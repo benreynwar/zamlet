@@ -28,31 +28,17 @@ class AdjustableDelay(maxDelay: Int, width: Int) extends Module {
   errors := Mux(delay < maxDelay.U, input.valid && regs(delay(log2Ceil(maxDelay)-1, 0)).valid, 0.U);
 }
 
+
 object AdjustableDelayGenerator extends ModuleGenerator {
 
-  override def generate(outputDir: String, args: Seq[String]): Unit = {
-    // Parse arguments
+  override def makeModule(args: Seq[String]): Module = {
     if (args.length < 2) {
-      println("Usage: <command> <outputDir> AdjustableDelay <maxDelay> <width>")
-      return
+      println("Usage: <command> <outputDir> AdjustableDelay <maxDelay> <width>");
+      return null;
     }
-    
-    val maxDelay = args(0).toInt
-    val width = args(1).toInt
-    
-    println(s"Generating AdjustableDelay with maxDelay=$maxDelay, width=$width")
-    ChiselStage.emitSystemVerilogFile(
-      gen = new AdjustableDelay(maxDelay, width),
-      args = Array(
-        "--target-dir", outputDir,
-        ),
-      firtoolOpts = Array(
-        "-disable-all-randomization",
-        "-strip-debug-info",
-        "-default-layer-specialization=enable",
-      )
-    )
-    
-    println(s"Generated Verilog file: $outputDir/AdjustableDelay_${maxDelay}_${width}.sv")
+    val maxDelay = args(0).toInt;
+    val width = args(1).toInt;
+    return new AdjustableDelay(maxDelay, width);
   }
+
 }

@@ -12,13 +12,6 @@ import scala.io.Source
 
 import fvpu.ModuleGenerator
 
-case class FVPUParams(
-  nBuses: Int,
-  width: Int,
-  // Max depth of the output buffers in the network node.
-  maxNetworkOutputDelay: Int
-)
-
 class NetworkNodeControl(params: FVPUParams) extends Bundle {
   val nsInputSel =  Vec(params.nBuses, Bool());
   val weInputSel =  Vec(params.nBuses, Bool());
@@ -140,42 +133,14 @@ class NetworkNode(params: FVPUParams) extends Module {
 
 object NetworkNodeGenerator extends ModuleGenerator {
 
-  override def generate(outputDir: String, args: Seq[String]): Unit = {
+  override def makeModule(args: Seq[String]): Module = {
     // Parse arguments
     if (args.length < 1) {
       println("Usage: <command> <outputDir> NetworkNode <paramsFileName>")
-      return
+      return null
     }
-    
-    val paramsFileName = args(0)
-    
-    // Read and parse JSON file using circe
-    val jsonContent = Source.fromFile(paramsFileName).mkString
-    
-    // Import circe libraries for JSON parsing
-    import io.circe._
-    import io.circe.parser._
-    import io.circe.generic.auto._
-    
-    val paramsResult = decode[FVPUParams](jsonContent)
-  
-    paramsResult match {
-      case Right(params) =>
-        ChiselStage.emitSystemVerilogFile(
-          gen = new NetworkNode(params),
-          args = Array(
-            "--target-dir", outputDir,
-            ),
-          firtoolOpts = Array(
-            "-disable-all-randomization",
-            "-strip-debug-info",
-            "-default-layer-specialization=enable",
-          )
-        )
-        
-      case Left(error) => 
-        println(s"Failed to parse JSON: ${error.getMessage}")
-        System.exit(1)
-    }
+    val params = FVPUParams.fromFile(args(0));
+    return new NetworkNode(params);
   }
+
 }
