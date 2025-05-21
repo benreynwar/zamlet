@@ -1,0 +1,22 @@
+[build-system]
+requires = [
+    "setuptools>=61.0",
+]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fvpu"
+version = "0.0.1"
+
+authors = [
+    { name="Ben Reynwar", email="ben@reynwar.net" },
+]
+
+description = "Flexible Vector Processing Unit"
+
+requires-python = ">=3.8"
+
+license = "MIT"
+
+[project.urls]
+Homepage = "https://github.com/benreynwar/fvpu"

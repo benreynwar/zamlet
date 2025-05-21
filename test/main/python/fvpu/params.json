@@ -1,0 +1,5 @@
+{
+    "nBuses": 4,
+    "width": 16,
+    "maxNetworkOutputDelay": 8
+}

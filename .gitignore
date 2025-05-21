@@ -1,0 +1,6 @@
+out/
+.scala-build/
+.bsp/
+*.egg-info
+*.swp
+__pycache__
