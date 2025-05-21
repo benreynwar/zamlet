@@ -10,7 +10,13 @@ case class FVPUParams(
   nBuses: Int,
   width: Int,
   // Max depth of the output buffers in the network node.
-  maxNetworkOutputDelay: Int
+  maxNetworkOutputDelay: Int,
+  // Number of regisers in the distributed register file.
+  nDRF: Int,
+  // Number of vectors stored in the distributed data memory.
+  depthDDM: Int,
+  // Number of entries in the network configuration.
+  depthNetworkConfig: Int,
 )
 
 object FVPUParams {

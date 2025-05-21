@@ -4,3 +4,5 @@ out/
 *.egg-info
 *.swp
 __pycache__
+deleteme
+sim_build

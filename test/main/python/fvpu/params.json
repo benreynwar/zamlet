@@ -1,5 +1,8 @@
 {
     "nBuses": 4,
     "width": 16,
-    "maxNetworkOutputDelay": 8
+    "maxNetworkOutputDelay": 8,
+    "nDRF": 32,
+    "depthDDM": 1024,
+    "depthNetworkConfig": 64
 }

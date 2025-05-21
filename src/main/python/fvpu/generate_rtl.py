@@ -13,8 +13,9 @@ def generate(module_name, working_dir, args):
     mill_dir = os.path.abspath(os.path.join(this_dir, '..', '..' , '..', '..'))
     mill = os.path.join(mill_dir, 'mill')
     # Fix argument order: Main.scala expects [outputDir, moduleName, ...]
-    subprocess.run([mill, 'fvpu.run', '--', working_dir, module_name] + args,
+    result = subprocess.run([mill, 'fvpu.run', '--', working_dir, module_name] + args,
                    check=False, cwd=mill_dir)
+    assert result.returncode == 0
     filenames = [os.path.join(working_dir, fn)
                  for fn in os.listdir(working_dir) if fn[-3:] == '.sv']
     return filenames

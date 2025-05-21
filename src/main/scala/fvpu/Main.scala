@@ -31,6 +31,7 @@ object Main extends App {
   val generator: ModuleGenerator = moduleName match {
     case "AdjustableDelay" => AdjustableDelayGenerator
     case "NetworkNode" => NetworkNodeGenerator
+    case "RegisterFile" => RegisterFileGenerator
     case _ => 
       println(s"Module name '${moduleName}' is unknown.")
       System.exit(1)
