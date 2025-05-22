@@ -20,7 +20,7 @@ async def reads_and_writes(seed, dut, contents, width, depth, n_read_ports, n_wr
     for read_port in range(n_read_ports):
         expected_datas.append(contents.get(r_addresses[read_port], None))
         valid_port = getattr(dut, f'reads_{read_port}_enable')
-        address_port = getattr(dut, f'reads_{read_port}_addr')
+        address_port = getattr(dut, f'reads_{read_port}_address')
         valid_port.value = r_valids[read_port]
         address_port.value = r_addresses[read_port]
 
@@ -33,7 +33,7 @@ async def reads_and_writes(seed, dut, contents, width, depth, n_read_ports, n_wr
             contents[w_addresses[write_port]] = w_datas[write_port]
         valid_port = getattr(dut, f'writes_{write_port}_enable')
         data_port = getattr(dut, f'writes_{write_port}_data')
-        addr_port = getattr(dut, f'writes_{write_port}_addr')
+        addr_port = getattr(dut, f'writes_{write_port}_address')
         valid_port.value = w_valids[write_port]
         data_port.value = w_datas[write_port]
         addr_port.value = w_addresses[write_port]

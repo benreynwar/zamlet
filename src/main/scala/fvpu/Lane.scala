@@ -58,7 +58,7 @@ class Lane(params: FVPUParams) extends Module {
   val instr = IO(Input(Valid(new Instr(params))));
 
   val networkNode = Module(new NetworkNode(params));
-  //val DRF = Module(new DistributedRegisterFile(params));
+  val DRF = Module(new RegisterFile(params.width, params.nDRF, 4, 3));
   //val DDM = Module(new DistributedDataMemory(params));
   //val ALU = Module(new LaneALU(params));
 
@@ -74,6 +74,7 @@ class Lane(params: FVPUParams) extends Module {
   networkNode.eI := eI;
   eO := networkNode.eO;
   networkNode.control := networkControl;
+
 
 }
 
