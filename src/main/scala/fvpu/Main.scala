@@ -32,6 +32,9 @@ object Main extends App {
     case "AdjustableDelay" => AdjustableDelayGenerator
     case "NetworkNode" => NetworkNodeGenerator
     case "RegisterFile" => RegisterFileGenerator
+    case "DataMemory" => DataMemoryGenerator
+    case "Lane" => LaneGenerator
+    case "ddmAccess" => ddmAccessGenerator
     case _ => 
       println(s"Module name '${moduleName}' is unknown.")
       System.exit(1)

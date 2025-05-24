@@ -57,8 +57,8 @@ class NetworkNode(params: FVPUParams) extends Module {
   val weToCrossbar = Wire(Vec(params.nBuses+2, Valid(UInt(params.width.W))));
   val nsweToCrossbar = Wire(Vec(2*params.nBuses, Valid(UInt(params.width.W))));
   for (i <- 0 until params.nBuses) {
-    nsToCrossbar(i) := Mux(control.weInputSel(i), nI(i), sI(i));
-    weToCrossbar(i) := Mux(control.nsInputSel(i), wI(i), eI(i));
+    nsToCrossbar(i) := Mux(control.nsInputSel(i), sI(i), nI(i));
+    weToCrossbar(i) := Mux(control.weInputSel(i), eI(i), wI(i));
     nsweToCrossbar(i) := nsToCrossbar(i);
     nsweToCrossbar(i+params.nBuses) := weToCrossbar(i);
   }

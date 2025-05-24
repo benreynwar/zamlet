@@ -14,55 +14,65 @@ import scala.io.Source
 import fvpu.ModuleGenerator
 
 
-class ValidReadPort(width: Int, depth: Int) extends Bundle {
+class ValidReadPort[T <: Data](gen: T, addrWidth: Int) extends Bundle {
   // Using valid since latency is unknown.
-  val addr  = Input(Valid(UInt(log2Ceil(depth).W)));
-  val data = Output(Valid(UInt(width.W)));
+  val address  = Input(Valid(UInt(addrWidth.W)));
+  val data = Output(Valid(gen));
   }
 
+// The inputs ports going to a one-port memory
+// Excludes the output data port for situations where we're going through
+// logic that can't handle a bi-directional interface.
+class ReadWriteInputPort(width: Int, addrWidth: Int) extends Bundle {
+  val address = UInt(addrWidth.W);
+  val data = UInt(width.W);
+  val enable = Bool();
+  val isWrite = Bool();
+}
 
-class WriteMux[T <: Data](gen: T, nWritePorts: Int) extends Module {
-  // We take nWritePorts valid/bits signals.
+
+class ValidMux[T <: Data](gen: T, nInputs: Int) extends Module {
+  // We take nInputs valid/bits signals.
   // If there is exactly 1 valid input then the output corresponds to that input.
   // Otherwise the output is not valid.
-  val iWrites = IO(Input(Vec(nWritePorts, Valid(gen))));
-  val oWrite = IO(Output(Valid(gen)));
+  val inputs = IO(Input(Vec(nInputs, Valid(gen))));
+  val output = IO(Output(Valid(gen)));
   val error = IO(Output(Bool()));
 
-  val nWritePortsA = (nWritePorts+1)/2;
-  val nWritePortsB = nWritePorts - nWritePortsA;
+  val nInputsA = (nInputs+1)/2;
+  val nInputsB = nInputs - nInputsA;
 
-  if (nWritePorts == 1) {
-    oWrite := iWrites(0);
+  if (nInputs == 1) {
+    output := inputs(0);
     error := false.B;
   } else {
-    val writeMuxA = Module(new WriteMux(gen, nWritePortsA));
-    for (i <- 0 until nWritePortsA) {
-      writeMuxA.iWrites(i) := iWrites(i);
+    val validMuxA = Module(new ValidMux(gen, nInputsA));
+    val validMuxB = Module(new ValidMux(gen, nInputsB));
+    for (i <- 0 until nInputsA) {
+      validMuxA.inputs(i) := inputs(i);
     }
-    val aWrite = writeMuxA.oWrite;
-    val aError = writeMuxA.error;
-    val writeMuxB = Module(new WriteMux(gen, nWritePortsB));
-    for (i <- 0 until nWritePortsB) {
-      writeMuxB.iWrites(i) := iWrites(i+nWritePortsA);
+    for (i <- 0 until nInputsB) {
+      validMuxB.inputs(i) := inputs(i+nInputsA);
     }
-    val bWrite = writeMuxB.oWrite;
-    val bError = writeMuxB.error;
-    when (aWrite.valid && bWrite.valid) {
-      oWrite.valid := false.B;
-      oWrite.bits := DontCare;
+    val aIntermed = validMuxA.output;
+    val aError = validMuxA.error;
+    val bIntermed = validMuxB.output;
+    val bError = validMuxB.error;
+    when (aIntermed.valid && bIntermed.valid) {
+      output.valid := false.B;
+      output.bits := DontCare;
       error := true.B;
-    }.elsewhen (aWrite.valid) {
-      oWrite.valid := true.B;
-      oWrite.bits := aWrite.bits;
+    }.elsewhen (aIntermed.valid) {
+      output.valid := true.B;
+      output.bits := aIntermed.bits;
       error := aError || bError;
-    }.elsewhen (bWrite.valid) {
-      oWrite.valid := true.B;
-      oWrite.bits := bWrite.bits;
+    }.elsewhen (bIntermed.valid) {
+      output.valid := true.B;
+      output.bits := bIntermed.bits;
       error := aError || bError;
     }.otherwise {
-      oWrite.valid := false.B;
-      oWrite.bits := DontCare;
+      output.valid := false.B;
+      output.bits := DontCare;
       error := aError || bError;
     }
   }

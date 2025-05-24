@@ -35,10 +35,10 @@ class RegisterFile(width: Int, depth: Int, nReadPorts: Int, nWritePorts: Int) ex
       validWrites(port_index).bits := writes(port_index).data;
     }
     val finalWrite = Wire(Valid(UInt(width.W)));
-    val writeMux = Module(new WriteMux(UInt(width.W), nWritePorts));
-    writeMux.iWrites := validWrites;
-    finalWrite := writeMux.oWrite;
-    writeClashes(addr) := writeMux.error;
+    val mux = Module(new ValidMux(UInt(width.W), nWritePorts));
+    mux.inputs := validWrites;
+    finalWrite := mux.output;
+    writeClashes(addr) := mux.error;
     when(finalWrite.valid) {
       contents(addr) := finalWrite.bits
     }

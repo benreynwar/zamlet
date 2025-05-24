@@ -14,7 +14,9 @@ case class FVPUParams(
   // Number of regisers in the distributed register file.
   nDRF: Int,
   // Number of vectors stored in the distributed data memory.
-  depthDDM: Int,
+  ddmBankDepth: Int,
+  ddmNBanks: Int,
+  ddmAddrWidth: Int,
   // Number of entries in the network configuration.
   depthNetworkConfig: Int,
 )

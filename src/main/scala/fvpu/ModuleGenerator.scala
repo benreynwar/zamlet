@@ -15,6 +15,7 @@ trait ModuleGenerator {
       firtoolOpts = Array(
         "-disable-all-randomization",
         "-strip-debug-info",
+        "-disable-opt",
         "-default-layer-specialization=enable",
       )
     )

@@ -3,6 +3,8 @@
     "width": 16,
     "maxNetworkOutputDelay": 8,
     "nDRF": 32,
-    "depthDDM": 1024,
+    "ddmBankDepth": 1024,
+    "ddmNBanks": 2,
+    "ddmAddrWidth": 11,
     "depthNetworkConfig": 64
 }
