@@ -19,6 +19,8 @@ class FVPUParams:
     ddm_addr_width: int
     # Number of entries in the network configuration.
     depth_network_config: int
+    n_columns: int
+    n_rows: int
 
     # Map camelCase JSON field names to snake_case Python field names
     _FIELD_MAPPING = {
@@ -30,6 +32,8 @@ class FVPUParams:
         'ddmNBanks': 'ddm_n_banks',
         'ddmAddrWidth': 'ddm_addr_width',
         'depthNetworkConfig': 'depth_network_config',
+        'nColumns': 'n_columns',
+        'nRows': 'n_rows',
     }
 
     @classmethod

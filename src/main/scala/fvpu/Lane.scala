@@ -39,6 +39,8 @@ class SendReceiveInstr(params: FVPUParams) extends Bundle {
   val mode =  UInt(1.W)
   val length = UInt(params.ddmAddrWidth.W)
   val addr = UInt(params.ddmAddrWidth.W)
+  val startOffset = UInt(params.ddmAddrWidth.W)
+  val stride = UInt(params.ddmAddrWidth.W)
   }
 
 class NetworkInstr(params: FVPUParams) extends Bundle {
@@ -70,13 +72,25 @@ class Lane(params: FVPUParams) extends Module {
   val eO = IO(Output(Vec(params.nBuses, Valid(UInt(params.width.W)))))
   val wI = IO(Input(Vec(params.nBuses, Valid(UInt(params.width.W)))))
   val wO = IO(Output(Vec(params.nBuses, Valid(UInt(params.width.W)))))
-  val instr = IO(Input(new Instr(params)))
+  val nInstr = IO(Input(new Instr(params)))
+  val sInstr = IO(Output(new Instr(params)))
+  val instrDelay = IO(Input(UInt(log2Ceil(params.maxNetworkOutputDelay+1).W)))
 
   val networkNode = Module(new NetworkNode(params))
   val DRF = Module(new RegisterFile(params.width, params.nDRF, 4, 3))
   val DDM = Module(new DataMemory(params.width, params.ddmBankDepth, params.ddmNBanks))
   val ddmAccess = Module(new ddmAccess(params))
   //val ALU = Module(new LaneALU(params))
+
+  // Register nInstr to create sInstr
+  sInstr := RegNext(nInstr)
+
+  // Adjustable delay for instruction execution
+  val instrDelayModule = Module(new AdjustableDelay(params.maxNetworkOutputDelay, nInstr.getWidth))
+  instrDelayModule.delay := instrDelay
+  instrDelayModule.input.valid := true.B
+  instrDelayModule.input.bits := nInstr.asUInt
+  val instr = instrDelayModule.output.bits.asTypeOf(new Instr(params))
 
   // Connect ddmAccess to sendreceive instructions
   ddmAccess.instr := instr.sendreceive
@@ -129,16 +143,12 @@ class Lane(params: FVPUParams) extends Module {
   for (i <- 0 until params.nBuses) {
     networkControl.nsInputSel(i) := false.B
     networkControl.weInputSel(i) := false.B
-    networkControl.nsCrossbarSel(i) := (if (i == 0) (params.nBuses+0).U else 0.U)
-    networkControl.weCrossbarSel(i) := (if (i == 0) (params.nBuses+1).U else 0.U)
+    networkControl.nsCrossbarSel(i) := (if (i == 1) (params.nBuses+0).U else 0.U)
+    networkControl.weCrossbarSel(i) := (if (i == 1) (params.nBuses+1).U else 0.U)
     networkControl.nOutputDelays(i) := 0.U
     networkControl.sOutputDelays(i) := 0.U
     networkControl.wOutputDelays(i) := 0.U
     networkControl.eOutputDelays(i) := 0.U
-    networkControl.nOutputDrive(i) := false.B
-    networkControl.sOutputDrive(i) := (i == 0).B
-    networkControl.wOutputDrive(i) := false.B
-    networkControl.eOutputDrive(i) := (i == 0).B
   }
   networkControl.drfSel := 0.U
   networkControl.ddmSel := params.nBuses.U

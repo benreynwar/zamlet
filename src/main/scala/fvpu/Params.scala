@@ -19,6 +19,9 @@ case class FVPUParams(
   ddmAddrWidth: Int,
   // Number of entries in the network configuration.
   depthNetworkConfig: Int,
+  // Number of rows and columns in a LaneGrid
+  nColumns: Int,
+  nRows: Int,
 )
 
 object FVPUParams {

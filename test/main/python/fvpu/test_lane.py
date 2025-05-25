@@ -25,8 +25,8 @@ async def process_to_lane(dut, tolane_queue):
 async def process_from_lane(dut, fromlane_queue):
     while True:
         await triggers.ReadOnly()
-        if dut.eO_0_valid.value:
-            fromlane_queue.append(dut.eO_0_bits.value)
+        if dut.eO_1_valid.value:
+            fromlane_queue.append(dut.eO_1_bits.value)
         await triggers.RisingEdge(dut.clock)
 
 

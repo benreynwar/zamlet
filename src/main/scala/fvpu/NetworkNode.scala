@@ -23,10 +23,6 @@ class NetworkNodeControl(params: FVPUParams) extends Bundle {
   val sOutputDelays = Vec(params.nBuses, UInt(log2Ceil(params.maxNetworkOutputDelay).W));
   val wOutputDelays = Vec(params.nBuses, UInt(log2Ceil(params.maxNetworkOutputDelay).W));
   val eOutputDelays = Vec(params.nBuses, UInt(log2Ceil(params.maxNetworkOutputDelay).W));
-  val nOutputDrive = Vec(params.nBuses, Bool());
-  val sOutputDrive = Vec(params.nBuses, Bool());
-  val wOutputDrive = Vec(params.nBuses, Bool());
-  val eOutputDrive = Vec(params.nBuses, Bool());
   }
 
 class NetworkNode(params: FVPUParams) extends Module {
@@ -114,10 +110,10 @@ class NetworkNode(params: FVPUParams) extends Module {
   dontTouch(wFromOutputMux);
   dontTouch(eFromOutputMux);
   for (i <- 0 until params.nBuses) {
-    nFromOutputMux(i) := Mux(control.nOutputDrive(i), nDelayed(i), sI(i));
-    sFromOutputMux(i) := Mux(control.sOutputDrive(i), sDelayed(i), nI(i));
-    wFromOutputMux(i) := Mux(control.wOutputDrive(i), wDelayed(i), eI(i));
-    eFromOutputMux(i) := Mux(control.eOutputDrive(i), eDelayed(i), wI(i));
+    nFromOutputMux(i) := Mux(nDelayed(i).valid, nDelayed(i), sI(i));
+    sFromOutputMux(i) := Mux(sDelayed(i).valid, sDelayed(i), nI(i));
+    wFromOutputMux(i) := Mux(wDelayed(i).valid, wDelayed(i), eI(i));
+    eFromOutputMux(i) := Mux(eDelayed(i).valid, eDelayed(i), wI(i));
   }
 
   nO := RegNext(nFromOutputMux);

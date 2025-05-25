@@ -29,10 +29,16 @@ class ddmAccess(params: FVPUParams) extends Module {
   val readActive = RegInit(false.B)
   val readLength = RegInit(0.U(params.ddmAddrWidth.W))
   val readAddress = RegInit(0.U(params.ddmAddrWidth.W))
+  val readStartOffset = RegInit(0.U(params.ddmAddrWidth.W))
+  val readStride = RegInit(0.U(params.ddmAddrWidth.W))
+  val readWordCount = RegInit(0.U(params.ddmAddrWidth.W))
 
   val writeActive = RegInit(false.B)
   val writeLength = RegInit(0.U(params.ddmAddrWidth.W))
   val writeAddress = RegInit(0.U(params.ddmAddrWidth.W))
+  val writeStartOffset = RegInit(0.U(params.ddmAddrWidth.W))
+  val writeStride = RegInit(0.U(params.ddmAddrWidth.W))
+  val writeWordCount = RegInit(0.U(params.ddmAddrWidth.W))
 
   toNetwork := readDDM.data
 
@@ -54,6 +60,9 @@ class ddmAccess(params: FVPUParams) extends Module {
         readActive := true.B
         readLength := instr.bits.length
         readAddress := instr.bits.addr
+        readStartOffset := instr.bits.startOffset
+        readStride := instr.bits.stride
+        readWordCount := 0.U
       }
     }.otherwise { // Receive instruction (mode === 1.U)
       when (writeActive) {
@@ -62,19 +71,32 @@ class ddmAccess(params: FVPUParams) extends Module {
         writeActive := true.B
         writeLength := instr.bits.length
         writeAddress := instr.bits.addr
+        writeStartOffset := instr.bits.startOffset
+        writeStride := instr.bits.stride
+        writeWordCount := 0.U
       }
     }
   }
 
   // Handle read operations (Send)
   when (readActive) {
-    readDDM.address.valid := true.B
-    readDDM.address.bits := readAddress
-    readLength := readLength - 1.U
-    readAddress := readAddress + 1.U
-    when (readLength === 1.U) {
-      readActive := false.B
+    val shouldRead = (readWordCount >= readStartOffset) && 
+                    ((readWordCount - readStartOffset) % readStride === 0.U)
+    
+    when (shouldRead) {
+      readDDM.address.valid := true.B
+      readDDM.address.bits := readAddress
+      readLength := readLength - 1.U
+      readAddress := readAddress + 1.U
+      
+      when (readLength === 1.U) {
+        readActive := false.B
+      }
+    }.otherwise {
+      readDDM.address.valid := false.B
     }
+    
+    readWordCount := readWordCount + 1.U
   }
 
   // Handle write operations (Receive)
@@ -82,16 +104,23 @@ class ddmAccess(params: FVPUParams) extends Module {
     when (!writeActive) {
       errorBadFromNetwork := true.B
     }.otherwise {
-      writeDDM.enable := true.B
-      writeDDM.address := writeAddress
-      writeDDM.data := fromNetwork.bits
+      val shouldWrite = (writeWordCount >= writeStartOffset) && 
+                       ((writeWordCount - writeStartOffset) % writeStride === 0.U)
       
-      writeLength := writeLength - 1.U
-      writeAddress := writeAddress + 1.U
-      
-      when (writeLength === 1.U) {
-        writeActive := false.B
+      when (shouldWrite) {
+        writeDDM.enable := true.B
+        writeDDM.address := writeAddress
+        writeDDM.data := fromNetwork.bits
+        
+        writeLength := writeLength - 1.U
+        writeAddress := writeAddress + 1.U
+        
+        when (writeLength === 1.U) {
+          writeActive := false.B
+        }
       }
+      
+      writeWordCount := writeWordCount + 1.U
     }
   }
 }

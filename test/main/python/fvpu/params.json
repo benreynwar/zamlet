@@ -6,5 +6,7 @@
     "ddmBankDepth": 1024,
     "ddmNBanks": 2,
     "ddmAddrWidth": 11,
-    "depthNetworkConfig": 64
+    "depthNetworkConfig": 64,
+    "nColumns": 2,
+    "nRows": 3
 }
