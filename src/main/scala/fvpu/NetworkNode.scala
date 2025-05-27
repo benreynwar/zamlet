@@ -12,6 +12,7 @@ import scala.io.Source
 
 import fvpu.ModuleGenerator
 
+
 class NetworkNodeControl(params: FVPUParams) extends Bundle {
   val nsInputSel =  Vec(params.nBuses, Bool());
   val weInputSel =  Vec(params.nBuses, Bool());
@@ -19,110 +20,103 @@ class NetworkNodeControl(params: FVPUParams) extends Bundle {
   val weCrossbarSel = Vec(params.nBuses, UInt(log2Ceil(params.nBuses+2).W));
   val drfSel = UInt(log2Ceil(params.nBuses*2).W);
   val ddmSel = UInt(log2Ceil(params.nBuses*2).W);
-  val nOutputDelays = Vec(params.nBuses, UInt(log2Ceil(params.maxNetworkOutputDelay).W));
-  val sOutputDelays = Vec(params.nBuses, UInt(log2Ceil(params.maxNetworkOutputDelay).W));
-  val wOutputDelays = Vec(params.nBuses, UInt(log2Ceil(params.maxNetworkOutputDelay).W));
-  val eOutputDelays = Vec(params.nBuses, UInt(log2Ceil(params.maxNetworkOutputDelay).W));
+  val nOutputDelays = Vec(params.nBuses, UInt(log2Ceil(params.networkMemoryDepth+1).W));
+  val sOutputDelays = Vec(params.nBuses, UInt(log2Ceil(params.networkMemoryDepth+1).W));
+  val wOutputDelays = Vec(params.nBuses, UInt(log2Ceil(params.networkMemoryDepth+1).W));
+  val eOutputDelays = Vec(params.nBuses, UInt(log2Ceil(params.networkMemoryDepth+1).W));
   }
 
 class NetworkNode(params: FVPUParams) extends Module {
-  val nI = IO(Input(Vec(params.nBuses, Valid(UInt(params.width.W)))));
-  val nO = IO(Output(Vec(params.nBuses, Valid(UInt(params.width.W)))));
-  val sI = IO(Input(Vec(params.nBuses, Valid(UInt(params.width.W)))));
-  val sO = IO(Output(Vec(params.nBuses, Valid(UInt(params.width.W)))));
-  val eI = IO(Input(Vec(params.nBuses, Valid(UInt(params.width.W)))));
-  val eO = IO(Output(Vec(params.nBuses, Valid(UInt(params.width.W)))));
-  val wI = IO(Input(Vec(params.nBuses, Valid(UInt(params.width.W)))));
-  val wO = IO(Output(Vec(params.nBuses, Valid(UInt(params.width.W)))));
-  val toDRF = IO(Output(Valid(UInt(params.width.W))));
-  val fromDRF = IO(Input(Valid(UInt(params.width.W))));
-  val toDDM = IO(Output(Valid(UInt(params.width.W))));
-  val fromDDM = IO(Input(Valid(UInt(params.width.W))));
-  val control = IO(Input(new NetworkNodeControl(params)));
+  val inputs = IO(Vec(4, Vec(params.nBuses, new Bus(params.width))))
+  val outputs = IO(Vec(4, Vec(params.nBuses, Flipped(new Bus(params.width)))))
+  val toDRF = IO(Output(Valid(UInt(params.width.W))))
+  val fromDRF = IO(Input(Valid(UInt(params.width.W))))
+  val toDDM = IO(Output(Valid(UInt(params.width.W))))
+  val fromDDM = IO(Input(Valid(UInt(params.width.W))))
+  val control = IO(Input(new NetworkNodeControl(params)))
+  val thisLoc = IO(Input(new Location(params)))
 
-  val allI = Wire(Vec(params.nBuses, Vec(4, Valid(UInt(params.width.W)))));
-  for (i <- 0 until params.nBuses) {
-    // Connect each direction: North(0), South(1), West(3), East(4)
-    allI(i)(0) := nI(i)
-    allI(i)(1) := sI(i)
-    allI(i)(2) := wI(i)
-    allI(i)(3) := eI(i)
+  // Just here to define modules
+  val withHeaderTemplate = new HeaderTag(UInt(params.width.W))
+
+  val configValid = IO(Input(Bool()))
+  val configIsPacketMode = IO(Input(Bool()))
+  val configDelay = IO(Input(UInt(log2Ceil(params.networkMemoryDepth+1).W)))
+
+
+  val isPacketMode = RegInit(true.B)
+
+  when (configValid) {
+    isPacketMode := configIsPacketMode
   }
 
-  val nsToCrossbar = Wire(Vec(params.nBuses+2, Valid(UInt(params.width.W))));
-  val weToCrossbar = Wire(Vec(params.nBuses+2, Valid(UInt(params.width.W))));
-  val nsweToCrossbar = Wire(Vec(2*params.nBuses, Valid(UInt(params.width.W))));
-  for (i <- 0 until params.nBuses) {
-    nsToCrossbar(i) := Mux(control.nsInputSel(i), sI(i), nI(i));
-    weToCrossbar(i) := Mux(control.weInputSel(i), eI(i), wI(i));
-    nsweToCrossbar(i) := nsToCrossbar(i);
-    nsweToCrossbar(i+params.nBuses) := weToCrossbar(i);
+  val crossbar = Module(new NetworkCrossbar(params))
+  // TODO: Connect crossbar inputs properly
+  crossbar.fromDRF := fromDRF
+  toDRF := crossbar.toDRF
+  crossbar.fromDDM := fromDDM
+  toDDM := crossbar.toDDM
+  crossbar.control := control
+
+  for (busIndex <- 0 until params.nBuses) {
+    val switch = Module(new NetworkSwitch(params))
+    switch.thisLoc := thisLoc
+
+    for (direction <- 0 until 4) {
+      // If we're in packet mode the inputs go to the switch
+      // otherwise they go to the crossbar.
+      when (isPacketMode) {
+        switch.inputs(direction) <> inputs(direction)(busIndex)
+        crossbar.inputs(direction)(busIndex).valid := false.B
+        crossbar.inputs(direction)(busIndex).bits := DontCare
+      }.otherwise {
+        switch.inputs(direction).valid := false.B
+        switch.inputs(direction).bits := DontCare
+        inputs(direction)(busIndex).token := false.B
+        crossbar.inputs(direction)(busIndex) := inputs(direction)(busIndex).toValid()
+      }
+
+      val fifoOrDelay = Module(new FifoOrDelay(withHeaderTemplate, params.networkMemoryDepth))
+      fifoOrDelay.configValid := configValid
+      fifoOrDelay.configIsFifo := configIsPacketMode
+      fifoOrDelay.configDelay := configDelay
+
+      // If we're in packet mode then the memory inputs come from the switch
+      // otherwise the inputs come from the crossbar
+      when (isPacketMode) {
+        fifoOrDelay.input <> switch.toFifos(direction)
+      }.otherwise {
+        fifoOrDelay.input.valid := crossbar.outputs(direction)(busIndex).valid
+        fifoOrDelay.input.bits.bits := crossbar.outputs(direction)(busIndex).bits
+        fifoOrDelay.input.bits.header := false.B
+        switch.toFifos(direction).ready := false.B
+      }
+
+      // If we're in packet mode then the memory outputs go the switch
+      // otherwise they go into the pre-output mux.
+      // If we're in packet mode then the pre-output mux comes from the switch
+
+      val toOutputs = Wire(new Bus(params.width))
+      when (isPacketMode) {
+        switch.fromFifos(direction) <> fifoOrDelay.output
+        toOutputs <> switch.outputs(direction)
+      }.otherwise {
+        toOutputs.valid := fifoOrDelay.output.valid
+        toOutputs.bits.bits := fifoOrDelay.output.bits.bits
+        toOutputs.bits.header := fifoOrDelay.output.bits.header
+        fifoOrDelay.output.ready := toOutputs.token
+        switch.fromFifos(direction).valid := false.B
+        switch.fromFifos(direction).bits := DontCare
+        switch.outputs(direction).token := false.B
+      }
+      
+      // Register the outputs.
+      outputs(direction)(busIndex).valid := RegNext(toOutputs.valid)
+      outputs(direction)(busIndex).bits := RegNext(toOutputs.bits)
+      toOutputs.token := RegNext(outputs(direction)(busIndex).token)
+
+    }
   }
-  nsToCrossbar(params.nBuses) := fromDRF;
-  nsToCrossbar(params.nBuses+1) := fromDDM;
-  weToCrossbar(params.nBuses) := fromDRF;
-  weToCrossbar(params.nBuses+1) := fromDDM;
-
-  val nsFromCrossbar = Wire(Vec(params.nBuses, Valid(UInt(params.width.W))));
-  val weFromCrossbar = Wire(Vec(params.nBuses, Valid(UInt(params.width.W))));
-  for (i <- 0 until params.nBuses) {
-    nsFromCrossbar(i) := nsToCrossbar(control.nsCrossbarSel(i));
-    weFromCrossbar(i) := weToCrossbar(control.weCrossbarSel(i));
-  }
-
-  val fromDRFSel = Wire(Valid(UInt(params.width.W)));
-  val fromDDMSel = Wire(Valid(UInt(params.width.W)));
-  fromDRFSel := nsweToCrossbar(control.drfSel);
-  fromDDMSel := nsweToCrossbar(control.ddmSel);
-
-  val nDelayed = Wire(Vec(params.nBuses, Valid(UInt(params.width.W))));
-  val sDelayed = Wire(Vec(params.nBuses, Valid(UInt(params.width.W))));
-  val wDelayed = Wire(Vec(params.nBuses, Valid(UInt(params.width.W))));
-  val eDelayed = Wire(Vec(params.nBuses, Valid(UInt(params.width.W))));
-  for (i <- 0 until params.nBuses) {
-    val nAdjustableDelay = Module(new AdjustableDelay(params.maxNetworkOutputDelay, params.width));
-    nAdjustableDelay.delay := control.nOutputDelays(i);
-    nAdjustableDelay.input := nsFromCrossbar(i);
-    nDelayed(i) := nAdjustableDelay.output;
-    
-    val sAdjustableDelay = Module(new AdjustableDelay(params.maxNetworkOutputDelay, params.width));
-    sAdjustableDelay.delay := control.sOutputDelays(i);
-    sAdjustableDelay.input := nsFromCrossbar(i);
-    sDelayed(i) := sAdjustableDelay.output;
-    
-    val wAdjustableDelay = Module(new AdjustableDelay(params.maxNetworkOutputDelay, params.width));
-    wAdjustableDelay.delay := control.wOutputDelays(i);
-    wAdjustableDelay.input := weFromCrossbar(i);
-    wDelayed(i) := wAdjustableDelay.output;
-    
-    val eAdjustableDelay = Module(new AdjustableDelay(params.maxNetworkOutputDelay, params.width));
-    eAdjustableDelay.delay := control.eOutputDelays(i);
-    eAdjustableDelay.input := weFromCrossbar(i);
-    eDelayed(i) := eAdjustableDelay.output;
-  }
-
-  val nFromOutputMux = Wire(Vec(params.nBuses, Valid(UInt(params.width.W))));
-  val sFromOutputMux = Wire(Vec(params.nBuses, Valid(UInt(params.width.W))));
-  val wFromOutputMux = Wire(Vec(params.nBuses, Valid(UInt(params.width.W))));
-  val eFromOutputMux = Wire(Vec(params.nBuses, Valid(UInt(params.width.W))));
-  dontTouch(nFromOutputMux);
-  dontTouch(sFromOutputMux);
-  dontTouch(wFromOutputMux);
-  dontTouch(eFromOutputMux);
-  for (i <- 0 until params.nBuses) {
-    nFromOutputMux(i) := Mux(nDelayed(i).valid, nDelayed(i), sI(i));
-    sFromOutputMux(i) := Mux(sDelayed(i).valid, sDelayed(i), nI(i));
-    wFromOutputMux(i) := Mux(wDelayed(i).valid, wDelayed(i), eI(i));
-    eFromOutputMux(i) := Mux(eDelayed(i).valid, eDelayed(i), wI(i));
-  }
-
-  nO := RegNext(nFromOutputMux);
-  sO := RegNext(sFromOutputMux);
-  wO := RegNext(wFromOutputMux);
-  eO := RegNext(eFromOutputMux);
-
-  toDRF := RegNext(fromDRFSel);
-  toDDM := RegNext(fromDDMSel);
 
 }
 

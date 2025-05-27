@@ -10,7 +10,7 @@ class FVPUParams:
     n_buses: int
     width: int
     # Max depth of the output buffers in the network node.
-    max_network_output_delay: int
+    network_memory_depth: int
     # Number of registers in the distributed register file.
     n_drf: int
     # Number of vectors stored in the distributed data memory.
@@ -26,7 +26,7 @@ class FVPUParams:
     _FIELD_MAPPING = {
         'nBuses': 'n_buses',
         'width': 'width',
-        'maxNetworkOutputDelay': 'max_network_output_delay',
+        'networkMemoryDepth': 'network_memory_depth',
         'nDRF': 'n_drf',
         'ddmBankDepth': 'ddm_bank_depth',
         'ddmNBanks': 'ddm_n_banks',

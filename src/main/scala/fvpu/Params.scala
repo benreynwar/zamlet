@@ -10,7 +10,7 @@ case class FVPUParams(
   nBuses: Int,
   width: Int,
   // Max depth of the output buffers in the network node.
-  maxNetworkOutputDelay: Int,
+  networkMemoryDepth: Int,
   // Number of regisers in the distributed register file.
   nDRF: Int,
   // Number of vectors stored in the distributed data memory.
@@ -22,6 +22,8 @@ case class FVPUParams(
   // Number of rows and columns in a LaneGrid
   nColumns: Int,
   nRows: Int,
+  // Maximum packet length for network switching
+  maxPacketLength: Int,
 )
 
 object FVPUParams {

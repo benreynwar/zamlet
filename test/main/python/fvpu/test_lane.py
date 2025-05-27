@@ -16,7 +16,8 @@ async def process_to_lane(dut, tolane_queue):
     while True:
         if tolane_queue:
             dut.wI_0_valid.value = 1
-            dut.wI_0_bits.value = tolane_queue.popleft()
+            dut.wI_0_bits_bits.value = tolane_queue.popleft()
+            dut.wI_0_bits_header.value = 0
         else:
             dut.wI_0_valid.value = 0
         await triggers.RisingEdge(dut.clock)
@@ -26,46 +27,51 @@ async def process_from_lane(dut, fromlane_queue):
     while True:
         await triggers.ReadOnly()
         if dut.eO_1_valid.value:
-            fromlane_queue.append(dut.eO_1_bits.value)
+            fromlane_queue.append(dut.eO_1_bits_bits.value)
         await triggers.RisingEdge(dut.clock)
+        # Set token after the ReadOnly phase
+        if dut.eO_1_valid.value:
+            dut.eO_1_token.value = 1
+        else:
+            dut.eO_1_token.value = 0
 
 
 def submit_send(dut, length, address):
-    dut.instr_sendreceive_valid.value = 1
-    dut.instr_sendreceive_bits_mode.value = 0
-    dut.instr_sendreceive_bits_length.value = length
-    dut.instr_sendreceive_bits_addr.value = address
+    dut.nInstr_sendreceive_valid.value = 1
+    dut.nInstr_sendreceive_bits_mode.value = 0
+    dut.nInstr_sendreceive_bits_length.value = length
+    dut.nInstr_sendreceive_bits_addr.value = address
 
 
 def submit_receive(dut, length, address):
-    dut.instr_sendreceive_valid.value = 1
-    dut.instr_sendreceive_bits_mode.value = 1
-    dut.instr_sendreceive_bits_length.value = length
-    dut.instr_sendreceive_bits_addr.value = address
+    dut.nInstr_sendreceive_valid.value = 1
+    dut.nInstr_sendreceive_bits_mode.value = 1
+    dut.nInstr_sendreceive_bits_length.value = length
+    dut.nInstr_sendreceive_bits_addr.value = address
 
 
 def clear_sendreceive(dut):
-    dut.instr_sendreceive_valid.value = 0
+    dut.nInstr_sendreceive_valid.value = 0
 
 
 def submit_load(dut, reg, addr):
     """Load from register to memory address"""
-    dut.instr_loadstore_valid.value = 1
-    dut.instr_loadstore_bits_mode.value = 0  # Load mode: register -> memory
-    dut.instr_loadstore_bits_reg.value = reg
-    dut.instr_loadstore_bits_addr.value = addr
+    dut.nInstr_loadstore_valid.value = 1
+    dut.nInstr_loadstore_bits_mode.value = 0  # Load mode: register -> memory
+    dut.nInstr_loadstore_bits_reg.value = reg
+    dut.nInstr_loadstore_bits_addr.value = addr
 
 
 def submit_store(dut, reg, addr):
     """Store from memory address to register"""
-    dut.instr_loadstore_valid.value = 1
-    dut.instr_loadstore_bits_mode.value = 1  # Store mode: memory -> register
-    dut.instr_loadstore_bits_reg.value = reg
-    dut.instr_loadstore_bits_addr.value = addr
+    dut.nInstr_loadstore_valid.value = 1
+    dut.nInstr_loadstore_bits_mode.value = 1  # Store mode: memory -> register
+    dut.nInstr_loadstore_bits_reg.value = reg
+    dut.nInstr_loadstore_bits_addr.value = addr
 
 
 def clear_loadstore(dut):
-    dut.instr_loadstore_valid.value = 0
+    dut.nInstr_loadstore_valid.value = 0
     
 
 async def send_and_receive(dut, rnd, params):
@@ -171,10 +177,16 @@ async def lane_test(dut):
     rnd = Random(test_params['seed'])
     params_dict = test_params['params']
     params = FVPUParams.from_dict(params_dict)
-    dut.instr_compute_valid.value = 0
-    dut.instr_loadstore_valid.value = 0
-    dut.instr_network_valid.value = 0
-    dut.instr_sendreceive_valid.value = 0
+    dut.nInstr_compute_valid.value = 0
+    dut.nInstr_loadstore_valid.value = 0
+    dut.nInstr_network_valid.value = 0
+    dut.nInstr_sendreceive_valid.value = 0
+    dut.instrDelay.value = 0
+    dut.thisLoc_x.value = 0
+    dut.thisLoc_y.value = 0
+    dut.configValid.value = 0
+    dut.configIsPacketMode.value = 1
+    dut.configDelay.value = 0
     for i in range(params.n_buses):
         dut.nI_0_valid.value = 0
         dut.sI_0_valid.value = 0
@@ -188,6 +200,13 @@ async def lane_test(dut):
     dut.reset.value = 1
     await triggers.RisingEdge(dut.clock)
     dut.reset.value = 0
+    await triggers.RisingEdge(dut.clock)
+    dut.configValid.value = 1
+    dut.configIsPacketMode.value = 0
+    await triggers.RisingEdge(dut.clock)
+    dut.configValid.value = 0
+    await triggers.RisingEdge(dut.clock)
+    
     await send_and_receive(dut, rnd, params)
     await send_and_receive_swap_order(dut, rnd, params)
 

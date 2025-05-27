@@ -22,7 +22,8 @@ async def process_to_lane_grid(dut, togrid_queue, params):
                 for row in range(params.n_rows):
                     lane_idx = row * params.n_columns + col
                     getattr(dut, f'wI_{row}_0_valid').value = 1
-                    getattr(dut, f'wI_{row}_0_bits').value = words[lane_idx]
+                    getattr(dut, f'wI_{row}_0_bits_bits').value = words[lane_idx]
+                    getattr(dut, f'wI_{row}_0_bits_header').value = 0
                 await triggers.RisingEdge(dut.clock)
         else:
             for row in range(params.n_rows):
@@ -41,13 +42,19 @@ async def process_from_lane_grid(dut, fromlane_queue, params):
                 for row in range(params.n_rows):
                     lane_idx = row * params.n_columns + col
                     assert getattr(dut, f'eO_{row}_1_valid').value == 1
-                    words[lane_idx] = int(getattr(dut, f'eO_{row}_1_bits').value)
+                    words[lane_idx] = int(getattr(dut, f'eO_{row}_1_bits_bits').value)
                 await triggers.RisingEdge(dut.clock)
+                # Send token back to acknowledge receipt (after rising edge, not in read-only mode)
+                for row in range(params.n_rows):
+                    getattr(dut, f'eO_{row}_1_token').value = 1
                 await triggers.ReadOnly()
             assert None not in words
             fromlane_queue.append(words)
         else:
             await triggers.RisingEdge(dut.clock)
+            # No tokens when no valid data (after rising edge, not in read-only mode)
+            for row in range(params.n_rows):
+                getattr(dut, f'eO_{row}_1_token').value = 0
             await triggers.ReadOnly()
 
 
@@ -263,11 +270,23 @@ async def lane_grid_test(dut):
         for bus in range(params.n_buses):
             getattr(dut, f'wI_{row}_{bus}_valid').value = 0
             getattr(dut, f'eI_{row}_{bus}_valid').value = 0
+            # Token inputs for outputs (these go into the LaneGrid)
+            getattr(dut, f'eO_{row}_{bus}_token').value = 0
+            getattr(dut, f'wO_{row}_{bus}_token').value = 0
     
     for col in range(params.n_columns):
         for bus in range(params.n_buses):
             getattr(dut, f'nI_{col}_{bus}_valid').value = 0
             getattr(dut, f'sI_{col}_{bus}_valid').value = 0
+            # Token inputs for outputs (these go into the LaneGrid)
+            getattr(dut, f'nO_{col}_{bus}_token').value = 0
+            getattr(dut, f'sO_{col}_{bus}_token').value = 0
+
+    # Initialize all config interfaces to inactive
+    for col in range(params.n_columns):
+        getattr(dut, f'config_{col}_configValid').value = 0
+        getattr(dut, f'config_{col}_configIsPacketMode').value = 0
+        getattr(dut, f'config_{col}_configDelay').value = 0
 
     cocotb.start_soon(clock.Clock(dut.clock, 1, 'ns').start())
     cocotb.start_soon(timeout(dut, 200))
@@ -278,6 +297,14 @@ async def lane_grid_test(dut):
     dut.reset.value = 1
     await triggers.RisingEdge(dut.clock)
     dut.reset.value = 0
+
+    for col in range(params.n_columns):
+        getattr(dut, f'config_{col}_configValid').value = 1
+        getattr(dut, f'config_{col}_configIsPacketMode').value = 0
+        getattr(dut, f'config_{col}_configDelay').value = 0
+    await triggers.RisingEdge(dut.clock)
+    for col in range(params.n_columns):
+        getattr(dut, f'config_{col}_configValid').value = 0
     
     # Run tests
     await send_and_receive(dut, rnd, params)

@@ -63,18 +63,27 @@ class Instr(params: FVPUParams) extends Bundle {
   val sendreceive = Valid(new SendReceiveInstr(params))
   }
 
+class Config(params: FVPUParams) extends Bundle {
+  val configValid = Bool()
+  val configIsPacketMode = Bool()
+  val configDelay = UInt(log2Ceil(params.networkMemoryDepth+1).W)
+  }
+
 class Lane(params: FVPUParams) extends Module {
-  val nI = IO(Input(Vec(params.nBuses, Valid(UInt(params.width.W)))))
-  val nO = IO(Output(Vec(params.nBuses, Valid(UInt(params.width.W)))))
-  val sI = IO(Input(Vec(params.nBuses, Valid(UInt(params.width.W)))))
-  val sO = IO(Output(Vec(params.nBuses, Valid(UInt(params.width.W)))))
-  val eI = IO(Input(Vec(params.nBuses, Valid(UInt(params.width.W)))))
-  val eO = IO(Output(Vec(params.nBuses, Valid(UInt(params.width.W)))))
-  val wI = IO(Input(Vec(params.nBuses, Valid(UInt(params.width.W)))))
-  val wO = IO(Output(Vec(params.nBuses, Valid(UInt(params.width.W)))))
+  val nI = IO(Vec(params.nBuses, new Bus(params.width)))
+  val nO = IO(Vec(params.nBuses, Flipped(new Bus(params.width))))
+  val sI = IO(Vec(params.nBuses, new Bus(params.width)))
+  val sO = IO(Vec(params.nBuses, Flipped(new Bus(params.width))))
+  val eI = IO(Vec(params.nBuses, new Bus(params.width)))
+  val eO = IO(Vec(params.nBuses, Flipped(new Bus(params.width))))
+  val wI = IO(Vec(params.nBuses, new Bus(params.width)))
+  val wO = IO(Vec(params.nBuses, Flipped(new Bus(params.width))))
   val nInstr = IO(Input(new Instr(params)))
   val sInstr = IO(Output(new Instr(params)))
-  val instrDelay = IO(Input(UInt(log2Ceil(params.maxNetworkOutputDelay+1).W)))
+  val instrDelay = IO(Input(UInt(log2Ceil(params.networkMemoryDepth+1).W)))
+  val thisLoc = IO(Input(new Location(params)))
+  val nConfig = IO(Input(new Config(params)))
+  val sConfig = IO(Output(new Config(params)))
 
   val networkNode = Module(new NetworkNode(params))
   val DRF = Module(new RegisterFile(params.width, params.nDRF, 4, 3))
@@ -84,9 +93,12 @@ class Lane(params: FVPUParams) extends Module {
 
   // Register nInstr to create sInstr
   sInstr := RegNext(nInstr)
+  
+  // Register nConfig to create sConfig
+  sConfig := RegNext(nConfig)
 
   // Adjustable delay for instruction execution
-  val instrDelayModule = Module(new AdjustableDelay(params.maxNetworkOutputDelay, nInstr.getWidth))
+  val instrDelayModule = Module(new AdjustableDelay(params.networkMemoryDepth, nInstr.getWidth))
   instrDelayModule.delay := instrDelay
   instrDelayModule.input.valid := true.B
   instrDelayModule.input.bits := nInstr.asUInt
@@ -140,29 +152,34 @@ class Lane(params: FVPUParams) extends Module {
   // Reads from the DDM go the east (bus 0).
   // Writes to the DRF come from the north (bus 0).
   // Reads from the DRF go the south (bus 0).
+  // For n_buses = 4, delay up to 7 this is 4 * (1 + 1 + 3 + 3 + 3 + 3 +3 + 3) = 4 * 20 = 80 bits
   for (i <- 0 until params.nBuses) {
     networkControl.nsInputSel(i) := false.B
     networkControl.weInputSel(i) := false.B
     networkControl.nsCrossbarSel(i) := (if (i == 1) (params.nBuses+0).U else 0.U)
     networkControl.weCrossbarSel(i) := (if (i == 1) (params.nBuses+1).U else 0.U)
-    networkControl.nOutputDelays(i) := 0.U
-    networkControl.sOutputDelays(i) := 0.U
-    networkControl.wOutputDelays(i) := 0.U
-    networkControl.eOutputDelays(i) := 0.U
+    networkControl.nOutputDelays(i) := (params.nRows.U - 1.U - thisLoc.y)
+    networkControl.sOutputDelays(i) := thisLoc.y
+    networkControl.wOutputDelays(i) := (params.nColumns.U - 1.U - thisLoc.x)
+    networkControl.eOutputDelays(i) := thisLoc.x
   }
   networkControl.drfSel := 0.U
   networkControl.ddmSel := params.nBuses.U
 
   // Connect up the Network to the lane boundary.
-  networkNode.nI := nI
-  nO := networkNode.nO
-  networkNode.sI := sI
-  sO := networkNode.sO
-  networkNode.wI := wI
-  wO := networkNode.wO
-  networkNode.eI := eI
-  eO := networkNode.eO
+  networkNode.inputs(0) <> nI
+  nO <> networkNode.outputs(0)
+  networkNode.inputs(1) <> sI
+  sO <> networkNode.outputs(1)
+  networkNode.inputs(2) <> wI
+  wO <> networkNode.outputs(2)
+  networkNode.inputs(3) <> eI
+  eO <> networkNode.outputs(3)
   networkNode.control := networkControl
+  networkNode.thisLoc := thisLoc
+  networkNode.configValid := nConfig.configValid
+  networkNode.configIsPacketMode := nConfig.configIsPacketMode
+  networkNode.configDelay := nConfig.configDelay
 
   // We haven't yet connected the DRF to the Network
   DRF.writes(0).enable := false.B
