@@ -20,10 +20,6 @@ class NetworkNodeControl(params: FVPUParams) extends Bundle {
   val weCrossbarSel = Vec(params.nBuses, UInt(log2Ceil(params.nBuses+2).W));
   val drfSel = UInt(log2Ceil(params.nBuses*2).W);
   val ddmSel = UInt(log2Ceil(params.nBuses*2).W);
-  val nOutputDelays = Vec(params.nBuses, UInt(log2Ceil(params.networkMemoryDepth+1).W));
-  val sOutputDelays = Vec(params.nBuses, UInt(log2Ceil(params.networkMemoryDepth+1).W));
-  val wOutputDelays = Vec(params.nBuses, UInt(log2Ceil(params.networkMemoryDepth+1).W));
-  val eOutputDelays = Vec(params.nBuses, UInt(log2Ceil(params.networkMemoryDepth+1).W));
   }
 
 class NetworkNode(params: FVPUParams) extends Module {
@@ -101,9 +97,29 @@ class NetworkNode(params: FVPUParams) extends Module {
         switch.fromFifos(direction) <> fifoOrDelay.output
         toOutputs <> switch.outputs(direction)
       }.otherwise {
-        toOutputs.valid := fifoOrDelay.output.valid
-        toOutputs.bits.bits := fifoOrDelay.output.bits.bits
-        toOutputs.bits.header := fifoOrDelay.output.bits.header
+        val oppositeDir = Wire(UInt(2.W))
+        when (direction.U === 0.U) {
+          oppositeDir := 1.U
+        }.elsewhen (direction.U === 1.U) {
+          oppositeDir := 0.U
+        }.elsewhen (direction.U === 2.U) {
+          oppositeDir := 3.U
+        }.otherwise {
+          oppositeDir := 2.U
+        }
+        val fromOpposite = inputs(oppositeDir)(busIndex)
+        // Output from fifoOrDelay gets precedence
+        when (fifoOrDelay.output.valid) {
+          toOutputs.valid := true.B
+          toOutputs.bits := fifoOrDelay.output.bits
+          fifoOrDelay.output.ready := toOutputs.token
+          fromOpposite.token := false.B
+        }.otherwise {
+          toOutputs.valid := fromOpposite.valid
+          toOutputs.bits := fromOpposite.bits
+          fifoOrDelay.output.ready := false.B
+          fromOpposite.token := toOutputs.token
+        }
         fifoOrDelay.output.ready := toOutputs.token
         switch.fromFifos(direction).valid := false.B
         switch.fromFifos(direction).bits := DontCare

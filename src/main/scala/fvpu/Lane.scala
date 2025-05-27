@@ -158,10 +158,6 @@ class Lane(params: FVPUParams) extends Module {
     networkControl.weInputSel(i) := false.B
     networkControl.nsCrossbarSel(i) := (if (i == 1) (params.nBuses+0).U else 0.U)
     networkControl.weCrossbarSel(i) := (if (i == 1) (params.nBuses+1).U else 0.U)
-    networkControl.nOutputDelays(i) := (params.nRows.U - 1.U - thisLoc.y)
-    networkControl.sOutputDelays(i) := thisLoc.y
-    networkControl.wOutputDelays(i) := (params.nColumns.U - 1.U - thisLoc.x)
-    networkControl.eOutputDelays(i) := thisLoc.x
   }
   networkControl.drfSel := 0.U
   networkControl.ddmSel := params.nBuses.U

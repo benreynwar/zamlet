@@ -52,7 +52,7 @@ class FifoOrDelay[T <: Data](t: T, depth: Int) extends Module {
     isFifo := configIsFifo
     zeroDelay := false.B
     count := 0.U
-    when (isFifo) {
+    when (configIsFifo) {
       readAddress := 0.U
       writeAddress := 0.U
       empty := true.B
