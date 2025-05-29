@@ -1,4 +1,4 @@
-package fvpu
+package fmpvu
 
 import chisel3._
 import _root_.circt.stage.ChiselStage
@@ -12,7 +12,7 @@ import chisel3.util.{MemoryWritePort, SRAM}
 
 import scala.io.Source
 
-import fvpu.ModuleGenerator
+import fmpvu.ModuleGenerator
 
 
 class DataMemory(width: Int, depth: Int, nBanks: Int) extends Module {

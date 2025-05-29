@@ -1,11 +1,12 @@
 import os
 import subprocess
+import tempfile
 
 import cocotb
 from cocotb import triggers, clock
 from cocotb_tools.runner import get_runner
 
-from fvpu import generate_rtl
+from fmpvu import generate_rtl
 
 this_dir = os.path.abspath(os.path.dirname(__file__))
 
@@ -88,22 +89,24 @@ async def network_delay_mode_test(dut):
     await triggers.RisingEdge(dut.clock)
 
 
-def test_proc():
-    sim = 'verilator'
-    runner = get_runner(sim)
-    working_dir = os.path.abspath('deleteme')
-    params_filename = os.path.join(this_dir, 'params.json')
+def test_proc(temp_dir=None):
+    with tempfile.TemporaryDirectory() as working_dir:
+        if temp_dir is not None:
+            working_dir = temp_dir
+        sim = 'verilator'
+        runner = get_runner(sim)
+        params_filename = os.path.join(this_dir, 'params.json')
 
-    filenames = generate_rtl.generate('NetworkNode', working_dir, [params_filename])
-    runner.build(
-        sources=filenames,
-        hdl_toplevel='NetworkNode',
-        always=True,
-        waves=True,
-        build_args=['--trace', '--trace-structs'],
-        )
-    runner.test(hdl_toplevel='NetworkNode', test_module='test_network', waves=True)
+        filenames = generate_rtl.generate('NetworkNode', working_dir, [params_filename])
+        runner.build(
+            sources=filenames,
+            hdl_toplevel='NetworkNode',
+            always=True,
+            waves=True,
+            build_args=['--trace', '--trace-structs'],
+            )
+        runner.test(hdl_toplevel='NetworkNode', test_module='test_network', waves=True)
 
 
 if __name__ == '__main__':
-    test_proc()
+    test_proc(os.path.abspath('deleteme'))

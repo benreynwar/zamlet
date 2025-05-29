@@ -1,4 +1,4 @@
-package fvpu
+package fmpvu
 
 import chisel3._
 import chisel3.util.{log2Ceil, Valid, DecoupledIO, Cat}
@@ -37,19 +37,19 @@ object NetworkDirection {
   }
 }
 
-class Location(params: FVPUParams) extends Bundle {
+class Location(params: FMPVUParams) extends Bundle {
   val x = UInt(log2Ceil(params.nColumns).W)
   val y = UInt(log2Ceil(params.nRows).W)
 }
 
-class OutputState(params: FVPUParams) extends Bundle {
+class OutputState(params: FMPVUParams) extends Bundle {
   val input = NetworkDirection.DirectionOrHere()
   val active = Bool()
   val remaining = UInt(log2Ceil(params.maxPacketLength+1).W)
 }
 
 object OutputState {
-  def apply(params: FVPUParams): OutputState = {
+  def apply(params: FMPVUParams): OutputState = {
     val state = Wire(new OutputState(params))
     state.input := DontCare
     state.active := false.B
@@ -58,14 +58,14 @@ object OutputState {
   }
 }
 
-class Header(params: FVPUParams) extends Bundle {
+class Header(params: FMPVUParams) extends Bundle {
   val dest = new Location(params)
   val address = UInt(params.ddmAddrWidth.W)
   val length = UInt(log2Ceil(params.maxPacketLength).W)
 }
 
 object Header {
-  def fromBits(bits: UInt, params: FVPUParams): Header = {
+  def fromBits(bits: UInt, params: FMPVUParams): Header = {
     val header = Wire(new Header(params))
     val headerWidth = header.getWidth
     val bitsWidth = bits.getWidth
@@ -80,7 +80,7 @@ object Header {
   }
 }
 
-class NetworkSwitch(params: FVPUParams) extends Module {
+class NetworkSwitch(params: FMPVUParams) extends Module {
   // This is a component of the network node that is responsible for implementing the
   // header based packet switching.
 

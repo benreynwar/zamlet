@@ -1,4 +1,4 @@
-package fvpu
+package fmpvu
 
 import chisel3._
 import _root_.circt.stage.ChiselStage
@@ -10,10 +10,10 @@ import chisel3.util.Valid
 
 import scala.io.Source
 
-import fvpu.ModuleGenerator
+import fmpvu.ModuleGenerator
 
 
-class NetworkCrossbar(params: FVPUParams) extends Module {
+class NetworkCrossbar(params: FMPVUParams) extends Module {
   val inputs = IO(Vec(4, Vec(params.nBuses, Input(Valid(UInt(params.width.W))))))
   val outputs = IO(Vec(4, Vec(params.nBuses, Output(Valid(UInt(params.width.W))))))
   val toDRF = IO(Output(Valid(UInt(params.width.W))));

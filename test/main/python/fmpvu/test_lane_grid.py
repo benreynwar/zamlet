@@ -3,12 +3,13 @@ import json
 import math
 from random import Random
 import collections
+import tempfile
 
 import cocotb
 from cocotb import triggers, clock
 
-from fvpu import generate_rtl, test_utils
-from fvpu.params import FVPUParams
+from fmpvu import generate_rtl, test_utils
+from fmpvu.params import FMPVUParams
 
 this_dir = os.path.abspath(os.path.dirname(__file__))
 
@@ -400,7 +401,7 @@ async def lane_grid_test(dut):
     test_params = test_utils.read_params()
     rnd = Random(test_params['seed'])
     params_dict = test_params['params']
-    params = FVPUParams.from_dict(params_dict)
+    params = FMPVUParams.from_dict(params_dict)
     
     # Initialize all instruction interfaces to inactive
     for col in range(params.n_columns):
@@ -456,20 +457,22 @@ async def lane_grid_test(dut):
     await send_packet_and_receive(dut, rnd, params)
 
 
-def test_proc():
-    working_dir = os.path.abspath('deleteme')
-    params_filename = os.path.join(this_dir, 'params.json')
-    filenames = generate_rtl.generate('LaneGrid', working_dir, [params_filename])
-    toplevel = 'LaneGrid'
-    module = 'test_lane_grid'
-    with open(params_filename, 'r', encoding='utf-8') as params_f:
-        design_params = json.loads(params_f.read())
-    test_params = {
-        'seed': 0,
-        'params': design_params,
-        }
-    test_utils.run_test(working_dir, filenames, test_params, toplevel, module)
+def test_proc(temp_dir=None):
+    with tempfile.TemporaryDirectory() as working_dir:
+        if temp_dir is not None:
+            working_dir = temp_dir
+        params_filename = os.path.join(this_dir, 'params.json')
+        filenames = generate_rtl.generate('LaneGrid', working_dir, [params_filename])
+        toplevel = 'LaneGrid'
+        module = 'test_lane_grid'
+        with open(params_filename, 'r', encoding='utf-8') as params_f:
+            design_params = json.loads(params_f.read())
+        test_params = {
+            'seed': 0,
+            'params': design_params,
+            }
+        test_utils.run_test(working_dir, filenames, test_params, toplevel, module)
 
 
 if __name__ == '__main__':
-    test_proc()
+    test_proc(os.path.abspath('deleteme'))

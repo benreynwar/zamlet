@@ -2,12 +2,13 @@ import os
 import subprocess
 from random import Random
 from collections import deque
+import tempfile
 
 import cocotb
 from cocotb import triggers, clock
 from cocotb_tools.runner import get_runner
 
-from fvpu import generate_rtl
+from fmpvu import generate_rtl
 
 this_dir = os.path.abspath(os.path.dirname(__file__))
 
@@ -52,21 +53,23 @@ async def adjustable_test(dut):
             await triggers.RisingEdge(dut.clock)
 
 
-def test_proc(max_delay=3, width=4):
-    sim = 'verilator'
-    runner = get_runner(sim)
-    working_dir = os.path.abspath('deleteme')
-    params_filename = os.path.join(this_dir, 'params.json')
-    filenames = generate_rtl.generate('AdjustableDelay', working_dir, [str(max_delay), str(width)])
-    runner.build(
-        sources=filenames,
-        hdl_toplevel='AdjustableDelay',
-        always=True,
-        waves=True,
-        build_args=['--trace', '--trace-structs'],
-        )
-    runner.test(hdl_toplevel='AdjustableDelay', test_module='test_adjustable_delay', waves=True)
+def test_proc(max_delay=3, width=4, temp_dir=None):
+    with tempfile.TemporaryDirectory() as working_dir:
+        if temp_dir is not None:
+            working_dir = temp_dir
+        sim = 'verilator'
+        runner = get_runner(sim)
+        params_filename = os.path.join(this_dir, 'params.json')
+        filenames = generate_rtl.generate('AdjustableDelay', working_dir, [str(max_delay), str(width)])
+        runner.build(
+            sources=filenames,
+            hdl_toplevel='AdjustableDelay',
+            always=True,
+            waves=True,
+            build_args=['--trace', '--trace-structs'],
+            )
+        runner.test(hdl_toplevel='AdjustableDelay', test_module='test_adjustable_delay', waves=True)
 
 
 if __name__ == '__main__':
-    test_proc()
+    test_proc(os.path.abspath('deleteme'))

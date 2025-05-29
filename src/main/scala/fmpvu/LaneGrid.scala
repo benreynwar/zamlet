@@ -1,4 +1,4 @@
-package fvpu
+package fmpvu
 
 import chisel3._
 import _root_.circt.stage.ChiselStage
@@ -10,10 +10,10 @@ import chisel3.util.Valid
 
 import scala.io.Source
 
-import fvpu.ModuleGenerator
+import fmpvu.ModuleGenerator
 
 
-class LaneGrid(params: FVPUParams) extends Module {
+class LaneGrid(params: FMPVUParams) extends Module {
   val nI = IO(Vec(params.nColumns, Vec(params.nBuses, new Bus(params.width))))
   val nO = IO(Vec(params.nColumns, Vec(params.nBuses, Flipped(new Bus(params.width)))))
   val sI = IO(Vec(params.nColumns, Vec(params.nBuses, new Bus(params.width))))
@@ -134,7 +134,7 @@ object LaneGridGenerator extends ModuleGenerator {
       println("Usage: <command> <outputDir> LaneGrid <paramsFileName>")
       return null
     }
-    val params = FVPUParams.fromFile(args(0));
+    val params = FMPVUParams.fromFile(args(0));
     return new LaneGrid(params);
   }
 

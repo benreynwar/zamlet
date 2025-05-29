@@ -1,4 +1,4 @@
-package fvpu
+package fmpvu
 
 import chisel3._
 import _root_.circt.stage.ChiselStage
@@ -11,10 +11,10 @@ import chisel3.util.{MemoryWritePort}
 
 import scala.io.Source
 
-import fvpu.ModuleGenerator
+import fmpvu.ModuleGenerator
 
 
-class ddmAccess(params: FVPUParams) extends Module {
+class ddmAccess(params: FMPVUParams) extends Module {
   // This module receives Send and Receive instructions and uses them to connect the
   // distributed data memory with the network.
 
@@ -145,7 +145,7 @@ object ddmAccessGenerator extends ModuleGenerator {
       println("Usage: <command> <outputDir> ddmAccess <paramsFileName>")
       return null
     }
-    val params = FVPUParams.fromFile(args(0));
+    val params = FMPVUParams.fromFile(args(0));
     return new ddmAccess(params);
   }
 

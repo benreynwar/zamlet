@@ -1,4 +1,4 @@
-package fvpu
+package fmpvu
 
 import chisel3._
 import _root_.circt.stage.ChiselStage
@@ -12,7 +12,7 @@ import chisel3.util.DecoupledIO
 
 import scala.io.Source
 
-import fvpu.ModuleGenerator
+import fmpvu.ModuleGenerator
 
 
 class ValidReadPort[T <: Data](t: T, addrWidth: Int) extends Bundle {

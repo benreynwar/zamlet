@@ -5,13 +5,13 @@ from cocotb_tools.runner import get_runner
 
 def write_params(working_dir, params):
     params_filename = os.path.join(working_dir, 'test_params.json')
-    os.environ['FVPU_TEST_PARAMS_FILENAME'] = params_filename
+    os.environ['FMPVU_TEST_PARAMS_FILENAME'] = params_filename
     with open(params_filename, 'w', encoding='utf-8') as params_file:
         params_file.write(json.dumps(params))
 
 
 def read_params():
-    params_filename = os.environ['FVPU_TEST_PARAMS_FILENAME']
+    params_filename = os.environ['FMPVU_TEST_PARAMS_FILENAME']
     with open(params_filename, 'r') as params_file:
         params = json.loads(params_file.read())
     return params

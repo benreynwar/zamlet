@@ -1,4 +1,4 @@
-package fvpu
+package fmpvu
 
 import chisel3._
 import _root_.circt.stage.ChiselStage
@@ -9,7 +9,7 @@ import chisel3.util.log2Ceil
 import chisel3.util.Valid
 import chisel3.util.DecoupledIO
 
-import fvpu.ModuleGenerator
+import fmpvu.ModuleGenerator
 
 class FifoOrDelay[T <: Data](t: T, depth: Int) extends Module {
   assert(depth > 0)

@@ -1,4 +1,4 @@
-package fvpu
+package fmpvu
 
 import chisel3._
 import _root_.circt.stage.ChiselStage
@@ -8,7 +8,7 @@ import java.io.{File, PrintWriter}
 import chisel3.util.log2Ceil
 import chisel3.util.Valid
 
-import fvpu.ModuleGenerator
+import fmpvu.ModuleGenerator
 
 class AdjustableDelay(maxDelay: Int, width: Int) extends Module {
   val delay = IO(Input(UInt(log2Ceil(maxDelay+1).W)));

@@ -1,4 +1,4 @@
-package fvpu
+package fmpvu
 
 import chisel3._
 import _root_.circt.stage.ChiselStage
@@ -10,32 +10,32 @@ import chisel3.util.Valid
 
 import scala.io.Source
 
-import fvpu.ModuleGenerator
+import fmpvu.ModuleGenerator
 
-class ComputeInstr(params: FVPUParams) extends Bundle {
+class ComputeInstr(params: FMPVUParams) extends Bundle {
   val mode =  UInt(4.W)
   val src1 = UInt(log2Ceil(params.nDRF).W)
   val src2 = UInt(log2Ceil(params.nDRF).W)
   val dst = UInt(log2Ceil(params.nDRF).W)
   }
 
-class LoadOrStoreInstr(params: FVPUParams) extends Bundle {
+class LoadOrStoreInstr(params: FMPVUParams) extends Bundle {
   val mode =  UInt(1.W)
   val reg = UInt(log2Ceil(params.nDRF).W)
   val addr = UInt(params.ddmAddrWidth.W)
   }
 
-class LoadInstr(params: FVPUParams) extends Bundle {
+class LoadInstr(params: FMPVUParams) extends Bundle {
   val reg = UInt(log2Ceil(params.nDRF).W)
   val addr = UInt(params.ddmAddrWidth.W)
   }
 
-class StoreInstr(params: FVPUParams) extends Bundle {
+class StoreInstr(params: FMPVUParams) extends Bundle {
   val reg = UInt(log2Ceil(params.nDRF).W)
   val addr = UInt(params.ddmAddrWidth.W)
   }
 
-class SendReceiveInstr(params: FVPUParams) extends Bundle {
+class SendReceiveInstr(params: FMPVUParams) extends Bundle {
   val mode =  UInt(1.W)
   val length = UInt(params.ddmAddrWidth.W)
   val addr = UInt(params.ddmAddrWidth.W)
@@ -43,33 +43,33 @@ class SendReceiveInstr(params: FVPUParams) extends Bundle {
   val stride = UInt(params.ddmAddrWidth.W)
   }
 
-class NetworkInstr(params: FVPUParams) extends Bundle {
+class NetworkInstr(params: FMPVUParams) extends Bundle {
   val mode =  UInt(log2Ceil(params.depthNetworkConfig).W)
   val src = UInt(log2Ceil(params.nDRF).W)
   val dst = UInt(log2Ceil(params.nDRF).W)
   }
 
-class ConfigInstr(params: FVPUParams) extends Bundle {
+class ConfigInstr(params: FMPVUParams) extends Bundle {
   val src = UInt(log2Ceil(params.nDRF).W)
   val dst = UInt(log2Ceil(params.nDRF).W)
   }
 // When a mode is read it specifies how the network should be configured on each clock cycle.
 //
 
-class Instr(params: FVPUParams) extends Bundle {
+class Instr(params: FMPVUParams) extends Bundle {
   val compute = Valid(new ComputeInstr(params))
   val loadstore = Valid(new LoadOrStoreInstr(params))
   val network = Valid(new NetworkInstr(params))
   val sendreceive = Valid(new SendReceiveInstr(params))
   }
 
-class Config(params: FVPUParams) extends Bundle {
+class Config(params: FMPVUParams) extends Bundle {
   val configValid = Bool()
   val configIsPacketMode = Bool()
   val configDelay = UInt(log2Ceil(params.networkMemoryDepth+1).W)
   }
 
-class Lane(params: FVPUParams) extends Module {
+class Lane(params: FMPVUParams) extends Module {
   val nI = IO(Vec(params.nBuses, new Bus(params.width)))
   val nO = IO(Vec(params.nBuses, Flipped(new Bus(params.width))))
   val sI = IO(Vec(params.nBuses, new Bus(params.width)))
@@ -212,7 +212,7 @@ object LaneGenerator extends ModuleGenerator {
       println("Usage: <command> <outputDir> Lane <paramsFileName>")
       return null
     }
-    val params = FVPUParams.fromFile(args(0));
+    val params = FMPVUParams.fromFile(args(0));
     return new Lane(params);
   }
 

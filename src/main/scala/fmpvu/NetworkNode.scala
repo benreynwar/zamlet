@@ -1,4 +1,4 @@
-package fvpu
+package fmpvu
 
 import chisel3._
 import _root_.circt.stage.ChiselStage
@@ -11,10 +11,10 @@ import chisel3.util.DecoupledIO
 
 import scala.io.Source
 
-import fvpu.ModuleGenerator
+import fmpvu.ModuleGenerator
 
 
-class NetworkNodeControl(params: FVPUParams) extends Bundle {
+class NetworkNodeControl(params: FMPVUParams) extends Bundle {
   val nsInputSel =  Vec(params.nBuses, Bool());
   val weInputSel =  Vec(params.nBuses, Bool());
   val nsCrossbarSel = Vec(params.nBuses, UInt(log2Ceil(params.nBuses+2).W));
@@ -23,7 +23,7 @@ class NetworkNodeControl(params: FVPUParams) extends Bundle {
   val ddmSel = UInt(log2Ceil(params.nBuses*2).W);
   }
 
-class NetworkNode(params: FVPUParams) extends Module {
+class NetworkNode(params: FMPVUParams) extends Module {
   val inputs = IO(Vec(4, Vec(params.nBuses, new Bus(params.width))))
   val outputs = IO(Vec(4, Vec(params.nBuses, Flipped(new Bus(params.width)))))
   val toDRF = IO(Output(Valid(UInt(params.width.W))))
@@ -229,7 +229,7 @@ object NetworkNodeGenerator extends ModuleGenerator {
       println("Usage: <command> <outputDir> NetworkNode <paramsFileName>")
       return null
     }
-    val params = FVPUParams.fromFile(args(0));
+    val params = FMPVUParams.fromFile(args(0));
     return new NetworkNode(params);
   }
 

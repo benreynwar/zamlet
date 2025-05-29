@@ -1,4 +1,4 @@
-package fvpu
+package fmpvu
 
 // Import circe libraries for JSON parsing
 import io.circe._
@@ -6,7 +6,7 @@ import io.circe.parser._
 import io.circe.generic.auto._
 import scala.io.Source
 
-case class FVPUParams(
+case class FMPVUParams(
   nBuses: Int,
   width: Int,
   // Max depth of the output buffers in the network node.
@@ -26,11 +26,11 @@ case class FVPUParams(
   maxPacketLength: Int,
 )
 
-object FVPUParams {
+object FMPVUParams {
 
-  def fromFile(fileName: String): FVPUParams = {
+  def fromFile(fileName: String): FMPVUParams = {
     val jsonContent = Source.fromFile(fileName).mkString;
-    val paramsResult = decode[FVPUParams](jsonContent);
+    val paramsResult = decode[FMPVUParams](jsonContent);
     paramsResult match {
       case Right(params) =>
         return params;

@@ -1,13 +1,14 @@
 import os
 from random import Random
 import json
+import tempfile
 
 import cocotb
 from cocotb import triggers, clock
 from cocotb_tools.runner import get_runner
 
-from fvpu import generate_rtl, test_utils
-from fvpu.test_utils import clog2
+from fmpvu import generate_rtl, test_utils
+from fmpvu.test_utils import clog2
 
 this_dir = os.path.abspath(os.path.dirname(__file__))
 
@@ -67,21 +68,23 @@ async def register_file_test(dut):
         cocotb.start_soon(reads_and_writes(test_utils.make_seed(rnd), dut, contents, width, depth, n_read_ports, n_write_ports))
 
 
-def test_proc(width=4, depth=8, n_read_ports=2, n_write_ports=2):
-    working_dir = os.path.abspath('deleteme')
-    filenames = generate_rtl.generate(
-            'RegisterFile', working_dir, [str(width), str(depth), str(n_read_ports), str(n_write_ports)])
-    test_params = {
-        'seed': 0,
-        'width': width,
-        'depth': depth,
-        'n_read_ports': n_read_ports,
-        'n_write_ports': n_write_ports,
-        }
-    toplevel = 'RegisterFile'
-    module = 'test_register_file'
-    test_utils.run_test(working_dir, filenames, test_params, toplevel, module)
+def test_proc(width=4, depth=8, n_read_ports=2, n_write_ports=2, temp_dir=None):
+    with tempfile.TemporaryDirectory() as working_dir:
+        if temp_dir is not None:
+            working_dir = temp_dir
+        filenames = generate_rtl.generate(
+                'RegisterFile', working_dir, [str(width), str(depth), str(n_read_ports), str(n_write_ports)])
+        test_params = {
+            'seed': 0,
+            'width': width,
+            'depth': depth,
+            'n_read_ports': n_read_ports,
+            'n_write_ports': n_write_ports,
+            }
+        toplevel = 'RegisterFile'
+        module = 'test_register_file'
+        test_utils.run_test(working_dir, filenames, test_params, toplevel, module)
 
 
 if __name__ == '__main__':
-    test_proc()
+    test_proc(os.path.abspath('deleteme'))

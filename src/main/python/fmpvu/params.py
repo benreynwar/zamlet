@@ -4,8 +4,8 @@ from typing import Dict, Any
 
 
 @dataclass
-class FVPUParams:
-    """Python mirror of the Scala FVPUParams case class with snake_case naming."""
+class FMPVUParams:
+    """Python mirror of the Scala FMPVUParams case class with snake_case naming."""
     
     n_buses: int
     width: int
@@ -39,21 +39,21 @@ class FVPUParams:
     }
 
     @classmethod
-    def from_json(cls, json_str: str) -> 'FVPUParams':
-        """Create FVPUParams from JSON string with camelCase field names."""
+    def from_json(cls, json_str: str) -> 'FMPVUParams':
+        """Create FMPVUParams from JSON string with camelCase field names."""
         data = json.loads(json_str)
         return cls.from_dict(data)
 
     @classmethod
-    def from_file(cls, filename: str) -> 'FVPUParams':
-        """Create FVPUParams from JSON file with camelCase field names."""
+    def from_file(cls, filename: str) -> 'FMPVUParams':
+        """Create FMPVUParams from JSON file with camelCase field names."""
         with open(filename, 'r', encoding='utf-8') as f:
             data = json.load(f)
         return cls.from_dict(data)
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'FVPUParams':
-        """Create FVPUParams from dictionary with camelCase field names."""
+    def from_dict(cls, data: Dict[str, Any]) -> 'FMPVUParams':
+        """Create FMPVUParams from dictionary with camelCase field names."""
         # Convert camelCase keys to snake_case
         converted_data = {}
         for camel_key, snake_key in cls._FIELD_MAPPING.items():

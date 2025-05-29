@@ -2,12 +2,13 @@ import os
 import json
 from random import Random
 import collections
+import tempfile
 
 import cocotb
 from cocotb import triggers, clock
 
-from fvpu import generate_rtl, test_utils
-from fvpu.params import FVPUParams
+from fmpvu import generate_rtl, test_utils
+from fmpvu.params import FMPVUParams
 
 this_dir = os.path.abspath(os.path.dirname(__file__))
 
@@ -176,7 +177,7 @@ async def lane_test(dut):
     test_params = test_utils.read_params()
     rnd = Random(test_params['seed'])
     params_dict = test_params['params']
-    params = FVPUParams.from_dict(params_dict)
+    params = FMPVUParams.from_dict(params_dict)
     dut.nInstr_compute_valid.value = 0
     dut.nInstr_loadstore_valid.value = 0
     dut.nInstr_network_valid.value = 0
@@ -184,9 +185,9 @@ async def lane_test(dut):
     dut.instrDelay.value = 0
     dut.thisLoc_x.value = 0
     dut.thisLoc_y.value = 0
-    dut.configValid.value = 0
-    dut.configIsPacketMode.value = 1
-    dut.configDelay.value = 0
+    dut.nConfig_configValid.value = 0
+    dut.nConfig_configIsPacketMode.value = 1
+    dut.nConfig_configDelay.value = 0
     for i in range(params.n_buses):
         dut.nI_0_valid.value = 0
         dut.sI_0_valid.value = 0
@@ -201,30 +202,32 @@ async def lane_test(dut):
     await triggers.RisingEdge(dut.clock)
     dut.reset.value = 0
     await triggers.RisingEdge(dut.clock)
-    dut.configValid.value = 1
-    dut.configIsPacketMode.value = 0
+    dut.nConfig_configValid.value = 1
+    dut.nConfig_configIsPacketMode.value = 0
     await triggers.RisingEdge(dut.clock)
-    dut.configValid.value = 0
+    dut.nConfig_configValid.value = 0
     await triggers.RisingEdge(dut.clock)
     
     await send_and_receive(dut, rnd, params)
     await send_and_receive_swap_order(dut, rnd, params)
 
 
-def test_proc():
-    working_dir = os.path.abspath('deleteme')
-    params_filename = os.path.join(this_dir, 'params.json')
-    filenames = generate_rtl.generate('Lane', working_dir, [params_filename])
-    toplevel = 'Lane'
-    module = 'test_lane'
-    with open(params_filename, 'r', encoding='utf-8') as params_f:
-        design_params = json.loads(params_f.read())
-    test_params = {
-        'seed': 0,
-        'params': design_params,
-        }
-    test_utils.run_test(working_dir, filenames, test_params, toplevel, module)
+def test_proc(temp_dir=None):
+    with tempfile.TemporaryDirectory() as working_dir:
+        if temp_dir is not None:
+            working_dir = temp_dir
+        params_filename = os.path.join(this_dir, 'params.json')
+        filenames = generate_rtl.generate('Lane', working_dir, [params_filename])
+        toplevel = 'Lane'
+        module = 'test_lane'
+        with open(params_filename, 'r', encoding='utf-8') as params_f:
+            design_params = json.loads(params_f.read())
+        test_params = {
+            'seed': 0,
+            'params': design_params,
+            }
+        test_utils.run_test(working_dir, filenames, test_params, toplevel, module)
 
 
 if __name__ == '__main__':
-    test_proc()
+    test_proc(os.path.abspath('deleteme'))
