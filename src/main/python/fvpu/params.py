@@ -21,6 +21,7 @@ class FVPUParams:
     depth_network_config: int
     n_columns: int
     n_rows: int
+    max_packet_length: int
 
     # Map camelCase JSON field names to snake_case Python field names
     _FIELD_MAPPING = {
@@ -34,6 +35,7 @@ class FVPUParams:
         'depthNetworkConfig': 'depth_network_config',
         'nColumns': 'n_columns',
         'nRows': 'n_rows',
+        'maxPacketLength': 'max_packet_length',
     }
 
     @classmethod

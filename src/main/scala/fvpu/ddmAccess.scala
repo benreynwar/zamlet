@@ -19,7 +19,7 @@ class ddmAccess(params: FVPUParams) extends Module {
   // distributed data memory with the network.
 
   val instr = IO(Input(Valid(new SendReceiveInstr(params))))
-  val fromNetwork = IO(Input(Valid(UInt(params.width.W))))
+  val fromNetwork = IO(Input(Valid(new HeaderTag(UInt(params.width.W)))))
   val toNetwork = IO(Output(Valid(UInt(params.width.W))))
   val writeDDM = IO(Output(new MemoryWritePort(UInt(params.width.W), params.ddmAddrWidth, false)))
   val readDDM = IO(Flipped(new ValidReadPort(UInt(params.width.W), params.ddmAddrWidth)))
@@ -102,7 +102,18 @@ class ddmAccess(params: FVPUParams) extends Module {
   // Handle write operations (Receive)
   when (fromNetwork.valid) {
     when (!writeActive) {
-      errorBadFromNetwork := true.B
+      when (fromNetwork.bits.header) {
+        // Extract address and length from the header
+        val header = fromNetwork.bits.bits.asTypeOf(new Header(params))
+        writeActive := true.B
+        writeLength := header.length
+        writeAddress := header.address
+        writeStartOffset := 0.U  // Start immediately for header-initiated transfers
+        writeStride := 1.U       // Default to consecutive addressing
+        writeWordCount := 0.U
+      }.otherwise {
+        errorBadFromNetwork := true.B
+      }
     }.otherwise {
       val shouldWrite = (writeWordCount >= writeStartOffset) && 
                        ((writeWordCount - writeStartOffset) % writeStride === 0.U)
@@ -110,7 +121,7 @@ class ddmAccess(params: FVPUParams) extends Module {
       when (shouldWrite) {
         writeDDM.enable := true.B
         writeDDM.address := writeAddress
-        writeDDM.data := fromNetwork.bits
+        writeDDM.data := fromNetwork.bits.bits
         
         writeLength := writeLength - 1.U
         writeAddress := writeAddress + 1.U

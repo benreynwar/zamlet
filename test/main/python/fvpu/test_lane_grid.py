@@ -1,5 +1,6 @@
 import os
 import json
+import math
 from random import Random
 import collections
 
@@ -243,6 +244,112 @@ async def send_and_receive_swap_order(dut, rnd, params):
     fromgrid_task.kill()
 
 
+def make_packet_header(params, x, y, address, length):
+    x_bits = test_utils.clog2(params.n_columns)
+    y_bits = test_utils.clog2(params.n_rows)
+    addr_bits = test_utils.clog2(params.ddm_addr_width)
+    length_bits = test_utils.clog2(params.max_packet_length)
+
+    # Pack header with MSB to LSB order: dest.x | dest.y | address | length
+    header = 0
+    header |= (length & ((1 << length_bits) - 1))
+    header |= ((address & ((1 << addr_bits) - 1)) << length_bits)
+    header |= ((y & ((1 << y_bits) - 1)) << (length_bits + addr_bits))
+    header |= ((x & ((1 << x_bits) - 1)) << (length_bits + addr_bits + y_bits))
+
+    return header
+
+
+class PacketSender:
+
+    def __init__(self, dut, edge, position, bus_index, packet_queue):
+        self.dut = dut
+        self.valid_s = getattr(dut, f'{edge}I_{position}_{bus_index}_valid')
+        self.token_s = getattr(dut, f'{edge}I_{position}_{bus_index}_token')
+        self.header_s = getattr(dut, f'{edge}I_{position}_{bus_index}_bits_header')
+        self.data_s = getattr(dut, f'{edge}I_{position}_{bus_index}_bits_bits')
+        self.queue = packet_queue
+        self.n_tokens = 0
+        cocotb.start_soon(self.receive_tokens())
+        cocotb.start_soon(self.send_packets())
+
+    async def receive_tokens(self):
+        while True:
+            await triggers.RisingEdge(self.dut.clock)
+            await triggers.ReadOnly()
+            if self.token_s.value == 1:
+                self.n_tokens += 1
+
+    async def send_packets(self):
+        header = None
+        body = []
+        while True:
+            await triggers.RisingEdge(self.dut.clock)
+            self.valid_s.value = 0
+            if (not body) and self.queue:
+                packet = self.queue.popleft()
+                header = packet[0]
+                body = packet[1:]
+            if self.n_tokens > 0:
+                if header is not None:
+                    self.dut._log.info(f'Sending header on {self.valid_s}')
+                    self.valid_s.value = 1
+                    self.header_s.value = 1
+                    self.data_s.value = header
+                    header = None
+                    self.n_tokens -= 1
+                elif body:
+                    self.valid_s.value = 1
+                    self.header_s.value = 0
+                    self.data_s.value = body.pop(0)
+                    self.n_tokens -= 1
+
+
+async def send_packet_and_receive(dut, rnd, params):
+    '''
+    Send data to the lanes with packets.
+    Use a 'send' instruction to get it back.
+    '''
+    # Make the data to send
+    n_words_per_lane = 13
+    base_address = 8
+    n_lanes = params.n_rows * params.n_columns
+
+    data = [i for i in range(n_lanes*n_words_per_lane)]
+
+    packets = []
+    for x in range(params.n_columns):
+        for y in range(params.n_rows):
+            lane_index = y*params.n_columns + x
+            header = make_packet_header(params, x, y, base_address, n_words_per_lane)
+            body = []
+            for offset in range(n_words_per_lane):
+                data_index = offset*n_lanes + lane_index
+                body.append(data[data_index])
+            packet = [header] + body
+            packets.append(packet)
+
+    packet_queue = collections.deque()
+
+    for col in range(params.n_columns):
+        getattr(dut, f'config_{col}_configValid').value = 1
+        getattr(dut, f'config_{col}_configIsPacketMode').value = 1
+        getattr(dut, f'config_{col}_configDelay').value = 0
+    await triggers.RisingEdge(dut.clock)
+    for col in range(params.n_columns):
+        getattr(dut, f'config_{col}_configValid').value = 0
+    for i in range(4):
+        await triggers.RisingEdge(dut.clock)
+
+    packet_sender = PacketSender(dut=dut, edge='n', position=1, bus_index=2, packet_queue=packet_queue)
+    header = make_packet_header(params, 0, 0, 6, 3)
+    dut._log.info(f'header is {bin(header)}')
+    packet = [header, 0, 1, 2]
+    packet_queue.append(packet)
+    for i in range(100):
+        await triggers.RisingEdge(dut.clock)
+
+
 async def timeout(dut, max_cycles):
     count = 0
     while True:
@@ -309,6 +416,7 @@ async def lane_grid_test(dut):
     # Run tests
     await send_and_receive(dut, rnd, params)
     await send_and_receive_swap_order(dut, rnd, params)
+    await send_packet_and_receive(dut, rnd, params)
 
 
 def test_proc():

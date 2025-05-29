@@ -7,6 +7,7 @@ import java.io.{File, PrintWriter}
 
 import chisel3.util.log2Ceil
 import chisel3.util.Valid
+import chisel3.util.DecoupledIO
 
 import scala.io.Source
 
@@ -27,7 +28,7 @@ class NetworkNode(params: FVPUParams) extends Module {
   val outputs = IO(Vec(4, Vec(params.nBuses, Flipped(new Bus(params.width)))))
   val toDRF = IO(Output(Valid(UInt(params.width.W))))
   val fromDRF = IO(Input(Valid(UInt(params.width.W))))
-  val toDDM = IO(Output(Valid(UInt(params.width.W))))
+  val toDDM = IO(Output(Valid(new HeaderTag(UInt(params.width.W)))))
   val fromDDM = IO(Input(Valid(UInt(params.width.W))))
   val control = IO(Input(new NetworkNodeControl(params)))
   val thisLoc = IO(Input(new Location(params)))
@@ -39,7 +40,6 @@ class NetworkNode(params: FVPUParams) extends Module {
   val configIsPacketMode = IO(Input(Bool()))
   val configDelay = IO(Input(UInt(log2Ceil(params.networkMemoryDepth+1).W)))
 
-
   val isPacketMode = RegInit(true.B)
 
   when (configValid) {
@@ -47,16 +47,94 @@ class NetworkNode(params: FVPUParams) extends Module {
   }
 
   val crossbar = Module(new NetworkCrossbar(params))
-  // TODO: Connect crossbar inputs properly
+
+  // Create a wire to aggregate all switch toDDM outputs
+  val switchesToDDM = Wire(DecoupledIO(new HeaderTag(UInt(params.width.W))))
+
+  // To the DDM from either the switch or the crossbar
+  when (isPacketMode) {
+    toDDM.valid := switchesToDDM.valid
+    toDDM.bits := switchesToDDM.bits
+    switchesToDDM.ready := true.B
+  }.otherwise {
+    toDDM.valid := crossbar.toDDM.valid
+    toDDM.bits.bits := crossbar.toDDM.bits
+    toDDM.bits.header := false.B
+    switchesToDDM.ready := false.B
+  }
+
+  val ddmSelActive = RegInit(false.B)
+  val ddmSelPointer = RegInit(0.U(log2Ceil(params.nBuses).W))
+  val ddmRemaining = RegInit(0.U(log2Ceil(params.maxPacketLength+1).W))
+  
+  // Default values for switchesToDDM
+  switchesToDDM.valid := false.B
+  switchesToDDM.bits := DontCare
+  
+  // DDM arbitration logic - will be connected to switches in the loop below
+  val nextDdmSelActive = Wire(Bool())
+  val nextDdmSelPointer = Wire(UInt(log2Ceil(params.nBuses).W))
+  val nextDdmRemaining = Wire(UInt(log2Ceil(params.maxPacketLength+1).W))
+  
+  // Default next values
+  nextDdmSelActive := ddmSelActive
+  nextDdmRemaining := ddmRemaining
+  nextDdmSelPointer := ddmSelPointer
+
   crossbar.fromDRF := fromDRF
   toDRF := crossbar.toDRF
   crossbar.fromDDM := fromDDM
-  toDDM := crossbar.toDDM
   crossbar.control := control
 
+  // Create all switch instances
+  val switches = Seq.fill(params.nBuses)(withReset(reset.asBool || configValid) { Module(new NetworkSwitch(params)) })
+
+  val allSwitchToDDM = Wire(Vec(params.nBuses, DecoupledIO(new HeaderTag(UInt(params.width.W)))))
+  for (i <- 0 until params.nBuses) {
+    allSwitchToDDM(i) <> switches(i).toDDM
+  }
+  switchesToDDM.valid := allSwitchToDDM(ddmSelPointer).valid && isPacketMode
+  switchesToDDM.bits := allSwitchToDDM(ddmSelPointer).bits
+
   for (busIndex <- 0 until params.nBuses) {
-    val switch = Module(new NetworkSwitch(params))
+    val switch = switches(busIndex)
     switch.thisLoc := thisLoc
+    
+    // Currently we don't have any way for the DDM to initiate sending a packet
+    // so this is inactive.
+    switch.fromDDM.valid := false.B
+    switch.fromDDM.bits := DontCare
+    
+    // DDM arbitration: only the selected switch can write to DDM
+    when (isPacketMode && ddmSelPointer === busIndex.U) {
+      allSwitchToDDM(busIndex).ready := switchesToDDM.ready
+      // This switch is selected for DDM access
+      when (!ddmSelActive) {
+        // Not currently active - check if this switch wants to start a packet
+        when (switch.toDDM.valid && switch.toDDM.bits.header) {
+          // Switch wants to start a new packet, grant access
+          nextDdmSelActive := true.B
+          // Extract packet length from header
+          val header = Header.fromBits(switch.toDDM.bits.bits, params)
+          nextDdmRemaining := header.length
+        }.otherwise {
+          nextDdmSelPointer := (ddmSelPointer + 1.U) % params.nBuses.U
+        }
+      }.otherwise {
+        // Decrement remaining count on successful transfer
+        when (switch.toDDM.valid && switch.toDDM.ready) {
+          nextDdmRemaining := ddmRemaining - 1.U
+          // Check if this is the last transfer
+          when (ddmRemaining === 1.U) {
+            nextDdmSelActive := false.B
+          }
+        }
+      }
+    }.otherwise {
+      // This switch is not selected for DDM access
+      allSwitchToDDM(busIndex).ready := false.B
+    }
+
 
     for (direction <- 0 until 4) {
       // If we're in packet mode the inputs go to the switch
@@ -85,6 +163,7 @@ class NetworkNode(params: FVPUParams) extends Module {
         fifoOrDelay.input.valid := crossbar.outputs(direction)(busIndex).valid
         fifoOrDelay.input.bits.bits := crossbar.outputs(direction)(busIndex).bits
         fifoOrDelay.input.bits.header := false.B
+        // Note: crossbar outputs are Valid signals with no backpressure
         switch.toFifos(direction).ready := false.B
       }
 
@@ -133,7 +212,12 @@ class NetworkNode(params: FVPUParams) extends Module {
 
     }
   }
-
+  
+  // Update DDM arbitration registers
+  ddmSelActive := nextDdmSelActive
+  ddmRemaining := nextDdmRemaining
+  ddmSelPointer := nextDdmSelPointer
+  
 }
 
 
