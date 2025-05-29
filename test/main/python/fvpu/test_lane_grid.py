@@ -247,15 +247,21 @@ async def send_and_receive_swap_order(dut, rnd, params):
 def make_packet_header(params, x, y, address, length):
     x_bits = test_utils.clog2(params.n_columns)
     y_bits = test_utils.clog2(params.n_rows)
-    addr_bits = test_utils.clog2(params.ddm_addr_width)
+    addr_bits = params.ddm_addr_width
     length_bits = test_utils.clog2(params.max_packet_length)
+    assert x_bits + y_bits + addr_bits + length_bits <= params.width
+
+    assert 0 <= length < (1 << length_bits)
+    assert 0 <= address < (1 << addr_bits)
+    assert 0 <= y < (1 << y_bits)
+    assert 0 <= x < (1 << x_bits)
 
     # Pack header with MSB to LSB order: dest.x | dest.y | address | length
     header = 0
-    header |= (length & ((1 << length_bits) - 1))
-    header |= ((address & ((1 << addr_bits) - 1)) << length_bits)
-    header |= ((y & ((1 << y_bits) - 1)) << (length_bits + addr_bits))
-    header |= ((x & ((1 << x_bits) - 1)) << (length_bits + addr_bits + y_bits))
+    header |= length
+    header |= address << length_bits
+    header |= y << (length_bits + addr_bits)
+    header |= x << (length_bits + addr_bits + y_bits)
 
     return header
 
@@ -292,7 +298,7 @@ class PacketSender:
                 body = packet[1:]
             if self.n_tokens > 0:
                 if header is not None:
-                    self.dut._log.info(f'Sending header on {self.valid_s}')
+                    self.dut._log.info(f'Sending header on {self.valid_s.value}')
                     self.valid_s.value = 1
                     self.header_s.value = 1
                     self.data_s.value = header
@@ -317,6 +323,7 @@ async def send_packet_and_receive(dut, rnd, params):
 
     data = [i for i in range(n_lanes*n_words_per_lane)]
 
+    # Build packets to send this dta.
     packets = []
     for x in range(params.n_columns):
         for y in range(params.n_rows):
@@ -341,13 +348,43 @@ async def send_packet_and_receive(dut, rnd, params):
     for i in range(4):
         await triggers.RisingEdge(dut.clock)
 
+    # Send the packages
     packet_sender = PacketSender(dut=dut, edge='n', position=1, bus_index=2, packet_queue=packet_queue)
-    header = make_packet_header(params, 0, 0, 6, 3)
-    dut._log.info(f'header is {bin(header)}')
-    packet = [header, 0, 1, 2]
-    packet_queue.append(packet)
+    for packet in packets:
+        dut._log.info(f'header is {bin(packet[0])}')
+        packet_queue.append(packet)
+    while packet_queue:
+        await triggers.RisingEdge(dut.clock)
     for i in range(100):
         await triggers.RisingEdge(dut.clock)
+
+    # Turn off packet mode
+    for col in range(params.n_columns):
+        getattr(dut, f'config_{col}_configValid').value = 1
+        getattr(dut, f'config_{col}_configIsPacketMode').value = 0
+    await triggers.RisingEdge(dut.clock)
+    for col in range(params.n_columns):
+        getattr(dut, f'config_{col}_configValid').value = 0
+
+    # Set up a task to receive data coming off grid.
+    fromgrid_queue = collections.deque()
+    fromgrid_task = cocotb.start_soon(process_from_lane_grid(dut, fromgrid_queue, params))
+
+    submit_send(dut, 2, 0, params)
+    await triggers.RisingEdge(dut.clock)
+    clear_sendreceive(dut, params)
+
+    while len(fromgrid_queue) < 2:
+        await triggers.RisingEdge(dut.clock)
+
+    # Collect received data and verify
+    received_data = []
+    while fromgrid_queue:
+        received_data += fromgrid_queue.popleft()
+
+    assert data == received_data
+
+    fromgrid_task.kill()
 
 
 async def timeout(dut, max_cycles):
@@ -396,7 +433,7 @@ async def lane_grid_test(dut):
         getattr(dut, f'config_{col}_configDelay').value = 0
 
     cocotb.start_soon(clock.Clock(dut.clock, 1, 'ns').start())
-    cocotb.start_soon(timeout(dut, 200))
+    cocotb.start_soon(timeout(dut, 1000))
     
     # Reset sequence
     dut.reset.value = 0

@@ -1,6 +1,6 @@
 {
     "nBuses": 4,
-    "width": 16,
+    "width": 32,
     "networkMemoryDepth": 8,
     "nDRF": 32,
     "ddmBankDepth": 1024,
