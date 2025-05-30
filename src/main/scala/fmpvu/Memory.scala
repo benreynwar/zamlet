@@ -201,45 +201,47 @@ class ValidMux[T <: Data](gen: T, nInputs: Int) extends Module {
   // We take nInputs valid/bits signals.
   // If there is exactly 1 valid input then the output corresponds to that input.
   // Otherwise the output is not valid.
-  val inputs = IO(Input(Vec(nInputs, Valid(gen))));
-  val output = IO(Output(Valid(gen)));
-  val error = IO(Output(Bool()));
+  val io = IO(new Bundle {
+    val inputs = Input(Vec(nInputs, Valid(gen)))
+    val output = Output(Valid(gen))
+    val error = Output(Bool())
+  })
 
-  val nInputsA = (nInputs+1)/2;
-  val nInputsB = nInputs - nInputsA;
+  val nInputsA = (nInputs + 1) / 2
+  val nInputsB = nInputs - nInputsA
 
   if (nInputs == 1) {
-    output := inputs(0);
-    error := false.B;
+    io.output := io.inputs(0)
+    io.error := false.B
   } else {
-    val validMuxA = Module(new ValidMux(gen, nInputsA));
-    val validMuxB = Module(new ValidMux(gen, nInputsB));
+    val validMuxA = Module(new ValidMux(gen, nInputsA))
+    val validMuxB = Module(new ValidMux(gen, nInputsB))
     for (i <- 0 until nInputsA) {
-      validMuxA.inputs(i) := inputs(i);
+      validMuxA.io.inputs(i) := io.inputs(i)
     }
     for (i <- 0 until nInputsB) {
-      validMuxB.inputs(i) := inputs(i+nInputsA);
+      validMuxB.io.inputs(i) := io.inputs(i + nInputsA)
     }
-    val aIntermed = validMuxA.output;
-    val aError = validMuxA.error;
-    val bIntermed = validMuxB.output;
-    val bError = validMuxB.error;
+    val aIntermed = validMuxA.io.output
+    val aError = validMuxA.io.error
+    val bIntermed = validMuxB.io.output
+    val bError = validMuxB.io.error
     when (aIntermed.valid && bIntermed.valid) {
-      output.valid := false.B;
-      output.bits := DontCare;
-      error := true.B;
+      io.output.valid := false.B
+      io.output.bits := DontCare
+      io.error := true.B
     }.elsewhen (aIntermed.valid) {
-      output.valid := true.B;
-      output.bits := aIntermed.bits;
-      error := aError || bError;
+      io.output.valid := true.B
+      io.output.bits := aIntermed.bits
+      io.error := aError || bError
     }.elsewhen (bIntermed.valid) {
-      output.valid := true.B;
-      output.bits := bIntermed.bits;
-      error := aError || bError;
+      io.output.valid := true.B
+      io.output.bits := bIntermed.bits
+      io.error := aError || bError
     }.otherwise {
-      output.valid := false.B;
-      output.bits := DontCare;
-      error := aError || bError;
+      io.output.valid := false.B
+      io.output.bits := DontCare
+      io.error := aError || bError
     }
   }
 }

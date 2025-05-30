@@ -84,23 +84,23 @@ class NetworkSwitch(params: FMPVUParams) extends Module {
   // This is a component of the network node that is responsible for implementing the
   // header based packet switching.
 
-  val inputs = IO(Vec(4, new Bus(params.width)))
-  val outputs = IO(Vec(4, Flipped(new Bus(params.width))))
-
-  val thisLoc = IO(Input(new Location(params)))
-
-  val toFifos = IO(Vec(4, DecoupledIO(new HeaderTag(UInt(params.width.W)))))
-  val fromFifos = IO(Vec(4, Flipped(DecoupledIO(new HeaderTag(UInt(params.width.W))))))
-  val fromDDM = IO(Flipped(DecoupledIO(new HeaderTag(UInt(params.width.W)))))
-  val toDDM = IO(DecoupledIO(new HeaderTag(UInt(params.width.W))))
+  val io = IO(new Bundle {
+    val inputs = Vec(4, new Bus(params.width))
+    val outputs = Vec(4, Flipped(new Bus(params.width)))
+    val thisLoc = Input(new Location(params))
+    val toFifos = Vec(4, DecoupledIO(new HeaderTag(UInt(params.width.W))))
+    val fromFifos = Vec(4, Flipped(DecoupledIO(new HeaderTag(UInt(params.width.W)))))
+    val fromDDM = Flipped(DecoupledIO(new HeaderTag(UInt(params.width.W))))
+    val toDDM = DecoupledIO(new HeaderTag(UInt(params.width.W)))
+  })
 
 
   // Combine fromFifos and fromDDM into a single Vec for easier processing
   val fromFifosAndDDM = Wire(Vec(5, Flipped(DecoupledIO(new HeaderTag(UInt(params.width.W))))))
   for (i <- 0 until 4) {
-    fromFifosAndDDM(i) <> fromFifos(i)
+    fromFifosAndDDM(i) <> io.fromFifos(i)
   }
-  fromFifosAndDDM(4) <> fromDDM
+  fromFifosAndDDM(4) <> io.fromDDM
 
   // Convert ready/valid to token/valid before outputs
   val readyToToken = Seq.fill(4)(Module(new ReadyValidToTokenValid(new HeaderTag(UInt(params.width.W)), params.networkMemoryDepth)))
@@ -111,7 +111,7 @@ class NetworkSwitch(params: FMPVUParams) extends Module {
   for (i <- 0 until 4) {
     toReadyToTokenAndDDM(i) <> readyToToken(i).input
   }
-  toReadyToTokenAndDDM(4) <> toDDM
+  toReadyToTokenAndDDM(4) <> io.toDDM
 
   val fromFifosAndDDMRegDirections = Reg(Vec(5, NetworkDirection.DirectionOrHere()))
   val fromFifosAndDDMDirections = Wire(Vec(5, NetworkDirection.DirectionOrHere()))
@@ -145,18 +145,18 @@ class NetworkSwitch(params: FMPVUParams) extends Module {
   // Calculate routing directions and packet lengths for all inputs
   for (i <- 0 until 5) {
     when (fromFifosAndDDM(i).bits.header) {
-      fromFifosAndDDMRegDirections(i) := getDirection(thisLoc, fromFifosAndDDM(i).bits.bits)
-      fromFifosAndDDMDirections(i) := getDirection(thisLoc, fromFifosAndDDM(i).bits.bits)
+      fromFifosAndDDMRegDirections(i) := getDirection(io.thisLoc, fromFifosAndDDM(i).bits.bits)
+      fromFifosAndDDMDirections(i) := getDirection(io.thisLoc, fromFifosAndDDM(i).bits.bits)
     }.otherwise {
-      fromFifosAndDDMDirections(i) := fromFifosAndDDMRegDirections(i);
+      fromFifosAndDDMDirections(i) := fromFifosAndDDMRegDirections(i)
     }
   }
 
   // Convert input token-valid interfaces to ready-valid for processing
   for (srcDirection <- 0 until 4) {
     val tokenToReady = Module(new TokenValidToReadyValid(new HeaderTag(UInt(params.width.W)), params.networkMemoryDepth))
-    tokenToReady.input <> inputs(srcDirection)
-    toFifos(srcDirection) <> tokenToReady.output
+    tokenToReady.input <> io.inputs(srcDirection)
+    io.toFifos(srcDirection) <> tokenToReady.output
   }
 
 
@@ -177,8 +177,8 @@ class NetworkSwitch(params: FMPVUParams) extends Module {
     val validHeaders = Wire(Vec(5, Bool()))
     for (i <- 0 until 5) {
       val input = fromFifosAndDDM(i)
-      validHeaders(i) := input.valid && input.bits.header && 
-                        getDirection(thisLoc, input.bits.bits) === dstDirection.U
+      validHeaders(i) := input.valid && input.bits.header &&
+                        getDirection(io.thisLoc, input.bits.bits) === dstDirection.U
     }
     
     // Find first valid input in round-robin order
@@ -246,7 +246,7 @@ class NetworkSwitch(params: FMPVUParams) extends Module {
   }
 
   for (dstDirection <- 0 until 4) {
-    readyToToken(dstDirection).output <> outputs(dstDirection)
+    readyToToken(dstDirection).output <> io.outputs(dstDirection)
   }
 
 }

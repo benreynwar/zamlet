@@ -1,9 +1,11 @@
 import os
-import subprocess
 import tempfile
+from typing import Optional
 
 import cocotb
-from cocotb import triggers, clock
+from cocotb import triggers
+from cocotb.clock import Clock
+from cocotb.handle import HierarchyObject
 from cocotb_tools.runner import get_runner
 
 from fmpvu import generate_rtl
@@ -12,8 +14,13 @@ this_dir = os.path.abspath(os.path.dirname(__file__))
 
 
 @cocotb.test()
-async def network_basic_test(dut):
-    cocotb.start_soon(clock.Clock(dut.clock, 1, 'ns').start())
+async def network_basic_test(dut: HierarchyObject) -> None:
+    """Basic test of NetworkNode module initialization."""
+    # Start clock
+    clock_gen = Clock(dut.clock, 1, 'ns')
+    cocotb.start_soon(clock_gen.start())
+    
+    # Apply reset sequence
     dut.reset.value = 0
     await triggers.RisingEdge(dut.clock)
     dut.reset.value = 1
@@ -21,37 +28,42 @@ async def network_basic_test(dut):
     dut.reset.value = 0
     
     # Initialize inputs
-    dut.configValid.value = 0
-    dut.configIsPacketMode.value = 0
-    dut.configDelay.value = 0
-    dut.fromDRF_valid.value = 0
-    dut.fromDRF_bits.value = 0
-    dut.fromDDM_valid.value = 0
-    dut.fromDDM_bits.value = 0
+    dut.io_configValid.value = 0
+    dut.io_configIsPacketMode.value = 0
+    dut.io_configDelay.value = 0
+    dut.io_fromDRF_valid.value = 0
+    dut.io_fromDRF_bits.value = 0
+    dut.io_fromDDM_valid.value = 0
+    dut.io_fromDDM_bits.value = 0
 
     # Initialize bus inputs
     for direction in range(4):
         for bus in range(2):  # assuming 2 buses from params
-            getattr(dut, f'inputs_{direction}_{bus}_valid').value = 0
-            getattr(dut, f'inputs_{direction}_{bus}_bits_header').value = 0
-            getattr(dut, f'inputs_{direction}_{bus}_bits_bits').value = 0
-            getattr(dut, f'outputs_{direction}_{bus}_token').value = 0
+            getattr(dut, f'io_inputs_{direction}_{bus}_valid').value = 0
+            getattr(dut, f'io_inputs_{direction}_{bus}_bits_header').value = 0
+            getattr(dut, f'io_inputs_{direction}_{bus}_bits_bits').value = 0
+            getattr(dut, f'io_outputs_{direction}_{bus}_token').value = 0
     
     # Initialize control signals
     for bus in range(2):
-        getattr(dut, f'control_nsInputSel_{bus}').value = 0
-        getattr(dut, f'control_weInputSel_{bus}').value = 0
-        getattr(dut, f'control_nsCrossbarSel_{bus}').value = 0
-        getattr(dut, f'control_weCrossbarSel_{bus}').value = 0
-    dut.control_drfSel.value = 0
-    dut.control_ddmSel.value = 0
+        getattr(dut, f'io_control_nsInputSel_{bus}').value = 0
+        getattr(dut, f'io_control_weInputSel_{bus}').value = 0
+        getattr(dut, f'io_control_nsCrossbarSel_{bus}').value = 0
+        getattr(dut, f'io_control_weCrossbarSel_{bus}').value = 0
+    dut.io_control_drfSel.value = 0
+    dut.io_control_ddmSel.value = 0
     
     await triggers.RisingEdge(dut.clock)
 
 
 @cocotb.test()
-async def network_packet_mode_test(dut):
-    cocotb.start_soon(clock.Clock(dut.clock, 1, 'ns').start())
+async def network_packet_mode_test(dut: HierarchyObject) -> None:
+    """Test NetworkNode in packet mode configuration."""
+    # Start clock
+    clock_gen = Clock(dut.clock, 1, 'ns')
+    cocotb.start_soon(clock_gen.start())
+    
+    # Apply reset sequence
     dut.reset.value = 0
     await triggers.RisingEdge(dut.clock)
     dut.reset.value = 1
@@ -59,19 +71,24 @@ async def network_packet_mode_test(dut):
     dut.reset.value = 0
     
     # Configure for packet mode
-    dut.configValid.value = 1
-    dut.configIsPacketMode.value = 1
-    dut.configDelay.value = 2
+    dut.io_configValid.value = 1
+    dut.io_configIsPacketMode.value = 1
+    dut.io_configDelay.value = 2
     await triggers.RisingEdge(dut.clock)
-    dut.configValid.value = 0
+    dut.io_configValid.value = 0
     
     # Test that node is in packet mode
     await triggers.RisingEdge(dut.clock)
 
 
 @cocotb.test()
-async def network_delay_mode_test(dut):
-    cocotb.start_soon(clock.Clock(dut.clock, 1, 'ns').start())
+async def network_delay_mode_test(dut: HierarchyObject) -> None:
+    """Test NetworkNode in delay mode configuration."""
+    # Start clock
+    clock_gen = Clock(dut.clock, 1, 'ns')
+    cocotb.start_soon(clock_gen.start())
+    
+    # Apply reset sequence
     dut.reset.value = 0
     await triggers.RisingEdge(dut.clock)
     dut.reset.value = 1
@@ -79,17 +96,18 @@ async def network_delay_mode_test(dut):
     dut.reset.value = 0
     
     # Configure for delay mode
-    dut.configValid.value = 1
-    dut.configIsPacketMode.value = 0
-    dut.configDelay.value = 3
+    dut.io_configValid.value = 1
+    dut.io_configIsPacketMode.value = 0
+    dut.io_configDelay.value = 3
     await triggers.RisingEdge(dut.clock)
-    dut.configValid.value = 0
+    dut.io_configValid.value = 0
     
     # Test that node is in delay mode
     await triggers.RisingEdge(dut.clock)
 
 
-def test_proc(temp_dir=None):
+def test_network_main(temp_dir: Optional[str] = None) -> None:
+    """Generate RTL and run the NetworkNode test."""
     with tempfile.TemporaryDirectory() as working_dir:
         if temp_dir is not None:
             working_dir = temp_dir
@@ -105,8 +123,12 @@ def test_proc(temp_dir=None):
             waves=True,
             build_args=['--trace', '--trace-structs'],
             )
-        runner.test(hdl_toplevel='NetworkNode', test_module='test_network', waves=True)
+        runner.test(
+            hdl_toplevel='NetworkNode',
+            test_module='test_network',
+            waves=True
+        )
 
 
 if __name__ == '__main__':
-    test_proc(os.path.abspath('deleteme'))
+    test_network_main(temp_dir=os.path.abspath('deleteme'))

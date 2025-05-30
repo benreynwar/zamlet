@@ -16,54 +16,54 @@ import fmpvu.ModuleGenerator
 
 
 class RegisterFile(width: Int, depth: Int, nReadPorts: Int, nWritePorts: Int) extends Module {
+  val io = IO(new Bundle {
+    val writes = Input(Vec(nWritePorts, new MemoryWritePort(UInt(width.W), log2Ceil(depth), false)))
+    val reads = Vec(nReadPorts, new MemoryReadPort(UInt(width.W), log2Ceil(depth)))
+  })
 
-  val writes = IO(Input(Vec(nWritePorts, new MemoryWritePort(UInt(width.W), log2Ceil(depth), false))));
-  val reads = IO(Vec(nReadPorts, new MemoryReadPort(UInt(width.W), log2Ceil(depth))));
-
-  val contents = Reg(Vec(depth, UInt(width.W)));
+  val contents = Reg(Vec(depth, UInt(width.W)))
 
   // For each location in memory this should contain how many write ports are trying to write to that location.
-  val oneHots = Wire(Vec(nWritePorts, UInt(depth.W))); 
+  val oneHots = Wire(Vec(nWritePorts, UInt(depth.W)))
   for (port_index <- 0 until nWritePorts) {
-    oneHots(port_index) := UIntToOH(writes(port_index).address);
+    oneHots(port_index) := UIntToOH(io.writes(port_index).address)
   }
-  val writeClashes = Wire(Vec(depth, Bool()));
+  val writeClashes = Wire(Vec(depth, Bool()))
   for (addr <- 0 until depth) {
-    val validWrites = Wire(Vec(nWritePorts, Valid(UInt(width.W))));
+    val validWrites = Wire(Vec(nWritePorts, Valid(UInt(width.W))))
     for (port_index <- 0 until nWritePorts) {
-      validWrites(port_index).valid := oneHots(port_index)(addr) && writes(port_index).enable;
-      validWrites(port_index).bits := writes(port_index).data;
+      validWrites(port_index).valid := oneHots(port_index)(addr) && io.writes(port_index).enable
+      validWrites(port_index).bits := io.writes(port_index).data
     }
-    val finalWrite = Wire(Valid(UInt(width.W)));
-    val mux = Module(new ValidMux(UInt(width.W), nWritePorts));
-    mux.inputs := validWrites;
-    finalWrite := mux.output;
-    writeClashes(addr) := mux.error;
+    val finalWrite = Wire(Valid(UInt(width.W)))
+    val mux = Module(new ValidMux(UInt(width.W), nWritePorts))
+    mux.io.inputs := validWrites
+    finalWrite := mux.io.output
+    writeClashes(addr) := mux.io.error
     when(finalWrite.valid) {
       contents(addr) := finalWrite.bits
     }
   }
-  val writeClash = writeClashes.exists(x => x);
+  val writeClash = writeClashes.exists(x => x)
 
   for (port_index <- 0 until nReadPorts) {
-    reads(port_index).data := contents(reads(port_index).address);
+    io.reads(port_index).data := contents(io.reads(port_index).address)
   }
 
 }
 
 
 object RegisterFileGenerator extends ModuleGenerator {
-
   override def makeModule(args: Seq[String]): Module = {
     if (args.length < 4) {
-      println("Usage: <command> <outputDir> RegisterFile <width> <depth> <nReadPorts> <nWritePorts>");
-      return null;
+      println("Usage: <command> <outputDir> RegisterFile <width> <depth> <nReadPorts> <nWritePorts>")
+      null
+    } else {
+      val width = args(0).toInt
+      val depth = args(1).toInt
+      val nReadPorts = args(2).toInt
+      val nWritePorts = args(3).toInt
+      new RegisterFile(width, depth, nReadPorts, nWritePorts)
     }
-    val width = args(0).toInt;
-    val depth = args(1).toInt;
-    val nReadPorts = args(2).toInt;
-    val nWritePorts = args(3).toInt;
-    return new RegisterFile(width, depth, nReadPorts, nWritePorts);
   }
-
 }

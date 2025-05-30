@@ -4,9 +4,11 @@ import math
 from random import Random
 import collections
 import tempfile
+from typing import Any, Deque, Optional
 
 import cocotb
 from cocotb import triggers, clock
+from cocotb.handle import HierarchyObject
 
 from fmpvu import generate_rtl, test_utils
 from fmpvu.params import FMPVUParams
@@ -14,7 +16,8 @@ from fmpvu.params import FMPVUParams
 this_dir = os.path.abspath(os.path.dirname(__file__))
 
 
-async def process_to_lane_grid(dut, togrid_queue, params):
+async def process_to_lane_grid(dut: HierarchyObject, togrid_queue: Deque[Any], params: Any) -> None:
+    """Drive data from queue to the lane grid's west input interfaces."""
     while True:
         if togrid_queue:
             words = togrid_queue.popleft()  # List of nColumns * nRows words
@@ -23,32 +26,33 @@ async def process_to_lane_grid(dut, togrid_queue, params):
                 col = params.n_columns - 1 - cycle  # Start from final column, work backwards
                 for row in range(params.n_rows):
                     lane_idx = row * params.n_columns + col
-                    getattr(dut, f'wI_{row}_0_valid').value = 1
-                    getattr(dut, f'wI_{row}_0_bits_bits').value = words[lane_idx]
-                    getattr(dut, f'wI_{row}_0_bits_header').value = 0
+                    getattr(dut, f'io_wI_{row}_0_valid').value = 1
+                    getattr(dut, f'io_wI_{row}_0_bits_bits').value = words[lane_idx]
+                    getattr(dut, f'io_wI_{row}_0_bits_header').value = 0
                 await triggers.RisingEdge(dut.clock)
         else:
             for row in range(params.n_rows):
-                getattr(dut, f'wI_{row}_0_valid').value = 0
+                getattr(dut, f'io_wI_{row}_0_valid').value = 0
             await triggers.RisingEdge(dut.clock)
 
 
-async def process_from_lane_grid(dut, fromlane_queue, params):
+async def process_from_lane_grid(dut: HierarchyObject, fromlane_queue: Deque[Any], params: Any) -> None:
+    """Collect data from the lane grid's east output interfaces."""
     await triggers.RisingEdge(dut.clock)
     await triggers.ReadOnly()
     while True:
-        if getattr(dut, 'eO_0_1_valid').value:
+        if getattr(dut, 'io_eO_0_1_valid').value:
             words = [None] * (params.n_rows * params.n_columns)
             for cycle in range(params.n_columns):
                 col = params.n_columns - 1 - cycle
                 for row in range(params.n_rows):
                     lane_idx = row * params.n_columns + col
-                    assert getattr(dut, f'eO_{row}_1_valid').value == 1
-                    words[lane_idx] = int(getattr(dut, f'eO_{row}_1_bits_bits').value)
+                    assert getattr(dut, f'io_eO_{row}_1_valid').value == 1
+                    words[lane_idx] = int(getattr(dut, f'io_eO_{row}_1_bits_bits').value)
                 await triggers.RisingEdge(dut.clock)
                 # Send token back to acknowledge receipt (after rising edge, not in read-only mode)
                 for row in range(params.n_rows):
-                    getattr(dut, f'eO_{row}_1_token').value = 1
+                    getattr(dut, f'io_eO_{row}_1_token').value = 1
                 await triggers.ReadOnly()
             assert None not in words
             fromlane_queue.append(words)
@@ -56,66 +60,68 @@ async def process_from_lane_grid(dut, fromlane_queue, params):
             await triggers.RisingEdge(dut.clock)
             # No tokens when no valid data (after rising edge, not in read-only mode)
             for row in range(params.n_rows):
-                getattr(dut, f'eO_{row}_1_token').value = 0
+                getattr(dut, f'io_eO_{row}_1_token').value = 0
             await triggers.ReadOnly()
 
 
-def submit_send(dut, length, address, params):
+def submit_send(dut: HierarchyObject, length: int, address: int, params: Any) -> None:
+    """Submit a send instruction to all columns in the lane grid."""
     # Submit to all columns with appropriate offset/stride
     for col in range(params.n_columns):
         start_offset = 0
         stride = params.n_columns
-        getattr(dut, f'instr_{col}_sendreceive_valid').value = 1
-        getattr(dut, f'instr_{col}_sendreceive_bits_mode').value = 0
-        getattr(dut, f'instr_{col}_sendreceive_bits_length').value = length
-        getattr(dut, f'instr_{col}_sendreceive_bits_addr').value = address
-        getattr(dut, f'instr_{col}_sendreceive_bits_startOffset').value = start_offset
-        getattr(dut, f'instr_{col}_sendreceive_bits_stride').value = stride
+        getattr(dut, f'io_instr_{col}_sendreceive_valid').value = 1
+        getattr(dut, f'io_instr_{col}_sendreceive_bits_mode').value = 0
+        getattr(dut, f'io_instr_{col}_sendreceive_bits_length').value = length
+        getattr(dut, f'io_instr_{col}_sendreceive_bits_addr').value = address
+        getattr(dut, f'io_instr_{col}_sendreceive_bits_startOffset').value = start_offset
+        getattr(dut, f'io_instr_{col}_sendreceive_bits_stride').value = stride
 
 
-def submit_receive(dut, length, address, params):
+def submit_receive(dut: HierarchyObject, length: int, address: int, params: Any) -> None:
+    """Submit a receive instruction to all columns in the lane grid."""
     # Submit to all columns with appropriate offset/stride
     for col in range(params.n_columns):
         start_offset = params.n_columns - 1 - col  # Column 0 gets last word, column 1 gets second-to-last, etc.
         stride = params.n_columns
-        getattr(dut, f'instr_{col}_sendreceive_valid').value = 1
-        getattr(dut, f'instr_{col}_sendreceive_bits_mode').value = 1
-        getattr(dut, f'instr_{col}_sendreceive_bits_length').value = length
-        getattr(dut, f'instr_{col}_sendreceive_bits_addr').value = address
-        getattr(dut, f'instr_{col}_sendreceive_bits_startOffset').value = start_offset
-        getattr(dut, f'instr_{col}_sendreceive_bits_stride').value = stride
+        getattr(dut, f'io_instr_{col}_sendreceive_valid').value = 1
+        getattr(dut, f'io_instr_{col}_sendreceive_bits_mode').value = 1
+        getattr(dut, f'io_instr_{col}_sendreceive_bits_length').value = length
+        getattr(dut, f'io_instr_{col}_sendreceive_bits_addr').value = address
+        getattr(dut, f'io_instr_{col}_sendreceive_bits_startOffset').value = start_offset
+        getattr(dut, f'io_instr_{col}_sendreceive_bits_stride').value = stride
 
 
-def clear_sendreceive(dut, params):
+def clear_sendreceive(dut: HierarchyObject, params: Any) -> None:
     # Clear all columns
     for col in range(params.n_columns):
-        getattr(dut, f'instr_{col}_sendreceive_valid').value = 0
+        getattr(dut, f'io_instr_{col}_sendreceive_valid').value = 0
 
 
-def submit_load(dut, reg, addr, params):
+def submit_load(dut: HierarchyObject, reg: int, addr: int, params: Any) -> None:
     """Load from register to memory address"""
     for col in range(params.n_columns):
-        getattr(dut, f'instr_{col}_loadstore_valid').value = 1
-        getattr(dut, f'instr_{col}_loadstore_bits_mode').value = 0  # Load mode: register -> memory
-        getattr(dut, f'instr_{col}_loadstore_bits_reg').value = reg
-        getattr(dut, f'instr_{col}_loadstore_bits_addr').value = addr
+        getattr(dut, f'io_instr_{col}_loadstore_valid').value = 1
+        getattr(dut, f'io_instr_{col}_loadstore_bits_mode').value = 0  # Load mode: register -> memory
+        getattr(dut, f'io_instr_{col}_loadstore_bits_reg').value = reg
+        getattr(dut, f'io_instr_{col}_loadstore_bits_addr').value = addr
 
 
-def submit_store(dut, reg, addr, params):
+def submit_store(dut: HierarchyObject, reg: int, addr: int, params: Any) -> None:
     """Store from memory address to register"""
     for col in range(params.n_columns):
-        getattr(dut, f'instr_{col}_loadstore_valid').value = 1
-        getattr(dut, f'instr_{col}_loadstore_bits_mode').value = 1  # Store mode: memory -> register
-        getattr(dut, f'instr_{col}_loadstore_bits_reg').value = reg
-        getattr(dut, f'instr_{col}_loadstore_bits_addr').value = addr
+        getattr(dut, f'io_instr_{col}_loadstore_valid').value = 1
+        getattr(dut, f'io_instr_{col}_loadstore_bits_mode').value = 1  # Store mode: memory -> register
+        getattr(dut, f'io_instr_{col}_loadstore_bits_reg').value = reg
+        getattr(dut, f'io_instr_{col}_loadstore_bits_addr').value = addr
 
 
-def clear_loadstore(dut, params):
+def clear_loadstore(dut: HierarchyObject, params: Any) -> None:
     for col in range(params.n_columns):
-        getattr(dut, f'instr_{col}_loadstore_valid').value = 0
+        getattr(dut, f'io_instr_{col}_loadstore_valid').value = 0
 
 
-async def send_and_receive(dut, rnd, params):
+async def send_and_receive(dut: HierarchyObject, rnd: Random, params: Any) -> None:
     """
     Send in vectors using the Receive instruction.
     Send out vectors using the Send instruction.
@@ -167,7 +173,7 @@ async def send_and_receive(dut, rnd, params):
     fromgrid_task.kill()
 
 
-async def send_and_receive_swap_order(dut, rnd, params):
+async def send_and_receive_swap_order(dut: HierarchyObject, rnd: Random, params: Any) -> None:
     """
     Send in vectors using the Receive instruction.
     Load the vectors into registers.
@@ -245,7 +251,7 @@ async def send_and_receive_swap_order(dut, rnd, params):
     fromgrid_task.kill()
 
 
-def make_packet_header(params, x, y, address, length):
+def make_packet_header(params: Any, x: int, y: int, address: int, length: int) -> int:
     x_bits = test_utils.clog2(params.n_columns)
     y_bits = test_utils.clog2(params.n_rows)
     addr_bits = params.ddm_addr_width
@@ -271,10 +277,10 @@ class PacketSender:
 
     def __init__(self, dut, edge, position, bus_index, packet_queue):
         self.dut = dut
-        self.valid_s = getattr(dut, f'{edge}I_{position}_{bus_index}_valid')
-        self.token_s = getattr(dut, f'{edge}I_{position}_{bus_index}_token')
-        self.header_s = getattr(dut, f'{edge}I_{position}_{bus_index}_bits_header')
-        self.data_s = getattr(dut, f'{edge}I_{position}_{bus_index}_bits_bits')
+        self.valid_s = getattr(dut, f'io_{edge}I_{position}_{bus_index}_valid')
+        self.token_s = getattr(dut, f'io_{edge}I_{position}_{bus_index}_token')
+        self.header_s = getattr(dut, f'io_{edge}I_{position}_{bus_index}_bits_header')
+        self.data_s = getattr(dut, f'io_{edge}I_{position}_{bus_index}_bits_bits')
         self.queue = packet_queue
         self.n_tokens = 0
         cocotb.start_soon(self.receive_tokens())
@@ -312,7 +318,7 @@ class PacketSender:
                     self.n_tokens -= 1
 
 
-async def send_packet_and_receive(dut, rnd, params):
+async def send_packet_and_receive(dut: HierarchyObject, rnd: Random, params: Any) -> None:
     '''
     Send data to the lanes with packets.
     Use a 'send' instruction to get it back.
@@ -340,12 +346,12 @@ async def send_packet_and_receive(dut, rnd, params):
     packet_queue = collections.deque()
 
     for col in range(params.n_columns):
-        getattr(dut, f'config_{col}_configValid').value = 1
-        getattr(dut, f'config_{col}_configIsPacketMode').value = 1
-        getattr(dut, f'config_{col}_configDelay').value = 0
+        getattr(dut, f'io_config_{col}_configValid').value = 1
+        getattr(dut, f'io_config_{col}_configIsPacketMode').value = 1
+        getattr(dut, f'io_config_{col}_configDelay').value = 0
     await triggers.RisingEdge(dut.clock)
     for col in range(params.n_columns):
-        getattr(dut, f'config_{col}_configValid').value = 0
+        getattr(dut, f'io_config_{col}_configValid').value = 0
     for i in range(4):
         await triggers.RisingEdge(dut.clock)
 
@@ -361,11 +367,11 @@ async def send_packet_and_receive(dut, rnd, params):
 
     # Turn off packet mode
     for col in range(params.n_columns):
-        getattr(dut, f'config_{col}_configValid').value = 1
-        getattr(dut, f'config_{col}_configIsPacketMode').value = 0
+        getattr(dut, f'io_config_{col}_configValid').value = 1
+        getattr(dut, f'io_config_{col}_configIsPacketMode').value = 0
     await triggers.RisingEdge(dut.clock)
     for col in range(params.n_columns):
-        getattr(dut, f'config_{col}_configValid').value = 0
+        getattr(dut, f'io_config_{col}_configValid').value = 0
 
     # Set up a task to receive data coming off grid.
     fromgrid_queue = collections.deque()
@@ -388,7 +394,7 @@ async def send_packet_and_receive(dut, rnd, params):
     fromgrid_task.kill()
 
 
-async def timeout(dut, max_cycles):
+async def timeout(dut: HierarchyObject, max_cycles: int) -> None:
     count = 0
     while True:
         await triggers.RisingEdge(dut.clock)
@@ -397,7 +403,7 @@ async def timeout(dut, max_cycles):
 
 
 @cocotb.test()
-async def lane_grid_test(dut):
+async def lane_grid_test(dut: HierarchyObject) -> None:
     test_params = test_utils.read_params()
     rnd = Random(test_params['seed'])
     params_dict = test_params['params']
@@ -405,33 +411,33 @@ async def lane_grid_test(dut):
     
     # Initialize all instruction interfaces to inactive
     for col in range(params.n_columns):
-        getattr(dut, f'instr_{col}_compute_valid').value = 0
-        getattr(dut, f'instr_{col}_loadstore_valid').value = 0
-        getattr(dut, f'instr_{col}_network_valid').value = 0
-        getattr(dut, f'instr_{col}_sendreceive_valid').value = 0
+        getattr(dut, f'io_instr_{col}_compute_valid').value = 0
+        getattr(dut, f'io_instr_{col}_loadstore_valid').value = 0
+        getattr(dut, f'io_instr_{col}_network_valid').value = 0
+        getattr(dut, f'io_instr_{col}_sendreceive_valid').value = 0
     
     # Initialize all network interfaces to inactive
     for row in range(params.n_rows):
         for bus in range(params.n_buses):
-            getattr(dut, f'wI_{row}_{bus}_valid').value = 0
-            getattr(dut, f'eI_{row}_{bus}_valid').value = 0
+            getattr(dut, f'io_wI_{row}_{bus}_valid').value = 0
+            getattr(dut, f'io_eI_{row}_{bus}_valid').value = 0
             # Token inputs for outputs (these go into the LaneGrid)
-            getattr(dut, f'eO_{row}_{bus}_token').value = 0
-            getattr(dut, f'wO_{row}_{bus}_token').value = 0
+            getattr(dut, f'io_eO_{row}_{bus}_token').value = 0
+            getattr(dut, f'io_wO_{row}_{bus}_token').value = 0
     
     for col in range(params.n_columns):
         for bus in range(params.n_buses):
-            getattr(dut, f'nI_{col}_{bus}_valid').value = 0
-            getattr(dut, f'sI_{col}_{bus}_valid').value = 0
+            getattr(dut, f'io_nI_{col}_{bus}_valid').value = 0
+            getattr(dut, f'io_sI_{col}_{bus}_valid').value = 0
             # Token inputs for outputs (these go into the LaneGrid)
-            getattr(dut, f'nO_{col}_{bus}_token').value = 0
-            getattr(dut, f'sO_{col}_{bus}_token').value = 0
+            getattr(dut, f'io_nO_{col}_{bus}_token').value = 0
+            getattr(dut, f'io_sO_{col}_{bus}_token').value = 0
 
     # Initialize all config interfaces to inactive
     for col in range(params.n_columns):
-        getattr(dut, f'config_{col}_configValid').value = 0
-        getattr(dut, f'config_{col}_configIsPacketMode').value = 0
-        getattr(dut, f'config_{col}_configDelay').value = 0
+        getattr(dut, f'io_config_{col}_configValid').value = 0
+        getattr(dut, f'io_config_{col}_configIsPacketMode').value = 0
+        getattr(dut, f'io_config_{col}_configDelay').value = 0
 
     cocotb.start_soon(clock.Clock(dut.clock, 1, 'ns').start())
     cocotb.start_soon(timeout(dut, 1000))
@@ -444,12 +450,12 @@ async def lane_grid_test(dut):
     dut.reset.value = 0
 
     for col in range(params.n_columns):
-        getattr(dut, f'config_{col}_configValid').value = 1
-        getattr(dut, f'config_{col}_configIsPacketMode').value = 0
-        getattr(dut, f'config_{col}_configDelay').value = 0
+        getattr(dut, f'io_config_{col}_configValid').value = 1
+        getattr(dut, f'io_config_{col}_configIsPacketMode').value = 0
+        getattr(dut, f'io_config_{col}_configDelay').value = 0
     await triggers.RisingEdge(dut.clock)
     for col in range(params.n_columns):
-        getattr(dut, f'config_{col}_configValid').value = 0
+        getattr(dut, f'io_config_{col}_configValid').value = 0
     
     # Run tests
     await send_and_receive(dut, rnd, params)
@@ -457,7 +463,7 @@ async def lane_grid_test(dut):
     await send_packet_and_receive(dut, rnd, params)
 
 
-def test_proc(temp_dir=None):
+def test_lane_grid(temp_dir: Optional[str] = None) -> None:
     with tempfile.TemporaryDirectory() as working_dir:
         if temp_dir is not None:
             working_dir = temp_dir
@@ -475,4 +481,4 @@ def test_proc(temp_dir=None):
 
 
 if __name__ == '__main__':
-    test_proc(os.path.abspath('deleteme'))
+    test_lane_grid(os.path.abspath('deleteme'))
