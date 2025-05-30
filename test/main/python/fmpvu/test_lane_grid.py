@@ -371,11 +371,11 @@ async def send_packet_and_receive(dut, rnd, params):
     fromgrid_queue = collections.deque()
     fromgrid_task = cocotb.start_soon(process_from_lane_grid(dut, fromgrid_queue, params))
 
-    submit_send(dut, 2, 0, params)
+    submit_send(dut, n_words_per_lane, base_address, params)
     await triggers.RisingEdge(dut.clock)
     clear_sendreceive(dut, params)
 
-    while len(fromgrid_queue) < 2:
+    while len(fromgrid_queue) < n_words_per_lane:
         await triggers.RisingEdge(dut.clock)
 
     # Collect received data and verify

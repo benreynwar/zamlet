@@ -113,8 +113,8 @@ class NetworkSwitch(params: FMPVUParams) extends Module {
   }
   toReadyToTokenAndDDM(4) <> toDDM
 
+  val fromFifosAndDDMRegDirections = Reg(Vec(5, NetworkDirection.DirectionOrHere()))
   val fromFifosAndDDMDirections = Wire(Vec(5, NetworkDirection.DirectionOrHere()))
-  val fromFifosAndDDMLengths = Wire(Vec(5, UInt(log2Ceil(params.maxPacketLength).W)))
   
   // Routes packets based on X-Y routing algorithm
   // Routes in X direction first, then Y direction
@@ -144,8 +144,12 @@ class NetworkSwitch(params: FMPVUParams) extends Module {
   
   // Calculate routing directions and packet lengths for all inputs
   for (i <- 0 until 5) {
-    fromFifosAndDDMDirections(i) := getDirection(thisLoc, fromFifosAndDDM(i).bits.bits)
-    fromFifosAndDDMLengths(i) := Header.fromBits(fromFifosAndDDM(i).bits.bits, params).length
+    when (fromFifosAndDDM(i).bits.header) {
+      fromFifosAndDDMRegDirections(i) := getDirection(thisLoc, fromFifosAndDDM(i).bits.bits)
+      fromFifosAndDDMDirections(i) := getDirection(thisLoc, fromFifosAndDDM(i).bits.bits)
+    }.otherwise {
+      fromFifosAndDDMDirections(i) := fromFifosAndDDMRegDirections(i);
+    }
   }
 
   // Convert input token-valid interfaces to ready-valid for processing
