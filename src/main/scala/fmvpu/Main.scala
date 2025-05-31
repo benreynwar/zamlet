@@ -1,8 +1,12 @@
-package fmpvu
+package fmvpu
 
 import chisel3._
 import _root_.circt.stage.ChiselStage
 import java.io.File
+import fmvpu.core._
+import fmvpu.memory._
+import fmvpu.network._
+import fmvpu.utils._
 
 object Main extends App {
 

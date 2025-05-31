@@ -1,4 +1,4 @@
-package fmpvu
+package fmvpu.core
 
 // Import circe libraries for JSON parsing
 import io.circe._

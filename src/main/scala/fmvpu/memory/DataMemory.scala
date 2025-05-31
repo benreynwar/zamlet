@@ -1,4 +1,4 @@
-package fmpvu
+package fmvpu.memory
 
 import chisel3._
 import _root_.circt.stage.ChiselStage
@@ -7,12 +7,14 @@ import java.io.{File, PrintWriter}
 
 import chisel3.util.log2Ceil
 import chisel3.util.Valid
+import fmvpu.core.FMPVUParams
+import fmvpu.network._
+import fmvpu.ModuleGenerator
 import chisel3.util.UIntToOH
 import chisel3.util.{MemoryWritePort, SRAM}
 
 import scala.io.Source
 
-import fmpvu.ModuleGenerator
 
 /**
  * Error signals for the DataMemory module

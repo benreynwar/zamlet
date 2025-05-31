@@ -1,4 +1,4 @@
-package fmpvu
+package fmvpu.network
 
 import chisel3._
 import _root_.circt.stage.ChiselStage
@@ -7,11 +7,13 @@ import java.io.{File, PrintWriter}
 
 import chisel3.util.log2Ceil
 import chisel3.util.Valid
+import fmvpu.core.FMPVUParams
+import fmvpu.utils._
+import fmvpu.ModuleGenerator
 import chisel3.util.DecoupledIO
 
 import scala.io.Source
 
-import fmpvu.ModuleGenerator
 
 /**
  * Control signals for configuring NetworkNode routing behavior

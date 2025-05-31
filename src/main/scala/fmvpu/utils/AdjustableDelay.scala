@@ -1,4 +1,4 @@
-package fmpvu
+package fmvpu.utils
 
 import chisel3._
 import _root_.circt.stage.ChiselStage
@@ -7,8 +7,8 @@ import java.io.{File, PrintWriter}
 
 import chisel3.util.log2Ceil
 import chisel3.util.Valid
+import fmvpu.ModuleGenerator
 
-import fmpvu.ModuleGenerator
 
 /**
  * Error signals for the AdjustableDelay module

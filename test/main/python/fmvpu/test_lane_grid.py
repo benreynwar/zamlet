@@ -10,8 +10,8 @@ import cocotb
 from cocotb import triggers, clock
 from cocotb.handle import HierarchyObject
 
-from fmpvu import generate_rtl, test_utils
-from fmpvu.params import FMPVUParams
+from fmvpu import generate_rtl, test_utils
+from fmvpu.params import FMPVUParams
 
 this_dir = os.path.abspath(os.path.dirname(__file__))
 

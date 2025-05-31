@@ -1,4 +1,5 @@
 import os
+import json
 import tempfile
 from typing import Optional
 
@@ -6,9 +7,9 @@ import cocotb
 from cocotb import triggers
 from cocotb.clock import Clock
 from cocotb.handle import HierarchyObject
-from cocotb_tools.runner import get_runner
 
-from fmpvu import generate_rtl
+from fmvpu import generate_rtl, test_utils
+from fmvpu.params import FMPVUParams
 
 this_dir = os.path.abspath(os.path.dirname(__file__))
 
@@ -36,6 +37,11 @@ async def network_basic_test(dut: HierarchyObject) -> None:
     dut.io_fromDDM_valid.value = 0
     dut.io_fromDDM_bits.value = 0
 
+    # Read test parameters to get n_channels
+    test_params = test_utils.read_params()
+    params_dict = test_params['params']
+    params = FMPVUParams.from_dict(params_dict)
+    
     # Initialize bus inputs
     for direction in range(4):
         for channel in range(params.n_channels):
@@ -111,23 +117,21 @@ def test_network_main(temp_dir: Optional[str] = None) -> None:
     with tempfile.TemporaryDirectory() as working_dir:
         if temp_dir is not None:
             working_dir = temp_dir
-        sim = 'verilator'
-        runner = get_runner(sim)
+        
         params_filename = os.path.join(this_dir, 'params.json')
-
         filenames = generate_rtl.generate('NetworkNode', working_dir, [params_filename])
-        runner.build(
-            sources=filenames,
-            hdl_toplevel='NetworkNode',
-            always=True,
-            waves=True,
-            build_args=['--trace', '--trace-structs'],
-            )
-        runner.test(
-            hdl_toplevel='NetworkNode',
-            test_module='test_network',
-            waves=True
-        )
+        toplevel = 'NetworkNode'
+        module = 'test_network'
+        
+        with open(params_filename, 'r', encoding='utf-8') as params_f:
+            design_params = json.loads(params_f.read())
+        
+        test_params = {
+            'seed': 0,
+            'params': design_params,
+        }
+        
+        test_utils.run_test(working_dir, filenames, test_params, toplevel, module)
 
 
 if __name__ == '__main__':

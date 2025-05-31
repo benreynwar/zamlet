@@ -10,7 +10,7 @@ from cocotb.clock import Clock
 from cocotb.handle import HierarchyObject
 from cocotb_tools.runner import get_runner
 
-from fmpvu import generate_rtl
+from fmvpu import generate_rtl
 
 this_dir = os.path.abspath(os.path.dirname(__file__))
 

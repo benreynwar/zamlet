@@ -1,4 +1,4 @@
-package fmpvu
+package fmvpu.core
 
 import chisel3._
 import _root_.circt.stage.ChiselStage
@@ -7,10 +7,12 @@ import java.io.{File, PrintWriter}
 
 import chisel3.util.log2Ceil
 import chisel3.util.Valid
+import fmvpu.utils._
+import fmvpu.network._
 
 import scala.io.Source
 
-import fmpvu.ModuleGenerator
+import fmvpu.ModuleGenerator
 
 
 class LaneGrid(params: FMPVUParams) extends Module {

@@ -5,18 +5,18 @@ requires = [
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "fmpvu"
+name = "fmvpu"
 version = "0.0.1"
 
 authors = [
     { name="Ben Reynwar", email="ben@reynwar.net" },
 ]
 
-description = "Flexible Vector Processing Unit"
+description = "Flexible Multi Vector Processing Unit"
 
 requires-python = ">=3.8"
 
 license = "MIT"
 
 [project.urls]
-Homepage = "https://github.com/benreynwar/fmpvu"
+Homepage = "https://github.com/benreynwar/fmvpu"
