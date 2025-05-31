@@ -35,12 +35,36 @@ class StoreInstr(params: FMPVUParams) extends Bundle {
   val addr = UInt(params.ddmAddrWidth.W)
 }
 
+/**
+ * Send/Receive instruction for DDM-Network communication with TDM support
+ * @param params FMPVU system parameters
+ * @groupdesc Signals The actual hardware fields of the Bundle
+ */
 class SendReceiveInstr(params: FMPVUParams) extends Bundle {
+  /** Operation mode: 0 = Send (DDM to network), 1 = Receive (network to DDM)
+    * @group Signals
+    */
   val mode = UInt(1.W)
+  
+  /** Number of data words to transfer
+    * @group Signals
+    */
   val length = UInt(params.ddmAddrWidth.W)
+  
+  /** Starting address in DDM for the transfer
+    * @group Signals
+    */
   val addr = UInt(params.ddmAddrWidth.W)
-  val startOffset = UInt(params.ddmAddrWidth.W)
-  val stride = UInt(params.ddmAddrWidth.W)
+  
+  /** Time slot offset - number of cycles to wait before using first assigned slot
+    * @group Signals
+    */
+  val slotOffset = UInt(params.ddmAddrWidth.W)
+  
+  /** Time slot spacing - interval between assigned network time slots for this node
+    * @group Signals
+    */
+  val slotSpacing = UInt(params.ddmAddrWidth.W)
 }
 
 class NetworkInstr(params: FMPVUParams) extends Bundle {
@@ -161,6 +185,14 @@ class Lane(params: FMPVUParams) extends Module {
   }
   networkControl.drfSel := 0.U
   networkControl.ddmSel := params.nBuses.U
+  
+  // Set drive signals - for current tests, only drive east
+  for (i <- 0 until params.nBuses) {
+    networkControl.nDrive(i) := false.B
+    networkControl.sDrive(i) := false.B
+    networkControl.wDrive(i) := false.B
+    networkControl.eDrive(i) := true.B
+  }
 
   // Connect up the Network to the lane boundary.
   networkNode.io.inputs(0) <> io.nI

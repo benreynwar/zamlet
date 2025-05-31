@@ -21,6 +21,10 @@ class NetworkNodeControl(params: FMPVUParams) extends Bundle {
   val weCrossbarSel = Vec(params.nBuses, UInt(log2Ceil(params.nBuses + 2).W))
   val drfSel = UInt(log2Ceil(params.nBuses * 2).W)
   val ddmSel = UInt(log2Ceil(params.nBuses * 2).W)
+  val nDrive = Vec(params.nBuses, Bool())
+  val sDrive = Vec(params.nBuses, Bool())
+  val wDrive = Vec(params.nBuses, Bool())
+  val eDrive = Vec(params.nBuses, Bool())
 }
 
 class NetworkNode(params: FMPVUParams) extends Module {
@@ -152,18 +156,18 @@ class NetworkNode(params: FMPVUParams) extends Module {
       }
 
       val fifoOrDelay = Module(new FifoOrDelay(withHeaderTemplate, params.networkMemoryDepth))
-      fifoOrDelay.configValid := io.configValid
-      fifoOrDelay.configIsFifo := io.configIsPacketMode
-      fifoOrDelay.configDelay := io.configDelay
+      fifoOrDelay.io.config.valid := io.configValid
+      fifoOrDelay.io.config.bits.isFifo := io.configIsPacketMode
+      fifoOrDelay.io.config.bits.delay := io.configDelay
 
       // If we're in packet mode then the memory inputs come from the switch
       // otherwise the inputs come from the crossbar
       when (isPacketMode) {
-        fifoOrDelay.input <> switch.io.toFifos(direction)
+        fifoOrDelay.io.input <> switch.io.toFifos(direction)
       }.otherwise {
-        fifoOrDelay.input.valid := crossbar.io.outputs(direction)(busIndex).valid
-        fifoOrDelay.input.bits.bits := crossbar.io.outputs(direction)(busIndex).bits
-        fifoOrDelay.input.bits.header := false.B
+        fifoOrDelay.io.input.valid := crossbar.io.outputs(direction)(busIndex).valid
+        fifoOrDelay.io.input.bits.bits := crossbar.io.outputs(direction)(busIndex).bits
+        fifoOrDelay.io.input.bits.header := false.B
         // Note: crossbar outputs are Valid signals with no backpressure
         switch.io.toFifos(direction).ready := false.B
       }
@@ -174,7 +178,7 @@ class NetworkNode(params: FMPVUParams) extends Module {
 
       val toOutputs = Wire(new Bus(params.width))
       when (isPacketMode) {
-        switch.io.fromFifos(direction) <> fifoOrDelay.output
+        switch.io.fromFifos(direction) <> fifoOrDelay.io.output
         toOutputs <> switch.io.outputs(direction)
       }.otherwise {
         val oppositeDir = Wire(UInt(2.W))
@@ -188,19 +192,31 @@ class NetworkNode(params: FMPVUParams) extends Module {
           oppositeDir := 2.U
         }
         val fromOpposite = io.inputs(oppositeDir)(busIndex)
-        // Output from fifoOrDelay gets precedence
-        when (fifoOrDelay.output.valid) {
+        val shouldDrive = Wire(Bool())
+        when (direction.U === 0.U) {
+          shouldDrive := io.control.nDrive(busIndex)
+        }.elsewhen (direction.U === 1.U) {
+          shouldDrive := io.control.sDrive(busIndex)
+        }.elsewhen (direction.U === 2.U) {
+          shouldDrive := io.control.wDrive(busIndex)
+        }.otherwise {
+          shouldDrive := io.control.eDrive(busIndex)
+        }
+        
+        when (shouldDrive && fifoOrDelay.io.output.valid) {
+          // Drive our own output from fifoOrDelay
           toOutputs.valid := true.B
-          toOutputs.bits := fifoOrDelay.output.bits
-          fifoOrDelay.output.ready := toOutputs.token
+          toOutputs.bits := fifoOrDelay.io.output.bits
+          fifoOrDelay.io.output.ready := toOutputs.token
           fromOpposite.token := false.B
         }.otherwise {
+          // Don't drive - pass through from opposite direction
           toOutputs.valid := fromOpposite.valid
           toOutputs.bits := fromOpposite.bits
-          fifoOrDelay.output.ready := false.B
+          fifoOrDelay.io.output.ready := false.B
           fromOpposite.token := toOutputs.token
         }
-        fifoOrDelay.output.ready := toOutputs.token
+        fifoOrDelay.io.output.ready := toOutputs.token
         switch.io.fromFifos(direction).valid := false.B
         switch.io.fromFifos(direction).bits := DontCare
         switch.io.outputs(direction).token := false.B

@@ -3,21 +3,40 @@ package fmpvu
 import chisel3._
 import chisel3.util.{log2Ceil, Valid, DecoupledIO, Cat}
 
+/**
+ * Network routing direction constants and utilities
+ * 
+ * Defines the four cardinal directions plus a local "HERE" destination
+ * for packet routing in a 2D mesh network. Uses X-Y routing where
+ * packets first route in the X direction, then Y direction.
+ */
 object NetworkDirection {
-  // Direction constants
+  /** North direction (decreasing Y coordinate) */
   val NORTH = 0.U(3.W)
+  /** South direction (increasing Y coordinate) */
   val SOUTH = 1.U(3.W)  
+  /** West direction (decreasing X coordinate) */
   val WEST = 2.U(3.W)
+  /** East direction (increasing X coordinate) */
   val EAST = 3.U(3.W)
+  /** Local destination (packet has reached its target) */
   val HERE = 4.U(3.W)
 
-  // Type aliases for clarity
-  type Direction = UInt  // 2 bits for NORTH, SOUTH, WEST, EAST (0-3)
-  type DirectionOrHere = UInt  // 3 bits for directions including HERE (0-4)
+  /** Type for cardinal directions only (2 bits, values 0-3) */
+  type Direction = UInt
+  /** Type for directions including local destination (3 bits, values 0-4) */
+  type DirectionOrHere = UInt
 
+  /** Create a Direction type (2 bits) */
   def Direction(): UInt = UInt(2.W)
+  /** Create a DirectionOrHere type (3 bits) */
   def DirectionOrHere(): UInt = UInt(3.W)
 
+  /**
+   * Round-robin direction iterator for arbitration
+   * @param current Current direction
+   * @return Next direction in sequence: NORTH -> SOUTH -> WEST -> EAST -> HERE -> NORTH
+   */
   def nextDirection(current: UInt): UInt = {
     val result = Wire(UInt(3.W))
     when (current === NORTH) {
@@ -31,24 +50,58 @@ object NetworkDirection {
     }.elsewhen (current === HERE) {
       result := NORTH
     }.otherwise {
-      result := NORTH  // Default for invalid
+      result := NORTH  // Default for invalid values
     }
     result
   }
 }
 
+/**
+ * 2D coordinate location in the mesh network
+ * @param params FMPVU parameters containing grid dimensions
+ * @groupdesc Signals The actual hardware fields of the Bundle
+ */
 class Location(params: FMPVUParams) extends Bundle {
+  /** X coordinate (column) in the mesh network
+    * @group Signals
+    */
   val x = UInt(log2Ceil(params.nColumns).W)
+  /** Y coordinate (row) in the mesh network
+    * @group Signals
+    */
   val y = UInt(log2Ceil(params.nRows).W)
 }
 
+/**
+ * State tracking for each output port in the network switch
+ * 
+ * Tracks which input is currently being served and how much of the
+ * current packet remains to be transmitted.
+ * 
+ * @param params FMPVU parameters for sizing fields
+ * @groupdesc Signals The actual hardware fields of the Bundle
+ */
 class OutputState(params: FMPVUParams) extends Bundle {
+  /** Which input direction is currently being served by this output
+    * @group Signals
+    */
   val input = NetworkDirection.DirectionOrHere()
+  /** Whether this output is actively transmitting a packet
+    * @group Signals
+    */
   val active = Bool()
+  /** Number of data words remaining in current packet
+    * @group Signals
+    */
   val remaining = UInt(log2Ceil(params.maxPacketLength+1).W)
 }
 
 object OutputState {
+  /**
+   * Create an initialized OutputState with safe default values
+   * @param params FMPVU parameters
+   * @return OutputState with active=false and other fields as DontCare
+   */
   def apply(params: FMPVUParams): OutputState = {
     val state = Wire(new OutputState(params))
     state.input := DontCare
@@ -58,39 +111,105 @@ object OutputState {
   }
 }
 
+/**
+ * Packet header containing routing and memory access information
+ * 
+ * The header is transmitted as the first word of each packet and contains
+ * all information needed for routing and memory access.
+ * 
+ * @param params FMPVU parameters for sizing fields
+ * @groupdesc Signals The actual hardware fields of the Bundle
+ */
 class Header(params: FMPVUParams) extends Bundle {
+  /** Destination location in the mesh network
+    * @group Signals
+    */
   val dest = new Location(params)
+  /** Memory address for DDM access at destination
+    * @group Signals
+    */
   val address = UInt(params.ddmAddrWidth.W)
+  /** Number of data words following this header
+    * @group Signals
+    */
   val length = UInt(log2Ceil(params.maxPacketLength).W)
 }
 
 object Header {
+  /**
+   * Parse a header from raw bits
+   * 
+   * Requires input bits to be at least as wide as the header.
+   * Will truncate if input is wider than needed.
+   * 
+   * @param bits Raw bits to parse as header (must be >= header width)
+   * @param params FMPVU parameters for header sizing
+   * @return Parsed Header bundle
+   */
   def fromBits(bits: UInt, params: FMPVUParams): Header = {
     val header = Wire(new Header(params))
     val headerWidth = header.getWidth
     val bitsWidth = bits.getWidth
     
-    if (bitsWidth >= headerWidth) {
-      header := bits(headerWidth-1, 0).asTypeOf(header)
-    } else {
-      val paddedBits = Cat(0.U((headerWidth - bitsWidth).W), bits)
-      header := paddedBits.asTypeOf(header)
-    }
+    require(bitsWidth >= headerWidth, s"Input bits ($bitsWidth) must be at least header width ($headerWidth)")
+    header := bits(headerWidth-1, 0).asTypeOf(header)
     header
   }
 }
 
+/**
+ * Packet-switched network router for 2D mesh network
+ * 
+ * This module implements a header-based packet switching router that:
+ * - Routes packets using X-Y routing algorithm (X first, then Y)
+ * - Provides round-robin arbitration between inputs competing for same output
+ * - Maintains packet boundaries and flow control
+ * - Converts between token-valid (network) and ready-valid (local) protocols
+ * - Supports local DDM (Distributed Data Memory) access
+ * 
+ * The router has 4 directional ports (NORTH, SOUTH, EAST, WEST) plus local DDM.
+ * Each packet starts with a header containing destination coordinates, followed
+ * by data words. The router examines headers to determine output direction and
+ * switches complete packets atomically.
+ * 
+ * @param params FMPVU parameters containing network and memory configuration
+ * @groupdesc Signals The actual hardware fields of the IO Bundle
+ */
 class NetworkSwitch(params: FMPVUParams) extends Module {
-  // This is a component of the network node that is responsible for implementing the
-  // header based packet switching.
-
   val io = IO(new Bundle {
+    /** Input ports from four cardinal directions using token-valid protocol
+      * @group Signals
+      */
     val inputs = Vec(4, new Bus(params.width))
+    
+    /** Output ports to four cardinal directions using token-valid protocol
+      * @group Signals
+      */
     val outputs = Vec(4, Flipped(new Bus(params.width)))
+    
+    /** This router's location in the mesh network for routing decisions
+      * @group Signals
+      */
     val thisLoc = Input(new Location(params))
+    
+    /** Output interfaces to local FIFOs (converted from token-valid inputs)
+      * @group Signals
+      */
     val toFifos = Vec(4, DecoupledIO(new HeaderTag(UInt(params.width.W))))
+    
+    /** Input interfaces from local FIFOs (to be converted to token-valid outputs)
+      * @group Signals
+      */
     val fromFifos = Vec(4, Flipped(DecoupledIO(new HeaderTag(UInt(params.width.W)))))
+    
+    /** Input from local Distributed Data Memory
+      * @group Signals
+      */
     val fromDDM = Flipped(DecoupledIO(new HeaderTag(UInt(params.width.W))))
+    
+    /** Output to local Distributed Data Memory
+      * @group Signals
+      */
     val toDDM = DecoupledIO(new HeaderTag(UInt(params.width.W)))
   })
 
@@ -105,44 +224,54 @@ class NetworkSwitch(params: FMPVUParams) extends Module {
   // Convert ready/valid to token/valid before outputs
   val readyToToken = Seq.fill(4)(Module(new ReadyValidToTokenValid(new HeaderTag(UInt(params.width.W)), params.networkMemoryDepth)))
 
-  // Combined the signals that can go to either the DDM or the directional outputs.
-  // Makes expressing routing logic simpler.
+  // Combine outputs to directions and DDM for uniform processing
   val toReadyToTokenAndDDM = Wire(Vec(5, Flipped(DecoupledIO(new HeaderTag(UInt(params.width.W))))))
   for (i <- 0 until 4) {
     toReadyToTokenAndDDM(i) <> readyToToken(i).input
   }
   toReadyToTokenAndDDM(4) <> io.toDDM
 
+  // Track routing directions for each input (cached for non-header words)
   val fromFifosAndDDMRegDirections = Reg(Vec(5, NetworkDirection.DirectionOrHere()))
   val fromFifosAndDDMDirections = Wire(Vec(5, NetworkDirection.DirectionOrHere()))
   
-  // Routes packets based on X-Y routing algorithm
-  // Routes in X direction first, then Y direction
+  /**
+   * Compute routing direction using X-Y routing algorithm
+   * 
+   * Routes in X direction first (EAST/WEST), then Y direction (NORTH/SOUTH).
+   * Packets always make progress toward their destination in a deterministic order.
+   * 
+   * @param thisLoc Current router's location in the mesh
+   * @param data Header word containing destination coordinates
+   * @return Direction to route packet (NORTH/SOUTH/EAST/WEST/HERE)
+   */
   def getDirection(thisLoc: Location, data: UInt): UInt = {
-    val result = Wire(UInt(3.W))
     val header = Header.fromBits(data, params)
     val destLoc = header.dest
+    val direction = Wire(UInt(3.W))
     
     // X-Y routing: route in X direction first, then Y
     when (thisLoc.x > destLoc.x) {
-      result := NetworkDirection.WEST
+      direction := NetworkDirection.WEST
     }.elsewhen (thisLoc.x < destLoc.x) {
-      result := NetworkDirection.EAST
+      direction := NetworkDirection.EAST
     }.otherwise {
       // X coordinates match, route in Y direction
       when (thisLoc.y > destLoc.y) {
-        result := NetworkDirection.NORTH
+        direction := NetworkDirection.NORTH
       }.elsewhen (thisLoc.y < destLoc.y) {
-        result := NetworkDirection.SOUTH
+        direction := NetworkDirection.SOUTH
       }.otherwise {
         // Both coordinates match - destination is here
-        result := NetworkDirection.HERE
+        direction := NetworkDirection.HERE
       }
     }
-    result
+    direction
   }
   
-  // Calculate routing directions and packet lengths for all inputs
+  // Calculate routing directions for all inputs
+  // For headers: compute direction from destination coordinates
+  // For data: use cached direction from previous header
   for (i <- 0 until 5) {
     when (fromFifosAndDDM(i).bits.header) {
       fromFifosAndDDMRegDirections(i) := getDirection(io.thisLoc, fromFifosAndDDM(i).bits.bits)
@@ -160,7 +289,7 @@ class NetworkSwitch(params: FMPVUParams) extends Module {
   }
 
 
-  // Output state for each destination (4 directions + DDM)
+  // Output state tracking for packet switching
   val state = RegInit(VecInit(Seq.fill(5)(OutputState(params))))
   val choice = Wire(Vec(5, NetworkDirection.DirectionOrHere()))
 
@@ -173,7 +302,7 @@ class NetworkSwitch(params: FMPVUParams) extends Module {
     val lastInput = state(dstDirection).input
     val inputOrder = (0 until 5).map(i => (lastInput + 1.U + i.U) % 5.U)
     
-    // Check which inputs have valid headers for this output
+    // Check which inputs have valid headers targeting this output
     val validHeaders = Wire(Vec(5, Bool()))
     for (i <- 0 until 5) {
       val input = fromFifosAndDDM(i)
@@ -181,43 +310,39 @@ class NetworkSwitch(params: FMPVUParams) extends Module {
                         getDirection(io.thisLoc, input.bits.bits) === dstDirection.U
     }
     
-    // Find first valid input in round-robin order
-    val availableHeader = Wire(Bool())
-    availableHeader := validHeaders.asUInt.orR
+    val availableHeader = validHeaders.asUInt.orR
     choice(dstDirection) := state(dstDirection).input
     
-    // Priority encoder for round-robin selection
+    // Select first available input in round-robin order
     for (i <- 0 until 5) {
       val inputIdx = inputOrder(i)
-      when (validHeaders(inputIdx) && toReadyToTokenAndDDM(inputIdx).ready) {
+      when (validHeaders(inputIdx) && toReadyToTokenAndDDM(dstDirection).ready) {
         choice(dstDirection) := inputIdx
       }
     }
 
-    // State machine: idle -> active (on header) -> idle (when packet complete)
+    // Packet switching state machine
     nextState := state(dstDirection)
     when (!state(dstDirection).active) {
-      // Start new packet if header available
+      // Idle: start new packet when header arrives
       when (availableHeader) {
         nextState.input := choice(dstDirection)
         nextState.active := true.B
         nextState.remaining := Header.fromBits(fromFifosAndDDM(choice(dstDirection)).bits.bits, params).length
       }
     }.otherwise {
-      // Continue active packet
+      // Active: continue current packet until complete
       val activeInput = fromFifosAndDDM(state(dstDirection).input)
-      when (activeInput.valid && activeInput.ready) {
-        when (!activeInput.bits.header) {
-          // Data transfer - decrement remaining count
-          when (state(dstDirection).remaining === 1.U) {
-            nextState.active := false.B
-          }
-          nextState.remaining := state(dstDirection).remaining - 1.U
+      when (activeInput.valid && activeInput.ready && !activeInput.bits.header) {
+        // Data word transferred - decrement remaining count
+        when (state(dstDirection).remaining === 1.U) {
+          nextState.active := false.B  // Packet complete
         }
+        nextState.remaining := state(dstDirection).remaining - 1.U
       }
     }
 
-    // Connect active input to output
+    // Connect selected input to output
     when (state(dstDirection).active || availableHeader) {
       val selectedInput = Mux(state(dstDirection).active, 
                               state(dstDirection).input, 
@@ -228,11 +353,11 @@ class NetworkSwitch(params: FMPVUParams) extends Module {
       toReadyToTokenAndDDM(dstDirection).valid := false.B
       toReadyToTokenAndDDM(dstDirection).bits := DontCare
     }
-
   }
 
 
   // Connect input ready signals based on arbitration results
+  // An input is ready when it's either chosen for new packet or actively transmitting
   for (srcDirection <- 0 until 5) {
     val dstDirection = fromFifosAndDDMDirections(srcDirection)
     val isChosen = choice(dstDirection) === srcDirection.U
@@ -245,6 +370,7 @@ class NetworkSwitch(params: FMPVUParams) extends Module {
     }
   }
 
+  // Connect converted outputs to external token-valid interfaces
   for (dstDirection <- 0 until 4) {
     readyToToken(dstDirection).output <> io.outputs(dstDirection)
   }

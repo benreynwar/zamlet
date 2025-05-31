@@ -13,34 +13,143 @@ import scala.io.Source
 
 import fmpvu.ModuleGenerator
 
+/**
+ * Error signals for the ddmAccess module
+ * @groupdesc Signals The actual hardware fields of the Bundle
+ */
+class DDMAccessErrors extends Bundle {
+  /** Asserted when trying to start a new instruction while another is active
+    * @group Signals
+    */
+  val badInstr = Bool()
+  
+  /** Asserted when receiving network payload without proper header
+    * @group Signals
+    */
+  val badFromNetwork = Bool()
+}
 
+/**
+ * State bundle for tracking DDM transfer operations
+ * @param params FMPVU system parameters for address width sizing
+ * @groupdesc Signals The actual hardware fields of the Bundle
+ */
+class DDMTransferState(params: FMPVUParams) extends Bundle {
+  /** Transfer is currently active
+    * @group Signals
+    */
+  val active = Bool()
+  
+  /** Remaining words to transfer
+    * @group Signals
+    */
+  val length = UInt(params.ddmAddrWidth.W)
+  
+  /** Current DDM address for transfer
+    * @group Signals
+    */
+  val address = UInt(params.ddmAddrWidth.W)
+  
+  /** Time slot offset for TDM scheduling
+    * @group Signals
+    */
+  val slotOffset = UInt(params.ddmAddrWidth.W)
+  
+  /** Time slot spacing for TDM scheduling
+    * @group Signals
+    */
+  val slotSpacing = UInt(params.ddmAddrWidth.W)
+  
+  /** Word count for TDM timing
+    * @group Signals
+    */
+  val wordCount = UInt(params.ddmAddrWidth.W)
+}
+
+
+/**
+ * DDM (Distributed Data Memory) Access Controller
+ * 
+ * This module handles communication between the distributed data memory and the network.
+ * It processes Send and Receive instructions to transfer data blocks with time-division
+ * multiplexing support for coordinated network sharing between multiple nodes.
+ * 
+ * Features:
+ * - Send operations: Read sequential data from DDM and send to network
+ * - Receive operations: Receive data from network and write to sequential DDM addresses
+ * - Time-division multiplexing via slotSpacing/slotOffset for coordinated network sharing
+ * - Slot offset: Delays when this node begins using its allocated network time slots
+ * - Slot spacing: Interval between network time slots allocated to this node
+ * - Header-based network packet handling for receive operations
+ * - Error detection for instruction conflicts and invalid network data
+ * 
+ * @param params FMPVU system parameters containing DDM configuration
+ * @groupdesc Signals The actual hardware fields of the IO Bundle
+ */
 class ddmAccess(params: FMPVUParams) extends Module {
-  // This module receives Send and Receive instructions and uses them to connect the
-  // distributed data memory with the network.
 
   val io = IO(new Bundle {
+    /** Input instruction port for Send/Receive commands with TDM parameters
+      * @group Signals
+      */
     val instr = Input(Valid(new SendReceiveInstr(params)))
+    
+    /** Data input from network with header/payload tagging
+      * @group Signals  
+      */
     val fromNetwork = Input(Valid(new HeaderTag(UInt(params.width.W))))
+    
+    /** Data output to network (from DDM reads) with TDM scheduling
+      * @group Signals
+      */
     val toNetwork = Output(Valid(UInt(params.width.W)))
+    
+    /** Write port to distributed data memory for sequential addresses
+      * @group Signals
+      */
     val writeDDM = Output(new MemoryWritePort(UInt(params.width.W), params.ddmAddrWidth, false))
+    
+    /** Read port from distributed data memory for sequential addresses
+      * @group Signals
+      */
     val readDDM = Flipped(new ValidReadPort(UInt(params.width.W), params.ddmAddrWidth))
-    val errorBadInstr = Output(Bool())
-    val errorBadFromNetwork = Output(Bool())
+    
+    /** Error status signals indicating various fault conditions
+      * @group Signals
+      */
+    val errors = Output(new DDMAccessErrors)
   })
 
-  val readActive = RegInit(false.B)
-  val readLength = RegInit(0.U(params.ddmAddrWidth.W))
-  val readAddress = RegInit(0.U(params.ddmAddrWidth.W))
-  val readStartOffset = RegInit(0.U(params.ddmAddrWidth.W))
-  val readStride = RegInit(0.U(params.ddmAddrWidth.W))
-  val readWordCount = RegInit(0.U(params.ddmAddrWidth.W))
-
-  val writeActive = RegInit(false.B)
-  val writeLength = RegInit(0.U(params.ddmAddrWidth.W))
-  val writeAddress = RegInit(0.U(params.ddmAddrWidth.W))
-  val writeStartOffset = RegInit(0.U(params.ddmAddrWidth.W))
-  val writeStride = RegInit(0.U(params.ddmAddrWidth.W))
-  val writeWordCount = RegInit(0.U(params.ddmAddrWidth.W))
+  // Transfer state for Send operations (DDM -> Network)
+  val sendState = RegInit(0.U.asTypeOf(new DDMTransferState(params)))
+  
+  // Transfer state for Receive operations (Network -> DDM)  
+  val receiveState = RegInit(0.U.asTypeOf(new DDMTransferState(params)))
+  
+  // Helper function to check if a transfer should occur in this cycle based on TDM schedule
+  def shouldTransfer(state: DDMTransferState): Bool = {
+    (state.wordCount >= state.slotOffset) &&
+    ((state.wordCount - state.slotOffset) % state.slotSpacing === 0.U)
+  }
+  
+  // Helper function to initialize transfer state from instruction
+  def initTransfer(state: DDMTransferState, instr: SendReceiveInstr): Unit = {
+    state.active := true.B
+    state.length := instr.length
+    state.address := instr.addr
+    state.slotOffset := instr.slotOffset
+    state.slotSpacing := instr.slotSpacing
+    state.wordCount := 0.U
+  }
+  
+  // Helper function to advance transfer state (address increment, length decrement)
+  def advanceTransfer(state: DDMTransferState): Unit = {
+    state.length := state.length - 1.U
+    state.address := state.address + 1.U
+    when (state.length === 1.U) {
+      state.active := false.B
+    }
+  }
 
   io.toNetwork := io.readDDM.data
 
@@ -50,90 +159,66 @@ class ddmAccess(params: FMPVUParams) extends Module {
   io.writeDDM.data := DontCare
   io.readDDM.address.valid := false.B
   io.readDDM.address.bits := DontCare
-  io.errorBadInstr := false.B
-  io.errorBadFromNetwork := false.B
+  io.errors.badInstr := false.B
+  io.errors.badFromNetwork := false.B
 
   // Handle Send/Receive instructions
   when (io.instr.valid) {
     when (io.instr.bits.mode === 0.U) { // Send instruction
-      when (readActive) {
-        io.errorBadInstr := true.B
+      when (sendState.active) {
+        // Error: Cannot start new Send while previous Send is still active
+        io.errors.badInstr := true.B
       }.otherwise {
-        readActive := true.B
-        readLength := io.instr.bits.length
-        readAddress := io.instr.bits.addr
-        readStartOffset := io.instr.bits.startOffset
-        readStride := io.instr.bits.stride
-        readWordCount := 0.U
+        initTransfer(sendState, io.instr.bits)
       }
     }.otherwise { // Receive instruction (mode === 1.U)
-      when (writeActive) {
-        io.errorBadInstr := true.B
+      when (receiveState.active) {
+        // Error: Cannot start new Receive while previous Receive is still active
+        io.errors.badInstr := true.B
       }.otherwise {
-        writeActive := true.B
-        writeLength := io.instr.bits.length
-        writeAddress := io.instr.bits.addr
-        writeStartOffset := io.instr.bits.startOffset
-        writeStride := io.instr.bits.stride
-        writeWordCount := 0.U
+        initTransfer(receiveState, io.instr.bits)
       }
     }
   }
 
   // Handle read operations (Send)
-  when (readActive) {
-    val shouldRead = (readWordCount >= readStartOffset) &&
-                    ((readWordCount - readStartOffset) % readStride === 0.U)
-    
-    when (shouldRead) {
+  when (sendState.active) {
+    when (shouldTransfer(sendState)) {
       io.readDDM.address.valid := true.B
-      io.readDDM.address.bits := readAddress
-      readLength := readLength - 1.U
-      readAddress := readAddress + 1.U
-      
-      when (readLength === 1.U) {
-        readActive := false.B
-      }
+      io.readDDM.address.bits := sendState.address
+      advanceTransfer(sendState)
     }.otherwise {
       io.readDDM.address.valid := false.B
     }
     
-    readWordCount := readWordCount + 1.U
+    sendState.wordCount := sendState.wordCount + 1.U
   }
 
   // Handle write operations (Receive)
   when (io.fromNetwork.valid) {
-    when (!writeActive) {
+    when (!receiveState.active) {
       when (io.fromNetwork.bits.header) {
         // Extract address and length from the header
         val header = io.fromNetwork.bits.bits.asTypeOf(new Header(params))
-        writeActive := true.B
-        writeLength := header.length
-        writeAddress := header.address
-        writeStartOffset := 0.U  // Start immediately for header-initiated transfers
-        writeStride := 1.U       // Default to consecutive addressing
-        writeWordCount := 0.U
+        receiveState.active := true.B
+        receiveState.length := header.length
+        receiveState.address := header.address
+        receiveState.slotOffset := 0.U   // Start immediately for header-initiated transfers
+        receiveState.slotSpacing := 1.U  // Use every time slot for header-initiated transfers
+        receiveState.wordCount := 0.U
       }.otherwise {
-        io.errorBadFromNetwork := true.B
+        // Error: Received network payload without header to start transfer
+        io.errors.badFromNetwork := true.B
       }
     }.otherwise {
-      val shouldWrite = (writeWordCount >= writeStartOffset) &&
-                       ((writeWordCount - writeStartOffset) % writeStride === 0.U)
-      
-      when (shouldWrite) {
+      when (shouldTransfer(receiveState)) {
         io.writeDDM.enable := true.B
-        io.writeDDM.address := writeAddress
+        io.writeDDM.address := receiveState.address
         io.writeDDM.data := io.fromNetwork.bits.bits
-        
-        writeLength := writeLength - 1.U
-        writeAddress := writeAddress + 1.U
-        
-        when (writeLength === 1.U) {
-          writeActive := false.B
-        }
+        advanceTransfer(receiveState)
       }
       
-      writeWordCount := writeWordCount + 1.U
+      receiveState.wordCount := receiveState.wordCount + 1.U
     }
   }
 }

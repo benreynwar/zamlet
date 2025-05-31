@@ -74,8 +74,8 @@ def submit_send(dut: HierarchyObject, length: int, address: int, params: Any) ->
         getattr(dut, f'io_instr_{col}_sendreceive_bits_mode').value = 0
         getattr(dut, f'io_instr_{col}_sendreceive_bits_length').value = length
         getattr(dut, f'io_instr_{col}_sendreceive_bits_addr').value = address
-        getattr(dut, f'io_instr_{col}_sendreceive_bits_startOffset').value = start_offset
-        getattr(dut, f'io_instr_{col}_sendreceive_bits_stride').value = stride
+        getattr(dut, f'io_instr_{col}_sendreceive_bits_slotOffset').value = start_offset
+        getattr(dut, f'io_instr_{col}_sendreceive_bits_slotSpacing').value = stride
 
 
 def submit_receive(dut: HierarchyObject, length: int, address: int, params: Any) -> None:
@@ -88,8 +88,8 @@ def submit_receive(dut: HierarchyObject, length: int, address: int, params: Any)
         getattr(dut, f'io_instr_{col}_sendreceive_bits_mode').value = 1
         getattr(dut, f'io_instr_{col}_sendreceive_bits_length').value = length
         getattr(dut, f'io_instr_{col}_sendreceive_bits_addr').value = address
-        getattr(dut, f'io_instr_{col}_sendreceive_bits_startOffset').value = start_offset
-        getattr(dut, f'io_instr_{col}_sendreceive_bits_stride').value = stride
+        getattr(dut, f'io_instr_{col}_sendreceive_bits_slotOffset').value = start_offset
+        getattr(dut, f'io_instr_{col}_sendreceive_bits_slotSpacing').value = stride
 
 
 def clear_sendreceive(dut: HierarchyObject, params: Any) -> None:

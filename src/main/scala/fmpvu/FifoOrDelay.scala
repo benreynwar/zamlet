@@ -11,94 +11,150 @@ import chisel3.util.DecoupledIO
 
 import fmpvu.ModuleGenerator
 
+/**
+ * Configuration bundle for FifoOrDelay module
+ * @param depth Maximum buffer depth for sizing the delay field
+ * @groupdesc Signals The actual hardware fields of the Bundle
+ */
+class FifoOrDelayConfig(depth: Int) extends Bundle {
+  /** Mode selection: true for FIFO mode, false for delay mode
+    * @group Signals
+    */
+  val isFifo = Bool()
+  
+  /** Delay amount in cycles for delay mode (0 = passthrough, ignored in FIFO mode)
+    * @group Signals
+    */
+  val delay = UInt(log2Ceil(depth+1).W)
+}
+
+/**
+ * Configurable FIFO or fixed-delay buffer
+ * 
+ * This module can operate in two modes:
+ * - FIFO mode: Traditional first-in-first-out queue with flow control
+ * - Delay mode: Fixed-delay shift register with configurable delay length
+ * 
+ * The mode is selected at runtime via configuration signals. In delay mode,
+ * data flows through the buffer with a fixed latency, while FIFO mode
+ * implements proper ready/valid handshaking with backpressure.
+ * 
+ * @param t Data type for the buffer elements
+ * @param depth Maximum buffer depth (must be > 0)
+ * @groupdesc Signals The actual hardware fields of the IO Bundle
+ */
 class FifoOrDelay[T <: Data](t: T, depth: Int) extends Module {
   assert(depth > 0)
-  val configValid = IO(Input(Bool()))
-  val configIsFifo = IO(Input(Bool()))
-  val configDelay = IO(Input(UInt(log2Ceil(depth+1).W)))
-  val input = IO(Flipped(DecoupledIO(t)))
-  val output = IO(DecoupledIO(t))
+  
+  val io = IO(new Bundle {
+    /** Configuration interface with valid/ready semantics
+      * @group Signals
+      */
+    val config = Input(Valid(new FifoOrDelayConfig(depth)))
+    
+    /** Input data stream with ready/valid handshaking
+      * @group Signals
+      */
+    val input = Flipped(DecoupledIO(t))
+    
+    /** Output data stream with ready/valid handshaking
+      * @group Signals
+      */
+    val output = DecoupledIO(t)
+  })
 
+  // Internal storage and control registers
   val regs = Reg(Vec(depth, Valid(t)))
   val readAddress = RegInit(0.U(log2Ceil(depth).W))
   val writeAddress = RegInit(0.U(log2Ceil(depth).W))
 
+  // Mode and state tracking
   val isFifo = RegInit(true.B)
   val empty = RegInit(true.B)
   val full = RegInit(false.B)
   val zeroDelay = RegInit(false.B)
   val count = RegInit(0.U(log2Ceil(depth+1).W))
 
-  input.ready := !full
+  // Flow control and output logic
+  io.input.ready := !full
   when (isFifo) {
-    // If we're operating as a FIFO we don't use the valid
-    // stored in the memory.  Instead we look at whether it
-    // is empty
-    output.valid := !empty
-    output.bits := regs(readAddress).bits
+    // FIFO mode: output valid when not empty, data from read address
+    io.output.valid := !empty
+    io.output.bits := regs(readAddress).bits
   }.otherwise {
-    // If we're in delay mode, then if the delay is 0 we're
-    // just a passthrough otherwise we read from the memory. 
+    // Delay mode: either passthrough (zero delay) or from buffer
     when (zeroDelay) {
-      output.valid := input.valid
-      output.bits := input.bits
+      io.output.valid := io.input.valid
+      io.output.bits := io.input.bits
     }.otherwise {
-      output.valid := regs(readAddress).valid
-      output.bits := regs(readAddress).bits
+      io.output.valid := regs(readAddress).valid
+      io.output.bits := regs(readAddress).bits
     }
   }
 
-  when (configValid) {
-    isFifo := configIsFifo
+  // Configuration logic
+  when (io.config.valid) {
+    isFifo := io.config.bits.isFifo
     zeroDelay := false.B
     count := 0.U
-    when (configIsFifo) {
+    
+    when (io.config.bits.isFifo) {
+      // Initialize for FIFO mode
       readAddress := 0.U
       writeAddress := 0.U
       empty := true.B
       full := false.B
     }.otherwise {
-      // In delay mode the readAddress is configDelay locations before the writeadress. In will
-      // take configDelay cycles to reach the writeAddress so that we get the correct delay
+      // Initialize for delay mode
+      // Read address starts (delay) positions behind write address
       empty := false.B
       full := false.B
       writeAddress := 0.U
-      when (configDelay > 0.U) {
-        readAddress := (depth.U - configDelay)
+      when (io.config.bits.delay > 0.U) {
+        readAddress := (depth.U - io.config.bits.delay)
       }.otherwise {
         zeroDelay := true.B
         readAddress := 0.U
       }
     }
+    
+    // Clear all storage
     for (i <- 0 until depth) {
       regs(i).valid := false.B
     }
   }.otherwise {
-    // The addresses always increment in delay mode.
-    // In fifo mode they only increment on a read or write which correspond to both
-    // valid and ready being high.
-    when (!isFifo || (output.valid && output.ready)) {
+    // Normal operation logic
+    
+    // Read address management
+    // In delay mode: always increments
+    // In FIFO mode: increments only when data is consumed
+    when (!isFifo || (io.output.valid && io.output.ready)) {
       when (readAddress === (depth-1).U) {
         readAddress := 0.U
       }.otherwise {
         readAddress := readAddress + 1.U
       }
     }
-    when (!isFifo || (input.valid && input.ready)) {
-      regs(writeAddress).bits := input.bits
-      regs(writeAddress).valid := input.valid
+    
+    // Write address management and data storage
+    // In delay mode: always increments
+    // In FIFO mode: increments only when data is accepted
+    when (!isFifo || (io.input.valid && io.input.ready)) {
+      regs(writeAddress).bits := io.input.bits
+      regs(writeAddress).valid := io.input.valid
       when (writeAddress === (depth-1).U) {
         writeAddress := 0.U
       }.otherwise {
         writeAddress := writeAddress + 1.U
       }
     }
-    // For fifo mode we keep track of the number of elements in the fifo.
-    // We register 'empty' and 'full' so that we can use them to set the
-    // valid and ready signals.
-    val countIncr = (input.valid && input.ready)
-    val countDecr = (output.valid && output.ready)
+    
+    // FIFO occupancy tracking
+    // Maintains count, empty, and full status for flow control
+    val countIncr = (io.input.valid && io.input.ready)
+    val countDecr = (io.output.valid && io.output.ready)
     when (countIncr && countDecr) {
+      // Both increment and decrement - no change
     }.elsewhen (countIncr) {
       count := count + 1.U
       when (count === (depth-1).U) {
@@ -116,16 +172,15 @@ class FifoOrDelay[T <: Data](t: T, depth: Int) extends Module {
 }
 
 
-object FifoOrDelay extends ModuleGenerator {
-
+object FifoOrDelayGenerator extends ModuleGenerator {
   override def makeModule(args: Seq[String]): Module = {
     if (args.length < 2) {
-      println("Usage: <command> <outputDir> FifoOrDelay <width> <depth>");
-      return null;
+      println("Usage: <command> <outputDir> FifoOrDelay <width> <depth>")
+      null
+    } else {
+      val width = args(0).toInt
+      val depth = args(1).toInt
+      new FifoOrDelay(UInt(width.W), depth)
     }
-    val width = args(0).toInt
-    val depth = args(1).toInt
-    return new FifoOrDelay(UInt(width.W), depth)
   }
-
 }

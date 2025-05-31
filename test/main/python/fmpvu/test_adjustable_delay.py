@@ -15,6 +15,13 @@ from fmpvu import generate_rtl
 this_dir = os.path.abspath(os.path.dirname(__file__))
 
 
+async def error_monitor(dut: HierarchyObject) -> None:
+    """Monitor error signals and assert if any errors occur."""
+    while True:
+        await triggers.ReadOnly()
+        assert dut.io_errors_dataOverwrite.value == 0, "dataOverwrite error detected"
+        await triggers.RisingEdge(dut.clock)
+
 @cocotb.test()
 async def adjustable_delay_test(dut: HierarchyObject) -> None:
     """Test AdjustableDelay module with various delay values and input patterns."""
@@ -33,6 +40,9 @@ async def adjustable_delay_test(dut: HierarchyObject) -> None:
     dut.reset.value = 1
     await triggers.RisingEdge(dut.clock)
     dut.reset.value = 0
+    
+    # Start error monitoring after reset
+    cocotb.start_soon(error_monitor(dut))
     for i in range(20):
         await triggers.RisingEdge(dut.clock)
         delay = rnd.getrandbits(delay_width)

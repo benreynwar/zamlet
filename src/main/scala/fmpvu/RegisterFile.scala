@@ -1,55 +1,94 @@
 package fmpvu
 
 import chisel3._
-import _root_.circt.stage.ChiselStage
-import chisel3.stage.ChiselGeneratorAnnotation
-import java.io.{File, PrintWriter}
-
 import chisel3.util.log2Ceil
 import chisel3.util.Valid
 import chisel3.util.UIntToOH
 import chisel3.util.{MemoryWritePort, MemoryReadPort}
 
-import scala.io.Source
-
 import fmpvu.ModuleGenerator
 
+/**
+ * Error signals for the RegisterFile module
+ * @param nWritePorts Number of write ports for sizing the error vectors
+ * @groupdesc Signals The actual hardware fields of the Bundle
+ */
+class RegisterFileErrors(nWritePorts: Int) extends Bundle {
+  /** Indicates if multiple write ports attempted to write to the same address this cycle
+    * @group Signals
+    */
+  val writeConflict = Bool()
+}
 
+/**
+ * Multi-port register file with write conflict detection
+ * 
+ * This module implements a register file that supports:
+ * - Multiple concurrent read ports (combinational read)
+ * - Multiple concurrent write ports with conflict detection
+ * - Write conflicts are detected and reported as errors
+ * - All reads are combinational (no latency)
+ * 
+ * @param width Data width in bits
+ * @param depth Number of registers
+ * @param nReadPorts Number of concurrent read ports
+ * @param nWritePorts Number of concurrent write ports
+ * @groupdesc Signals The actual hardware fields of the IO Bundle
+ */
 class RegisterFile(width: Int, depth: Int, nReadPorts: Int, nWritePorts: Int) extends Module {
   val io = IO(new Bundle {
+    /** Write ports for concurrent write operations
+      * @group Signals
+      */
     val writes = Input(Vec(nWritePorts, new MemoryWritePort(UInt(width.W), log2Ceil(depth), false)))
+    
+    /** Read ports for concurrent read operations (combinational)
+      * @group Signals
+      */
     val reads = Vec(nReadPorts, new MemoryReadPort(UInt(width.W), log2Ceil(depth)))
+    
+    /** Error status signals indicating write conflicts
+      * @group Signals
+      */
+    val errors = Output(new RegisterFileErrors(nWritePorts))
   })
 
-  val contents = Reg(Vec(depth, UInt(width.W)))
+  // Register file storage
+  val registers = Reg(Vec(depth, UInt(width.W)))
 
-  // For each location in memory this should contain how many write ports are trying to write to that location.
-  val oneHots = Wire(Vec(nWritePorts, UInt(depth.W)))
-  for (port_index <- 0 until nWritePorts) {
-    oneHots(port_index) := UIntToOH(io.writes(port_index).address)
-  }
-  val writeClashes = Wire(Vec(depth, Bool()))
+  // Convert write addresses to one-hot encoding for conflict detection
+  val writeOneHots = VecInit(io.writes.map(port => UIntToOH(port.address)))
+  
+  // Check for write conflicts across all addresses
+  val addressConflicts = Wire(Vec(depth, Bool()))
+  
   for (addr <- 0 until depth) {
-    val validWrites = Wire(Vec(nWritePorts, Valid(UInt(width.W))))
-    for (port_index <- 0 until nWritePorts) {
-      validWrites(port_index).valid := oneHots(port_index)(addr) && io.writes(port_index).enable
-      validWrites(port_index).bits := io.writes(port_index).data
+    // Collect all valid write requests targeting this address
+    val writesToThisAddr = Wire(Vec(nWritePorts, Valid(UInt(width.W))))
+    for (portIdx <- 0 until nWritePorts) {
+      val targetThisAddr = writeOneHots(portIdx)(addr) && io.writes(portIdx).enable
+      writesToThisAddr(portIdx).valid := targetThisAddr
+      writesToThisAddr(portIdx).bits := io.writes(portIdx).data
     }
-    val finalWrite = Wire(Valid(UInt(width.W)))
-    val mux = Module(new ValidMux(UInt(width.W), nWritePorts))
-    mux.io.inputs := validWrites
-    finalWrite := mux.io.output
-    writeClashes(addr) := mux.io.error
-    when(finalWrite.valid) {
-      contents(addr) := finalWrite.bits
+    
+    // Use ValidMux to arbitrate writes and detect conflicts
+    val writeArbiter = Module(new ValidMux(UInt(width.W), nWritePorts))
+    writeArbiter.io.inputs := writesToThisAddr
+    addressConflicts(addr) := writeArbiter.io.error
+    
+    // Apply the arbitrated write if valid
+    when(writeArbiter.io.output.valid) {
+      registers(addr) := writeArbiter.io.output.bits
     }
   }
-  val writeClash = writeClashes.exists(x => x)
 
-  for (port_index <- 0 until nReadPorts) {
-    io.reads(port_index).data := contents(io.reads(port_index).address)
+  // Combinational reads
+  for (portIdx <- 0 until nReadPorts) {
+    io.reads(portIdx).data := registers(io.reads(portIdx).address)
   }
-
+  
+  // Report write conflicts
+  io.errors.writeConflict := addressConflicts.reduce(_ || _)
 }
 
 
