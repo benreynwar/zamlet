@@ -218,7 +218,7 @@ async def lane_test(dut: HierarchyObject) -> None:
     dut.io_nConfig_configDelay.value = 0
     
     # Initialize bus interfaces
-    for i in range(params.n_buses):
+    for i in range(params.n_channels):
         getattr(dut, f'io_nI_{i}_valid').value = 0
         getattr(dut, f'io_sI_{i}_valid').value = 0
         getattr(dut, f'io_eI_{i}_valid').value = 0

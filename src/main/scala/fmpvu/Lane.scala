@@ -95,14 +95,14 @@ class Config(params: FMPVUParams) extends Bundle {
 
 class Lane(params: FMPVUParams) extends Module {
   val io = IO(new Bundle {
-    val nI = Vec(params.nBuses, new Bus(params.width))
-    val nO = Vec(params.nBuses, Flipped(new Bus(params.width)))
-    val sI = Vec(params.nBuses, new Bus(params.width))
-    val sO = Vec(params.nBuses, Flipped(new Bus(params.width)))
-    val eI = Vec(params.nBuses, new Bus(params.width))
-    val eO = Vec(params.nBuses, Flipped(new Bus(params.width)))
-    val wI = Vec(params.nBuses, new Bus(params.width))
-    val wO = Vec(params.nBuses, Flipped(new Bus(params.width)))
+    val nI = Vec(params.nChannels, new PacketInterface(params.width))
+    val nO = Vec(params.nChannels, Flipped(new PacketInterface(params.width)))
+    val sI = Vec(params.nChannels, new PacketInterface(params.width))
+    val sO = Vec(params.nChannels, Flipped(new PacketInterface(params.width)))
+    val eI = Vec(params.nChannels, new PacketInterface(params.width))
+    val eO = Vec(params.nChannels, Flipped(new PacketInterface(params.width)))
+    val wI = Vec(params.nChannels, new PacketInterface(params.width))
+    val wO = Vec(params.nChannels, Flipped(new PacketInterface(params.width)))
     val nInstr = Input(new Instr(params))
     val sInstr = Output(new Instr(params))
     val instrDelay = Input(UInt(log2Ceil(params.networkMemoryDepth + 1).W))
@@ -172,22 +172,22 @@ class Lane(params: FMPVUParams) extends Module {
 
   val networkControl = Wire(new NetworkNodeControl(params))
   // For now let's keep things simple
-  // Writes to the DDM come from the west (bus 0)
-  // Reads from the DDM go the east (bus 0)
-  // Writes to the DRF come from the north (bus 0)
-  // Reads from the DRF go the south (bus 0)
-  // For n_buses = 4, delay up to 7 this is 4 * (1 + 1 + 3 + 3 + 3 + 3 + 3 + 3) = 4 * 20 = 80 bits
-  for (i <- 0 until params.nBuses) {
+  // Writes to the DDM come from the west (channel 0)
+  // Reads from the DDM go the east (channel 0)
+  // Writes to the DRF come from the north (channel 0)
+  // Reads from the DRF go the south (channel 0)
+  // For n_channels = 4, delay up to 7 this is 4 * (1 + 1 + 3 + 3 + 3 + 3 + 3 + 3) = 4 * 20 = 80 bits
+  for (i <- 0 until params.nChannels) {
     networkControl.nsInputSel(i) := false.B
     networkControl.weInputSel(i) := false.B
-    networkControl.nsCrossbarSel(i) := (if (i == 1) (params.nBuses + 0).U else 0.U)
-    networkControl.weCrossbarSel(i) := (if (i == 1) (params.nBuses + 1).U else 0.U)
+    networkControl.nsCrossbarSel(i) := (if (i == 1) (params.nChannels + 0).U else 0.U)
+    networkControl.weCrossbarSel(i) := (if (i == 1) (params.nChannels + 1).U else 0.U)
   }
   networkControl.drfSel := 0.U
-  networkControl.ddmSel := params.nBuses.U
+  networkControl.ddmSel := params.nChannels.U
   
   // Set drive signals - for current tests, only drive east
-  for (i <- 0 until params.nBuses) {
+  for (i <- 0 until params.nChannels) {
     networkControl.nDrive(i) := false.B
     networkControl.sDrive(i) := false.B
     networkControl.wDrive(i) := false.B

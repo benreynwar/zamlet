@@ -13,50 +13,137 @@ import scala.io.Source
 
 import fmpvu.ModuleGenerator
 
+/**
+ * Control signals for configuring NetworkNode routing behavior
+ * @param params FMPVU parameters for sizing the control vectors
+ * @groupdesc Signals The actual hardware fields of the Bundle
+ */
+
 
 class NetworkNodeControl(params: FMPVUParams) extends Bundle {
-  val nsInputSel = Vec(params.nBuses, Bool())
-  val weInputSel = Vec(params.nBuses, Bool())
-  val nsCrossbarSel = Vec(params.nBuses, UInt(log2Ceil(params.nBuses + 2).W))
-  val weCrossbarSel = Vec(params.nBuses, UInt(log2Ceil(params.nBuses + 2).W))
-  val drfSel = UInt(log2Ceil(params.nBuses * 2).W)
-  val ddmSel = UInt(log2Ceil(params.nBuses * 2).W)
-  val nDrive = Vec(params.nBuses, Bool())
-  val sDrive = Vec(params.nBuses, Bool())
-  val wDrive = Vec(params.nBuses, Bool())
-  val eDrive = Vec(params.nBuses, Bool())
+  /** Input selection for north-south direction per channel
+    * @group Signals
+    */
+  val nsInputSel = Vec(params.nChannels, Bool())
+  
+  /** Input selection for west-east direction per channel
+    * @group Signals
+    */
+  val weInputSel = Vec(params.nChannels, Bool())
+  
+  /** Crossbar selection for north-south routing per channel
+    * @group Signals
+    */
+  val nsCrossbarSel = Vec(params.nChannels, UInt(log2Ceil(params.nChannels + 2).W))
+  
+  /** Crossbar selection for west-east routing per channel
+    * @group Signals
+    */
+  val weCrossbarSel = Vec(params.nChannels, UInt(log2Ceil(params.nChannels + 2).W))
+  
+  /** Data register file selection signal
+    * @group Signals
+    */
+  val drfSel = UInt(log2Ceil(params.nChannels * 2).W)
+  
+  /** Data memory selection signal
+    * @group Signals
+    */
+  val ddmSel = UInt(log2Ceil(params.nChannels * 2).W)
+  
+  /** Enable driving outputs in each direction per channel
+    * @group Signals
+    */
+  val nDrive = Vec(params.nChannels, Bool())
+  val sDrive = Vec(params.nChannels, Bool())
+  val wDrive = Vec(params.nChannels, Bool())
+  val eDrive = Vec(params.nChannels, Bool())
 }
 
+/**
+ * Network node that can operate in either packet or static mode
+ * 
+ * This module implements a configurable network router that supports:
+ * - Packet mode: Uses switches and FIFOs for store-and-forward routing as nChannels independent networks
+ * - Static mode: Uses crossbars and delay lines for deterministic routing as a single unified network
+ * - DDM (Data Memory) and DRF (Data Register File) access interfaces
+ * - Configurable routing delay and memory behavior
+ * 
+ * The node contains 4 directional ports (N,S,W,E) with multiple channels per direction.
+ * In packet mode, packets are routed based on header information on independent channels.
+ * In static mode, data flows according to static control signals across all channels.
+ * 
+ * @param params FMPVU parameters defining channel counts, widths, and memory sizes
+ * @groupdesc Signals The actual hardware fields of the IO Bundle
+ */
 class NetworkNode(params: FMPVUParams) extends Module {
   val io = IO(new Bundle {
-    val inputs = Vec(4, Vec(params.nBuses, new Bus(params.width)))
-    val outputs = Vec(4, Vec(params.nBuses, Flipped(new Bus(params.width))))
+    /** Input channels from 4 directions: North(0), South(1), West(2), East(3)
+      * @group Signals
+      */
+    val inputs = Vec(4, Vec(params.nChannels, new PacketInterface(params.width)))
+    
+    /** Output channels to 4 directions: North(0), South(1), West(2), East(3)
+      * @group Signals
+      */
+    val outputs = Vec(4, Vec(params.nChannels, Flipped(new PacketInterface(params.width))))
+    
+    /** Interface to Data Register File for temporary data storage
+      * @group Signals
+      */
     val toDRF = Output(Valid(UInt(params.width.W)))
     val fromDRF = Input(Valid(UInt(params.width.W)))
+    
+    /** Interface to Data Memory for packet/data storage
+      * @group Signals
+      */
     val toDDM = Output(Valid(new HeaderTag(UInt(params.width.W))))
     val fromDDM = Input(Valid(UInt(params.width.W)))
+    
+    /** Control signals for static mode routing configuration
+      * @group Signals
+      */
     val control = Input(new NetworkNodeControl(params))
+    
+    /** This node's location in the network grid
+      * @group Signals
+      */
     val thisLoc = Input(new Location(params))
+    
+    /** Configuration signals for mode and timing setup
+      * @group Signals
+      */
     val configValid = Input(Bool())
     val configIsPacketMode = Input(Bool())
     val configDelay = Input(UInt(log2Ceil(params.networkMemoryDepth + 1).W))
   })
 
-  // Just here to define modules
-  val withHeaderTemplate = new HeaderTag(UInt(params.width.W))
+  // Template for HeaderTag type inference
+  val headerTemplate = new HeaderTag(UInt(params.width.W))
 
+  /** Current operating mode: true for packet mode, false for static mode */
   val isPacketMode = RegInit(true.B)
-
   when (io.configValid) {
     isPacketMode := io.configIsPacketMode
   }
 
+  // Network components
   val crossbar = Module(new NetworkCrossbar(params))
+  val switches = Seq.fill(params.nChannels)(withReset(reset.asBool || io.configValid) { 
+    Module(new NetworkSwitch(params)) 
+  })
 
-  // Create a wire to aggregate all switch toDDM outputs
-  val switchesToDDM = Wire(DecoupledIO(new HeaderTag(UInt(params.width.W))))
+  // DDM arbitration signals
+  val ddmArbitrationActive = RegInit(false.B)
+  val ddmArbitrationChannelPointer = RegInit(0.U(log2Ceil(params.nChannels).W))
+  val ddmArbitrationRemaining = RegInit(0.U(log2Ceil(params.maxPacketLength+1).W))
+  
+  // Aggregated switch outputs for DDM access
+  val switchesToDDM = Wire(DecoupledIO(headerTemplate))
+  switchesToDDM.valid := false.B
+  switchesToDDM.bits := DontCare
 
-  // To the DDM from either the switch or the crossbar
+  // Route DDM interface based on operating mode
   when (isPacketMode) {
     io.toDDM.valid := switchesToDDM.valid
     io.toDDM.bits := switchesToDDM.bits
@@ -68,172 +155,165 @@ class NetworkNode(params: FMPVUParams) extends Module {
     switchesToDDM.ready := false.B
   }
 
-  val ddmSelActive = RegInit(false.B)
-  val ddmSelPointer = RegInit(0.U(log2Ceil(params.nBuses).W))
-  val ddmRemaining = RegInit(0.U(log2Ceil(params.maxPacketLength+1).W))
+  // DDM arbitration next-state logic
+  val nextDdmArbitrationActive = Wire(Bool())
+  val nextDdmArbitrationChannelPointer = Wire(UInt(log2Ceil(params.nChannels).W))
+  val nextDdmArbitrationRemaining = Wire(UInt(log2Ceil(params.maxPacketLength+1).W))
   
-  // Default values for switchesToDDM
-  switchesToDDM.valid := false.B
-  switchesToDDM.bits := DontCare
-  
-  // DDM arbitration logic - will be connected to switches in the loop below
-  val nextDdmSelActive = Wire(Bool())
-  val nextDdmSelPointer = Wire(UInt(log2Ceil(params.nBuses).W))
-  val nextDdmRemaining = Wire(UInt(log2Ceil(params.maxPacketLength+1).W))
-  
-  // Default next values
-  nextDdmSelActive := ddmSelActive
-  nextDdmRemaining := ddmRemaining
-  nextDdmSelPointer := ddmSelPointer
+  // Default to current state
+  nextDdmArbitrationActive := ddmArbitrationActive
+  nextDdmArbitrationChannelPointer := ddmArbitrationChannelPointer
+  nextDdmArbitrationRemaining := ddmArbitrationRemaining
 
+  // Connect crossbar to external interfaces
   crossbar.io.fromDRF := io.fromDRF
   io.toDRF := crossbar.io.toDRF
   crossbar.io.fromDDM := io.fromDDM
   crossbar.io.control := io.control
 
-  // Create all switch instances
-  val switches = Seq.fill(params.nBuses)(withReset(reset.asBool || io.configValid) { Module(new NetworkSwitch(params)) })
-
-  val allSwitchToDDM = Wire(Vec(params.nBuses, DecoupledIO(new HeaderTag(UInt(params.width.W)))))
-  for (i <- 0 until params.nBuses) {
+  // Collect all switch DDM outputs
+  val allSwitchToDDM = Wire(Vec(params.nChannels, DecoupledIO(headerTemplate)))
+  for (i <- 0 until params.nChannels) {
     allSwitchToDDM(i) <> switches(i).io.toDDM
   }
-  switchesToDDM.valid := allSwitchToDDM(ddmSelPointer).valid && isPacketMode
-  switchesToDDM.bits := allSwitchToDDM(ddmSelPointer).bits
+  
+  // Connect selected switch to aggregated DDM output
+  switchesToDDM.valid := allSwitchToDDM(ddmArbitrationChannelPointer).valid && isPacketMode
+  switchesToDDM.bits := allSwitchToDDM(ddmArbitrationChannelPointer).bits
 
-  for (busIndex <- 0 until params.nBuses) {
-    val switch = switches(busIndex)
-    switch.io.thisLoc := io.thisLoc
+  // Configure each channel and its associated switch
+  for (channelIndex <- 0 until params.nChannels) {
+    val currentSwitch = switches(channelIndex)
     
-    // Currently we don't have any way for the DDM to initiate sending a packet
-    // so this is inactive.
-    switch.io.fromDDM.valid := false.B
-    switch.io.fromDDM.bits := DontCare
+    // Connect switch location interface
+    currentSwitch.io.thisLoc := io.thisLoc
     
-    // DDM arbitration: only the selected switch can write to DDM
-    when (isPacketMode && ddmSelPointer === busIndex.U) {
-      allSwitchToDDM(busIndex).ready := switchesToDDM.ready
-      // This switch is selected for DDM access
-      when (!ddmSelActive) {
-        // Not currently active - check if this switch wants to start a packet
-        when (switch.io.toDDM.valid && switch.io.toDDM.bits.header) {
-          // Switch wants to start a new packet, grant access
-          nextDdmSelActive := true.B
-          // Extract packet length from header
-          val header = Header.fromBits(switch.io.toDDM.bits.bits, params)
-          nextDdmRemaining := header.length
+    // DDM to switch interface (currently unused)
+    currentSwitch.io.fromDDM.valid := false.B
+    currentSwitch.io.fromDDM.bits := DontCare
+    
+    // DDM arbitration: manage which switch can access DDM
+    val isSelectedForDDM = isPacketMode && ddmArbitrationChannelPointer === channelIndex.U
+    when (isSelectedForDDM) {
+      allSwitchToDDM(channelIndex).ready := switchesToDDM.ready
+      
+      when (!ddmArbitrationActive) {
+        // Not actively transmitting - check for new packet start
+        when (currentSwitch.io.toDDM.valid && currentSwitch.io.toDDM.bits.header) {
+          // Grant DDM access and extract packet length
+          nextDdmArbitrationActive := true.B
+          val packetHeader = Header.fromBits(currentSwitch.io.toDDM.bits.bits, params)
+          nextDdmArbitrationRemaining := packetHeader.length
         }.otherwise {
-          nextDdmSelPointer := (ddmSelPointer + 1.U) % params.nBuses.U
+          // Move to next channel in round-robin fashion
+          nextDdmArbitrationChannelPointer := (ddmArbitrationChannelPointer + 1.U) % params.nChannels.U
         }
       }.otherwise {
-        // Decrement remaining count on successful transfer
-        when (switch.io.toDDM.valid && switch.io.toDDM.ready) {
-          nextDdmRemaining := ddmRemaining - 1.U
-          // Check if this is the last transfer
-          when (ddmRemaining === 1.U) {
-            nextDdmSelActive := false.B
+        // Actively transmitting - count down remaining transfers
+        when (currentSwitch.io.toDDM.valid && currentSwitch.io.toDDM.ready) {
+          nextDdmArbitrationRemaining := ddmArbitrationRemaining - 1.U
+          when (ddmArbitrationRemaining === 1.U) {
+            nextDdmArbitrationActive := false.B
           }
         }
       }
     }.otherwise {
-      // This switch is not selected for DDM access
-      allSwitchToDDM(busIndex).ready := false.B
+      // This channel is not selected for DDM access
+      allSwitchToDDM(channelIndex).ready := false.B
     }
 
 
+    // Configure input/output routing for each direction (N=0, S=1, W=2, E=3)
     for (direction <- 0 until 4) {
-      // If we're in packet mode the inputs go to the switch
-      // otherwise they go to the crossbar.
+      // Route inputs based on operating mode
       when (isPacketMode) {
-        switch.io.inputs(direction) <> io.inputs(direction)(busIndex)
-        crossbar.io.inputs(direction)(busIndex).valid := false.B
-        crossbar.io.inputs(direction)(busIndex).bits := DontCare
+        // Packet mode: inputs go to switches
+        currentSwitch.io.inputs(direction) <> io.inputs(direction)(channelIndex)
+        crossbar.io.inputs(direction)(channelIndex).valid := false.B
+        crossbar.io.inputs(direction)(channelIndex).bits := DontCare
       }.otherwise {
-        switch.io.inputs(direction).valid := false.B
-        switch.io.inputs(direction).bits := DontCare
-        io.inputs(direction)(busIndex).token := false.B
-        crossbar.io.inputs(direction)(busIndex) := io.inputs(direction)(busIndex).toValid()
+        // Static mode: inputs go to crossbar
+        currentSwitch.io.inputs(direction).valid := false.B
+        currentSwitch.io.inputs(direction).bits := DontCare
+        io.inputs(direction)(channelIndex).token := false.B
+        crossbar.io.inputs(direction)(channelIndex) := io.inputs(direction)(channelIndex).toValid()
       }
 
-      val fifoOrDelay = Module(new FifoOrDelay(withHeaderTemplate, params.networkMemoryDepth))
-      fifoOrDelay.io.config.valid := io.configValid
-      fifoOrDelay.io.config.bits.isFifo := io.configIsPacketMode
-      fifoOrDelay.io.config.bits.delay := io.configDelay
+      // Create configurable buffer (FIFO for packet mode, delay line for static mode)
+      val routingBuffer = Module(new FifoOrDelay(headerTemplate, params.networkMemoryDepth))
+      routingBuffer.io.config.valid := io.configValid
+      routingBuffer.io.config.bits.isFifo := io.configIsPacketMode
+      routingBuffer.io.config.bits.delay := io.configDelay
 
-      // If we're in packet mode then the memory inputs come from the switch
-      // otherwise the inputs come from the crossbar
+      // Route buffer inputs based on operating mode
       when (isPacketMode) {
-        fifoOrDelay.io.input <> switch.io.toFifos(direction)
+        // Packet mode: buffer inputs come from switch
+        routingBuffer.io.input <> currentSwitch.io.toFifos(direction)
       }.otherwise {
-        fifoOrDelay.io.input.valid := crossbar.io.outputs(direction)(busIndex).valid
-        fifoOrDelay.io.input.bits.bits := crossbar.io.outputs(direction)(busIndex).bits
-        fifoOrDelay.io.input.bits.header := false.B
-        // Note: crossbar outputs are Valid signals with no backpressure
-        switch.io.toFifos(direction).ready := false.B
+        // Static mode: buffer inputs come from crossbar
+        routingBuffer.io.input.valid := crossbar.io.outputs(direction)(channelIndex).valid
+        routingBuffer.io.input.bits.bits := crossbar.io.outputs(direction)(channelIndex).bits
+        routingBuffer.io.input.bits.header := false.B
+        currentSwitch.io.toFifos(direction).ready := false.B
       }
 
-      // If we're in packet mode then the memory outputs go the switch
-      // otherwise they go into the pre-output mux.
-      // If we're in packet mode then the pre-output mux comes from the switch
-
-      val toOutputs = Wire(new Bus(params.width))
+      // Route buffer outputs and determine final output signals
+      val finalOutput = Wire(new PacketInterface(params.width))
       when (isPacketMode) {
-        switch.io.fromFifos(direction) <> fifoOrDelay.io.output
-        toOutputs <> switch.io.outputs(direction)
+        // Packet mode: buffer outputs go to switch, final output from switch
+        currentSwitch.io.fromFifos(direction) <> routingBuffer.io.output
+        finalOutput <> currentSwitch.io.outputs(direction)
       }.otherwise {
-        val oppositeDir = Wire(UInt(2.W))
-        when (direction.U === 0.U) {
-          oppositeDir := 1.U
-        }.elsewhen (direction.U === 1.U) {
-          oppositeDir := 0.U
-        }.elsewhen (direction.U === 2.U) {
-          oppositeDir := 3.U
+        // Static mode: complex output routing with passthrough capability
+        // Calculate opposite direction: N<->S (0<->1), W<->E (2<->3)
+        val oppositeDirection = Wire(UInt(2.W))
+        oppositeDirection := Mux(direction.U < 2.U, 
+          direction.U ^ 1.U,  // N<->S: 0^1=1, 1^1=0
+          direction.U ^ 1.U   // W<->E: 2^1=3, 3^1=2
+        )
+        
+        val inputFromOpposite = io.inputs(oppositeDirection)(channelIndex)
+        
+        // Determine if this direction should drive its output
+        val shouldDriveOutput = Wire(Bool())
+        shouldDriveOutput := VecInit(Seq(
+          io.control.nDrive(channelIndex),  // North (0)
+          io.control.sDrive(channelIndex),  // South (1) 
+          io.control.wDrive(channelIndex),  // West (2)
+          io.control.eDrive(channelIndex)   // East (3)
+        ))(direction)
+        
+        when (shouldDriveOutput && routingBuffer.io.output.valid) {
+          // Drive output from our own routing buffer
+          finalOutput.valid := true.B
+          finalOutput.bits := routingBuffer.io.output.bits
+          routingBuffer.io.output.ready := finalOutput.token
+          inputFromOpposite.token := false.B
         }.otherwise {
-          oppositeDir := 2.U
-        }
-        val fromOpposite = io.inputs(oppositeDir)(busIndex)
-        val shouldDrive = Wire(Bool())
-        when (direction.U === 0.U) {
-          shouldDrive := io.control.nDrive(busIndex)
-        }.elsewhen (direction.U === 1.U) {
-          shouldDrive := io.control.sDrive(busIndex)
-        }.elsewhen (direction.U === 2.U) {
-          shouldDrive := io.control.wDrive(busIndex)
-        }.otherwise {
-          shouldDrive := io.control.eDrive(busIndex)
+          // Pass through from opposite direction (no local drive)
+          finalOutput.valid := inputFromOpposite.valid
+          finalOutput.bits := inputFromOpposite.bits
+          routingBuffer.io.output.ready := false.B
+          inputFromOpposite.token := finalOutput.token
         }
         
-        when (shouldDrive && fifoOrDelay.io.output.valid) {
-          // Drive our own output from fifoOrDelay
-          toOutputs.valid := true.B
-          toOutputs.bits := fifoOrDelay.io.output.bits
-          fifoOrDelay.io.output.ready := toOutputs.token
-          fromOpposite.token := false.B
-        }.otherwise {
-          // Don't drive - pass through from opposite direction
-          toOutputs.valid := fromOpposite.valid
-          toOutputs.bits := fromOpposite.bits
-          fifoOrDelay.io.output.ready := false.B
-          fromOpposite.token := toOutputs.token
-        }
-        fifoOrDelay.io.output.ready := toOutputs.token
-        switch.io.fromFifos(direction).valid := false.B
-        switch.io.fromFifos(direction).bits := DontCare
-        switch.io.outputs(direction).token := false.B
+        // Disable unused switch interfaces in static mode
+        currentSwitch.io.fromFifos(direction).valid := false.B
+        currentSwitch.io.fromFifos(direction).bits := DontCare
+        currentSwitch.io.outputs(direction).token := false.B
       }
       
-      // Register the outputs.
-      io.outputs(direction)(busIndex).valid := RegNext(toOutputs.valid)
-      io.outputs(direction)(busIndex).bits := RegNext(toOutputs.bits)
-      toOutputs.token := RegNext(io.outputs(direction)(busIndex).token)
-
+      // Register outputs for timing (1-cycle delay)
+      io.outputs(direction)(channelIndex).valid := RegNext(finalOutput.valid)
+      io.outputs(direction)(channelIndex).bits := RegNext(finalOutput.bits)
+      finalOutput.token := RegNext(io.outputs(direction)(channelIndex).token)
     }
   }
   
-  // Update DDM arbitration registers
-  ddmSelActive := nextDdmSelActive
-  ddmRemaining := nextDdmRemaining
-  ddmSelPointer := nextDdmSelPointer
+  // Update DDM arbitration state for next cycle
+  ddmArbitrationActive := nextDdmArbitrationActive
+  ddmArbitrationChannelPointer := nextDdmArbitrationChannelPointer
+  ddmArbitrationRemaining := nextDdmArbitrationRemaining
   
 }
 

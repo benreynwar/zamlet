@@ -7,7 +7,7 @@ import io.circe.generic.auto._
 import scala.io.Source
 
 case class FMPVUParams(
-  nBuses: Int,
+  nChannels: Int,
   width: Int,
   // Max depth of the output buffers in the network node.
   networkMemoryDepth: Int,

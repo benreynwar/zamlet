@@ -7,7 +7,7 @@ from typing import Dict, Any
 class FMPVUParams:
     """Python mirror of the Scala FMPVUParams case class with snake_case naming."""
     
-    n_buses: int
+    n_channels: int
     width: int
     # Max depth of the output buffers in the network node.
     network_memory_depth: int
@@ -25,7 +25,7 @@ class FMPVUParams:
 
     # Map camelCase JSON field names to snake_case Python field names
     _FIELD_MAPPING = {
-        'nBuses': 'n_buses',
+        'nChannels': 'n_channels',
         'width': 'width',
         'networkMemoryDepth': 'network_memory_depth',
         'nDRF': 'n_drf',

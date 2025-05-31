@@ -99,14 +99,14 @@ class TokenValid[T <: Data](t: T) extends Bundle {
 }
 
 /**
- * Bus interface with header/data packets and token flow control
+ * PacketInterface with header/data packets and token flow control
  * 
  * This extends TokenValid with header tagging support for packet-based communication.
  * 
  * @param width Data width in bits
  * @groupdesc Methods Utility methods for interface conversion
  */
-class Bus(width: Int) extends TokenValid(new HeaderTag(UInt(width.W))) {
+class PacketInterface(width: Int) extends TokenValid(new HeaderTag(UInt(width.W))) {
 
   /** Convert to a simple Valid interface, extracting just the data
     * @group Methods

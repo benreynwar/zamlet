@@ -418,20 +418,20 @@ async def lane_grid_test(dut: HierarchyObject) -> None:
     
     # Initialize all network interfaces to inactive
     for row in range(params.n_rows):
-        for bus in range(params.n_buses):
-            getattr(dut, f'io_wI_{row}_{bus}_valid').value = 0
-            getattr(dut, f'io_eI_{row}_{bus}_valid').value = 0
+        for channel in range(params.n_channels):
+            getattr(dut, f'io_wI_{row}_{channel}_valid').value = 0
+            getattr(dut, f'io_eI_{row}_{channel}_valid').value = 0
             # Token inputs for outputs (these go into the LaneGrid)
-            getattr(dut, f'io_eO_{row}_{bus}_token').value = 0
-            getattr(dut, f'io_wO_{row}_{bus}_token').value = 0
+            getattr(dut, f'io_eO_{row}_{channel}_token').value = 0
+            getattr(dut, f'io_wO_{row}_{channel}_token').value = 0
     
     for col in range(params.n_columns):
-        for bus in range(params.n_buses):
-            getattr(dut, f'io_nI_{col}_{bus}_valid').value = 0
-            getattr(dut, f'io_sI_{col}_{bus}_valid').value = 0
+        for channel in range(params.n_channels):
+            getattr(dut, f'io_nI_{col}_{channel}_valid').value = 0
+            getattr(dut, f'io_sI_{col}_{channel}_valid').value = 0
             # Token inputs for outputs (these go into the LaneGrid)
-            getattr(dut, f'io_nO_{col}_{bus}_token').value = 0
-            getattr(dut, f'io_sO_{col}_{bus}_token').value = 0
+            getattr(dut, f'io_nO_{col}_{channel}_token').value = 0
+            getattr(dut, f'io_sO_{col}_{channel}_token').value = 0
 
     # Initialize all config interfaces to inactive
     for col in range(params.n_columns):

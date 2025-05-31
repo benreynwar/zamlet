@@ -38,18 +38,18 @@ async def network_basic_test(dut: HierarchyObject) -> None:
 
     # Initialize bus inputs
     for direction in range(4):
-        for bus in range(2):  # assuming 2 buses from params
-            getattr(dut, f'io_inputs_{direction}_{bus}_valid').value = 0
-            getattr(dut, f'io_inputs_{direction}_{bus}_bits_header').value = 0
-            getattr(dut, f'io_inputs_{direction}_{bus}_bits_bits').value = 0
-            getattr(dut, f'io_outputs_{direction}_{bus}_token').value = 0
+        for channel in range(params.n_channels):
+            getattr(dut, f'io_inputs_{direction}_{channel}_valid').value = 0
+            getattr(dut, f'io_inputs_{direction}_{channel}_bits_header').value = 0
+            getattr(dut, f'io_inputs_{direction}_{channel}_bits_bits').value = 0
+            getattr(dut, f'io_outputs_{direction}_{channel}_token').value = 0
     
     # Initialize control signals
-    for bus in range(2):
-        getattr(dut, f'io_control_nsInputSel_{bus}').value = 0
-        getattr(dut, f'io_control_weInputSel_{bus}').value = 0
-        getattr(dut, f'io_control_nsCrossbarSel_{bus}').value = 0
-        getattr(dut, f'io_control_weCrossbarSel_{bus}').value = 0
+    for channel in range(params.n_channels):
+        getattr(dut, f'io_control_nsInputSel_{channel}').value = 0
+        getattr(dut, f'io_control_weInputSel_{channel}').value = 0
+        getattr(dut, f'io_control_nsCrossbarSel_{channel}').value = 0
+        getattr(dut, f'io_control_weCrossbarSel_{channel}').value = 0
     dut.io_control_drfSel.value = 0
     dut.io_control_ddmSel.value = 0
     

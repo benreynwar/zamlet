@@ -15,14 +15,14 @@ import fmpvu.ModuleGenerator
 
 class LaneGrid(params: FMPVUParams) extends Module {
   val io = IO(new Bundle {
-    val nI = Vec(params.nColumns, Vec(params.nBuses, new Bus(params.width)))
-    val nO = Vec(params.nColumns, Vec(params.nBuses, Flipped(new Bus(params.width))))
-    val sI = Vec(params.nColumns, Vec(params.nBuses, new Bus(params.width)))
-    val sO = Vec(params.nColumns, Vec(params.nBuses, Flipped(new Bus(params.width))))
-    val eI = Vec(params.nRows, Vec(params.nBuses, new Bus(params.width)))
-    val eO = Vec(params.nRows, Vec(params.nBuses, Flipped(new Bus(params.width))))
-    val wI = Vec(params.nRows, Vec(params.nBuses, new Bus(params.width)))
-    val wO = Vec(params.nRows, Vec(params.nBuses, Flipped(new Bus(params.width))))
+    val nI = Vec(params.nColumns, Vec(params.nChannels, new PacketInterface(params.width)))
+    val nO = Vec(params.nColumns, Vec(params.nChannels, Flipped(new PacketInterface(params.width))))
+    val sI = Vec(params.nColumns, Vec(params.nChannels, new PacketInterface(params.width)))
+    val sO = Vec(params.nColumns, Vec(params.nChannels, Flipped(new PacketInterface(params.width))))
+    val eI = Vec(params.nRows, Vec(params.nChannels, new PacketInterface(params.width)))
+    val eO = Vec(params.nRows, Vec(params.nChannels, Flipped(new PacketInterface(params.width))))
+    val wI = Vec(params.nRows, Vec(params.nChannels, new PacketInterface(params.width)))
+    val wO = Vec(params.nRows, Vec(params.nChannels, Flipped(new PacketInterface(params.width))))
     val instr = Vec(params.nColumns, Input(new Instr(params)))
     val config = Vec(params.nColumns, Input(new Config(params)))
   })

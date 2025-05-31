@@ -16,7 +16,7 @@ import fmpvu.ModuleGenerator
  * Network crossbar for routing data between directions and memory units
  * 
  * This module implements a configurable crossbar switch that routes data between:
- * - Four directional ports (North, South, East, West) with multiple buses each
+ * - Four directional ports (North, South, East, West) with multiple channels each
  * - Data Register File (DRF) for register access
  * - Distributed Data Memory (DDM) for memory access
  * 
@@ -24,26 +24,26 @@ import fmpvu.ModuleGenerator
  * selection for each output.
  * 
  * Key features:
- * - Configurable number of buses per direction
+ * - Configurable number of channels per direction
  * - 1-cycle latency for DRF/DDM outputs
  * - Combinational routing for directional outputs
  * 
- * @param params FMPVU parameters containing width and bus configuration
+ * @param params FMPVU parameters containing width and channel configuration
  * @groupdesc Signals The actual hardware fields of the IO Bundle
  */
 class NetworkCrossbar(params: FMPVUParams) extends Module {
   val io = IO(new Bundle {
     /** Input data from four directions: [0]=North, [1]=South, [2]=East, [3]=West
-      * Each direction has multiple independent buses
+      * Each direction has multiple independent channels
       * @group Signals
       */
-    val inputs = Vec(4, Vec(params.nBuses, Input(Valid(UInt(params.width.W)))))
+    val inputs = Vec(4, Vec(params.nChannels, Input(Valid(UInt(params.width.W)))))
     
     /** Output data to four directions: [0]=North, [1]=South, [2]=East, [3]=West
-      * Each direction has multiple independent buses
+      * Each direction has multiple independent channels
       * @group Signals
       */
-    val outputs = Vec(4, Vec(params.nBuses, Output(Valid(UInt(params.width.W)))))
+    val outputs = Vec(4, Vec(params.nChannels, Output(Valid(UInt(params.width.W)))))
     
     /** Data output to Data Register File (1-cycle latency)
       * @group Signals
@@ -81,50 +81,50 @@ class NetworkCrossbar(params: FMPVUParams) extends Module {
   // Input Selection Stage
   // ============================================================================
   
-  // Aggregated inputs from North/South directions (nBuses + 2 extra for DRF/DDM)
-  val northSouthInputs = Wire(Vec(params.nBuses + 2, Valid(UInt(params.width.W))))
+  // Aggregated inputs from North/South directions (nChannels + 2 extra for DRF/DDM)
+  val northSouthInputs = Wire(Vec(params.nChannels + 2, Valid(UInt(params.width.W))))
   
-  // Aggregated inputs from West/East directions (nBuses + 2 extra for DRF/DDM)
-  val westEastInputs = Wire(Vec(params.nBuses + 2, Valid(UInt(params.width.W))))
+  // Aggregated inputs from West/East directions (nChannels + 2 extra for DRF/DDM)
+  val westEastInputs = Wire(Vec(params.nChannels + 2, Valid(UInt(params.width.W))))
   
   // Combined input array for DRF/DDM selection (all NS + all WE inputs)
-  val allCombinedInputs = Wire(Vec(2 * params.nBuses, Valid(UInt(params.width.W))))
+  val allCombinedInputs = Wire(Vec(2 * params.nChannels, Valid(UInt(params.width.W))))
   
-  // Select between North/South inputs for each bus
-  for (busIndex <- 0 until params.nBuses) {
-    northSouthInputs(busIndex) := Mux(io.control.nsInputSel(busIndex), 
-                                      io.inputs(SOUTH)(busIndex), 
-                                      io.inputs(NORTH)(busIndex))
+  // Select between North/South inputs for each channel
+  for (channelIndex <- 0 until params.nChannels) {
+    northSouthInputs(channelIndex) := Mux(io.control.nsInputSel(channelIndex), 
+                                          io.inputs(SOUTH)(channelIndex), 
+                                          io.inputs(NORTH)(channelIndex))
     
-    westEastInputs(busIndex) := Mux(io.control.weInputSel(busIndex), 
-                                    io.inputs(WEST)(busIndex), 
-                                    io.inputs(EAST)(busIndex))
+    westEastInputs(channelIndex) := Mux(io.control.weInputSel(channelIndex), 
+                                        io.inputs(WEST)(channelIndex), 
+                                        io.inputs(EAST)(channelIndex))
     
     // Build combined array for DRF/DDM input selection
-    allCombinedInputs(busIndex) := northSouthInputs(busIndex)
-    allCombinedInputs(busIndex + params.nBuses) := westEastInputs(busIndex)
+    allCombinedInputs(channelIndex) := northSouthInputs(channelIndex)
+    allCombinedInputs(channelIndex + params.nChannels) := westEastInputs(channelIndex)
   }
   
   // Add DRF and DDM as additional input sources
-  northSouthInputs(params.nBuses) := io.fromDRF
-  northSouthInputs(params.nBuses + 1) := io.fromDDM
-  westEastInputs(params.nBuses) := io.fromDRF
-  westEastInputs(params.nBuses + 1) := io.fromDDM
+  northSouthInputs(params.nChannels) := io.fromDRF
+  northSouthInputs(params.nChannels + 1) := io.fromDDM
+  westEastInputs(params.nChannels) := io.fromDRF
+  westEastInputs(params.nChannels + 1) := io.fromDDM
 
   // ============================================================================
   // Output Selection Stage
   // ============================================================================
   
   // Selected data for North-South direction outputs
-  val northSouthOutputs = Wire(Vec(params.nBuses, Valid(UInt(params.width.W))))
+  val northSouthOutputs = Wire(Vec(params.nChannels, Valid(UInt(params.width.W))))
   // Selected data for West-East direction outputs  
-  val westEastOutputs = Wire(Vec(params.nBuses, Valid(UInt(params.width.W))))
+  val westEastOutputs = Wire(Vec(params.nChannels, Valid(UInt(params.width.W))))
   
-  for (busIndex <- 0 until params.nBuses) {
+  for (channelIndex <- 0 until params.nChannels) {
     // North-South outputs select from West-East input sources
-    northSouthOutputs(busIndex) := westEastInputs(io.control.nsCrossbarSel(busIndex))
+    northSouthOutputs(channelIndex) := westEastInputs(io.control.nsCrossbarSel(channelIndex))
     // West-East outputs select from North-South input sources
-    westEastOutputs(busIndex) := northSouthInputs(io.control.weCrossbarSel(busIndex))
+    westEastOutputs(channelIndex) := northSouthInputs(io.control.weCrossbarSel(channelIndex))
   }
 
   // Select inputs for DRF and DDM from all available sources
@@ -138,11 +138,11 @@ class NetworkCrossbar(params: FMPVUParams) extends Module {
   // ============================================================================
   
   // Connect directional outputs (combinational)
-  for (busIndex <- 0 until params.nBuses) {
-    io.outputs(NORTH)(busIndex) := northSouthOutputs(busIndex)
-    io.outputs(SOUTH)(busIndex) := northSouthOutputs(busIndex)
-    io.outputs(EAST)(busIndex) := westEastOutputs(busIndex)
-    io.outputs(WEST)(busIndex) := westEastOutputs(busIndex)
+  for (channelIndex <- 0 until params.nChannels) {
+    io.outputs(NORTH)(channelIndex) := northSouthOutputs(channelIndex)
+    io.outputs(SOUTH)(channelIndex) := northSouthOutputs(channelIndex)
+    io.outputs(EAST)(channelIndex) := westEastOutputs(channelIndex)
+    io.outputs(WEST)(channelIndex) := westEastOutputs(channelIndex)
   }
 
   // Connect DRF and DDM outputs with 1-cycle delay

@@ -180,12 +180,12 @@ class NetworkSwitch(params: FMPVUParams) extends Module {
     /** Input ports from four cardinal directions using token-valid protocol
       * @group Signals
       */
-    val inputs = Vec(4, new Bus(params.width))
+    val inputs = Vec(4, new PacketInterface(params.width))
     
     /** Output ports to four cardinal directions using token-valid protocol
       * @group Signals
       */
-    val outputs = Vec(4, Flipped(new Bus(params.width)))
+    val outputs = Vec(4, Flipped(new PacketInterface(params.width)))
     
     /** This router's location in the mesh network for routing decisions
       * @group Signals
