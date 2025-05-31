@@ -1,8 +1,30 @@
+# Mill build outputs
 out/
+.mill-jvm-opts
+mill-build/
+
+# Scala/BSP
 .scala-build/
 .bsp/
-*.egg-info
+.metals/
+
+# Python
+*.egg-info/
+__pycache__/
+.pytest_cache/
+*.pyc
+sim_build/
+
+# Editor files
 *.swp
-__pycache__
-deleteme
-sim_build
+*.swo
+*~
+
+# Temporary/test directories
+deleteme/
+test_run_dir/
+generated/
+
+# OS files
+.DS_Store
+Thumbs.db
