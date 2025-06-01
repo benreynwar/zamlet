@@ -136,7 +136,17 @@ class DataMemory(width: Int, depth: Int, nBanks: Int) extends Module {
   io.errors.bankConflicts := RegNext(bankClashes)
 }
 
+/** Generator object for creating DataMemory modules from command line arguments.
+  *
+  * This object implements the ModuleGenerator interface to enable command-line
+  * generation of DataMemory modules with configurable parameters.
+  */
 object DataMemoryGenerator extends ModuleGenerator {
+  /** Create a DataMemory module with the specified parameters.
+    *
+    * @param args Command line arguments: width, depth, nBanks
+    * @return DataMemory module instance configured with the provided parameters
+    */
   override def makeModule(args: Seq[String]): Module = {
     if (args.length < 3) {
       println("Usage: <command> <outputDir> DataMemory <width> <depth> <nBanks>")

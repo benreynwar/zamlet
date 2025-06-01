@@ -14,21 +14,86 @@ import fmvpu.ModuleGenerator
 
 import scala.io.Source
 
+/** A single processing lane in the FMVPU mesh architecture.
+  *
+  * Each Lane contains a network node for communication, distributed register file (DRF),
+  * distributed data memory (DDM), and memory access controllers. The lane can execute
+  * load/store instructions and participates in the mesh network for inter-lane communication.
+  *
+  * @param params System configuration parameters
+  * @groupdesc Network Network interface ports for mesh connectivity  
+  * @groupdesc Control Control and configuration signals
+  */
 class Lane(params: FMPVUParams) extends Module {
   val io = IO(new Bundle {
+    /** North input channels from neighboring lane
+      * @group Network
+      */
     val nI = Vec(params.nChannels, new PacketInterface(params.width))
+    
+    /** North output channels to neighboring lane  
+      * @group Network
+      */
     val nO = Vec(params.nChannels, Flipped(new PacketInterface(params.width)))
+    
+    /** South input channels from neighboring lane
+      * @group Network
+      */
     val sI = Vec(params.nChannels, new PacketInterface(params.width))
+    
+    /** South output channels to neighboring lane
+      * @group Network  
+      */
     val sO = Vec(params.nChannels, Flipped(new PacketInterface(params.width)))
+    
+    /** East input channels from neighboring lane
+      * @group Network
+      */
     val eI = Vec(params.nChannels, new PacketInterface(params.width))
+    
+    /** East output channels to neighboring lane
+      * @group Network
+      */
     val eO = Vec(params.nChannels, Flipped(new PacketInterface(params.width)))
+    
+    /** West input channels from neighboring lane
+      * @group Network
+      */
     val wI = Vec(params.nChannels, new PacketInterface(params.width))
+    
+    /** West output channels to neighboring lane
+      * @group Network
+      */
     val wO = Vec(params.nChannels, Flipped(new PacketInterface(params.width)))
+    
+    /** Instruction input from north neighbor
+      * @group Control
+      */
     val nInstr = Input(new Instr(params))
+    
+    /** Instruction output to south neighbor
+      * @group Control
+      */
     val sInstr = Output(new Instr(params))
+    
+    /** Configurable delay for instruction execution timing
+      * @group Control
+      */
     val instrDelay = Input(UInt(log2Ceil(params.networkMemoryDepth + 1).W))
+    
+    /** This lane's position in the grid coordinate system
+      * @group Control
+      */
     val thisLoc = Input(new Location(params))
+    
+    /** Network configuration input from north neighbor
+      * @group Control
+      */
     val nConfig = Input(new Config(params))
+    
+    /** Network configuration output to south neighbor  
+      * @group Control
+      */
     val sConfig = Output(new Config(params))
   })
 
@@ -156,8 +221,18 @@ class Lane(params: FMPVUParams) extends Module {
 }
 
 
+/** Generator object for creating Lane modules from command line arguments.
+  *
+  * This object implements the ModuleGenerator interface to enable command-line
+  * generation of Lane modules with parameters loaded from JSON files.
+  */
 object LaneGenerator extends ModuleGenerator {
 
+  /** Create a Lane module with parameters loaded from a JSON file.
+    *
+    * @param args Command line arguments, where args(0) should be the path to a JSON parameter file
+    * @return Lane module instance configured with the loaded parameters
+    */
   override def makeModule(args: Seq[String]): Module = {
     // Parse arguments
     if (args.length < 1) {

@@ -51,3 +51,19 @@ def testAll = T {
   fmvpu.test.test()
   pythonTest()
 }
+
+def docs = T {
+  // Generate Scaladoc for FMVPU only
+  val docJar = fmvpu.docJar()
+  val docsDir = millSourcePath / "docs"
+  val apiDir = docsDir / "api" / "generated"
+  
+  // Extract Scaladoc to docs/api/generated/
+  os.makeDir.all(apiDir)
+  os.proc("unzip", "-o", docJar.path, "-d", apiDir).call()
+  
+  println(s"✓ Scaladoc generated at: docs/api/generated/index.html")
+  println(s"✓ Markdown docs available at: docs/README.md")
+  
+  PathRef(docsDir)
+}

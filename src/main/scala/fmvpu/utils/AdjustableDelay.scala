@@ -93,6 +93,11 @@ class AdjustableDelay(maxDelay: Int, width: Int) extends Module {
 }
 
 
+/** Generator object for AdjustableDelay module.
+  *
+  * Provides command-line instantiation of AdjustableDelay modules with configurable
+  * maximum delay and data width parameters.
+  */
 object AdjustableDelayGenerator extends ModuleGenerator {
   override def makeModule(args: Seq[String]): Module = {
     if (args.length < 2) {

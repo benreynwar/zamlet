@@ -172,6 +172,11 @@ class FifoOrDelay[T <: Data](t: T, depth: Int) extends Module {
 }
 
 
+/** Generator object for FifoOrDelay module.
+  *
+  * Provides command-line instantiation of FifoOrDelay modules with configurable
+  * data width and buffer depth parameters.
+  */
 object FifoOrDelayGenerator extends ModuleGenerator {
   override def makeModule(args: Seq[String]): Module = {
     if (args.length < 2) {

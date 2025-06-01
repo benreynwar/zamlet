@@ -226,7 +226,17 @@ class ddmAccess(params: FMPVUParams) extends Module {
 }
 
 
+/** Generator object for creating ddmAccess modules from command line arguments.
+  *
+  * This object implements the ModuleGenerator interface to enable command-line
+  * generation of ddmAccess modules with parameters loaded from JSON files.
+  */
 object ddmAccessGenerator extends ModuleGenerator {
+  /** Create a ddmAccess module with parameters loaded from a JSON file.
+    *
+    * @param args Command line arguments, where args(0) should be the path to a JSON parameter file
+    * @return ddmAccess module instance configured with the loaded parameters
+    */
   override def makeModule(args: Seq[String]): Module = {
     // Parse arguments
     if (args.length < 1) {

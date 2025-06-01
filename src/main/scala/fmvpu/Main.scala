@@ -8,6 +8,14 @@ import fmvpu.memory._
 import fmvpu.network._
 import fmvpu.utils._
 
+/** Main entry point for generating Verilog from FMVPU modules.
+  *
+  * This object provides a command-line interface for generating Verilog files
+  * from any FMVPU module. It supports all major modules including Lane, LaneGrid,
+  * NetworkNode, RegisterFile, DataMemory, and utility modules.
+  *
+  * Usage: scala-cli Main.scala -- <outputDir> <moduleName> [moduleArgs...]
+  */
 object Main extends App {
 
   // Parse command line arguments

@@ -94,7 +94,17 @@ class RegisterFile(width: Int, depth: Int, nReadPorts: Int, nWritePorts: Int) ex
 }
 
 
+/** Generator object for creating RegisterFile modules from command line arguments.
+  *
+  * This object implements the ModuleGenerator interface to enable command-line
+  * generation of RegisterFile modules with configurable parameters.
+  */
 object RegisterFileGenerator extends ModuleGenerator {
+  /** Create a RegisterFile module with the specified parameters.
+    *
+    * @param args Command line arguments: width, depth, nReadPorts, nWritePorts
+    * @return RegisterFile module instance configured with the provided parameters
+    */
   override def makeModule(args: Seq[String]): Module = {
     if (args.length < 4) {
       println("Usage: <command> <outputDir> RegisterFile <width> <depth> <nReadPorts> <nWritePorts>")

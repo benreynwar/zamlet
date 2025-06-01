@@ -15,17 +15,68 @@ import scala.io.Source
 import fmvpu.ModuleGenerator
 
 
+/** A 2D grid of processing lanes forming the complete FMVPU mesh architecture.
+  *
+  * The LaneGrid instantiates a configurable array of Lane modules and connects them
+  * in a 2D mesh topology. Each lane can communicate with its immediate neighbors
+  * (north, south, east, west) through packet interfaces. Instructions and configuration
+  * flow from north to south through each column, with configurable delays to ensure
+  * synchronized execution across all lanes.
+  *
+  * @param params System configuration parameters including grid dimensions
+  * @groupdesc Boundary External mesh boundary interfaces
+  * @groupdesc Control Global control and configuration signals
+  */
 class LaneGrid(params: FMPVUParams) extends Module {
   val io = IO(new Bundle {
+    /** North boundary input channels (one vector per column)
+      * @group Boundary
+      */
     val nI = Vec(params.nColumns, Vec(params.nChannels, new PacketInterface(params.width)))
+    
+    /** North boundary output channels (one vector per column)
+      * @group Boundary
+      */
     val nO = Vec(params.nColumns, Vec(params.nChannels, Flipped(new PacketInterface(params.width))))
+    
+    /** South boundary input channels (one vector per column)  
+      * @group Boundary
+      */
     val sI = Vec(params.nColumns, Vec(params.nChannels, new PacketInterface(params.width)))
+    
+    /** South boundary output channels (one vector per column)
+      * @group Boundary
+      */
     val sO = Vec(params.nColumns, Vec(params.nChannels, Flipped(new PacketInterface(params.width))))
+    
+    /** East boundary input channels (one vector per row)
+      * @group Boundary
+      */
     val eI = Vec(params.nRows, Vec(params.nChannels, new PacketInterface(params.width)))
+    
+    /** East boundary output channels (one vector per row)
+      * @group Boundary
+      */
     val eO = Vec(params.nRows, Vec(params.nChannels, Flipped(new PacketInterface(params.width))))
+    
+    /** West boundary input channels (one vector per row)
+      * @group Boundary
+      */
     val wI = Vec(params.nRows, Vec(params.nChannels, new PacketInterface(params.width)))
+    
+    /** West boundary output channels (one vector per row)
+      * @group Boundary
+      */
     val wO = Vec(params.nRows, Vec(params.nChannels, Flipped(new PacketInterface(params.width))))
+    
+    /** Instruction inputs for each column (flows north to south)
+      * @group Control
+      */
     val instr = Vec(params.nColumns, Input(new Instr(params)))
+    
+    /** Configuration inputs for each column (flows north to south)
+      * @group Control
+      */
     val config = Vec(params.nColumns, Input(new Config(params)))
   })
 
@@ -130,8 +181,18 @@ class LaneGrid(params: FMPVUParams) extends Module {
 }
 
 
+/** Generator object for creating LaneGrid modules from command line arguments.
+  *
+  * This object implements the ModuleGenerator interface to enable command-line
+  * generation of LaneGrid modules with parameters loaded from JSON files.
+  */
 object LaneGridGenerator extends ModuleGenerator {
 
+  /** Create a LaneGrid module with parameters loaded from a JSON file.
+    *
+    * @param args Command line arguments, where args(0) should be the path to a JSON parameter file
+    * @return LaneGrid module instance configured with the loaded parameters
+    */
   override def makeModule(args: Seq[String]): Module = {
     // Parse arguments
     if (args.length < 1) {
