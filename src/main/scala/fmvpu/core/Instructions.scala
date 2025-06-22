@@ -9,7 +9,7 @@ import chisel3.util.Valid
   * @param params FMVPU system parameters
   * @groupdesc Signals The actual hardware fields of the Bundle
   */
-class ComputeInstr(params: FMPVUParams) extends Bundle {
+class ComputeInstr(params: FMVPUParams) extends Bundle {
   /** Operation mode
     * @group Signals
     */
@@ -36,7 +36,7 @@ class ComputeInstr(params: FMPVUParams) extends Bundle {
   * @param params FMVPU system parameters
   * @groupdesc Signals The actual hardware fields of the Bundle
   */
-class LoadOrStoreInstr(params: FMPVUParams) extends Bundle {
+class LoadOrStoreInstr(params: FMVPUParams) extends Bundle {
   /** Operation mode: 0 = load, 1 = store
     * @group Signals
     */
@@ -58,7 +58,7 @@ class LoadOrStoreInstr(params: FMPVUParams) extends Bundle {
   * @param params FMVPU system parameters
   * @groupdesc Signals The actual hardware fields of the Bundle
   */
-class LoadInstr(params: FMPVUParams) extends Bundle {
+class LoadInstr(params: FMVPUParams) extends Bundle {
   /** @group Signals */ val reg = UInt(log2Ceil(params.nDRF).W)
   /** @group Signals */ val addr = UInt(params.ddmAddrWidth.W)
 }
@@ -68,17 +68,17 @@ class LoadInstr(params: FMPVUParams) extends Bundle {
   * @param params FMVPU system parameters
   * @groupdesc Signals The actual hardware fields of the Bundle
   */
-class StoreInstr(params: FMPVUParams) extends Bundle {
+class StoreInstr(params: FMVPUParams) extends Bundle {
   /** @group Signals */ val reg = UInt(log2Ceil(params.nDRF).W)
   /** @group Signals */ val addr = UInt(params.ddmAddrWidth.W)
 }
 
 /**
  * Send/Receive instruction for DDM-Network communication with TDM support
- * @param params FMPVU system parameters
+ * @param params FMVPU system parameters
  * @groupdesc Signals The actual hardware fields of the Bundle
  */
-class SendReceiveInstr(params: FMPVUParams) extends Bundle {
+class SendReceiveInstr(params: FMVPUParams) extends Bundle {
   /** Operation mode: 0 = Send (DDM to network), 1 = Receive (network to DDM)
     * @group Signals
     */
@@ -89,42 +89,86 @@ class SendReceiveInstr(params: FMPVUParams) extends Bundle {
     */
   val length = UInt(params.ddmAddrWidth.W)
   
-  /** Starting address in DDM for the transfer
+  /** Source address in local DDM for Send operations (unused for Receive)
     * @group Signals
     */
-  val addr = UInt(params.ddmAddrWidth.W)
+  val srcAddr = UInt(params.ddmAddrWidth.W)
   
-  /** Time slot offset - number of cycles to wait before using first assigned slot
+  /** Destination address: remote location for Send operations, local DDM for Receive operations
     * @group Signals
     */
-  val slotOffset = UInt(params.ddmAddrWidth.W)
+  val dstAddr = UInt((params.ddmAddrWidth + 1).W)
   
-  /** Time slot spacing - interval between assigned network time slots for this node
+  /** What channel a Send instruction will send the packet over.
     * @group Signals
     */
-  val slotSpacing = UInt(params.ddmAddrWidth.W)
+  val channel = UInt(log2Ceil(params.nChannels).W)
+
+  /** For a Receive instruction what 'ident' the packet will be
+   *  tagged with.
+    * @group Signals
+    */
+  val ident = UInt(params.networkIdentWidth.W)
+  
+  /** Destination X coordinate for packet generation (mode 0)
+    * @group Signals
+    */
+  val destX = UInt(log2Ceil(params.nColumns).W)
+  
+  /** Destination Y coordinate for packet generation (mode 0)
+    * @group Signals
+    */
+  val destY = UInt(log2Ceil(params.nRows).W)
+  
+  /** Use sender's X coordinate as destination X (mode 0)
+    * @group Signals
+    */
+  val useSameX = Bool()
+  
+  /** Use sender's Y coordinate as destination Y (mode 0)
+    * @group Signals
+    */
+  val useSameY = Bool()
 }
 
-/** Network configuration instruction for routing control.
+class SendReceiveInstrResponse(params: FMVPUParams) extends Bundle {
+  /** Indicates that a Send or Receive instruction has completed.
+    * @group Signals
+    */
+  val mode = UInt(1.W)
+  val ident = UInt(params.networkIdentWidth.W)
+}
+
+/** Network instruction union for routing control and slot configuration.
+  *
+  * This is a union where fields are interpreted based on instrType:
+  * - instrType = 0: Permutation instruction (uses mode, src, dst)  
+  * - instrType = 1: Set slow control slot (uses slot field)
   *
   * @param params FMVPU system parameters
   * @groupdesc Signals The actual hardware fields of the Bundle
   */
-class NetworkInstr(params: FMPVUParams) extends Bundle {
-  /** Configuration mode index into network configuration table
+class NetworkInstr(params: FMVPUParams) extends Bundle {
+  /** Instruction type: 0 = permutation, 1 = set slow control slot
     * @group Signals
     */
-  val mode = UInt(log2Ceil(params.depthNetworkConfig).W)
+  val instrType = UInt(1.W)
   
-  /** Source register address
+  /** Union data field - interpretation depends on instrType
+    * For permutation (instrType=0): Cat(dst, src, mode)
+    * For set slot (instrType=1): slot
     * @group Signals
     */
-  val src = UInt(log2Ceil(params.nDRF).W)
+  val data = UInt(scala.math.max(
+    log2Ceil(params.depthNetworkConfig) + 2 * log2Ceil(params.nDRF),
+    log2Ceil(params.nSlowNetworkControlSlots)
+  ).W)
   
-  /** Destination register address
-    * @group Signals
-    */
-  val dst = UInt(log2Ceil(params.nDRF).W)
+  // Helper methods to extract fields based on instruction type
+  def mode = data(log2Ceil(params.nFastNetworkControlSlots) - 1, 0)
+  def src = data(log2Ceil(params.depthNetworkConfig) + log2Ceil(params.nDRF) - 1, log2Ceil(params.depthNetworkConfig))
+  def dst = data(log2Ceil(params.depthNetworkConfig) + 2 * log2Ceil(params.nDRF) - 1, log2Ceil(params.depthNetworkConfig) + log2Ceil(params.nDRF))
+  def slot = data(log2Ceil(params.nSlowNetworkControlSlots) - 1, 0)
 }
 
 /** Configuration instruction for system setup.
@@ -132,7 +176,7 @@ class NetworkInstr(params: FMPVUParams) extends Bundle {
   * @param params FMVPU system parameters
   * @groupdesc Signals The actual hardware fields of the Bundle
   */
-class ConfigInstr(params: FMPVUParams) extends Bundle {
+class ConfigInstr(params: FMVPUParams) extends Bundle {
   /** Source register address
     * @group Signals
     */
@@ -153,7 +197,7 @@ class ConfigInstr(params: FMPVUParams) extends Bundle {
   * @param params FMVPU system parameters
   * @groupdesc Signals The actual hardware fields of the Bundle
   */
-class Instr(params: FMPVUParams) extends Bundle {
+class Instr(params: FMVPUParams) extends Bundle {
   /** Arithmetic/logic computation instruction (when valid)
     * @group Signals
     */
@@ -183,7 +227,7 @@ class Instr(params: FMPVUParams) extends Bundle {
   * @param params FMVPU system parameters
   * @groupdesc Signals The actual hardware fields of the Bundle
   */
-class Config(params: FMPVUParams) extends Bundle {
+class Config(params: FMVPUParams) extends Bundle {
   /** Configuration valid signal - indicates configuration is active
     * @group Signals
     */

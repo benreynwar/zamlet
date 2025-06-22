@@ -2,7 +2,7 @@ package fmvpu.network
 
 import chisel3._
 import chisel3.util.log2Ceil
-import fmvpu.core.FMPVUParams
+import fmvpu.core.FMVPUParams
 
 /**
  * Network routing direction constants and utilities
@@ -59,10 +59,10 @@ object NetworkDirection {
 
 /**
  * 2D coordinate location in the mesh network
- * @param params FMPVU parameters containing grid dimensions
+ * @param params FMVPU parameters containing grid dimensions
  * @groupdesc Signals The actual hardware fields of the Bundle
  */
-class Location(params: FMPVUParams) extends Bundle {
+class Location(params: FMVPUParams) extends Bundle {
   /** X coordinate (column) in the mesh network
     * @group Signals
     */
@@ -79,22 +79,30 @@ class Location(params: FMPVUParams) extends Bundle {
  * The header is transmitted as the first word of each packet and contains
  * all information needed for routing and memory access.
  * 
- * @param params FMPVU parameters for sizing fields
+ * @param params FMVPU parameters for sizing fields
  * @groupdesc Signals The actual hardware fields of the Bundle
  */
-class Header(params: FMPVUParams) extends Bundle {
+class Header(params: FMVPUParams) extends Bundle {
   /** Destination location in the mesh network
     * @group Signals
     */
   val dest = new Location(params)
-  /** Memory address for DDM access at destination
+  /** Memory address for DDM access at destination (includes extended address space for network control)
     * @group Signals
     */
-  val address = UInt(params.ddmAddrWidth.W)
+  val address = UInt((params.ddmAddrWidth + 1).W)
   /** Number of data words following this header
     * @group Signals
     */
   val length = UInt(log2Ceil(params.maxPacketLength).W)
+  /** Flag indicating whether this packet expects a receive instruction
+    * @group Signals
+    */
+  val expectsReceive = Bool()
+  /** Identifier for matching with receive instructions (when expectsReceive is true)
+    * @group Signals
+    */
+  val ident = UInt(params.networkIdentWidth.W)
 }
 
 object Header {
@@ -105,10 +113,10 @@ object Header {
    * Will truncate if input is wider than needed.
    * 
    * @param bits Raw bits to parse as header (must be >= header width)
-   * @param params FMPVU parameters for header sizing
+   * @param params FMVPU parameters for header sizing
    * @return Parsed Header bundle
    */
-  def fromBits(bits: UInt, params: FMPVUParams): Header = {
+  def fromBits(bits: UInt, params: FMVPUParams): Header = {
     val header = Wire(new Header(params))
     val headerWidth = header.getWidth
     val bitsWidth = bits.getWidth

@@ -24,7 +24,7 @@ import scala.io.Source
   * @param nRows Number of rows in the LaneGrid
   * @param maxPacketLength Maximum packet length for network switching
   */
-case class FMPVUParams(
+case class FMVPUParams(
   nChannels: Int,
   width: Int,
   networkMemoryDepth: Int,
@@ -36,26 +36,75 @@ case class FMPVUParams(
   nColumns: Int,
   nRows: Int,
   maxPacketLength: Int,
-)
+  maxNetworkControlDelay: Int,
+  nSlowNetworkControlSlots: Int,
+  nFastNetworkControlSlots: Int,
+  networkIdentWidth: Int,
+) {
+  // Calculated parameters based on actual control structure sizes
+  import chisel3.util.log2Ceil
+  
+  // Calculate bit widths for control structures
+  private def bitsForChannelSlowControl: Int = {
+    1 + // IsPacketMode
+    4 * log2Ceil(networkMemoryDepth + 1) + // delays
+    1 + // isOutputDelay  
+    4 * nChannels + // drive enables
+    2 * log2Ceil(maxNetworkControlDelay + 1) + // input sel delays
+    2 * log2Ceil(maxNetworkControlDelay + 1) // crossbar sel delays
+  }
+  
+  private def bitsForGeneralSlowControl: Int = {
+    2 * log2Ceil(maxNetworkControlDelay + 1) // drf and ddm sel delays
+  }
+  
+  private def bitsForChannelFastControl: Int = {
+    2 + // nsInputSel + weInputSel
+    2 * log2Ceil(nChannels + 2) // crossbar selections
+  }
+  
+  private def bitsForGeneralFastControl: Int = {
+    2 * log2Ceil(nChannels * 2) // drf and ddm selections
+  }
+  
+  val wordsPerChannelSlowNetworkControl = (bitsForChannelSlowControl + width - 1) / width
+  val wordsPerGeneralSlowNetworkControl = (bitsForGeneralSlowControl + width - 1) / width  
+  val wordsPerChannelFastNetworkControl = (bitsForChannelFastControl + width - 1) / width
+  val wordsPerGeneralFastNetworkControl = (bitsForGeneralFastControl + width - 1) / width
+  
+  // Round slot sizes up to powers of 2 for cleaner addressing
+  private val rawWordsPerSlowSlot = wordsPerGeneralSlowNetworkControl + nChannels * wordsPerChannelSlowNetworkControl
+  val wordsPerSlowNetworkControlSlot = 1 << scala.math.ceil(scala.math.log(rawWordsPerSlowSlot) / scala.math.log(2)).toInt
+  
+  private val rawWordsPerFastSlot = wordsPerGeneralFastNetworkControl + nChannels * wordsPerChannelFastNetworkControl  
+  val wordsPerFastNetworkControlSlot = 1 << scala.math.ceil(scala.math.log(rawWordsPerFastSlot) / scala.math.log(2)).toInt
+  
+  // Calculate fastNetworkControlOffset as total slow control space
+  val fastNetworkControlOffset = nSlowNetworkControlSlots * wordsPerSlowNetworkControlSlot
+  
+  val networkControlAddrWidth = scala.math.max(1, 
+    32 - Integer.numberOfLeadingZeros(fastNetworkControlOffset + nFastNetworkControlSlots * wordsPerFastNetworkControlSlot - 1)
+  )
+}
 
-/** Companion object for FMPVUParams with factory methods. */
-object FMPVUParams {
+/** Companion object for FMVPUParams with factory methods. */
+object FMVPUParams {
 
   /** Load FMVPU parameters from a JSON configuration file.
     *
     * @param fileName Path to the JSON configuration file
-    * @return FMPVUParams instance with configuration loaded from file
+    * @return FMVPUParams instance with configuration loaded from file
     * @throws RuntimeException if the file cannot be parsed or contains invalid parameters
     *
     * @example
     * {{{
-    * val params = FMPVUParams.fromFile("config/default.json")
+    * val params = FMVPUParams.fromFile("config/default.json")
     * val grid = Module(new LaneGrid(params))
     * }}}
     */
-  def fromFile(fileName: String): FMPVUParams = {
+  def fromFile(fileName: String): FMVPUParams = {
     val jsonContent = Source.fromFile(fileName).mkString;
-    val paramsResult = decode[FMPVUParams](jsonContent);
+    val paramsResult = decode[FMVPUParams](jsonContent);
     paramsResult match {
       case Right(params) =>
         return params;

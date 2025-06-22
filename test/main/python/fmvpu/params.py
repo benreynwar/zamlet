@@ -1,11 +1,13 @@
 from dataclasses import dataclass
 import json
+import math
 from typing import Dict, Any
+from test_utils import clog2
 
 
 @dataclass
-class FMPVUParams:
-    """Python mirror of the Scala FMPVUParams case class with snake_case naming."""
+class FMVPUParams:
+    """Python mirror of the Scala FMVPUParams case class with snake_case naming."""
     
     n_channels: int
     width: int
@@ -22,6 +24,10 @@ class FMPVUParams:
     n_columns: int
     n_rows: int
     max_packet_length: int
+    max_network_control_delay: int
+    n_slow_network_control_slots: int
+    n_fast_network_control_slots: int
+    network_ident_width: int
 
     # Map camelCase JSON field names to snake_case Python field names
     _FIELD_MAPPING = {
@@ -36,24 +42,28 @@ class FMPVUParams:
         'nColumns': 'n_columns',
         'nRows': 'n_rows',
         'maxPacketLength': 'max_packet_length',
+        'maxNetworkControlDelay': 'max_network_control_delay',
+        'nSlowNetworkControlSlots': 'n_slow_network_control_slots',
+        'nFastNetworkControlSlots': 'n_fast_network_control_slots',
+        'networkIdentWidth': 'network_ident_width',
     }
 
     @classmethod
-    def from_json(cls, json_str: str) -> 'FMPVUParams':
-        """Create FMPVUParams from JSON string with camelCase field names."""
+    def from_json(cls, json_str: str) -> 'FMVPUParams':
+        """Create FMVPUParams from JSON string with camelCase field names."""
         data = json.loads(json_str)
         return cls.from_dict(data)
 
     @classmethod
-    def from_file(cls, filename: str) -> 'FMPVUParams':
-        """Create FMPVUParams from JSON file with camelCase field names."""
+    def from_file(cls, filename: str) -> 'FMVPUParams':
+        """Create FMVPUParams from JSON file with camelCase field names."""
         with open(filename, 'r', encoding='utf-8') as f:
             data = json.load(f)
         return cls.from_dict(data)
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'FMPVUParams':
-        """Create FMPVUParams from dictionary with camelCase field names."""
+    def from_dict(cls, data: Dict[str, Any]) -> 'FMVPUParams':
+        """Create FMVPUParams from dictionary with camelCase field names."""
         # Convert camelCase keys to snake_case
         converted_data = {}
         for camel_key, snake_key in cls._FIELD_MAPPING.items():
@@ -81,3 +91,54 @@ class FMPVUParams:
         """Write to JSON file with camelCase field names."""
         with open(filename, 'w', encoding='utf-8') as f:
             json.dump(self.to_dict(), f, indent=indent)
+
+    @property
+    def words_per_channel_slow_network_control(self) -> int:
+        """Calculate words per channel slow network control."""
+        from control_structures import ChannelSlowControl
+        bits = ChannelSlowControl.width_bits(self)
+        return (bits + self.width - 1) // self.width
+
+    @property
+    def words_per_general_slow_network_control(self) -> int:
+        """Calculate words per general slow network control."""
+        from control_structures import GeneralSlowControl
+        bits = GeneralSlowControl.width_bits(self)
+        return (bits + self.width - 1) // self.width
+
+    @property
+    def words_per_channel_fast_network_control(self) -> int:
+        """Calculate words per channel fast network control."""
+        from control_structures import ChannelFastControl
+        bits = ChannelFastControl.width_bits(self)
+        return (bits + self.width - 1) // self.width
+
+    @property
+    def words_per_general_fast_network_control(self) -> int:
+        """Calculate words per general fast network control."""
+        from control_structures import GeneralFastControl
+        bits = GeneralFastControl.width_bits(self)
+        return (bits + self.width - 1) // self.width
+
+    @property
+    def words_per_slow_network_control_slot(self) -> int:
+        """Calculate words per slow network control slot (rounded up to power of 2)."""
+        raw_words = self.words_per_general_slow_network_control + self.n_channels * self.words_per_channel_slow_network_control
+        return 1 << math.ceil(math.log2(raw_words))
+
+    @property
+    def words_per_fast_network_control_slot(self) -> int:
+        """Calculate words per fast network control slot (rounded up to power of 2)."""
+        raw_words = self.words_per_general_fast_network_control + self.n_channels * self.words_per_channel_fast_network_control
+        return 1 << math.ceil(math.log2(raw_words))
+
+    @property
+    def fast_network_control_offset(self) -> int:
+        """Calculate offset for fast network control (after DDM space and slow control slots)."""
+        # Calculate control memory start address (after DDM space)
+        ddm_max_addr = self.ddm_bank_depth * self.ddm_n_banks
+        control_mem_start = 1 << clog2(ddm_max_addr) if ddm_max_addr > 0 else 0
+        # Add slow control slots
+        return control_mem_start + self.n_slow_network_control_slots * self.words_per_slow_network_control_slot
+
+

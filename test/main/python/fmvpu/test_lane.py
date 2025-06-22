@@ -3,7 +3,8 @@ import json
 from random import Random
 import collections
 import tempfile
-from typing import Any, Deque, Optional
+import logging
+from typing import Any, Deque, Optional, List
 
 import cocotb
 from cocotb import triggers
@@ -12,51 +13,77 @@ from cocotb.handle import HierarchyObject
 
 import generate_rtl
 import test_utils
-from params import FMPVUParams
+from params import FMVPUParams
+from control_structures import ChannelSlowControl, NetworkSlowControl, GeneralSlowControl, NetworkFastControl
 
+
+logger = logging.getLogger(__name__)
 this_dir = os.path.abspath(os.path.dirname(__file__))
 
 
-async def process_to_lane(dut: HierarchyObject, tolane_queue: Deque[int]) -> None:
-    """Drive data from queue to the lane's west input interface."""
-    while True:
-        if tolane_queue:
-            dut.io_wI_0_valid.value = 1
-            dut.io_wI_0_bits_bits.value = tolane_queue.popleft()
-            dut.io_wI_0_bits_header.value = 0
-        else:
-            dut.io_wI_0_valid.value = 0
+async def send_data_via_packets(data: List[int], address, ident, dut, queue: Deque[List[int]], params: FMVPUParams) -> None:
+    logger.info('send_data_via_packets: start')
+    column_index = 1
+    row_index = 1
+    expected_receive=True
+    header = test_utils.make_packet_header(params, column_index, row_index, address, len(data), expected_receive, ident)
+    packet = [header] + data
+    queue.append(packet)
+    
+    # Wait for instruction response to indicate packet has been received
+    while not dut.io_instrResponse_valid.value:
         await triggers.RisingEdge(dut.clock)
+    
+    # Verify the response matches our sent packet
+    response_mode = int(dut.io_instrResponse_bits_mode.value)
+    response_ident = int(dut.io_instrResponse_bits_ident.value)
+    assert response_mode == 1, f"Expected receive mode (1), got {response_mode}"
+    assert response_ident == ident, f"Expected ident {ident}, got {response_ident}"
+    logger.info('send_data_via_packets: end')
+    await triggers.RisingEdge(dut.clock)
 
-
-async def process_from_lane(dut: HierarchyObject, fromlane_queue: Deque[int]) -> None:
-    """Collect data from the lane's east output interface."""
-    while True:
-        await triggers.ReadOnly()
-        if dut.io_eO_1_valid.value:
-            fromlane_queue.append(dut.io_eO_1_bits_bits.value)
+async def receive_data_via_packets(dut, queues: Deque[List[int]]) -> List[int]:
+    logger.info('receive_data_via_packets: start')
+    """Monitor instruction responses and output queue to receive packet data."""
+    # Wait for instruction response indicating send is complete
+    while not dut.io_instrResponse_valid.value:
         await triggers.RisingEdge(dut.clock)
-        # Set token after the ReadOnly phase
-        if dut.io_eO_1_valid.value:
-            dut.io_eO_1_token.value = 1
-        else:
-            dut.io_eO_1_token.value = 0
+    
+    # Verify the response is for a send instruction
+    response_mode = int(dut.io_instrResponse_bits_mode.value)
+    assert response_mode == 0, f"Expected send mode (0), got {response_mode}"
+    
+    # Wait for packet in output queue
+    while not queues:
+        await triggers.RisingEdge(dut.clock)
+    
+    packet = queues.popleft()
+    logger.info('receive_data_via_packets: end')
+    return packet[1:]  # Return data without header
 
 
-def submit_send(dut: HierarchyObject, length: int, address: int) -> None:
-    """Submit a send instruction to the lane."""
-    dut.io_nInstr_sendreceive_valid.value = 1
-    dut.io_nInstr_sendreceive_bits_mode.value = 0
-    dut.io_nInstr_sendreceive_bits_length.value = length
-    dut.io_nInstr_sendreceive_bits_addr.value = address
-
-
-def submit_receive(dut: HierarchyObject, length: int, address: int) -> None:
+def submit_receive(dut: HierarchyObject, ident: int, length: int, address: int, network_slot: int = 0) -> None:
     """Submit a receive instruction to the lane."""
     dut.io_nInstr_sendreceive_valid.value = 1
     dut.io_nInstr_sendreceive_bits_mode.value = 1
     dut.io_nInstr_sendreceive_bits_length.value = length
-    dut.io_nInstr_sendreceive_bits_addr.value = address
+    dut.io_nInstr_sendreceive_bits_dstAddr.value = address
+    dut.io_nInstr_sendreceive_bits_ident.value = ident
+
+
+def submit_send(dut: HierarchyObject, ident: int, length: int, address: int, dest_x: int = 0, dest_y: int = 0, channel: int = 0) -> None:
+    """Submit a send instruction to the lane."""
+    dut.io_nInstr_sendreceive_valid.value = 1
+    dut.io_nInstr_sendreceive_bits_mode.value = 0
+    dut.io_nInstr_sendreceive_bits_length.value = length
+    dut.io_nInstr_sendreceive_bits_srcAddr.value = address
+    dut.io_nInstr_sendreceive_bits_ident.value = ident
+    dut.io_nInstr_sendreceive_bits_dstAddr.value = 0
+    dut.io_nInstr_sendreceive_bits_destX.value = dest_x
+    dut.io_nInstr_sendreceive_bits_destY.value = dest_y
+    dut.io_nInstr_sendreceive_bits_useSameX.value = 0
+    dut.io_nInstr_sendreceive_bits_useSameY.value = 0
+    dut.io_nInstr_sendreceive_bits_channel.value = channel
 
 
 def clear_sendreceive(dut: HierarchyObject) -> None:
@@ -85,7 +112,7 @@ def clear_loadstore(dut: HierarchyObject) -> None:
     dut.io_nInstr_loadstore_valid.value = 0
     
 
-async def send_and_receive(dut: HierarchyObject, rnd: Random, params: Any) -> None:
+async def send_and_receive(dut: HierarchyObject, rnd: Random, params: Any, packet_sender, packet_receiver) -> None:
     """
     Test basic send and receive functionality.
     
@@ -94,28 +121,27 @@ async def send_and_receive(dut: HierarchyObject, rnd: Random, params: Any) -> No
     Check that they match.
     """
     test_data = [0x1234, 0x5678]
-    tolane_queue: Deque[int] = collections.deque()
-    fromlane_queue: Deque[int] = collections.deque()
-    tolane_task = cocotb.start_soon(process_to_lane(dut, tolane_queue))
-    fromlane_task = cocotb.start_soon(process_from_lane(dut, fromlane_queue))
-    submit_receive(dut, 2, 0)
+
+    ident = 3
+    length = 2
+    address = 0
+    submit_receive(dut, ident, length, address)
     await triggers.RisingEdge(dut.clock)
     clear_sendreceive(dut)
-    tolane_queue += test_data
-    while tolane_queue:
-        await triggers.RisingEdge(dut.clock)
-    submit_send(dut, 2, 0)
+    data = [26, 28]
+    await send_data_via_packets(data, address, ident, dut, packet_sender.queue, params)
+
+    receive_packet_task = cocotb.start_soon(receive_data_via_packets(dut, packet_receiver.queue))
+
+    submit_send(dut, ident, length, address)
     await triggers.RisingEdge(dut.clock)
     clear_sendreceive(dut)
-    while len(fromlane_queue) < 2:
-        await triggers.RisingEdge(dut.clock)
-    received_data = [fromlane_queue.popleft() for _ in range(2)]
-    assert test_data == received_data, f"Expected {test_data}, got {received_data}"
-    tolane_task.kill()
-    fromlane_task.kill()
+    received_data = await receive_packet_task
+
+    assert data == received_data
 
 
-async def send_and_receive_swap_order(dut: HierarchyObject, rnd: Random, params: Any) -> None:
+async def send_and_receive_swap_order(dut: HierarchyObject, rnd: Random, params: Any, packet_sender, packet_receiver) -> None:
     """
     Test data manipulation through register file.
     
@@ -126,20 +152,16 @@ async def send_and_receive_swap_order(dut: HierarchyObject, rnd: Random, params:
     """
     test_data = [0x1234, 0x5678]
     expected_data = [0x5678, 0x1234]  # swapped order
-    tolane_queue: Deque[int] = collections.deque()
-    fromlane_queue: Deque[int] = collections.deque()
-    tolane_task = cocotb.start_soon(process_to_lane(dut, tolane_queue))
-    fromlane_task = cocotb.start_soon(process_from_lane(dut, fromlane_queue))
     
     # Step 1: Receive two words into memory (addresses 0 and 1)
-    submit_receive(dut, 2, 0)
+    ident = 3
+    length = 2
+    address = 0
+
+    submit_receive(dut, ident, length, address)
     await triggers.RisingEdge(dut.clock)
     clear_sendreceive(dut)
-    tolane_queue += test_data
-
-    while tolane_queue:
-        await triggers.RisingEdge(dut.clock)
-    await triggers.RisingEdge(dut.clock)
+    await send_data_via_packets(test_data, address, ident, dut, packet_sender.queue, params)
     
     # Step 2: Store word from memory address 0 into register 0
     submit_store(dut, 0, 0)
@@ -166,16 +188,14 @@ async def send_and_receive_swap_order(dut: HierarchyObject, rnd: Random, params:
     await triggers.RisingEdge(dut.clock)  # Wait for load to complete
     
     # Step 6: Send the swapped data out
-    submit_send(dut, 2, 0)
+    receive_packet_task = cocotb.start_soon(receive_data_via_packets(dut, packet_receiver.queue))
+    
+    submit_send(dut, ident, length, address)
     await triggers.RisingEdge(dut.clock)
     clear_sendreceive(dut)
-    while len(fromlane_queue) < 2:
-        await triggers.RisingEdge(dut.clock)
-    received_data = [fromlane_queue.popleft() for _ in range(2)]
+    received_data = await receive_packet_task
+    
     assert expected_data == received_data, f"Expected {expected_data}, got {received_data}"
-
-    tolane_task.kill()
-    fromlane_task.kill()
 
 
 async def timeout_watchdog(dut: HierarchyObject, max_cycles: int) -> None:
@@ -197,14 +217,172 @@ async def reset_dut(dut: HierarchyObject) -> None:
     await triggers.RisingEdge(dut.clock)
 
 
+async def error_monitor(dut: HierarchyObject, params: FMVPUParams) -> None:
+    """Continuously monitor error signals and assert if any are asserted."""
+    # Constants matching Lane module configuration
+    N_DRF_WRITE_PORTS = 3
+    
+    while True:
+        await triggers.RisingEdge(dut.clock)
+        
+        error_signals = []
+        
+        # Check ddmAccess error signals
+        if dut.io_errors_ddmAccess_badInstr.value:
+            error_signals.append("ddmAccess.badInstr")
+        if dut.io_errors_ddmAccess_badFromNetwork.value:
+            error_signals.append("ddmAccess.badFromNetwork")
+        if dut.io_errors_ddmAccess_sendConflict.value:
+            error_signals.append("ddmAccess.sendConflict")
+        if dut.io_errors_ddmAccess_sendFifoOverflow.value:
+            error_signals.append("ddmAccess.sendFifoOverflow")
+        if dut.io_errors_ddmAccess_receiveSlotOccupied.value:
+            error_signals.append("ddmAccess.receiveSlotOccupied")
+        
+        # Check networkNode error signals
+        if dut.io_errors_networkNode_instrConflict.value:
+            error_signals.append("networkNode.instrConflict")
+        
+        # Check dataMemory error signals (bank conflicts)
+        for i in range(params.ddm_n_banks):
+            bank_attr = f'io_errors_dataMemory_bankConflicts_{i}'
+            if getattr(dut, bank_attr).value:
+                error_signals.append(f"dataMemory.bankConflicts[{i}]")
+        
+        # Check registerFile error signals (write conflicts)
+        if dut.io_errors_registerFile_writeConflict.value:
+            error_signals.append("registerFile.writeConflict")
+        
+        # Assert if any errors are found
+        if error_signals:
+            error_msg = f"Error signals asserted: {', '.join(error_signals)}"
+            assert False, error_msg
+
+
+async def configure_network_fast_control(dut: HierarchyObject, params: FMVPUParams, packet_queue: collections.deque) -> None:
+    """Configure NetworkFastControl for data routing between channels."""
+    # Create fast control configuration
+    fast_control = NetworkFastControl.default(params)
+    
+    # Configure channel 1 to receive from west input
+    fast_control.channels[1].we_input_sel = True  # Select west input
+    
+    # Configure channel 2 to send to east output
+    fast_control.channels[2].we_crossbar_sel = 2  # Route channel 2 to east
+    
+    # Configure general data routing
+    fast_control.general.drf_sel = 1  # Select data from channel 1 for register file
+    fast_control.general.ddm_sel = 1  # Select data from channel 1 for data memory
+    
+    # Pack fast control configuration into words
+    config_words = fast_control.to_words(params)
+    
+    # Calculate fast control memory address for slot 0
+    control_mem_start = params.fast_network_control_offset
+    
+    # Create packet header targeting this lane's location (0,0)
+    header = test_utils.make_packet_header(
+            params, x=0, y=0, address=control_mem_start, length=len(config_words))
+    
+    # Create the configuration packet and add to queue
+    config_packet = [header] + config_words
+
+    packet_queue.append(config_packet)
+    
+    # Wait for packet to be sent and processed
+    while packet_queue:
+        await triggers.RisingEdge(dut.clock)
+    
+    # Wait a few more cycles for packet processing
+    for _ in range(10):
+        await triggers.RisingEdge(dut.clock)
+
+
+async def configure_network_mixed_mode(dut: HierarchyObject, params: FMVPUParams, packet_queue: collections.deque) -> None:
+    """Configure network with channel 0 in packet mode, channels 1-2 in static mode."""
+    # Create mixed mode configuration - channel 0 packet, channels 1-2 static
+    mixed_config = NetworkSlowControl(
+        channels=[
+            # Channel 0: packet mode for network configuration
+            ChannelSlowControl.default(params),
+            # Channel 1: static mode for west input
+            ChannelSlowControl(
+                is_packet_mode=False,
+                delays=[0, 0, 0, 0],
+                is_output_delay=False,
+                n_drive=[False] * params.n_channels,
+                s_drive=[False] * params.n_channels,
+                w_drive=[True] + [False] * (params.n_channels - 1),  # Only channel 1 from west
+                e_drive=[False] * params.n_channels,
+                ns_input_sel_delay=0,
+                we_input_sel_delay=0,
+                ns_crossbar_sel_delay=0,
+                we_crossbar_sel_delay=0
+            ),
+            # Channel 2: static mode for east output
+            ChannelSlowControl(
+                is_packet_mode=False,
+                delays=[0, 0, 0, 0],
+                is_output_delay=False,
+                n_drive=[False] * params.n_channels,
+                s_drive=[False] * params.n_channels,
+                w_drive=[False] * params.n_channels,
+                e_drive=[False, False, True] + [False] * (params.n_channels - 3),  # Only channel 2 to east
+                ns_input_sel_delay=0,
+                we_input_sel_delay=0,
+                ns_crossbar_sel_delay=0,
+                we_crossbar_sel_delay=0
+            )
+        ] + [ChannelSlowControl.default(params) for _ in range(3, params.n_channels)],  # Remaining channels as default
+        general=GeneralSlowControl.default()
+    )
+    
+    # Pack general config first, then all channels
+    config_words = []
+    config_words.extend(mixed_config.general.to_words(params))
+    for channel_config in mixed_config.channels:
+        config_words.extend(channel_config.to_words(params))
+    
+    # Calculate control memory start address (after DDM space)
+    ddm_max_addr = params.ddm_bank_depth * params.ddm_n_banks
+    control_mem_start = 1 << (ddm_max_addr - 1).bit_length()  # Round up to power of 2
+    
+    # Create packet header targeting this lane's location (0,0)
+    header = test_utils.make_packet_header(
+            params, x=0, y=0, address=control_mem_start, length=len(config_words))
+    
+    # Create the configuration packet and add to queue
+    config_packet = [header] + config_words
+    packet_queue.append(config_packet)
+    
+    # Wait for packet to be sent and processed
+    while packet_queue:
+        await triggers.RisingEdge(dut.clock)
+    
+    # Wait a few more cycles for packet processing
+    for _ in range(10):
+        await triggers.RisingEdge(dut.clock)
+    
+    # Select slow control slot 0 to use our configuration
+    dut.io_nInstr_network_valid.value = 1
+    dut.io_nInstr_network_bits_instrType.value = 1  # Set slow control slot
+    dut.io_nInstr_network_bits_data.value = 0  # slot = 0
+    await triggers.RisingEdge(dut.clock)
+    dut.io_nInstr_network_valid.value = 0
+    await triggers.RisingEdge(dut.clock)
+
+
 @cocotb.test()
 async def lane_test(dut: HierarchyObject) -> None:
     """Main test for Lane module functionality."""
+    # Configure logging for the cocotb test
+    test_utils.configure_logging_sim('INFO')
+    
     # Read test parameters
     test_params = test_utils.read_params()
     rnd = Random(test_params['seed'])
     params_dict = test_params['params']
-    params = FMPVUParams.from_dict(params_dict)
+    params = FMVPUParams.from_dict(params_dict)
     
     # Initialize all inputs to safe values
     dut.io_nInstr_compute_valid.value = 0
@@ -212,11 +390,8 @@ async def lane_test(dut: HierarchyObject) -> None:
     dut.io_nInstr_network_valid.value = 0
     dut.io_nInstr_sendreceive_valid.value = 0
     dut.io_instrDelay.value = 0
-    dut.io_thisLoc_x.value = 0
-    dut.io_thisLoc_y.value = 0
-    dut.io_nConfig_configValid.value = 0
-    dut.io_nConfig_configIsPacketMode.value = 1
-    dut.io_nConfig_configDelay.value = 0
+    dut.io_thisLoc_x.value = 1
+    dut.io_thisLoc_y.value = 1
     
     # Initialize bus interfaces
     for i in range(params.n_channels):
@@ -224,6 +399,11 @@ async def lane_test(dut: HierarchyObject) -> None:
         getattr(dut, f'io_sI_{i}_valid').value = 0
         getattr(dut, f'io_eI_{i}_valid').value = 0
         getattr(dut, f'io_wI_{i}_valid').value = 0
+        # In static mode, always provide tokens (ignore flow control)
+        getattr(dut, f'io_nO_{i}_token').value = 1
+        getattr(dut, f'io_sO_{i}_token').value = 1
+        getattr(dut, f'io_eO_{i}_token').value = 1
+        getattr(dut, f'io_wO_{i}_token').value = 1
 
     # Start clock and timeout watchdog
     clock_gen = Clock(dut.clock, 1, 'ns')
@@ -233,16 +413,23 @@ async def lane_test(dut: HierarchyObject) -> None:
     # Apply reset sequence
     await reset_dut(dut)
     
-    # Configure network for crossbar mode
-    dut.io_nConfig_configValid.value = 1
-    dut.io_nConfig_configIsPacketMode.value = 0
-    await triggers.RisingEdge(dut.clock)
-    dut.io_nConfig_configValid.value = 0
-    await triggers.RisingEdge(dut.clock)
+    # Start error monitor
+    cocotb.start_soon(error_monitor(dut, params))
+    
+    # Create packet queues and handlers for tests
+    channel = 0
+    tolane_queue: Deque[List[int]] = collections.deque()
+    fromlane_queue: Deque[List[int]] = collections.deque()
+    packet_sender = test_utils.PacketSender(dut, 'w', None, channel, tolane_queue)
+    packet_receiver = test_utils.PacketReceiver(dut, 'w', None, channel, fromlane_queue, params)
     
     # Run test scenarios
-    await send_and_receive(dut, rnd, params)
-    await send_and_receive_swap_order(dut, rnd, params)
+    await send_and_receive(dut, rnd, params, packet_sender, packet_receiver)
+    await send_and_receive_swap_order(dut, rnd, params, packet_sender, packet_receiver)
+    
+    # Clean up packet handlers
+    packet_sender.kill()
+    packet_receiver.kill()
 
 
 def test_lane(temp_dir: Optional[str] = None) -> None:
@@ -268,4 +455,5 @@ def test_lane(temp_dir: Optional[str] = None) -> None:
 
 
 if __name__ == '__main__':
+    test_utils.configure_logging_pre_sim('INFO')
     test_lane(os.path.abspath('deleteme'))

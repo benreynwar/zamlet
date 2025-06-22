@@ -4,7 +4,7 @@ import math
 from random import Random
 import collections
 import tempfile
-from typing import Any, Deque, Optional
+from typing import Any, Deque, Optional, List
 
 import cocotb
 from cocotb import triggers, clock
@@ -12,9 +12,35 @@ from cocotb.handle import HierarchyObject
 
 import generate_rtl
 import test_utils
-from params import FMPVUParams
+from params import FMVPUParams
 
 this_dir = os.path.abspath(os.path.dirname(__file__))
+
+
+async def send_data_via_packets(data: List[int], address, dut, w_queues: List[List[Deque[List[int]]]], params: FMVPUParams) -> None:
+    assert address % params.n_lanes == 0
+    local_address = address // params.n_lanes
+    for lane_index in range(params.n_lanes):
+        lane_data = data[lane_index::params.n_lanes]
+        row_index = lane_index // params.n_columns
+        column_index = lane_index % params.n_columns
+        channel = column_index % params.n_channels
+        header = test_utils.make_packet_header(params, column_index, row_index, local_address, len(lane_data))
+        packet = [header] + lane_data
+        w_queues[row_index][channel].append(packet)
+    while True:
+        all_empty = True
+        for row_queues in w_queues:
+            for queue in row_queues:
+                if queue:
+                    all_empty = False
+        if all_empty:
+            break
+        await triggers.RisingEdge(dut.clock)
+    for i in range(10):
+        await triggers.RisingEdge(dut.clock)
+
+async def receive_data_via_packets(data: List[int], address, dut, w_queues: List[List[Deque[List[int]]]], params: FMVPUParams) -> None:
 
 
 async def process_to_lane_grid(dut: HierarchyObject, togrid_queue: Deque[Any], params: Any) -> None:
@@ -252,71 +278,6 @@ async def send_and_receive_swap_order(dut: HierarchyObject, rnd: Random, params:
     fromgrid_task.kill()
 
 
-def make_packet_header(params: Any, x: int, y: int, address: int, length: int) -> int:
-    x_bits = test_utils.clog2(params.n_columns)
-    y_bits = test_utils.clog2(params.n_rows)
-    addr_bits = params.ddm_addr_width
-    length_bits = test_utils.clog2(params.max_packet_length)
-    assert x_bits + y_bits + addr_bits + length_bits <= params.width
-
-    assert 0 <= length < (1 << length_bits)
-    assert 0 <= address < (1 << addr_bits)
-    assert 0 <= y < (1 << y_bits)
-    assert 0 <= x < (1 << x_bits)
-
-    # Pack header with MSB to LSB order: dest.x | dest.y | address | length
-    header = 0
-    header |= length
-    header |= address << length_bits
-    header |= y << (length_bits + addr_bits)
-    header |= x << (length_bits + addr_bits + y_bits)
-
-    return header
-
-
-class PacketSender:
-
-    def __init__(self, dut, edge, position, bus_index, packet_queue):
-        self.dut = dut
-        self.valid_s = getattr(dut, f'io_{edge}I_{position}_{bus_index}_valid')
-        self.token_s = getattr(dut, f'io_{edge}I_{position}_{bus_index}_token')
-        self.header_s = getattr(dut, f'io_{edge}I_{position}_{bus_index}_bits_header')
-        self.data_s = getattr(dut, f'io_{edge}I_{position}_{bus_index}_bits_bits')
-        self.queue = packet_queue
-        self.n_tokens = 0
-        cocotb.start_soon(self.receive_tokens())
-        cocotb.start_soon(self.send_packets())
-
-    async def receive_tokens(self):
-        while True:
-            await triggers.RisingEdge(self.dut.clock)
-            await triggers.ReadOnly()
-            if self.token_s.value == 1:
-                self.n_tokens += 1
-
-    async def send_packets(self):
-        header = None
-        body = []
-        while True:
-            await triggers.RisingEdge(self.dut.clock)
-            self.valid_s.value = 0
-            if (not body) and self.queue:
-                packet = self.queue.popleft()
-                header = packet[0]
-                body = packet[1:]
-            if self.n_tokens > 0:
-                if header is not None:
-                    self.dut._log.info(f'Sending header on {self.valid_s.value}')
-                    self.valid_s.value = 1
-                    self.header_s.value = 1
-                    self.data_s.value = header
-                    header = None
-                    self.n_tokens -= 1
-                elif body:
-                    self.valid_s.value = 1
-                    self.header_s.value = 0
-                    self.data_s.value = body.pop(0)
-                    self.n_tokens -= 1
 
 
 async def send_packet_and_receive(dut: HierarchyObject, rnd: Random, params: Any) -> None:
@@ -336,7 +297,7 @@ async def send_packet_and_receive(dut: HierarchyObject, rnd: Random, params: Any
     for x in range(params.n_columns):
         for y in range(params.n_rows):
             lane_index = y*params.n_columns + x
-            header = make_packet_header(params, x, y, base_address, n_words_per_lane)
+            header = test_utils.make_packet_header(params, x, y, base_address, n_words_per_lane)
             body = []
             for offset in range(n_words_per_lane):
                 data_index = offset*n_lanes + lane_index
@@ -357,7 +318,7 @@ async def send_packet_and_receive(dut: HierarchyObject, rnd: Random, params: Any
         await triggers.RisingEdge(dut.clock)
 
     # Send the packages
-    packet_sender = PacketSender(dut=dut, edge='n', position=1, bus_index=2, packet_queue=packet_queue)
+    packet_sender = test_utils.PacketSender(dut=dut, edge='n', position=1, bus_index=2, packet_queue=packet_queue)
     for packet in packets:
         dut._log.info(f'header is {bin(packet[0])}')
         packet_queue.append(packet)

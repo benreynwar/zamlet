@@ -12,6 +12,33 @@ import fmvpu.network._
 import fmvpu.utils._
 import fmvpu.ModuleGenerator
 
+/**
+ * Error signals for the Lane module
+ * @param params FMVPU system parameters
+ * @groupdesc Signals The actual hardware fields of the Bundle
+ */
+class LaneErrors(params: FMVPUParams) extends Bundle {
+  /** Error signals from DDM access controller
+    * @group Signals
+    */
+  val ddmAccess = new DDMAccessErrors
+  
+  /** Error signals from network node
+    * @group Signals
+    */
+  val networkNode = new NetworkNodeErrors
+  
+  /** Error signals from data memory
+    * @group Signals
+    */
+  val dataMemory = new DataMemoryErrors(params.ddmNBanks)
+  
+  /** Error signals from register file
+    * @group Signals
+    */
+  val registerFile = new RegisterFileErrors(3) // 3 write ports (from RegisterFile instantiation)
+}
+
 import scala.io.Source
 
 /** A single processing lane in the FMVPU mesh architecture.
@@ -24,7 +51,7 @@ import scala.io.Source
   * @groupdesc Network Network interface ports for mesh connectivity  
   * @groupdesc Control Control and configuration signals
   */
-class Lane(params: FMPVUParams) extends Module {
+class Lane(params: FMVPUParams) extends Module {
   val io = IO(new Bundle {
     /** North input channels from neighboring lane
       * @group Network
@@ -86,15 +113,16 @@ class Lane(params: FMPVUParams) extends Module {
       */
     val thisLoc = Input(new Location(params))
     
-    /** Network configuration input from north neighbor
+    /** Send/receive instruction response output
       * @group Control
       */
-    val nConfig = Input(new Config(params))
+    val instrResponse = Output(Valid(new SendReceiveInstrResponse(params)))
     
-    /** Network configuration output to south neighbor  
+    /** Error status signals from all sub-modules
       * @group Control
       */
-    val sConfig = Output(new Config(params))
+    val errors = Output(new LaneErrors(params))
+    
   })
 
   val networkNode = Module(new NetworkNode(params))
@@ -106,8 +134,6 @@ class Lane(params: FMPVUParams) extends Module {
   // Register nInstr to create sInstr
   io.sInstr := RegNext(io.nInstr)
 
-  // Register nConfig to create sConfig
-  io.sConfig := RegNext(io.nConfig)
 
   // Adjustable delay for instruction execution
   val instrDelayModule = Module(new AdjustableDelay(params.networkMemoryDepth, io.nInstr.getWidth))
@@ -156,29 +182,6 @@ class Lane(params: FMPVUParams) extends Module {
   drf.io.writes(1).address := cStoreInstr.bits.reg
   drf.io.writes(1).data := cStoreData
 
-  val networkControl = Wire(new NetworkNodeControl(params))
-  // For now let's keep things simple
-  // Writes to the DDM come from the west (channel 0)
-  // Reads from the DDM go the east (channel 0)
-  // Writes to the DRF come from the north (channel 0)
-  // Reads from the DRF go the south (channel 0)
-  // For n_channels = 4, delay up to 7 this is 4 * (1 + 1 + 3 + 3 + 3 + 3 + 3 + 3) = 4 * 20 = 80 bits
-  for (i <- 0 until params.nChannels) {
-    networkControl.nsInputSel(i) := false.B
-    networkControl.weInputSel(i) := false.B
-    networkControl.nsCrossbarSel(i) := (if (i == 1) (params.nChannels + 0).U else 0.U)
-    networkControl.weCrossbarSel(i) := (if (i == 1) (params.nChannels + 1).U else 0.U)
-  }
-  networkControl.drfSel := 0.U
-  networkControl.ddmSel := params.nChannels.U
-  
-  // Set drive signals - for current tests, only drive east
-  for (i <- 0 until params.nChannels) {
-    networkControl.nDrive(i) := false.B
-    networkControl.sDrive(i) := false.B
-    networkControl.wDrive(i) := false.B
-    networkControl.eDrive(i) := true.B
-  }
 
   // Connect up the Network to the lane boundary.
   networkNode.io.inputs(0) <> io.nI
@@ -189,11 +192,7 @@ class Lane(params: FMPVUParams) extends Module {
   io.wO <> networkNode.io.outputs(2)
   networkNode.io.inputs(3) <> io.eI
   io.eO <> networkNode.io.outputs(3)
-  networkNode.io.control := networkControl
   networkNode.io.thisLoc := io.thisLoc
-  networkNode.io.configValid := io.nConfig.configValid
-  networkNode.io.configIsPacketMode := io.nConfig.configIsPacketMode
-  networkNode.io.configDelay := io.nConfig.configDelay
 
   // We haven't yet connected the DRF to the Network
   drf.io.writes(0).enable := false.B
@@ -214,10 +213,28 @@ class Lane(params: FMPVUParams) extends Module {
   drf.io.writes(2).data := DontCare
 
   // Connect ddmAccess between network and DDM
-  ddmAccess.io.writeDDM <> ddm.io.writes(0)
+  ddm.io.writes(0) <> ddmAccess.io.writeDDM
+  networkNode.io.writeControl <> ddmAccess.io.writeControl
   ddmAccess.io.readDDM <> ddm.io.reads(0)
   ddmAccess.io.fromNetwork := networkNode.io.toDDM
-  networkNode.io.fromDDM := ddmAccess.io.toNetwork
+  ddmAccess.io.thisLoc := io.thisLoc
+  networkNode.io.fromDDM <> ddmAccess.io.toNetwork
+  networkNode.io.fromDDMChannel := ddmAccess.io.toNetworkChannel
+  
+  // Connect network instruction from the main instruction bundle
+  networkNode.io.networkInstr := instr.network
+  
+  // Connect send/receive instruction for network slot selection
+  networkNode.io.sendReceiveInstr := instr.sendreceive
+  
+  // Connect instruction response output from ddmAccess
+  io.instrResponse := ddmAccess.io.instrResponse
+  
+  // Connect error signals from all sub-modules
+  io.errors.ddmAccess <> ddmAccess.io.errors
+  io.errors.networkNode <> networkNode.io.errors
+  io.errors.dataMemory <> ddm.io.errors
+  io.errors.registerFile <> drf.io.errors
 }
 
 
@@ -239,7 +256,7 @@ object LaneGenerator extends ModuleGenerator {
       println("Usage: <command> <outputDir> Lane <paramsFileName>")
       return null
     }
-    val params = FMPVUParams.fromFile(args(0))
+    val params = FMVPUParams.fromFile(args(0))
     new Lane(params)
   }
 }

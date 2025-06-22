@@ -9,5 +9,9 @@
     "depthNetworkConfig": 64,
     "nColumns": 2,
     "nRows": 3,
-    "maxPacketLength": 16
+    "maxPacketLength": 16,
+    "maxNetworkControlDelay": 8,
+    "nSlowNetworkControlSlots": 4,
+    "nFastNetworkControlSlots": 4,
+    "networkIdentWidth": 4
 }

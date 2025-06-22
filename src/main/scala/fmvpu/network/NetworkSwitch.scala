@@ -2,7 +2,7 @@ package fmvpu.network
 
 import chisel3._
 import chisel3.util.{log2Ceil, Valid, DecoupledIO, Cat}
-import fmvpu.core.FMPVUParams
+import fmvpu.core.FMVPUParams
 
 /**
  * State tracking for each output port in the network switch
@@ -10,10 +10,10 @@ import fmvpu.core.FMPVUParams
  * Tracks which input is currently being served and how much of the
  * current packet remains to be transmitted.
  * 
- * @param params FMPVU parameters for sizing fields
+ * @param params FMVPU parameters for sizing fields
  * @groupdesc Signals The actual hardware fields of the Bundle
  */
-class OutputState(params: FMPVUParams) extends Bundle {
+class OutputState(params: FMVPUParams) extends Bundle {
   /** Which input direction is currently being served by this output
     * @group Signals
     */
@@ -31,10 +31,10 @@ class OutputState(params: FMPVUParams) extends Bundle {
 object OutputState {
   /**
    * Create an initialized OutputState with safe default values
-   * @param params FMPVU parameters
+   * @param params FMVPU parameters
    * @return OutputState with active=false and other fields as DontCare
    */
-  def apply(params: FMPVUParams): OutputState = {
+  def apply(params: FMVPUParams): OutputState = {
     val state = Wire(new OutputState(params))
     state.input := DontCare
     state.active := false.B
@@ -59,10 +59,10 @@ object OutputState {
  * by data words. The router examines headers to determine output direction and
  * switches complete packets atomically.
  * 
- * @param params FMPVU parameters containing network and memory configuration
+ * @param params FMVPU parameters containing network and memory configuration
  * @groupdesc Signals The actual hardware fields of the IO Bundle
  */
-class NetworkSwitch(params: FMPVUParams) extends Module {
+class NetworkSwitch(params: FMVPUParams) extends Module {
   val io = IO(new Bundle {
     /** Input ports from four cardinal directions using token-valid protocol
       * @group Signals

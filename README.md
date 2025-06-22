@@ -73,10 +73,11 @@ MIT
    don't get too offtrack.
 
 ### Add a network configuration Memory
-   This will store the configuration data for the static network mode.
-   The memory will be mapped to same address space as the DDM.  We expect to initialize this memory using the network's
-   packet mode.
-   Static network instructions will reference an address in this configuration memory.
+   The NetworkNode will contain a small memory (of configurable depth with expected values of
+   8 or 16 or so).  It will be possible to load data from the DDM into this configurable memory.
+   There will add a new instruction that loads data from the DDM into this memory.
+   When a permutation instruction is submitted it will reference this memory and the data from that
+   address will be read and interpreted as a NetworkControl instance.
 
    Status - Not started
 

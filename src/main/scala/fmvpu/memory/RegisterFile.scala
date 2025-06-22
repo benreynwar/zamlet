@@ -3,7 +3,7 @@ package fmvpu.memory
 import chisel3._
 import chisel3.util.log2Ceil
 import chisel3.util.Valid
-import fmvpu.core.FMPVUParams
+import fmvpu.core.FMVPUParams
 import fmvpu.network._
 import fmvpu.ModuleGenerator
 import chisel3.util.UIntToOH

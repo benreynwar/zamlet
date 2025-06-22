@@ -7,41 +7,89 @@ import java.io.{File, PrintWriter}
 
 import chisel3.util.log2Ceil
 import chisel3.util.Valid
-import fmvpu.core.FMPVUParams
+import fmvpu.core.{FMVPUParams, NetworkInstr, SendReceiveInstr}
 import fmvpu.utils._
 import fmvpu.ModuleGenerator
 import chisel3.util.DecoupledIO
+import chisel3.util.MemoryWritePort
+import chisel3.util.Cat
 
 import scala.io.Source
 
 
 /**
- * Control signals for configuring NetworkNode routing behavior
- * @param params FMPVU parameters for sizing the control vectors
+ * Error signals for the NetworkNode module
  * @groupdesc Signals The actual hardware fields of the Bundle
  */
+class NetworkNodeErrors extends Bundle {
+  /** Asserted when both network and send/receive instructions are valid simultaneously
+    * @group Signals
+    */
+  val instrConflict = Bool()
+}
 
+// This is  configuration for the network that is expected to change
+// relatively infrequently.  It will only be possible to change these
+// after flushing the network pipeline.
+class ChannelSlowControl(params: FMVPUParams) extends Bundle {
+    val IsPacketMode = Bool()
+    // How many cycles to delay for each of the 4 directions.
+    val delays = Vec(4, UInt(log2Ceil(params.networkMemoryDepth + 1).W))
+    // If this is false the delay is on the inputs.
+    // If it is true the delay is on the outputs.
+    val isOutputDelay = Bool()
+    /** Enable driving outputs in each direction per channel
+      * @group Signals
+      */
+    val nDrive = Vec(params.nChannels, Bool())
+    val sDrive = Vec(params.nChannels, Bool())
+    val wDrive = Vec(params.nChannels, Bool())
+    val eDrive = Vec(params.nChannels, Bool())
 
-class NetworkNodeControl(params: FMPVUParams) extends Bundle {
+    // How many cycles to delay the nsInputSel signal before applying it to the
+    // mux
+    val nsInputSelDelay = UInt(log2Ceil(params.maxNetworkControlDelay + 1).W)
+    // How many cycles to delay the weInputSel signal before applying it to the
+    // mux
+    val weInputSelDelay = UInt(log2Ceil(params.maxNetworkControlDelay + 1).W)
+
+    val nsCrossbarSelDelay = UInt(log2Ceil(params.maxNetworkControlDelay + 1).W)
+    val weCrossbarSelDelay = UInt(log2Ceil(params.maxNetworkControlDelay + 1).W)
+}
+
+class GeneralSlowControl(params: FMVPUParams) extends Bundle {
+  val drfSelDelay = UInt(log2Ceil(params.maxNetworkControlDelay + 1).W)
+  val ddmSelDelay = UInt(log2Ceil(params.maxNetworkControlDelay + 1).W)
+}
+
+class NetworkSlowControl(params: FMVPUParams) extends Bundle {
+  val channels = Vec(params.nChannels, new ChannelSlowControl(params))
+  val general = new GeneralSlowControl(params)
+}
+
+class ChannelFastControl(params: FMVPUParams) extends Bundle {
   /** Input selection for north-south direction per channel
     * @group Signals
     */
-  val nsInputSel = Vec(params.nChannels, Bool())
+  val nsInputSel = Bool()
   
   /** Input selection for west-east direction per channel
     * @group Signals
     */
-  val weInputSel = Vec(params.nChannels, Bool())
+  val weInputSel = Bool()
   
   /** Crossbar selection for north-south routing per channel
     * @group Signals
     */
-  val nsCrossbarSel = Vec(params.nChannels, UInt(log2Ceil(params.nChannels + 2).W))
+  val nsCrossbarSel = UInt(log2Ceil(params.nChannels + 2).W)
   
   /** Crossbar selection for west-east routing per channel
     * @group Signals
     */
-  val weCrossbarSel = Vec(params.nChannels, UInt(log2Ceil(params.nChannels + 2).W))
+  val weCrossbarSel = UInt(log2Ceil(params.nChannels + 2).W)
+}
+
+class GeneralFastControl(params: FMVPUParams) extends Bundle {
   
   /** Data register file selection signal
     * @group Signals
@@ -52,15 +100,41 @@ class NetworkNodeControl(params: FMPVUParams) extends Bundle {
     * @group Signals
     */
   val ddmSel = UInt(log2Ceil(params.nChannels * 2).W)
-  
-  /** Enable driving outputs in each direction per channel
-    * @group Signals
-    */
-  val nDrive = Vec(params.nChannels, Bool())
-  val sDrive = Vec(params.nChannels, Bool())
-  val wDrive = Vec(params.nChannels, Bool())
-  val eDrive = Vec(params.nChannels, Bool())
 }
+
+
+class NetworkFastControl(params: FMVPUParams) extends Bundle {
+
+  val channels = Vec(params.nChannels, new ChannelFastControl(params))
+  val general = new GeneralFastControl(params)
+}
+
+/**
+ * The slow and fast control signals are stored in small memories in the NetworkNode.
+ * The contents of these memories are written by the writeConfig signal.
+ * If width is 32 we'd expect something like
+ * 0 - slow config channel 0 slot 0
+ * 1 - slow config channel 1 slot 0
+ * 2 - slow config channel 2 slot 0
+ * 3 - slow config channel 3 slot 0
+ * 4 - slow config network   slot 0 (starts on the next power of two)
+ * 8 - slot 1                       (starts on the next power of two)
+ * 16 - slot 2
+ * 
+ * parameters to describe the address mapping are
+ * wordsPerChannelSlowControl = ceil(channelSlowControl.Width/width)
+ * wordsPerGeneralSlowControl = words for the fields in NetworkSlowControl excluding the channel ones.
+ * wordsPerNetworkSlowControl = wordsPerChannelSlowControl * nChannels + wordsPerGeneralSlowControl
+ * networkSlowControlStep = round wordsPerNetworkSlowControl up to a power of two.
+ * nNetworkSlowControlSlots
+ * nNetworkFastControlSlots
+ * 
+ * then we do the same for the FastControl.
+ *
+ * When we receive an address we need to work out whether it is modifying 
+ * - If it is less than nNetworkSlotControlSlots * networkSlotControlSteps we're modifying the slow control.
+ *   The we work out which of the slots we're modifying and so on.
+ */ 
 
 /**
  * Network node that can operate in either packet or static mode
@@ -75,10 +149,10 @@ class NetworkNodeControl(params: FMPVUParams) extends Bundle {
  * In packet mode, packets are routed based on header information on independent channels.
  * In static mode, data flows according to static control signals across all channels.
  * 
- * @param params FMPVU parameters defining channel counts, widths, and memory sizes
+ * @param params FMVPU parameters defining channel counts, widths, and memory sizes
  * @groupdesc Signals The actual hardware fields of the IO Bundle
  */
-class NetworkNode(params: FMPVUParams) extends Module {
+class NetworkNode(params: FMVPUParams) extends Module {
   val io = IO(new Bundle {
     /** Input channels from 4 directions: North(0), South(1), West(2), East(3)
       * @group Signals
@@ -100,40 +174,115 @@ class NetworkNode(params: FMPVUParams) extends Module {
       * @group Signals
       */
     val toDDM = Output(Valid(new HeaderTag(UInt(params.width.W))))
-    val fromDDM = Input(Valid(UInt(params.width.W)))
+    val fromDDM = Flipped(DecoupledIO(new HeaderTag(UInt(params.width.W))))
+    val fromDDMChannel = Input(UInt(log2Ceil(params.nChannels).W))
     
-    /** Control signals for static mode routing configuration
+    /** Updates the control signals.
       * @group Signals
       */
-    val control = Input(new NetworkNodeControl(params))
+    val writeControl = Input(new MemoryWritePort(UInt(params.width.W), params.networkControlAddrWidth, false))
+    
+    /** Network instruction for slot configuration
+      * @group Signals
+      */
+    val networkInstr = Input(Valid(new NetworkInstr(params)))
+    
+    /** Send/receive instruction for network slot selection
+      * @group Signals
+      */
+    val sendReceiveInstr = Input(Valid(new SendReceiveInstr(params)))
     
     /** This node's location in the network grid
       * @group Signals
       */
     val thisLoc = Input(new Location(params))
     
-    /** Configuration signals for mode and timing setup
+    /** Error status signals indicating various fault conditions
       * @group Signals
       */
-    val configValid = Input(Bool())
-    val configIsPacketMode = Input(Bool())
-    val configDelay = Input(UInt(log2Ceil(params.networkMemoryDepth + 1).W))
+    val errors = Output(new NetworkNodeErrors)
   })
+
+  // Deals with the Control memories.
+  //
+  val slowControlMemory = Reg(Vec(params.nSlowNetworkControlSlots, new NetworkSlowControl(params)))
+  val fastControlMemory = Reg(Vec(params.nFastNetworkControlSlots, new NetworkFastControl(params)))
+  
+  // On reset, ensure all channels are in packet mode
+  when (reset.asBool) {
+    for (slotIdx <- 0 until params.nSlowNetworkControlSlots) {
+      for (channelIdx <- 0 until params.nChannels) {
+        slowControlMemory(slotIdx).channels(channelIdx).IsPacketMode := true.B
+      }
+    }
+  }
+  
+  val currentSlowControlSlot = RegInit(0.U(log2Ceil(params.nSlowNetworkControlSlots).W))
+  
+  // Detect when slow control slot is being set
+  val slowControlBeingModified = Wire(Bool())
+  slowControlBeingModified := io.networkInstr.valid && io.networkInstr.bits.instrType === 1.U
+
+  // Handle set slow control slot instruction
+  when (slowControlBeingModified) {
+    currentSlowControlSlot := io.networkInstr.bits.slot
+  }
+
+  // Helper function to update a word within a bundle
+  def updateBundleWord[T <: Data](bundle: T, wordAddress: UInt, newData: UInt): T = {
+    val bundleAsUInt = bundle.asUInt
+    val wordsInBundle = (bundleAsUInt.getWidth + params.width - 1) / params.width
+    val paddedWidth = wordsInBundle * params.width
+    val paddedBundle = Cat(0.U((paddedWidth - bundleAsUInt.getWidth).W), bundleAsUInt)
+    val words = VecInit((0 until wordsInBundle).map(i => 
+      paddedBundle((i + 1) * params.width - 1, i * params.width)
+    ))
+    words(wordAddress) := newData
+    Cat(words.reverse)(bundleAsUInt.getWidth - 1, 0).asTypeOf(bundle)
+  }
+
+  // Control memory writes are already decoded by ddmAccess module
+  when (io.writeControl.enable) {
+    when (io.writeControl.address < (params.nSlowNetworkControlSlots * params.wordsPerSlowNetworkControlSlot).U) {
+      val slowSlot = io.writeControl.address / params.wordsPerSlowNetworkControlSlot.U
+      dontTouch(slowSlot)
+      val addressInSlot = io.writeControl.address - slowSlot * params.wordsPerSlowNetworkControlSlot.U
+      dontTouch(addressInSlot)
+      // First we have the general control
+      val isGeneral = addressInSlot < params.wordsPerGeneralSlowNetworkControl.U
+      dontTouch(isGeneral)
+      when (isGeneral) {
+        slowControlMemory(slowSlot).general := updateBundleWord(slowControlMemory(slowSlot).general, addressInSlot, io.writeControl.data)
+      }.otherwise {
+        val channelIndex = (addressInSlot - params.wordsPerGeneralSlowNetworkControl.U) / params.wordsPerChannelSlowNetworkControl.U
+        dontTouch(channelIndex)
+        val addressInChannel = addressInSlot - params.wordsPerGeneralSlowNetworkControl.U - channelIndex * params.wordsPerChannelSlowNetworkControl.U
+        dontTouch(addressInChannel)
+        slowControlMemory(slowSlot).channels(channelIndex) := updateBundleWord(slowControlMemory(slowSlot).channels(channelIndex), addressInChannel, io.writeControl.data)
+      }
+    }.otherwise {
+      val fastSlot = (io.writeControl.address - params.fastNetworkControlOffset.U) / params.wordsPerFastNetworkControlSlot.U
+      val addressInSlot = (io.writeControl.address - params.fastNetworkControlOffset.U) - fastSlot * params.wordsPerFastNetworkControlSlot.U
+      val isGeneral = addressInSlot < params.wordsPerGeneralFastNetworkControl.U
+      when (isGeneral) {
+        fastControlMemory(fastSlot).general := updateBundleWord(fastControlMemory(fastSlot).general, addressInSlot, io.writeControl.data)
+      }.otherwise {
+        val channelIndex = (addressInSlot - params.wordsPerGeneralFastNetworkControl.U) / params.wordsPerChannelFastNetworkControl.U
+        val addressInChannel = addressInSlot - params.wordsPerGeneralFastNetworkControl.U - channelIndex * params.wordsPerChannelFastNetworkControl.U
+        fastControlMemory(fastSlot).channels(channelIndex) := updateBundleWord(fastControlMemory(fastSlot).channels(channelIndex), addressInChannel, io.writeControl.data)
+      }
+    }
+  }
 
   // Template for HeaderTag type inference
   val headerTemplate = new HeaderTag(UInt(params.width.W))
 
   /** Current operating mode: true for packet mode, false for static mode */
-  val isPacketMode = RegInit(true.B)
-  when (io.configValid) {
-    isPacketMode := io.configIsPacketMode
-  }
+  val currentSlowControl = slowControlMemory(currentSlowControlSlot)
 
   // Network components
   val crossbar = Module(new NetworkCrossbar(params))
-  val switches = Seq.fill(params.nChannels)(withReset(reset.asBool || io.configValid) { 
-    Module(new NetworkSwitch(params)) 
-  })
+  val switches = Seq.fill(params.nChannels)(Module(new NetworkSwitch(params)))
 
   // DDM arbitration signals
   val ddmArbitrationActive = RegInit(false.B)
@@ -142,20 +291,10 @@ class NetworkNode(params: FMPVUParams) extends Module {
   
   // Aggregated switch outputs for DDM access
   val switchesToDDM = Wire(DecoupledIO(headerTemplate))
-  switchesToDDM.valid := false.B
-  switchesToDDM.bits := DontCare
 
-  // Route DDM interface based on operating mode
-  when (isPacketMode) {
-    io.toDDM.valid := switchesToDDM.valid
-    io.toDDM.bits := switchesToDDM.bits
-    switchesToDDM.ready := true.B
-  }.otherwise {
-    io.toDDM.valid := crossbar.io.toDDM.valid
-    io.toDDM.bits.bits := crossbar.io.toDDM.bits
-    io.toDDM.bits.header := false.B
-    switchesToDDM.ready := false.B
-  }
+  io.toDDM.valid := switchesToDDM.valid
+  io.toDDM.bits := switchesToDDM.bits
+  switchesToDDM.ready := true.B
 
   // DDM arbitration next-state logic
   val nextDdmArbitrationActive = Wire(Bool())
@@ -167,11 +306,83 @@ class NetworkNode(params: FMPVUParams) extends Module {
   nextDdmArbitrationChannelPointer := ddmArbitrationChannelPointer
   nextDdmArbitrationRemaining := ddmArbitrationRemaining
 
-  // Connect crossbar to external interfaces
+  // Error detection and default error output
+  io.errors.instrConflict := false.B
+  
+  // Connect crossbar to external interfaces  
+  // Error detection: both instructions should not be valid simultaneously
+  when (io.networkInstr.valid && io.sendReceiveInstr.valid) {
+    io.errors.instrConflict := true.B
+  }
+  
+  // Select fast control slot: always use network instruction mode (send/receive use packets, not control memory)
+  val fastControlSlotSel = io.networkInstr.bits.mode
+  dontTouch(fastControlSlotSel)
+  val currentFastControl = fastControlMemory(fastControlSlotSel)
+  
+  // Create delayed control signals using AdjustableDelay instances
+  val delayedFastControl = Wire(new NetworkFastControl(params))
+  
+  // Delay general control signals
+  val drfSelDelay = Module(new AdjustableDelay(params.maxNetworkControlDelay, log2Ceil(params.nChannels * 2)))
+  drfSelDelay.io.delay := currentSlowControl.general.drfSelDelay
+  drfSelDelay.io.input.valid := true.B
+  drfSelDelay.io.input.bits := currentFastControl.general.drfSel
+  delayedFastControl.general.drfSel := drfSelDelay.io.output.bits
+  
+  val ddmSelDelay = Module(new AdjustableDelay(params.maxNetworkControlDelay, log2Ceil(params.nChannels * 2)))
+  ddmSelDelay.io.delay := currentSlowControl.general.ddmSelDelay
+  ddmSelDelay.io.input.valid := true.B
+  ddmSelDelay.io.input.bits := currentFastControl.general.ddmSel
+  delayedFastControl.general.ddmSel := ddmSelDelay.io.output.bits
+  
+  // Delay channel control signals
+  for (i <- 0 until params.nChannels) {
+    val nsInputSelDelay = Module(new AdjustableDelay(params.maxNetworkControlDelay, 1))
+    nsInputSelDelay.io.delay := currentSlowControl.channels(i).nsInputSelDelay
+    nsInputSelDelay.io.input.valid := true.B
+    nsInputSelDelay.io.input.bits := currentFastControl.channels(i).nsInputSel
+    delayedFastControl.channels(i).nsInputSel := nsInputSelDelay.io.output.bits
+    
+    val weInputSelDelay = Module(new AdjustableDelay(params.maxNetworkControlDelay, 1))
+    weInputSelDelay.io.delay := currentSlowControl.channels(i).weInputSelDelay
+    weInputSelDelay.io.input.valid := true.B
+    weInputSelDelay.io.input.bits := currentFastControl.channels(i).weInputSel
+    delayedFastControl.channels(i).weInputSel := weInputSelDelay.io.output.bits
+    
+    val nsCrossbarSelDelay = Module(new AdjustableDelay(params.maxNetworkControlDelay, log2Ceil(params.nChannels + 2)))
+    nsCrossbarSelDelay.io.delay := currentSlowControl.channels(i).nsCrossbarSelDelay
+    nsCrossbarSelDelay.io.input.valid := true.B
+    nsCrossbarSelDelay.io.input.bits := currentFastControl.channels(i).nsCrossbarSel
+    delayedFastControl.channels(i).nsCrossbarSel := nsCrossbarSelDelay.io.output.bits
+    
+    val weCrossbarSelDelay = Module(new AdjustableDelay(params.maxNetworkControlDelay, log2Ceil(params.nChannels + 2)))
+    weCrossbarSelDelay.io.delay := currentSlowControl.channels(i).weCrossbarSelDelay
+    weCrossbarSelDelay.io.input.valid := true.B
+    weCrossbarSelDelay.io.input.bits := currentFastControl.channels(i).weCrossbarSel
+    delayedFastControl.channels(i).weCrossbarSel := weCrossbarSelDelay.io.output.bits
+  }
+  
   crossbar.io.fromDRF := io.fromDRF
   io.toDRF := crossbar.io.toDRF
-  crossbar.io.fromDDM := io.fromDDM
-  crossbar.io.control := io.control
+  crossbar.io.control := delayedFastControl
+  
+  // Route DDM data to the appropriate switch based on channel
+  // Default all switches to not ready and invalid
+  for (channelIndex <- 0 until params.nChannels) {
+    switches(channelIndex).io.fromDDM.valid := false.B
+    switches(channelIndex).io.fromDDM.bits := DontCare
+  }
+  
+  // Default ready signal
+  io.fromDDM.ready := false.B
+  
+  // Connect selected switch
+  for (channelIndex <- 0 until params.nChannels) {
+    when (io.fromDDMChannel === channelIndex.U) {
+      switches(channelIndex).io.fromDDM <> io.fromDDM
+    }
+  }
 
   // Collect all switch DDM outputs
   val allSwitchToDDM = Wire(Vec(params.nChannels, DecoupledIO(headerTemplate)))
@@ -180,7 +391,8 @@ class NetworkNode(params: FMPVUParams) extends Module {
   }
   
   // Connect selected switch to aggregated DDM output
-  switchesToDDM.valid := allSwitchToDDM(ddmArbitrationChannelPointer).valid && isPacketMode
+  switchesToDDM.valid := allSwitchToDDM(ddmArbitrationChannelPointer).valid && 
+    currentSlowControl.channels(ddmArbitrationChannelPointer).IsPacketMode
   switchesToDDM.bits := allSwitchToDDM(ddmArbitrationChannelPointer).bits
 
   // Configure each channel and its associated switch
@@ -190,12 +402,9 @@ class NetworkNode(params: FMPVUParams) extends Module {
     // Connect switch location interface
     currentSwitch.io.thisLoc := io.thisLoc
     
-    // DDM to switch interface (currently unused)
-    currentSwitch.io.fromDDM.valid := false.B
-    currentSwitch.io.fromDDM.bits := DontCare
     
     // DDM arbitration: manage which switch can access DDM
-    val isSelectedForDDM = isPacketMode && ddmArbitrationChannelPointer === channelIndex.U
+    val isSelectedForDDM = currentSlowControl.channels(channelIndex).IsPacketMode && ddmArbitrationChannelPointer === channelIndex.U
     when (isSelectedForDDM) {
       allSwitchToDDM(channelIndex).ready := switchesToDDM.ready
       
@@ -228,7 +437,8 @@ class NetworkNode(params: FMPVUParams) extends Module {
     // Configure input/output routing for each direction (N=0, S=1, W=2, E=3)
     for (direction <- 0 until 4) {
       // Route inputs based on operating mode
-      when (isPacketMode) {
+      val channelIsPacketMode = currentSlowControl.channels(channelIndex).IsPacketMode
+      when (channelIsPacketMode) {
         // Packet mode: inputs go to switches
         currentSwitch.io.inputs(direction) <> io.inputs(direction)(channelIndex)
         crossbar.io.inputs(direction)(channelIndex).valid := false.B
@@ -243,12 +453,12 @@ class NetworkNode(params: FMPVUParams) extends Module {
 
       // Create configurable buffer (FIFO for packet mode, delay line for static mode)
       val routingBuffer = Module(new FifoOrDelay(headerTemplate, params.networkMemoryDepth))
-      routingBuffer.io.config.valid := io.configValid
-      routingBuffer.io.config.bits.isFifo := io.configIsPacketMode
-      routingBuffer.io.config.bits.delay := io.configDelay
+      routingBuffer.io.config.valid := slowControlBeingModified
+      routingBuffer.io.config.bits.isFifo := slowControlMemory(io.networkInstr.bits.slot).channels(channelIndex).IsPacketMode
+      routingBuffer.io.config.bits.delay := slowControlMemory(io.networkInstr.bits.slot).channels(channelIndex).delays(direction)
 
       // Route buffer inputs based on operating mode
-      when (isPacketMode) {
+      when (channelIsPacketMode) {
         // Packet mode: buffer inputs come from switch
         routingBuffer.io.input <> currentSwitch.io.toFifos(direction)
       }.otherwise {
@@ -261,7 +471,7 @@ class NetworkNode(params: FMPVUParams) extends Module {
 
       // Route buffer outputs and determine final output signals
       val finalOutput = Wire(new PacketInterface(params.width))
-      when (isPacketMode) {
+      when (channelIsPacketMode) {
         // Packet mode: buffer outputs go to switch, final output from switch
         currentSwitch.io.fromFifos(direction) <> routingBuffer.io.output
         finalOutput <> currentSwitch.io.outputs(direction)
@@ -279,10 +489,10 @@ class NetworkNode(params: FMPVUParams) extends Module {
         // Determine if this direction should drive its output
         val shouldDriveOutput = Wire(Bool())
         shouldDriveOutput := VecInit(Seq(
-          io.control.nDrive(channelIndex),  // North (0)
-          io.control.sDrive(channelIndex),  // South (1) 
-          io.control.wDrive(channelIndex),  // West (2)
-          io.control.eDrive(channelIndex)   // East (3)
+          currentSlowControl.channels(channelIndex).nDrive(channelIndex),  // North (0)
+          currentSlowControl.channels(channelIndex).sDrive(channelIndex),  // South (1) 
+          currentSlowControl.channels(channelIndex).wDrive(channelIndex),  // West (2)
+          currentSlowControl.channels(channelIndex).eDrive(channelIndex)   // East (3)
         ))(direction)
         
         when (shouldDriveOutput && routingBuffer.io.output.valid) {
@@ -327,7 +537,7 @@ object NetworkNodeGenerator extends ModuleGenerator {
       println("Usage: <command> <outputDir> NetworkNode <paramsFileName>")
       null
     } else {
-      val params = FMPVUParams.fromFile(args(0))
+      val params = FMVPUParams.fromFile(args(0))
       new NetworkNode(params)
     }
   }

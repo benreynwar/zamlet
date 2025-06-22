@@ -27,7 +27,7 @@ import fmvpu.ModuleGenerator
   * @groupdesc Boundary External mesh boundary interfaces
   * @groupdesc Control Global control and configuration signals
   */
-class LaneGrid(params: FMPVUParams) extends Module {
+class LaneGrid(params: FMVPUParams) extends Module {
   val io = IO(new Bundle {
     /** North boundary input channels (one vector per column)
       * @group Boundary
@@ -74,10 +74,6 @@ class LaneGrid(params: FMPVUParams) extends Module {
       */
     val instr = Vec(params.nColumns, Input(new Instr(params)))
     
-    /** Configuration inputs for each column (flows north to south)
-      * @group Control
-      */
-    val config = Vec(params.nColumns, Input(new Config(params)))
   })
 
   // Instantiate 2D grid of Lanes
@@ -157,18 +153,6 @@ class LaneGrid(params: FMPVUParams) extends Module {
     }
   }
 
-  // Connect config flow north-to-south through columns
-  for (col <- 0 until params.nColumns) {
-    for (row <- 0 until params.nRows) {
-      if (row == 0) {
-        // Top row gets config from grid input
-        lanes(row)(col).io.nConfig := io.config(col)
-      } else {
-        // Connect to sConfig of lane above
-        lanes(row)(col).io.nConfig := lanes(row - 1)(col).io.sConfig
-      }
-    }
-  }
 
   // Set location for each lane
   for (col <- 0 until params.nColumns) {
@@ -199,7 +183,7 @@ object LaneGridGenerator extends ModuleGenerator {
       println("Usage: <command> <outputDir> LaneGrid <paramsFileName>")
       return null
     }
-    val params = FMPVUParams.fromFile(args(0))
+    val params = FMVPUParams.fromFile(args(0))
     new LaneGrid(params)
   }
 }
