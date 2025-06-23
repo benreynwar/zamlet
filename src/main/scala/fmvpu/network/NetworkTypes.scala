@@ -87,6 +87,10 @@ class Header(params: FMVPUParams) extends Bundle {
     * @group Signals
     */
   val dest = new Location(params)
+  /** Source location in the mesh network
+    * @group Signals
+    */
+  val src = new Location(params)
   /** Memory address for DDM access at destination (includes extended address space for network control)
     * @group Signals
     */

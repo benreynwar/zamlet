@@ -1,8 +1,13 @@
 from dataclasses import dataclass
-from typing import List, Tuple
+from typing import List, Tuple, Dict, Any
 import math
+import logging
 
 from params import FMVPUParams
+from test_utils import clog2
+
+
+logger = logging.getLogger(__name__)
 
 
 def pack_value_to_bits(value, width: int) -> List[bool]:
@@ -63,6 +68,29 @@ def pack_fields_to_words(obj, field_specs: List[Tuple[str, int]], word_width: in
     """Pack object fields into words using field specifications."""
     bits = pack_fields_to_bits(obj, field_specs)
     return pack_bits_to_words(bits, word_width)
+
+
+def unpack_words_to_fields(words: List[int], field_specs: List[Tuple[str, int]], word_width: int = 32) -> Dict[str, Any]:
+    """Unpack words into field values using field specifications."""
+    # Convert words back to bits
+    bits = []
+    for word in words:
+        for i in range(word_width):
+            bits.append((word >> i) & 1 == 1)
+    
+    # Extract fields from bits (reverse order to match packing)
+    field_values = {}
+    bit_offset = 0
+    
+    for field_name, bit_width in reversed(field_specs):
+        value = 0
+        for i in range(bit_width):
+            if bits[bit_offset + i]:
+                value |= (1 << i)
+        field_values[field_name] = value
+        bit_offset += bit_width
+    
+    return field_values
 
 
 def calculate_total_width(field_specs: List[Tuple[str, int]]) -> int:
@@ -294,3 +322,65 @@ class NetworkFastControl:
         for channel_config in self.channels:
             config_words.extend(channel_config.to_words(params))
         return config_words
+
+
+@dataclass
+class PacketHeader:
+    """Python mirror of packet header structure."""
+    dest_x: int
+    dest_y: int
+    src_x: int
+    src_y: int
+    address: int
+    length: int
+    expects_receive: bool
+    ident: int
+
+    @classmethod
+    def get_field_specs(cls, params: FMVPUParams) -> List[Tuple[str, int]]:
+        """Get field specifications for bit packing."""
+        dest_x_bits = clog2(params.n_columns)
+        dest_y_bits = clog2(params.n_rows)
+        src_x_bits = clog2(params.n_columns)
+        src_y_bits = clog2(params.n_rows)
+        addr_bits = params.ddm_addr_width + 1
+        length_bits = clog2(params.max_packet_length)
+        expects_receive_bits = 1
+        ident_bits = params.network_ident_width
+        
+        return [
+            ('dest_x', dest_x_bits),
+            ('dest_y', dest_y_bits),
+            ('src_x', src_x_bits),
+            ('src_y', src_y_bits),
+            ('address', addr_bits),
+            ('length', length_bits),
+            ('expects_receive', expects_receive_bits),
+            ('ident', ident_bits),
+        ]
+
+    @classmethod
+    def width_bits(cls, params: FMVPUParams) -> int:
+        """Calculate width in bits."""
+        return calculate_total_width(cls.get_field_specs(params))
+
+    def to_words(self, params: FMVPUParams) -> List[int]:
+        """Convert to list of words."""
+        return pack_fields_to_words(self, self.get_field_specs(params), params.width)
+
+    def to_word(self, params: FMVPUParams) -> int:
+        """Convert to single word value, checking that it fits in one word."""
+        total_bits = self.width_bits(params)
+        assert total_bits <= params.width, f"PacketHeader requires {total_bits} bits but only {params.width} available"
+        
+        words = self.to_words(params)
+        assert len(words) == 1, f"PacketHeader requires {len(words)} words but should fit in 1 word"
+        
+        return words[0]
+
+    @classmethod
+    def from_word(cls, params: FMVPUParams, word: int) -> 'PacketHeader':
+        """Create PacketHeader from a single word value."""
+        field_specs = cls.get_field_specs(params)
+        field_values = unpack_words_to_fields([word], field_specs, params.width)
+        return cls(**field_values)

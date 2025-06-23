@@ -28,137 +28,137 @@ import fmvpu.ModuleGenerator
   * @groupdesc Control Global control and configuration signals
   */
 class LaneGrid(params: FMVPUParams) extends Module {
+  // Grid coordinates: lanes exist from (1,1) to (nColumns-2, nRows-2)
+  // Coordinates 0 and nColumns-1/nRows-1 are reserved for routing data off the grid
   val io = IO(new Bundle {
     /** North boundary input channels (one vector per column)
       * @group Boundary
       */
-    val nI = Vec(params.nColumns, Vec(params.nChannels, new PacketInterface(params.width)))
+    val nI = Vec(params.nColumns-2, Vec(params.nChannels, new PacketInterface(params.width)))
     
     /** North boundary output channels (one vector per column)
       * @group Boundary
       */
-    val nO = Vec(params.nColumns, Vec(params.nChannels, Flipped(new PacketInterface(params.width))))
+    val nO = Vec(params.nColumns-2, Vec(params.nChannels, Flipped(new PacketInterface(params.width))))
     
     /** South boundary input channels (one vector per column)  
       * @group Boundary
       */
-    val sI = Vec(params.nColumns, Vec(params.nChannels, new PacketInterface(params.width)))
+    val sI = Vec(params.nColumns-2, Vec(params.nChannels, new PacketInterface(params.width)))
     
     /** South boundary output channels (one vector per column)
       * @group Boundary
       */
-    val sO = Vec(params.nColumns, Vec(params.nChannels, Flipped(new PacketInterface(params.width))))
+    val sO = Vec(params.nColumns-2, Vec(params.nChannels, Flipped(new PacketInterface(params.width))))
     
     /** East boundary input channels (one vector per row)
       * @group Boundary
       */
-    val eI = Vec(params.nRows, Vec(params.nChannels, new PacketInterface(params.width)))
+    val eI = Vec(params.nRows-2, Vec(params.nChannels, new PacketInterface(params.width)))
     
     /** East boundary output channels (one vector per row)
       * @group Boundary
       */
-    val eO = Vec(params.nRows, Vec(params.nChannels, Flipped(new PacketInterface(params.width))))
+    val eO = Vec(params.nRows-2, Vec(params.nChannels, Flipped(new PacketInterface(params.width))))
     
     /** West boundary input channels (one vector per row)
       * @group Boundary
       */
-    val wI = Vec(params.nRows, Vec(params.nChannels, new PacketInterface(params.width)))
+    val wI = Vec(params.nRows-2, Vec(params.nChannels, new PacketInterface(params.width)))
     
     /** West boundary output channels (one vector per row)
       * @group Boundary
       */
-    val wO = Vec(params.nRows, Vec(params.nChannels, Flipped(new PacketInterface(params.width))))
+    val wO = Vec(params.nRows-2, Vec(params.nChannels, Flipped(new PacketInterface(params.width))))
     
     /** Instruction inputs for each column (flows north to south)
       * @group Control
       */
-    val instr = Vec(params.nColumns, Input(new Instr(params)))
+    val instr = Vec(params.nColumns-2, Input(new Instr(params)))
     
   })
 
   // Instantiate 2D grid of Lanes
-  val lanes = Array.tabulate(params.nRows, params.nColumns) { (row, col) =>
+  val lanes = Array.tabulate(params.nRows-2, params.nColumns-2) { (row, col) =>
     Module(new Lane(params))
   }
 
   // Connect north/south data buses
-  for (col <- 0 until params.nColumns) {
-    for (row <- 0 until params.nRows) {
-      if (row == 0) {
+  for (col <- 1 until params.nColumns-1) {
+    val arrayCol = col - 1  // Convert from coordinate to array index
+    for (row <- 1 until params.nRows-1) {
+      val arrayRow = row - 1  // Convert from coordinate to array index
+      if (row == 1) {
         // Top row connects to north inputs
-        lanes(row)(col).io.nI <> io.nI(col)
-        lanes(row)(col).io.nO <> io.nO(col)
+        lanes(arrayRow)(arrayCol).io.nI <> io.nI(arrayCol)
+        lanes(arrayRow)(arrayCol).io.nO <> io.nO(arrayCol)
       } else {
         // Connect to lane above
-        lanes(row)(col).io.nI <> lanes(row - 1)(col).io.sO
+        lanes(arrayRow)(arrayCol).io.nI <> lanes(arrayRow - 1)(arrayCol).io.sO
       }
       
-      if (row == params.nRows - 1) {
-        // Bottom row connects to north outputs
-        io.nO(col) <> lanes(row)(col).io.nO
-      }
-      
-      if (row == params.nRows - 1) {
+      if (row == params.nRows - 2) {
         // Bottom row connects to south inputs
-        lanes(row)(col).io.sI <> io.sI(col)
-        lanes(row)(col).io.sO <> io.sO(col)
+        lanes(arrayRow)(arrayCol).io.sI <> io.sI(arrayCol)
+        lanes(arrayRow)(arrayCol).io.sO <> io.sO(arrayCol)
       } else {
         // Connect to lane below
-        lanes(row)(col).io.sI <> lanes(row + 1)(col).io.nO
-      }
-      
-      if (row == 0) {
-        // Top row connects to south outputs
-        io.sO(col) <> lanes(row)(col).io.sO
+        lanes(arrayRow)(arrayCol).io.sI <> lanes(arrayRow + 1)(arrayCol).io.nO
       }
     }
   }
 
   // Connect east/west data buses
-  for (row <- 0 until params.nRows) {
-    for (col <- 0 until params.nColumns) {
-      if (col == 0) {
+  for (row <- 1 until params.nRows-1) {
+    val arrayRow = row - 1  // Convert from coordinate to array index
+    for (col <- 1 until params.nColumns-1) {
+      val arrayCol = col - 1  // Convert from coordinate to array index
+      if (col == 1) {
         // Left column connects to west inputs
-        lanes(row)(col).io.wI <> io.wI(row)
-        lanes(row)(col).io.wO <> io.wO(row)
+        lanes(arrayRow)(arrayCol).io.wI <> io.wI(arrayRow)
+        lanes(arrayRow)(arrayCol).io.wO <> io.wO(arrayRow)
       } else {
         // Connect to lane to the left
-        lanes(row)(col).io.wI <> lanes(row)(col - 1).io.eO
+        lanes(arrayRow)(arrayCol).io.wI <> lanes(arrayRow)(arrayCol - 1).io.eO
       }
       
-      if (col == params.nColumns - 1) {
+      if (col == params.nColumns - 2) {
         // Right column connects to east inputs
-        lanes(row)(col).io.eI <> io.eI(row)
-        io.eO(row) <> lanes(row)(col).io.eO
+        lanes(arrayRow)(arrayCol).io.eI <> io.eI(arrayRow)
+        lanes(arrayRow)(arrayCol).io.eO <> io.eO(arrayRow)
       } else {
         // Connect to lane to the right
-        lanes(row)(col).io.eI <> lanes(row)(col + 1).io.wO
+        lanes(arrayRow)(arrayCol).io.eI <> lanes(arrayRow)(arrayCol + 1).io.wO
       }
     }
   }
 
   // Connect instruction flow north-to-south through columns
-  for (col <- 0 until params.nColumns) {
-    for (row <- 0 until params.nRows) {
-      if (row == 0) {
+  for (col <- 1 until params.nColumns-1) {
+    val arrayCol = col - 1  // Convert from coordinate to array index
+    for (row <- 1 until params.nRows-1) {
+      val arrayRow = row - 1  // Convert from coordinate to array index
+      if (row == 1) {
         // Top row gets instructions from grid input
-        lanes(row)(col).io.nInstr := io.instr(col)
+        lanes(arrayRow)(arrayCol).io.nInstr := io.instr(arrayCol)
       } else {
         // Connect to sInstr of lane above
-        lanes(row)(col).io.nInstr := lanes(row - 1)(col).io.sInstr
+        lanes(arrayRow)(arrayCol).io.nInstr := lanes(arrayRow - 1)(arrayCol).io.sInstr
       }
       // Set delay so all lanes execute on the same cycle
       // Lane at row R needs delay of (nRows-1-R) to sync with bottom row
-      lanes(row)(col).io.instrDelay := (params.nRows - 1 - row).U
+      lanes(arrayRow)(arrayCol).io.instrDelay := (params.nRows - 1 - row).U
     }
   }
 
 
   // Set location for each lane
-  for (col <- 0 until params.nColumns) {
-    for (row <- 0 until params.nRows) {
-      lanes(row)(col).io.thisLoc.x := col.U
-      lanes(row)(col).io.thisLoc.y := row.U
+  for (col <- 1 until params.nColumns-1) {
+    val arrayCol = col - 1  // Convert from coordinate to array index
+    for (row <- 1 until params.nRows-1) {
+      val arrayRow = row - 1  // Convert from coordinate to array index
+      lanes(arrayRow)(arrayCol).io.thisLoc.x := col.U
+      lanes(arrayRow)(arrayCol).io.thisLoc.y := row.U
     }
   }
 

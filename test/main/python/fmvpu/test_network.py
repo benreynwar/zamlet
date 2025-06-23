@@ -32,15 +32,13 @@ async def network_basic_test(dut: HierarchyObject) -> None:
     
     # Initialize inputs
     dut.io_networkInstr_valid.value = 0
-    dut.io_networkInstr_bits_instrType.value = 0
-    dut.io_networkInstr_bits_data.value = 0
     dut.io_fromDRF_valid.value = 0
-    dut.io_fromDRF_bits.value = 0
     dut.io_fromDDM_valid.value = 0
-    dut.io_fromDDM_bits.value = 0
+    dut.io_fromDDMChannel.value = 0
     dut.io_writeControl_enable.value = 0
-    dut.io_writeControl_address.value = 0
-    dut.io_writeControl_data.value = 0
+    dut.io_sendReceiveInstr_valid.value = 0
+    dut.io_thisLoc_x.value = 0
+    dut.io_thisLoc_y.value = 0
 
     # Read test parameters to get n_channels
     test_params = test_utils.read_params()

@@ -191,6 +191,7 @@ class NetworkSwitch(params: FMVPUParams) extends Module {
     
     // Check which inputs have valid headers targeting this output
     val validHeaders = Wire(Vec(5, Bool()))
+    dontTouch(validHeaders)
     for (i <- 0 until 5) {
       val input = fromFifosAndDDM(i)
       validHeaders(i) := input.valid && input.bits.header &&
@@ -212,7 +213,7 @@ class NetworkSwitch(params: FMVPUParams) extends Module {
     nextState := state(dstDirection)
     when (!state(dstDirection).active) {
       // Idle: start new packet when header arrives
-      when (availableHeader) {
+      when (availableHeader && toReadyToTokenAndDDM(dstDirection).ready) {
         nextState.input := choice(dstDirection)
         nextState.active := true.B
         nextState.remaining := Header.fromBits(fromFifosAndDDM(choice(dstDirection)).bits.bits, params).length

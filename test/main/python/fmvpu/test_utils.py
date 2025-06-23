@@ -83,62 +83,6 @@ def make_seed(rnd: Any) -> int:
     return rnd.getrandbits(32)
 
 
-def make_packet_header(params: Any, x: int, y: int, address: int, length: int, expects_receive: bool = True, ident: int = 0) -> int:
-    """Create a packet header with destination coordinates, address, length, expects_receive flag, and identifier."""
-    x_bits = clog2(params.n_columns)
-    y_bits = clog2(params.n_rows)
-    # Allow one extra bit for network control memory which extends beyond DDM space
-    addr_bits = params.ddm_addr_width + 1
-    length_bits = clog2(params.max_packet_length)
-    expects_receive_bits = 1
-    ident_bits = params.network_ident_width
-    
-    total_bits = x_bits + y_bits + addr_bits + length_bits + expects_receive_bits + ident_bits
-    assert total_bits <= params.width, f"Header requires {total_bits} bits but only {params.width} available"
-
-    assert 0 <= length < (1 << length_bits)
-    assert 0 <= address < (1 << addr_bits)
-    assert 0 <= y < (1 << y_bits)
-    assert 0 <= x < (1 << x_bits)
-    assert 0 <= ident < (1 << ident_bits)
-
-    # Pack header with MSB to LSB order: dest.x | dest.y | address | length | expects_receive | ident
-    header = 0
-    header |= ident
-    header |= (1 if expects_receive else 0) << ident_bits
-    header |= length << (ident_bits + expects_receive_bits)
-    header |= address << (ident_bits + expects_receive_bits + length_bits)
-    header |= y << (ident_bits + expects_receive_bits + length_bits + addr_bits)
-    header |= x << (ident_bits + expects_receive_bits + length_bits + addr_bits + y_bits)
-
-    return header
-
-
-def decode_packet_header(params: Any, header: int) -> Dict[str, int]:
-    """Decode a packet header into its components."""
-    x_bits = clog2(params.n_columns)
-    y_bits = clog2(params.n_rows)
-    addr_bits = params.ddm_addr_width + 1
-    length_bits = clog2(params.max_packet_length)
-    expects_receive_bits = 1
-    ident_bits = params.network_ident_width
-    
-    # Extract fields from packed header (MSB to LSB: dest.x | dest.y | address | length | expectsReceive | ident)
-    ident = header & ((1 << ident_bits) - 1)
-    expects_receive = (header >> ident_bits) & ((1 << expects_receive_bits) - 1)
-    length = (header >> (ident_bits + expects_receive_bits)) & ((1 << length_bits) - 1)
-    address = (header >> (ident_bits + expects_receive_bits + length_bits)) & ((1 << addr_bits) - 1)
-    y = (header >> (ident_bits + expects_receive_bits + length_bits + addr_bits)) & ((1 << y_bits) - 1)
-    x = (header >> (ident_bits + expects_receive_bits + length_bits + addr_bits + y_bits)) & ((1 << x_bits) - 1)
-    
-    return {
-        'x': x,
-        'y': y,
-        'address': address,
-        'length': length,
-        'expects_receive': expects_receive,
-        'ident': ident
-    }
 
 
 class PacketSender:
@@ -204,13 +148,16 @@ class PacketSender:
                 if header is not None:
                     self.valid_s.value = 1
                     self.header_s.value = 1
+                    logger.info(f'Sending header {header} on {self.data_s}')
                     self.data_s.value = header
                     header = None
                     self.n_tokens -= 1
                 elif body:
                     self.valid_s.value = 1
                     self.header_s.value = 0
-                    self.data_s.value = body.pop(0)
+                    word = body.pop(0)
+                    logger.info(f'Sending body {word}')
+                    self.data_s.value = word
                     self.n_tokens -= 1
 
     def kill(self):
@@ -287,10 +234,11 @@ class PacketReceiver:
                         raise RuntimeError("Received unexpected packet header - expected data")
                     
                     # Start of new packet - decode header to get length
-                    header_info = decode_packet_header(self.params, data_value)
-                    logger.info(f'Header is {header_info}')
+                    from control_structures import PacketHeader
+                    packet_header = PacketHeader.from_word(self.params, data_value)
+                    logger.info(f'Header is {packet_header}')
                     self.current_packet = [data_value]
-                    self.packet_length = header_info['length']
+                    self.packet_length = packet_header.length
                     self.words_received = 0
                     self.expecting_header = False
                     

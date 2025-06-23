@@ -91,16 +91,6 @@ class SendState(params: FMVPUParams) extends Bundle {
     * @group Signals
     */
   val destY = UInt(log2Ceil(params.nRows).W)
-  
-  /** Use sender's X coordinate as destination
-    * @group Signals
-    */
-  val useSameX = Bool()
-  
-  /** Use sender's Y coordinate as destination
-    * @group Signals
-    */
-  val useSameY = Bool()
 }
 
 object SendState {
@@ -114,8 +104,6 @@ object SendState {
     state.headerSent := DontCare
     state.destX := DontCare
     state.destY := DontCare
-    state.useSameX := DontCare
-    state.useSameY := DontCare
     state
   }
 }
@@ -336,10 +324,8 @@ class ddmAccess(params: FMVPUParams) extends Module {
     sendState.dstAddress := sendInstrFIFO.io.deq.bits.dstAddr
     sendState.channel := sendInstrFIFO.io.deq.bits.channel
     sendState.headerSent := false.B
-    sendState.destX := sendInstrFIFO.io.deq.bits.destX
-    sendState.destY := sendInstrFIFO.io.deq.bits.destY
-    sendState.useSameX := sendInstrFIFO.io.deq.bits.useSameX
-    sendState.useSameY := sendInstrFIFO.io.deq.bits.useSameY
+    sendState.destX := Mux(sendInstrFIFO.io.deq.bits.useSameX, io.thisLoc.x, sendInstrFIFO.io.deq.bits.destX)
+    sendState.destY := Mux(sendInstrFIFO.io.deq.bits.useSameY, io.thisLoc.y, sendInstrFIFO.io.deq.bits.destY)
   }
 
   // Bundle for data going through the shift register
@@ -369,8 +355,10 @@ class ddmAccess(params: FMVPUParams) extends Module {
     when(!sendState.headerSent) {
       // Generate header and put it in shift register
       val packetHeader = Wire(new Header(params))
-      packetHeader.dest.x := Mux(sendState.useSameX, io.thisLoc.x, sendState.destX)
-      packetHeader.dest.y := Mux(sendState.useSameY, io.thisLoc.y, sendState.destY)
+      packetHeader.dest.x := sendState.destX
+      packetHeader.dest.y := sendState.destY
+      packetHeader.src.x := io.thisLoc.x
+      packetHeader.src.y := io.thisLoc.y
       packetHeader.address := sendState.dstAddress
       packetHeader.length := sendState.length
       packetHeader.expectsReceive := false.B  // Send instructions don't expect receive instructions

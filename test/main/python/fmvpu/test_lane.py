@@ -14,7 +14,7 @@ from cocotb.handle import HierarchyObject
 import generate_rtl
 import test_utils
 from params import FMVPUParams
-from control_structures import ChannelSlowControl, NetworkSlowControl, GeneralSlowControl, NetworkFastControl
+from control_structures import ChannelSlowControl, NetworkSlowControl, GeneralSlowControl, NetworkFastControl, PacketHeader
 
 
 logger = logging.getLogger(__name__)
@@ -26,7 +26,11 @@ async def send_data_via_packets(data: List[int], address, ident, dut, queue: Deq
     column_index = 1
     row_index = 1
     expected_receive=True
-    header = test_utils.make_packet_header(params, column_index, row_index, address, len(data), expected_receive, ident)
+    packet_header = PacketHeader(
+        dest_x=column_index, dest_y=row_index, src_x=0, src_y=0,
+        address=address, length=len(data), expects_receive=expected_receive, ident=ident
+    )
+    header = packet_header.to_word(params)
     packet = [header] + data
     queue.append(packet)
     
@@ -41,6 +45,7 @@ async def send_data_via_packets(data: List[int], address, ident, dut, queue: Deq
     assert response_ident == ident, f"Expected ident {ident}, got {response_ident}"
     logger.info('send_data_via_packets: end')
     await triggers.RisingEdge(dut.clock)
+
 
 async def receive_data_via_packets(dut, queues: Deque[List[int]]) -> List[int]:
     logger.info('receive_data_via_packets: start')
@@ -112,7 +117,7 @@ def clear_loadstore(dut: HierarchyObject) -> None:
     dut.io_nInstr_loadstore_valid.value = 0
     
 
-async def send_and_receive(dut: HierarchyObject, rnd: Random, params: Any, packet_sender, packet_receiver) -> None:
+async def send_and_receive(dut: HierarchyObject, rnd: Random, params: Any, packet_sender, packet_receiver, send_channel) -> None:
     """
     Test basic send and receive functionality.
     
@@ -133,7 +138,7 @@ async def send_and_receive(dut: HierarchyObject, rnd: Random, params: Any, packe
 
     receive_packet_task = cocotb.start_soon(receive_data_via_packets(dut, packet_receiver.queue))
 
-    submit_send(dut, ident, length, address)
+    submit_send(dut, ident, length, address, send_channel)
     await triggers.RisingEdge(dut.clock)
     clear_sendreceive(dut)
     received_data = await receive_packet_task
@@ -141,7 +146,7 @@ async def send_and_receive(dut: HierarchyObject, rnd: Random, params: Any, packe
     assert data == received_data
 
 
-async def send_and_receive_swap_order(dut: HierarchyObject, rnd: Random, params: Any, packet_sender, packet_receiver) -> None:
+async def send_and_receive_swap_order(dut: HierarchyObject, rnd: Random, params: Any, packet_sender, packet_receiver, send_channel) -> None:
     """
     Test data manipulation through register file.
     
@@ -190,7 +195,7 @@ async def send_and_receive_swap_order(dut: HierarchyObject, rnd: Random, params:
     # Step 6: Send the swapped data out
     receive_packet_task = cocotb.start_soon(receive_data_via_packets(dut, packet_receiver.queue))
     
-    submit_send(dut, ident, length, address)
+    submit_send(dut, ident, length, address, send_channel)
     await triggers.RisingEdge(dut.clock)
     clear_sendreceive(dut)
     received_data = await receive_packet_task
@@ -281,8 +286,11 @@ async def configure_network_fast_control(dut: HierarchyObject, params: FMVPUPara
     control_mem_start = params.fast_network_control_offset
     
     # Create packet header targeting this lane's location (0,0)
-    header = test_utils.make_packet_header(
-            params, x=0, y=0, address=control_mem_start, length=len(config_words))
+    packet_header = PacketHeader(
+        dest_x=0, dest_y=0, src_x=0, src_y=0,
+        address=control_mem_start, length=len(config_words), expects_receive=True, ident=0
+    )
+    header = packet_header.to_word(params)
     
     # Create the configuration packet and add to queue
     config_packet = [header] + config_words
@@ -348,8 +356,11 @@ async def configure_network_mixed_mode(dut: HierarchyObject, params: FMVPUParams
     control_mem_start = 1 << (ddm_max_addr - 1).bit_length()  # Round up to power of 2
     
     # Create packet header targeting this lane's location (0,0)
-    header = test_utils.make_packet_header(
-            params, x=0, y=0, address=control_mem_start, length=len(config_words))
+    packet_header = PacketHeader(
+        dest_x=0, dest_y=0, src_x=0, src_y=0,
+        address=control_mem_start, length=len(config_words), expects_receive=True, ident=0
+    )
+    header = packet_header.to_word(params)
     
     # Create the configuration packet and add to queue
     config_packet = [header] + config_words
@@ -417,19 +428,21 @@ async def lane_test(dut: HierarchyObject) -> None:
     cocotb.start_soon(error_monitor(dut, params))
     
     # Create packet queues and handlers for tests
-    channel = 0
-    tolane_queue: Deque[List[int]] = collections.deque()
-    fromlane_queue: Deque[List[int]] = collections.deque()
-    packet_sender = test_utils.PacketSender(dut, 'w', None, channel, tolane_queue)
-    packet_receiver = test_utils.PacketReceiver(dut, 'w', None, channel, fromlane_queue, params)
+    tolane_queues = [collections.deque() for i in range(params.n_channels)]
+    fromlane_queues = [collections.deque() for i in range(params.n_channels)]
+    packet_senders = [test_utils.PacketSender(dut, 'w', None, channel, tolane_queues[channel]) for channel in range(params.n_channels)]
+    packet_receivers = [test_utils.PacketReceiver(dut, 'w', None, channel, fromlane_queues[channel], params) for channel in range(params.n_channels)]
     
     # Run test scenarios
-    await send_and_receive(dut, rnd, params, packet_sender, packet_receiver)
-    await send_and_receive_swap_order(dut, rnd, params, packet_sender, packet_receiver)
+    receive_channel = 1
+    send_channel = 2
+    await send_and_receive(dut, rnd, params, packet_senders[receive_channel], packet_receivers[send_channel], send_channel)
+    await send_and_receive_swap_order(dut, rnd, params, packet_senders[receive_channel], packet_receivers[send_channel], send_channel)
     
     # Clean up packet handlers
-    packet_sender.kill()
-    packet_receiver.kill()
+    for i in range(params.n_channels):
+        packet_senders[i].kill()
+        packet_receivers[i].kill()
 
 
 def test_lane(temp_dir: Optional[str] = None) -> None:
