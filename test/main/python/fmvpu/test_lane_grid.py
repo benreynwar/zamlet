@@ -194,15 +194,20 @@ async def send_and_receive(dut: HierarchyObject, rnd: Random, params: Any, packe
     submit_receive(dut, length, address, params, ident)
     await triggers.RisingEdge(dut.clock)
     clear_sendreceive(dut, params)
-    await triggers.RisingEdge(dut.clock)
+    for i in range(4):
+        await triggers.RisingEdge(dut.clock)
     
     # Send data via packets
     await send_data_via_packets(test_data, address, ident, dut, packet_senders, params)
+    for i in range(4):
+        await triggers.RisingEdge(dut.clock)
     
     # Set up send instruction
     submit_send(dut, length, address, params, ident)
     await triggers.RisingEdge(dut.clock)
     clear_sendreceive(dut, params)
+    for i in range(4):
+        await triggers.RisingEdge(dut.clock)
     
     # Receive data via packets
     received_data = await receive_data_via_packets(dut, packet_receivers, params)
@@ -229,9 +234,12 @@ async def send_and_receive_swap_order(dut: HierarchyObject, rnd: Random, params:
     submit_receive(dut, length, address, params, ident)
     await triggers.RisingEdge(dut.clock)
     clear_sendreceive(dut, params)
-    await triggers.RisingEdge(dut.clock)
+    for i in range(4):
+        await triggers.RisingEdge(dut.clock)
     
     await send_data_via_packets(test_data, address, ident, dut, packet_senders, params)
+    for i in range(4):
+        await triggers.RisingEdge(dut.clock)
     
     # Step 2: Store vector from memory address 0 into register 0
     submit_store(dut, 0, 0, params)
@@ -261,6 +269,8 @@ async def send_and_receive_swap_order(dut: HierarchyObject, rnd: Random, params:
     submit_send(dut, length, address, params, ident)
     await triggers.RisingEdge(dut.clock)
     clear_sendreceive(dut, params)
+    for i in range(4):
+        await triggers.RisingEdge(dut.clock)
     
     # Receive data via packets
     received_data = await receive_data_via_packets(dut, packet_receivers, params)
@@ -349,8 +359,8 @@ async def lane_grid_test(dut: HierarchyObject) -> None:
     # Clean up packet handlers
     for row in range(params.n_rows-2):
         for channel in range(params.n_channels):
-            packet_senders[row][channel].kill()
-            packet_receivers[row][channel].kill()
+            packet_senders[row][channel].cancel()
+            packet_receivers[row][channel].cancel()
 
 
 def test_lane_grid(temp_dir: Optional[str] = None) -> None:

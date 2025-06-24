@@ -138,7 +138,7 @@ async def send_and_receive(dut: HierarchyObject, rnd: Random, params: Any, packe
 
     receive_packet_task = cocotb.start_soon(receive_data_via_packets(dut, packet_receiver.queue))
 
-    submit_send(dut, ident, length, address, send_channel)
+    submit_send(dut, ident, length, address, 0, 1, send_channel)
     await triggers.RisingEdge(dut.clock)
     clear_sendreceive(dut)
     received_data = await receive_packet_task
@@ -195,7 +195,7 @@ async def send_and_receive_swap_order(dut: HierarchyObject, rnd: Random, params:
     # Step 6: Send the swapped data out
     receive_packet_task = cocotb.start_soon(receive_data_via_packets(dut, packet_receiver.queue))
     
-    submit_send(dut, ident, length, address, send_channel)
+    submit_send(dut, ident, length, address, 0, 1, send_channel)
     await triggers.RisingEdge(dut.clock)
     clear_sendreceive(dut)
     received_data = await receive_packet_task
@@ -441,8 +441,8 @@ async def lane_test(dut: HierarchyObject) -> None:
     
     # Clean up packet handlers
     for i in range(params.n_channels):
-        packet_senders[i].kill()
-        packet_receivers[i].kill()
+        packet_senders[i].cancel()
+        packet_receivers[i].cancel()
 
 
 def test_lane(temp_dir: Optional[str] = None) -> None:

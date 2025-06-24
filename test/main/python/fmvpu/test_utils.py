@@ -160,10 +160,10 @@ class PacketSender:
                     self.data_s.value = word
                     self.n_tokens -= 1
 
-    def kill(self):
+    def cancel(self):
         """Terminate the packet sender tasks."""
-        self.token_task.kill()
-        self.send_task.kill()
+        self.token_task.cancel()
+        self.send_task.cancel()
 
 
 class PacketReceiver:
@@ -266,6 +266,6 @@ class PacketReceiver:
                         self.words_received = 0
                         self.expecting_header = True
 
-    def kill(self):
+    def cancel(self):
         """Terminate the packet receiver task."""
-        self.receive_task.kill()
+        self.receive_task.cancel()
