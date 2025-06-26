@@ -2,7 +2,7 @@ from dataclasses import dataclass
 import json
 import math
 from typing import Dict, Any
-from test_utils import clog2
+from fmvpu.test_utils import clog2
 
 
 @dataclass

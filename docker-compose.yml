@@ -1,0 +1,22 @@
+version: '3.8'
+
+services:
+  fmvpu:
+    build: .
+    container_name: fmvpu
+    working_dir: /workspace
+    volumes:
+      - .:/workspace
+      - /var/run/docker.sock:/var/run/docker.sock
+      - bazel-cache:/root/.cache/bazel
+      - bazelisk-cache:/root/.cache/bazelisk
+    environment:
+      - USER=root
+      - JAVA_HOME=/usr/lib/jvm/java-11-openjdk-amd64
+    # Keep container running for interactive use
+    tty: true
+    stdin_open: true
+
+volumes:
+  bazel-cache:
+  bazelisk-cache:

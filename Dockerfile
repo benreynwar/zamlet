@@ -14,31 +14,54 @@ RUN apt-get update -y && \
         unzip \
         # Build essentials
         build-essential \
-        # Java for Mill and Scala
-        openjdk-17-jdk \
+        clang \
+        # Java for Bazel and Scala
+        openjdk-11-jdk \
         # Python and pip
         python3 \
         python3-pip \
         python3-venv \
+        python3-dev \
+        # Node.js and npm for Claude Code
+        nodejs \
+        npm \
         # Dependencies for building Verilator
         autoconf \
         help2man \
         perl \
-        python3-dev \
         flex \
         bison \
         ccache \
         libgoogle-perftools-dev \
         numactl \
         perl-doc \
-        # Additional tools for cocotb
+        # Additional tools
         make \
         g++ \
+        tmux \
+        vim \
+        locales \
+        # Docker client for Docker-in-Docker
+        ca-certificates \
+        gnupg \
+        lsb-release \
+        time \
         && rm -rf /var/lib/apt/lists/*
 
+# Install Docker CLI
+RUN curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg && \
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null && \
+    apt-get update && \
+    apt-get install -y docker-ce-cli && \
+    rm -rf /var/lib/apt/lists/*
+
 # Set Java environment
-ENV JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
+ENV JAVA_HOME=/usr/lib/jvm/java-11-openjdk-amd64
 ENV PATH="${JAVA_HOME}/bin:${PATH}"
+
+# Install Bazelisk (wrapper that manages Bazel versions)
+RUN curl -Lo /usr/local/bin/bazel https://github.com/bazelbuild/bazelisk/releases/latest/download/bazelisk-linux-amd64 && \
+    chmod +x /usr/local/bin/bazel
 
 # Configure ccache for Verilator compilations
 ENV CCACHE_DIR=/workspace/.ccache
@@ -56,16 +79,19 @@ RUN git clone https://github.com/verilator/verilator && \
     cd .. && \
     rm -rf verilator
 
-# Install Python packages
-# Use --break-system-packages since this is a container
-RUN pip3 install --no-cache-dir --break-system-packages \
-    pytest \
-    git+https://github.com/cocotb/cocotb.git@master
-
-# Install Node.js and npm for claude-code
-RUN apt-get update -y && \
-    apt-get install -y nodejs npm && \
+# Install Python 3.13 for bazel-orfs compatibility  
+RUN apt-get update && \
+    apt-get install -y software-properties-common && \
+    add-apt-repository ppa:deadsnakes/ppa && \
+    apt-get update && \
+    apt-get install -y python3.13 python3.13-venv python3.13-dev && \
     rm -rf /var/lib/apt/lists/*
+
+# Create Python virtual environment for Bazel using Python 3.13
+RUN python3.13 -m venv /opt/python-venv && \
+    /opt/python-venv/bin/pip install --upgrade pip && \
+    /opt/python-venv/bin/pip install git+https://github.com/cocotb/cocotb.git
+    /opt/python-venv/bin/pip install yaml matplotlib
 
 # Install claude-code CLI
 RUN npm install -g @anthropic-ai/claude-code
@@ -73,24 +99,10 @@ RUN npm install -g @anthropic-ai/claude-code
 # Set working directory
 WORKDIR /workspace
 
-# Copy mill build files to pre-download dependencies
-COPY mill /workspace/mill
-COPY .mill-version /workspace/.mill-version
-COPY build.mill /workspace/build.mill
-COPY .mill-jvm-opts /workspace/.mill-jvm-opts
-
-# Run mill to download dependencies and cache them in the image
-RUN chmod +x /workspace/mill && \
-    /workspace/mill --version && \
-    /workspace/mill show fmvpu.prepareOffline || true
-
-RUN apt-get update -y && \
-    apt-get install -y tmux vim && \
-    rm -rf /var/lib/apt/lists/*
-
+# Configure locale
 ENV LANG=C.UTF-8
-  ENV LC_ALL=C.UTF-8
-  RUN apt-get update && apt-get install -y locales && locale-gen en_US.UTF-8
+ENV LC_ALL=C.UTF-8
+RUN locale-gen en_US.UTF-8
 
 # Keep container running
 CMD ["tail", "-f", "/dev/null"]

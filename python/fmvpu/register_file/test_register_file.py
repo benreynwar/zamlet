@@ -1,4 +1,5 @@
 import os
+import sys
 import tempfile
 from random import Random
 from typing import Dict, List, Optional
@@ -7,11 +8,10 @@ import cocotb
 from cocotb import triggers
 from cocotb.clock import Clock
 from cocotb.handle import HierarchyObject
-from cocotb_tools.runner import get_runner
 
-import generate_rtl
-import test_utils
-from test_utils import clog2
+from fmvpu import generate_rtl
+from fmvpu import test_utils
+from fmvpu.test_utils import clog2
 
 this_dir = os.path.abspath(os.path.dirname(__file__))
 
@@ -67,35 +67,66 @@ async def register_file_test(dut: HierarchyObject) -> None:
     dut.reset.value = 1
     await triggers.RisingEdge(dut.clock)
     dut.reset.value = 0
-    n_write_ports = params['n_write_ports']
-    depth = params['depth']
+    
+    # Get parameters from the test configuration
     width = params['width']
+    depth = params['depth']
     n_read_ports = params['n_read_ports']
     n_write_ports = params['n_write_ports']
+    
     contents = {}
     for i in range(100):
         await triggers.RisingEdge(dut.clock)
         cocotb.start_soon(reads_and_writes(test_utils.make_seed(rnd), dut, contents, width, depth, n_read_ports, n_write_ports))
 
 
-def test_register_file_main(width: int = 4, depth: int = 8, n_read_ports: int = 2, n_write_ports: int = 2, temp_dir: Optional[str] = None) -> None:
-    """Generate RTL and run the RegisterFile test."""
+def test_register_file(verilog_file: str, width: int, depth: int, n_read_ports: int, n_write_ports: int, seed: int = 0) -> None:
+    """Main test procedure using pre-generated Verilog."""
+    # Use the single concatenated Verilog file
+    filenames = [verilog_file]
+    
+    toplevel = 'RegisterFile'
+    module = 'fmvpu.register_file.test_register_file'
+    
+    test_params = {
+        'seed': seed,
+        'width': width,
+        'depth': depth,
+        'n_read_ports': n_read_ports,
+        'n_write_ports': n_write_ports,
+    }
+    
+    verilog_dir = os.path.dirname(verilog_file)
+    test_utils.run_test(verilog_dir, filenames, test_params, toplevel, module)
+
+
+def generate_and_test_register_file(width: int = 32, depth: int = 16, n_read_ports: int = 2, n_write_ports: int = 2, temp_dir: Optional[str] = None, seed: int = 0) -> None:
+    """Generate Verilog and run test (for non-Bazel usage)."""
     with tempfile.TemporaryDirectory() as working_dir:
         if temp_dir is not None:
             working_dir = temp_dir
-        filenames = generate_rtl.generate(
-                'RegisterFile', working_dir, [str(width), str(depth), str(n_read_ports), str(n_write_ports)])
-        test_params = {
-            'seed': 0,
-            'width': width,
-            'depth': depth,
-            'n_read_ports': n_read_ports,
-            'n_write_ports': n_write_ports,
-        }
-        toplevel = 'RegisterFile'
-        module = 'test_register_file'
-        test_utils.run_test(working_dir, filenames, test_params, toplevel, module)
+        
+        filenames = generate_rtl.generate('RegisterFile', working_dir, [str(width), str(depth), str(n_read_ports), str(n_write_ports)])
+        
+        # Concatenate all generated .sv files into a single file
+        concat_filename = os.path.join(working_dir, 'register_file_verilog.sv')
+        test_utils.concatenate_sv_files(filenames, concat_filename)
+        
+        test_register_file(concat_filename, width, depth, n_read_ports, n_write_ports, seed)
 
 
 if __name__ == '__main__':
-    test_register_file_main(temp_dir=os.path.abspath('deleteme'))
+    test_utils.configure_logging_pre_sim('INFO')
+    
+    if len(sys.argv) == 6:
+        # Called from Bazel with verilog_file and configuration parameters
+        verilog_file = sys.argv[1]
+        width = int(sys.argv[2])
+        depth = int(sys.argv[3])
+        n_read_ports = int(sys.argv[4])
+        n_write_ports = int(sys.argv[5])
+        
+        test_register_file(verilog_file, width, depth, n_read_ports, n_write_ports)
+    else:
+        # Called directly - generate Verilog and test
+        generate_and_test_register_file()

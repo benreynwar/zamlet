@@ -1,4 +1,5 @@
 import os
+import sys
 import json
 import tempfile
 from typing import Optional
@@ -8,10 +9,10 @@ from cocotb import triggers
 from cocotb.clock import Clock
 from cocotb.handle import HierarchyObject
 
-import generate_rtl
-import test_utils
-from params import FMVPUParams
-from control_structures import NetworkSlowControl, ChannelSlowControl
+from fmvpu import generate_rtl
+from fmvpu import test_utils
+from fmvpu.params import FMVPUParams
+from fmvpu.control_structures import NetworkSlowControl, ChannelSlowControl
 
 this_dir = os.path.abspath(os.path.dirname(__file__))
 
@@ -136,27 +137,51 @@ async def network_delay_mode_test(dut: HierarchyObject) -> None:
     await triggers.RisingEdge(dut.clock)
 
 
-def test_network_main(temp_dir: Optional[str] = None) -> None:
-    """Generate RTL and run the NetworkNode test."""
+def test_network(verilog_file: str, params_file: str, seed: int = 0) -> None:
+    """Main test procedure using pre-generated Verilog."""
+    # Use the single concatenated Verilog file
+    filenames = [verilog_file]
+    
+    toplevel = 'NetworkNode'
+    module = 'fmvpu.network.test_network'
+    
+    with open(params_file, 'r', encoding='utf-8') as params_f:
+        design_params = json.loads(params_f.read())
+    
+    test_params = {
+        'seed': seed,
+        'params': design_params,
+    }
+    
+    verilog_dir = os.path.dirname(verilog_file)
+    test_utils.run_test(verilog_dir, filenames, test_params, toplevel, module)
+
+
+def generate_and_test_network(temp_dir: Optional[str] = None, seed: int = 0) -> None:
+    """Generate Verilog and run test (for non-Bazel usage)."""
     with tempfile.TemporaryDirectory() as working_dir:
         if temp_dir is not None:
             working_dir = temp_dir
         
         params_filename = os.path.join(this_dir, 'params.json')
         filenames = generate_rtl.generate('NetworkNode', working_dir, [params_filename])
-        toplevel = 'NetworkNode'
-        module = 'test_network'
         
-        with open(params_filename, 'r', encoding='utf-8') as params_f:
-            design_params = json.loads(params_f.read())
+        # Concatenate all generated .sv files into a single file
+        concat_filename = os.path.join(working_dir, 'network_verilog.sv')
+        test_utils.concatenate_sv_files(filenames, concat_filename)
         
-        test_params = {
-            'seed': 0,
-            'params': design_params,
-        }
-        
-        test_utils.run_test(working_dir, filenames, test_params, toplevel, module)
+        test_network(concat_filename, params_filename, seed)
 
 
 if __name__ == '__main__':
-    test_network_main(temp_dir=os.path.abspath('deleteme'))
+    test_utils.configure_logging_pre_sim('INFO')
+    
+    if len(sys.argv) == 3:
+        # Called from Bazel with verilog_file and params_file
+        verilog_file = sys.argv[1]
+        params_file = sys.argv[2]
+        
+        test_network(verilog_file, params_file)
+    else:
+        # Called directly - generate Verilog and test
+        generate_and_test_network()

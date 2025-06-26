@@ -3,8 +3,8 @@ from typing import List, Tuple, Dict, Any
 import math
 import logging
 
-from params import FMVPUParams
-from test_utils import clog2
+from fmvpu.params import FMVPUParams
+from fmvpu.test_utils import clog2
 
 
 logger = logging.getLogger(__name__)

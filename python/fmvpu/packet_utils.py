@@ -1,88 +1,14 @@
-import os
-import json
-import collections
 import logging
-from typing import Any, Dict, List, Deque, Optional
+from typing import Optional, Deque, Any
 
 import cocotb
 from cocotb import triggers
 from cocotb.handle import HierarchyObject
-from cocotb_tools.runner import get_runner
-import cocotb.logging
+
+from fmvpu.control_structures import PacketHeader
 
 
 logger = logging.getLogger(__name__)
-
-
-def configure_logging_pre_sim(level: str = 'INFO') -> None:
-    """Configure logging for tests before simulation starts."""
-    numeric_level = getattr(logging, level.upper(), None)
-    if not isinstance(numeric_level, int):
-        raise ValueError(f'Invalid log level: {level}')
-    logging.basicConfig(
-        level=numeric_level,
-        format='%(levelname)-8s %(name)-34s %(message)s',
-        force=True
-    )
-
-
-def configure_logging_sim(level: str = 'INFO') -> None:
-    """Configure logging for tests during simulation using cocotb's format."""
-    cocotb.logging.default_config()
-    
-    # Set the desired log level
-    numeric_level = getattr(logging, level.upper(), None)
-    if not isinstance(numeric_level, int):
-        raise ValueError(f'Invalid log level: {level}')
-    logging.getLogger().setLevel(numeric_level)
-
-
-def write_params(working_dir: str, params: Dict[str, Any]) -> None:
-    """Write test parameters to JSON file and set environment variable."""
-    params_filename = os.path.join(working_dir, 'test_params.json')
-    os.environ['FMPVU_TEST_PARAMS_FILENAME'] = params_filename
-    with open(params_filename, 'w', encoding='utf-8') as params_file:
-        params_file.write(json.dumps(params))
-
-
-def read_params() -> Dict[str, Any]:
-    """Read test parameters from JSON file specified in environment variable."""
-    params_filename = os.environ['FMPVU_TEST_PARAMS_FILENAME']
-    with open(params_filename, 'r', encoding='utf-8') as params_file:
-        params = json.loads(params_file.read())
-    return params
-
-
-def run_test(working_dir: str, filenames: List[str], params: Dict[str, Any], toplevel: str, module: str) -> None:
-    """Run cocotb test with Verilator simulator."""
-    sim = 'verilator'
-    runner = get_runner(sim)
-    write_params(working_dir, params)
-    runner.build(
-        sources=filenames,
-        hdl_toplevel=toplevel,
-        always=True,
-        waves=True,
-        build_args=['--trace', '--trace-structs'],
-        )
-    runner.test(hdl_toplevel=toplevel, test_module=module, waves=True)
-
-
-def clog2(value: int) -> int:
-    """Calculate ceiling log2 - how many bits are required to represent 'value-1'."""
-    value = value - 1
-    bits = 0
-    while value > 0:
-        value = value >> 1
-        bits += 1
-    return bits
-
-
-def make_seed(rnd: Any) -> int:
-    """Generate a 32-bit random seed."""
-    return rnd.getrandbits(32)
-
-
 
 
 class PacketSender:
@@ -234,7 +160,6 @@ class PacketReceiver:
                         raise RuntimeError("Received unexpected packet header - expected data")
                     
                     # Start of new packet - decode header to get length
-                    from control_structures import PacketHeader
                     packet_header = PacketHeader.from_word(self.params, data_value)
                     logger.info(f'Header is {packet_header}')
                     self.current_packet = [data_value]

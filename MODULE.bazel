@@ -1,0 +1,116 @@
+module(
+    name = "fmvpu",
+    version = "1.0.0",
+)
+
+# Bazel Central Registry
+bazel_dep(name = "rules_jvm_external", version = "6.4")
+bazel_dep(
+    name = "rules_python",
+    version = "1.3.0",
+)
+bazel_dep(name = "rules_scala")
+bazel_dep(name = "rules_cc", version = "0.1.1")
+git_override(
+    module_name = "rules_scala",
+    commit = "1aced658083aac6c636fcc03b7cd3952a426eda7",
+    remote = "https://github.com/bazelbuild/rules_scala",
+)
+
+# Python toolchain - use existing virtual environment
+python = use_extension("@rules_python//python/extensions:python.bzl", "python")
+python.toolchain(
+    ignore_root_user_error = True,
+    python_version = "3.13"
+)
+
+# Python dependencies managed in virtual environment
+
+# Scala toolchain
+SCALA_VERSION = "2.13.16"
+
+scala_config = use_extension("@rules_scala//scala/extensions:config.bzl", "scala_config")
+scala_config.settings(scala_version = SCALA_VERSION)
+use_repo(scala_config, "rules_scala_config")
+
+scala_deps = use_extension("@rules_scala//scala/extensions:deps.bzl", "scala_deps")
+scala_deps.settings(fetch_sources = True)
+scala_deps.scala()
+scala_deps.scalatest()
+
+# Maven dependencies for Chisel
+maven = use_extension("@rules_jvm_external//:extensions.bzl", "maven")
+maven.install(
+    name = "maven",
+    artifacts = [
+        "org.chipsalliance:chisel_2.13:7.0.0-RC1+22-2cb90ea2-SNAPSHOT",
+        "org.chipsalliance:chisel-plugin_2.13.16:7.0.0-RC1+22-2cb90ea2-SNAPSHOT",
+        "org.typelevel:cats-core_2.13:2.13.0",
+        "org.typelevel:cats-kernel_2.13:2.13.0",
+        "io.circe:circe-core_2.13:0.14.13",
+        "io.circe:circe-generic_2.13:0.14.13",
+        "io.circe:circe-parser_2.13:0.14.13",
+        "io.circe:circe-yaml_2.13:1.15.0",
+        "com.chuusai:shapeless_2.13:2.3.13",
+    ],
+    repositories = [
+        "https://s01.oss.sonatype.org/content/repositories/snapshots",
+        "https://repo1.maven.org/maven2",
+    ],
+)
+use_repo(maven, "maven")
+
+# ORFS (OpenROAD Flow Scripts) integration
+bazel_dep(name = "bazel-orfs")
+
+git_override(
+    module_name = "bazel-orfs",
+    commit = "396db853dbf00185d1e3fab18c5e68570221e10f",
+    remote = "https://github.com/The-OpenROAD-Project/bazel-orfs.git",
+)
+
+orfs = use_extension("@bazel-orfs//:extension.bzl", "orfs_repositories")
+
+orfs.default(
+    image = "docker.io/openroad/orfs:v3.0-3290-gbabc69e0",
+    sha256 = "a0ca3cd48fcc71d8bcb6e2f420842130004ff0d21f20ebf178301dccc2d54623",
+)
+use_repo(orfs, "com_github_nixos_patchelf_download")
+use_repo(orfs, "docker_orfs")
+
+# Docker platform support
+bazel_dep(name = "rules_oci", version = "1.8.0")
+bazel_dep(name = "rules_pkg", version = "1.0.1")
+
+# OpenROAD container
+oci = use_extension("@rules_oci//oci:extensions.bzl", "oci")
+oci.pull(
+    name = "openroad_base",
+    image = "openroad/flow-scripts",
+    tag = "v3.0",
+    platforms = ["linux/amd64"],
+)
+use_repo(oci, "openroad_base")
+
+# LLVM toolchain for synthesis
+bazel_dep(name = "toolchains_llvm", version = "1.4.0")
+llvm = use_extension("@toolchains_llvm//toolchain/extensions:llvm.bzl", "llvm")
+llvm.toolchain(llvm_version = "20.1.0")
+use_repo(llvm, "llvm_toolchain")
+register_toolchains("@llvm_toolchain//:all")
+
+# CIRCT for FIRRTL compilation
+http_archive = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+git_repository = use_repo_rule("@bazel_tools//tools/build_defs/repo:git.bzl", "git_repository")
+
+
+
+http_archive(
+    name = "circt",
+    build_file_content = """
+exports_files(glob(["bin/*"]), visibility = ["//visibility:public"])
+""",
+    sha256 = "b1b57d1b76ceba2bb37229dab53839d5db6d61394149708c71f6265565991ce6",
+    strip_prefix = "firtool-1.108.0",
+    url = "https://github.com/llvm/circt/releases/download/firtool-1.108.0/firrtl-bin-linux-x64.tar.gz",
+)

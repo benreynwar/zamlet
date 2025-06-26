@@ -1,4 +1,5 @@
 import os
+import sys
 import json
 from random import Random
 import collections
@@ -11,10 +12,11 @@ from cocotb import triggers
 from cocotb.clock import Clock
 from cocotb.handle import HierarchyObject
 
-import generate_rtl
-import test_utils
-from params import FMVPUParams
-from control_structures import ChannelSlowControl, NetworkSlowControl, GeneralSlowControl, NetworkFastControl, PacketHeader
+from fmvpu import generate_rtl
+from fmvpu import test_utils
+from fmvpu.params import FMVPUParams
+from fmvpu.control_structures import ChannelSlowControl, NetworkSlowControl, GeneralSlowControl, NetworkFastControl
+from fmvpu.packet_utils import PacketHeader, PacketSender, PacketReceiver
 
 
 logger = logging.getLogger(__name__)
@@ -430,8 +432,8 @@ async def lane_test(dut: HierarchyObject) -> None:
     # Create packet queues and handlers for tests
     tolane_queues = [collections.deque() for i in range(params.n_channels)]
     fromlane_queues = [collections.deque() for i in range(params.n_channels)]
-    packet_senders = [test_utils.PacketSender(dut, 'w', None, channel, tolane_queues[channel]) for channel in range(params.n_channels)]
-    packet_receivers = [test_utils.PacketReceiver(dut, 'w', None, channel, fromlane_queues[channel], params) for channel in range(params.n_channels)]
+    packet_senders = [PacketSender(dut, 'w', None, channel, tolane_queues[channel]) for channel in range(params.n_channels)]
+    packet_receivers = [PacketReceiver(dut, 'w', None, channel, fromlane_queues[channel], params) for channel in range(params.n_channels)]
     
     # Run test scenarios
     receive_channel = 1
@@ -445,28 +447,51 @@ async def lane_test(dut: HierarchyObject) -> None:
         packet_receivers[i].cancel()
 
 
-def test_lane(temp_dir: Optional[str] = None) -> None:
-    """Main test procedure to generate RTL and run cocotb test."""
+def test_lane(verilog_file: str, params_file: str, seed: int = 0) -> None:
+    """Main test procedure using pre-generated Verilog."""
+    # Use the single concatenated Verilog file
+    filenames = [verilog_file]
+    
+    toplevel = 'Lane'
+    module = 'fmvpu.lane.test_lane'
+    
+    with open(params_file, 'r', encoding='utf-8') as params_f:
+        design_params = json.loads(params_f.read())
+    
+    test_params = {
+        'seed': seed,
+        'params': design_params,
+    }
+    
+    verilog_dir = os.path.dirname(verilog_file)
+    test_utils.run_test(verilog_dir, filenames, test_params, toplevel, module)
+
+
+def generate_and_test_lane(temp_dir: Optional[str] = None, seed: int = 0) -> None:
+    """Generate Verilog and run test (for non-Bazel usage)."""
     with tempfile.TemporaryDirectory() as working_dir:
         if temp_dir is not None:
             working_dir = temp_dir
         
         params_filename = os.path.join(this_dir, 'params.json')
         filenames = generate_rtl.generate('Lane', working_dir, [params_filename])
-        toplevel = 'Lane'
-        module = 'test_lane'
         
-        with open(params_filename, 'r', encoding='utf-8') as params_f:
-            design_params = json.loads(params_f.read())
+        # Concatenate all generated .sv files into a single file
+        concat_filename = os.path.join(working_dir, 'lane_verilog.sv')
+        test_utils.concatenate_sv_files(filenames, concat_filename)
         
-        test_params = {
-            'seed': 0,
-            'params': design_params,
-        }
-        
-        test_utils.run_test(working_dir, filenames, test_params, toplevel, module)
+        test_lane(concat_filename, params_filename, seed)
 
 
 if __name__ == '__main__':
     test_utils.configure_logging_pre_sim('INFO')
-    test_lane(os.path.abspath('deleteme'))
+    
+    if len(sys.argv) == 3:
+        # Called from Bazel with verilog_file and params_file
+        verilog_file = sys.argv[1]
+        params_file = sys.argv[2]
+        
+        test_lane(verilog_file, params_file)
+    else:
+        # Called directly - generate Verilog and test
+        generate_and_test_lane()

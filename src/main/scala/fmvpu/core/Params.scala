@@ -4,6 +4,7 @@ package fmvpu.core
 import io.circe._
 import io.circe.parser._
 import io.circe.generic.auto._
+import io.circe.generic.semiauto._
 import scala.io.Source
 
 /** Configuration parameters for the FMVPU system.
@@ -89,6 +90,9 @@ case class FMVPUParams(
 
 /** Companion object for FMVPUParams with factory methods. */
 object FMVPUParams {
+  
+  // Explicit decoder for FMVPUParams
+  implicit val fmvpuParamsDecoder: Decoder[FMVPUParams] = deriveDecoder[FMVPUParams]
 
   /** Load FMVPU parameters from a JSON configuration file.
     *
@@ -107,9 +111,9 @@ object FMVPUParams {
     val paramsResult = decode[FMVPUParams](jsonContent);
     paramsResult match {
       case Right(params) =>
-        return params;
+        params
       case Left(error) =>
-        println(s"Failed to parse JSON: ${error.getMessage}")
+        println(s"Failed to parse JSON: ${error}")
         System.exit(1)
         null
     }

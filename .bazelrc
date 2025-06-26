@@ -1,0 +1,8 @@
+# Use virtual environment Python and packages
+build --action_env=PYTHONPATH=/opt/python-venv/lib/python3.13/site-packages
+test --action_env=PYTHONPATH=/opt/python-venv/lib/python3.13/site-packages
+build --python_path=/opt/python-venv/bin/python
+test --python_path=/opt/python-venv/bin/python
+
+# Use Python 3.13 to match bazel-orfs requirements
+build --@@rules_python+//python/config_settings:python_version=3.13

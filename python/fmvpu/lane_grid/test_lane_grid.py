@@ -1,4 +1,5 @@
 import os
+import sys
 import json
 import math
 from random import Random
@@ -12,10 +13,10 @@ from cocotb import triggers
 from cocotb.clock import Clock
 from cocotb.handle import HierarchyObject
 
-import generate_rtl
-import test_utils
-from params import FMVPUParams
-from control_structures import PacketHeader
+from fmvpu import generate_rtl
+from fmvpu import test_utils
+from fmvpu.params import FMVPUParams
+from fmvpu.packet_utils import PacketHeader, PacketSender, PacketReceiver
 
 logger = logging.getLogger(__name__)
 this_dir = os.path.abspath(os.path.dirname(__file__))
@@ -343,8 +344,8 @@ async def lane_grid_test(dut: HierarchyObject) -> None:
             receiver_queue = collections.deque()
             
             # Create PacketSender and PacketReceiver for west direction
-            sender = test_utils.PacketSender(dut, 'w', row, channel, sender_queue)
-            receiver = test_utils.PacketReceiver(dut, 'w', row, channel, receiver_queue, params)
+            sender = PacketSender(dut, 'w', row, channel, sender_queue)
+            receiver = PacketReceiver(dut, 'w', row, channel, receiver_queue, params)
             
             row_senders.append(sender)
             row_receivers.append(receiver)
@@ -363,22 +364,51 @@ async def lane_grid_test(dut: HierarchyObject) -> None:
             packet_receivers[row][channel].cancel()
 
 
-def test_lane_grid(temp_dir: Optional[str] = None) -> None:
+def test_lane_grid(verilog_file: str, params_file: str, seed: int = 0) -> None:
+    """Main test procedure using pre-generated Verilog."""
+    # Use the single concatenated Verilog file
+    filenames = [verilog_file]
+    
+    toplevel = 'LaneGrid'
+    module = 'fmvpu.lane_grid.test_lane_grid'
+    
+    with open(params_file, 'r', encoding='utf-8') as params_f:
+        design_params = json.loads(params_f.read())
+    
+    test_params = {
+        'seed': seed,
+        'params': design_params,
+    }
+    
+    verilog_dir = os.path.dirname(verilog_file)
+    test_utils.run_test(verilog_dir, filenames, test_params, toplevel, module)
+
+
+def generate_and_test_lane_grid(temp_dir: Optional[str] = None, seed: int = 0) -> None:
+    """Generate Verilog and run test (for non-Bazel usage)."""
     with tempfile.TemporaryDirectory() as working_dir:
         if temp_dir is not None:
             working_dir = temp_dir
+        
         params_filename = os.path.join(this_dir, 'params.json')
         filenames = generate_rtl.generate('LaneGrid', working_dir, [params_filename])
-        toplevel = 'LaneGrid'
-        module = 'test_lane_grid'
-        with open(params_filename, 'r', encoding='utf-8') as params_f:
-            design_params = json.loads(params_f.read())
-        test_params = {
-            'seed': 0,
-            'params': design_params,
-            }
-        test_utils.run_test(working_dir, filenames, test_params, toplevel, module)
+        
+        # Concatenate all generated .sv files into a single file
+        concat_filename = os.path.join(working_dir, 'lane_grid_verilog.sv')
+        test_utils.concatenate_sv_files(filenames, concat_filename)
+        
+        test_lane_grid(concat_filename, params_filename, seed)
 
 
 if __name__ == '__main__':
-    test_lane_grid(os.path.abspath('deleteme'))
+    test_utils.configure_logging_pre_sim('INFO')
+    
+    if len(sys.argv) == 3:
+        # Called from Bazel with verilog_file and params_file
+        verilog_file = sys.argv[1]
+        params_file = sys.argv[2]
+        
+        test_lane_grid(verilog_file, params_file)
+    else:
+        # Called directly - generate Verilog and test
+        generate_and_test_lane_grid()

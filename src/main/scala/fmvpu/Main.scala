@@ -19,8 +19,8 @@ import fmvpu.utils._
 object Main extends App {
 
   // Parse command line arguments
-  if (args.length < 3) {
-    println("Usage: scala-cli Main.scala -- <outputDir> <moduleName> ...")
+  if (args.length < 2) {
+    println("Usage: <outputDir> <moduleName> [moduleArgs...]")
     System.exit(1)
   }
 
@@ -28,8 +28,8 @@ object Main extends App {
   println("DEBUG: All arguments received:")
   args.zipWithIndex.foreach { case (arg, i) => println(s"args($i) = $arg") }
 
-  val outputDir = args(1)
-  val moduleName = args(2)
+  val outputDir = args(0)
+  val moduleName = args(1)
   
   // Create output directory if it doesn't exist
   val outDirFile = new File(outputDir)
@@ -38,7 +38,7 @@ object Main extends App {
   }
   
   // Generate Verilog based on the module name
-  val moduleArgs = args.drop(3)
+  val moduleArgs = args.drop(2)
   
   val generator: ModuleGenerator = moduleName match {
     case "AdjustableDelay" => AdjustableDelayGenerator
