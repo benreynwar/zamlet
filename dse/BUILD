@@ -23,9 +23,10 @@ STUDY = [{
     "nSlowNetworkControlSlots": 4,
     "nFastNetworkControlSlots": 4,
     "networkIdentWidth": 4,
-} for ch in [1, 2, 4, 8, 16]]
+} for ch in [1, 2, 4]]
 
-NAMES = [study["name"] for study in STUDY]
+PDKS = ["asap7", "sky130hd"]
+NAMES = ["{}__{}".format(study["name"], pdk) for study in STUDY for pdk in PDKS]
 
 # Generate individual JSON files for each study configuration
 [genrule(
@@ -81,7 +82,8 @@ filegroup(
 
 [orfs_flow(
     name = name,
-    top = name,
+    top = study_name,
+    pdk = "@docker_orfs//:{}".format(pdk),
     arguments = {
         # Speed up the flow by skipping things
         "FILL_CELLS": "",
@@ -102,8 +104,8 @@ filegroup(
     sources = {
         "SDC_FILE": ["config/constraints.sdc"],
     },
-    verilog_files = [":{}.sv".format(name)],
-) for name in NAMES]
+    verilog_files = [":{}.sv".format(study_name)],
+) for study in STUDY for pdk in PDKS for name, study_name in [("{}__{}".format(study["name"], pdk), study["name"])]]
 
 [
     orfs_run(
@@ -126,6 +128,13 @@ filegroup(
     visibility = ["//visibility:public"],
 )
 
+# Convenience targets for running single PDK
+[filegroup(
+    name = "results_{}".format(pdk),
+    srcs = [":{}_results".format(name) for name in NAMES if name.endswith("__{}".format(pdk))],
+    visibility = ["//visibility:public"],
+) for pdk in PDKS]
+
 py_binary(
     name = "analyze_results",
     srcs = ["scripts/analyze_results.py"],
@@ -146,3 +155,20 @@ genrule(
         ":analyze_results",
     ],
 )
+
+# PDK-specific plot targets
+[genrule(
+    name = "plot_{}".format(pdk),
+    srcs = [
+        "study_configs",
+        "results_{}".format(pdk),
+    ],
+    outs = ["networknode_area_study_{}.pdf".format(pdk)],
+    cmd = """
+    set -euo pipefail
+    $(execpath :analyze_results) $(location :networknode_area_study_{}.pdf) {} $(locations :study_configs) $(locations :results_{})
+    """.format(pdk, pdk, pdk),
+    tools = [
+        ":analyze_results",
+    ],
+) for pdk in PDKS]

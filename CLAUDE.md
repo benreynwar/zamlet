@@ -6,6 +6,8 @@ NEVER add comments that explain what was changed or reference previous states of
 ## Code Style
 All imports must be placed at the top of the file, not inline within functions. Follow standard Python import ordering (standard library, third-party, local imports).
 
+NEVER add imports inside functions - always place them at the top of the file.
+
 ## Testing
 When running Python tests, always redirect output to a file so you can examine the complete output without needing to rerun the test. For example:
 ```bash
