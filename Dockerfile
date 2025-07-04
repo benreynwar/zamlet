@@ -46,7 +46,37 @@ RUN apt-get update -y && \
         gnupg \
         lsb-release \
         time \
+        # For OpenRAM
+        git \
+        make \
+        build-essential \
+        ngspice \
+        netgen-lvs \
+        iverilog \
+        libreadline-dev \
+        tcl-dev \
+        tk-dev \
+        # Magic build dependencies (for OpenRAM) \
+        m4 \
+        csh \
+        libx11-dev \
+        libcairo2-dev \
+        # Development tools \
+        vim \
+        tmux \
         && rm -rf /var/lib/apt/lists/*
+
+# Build Magic 8.3.363 to match OpenRAM's conda version
+RUN git clone git://opencircuitdesign.com/magic /tmp/magic \
+    && cd /tmp/magic \
+    && git checkout 8.3.363 \
+    && ./configure \
+    && make \
+    && make install \
+    && rm -rf /tmp/magic
+
+# Create symlink for netgen binary
+RUN ln -s /usr/lib/netgen/bin/netgen /usr/local/bin/netgen
 
 # Install Docker CLI
 RUN curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg && \
@@ -90,8 +120,36 @@ RUN apt-get update && \
 # Create Python virtual environment for Bazel using Python 3.13
 RUN python3.13 -m venv /opt/python-venv && \
     /opt/python-venv/bin/pip install --upgrade pip && \
-    /opt/python-venv/bin/pip install git+https://github.com/cocotb/cocotb.git
-    /opt/python-venv/bin/pip install yaml matplotlib
+    /opt/python-venv/bin/pip install git+https://github.com/cocotb/cocotb.git && \
+    /opt/python-venv/bin/pip install pyyaml matplotlib
+
+# Install Python dependencies for OpenRAM
+RUN /opt/python-venv/bin/pip install --upgrade pip && \
+    /opt/python-venv/bin/pip install \
+    scikit-learn>=0.22.2 \
+    coverage>=4.5.2 \
+    python-subunit>=1.4.0 \
+    unittest2>=1.1.0 \
+    volare>=0.15.2 \
+    scipy>=1.3.3 \
+    numpy>=1.17.4
+
+# Clone OpenRAM from git repository and install it
+WORKDIR /opt
+RUN git clone https://github.com/VLSIDA/OpenRAM.git /opt/OpenRAM
+RUN cd /opt/OpenRAM && /opt/python-venv/bin/pip install .
+# Install Sky130 PDK (for OpenRAM)
+RUN . /opt/python-venv/bin/activate && volare enable --pdk sky130 e8294524e5f67c533c5d0c3afa0bcc5b2a5fa066 --pdk-root /opt/pdk
+# Install skywater-pdk repository (required by sky130-install) (for OpenRAM)
+RUN . /opt/python-venv/bin/activate && cd /opt/OpenRAM && PDK_ROOT=/opt/pdk make sky130-pdk
+# Install SRAM libraries (for OpenRAM)
+RUN . /opt/python-venv/bin/activate && cd /opt/OpenRAM && PDK_ROOT=/opt/pdk make sky130-install
+# Set up OpenRAM environment variables
+ENV OPENRAM_HOME=/opt/OpenRAM/compiler
+ENV OPENRAM_TECH=/opt/OpenRAM/technology
+ENV PDK_ROOT=/opt/pdk
+# Disable conda installation in OpenRAM
+ENV OPENRAM_DISABLE_CONDA=1
 
 # Install claude-code CLI
 RUN npm install -g @anthropic-ai/claude-code

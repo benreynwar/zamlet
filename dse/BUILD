@@ -4,6 +4,7 @@
 load("@bazel-orfs//:openroad.bzl", "orfs_flow", "orfs_run")
 load("@bazel-orfs//:write_binary.bzl", "write_binary")
 load("//:chisel.bzl", "chisel_binary")
+load(":openram.bzl", "openram_sram")
 
 # NetworkNode channel count study - simplified for testing
 STUDY = [{
@@ -172,3 +173,36 @@ genrule(
         ":analyze_results",
     ],
 ) for pdk in PDKS]
+
+# Test OpenRAM SRAM generation
+openram_sram(
+    name = "test_sram_8x16",
+    word_size = 8,
+    num_words = 16,
+    write_size = 2,
+    num_rw_ports = 1,
+)
+
+openram_sram(
+    name = "test_sram_16x16",
+    word_size = 16,
+    num_words = 16,
+    write_size = 16,
+    num_rw_ports = 1,
+)
+
+openram_sram(
+    name = "test_sram_32x16",
+    word_size = 32,
+    num_words = 16,
+    write_size = 32,
+    num_rw_ports = 1,
+)
+
+openram_sram(
+    name = "test_sram_32x128",
+    word_size = 32,
+    num_words = 128,
+    write_size = 32,
+    num_rw_ports = 1,
+)
