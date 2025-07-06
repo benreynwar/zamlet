@@ -99,17 +99,17 @@ def clear_sendreceive(dut: HierarchyObject) -> None:
 
 
 def submit_load(dut: HierarchyObject, reg: int, addr: int) -> None:
-    """Submit a load instruction (register -> memory)."""
+    """Submit a load instruction (memory -> register)."""
     dut.io_nInstr_loadstore_valid.value = 1
-    dut.io_nInstr_loadstore_bits_mode.value = 0  # Load mode: register -> memory
+    dut.io_nInstr_loadstore_bits_mode.value = 1  # Load mode: memory -> register
     dut.io_nInstr_loadstore_bits_reg.value = reg
     dut.io_nInstr_loadstore_bits_addr.value = addr
 
 
 def submit_store(dut: HierarchyObject, reg: int, addr: int) -> None:
-    """Submit a store instruction (memory -> register)."""
+    """Submit a store instruction (register -> memory)."""
     dut.io_nInstr_loadstore_valid.value = 1
-    dut.io_nInstr_loadstore_bits_mode.value = 1  # Store mode: memory -> register
+    dut.io_nInstr_loadstore_bits_mode.value = 0  # Store mode: register -> memory
     dut.io_nInstr_loadstore_bits_reg.value = reg
     dut.io_nInstr_loadstore_bits_addr.value = addr
 
@@ -117,7 +117,20 @@ def submit_store(dut: HierarchyObject, reg: int, addr: int) -> None:
 def clear_loadstore(dut: HierarchyObject) -> None:
     """Clear the load/store instruction."""
     dut.io_nInstr_loadstore_valid.value = 0
-    
+
+
+def submit_compute(dut: HierarchyObject, mode: int, src1: int, src2: int, dst: int) -> None:
+    """Submit a compute instruction to the lane."""
+    dut.io_nInstr_compute_valid.value = 1
+    dut.io_nInstr_compute_bits_mode.value = mode
+    dut.io_nInstr_compute_bits_src1.value = src1
+    dut.io_nInstr_compute_bits_src2.value = src2
+    dut.io_nInstr_compute_bits_dst.value = dst
+
+
+def clear_compute(dut: HierarchyObject) -> None:
+    """Clear the compute instruction."""
+    dut.io_nInstr_compute_valid.value = 0
 
 async def send_and_receive(dut: HierarchyObject, rnd: Random, params: Any, packet_sender, packet_receiver, send_channel) -> None:
     """
@@ -170,29 +183,29 @@ async def send_and_receive_swap_order(dut: HierarchyObject, rnd: Random, params:
     clear_sendreceive(dut)
     await send_data_via_packets(test_data, address, ident, dut, packet_sender.queue, params)
     
-    # Step 2: Store word from memory address 0 into register 0
-    submit_store(dut, 0, 0)
-    await triggers.RisingEdge(dut.clock)
-    clear_loadstore(dut)
-    await triggers.RisingEdge(dut.clock)  # Wait for store to complete
-    
-    # Step 3: Store word from memory address 1 into register 1
-    submit_store(dut, 1, 1)
-    await triggers.RisingEdge(dut.clock)
-    clear_loadstore(dut)
-    await triggers.RisingEdge(dut.clock)  # Wait for store to complete
-    
-    # Step 4: Load register 0 to memory address 1 (swap)
-    submit_load(dut, 0, 1)
+    # Step 2: Load word from memory address 0 into register 0
+    submit_load(dut, 0, 0)
     await triggers.RisingEdge(dut.clock)
     clear_loadstore(dut)
     await triggers.RisingEdge(dut.clock)  # Wait for load to complete
     
-    # Step 5: Load register 1 to memory address 0 (swap)
-    submit_load(dut, 1, 0)
+    # Step 3: Load word from memory address 1 into register 1
+    submit_load(dut, 1, 1)
     await triggers.RisingEdge(dut.clock)
     clear_loadstore(dut)
     await triggers.RisingEdge(dut.clock)  # Wait for load to complete
+    
+    # Step 4: Store register 0 to memory address 1 (swap)
+    submit_store(dut, 0, 1)
+    await triggers.RisingEdge(dut.clock)
+    clear_loadstore(dut)
+    await triggers.RisingEdge(dut.clock)  # Wait for store to complete
+    
+    # Step 5: Store register 1 to memory address 0 (swap)
+    submit_store(dut, 1, 0)
+    await triggers.RisingEdge(dut.clock)
+    clear_loadstore(dut)
+    await triggers.RisingEdge(dut.clock)  # Wait for store to complete
     
     # Step 6: Send the swapped data out
     receive_packet_task = cocotb.start_soon(receive_data_via_packets(dut, packet_receiver.queue))
@@ -203,6 +216,88 @@ async def send_and_receive_swap_order(dut: HierarchyObject, rnd: Random, params:
     received_data = await receive_packet_task
     
     assert expected_data == received_data, f"Expected {expected_data}, got {received_data}"
+
+
+async def test_lane_alu(dut: HierarchyObject, rnd: Random, params: Any, packet_sender, packet_receiver, send_channel) -> None:
+    """
+    Test LaneALU basic addition operation.
+    
+    This test verifies that the LaneALU correctly performs addition operations
+    and handles the pipeline delay properly by moving real data through the system.
+    """
+    # Test data for addition
+    test_values = [
+        (0x1234, 0x5678),  # Basic addition
+        (0x0000, 0x0000),  # Zero addition
+        (0x1111, 0x2222),  # Simple addition
+    ]
+    
+    for test_idx, (src1_val, src2_val) in enumerate(test_values):
+        expected_result = (src1_val + src2_val) & ((1 << params.width) - 1)  # Mask to data width
+        
+        # Step 1: Send test data to memory using packet interface
+        test_data = [src1_val, src2_val]
+        memory_addr = 0
+        ident = rnd.getrandbits(params.network_ident_width)
+        
+        # Use receive instruction to get test data into memory
+        submit_receive(dut, ident, len(test_data), memory_addr)
+        await triggers.RisingEdge(dut.clock)
+        clear_sendreceive(dut)
+        
+        # Send the test data via packets
+        await send_data_via_packets(test_data, memory_addr, ident, dut, packet_sender.queue, params)
+        
+        # Step 2: Load test values from memory to registers
+        # Load src1_val from memory[0] to register 0
+        submit_load(dut, 0, 0)  # Load memory[0] -> register[0]
+        await triggers.RisingEdge(dut.clock)
+        clear_loadstore(dut)
+        await triggers.RisingEdge(dut.clock)  # Wait for load to complete
+        
+        # Load src2_val from memory[1] to register 1
+        submit_load(dut, 1, 1)  # Load memory[1] -> register[1]
+        await triggers.RisingEdge(dut.clock)
+        clear_loadstore(dut)
+        await triggers.RisingEdge(dut.clock)  # Wait for load to complete
+        
+        # Step 3: Perform ALU operation
+        # Submit compute instruction: ADD mode (0), src1=reg0, src2=reg1, dst=reg2
+        submit_compute(dut, 0, 0, 1, 2)  # mode=0 (ADD), src1=reg0, src2=reg1, dst=reg2
+        await triggers.RisingEdge(dut.clock)
+        clear_compute(dut)
+        
+        # Wait for pipeline delay (LaneALU.PIPELINE_LENGTH = 1)
+        await triggers.RisingEdge(dut.clock)
+        
+        # Step 4: Move result back to memory and verify
+        # Store result from register 2 to memory[2]
+        submit_store(dut, 2, 2)  # Store register[2] -> memory[2]
+        await triggers.RisingEdge(dut.clock)
+        clear_loadstore(dut)
+        await triggers.RisingEdge(dut.clock)  # Wait for store to complete
+        
+        # Step 5: Send result back via packet and verify
+        result_ident = rnd.getrandbits(params.network_ident_width)
+        result_addr = 2
+        result_length = 1
+        
+        # Start receiving the result packet
+        receive_packet_task = cocotb.start_soon(receive_data_via_packets(dut, packet_receiver.queue))
+        
+        # Send the result out
+        submit_send(dut, result_ident, result_length, result_addr, 0, 1, send_channel)
+        await triggers.RisingEdge(dut.clock)
+        clear_sendreceive(dut)
+        
+        # Get the result
+        received_data = await receive_packet_task
+        actual_result = received_data[0]
+        
+        # Verify the result
+        assert actual_result == expected_result, f"ALU test failed: {src1_val:#x} + {src2_val:#x} = {actual_result:#x}, expected {expected_result:#x}"
+        logger.info(f"ALU test passed: {src1_val:#x} + {src2_val:#x} = {actual_result:#x}")
+
 
 
 async def timeout_watchdog(dut: HierarchyObject, max_cycles: int) -> None:
@@ -436,10 +531,13 @@ async def lane_test(dut: HierarchyObject) -> None:
     packet_receivers = [PacketReceiver(dut, 'w', None, channel, fromlane_queues[channel], params) for channel in range(params.n_channels)]
     
     # Run test scenarios
-    receive_channel = 1
-    send_channel = 2
+    receive_channel = rnd.randint(0, params.n_channels-1)
+    send_channel = rnd.randint(0, params.n_channels-1)
     await send_and_receive(dut, rnd, params, packet_senders[receive_channel], packet_receivers[send_channel], send_channel)
     await send_and_receive_swap_order(dut, rnd, params, packet_senders[receive_channel], packet_receivers[send_channel], send_channel)
+    
+    # Run ALU tests
+    await test_lane_alu(dut, rnd, params, packet_senders[receive_channel], packet_receivers[send_channel], send_channel)
     
     # Clean up packet handlers
     for i in range(params.n_channels):

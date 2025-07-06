@@ -1,5 +1,5 @@
 {
-    "nChannels": 4,
+    "nChannels": 2,
     "width": 32,
     "networkMemoryDepth": 8,
     "nDRF": 32,

@@ -10,6 +10,7 @@ import chisel3.util.Valid
 import fmvpu.memory._
 import fmvpu.network._
 import fmvpu.utils._
+import fmvpu.alu._
 import fmvpu.ModuleGenerator
 
 /**
@@ -129,7 +130,7 @@ class Lane(params: FMVPUParams) extends Module {
   val drf = Module(new RegisterFile(params.width, params.nDRF, 4, 3))
   val ddm = Module(new DataMemory(params.width, params.ddmBankDepth, params.ddmNBanks))
   val ddmAccess = Module(new ddmAccess(params))
-  // val alu = Module(new LaneALU(params))
+  val alu = Module(new LaneALU(params))
 
   // Register nInstr to create sInstr
   io.sInstr := RegNext(io.nInstr)
@@ -145,42 +146,42 @@ class Lane(params: FMVPUParams) extends Module {
   // Connect ddmAccess to sendreceive instructions
   ddmAccess.io.instr := instr.sendreceive
 
-  // Load Instruction
-  val aLoadInstr = Wire(Valid(new LoadInstr(params)))
-  aLoadInstr.valid := instr.loadstore.valid && instr.loadstore.bits.mode === false.B
-  aLoadInstr.bits.reg := instr.loadstore.bits.reg
-  aLoadInstr.bits.addr := instr.loadstore.bits.addr
-
-  val bLoadInstr = aLoadInstr
-
-  drf.io.reads(1).enable := bLoadInstr.valid
-  drf.io.reads(1).address := bLoadInstr.bits.reg
-  val bLoadData = drf.io.reads(1).data
-
-  val cLoadInstr = bLoadInstr
-  val cLoadData = bLoadData
-
-  ddm.io.writes(1).enable := cLoadInstr.valid
-  ddm.io.writes(1).address := cLoadInstr.bits.addr
-  ddm.io.writes(1).data := cLoadData
-
-  // Store Instruction
+  // Store Instruction (register -> memory)
   val aStoreInstr = Wire(Valid(new LoadInstr(params)))
-  aStoreInstr.valid := instr.loadstore.valid && instr.loadstore.bits.mode === true.B
+  aStoreInstr.valid := instr.loadstore.valid && instr.loadstore.bits.mode === false.B
   aStoreInstr.bits.reg := instr.loadstore.bits.reg
   aStoreInstr.bits.addr := instr.loadstore.bits.addr
 
   val bStoreInstr = aStoreInstr
 
-  ddm.io.reads(1).address.valid := bStoreInstr.valid
-  ddm.io.reads(1).address.bits := bStoreInstr.bits.addr
-  val cStoreData = ddm.io.reads(1).data.bits
-  // Assuming DDM has a latency of 1
-  val cStoreInstr = RegNext(bStoreInstr)
+  drf.io.reads(1).enable := bStoreInstr.valid
+  drf.io.reads(1).address := bStoreInstr.bits.reg
+  val bStoreData = drf.io.reads(1).data
 
-  drf.io.writes(1).enable := cStoreInstr.valid
-  drf.io.writes(1).address := cStoreInstr.bits.reg
-  drf.io.writes(1).data := cStoreData
+  val cStoreInstr = bStoreInstr
+  val cStoreData = bStoreData
+
+  ddm.io.writes(1).enable := cStoreInstr.valid
+  ddm.io.writes(1).address := cStoreInstr.bits.addr
+  ddm.io.writes(1).data := cStoreData
+
+  // Load Instruction (memory -> register)
+  val aLoadInstr = Wire(Valid(new LoadInstr(params)))
+  aLoadInstr.valid := instr.loadstore.valid && instr.loadstore.bits.mode === true.B
+  aLoadInstr.bits.reg := instr.loadstore.bits.reg
+  aLoadInstr.bits.addr := instr.loadstore.bits.addr
+
+  val bLoadInstr = aLoadInstr
+
+  ddm.io.reads(1).address.valid := bLoadInstr.valid
+  ddm.io.reads(1).address.bits := bLoadInstr.bits.addr
+  val cLoadData = ddm.io.reads(1).data.bits
+  // Assuming DDM has a latency of 1
+  val cLoadInstr = RegNext(bLoadInstr)
+
+  drf.io.writes(1).enable := cLoadInstr.valid
+  drf.io.writes(1).address := cLoadInstr.bits.reg
+  drf.io.writes(1).data := cLoadData
 
 
   // Connect up the Network to the lane boundary.
@@ -203,14 +204,17 @@ class Lane(params: FMVPUParams) extends Module {
   drf.io.reads(0).enable := false.B
   drf.io.reads(0).address := DontCare
 
-  // We haven't connected a ALU to the DRF
-  for (i <- 2 until 4) {
-    drf.io.reads(i).enable := false.B
-    drf.io.reads(i).address := DontCare
-  }
-  drf.io.writes(2).enable := false.B
-  drf.io.writes(2).address := DontCare
-  drf.io.writes(2).data := DontCare
+  // Connect ALU to DRF
+  alu.io.instr := instr.compute
+  drf.io.reads(2).enable := instr.compute.valid
+  drf.io.reads(2).address := instr.compute.bits.src1
+  drf.io.reads(3).enable := instr.compute.valid
+  drf.io.reads(3).address := instr.compute.bits.src2
+  alu.io.src1Data := drf.io.reads(2).data
+  alu.io.src2Data := drf.io.reads(3).data
+  drf.io.writes(2).enable := alu.io.result.valid
+  drf.io.writes(2).address := alu.io.result.bits.dstAddr
+  drf.io.writes(2).data := alu.io.result.bits.data
 
   // Connect ddmAccess between network and DDM
   ddm.io.writes(0) <> ddmAccess.io.writeDDM

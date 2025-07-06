@@ -37,7 +37,7 @@ class ComputeInstr(params: FMVPUParams) extends Bundle {
   * @groupdesc Signals The actual hardware fields of the Bundle
   */
 class LoadOrStoreInstr(params: FMVPUParams) extends Bundle {
-  /** Operation mode: 0 = load, 1 = store
+  /** Operation mode: 0 = store, 1 = load
     * @group Signals
     */
   val mode = UInt(1.W)

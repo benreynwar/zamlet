@@ -3,6 +3,7 @@ import json
 import logging
 from typing import Any, Dict, List
 import sys
+import shutil
 from pathlib import Path
 
 import cocotb
@@ -69,6 +70,17 @@ def run_test(working_dir: str, filenames: List[str], params: Dict[str, Any], top
     )
     
     runner.test(hdl_toplevel=toplevel, test_module=module, waves=True)
+    
+    # Copy VCD file to workspace for debugging (regardless of test outcome)
+    vcd_file = Path(runner.build_dir) / 'dump.vcd'
+    if vcd_file.exists():
+        try:
+            shutil.copy(str(vcd_file), '/workspace/last_dump.vcd')
+            logger.info(f"Copied {vcd_file} to /workspace/last_dump.vcd")
+        except Exception as e:
+            logger.warning(f"Failed to copy VCD file: {e}")
+    else:
+        logger.info(f"No VCD file found at {vcd_file}")
     
     # Check test results using cocotb's check_results function
     results_file = Path(runner.build_dir) / 'results.xml'
