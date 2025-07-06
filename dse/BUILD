@@ -9,6 +9,7 @@ load(":openram.bzl", "openram_sram")
 # NetworkNode channel count study - simplified for testing
 STUDY = [{
     "name": "NetworkNode_{}ch_32b_16d".format(ch),
+    "top_level": "NetworkNode",
     "nChannels": ch,
     "width": 32,
     "networkMemoryDepth": 16,
@@ -26,20 +27,42 @@ STUDY = [{
     "networkIdentWidth": 4,
 } for ch in [1, 2, 4]]
 
+# ALU study - same width as NetworkNode for comparison
+ALU_STUDY = [{
+    "name": "LaneALU_32b_32drf",
+    "top_level": "LaneALU",
+    "width": 32,
+    "nDRF": 32,
+    "nChannels": 1,
+    "networkMemoryDepth": 16,
+    "ddmBankDepth": 256,
+    "ddmNBanks": 4,
+    "ddmAddrWidth": 10,
+    "depthNetworkConfig": 64,
+    "nColumns": 4,
+    "nRows": 5,
+    "maxPacketLength": 16,
+    "maxNetworkControlDelay": 8,
+    "nSlowNetworkControlSlots": 4,
+    "nFastNetworkControlSlots": 4,
+    "networkIdentWidth": 4,
+}]
+
 PDKS = ["asap7", "sky130hd"]
-NAMES = ["{}__{}".format(study["name"], pdk) for study in STUDY for pdk in PDKS]
+ALL_STUDIES = STUDY + ALU_STUDY
+NAMES = ["{}__{}".format(study["name"], pdk) for study in ALL_STUDIES for pdk in PDKS]
 
 # Generate individual JSON files for each study configuration
 [genrule(
     name = "{}_config".format(study["name"]),
     outs = ["{}.json".format(study["name"])],
     cmd = "cat > $@ <<'EOF'\n{}\nEOF".format(str(study).replace("'", '"')),
-) for study in STUDY]
+) for study in ALL_STUDIES]
 
 # Create a filegroup containing all JSON configs
 filegroup(
     name = "study_configs",
-    srcs = [":{}.json".format(study["name"]) for study in STUDY],
+    srcs = [":{}.json".format(study["name"]) for study in ALL_STUDIES],
 )
 
 chisel_binary(
@@ -64,21 +87,22 @@ chisel_binary(
     outs = ["{}.sv".format(study["name"])],
     cmd = """
     TMPDIR=$$(mktemp -d)
+    TOP_LEVEL={}
     $(location :fmvpu_generator) \\
         $$TMPDIR/{}_verilog \\
-        NetworkNode \\
+        $$TOP_LEVEL \\
         $(location :{}.json)
     # Concatenate all SystemVerilog files and rename the top module
-    find $$TMPDIR/{}_verilog -name "*.sv" -type f | sort | xargs cat | sed 's/^module NetworkNode(/module {}(/' > $@
+    find $$TMPDIR/{}_verilog -name "*.sv" -type f | sort | xargs cat | sed 's/^module '$$TOP_LEVEL'(/module {}(/' > $@
     rm -rf $$TMPDIR
-    """.format(study["name"], study["name"], study["name"], study["name"]),
+    """.format(study["top_level"], study["name"], study["name"], study["name"], study["name"]),
     tools = [":fmvpu_generator"],
-) for study in STUDY]
+) for study in ALL_STUDIES]
 
 # Create a filegroup containing all concatenated Verilog files
 filegroup(
     name = "verilog_files",
-    srcs = [":{}.sv".format(study["name"]) for study in STUDY],
+    srcs = [":{}.sv".format(study["name"]) for study in ALL_STUDIES],
 )
 
 [orfs_flow(
@@ -106,7 +130,7 @@ filegroup(
         "SDC_FILE": ["config/constraints.sdc"],
     },
     verilog_files = [":{}.sv".format(study_name)],
-) for study in STUDY for pdk in PDKS for name, study_name in [("{}__{}".format(study["name"], pdk), study["name"])]]
+) for study in ALL_STUDIES for pdk in PDKS for name, study_name in [("{}__{}".format(study["name"], pdk), study["name"])]]
 
 [
     orfs_run(

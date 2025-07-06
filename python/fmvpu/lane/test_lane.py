@@ -220,20 +220,33 @@ async def send_and_receive_swap_order(dut: HierarchyObject, rnd: Random, params:
 
 async def test_lane_alu(dut: HierarchyObject, rnd: Random, params: Any, packet_sender, packet_receiver, send_channel) -> None:
     """
-    Test LaneALU basic addition operation.
+    Test LaneALU arithmetic operations.
     
-    This test verifies that the LaneALU correctly performs addition operations
-    and handles the pipeline delay properly by moving real data through the system.
+    This test verifies that the LaneALU correctly performs addition, subtraction,
+    and multiplication operations and handles the pipeline delay properly by moving
+    real data through the system.
     """
-    # Test data for addition
-    test_values = [
-        (0x1234, 0x5678),  # Basic addition
-        (0x0000, 0x0000),  # Zero addition
-        (0x1111, 0x2222),  # Simple addition
+    # Test data for addition, subtraction, and multiplication
+    test_cases = [
+        # (mode, src1, src2, operation_name)
+        (0, 0x1234, 0x5678, "addition"),      # Basic addition
+        (0, 0x0000, 0x0000, "addition"),      # Zero addition
+        (0, 0x1111, 0x2222, "addition"),      # Simple addition
+        (1, 0x5678, 0x1234, "subtraction"),   # Basic subtraction
+        (1, 0x2222, 0x1111, "subtraction"),   # Simple subtraction
+        (1, 0x1000, 0x0001, "subtraction"),   # Subtraction with result
+        (2, 0x0012, 0x0034, "multiplication"), # Basic multiplication
+        (2, 0x0002, 0x0008, "multiplication"), # Simple multiplication
+        (2, 0x0007, 0x0009, "multiplication"), # Multiplication with result
     ]
     
-    for test_idx, (src1_val, src2_val) in enumerate(test_values):
-        expected_result = (src1_val + src2_val) & ((1 << params.width) - 1)  # Mask to data width
+    for test_idx, (mode, src1_val, src2_val, op_name) in enumerate(test_cases):
+        if mode == 0:  # Addition
+            expected_result = (src1_val + src2_val) & ((1 << params.width) - 1)
+        elif mode == 1:  # Subtraction
+            expected_result = (src1_val - src2_val) & ((1 << params.width) - 1)
+        elif mode == 2:  # Multiplication
+            expected_result = (src1_val * src2_val) & ((1 << params.width) - 1)
         
         # Step 1: Send test data to memory using packet interface
         test_data = [src1_val, src2_val]
@@ -262,8 +275,7 @@ async def test_lane_alu(dut: HierarchyObject, rnd: Random, params: Any, packet_s
         await triggers.RisingEdge(dut.clock)  # Wait for load to complete
         
         # Step 3: Perform ALU operation
-        # Submit compute instruction: ADD mode (0), src1=reg0, src2=reg1, dst=reg2
-        submit_compute(dut, 0, 0, 1, 2)  # mode=0 (ADD), src1=reg0, src2=reg1, dst=reg2
+        submit_compute(dut, mode=mode, src1=0, src2=1, dst=2)
         await triggers.RisingEdge(dut.clock)
         clear_compute(dut)
         
@@ -295,8 +307,9 @@ async def test_lane_alu(dut: HierarchyObject, rnd: Random, params: Any, packet_s
         actual_result = received_data[0]
         
         # Verify the result
-        assert actual_result == expected_result, f"ALU test failed: {src1_val:#x} + {src2_val:#x} = {actual_result:#x}, expected {expected_result:#x}"
-        logger.info(f"ALU test passed: {src1_val:#x} + {src2_val:#x} = {actual_result:#x}")
+        op_symbol = "+" if mode == 0 else "-" if mode == 1 else "*"
+        assert actual_result == expected_result, f"ALU {op_name} test failed: {src1_val:#x} {op_symbol} {src2_val:#x} = {actual_result:#x}, expected {expected_result:#x}"
+        logger.info(f"ALU {op_name} test passed: {src1_val:#x} {op_symbol} {src2_val:#x} = {actual_result:#x}")
 
 
 

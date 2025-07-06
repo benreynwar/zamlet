@@ -7,6 +7,7 @@ import fmvpu.core._
 import fmvpu.memory._
 import fmvpu.network._
 import fmvpu.utils._
+import fmvpu.alu._
 
 /** Main entry point for generating Verilog from FMVPU modules.
   *
@@ -48,6 +49,7 @@ object Main extends App {
     case "ddmAccess" => ddmAccessGenerator
     case "Lane" => LaneGenerator
     case "LaneGrid" => LaneGridGenerator
+    case "LaneALU" => LaneALUGenerator
     case _ => 
       println(s"Module name '${moduleName}' is unknown.")
       System.exit(1)

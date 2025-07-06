@@ -22,55 +22,79 @@ def make_pdk_plot(study, pdk_name, output_file):
         print(f"No data found for PDK: {pdk_name}")
         return
     
-    # Collect all samples (single depth)
-    samples = []
-    for s in pdk_study.values():
+    # Separate NetworkNode and ALU data
+    networknode_data = {name: data for name, data in pdk_study.items() 
+                       if data.get("top_level") == "NetworkNode"}
+    alu_data = {name: data for name, data in pdk_study.items() 
+               if data.get("top_level") == "LaneALU"}
+    
+    # Collect NetworkNode samples
+    networknode_samples = []
+    for s in networknode_data.values():
         channels = s["nChannels"]
         area = s["area"]
-        samples.append((channels, area))
+        networknode_samples.append((channels, area))
 
     # Sort by channel count
-    samples.sort(key=lambda x: x[0])
-    channels, areas = zip(*samples) if samples else ([], [])
+    networknode_samples.sort(key=lambda x: x[0])
+    nn_channels, nn_areas = zip(*networknode_samples) if networknode_samples else ([], [])
+    
+    # Get ALU area (single data point)
+    alu_area = None
+    if alu_data:
+        alu_area = list(alu_data.values())[0]["area"]
 
     plt.figure(figsize=(12, 9))
     
     # Plot area vs channel count (log-log)
     plt.subplot(2, 1, 1)
-    if channels and areas:
-        plt.plot(channels, areas, 'bo-', linewidth=2, markersize=8)
+    if nn_channels and nn_areas:
+        plt.plot(nn_channels, nn_areas, 'bo-', linewidth=2, markersize=8, label='NetworkNode')
+    if alu_area:
+        plt.axhline(y=alu_area, color='r', linestyle='--', linewidth=2, label='LaneALU')
     
     plt.xlabel("Number of Channels")
     plt.ylabel("Area (μm²)")
-    plt.title(f"NetworkNode Area vs Channel Count - {pdk_name.upper()} PDK (Log-Log)")
+    plt.title(f"NetworkNode vs ALU Area - {pdk_name.upper()} PDK (Log-Log)")
     plt.grid(True, alpha=0.3)
     plt.yscale('log')
     plt.xscale('log', base=2)
+    plt.legend()
     
     # Plot area vs channel count (linear)
     plt.subplot(2, 1, 2)
-    if channels and areas:
-        plt.plot(channels, areas, 'bo-', linewidth=2, markersize=8)
+    if nn_channels and nn_areas:
+        plt.plot(nn_channels, nn_areas, 'bo-', linewidth=2, markersize=8, label='NetworkNode')
+    if alu_area:
+        plt.axhline(y=alu_area, color='r', linestyle='--', linewidth=2, label='LaneALU')
     
     plt.xlabel("Number of Channels")
     plt.ylabel("Area (μm²)")
-    plt.title(f"NetworkNode Area vs Channel Count - {pdk_name.upper()} PDK (Linear)")
+    plt.title(f"NetworkNode vs ALU Area - {pdk_name.upper()} PDK (Linear)")
     plt.grid(True, alpha=0.3)
+    plt.legend()
     
     plt.tight_layout()
     plt.savefig(output_file, dpi=300, bbox_inches='tight')
     plt.close()
     
     # Print summary statistics
-    print(f"\n=== NetworkNode Area Scaling Analysis - {pdk_name.upper()} PDK ===")
-    print(f"Study configurations: {len(pdk_study)}")
-    print(f"Channel counts tested: {sorted(set(s['nChannels'] for s in pdk_study.values()))}")
+    print(f"\n=== NetworkNode vs ALU Area Analysis - {pdk_name.upper()} PDK ===")
+    print(f"NetworkNode configurations: {len(networknode_data)}")
+    print(f"ALU configurations: {len(alu_data)}")
     
-    if channels and areas:
-        for ch, area in zip(channels, areas):
+    if nn_channels and nn_areas:
+        print(f"\nNetworkNode Channel Scaling:")
+        for ch, area in zip(nn_channels, nn_areas):
             unit = "channel" if ch == 1 else "channels"
             print(f"  {ch} {unit}: {area:.1f} μm²")
-        print(f"  Total scaling: {areas[-1]/areas[0]:.2f}x")
+        print(f"  Total scaling: {nn_areas[-1]/nn_areas[0]:.2f}x")
+    
+    if alu_area:
+        print(f"\nLaneALU Area: {alu_area:.1f} μm²")
+        if nn_areas:
+            print(f"ALU vs NetworkNode 1ch: {alu_area/nn_areas[0]:.2f}x")
+            print(f"ALU vs NetworkNode 4ch: {alu_area/nn_areas[-1]:.2f}x")
 
 
 def main(argv):
