@@ -16,7 +16,7 @@ REGISTER_FILE_CONFIGS = [
     outs = ["register_file_{}w_{}d_{}r_{}w.sv".format(config["width"], config["depth"], config["nReadPorts"], config["nWritePorts"])],
     cmd = """
     TMPDIR=$$(mktemp -d)
-    $(location //python/fmvpu:verilog_generator) \\
+    $(location //src:verilog_generator) \\
         $$TMPDIR/register_file_verilog \\
         RegisterFile \\
         {} \\
@@ -26,7 +26,7 @@ REGISTER_FILE_CONFIGS = [
     cat $$TMPDIR/register_file_verilog/*.sv > $@
     rm -rf $$TMPDIR
     """.format(config["width"], config["depth"], config["nReadPorts"], config["nWritePorts"]),
-    tools = ["//python/fmvpu:verilog_generator"],
+    tools = ["//src:verilog_generator"],
 ) for config in REGISTER_FILE_CONFIGS]
 
 # Create filegroups to expose the generated Verilog files

@@ -16,7 +16,7 @@ ADJUSTABLE_DELAY_CONFIGS = [
     outs = ["adjustable_delay_{}d_{}w.sv".format(config["max_delay"], config["width"])],
     cmd = """
     TMPDIR=$$(mktemp -d)
-    $(location //python/fmvpu:verilog_generator) \\
+    $(location //src:verilog_generator) \\
         $$TMPDIR/adjustable_delay_verilog \\
         AdjustableDelay \\
         {} \\
@@ -24,7 +24,7 @@ ADJUSTABLE_DELAY_CONFIGS = [
     cat $$TMPDIR/adjustable_delay_verilog/*.sv > $@
     rm -rf $$TMPDIR
     """.format(config["max_delay"], config["width"]),
-    tools = ["//python/fmvpu:verilog_generator"],
+    tools = ["//src:verilog_generator"],
 ) for config in ADJUSTABLE_DELAY_CONFIGS]
 
 # Create filegroups to expose the generated Verilog files

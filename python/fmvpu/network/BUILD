@@ -9,14 +9,14 @@ genrule(
     outs = ["network_verilog.sv"],
     cmd = """
     TMPDIR=$$(mktemp -d)
-    $(location //python/fmvpu:verilog_generator) \\
+    $(location //src:verilog_generator) \\
         $$TMPDIR/network_verilog \\
         NetworkNode \\
         $(location //python/fmvpu:params.json)
     cat $$TMPDIR/network_verilog/*.sv > $@
     rm -rf $$TMPDIR
     """,
-    tools = ["//python/fmvpu:verilog_generator"],
+    tools = ["//src:verilog_generator"],
 )
 
 # Create a filegroup to expose the generated Verilog directory

@@ -200,6 +200,22 @@ openram_sram(
 )
 
 openram_sram(
+    name = "test_sram_32x32",
+    word_size = 32,
+    num_words = 32,
+    write_size = 32,
+    num_rw_ports = 1,
+)
+
+openram_sram(
+    name = "test_sram_32x64",
+    word_size = 32,
+    num_words = 64,
+    write_size = 32,
+    num_rw_ports = 1,
+)
+
+openram_sram(
     name = "test_sram_32x128",
     word_size = 32,
     num_words = 128,

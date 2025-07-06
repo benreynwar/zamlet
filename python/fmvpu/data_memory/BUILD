@@ -16,7 +16,7 @@ DATA_MEMORY_CONFIGS = [
     outs = ["data_memory_{}w_{}d_{}b.sv".format(config["width"], config["depth"], config["nBanks"])],
     cmd = """
     TMPDIR=$$(mktemp -d)
-    $(location //python/fmvpu:verilog_generator) \\
+    $(location //src:verilog_generator) \\
         $$TMPDIR/data_memory_verilog \\
         DataMemory \\
         {} \\
@@ -25,7 +25,7 @@ DATA_MEMORY_CONFIGS = [
     cat $$TMPDIR/data_memory_verilog/*.sv > $@
     rm -rf $$TMPDIR
     """.format(config["width"], config["depth"], config["nBanks"]),
-    tools = ["//python/fmvpu:verilog_generator"],
+    tools = ["//src:verilog_generator"],
 ) for config in DATA_MEMORY_CONFIGS]
 
 # Create filegroups to expose the generated Verilog files
