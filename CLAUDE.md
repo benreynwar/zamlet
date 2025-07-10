@@ -8,6 +8,9 @@ All imports must be placed at the top of the file, not inline within functions. 
 
 NEVER add imports inside functions - always place them at the top of the file.
 
+## Module Generation
+**IMPORTANT**: When creating new modules with ModuleGenerator objects, you MUST add them to the case statement in `src/main/scala/fmvpu/Main.scala`.
+
 ## Testing
 When running Python tests, always redirect output to a file so you can examine the complete output without needing to rerun the test. For example:
 ```bash

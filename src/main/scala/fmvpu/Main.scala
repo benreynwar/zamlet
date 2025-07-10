@@ -8,6 +8,7 @@ import fmvpu.memory._
 import fmvpu.network._
 import fmvpu.utils._
 import fmvpu.alu._
+import fmvpu.lane._
 
 /** Main entry point for generating Verilog from FMVPU modules.
   *
@@ -44,12 +45,17 @@ object Main extends App {
   val generator: ModuleGenerator = moduleName match {
     case "AdjustableDelay" => AdjustableDelayGenerator
     case "NetworkNode" => NetworkNodeGenerator
+    case "NetworkCrossbar" => NetworkCrossbarGenerator
+    case "NetworkSwitch" => NetworkSwitchGenerator
     case "RegisterFile" => RegisterFileGenerator
     case "DataMemory" => DataMemoryGenerator
     case "ddmAccess" => ddmAccessGenerator
     case "Lane" => LaneGenerator
     case "LaneGrid" => LaneGridGenerator
     case "LaneALU" => LaneALUGenerator
+    case "RegisterFileAndFriends" => RegisterFileAndFriendsGenerator
+    case "ALU" => ALUGenerator
+    case "Fifo" => FifoGenerator
     case _ => 
       println(s"Module name '${moduleName}' is unknown.")
       System.exit(1)
