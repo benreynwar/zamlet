@@ -1,0 +1,54 @@
+Packet Switch
+------------
+
+inputs:
+  ni_valid
+  ni_data
+  si_valid
+  ...
+
+  no_ready
+  so_ready
+  ...
+
+  hi_valid
+  hi_last
+  hi_data
+
+  ho_ready
+
+  forward_valid
+  forward_direction (4 bits)
+  forward_header (32 bits)
+
+outputs:
+  ni_ready
+  si_ready
+  ...
+
+  no_valid
+  no_data
+  so_valid
+  ...
+
+  ho_valid
+  ho_last
+  ho_data
+  
+  hi_ready
+
+  forward_ready
+
+
+instances:
+   5 x PacketInHandler (5 is 4 directions and 'here')
+   5 x PacketOutHandler
+
+   Just tieing 10 handlers together.
+
+
+  
+
+
+
+

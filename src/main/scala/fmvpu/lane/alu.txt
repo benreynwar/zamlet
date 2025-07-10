@@ -1,0 +1,24 @@
+ALU
+---
+inputs
+  i_valid
+  i_mode     (4 bits)
+  i_src1     (WIDTH bits)
+  i_src2     (WIDTH bits)
+  i_dst_addr (3+WRITE_IDENT_WIDTH bits)
+outputs
+  o_valid
+  o_result   (WIDTH bits)
+  o_dst_addr (3+WRITE_IDENT_WIDTH bits)
+
+parameters
+  ALU_LATENCY
+
+modes
+  Mode 0 = Add
+  Mode 1 = Addi
+  Mode 2 = Sub
+  Mode 3 = Subi
+  Mode 4 = Mult
+  Mode 5 = MultAcc
+  Mode 6-15 Not set yet.

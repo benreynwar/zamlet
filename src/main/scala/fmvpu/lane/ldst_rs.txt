@@ -1,0 +1,20 @@
+Load/Store Reservation State
+----------------------------
+inputs
+  i_valid
+  i_mode
+  i_address (8 bit address or 3 bit reg address + 2 bit w ident) (9 bit total)
+  i_dst_addr (3 bit reg address + 2 bit w ident)
+  i_value (32 bit value or 3 bit reg address + 2 bit w ident) (33 bit total)
+    i_value and i_dst_addr is either or so we can manage with 33 bit for both
+
+  write_valids[3:0]  (writes coming from the ALU or store or packets or loop)
+  write_values[3:0][31:0] (write values)
+  write_addresses[3:0][3+2-1:0]
+
+outputs
+  o_valid
+  o_mode
+  o_address
+  o_value or o_dst_addr
+

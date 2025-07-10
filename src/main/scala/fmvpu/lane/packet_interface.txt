@@ -1,0 +1,119 @@
+Packets
+-------
+Packets can be directed to a particular lane, or broadcast to a rectangle of lanes.
+
+Packet Header
+
+- Length is 8 bits
+- Destination is 10 bits
+- Mode (0 = normal packet, 1 = command packet)
+- Forward 1bit
+- IsBroadCast 1 bit
+- BroadcastDirection (2 bits) (if we're broadcasting dest is the boundary) (direction is NE, SE, SW, or NW)
+- Unused (9 bits)
+
+If it's a command packet then each data word is a command
+The first few bits are command mode
+Command mode = 0 -> Start running (PC address in other bits)
+               1 -> Write to IM (IM adddress and data in other bits)
+               2 -> Write to Reg (Reg address in rest of word)
+                      Next word is the value to write to the reg.
+               3 -> ??
+
+Packet Interface
+---------------
+inputs
+  fromnetwork_valid
+  fromnetwork_data
+
+  instr_valid   1 bit
+  instr_mode    3 bits
+     0: Receive                      (uses receive state)
+     1: Receive and Forward          (uses receive state)
+     2: Receive, Forward and Append  (uses receive and send state)
+     3: Forward and Append           (uses send state)
+     4: Send                         (uses send state)
+     5: Get Packet Word              (need active receive state)
+  instr_target  10 bits
+  instr_result  3 bits (what register to put the length or word in)
+  instr_send_length  8 bits
+  instr_channel 2 bits
+
+  forward_ready
+
+
+outputs
+
+  fromnetwork_ready
+
+  tonetwork_valid
+  tonetwork_data
+
+  write_valid
+  write_reg      (3 bits)
+  write_wident   (2 bits)  (this increments with each received word)
+  write_data     (32 bits)
+  write_force    (1 bit)  (from a command packet, no wident)
+
+  writeim_valid
+  writeim_address
+  writeim_data
+
+  send_ready     Let the Reservation Station know what we can accept.
+  receive_ready
+
+  forward_valid
+  forward_direction (4 bits)
+  forward_header (32 bits)
+
+If we receive an instruction that requires forwarding we should send the forward_* signals
+until forward_ready goes high.
+
+sending:
+  state:
+    active 1 bit
+    remaining_words 8 bit
+
+  We receive a send instruction.  We produce the header. We set active and remaining_words
+  When we see a write to address 0 it's a word that we want to add to the packet.
+  However we don't know that we will get words in the correct order.
+
+  The RFF labels the writes with write_idents in order in the range 0 to N_PACKET_OUT_IDENTS-1
+  N_PACKET_OUT_IDENTS <= 2**WRITE_IDENT_WIDTH
+
+  Here we keep a buffer of N_PACKET_OUT_IDENTS entries.
+  When we get a write we write into the write_ident address of the buffer.
+  When we have a valid entry in the next read buffer address we send the value out on
+    packetout_data. And we set the read buffer entry to empty. And increment the
+    next read buffer address.
+
+  When remaining_words goes down to 0 we set active to 0
+  
+receiving:
+  state
+    active 1 bit
+    remaining_words 8 bit
+
+  When we see a packet on fromnetwork_* we parse the header.
+  If it's a normal packet we stall until we have received a receive packet instruction.
+  We set the receiving state to active and if it's a forwarding with append we also set
+  the sending to active.
+  The sending 'remaining_words' will just be the number to be appended.  The dataout_ready
+  won't go high until we've consumed all the other words and the network is ready for the
+  appended words.
+
+  We receive a packet. We look at the header.  It could be of several types
+  0: Normal packet
+     We send the receivelength_* signals
+     We set remaining_words to the length
+     
+     When we get 'get_word' instructions we send receiveword_* signals once we have
+     some packet data.
+
+     When we get the last word we set active to 0.
+
+  1: Command packet
+       As we process words from the command packet we either
+         - send the start_* signal
+         - send writeim_*
+         - send receiveword_* to write a reg

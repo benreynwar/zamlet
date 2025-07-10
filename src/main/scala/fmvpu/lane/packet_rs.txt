@@ -1,0 +1,22 @@
+Packet Reservation State
+----------------------------
+inputs
+  i_valid   1 bit
+  i_mode    3 bits
+  i_target  10 bits or (or 3 bits + 2 bit w_ident)
+  i_result  3 bits + 2 bit w_ident
+  i_send_length  8 bits (or 3 bits + 2 bit w_ident)
+  i_channel 2 bits (or 2 bit w_ident)
+
+  write_valids[3:0]  (writes coming from the ALU or store or packets or loop)
+  write_values[3:0][31:0] (write values)
+  write_addresses[3:0][3+2-1:0]
+
+outputs
+  o_valid
+  o_mode
+  o_target
+  o_result
+  o_send_length
+  o_channel
+

@@ -1,0 +1,62 @@
+PacketInHandler
+---------------
+
+inputs
+  i_valid                 (connected to one of ni_valid, si_valid, wi_valid, ei_valid on the lane)
+  i_data (WIDTH bits)
+
+  // We need to send this to the Handler for any packets that we want to forward
+  // This data must remain until it is used
+  // It is applied to the next 'normal' packet that is received
+
+  forward_valid
+  forward_direction (4 bits)
+  forward_header (32 bits)
+
+  o_ready[3:0]  (which one we consider depends on  which out handler we connected to)
+
+  handler_response
+
+outputs
+  i_ready
+
+  forward_ready   //goes high when the forward data was used to forward a packet
+
+  o_valid
+  o_data
+  o_last
+  o_append
+
+  handler_request
+  handler_confirm
+
+implementation
+
+  It looks at the header of the packet and at forward_direction and works out where the packet needs to go.
+
+  If the packet should go to this node and it is needs forwarding
+    Block until we have the forwarding information.
+  
+  The packet may have several directions it needs to go.
+  It may have 2 if it is a broadcast.
+  It may have 2 it it's going to this node and is being forwarded.
+
+  When all the directions are available it aquires the corresponding PacketOutHandlers.
+
+  The request is:
+    1) handler_request   (high if we requested a PacketOutHandler)  (our packet needs it)
+    2) handler_response  (high if the PacketOutHandler is avail)  (we were highest priority request)
+    3) handler_confirm   (high is we take the PacketOutHandler)  (all our requests got positive responses)
+
+  Which PacketInHandler has the highest priority rotates each cycle.
+
+  Then each cycle we see whether the PacketOutHandlers all have data_ready high.
+  If they are all high then we send data_valid high to all our PacketOutHandlers along with the packet word.
+
+  A packet that is being forwarded is not too hard.  It's just going in two directions.
+  A packet that we're appending too is a bit harder.
+
+  When we finish the packet we need to tell the PacketOutHandler somehow that it should switch to be
+  connected to the Here direction.
+  o_append is high for the last word
+  normally o_last is high for the last word

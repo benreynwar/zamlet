@@ -1,0 +1,76 @@
+This is a redesign of the lane.
+The old NetworkNode was much too big.
+Here we only have a packet based network and we have no big buffers.
+Goal is to quickly get some netlists and get a feel of area.
+Here we're going taking the Tomosulo approach, but only single-issue to start off with.
+
+Lane
+----
+
+inputs:
+
+  clk
+  rst
+
+  x_pos (specifies the position of the lane in the grid, will be hardwired)
+  y_pos
+
+  // The packet data coming from other nodes
+  wi_valid[n_channels]
+  wi_data[n_channels] 
+  ei_valid[n_channels]
+  ei_data[n_channels] 
+  ni_valid[n_channels]
+  ni_data[n_channels] 
+  si_valid[n_channels]
+  si_data[n_channels] 
+
+  wo_ready[n_channels]
+  eo_ready[n_channels]
+  no_ready[n_channels]
+  so_ready[n_channels]
+
+outputs
+  // The packet data going to other nodes
+  wo_valid[n_channels]
+  wo_data[n_channels] 
+  eo_valid[n_channels]
+  eo_data[n_channels] 
+  no_valid[n_channels]
+  no_data[n_channels] 
+  so_valid[n_channels]
+  so_data[n_channels] 
+
+  wi_ready[n_channels]
+  ei_ready[n_channels]
+  ni_ready[n_channels]
+  si_ready[n_channels]
+
+contained modules
+  register_file_and_friends (RFF)
+  instruction_memory  (IM)
+  alu_reservation_station (ARS)
+  alu (ALU)
+  ldst_reservation_station (LSRS)
+  data_memory (DM)
+  packet_reservation_station (PRS)
+  packet_interface (PI)
+  network_node (NN)
+    packet_switch (NS)
+      packet_in_handler
+      packet_out_handler
+
+  At this top level there it should just be structural, wiring together the existing modules.
+
+  RFF controls the IM and sends instructions to the 3 reservation stations.
+
+  The ARS sends control to the ALU.
+  The LSRS send control to the DM.
+  The PRS sends control to the PI.
+
+  The PI sends and receives packets from the NN.
+
+  The NN uses n_channels NS to communicate with outside the Lane.
+
+  The ALU, DM, PI all provide write information that goes to the RFF and the the reservation stations.
+   

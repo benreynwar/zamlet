@@ -1,0 +1,83 @@
+ISA
+===
+
+Packet Instructions
+-------------------
+ - Modes
+   0: Receive
+   1: Receive and Forward
+   2: Receive, Forward and Append
+   3: Forward and Append
+   4: Send
+   5: Get Packet Word
+
+ 2 bits 00
+ 3 bits for mode
+ 1 bit unused
+ 1 bit mask
+ 3 bits of location          (read 1) (should be 0 if don't forward)
+ 3 bit for send length       (read 2)
+ 3 bit for receive length    (write)
+
+Load and Store Instructions
+---------------------------
+Load from address to reg
+Store from reg to address (base address in reg, offset in reg)
+
+  2 bits 01
+  2 bits for mode
+  1 bit unused
+  1 bits for base address (use it or not)
+  1 bit mask
+  3 bits for offset reg   (read 1)
+  3 bits for src  (read 2)
+  3 bits  for dest (write)  (we'll never use both src and dest at same time)
+
+  13 bits
+
+ALU Instruction
+---------------
+
+Mode 0 = Add
+Mode 1 = Addi
+Mode 2 = Sub
+Mode 3 = Subi
+Mode 4 = Mult
+Mode 5 = MultAcc
+Mode 6-15 Not set yet.
+
+  2 bits 10
+  4 bits mode
+  3 bits src 1
+  3 bits src 2
+  3 bits dest
+  1 bit mask
+
+Loop Instructions
+-----------------
+
+Start Loop:
+  2 bits 11
+  2 bits 00
+  mode 2 bit (2'b00)
+  unused mask 1 bit
+  length 3 bits (read 1)
+  unused 3 bits (read 2)  (maybe hardwire to number of instructions in loop) (if zero expect loop_length instruction)
+  index 3 bits (write)
+
+Loop Size:
+  2 bits 11
+  2 bits 00
+  mode 2 bit (2'b11)
+  loop_size (10 bits)
+    (The last instruction within the loop has an address that is equal to the first_instruction + loop_size)
+    (There must always be at least one instruction in a loop)
+   
+
+If we want to make it general the 16 bits
+
+6 bits mode + channel/use_base_address etc
+1 bit mask
+3 bits (read 1)
+3 bits (read 2)
+3 bits (write)
