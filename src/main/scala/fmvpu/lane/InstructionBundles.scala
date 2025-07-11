@@ -7,11 +7,11 @@ import chisel3.util._
  * Unresolved ALU instruction - contains register references that may not be ready
  */
 class ALUInstrUnresolved(params: LaneParams) extends Bundle {
-  val valid = Bool()
   val mode = ALUModes()
   val src1 = new RegReadInfo(params)
   val src2 = new RegReadInfo(params) 
   val accum = new RegReadInfo(params)
+  val mask = new RegReadInfo(params)
   val dstAddr = new RegWithIdent(params)
   val useLocalAccum = Bool()
 }
@@ -20,11 +20,11 @@ class ALUInstrUnresolved(params: LaneParams) extends Bundle {
  * Resolved ALU instruction - all operands are ready data values
  */
 class ALUInstrResolved(params: LaneParams) extends Bundle {
-  val valid = Bool()
   val mode = ALUModes()
   val src1 = UInt(params.width.W)
   val src2 = UInt(params.width.W)
   val accum = UInt(params.width.W)
+  val mask = Bool()
   val dstAddr = new RegWithIdent(params)
   val useLocalAccum = Bool()
 }
@@ -33,7 +33,6 @@ class ALUInstrResolved(params: LaneParams) extends Bundle {
  * Unresolved Load/Store instruction
  */
 class LdStInstrUnresolved(params: LaneParams) extends Bundle {
-  val valid = Bool()
   val mode = LdStModes()
   val baseAddress = new RegReadInfo(params)
   val offset = new RegReadInfo(params)
@@ -45,7 +44,6 @@ class LdStInstrUnresolved(params: LaneParams) extends Bundle {
  * Resolved Load/Store instruction
  */
 class LdStInstrResolved(params: LaneParams) extends Bundle {
-  val valid = Bool()
   val mode = LdStModes()
   val baseAddress = UInt(params.addressWidth.W)
   val offset = UInt(params.addressWidth.W)
@@ -57,7 +55,6 @@ class LdStInstrResolved(params: LaneParams) extends Bundle {
  * Unresolved Packet instruction
  */
 class PacketInstrUnresolved(params: LaneParams) extends Bundle {
-  val valid = Bool()
   val mode = PacketModes()
   val target = new RegReadInfo(params)
   val result = new RegWithIdent(params) // register to put length or word in
@@ -69,7 +66,6 @@ class PacketInstrUnresolved(params: LaneParams) extends Bundle {
  * Resolved Packet instruction
  */
 class PacketInstrResolved(params: LaneParams) extends Bundle {
-  val valid = Bool()
   val mode = PacketModes()
   val target = UInt(params.targetWidth.W)
   val result = new RegWithIdent(params)

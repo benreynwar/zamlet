@@ -13,7 +13,7 @@ import chisel3.util._
 class ALU(params: LaneParams) extends Module {
   val io = IO(new Bundle {
     // Input instruction
-    val instr = Input(new ALUInstrResolved(params))
+    val instr = Input(Valid(new ALUInstrResolved(params)))
     
     // ALU result output
     val result = Output(new WriteResult(params))
@@ -24,35 +24,35 @@ class ALU(params: LaneParams) extends Module {
   val localAccumulator = RegInit(0.U(params.width.W))
   
   // Determine which accumulator value to use
-  val accumValue = Mux(io.instr.useLocalAccum, localAccumulator, io.instr.accum)
+  val accumValue = Mux(io.instr.bits.useLocalAccum, localAccumulator, io.instr.bits.accum)
 
   // Compute ALU result
   val aluOut = Wire(UInt(params.width.W))
   
   aluOut := 0.U  // Default value
-  switch(io.instr.mode) {
+  switch(io.instr.bits.mode) {
     is(ALUModes.Add) {
-      aluOut := io.instr.src1 + io.instr.src2
+      aluOut := io.instr.bits.src1 + io.instr.bits.src2
     }
     is(ALUModes.Addi) {
-      aluOut := io.instr.src1 + io.instr.src2  // src2 is immediate
+      aluOut := io.instr.bits.src1 + io.instr.bits.src2  // src2 is immediate
     }
     is(ALUModes.Sub) {
-      aluOut := io.instr.src1 - io.instr.src2
+      aluOut := io.instr.bits.src1 - io.instr.bits.src2
     }
     is(ALUModes.Subi) {
-      aluOut := io.instr.src1 - io.instr.src2  // src2 is immediate
+      aluOut := io.instr.bits.src1 - io.instr.bits.src2  // src2 is immediate
     }
     is(ALUModes.Mult) {
-      aluOut := io.instr.src1 * io.instr.src2
+      aluOut := io.instr.bits.src1 * io.instr.bits.src2
     }
     is(ALUModes.MultAcc) {
-      aluOut := accumValue + (io.instr.src1 * io.instr.src2)
+      aluOut := accumValue + (io.instr.bits.src1 * io.instr.bits.src2)
     }
   }
 
   // Update local accumulator when writing to accumulator register
-  val isWritingToAccum = io.instr.valid && io.instr.dstAddr.regAddr === params.accumRegAddr.U
+  val isWritingToAccum = io.instr.valid && io.instr.bits.dstAddr.regAddr === params.accumRegAddr.U
   when (isWritingToAccum) {
     localAccumulator := aluOut
   }
@@ -62,7 +62,8 @@ class ALU(params: LaneParams) extends Module {
     // Single cycle latency
     io.result.valid := io.instr.valid
     io.result.value := aluOut
-    io.result.address := io.instr.dstAddr
+    io.result.address := io.instr.bits.dstAddr
+    io.result.force := false.B
   } else {
     // Multi-cycle pipeline
     val validPipe = Reg(Vec(params.aluLatency, Bool()))
@@ -72,7 +73,7 @@ class ALU(params: LaneParams) extends Module {
     // Stage 0 (input)
     validPipe(0) := io.instr.valid
     resultPipe(0) := aluOut
-    dstAddrPipe(0) := io.instr.dstAddr
+    dstAddrPipe(0) := io.instr.bits.dstAddr
     
     // Pipeline stages 1 to latency-1
     for (i <- 1 until params.aluLatency) {
@@ -85,6 +86,7 @@ class ALU(params: LaneParams) extends Module {
     io.result.valid := validPipe(params.aluLatency-1)
     io.result.value := resultPipe(params.aluLatency-1)
     io.result.address := dstAddrPipe(params.aluLatency-1)
+    io.result.force := false.B
   }
 }
 

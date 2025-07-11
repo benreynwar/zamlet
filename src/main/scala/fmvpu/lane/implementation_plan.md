@@ -1,178 +1,62 @@
 # FMVPU Lane Implementation Plan
 
-## Overview
-Redesign of the Lane module using Tomasulo approach with single-issue pipeline, packet-based networking, and minimal buffering for quick netlist generation and area analysis.
+Single-issue pipeline with Tomasulo approach, packet-based networking, minimal buffering.
 
-## Implementation Phases
+## Implementation Status
 
-### Phase 1: Foundation Components
-- [x] **Register File and Friends (RFF)** (`rff.txt`)
-  - Basic implementation done, logic needs fixing
-  - Placeholder test passes (reset + 10 cycles)
-  - TODO: Fix instruction processing and PC logic
-  - **Area (sky130hd):** 34,363 µm² (4,409 instances)
+### Phase 1: Foundation ✅
+- [x] **RFF** - Register file with dependency tracking - **34,363 µm²** (4,409 inst)
+- [x] **InstructionMemory** - 64-deep instruction storage - **39,776 µm²** (1,794 inst)  
+- [x] **ALU** - Add/Sub/Mult/MultAcc operations - **22,014 µm²** (2,587 inst)
 
-- [ ] **Instruction Memory (IM)**
-  - Simple memory interface for instruction fetch
-  - Integration with RFF for PC-based reads
-
-- [x] **Basic ALU** (`alu.txt`)
-  - ✅ Support for Add, Sub, Mult, MultAcc operations with proper enum types
-  - ✅ Pipeline latency parameter (configurable in LaneParams)
-  - ✅ Write-back to register file using WriteResult bundle
-  - ✅ Local accumulator for chained MultAcc operations
-  - ✅ Unit tests passing (Claude Code generated)
-  - **Area (sky130hd):** 22,014 µm² (2,587 instances)
-
-### Phase 2: Reservation Stations
-- [ ] **ALU Reservation Station** (`alu_rs.txt`)
-  - Out-of-order execution support
-  - Dependency resolution via write monitoring
-  - Configurable number of slots (N_ALURS_SLOTS)
-
-- [ ] **Load/Store Reservation Station** (`ldst_rs.txt`)
-  - Memory operation queueing
-  - Base address + offset calculation
-  - Load/store dependency management
-
-- [ ] **Packet Reservation Station** (`packet_rs.txt`)
-  - Network packet operation management
-  - Send/receive/forward instruction handling
-  - Channel assignment logic
+### Phase 2: Reservation Stations ✅
+- [x] **ALU RS** (`alu_rs.txt`) - Out-of-order execution, dependency resolution - **29,608 µm²** (3,426 inst)
+- [x] **Load/Store RS** (`ldst_rs.txt`) - Memory ops, base+offset calc - **15,363 µm²** (1,764 inst)
+- [x] **Packet RS** (`packet_rs.txt`) - Network packet ops, channel assignment - **3,907 µm²** (414 inst)
 
 ### Phase 3: Execution Units
-- [ ] **Data Memory (DM)**
-  - Local memory interface
-  - Load/store operation execution
-  - Write-back to register file
+- [x] **Data Memory** - Local memory interface, load/store execution - **77,727 µm²** (3,321 inst)
+- [x] **Packet Interface** (`packet_interface.txt`) - Network send/receive/forward - **11,012 µm²** (1,194 inst) - **BUGGY: Missing forwarding logic**
 
-- [ ] **Packet Interface (PI)** (`packet_interface.txt`)
-  - Network packet send/receive logic
-  - Command packet processing
-  - Buffer management for packet words
-  - Forward operation support
+### Phase 4: Network Infrastructure  
+- [x] **Packet Input Handler** (`packet_in_handler.txt`) - Reception, routing, arbitration - **1,815 µm²** (252 inst)
+- [x] **Packet Output Handler** (`packet_out_handler.txt`) - Transmission, channel management - **1,745 µm²** (168 inst)
+- [x] **Packet Switch** - Multi-channel routing and switching - **22,173 µm²** (2,695 inst)
+- [x] **LaneNetworkNode** - Connection state, priority arbitration - **48,409 µm²** (5,615 inst)
 
-### Phase 4: Network Infrastructure
-- [ ] **Packet Input Handler** (`packet_in_handler.txt`)
-  - Incoming packet reception
-  - Header parsing and validation
-  - Flow control management
+### Phase 5: Integration ✅
+- [x] **NewLane** - Top-level wiring, I/O interfaces - **282,411 µm²** (24,710 inst)
+- [ ] **Testing** - Unit and integration tests
+- [ ] **Area Analysis** - Compare vs old NetworkNode
 
-- [ ] **Packet Output Handler** (`packet_out_handler.txt`)
-  - Outgoing packet transmission
-  - Header generation
-  - Channel arbitration
-
-- [ ] **Packet Switch** (`packet_switch.txt`)
-  - Integration of input/output handlers
-  - Packet routing logic
-  - Multi-channel support
-
-- [ ] **Network Node** (`network_node.txt`)
-  - Multi-channel packet switching
-  - Connection state management
-  - Priority-based arbitration
-
-### Phase 5: Integration & Testing
-- [ ] **Top-level Lane module** (`lane.txt`)
-  - Structural wiring of all components
-  - I/O interface implementation
-  - Parameter configuration
-
-- [ ] **Unit Testing**
-  - Individual component tests
-  - Reservation station functionality
-  - Network packet flow
-
-- [ ] **Integration Testing**
-  - Full Lane module testing
-  - Instruction execution flow
-  - Network communication
-
-- [ ] **Area Analysis**
-  - Netlist generation using existing tools
-  - Hardware cost evaluation with DSE
-  - Comparison with previous NetworkNode
-
-## Key Design Features
-
-### ISA Support (`isa.txt`)
-- **Packet Instructions**: Receive, Forward, Send, Get Word (6 modes)
-- **Load/Store Instructions**: Memory operations with base+offset
-- **ALU Instructions**: Add, Sub, Mult, MultAcc with immediate variants
-- **Loop Instructions**: Start/Size with automatic iteration
-
-### Register File Design
-- 8 registers (0-7) with special purposes:
-  - Reg 0: Packet word out (write-only)
-  - Reg 1: Accumulator
-  - Reg 2: Mask
-  - Reg 3: Base address
-  - Reg 4: Channel
-  - Reg 5-7: General purpose
-
-### Network Interface
-- 4-direction connectivity (North, South, East, West)
-- Multi-channel support per direction
-- Packet forwarding and broadcast capabilities
-- Command packet support for remote control
-
-### Architecture Decisions
-- **Single-issue pipeline** for initial implementation
-- **Write identifier renaming** (2^WRITE_IDENT_WIDTH in-flight writes)
-- **Minimal buffering** to reduce area overhead
-- **Packet-based networking** with no large buffers
-
-## Testing Strategy
-1. Component-level unit tests for each module
-2. Reservation station dependency resolution tests
-3. Network packet flow validation
-4. Full instruction execution pipeline tests
-5. Multi-lane network communication tests
-
-## Success Criteria
-- [ ] All components compile and synthesize
-- [ ] Basic instruction execution works
-- [ ] Network packet communication functional
-- [ ] Area analysis shows improvement over old NetworkNode
-- [ ] Test suite passes completely
-
-## Notes
-- Prioritize quick netlist generation for area evaluation
-- Follow existing codebase patterns and conventions
-- Use existing DSE tools for hardware analysis
-- Focus on structural implementation initially
+## Architecture
+- **Registers**: 8 total (0=packet out, 1=accum, 2=mask, 3=base, 4=channel, 5-7=general)
+- **Network**: 4-direction (N/S/E/W), multi-channel, packet forwarding
+- **Pipeline**: Single-issue, write identifier renaming, minimal buffering
 
 ## Module Implementation Checklist (for Claude Code)
-For each new module, follow this standard workflow:
 
-### 1. Design & Code
+### 1. Implement
 - [ ] Read corresponding .txt specification file
-- [ ] Create module in `src/main/scala/fmvpu/lane/ModuleName.scala`
-- [ ] Use proper enum types from `LaneParams.scala` (ALUModes, LdStModes, PacketModes)
-- [ ] Use shared parameter constants (register addresses, etc.) from `LaneParams`
-- [ ] Create ModuleNameGenerator object extending `fmvpu.ModuleGenerator`
-- [ ] Add case to `src/main/scala/fmvpu/Main.scala` switch statement
+- [ ] Create `ModuleName.scala` in `src/main/scala/fmvpu/lane/`
+- [ ] Add ModuleNameGenerator and case to `Main.scala`
+- [ ] Update `LaneParams.scala` and `lane_default.json` if needed
 
-### 2. Configuration
-- [ ] Add any new parameters to `LaneParams.scala`
-- [ ] Update `configs/lane_default.json` with new parameter values
-- [ ] Ensure enum types have correct bit widths for instruction encoding
+### 2. Test
+- [ ] Create `test_modulename_basic.py` in `python/fmvpu/new_lane/`
+- [ ] Add BUILD rules for test
+- [ ] Run: `bazel test //python/fmvpu/new_lane:test_modulename_basic`
 
-### 3. Testing
-- [ ] Create `python/fmvpu/new_lane/test_modulename_basic.py`
-- [ ] Add test target to `python/fmvpu/new_lane/BUILD`
-- [ ] Run `bazel test //python/fmvpu/new_lane:test_modulename_basic`
-- [ ] Add intentional failure test to verify test infrastructure, then remove
+### 3. Area Analysis
+- [ ] Add to `NEW_LANE_STUDIES` in `dse/new_lane/BUILD`
+- [ ] Run: `bazel build //dse/new_lane:ModuleName_default__sky130hd_results`
+- [ ] Update plan with area (µm²) and instance count
 
-### 4. Area Analysis
-- [ ] Add study to appropriate section in `dse/BUILD`
-- [ ] Add to `ALL_STUDIES` list
-- [ ] Handle special cases (external config files, extra parameters)
-- [ ] Run `bazel build //dse:ModuleName_default__sky130hd_results`
-- [ ] Record area results in implementation plan
+## Implementation Lessons Learned
 
-### 5. Integration
-- [ ] Update any dependent modules to use new module
-- [ ] Verify compatibility with existing interfaces
-- [ ] Update instruction bundles if needed
+### Interface Design Consistency
+- **Always use Valid() or Decoupled() wrappers** instead of embedding `valid` fields in Bundle classes
+
+### Testing Signal Access
+- In cocotb tests, always use `.value` attribute: `dut.signal.value = 0`
+- For dynamic signal access: `getattr(dut, f'signal_{i}').value = 0`

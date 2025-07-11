@@ -7,6 +7,13 @@ load("@bazel-orfs//:yosys.bzl", "yosys")
 load("//:chisel.bzl", "chisel_binary")
 load(":openram.bzl", "openram_sram")
 
+# Export files for use by sub-packages
+exports_files([
+    "config/constraints.sdc",
+    "scripts/results.tcl",
+    "scripts/netlist_hierarchy_report.tcl",
+])
+
 # NetworkNode channel count study - simplified for testing
 STUDY = [{
     "name": "NetworkNode_{}ch_32b_16d".format(ch),
@@ -96,22 +103,9 @@ FIFO_STUDY = [{
     "depth": 8,
 }]
 
-# RegisterFileAndFriends study - uses lane_default.json config
-RFF_STUDY = [{
-    "name": "RegisterFileAndFriends_default",
-    "top_level": "RegisterFileAndFriends",
-    "config_file": "//configs:lane_default.json",
-}]
-
-# Lane ALU study - uses lane_default.json config
-LANE_ALU_STUDY = [{
-    "name": "ALU_default",
-    "top_level": "ALU",
-    "config_file": "//configs:lane_default.json",
-}]
 
 PDKS = ["asap7", "sky130hd"]
-ALL_STUDIES = STUDY + ALU_STUDY + NETWORK_COMPONENT_STUDY + FIFO_STUDY + RFF_STUDY + LANE_ALU_STUDY
+ALL_STUDIES = STUDY + ALU_STUDY + NETWORK_COMPONENT_STUDY + FIFO_STUDY
 NAMES = ["{}__{}".format(study["name"], pdk) for study in ALL_STUDIES for pdk in PDKS]
 
 # Generate individual JSON files for each study configuration
@@ -131,6 +125,7 @@ chisel_binary(
     name = "fmvpu_generator",
     srcs = ["//src:scala_sources"],
     main_class = "fmvpu.Main",
+    visibility = ["//dse/new_lane:__pkg__"],
     deps = [
         "@maven//:io_circe_circe_core_2_13",
         "@maven//:io_circe_circe_generic_2_13",
@@ -161,24 +156,6 @@ chisel_binary(
     tools = [":fmvpu_generator"],
 ) for study in ALL_STUDIES if study["top_level"] not in ["Fifo", "RegisterFileAndFriends", "ALU"]]
 
-# Generate Verilog for RegisterFileAndFriends (uses external config file)
-[genrule(
-    name = "{}_verilog".format(study["name"]),
-    srcs = [study["config_file"]],
-    outs = ["{}.sv".format(study["name"])],
-    cmd = """
-    TMPDIR=$$(mktemp -d)
-    TOP_LEVEL={}
-    $(location :fmvpu_generator) \\
-        $$TMPDIR/{}_verilog \\
-        $$TOP_LEVEL \\
-        $(location {})
-    # Concatenate all SystemVerilog files and rename the top module
-    find $$TMPDIR/{}_verilog -name "*.sv" -type f | sort | xargs cat | sed 's/^module '$$TOP_LEVEL'(/module {}(/' > $@
-    rm -rf $$TMPDIR
-    """.format(study["top_level"], study["name"], study["config_file"], study["name"], study["name"]),
-    tools = [":fmvpu_generator"],
-) for study in ALL_STUDIES if study["top_level"] in ["RegisterFileAndFriends", "ALU"]]
 
 # Generate Verilog for Fifo studies (no config file needed)
 [genrule(

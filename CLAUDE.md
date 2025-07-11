@@ -17,3 +17,8 @@ When running Python tests, always redirect output to a file so you can examine t
 python test/main/python/fmvpu/test_lane.py > test_output.log 2>&1
 ```
 This allows you to read the file multiple times to analyze different parts of the output.
+
+**IMPORTANT**: In cocotb tests, when setting signal values, you MUST use the `.value` attribute. For dynamic signal access, use `getattr` to get the signal object, then set its `.value`:
+- Correct: `dut.io_writeInputs_0_valid.value = 0`
+- Correct: `getattr(dut, f'io_writeInputs_{i}_valid').value = 0`
+- Incorrect: `setattr(dut, 'io_writeInputs_0_valid', 0)`

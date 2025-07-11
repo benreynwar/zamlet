@@ -13,12 +13,23 @@ Packet Header
 - Unused (9 bits)
 
 If it's a command packet then each data word is a command
-The first few bits are command mode
-Command mode = 0 -> Start running (PC address in other bits)
-               1 -> Write to IM (IM adddress and data in other bits)
-               2 -> Write to Reg (Reg address in rest of word)
-                      Next word is the value to write to the reg.
-               3 -> ??
+Command word format (width bits, typically 32):
+- Bits [width-1:width-2]: Command type (2 bits)
+- Bits [width-3:0]:       Command data (width-2 bits)
+
+Command types:
+0 -> Start running
+     Data bits [width-3:0]: PC address (only lower instrAddrWidth bits used)
+     
+1 -> Write to Instruction Memory
+     Data bits [width-3:width-2-instrAddrWidth]: Instruction data (instructionWidth bits, typically 16)
+     Data bits [instrAddrWidth-1:0]:             IM address (instrAddrWidth bits)
+     
+2 -> Write to Register (single word command)
+     Data bits [width-3:width-2-regAddrWidth]: Register address (regAddrWidth bits, typically 3)
+     Data bits [width-3-regAddrWidth:0]:       Value to write (width-2-regAddrWidth bits)
+     
+3 -> Reserved
 
 Packet Interface
 ---------------

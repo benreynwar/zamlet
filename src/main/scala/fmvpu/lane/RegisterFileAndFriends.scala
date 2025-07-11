@@ -10,6 +10,7 @@ class WriteResult(params: LaneParams) extends Bundle {
   val valid = Bool()
   val value = UInt(params.width.W)
   val address = new RegWithIdent(params)
+  val force = Bool() // from command packet, bypasses writeIdent system
 }
 
 /**
@@ -51,15 +52,11 @@ class RegisterFileAndFriends(params: LaneParams) extends Module {
     // Write inputs from ALU, load/store, and packets
     val writeInputs = Input(Vec(params.nWritePorts, new WriteResult(params)))
     
-    // Ready signals from reservation stations
-    val aluReady = Input(Bool())
-    val ldstReady = Input(Bool())
-    val packetsReady = Input(Bool())
     
     // Instruction outputs to reservation stations
-    val aluInstr = Output(new ALUInstrUnresolved(params))
-    val ldstInstr = Output(new LdStInstrUnresolved(params))
-    val packetInstr = Output(new PacketInstrUnresolved(params))
+    val aluInstr = Decoupled(new ALUInstrUnresolved(params))
+    val ldstInstr = Decoupled(new LdStInstrUnresolved(params))
+    val packetInstr = Decoupled(new PacketInstrUnresolved(params))
     
     // Instruction memory interface
     val imReadValid = Output(Bool())
@@ -118,12 +115,22 @@ class RegisterFileAndFriends(params: LaneParams) extends Module {
   // Helper function to issue a new write and update register state
   def issueWrite(regAddr: UInt): RegWithIdent = {
     val result = Wire(new RegWithIdent(params))
-    val nextIdent = registers(regAddr).lastIdent + 1.U
+
+    // For register 0 (packet output), always increment - order matters for packet assembly
+    // For other registers, find first available write identifier
+    val nextIdent = Wire(UInt(params.writeIdentWidth.W))
+    when(regAddr === params.packetWordOutRegAddr.U) {
+      nextIdent := registers(regAddr).lastIdent + 1.U
+    }.otherwise {
+      // Find first available write identifier by checking inFlight bits
+      val availableIdents = ~registers(regAddr).inFlight
+      nextIdent := PriorityEncoder(availableIdents)
+    }
     
     result.regAddr := regAddr
     result.writeIdent := nextIdent
     
-    // Update register state
+    // Update register state - always update lastIdent for dependency tracking
     registers(regAddr).lastIdent := nextIdent
     registers(regAddr).inFlight := registers(regAddr).inFlight | UIntToOH(nextIdent)
     registers(regAddr).isLocal := false.B
@@ -160,44 +167,46 @@ class RegisterFileAndFriends(params: LaneParams) extends Module {
   
   // Default instruction outputs
   io.aluInstr.valid := false.B
-  io.aluInstr.mode := ALUModes.Add
-  io.aluInstr.src1.resolved := true.B
-  io.aluInstr.src1.value := 0.U
-  io.aluInstr.src2.resolved := true.B
-  io.aluInstr.src2.value := 0.U
-  io.aluInstr.accum.resolved := true.B
-  io.aluInstr.accum.value := 0.U
-  io.aluInstr.dstAddr.regAddr := 0.U
-  io.aluInstr.dstAddr.writeIdent := 0.U
-  io.aluInstr.useLocalAccum := false.B
+  io.aluInstr.bits.mode := ALUModes.Add
+  io.aluInstr.bits.src1.resolved := true.B
+  io.aluInstr.bits.src1.value := 0.U
+  io.aluInstr.bits.src2.resolved := true.B
+  io.aluInstr.bits.src2.value := 0.U
+  io.aluInstr.bits.accum.resolved := true.B
+  io.aluInstr.bits.accum.value := 0.U
+  io.aluInstr.bits.mask.resolved := true.B
+  io.aluInstr.bits.mask.value := 1.U
+  io.aluInstr.bits.dstAddr.regAddr := 0.U
+  io.aluInstr.bits.dstAddr.writeIdent := 0.U
+  io.aluInstr.bits.useLocalAccum := false.B
   
   io.ldstInstr.valid := false.B
-  io.ldstInstr.mode := LdStModes.Load
-  io.ldstInstr.baseAddress.resolved := true.B
-  io.ldstInstr.baseAddress.value := 0.U
-  io.ldstInstr.offset.resolved := true.B
-  io.ldstInstr.offset.value := 0.U
-  io.ldstInstr.dstAddr.regAddr := 0.U
-  io.ldstInstr.dstAddr.writeIdent := 0.U
-  io.ldstInstr.value.resolved := true.B
-  io.ldstInstr.value.value := 0.U
+  io.ldstInstr.bits.mode := LdStModes.Load
+  io.ldstInstr.bits.baseAddress.resolved := true.B
+  io.ldstInstr.bits.baseAddress.value := 0.U
+  io.ldstInstr.bits.offset.resolved := true.B
+  io.ldstInstr.bits.offset.value := 0.U
+  io.ldstInstr.bits.dstAddr.regAddr := 0.U
+  io.ldstInstr.bits.dstAddr.writeIdent := 0.U
+  io.ldstInstr.bits.value.resolved := true.B
+  io.ldstInstr.bits.value.value := 0.U
   
   io.packetInstr.valid := false.B
-  io.packetInstr.mode := PacketModes.Receive
-  io.packetInstr.target.resolved := true.B
-  io.packetInstr.target.value := 0.U
-  io.packetInstr.result.regAddr := 0.U
-  io.packetInstr.result.writeIdent := 0.U
-  io.packetInstr.sendLength.resolved := true.B
-  io.packetInstr.sendLength.value := 0.U
-  io.packetInstr.channel.resolved := true.B
-  io.packetInstr.channel.value := 0.U
+  io.packetInstr.bits.mode := PacketModes.Receive
+  io.packetInstr.bits.target.resolved := true.B
+  io.packetInstr.bits.target.value := 0.U
+  io.packetInstr.bits.result.regAddr := 0.U
+  io.packetInstr.bits.result.writeIdent := 0.U
+  io.packetInstr.bits.sendLength.resolved := true.B
+  io.packetInstr.bits.sendLength.value := 0.U
+  io.packetInstr.bits.channel.resolved := true.B
+  io.packetInstr.bits.channel.value := 0.U
   
   // Instruction processing
   val canProcess = io.instrValid && !cancelNextInstr && !waitingForLoopLength
-  val stallALU = isALUInstr && !io.aluReady
-  val stallLdSt = isLdStInstr && !io.ldstReady
-  val stallPacket = isPacketInstr && !io.packetsReady
+  val stallALU = isALUInstr && !io.aluInstr.ready
+  val stallLdSt = isLdStInstr && !io.ldstInstr.ready
+  val stallPacket = isPacketInstr && !io.packetInstr.ready
   val stalled = stallALU || stallLdSt || stallPacket
   
   // Determine read/write enables based on instruction type
@@ -261,12 +270,13 @@ class RegisterFileAndFriends(params: LaneParams) extends Module {
       val aluMode = instrMode.asTypeOf(ALUModes())
       
       io.aluInstr.valid := true.B
-      io.aluInstr.mode := aluMode
-      io.aluInstr.src1 := read1Data
-      io.aluInstr.src2 := read2Data
-      io.aluInstr.accum := readRegister(params.accumRegAddr.U) // Accumulator register (always read)
-      io.aluInstr.dstAddr := dstAddr
-      io.aluInstr.useLocalAccum := lastAccumWasMultAcc && (aluMode === ALUModes.MultAcc)
+      io.aluInstr.bits.mode := aluMode
+      io.aluInstr.bits.src1 := read1Data
+      io.aluInstr.bits.src2 := read2Data
+      io.aluInstr.bits.accum := readRegister(params.accumRegAddr.U) // Accumulator register (always read)
+      io.aluInstr.bits.mask := readRegister(params.maskRegAddr.U) // Mask register (always read)
+      io.aluInstr.bits.dstAddr := dstAddr
+      io.aluInstr.bits.useLocalAccum := lastAccumWasMultAcc && (aluMode === ALUModes.MultAcc)
       
       // Update flag: set if this is MultAcc writing to accumulator
       when (aluMode === ALUModes.MultAcc && dstAddr.regAddr === params.accumRegAddr.U) {
@@ -287,11 +297,11 @@ class RegisterFileAndFriends(params: LaneParams) extends Module {
       zeroRegReadInfo.value := 0.U
       
       io.ldstInstr.valid := true.B
-      io.ldstInstr.mode := ldstMode
-      io.ldstInstr.baseAddress := Mux(useBase, readRegister(params.baseAddrRegAddr.U), zeroRegReadInfo) // Base address register or 0
-      io.ldstInstr.offset := read1Data
-      io.ldstInstr.value := read2Data // For stores
-      io.ldstInstr.dstAddr := dstAddr
+      io.ldstInstr.bits.mode := ldstMode
+      io.ldstInstr.bits.baseAddress := Mux(useBase, readRegister(params.baseAddrRegAddr.U), zeroRegReadInfo) // Base address register or 0
+      io.ldstInstr.bits.offset := read1Data
+      io.ldstInstr.bits.value := read2Data // For stores
+      io.ldstInstr.bits.dstAddr := dstAddr
       
       // Clear MultAcc flag if load writes to accumulator
       when (ldstMode === LdStModes.Load && dstAddr.regAddr === params.accumRegAddr.U) {
@@ -304,14 +314,14 @@ class RegisterFileAndFriends(params: LaneParams) extends Module {
       val packetMode = instrMode(2, 0).asTypeOf(PacketModes())
       
       io.packetInstr.valid := true.B
-      io.packetInstr.mode := packetMode
-      io.packetInstr.target := read1Data
-      io.packetInstr.sendLength := read2Data
-      io.packetInstr.channel := readRegister(params.channelRegAddr.U) // Channel register
-      io.packetInstr.result := dstAddr
+      io.packetInstr.bits.mode := packetMode
+      io.packetInstr.bits.target := read1Data
+      io.packetInstr.bits.sendLength := read2Data
+      io.packetInstr.bits.channel := readRegister(params.channelRegAddr.U) // Channel register
+      io.packetInstr.bits.result := dstAddr
       
       // Clear MultAcc flag if packet instruction writes to accumulator
-      when ((packetMode === PacketModes.Receive || packetMode === PacketModes.GetWord) && 
+      when ((packetMode === PacketModes.Receive || packetMode === PacketModes.GetPacketWord) && 
             dstAddr.regAddr === params.accumRegAddr.U) {
         lastAccumWasMultAcc := false.B
       }

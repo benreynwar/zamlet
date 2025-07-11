@@ -44,17 +44,27 @@ object Main extends App {
   
   val generator: ModuleGenerator = moduleName match {
     case "AdjustableDelay" => AdjustableDelayGenerator
+    case "LaneNetworkNode" => LaneNetworkNodeGenerator
     case "NetworkNode" => NetworkNodeGenerator
     case "NetworkCrossbar" => NetworkCrossbarGenerator
     case "NetworkSwitch" => NetworkSwitchGenerator
     case "RegisterFile" => RegisterFileGenerator
-    case "DataMemory" => DataMemoryGenerator
+    case "LaneDataMemory" => LaneDataMemoryGenerator
     case "ddmAccess" => ddmAccessGenerator
     case "Lane" => LaneGenerator
     case "LaneGrid" => LaneGridGenerator
     case "LaneALU" => LaneALUGenerator
     case "RegisterFileAndFriends" => RegisterFileAndFriendsGenerator
     case "ALU" => ALUGenerator
+    case "AluRS" => AluRSGenerator
+    case "LoadStoreRS" => LoadStoreRSGenerator
+    case "PacketRS" => PacketRSGenerator
+    case "PacketInterface" => PacketInterfaceGenerator
+    case "PacketInHandler" => PacketInHandlerGenerator
+    case "PacketOutHandler" => PacketOutHandlerGenerator
+    case "PacketSwitch" => PacketSwitchGenerator
+    case "InstructionMemory" => InstructionMemoryGenerator
+    case "NewLane" => NewLaneGenerator
     case "Fifo" => FifoGenerator
     case _ => 
       println(s"Module name '${moduleName}' is unknown.")

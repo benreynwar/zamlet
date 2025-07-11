@@ -41,15 +41,47 @@ object LdStModes extends ChiselEnum {
 }
 
 /**
+ * Packet header modes
+ */
+object PacketHeaderModes extends ChiselEnum {
+  val Normal = Value(0.U)
+  val Command = Value(1.U)
+}
+
+/**
+ * Broadcast directions
+ */
+object BroadcastDirections extends ChiselEnum {
+  val NE = Value(0.U)
+  val SE = Value(1.U)
+  val SW = Value(2.U)
+  val NW = Value(3.U)
+}
+
+/**
+ * Network directions for forwarding
+ */
+object NetworkDirections extends ChiselEnum {
+  val North = Value(0.U)
+  val East = Value(1.U)
+  val South = Value(2.U)
+  val West = Value(3.U)
+  val Here = Value(4.U)
+}
+
+
+/**
  * Packet operation modes
  */
 object PacketModes extends ChiselEnum {
   val Receive = Value(0.U)
-  val Forward = Value(1.U)
-  val Send = Value(2.U)
-  val SendImm = Value(3.U)
-  val SendReg = Value(4.U)
-  val GetWord = Value(5.U)
+  val ReceiveAndForward = Value(1.U)
+  val ReceiveForwardAndAppend = Value(2.U)
+  val ForwardAndAppend = Value(3.U)
+  val Send = Value(4.U)
+  val GetPacketWord = Value(5.U)
+  val Unused6 = Value(6.U)
+  val Unused7 = Value(7.U)
 }
 
 /**
@@ -59,16 +91,19 @@ case class LaneParams(
   width: Int = 32,
   writeIdentWidth: Int = 2,
   nRegs: Int = 8,
-  maxInstructionAddress: Int = 1024,
+  instructionMemoryDepth: Int = 64,
+  dataMemoryDepth: Int = 64,
   nWritePorts: Int = 3,
   
   // Instruction field widths
   aluModeWidth: Int = 4,
   ldstModeWidth: Int = 2,
   packetModeWidth: Int = 3,
-  targetWidth: Int = 10,
+  xPosWidth: Int = 5,
+  yPosWidth: Int = 5,
   packetLengthWidth: Int = 8,
   addressWidth: Int = 8,
+  instrAddrWidth: Int = 10,
   
   // Special register assignments
   packetWordOutRegAddr: Int = 0,
@@ -78,13 +113,27 @@ case class LaneParams(
   channelRegAddr: Int = 4,
   
   // ALU configuration
-  aluLatency: Int = 1
+  aluLatency: Int = 1,
+  nAluRSSlots: Int = 4,
+  
+  // Load/Store configuration
+  nLdStRSSlots: Int = 4,
+  
+  // Packet configuration
+  nPacketRSSlots: Int = 2,
+  nPacketOutIdents: Int = 4,
+  
+  // Network configuration
+  nChannels: Int = 2
 ) {
   // Calculated parameters
   val nWriteIdents = 1 << writeIdentWidth
   val regAddrWidth = log2Ceil(nRegs)
   val regWithIdentWidth = regAddrWidth + writeIdentWidth
-  val instrAddrWidth = log2Ceil(maxInstructionAddress)
+  val targetWidth = xPosWidth + yPosWidth
+  
+  // Constants
+  val instructionWidth = 16
 }
 
 /** Companion object for LaneParams with factory methods. */
