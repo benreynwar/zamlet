@@ -8,24 +8,15 @@ import chisel3.util._
  */
 class PacketHeader(params: LaneParams) extends Bundle {
   val length = UInt(params.packetLengthWidth.W)
-  val destination = UInt(params.targetWidth.W)
+  val xDest = UInt(params.xPosWidth.W)
+  val yDest = UInt(params.yPosWidth.W)
   val mode = PacketHeaderModes()
   val forward = Bool()
   val isBroadcast = Bool()
   val broadcastDirection = BroadcastDirections()
   
-  /**
-   * Convert packet header to UInt of params.width
-   */
-  def toUInt: UInt = {
-    val packed = Cat(broadcastDirection.asUInt, isBroadcast, forward, mode.asUInt, destination, length)
-    assert(packed.getWidth <= params.width, s"Packet header width ${packed.getWidth} exceeds params.width ${params.width}")
-    if (params.width > packed.getWidth) {
-      Cat(0.U((params.width - packed.getWidth).W), packed)
-    } else {
-      packed
-    }
-  }
+  // Backward compatibility: destination field as concatenated x,y
+  def destination: UInt = Cat(yDest, xDest)
 }
 
 /**
@@ -50,6 +41,7 @@ class IMWrite(params: LaneParams) extends Bundle {
 class PacketForward(params: LaneParams) extends Bundle {
   val networkDirection = NetworkDirections()
   val header = UInt(params.width.W)
+  val append = Bool()
 }
 
 /**
@@ -335,14 +327,15 @@ class PacketInterface(params: LaneParams) extends Module {
       // Create and send packet header
       val header = Wire(new PacketHeader(params))
       header.length := sendRemainingWords
-      header.destination := io.instr.bits.target
+      header.xDest := io.instr.bits.xTarget
+      header.yDest := io.instr.bits.yTarget
       header.mode := PacketHeaderModes.Normal
       header.forward := false.B
       header.isBroadcast := false.B
       header.broadcastDirection := BroadcastDirections.NE
       
       io.toNetwork.valid := true.B
-      io.toNetwork.bits.data := header.toUInt
+      io.toNetwork.bits.data := header.asUInt
       io.toNetwork.bits.isHeader := true.B
       
       when(io.toNetwork.ready) {

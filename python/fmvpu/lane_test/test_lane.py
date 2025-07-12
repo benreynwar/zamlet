@@ -5,6 +5,7 @@ import os
 import sys
 import tempfile
 from typing import Optional
+import logging
 
 import cocotb
 from cocotb import triggers
@@ -13,6 +14,24 @@ from cocotb.handle import HierarchyObject
 
 from fmvpu import generate_rtl
 from fmvpu import test_utils
+from fmvpu.new_lane.packet_utils import PacketDriver
+from fmvpu.new_lane.instructions import PacketHeader, PacketHeaderModes, create_register_write_command
+from fmvpu.new_lane.lane_params import LaneParams
+
+
+logger = logging.getLogger(__name__)
+
+
+def create_register_write_packet(register: int, value: int, dest_x: int = 0, dest_y: int = 0, params: LaneParams = LaneParams()) -> list[int]:
+    """Create a command packet to write a value to a register"""
+    header = PacketHeader(
+        length=1,  # One command word
+        dest_x=dest_x,
+        dest_y=dest_y,
+        mode=PacketHeaderModes.COMMAND
+    )
+    command_word = create_register_write_command(register, value, params)
+    return [header.encode(), command_word]
 
 this_dir = os.path.abspath(os.path.dirname(__file__))
 
@@ -20,22 +39,36 @@ this_dir = os.path.abspath(os.path.dirname(__file__))
 @cocotb.test()
 async def lane_basic_reset_test(dut: HierarchyObject) -> None:
     """Basic test that resets the NewLane module and waits 10 cycles."""
-    print("Starting basic NewLane reset test...")
+    test_utils.configure_logging_sim('DEBUG')
+    
+    logger.info("Starting basic NewLane reset test...")
+    
+    # Test lane position
+    LANE_X = 1
+    LANE_Y = 2
     
     # Start clock
     clock_gen = Clock(dut.clock, 1, 'ns')
     cocotb.start_soon(clock_gen.start())
     
     # Initialize position inputs
-    dut.io_thisX.value = 0
-    dut.io_thisY.value = 0
+    dut.io_thisX.value = LANE_X
+    dut.io_thisY.value = LANE_Y
     
-    # Initialize network inputs - need to check how many channels
-    # For now assume 1 channel each direction
+    # Initialize network inputs
     dut.io_ni_0_valid.value = 0
     dut.io_si_0_valid.value = 0
     dut.io_ei_0_valid.value = 0
     dut.io_wi_0_valid.value = 0
+    
+    # Create packet driver for west input, channel 0
+    west_driver = PacketDriver(
+        dut=dut,
+        valid_signal=dut.io_wi_0_valid,
+        ready_signal=dut.io_wi_0_ready,
+        data_signal=dut.io_wi_0_bits_data,
+        isheader_signal=dut.io_wi_0_bits_isHeader
+    )
     
     # Apply reset sequence
     dut.reset.value = 0
@@ -44,11 +77,32 @@ async def lane_basic_reset_test(dut: HierarchyObject) -> None:
     await triggers.RisingEdge(dut.clock)
     dut.reset.value = 0
     
-    # Wait 10 cycles
-    for cycle in range(10):
-        await triggers.RisingEdge(dut.clock)
+    # Start packet driver after reset
+    cocotb.start_soon(west_driver.drive_packets())
     
-    print("Basic reset test completed successfully!")
+    # Send a command packet to write register 3 with value 0x0001 (coordinate 0,1)
+    coord_packet = create_register_write_packet(register=3, value=0x0001, dest_x=LANE_X, dest_y=LANE_Y)
+    west_driver.add_packet(coord_packet)
+    
+    # Wait 40 cycles for packet processing
+    logger.info('About to wait for 40 cycles')
+    for cycle in range(40):
+        await triggers.RisingEdge(dut.clock)
+    logger.info('Done to wait for 40 cycles')
+    
+    # Probe register 3 to see if value was written
+    register_3_value = dut.rff.registers_3_value.value
+    logger.info(f"Register 3 value: {register_3_value}")
+    
+    # Check if the value matches what we wrote
+    expected_value = 0x0001
+    if register_3_value == expected_value:
+        logger.info("Register write successful!")
+    else:
+        logger.info(f"Register write failed! Expected {expected_value}, got {register_3_value}")
+        assert False
+    
+    logger.info("Basic reset test completed successfully!")
 
 
 def test_lane_basic(verilog_file: str, seed: int = 0) -> None:
@@ -56,7 +110,7 @@ def test_lane_basic(verilog_file: str, seed: int = 0) -> None:
     filenames = [verilog_file]
     
     toplevel = 'NewLane'
-    module = 'fmvpu.new_lane.test_lane'
+    module = 'fmvpu.lane_test.test_lane'
     
     test_params = {
         'seed': seed,

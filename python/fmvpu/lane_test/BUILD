@@ -199,3 +199,42 @@ py_test(
     ],
     main = "test_lane.py",
 )
+
+# Generate Verilog file for PacketSwitch
+genrule(
+    name = "packet_switch_verilog",
+    srcs = ["//configs:lane_default.json"],
+    outs = ["packet_switch.sv"],
+    cmd = """
+    TMPDIR=$$(mktemp -d)
+    $(location //src:verilog_generator) \\
+        $$TMPDIR/packet_switch_verilog \\
+        PacketSwitch \\
+        $(location //configs:lane_default.json)
+    cat $$TMPDIR/packet_switch_verilog/*.sv > $@
+    rm -rf $$TMPDIR
+    """,
+    tools = ["//src:verilog_generator"],
+)
+
+# Create filegroup to expose the generated PacketSwitch Verilog file
+filegroup(
+    name = "packet_switch_verilog_files",
+    srcs = [":packet_switch_verilog"],
+)
+
+# Basic PacketSwitch test
+py_test(
+    name = "test_packet_switch_basic",
+    srcs = ["test_packet_switch.py"],
+    deps = [
+        "//python/fmvpu:fmvpu",
+    ],
+    data = [
+        ":packet_switch_verilog_files",
+    ],
+    args = [
+        "$(location :packet_switch_verilog_files)",
+    ],
+    main = "test_packet_switch.py",
+)

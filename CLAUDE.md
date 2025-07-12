@@ -22,3 +22,6 @@ This allows you to read the file multiple times to analyze different parts of th
 - Correct: `dut.io_writeInputs_0_valid.value = 0`
 - Correct: `getattr(dut, f'io_writeInputs_{i}_valid').value = 0`
 - Incorrect: `setattr(dut, 'io_writeInputs_0_valid', 0)`
+
+## File Creation
+When creating new files, especially large ones, create them in small chunks for review. Do not create entire large files at once.

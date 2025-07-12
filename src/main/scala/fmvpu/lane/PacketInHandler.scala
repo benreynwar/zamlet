@@ -2,6 +2,37 @@ package fmvpu.lane
 
 import chisel3._
 import chisel3.util._
+import fmvpu.utils._
+
+/**
+ * Direction bit constants for 5-bit direction fields
+ */
+object DirectionBits {
+  val NORTH_BIT = 0
+  val EAST_BIT = 1 
+  val SOUTH_BIT = 2
+  val WEST_BIT = 3
+  val HERE_BIT = 4
+  
+  val NORTH_MASK = 1 << NORTH_BIT
+  val EAST_MASK = 1 << EAST_BIT
+  val SOUTH_MASK = 1 << SOUTH_BIT
+  val WEST_MASK = 1 << WEST_BIT
+  val HERE_MASK = 1 << HERE_BIT
+  
+  /**
+   * Convert NetworkDirection to corresponding direction mask
+   */
+  def directionToMask(direction: NetworkDirections.Type): UInt = {
+    MuxLookup(direction.asUInt, 0.U)(Seq(
+      NetworkDirections.North.asUInt -> NORTH_MASK.U,
+      NetworkDirections.East.asUInt -> EAST_MASK.U,
+      NetworkDirections.South.asUInt -> SOUTH_MASK.U,
+      NetworkDirections.West.asUInt -> WEST_MASK.U,
+      NetworkDirections.Here.asUInt -> HERE_MASK.U
+    ))
+  }
+}
 
 /**
  * Packet data bundle with control signals
@@ -11,16 +42,6 @@ class PacketData(params: LaneParams) extends Bundle {
   val isHeader = Bool()
   val last = Bool()
   val append = Bool()
-}
-
-/**
- * Packet processing state bundle
- */
-class PacketState(params: LaneParams) extends Bundle {
-  val remainingWords = UInt(8.W)
-  val isForwarding = Bool()
-  val targetDirections = UInt(5.W)
-  val isAppending = Bool()
 }
 
 /**
@@ -50,26 +71,15 @@ class PacketInHandlerIO(params: LaneParams) extends Bundle {
   
   
   // Handler arbitration signals
-  val handlerResponse = Input(UInt(5.W))
   val handlerRequest = Output(UInt(5.W))
-  val handlerConfirm = Output(UInt(5.W))
   
-  // Outputs to packet handlers (4 connections)
-  val outputs = Vec(4, Decoupled(new PacketData(params)))
+  // Outputs to packet handlers (5 connections)
+  val outputs = Vec(5, Decoupled(new PacketData(params)))
   
   // Error outputs
   val errors = Output(new PacketInHandlerErrors)
 }
 
-/**
- * Packet In Handler states
- */
-object PacketInStates extends ChiselEnum {
-  val Idle = Value(0.U)
-  val WaitingForForward = Value(1.U)
-  val WaitingForHandlers = Value(2.U)
-  val Transmitting = Value(3.U)
-}
 
 /**
  * Packet In Handler Module
@@ -77,24 +87,15 @@ object PacketInStates extends ChiselEnum {
 class PacketInHandler(params: LaneParams) extends Module {
   val io = IO(new PacketInHandlerIO(params))
   
-  // State registers
-  val state = RegInit(PacketInStates.Idle)
-  
-  // Packet processing state
-  val packetState = RegInit({
-    val init = Wire(new PacketState(params))
-    init.remainingWords := 0.U
-    init.isForwarding := false.B
-    init.targetDirections := 0.U
-    init.isAppending := false.B
-    init
-  })
-  
+  // Register declarations
+  val bufferedDirections = RegInit(0.U(5.W))
+  val remainingWords = RegInit(0.U(params.packetLengthWidth.W))
+  val isAppend = RegInit(false.B)
+
   // Default outputs
   io.fromNetwork.ready := false.B
   io.forward.ready := false.B
   io.handlerRequest := 0.U
-  io.handlerConfirm := 0.U
   io.outputs.foreach { out =>
     out.valid := false.B
     out.bits := DontCare
@@ -139,8 +140,12 @@ class PacketInHandler(params: LaneParams) extends Module {
       BroadcastDirections.SW -> (io.thisX > targetX)
     ))
     
-    // Bit mapping: 0=Here, 1=North, 2=South, 3=East, 4=West
-    directions := here | (canGoWest << 4) | (canGoEast << 3) | (canGoSouth << 2) | (canGoNorth << 1)
+    // Bit mapping: North=0, East=1, South=2, West=3, Here=4
+    directions := (canGoNorth << DirectionBits.NORTH_BIT) | 
+                  (canGoEast << DirectionBits.EAST_BIT) | 
+                  (canGoSouth << DirectionBits.SOUTH_BIT) | 
+                  (canGoWest << DirectionBits.WEST_BIT) | 
+                  DirectionBits.HERE_MASK.U
     
     // Error if we've gone past the target bounds for this broadcast type
     error := MuxLookup(broadcastDir, false.B)(Seq(
@@ -159,160 +164,135 @@ class PacketInHandler(params: LaneParams) extends Module {
     
     val needsEast = targetX > io.thisX
     val needsWest = targetX < io.thisX
-    val needsNorth = targetY > io.thisY
-    val needsSouth = targetY < io.thisY
+    val needsNorth = targetY < io.thisY
+    val needsSouth = targetY > io.thisY
     
     val isAtTarget = (targetX === io.thisX) && (targetY === io.thisY)
     
     when(isAtTarget) {
       // Packet is for this node
-      directions := "b00001".U // Here only
+      directions := DirectionBits.HERE_MASK.U // Here only
     }.otherwise {
       // Route towards target - use dimension-order routing (X first, then Y)
       when(needsEast || needsWest) {
         // Move in X direction first
-        directions := Mux(needsEast, "b01000".U, "b10000".U) // East or West
+        directions := Mux(needsEast, DirectionBits.EAST_MASK.U, DirectionBits.WEST_MASK.U)
       }.otherwise {
         // X is correct, move in Y direction
-        directions := Mux(needsNorth, "b00010".U, "b00100".U) // North or South
+        directions := Mux(needsNorth, DirectionBits.NORTH_MASK.U, DirectionBits.SOUTH_MASK.U)
       }
     }
     
     directions
   }
-  
-  // Helper function to calculate target directions
-  def calculateTargetDirections(header: PacketHeader, forwardDir: NetworkDirections.Type, isForwarding: Bool): (UInt, Bool, Bool) = {
-    val directions = Wire(UInt(5.W))
-    val broadcastError = Wire(Bool())
-    val routingError = Wire(Bool())
-    
-    // Extract target coordinates
-    val targetX = header.destination(params.xPosWidth - 1, 0)
-    val targetY = header.destination(params.targetWidth - 1, params.xPosWidth)
-    
-    when(header.isBroadcast) {
-      // Use broadcast routing
-      val (broadcastDirs, bcastError) = calculateBroadcastRouting(header.broadcastDirection, targetX, targetY)
-      directions := broadcastDirs
-      broadcastError := bcastError
-    }.elsewhen(isForwarding) {
-      // Packet needs forwarding - use forward direction plus regular routing
-      val regularDirs = calculateRegularRouting(targetX, targetY)
-      val fwdDir = UIntToOH(forwardDir.asUInt, 5)
-      directions := regularDirs | fwdDir
-      broadcastError := false.B
-    }.otherwise {
-      // Regular routing only
-      directions := calculateRegularRouting(targetX, targetY)
-      broadcastError := false.B
-    }
-    
-    // Filter out input direction and check for routing error
-    val inputDirMask = UIntToOH(io.inputDirection.asUInt, 5)
-    val filteredDirections = directions & ~inputDirMask
-    routingError := (directions & inputDirMask) =/= 0.U
-    
-    (filteredDirections, broadcastError, routingError)
+
+  // When data arrives it goes into a buffer to break the forwards and
+  // backwards paths.
+  // ---------------------------------------------------------------
+  val buffered = Wire(Decoupled(new NetworkWord(params)))
+  val buffer = Module(new DoubleBuffer(new NetworkWord(params)))
+  buffer.io.i <> io.fromNetwork
+  buffer.io.o <> buffered
+
+  // From the output of that skid buffer we look at the header.
+  // We work out what directions it wants to go.
+  // ----------------------------------------------------------
+  val bufferedHeader = buffered.bits.data.asTypeOf(new PacketHeader(params))
+  // What direction we go if this is a normal route
+  val regularDirections = calculateRegularRouting(bufferedHeader.xDest, bufferedHeader.yDest)
+  // What directions we go if this is a broadcast route
+  val broadcastResult = calculateBroadcastRouting(bufferedHeader.broadcastDirection, bufferedHeader.xDest, bufferedHeader.yDest)
+  val broadcastDirections = broadcastResult._1
+  val badBroadcastRoute = broadcastResult._2
+
+  // Get the actual directions based on whether we are broadcasting or forwarding or neither
+  val directions = Wire(UInt(5.W))
+  when(bufferedHeader.isBroadcast) {
+    directions := broadcastDirections
+  }.elsewhen(bufferedHeader.forward) {
+    // Packet needs forwarding - use forward direction plus regular routing
+    val fwdDir = DirectionBits.directionToMask(io.forward.bits.networkDirection)
+    directions := regularDirections | fwdDir
+  }.otherwise {
+    // Regular routing only
+    directions := regularDirections
   }
-  
-  // Main state machine
-  switch(state) {
-    is(PacketInStates.Idle) {
-      io.fromNetwork.ready := true.B
-      
-      // Process incoming packet header
-      when(io.fromNetwork.valid && io.fromNetwork.bits.isHeader) {
-        val header = io.fromNetwork.bits.data.asTypeOf(new PacketHeader(params))
-        packetState.remainingWords := header.length
-        
-        // Calculate base directions for this packet
-        val (targetDirs, bcastError, routeError) = calculateTargetDirections(header, NetworkDirections.North, false.B)
-        packetState.targetDirections := targetDirs
-        io.errors.broadcastError := bcastError
-        io.errors.routingError := routeError
-        
-        when(header.forward && io.forward.valid) {
-          // Packet needs forwarding and forward data is available
-          io.forward.ready := true.B
-          packetState.isForwarding := true.B
-          // Add forward direction to existing directions
-          packetState.targetDirections := packetState.targetDirections | UIntToOH(io.forward.bits.networkDirection.asUInt, 5)
-          state := PacketInStates.WaitingForHandlers
-        }.elsewhen(header.forward) {
-          // Packet needs forwarding but no forward data yet
-          state := PacketInStates.WaitingForForward
-          io.forward.ready := true.B
-        }.otherwise {
-          // Regular packet - proceed to handler acquisition
-          state := PacketInStates.WaitingForHandlers
-        }
-      }
+
+  // Filter out input direction and check for routing error
+
+  // Todo (3)
+  // We send handlerRequest to all the PacketOutHandlers it wants to go to. (except back in same dir)
+  val inputDirMask = UIntToOH(io.inputDirection.asUInt, 5)
+  val otherDirections = directions & ~inputDirMask
+
+  // This is comes from otherDirections when we're processing the header and
+  // otherwise comes from a registered version from the last header.
+  val connectionDirections = Wire(UInt(5.W))
+  when(buffered.bits.isHeader) {
+    connectionDirections := otherDirections
+  }.otherwise {
+    connectionDirections := bufferedDirections
+  }
+
+  val badRegularRoute = (connectionDirections & inputDirMask) =/= 0.U
+  // We get ready back from those that can accept it.
+  val outputReadys = Cat(io.outputs.map(_.ready))
+  // We sent valid to them all if we get ready back from all of them.
+  val allTargetOutputsReady = (outputReadys | ~connectionDirections).andR
+
+  // Whenever we have a header coming out of the buffer we are trying to
+  // make a new connection.
+
+  io.handlerRequest := 0.U
+
+  when(buffered.valid && buffered.bits.isHeader) {
+    remainingWords := bufferedHeader.length
+    when (bufferedHeader.isBroadcast) {
+      io.errors.broadcastError := badBroadcastRoute
     }
-    
-    is(PacketInStates.WaitingForForward) {
-      // Wait for forward data to arrive
+    io.errors.routingError := badRegularRoute
+    when(bufferedHeader.forward) {
       io.forward.ready := true.B
-      when(io.forward.valid) {
-        packetState.isForwarding := true.B
-        // Add forward direction to existing directions
-        packetState.targetDirections := packetState.targetDirections | UIntToOH(io.forward.bits.networkDirection.asUInt, 5)
-        state := PacketInStates.WaitingForHandlers
-      }
     }
-    
-    is(PacketInStates.WaitingForHandlers) {
-      // Request handler resources
-      io.handlerRequest := packetState.targetDirections
-      
-      // Check if all required handlers responded positively
-      val allHandlersResponded = (packetState.targetDirections & io.handlerResponse) === packetState.targetDirections
-      
-      when(allHandlersResponded) {
-        io.handlerConfirm := packetState.targetDirections
-        state := PacketInStates.Transmitting
-      }
-    }
-    
-    is(PacketInStates.Transmitting) {
-      // Create per-output ready signals that exclude each output's own ready
-      val perOutputReady = io.outputs.zipWithIndex.map { case (_, thisIdx) =>
-        io.outputs.zipWithIndex.map { case (out, idx) =>
-          if (idx == thisIdx) true.B // Exclude this output's own ready
-          else !packetState.targetDirections(idx) || out.ready
-        }.reduce(_ && _)
-      }
-      
-      // Set valid and data on outputs based on their individual ready conditions
-      io.outputs.zipWithIndex.foreach { case (out, idx) =>
-        when(perOutputReady(idx) && packetState.targetDirections(idx)) {
-          out.valid := io.fromNetwork.valid
-          out.bits.data := io.fromNetwork.bits.data
-          out.bits.isHeader := io.fromNetwork.bits.isHeader
-          out.bits.last := packetState.remainingWords === 1.U && !packetState.isAppending
-          out.bits.append := packetState.isAppending && packetState.remainingWords === 1.U
-        }
-      }
-      
-      // Overall ready when all target outputs have their conditions met
-      val allTargetOutputsReady = io.outputs.zipWithIndex.map { case (out, idx) =>
-        !packetState.targetDirections(idx) || out.ready
-      }.reduce(_ && _)
-      
+    when(!bufferedHeader.forward || io.forward.valid) {
+      // We send the request unless we don't have forward data.
+      io.handlerRequest := connectionDirections & ~inputDirMask
+      // All our targets are ready to receive
       when(allTargetOutputsReady) {
-        io.fromNetwork.ready := true.B
-        
-        when(io.fromNetwork.valid) {
-          packetState.remainingWords := packetState.remainingWords - 1.U
-          when(packetState.remainingWords === 1.U) {
-            state := PacketInStates.Idle
-            packetState.isForwarding := false.B
-            packetState.isAppending := false.B
-            packetState.targetDirections := 0.U
-          }
-        }
+        // Buffer the routing directions for the reset of the packet.
+        bufferedDirections := otherDirections
       }
     }
+    // Determine append mode from forward data if forwarding, otherwise false
+    when(bufferedHeader.forward && io.forward.valid) {
+      val forwardHeader = io.forward.bits.header.asTypeOf(new PacketHeader(params))
+      isAppend := io.forward.bits.append
+    }.otherwise {
+      isAppend := false.B
+    }
+  }
+  when(buffered.valid && buffered.ready && !buffered.bits.isHeader) {
+    remainingWords := remainingWords - 1.U
+  }
+  // For each direction, check if all OTHER directions that need outputs are ready
+  val otherOutputsReady = Wire(Vec(5, Bool()))
+  for (i <- 0 until 5) {
+    val otherDirectionsMask = connectionDirections & ~(1.U << i).asUInt
+    val otherReadys = Cat((0 until 5).map(j => 
+      if (j == i) true.B else (io.outputs(j).ready || !otherDirectionsMask(j))
+    ))
+    otherOutputsReady(i) := otherReadys.andR
+  }
+
+  buffered.ready := allTargetOutputsReady
+
+  io.outputs.zipWithIndex.foreach { case (out, idx) =>
+    val shouldOutput = connectionDirections(idx)
+    out.valid := buffered.valid && shouldOutput && otherOutputsReady(idx)
+    out.bits.data := buffered.bits.data
+    out.bits.isHeader := buffered.bits.isHeader
+    out.bits.last := !isAppend && ((remainingWords === 1.U) || (buffered.bits.isHeader && bufferedHeader.length === 0.U))
+    out.bits.append := isAppend && ((remainingWords === 1.U) || (buffered.bits.isHeader && bufferedHeader.length === 0.U))
   }
 }
 

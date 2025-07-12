@@ -21,7 +21,7 @@ Single-issue pipeline with Tomasulo approach, packet-based networking, minimal b
 ### Phase 4: Network Infrastructure  
 - [x] **Packet Input Handler** (`packet_in_handler.txt`) - Reception, routing, arbitration - **1,815 µm²** (252 inst)
 - [x] **Packet Output Handler** (`packet_out_handler.txt`) - Transmission, channel management - **1,745 µm²** (168 inst)
-- [x] **Packet Switch** - Multi-channel routing and switching - **22,173 µm²** (2,695 inst)
+- [x] **Packet Switch** - Multi-channel routing and switching - **31,381 µm²** (4,060 inst) - *Note: Area could be reduced by ~20% by eliminating self-connections (4 inputs per output instead of 5)*
 - [x] **LaneNetworkNode** - Connection state, priority arbitration - **48,409 µm²** (5,615 inst)
 
 ### Phase 5: Integration ✅

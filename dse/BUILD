@@ -125,7 +125,7 @@ chisel_binary(
     name = "fmvpu_generator",
     srcs = ["//src:scala_sources"],
     main_class = "fmvpu.Main",
-    visibility = ["//dse/new_lane:__pkg__"],
+    visibility = ["//dse/new_lane:__pkg__", "//dse/buffer_experiment:__pkg__"],
     deps = [
         "@maven//:io_circe_circe_core_2_13",
         "@maven//:io_circe_circe_generic_2_13",

@@ -83,7 +83,8 @@ class PacketRS(params: LaneParams) extends Module {
     val readySlot = slots(readySlotIdx)
     
     io.output.bits.mode := readySlot.bits.mode
-    io.output.bits.target := readySlot.bits.target.getData
+    io.output.bits.xTarget := readySlot.bits.xTarget
+    io.output.bits.yTarget := readySlot.bits.yTarget
     io.output.bits.result := readySlot.bits.result
     io.output.bits.sendLength := readySlot.bits.sendLength.getData
     io.output.bits.channel := readySlot.bits.channel.getData(1, 0) // Extract 2 bits for channel
@@ -93,7 +94,8 @@ class PacketRS(params: LaneParams) extends Module {
   } .otherwise {
     // Default output values when no instruction is ready
     io.output.bits.mode := PacketModes.Receive
-    io.output.bits.target := 0.U
+    io.output.bits.xTarget := 0.U
+    io.output.bits.yTarget := 0.U
     io.output.bits.result := 0.U.asTypeOf(new RegWithIdent(params))
     io.output.bits.sendLength := 0.U
     io.output.bits.channel := 0.U

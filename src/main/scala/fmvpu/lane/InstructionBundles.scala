@@ -60,6 +60,10 @@ class PacketInstrUnresolved(params: LaneParams) extends Bundle {
   val result = new RegWithIdent(params) // register to put length or word in
   val sendLength = new RegReadInfo(params)
   val channel = new RegReadInfo(params)
+  
+  // Helper functions to extract x and y coordinates from target
+  def xTarget: UInt = target.getData(params.xPosWidth - 1, 0)
+  def yTarget: UInt = target.getData(params.targetWidth - 1, params.xPosWidth)
 }
 
 /**
@@ -67,8 +71,12 @@ class PacketInstrUnresolved(params: LaneParams) extends Bundle {
  */
 class PacketInstrResolved(params: LaneParams) extends Bundle {
   val mode = PacketModes()
-  val target = UInt(params.targetWidth.W)
+  val xTarget = UInt(params.xPosWidth.W)
+  val yTarget = UInt(params.yPosWidth.W)
   val result = new RegWithIdent(params)
   val sendLength = UInt(params.packetLengthWidth.W)
   val channel = UInt(2.W)
+  
+  // Backward compatibility: target field as concatenated x,y
+  def target: UInt = Cat(yTarget, xTarget)
 }

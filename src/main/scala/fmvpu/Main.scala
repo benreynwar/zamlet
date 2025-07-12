@@ -66,6 +66,10 @@ object Main extends App {
     case "InstructionMemory" => InstructionMemoryGenerator
     case "NewLane" => NewLaneGenerator
     case "Fifo" => FifoGenerator
+    case "SkidBuffer" => SkidBufferGenerator
+    case "DecoupledBuffer" => DecoupledBufferGenerator
+    case "DoubleBuffer" => DoubleBufferGenerator
+    case "ShortQueue" => ShortQueueGenerator
     case _ => 
       println(s"Module name '${moduleName}' is unknown.")
       System.exit(1)
