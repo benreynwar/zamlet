@@ -90,33 +90,22 @@ class PacketSwitch(params: LaneParams) extends Module {
   // Connect data paths from PacketInHandlers to PacketOutHandlers using the mapping function
   val directions = Seq(NetworkDirections.North, NetworkDirections.East, NetworkDirections.South, NetworkDirections.West, NetworkDirections.Here)
   
-  // Create unpacked Wire arrays for arbitration signals
-  val outHandlerRequests = Seq.fill(5)(Wire(Vec(5, Bool())))
-  
-  // Initialize all to false
-  outHandlerRequests.foreach(_.foreach(_ := false.B))
-  
   for (dstIdx <- 0 until 5) {
     for (srcIdx <- 0 until 5) {
       if (dstIdx != srcIdx) {
         // Map to correct output index on source handler
         outHandlers(dstIdx).io.connections(srcIdx) <> inHandlers(srcIdx).io.outputs(dstIdx)
         
-        // Connect arbitration signals using unpacked arrays
-        outHandlerRequests(dstIdx)(srcIdx) := inHandlers(srcIdx).io.handlerRequest(dstIdx)
+        outHandlers(dstIdx).io.handlerRequest(srcIdx) := inHandlers(srcIdx).io.handlerRequest(dstIdx)
       } else {
         outHandlers(dstIdx).io.connections(srcIdx).valid := false.B
         outHandlers(dstIdx).io.connections(srcIdx).bits := DontCare
         inHandlers(srcIdx).io.outputs(dstIdx).ready := false.B
-        outHandlerRequests(dstIdx)(srcIdx) := false.B
+        outHandlers(dstIdx).io.handlerRequest(srcIdx) := false.B
       }
     }
   }
   
-  // Pack the Wire arrays into UInt signals
-  for (outIdx <- 0 until 5) {
-    outHandlers(outIdx).io.handlerRequest := Cat(outHandlerRequests(outIdx).reverse)
-  }
 }
 
 /**

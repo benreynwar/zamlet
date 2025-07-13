@@ -71,7 +71,7 @@ class PacketInHandlerIO(params: LaneParams) extends Bundle {
   
   
   // Handler arbitration signals
-  val handlerRequest = Output(UInt(5.W))
+  val handlerRequest = Output(Vec(5, Bool()))
   
   // Outputs to packet handlers (5 connections)
   val outputs = Vec(5, Decoupled(new PacketData(params)))
@@ -95,7 +95,7 @@ class PacketInHandler(params: LaneParams) extends Module {
   // Default outputs
   io.fromNetwork.ready := false.B
   io.forward.ready := false.B
-  io.handlerRequest := 0.U
+  io.handlerRequest := VecInit(Seq.fill(5)(false.B))
   io.outputs.foreach { out =>
     out.valid := false.B
     out.bits := DontCare
@@ -235,15 +235,18 @@ class PacketInHandler(params: LaneParams) extends Module {
   }
 
   val badRegularRoute = (connectionDirections & inputDirMask) =/= 0.U
-  // We get ready back from those that can accept it.
-  val outputReadys = Cat(io.outputs.map(_.ready))
+  // We get ready back from those that can accept it. (have to reverse because of Uint vs Seq ordering default)
+  val outputReadys = Cat(io.outputs.map(_.ready).reverse)
+  dontTouch(outputReadys)
+  dontTouch(connectionDirections)
   // We sent valid to them all if we get ready back from all of them.
   val allTargetOutputsReady = (outputReadys | ~connectionDirections).andR
+  dontTouch(allTargetOutputsReady)
 
   // Whenever we have a header coming out of the buffer we are trying to
   // make a new connection.
 
-  io.handlerRequest := 0.U
+  io.handlerRequest := VecInit(Seq.fill(5)(false.B))
 
   when(buffered.valid && buffered.bits.isHeader) {
     remainingWords := bufferedHeader.length
@@ -256,7 +259,8 @@ class PacketInHandler(params: LaneParams) extends Module {
     }
     when(!bufferedHeader.forward || io.forward.valid) {
       // We send the request unless we don't have forward data.
-      io.handlerRequest := connectionDirections & ~inputDirMask
+      val requestBits = connectionDirections & ~inputDirMask
+      io.handlerRequest := VecInit((0 until 5).map(i => requestBits(i)))
       // All our targets are ready to receive
       when(allTargetOutputsReady) {
         // Buffer the routing directions for the reset of the packet.
@@ -291,8 +295,8 @@ class PacketInHandler(params: LaneParams) extends Module {
     out.valid := buffered.valid && shouldOutput && otherOutputsReady(idx)
     out.bits.data := buffered.bits.data
     out.bits.isHeader := buffered.bits.isHeader
-    out.bits.last := !isAppend && ((remainingWords === 1.U) || (buffered.bits.isHeader && bufferedHeader.length === 0.U))
-    out.bits.append := isAppend && ((remainingWords === 1.U) || (buffered.bits.isHeader && bufferedHeader.length === 0.U))
+    out.bits.last := !isAppend && ((!buffered.bits.isHeader && remainingWords === 1.U) || (buffered.bits.isHeader && bufferedHeader.length === 0.U))
+    out.bits.append := isAppend && ((!buffered.bits.isHeader && remainingWords === 1.U) || (buffered.bits.isHeader && bufferedHeader.length === 0.U))
   }
 }
 

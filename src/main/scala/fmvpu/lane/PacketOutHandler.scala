@@ -11,7 +11,7 @@ class PacketOutHandlerIO(params: LaneParams) extends Bundle {
   val outputDirection = Input(NetworkDirections())
   
   // Handler arbitration signals
-  val handlerRequest = Input(UInt(5.W))
+  val handlerRequest = Input(Vec(5, Bool()))
   
   // Connection inputs from packet input handlers
   val connections = Flipped(Vec(5, Decoupled(new PacketData(params))))
@@ -51,16 +51,39 @@ class PacketOutHandler(params: LaneParams) extends Module {
   
   // Helper function to select which input handler gets priority for new connections
   // Uses round-robin scheduling starting from current priority input
-  // Returns the index (0-3) of the highest priority requester
-  def getHighestPriorityRequester(requests: UInt, currentPriority: UInt): UInt = {
+  // Returns the index (0-4) of the highest priority requester
+  def getHighestPriorityRequester(requests: Vec[Bool], currentPriority: UInt): UInt = {
+    val result = Wire(UInt(3.W))
+    result := 0.U // default value
+    
     // Check priority order starting from current priority
-    MuxCase(0.U, Seq(
-      requests(currentPriority) -> currentPriority,
-      requests((currentPriority + 1.U) % 5.U) -> ((currentPriority + 1.U) % 5.U),
-      requests((currentPriority + 2.U) % 5.U) -> ((currentPriority + 2.U) % 5.U),
-      requests((currentPriority + 3.U) % 5.U) -> ((currentPriority + 3.U) % 5.U),
-      requests((currentPriority + 4.U) % 5.U) -> ((currentPriority + 4.U) % 5.U)
-    ))
+    when(currentPriority === 0.U && requests(0)) { result := 0.U }
+    .elsewhen(currentPriority === 0.U && requests(1)) { result := 1.U }
+    .elsewhen(currentPriority === 0.U && requests(2)) { result := 2.U }
+    .elsewhen(currentPriority === 0.U && requests(3)) { result := 3.U }
+    .elsewhen(currentPriority === 0.U && requests(4)) { result := 4.U }
+    .elsewhen(currentPriority === 1.U && requests(1)) { result := 1.U }
+    .elsewhen(currentPriority === 1.U && requests(2)) { result := 2.U }
+    .elsewhen(currentPriority === 1.U && requests(3)) { result := 3.U }
+    .elsewhen(currentPriority === 1.U && requests(4)) { result := 4.U }
+    .elsewhen(currentPriority === 1.U && requests(0)) { result := 0.U }
+    .elsewhen(currentPriority === 2.U && requests(2)) { result := 2.U }
+    .elsewhen(currentPriority === 2.U && requests(3)) { result := 3.U }
+    .elsewhen(currentPriority === 2.U && requests(4)) { result := 4.U }
+    .elsewhen(currentPriority === 2.U && requests(0)) { result := 0.U }
+    .elsewhen(currentPriority === 2.U && requests(1)) { result := 1.U }
+    .elsewhen(currentPriority === 3.U && requests(3)) { result := 3.U }
+    .elsewhen(currentPriority === 3.U && requests(4)) { result := 4.U }
+    .elsewhen(currentPriority === 3.U && requests(0)) { result := 0.U }
+    .elsewhen(currentPriority === 3.U && requests(1)) { result := 1.U }
+    .elsewhen(currentPriority === 3.U && requests(2)) { result := 2.U }
+    .elsewhen(currentPriority === 4.U && requests(4)) { result := 4.U }
+    .elsewhen(currentPriority === 4.U && requests(0)) { result := 0.U }
+    .elsewhen(currentPriority === 4.U && requests(1)) { result := 1.U }
+    .elsewhen(currentPriority === 4.U && requests(2)) { result := 2.U }
+    .elsewhen(currentPriority === 4.U && requests(3)) { result := 3.U }
+    
+    result
   }
   // Which input we would select if we were making a new connection
   val selectedInput = getHighestPriorityRequester(io.handlerRequest, globalPriority)
@@ -85,12 +108,16 @@ class PacketOutHandler(params: LaneParams) extends Module {
   }
   when (io.connections(connectedIn).valid) {
     when (io.connections(connectedIn).bits.isHeader) {
-      connstateIn := selectedInput
+      when (!connstateActive) {
+        connstateIn := selectedInput
+      }
     }
     when (io.connections(connectedIn).bits.append) {
       connstateIn := NetworkDirections.Here.asUInt
     }
-    connstateActive := !io.connections(connectedIn).bits.last
+    when (io.output.ready) {
+      connstateActive := !io.connections(connectedIn).bits.last
+    }
   }
 }
 

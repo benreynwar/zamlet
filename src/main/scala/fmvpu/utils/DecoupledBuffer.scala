@@ -16,11 +16,11 @@ class DecoupledBuffer[T <: Data](t: T) extends Module {
   when (io.i.valid && io.i.ready) {
     buffer := io.i.bits
     bufferValid := true.B
-  } .elsewhen (io.o.valid && io.o.ready) {
+  } .elsewhen (io.o.ready) {
     bufferValid := false.B
   }
 
-  io.i.ready := !bufferValid
+  io.i.ready := !bufferValid || io.o.ready
   io.o.valid := bufferValid
   io.o.bits := buffer
 }
