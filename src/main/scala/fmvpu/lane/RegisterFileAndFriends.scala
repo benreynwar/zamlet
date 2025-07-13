@@ -98,17 +98,24 @@ class RegisterFileAndFriends(params: LaneParams) extends Module {
   def readRegister(addr: UInt): RegReadInfo = {
     val result = Wire(new RegReadInfo(params))
     val regIndex = addr
-    val hasInFlight = registers(regIndex).inFlight.orR
-    val isLocalReg = registers(regIndex).isLocal
     
-    // If no in-flight writes or is local, return resolved data
-    when (!hasInFlight || isLocalReg) {
+    // Register 0 always returns 0
+    when (regIndex === 0.U) {
       result.resolved := true.B
-      result.value := registers(regIndex).value
+      result.value := 0.U
     } .otherwise {
-      // Return unresolved reference
-      result.resolved := false.B
-      result.value := Cat(registers(regIndex).lastIdent, regIndex)
+      val hasInFlight = registers(regIndex).inFlight.orR
+      val isLocalReg = registers(regIndex).isLocal
+      
+      // If no in-flight writes or is local, return resolved data
+      when (!hasInFlight || isLocalReg) {
+        result.resolved := true.B
+        result.value := registers(regIndex).value
+      } .otherwise {
+        // Return unresolved reference
+        result.resolved := false.B
+        result.value := Cat(registers(regIndex).lastIdent, regIndex)
+      }
     }
     result
   }
