@@ -58,6 +58,7 @@ class PacketInterfaceIO(params: LaneParams) extends Bundle {
   // Network interface
   val fromNetwork = Flipped(Decoupled(new NetworkWord(params)))
   val toNetwork = Decoupled(new NetworkWord(params))
+  val toNetworkChannel = Output(UInt(log2Ceil(params.nChannels).W))
   
   // Instruction interface
   val instr = Input(Valid(new PacketInstrResolved(params)))
@@ -125,6 +126,7 @@ class PacketInterface(params: LaneParams) extends Module {
   // Send state
   val sendState = RegInit(SendStates.Idle)
   val sendRemainingWords = RegInit(0.U(8.W))
+  val sendChannel = RegInit(0.U(log2Ceil(params.nChannels).W))
   
   // Receive state  
   val receiveState = RegInit(ReceiveStates.Idle)
@@ -318,10 +320,12 @@ class PacketInterface(params: LaneParams) extends Module {
   when(io.instr.valid && io.instr.bits.mode === PacketModes.Send && sendState === SendStates.Idle) {
     sendState := SendStates.SendingHeader
     sendRemainingWords := io.instr.bits.sendLength
+    sendChannel := io.instr.bits.channel
     packetOutReadPtr := 0.U
   }
   
   // Send state machine
+  io.toNetworkChannel := sendChannel
   switch(sendState) {
     is(SendStates.SendingHeader) {
       // Create and send packet header

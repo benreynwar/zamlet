@@ -35,6 +35,7 @@ class LaneNetworkNodeIO(params: LaneParams) extends Bundle {
   
   // 'Here' interface to/from local lane
   val hi = Flipped(Decoupled(new NetworkWord(params)))
+  val hiChannel = Input(UInt(log2Ceil(params.nChannels).W)) // What channel the input should connect to.
   val ho = Decoupled(new NetworkWord(params))
   
   // Forward interface
@@ -59,10 +60,6 @@ class LaneNetworkNode(params: LaneParams) extends Module {
     switch.io.thisY := io.thisY
   }
   
-  // Connection state as specified in network_node.txt
-  val connectionIn = RegInit(0.U.asTypeOf(new ConnectionState(params)))
-  val connectionOut = RegInit(0.U.asTypeOf(new ConnectionState(params)))
-  
   // Default outputs
   io.headerError := false.B
   io.hi.ready := false.B
@@ -81,113 +78,93 @@ class LaneNetworkNode(params: LaneParams) extends Module {
     io.eo(i) <> switches(i).io.eo
     io.wo(i) <> switches(i).io.wo
   }
-  
-  // Arbitration for incoming connection (hi -> switches)
-  // Default: all switches disconnected from hi
-  for (i <- 0 until params.nChannels) {
-    switches(i).io.hi.valid := false.B
-    switches(i).io.hi.bits := DontCare
-  }
-  
-  // When no connection is active, look for ready switches with priority arbitration
-  when (!connectionIn.active) {
-    val startIdx = Mux(connectionIn.channel === (params.nChannels-1).U, 0.U, connectionIn.channel + 1.U)
-    val readyMask = VecInit(switches.map(_.io.hi.ready))
-    val anyReady = readyMask.asUInt.orR
-    
-    when (anyReady && io.hi.valid) {
-      // Find next ready channel starting from startIdx
-      val nextChannel = PriorityMux(
-        (0 until params.nChannels).map { i =>
-          val idx = (startIdx + i.U) % params.nChannels.U
-          (readyMask(idx), idx)
-        }
-      )
-      connectionIn.active := true.B
-      connectionIn.channel := nextChannel
-      // Extract packet length from header when isHeader is true
-      val header = io.hi.bits.data.asTypeOf(new PacketHeader(params))
-      connectionIn.remainingWords := Mux(io.hi.bits.isHeader, header.length, 1.U)
-      
-      // Signal error if first word is not a header
-      io.headerError := !io.hi.bits.isHeader
-    }
-  }
-  
-  // Route hi to switches based on connection state
-  for (i <- 0 until params.nChannels) {
-    when (connectionIn.active && connectionIn.channel === i.U) {
-      switches(i).io.hi <> io.hi
+
+  // Connecting to hi.
+  for (channelIdx <- 0 until params.nChannels) {
+    when (channelIdx.U === io.hiChannel) {
+      switches(channelIdx).io.hi.valid := io.hi.valid
+      switches(channelIdx).io.hi.bits := io.hi.bits
     } .otherwise {
-      switches(i).io.hi.valid := false.B
-      switches(i).io.hi.bits := DontCare
+      switches(channelIdx).io.hi.valid := false.B
+      switches(channelIdx).io.hi.bits := DontCare
     }
   }
-  
-  // Set hi.ready when no connection is active
-  when (!connectionIn.active) {
-    io.hi.ready := false.B
-  }
-  
-  // Count down remaining words when connection is active
-  when (connectionIn.active && io.hi.fire) {
-    connectionIn.remainingWords := connectionIn.remainingWords - 1.U
-    when (connectionIn.remainingWords === 1.U) {
-      connectionIn.active := false.B
-    }
-  }
+  io.hi.ready := MuxLookup(io.hiChannel, false.B)(
+    (0 until params.nChannels).map(i => i.U -> switches(i).io.hi.ready)
+  )
+
+  // Connecting to ho
   
   // Arbitration for outgoing connection (switches -> ho)
   // Default: all switches disconnected from ho
   for (i <- 0 until params.nChannels) {
     switches(i).io.ho.ready := false.B
   }
+
+  val connstateActive = RegInit(false.B)
+  val connstateChannel = Reg(UInt(log2Ceil(params.nChannels).W))
+  val connstateWordsRemaining = Reg(UInt(params.packetLengthWidth.W))
   
+  val nextChannel = PriorityMux(
+    (0 until params.nChannels).map { i =>
+      val idx = (connstateChannel + i.U) % params.nChannels.U
+      val switchValid = MuxLookup(idx, false.B)(
+        (0 until params.nChannels).map(j => j.U -> switches(j).io.ho.valid)
+      )
+      (switchValid, idx)
+    }
+  )
+
+  val connectedChannel = Wire(UInt(log2Ceil(params.nChannels).W))
+  when (!connstateActive) {
+    connectedChannel := nextChannel
+  } .otherwise {
+    connectedChannel := connstateChannel
+  }
+
   // When no outgoing connection is active, look for valid switches
-  when (!connectionOut.active) {
-    val startIdx = Mux(connectionOut.channel === (params.nChannels-1).U, 0.U, connectionOut.channel + 1.U)
-    val validMask = VecInit(switches.map(_.io.ho.valid))
-    val anyValid = validMask.asUInt.orR
-    
-    when (anyValid && io.ho.ready) {
-      // Find next valid channel starting from startIdx
-      val nextChannel = PriorityMux(
-        (0 until params.nChannels).map { i =>
-          val idx = (startIdx + i.U) % params.nChannels.U
-          (validMask(idx), idx)
-        }
-      )
-      connectionOut.active := true.B
-      connectionOut.channel := nextChannel
-      // Extract packet length from header - use MuxLookup to get the right switch
-      val selectedSwitchBits = MuxLookup(nextChannel, switches(0).io.ho.bits)(
-        (0 until params.nChannels).map(i => i.U -> switches(i).io.ho.bits)
-      )
-      val header = selectedSwitchBits.data.asTypeOf(new PacketHeader(params))
-      connectionOut.remainingWords := Mux(selectedSwitchBits.isHeader, header.length, 1.U)
-    }
-  }
-  
-  // Route switches to ho based on connection state
-  for (i <- 0 until params.nChannels) {
-    when (connectionOut.active && connectionOut.channel === i.U) {
-      io.ho <> switches(i).io.ho
+  for (channelIdx <- 0 until params.nChannels) {
+    when (channelIdx.U === connectedChannel) {
+      switches(channelIdx).io.ho.ready := io.ho.ready
     } .otherwise {
-      switches(i).io.ho.ready := false.B
+      switches(channelIdx).io.ho.ready := false.B
     }
   }
-  
-  // Set ho outputs when no connection is active
-  when (!connectionOut.active) {
-    io.ho.valid := false.B
-    io.ho.bits := DontCare
-  }
-  
-  // Count down remaining words when connection is active
-  when (connectionOut.active && io.ho.fire) {
-    connectionOut.remainingWords := connectionOut.remainingWords - 1.U
-    when (connectionOut.remainingWords === 1.U) {
-      connectionOut.active := false.B
+  io.ho.valid := MuxLookup(connectedChannel, false.B)(
+    (0 until params.nChannels).map(i => i.U -> switches(i).io.ho.valid)
+  )
+  io.ho.bits := MuxLookup(connectedChannel, switches(0).io.ho.bits)(
+    (0 until params.nChannels).map(i => i.U -> switches(i).io.ho.bits)
+  )
+
+  val connectedHeader = MuxLookup(connectedChannel, switches(0).io.ho.bits.data)(
+    (0 until params.nChannels).map(i => i.U -> switches(i).io.ho.bits.data)
+  ).asTypeOf(new PacketHeader(params))
+
+  val connectedValid = MuxLookup(connectedChannel, false.B)(
+    (0 until params.nChannels).map(i => i.U -> switches(i).io.ho.valid)
+  )
+  val connectedIsHeader = MuxLookup(connectedChannel, false.B)(
+    (0 until params.nChannels).map(i => i.U -> switches(i).io.ho.bits.isHeader)
+  )
+
+  when (connectedValid) {
+    when (connectedIsHeader) {
+      io.headerError := connstateActive
+      connstateWordsRemaining := connectedHeader.length
+      when (connectedHeader.length > 0.U) {
+        connstateActive := true.B
+      } .otherwise {
+        connstateActive := false.B
+      }
+    } .otherwise {
+      io.headerError := !connstateActive
+      when (io.ho.ready) {
+        connstateWordsRemaining := connstateWordsRemaining - 1.U
+      }
+      when (connstateWordsRemaining === 1.U) {
+        connstateActive := false.B
+      }
     }
   }
   

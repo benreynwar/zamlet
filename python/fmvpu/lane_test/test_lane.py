@@ -6,6 +6,7 @@ import sys
 import tempfile
 from typing import Optional
 import logging
+from random import Random
 
 import cocotb
 from cocotb import triggers
@@ -36,10 +37,16 @@ def create_register_write_packet(register: int, value: int, dest_x: int = 0, des
 this_dir = os.path.abspath(os.path.dirname(__file__))
 
 
+def make_seed(rnd):
+    return rnd.getrandbits(32)
+
+
 @cocotb.test()
-async def lane_basic_reset_test(dut: HierarchyObject) -> None:
+async def lane_basic_reset_test(dut: HierarchyObject, seed=0) -> None:
     """Basic test that resets the NewLane module and waits 10 cycles."""
     test_utils.configure_logging_sim('DEBUG')
+
+    rnd = Random(seed)
     
     logger.info("Starting basic NewLane reset test...")
     
@@ -64,6 +71,7 @@ async def lane_basic_reset_test(dut: HierarchyObject) -> None:
     # Create packet driver for west input, channel 0
     west_driver = PacketDriver(
         dut=dut,
+        seed=make_seed(rnd),
         valid_signal=dut.io_wi_0_valid,
         ready_signal=dut.io_wi_0_ready,
         data_signal=dut.io_wi_0_bits_data,
