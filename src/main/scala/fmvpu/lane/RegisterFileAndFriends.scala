@@ -71,6 +71,7 @@ class RegisterFileAndFriends(params: LaneParams) extends Module {
   
   // Program counter and loop state
   val pc = RegInit(0.U(params.instrAddrWidth.W))
+  val active = RegInit(false.B)
   val loopActive = RegInit(false.B)
   val loopStartPC = Reg(UInt(params.instrAddrWidth.W))
   val loopEndPC = Reg(UInt(params.instrAddrWidth.W))
@@ -157,12 +158,13 @@ class RegisterFileAndFriends(params: LaneParams) extends Module {
   // Start signal handling
   when (io.startValid) {
     pc := io.startPC
+    active := true.B
     loopActive := false.B
     waitingForLoopLength := false.B
   }
   
   // Default instruction memory interface
-  io.imReadValid := !waitingForLoopLength && !cancelNextInstr
+  io.imReadValid := active && !waitingForLoopLength && !cancelNextInstr
   io.imReadAddress := pc
   
   // Default instruction outputs
@@ -203,7 +205,7 @@ class RegisterFileAndFriends(params: LaneParams) extends Module {
   io.packetInstr.bits.channel.value := 0.U
   
   // Instruction processing
-  val canProcess = io.instrValid && !cancelNextInstr && !waitingForLoopLength
+  val canProcess = io.instrValid && active && !cancelNextInstr && !waitingForLoopLength
   val stallALU = isALUInstr && !io.aluInstr.ready
   val stallLdSt = isLdStInstr && !io.ldstInstr.ready
   val stallPacket = isPacketInstr && !io.packetInstr.ready
@@ -359,6 +361,9 @@ class RegisterFileAndFriends(params: LaneParams) extends Module {
           waitingForLoopLength := true.B
         }
       }
+      .elsewhen (loopSubtype === 1.U && loopMode === 0.U) { // HALT instruction
+        active := false.B
+      }
     }
   }
   
@@ -382,8 +387,8 @@ class RegisterFileAndFriends(params: LaneParams) extends Module {
     loopActive := false.B
   }
   
-  // Update PC when not stalled
-  when (!stalled && !waitingForLoopLength) {
+  // Update PC when not stalled and active
+  when (active && !stalled && !waitingForLoopLength) {
     pc := nextPC
   }
   

@@ -1,15 +1,102 @@
-from typing import List
+from typing import List, Tuple
 from collections import deque
 import logging
 from random import Random
+from dataclasses import dataclass
+from enum import IntEnum
 
 from cocotb.triggers import RisingEdge, ReadOnly
 
-from fmvpu.new_lane.instructions import PacketHeader
+from fmvpu.control_structures import pack_fields_to_words, unpack_words_to_fields
 from fmvpu.new_lane.lane_params import LaneParams
 
 
 logger = logging.getLogger(__name__)
+
+
+class PacketHeaderModes(IntEnum):
+    NORMAL = 0
+    COMMAND = 1
+
+
+class CommandTypes(IntEnum):
+    START = 0
+    WRITE_INSTRUCTION_MEMORY = 1
+    WRITE_REGISTER = 2
+    RESERVED = 3
+
+
+@dataclass
+class PacketHeader:
+    """Packet header structure"""
+    length: int  # 8 bits
+    dest_x: int = 0  # 5 bits (assuming 32 max)
+    dest_y: int = 0  # 5 bits
+    mode: PacketHeaderModes = PacketHeaderModes.NORMAL  # 1 bit (0=normal, 1=command)
+    forward: bool = False  # 1 bit
+    is_broadcast: bool = False  # 1 bit  
+    broadcast_direction: int = 0  # 2 bits
+    
+    @classmethod
+    def get_field_specs(cls) -> List[Tuple[str, int]]:
+        """Get field specifications for bit packing."""
+        return [
+            ('length', 8),
+            ('dest_x', 5),
+            ('dest_y', 5),
+            ('mode', 1),
+            ('forward', 1),
+            ('is_broadcast', 1),
+            ('broadcast_direction', 2),
+        ]
+    
+    def encode(self) -> int:
+        """Encode to 32-bit header"""
+        words = pack_fields_to_words(self, self.get_field_specs(), word_width=32)
+        assert len(words) == 1, f"PacketHeader requires {len(words)} words but should fit in 1 word"
+        return words[0]
+    
+    @classmethod
+    def from_word(cls, word: int) -> 'PacketHeader':
+        """Parse packet header from a 32-bit word"""
+        field_specs = cls.get_field_specs()
+        field_values = unpack_words_to_fields([word], field_specs, word_width=32)
+        return cls(**field_values)
+
+
+def create_register_write_command(register: int, value: int, params: LaneParams = LaneParams()) -> int:
+    """Create register write command word (type 2)"""
+    cmd = CommandTypes.WRITE_REGISTER << (params.width - 2)  # Command type in upper 2 bits
+    cmd |= (register & ((1 << params.reg_addr_width) - 1)) << (params.width - 2 - params.reg_addr_width)  # Register address
+    cmd |= value & ((1 << (params.width - 2 - params.reg_addr_width)) - 1)  # Value in remaining bits
+    return cmd
+
+
+def create_instruction_memory_write_command(address: int, instruction: int, params: LaneParams = LaneParams()) -> int:
+    """Create instruction memory write command word (type 1)"""
+    cmd = CommandTypes.WRITE_INSTRUCTION_MEMORY << (params.width - 2)  # Command type in upper 2 bits
+    cmd |= (instruction & ((1 << params.instruction_width) - 1)) << params.instr_addr_width  # Instruction
+    cmd |= address & ((1 << params.instr_addr_width) - 1)  # Address
+    return cmd
+
+
+def create_start_command(pc: int, params: LaneParams = LaneParams()) -> int:
+    """Create start execution command word (type 0)"""
+    cmd = CommandTypes.START << (params.width - 2)  # Command type in upper 2 bits
+    cmd |= pc & ((1 << (params.width - 2)) - 1)  # PC address in remaining bits
+    return cmd
+
+
+def create_register_write_packet(register: int, value: int, dest_x: int = 0, dest_y: int = 0, params: LaneParams = LaneParams()) -> list[int]:
+    """Create a command packet to write a value to a register"""
+    header = PacketHeader(
+        length=1,  # One command word
+        dest_x=dest_x,
+        dest_y=dest_y,
+        mode=PacketHeaderModes.COMMAND
+    )
+    command_word = create_register_write_command(register, value, params)
+    return [header.encode(), command_word]
 
 
 class PacketDriver:

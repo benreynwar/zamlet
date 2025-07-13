@@ -156,3 +156,16 @@ def create_start_command(pc: int, params: LaneParams = LaneParams()) -> int:
     cmd = CommandTypes.START << (params.width - 2)  # Command type in upper 2 bits
     cmd |= pc & ((1 << (params.width - 2)) - 1)  # PC address in remaining bits
     return cmd
+
+
+@dataclass
+class HaltInstruction:
+    """HALT instruction encoding (bits 15-14 = 11, bits 13-12 = 01, bits 11-10 = 00)"""
+    
+    def encode(self) -> int:
+        """Encode to 16-bit instruction"""
+        # Bits 15-14 = 11 (LOOP_INSTR_TYPE)
+        # Bits 13-12 = 01 
+        # Bits 11-10 = 00 (mode)
+        # Bits 9-0 = unused (0)
+        return LOOP_INSTR_TYPE | (0x01 << 12) | (0x00 << 10)

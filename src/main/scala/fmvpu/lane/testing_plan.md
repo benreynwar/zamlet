@@ -7,9 +7,10 @@
 
 ## Phase 2: Program Execution Test
 - Use command packets to write registers:
-  - Write coordinate (0, 1) to register 3
-  - Write value 4 to register 5
+  - Write coordinate (0, 1) to register 3 (encoded as 0x0020: (y << 5) | x = (1 << 5) | 0)
+  - Write value 0 to register 5 (packet length)
 - Write program to instruction memory using command packet:
-  - Instruction: `0100_0_011_101_000` (packet send: location=reg3, value=reg5, result=reg0)
-- Send command packet to run the program
-- Confirm that a packet header with destination (0, 1) and length field 4 is output from the lane
+  - Address 0: `0100_0_011_101_000` (packet send: location=reg3, value=reg5, result=reg0)
+  - Address 1: HALT instruction (`1101_00_00_0000000000`)
+- Send command packet to run the program starting at PC=0
+- Confirm that a packet header with destination (0, 1) and length field 0 is output from the lane

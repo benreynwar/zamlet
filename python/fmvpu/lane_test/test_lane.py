@@ -15,8 +15,8 @@ from cocotb.handle import HierarchyObject
 
 from fmvpu import generate_rtl
 from fmvpu import test_utils
-from fmvpu.new_lane.packet_utils import PacketDriver
-from fmvpu.new_lane.instructions import PacketHeader, PacketHeaderModes, create_register_write_command
+from fmvpu.new_lane import packet_utils
+from fmvpu.new_lane.instructions import PacketInstruction, PacketModes, HaltInstruction
 from fmvpu.new_lane.lane_params import LaneParams
 
 
@@ -25,13 +25,41 @@ logger = logging.getLogger(__name__)
 
 def create_register_write_packet(register: int, value: int, dest_x: int = 0, dest_y: int = 0, params: LaneParams = LaneParams()) -> list[int]:
     """Create a command packet to write a value to a register"""
-    header = PacketHeader(
+    header = packet_utils.PacketHeader(
         length=1,  # One command word
         dest_x=dest_x,
         dest_y=dest_y,
-        mode=PacketHeaderModes.COMMAND
+        mode=packet_utils.PacketHeaderModes.COMMAND
     )
-    command_word = create_register_write_command(register, value, params)
+    command_word = packet_utils.create_register_write_command(register, value, params)
+    return [header.encode(), command_word]
+
+
+def create_instruction_write_packet(instructions: list[int], base_address: int = 0, dest_x: int = 0, dest_y: int = 0, params: LaneParams = LaneParams()) -> list[int]:
+    """Create a command packet to write multiple instructions to instruction memory"""
+    header = packet_utils.PacketHeader(
+        length=len(instructions),  # One command word per instruction
+        dest_x=dest_x,
+        dest_y=dest_y,
+        mode=packet_utils.PacketHeaderModes.COMMAND
+    )
+    command_words = []
+    for i, instruction in enumerate(instructions):
+        address = base_address + i
+        command_word = packet_utils.create_instruction_memory_write_command(address, instruction, params)
+        command_words.append(command_word)
+    return [header.encode()] + command_words
+
+
+def create_start_packet(pc: int, dest_x: int = 0, dest_y: int = 0, params: LaneParams = LaneParams()) -> list[int]:
+    """Create a command packet to start execution at a given PC"""
+    header = packet_utils.PacketHeader(
+        length=1,  # One command word
+        dest_x=dest_x,
+        dest_y=dest_y,
+        mode=packet_utils.PacketHeaderModes.COMMAND
+    )
+    command_word = packet_utils.create_start_command(pc, params)
     return [header.encode(), command_word]
 
 this_dir = os.path.abspath(os.path.dirname(__file__))
@@ -69,13 +97,54 @@ async def lane_basic_reset_test(dut: HierarchyObject, seed=0) -> None:
     dut.io_wi_0_valid.value = 0
     
     # Create packet driver for west input, channel 0
-    west_driver = PacketDriver(
+    west_driver = packet_utils.PacketDriver(
         dut=dut,
         seed=make_seed(rnd),
         valid_signal=dut.io_wi_0_valid,
         ready_signal=dut.io_wi_0_ready,
         data_signal=dut.io_wi_0_bits_data,
         isheader_signal=dut.io_wi_0_bits_isHeader
+    )
+    
+    # Create packet receivers for all outputs to monitor packets
+    north_receiver = packet_utils.PacketReceiver(
+        dut=dut,
+        seed=make_seed(rnd),
+        valid_signal=dut.io_no_0_valid,
+        ready_signal=dut.io_no_0_ready,
+        data_signal=dut.io_no_0_bits_data,
+        isheader_signal=dut.io_no_0_bits_isHeader,
+        name="north"
+    )
+    
+    south_receiver = packet_utils.PacketReceiver(
+        dut=dut,
+        seed=make_seed(rnd),
+        valid_signal=dut.io_so_0_valid,
+        ready_signal=dut.io_so_0_ready,
+        data_signal=dut.io_so_0_bits_data,
+        isheader_signal=dut.io_so_0_bits_isHeader,
+        name="south"
+    )
+    
+    east_receiver = packet_utils.PacketReceiver(
+        dut=dut,
+        seed=make_seed(rnd),
+        valid_signal=dut.io_eo_0_valid,
+        ready_signal=dut.io_eo_0_ready,
+        data_signal=dut.io_eo_0_bits_data,
+        isheader_signal=dut.io_eo_0_bits_isHeader,
+        name="east"
+    )
+    
+    west_receiver = packet_utils.PacketReceiver(
+        dut=dut,
+        seed=make_seed(rnd),
+        valid_signal=dut.io_wo_0_valid,
+        ready_signal=dut.io_wo_0_ready,
+        data_signal=dut.io_wo_0_bits_data,
+        isheader_signal=dut.io_wo_0_bits_isHeader,
+        name="west"
     )
     
     # Apply reset sequence
@@ -85,11 +154,16 @@ async def lane_basic_reset_test(dut: HierarchyObject, seed=0) -> None:
     await triggers.RisingEdge(dut.clock)
     dut.reset.value = 0
     
-    # Start packet driver after reset
+    # Start packet driver and receivers after reset
     cocotb.start_soon(west_driver.drive_packets())
+    cocotb.start_soon(north_receiver.receive_packets())
+    cocotb.start_soon(south_receiver.receive_packets())
+    cocotb.start_soon(east_receiver.receive_packets())
+    cocotb.start_soon(west_receiver.receive_packets())
     
-    # Send a command packet to write register 3 with value 0x0001 (coordinate 0,1)
-    coord_packet = create_register_write_packet(register=3, value=0x0001, dest_x=LANE_X, dest_y=LANE_Y)
+    # Send a command packet to write register 3 with coordinate (0,1)
+    # Coordinate encoding: (y << 5) | x = (1 << 5) | 0 = 32 = 0x0020
+    coord_packet = create_register_write_packet(register=3, value=0x0020, dest_x=LANE_X, dest_y=LANE_Y)
     west_driver.add_packet(coord_packet)
     
     # Wait 40 cycles for packet processing
@@ -103,12 +177,85 @@ async def lane_basic_reset_test(dut: HierarchyObject, seed=0) -> None:
     logger.info(f"Register 3 value: {register_3_value}")
     
     # Check if the value matches what we wrote
-    expected_value = 0x0001
+    expected_value = 0x0020
     if register_3_value == expected_value:
         logger.info("Register write successful!")
     else:
         logger.info(f"Register write failed! Expected {expected_value}, got {register_3_value}")
         assert False
+    
+    # Phase 2: Write value 0 to register 5 (packet length)
+    logger.info("Phase 2: Writing value 0 to register 5")
+    value_packet = create_register_write_packet(register=5, value=0, dest_x=LANE_X, dest_y=LANE_Y)
+    west_driver.add_packet(value_packet)
+    
+    # Wait for packet processing
+    for cycle in range(20):
+        await triggers.RisingEdge(dut.clock)
+    
+    # Check register 5 value
+    register_5_value = dut.rff.registers_5_value.value
+    logger.info(f"Register 5 value: {register_5_value}")
+    assert register_5_value == 0, f"Expected register 5 to be 0, got {register_5_value}"
+    
+    # Phase 2: Write program instructions to instruction memory
+    logger.info("Phase 2: Writing packet send and halt instructions to instruction memory")
+    
+    # Create packet send instruction: send from location=reg3, value=reg5, result=reg0
+    packet_instr = PacketInstruction(
+        mode=PacketModes.SEND,  # 4
+        mask=False,             # 0
+        location_reg=3,         # register 3 (coordinate)
+        send_length_reg=5,      # register 5 (value 4)
+        result_reg=0            # register 0
+    )
+    packet_word = packet_instr.encode()
+    logger.info(f"Encoded packet instruction: 0x{packet_word:04x}")
+    
+    # Create halt instruction
+    halt_instr = HaltInstruction()
+    halt_word = halt_instr.encode()
+    logger.info(f"Encoded halt instruction: 0x{halt_word:04x}")
+    
+    # Write both instructions starting at address 0
+    program = [packet_word, halt_word]
+    instr_packet = create_instruction_write_packet(program, base_address=0, dest_x=LANE_X, dest_y=LANE_Y)
+    west_driver.add_packet(instr_packet)
+    
+    # Wait for instruction write
+    for cycle in range(20):
+        await triggers.RisingEdge(dut.clock)
+    
+    # Phase 2: Start program execution
+    logger.info("Phase 2: Starting program execution at PC=0")
+    start_packet = create_start_packet(pc=0, dest_x=LANE_X, dest_y=LANE_Y)
+    west_driver.add_packet(start_packet)
+    
+    # Wait for program execution and monitor outputs
+    logger.info("Phase 2: Monitoring for packet output")
+    packet_found = False
+    for cycle in range(100):
+        await triggers.RisingEdge(dut.clock)
+        
+        # Check all receivers for packets
+        for receiver in [north_receiver, south_receiver, east_receiver, west_receiver]:
+            if receiver.has_packet():
+                packet = receiver.get_packet()
+                header = packet_utils.PacketHeader.from_word(packet[0])
+                logger.info(f"Received packet from {receiver.name}: dest=({header.dest_x},{header.dest_y}), length={header.length}")
+                
+                # Check if this matches our expected packet
+                if header.dest_x == 0 and header.dest_y == 1 and header.length == 0:
+                    logger.info("SUCCESS: Found expected packet with destination (0,1) and length 0!")
+                    packet_found = True
+                    break
+        
+        if packet_found:
+            break
+    
+    if not packet_found:
+        logger.error("FAILURE: Expected packet with destination (0,1) and length 0 was not found")
+        assert False, "Expected packet not found"
     
     logger.info("Basic reset test completed successfully!")
 

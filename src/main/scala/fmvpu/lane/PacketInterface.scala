@@ -127,6 +127,8 @@ class PacketInterface(params: LaneParams) extends Module {
   val sendState = RegInit(SendStates.Idle)
   val sendRemainingWords = RegInit(0.U(8.W))
   val sendChannel = RegInit(0.U(log2Ceil(params.nChannels).W))
+  val sendX = RegInit(0.U(params.xPosWidth.W))
+  val sendY = RegInit(0.U(params.yPosWidth.W))
   
   // Receive state  
   val receiveState = RegInit(ReceiveStates.Idle)
@@ -321,6 +323,8 @@ class PacketInterface(params: LaneParams) extends Module {
     sendState := SendStates.SendingHeader
     sendRemainingWords := io.instr.bits.sendLength
     sendChannel := io.instr.bits.channel
+    sendX := io.instr.bits.xTarget
+    sendY := io.instr.bits.yTarget
     packetOutReadPtr := 0.U
   }
   
@@ -331,8 +335,8 @@ class PacketInterface(params: LaneParams) extends Module {
       // Create and send packet header
       val header = Wire(new PacketHeader(params))
       header.length := sendRemainingWords
-      header.xDest := io.instr.bits.xTarget
-      header.yDest := io.instr.bits.yTarget
+      header.xDest := sendX
+      header.yDest := sendY
       header.mode := PacketHeaderModes.Normal
       header.forward := false.B
       header.isBroadcast := false.B

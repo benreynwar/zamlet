@@ -70,6 +70,15 @@ Loop Size:
   10 bits loop_size   (bits 9-0)
     (The last instruction within the loop has an address that is equal to the first_instruction + loop_size)
     (There must always be at least one instruction in a loop)
+
+Misc Instructions
+-----------------
+
+Halt:
+  2 bits 11           (bits 15-14)
+  2 bits 01           (bits 13-12)
+  2 bits mode 00      (bits 11-10)
+  10 bits unused
    
 
 If we want to make it general the 16 bits
