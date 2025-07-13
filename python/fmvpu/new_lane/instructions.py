@@ -16,10 +16,10 @@ LOOP_INSTR_TYPE = 0xC000    # 11
 class PacketInstruction:
     """Packet instruction encoding (bits 15-14 = 00)"""
     mode: int  # 3 bits (bits 13-11)
-    mask: bool  # 1 bit (bit 9)
-    location_reg: int  # 3 bits (bits 8-6)
-    send_length_reg: int  # 3 bits (bits 5-3)
-    result_reg: int  # 3 bits (bits 2-0)
+    mask: bool = 0 # 1 bit (bit 9)
+    location_reg: int = 0 # 3 bits (bits 8-6)
+    send_length_reg: int = 0 # 3 bits (bits 5-3)
+    result_reg: int = 0 # 3 bits (bits 2-0)
     
     @classmethod
     def get_field_specs(cls) -> List[Tuple[str, int]]:
@@ -73,7 +73,7 @@ class PacketModes(IntEnum):
     RECEIVE_FORWARD_AND_APPEND = 2
     FORWARD_AND_APPEND = 3
     SEND = 4
-    GET_PACKET_WORD = 5
+    GET_WORD = 5
 
 
 class ALUModes(IntEnum):

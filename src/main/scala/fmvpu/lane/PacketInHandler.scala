@@ -67,7 +67,7 @@ class PacketInHandlerIO(params: LaneParams) extends Bundle {
   val fromNetwork = Flipped(Decoupled(new NetworkWord(params)))
   
   // Forward data input (from PacketInterface for forwarding packets)
-  val forward = Flipped(Decoupled(new PacketForward(params)))
+  val forward = Flipped(Valid(new PacketForward(params)))
   
   
   // Handler arbitration signals
@@ -92,9 +92,21 @@ class PacketInHandler(params: LaneParams) extends Module {
   val remainingWords = RegInit(0.U(params.packetLengthWidth.W))
   val isAppend = RegInit(false.B)
 
+  // Forward change detection
+  val prevForwardValid = RegInit(false.B)
+  val prevForwardToggle = RegInit(false.B)
+  prevForwardValid := io.forward.valid
+  prevForwardToggle := io.forward.bits.toggle
+  
+  val freshForward = RegInit(false.B)
+  when ((io.forward.valid && !prevForwardValid) || (io.forward.bits.toggle =/= prevForwardToggle)) {
+    freshForward := true.B
+  } .elsewhen (!io.forward.valid) {
+    freshForward := false.B
+  }
+
   // Default outputs
   io.fromNetwork.ready := false.B
-  io.forward.ready := false.B
   io.handlerRequest := VecInit(Seq.fill(5)(false.B))
   io.outputs.foreach { out =>
     out.valid := false.B
@@ -254,9 +266,6 @@ class PacketInHandler(params: LaneParams) extends Module {
       io.errors.broadcastError := badBroadcastRoute
     }
     io.errors.routingError := badRegularRoute
-    when(bufferedHeader.forward) {
-      io.forward.ready := true.B
-    }
     when(!bufferedHeader.forward || io.forward.valid) {
       // We send the request unless we don't have forward data.
       val requestBits = connectionDirections & ~inputDirMask
@@ -271,6 +280,7 @@ class PacketInHandler(params: LaneParams) extends Module {
     when(bufferedHeader.forward && io.forward.valid) {
       val forwardHeader = io.forward.bits.header.asTypeOf(new PacketHeader(params))
       isAppend := io.forward.bits.append
+      freshForward := false.B
     }.otherwise {
       isAppend := false.B
     }

@@ -27,7 +27,7 @@ class PacketSwitchIO(params: LaneParams) extends Bundle {
   val ho = Decoupled(new NetworkWord(params))
   
   // Forward interface
-  val forward = Flipped(Decoupled(new PacketForward(params)))
+  val forward = Flipped(Valid(new PacketForward(params)))
 }
 
 /**
@@ -84,8 +84,6 @@ class PacketSwitch(params: LaneParams) extends Module {
     handler.io.forward.valid := io.forward.valid
     handler.io.forward.bits := io.forward.bits
   }
-  // Forward ready is OR of all input handler ready signals
-  io.forward.ready := inHandlers.map(_.io.forward.ready).reduce(_ || _)
   
   // Connect data paths from PacketInHandlers to PacketOutHandlers using the mapping function
   val directions = Seq(NetworkDirections.North, NetworkDirections.East, NetworkDirections.South, NetworkDirections.West, NetworkDirections.Here)

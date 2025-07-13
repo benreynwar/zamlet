@@ -11,8 +11,11 @@ class PacketRS(params: LaneParams) extends Module {
     // Input instruction from RegisterFileAndFriends
     val input = Flipped(Decoupled(new PacketInstrUnresolved(params)))
     
-    // Output to packet interface when instruction is ready
-    val output = Valid(new PacketInstrResolved(params))
+    // Output to send packet interface when send instruction is ready
+    val sendOutput = Decoupled(new PacketInstrResolved(params))
+    
+    // Output to receive packet interface when receive instruction is ready
+    val receiveOutput = Decoupled(new PacketInstrResolved(params))
     
     // Write results from execution units for dependency resolution
     val writeInputs = Input(Vec(params.nWritePorts, new WriteResult(params)))
@@ -65,40 +68,66 @@ class PacketRS(params: LaneParams) extends Module {
     }
   }
   
-  // Find ready instruction (all dependencies resolved)
-  val readySlots = slots.map(slot => 
-    slot.valid && 
-    slot.bits.target.resolved && 
-    slot.bits.sendLength.resolved && 
-    slot.bits.channel.resolved
-  )
+  // Helper function to determine if instruction should go to send or receive interface
+  def isSendInstruction(mode: PacketModes.Type): Bool = {
+    mode === PacketModes.Send || mode === PacketModes.ForwardAndAppend || mode === PacketModes.ReceiveForwardAndAppend
+  }
+  
+  def isReceiveInstruction(mode: PacketModes.Type): Bool = {
+    mode === PacketModes.Receive || mode === PacketModes.ReceiveAndForward || 
+    mode === PacketModes.ReceiveForwardAndAppend || mode === PacketModes.GetWord
+  }
+  
+  // Find ready instructions (all dependencies resolved AND target interface(s) are ready)
+  val readySlots = slots.map(slot => {
+    val depsResolved = slot.valid && 
+                      slot.bits.target.resolved && 
+                      slot.bits.sendLength.resolved && 
+                      slot.bits.channel.resolved
+    
+    val goesToSend = isSendInstruction(slot.bits.mode)
+    val goesToReceive = isReceiveInstruction(slot.bits.mode)
+    
+    val interfaceReady = (!goesToSend || io.sendOutput.ready) && 
+                        (!goesToReceive || io.receiveOutput.ready)
+    
+    depsResolved && interfaceReady
+  })
   
   val hasReadySlot = readySlots.reduce(_ || _)
   val readySlotIdx = PriorityEncoder(readySlots)
   
-  // Output ready instruction
-  io.output.valid := hasReadySlot
+  // Determine which interface(s) to send to
+  val readySlotGoesToSend = hasReadySlot && isSendInstruction(slots(readySlotIdx).bits.mode)
+  val readySlotGoesToReceive = hasReadySlot && isReceiveInstruction(slots(readySlotIdx).bits.mode)
   
-  when (hasReadySlot) {
-    val readySlot = slots(readySlotIdx)
-    
-    io.output.bits.mode := readySlot.bits.mode
-    io.output.bits.xTarget := readySlot.bits.xTarget
-    io.output.bits.yTarget := readySlot.bits.yTarget
-    io.output.bits.result := readySlot.bits.result
-    io.output.bits.sendLength := readySlot.bits.sendLength.getData
-    io.output.bits.channel := readySlot.bits.channel.getData(1, 0) // Extract 2 bits for channel
-    
-    // Clear the slot that was dispatched
+  // Send interface output
+  io.sendOutput.valid := readySlotGoesToSend
+  io.sendOutput.bits := DontCare
+  val readySlot = slots(readySlotIdx)
+  io.sendOutput.bits.mode := readySlot.bits.mode
+  io.sendOutput.bits.xTarget := readySlot.bits.xTarget
+  io.sendOutput.bits.yTarget := readySlot.bits.yTarget
+  io.sendOutput.bits.result := readySlot.bits.result
+  io.sendOutput.bits.sendLength := readySlot.bits.sendLength.getData
+  io.sendOutput.bits.channel := readySlot.bits.channel.getData(1, 0)
+  
+  // Receive interface output
+  io.receiveOutput.valid := readySlotGoesToReceive
+  io.receiveOutput.bits := DontCare
+  io.receiveOutput.bits.mode := readySlot.bits.mode
+  io.receiveOutput.bits.xTarget := readySlot.bits.xTarget
+  io.receiveOutput.bits.yTarget := readySlot.bits.yTarget
+  io.receiveOutput.bits.result := readySlot.bits.result
+  io.receiveOutput.bits.sendLength := readySlot.bits.sendLength.getData
+  io.receiveOutput.bits.channel := readySlot.bits.channel.getData(1, 0)
+  
+  // Clear the slot when instruction is consumed by all required interfaces
+  val slotConsumed = (!readySlotGoesToSend || io.sendOutput.ready) && 
+                     (!readySlotGoesToReceive || io.receiveOutput.ready)
+  
+  when (hasReadySlot && slotConsumed) {
     slots(readySlotIdx).valid := false.B
-  } .otherwise {
-    // Default output values when no instruction is ready
-    io.output.bits.mode := PacketModes.Receive
-    io.output.bits.xTarget := 0.U
-    io.output.bits.yTarget := 0.U
-    io.output.bits.result := 0.U.asTypeOf(new RegWithIdent(params))
-    io.output.bits.sendLength := 0.U
-    io.output.bits.channel := 0.U
   }
 }
 

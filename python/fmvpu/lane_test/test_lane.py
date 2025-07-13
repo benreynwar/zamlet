@@ -76,6 +76,18 @@ def create_start_packet(
     return [header.encode(), command_word]
 
 
+def create_data_packet(
+    data: list[int], dest_x: int = 0, dest_y: int = 0) -> list[int]:
+    """Send a data packet in"""
+    header = packet_utils.PacketHeader(
+        length=len(data),  # One command word
+        dest_x=dest_x,
+        dest_y=dest_y,
+        mode=packet_utils.PacketHeaderModes.NORMAL,
+    )
+    return [header.encode()] + data
+
+
 this_dir = os.path.abspath(os.path.dirname(__file__))
 
 
@@ -88,74 +100,13 @@ def make_coord_register(x: int, y: int, params: LaneParams = LaneParams()) -> in
     return (y << params.x_pos_width) | x
 
 
-@cocotb.test()
-async def lane_test(dut: HierarchyObject, seed=0) -> None:
-    """Basic test that resets the NewLane module and waits 10 cycles."""
-    test_utils.configure_logging_sim("DEBUG")
+# Test lane position
+LANE_X = 1
+LANE_Y = 2
 
-    rnd = Random(seed)
 
-    # Test lane position
-    LANE_X = 1
-    LANE_Y = 2
-
-    # Start clock
-    clock_gen = Clock(dut.clock, 1, "ns")
-    cocotb.start_soon(clock_gen.start())
-
-    # Initialize position inputs
-    dut.io_thisX.value = LANE_X
-    dut.io_thisY.value = LANE_Y
-
-    # Initialize network inputs
-    dut.io_ni_0_valid.value = 0
-    dut.io_si_0_valid.value = 0
-    dut.io_ei_0_valid.value = 0
-    dut.io_wi_0_valid.value = 0
-
-    drivers = {
-        label: packet_utils.PacketDriver(
-            dut=dut,
-            seed=make_seed(rnd),
-            valid_signal=getattr(dut, f'io_{label}i_0_valid'),
-            ready_signal=getattr(dut, f'io_{label}i_0_ready'),
-            data_signal=getattr(dut, f'io_{label}i_0_bits_data'),
-            isheader_signal=getattr(dut, f'io_{label}i_0_bits_isHeader'),
-            p_valid=0.5,
-        )
-        for label in ['n', 's', 'e', 'w']}
-
-    receivers = {
-        label: packet_utils.PacketReceiver(
-            name=label,
-            dut=dut,
-            seed=make_seed(rnd),
-            valid_signal=getattr(dut, f'io_{label}o_0_valid'),
-            ready_signal=getattr(dut, f'io_{label}o_0_ready'),
-            data_signal=getattr(dut, f'io_{label}o_0_bits_data'),
-            isheader_signal=getattr(dut, f'io_{label}o_0_bits_isHeader'),
-        )
-        for label in ['n', 's', 'e', 'w']}
-
-    # Apply reset sequence
-    dut.reset.value = 0
-    await triggers.RisingEdge(dut.clock)
-    dut.reset.value = 1
-    await triggers.RisingEdge(dut.clock)
-    dut.reset.value = 0
-
-    # Start packet driver and receivers after reset
-    for label in ['n', 's', 'e', 'w']:
-        cocotb.start_soon(drivers[label].drive_packets())
-        cocotb.start_soon(receivers[label].receive_packets())
-
-    # We want to write the V
-    # Send a command packet to write register 3 with coordinate (0,1)
-    # Coordinate encoding: (y << 5) | x = (1 << 5) | 0 = 32 = 0x0020
-
-    # We want to get the lane to send a packet to (0, 1)
-    # The packet should have length 0.
-
+async def send_zero_length_packet_test(dut: HierarchyObject, rnd, drivers, receivers) -> None:
+    """Sends a packet with zero length"""
     coord_word = make_coord_register(x=0, y=1)
     coord_packet = create_register_write_packet(
         register=3, value=coord_word, dest_x=LANE_X, dest_y=LANE_Y
@@ -207,6 +158,123 @@ async def lane_test(dut: HierarchyObject, seed=0) -> None:
             packet_found = True
             break
     assert packet_found
+
+
+async def echo_packet_test(dut: HierarchyObject, rnd, drivers, receivers) -> None:
+
+    # Create packet send instruction: send from location=reg3, value=reg5, result=reg0
+    program = [
+        PacketInstruction(
+            mode=PacketModes.RECEIVE,
+            result_reg=5,  # It will put the length here
+        ),
+        PacketInstruction(
+            mode=PacketModes.SEND,
+            location_reg=3,  # coordinate
+            send_length_reg=5,  # Same length as packet received
+        ),
+        # We're assuming that the packet has length 2 here
+        PacketInstruction(
+            mode=PacketModes.GET_WORD,
+            result_reg=0,  # It will put the received packet in the send packet
+        ),
+        PacketInstruction(
+            mode=PacketModes.GET_WORD,
+            result_reg=0,  # It will put the received packet in the send packet
+        ),
+        HaltInstruction(),
+        ]
+    machine_code = [instr.encode() for instr in program]
+
+    instr_packet = create_instruction_write_packet(
+        machine_code, base_address=0, dest_x=LANE_X, dest_y=LANE_Y
+    )
+    drivers['w'].add_packet(instr_packet)
+
+    # Wait for instruction write
+    for cycle in range(20):
+        await triggers.RisingEdge(dut.clock)
+
+    # Start the program
+    start_packet = create_start_packet(pc=0, dest_x=LANE_X, dest_y=LANE_Y)
+    drivers['w'].add_packet(start_packet)
+
+    data = [1, 2]
+    data_packet = create_data_packet(data=data, dest_x=LANE_X, dest_y=LANE_Y)
+    drivers['w'].add_packet(data_packet)
+
+    # Wait for program execution and monitor outputs
+    logger.info("Phase 2: Monitoring for packet output")
+    packet_found = False
+    for cycle in range(100):
+        await triggers.RisingEdge(dut.clock)
+        if receivers['w'].has_packet():
+            packet = receivers['w'].get_packet()
+            header = packet_utils.PacketHeader.from_word(packet[0])
+            assert header.dest_x == 0 and header.dest_y == 0 and header.length == len(data)
+            assert packet[1:] == data
+            packet_found = True
+            break
+    assert packet_found
+
+@cocotb.test()
+async def lane_test(dut: HierarchyObject, seed=0) -> None:
+    test_utils.configure_logging_sim("DEBUG")
+
+    rnd = Random(seed)
+
+    # Start clock
+    clock_gen = Clock(dut.clock, 1, "ns")
+    cocotb.start_soon(clock_gen.start())
+
+    # Initialize position inputs
+    dut.io_thisX.value = LANE_X
+    dut.io_thisY.value = LANE_Y
+
+    # Initialize network inputs
+    dut.io_ni_0_valid.value = 0
+    dut.io_si_0_valid.value = 0
+    dut.io_ei_0_valid.value = 0
+    dut.io_wi_0_valid.value = 0
+
+    drivers = {
+        label: packet_utils.PacketDriver(
+            dut=dut,
+            seed=make_seed(rnd),
+            valid_signal=getattr(dut, f'io_{label}i_0_valid'),
+            ready_signal=getattr(dut, f'io_{label}i_0_ready'),
+            data_signal=getattr(dut, f'io_{label}i_0_bits_data'),
+            isheader_signal=getattr(dut, f'io_{label}i_0_bits_isHeader'),
+            p_valid=0.5,
+        )
+        for label in ['n', 's', 'e', 'w']}
+
+    receivers = {
+        label: packet_utils.PacketReceiver(
+            name=label,
+            dut=dut,
+            seed=make_seed(rnd),
+            valid_signal=getattr(dut, f'io_{label}o_0_valid'),
+            ready_signal=getattr(dut, f'io_{label}o_0_ready'),
+            data_signal=getattr(dut, f'io_{label}o_0_bits_data'),
+            isheader_signal=getattr(dut, f'io_{label}o_0_bits_isHeader'),
+        )
+        for label in ['n', 's', 'e', 'w']}
+
+    # Apply reset sequence
+    dut.reset.value = 0
+    await triggers.RisingEdge(dut.clock)
+    dut.reset.value = 1
+    await triggers.RisingEdge(dut.clock)
+    dut.reset.value = 0
+
+    # Start packet driver and receivers after reset
+    for label in ['n', 's', 'e', 'w']:
+        cocotb.start_soon(drivers[label].drive_packets())
+        cocotb.start_soon(receivers[label].receive_packets())
+
+    #await send_zero_length_packet_test(dut, rnd, drivers, receivers)
+    await echo_packet_test(dut, rnd, drivers, receivers)
 
 
 def test_lane_basic(verilog_file: str, seed: int = 0) -> None:

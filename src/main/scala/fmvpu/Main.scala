@@ -59,7 +59,8 @@ object Main extends App {
     case "AluRS" => AluRSGenerator
     case "LoadStoreRS" => LoadStoreRSGenerator
     case "PacketRS" => PacketRSGenerator
-    case "PacketInterface" => PacketInterfaceGenerator
+    case "SendPacketInterface" => SendPacketInterfaceGenerator
+    case "ReceivePacketInterface" => ReceivePacketInterfaceGenerator
     case "PacketInHandler" => PacketInHandlerGenerator
     case "PacketOutHandler" => PacketOutHandlerGenerator
     case "PacketSwitch" => PacketSwitchGenerator

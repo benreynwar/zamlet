@@ -79,7 +79,7 @@ object PacketModes extends ChiselEnum {
   val ReceiveForwardAndAppend = Value(2.U)
   val ForwardAndAppend = Value(3.U)
   val Send = Value(4.U)
-  val GetPacketWord = Value(5.U)
+  val GetWord = Value(5.U)
   val Unused6 = Value(6.U)
   val Unused7 = Value(7.U)
 }

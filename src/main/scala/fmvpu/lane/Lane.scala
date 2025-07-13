@@ -39,17 +39,18 @@ class NewLane(params: LaneParams) extends Module {
   val packetRS = Module(new PacketRS(params))
   val alu = Module(new ALU(params))
   val dataMem = Module(new LaneDataMemory(params))
-  val packetInterface = Module(new PacketInterface(params))
+  val sendPacketInterface = Module(new SendPacketInterface(params))
+  val receivePacketInterface = Module(new ReceivePacketInterface(params))
   val networkNode = Module(new LaneNetworkNode(params))
   
-  // Connect RFF control inputs from PacketInterface  
-  rff.io.startValid := packetInterface.io.start.valid
-  rff.io.startPC := packetInterface.io.start.bits
+  // Connect RFF control inputs from ReceivePacketInterface  
+  rff.io.startValid := receivePacketInterface.io.start.valid
+  rff.io.startPC := receivePacketInterface.io.start.bits
   
   // Connect instruction memory
   instrMem.io.readAddr := rff.io.imReadAddress
   instrMem.io.readEnable := rff.io.imReadValid
-  instrMem.io.writeIM <> packetInterface.io.writeIM
+  instrMem.io.writeIM <> receivePacketInterface.io.writeIM
   
   // Connect instruction memory output to RFF
   rff.io.instrValid := instrMem.io.readValid
@@ -63,13 +64,14 @@ class NewLane(params: LaneParams) extends Module {
   // Connect execution units to reservation stations
   alu.io.instr := aluRS.io.output
   dataMem.io.instr := ldstRS.io.output
-  packetInterface.io.instr := packetRS.io.output
+  sendPacketInterface.io.instr <> packetRS.io.sendOutput
+  receivePacketInterface.io.instr <> packetRS.io.receiveOutput
   
   // Collect all write results for dependency resolution
   val writeResults = Wire(Vec(params.nWritePorts, new WriteResult(params)))
   writeResults(0) := alu.io.result
   writeResults(1) := dataMem.io.result
-  writeResults(2) := packetInterface.io.writeReg.bits
+  writeResults(2) := receivePacketInterface.io.writeReg
   
   // Connect write results to all reservation stations for dependency resolution
   aluRS.io.writeInputs := writeResults
@@ -79,12 +81,14 @@ class NewLane(params: LaneParams) extends Module {
   // Connect write results to RFF for register file updates
   rff.io.writeInputs := writeResults
   
-  // Connect write results to PacketInterface for dependency resolution
-  packetInterface.io.writeInputs := writeResults
+  // Connect write results to packet interfaces for dependency resolution
+  sendPacketInterface.io.writeInputs := writeResults
   
-  // Connect network node
+  // Connect position to modules that need it
   networkNode.io.thisX := io.thisX
   networkNode.io.thisY := io.thisY
+  receivePacketInterface.io.thisX := io.thisX
+  receivePacketInterface.io.thisY := io.thisY
   
   // Connect external network interfaces
   networkNode.io.ni <> io.ni
@@ -96,11 +100,11 @@ class NewLane(params: LaneParams) extends Module {
   networkNode.io.eo <> io.eo
   networkNode.io.wo <> io.wo
   
-  // Connect packet interface to network node
-  packetInterface.io.toNetwork <> networkNode.io.hi
-  packetInterface.io.toNetworkChannel <> networkNode.io.hiChannel
-  networkNode.io.ho <> packetInterface.io.fromNetwork
-  networkNode.io.forward <> packetInterface.io.forward
+  // Connect packet interfaces to network node
+  sendPacketInterface.io.toNetwork <> networkNode.io.hi
+  sendPacketInterface.io.toNetworkChannel <> networkNode.io.hiChannel
+  networkNode.io.ho <> receivePacketInterface.io.fromNetwork
+  networkNode.io.forward <> receivePacketInterface.io.forward
 }
 
 object NewLaneGenerator extends fmvpu.ModuleGenerator {

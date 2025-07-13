@@ -13,7 +13,7 @@ Packet Instructions
 
  2 bits 00           (bits 15-14)
  3 bits for mode     (bits 13-11)
- 1 bit unused        (bit 10)
+ 1 bit forwardAgain  (bit 10)
  1 bit mask          (bit 9)
  3 bits location     (bits 8-6)  (read 1)
  3 bits send length  (bits 5-3)  (read 2)

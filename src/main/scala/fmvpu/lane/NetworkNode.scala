@@ -39,7 +39,7 @@ class LaneNetworkNodeIO(params: LaneParams) extends Bundle {
   val ho = Decoupled(new NetworkWord(params))
   
   // Forward interface
-  val forward = Flipped(Decoupled(new PacketForward(params)))
+  val forward = Flipped(Valid(new PacketForward(params)))
   
   // Error outputs
   val headerError = Output(Bool())
@@ -173,9 +173,6 @@ class LaneNetworkNode(params: LaneParams) extends Module {
     switch.io.forward.valid := io.forward.valid
     switch.io.forward.bits := io.forward.bits
   }
-  
-  // Forward ready is OR of all switch ready signals
-  io.forward.ready := switches.map(_.io.forward.ready).reduce(_ || _)
 }
 
 /**
