@@ -43,10 +43,10 @@ class PacketInstruction:
 class ALUInstruction:
     """ALU instruction encoding (bits 15-14 = 10)"""
     mode: int  # 4 bits (bits 13-10)
-    mask: bool  # 1 bit (bit 9)
-    src1_reg: int  # 3 bits (bits 8-6)
-    src2_reg: int  # 3 bits (bits 5-3)
-    dest_reg: int  # 3 bits (bits 2-0)
+    mask: bool = 0 # 1 bit (bit 9)
+    src1_reg: int = 0 # 3 bits (bits 8-6)
+    src2_reg: int = 0 # 3 bits (bits 5-3)
+    result_reg: int = 0 # 3 bits (bits 2-0)
     
     @classmethod
     def get_field_specs(cls) -> List[Tuple[str, int]]:
@@ -56,7 +56,7 @@ class ALUInstruction:
             ('mask', 1),
             ('src1_reg', 3),
             ('src2_reg', 3), 
-            ('dest_reg', 3),
+            ('result_reg', 3),
         ]
     
     def encode(self) -> int:

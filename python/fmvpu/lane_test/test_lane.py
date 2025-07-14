@@ -13,7 +13,7 @@ from cocotb.handle import HierarchyObject
 from fmvpu import generate_rtl
 from fmvpu import test_utils
 from fmvpu.new_lane import packet_utils
-from fmvpu.new_lane.instructions import PacketInstruction, PacketModes, HaltInstruction
+from fmvpu.new_lane.instructions import PacketInstruction, PacketModes, HaltInstruction, ALUInstruction, ALUModes
 from fmvpu.new_lane.lane_params import LaneParams
 
 
@@ -170,7 +170,7 @@ async def echo_packet_test(dut: HierarchyObject, rnd, drivers, receivers) -> Non
         ),
         PacketInstruction(
             mode=PacketModes.SEND,
-            location_reg=3,  # coordinate
+            location_reg=0,  # coordinate
             send_length_reg=5,  # Same length as packet received
         ),
         # We're assuming that the packet has length 2 here
@@ -213,6 +213,161 @@ async def echo_packet_test(dut: HierarchyObject, rnd, drivers, receivers) -> Non
             header = packet_utils.PacketHeader.from_word(packet[0])
             assert header.dest_x == 0 and header.dest_y == 0 and header.length == len(data)
             assert packet[1:] == data
+            packet_found = True
+            break
+    assert packet_found
+
+
+async def add_two_numbers_test(dut: HierarchyObject, rnd, drivers, receivers) -> None:
+
+    # Create packet send instruction: send from location=reg3, value=reg5, result=reg0
+    program = [
+        PacketInstruction(
+            mode=PacketModes.RECEIVE,
+            result_reg=5,  # It will put the length here
+        ),
+        PacketInstruction(
+            mode=PacketModes.SEND,
+            location_reg=0,  # coordinate
+            send_length_reg=5,  # Same length as packet received
+        ),
+        # We're assuming that the packet has length 2 here
+        PacketInstruction(
+            mode=PacketModes.GET_WORD,
+            result_reg=1,
+        ),
+        PacketInstruction(
+            mode=PacketModes.GET_WORD,
+            result_reg=2,
+        ),
+        ALUInstruction(
+            mode=ALUModes.ADD,
+            src1_reg=1,
+            src2_reg=2,
+            result_reg=0,
+        ),
+        ALUInstruction(
+            mode=ALUModes.MULT,
+            src1_reg=1,
+            src2_reg=2,
+            result_reg=0,
+        ),
+        HaltInstruction(),
+        ]
+    machine_code = [instr.encode() for instr in program]
+
+    instr_packet = create_instruction_write_packet(
+        machine_code, base_address=0, dest_x=LANE_X, dest_y=LANE_Y
+    )
+    drivers['w'].add_packet(instr_packet)
+
+    # Wait for instruction write
+    for cycle in range(20):
+        await triggers.RisingEdge(dut.clock)
+
+    # Start the program
+    start_packet = create_start_packet(pc=0, dest_x=LANE_X, dest_y=LANE_Y)
+    drivers['w'].add_packet(start_packet)
+
+    data = [10, 8]
+    data_packet = create_data_packet(data=data, dest_x=LANE_X, dest_y=LANE_Y)
+    drivers['w'].add_packet(data_packet)
+
+    # Wait for program execution and monitor outputs
+    logger.info("Phase 2: Monitoring for packet output")
+    packet_found = False
+    for cycle in range(100):
+        await triggers.RisingEdge(dut.clock)
+        if receivers['w'].has_packet():
+            packet = receivers['w'].get_packet()
+            header = packet_utils.PacketHeader.from_word(packet[0])
+            assert header.dest_x == 0 and header.dest_y == 0 and header.length == len(data)
+            assert packet[1:] == [data[0] + data[1], data[0] * data[1]]
+            packet_found = True
+            break
+    assert packet_found
+
+
+async def check_dependency_test(dut: HierarchyObject, rnd, drivers, receivers) -> None:
+
+    # Create packet send instruction: send from location=reg3, value=reg5, result=reg0
+    program = [
+        PacketInstruction(
+            mode=PacketModes.RECEIVE,
+            result_reg=5,  # It will put the length here
+        ),
+        PacketInstruction(
+            mode=PacketModes.SEND,
+            location_reg=0,  # coordinate
+            send_length_reg=5,  # Same length as packet received
+        ),
+        # We're assuming that the packet has length 2 here
+        PacketInstruction(
+            mode=PacketModes.GET_WORD,
+            result_reg=1,
+        ),
+        PacketInstruction(
+            mode=PacketModes.GET_WORD,
+            result_reg=2,
+        ),
+        # Add reg1 and reg2 together and put in reg4
+        ALUInstruction(
+            mode=ALUModes.ADD,
+            src1_reg=1,
+            src2_reg=2,
+            result_reg=4,
+        ),
+        # Add reg2 onto  reg4 and put in reg5
+        ALUInstruction(
+            mode=ALUModes.ADD,
+            src1_reg=4,
+            src2_reg=2,
+            result_reg=5,
+        ),
+        # Output the results of reg4 and reg5
+        ALUInstruction(
+            mode=ALUModes.ADD,
+            src1_reg=4,
+            src2_reg=0,
+            result_reg=0,
+        ),
+        ALUInstruction(
+            mode=ALUModes.ADD,
+            src1_reg=5,
+            src2_reg=0,
+            result_reg=0,
+        ),
+        HaltInstruction(),
+        ]
+    machine_code = [instr.encode() for instr in program]
+
+    instr_packet = create_instruction_write_packet(
+        machine_code, base_address=0, dest_x=LANE_X, dest_y=LANE_Y
+    )
+    drivers['w'].add_packet(instr_packet)
+
+    # Wait for instruction write
+    for cycle in range(20):
+        await triggers.RisingEdge(dut.clock)
+
+    # Start the program
+    start_packet = create_start_packet(pc=0, dest_x=LANE_X, dest_y=LANE_Y)
+    drivers['w'].add_packet(start_packet)
+
+    data = [10, 8]
+    data_packet = create_data_packet(data=data, dest_x=LANE_X, dest_y=LANE_Y)
+    drivers['w'].add_packet(data_packet)
+
+    # Wait for program execution and monitor outputs
+    logger.info("Phase 2: Monitoring for packet output")
+    packet_found = False
+    for cycle in range(100):
+        await triggers.RisingEdge(dut.clock)
+        if receivers['w'].has_packet():
+            packet = receivers['w'].get_packet()
+            header = packet_utils.PacketHeader.from_word(packet[0])
+            assert header.dest_x == 0 and header.dest_y == 0 and header.length == len(data)
+            assert packet[1:] == [data[0] + data[1], data[0] + 2*data[1]]
             packet_found = True
             break
     assert packet_found
@@ -273,8 +428,10 @@ async def lane_test(dut: HierarchyObject, seed=0) -> None:
         cocotb.start_soon(drivers[label].drive_packets())
         cocotb.start_soon(receivers[label].receive_packets())
 
-    #await send_zero_length_packet_test(dut, rnd, drivers, receivers)
+    await send_zero_length_packet_test(dut, rnd, drivers, receivers)
     await echo_packet_test(dut, rnd, drivers, receivers)
+    await add_two_numbers_test(dut, rnd, drivers, receivers)
+    await check_dependency_test(dut, rnd, drivers, receivers)
 
 
 def test_lane_basic(verilog_file: str, seed: int = 0) -> None:

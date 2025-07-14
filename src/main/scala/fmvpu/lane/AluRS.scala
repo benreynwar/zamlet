@@ -33,36 +33,20 @@ class AluRS(params: LaneParams) extends Module {
   when (io.input.fire) {
     slots(freeSlot).valid := true.B
     slots(freeSlot).bits := io.input.bits
+    slots(freeSlot).bits.src1 := RSUtils.updateRegReadInfo(io.input.bits.src1, io.writeInputs, params)
+    slots(freeSlot).bits.src2 := RSUtils.updateRegReadInfo(io.input.bits.src2, io.writeInputs, params)
+    slots(freeSlot).bits.accum := RSUtils.updateRegReadInfo(io.input.bits.accum, io.writeInputs, params)
+    slots(freeSlot).bits.mask := RSUtils.updateRegReadInfo(io.input.bits.mask, io.writeInputs, params)
   }
   
-  // Helper function to update RegReadInfo with write result if addresses match
-  def updateRegReadInfo(regInfo: RegReadInfo, writeValid: Bool, writeValue: UInt, writeAddr: RegWithIdent): RegReadInfo = {
-    val result = Wire(new RegReadInfo(params))
-    val regRef = regInfo.getRegWithIdent
-    
-    when (!regInfo.resolved && writeValid && 
-          regRef.regAddr === writeAddr.regAddr &&
-          regRef.writeIdent === writeAddr.writeIdent) {
-      // Address matches - resolve this dependency
-      result.resolved := true.B
-      result.value := writeValue
-    } .otherwise {
-      // No match - keep original value
-      result := regInfo
-    }
-    
-    result
-  }
   
   // Update slots with write results for dependency resolution
   for (i <- 0 until params.nAluRSSlots) {
     when (slots(i).valid) {
-      for (j <- 0 until params.nWritePorts) {
-        slots(i).bits.src1 := updateRegReadInfo(slots(i).bits.src1, io.writeInputs(j).valid, io.writeInputs(j).value, io.writeInputs(j).address)
-        slots(i).bits.src2 := updateRegReadInfo(slots(i).bits.src2, io.writeInputs(j).valid, io.writeInputs(j).value, io.writeInputs(j).address)
-        slots(i).bits.accum := updateRegReadInfo(slots(i).bits.accum, io.writeInputs(j).valid, io.writeInputs(j).value, io.writeInputs(j).address)
-        slots(i).bits.mask := updateRegReadInfo(slots(i).bits.mask, io.writeInputs(j).valid, io.writeInputs(j).value, io.writeInputs(j).address)
-      }
+      slots(i).bits.src1 := RSUtils.updateRegReadInfo(slots(i).bits.src1, io.writeInputs, params)
+      slots(i).bits.src2 := RSUtils.updateRegReadInfo(slots(i).bits.src2, io.writeInputs, params)
+      slots(i).bits.accum := RSUtils.updateRegReadInfo(slots(i).bits.accum, io.writeInputs, params)
+      slots(i).bits.mask := RSUtils.updateRegReadInfo(slots(i).bits.mask, io.writeInputs, params)
     }
   }
   
@@ -74,6 +58,7 @@ class AluRS(params: LaneParams) extends Module {
     slot.bits.accum.resolved && 
     slot.bits.mask.resolved
   )
+  readySlots.foreach(dontTouch(_))
   
   val hasReadySlot = readySlots.reduce(_ || _)
   val readySlotIdx = PriorityEncoder(readySlots)

@@ -33,35 +33,18 @@ class LoadStoreRS(params: LaneParams) extends Module {
   when (io.input.fire) {
     slots(freeSlot).valid := true.B
     slots(freeSlot).bits := io.input.bits
+    slots(freeSlot).bits.baseAddress := RSUtils.updateRegReadInfo(io.input.bits.baseAddress, io.writeInputs, params)
+    slots(freeSlot).bits.offset := RSUtils.updateRegReadInfo(io.input.bits.offset, io.writeInputs, params)
+    slots(freeSlot).bits.value := RSUtils.updateRegReadInfo(io.input.bits.value, io.writeInputs, params)
   }
   
-  // Helper function to update RegReadInfo with write result if addresses match
-  def updateRegReadInfo(regInfo: RegReadInfo, writeValid: Bool, writeValue: UInt, writeAddr: RegWithIdent): RegReadInfo = {
-    val result = Wire(new RegReadInfo(params))
-    val regRef = regInfo.getRegWithIdent
-    
-    when (!regInfo.resolved && writeValid && 
-          regRef.regAddr === writeAddr.regAddr &&
-          regRef.writeIdent === writeAddr.writeIdent) {
-      // Address matches - resolve this dependency
-      result.resolved := true.B
-      result.value := writeValue
-    } .otherwise {
-      // No match - keep original value
-      result := regInfo
-    }
-    
-    result
-  }
   
   // Update slots with write results for dependency resolution
   for (i <- 0 until params.nLdStRSSlots) {
     when (slots(i).valid) {
-      for (j <- 0 until params.nWritePorts) {
-        slots(i).bits.baseAddress := updateRegReadInfo(slots(i).bits.baseAddress, io.writeInputs(j).valid, io.writeInputs(j).value, io.writeInputs(j).address)
-        slots(i).bits.offset := updateRegReadInfo(slots(i).bits.offset, io.writeInputs(j).valid, io.writeInputs(j).value, io.writeInputs(j).address)
-        slots(i).bits.value := updateRegReadInfo(slots(i).bits.value, io.writeInputs(j).valid, io.writeInputs(j).value, io.writeInputs(j).address)
-      }
+      slots(i).bits.baseAddress := RSUtils.updateRegReadInfo(slots(i).bits.baseAddress, io.writeInputs, params)
+      slots(i).bits.offset := RSUtils.updateRegReadInfo(slots(i).bits.offset, io.writeInputs, params)
+      slots(i).bits.value := RSUtils.updateRegReadInfo(slots(i).bits.value, io.writeInputs, params)
     }
   }
   
