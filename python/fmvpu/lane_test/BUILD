@@ -216,6 +216,22 @@ py_test(
     main = "test_lane_alu.py",
 )
 
+# NewLane Load/Store functionality test
+py_test(
+    name = "test_lane_ldst",
+    srcs = ["test_ldst.py"],
+    deps = [
+        "//python/fmvpu:fmvpu",
+    ],
+    data = [
+        ":lane_verilog_files",
+    ],
+    args = [
+        "$(location :lane_verilog_files)",
+    ],
+    main = "test_ldst.py",
+)
+
 # Generate Verilog file for PacketSwitch
 genrule(
     name = "packet_switch_verilog",

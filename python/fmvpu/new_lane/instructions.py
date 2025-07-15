@@ -67,6 +67,37 @@ class ALUInstruction:
         return instr | ALU_INSTR_TYPE
 
 
+@dataclass
+class LoadStoreInstruction:
+    """Load/Store instruction encoding (bits 15-14 = 01)"""
+    mode: int  # 2 bits (bits 13-12)
+    unused: int = 0  # 1 bit (bit 11) unused
+    use_base: bool = 0  # 1 bit (bit 10)
+    mask: bool = 0  # 1 bit (bit 9)
+    offset_reg: int = 0  # 3 bits (bits 8-6)
+    src_reg: int = 0  # 3 bits (bits 5-3)
+    dest_reg: int = 0  # 3 bits (bits 2-0)
+    
+    @classmethod
+    def get_field_specs(cls) -> List[Tuple[str, int]]:
+        """Get field specifications for bit packing."""
+        return [
+            ('mode', 2),
+            ('unused', 1),
+            ('use_base', 1),
+            ('mask', 1),
+            ('offset_reg', 3),
+            ('src_reg', 3),
+            ('dest_reg', 3),
+        ]
+    
+    def encode(self) -> int:
+        """Encode to 16-bit instruction"""
+        words = pack_fields_to_words(self, self.get_field_specs(), word_width=16)
+        assert len(words) == 1, f"LoadStoreInstruction requires {len(words)} words but should fit in 1 word"
+        return words[0] | LDST_INSTR_TYPE
+
+
 class PacketModes(IntEnum):
     RECEIVE = 0
     RECEIVE_AND_FORWARD = 1
@@ -83,6 +114,11 @@ class ALUModes(IntEnum):
     SUBI = 3
     MULT = 4
     MULT_ACC = 5
+
+
+class LoadStoreModes(IntEnum):
+    LOAD = 0
+    STORE = 1
 
 
 class PacketHeaderModes(IntEnum):
