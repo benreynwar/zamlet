@@ -95,7 +95,11 @@ class RegisterFileAndFriends(params: LaneParams) extends Module {
 
   // Register file storage
   val registers = Reg(Vec(params.nRegs, new RegisterState(params)))
-  
+  // The contents of the registers after new writes have been noted, but write backs haven't
+  // been processed
+  val registersIntermed = Wire(Vec(params.nRegs, new RegisterState(params)))
+  registersIntermed := registers   // Initial value is just the old value
+
   // Track if last write to accumulator was from MultAcc (for local accumulator optimization)
   val lastAccumWasMultAcc = RegInit(false.B)
   
@@ -131,6 +135,126 @@ class RegisterFileAndFriends(params: LaneParams) extends Module {
   val isLdStInstr = instrTypeEnum === InstrTypes.LdSt
   val isALUInstr = instrTypeEnum === InstrTypes.ALU
   val isLoopInstr = instrTypeEnum === InstrTypes.Loop
+
+  // Determine read/write enables based on instruction type
+  val read1Enable = Wire(Bool())
+  val read2Enable = Wire(Bool())
+  val writeEnable = Wire(Bool())
+  
+  read1Enable := false.B
+  read2Enable := false.B
+  writeEnable := false.B
+
+  val aluMode = instrMode.asTypeOf(ALUModes())
+  val ldstMode = instrMode(1, 0).asTypeOf(LdStModes())
+  val packetMode = instrMode(2, 0).asTypeOf(PacketModes())
+
+  val loopSubtype = instrMode(3, 2).asTypeOf(LoopSubtypes())
+  val loopMode = instrMode(1, 0).asTypeOf(LoopControlModes())
+
+  when (isALUInstr) {
+    read1Enable := true.B  // src1
+    read2Enable := true.B  // src2
+    writeEnable := true.B  // dst
+  } .elsewhen (isLdStInstr) {
+    read1Enable := true.B           // offset reg
+    read2Enable := ldstMode === LdStModes.Store // store needs src value
+    writeEnable := ldstMode === LdStModes.Load // load writes to dst
+  } .elsewhen (isPacketInstr) {
+    // most modes read target
+    read1Enable := packetMode =/= PacketModes.Receive
+    // send modes read length
+    read2Enable := (packetMode === PacketModes.Send ||
+                    packetMode === PacketModes.ForwardAndAppend ||
+                    packetMode === PacketModes.ReceiveForwardAndAppend)
+    // write the length or the word
+    writeEnable := (packetMode === PacketModes.Receive ||
+                    packetMode === PacketModes.ReceiveAndForward ||
+                    packetMode === PacketModes.GetWord)
+  } .elsewhen (isLoopInstr) {
+    when (loopSubtype === LoopSubtypes.Control && loopMode === LoopControlModes.StartLoop) {  // Start Loop
+      read1Enable := true.B  // length reg
+      writeEnable := true.B  // index reg
+    }
+  }
+
+  // For register 0 (packet output), always increment - order matters for packet assembly
+  // For other registers, find first available write identifier
+
+  val nextWriteIdent = Wire(UInt(params.writeIdentWidth.W))
+  when(writeAddr === params.packetWordOutRegAddr.U) {
+    nextWriteIdent := registers(writeAddr).lastIdent + 1.U
+  }.otherwise {
+    // Find first available write identifier by checking inFlight bits
+    val availableIdents = ~registers(writeAddr).inFlight
+    nextWriteIdent := PriorityEncoder(availableIdents)
+  }
+
+  // If the reservation stations can't accept the instruction then we stall.
+  val stallALU = isALUInstr && !io.aluInstr.ready
+  val stallLdSt = isLdStInstr && !io.ldstInstr.ready
+  val stallPacket = isPacketInstr && !io.packetInstr.ready
+  val stalled = stallALU || stallLdSt || stallPacket
+  val fire = io.instrValid && active && !waitingForLoopLength && !stalled
+
+  // Read register data conditionally
+  val read1Data = Wire(new RegReadInfo(params))
+  val read2Data = Wire(new RegReadInfo(params))
+  val dstAddr = Wire(new RegWithIdent(params))
+  
+  when (fire && writeEnable) {
+    dstAddr.regAddr := writeAddr
+    dstAddr.writeIdent := nextWriteIdent
+    registersIntermed(writeAddr).lastIdent := nextWriteIdent
+    registersIntermed(writeAddr).inFlight := registers(writeAddr).inFlight | UIntToOH(nextWriteIdent)
+    registersIntermed(writeAddr).isLocal := false.B
+  } .otherwise {
+    dstAddr := 0.U.asTypeOf(new RegWithIdent(params))
+  }
+  
+  
+  // Update register state on writes from execution units
+  registers := registersIntermed
+  for (i <- 0 until params.nWritePorts) {
+    when (io.writeInputs(i).valid) {
+      val regAddr = io.writeInputs(i).address.regAddr
+      val writeIdent = io.writeInputs(i).address.writeIdent
+      val isForceWrite = io.writeInputs(i).force
+      
+      // Update register value if this matches last ident and not local, OR if it's a force write
+      when ((writeIdent === registersIntermed(regAddr).lastIdent && !registersIntermed(regAddr).isLocal) || isForceWrite) {
+        registers(regAddr).value := io.writeInputs(i).value
+        
+        // Reset lastAccumWasMultAcc if force writing to accumulator register
+        when (isForceWrite && regAddr === params.accumRegAddr.U) {
+          lastAccumWasMultAcc := false.B
+        }
+      }
+      
+      // Clear in-flight bit for this write identifier (only for normal writes, not force writes)
+      when (!isForceWrite) {
+        registers(regAddr).inFlight := registersIntermed(regAddr).inFlight & ~UIntToOH(writeIdent)
+      }
+    }
+  }
+
+  // Program counter update logic
+  val nextPC = Wire(UInt(params.instrAddrWidth.W))
+  pc := nextPC   // pc is a Register
+  nextPC := pc   // The default value for nextPC is pc
+  
+  // Start signal handling
+  when (io.startValid) {
+    pc := io.startPC
+    active := true.B
+    loopActive := false.B
+    waitingForLoopLength := false.B
+  }
+  
+  // Default instruction memory interface
+  io.imReadValid := active   // Should optimize and make it not always read when active if stalled
+  io.imReadAddress := nextPC
+  
   
   // Helper function to read register and return RegReadInfo
   def readRegister(addr: UInt): RegReadInfo = {
@@ -158,95 +282,6 @@ class RegisterFileAndFriends(params: LaneParams) extends Module {
     result
   }
   
-  // Update register state on writes from execution units
-  for (i <- 0 until params.nWritePorts) {
-    when (io.writeInputs(i).valid) {
-      val regAddr = io.writeInputs(i).address.regAddr
-      val writeIdent = io.writeInputs(i).address.writeIdent
-      
-      // Update register value if this matches last ident and not local
-      when (writeIdent === registers(regAddr).lastIdent && !registers(regAddr).isLocal) {
-        registers(regAddr).value := io.writeInputs(i).value
-      }
-      
-      // Clear in-flight bit for this write identifier
-      registers(regAddr).inFlight := registers(regAddr).inFlight & ~UIntToOH(writeIdent)
-    }
-  }
-
-  // Program counter update logic
-  val nextPC = Wire(UInt(params.instrAddrWidth.W))
-  pc := nextPC   // pc is a Register
-  nextPC := pc   // The default value for nextPC is pc
-  
-  // Start signal handling
-  when (io.startValid) {
-    pc := io.startPC
-    active := true.B
-    loopActive := false.B
-    waitingForLoopLength := false.B
-  }
-  
-  // Default instruction memory interface
-  io.imReadValid := active   // Should optimize and make it not always read when active if stalled
-  io.imReadAddress := nextPC
-  
-  // If the reservation stations can't accept the instruction then we stall.
-  val stallALU = isALUInstr && !io.aluInstr.ready
-  val stallLdSt = isLdStInstr && !io.ldstInstr.ready
-  val stallPacket = isPacketInstr && !io.packetInstr.ready
-  val stalled = stallALU || stallLdSt || stallPacket
-  // We process an instruction if the reservation station has room and we're not
-  // waiting on a loop length.
-  val fire = io.instrValid && active && !waitingForLoopLength && !stalled
-  dontTouch(fire)
-
-   val loopSubtype = instrMode(3, 2).asTypeOf(LoopSubtypes())
-   val loopMode = instrMode(1, 0).asTypeOf(LoopControlModes())
-
-  
-  // Determine read/write enables based on instruction type
-  val read1Enable = Wire(Bool())
-  val read2Enable = Wire(Bool())
-  val writeEnable = Wire(Bool())
-  
-  read1Enable := false.B
-  read2Enable := false.B
-  writeEnable := false.B
-
-  when (isALUInstr) {
-    read1Enable := true.B  // src1
-    read2Enable := true.B  // src2
-    writeEnable := true.B  // dst
-  } .elsewhen (isLdStInstr) {
-    val ldstMode = instrMode(1, 0).asTypeOf(LdStModes())
-    read1Enable := true.B           // offset reg
-    read2Enable := ldstMode === LdStModes.Store // store needs src value
-    writeEnable := ldstMode === LdStModes.Load // load writes to dst
-  } .elsewhen (isPacketInstr) {
-    val packetMode = instrMode(2, 0).asTypeOf(PacketModes())
-    // most modes read target
-    read1Enable := packetMode =/= PacketModes.Receive
-    // send modes read length
-    read2Enable := (packetMode === PacketModes.Send ||
-                    packetMode === PacketModes.ForwardAndAppend ||
-                    packetMode === PacketModes.ReceiveForwardAndAppend)
-    // write the length or the word
-    writeEnable := (packetMode === PacketModes.Receive ||
-                    packetMode === PacketModes.ReceiveAndForward ||
-                    packetMode === PacketModes.GetWord)
-  } .elsewhen (isLoopInstr) {
-    when (loopSubtype === LoopSubtypes.Control && loopMode === LoopControlModes.StartLoop) {  // Start Loop
-      read1Enable := true.B  // length reg
-      writeEnable := true.B  // index reg
-    }
-  }
-  
-  // Read register data conditionally
-  val read1Data = Wire(new RegReadInfo(params))
-  val read2Data = Wire(new RegReadInfo(params))
-  val dstAddr = Wire(new RegWithIdent(params))
-  
   when (read1Enable) {
     read1Data := readRegister(read1Addr)
   }.otherwise {
@@ -261,40 +296,18 @@ class RegisterFileAndFriends(params: LaneParams) extends Module {
     read2Data.value := 0.U
   }
   
-  // For register 0 (packet output), always increment - order matters for packet assembly
-  // For other registers, find first available write identifier
 
-  val nextWriteIdent = Wire(UInt(params.writeIdentWidth.W))
-  when(writeAddr === params.packetWordOutRegAddr.U) {
-    nextWriteIdent := registers(writeAddr).lastIdent + 1.U
-  }.otherwise {
-    // Find first available write identifier by checking inFlight bits
-    val availableIdents = ~registers(writeAddr).inFlight
-    nextWriteIdent := PriorityEncoder(availableIdents)
-  }
-  
-  when (fire && writeEnable) {
-    dstAddr.regAddr := writeAddr
-    dstAddr.writeIdent := nextWriteIdent
-    registers(writeAddr).lastIdent := nextWriteIdent
-    registers(writeAddr).inFlight := registers(writeAddr).inFlight | UIntToOH(nextWriteIdent)
-    registers(writeAddr).isLocal := false.B
-  } .otherwise {
-    dstAddr := 0.U.asTypeOf(new RegWithIdent(params))
-  }
+  val zeroRegReadInfo = Wire(new RegReadInfo(params))
 
-  val aluMode = instrMode.asTypeOf(ALUModes())
   io.aluInstr.valid := false.B // Default overriden later
   io.aluInstr.bits.mode := aluMode
   io.aluInstr.bits.src1 := read1Data
   io.aluInstr.bits.src2 := read2Data
   io.aluInstr.bits.accum := readRegister(params.accumRegAddr.U) // Accumulator register (always read)
-  io.aluInstr.bits.mask := readRegister(params.maskRegAddr.U) // Mask register (always read)
+  io.aluInstr.bits.mask := Mux(io.instruction(9), readRegister(params.maskRegAddr.U), zeroRegReadInfo) // Mask bit 9
   io.aluInstr.bits.dstAddr := dstAddr
   io.aluInstr.bits.useLocalAccum := lastAccumWasMultAcc && (aluMode === ALUModes.MultAcc)
 
-  val ldstMode = instrMode(1, 0).asTypeOf(LdStModes())
-  val zeroRegReadInfo = Wire(new RegReadInfo(params))
   zeroRegReadInfo.resolved := true.B
   zeroRegReadInfo.value := 0.U
   io.ldstInstr.valid := false.B
@@ -303,8 +316,8 @@ class RegisterFileAndFriends(params: LaneParams) extends Module {
   io.ldstInstr.bits.offset := read1Data
   io.ldstInstr.bits.value := read2Data // For stores
   io.ldstInstr.bits.dstAddr := dstAddr
+  io.ldstInstr.bits.mask := Mux(io.instruction(9), readRegister(params.maskRegAddr.U), zeroRegReadInfo) // Mask bit 9
 
-  val packetMode = instrMode(2, 0).asTypeOf(PacketModes())
   io.packetInstr.valid := false.B
   io.packetInstr.bits.mode := packetMode
   io.packetInstr.bits.target := read1Data
@@ -312,7 +325,10 @@ class RegisterFileAndFriends(params: LaneParams) extends Module {
   io.packetInstr.bits.channel := readRegister(params.channelRegAddr.U) // Channel register
   io.packetInstr.bits.result := dstAddr
   io.packetInstr.bits.forwardAgain := io.instruction(10) // Bit 10 from ISA
+  io.packetInstr.bits.mask := Mux(io.instruction(9), readRegister(params.maskRegAddr.U), zeroRegReadInfo) // Mask bit 9
   
+  // We process an instruction if the reservation station has room and we're not
+  // waiting on a loop length.
 
   // Instruction dispatch using conditional results
   when (fire) {

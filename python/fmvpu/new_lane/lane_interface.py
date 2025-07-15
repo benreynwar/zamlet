@@ -149,6 +149,11 @@ class LaneInterface:
         probed_value = getattr(self.dut.rff, f'registers_{reg}_value').value
         assert probed_value == value
 
+    async def read_register(self, reg):
+        """Read the current value of a register"""
+        for cycle in range(40):
+            await triggers.RisingEdge(self.dut.clock)
+        return getattr(self.dut.rff, f'registers_{reg}_value').value
 
     async def write_program(self, program, base_address=0):
         machine_code = [instr.encode() for instr in program]

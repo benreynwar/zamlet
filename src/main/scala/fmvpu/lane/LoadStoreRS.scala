@@ -36,6 +36,7 @@ class LoadStoreRS(params: LaneParams) extends Module {
     slots(freeSlot).bits.baseAddress := RSUtils.updateRegReadInfo(io.input.bits.baseAddress, io.writeInputs, params)
     slots(freeSlot).bits.offset := RSUtils.updateRegReadInfo(io.input.bits.offset, io.writeInputs, params)
     slots(freeSlot).bits.value := RSUtils.updateRegReadInfo(io.input.bits.value, io.writeInputs, params)
+    slots(freeSlot).bits.mask := RSUtils.updateRegReadInfo(io.input.bits.mask, io.writeInputs, params)
   }
   
   
@@ -45,6 +46,7 @@ class LoadStoreRS(params: LaneParams) extends Module {
       slots(i).bits.baseAddress := RSUtils.updateRegReadInfo(slots(i).bits.baseAddress, io.writeInputs, params)
       slots(i).bits.offset := RSUtils.updateRegReadInfo(slots(i).bits.offset, io.writeInputs, params)
       slots(i).bits.value := RSUtils.updateRegReadInfo(slots(i).bits.value, io.writeInputs, params)
+      slots(i).bits.mask := RSUtils.updateRegReadInfo(slots(i).bits.mask, io.writeInputs, params)
     }
   }
   
@@ -53,6 +55,7 @@ class LoadStoreRS(params: LaneParams) extends Module {
     slot.valid && 
     slot.bits.baseAddress.resolved && 
     slot.bits.offset.resolved && 
+    slot.bits.mask.resolved &&
     (slot.bits.mode === LdStModes.Load || slot.bits.value.resolved) // Only stores need value resolved
   )
   
@@ -70,6 +73,7 @@ class LoadStoreRS(params: LaneParams) extends Module {
     io.output.bits.offset := readySlot.bits.offset.getData
     io.output.bits.dstAddr := readySlot.bits.dstAddr
     io.output.bits.value := readySlot.bits.value.getData
+    io.output.bits.mask := readySlot.bits.mask.getData(0) // Extract single bit from mask
     
     // Clear the slot that was dispatched
     slots(readySlotIdx).valid := false.B
@@ -80,6 +84,7 @@ class LoadStoreRS(params: LaneParams) extends Module {
     io.output.bits.offset := 0.U
     io.output.bits.dstAddr := 0.U.asTypeOf(new RegWithIdent(params))
     io.output.bits.value := 0.U
+    io.output.bits.mask := false.B
   }
 }
 

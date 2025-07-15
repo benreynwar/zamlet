@@ -1,6 +1,17 @@
 ISA
 ===
 
+Mask Bit (Conditional Execution)
+-------------------------------
+
+All instructions include a mask bit (bit 9) for predicated execution:
+- mask bit = 0: Execute instruction unconditionally
+- mask bit = 1: Check mask register (register 2) bit 0:
+  - If mask register bit 0 = 1: Skip instruction execution (destination unchanged)  
+  - If mask register bit 0 = 0: Execute instruction normally
+
+This enables conditional execution and SIMD-style masking operations.
+
 Packet Instructions
 -------------------
  - Modes
@@ -36,13 +47,18 @@ Store from reg to address (base address in reg, offset in reg)
 ALU Instruction
 ---------------
 
-Mode 0 = Add
-Mode 1 = Addi
-Mode 2 = Sub
-Mode 3 = Subi
-Mode 4 = Mult
-Mode 5 = MultAcc
+Mode 0 = Add      : result = src1 + src2
+Mode 1 = Addi     : result = src1 + immediate (src2 as immediate)
+Mode 2 = Sub      : result = src1 - src2  
+Mode 3 = Subi     : result = src1 - immediate (src2 as immediate)
+Mode 4 = Mult     : result = src1 * src2
+Mode 5 = MultAcc  : result = accumulator + (src1 * src2)
+                    (accumulator = register 1, updated when writing to reg 1)
 Mode 6-15 Not set yet.
+
+Note: For MultAcc, the accumulator value comes from register 1.
+      When the result is written back to register 1, it updates the
+      internal accumulator state for subsequent MultAcc operations.
 
   2 bits 10           (bits 15-14)
   4 bits mode         (bits 13-10)

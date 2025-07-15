@@ -39,6 +39,7 @@ class PacketRS(params: LaneParams) extends Module {
     slots(freeSlot).bits.target := RSUtils.updateRegReadInfo(io.input.bits.target, io.writeInputs, params)
     slots(freeSlot).bits.sendLength := RSUtils.updateRegReadInfo(io.input.bits.sendLength, io.writeInputs, params)
     slots(freeSlot).bits.channel := RSUtils.updateRegReadInfo(io.input.bits.channel, io.writeInputs, params)
+    slots(freeSlot).bits.mask := RSUtils.updateRegReadInfo(io.input.bits.mask, io.writeInputs, params)
   }
   
   
@@ -48,6 +49,7 @@ class PacketRS(params: LaneParams) extends Module {
       slots(i).bits.target := RSUtils.updateRegReadInfo(slots(i).bits.target, io.writeInputs, params)
       slots(i).bits.sendLength := RSUtils.updateRegReadInfo(slots(i).bits.sendLength, io.writeInputs, params)
       slots(i).bits.channel := RSUtils.updateRegReadInfo(slots(i).bits.channel, io.writeInputs, params)
+      slots(i).bits.mask := RSUtils.updateRegReadInfo(slots(i).bits.mask, io.writeInputs, params)
     }
   }
   
@@ -66,7 +68,8 @@ class PacketRS(params: LaneParams) extends Module {
     val depsResolved = slot.valid && 
                       slot.bits.target.resolved && 
                       slot.bits.sendLength.resolved && 
-                      slot.bits.channel.resolved
+                      slot.bits.channel.resolved &&
+                      slot.bits.mask.resolved
     
     val goesToSend = isSendInstruction(slot.bits.mode)
     val goesToReceive = isReceiveInstruction(slot.bits.mode)
@@ -94,6 +97,7 @@ class PacketRS(params: LaneParams) extends Module {
   io.sendOutput.bits.result := readySlot.bits.result
   io.sendOutput.bits.sendLength := readySlot.bits.sendLength.getData
   io.sendOutput.bits.channel := readySlot.bits.channel.getData(1, 0)
+  io.sendOutput.bits.mask := readySlot.bits.mask.getData(0) // Extract single bit from mask
   
   // Receive interface output
   io.receiveOutput.valid := readySlotGoesToReceive
@@ -104,6 +108,7 @@ class PacketRS(params: LaneParams) extends Module {
   io.receiveOutput.bits.result := readySlot.bits.result
   io.receiveOutput.bits.sendLength := readySlot.bits.sendLength.getData
   io.receiveOutput.bits.channel := readySlot.bits.channel.getData(1, 0)
+  io.receiveOutput.bits.mask := readySlot.bits.mask.getData(0) // Extract single bit from mask
   
   // Clear the slot when instruction is consumed by all required interfaces
   val slotConsumed = (!readySlotGoesToSend || io.sendOutput.ready) && 

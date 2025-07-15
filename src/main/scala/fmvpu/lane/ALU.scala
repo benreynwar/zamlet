@@ -6,9 +6,23 @@ import chisel3.util._
 /**
  * Basic ALU for Lane implementation
  * 
- * Supports Add, Sub, Mult, MultAcc operations with configurable pipeline latency.
- * Immediate variants use src2 as immediate value.
- * Maintains local accumulator for chained MultAcc operations.
+ * Supports arithmetic operations with configurable pipeline latency:
+ * - Add/Addi: Addition with register or immediate operand
+ * - Sub/Subi: Subtraction with register or immediate operand  
+ * - Mult: Multiplication of two registers
+ * - MultAcc: Multiply-accumulate using register 1 as accumulator
+ * 
+ * Accumulator Behavior:
+ * - Register 1 (params.accumRegAddr) serves as the accumulator
+ * - MultAcc operation: accumulator + (src1 * src2) -> result
+ * - When writing to register 1, updates internal accumulator state
+ * - Local accumulator used for chained MultAcc operations
+ * 
+ * Mask Support:
+ * - When instruction mask bit = 0: Execute unconditionally
+ * - When instruction mask bit = 1: Check mask register (register 2) bit 0
+ *   - If mask register bit 0 = 1: Skip execution (no result produced)
+ *   - If mask register bit 0 = 0: Execute normally
  */
 class ALU(params: LaneParams) extends Module {
   val io = IO(new Bundle {
@@ -52,7 +66,7 @@ class ALU(params: LaneParams) extends Module {
   }
 
   // Update local accumulator when writing to accumulator register
-  val isWritingToAccum = io.instr.valid && io.instr.bits.dstAddr.regAddr === params.accumRegAddr.U
+  val isWritingToAccum = io.instr.valid && !io.instr.bits.mask && io.instr.bits.dstAddr.regAddr === params.accumRegAddr.U
   when (isWritingToAccum) {
     localAccumulator := aluOut
   }
@@ -60,7 +74,7 @@ class ALU(params: LaneParams) extends Module {
   // Pipeline the result through the specified latency
   if (params.aluLatency == 1) {
     // Single cycle latency
-    io.result.valid := io.instr.valid
+    io.result.valid := io.instr.valid && !io.instr.bits.mask
     io.result.value := aluOut
     io.result.address := io.instr.bits.dstAddr
     io.result.force := false.B
@@ -71,7 +85,7 @@ class ALU(params: LaneParams) extends Module {
     val dstAddrPipe = Reg(Vec(params.aluLatency, new RegWithIdent(params)))
     
     // Stage 0 (input)
-    validPipe(0) := io.instr.valid
+    validPipe(0) := io.instr.valid && !io.instr.bits.mask
     resultPipe(0) := aluOut
     dstAddrPipe(0) := io.instr.bits.dstAddr
     

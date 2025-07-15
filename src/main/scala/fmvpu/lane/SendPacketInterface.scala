@@ -91,14 +91,19 @@ class SendPacketInterface(params: LaneParams) extends Module {
     }
   }
   
-  // Handle send instructions
-  when(bufferedInstr.valid) {
+  // Handle send instructions (only when not masked)
+  when(bufferedInstr.valid && !bufferedInstr.bits.mask) {
     bufferedInstr.ready := true.B  // Consume the instruction
     sendState := States.SendingHeader
     sendRemainingWords := bufferedInstr.bits.sendLength
     sendChannel := bufferedInstr.bits.channel
     sendX := bufferedInstr.bits.xTarget
     sendY := bufferedInstr.bits.yTarget
+  }
+  
+  // Consume masked instructions without executing
+  when(bufferedInstr.valid && bufferedInstr.bits.mask) {
+    bufferedInstr.ready := true.B  // Consume the instruction but don't execute
   }
   
   // Send state machine

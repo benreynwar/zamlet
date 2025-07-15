@@ -27,16 +27,16 @@ class LaneDataMemory(params: LaneParams) extends Module {
   val isLoad = io.instr.bits.mode === LdStModes.Load
   val isStore = io.instr.bits.mode === LdStModes.Store
   
-  // Read operation
-  val readData = mem.read(addr, io.instr.valid && isLoad)
+  // Read operation (only when not masked)
+  val readData = mem.read(addr, io.instr.valid && isLoad && !io.instr.bits.mask)
   
-  // Write operation  
-  when(io.instr.valid && isStore) {
+  // Write operation (only when not masked)
+  when(io.instr.valid && isStore && !io.instr.bits.mask) {
     mem.write(addr, io.instr.bits.value)
   }
   
-  // Output result for loads only
-  io.result.valid := RegNext(io.instr.valid && isLoad, false.B)
+  // Output result for loads only (only when not masked)
+  io.result.valid := RegNext(io.instr.valid && isLoad && !io.instr.bits.mask, false.B)
   io.result.value := RegNext(readData)
   io.result.address := RegNext(io.instr.bits.dstAddr)
   io.result.force := false.B

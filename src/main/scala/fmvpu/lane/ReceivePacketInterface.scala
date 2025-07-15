@@ -153,8 +153,16 @@ class ReceivePacketInterface(params: LaneParams) extends Module {
   
   switch(receiveState) {
     is(States.Idle) {
-      // Send forward info if we have a forwarding instruction
-      when (bufferedInstr.valid && 
+      // Consume masked receive instructions without executing
+      when (bufferedInstr.valid && bufferedInstr.bits.mask &&
+           (bufferedInstr.bits.mode === PacketModes.Receive ||
+            bufferedInstr.bits.mode === PacketModes.ReceiveAndForward ||
+            bufferedInstr.bits.mode === PacketModes.ReceiveForwardAndAppend)) {
+        bufferedInstr.ready := true.B  // Consume but don't execute
+      }
+      
+      // Send forward info if we have a forwarding instruction (and not masked)
+      when (bufferedInstr.valid && !bufferedInstr.bits.mask &&
            (bufferedInstr.bits.mode === PacketModes.ReceiveAndForward ||
             bufferedInstr.bits.mode === PacketModes.ReceiveForwardAndAppend)) {
         io.forward.valid := true.B
@@ -176,8 +184,8 @@ class ReceivePacketInterface(params: LaneParams) extends Module {
           receiveState := States.ProcessingCommand
           // Ignore any pending receive instruction for command packets
         } .otherwise {
-          // Normal packets need both header and instruction
-          when (bufferedInstr.valid) {
+          // Normal packets need both header and instruction (and instruction not masked)
+          when (bufferedInstr.valid && !bufferedInstr.bits.mask) {
             // We have both - consume both and start receiving data
             bufferedFromNetwork.ready := true.B
             bufferedInstr.ready := true.B
@@ -201,7 +209,7 @@ class ReceivePacketInterface(params: LaneParams) extends Module {
             io.writeReg.value := header.length
             io.writeReg.force := false.B
           }
-          // If no instruction available, stay in Idle (don't consume header)
+          // If no instruction available or instruction is masked, stay in Idle (don't consume header)
         }
       }
       // If no header available, stay in Idle (don't consume instruction)
@@ -217,11 +225,15 @@ class ReceivePacketInterface(params: LaneParams) extends Module {
           errorWrongInstructionMode := true.B
         }
         
-        io.writeReg.valid := true.B
-        io.writeReg.value := bufferedFromNetwork.bits.data
-        io.writeReg.address.regAddr := bufferedInstr.bits.result.regAddr
-        io.writeReg.address.writeIdent := bufferedInstr.bits.result.writeIdent
-        io.writeReg.force := false.B
+        // Only write to register if not masked
+        when (!bufferedInstr.bits.mask) {
+          io.writeReg.valid := true.B
+          io.writeReg.value := bufferedFromNetwork.bits.data
+          io.writeReg.address.regAddr := bufferedInstr.bits.result.regAddr
+          io.writeReg.address.writeIdent := bufferedInstr.bits.result.writeIdent
+          io.writeReg.force := false.B
+        }
+        
         receiveRemainingWords := receiveRemainingWords - 1.U
         when (receiveRemainingWords === 1.U) {
           receiveState := States.Idle

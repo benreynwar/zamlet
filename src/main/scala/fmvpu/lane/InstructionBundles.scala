@@ -38,6 +38,7 @@ class LdStInstrUnresolved(params: LaneParams) extends Bundle {
   val offset = new RegReadInfo(params)
   val dstAddr = new RegWithIdent(params)
   val value = new RegReadInfo(params) // For stores
+  val mask = new RegReadInfo(params)
 }
 
 /**
@@ -49,6 +50,7 @@ class LdStInstrResolved(params: LaneParams) extends Bundle {
   val offset = UInt(params.addressWidth.W)
   val dstAddr = new RegWithIdent(params)
   val value = UInt(params.width.W) // For stores
+  val mask = Bool()
 }
 
 /**
@@ -61,6 +63,7 @@ class PacketInstrUnresolved(params: LaneParams) extends Bundle {
   val sendLength = new RegReadInfo(params)
   val channel = new RegReadInfo(params)
   val forwardAgain = Bool()
+  val mask = new RegReadInfo(params)
   
   // Helper functions to extract x and y coordinates from target
   def xTarget: UInt = target.getData(params.xPosWidth - 1, 0)
@@ -78,6 +81,7 @@ class PacketInstrResolved(params: LaneParams) extends Bundle {
   val sendLength = UInt(params.packetLengthWidth.W)
   val channel = UInt(2.W)
   val forwardAgain = Bool()
+  val mask = Bool()
   
   // Backward compatibility: target field as concatenated x,y
   def target: UInt = Cat(yTarget, xTarget)

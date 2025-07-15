@@ -20,7 +20,8 @@ class AluRS(params: LaneParams) extends Module {
 
   // Reservation station slots - reuse ALUInstrUnresolved bundle
   val slots = RegInit(VecInit(Seq.fill(params.nAluRSSlots)(0.U.asTypeOf(Valid(new ALUInstrUnresolved(params))))))
-  
+  val oldSlots = Wire(Vec(params.nAluRSSlots, Valid(new ALUInstrUnresolved(params))))
+
   // Find free slot for new instruction
   val freeSlotOH = PriorityEncoderOH(slots.map(!_.valid))
   val freeSlot = PriorityEncoder(slots.map(!_.valid))
@@ -30,23 +31,21 @@ class AluRS(params: LaneParams) extends Module {
   io.input.ready := hasFreeLot
   
   // Accept new instruction when interface fires
+  oldSlots := slots
   when (io.input.fire) {
-    slots(freeSlot).valid := true.B
-    slots(freeSlot).bits := io.input.bits
-    slots(freeSlot).bits.src1 := RSUtils.updateRegReadInfo(io.input.bits.src1, io.writeInputs, params)
-    slots(freeSlot).bits.src2 := RSUtils.updateRegReadInfo(io.input.bits.src2, io.writeInputs, params)
-    slots(freeSlot).bits.accum := RSUtils.updateRegReadInfo(io.input.bits.accum, io.writeInputs, params)
-    slots(freeSlot).bits.mask := RSUtils.updateRegReadInfo(io.input.bits.mask, io.writeInputs, params)
+    oldSlots(freeSlot).valid := true.B
+    oldSlots(freeSlot).bits := io.input.bits
   }
   
   
   // Update slots with write results for dependency resolution
   for (i <- 0 until params.nAluRSSlots) {
-    when (slots(i).valid) {
-      slots(i).bits.src1 := RSUtils.updateRegReadInfo(slots(i).bits.src1, io.writeInputs, params)
-      slots(i).bits.src2 := RSUtils.updateRegReadInfo(slots(i).bits.src2, io.writeInputs, params)
-      slots(i).bits.accum := RSUtils.updateRegReadInfo(slots(i).bits.accum, io.writeInputs, params)
-      slots(i).bits.mask := RSUtils.updateRegReadInfo(slots(i).bits.mask, io.writeInputs, params)
+    slots(i) := oldSlots(i)
+    when (oldSlots(i).valid) {
+      slots(i).bits.src1 := RSUtils.updateRegReadInfo(oldSlots(i).bits.src1, io.writeInputs, params)
+      slots(i).bits.src2 := RSUtils.updateRegReadInfo(oldSlots(i).bits.src2, io.writeInputs, params)
+      slots(i).bits.accum := RSUtils.updateRegReadInfo(oldSlots(i).bits.accum, io.writeInputs, params)
+      slots(i).bits.mask := RSUtils.updateRegReadInfo(oldSlots(i).bits.mask, io.writeInputs, params)
     }
   }
   
@@ -55,7 +54,7 @@ class AluRS(params: LaneParams) extends Module {
     slot.valid && 
     slot.bits.src1.resolved && 
     slot.bits.src2.resolved && 
-    slot.bits.accum.resolved && 
+    (slot.bits.accum.resolved || slot.bits.useLocalAccum) && 
     slot.bits.mask.resolved
   )
   readySlots.foreach(dontTouch(_))
