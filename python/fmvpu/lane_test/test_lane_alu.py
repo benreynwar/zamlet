@@ -4,6 +4,7 @@ import tempfile
 from typing import Optional
 import logging
 from random import Random
+import json
 
 import cocotb
 from cocotb import triggers
@@ -14,6 +15,7 @@ from fmvpu import generate_rtl
 from fmvpu import test_utils
 from fmvpu.new_lane import lane_interface
 from fmvpu.new_lane.lane_interface import LaneInterface
+from fmvpu.new_lane.lane_params import LaneParams
 from fmvpu.new_lane.instructions import PacketInstruction, PacketModes, HaltInstruction, ALUInstruction, ALUModes
 
 
@@ -60,7 +62,7 @@ async def alu_addi_test(li: LaneInterface) -> None:
     await li.start_program()
     
     # Check result in register 3
-    assert await li.read_register(3) == 15
+    assert await li.read_register(3) == 12
 
 
 async def alu_sub_test(li: LaneInterface) -> None:
@@ -102,7 +104,7 @@ async def alu_subi_test(li: LaneInterface) -> None:
     await li.start_program()
     
     # Check result in register 3
-    assert await li.read_register(3) == 22
+    assert await li.read_register(3) == 23
 
 
 async def alu_mult_test(li: LaneInterface) -> None:
@@ -356,8 +358,13 @@ async def alu_with_packet_io_test(li: LaneInterface) -> None:
 
 
 @cocotb.test()
-async def lane_alu_test(dut: HierarchyObject, seed=0) -> None:
+async def lane_alu_test(dut: HierarchyObject) -> None:
     test_utils.configure_logging_sim("DEBUG")
+    test_params = test_utils.read_params()
+    seed = test_params['seed']
+    with open(test_params['params_file']) as f:
+        params = LaneParams.from_dict(json.load(f))
+
     rnd = Random(seed)
     
     # Start clock
@@ -365,7 +372,7 @@ async def lane_alu_test(dut: HierarchyObject, seed=0) -> None:
     cocotb.start_soon(clock_gen.start())
     
     # Create the lane interface
-    li = LaneInterface(dut, rnd, 1, 2)
+    li = LaneInterface(dut, params, rnd, 1, 2)
     li.initialize_signals()
     await li.start()
     
@@ -384,7 +391,7 @@ async def lane_alu_test(dut: HierarchyObject, seed=0) -> None:
     await alu_with_packet_io_test(li)
 
 
-def test_lane_alu(verilog_file: str, seed: int = 0) -> None:
+def test_lane_alu(verilog_file: str, params_file: str, seed: int = 0) -> None:
     """Main test procedure using pre-generated Verilog."""
     filenames = [verilog_file]
     
@@ -393,6 +400,7 @@ def test_lane_alu(verilog_file: str, seed: int = 0) -> None:
     
     test_params = {
         "seed": seed,
+        "params_file": params_file,
     }
     
     verilog_dir = os.path.dirname(verilog_file)
@@ -418,16 +426,18 @@ def generate_and_test_lane_alu(temp_dir: Optional[str] = None, seed: int = 0) ->
         concat_filename = os.path.join(working_dir, "lane_verilog.sv")
         test_utils.concatenate_sv_files(filenames, concat_filename)
         
-        test_lane_alu(concat_filename, seed)
+        test_lane_alu(concat_filename, config_file, seed)
 
 
 if __name__ == "__main__":
     test_utils.configure_logging_pre_sim("INFO")
     
-    if len(sys.argv) >= 2:
+    if len(sys.argv) > 1:
         # Called from Bazel with verilog_file
-        verilog_file = sys.argv[1]
-        test_lane_alu(verilog_file)
+        assert len(sys.argv) >= 3
+        verilog_file = os.path.abspath(sys.argv[1])
+        config_file = os.path.abspath(sys.argv[2])
+        test_lane_alu(verilog_file, config_file)
     else:
         # Called directly - generate Verilog and test
         generate_and_test_lane_alu()

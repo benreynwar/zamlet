@@ -146,7 +146,7 @@ class RegisterFileAndFriends(params: LaneParams) extends Module {
   writeEnable := false.B
 
   val aluMode = instrMode.asTypeOf(ALUModes())
-  val ldstMode = instrMode(1, 0).asTypeOf(LdStModes())
+  val ldstMode = instrMode(3, 2).asTypeOf(LdStModes())
   val packetMode = instrMode(2, 0).asTypeOf(PacketModes())
 
   val loopSubtype = instrMode(3, 2).asTypeOf(LoopSubtypes())
@@ -154,7 +154,8 @@ class RegisterFileAndFriends(params: LaneParams) extends Module {
 
   when (isALUInstr) {
     read1Enable := true.B  // src1
-    read2Enable := true.B  // src2
+    // For immediate instructions (Addi, Subi), don't read src2 register
+    read2Enable := aluMode =/= ALUModes.Addi && aluMode =/= ALUModes.Subi
     writeEnable := true.B  // dst
   } .elsewhen (isLdStInstr) {
     read1Enable := true.B           // offset reg
@@ -291,6 +292,10 @@ class RegisterFileAndFriends(params: LaneParams) extends Module {
   
   when (read2Enable) {
     read2Data := readRegister(read2Addr)
+  } .elsewhen (isALUInstr && (aluMode === ALUModes.Addi || aluMode === ALUModes.Subi)) {
+    // For immediate instructions, use read2Addr as immediate value
+    read2Data.resolved := true.B
+    read2Data.value := read2Addr
   } .otherwise {
     read2Data.resolved := true.B
     read2Data.value := 0.U

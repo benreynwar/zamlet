@@ -3,270 +3,71 @@
 load("@rules_python//python:defs.bzl", "py_test")
 load("//:chisel.bzl", "chisel_binary")
 
-# Generate Verilog file for RegisterFileAndFriends
-genrule(
-    name = "rff_verilog",
-    srcs = ["//configs:lane_default.json"],
-    outs = ["rff.sv"],
+# Config file mapping: short_name -> actual_filename
+CONFIGS = {
+    "default": "lane_default",
+}
+
+# Module definitions: name, top_level, extra_args
+MODULES = [
+    ("rff", "RegisterFileAndFriends", []),
+    ("alu", "ALU", ["1"]),
+    ("alurs", "AluRS", []),
+    ("instruction_memory", "InstructionMemory", []),
+    ("lane", "NewLane", []),
+    ("packet_switch", "PacketSwitch", []),
+]
+
+# Test definitions: name, test_file, verilog_target, special_args
+TESTS = [
+    ("test_rff_basic", "test_rff_basic.py", "rff", []),
+    ("test_alu_basic", "test_alu_basic.py", "alu", []),
+    ("test_alurs_basic", "test_alurs_basic.py", "alurs", []),
+    ("test_instruction_memory_basic", "test_instruction_memory.py", "instruction_memory", ["--verilog-file"]),
+    ("test_lane_basic", "test_lane.py", "lane", []),
+    ("test_lane_alu", "test_lane_alu.py", "lane", []),
+    ("test_lane_ldst", "test_lane_ldst.py", "lane", []),
+    ("test_lane_packet", "test_lane_packet.py", "lane", []),
+    ("test_packet_switch_basic", "test_packet_switch.py", "packet_switch", []),
+]
+
+# Generate Verilog files for each module + config combination
+[genrule(
+    name = "{}_{}_verilog".format(name, config_name),
+    srcs = ["//configs:{}.json".format(config_file)],
+    outs = ["{}_{}.sv".format(name, config_name)],
     cmd = """
     TMPDIR=$$(mktemp -d)
     $(location //src:verilog_generator) \\
-        $$TMPDIR/rff_verilog \\
-        RegisterFileAndFriends \\
-        $(location //configs:lane_default.json)
-    cat $$TMPDIR/rff_verilog/*.sv > $@
+        $$TMPDIR/{name}_{config_name}_verilog \\
+        {top_level} \\
+        $(location //configs:{config_file}.json) {extra_args}
+    cat $$TMPDIR/{name}_{config_name}_verilog/*.sv > $@
     rm -rf $$TMPDIR
-    """,
+    """.format(name=name, config_name=config_name, top_level=top_level, config_file=config_file, extra_args=" ".join(extra_args)),
     tools = ["//src:verilog_generator"],
-)
+) for name, top_level, extra_args in MODULES for config_name, config_file in CONFIGS.items()]
 
-# Create filegroup to expose the generated Verilog file
-filegroup(
-    name = "rff_verilog_files",
-    srcs = [":rff_verilog"],
-)
+# Create filegroups for all Verilog files
+[filegroup(
+    name = "{}_{}_verilog_files".format(name, config_name),
+    srcs = [":{}_{}_verilog".format(name, config_name)],
+) for name, _, _ in MODULES for config_name, _ in CONFIGS.items()]
 
-# Basic RFF test
-py_test(
-    name = "test_rff_basic",
-    srcs = ["test_rff_basic.py"],
+# Generate all tests for each config
+[py_test(
+    name = "{}_{}".format(test_name, config_name),
+    srcs = [test_file],
     deps = [
         "//python/fmvpu:fmvpu",
     ],
     data = [
-        ":rff_verilog_files",
+        ":{}_{}_verilog_files".format(verilog_target, config_name),
+        "//configs:{}.json".format(config_file),
     ],
-    args = [
-        "$(location :rff_verilog_files)",
+    args = special_args + [
+        "$(location :{}_{}_verilog_files)".format(verilog_target, config_name),
+        "$(location //configs:{}.json)".format(config_file),
     ],
-    main = "test_rff_basic.py",
-)
-
-# Generate Verilog file for ALU
-genrule(
-    name = "alu_verilog",
-    srcs = ["//configs:lane_default.json"],
-    outs = ["alu.sv"],
-    cmd = """
-    TMPDIR=$$(mktemp -d)
-    $(location //src:verilog_generator) \\
-        $$TMPDIR/alu_verilog \\
-        ALU \\
-        $(location //configs:lane_default.json) \\
-        1
-    cat $$TMPDIR/alu_verilog/*.sv > $@
-    rm -rf $$TMPDIR
-    """,
-    tools = ["//src:verilog_generator"],
-)
-
-# Create filegroup to expose the generated ALU Verilog file
-filegroup(
-    name = "alu_verilog_files",
-    srcs = [":alu_verilog"],
-)
-
-# Basic ALU test
-py_test(
-    name = "test_alu_basic",
-    srcs = ["test_alu_basic.py"],
-    deps = [
-        "//python/fmvpu:fmvpu",
-    ],
-    data = [
-        ":alu_verilog_files",
-    ],
-    args = [
-        "$(location :alu_verilog_files)",
-    ],
-    main = "test_alu_basic.py",
-)
-
-# Generate Verilog file for AluRS
-genrule(
-    name = "alurs_verilog",
-    srcs = ["//configs:lane_default.json"],
-    outs = ["alurs.sv"],
-    cmd = """
-    TMPDIR=$$(mktemp -d)
-    $(location //src:verilog_generator) \\
-        $$TMPDIR/alurs_verilog \\
-        AluRS \\
-        $(location //configs:lane_default.json)
-    cat $$TMPDIR/alurs_verilog/*.sv > $@
-    rm -rf $$TMPDIR
-    """,
-    tools = ["//src:verilog_generator"],
-)
-
-# Create filegroup to expose the generated AluRS Verilog file
-filegroup(
-    name = "alurs_verilog_files",
-    srcs = [":alurs_verilog"],
-)
-
-# Basic AluRS test
-py_test(
-    name = "test_alurs_basic",
-    srcs = ["test_alurs_basic.py"],
-    deps = [
-        "//python/fmvpu:fmvpu",
-    ],
-    data = [
-        ":alurs_verilog_files",
-    ],
-    args = [
-        "$(location :alurs_verilog_files)",
-    ],
-    main = "test_alurs_basic.py",
-)
-
-# Generate Verilog file for InstructionMemory
-genrule(
-    name = "instruction_memory_verilog",
-    srcs = ["//configs:lane_default.json"],
-    outs = ["instruction_memory.sv"],
-    cmd = """
-    TMPDIR=$$(mktemp -d)
-    $(location //src:verilog_generator) \\
-        $$TMPDIR/instruction_memory_verilog \\
-        InstructionMemory \\
-        $(location //configs:lane_default.json)
-    cat $$TMPDIR/instruction_memory_verilog/*.sv > $@
-    rm -rf $$TMPDIR
-    """,
-    tools = ["//src:verilog_generator"],
-)
-
-# Create filegroup to expose the generated InstructionMemory Verilog file
-filegroup(
-    name = "instruction_memory_verilog_files",
-    srcs = [":instruction_memory_verilog"],
-)
-
-# Basic InstructionMemory test
-py_test(
-    name = "test_instruction_memory_basic",
-    srcs = ["test_instruction_memory.py"],
-    deps = [
-        "//python/fmvpu:fmvpu",
-    ],
-    data = [
-        ":instruction_memory_verilog_files",
-    ],
-    args = [
-        "--verilog-file",
-        "$(location :instruction_memory_verilog_files)",
-    ],
-    main = "test_instruction_memory.py",
-)
-
-# Generate Verilog file for NewLane
-genrule(
-    name = "lane_verilog",
-    srcs = ["//configs:lane_default.json"],
-    outs = ["lane.sv"],
-    cmd = """
-    TMPDIR=$$(mktemp -d)
-    $(location //src:verilog_generator) \\
-        $$TMPDIR/lane_verilog \\
-        NewLane \\
-        $(location //configs:lane_default.json)
-    cat $$TMPDIR/lane_verilog/*.sv > $@
-    rm -rf $$TMPDIR
-    """,
-    tools = ["//src:verilog_generator"],
-)
-
-# Create filegroup to expose the generated NewLane Verilog file
-filegroup(
-    name = "lane_verilog_files",
-    srcs = [":lane_verilog"],
-)
-
-# Basic NewLane test
-py_test(
-    name = "test_lane_basic",
-    srcs = ["test_lane.py"],
-    deps = [
-        "//python/fmvpu:fmvpu",
-    ],
-    data = [
-        ":lane_verilog_files",
-    ],
-    args = [
-        "$(location :lane_verilog_files)",
-    ],
-    main = "test_lane.py",
-)
-
-# NewLane ALU functionality test
-py_test(
-    name = "test_lane_alu",
-    srcs = ["test_lane_alu.py"],
-    deps = [
-        "//python/fmvpu:fmvpu",
-    ],
-    data = [
-        ":lane_verilog_files",
-    ],
-    args = [
-        "$(location :lane_verilog_files)",
-    ],
-    main = "test_lane_alu.py",
-)
-
-# NewLane Load/Store functionality test
-py_test(
-    name = "test_lane_ldst",
-    srcs = ["test_ldst.py"],
-    deps = [
-        "//python/fmvpu:fmvpu",
-    ],
-    data = [
-        ":lane_verilog_files",
-    ],
-    args = [
-        "$(location :lane_verilog_files)",
-    ],
-    main = "test_ldst.py",
-)
-
-# Generate Verilog file for PacketSwitch
-genrule(
-    name = "packet_switch_verilog",
-    srcs = ["//configs:lane_default.json"],
-    outs = ["packet_switch.sv"],
-    cmd = """
-    TMPDIR=$$(mktemp -d)
-    $(location //src:verilog_generator) \\
-        $$TMPDIR/packet_switch_verilog \\
-        PacketSwitch \\
-        $(location //configs:lane_default.json)
-    cat $$TMPDIR/packet_switch_verilog/*.sv > $@
-    rm -rf $$TMPDIR
-    """,
-    tools = ["//src:verilog_generator"],
-)
-
-# Create filegroup to expose the generated PacketSwitch Verilog file
-filegroup(
-    name = "packet_switch_verilog_files",
-    srcs = [":packet_switch_verilog"],
-)
-
-# Basic PacketSwitch test
-py_test(
-    name = "test_packet_switch_basic",
-    srcs = ["test_packet_switch.py"],
-    deps = [
-        "//python/fmvpu:fmvpu",
-    ],
-    data = [
-        ":packet_switch_verilog_files",
-    ],
-    args = [
-        "$(location :packet_switch_verilog_files)",
-    ],
-    main = "test_packet_switch.py",
-)
+    main = test_file,
+) for test_name, test_file, verilog_target, special_args in TESTS for config_name, config_file in CONFIGS.items()]

@@ -75,8 +75,8 @@ class LoadStoreInstruction:
     use_base: bool = 0  # 1 bit (bit 10)
     mask: bool = 0  # 1 bit (bit 9)
     offset_reg: int = 0  # 3 bits (bits 8-6)
-    src_reg: int = 0  # 3 bits (bits 5-3)
-    dest_reg: int = 0  # 3 bits (bits 2-0)
+    src_reg: int = 0  # 3 bits (bits 5-3)     Not used by a Load
+    dest_reg: int = 0  # 3 bits (bits 2-0)    Not used by a Store
     
     @classmethod
     def get_field_specs(cls) -> List[Tuple[str, int]]:

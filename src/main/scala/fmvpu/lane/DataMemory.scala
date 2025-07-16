@@ -37,7 +37,7 @@ class LaneDataMemory(params: LaneParams) extends Module {
   
   // Output result for loads only (only when not masked)
   io.result.valid := RegNext(io.instr.valid && isLoad && !io.instr.bits.mask, false.B)
-  io.result.value := RegNext(readData)
+  io.result.value := readData
   io.result.address := RegNext(io.instr.bits.dstAddr)
   io.result.force := false.B
 }

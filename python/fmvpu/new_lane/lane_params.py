@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 import math
+from typing import Dict, Any
 
 
 @dataclass
@@ -60,3 +61,42 @@ class LaneParams:
     @property
     def target_width(self) -> int:
         return self.x_pos_width + self.y_pos_width
+    
+    # Field mapping from camelCase JSON to snake_case Python
+    _FIELD_MAPPING = {
+        'width': 'width',
+        'writeIdentWidth': 'write_ident_width',
+        'nRegs': 'n_regs',
+        'instructionMemoryDepth': 'instruction_memory_depth',
+        'dataMemoryDepth': 'data_memory_depth',
+        'nWritePorts': 'n_write_ports',
+        'aluModeWidth': 'alu_mode_width',
+        'ldstModeWidth': 'ldst_mode_width',
+        'packetModeWidth': 'packet_mode_width',
+        'xPosWidth': 'x_pos_width',
+        'yPosWidth': 'y_pos_width',
+        'packetLengthWidth': 'packet_length_width',
+        'addressWidth': 'address_width',
+        'instrAddrWidth': 'instr_addr_width',
+        'packetWordOutRegAddr': 'packet_word_out_reg_addr',
+        'accumRegAddr': 'accum_reg_addr',
+        'maskRegAddr': 'mask_reg_addr',
+        'baseAddrRegAddr': 'base_addr_reg_addr',
+        'channelRegAddr': 'channel_reg_addr',
+        'aluLatency': 'alu_latency',
+        'nAluRsSlots': 'n_alu_rs_slots',
+        'nLdstRsSlots': 'n_ldst_rs_slots',
+        'nPacketRsSlots': 'n_packet_rs_slots',
+        'nPacketOutIdents': 'n_packet_out_idents',
+        'nChannels': 'n_channels',
+        'instructionWidth': 'instruction_width',
+    }
+    
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'LaneParams':
+        """Create LaneParams from dictionary with camelCase field names."""
+        converted_data = {}
+        for camel_key, snake_key in cls._FIELD_MAPPING.items():
+            if camel_key in data:
+                converted_data[snake_key] = data[camel_key]
+        return cls(**converted_data)

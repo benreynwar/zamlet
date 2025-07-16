@@ -88,8 +88,9 @@ def make_coord_register(x: int, y: int, params: LaneParams = LaneParams()) -> in
 
 class LaneInterface:
 
-    def __init__(self, dut, rnd, x, y):
+    def __init__(self, dut, params, rnd, x, y):
         self.dut = dut
+        self.params = params
         self.lane_x = x
         self.lane_y = y
         self.drivers = {
@@ -138,6 +139,9 @@ class LaneInterface:
             cocotb.start_soon(self.receivers[label].receive_packets())
 
     async def write_register(self, reg, value):
+        # We can only write width - regaddrwidth - 2 bits
+        writeable_width = self.params.width - self.params.reg_addr_width - 2
+        assert value < (1 << writeable_width)
         coord_packet = create_register_write_packet(
             register=reg, value=value, dest_x=self.lane_x, dest_y=self.lane_y
         )
@@ -153,7 +157,7 @@ class LaneInterface:
         """Read the current value of a register"""
         for cycle in range(40):
             await triggers.RisingEdge(self.dut.clock)
-        return getattr(self.dut.rff, f'registers_{reg}_value').value
+        return int(getattr(self.dut.rff, f'registers_{reg}_value').value)
 
     async def write_program(self, program, base_address=0):
         machine_code = [instr.encode() for instr in program]
@@ -188,6 +192,10 @@ class LaneInterface:
         start_packet = create_start_packet(pc=0, dest_x=self.lane_x, dest_y=self.lane_y)
         self.drivers['w'].add_packet(start_packet)
 
+    async def wait_for_program_to_run(self):
+        """Wait 40 cycles for the program to finish execution"""
+        for _ in range(40):
+            await triggers.RisingEdge(self.dut.clock)
 
     def direction_from_x_and_y(self, x: int, y: int):
         """What direction a packet will come out of the node for a given destination."""

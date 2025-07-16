@@ -151,6 +151,10 @@ class ReceivePacketInterface(params: LaneParams) extends Module {
   errorInstrAndCommandPacket := false.B
   errorWrongInstructionMode := false.B
   
+  val commandType = bufferedFromNetwork.bits.data(params.width-1, params.width-2) // Top 2 bits = command type
+  val commandData = bufferedFromNetwork.bits.data(params.width-3, 0)              // Bottom width-2 bits = data
+  val forwardDirection = PacketRouting.calculateNextDirection(params, io.thisX, io.thisY, bufferedInstr.bits.xTarget, bufferedInstr.bits.yTarget)
+  val forwardHeader = PacketRouting.createForwardHeader(params, bufferedInstr.bits.xTarget, bufferedInstr.bits.yTarget, bufferedInstr.bits.forwardAgain)
   switch(receiveState) {
     is(States.Idle) {
       // Consume masked receive instructions without executing
@@ -167,8 +171,6 @@ class ReceivePacketInterface(params: LaneParams) extends Module {
             bufferedInstr.bits.mode === PacketModes.ReceiveForwardAndAppend)) {
         io.forward.valid := true.B
         // Calculate routing direction and create header using utility functions
-        val forwardDirection = PacketRouting.calculateNextDirection(params, io.thisX, io.thisY, bufferedInstr.bits.xTarget, bufferedInstr.bits.yTarget)
-        val forwardHeader = PacketRouting.createForwardHeader(params, bufferedInstr.bits.xTarget, bufferedInstr.bits.yTarget, bufferedInstr.bits.forwardAgain)
         
         io.forward.bits.networkDirection := forwardDirection
         io.forward.bits.header := forwardHeader.asUInt
@@ -241,8 +243,6 @@ class ReceivePacketInterface(params: LaneParams) extends Module {
       }
     }
     is(States.ProcessingCommand) {
-      val commandType = bufferedFromNetwork.bits.data(params.width-1, params.width-2) // Top 2 bits = command type
-      val commandData = bufferedFromNetwork.bits.data(params.width-3, 0)              // Bottom width-2 bits = data
       
       when (bufferedFromNetwork.valid) {
         receiveRemainingWords := receiveRemainingWords - 1.U
@@ -259,13 +259,13 @@ class ReceivePacketInterface(params: LaneParams) extends Module {
           is(1.U) { // Write to instruction memory command
             io.writeIM.valid := true.B
             io.writeIM.bits.address := commandData(params.instrAddrWidth-1, 0)
-            io.writeIM.bits.data := commandData(params.width-3, params.instrAddrWidth)
+            io.writeIM.bits.data := commandData(params.instructionWidth+params.instrAddrWidth-1, params.instrAddrWidth)
           }
           is(2.U) { // Write to register command
             io.writeReg.valid := true.B
             io.writeReg.address.regAddr := commandData(params.width-3, params.width-2-params.regAddrWidth)
             io.writeReg.address.writeIdent := 0.U // Command writes don't use write identifiers
-            io.writeReg.value := commandData(params.width-3-params.regAddrWidth, 0)
+            io.writeReg.value := Cat(0.U(params.regAddrWidth.W), commandData(params.width-2-params.regAddrWidth-1, 0))
             io.writeReg.force := true.B // Command writes bypass dependency system
           }
         }

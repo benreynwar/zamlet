@@ -4,6 +4,7 @@ import tempfile
 from typing import Optional
 import logging
 from random import Random
+import json
 
 import cocotb
 from cocotb import triggers
@@ -14,6 +15,7 @@ from fmvpu import generate_rtl
 from fmvpu import test_utils
 from fmvpu.new_lane import lane_interface
 from fmvpu.new_lane.lane_interface import LaneInterface
+from fmvpu.new_lane.lane_params import LaneParams
 from fmvpu.new_lane.instructions import PacketInstruction, PacketModes, HaltInstruction, ALUInstruction, ALUModes
 
 
@@ -182,15 +184,20 @@ async def check_dependency_test(li: LaneInterface) -> None:
 
 
 @cocotb.test()
-async def lane_test(dut: HierarchyObject, seed=0) -> None:
+async def lane_test(dut: HierarchyObject) -> None:
     test_utils.configure_logging_sim("DEBUG")
+    test_params = test_utils.read_params()
+    seed = test_params['seed']
+    with open(test_params['params_file']) as f:
+        params = LaneParams.from_dict(json.load(f))
+
     rnd = Random(seed)
     # Start clock
     clock_gen = Clock(dut.clock, 1, "ns")
     cocotb.start_soon(clock_gen.start())
 
     # Create the lane interface
-    li = LaneInterface(dut, rnd, 1, 2)
+    li = LaneInterface(dut, params, rnd, 1, 2)
     li.initialize_signals()
     await li.start()
 
@@ -201,7 +208,7 @@ async def lane_test(dut: HierarchyObject, seed=0) -> None:
     await check_dependency_test(li)
 
 
-def test_lane_basic(verilog_file: str, seed: int = 0) -> None:
+def test_lane_basic(verilog_file: str, params_file: str, seed: int = 0) -> None:
     """Main test procedure using pre-generated Verilog."""
     filenames = [verilog_file]
 
@@ -210,6 +217,7 @@ def test_lane_basic(verilog_file: str, seed: int = 0) -> None:
 
     test_params = {
         "seed": seed,
+        "params_file": params_file,
     }
 
     verilog_dir = os.path.dirname(verilog_file)
@@ -241,10 +249,12 @@ def generate_and_test_lane_basic(temp_dir: Optional[str] = None, seed: int = 0) 
 if __name__ == "__main__":
     test_utils.configure_logging_pre_sim("INFO")
 
-    if len(sys.argv) >= 2:
+    if len(sys.argv) > 1:
         # Called from Bazel with verilog_file
-        verilog_file = sys.argv[1]
-        test_lane_basic(verilog_file)
+        assert len(sys.argv) >= 3
+        verilog_file = os.path.abspath(sys.argv[1])
+        config_file = os.path.abspath(sys.argv[2])
+        test_lane_basic(verilog_file, config_file)
     else:
         # Called directly - generate Verilog and test
         generate_and_test_lane_basic()
