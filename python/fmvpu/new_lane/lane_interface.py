@@ -67,13 +67,14 @@ def create_start_packet(
 
 
 def create_data_packet(
-    data: list[int], dest_x: int = 0, dest_y: int = 0) -> list[int]:
+      data: list[int], dest_x: int = 0, dest_y: int = 0, forward: bool = False) -> list[int]:
     """Send a data packet in"""
     header = packet_utils.PacketHeader(
-        length=len(data),  # One command word
+        length=len(data), # One command word
         dest_x=dest_x,
         dest_y=dest_y,
         mode=packet_utils.PacketHeaderModes.NORMAL,
+        forward=forward,
     )
     return [header.encode()] + data
 
@@ -184,8 +185,10 @@ class LaneInterface:
         assert packet is not None
         return packet
 
-    async def send_packet(self, data):
-        data_packet = create_data_packet(data=data, dest_x=self.lane_x, dest_y=self.lane_y)
+    async def send_packet(self, data, forward=False):
+        data_packet = create_data_packet(
+                data=data, dest_x=self.lane_x, dest_y=self.lane_y, forward=forward,
+                )
         self.drivers['w'].add_packet(data_packet)
 
     async def start_program(self, pc=0):

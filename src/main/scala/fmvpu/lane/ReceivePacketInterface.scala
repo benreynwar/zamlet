@@ -154,7 +154,6 @@ class ReceivePacketInterface(params: LaneParams) extends Module {
   val commandType = bufferedFromNetwork.bits.data(params.width-1, params.width-2) // Top 2 bits = command type
   val commandData = bufferedFromNetwork.bits.data(params.width-3, 0)              // Bottom width-2 bits = data
   val forwardDirection = PacketRouting.calculateNextDirection(params, io.thisX, io.thisY, bufferedInstr.bits.xTarget, bufferedInstr.bits.yTarget)
-  val forwardHeader = PacketRouting.createForwardHeader(params, bufferedInstr.bits.xTarget, bufferedInstr.bits.yTarget, bufferedInstr.bits.forwardAgain)
   switch(receiveState) {
     is(States.Idle) {
       // Consume masked receive instructions without executing
@@ -173,7 +172,9 @@ class ReceivePacketInterface(params: LaneParams) extends Module {
         // Calculate routing direction and create header using utility functions
         
         io.forward.bits.networkDirection := forwardDirection
-        io.forward.bits.header := forwardHeader.asUInt
+        io.forward.bits.xDest := bufferedInstr.bits.xTarget
+        io.forward.bits.yDest := bufferedInstr.bits.yTarget
+        io.forward.bits.forward := bufferedInstr.bits.forwardAgain
         io.forward.bits.append := (bufferedInstr.bits.mode === PacketModes.ReceiveForwardAndAppend)
         io.forward.bits.toggle := forwardToggle
       }

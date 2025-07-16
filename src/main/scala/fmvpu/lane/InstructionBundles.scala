@@ -59,7 +59,7 @@ class LdStInstrResolved(params: LaneParams) extends Bundle {
 class PacketInstrUnresolved(params: LaneParams) extends Bundle {
   val mode = PacketModes()
   val target = new RegReadInfo(params)
-  val result = new RegWithIdent(params) // register to put length or word in
+  val result = new RegWithIdent(params) // register to put length or word in  (stores append length for SEND)
   val sendLength = new RegReadInfo(params)
   val channel = new RegReadInfo(params)
   val forwardAgain = Bool()
@@ -77,7 +77,7 @@ class PacketInstrResolved(params: LaneParams) extends Bundle {
   val mode = PacketModes()
   val xTarget = UInt(params.xPosWidth.W)
   val yTarget = UInt(params.yPosWidth.W)
-  val result = new RegWithIdent(params)
+  val result = new RegWithIdent(params) // stores the append length for SEND
   val sendLength = UInt(params.packetLengthWidth.W)
   val channel = UInt(2.W)
   val forwardAgain = Bool()

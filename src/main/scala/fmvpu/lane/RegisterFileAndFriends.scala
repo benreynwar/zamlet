@@ -328,7 +328,16 @@ class RegisterFileAndFriends(params: LaneParams) extends Module {
   io.packetInstr.bits.target := read1Data
   io.packetInstr.bits.sendLength := read2Data
   io.packetInstr.bits.channel := readRegister(params.channelRegAddr.U) // Channel register
-  io.packetInstr.bits.result := dstAddr
+  // Normally the 'result' is used to store the place to write the result of the execution unit in.
+  when (packetMode === PacketModes.Send) {
+    // However a 'Send' operation has no result and
+    // we reuse the result addr to store the number of items to append to a packet at the 
+    // next destination if it's a Send instruction.
+    io.packetInstr.bits.result.regAddr := writeAddr
+    io.packetInstr.bits.result.writeIdent := 0.U
+  } .otherwise {
+    io.packetInstr.bits.result := dstAddr
+  }
   io.packetInstr.bits.forwardAgain := io.instruction(10) // Bit 10 from ISA
   io.packetInstr.bits.mask := Mux(io.instruction(9), readRegister(params.maskRegAddr.U), zeroRegReadInfo) // Mask bit 9
   

@@ -34,8 +34,7 @@ class LaneNetworkNodeIO(params: LaneParams) extends Bundle {
   val wo = Vec(nChannels, Decoupled(new NetworkWord(params)))
   
   // 'Here' interface to/from local lane
-  val hi = Flipped(Decoupled(new NetworkWord(params)))
-  val hiChannel = Input(UInt(log2Ceil(params.nChannels).W)) // What channel the input should connect to.
+  val hi = Flipped(Decoupled(new FromHereNetworkWord(params)))
   val ho = Decoupled(new NetworkWord(params))
   
   // Forward interface
@@ -81,7 +80,7 @@ class LaneNetworkNode(params: LaneParams) extends Module {
 
   // Connecting to hi.
   for (channelIdx <- 0 until params.nChannels) {
-    when (channelIdx.U === io.hiChannel) {
+    when (channelIdx.U === io.hi.bits.channel) {
       switches(channelIdx).io.hi.valid := io.hi.valid
       switches(channelIdx).io.hi.bits := io.hi.bits
     } .otherwise {
@@ -89,7 +88,7 @@ class LaneNetworkNode(params: LaneParams) extends Module {
       switches(channelIdx).io.hi.bits := DontCare
     }
   }
-  io.hi.ready := MuxLookup(io.hiChannel, false.B)(
+  io.hi.ready := MuxLookup(io.hi.bits.channel, false.B)(
     (0 until params.nChannels).map(i => i.U -> switches(i).io.hi.ready)
   )
 

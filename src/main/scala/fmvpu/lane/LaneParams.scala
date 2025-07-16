@@ -46,16 +46,9 @@ object LdStModes extends ChiselEnum {
 object PacketHeaderModes extends ChiselEnum {
   val Normal = Value(0.U)
   val Command = Value(1.U)
-}
-
-/**
- * Broadcast directions
- */
-object BroadcastDirections extends ChiselEnum {
-  val NE = Value(0.U)
-  val SE = Value(1.U)
-  val SW = Value(2.U)
-  val NW = Value(3.U)
+  val Append = Value(2.U)   // Internal.  This packet will be append to another
+                            // before leaving the lane.
+  val Unused = Value(3.U)
 }
 
 /**
@@ -80,8 +73,8 @@ object PacketModes extends ChiselEnum {
   val ForwardAndAppend = Value(3.U)
   val Send = Value(4.U)
   val GetWord = Value(5.U)
-  val Unused6 = Value(6.U)
-  val Unused7 = Value(7.U)
+  val SendBroadcast = Value(6.U)
+  val SendCommand = Value(7.U)
 }
 
 /**

@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 class PacketHeaderModes(IntEnum):
     NORMAL = 0
     COMMAND = 1
+    APPEND = 2
 
 
 class CommandTypes(IntEnum):
@@ -35,7 +36,7 @@ class PacketHeader:
     mode: PacketHeaderModes = PacketHeaderModes.NORMAL  # 1 bit (0=normal, 1=command)
     forward: bool = False  # 1 bit
     is_broadcast: bool = False  # 1 bit  
-    broadcast_direction: int = 0  # 2 bits
+    append_length: int = 0 # 8 bits
     
     @classmethod
     def get_field_specs(cls) -> List[Tuple[str, int]]:
@@ -44,10 +45,10 @@ class PacketHeader:
             ('length', 8),
             ('dest_x', 5),
             ('dest_y', 5),
-            ('mode', 1),
+            ('mode', 2),
             ('forward', 1),
             ('is_broadcast', 1),
-            ('broadcast_direction', 2),
+            ('append_length', 8),
         ]
     
     def encode(self) -> int:

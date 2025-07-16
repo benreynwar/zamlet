@@ -13,8 +13,7 @@ class PacketHeader(params: LaneParams) extends Bundle {
   val mode = PacketHeaderModes()
   val forward = Bool()
   val isBroadcast = Bool()
-  val broadcastDirection = BroadcastDirections()
-  
+  val appendLength = UInt(params.packetLengthWidth.W)
   // Backward compatibility: destination field as concatenated x,y
   def destination: UInt = Cat(yDest, xDest)
 }
@@ -24,6 +23,16 @@ class PacketHeader(params: LaneParams) extends Bundle {
  */
 class NetworkWord(params: LaneParams) extends Bundle {
   val data = UInt(params.width.W)
+  val isHeader = Bool()
+}
+
+/**
+ * Network word with header indication
+ * Extended with channel information
+ */
+class FromHereNetworkWord(params: LaneParams) extends Bundle {
+  val data = UInt(params.width.W)
+  val channel = UInt(log2Ceil(params.nChannels).W)
   val isHeader = Bool()
 }
 
@@ -40,7 +49,9 @@ class IMWrite(params: LaneParams) extends Bundle {
  */
 class PacketForward(params: LaneParams) extends Bundle {
   val networkDirection = NetworkDirections()
-  val header = UInt(params.width.W)
+  val xDest = UInt(params.xPosWidth.W)
+  val yDest = UInt(params.yPosWidth.W)
+  val forward = Bool()
   val append = Bool()
   val toggle = Bool()
 }
@@ -75,19 +86,5 @@ object PacketRouting {
     direction
   }
   
-  /**
-   * Create a packet header for forwarding
-   */
-  def createForwardHeader(params: LaneParams, targetX: UInt, targetY: UInt, forwardAgain: Bool, length: UInt = 0.U): PacketHeader = {
-    val header = Wire(new PacketHeader(params))
-    header.length := length
-    header.xDest := targetX
-    header.yDest := targetY
-    header.mode := PacketHeaderModes.Normal
-    header.forward := forwardAgain
-    header.isBroadcast := false.B
-    header.broadcastDirection := BroadcastDirections.NE
-    header
-  }
 }
 

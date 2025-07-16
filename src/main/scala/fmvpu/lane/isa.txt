@@ -21,6 +21,7 @@ Packet Instructions
    3: Forward and Append
    4: Send
    5: Get Packet Word
+   6: Broadcast
 
  2 bits 00           (bits 15-14)
  3 bits for mode     (bits 13-11)
@@ -28,7 +29,7 @@ Packet Instructions
  1 bit mask          (bit 9)
  3 bits location     (bits 8-6)  (read 1)
  3 bits send length  (bits 5-3)  (read 2)
- 3 bits result       (bits 2-0)  (write)
+ 3 bits result       (bits 2-0)  (write)  //also stores append length (for send mode)
 
 Load and Store Instructions
 ---------------------------

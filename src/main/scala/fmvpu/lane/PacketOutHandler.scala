@@ -21,21 +21,10 @@ class PacketOutHandlerIO(params: LaneParams) extends Bundle {
 }
 
 /**
- * Packet Output Handler states
- */
-object PacketOutHandlerStates extends ChiselEnum {
-  val Disconnected = Value(0.U)
-  val Connected = Value(1.U)
-}
-
-/**
  * Packet Output Handler Module
  */
 class PacketOutHandler(params: LaneParams) extends Module {
   val io = IO(new PacketOutHandlerIO(params))
-  
-  // State registers
-  val state = RegInit(PacketOutHandlerStates.Disconnected)
   
   // Global priority counter for all 5 directions (North=0, East=1, South=2, West=3, Here=4)
   // All output handlers share the same priority sequence

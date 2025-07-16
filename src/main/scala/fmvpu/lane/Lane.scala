@@ -102,7 +102,6 @@ class NewLane(params: LaneParams) extends Module {
   
   // Connect packet interfaces to network node
   sendPacketInterface.io.toNetwork <> networkNode.io.hi
-  sendPacketInterface.io.toNetworkChannel <> networkNode.io.hiChannel
   networkNode.io.ho <> receivePacketInterface.io.fromNetwork
   networkNode.io.forward <> receivePacketInterface.io.forward
 }

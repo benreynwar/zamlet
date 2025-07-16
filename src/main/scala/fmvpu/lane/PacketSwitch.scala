@@ -86,7 +86,9 @@ class PacketSwitch(params: LaneParams) extends Module {
   }
   
   // Connect data paths from PacketInHandlers to PacketOutHandlers using the mapping function
-  val directions = Seq(NetworkDirections.North, NetworkDirections.East, NetworkDirections.South, NetworkDirections.West, NetworkDirections.Here)
+  val directions = Seq(
+    NetworkDirections.North, NetworkDirections.East,
+    NetworkDirections.South, NetworkDirections.West, NetworkDirections.Here)
   
   for (dstIdx <- 0 until 5) {
     for (srcIdx <- 0 until 5) {

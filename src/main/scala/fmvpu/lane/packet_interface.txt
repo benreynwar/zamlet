@@ -6,11 +6,13 @@ Packet Header
 
 - Length is 8 bits
 - Destination is 10 bits
-- Mode (0 = normal packet, 1 = command packet)
+- Mode (0 = normal packet, 1 = command packet, 2 = append packet)
 - Forward 1bit
 - IsBroadCast 1 bit
-- BroadcastDirection (2 bits) (if we're broadcasting dest is the boundary) (direction is NE, SE, SW, or NW)
-- Unused (9 bits)
+- AppendLength 8 bits  // How many words will get appended
+- Unused (2 bits)
+
+The append packet is just used internally.  It shouldn't be sent between lanes.
 
 If it's a command packet then each data word is a command
 Command word format (width bits, typically 32):

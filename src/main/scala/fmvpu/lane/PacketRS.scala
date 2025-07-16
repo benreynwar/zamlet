@@ -55,12 +55,18 @@ class PacketRS(params: LaneParams) extends Module {
   
   // Helper function to determine if instruction should go to send or receive interface
   def isSendInstruction(mode: PacketModes.Type): Bool = {
-    mode === PacketModes.Send || mode === PacketModes.ForwardAndAppend || mode === PacketModes.ReceiveForwardAndAppend
+    mode === PacketModes.Send ||
+    mode === PacketModes.ForwardAndAppend ||
+    mode === PacketModes.ReceiveForwardAndAppend ||
+    mode === PacketModes.SendBroadcast ||
+    mode === PacketModes.SendCommand
   }
   
   def isReceiveInstruction(mode: PacketModes.Type): Bool = {
-    mode === PacketModes.Receive || mode === PacketModes.ReceiveAndForward || 
-    mode === PacketModes.ReceiveForwardAndAppend || mode === PacketModes.GetWord
+    mode === PacketModes.Receive ||
+    mode === PacketModes.ReceiveAndForward || 
+    mode === PacketModes.ReceiveForwardAndAppend ||
+    mode === PacketModes.GetWord
   }
   
   // Find ready instructions (all dependencies resolved AND target interface(s) are ready)

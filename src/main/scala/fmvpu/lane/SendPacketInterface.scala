@@ -9,9 +9,9 @@ import fmvpu.utils._
  * Send Packet Interface IO
  */
 class SendPacketInterfaceIO(params: LaneParams) extends Bundle {
+
   // Network interface
-  val toNetwork = Decoupled(new NetworkWord(params))
-  val toNetworkChannel = Output(UInt(log2Ceil(params.nChannels).W))
+  val toNetwork = Decoupled(new FromHereNetworkWord(params))
   
   // Instruction interface
   val instr = Flipped(Decoupled(new PacketInstrResolved(params)))
@@ -37,49 +37,25 @@ class SendPacketInterfaceErrors extends Bundle {
 class SendPacketInterface(params: LaneParams) extends Module {
   val io = IO(new SendPacketInterfaceIO(params))
   
-  /**
-   * Packet interface send states
-   */
-  object States extends ChiselEnum {
-    val Idle = Value(0.U)
-    val SendingHeader = Value(1.U)
-    val SendingData = Value(2.U)
-  }
   
-  // Packet buffer for out-of-order sends
+  // Packet buffer for storing payload data to the sent.
+  // ---------------------------------------------------
+  // Packets are populated by writing to register 0.
+  // We monitor the write bus for writes to this register.
+  // When we see them we place them in this packetOutBuffer.
+  // write ident are guaranteed to be in consecutive order when writing to register 0.
+  // The order we receive the writes in is not necssarily the correct order however
+  // we can work out the correct order by looking at the write idents.
+  // We store them in this buffer by write ident and then read them out in order.
+
   val packetOutBuffer = RegInit(VecInit(Seq.fill(params.nPacketOutIdents){
     val init = Wire(Valid(UInt(params.width.W)))
     init.valid := false.B
     init.bits := 0.U
     init
   }))
+  // The next write ident that we should read from the packetOutBuffer
   val packetOutReadPtr = RegInit(1.U(log2Ceil(params.nPacketOutIdents).W))
-  
-  // Send state
-  val sendState = RegInit(States.Idle)
-  val sendRemainingWords = RegInit(0.U(8.W))
-  val sendChannel = RegInit(0.U(log2Ceil(params.nChannels).W))
-  val sendX = RegInit(0.U(params.xPosWidth.W))
-  val sendY = RegInit(0.U(params.yPosWidth.W))
-  
-  // Buffer send instructions
-  val bufferedInstr = Wire(Decoupled(new PacketInstrResolved(params)))
-  val bufferInstr = Module(new DoubleBuffer(new PacketInstrResolved(params)))
-  bufferInstr.io.i <> io.instr
-  bufferInstr.io.o <> bufferedInstr
-
-  // Buffer network output
-  val bufferedToNetwork = Wire(Decoupled(new NetworkWord(params)))
-  val bufferToNetwork = Module(new DoubleBuffer(new NetworkWord(params)))
-  bufferToNetwork.io.i <> bufferedToNetwork
-  bufferToNetwork.io.o <> io.toNetwork
-
-  // Default ready signals for buffered interfaces
-  bufferedInstr.ready := false.B
-  bufferedToNetwork.valid := false.B
-  bufferedToNetwork.bits := DontCare
-  
-  
   // Handle writes to packet output register (register 0)
   for (i <- 0 until params.nWritePorts) {
     when(io.writeInputs(i).valid && 
@@ -90,35 +66,81 @@ class SendPacketInterface(params: LaneParams) extends Module {
       packetOutBuffer(writeIdent).bits := io.writeInputs(i).value
     }
   }
-  
-  // Handle send instructions (only when not masked)
-  when(bufferedInstr.valid && !bufferedInstr.bits.mask) {
-    bufferedInstr.ready := true.B  // Consume the instruction
-    sendState := States.SendingHeader
-    sendRemainingWords := bufferedInstr.bits.sendLength
-    sendChannel := bufferedInstr.bits.channel
-    sendX := bufferedInstr.bits.xTarget
-    sendY := bufferedInstr.bits.yTarget
+
+  // A stream of ordered data from the packet buffer that can be added to a packet.
+  val packetOut = Wire(Decoupled(UInt(params.width.W)))
+  packetOut.valid := packetOutBuffer(packetOutReadPtr).valid
+  packetOut.bits := packetOutBuffer(packetOutReadPtr).bits
+
+  // Update the state of the packet buffer when we read data.
+  when (packetOut.ready) {
+    packetOutBuffer(packetOutReadPtr).valid := false.B
+    packetOutReadPtr := packetOutReadPtr + 1.U
   }
   
-  // Consume masked instructions without executing
-  when(bufferedInstr.valid && bufferedInstr.bits.mask) {
-    bufferedInstr.ready := true.B  // Consume the instruction but don't execute
+  // Buffer instructions and data to the network
+  // ------------------------------------------------------
+
+  val bufferedInstr = Wire(Decoupled(new PacketInstrResolved(params)))
+  val bufferInstr = Module(new DoubleBuffer(new PacketInstrResolved(params)))
+  bufferInstr.io.i <> io.instr
+  bufferInstr.io.o <> bufferedInstr
+
+  val bufferedToNetwork = Wire(Decoupled(new FromHereNetworkWord(params)))
+  val bufferToNetwork = Module(new DoubleBuffer(new FromHereNetworkWord(params)))
+  bufferToNetwork.io.i <> bufferedToNetwork
+  bufferToNetwork.io.o <> io.toNetwork
+
+  // Process the instructions
+  // ------------------------
+
+  object States extends ChiselEnum {
+    val Idle = Value(0.U)
+    val SendingHeader = Value(1.U)
+    val SendingData = Value(2.U)
   }
   
-  // Send state machine
-  io.toNetworkChannel := sendChannel
+  // Send state
+  val sendState = RegInit(States.Idle)
+  // How many payload words are left to send
+  val sendRemainingWords = RegInit(0.U(8.W))
+  val sendInstruction = Reg(new PacketInstrResolved(params))
+
+
+  // Send the packet to the network
+  // ------------------------------
+  
+  bufferedToNetwork.bits.channel := sendInstruction.channel
+
+  // default values
+  packetOut.ready := false.B
+  bufferedToNetwork.valid := false.B
+  bufferedToNetwork.bits := DontCare
+  bufferedInstr.ready := false.B
+
   switch(sendState) {
+    is (States.Idle) {
+      bufferedInstr.ready := true.B
+      when(bufferedInstr.valid && !bufferedInstr.bits.mask) {
+        sendState := States.SendingHeader
+        sendRemainingWords := bufferedInstr.bits.sendLength
+        sendInstruction := bufferedInstr.bits
+      }
+    }
     is(States.SendingHeader) {
       // Create and send packet header
       val header = Wire(new PacketHeader(params))
       header.length := sendRemainingWords
-      header.xDest := sendX
-      header.yDest := sendY
-      header.mode := PacketHeaderModes.Normal
-      header.forward := false.B
-      header.isBroadcast := false.B
-      header.broadcastDirection := BroadcastDirections.NE
+      header.xDest := sendInstruction.xTarget
+      header.yDest := sendInstruction.yTarget
+      header.mode := MuxLookup(sendInstruction.mode, PacketHeaderModes.Normal)(Seq(
+        PacketModes.SendCommand -> PacketHeaderModes.Command,
+        PacketModes.ForwardAndAppend -> PacketHeaderModes.Append,
+        PacketModes.ReceiveForwardAndAppend -> PacketHeaderModes.Append
+      ))
+      header.forward := sendInstruction.forwardAgain
+      header.isBroadcast := sendInstruction.mode === PacketModes.SendBroadcast
+      header.appendLength := sendInstruction.result.regAddr
       
       bufferedToNetwork.valid := true.B
       bufferedToNetwork.bits.data := header.asUInt
@@ -128,21 +150,18 @@ class SendPacketInterface(params: LaneParams) extends Module {
         sendState := States.SendingData
       }
     }
-    
+
     is(States.SendingData) {
+      packetOut.ready := (sendRemainingWords > 0.U) && bufferedToNetwork.ready
       // Send packet data from buffer
-      when(packetOutBuffer(packetOutReadPtr).valid && sendRemainingWords > 0.U) {
-        bufferedToNetwork.valid := true.B
-        bufferedToNetwork.bits.data := packetOutBuffer(packetOutReadPtr).bits
-        bufferedToNetwork.bits.isHeader := false.B
-        
-        when(bufferedToNetwork.ready) {
-          packetOutBuffer(packetOutReadPtr).valid := false.B
-          packetOutReadPtr := packetOutReadPtr + 1.U
-          sendRemainingWords := sendRemainingWords - 1.U
-          when(sendRemainingWords === 1.U) {
-            sendState := States.Idle
-          }
+      bufferedToNetwork.valid := packetOut.valid && (sendRemainingWords > 0.U)
+      bufferedToNetwork.bits.data := packetOut.bits
+      bufferedToNetwork.bits.isHeader := false.B
+
+      when(packetOut.valid && packetOut.ready) {
+        sendRemainingWords := sendRemainingWords - 1.U
+        when(sendRemainingWords === 1.U) {
+          sendState := States.Idle
         }
       }
     }

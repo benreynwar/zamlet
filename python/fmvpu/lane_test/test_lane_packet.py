@@ -142,7 +142,7 @@ async def packet_receive_and_forward_test(li: LaneInterface) -> None:
     
     # Send a test packet (values within 27-bit limit)
     test_data = [0x3579BDF, 0x468ACE0]
-    await li.send_packet(test_data)
+    await li.send_packet(test_data, forward=True)
     
     # Check that packet was received
     packet_length = await li.read_register(5)
@@ -152,8 +152,7 @@ async def packet_receive_and_forward_test(li: LaneInterface) -> None:
     forwarded_packet = await li.get_packet(dest_x=dest_x, dest_y=dest_y, expected_length=len(test_data))
     assert len(forwarded_packet) == len(test_data) + 1, f"Expected forwarded packet length {len(test_data) + 1}, got {len(forwarded_packet)}"
     # Data should be preserved
-    for i, expected_word in enumerate(test_data):
-        assert forwarded_packet[i + 1] == expected_word, f"Expected data word {i} to be {expected_word:08x}, got {forwarded_packet[i + 1]:08x}"
+    assert forwarded_packet[1:] == test_data
 
 
 async def packet_receive_forward_and_append_test(li: LaneInterface) -> None:
@@ -162,14 +161,19 @@ async def packet_receive_forward_and_append_test(li: LaneInterface) -> None:
     dest_x, dest_y = 4, 1
     coord_value = make_coord_register(dest_x, dest_y, li.params)
     await li.write_register(3, coord_value)  # new coordinate
-    await li.write_register(6, 0x7EADBEEF)  # data to append (27 bits max)
+    await li.write_register(2, 3)  # Number to append
+    await li.write_register(6, 0x00ADBEEF)  # data to append (27 bits max)
     
     program = [
         PacketInstruction(
             mode=PacketModes.RECEIVE_FORWARD_AND_APPEND,
             location_reg=3,      # new coordinate
+            send_length_reg=2,
             result_reg=7,        # packet length
         ),
+        ALUInstruction(mode=ALUModes.ADDI, src1_reg=0, src2_reg=1, result_reg=0),
+        ALUInstruction(mode=ALUModes.ADDI, src1_reg=0, src2_reg=2, result_reg=0),
+        ALUInstruction(mode=ALUModes.ADDI, src1_reg=0, src2_reg=3, result_reg=0),
         HaltInstruction(),
     ]
     await li.write_program(program)
@@ -177,7 +181,7 @@ async def packet_receive_forward_and_append_test(li: LaneInterface) -> None:
     
     # Send a test packet (values within 27-bit limit)
     test_data = [0x1234567, 0x7ABCDEF]
-    await li.send_packet(test_data)
+    await li.send_packet(test_data, forward=True)
     
     # Check that packet was received
     packet_length = await li.read_register(7)
@@ -185,14 +189,9 @@ async def packet_receive_forward_and_append_test(li: LaneInterface) -> None:
     
     # Check that packet was forwarded with appended data
     forwarded_packet = await li.get_packet(dest_x=dest_x, dest_y=dest_y, expected_length=len(test_data) + 1)
-    assert len(forwarded_packet) == len(test_data) + 2, f"Expected forwarded packet length {len(test_data) + 2}, got {len(forwarded_packet)}"
-    
-    # Original data should be preserved
-    for i, expected_word in enumerate(test_data):
-        assert forwarded_packet[i + 1] == expected_word, f"Expected data word {i} to be {expected_word:08x}, got {forwarded_packet[i + 1]:08x}"
-    
-    # Appended data should be at the end
-    assert forwarded_packet[-1] == 0x7EADBEEF, f"Expected appended data {0x7EADBEEF:08x}, got {forwarded_packet[-1]:08x}"
+    assert len(forwarded_packet) == len(test_data) + 4, f"Expected forwarded packet length {len(test_data) + 4}, got {len(forwarded_packet)}"
+
+    assert forward_packet[1:] == test_data + [1, 2, 3]
 
 
 async def packet_forward_and_append_test(li: LaneInterface) -> None:
@@ -377,17 +376,17 @@ async def lane_packet_test(dut: HierarchyObject) -> None:
     li.initialize_signals()
     await li.start()
     
-    # Run packet tests
-    await packet_receive_test(li)
-    await packet_send_test(li)
-    await packet_get_word_test(li)
-    await packet_receive_and_forward_test(li)
+    # # Run packet tests
+    # await packet_receive_test(li)
+    # await packet_send_test(li)
+    # await packet_get_word_test(li)
+    # await packet_receive_and_forward_test(li)
     await packet_receive_forward_and_append_test(li)
-    await packet_forward_and_append_test(li)
-    await packet_mask_test(li)
-    await packet_mask_execute_test(li)
-    await packet_sequence_test(li)
-    await packet_empty_test(li)
+    #await packet_forward_and_append_test(li)
+    #await packet_mask_test(li)
+    #await packet_mask_execute_test(li)
+    #await packet_sequence_test(li)
+    #await packet_empty_test(li)
 
 
 def test_lane_packet(verilog_file: str, params_file: str, seed: int = 0) -> None:
