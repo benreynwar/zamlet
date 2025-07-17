@@ -193,7 +193,9 @@ class ReceivePacketInterface(params: LaneParams) extends Module {
             bufferedFromNetwork.ready := true.B
             bufferedInstr.ready := true.B
             receiveRemainingWords := header.length
-            receiveState := States.ReceivingData
+            when (header.length > 0.U) {
+              receiveState := States.ReceivingData
+            }
             
             // Toggle forward signal when consuming any instruction
             forwardToggle := !forwardToggle

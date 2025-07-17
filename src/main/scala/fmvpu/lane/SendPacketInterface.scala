@@ -73,7 +73,7 @@ class SendPacketInterface(params: LaneParams) extends Module {
   packetOut.bits := packetOutBuffer(packetOutReadPtr).bits
 
   // Update the state of the packet buffer when we read data.
-  when (packetOut.ready) {
+  when (packetOut.valid && packetOut.ready) {
     packetOutBuffer(packetOutReadPtr).valid := false.B
     packetOutReadPtr := packetOutReadPtr + 1.U
   }

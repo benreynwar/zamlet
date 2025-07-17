@@ -101,7 +101,7 @@ class PacketOutHandler(params: LaneParams) extends Module {
         connstateIn := selectedInput
       }
     }
-    when (io.connections(connectedIn).bits.append) {
+    when (io.output.ready && io.connections(connectedIn).bits.append) {
       connstateIn := NetworkDirections.Here.asUInt
     }
     when (io.output.ready) {

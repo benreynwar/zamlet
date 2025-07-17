@@ -299,8 +299,18 @@ class PacketInHandler(params: LaneParams) extends Module {
       out.bits.data := buffered.bits.data
     }
     out.bits.isHeader := buffered.bits.isHeader
-    out.bits.last := !isAppend && ((!buffered.bits.isHeader && remainingWords === 1.U) || (buffered.bits.isHeader && bufferedHeader.length === 0.U))
-    out.bits.append := isAppend && ((!buffered.bits.isHeader && remainingWords === 1.U) || (buffered.bits.isHeader && bufferedHeader.length === 0.U))
+    when ((!buffered.bits.isHeader && remainingWords === 1.U) || (buffered.bits.isHeader && bufferedHeader.length === 0.U)) {
+      if (idx == DirectionBits.HERE_BIT) {
+        out.bits.last := true.B
+        out.bits.append := false.B
+      } else {
+        out.bits.last := !isAppend
+        out.bits.append := isAppend
+      }
+    } .otherwise {
+      out.bits.last := false.B
+      out.bits.append := false.B
+    }
   }
 }
 

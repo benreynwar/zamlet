@@ -82,7 +82,6 @@ class RegisterFileAndFriends(params: LaneParams) extends Module {
     // Write inputs from ALU, load/store, and packets
     val writeInputs = Input(Vec(params.nWritePorts, new WriteResult(params)))
     
-    
     // Instruction outputs to reservation stations
     val aluInstr = Decoupled(new ALUInstrUnresolved(params))
     val ldstInstr = Decoupled(new LdStInstrUnresolved(params))
@@ -171,6 +170,7 @@ class RegisterFileAndFriends(params: LaneParams) extends Module {
     // write the length or the word
     writeEnable := (packetMode === PacketModes.Receive ||
                     packetMode === PacketModes.ReceiveAndForward ||
+                    packetMode === PacketModes.ReceiveForwardAndAppend ||
                     packetMode === PacketModes.GetWord)
   } .elsewhen (isLoopInstr) {
     when (loopSubtype === LoopSubtypes.Control && loopMode === LoopControlModes.StartLoop) {  // Start Loop
