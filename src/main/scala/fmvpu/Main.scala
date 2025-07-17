@@ -3,11 +3,7 @@ package fmvpu
 import chisel3._
 import _root_.circt.stage.ChiselStage
 import java.io.File
-import fmvpu.core._
-import fmvpu.memory._
-import fmvpu.network._
 import fmvpu.utils._
-import fmvpu.alu._
 import fmvpu.lane._
 
 /** Main entry point for generating Verilog from FMVPU modules.
@@ -43,17 +39,6 @@ object Main extends App {
   val moduleArgs = args.drop(2)
   
   val generator: ModuleGenerator = moduleName match {
-    case "AdjustableDelay" => AdjustableDelayGenerator
-    case "LaneNetworkNode" => LaneNetworkNodeGenerator
-    case "NetworkNode" => NetworkNodeGenerator
-    case "NetworkCrossbar" => NetworkCrossbarGenerator
-    case "NetworkSwitch" => NetworkSwitchGenerator
-    case "RegisterFile" => RegisterFileGenerator
-    case "LaneDataMemory" => LaneDataMemoryGenerator
-    case "ddmAccess" => ddmAccessGenerator
-    case "Lane" => LaneGenerator
-    case "LaneGrid" => LaneGridGenerator
-    case "LaneALU" => LaneALUGenerator
     case "RegisterFileAndFriends" => RegisterFileAndFriendsGenerator
     case "ALU" => ALUGenerator
     case "AluRS" => AluRSGenerator
