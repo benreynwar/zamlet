@@ -26,9 +26,9 @@ class LaneIO(params: LaneParams) extends Bundle {
 }
 
 /**
- * NewLane - Complete single-issue pipeline with Tomasulo execution
+ * Lane - Complete single-issue pipeline with Tomasulo execution
  */
-class NewLane(params: LaneParams) extends Module {
+class Lane(params: LaneParams) extends Module {
   val io = IO(new LaneIO(params))
   
   // Instantiate all components
@@ -106,16 +106,16 @@ class NewLane(params: LaneParams) extends Module {
   networkNode.io.forward <> receivePacketInterface.io.forward
 }
 
-object NewLaneGenerator extends fmvpu.ModuleGenerator {
+object LaneGenerator extends fmvpu.ModuleGenerator {
   override def makeModule(args: Seq[String]): Module = {
     if (args.length != 1) {
-      println("Usage: NewLaneGenerator <config_file>")
+      println("Usage: LaneGenerator <config_file>")
       System.exit(1)
     }
     
     val configFile = args(0)
     val params = LaneParams.fromFile(configFile)
     
-    new NewLane(params)
+    new Lane(params)
   }
 }

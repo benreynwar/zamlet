@@ -12,9 +12,9 @@ from cocotb.handle import HierarchyObject
 
 from fmvpu import generate_rtl
 from fmvpu import test_utils
-from fmvpu.new_lane.packet_utils import PacketDriver, PacketReceiver
-from fmvpu.new_lane.instructions import PacketHeader, PacketHeaderModes
-from fmvpu.new_lane.lane_params import LaneParams
+from fmvpu.lane.packet_utils import PacketDriver, PacketReceiver
+from fmvpu.lane.instructions import PacketHeader, PacketHeaderModes
+from fmvpu.lane.lane_params import LaneParams
 
 
 logger = logging.getLogger(__name__)

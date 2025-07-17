@@ -61,7 +61,7 @@ def test_rff_basic(verilog_file: str, seed: int = 0) -> None:
     filenames = [verilog_file]
     
     toplevel = 'RegisterFileAndFriends'
-    module = 'fmvpu.new_lane.test_rff_basic'
+    module = 'fmvpu.lane.test_rff_basic'
     
     test_params = {
         'seed': seed,

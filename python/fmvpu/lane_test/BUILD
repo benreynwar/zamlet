@@ -14,7 +14,7 @@ MODULES = [
     ("alu", "ALU", ["1"]),
     ("alurs", "AluRS", []),
     ("instruction_memory", "InstructionMemory", []),
-    ("lane", "NewLane", []),
+    ("lane", "Lane", []),
     ("packet_switch", "PacketSwitch", []),
 ]
 

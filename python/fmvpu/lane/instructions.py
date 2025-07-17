@@ -3,7 +3,7 @@ from typing import List, Tuple
 from enum import IntEnum
 
 from fmvpu.control_structures import pack_fields_to_words, unpack_words_to_fields
-from fmvpu.new_lane.lane_params import LaneParams
+from fmvpu.lane.lane_params import LaneParams
 
 # Instruction type constants (bits 15-14)
 PACKET_INSTR_TYPE = 0x0000  # 00

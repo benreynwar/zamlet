@@ -149,7 +149,7 @@ def test_alu_basic(verilog_file: str, seed: int = 0) -> None:
     filenames = [verilog_file]
     
     toplevel = 'ALU'
-    module = 'fmvpu.new_lane.test_alu_basic'
+    module = 'fmvpu.lane.test_alu_basic'
     
     test_params = {
         'seed': seed,

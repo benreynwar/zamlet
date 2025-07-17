@@ -145,7 +145,7 @@ def test_alurs_basic(verilog_file: str, seed: int = 0) -> None:
     filenames = [verilog_file]
     
     toplevel = 'AluRS'
-    module = 'fmvpu.new_lane.test_alurs_basic'
+    module = 'fmvpu.lane.test_alurs_basic'
     
     test_params = {
         'seed': seed,

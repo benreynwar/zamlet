@@ -8,7 +8,7 @@ from enum import IntEnum
 from cocotb.triggers import RisingEdge, ReadOnly
 
 from fmvpu.control_structures import pack_fields_to_words, unpack_words_to_fields
-from fmvpu.new_lane.lane_params import LaneParams
+from fmvpu.lane.lane_params import LaneParams
 
 
 logger = logging.getLogger(__name__)

@@ -13,10 +13,10 @@ from cocotb.handle import HierarchyObject
 
 from fmvpu import generate_rtl
 from fmvpu import test_utils
-from fmvpu.new_lane import lane_interface
-from fmvpu.new_lane.lane_interface import LaneInterface
-from fmvpu.new_lane.lane_params import LaneParams
-from fmvpu.new_lane.instructions import LoadStoreInstruction, LoadStoreModes, HaltInstruction
+from fmvpu.lane import lane_interface
+from fmvpu.lane.lane_interface import LaneInterface
+from fmvpu.lane.lane_params import LaneParams
+from fmvpu.lane.instructions import LoadStoreInstruction, LoadStoreModes, HaltInstruction
 
 
 logger = logging.getLogger(__name__)
@@ -324,7 +324,7 @@ def test_lane_ldst(verilog_file: str, params_file: str, seed: int = 0) -> None:
     """Main test procedure using pre-generated Verilog."""
     filenames = [verilog_file]
     
-    toplevel = "NewLane"
+    toplevel = "Lane"
     module = "fmvpu.lane_test.test_lane_ldst"
     
     test_params = {
@@ -348,8 +348,8 @@ def generate_and_test_lane_ldst(temp_dir: Optional[str] = None, seed: int = 0) -
         )
         config_file = os.path.abspath(config_file)
         
-        # Generate NewLane with lane parameters
-        filenames = generate_rtl.generate("NewLane", working_dir, [config_file])
+        # Generate Lane with lane parameters
+        filenames = generate_rtl.generate("Lane", working_dir, [config_file])
         
         # Concatenate all generated .sv files into a single file
         concat_filename = os.path.join(working_dir, "lane_verilog.sv")

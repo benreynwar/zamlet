@@ -50,7 +50,7 @@ object Main extends App {
     case "PacketOutHandler" => PacketOutHandlerGenerator
     case "PacketSwitch" => PacketSwitchGenerator
     case "InstructionMemory" => InstructionMemoryGenerator
-    case "NewLane" => NewLaneGenerator
+    case "Lane" => LaneGenerator
     case "Fifo" => FifoGenerator
     case "SkidBuffer" => SkidBufferGenerator
     case "DecoupledBuffer" => DecoupledBufferGenerator

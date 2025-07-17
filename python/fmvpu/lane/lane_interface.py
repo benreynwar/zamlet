@@ -3,8 +3,8 @@ import logging
 import cocotb
 from cocotb import triggers
 
-from fmvpu.new_lane import packet_utils
-from fmvpu.new_lane.lane_params import LaneParams
+from fmvpu.lane import packet_utils
+from fmvpu.lane.lane_params import LaneParams
 
 
 logger = logging.getLogger(__name__)
