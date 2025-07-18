@@ -34,6 +34,7 @@ def create_instruction_write_packet(
     dest_x: int = 0,
     dest_y: int = 0,
     params: LaneParams = LaneParams(),
+    is_broadcast: bool = False,
 ) -> list[int]:
     """Create a command packet to write multiple instructions to instruction memory"""
     header = packet_utils.PacketHeader(
@@ -41,6 +42,7 @@ def create_instruction_write_packet(
         dest_x=dest_x,
         dest_y=dest_y,
         mode=packet_utils.PacketHeaderModes.COMMAND,
+        is_broadcast=is_broadcast,
     )
     command_words = []
     for i, instruction in enumerate(instructions):
@@ -53,7 +55,8 @@ def create_instruction_write_packet(
 
 
 def create_start_packet(
-    pc: int, dest_x: int = 0, dest_y: int = 0, params: LaneParams = LaneParams()
+        pc: int, dest_x: int = 0, dest_y: int = 0, params: LaneParams = LaneParams(),
+        is_broadcast: bool = False,
 ) -> list[int]:
     """Create a command packet to start execution at a given PC"""
     header = packet_utils.PacketHeader(
@@ -61,6 +64,7 @@ def create_start_packet(
         dest_x=dest_x,
         dest_y=dest_y,
         mode=packet_utils.PacketHeaderModes.COMMAND,
+        is_broadcast=is_broadcast,
     )
     command_word = packet_utils.create_start_command(pc, params)
     return [header.encode(), command_word]
@@ -68,7 +72,7 @@ def create_start_packet(
 
 def create_data_packet(
         data: list[int], dest_x: int = 0, dest_y: int = 0, forward: bool = False,
-        append_length: bool = False) -> list[int]:
+        append_length: int = 0) -> list[int]:
     """Send a data packet in"""
     header = packet_utils.PacketHeader(
         length=len(data), # One command word

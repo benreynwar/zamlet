@@ -5,6 +5,7 @@ import _root_.circt.stage.ChiselStage
 import java.io.File
 import fmvpu.utils._
 import fmvpu.lane._
+import fmvpu.lane_array._
 
 /** Main entry point for generating Verilog from FMVPU modules.
   *
@@ -51,6 +52,7 @@ object Main extends App {
     case "PacketSwitch" => PacketSwitchGenerator
     case "InstructionMemory" => InstructionMemoryGenerator
     case "Lane" => LaneGenerator
+    case "LaneArray" => LaneArrayGenerator
     case "Fifo" => FifoGenerator
     case "SkidBuffer" => SkidBufferGenerator
     case "DecoupledBuffer" => DecoupledBufferGenerator
