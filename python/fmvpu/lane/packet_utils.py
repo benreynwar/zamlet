@@ -146,6 +146,12 @@ class PacketDriver:
             await RisingEdge(self.dut.clock)
 
 
+def packet_to_str(packet):
+    header = PacketHeader.from_word(packet[0])
+    as_str = f'{header} {packet[1:]}'
+    return as_str
+
+
 class PacketReceiver:
     """Receives packets from a single network output"""
     

@@ -86,11 +86,11 @@ class LaneArrayInterface:
                     cocotb.start_soon(self.drivers[label].drive_packets())
                     cocotb.start_soon(self.receivers[label].receive_packets())
 
-    async def write_register(self, lane_x: int, lane_y: int, reg: int, value: int):
+    async def write_register(self, lane_x: int, lane_y: int, reg: int, value: int, is_broadcast: bool = False):
         """Write a value to a register in a specific lane"""
         # Validate lane coordinates
-        assert 0 <= lane_x < self.params.nColumns
-        assert 0 <= lane_y < self.params.nRows
+        assert 1 <= lane_x <= self.params.n_columns
+        assert 1 <= lane_y <= self.params.n_rows
         
         # Create register write packet
         coord_packet = create_register_write_packet(
@@ -98,16 +98,13 @@ class LaneArrayInterface:
             value=value,
             dest_x=lane_x,
             dest_y=lane_y,
-            params=self.params.lane
+            params=self.params.lane,
+            is_broadcast=is_broadcast,
         )
         
         # We'll always send this from the ('n', 1, 0) 
         driver = self.drivers[('n', 1, 0)]
         driver.add_packet(coord_packet)
-        
-        # Wait for packet processing
-        for cycle in range(20):
-            await triggers.RisingEdge(self.dut.clock)
 
     async def write_program(self, program: List, base_address: int = 0):
         """Write a program to instruction memory in a specific lane"""
@@ -115,8 +112,8 @@ class LaneArrayInterface:
         instr_packet = create_instruction_write_packet(
             machine_code,
             base_address,
-            dest_x=self.params.n_columns-1,
-            dest_y=self.params.n_rows-1,
+            dest_x=self.params.n_columns,
+            dest_y=self.params.n_rows,
             params=self.params.lane,
             is_broadcast=True,
         )
@@ -134,8 +131,8 @@ class LaneArrayInterface:
         
         start_packet = create_start_packet(
             pc=pc,
-            dest_x=self.params.n_columns-1,
-            dest_y=self.params.n_rows-1,
+            dest_x=self.params.n_columns,
+            dest_y=self.params.n_rows,
             params=self.params.lane,
             is_broadcast = True,
         )
@@ -185,19 +182,23 @@ class LaneArrayInterface:
             assert False
         return (side, index)
 
-    async def get_packet(self, src_x, src_y, dest_x=0, dest_y=0, channel=0,
-                         timeout=100, expected_length=None):
-        packet = None
-        side, index = self.direction_from_x_and_y(src_x, src_y, dest_x, dest_y)
+    async def get_packet_from_side(self, side, index, channel=0, timeout=100):
         label = (side, index, channel)
+        packet = None
         for cycle in range(timeout):
             await triggers.RisingEdge(self.dut.clock)
             if self.receivers[label].has_packet():
                 packet = self.receivers[label].get_packet()
-                header = packet_utils.PacketHeader.from_word(packet[0])
-                assert header.dest_x == dest_x and header.dest_y == dest_y
-                if expected_length is not None:
-                    assert header.length == expected_length
                 break
         assert packet is not None
+        return packet
+
+    async def get_packet(self, src_x, src_y, dest_x=0, dest_y=0, channel=0,
+                         timeout=100, expected_length=None):
+        side, index = self.direction_from_x_and_y(src_x, src_y, dest_x, dest_y)
+        packet = await self.get_packet_from_side(side, index, channel, timeout)
+        header = packet_utils.PacketHeader.from_word(packet[0])
+        assert header.dest_x == dest_x and header.dest_y == dest_y
+        if expected_length is not None:
+            assert header.length == expected_length
         return packet

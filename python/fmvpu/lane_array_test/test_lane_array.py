@@ -17,6 +17,7 @@ from fmvpu.lane_array import lane_array_interface
 from fmvpu.lane_array.lane_array_interface import LaneArrayInterface
 from fmvpu.lane_array.lane_array_params import LaneArrayParams
 from fmvpu.lane.instructions import PacketInstruction, PacketModes, HaltInstruction, ALUInstruction, ALUModes
+from fmvpu.lane.lane_interface import make_coord_register
 
 
 logger = logging.getLogger(__name__)
@@ -24,8 +25,6 @@ this_dir = os.path.abspath(os.path.dirname(__file__))
 
 
 async def echo_packet_test(lai: LaneArrayInterface) -> None:
-
-    send_to_coords = (1, 1)
 
     # Create packet send instruction: send from location=reg3, value=reg5, result=reg0
     program = [
@@ -52,10 +51,54 @@ async def echo_packet_test(lai: LaneArrayInterface) -> None:
     await lai.write_program(program)
     await lai.start_program()
     
-    data = [1, 2]
-    await lai.send_data_packet(send_to_coords[0], send_to_coords[1], data)
-    packet = await lai.get_packet(send_to_coords[0], send_to_coords[1], expected_length=len(data))
-    assert packet[1:] == data
+    for x in range(1, lai.params.n_columns+1):
+        for y in range(1, lai.params.n_rows+1):
+            data = [2*x, 2*y]
+            await lai.send_data_packet(x, y, data)
+            packet = await lai.get_packet(x, y, expected_length=len(data))
+            assert packet[1:] == data
+
+
+async def report_coords_test(lai: LaneArrayInterface) -> None:
+    """
+    Send a value to each lane with command packets.
+    Write a program to return the values.
+    Collect all the reponses.
+    """
+
+    values = []
+    for x in range(1, lai.params.n_columns+1):
+        for y in range(1, lai.params.n_rows+1):
+            send_to_coords = (x, y)
+            value = x << 5 + y
+            values.append(value)
+            await lai.write_register(x, y, 4, value)
+
+    # Broadcast to all of them to write in register 5.
+    await lai.write_register(x, y, 5, 1, is_broadcast=True)
+    # Write the destination register (1, 0)
+    coord_value = make_coord_register(1, 0, lai.params.lane)
+    await lai.write_register(x, y, 6, coord_value, is_broadcast=True)
+
+    program = [
+        PacketInstruction(
+            mode=PacketModes.SEND,
+            location_reg=6,
+            send_length_reg=5,
+        ),
+        ALUInstruction(mode=ALUModes.ADD, src1_reg=0, src2_reg=4, result_reg=0),
+        HaltInstruction(),
+        ]
+    await lai.write_program(program)
+    await lai.start_program()
+    
+    received_values = []
+    for i in range(lai.params.n_lanes):
+        packet = await lai.get_packet_from_side('n', index=1, channel=0)
+        assert len(packet) == 2
+        received_values.append(packet[1])
+    assert set(received_values) == set(values)
+
 
 
 @cocotb.test()
@@ -78,6 +121,7 @@ async def lane_test_array(dut: HierarchyObject) -> None:
 
     # Run tests
     await echo_packet_test(lai)
+    await report_coords_test(lai)
 
 
 def test_lane_basic(verilog_file: str, params_file: str, seed: int = 0) -> None:

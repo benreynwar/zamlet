@@ -16,6 +16,7 @@ def create_register_write_packet(
     dest_x: int = 0,
     dest_y: int = 0,
     params: LaneParams = LaneParams(),
+    is_broadcast: bool = False,
 ) -> list[int]:
     """Create a command packet to write a value to a register"""
     header = packet_utils.PacketHeader(
@@ -23,6 +24,7 @@ def create_register_write_packet(
         dest_x=dest_x,
         dest_y=dest_y,
         mode=packet_utils.PacketHeaderModes.COMMAND,
+        is_broadcast=is_broadcast,
     )
     command_word = packet_utils.create_register_write_command(register, value, params)
     return [header.encode(), command_word]
@@ -176,30 +178,34 @@ class LaneInterface:
         for cycle in range(20):
             await triggers.RisingEdge(self.dut.clock)
 
-    async def get_packet(self, dest_x=0, dest_y=0, timeout=100, expected_length=None):
+    async def get_packet_from_side(self, side, timeout=100):
         packet = None
-        direction = self.direction_from_x_and_y(dest_x, dest_y)
         for cycle in range(timeout):
             await triggers.RisingEdge(self.dut.clock)
-            if self.receivers[direction].has_packet():
-                packet = self.receivers[direction].get_packet()
-                header = packet_utils.PacketHeader.from_word(packet[0])
-                assert header.dest_x == dest_x and header.dest_y == dest_y
-                if expected_length is not None:
-                    assert header.length == expected_length
+            if self.receivers[side].has_packet():
+                packet = self.receivers[side].get_packet()
                 break
         assert packet is not None
         return packet
 
-    async def send_packet(self, data, forward=False, append_length=0):
+    async def get_packet(self, dest_x=0, dest_y=0, timeout=100, expected_length=None):
+        direction = self.direction_from_x_and_y(dest_x, dest_y)
+        packet = await self.get_packet_from_side(direction, timeout)
+        header = packet_utils.PacketHeader.from_word(packet[0])
+        assert header.dest_x == dest_x and header.dest_y == dest_y
+        if expected_length is not None:
+            assert header.length == expected_length
+        return packet
+
+    async def send_packet(self, data, forward=False, side='w', append_length=0):
         data_packet = create_data_packet(
                 data=data, dest_x=self.lane_x, dest_y=self.lane_y, forward=forward, append_length=append_length,
                 )
-        self.drivers['w'].add_packet(data_packet)
+        self.drivers[side].add_packet(data_packet)
 
-    async def start_program(self, pc=0):
+    async def start_program(self, pc=0, side='w'):
         start_packet = create_start_packet(pc=0, dest_x=self.lane_x, dest_y=self.lane_y)
-        self.drivers['w'].add_packet(start_packet)
+        self.drivers[side].add_packet(start_packet)
 
     async def wait_for_program_to_run(self):
         """Wait 40 cycles for the program to finish execution"""

@@ -261,12 +261,15 @@ class PacketInHandler(params: LaneParams) extends Module {
   }
   // For each direction, check if all OTHER directions that need outputs are ready
   val otherOutputsReady = Wire(Vec(5, Bool()))
+  val otherDirectionsMask = Wire(Vec(5, UInt(5.W)))
+  val otherReadys = Wire(Vec(5, UInt(5.W)))
+  
   for (i <- 0 until 5) {
-    val otherDirectionsMask = connectionDirections & ~(1.U << i).asUInt
-    val otherReadys = Cat((0 until 5).map(j => 
-      if (j == i) true.B else (io.outputs(j).ready || !otherDirectionsMask(j))
+    otherDirectionsMask(i) := (connectionDirections) & ~(1.U(5.W) << i)
+    otherReadys(i) := Cat((0 until 5).map(j => 
+      if (j == i) true.B else (io.outputs(j).ready || !otherDirectionsMask(i)(j))
     ))
-    otherOutputsReady(i) := otherReadys.andR
+    otherOutputsReady(i) := otherReadys(i).andR
   }
 
   // We consume the buffer if we can send the data
@@ -285,7 +288,7 @@ class PacketInHandler(params: LaneParams) extends Module {
     } .otherwise {
       out.valid := buffered.valid && connectionDirections(idx) && otherOutputsReady(idx)
     }
-    when (connectionFwdDirections(idx) && buffered.bits.isHeader) {
+    when (bufferedHeader.forward && connectionFwdDirections(idx) && buffered.bits.isHeader) {
       val newHeader = Wire(new PacketHeader(params))
       newHeader.length := bufferedHeader.length + bufferedHeader.appendLength
       newHeader.xDest := io.forward.bits.xDest

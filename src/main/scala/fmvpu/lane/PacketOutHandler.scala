@@ -12,18 +12,26 @@ class PacketOutHandlerIO(params: LaneParams) extends Bundle {
   
   // Handler arbitration signals
   val handlerRequest = Input(Vec(5, Bool()))
-  
+
   // Connection inputs from packet input handlers
   val connections = Flipped(Vec(5, Decoupled(new PacketData(params))))
   
   // Output to downstream
   val output = Decoupled(new NetworkWord(params))
+
+  val thisX = Input(UInt(params.xPosWidth.W))
 }
 
 /**
  * Packet Output Handler Module
+ *
+ * arg: isNorthOrSouth
+ *   Is this outputting in the vertical direction
+ *   If so we tie the x_dest in the packet header to the current x_dest.
+ *   This helps with broadcast instructions (otherwise there are multiple paths to the same dest)
+ *   Since routing in horiz then vert it doesn't mess other stuff up.
  */
-class PacketOutHandler(params: LaneParams) extends Module {
+class PacketOutHandler(params: LaneParams, isNorthOrSouth: Boolean) extends Module {
   val io = IO(new PacketOutHandlerIO(params))
   
   // Global priority counter for all 5 directions (North=0, East=1, South=2, West=3, Here=4)
@@ -85,10 +93,20 @@ class PacketOutHandler(params: LaneParams) extends Module {
   // This could be selectedInput (for a new connection) or connstateIn for an existing connection
   val connectedIn = Wire(UInt(3.W))
 
+  val newHeader = Wire(new PacketHeader(params))
+  newHeader := io.connections(connectedIn).bits.data.asTypeOf(new PacketHeader(params))
+  
   io.output.valid := io.connections(connectedIn).valid
   io.connections(connectedIn).ready := io.output.ready
-  io.output.bits.data := io.connections(connectedIn).bits.data
+  when (io.connections(connectedIn).bits.isHeader) {
+    io.output.bits.data := newHeader.asUInt
+  } .otherwise {
+    io.output.bits.data := io.connections(connectedIn).bits.data
+  }
   io.output.bits.isHeader := io.connections(connectedIn).bits.isHeader
+  if (isNorthOrSouth) {
+    newHeader.xDest := io.thisX
+  }
 
   when (connstateActive) {
     connectedIn := connstateIn
@@ -120,7 +138,7 @@ object PacketOutHandlerGenerator extends fmvpu.ModuleGenerator {
       null
     } else {
       val params = LaneParams.fromFile(args(0))
-      new PacketOutHandler(params)
+      new PacketOutHandler(params, false)
     }
   }
 }

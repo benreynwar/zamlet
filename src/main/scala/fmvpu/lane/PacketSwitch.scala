@@ -43,12 +43,22 @@ class PacketSwitch(params: LaneParams) extends Module {
   val inHandlers = Seq.fill(5)(Module(new PacketInHandler(params)))
   
   // Create 5 PacketOutHandlers (North=0, East=1, South=2, West=3, Here=4)  
-  val outHandlers = Seq.fill(5)(Module(new PacketOutHandler(params)))
+  val outHandlers = Seq(
+    Module(new PacketOutHandler(params, true)),  // North - isNorthOrSouth = true
+    Module(new PacketOutHandler(params, false)), // East - isNorthOrSouth = false
+    Module(new PacketOutHandler(params, true)),  // South - isNorthOrSouth = true
+    Module(new PacketOutHandler(params, false)), // West - isNorthOrSouth = false
+    Module(new PacketOutHandler(params, false))  // Here - isNorthOrSouth = false
+  )
   
   // Position inputs for all handlers
   inHandlers.foreach { handler =>
     handler.io.thisX := io.thisX
     handler.io.thisY := io.thisY
+  }
+  
+  outHandlers.foreach { handler =>
+    handler.io.thisX := io.thisX
   }
   
   // Configure input directions for PacketInHandlers (North=0, East=1, South=2, West=3, Here=4)

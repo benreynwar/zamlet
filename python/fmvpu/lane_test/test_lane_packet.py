@@ -16,6 +16,7 @@ from fmvpu import test_utils
 from fmvpu.lane import lane_interface
 from fmvpu.lane.lane_interface import LaneInterface, make_coord_register
 from fmvpu.lane.lane_params import LaneParams
+from fmvpu.lane.packet_utils import packet_to_str
 from fmvpu.lane.instructions import PacketInstruction, PacketModes, HaltInstruction, ALUInstruction, ALUModes
 
 
@@ -364,6 +365,29 @@ async def packet_empty_test(li: LaneInterface) -> None:
     assert packet_length == 0, f"Expected empty packet length 0, got {packet_length}"
 
 
+async def broadcast_test(li: LaneInterface) -> None:
+    """Test broadcasting a command packet"""
+    # We'll write to register 2
+    # We'll target li.x_pos+1, li.y_pos+1
+    # The packet should come out the south and east sides.
+    reg = 2
+    value = 45
+    write_packet = lane_interface.create_register_write_packet(
+        register=reg, value=value, dest_x=li.lane_x+1, dest_y=li.lane_y+1,
+        is_broadcast=True,
+    )
+    logger.info(f'write packet is {packet_to_str(write_packet)}')
+    li.drivers['w'].add_packet(write_packet)
+    east_packet = await li.get_packet_from_side('e')
+    south_packet = await li.get_packet_from_side('s')
+    assert  east_packet == write_packet, f'{packet_to_str(east_packet)} != {packet_to_str(write_packet)}'
+
+    assert east_packet == write_packet
+    assert south_packet == write_packet
+    probed_value = await li.read_register(reg)
+    assert probed_value == value
+
+
 @cocotb.test()
 async def lane_packet_test(dut: HierarchyObject) -> None:
     test_utils.configure_logging_sim("DEBUG")
@@ -394,6 +418,7 @@ async def lane_packet_test(dut: HierarchyObject) -> None:
     await packet_mask_execute_test(li)
     await packet_sequence_test(li)
     await packet_empty_test(li)
+    await broadcast_test(li)
 
 
 def test_lane_packet(verilog_file: str, params_file: str, seed: int = 0) -> None:
