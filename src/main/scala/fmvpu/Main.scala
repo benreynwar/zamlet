@@ -4,8 +4,7 @@ import chisel3._
 import _root_.circt.stage.ChiselStage
 import java.io.File
 import fmvpu.utils._
-import fmvpu.lane._
-import fmvpu.lane_array._
+import fmvpu.amlet._
 
 /** Main entry point for generating Verilog from FMVPU modules.
   *
@@ -40,19 +39,22 @@ object Main extends App {
   val moduleArgs = args.drop(2)
   
   val generator: ModuleGenerator = moduleName match {
-    case "RegisterFileAndFriends" => RegisterFileAndFriendsGenerator
+    //case "RegisterFileAndFriends" => RegisterFileAndFriendsGenerator
+    //case "ALU" => ALUGenerator
+    //case "AluRS" => AluRSGenerator
+    case "ALURS" => ALURSGenerator
+    case "ALULiteRS" => ALULiteRSGenerator
     case "ALU" => ALUGenerator
-    case "AluRS" => AluRSGenerator
-    case "LoadStoreRS" => LoadStoreRSGenerator
-    case "PacketRS" => PacketRSGenerator
-    case "SendPacketInterface" => SendPacketInterfaceGenerator
-    case "ReceivePacketInterface" => ReceivePacketInterfaceGenerator
-    case "PacketInHandler" => PacketInHandlerGenerator
-    case "PacketOutHandler" => PacketOutHandlerGenerator
-    case "PacketSwitch" => PacketSwitchGenerator
-    case "InstructionMemory" => InstructionMemoryGenerator
-    case "Lane" => LaneGenerator
-    case "LaneArray" => LaneArrayGenerator
+    //case "LoadStoreRS" => LoadStoreRSGenerator
+    //case "PacketRS" => PacketRSGenerator
+    //case "SendPacketInterface" => SendPacketInterfaceGenerator
+    //case "ReceivePacketInterface" => ReceivePacketInterfaceGenerator
+    //case "PacketInHandler" => PacketInHandlerGenerator
+    //case "PacketOutHandler" => PacketOutHandlerGenerator
+    //case "PacketSwitch" => PacketSwitchGenerator
+    //case "InstructionMemory" => InstructionMemoryGenerator
+    //case "Lane" => LaneGenerator
+    //case "LaneArray" => LaneArrayGenerator
     case "Fifo" => FifoGenerator
     case "SkidBuffer" => SkidBufferGenerator
     case "DecoupledBuffer" => DecoupledBufferGenerator

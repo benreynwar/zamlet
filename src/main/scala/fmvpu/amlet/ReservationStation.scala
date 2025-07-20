@@ -25,59 +25,72 @@ abstract class ReservationStation[U <: Instr.Resolving, R <: Instr.Resolved]
 
   // FIXME: The slots don't have to be initialized all to 0.
   // The valid needs to be 0, but the rest should be DontCare
-  val slots = RegInit(VecInit(
+  val slotsNext = Wire(Vec(nSlots(), Valid(Resolving)))
+  val slots = RegNext(slotsNext, VecInit(
     Seq.fill(nSlots())
     (0.U.asTypeOf(Valid(Resolving)))))
 
+  // What the value of 'slots' will be half way through the
+  // combinatorial logic for updating them.
+  val slotsIntermed = Wire(Vec(nSlots(), Valid(Resolving)))
+
+  // How many of the 'slots' will be getting used next cycle.
   val nUsedSlotsNext = Wire(UInt(log2Ceil(nSlots()+1).W))
+  // How many of the 'slots are getting used this cycle.
   val nUsedSlots = RegNext(nUsedSlotsNext, 0.U)
-
-  // The oldest instruction that is resolved gets sent to the Execution Unit.
-
-  // First step is to update the slots.
-  val update1Slots = Wire(Vec(nSlots(), Valid(Resolving)))
 
   // Is an instruction being removed, this can be due to being issued or being masked.
   val removeValidNext = Wire(Bool())
   val removeValid = RegNext(removeValidNext, false.B)
+  // What slot index are we removing it from.
   val removeSlotIndexNext = Wire(UInt(log2Ceil(nSlots()).W))
   val removeSlotIndex = RegNext(removeSlotIndexNext)
 
   for (i <- 0 until nSlots()) {
-    update1Slots(i) := slots(i)
-    when (removeValid && i.U >= removeSlotIndex && i.U < nUsedSlots - 1.U) {
+    slotsIntermed(i) := slots(i)
+    // We breaking out belowRemoved here so that the condition make sense
+    // for all values of i and doesn't result in warnings.
+    val belowRemoved = Wire(Bool())
+    if (i == nSlots()-1) {
+      belowRemoved := false.B
+    } else {
+      belowRemoved := removeValid && i.U < removeSlotIndex
+    }
+    when (belowRemoved) {
       // Bounds check: ensure i+1 doesn't exceed array bounds when shifting slots left
-      // This shouldn't be necessary given the loop bounds, but seems to be required
+      // The condition shouldn't ever be false, but this resolves it before we
+      // generate the verilog so we don't have to trust tools to realize that.
       if (i+1 < nSlots()) {
-        update1Slots(i) := slots(i+1)
+        slotsIntermed(i) := slots(i+1)
       }
     } .elsewhen (io.input.fire && i.U === nUsedSlots) {
-      update1Slots(i).valid := true.B
-      update1Slots(i).bits := io.input.bits
+      slotsIntermed(i).valid := true.B
+      slotsIntermed(i).bits := io.input.bits
     } .elsewhen (i.U >= nUsedSlots) {
-      update1Slots(i).valid := false.B
-      update1Slots(i).bits := DontCare
+      slotsIntermed(i).valid := false.B
+      slotsIntermed(i).bits := DontCare
     }
   }
 
   // Now update them with the effect of the write backs.
-  val update2Slots = Wire(Vec(nSlots(), Valid(Resolving)))
   for (i <- 0 until nSlots()) {
-    update2Slots(i).valid := update1Slots(i).valid
-    update2Slots(i).bits := update1Slots(i).bits.update(io.writeBacks)
+    slotsNext(i).valid := slotsIntermed(i).valid
+    slotsNext(i).bits := slotsIntermed(i).bits.update(io.writeBacks)
   }
 
 
-  // Find out which slots have all their dependencies resolved.
-  val resolvedSlots = update2Slots.zipWithIndex.map { case (slot, index) => 
+  // Find out which slots will have dependencies resolved next cycle.
+  // i.e. slotsNext has resolved dependencies
+  //      and 'slots' will have resolved dependencies next cycle.
+  val resolvedSlotsNext = slotsNext.zipWithIndex.map { case (slot, index) => 
     index.U < nUsedSlotsNext && 
     slot.bits.isResolved() &&
     !slot.bits.isMasked()
   }
-  resolvedSlots.foreach(dontTouch(_))
+  resolvedSlotsNext.foreach(dontTouch(_))
 
   // Which slots have masked instructions
-  val maskedSlots = update2Slots.zipWithIndex.map { case (slot, index) => 
+  val maskedSlotsNext = slotsNext.zipWithIndex.map { case (slot, index) => 
     index.U < nUsedSlotsNext && 
     slot.bits.isMasked()
   }
@@ -92,13 +105,15 @@ abstract class ReservationStation[U <: Instr.Resolving, R <: Instr.Resolved]
 
 
   // The first resolved slot is the one we will emit next cycle
-  issueValidNext := resolvedSlots.reduce(_ || _)
-  issueSlotIndexNext := PriorityEncoder(resolvedSlots)
+  issueValidNext := resolvedSlotsNext.reduce(_ || _)
+  issueSlotIndexNext := PriorityEncoder(resolvedSlotsNext)
 
+  // The first masked slot is the one we will delete next cycle
+  // (if we aren't issueing)
   val maskValidNext = Wire(Bool())
   val maskSlotIndexNext = Wire(UInt(log2Ceil(nSlots()).W))
-  maskValidNext := maskedSlots.reduce(_ || _)
-  maskSlotIndexNext := PriorityEncoder(maskedSlots)
+  maskValidNext := maskedSlotsNext.reduce(_ || _)
+  maskSlotIndexNext := PriorityEncoder(maskedSlotsNext)
 
   removeValidNext := issueValidNext || maskValidNext
   when (issueValidNext) {
@@ -114,9 +129,9 @@ abstract class ReservationStation[U <: Instr.Resolving, R <: Instr.Resolved]
 
   nUsedSlotsNext := nUsedSlots
   inputReadyNext := inputReady
-  when (removeValidNext && io.input.fire) {
+  when (removeValid && io.input.fire) {
     // We receive an instruction and we issue one
-  } .elsewhen (removeValidNext) {
+  } .elsewhen (removeValid) {
     // We issued but didn't receive
     nUsedSlotsNext := nUsedSlots - 1.U
     inputReadyNext := true.B

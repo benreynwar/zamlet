@@ -35,6 +35,9 @@ case class AmletParams(
   // ALU configuration
   aluLatency: Int = 1,
   nAluRSSlots: Int = 4,
+  
+  // ALULite configuration
+  nAluLiteRSSlots: Int = 4,
 
   // Load Store configuration
   nLoadStoreRSSlots: Int = 4,
@@ -112,6 +115,30 @@ class ARegReadInfo(params: AmletParams) extends Bundle {
   val resolved = Bool()
   val addr = params.aReg()
   val ident = UInt(params.wIdentWidth.W)
+  
+  def getData: UInt = value
+  def update(writes: WriteBacks): ARegReadInfo = {
+    val result = Wire(new ARegReadInfo(params))
+    
+    // Start with original values
+    result.value := value
+    result.resolved := resolved
+    result.addr := addr
+    result.ident := ident
+
+    // Check each write port for a match
+    for (j <- 0 until params.nWriteBacks) {
+      when (!resolved && writes.writes(j).valid && 
+            addr === writes.writes(j).address.addr &&
+            ident === writes.writes(j).address.ident) {
+        // Address matches - resolve this dependency
+        result.resolved := true.B
+        result.value := writes.writes(j).value
+      }
+    }
+    
+    result
+  }
 }
 
 class BRegWithIdent(params: AmletParams) extends Bundle {
