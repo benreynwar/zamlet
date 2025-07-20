@@ -1,0 +1,335 @@
+Architecture
+============
+
+Amlet  - Is the smallest processing unit
+  In contains:
+    - Reservation Stations
+    - Executation Units (ALU, ALUlite, LD/ST, Packet)
+    - Network Interface
+    - Data memory (i.e. LD/ST execution unit)
+  It does not contain:
+    - an instruction memory
+  It receives:
+    - unresolved instruction stream for each of the reservation stations.
+    - network packets
+  It sends:
+    - write backs (but without the data, only the register address)
+  Modules:
+    - Top level (Amlet.scala)
+    - ALU Reservation station (ALURS.scala)
+    - ALULite reservation station (ALULiteRS.scala)
+    - Load/Store Reservation station (LoadStoreRS.scala)
+    - Packet Interface Reservation station (PacketRS.scala)
+    - ALU (ALU.scala) 
+    - ALULite (ALULite.scala)
+    - Data Memory (DataMemory.scala)
+    - PacketSender (PacketSender.scala)
+    - PacketReceiver (PacketReceiver.scala)
+    - NetworkInterface (NetworkInterface.scala) (contains NetworkSwitch, PacketInHandler, PacketOutHandler)
+
+Bamlet
+  It contains:
+    - Several Amlets (probably 4 or 16)
+    - An instruction memory
+    - State of which register writes are still in flight in each Amlet.
+    - State of masks
+    - State of loops
+    - A number of global registers.
+  It does not contain:
+    - Any connection to the network except via it's amlets
+  It sends:
+    - A stream of unresolved instructions to the amlets
+  It receives:
+    - write backs from the amlets (without the data)
+    - instruction memory writes from the amlets (that they received over the network)
+  The top level interface is just the exposes network connections of it's constituent amletes.
+  Modules:
+    - Top level (Bamlet.scala)
+    - InstructionMemory.scala
+    - Issuer.scala
+    - Amlet.scala
+
+Camlet
+  It contains
+    - A RiscV processor
+    - A grid of Bamlets.
+  Not well planned yet
+  
+Damlet
+  It contains a multi-core Riscv processor (consisting of the RiscV processors in the Camlets)
+  A sea of Bamlets that the processors can grab and program to act as accelerators or that
+  can be programmed in a CGRA manner.
+  Not well planned yet.
+
+Bamlet ISA
+==========
+
+The Bamlet has a VLIW ISA.
+The instruction is split into 5 instructlets and 3 termination bits.
+
+  - control     (handles loops and ifs)
+  - packet      (handles sending and receiving packets over the network)
+  - ldst        (loads and stores to the data memory)
+  - alu         (the main ALU, possibly customized to application domain)
+  - alulite     (A 16-bit ALU mostly used for address calculations)
+  - termination (Bits to terminate loops, ifs, and programs)
+
+Registers
+---------
+We have 3 kinds of registers
+
+Global  - N_GLOBAL_REGS (16) read-only registers unique to each Bamlet (programmed from the Camlet level residing in the Issuer) (reg 0 reads as 0)
+Data    - N_DATA_REGS (16) each WIDTH (32) bits wide registers unique to each Amlet (reg 0 reads as 0)
+Address - N_ADDR_REGS (16) each A_WIDTH (16) bits wide unique to each Amlet         (reg 0 reads as 0)
+
+We'll refer to them a greg, dreg, and areg.  An address that could refer to Data or Address is a breg.
+
+Control Instructions
+--------------------
+
+Start Loop:
+  2 bits 01
+  GREG_WIDTH (4) bits length greg    (read global)
+  AREG_WIDTH (4) bits index areg     (write, resolved in the Issuer so no write back)
+
+Start If:
+  2 bits 10
+  GREG_WIDTH (4) bits unused
+  AREG_WIDTH (4) bits condition reg  (read local)
+
+Packet Instructions
+-------------------
+
+ - Modes
+   0: Null
+   1: Receive
+   2: Receive and Forward
+   3: Receive, Forward and Append
+   4: Forward and Append
+   5: Send
+   6: Get Packet Word
+   7: Broadcast
+   8: Unused
+   9: Unused
+   10: Receive and Forward Continuously (we forward it, and they will forward it again)
+   11: Receive, Forward and Append Continously
+   12: Forward and Append and Continuosly
+   13: Send and Forward Again
+   14: Unused
+   15: Unused
+
+ 4 bits for             mode
+ BREG_WIDTH (5) bits    result  (write)  //also stores append length as immediate (for send mode)
+ AREG_WIDTH (4) bits    length
+ AREG_WIDTH (4) bits    target
+ clog2(N_CHANNELS) bits channel immediate
+  
+
+Load and Store Instructions
+---------------------------
+
+Load from address to reg
+Store from reg to address (base address in reg, offset in reg)
+
+  1 bits for valid
+  1 bits for mode
+  AREG_WIDTH (4)  bits addr   (read 1)  (where the address is held)
+  BREG_WIDTH (5) bits src reg (read 2) or (write) (where to read from for STORE, where to write for LOAD)
+
+
+ALU Instruction
+---------------
+
+  ALU Modes:
+    0: None = Value(0.U)
+    1: Add = Value(1.U)       
+    2: Addi = Value(2.U)
+    3: Sub = Value(3.U)
+    4: Subi = Value(4.U)
+    5: Mult = Value(5.U)
+    6: MultAcc = Value(6.U)
+    7: Reserved7 = Value(7.U)
+
+    8: Eq = Value(8.U)
+    9: Gte = Value(9.U)
+    10: te = Value(10.U)
+    11: Not = Value(11.U)
+    12: And = Value(12.U)
+    13: Or = Value(13.U)
+    14: Reserved14 = Value(14.U)
+    15: Reserved15 = Value(15.U)
+
+    16: ShiftL = Value(16.U)
+    17: ShiftR = Value(17.U)
+    18: Reserved18 = Value(18.U)
+    ...
+    31: Jump = Value(31.U)
+
+  5 bits mode
+  DREG_WIDTH (4) bits src1
+  DREG_WIDTH (4) bits src2
+  BREG_WIDTH (5) bits dest
+
+ALULite Instruction
+-------------------
+
+Same as Alu but src1 and src2 are AREG_WIDTH
+
+
+Jump Instruction
+----------------
+Hidden inside the ALUlite instruction space.
+Mode = 31 is a jump instruction
+If bit 12 is 0 -> jump to global. address in lower bits
+             1 -> jump to immediate in bits[11:0]
+
+
+End Region Instructions
+-------------------------
+1 bit End Loop
+1 bit End If
+1 bit Halt
+
+Module Implementations
+======================
+
+Issuer
+------
+
+1) Process the control instruction
+    - If it's a 'Loop'
+        PC is set appropriately
+        Loop state is set (loop index, loop length, loop depth)
+    - If it's a 'If' we submit to the mask hardware and register a new mask.
+
+2) Process the packet instruction.
+    - the reads are the location and length.
+    - The mask identifier could have been updated by processing an 'If' instruction.
+
+3) Process Load/Store instruction
+    - The reads from here can depend on the packet instruction or control instruction
+    - The mask identifier could have been updated by processing an 'If' instruction.
+
+4) Process ALU instruction
+    - Reads depend on control, packet and ld/st.
+    - The mask identifier could have been updated by processing an 'If' instruction.
+    - The jump instruction is also handled here.
+        - a jump instruction always exits any loops and ifs that are active.
+
+5) Process End control tags
+    - halt  (this is processed first)
+    - end if will update mask hardware  (then the end if)
+    - end loop is used to work out what the next PC is  (and then the end loop)
+
+
+Mask Tracking Hardware
+----------------------
+- Instructions submitted to the RS are tagged with a mask id.
+  The Mask Tracking Hardware sends them a signal then that mask id resolves.
+  It's acting as an intermediate between the write backs and the masks so the
+  cost of resolving the masks is shared by the execution units.
+
+  Mask IDs can be
+   - active    (the mask id for the current region)
+   - inactive  (mask ids for parent regions in the region hierarchy)
+   - expired   (mask ids for regions that have closed, but which haven't resolved)
+   - empty     
+
+- When we hit an 'If' a new Mask ident is assigned.
+  If no empty mask idents are available then we stall.
+  The new mask ident is marked as active.  The curent mask ident is stored as the parent.
+  The current mask ident (if there is one) is marked as inactive.
+
+  When we hit an 'EndIf' we drop back to the previous levels mask ident (our current mask ident)
+  stores a pointer to the previous mask ident. We mark the parent mask ident as active.  If
+  the current mask is resolved then it becomes empty.  It is is not resolved then it becomes expired.
+
+  Each mask ident is listing for a write. When they get their write they semi-resolve (or fully-resolve if no parent)
+    When the parent mask ident is fully-resolved they also fully-resolve.
+  When a mask ident fully-resolves, we send out the value to all the reservation stations.
+  If the mask was expired then it becomes empty.
+
+Loop Tracking Hardware
+----------------------
+- We receive a Loop instructlet and check if the length is resolved.
+  If it's not resolved then we stall.
+  When we fire:
+    We write the loop index to a register.
+    We store the loop start address.
+- We receive a LoopEnd instructlet.
+    We compare the loop_index to the loop_length.  (could come from LoopStart instructlet in the same instruction)
+    Based on this we jump to the loop_start_address or we continue.  (we output the pc)
+
+How is the PC calcuculated
+--------------------------
+The default is for
+  PC = PC + 1
+But the loop tracking hardware may tell us that
+  PC = loop_start_address
+Or a jump instruction may tell us
+  PC = jump_target
+Or a halt may tell us that
+  PC = PC
+Or a stall may tell us that
+  PC = PC
+
+Can we meeting timing with the next PC calculated combinatorilly from the current instruction.
+
+PC = loop_start_address might be OK.  It is using one bit from the IM output.
+  If it doesn't meet timing we could have an AlmostEndLoop bit to help with this.
+  If an StartLoop and EndLoop are in the same line then we would have an unavoidable bubble.
+
+PC = jump_target (the target was read from the IM, might well meet timing)
+
+Stalling depends on
+  - Are the write idents and mask idents that we need available.
+  - Are the reservation stations ready.
+  - Is the loop length resolved.
+  - If the send length is resolved.
+
+  We can choose whether we stall or not on an argument
+  Stalling slows performance but reduces the area of the RS.
+
+Load Store Execution
+--------------------
+Loads can jump ahead of Loads
+Loads look at all Stores in front and see if their address matches.
+They don't jump ahead if there is a match
+Stores look at all Loads/Stores ahead
+They don't jump ahead if there is match.
+
+Here we compare X^2/2 comparisons where X is the number of slots in the reservation station.
+We need to keep X fairly small.
+
+Changes we need
+---------------
+
+Instructions.scala (renamed from InstructionBundles.scala)
+ - This needs to be pretty much redone
+
+RegisterFileAndFriends.scala
+ - Needs to be pretty much redone
+ - Create new submoduels for 
+     MaskTracking
+     LoopTracking
+
+AluRS.scala
+ - Mostly unchanged. Make slot 0 be the oldest and have them shuffle down like in a fifo.
+ - mask resolution needs to be updated.
+
+PacketRS.scala
+ - Mask resolution needs to be updated
+
+LoadStateRS.scala
+ - Needs to have load/store reordering
+ - Substantiatl changes
+ - Mask resolution needs to be updated.
+
+
+
+
+  
+  
+
+
+
