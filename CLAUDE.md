@@ -25,3 +25,9 @@ This allows you to read the file multiple times to analyze different parts of th
 
 ## File Creation
 When creating new files, especially large ones, create them in small chunks for review. Do not create entire large files at once.
+
+## Area Analysis
+To get area analysis for components, add them to the appropriate DSE BUILD file:
+- For amlet components: Add to `dse/amlet/BUILD` in the `AMLET_STUDIES` list
+- For lane components: Add to `dse/lane/BUILD` in the `LANE_STUDIES` list
+Then run the DSE flows using bazel targets.

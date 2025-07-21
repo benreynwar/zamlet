@@ -1,48 +1,8 @@
-package fmvpu.lane
+package fmvpu.amlet
 
 import chisel3._
 import chisel3.util._
 import fmvpu.utils._
-
-/**
- * Direction bit constants for 5-bit direction fields
- */
-object DirectionBits {
-  val NORTH_BIT = 0
-  val EAST_BIT = 1 
-  val SOUTH_BIT = 2
-  val WEST_BIT = 3
-  val HERE_BIT = 4
-  
-  val NORTH_MASK = 1 << NORTH_BIT
-  val EAST_MASK = 1 << EAST_BIT
-  val SOUTH_MASK = 1 << SOUTH_BIT
-  val WEST_MASK = 1 << WEST_BIT
-  val HERE_MASK = 1 << HERE_BIT
-  
-  /**
-   * Convert NetworkDirection to corresponding direction mask
-   */
-  def directionToMask(direction: NetworkDirections.Type): UInt = {
-    MuxLookup(direction.asUInt, 0.U)(Seq(
-      NetworkDirections.North.asUInt -> NORTH_MASK.U,
-      NetworkDirections.East.asUInt -> EAST_MASK.U,
-      NetworkDirections.South.asUInt -> SOUTH_MASK.U,
-      NetworkDirections.West.asUInt -> WEST_MASK.U,
-      NetworkDirections.Here.asUInt -> HERE_MASK.U
-    ))
-  }
-}
-
-/**
- * Packet data bundle with control signals
- */
-class PacketData(params: LaneParams) extends Bundle {
-  val data = UInt(params.width.W)
-  val isHeader = Bool()
-  val last = Bool()
-  val append = Bool()
-}
 
 /**
  * Packet In Handler error bundle
@@ -54,7 +14,7 @@ class PacketInHandlerErrors extends Bundle {
 /**
  * Packet In Handler IO
  */
-class PacketInHandlerIO(params: LaneParams) extends Bundle {
+class PacketInHandlerIO(params: AmletParams) extends Bundle {
   // Current position
   val thisX = Input(UInt(params.xPosWidth.W))
   val thisY = Input(UInt(params.yPosWidth.W))
@@ -82,7 +42,7 @@ class PacketInHandlerIO(params: LaneParams) extends Bundle {
 /**
  * Packet In Handler Module
  */
-class PacketInHandler(params: LaneParams) extends Module {
+class PacketInHandler(params: AmletParams) extends Module {
   val io = IO(new PacketInHandlerIO(params))
   
   // Register declarations
@@ -323,10 +283,10 @@ class PacketInHandler(params: LaneParams) extends Module {
 object PacketInHandlerGenerator extends fmvpu.ModuleGenerator {
   override def makeModule(args: Seq[String]): Module = {
     if (args.length < 1) {
-      println("Usage: <command> <outputDir> PacketInHandler <laneParamsFileName>")
+      println("Usage: <command> <outputDir> PacketInHandler <amletParamsFileName>")
       null
     } else {
-      val params = LaneParams.fromFile(args(0))
+      val params = AmletParams.fromFile(args(0))
       new PacketInHandler(params)
     }
   }

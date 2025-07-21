@@ -1,4 +1,4 @@
-package fmvpu.lane
+package fmvpu.amlet
 
 import chisel3._
 import chisel3.util._
@@ -8,16 +8,16 @@ import fmvpu.utils._
 /**
  * Send Packet Interface IO
  */
-class SendPacketInterfaceIO(params: LaneParams) extends Bundle {
+class SendPacketInterfaceIO(params: AmletParams) extends Bundle {
 
   // Network interface
   val toNetwork = Decoupled(new FromHereNetworkWord(params))
   
   // Instruction interface
-  val instr = Flipped(Decoupled(new PacketInstrResolved(params)))
+  val instr = Flipped(Decoupled(new PacketInstr.SendResolved(params)))
 
   // Write inputs for packet data
-  val writeInputs = Input(Vec(params.nWritePorts, new WriteResult(params)))
+  val writeInputs = Input(Vec(params.nWriteBacks, new WriteResult(params)))
 
   // Error outputs
   val errors = Output(new SendPacketInterfaceErrors)
@@ -34,7 +34,7 @@ class SendPacketInterfaceErrors extends Bundle {
  * Send Packet Interface Module
  * Handles packet send operations
  */
-class SendPacketInterface(params: LaneParams) extends Module {
+class SendPacketInterface(params: AmletParams) extends Module {
   val io = IO(new SendPacketInterfaceIO(params))
   
   
@@ -57,11 +57,11 @@ class SendPacketInterface(params: LaneParams) extends Module {
   // The next write ident that we should read from the packetOutBuffer
   val packetOutReadPtr = RegInit(1.U(log2Ceil(params.nPacketOutIdents).W))
   // Handle writes to packet output register (register 0)
-  for (i <- 0 until params.nWritePorts) {
+  for (i <- 0 until params.nWriteBacks) {
     when(io.writeInputs(i).valid && 
-         io.writeInputs(i).address.regAddr === params.packetWordOutRegAddr.U && 
+         io.writeInputs(i).address.addr === 0.U && 
          !io.writeInputs(i).force) {
-      val writeIdent = io.writeInputs(i).address.writeIdent
+      val writeIdent = io.writeInputs(i).address.ident
       packetOutBuffer(writeIdent).valid := true.B
       packetOutBuffer(writeIdent).bits := io.writeInputs(i).value
     }
@@ -81,8 +81,8 @@ class SendPacketInterface(params: LaneParams) extends Module {
   // Buffer instructions and data to the network
   // ------------------------------------------------------
 
-  val bufferedInstr = Wire(Decoupled(new PacketInstrResolved(params)))
-  val bufferInstr = Module(new DoubleBuffer(new PacketInstrResolved(params)))
+  val bufferedInstr = Wire(Decoupled(new PacketInstr.SendResolved(params)))
+  val bufferInstr = Module(new DoubleBuffer(new PacketInstr.SendResolved(params)))
   bufferInstr.io.i <> io.instr
   bufferInstr.io.o <> bufferedInstr
 
@@ -104,7 +104,7 @@ class SendPacketInterface(params: LaneParams) extends Module {
   val sendState = RegInit(States.Idle)
   // How many payload words are left to send
   val sendRemainingWords = RegInit(0.U(8.W))
-  val sendInstruction = Reg(new PacketInstrResolved(params))
+  val sendInstruction = Reg(new PacketInstr.SendResolved(params))
 
 
   // Send the packet to the network
@@ -121,9 +121,9 @@ class SendPacketInterface(params: LaneParams) extends Module {
   switch(sendState) {
     is (States.Idle) {
       bufferedInstr.ready := true.B
-      when(bufferedInstr.valid && !bufferedInstr.bits.mask) {
+      when(bufferedInstr.valid) {
         sendState := States.SendingHeader
-        sendRemainingWords := bufferedInstr.bits.sendLength
+        sendRemainingWords := bufferedInstr.bits.length
         sendInstruction := bufferedInstr.bits
       }
     }
@@ -133,14 +133,14 @@ class SendPacketInterface(params: LaneParams) extends Module {
       header.length := sendRemainingWords
       header.xDest := sendInstruction.xTarget
       header.yDest := sendInstruction.yTarget
-      header.mode := MuxLookup(sendInstruction.mode, PacketHeaderModes.Normal)(Seq(
-        PacketModes.SendCommand -> PacketHeaderModes.Command,
-        PacketModes.ForwardAndAppend -> PacketHeaderModes.Append,
-        PacketModes.ReceiveForwardAndAppend -> PacketHeaderModes.Append
+      header.mode := MuxLookup(sendInstruction.mode.asUInt, PacketHeaderModes.Normal)(Seq(
+        PacketInstr.Modes.Send.asUInt -> PacketHeaderModes.Command,
+        PacketInstr.Modes.ForwardAndAppend.asUInt -> PacketHeaderModes.Append,
+        PacketInstr.Modes.ReceiveForwardAndAppend.asUInt -> PacketHeaderModes.Append
       ))
-      header.forward := sendInstruction.forwardAgain
-      header.isBroadcast := sendInstruction.mode === PacketModes.SendBroadcast
-      header.appendLength := sendInstruction.result.regAddr
+      header.forward := (sendInstruction.mode === PacketInstr.Modes.SendAndForwardAgain)
+      header.isBroadcast := sendInstruction.mode === PacketInstr.Modes.Broadcast
+      header.appendLength := sendInstruction.result.addr
       
       bufferedToNetwork.valid := true.B
       bufferedToNetwork.bits.data := header.asUInt
@@ -174,10 +174,10 @@ class SendPacketInterface(params: LaneParams) extends Module {
 object SendPacketInterfaceGenerator extends fmvpu.ModuleGenerator {
   override def makeModule(args: Seq[String]): Module = {
     if (args.length < 1) {
-      println("Usage: <command> <outputDir> SendPacketInterface <laneParamsFileName>")
+      println("Usage: <command> <outputDir> SendPacketInterface <amletParamsFileName>")
       null
     } else {
-      val params = LaneParams.fromFile(args(0))
+      val params = AmletParams.fromFile(args(0))
       new SendPacketInterface(params)
     }
   }

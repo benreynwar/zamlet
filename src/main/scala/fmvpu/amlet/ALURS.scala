@@ -12,6 +12,16 @@ class ALURS(params: AmletParams) extends ReservationStation[ALUInstr.Resolving, 
     params.nAluRSSlots
   }
 
+  def readyToIssue(allResolving: Vec[ALUInstr.Resolving], index: UInt): Bool = {
+    allResolving(index).isResolved()
+  }
+
+  def emptySlot(): ALUInstr.Resolving = {
+    val result = Wire(new ALUInstr.Resolving(params))
+    result := DontCare
+    result
+  }
+
 }
 
 /** Generator object for creating AluRS modules from command line arguments.

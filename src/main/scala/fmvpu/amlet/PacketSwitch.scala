@@ -1,4 +1,4 @@
-package fmvpu.lane
+package fmvpu.amlet
 
 import chisel3._
 import chisel3.util._
@@ -6,7 +6,7 @@ import chisel3.util._
 /**
  * Packet Switch IO
  */
-class PacketSwitchIO(params: LaneParams) extends Bundle {
+class PacketSwitchIO(params: AmletParams) extends Bundle {
   // Current position
   val thisX = Input(UInt(params.xPosWidth.W))
   val thisY = Input(UInt(params.yPosWidth.W))
@@ -22,7 +22,7 @@ class PacketSwitchIO(params: LaneParams) extends Bundle {
   val eo = Decoupled(new NetworkWord(params))
   val wo = Decoupled(new NetworkWord(params))
   
-  // 'Here' interface to/from local lane
+  // 'Here' interface to/from local amlet
   val hi = Flipped(Decoupled(new NetworkWord(params)))
   val ho = Decoupled(new NetworkWord(params))
   
@@ -36,7 +36,7 @@ class PacketSwitchIO(params: LaneParams) extends Bundle {
  * Instantiates 5 PacketInHandlers (North, East, South, West, Here) and 
  * 5 PacketOutHandlers (North, East, South, West, Here) and connects them together.
  */
-class PacketSwitch(params: LaneParams) extends Module {
+class PacketSwitch(params: AmletParams) extends Module {
   val io = IO(new PacketSwitchIO(params))
   
   // Create 5 PacketInHandlers (North=0, East=1, South=2, West=3, Here=4)
@@ -124,10 +124,10 @@ class PacketSwitch(params: LaneParams) extends Module {
 object PacketSwitchGenerator extends fmvpu.ModuleGenerator {
   override def makeModule(args: Seq[String]): Module = {
     if (args.length < 1) {
-      println("Usage: <command> <outputDir> PacketSwitch <laneParamsFileName>")
+      println("Usage: <command> <outputDir> PacketSwitch <amletParamsFileName>")
       null
     } else {
-      val params = LaneParams.fromFile(args(0))
+      val params = AmletParams.fromFile(args(0))
       new PacketSwitch(params)
     }
   }

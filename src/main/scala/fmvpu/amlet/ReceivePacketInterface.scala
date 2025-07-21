@@ -1,4 +1,4 @@
-package fmvpu.lane
+package fmvpu.amlet
 
 import chisel3._
 import chisel3.util._
@@ -7,7 +7,7 @@ import fmvpu.utils._
 /**
  * Receive Packet Interface IO
  */
-class ReceivePacketInterfaceIO(params: LaneParams) extends Bundle {
+class ReceivePacketInterfaceIO(params: AmletParams) extends Bundle {
   // Current position for routing calculations
   val thisX = Input(UInt(params.xPosWidth.W))
   val thisY = Input(UInt(params.yPosWidth.W))
@@ -16,7 +16,7 @@ class ReceivePacketInterfaceIO(params: LaneParams) extends Bundle {
   val fromNetwork = Flipped(Decoupled(new NetworkWord(params)))
   
   // Instruction interface
-  val instr = Flipped(Decoupled(new PacketInstrResolved(params)))
+  val instr = Flipped(Decoupled(new PacketInstr.ReceiveResolved(params)))
   
   // Forward interface
   val forward = Valid(new PacketForward(params))
@@ -28,7 +28,7 @@ class ReceivePacketInterfaceIO(params: LaneParams) extends Bundle {
   val writeIM = Valid(new IMWrite(params))
   
   // Control outputs
-  val start = Valid(UInt(params.instrAddrWidth.W))
+  val start = Valid(UInt(16.W)) // instrAddrWidth equivalent
   
   // Error outputs
   val errors = Output(new ReceivePacketInterfaceErrors)
@@ -40,6 +40,7 @@ class ReceivePacketInterfaceIO(params: LaneParams) extends Bundle {
 class ReceivePacketInterfaceErrors extends Bundle {
   val instrAndCommandPacket = Bool()
   val wrongInstructionMode = Bool()
+  val imWriteCountExceedsPacket = Bool()
 }
 
 /**
@@ -68,7 +69,7 @@ class ReceivePacketInterfaceErrors extends Bundle {
  * - Command packet received while receive instruction pending
  * - Any hardware limitation that prevents proper packet processing
  */
-class ReceivePacketInterface(params: LaneParams) extends Module {
+class ReceivePacketInterface(params: AmletParams) extends Module {
   val io = IO(new ReceivePacketInterfaceIO(params))
   
   /**
@@ -78,11 +79,16 @@ class ReceivePacketInterface(params: LaneParams) extends Module {
     val Idle = Value(0.U)
     val ReceivingData = Value(1.U)
     val ProcessingCommand = Value(2.U)
+    val ProcessingIMWrites = Value(3.U)
   }
   
   // Receive state  
   val receiveState = RegInit(States.Idle)
   val receiveRemainingWords = RegInit(0.U(8.W))
+  
+  // IM write state
+  val imWriteAddress = RegInit(0.U(16.W))
+  val imWriteCount = RegInit(0.U(8.W))
   
   // Forward toggle register
   val forwardToggle = RegInit(false.B)
@@ -91,13 +97,15 @@ class ReceivePacketInterface(params: LaneParams) extends Module {
   // Error signals
   val errorInstrAndCommandPacket = RegInit(false.B)
   val errorWrongInstructionMode = RegInit(false.B)
+  val errorIMWriteCountExceedsPacket = RegInit(false.B)
   io.errors.instrAndCommandPacket := errorInstrAndCommandPacket
   io.errors.wrongInstructionMode := errorWrongInstructionMode
+  io.errors.imWriteCountExceedsPacket := errorIMWriteCountExceedsPacket
   
   // Default outputs
   io.writeReg.valid := false.B
-  io.writeReg.address.regAddr := DontCare
-  io.writeReg.address.writeIdent := DontCare
+  io.writeReg.address.addr := DontCare
+  io.writeReg.address.ident := DontCare
   io.writeReg.value := DontCare
   io.writeReg.force := DontCare
   io.writeIM.valid := false.B
@@ -135,8 +143,8 @@ class ReceivePacketInterface(params: LaneParams) extends Module {
   bufferFromNetwork.io.o <> bufferedFromNetwork
 
   // Buffer receive instructions
-  val bufferedInstr = Wire(Decoupled(new PacketInstrResolved(params)))
-  val bufferInstr = Module(new DoubleBuffer(new PacketInstrResolved(params)))
+  val bufferedInstr = Wire(Decoupled(new PacketInstr.ReceiveResolved(params)))
+  val bufferInstr = Module(new DoubleBuffer(new PacketInstr.ReceiveResolved(params)))
   bufferInstr.io.i <> io.instr
   bufferInstr.io.o <> bufferedInstr
 
@@ -150,32 +158,25 @@ class ReceivePacketInterface(params: LaneParams) extends Module {
 
   errorInstrAndCommandPacket := false.B
   errorWrongInstructionMode := false.B
+  errorIMWriteCountExceedsPacket := false.B
   
   val commandType = bufferedFromNetwork.bits.data(params.width-1, params.width-2) // Top 2 bits = command type
   val commandData = bufferedFromNetwork.bits.data(params.width-3, 0)              // Bottom width-2 bits = data
   val forwardDirection = PacketRouting.calculateNextDirection(params, io.thisX, io.thisY, bufferedInstr.bits.xTarget, bufferedInstr.bits.yTarget)
   switch(receiveState) {
     is(States.Idle) {
-      // Consume masked receive instructions without executing
-      when (bufferedInstr.valid && bufferedInstr.bits.mask &&
-           (bufferedInstr.bits.mode === PacketModes.Receive ||
-            bufferedInstr.bits.mode === PacketModes.ReceiveAndForward ||
-            bufferedInstr.bits.mode === PacketModes.ReceiveForwardAndAppend)) {
-        bufferedInstr.ready := true.B  // Consume but don't execute
-      }
-      
-      // Send forward info if we have a forwarding instruction (and not masked)
-      when (bufferedInstr.valid && !bufferedInstr.bits.mask &&
-           (bufferedInstr.bits.mode === PacketModes.ReceiveAndForward ||
-            bufferedInstr.bits.mode === PacketModes.ReceiveForwardAndAppend)) {
+      // Send forward info if we have a forwarding instruction
+      when (bufferedInstr.valid &&
+           (bufferedInstr.bits.mode === PacketInstr.Modes.ReceiveAndForward ||
+            bufferedInstr.bits.mode === PacketInstr.Modes.ReceiveForwardAndAppend)) {
         io.forward.valid := true.B
         // Calculate routing direction and create header using utility functions
         
         io.forward.bits.networkDirection := forwardDirection
         io.forward.bits.xDest := bufferedInstr.bits.xTarget
         io.forward.bits.yDest := bufferedInstr.bits.yTarget
-        io.forward.bits.forward := bufferedInstr.bits.forwardAgain
-        io.forward.bits.append := (bufferedInstr.bits.mode === PacketModes.ReceiveForwardAndAppend)
+        io.forward.bits.forward := bufferedInstr.bits.forwardContinuously
+        io.forward.bits.append := bufferedInstr.bits.shouldAppend
         io.forward.bits.toggle := forwardToggle
       }
       
@@ -188,7 +189,7 @@ class ReceivePacketInterface(params: LaneParams) extends Module {
           // Ignore any pending receive instruction for command packets
         } .otherwise {
           // Normal packets need both header and instruction (and instruction not masked)
-          when (bufferedInstr.valid && !bufferedInstr.bits.mask) {
+          when (bufferedInstr.valid) {
             // We have both - consume both and start receiving data
             bufferedFromNetwork.ready := true.B
             bufferedInstr.ready := true.B
@@ -201,16 +202,16 @@ class ReceivePacketInterface(params: LaneParams) extends Module {
             forwardToggle := !forwardToggle
             
             // Error if wrong instruction mode
-            when (!(bufferedInstr.bits.mode === PacketModes.Receive ||
-                    bufferedInstr.bits.mode === PacketModes.ReceiveAndForward ||
-                    bufferedInstr.bits.mode === PacketModes.ReceiveForwardAndAppend)) {
+            when (!(bufferedInstr.bits.mode === PacketInstr.Modes.Receive ||
+                    bufferedInstr.bits.mode === PacketInstr.Modes.ReceiveAndForward ||
+                    bufferedInstr.bits.mode === PacketInstr.Modes.ReceiveForwardAndAppend)) {
               errorWrongInstructionMode := true.B
             }
             
             // Write packet length to the result register specified by instruction
             io.writeReg.valid := true.B
-            io.writeReg.address.regAddr := bufferedInstr.bits.result.regAddr
-            io.writeReg.address.writeIdent := bufferedInstr.bits.result.writeIdent
+            io.writeReg.address.addr := bufferedInstr.bits.result.addr
+            io.writeReg.address.ident := bufferedInstr.bits.result.ident
             io.writeReg.value := header.length
             io.writeReg.force := false.B
           }
@@ -226,18 +227,16 @@ class ReceivePacketInterface(params: LaneParams) extends Module {
         bufferedInstr.ready := true.B
         
         // Error if wrong instruction mode
-        when (bufferedInstr.bits.mode =/= PacketModes.GetWord) {
+        when (bufferedInstr.bits.mode =/= PacketInstr.Modes.GetPacketWord) {
           errorWrongInstructionMode := true.B
         }
         
-        // Only write to register if not masked
-        when (!bufferedInstr.bits.mask) {
-          io.writeReg.valid := true.B
-          io.writeReg.value := bufferedFromNetwork.bits.data
-          io.writeReg.address.regAddr := bufferedInstr.bits.result.regAddr
-          io.writeReg.address.writeIdent := bufferedInstr.bits.result.writeIdent
-          io.writeReg.force := false.B
-        }
+        // Write to register
+        io.writeReg.valid := true.B
+        io.writeReg.value := bufferedFromNetwork.bits.data
+        io.writeReg.address.addr := bufferedInstr.bits.result.addr
+        io.writeReg.address.ident := bufferedInstr.bits.result.ident
+        io.writeReg.force := false.B
         
         receiveRemainingWords := receiveRemainingWords - 1.U
         when (receiveRemainingWords === 1.U) {
@@ -257,19 +256,53 @@ class ReceivePacketInterface(params: LaneParams) extends Module {
         switch(commandType) {
           is(0.U) { // Start processor command
             io.start.valid := true.B
-            io.start.bits := commandData(params.instrAddrWidth-1, 0)
+            io.start.bits := commandData(15, 0) // instrAddrWidth equivalent
           }
-          is(1.U) { // Write to instruction memory command
-            io.writeIM.valid := true.B
-            io.writeIM.bits.address := commandData(params.instrAddrWidth-1, 0)
-            io.writeIM.bits.data := commandData(params.instructionWidth+params.instrAddrWidth-1, params.instrAddrWidth)
+          is(1.U) { // Write to instruction memory command setup
+            val requestedCount = commandData(23, 16) // Count in next 8 bits
+            imWriteAddress := commandData(15, 0) // Address in lower 16 bits
+            imWriteCount := requestedCount
+            
+            // Check if IM write count exceeds remaining packet words
+            when(requestedCount > (receiveRemainingWords - 1.U)) {
+              errorIMWriteCountExceedsPacket := true.B
+            }
+            
+            when(requestedCount > 0.U) {
+              receiveState := States.ProcessingIMWrites
+            }
           }
           is(2.U) { // Write to register command
             io.writeReg.valid := true.B
-            io.writeReg.address.regAddr := commandData(params.width-3, params.width-2-params.regAddrWidth)
-            io.writeReg.address.writeIdent := 0.U // Command writes don't use write identifiers
-            io.writeReg.value := Cat(0.U(params.regAddrWidth.W), commandData(params.width-2-params.regAddrWidth-1, 0))
+            io.writeReg.address.addr := commandData(params.width-3, params.width-2-params.bRegWidth)
+            io.writeReg.address.ident := 0.U // Command writes don't use write identifiers
+            io.writeReg.value := Cat(0.U(params.bRegWidth.W), commandData(params.width-2-params.bRegWidth-1, 0))
             io.writeReg.force := true.B // Command writes bypass dependency system
+          }
+        }
+      }
+      
+      bufferedFromNetwork.ready := true.B
+    }
+    is(States.ProcessingIMWrites) {
+      when (bufferedFromNetwork.valid) {
+        // Write data to instruction memory
+        io.writeIM.valid := true.B
+        io.writeIM.bits.address := imWriteAddress
+        io.writeIM.bits.data := bufferedFromNetwork.bits.data
+        
+        // Update state for next write
+        imWriteAddress := imWriteAddress + 1.U
+        imWriteCount := imWriteCount - 1.U
+        receiveRemainingWords := receiveRemainingWords - 1.U
+        
+        // Check if we're done with IM writes
+        when(imWriteCount === 1.U) {
+          // If there are still words in the command packet, go back to ProcessingCommand
+          when(receiveRemainingWords > 1.U) {
+            receiveState := States.ProcessingCommand
+          } .otherwise {
+            receiveState := States.Idle
           }
         }
       }
@@ -281,15 +314,15 @@ class ReceivePacketInterface(params: LaneParams) extends Module {
 }
 
 /**
- * Module generator for PacketInterface
+ * Module generator for ReceivePacketInterface
  */
 object ReceivePacketInterfaceGenerator extends fmvpu.ModuleGenerator {
   override def makeModule(args: Seq[String]): Module = {
     if (args.length < 1) {
-      println("Usage: <command> <outputDir> ReceivePacketInterface <laneParamsFileName>")
+      println("Usage: <command> <outputDir> ReceivePacketInterface <amletParamsFileName>")
       null
     } else {
-      val params = LaneParams.fromFile(args(0))
+      val params = AmletParams.fromFile(args(0))
       new ReceivePacketInterface(params)
     }
   }

@@ -43,7 +43,8 @@ case class AmletParams(
   nLoadStoreRSSlots: Int = 4,
 
   // Packet configuration
-  nPacketNSSlots: Int = 2,
+  nSendPacketRSSlots: Int = 2,
+  nReceivePacketRSSlots: Int = 2,
   nPacketOutIdents: Int = 4,
   
   // Network configuration
@@ -144,6 +145,37 @@ class ARegReadInfo(params: AmletParams) extends Bundle {
 class BRegWithIdent(params: AmletParams) extends Bundle {
   val addr = params.bReg()
   val ident = UInt(params.wIdentWidth.W)
+}
+
+class BRegReadInfo(params: AmletParams) extends Bundle {
+  val value = params.bWord()
+  val resolved = Bool()
+  val addr = params.bReg()
+  val ident = UInt(params.wIdentWidth.W)
+  
+  def getData: UInt = value
+  def update(writes: WriteBacks): BRegReadInfo = {
+    val result = Wire(new BRegReadInfo(params))
+    
+    // Start with original values
+    result.value := value
+    result.resolved := resolved
+    result.addr := addr
+    result.ident := ident
+
+    // Check each write port for a match
+    for (j <- 0 until params.nWriteBacks) {
+      when (!resolved && writes.writes(j).valid && 
+            addr === writes.writes(j).address.addr &&
+            ident === writes.writes(j).address.ident) {
+        // Address matches - resolve this dependency
+        result.resolved := true.B
+        result.value := writes.writes(j).value
+      }
+    }
+    
+    result
+  }
 }
 
 class WriteResult(params: AmletParams) extends Bundle {

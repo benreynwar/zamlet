@@ -14,7 +14,8 @@
   "nAluRSSlots": 4,
   "nAluLiteRSSlots": 4,
   "nLoadStoreRSSlots": 4,
-  "nPacketNSSlots": 2,
+  "nSendPacketRSSlots": 2,
+  "nReceivePacketRSSlots": 2,
   "nPacketOutIdents": 4,
   "nChannels": 2
 }

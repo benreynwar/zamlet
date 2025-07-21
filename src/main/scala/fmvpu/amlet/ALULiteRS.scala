@@ -12,6 +12,16 @@ class ALULiteRS(params: AmletParams) extends ReservationStation[ALULiteInstr.Res
     params.nAluLiteRSSlots
   }
 
+  def readyToIssue(allResolving: Vec[ALULiteInstr.Resolving], index: UInt): Bool = {
+    allResolving(index).isResolved()
+  }
+
+  def emptySlot(): ALULiteInstr.Resolving = {
+    val result = Wire(new ALULiteInstr.Resolving(params))
+    result := DontCare
+    result
+  }
+
 }
 
 /** Generator object for creating ALULiteRS modules from command line arguments.

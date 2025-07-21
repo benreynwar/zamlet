@@ -1,0 +1,303 @@
+Matrix multiplication
+
+X X X X
+X X X X
+X X X X
+X X X X
+
+Let's imagine we're we're doing a 32x32 matix mult.
+One matrix is stored in the data memory.
+Two columns in each lane.
+
+Now we feed in the data column by column into the bottom left node.
+The data streams through the nodes in a snake like pattern
+
+<------
+------>
+<------      
+------>
+
+As the column is streamed in is multiplied by one of the stored rows in each lane
+and also saved to the data memory.
+
+Loop:
+  set accumulator to 0
+  Receive a packet. Forward packet to reg3 location.
+  For each word in packet (index i)
+      Store packet word to base_address_a + i
+      Load base_address_b + i into reg 1
+      Multiply packet word by reg 1 and add to accumulator
+  Receive a packet. Forward packet to reg3 location. Append
+      accumulator to the end of the packet.
+
+Position of node can Loaded to reg with a special instruction.
+
+Packet length is put in a general register.  Specified by the packet
+command.
+
+Write register is 3 bits
+Read register is 2 bits
+
+0 - packet word out (write only) (read gives 0)
+1 - accumulator (also used as the accumulator)
+2 - general (also used as the mask)
+3 - general
+4 - general
+5 - general
+6 - general
+7 - general
+
+Loop (reg8 and reg9 are base addresses, reg10 is next lane in chain)
+- Load accumulator 0
+- Receive Packet Forward to Reg10 Process Word by Word
+  - Store packet word to reg8 + packet_word_index
+  - Load reg9 + packet_word_index to reg11
+  - Multiply and Accumulate (packet_word, reg11)
+- Receive Packet Forward to Reg10 Append 1 additional word
+  - Copy from 'accumulator' to packet_word out
+
+What would the instructions look like in memory   
+
+Assume load is 2 cycles
+Assume store is 2 cycles
+
+Receive Packet Forward to Reg10 Process Word by Word
+Load 0 -> Accum
+C0 Set Loop Start / Load (reg9 + packet_word_index) to reg11
+C1 -
+C2 Wait on Word   / Store word to (reg8 + packet_word_index) / MAC (packetword, reg11)
+Receive Packet Forward to Reg10 Append 1 Word
+   Copy Accum to packet_word_out
+
+It's hard to think how to time things without having back pressure in the commands.
+
+What would it look like if we had backpressure in the pipelines.
+
+Loop a Packet (packet_word avail is (B)) (D = finish packet) (forward to Reg10)
+Load (reg9 + packet_word_index) to reg11 (A)
+(B) Store packet_word to (reg8 + packet_word_index)
+(A, B) MAC(packetword, reg11) (C)
+(A, C) Release packet_word
+(D) Receive packet Forward to Reg10 (Append 1)
+Copy Accum to packet_word_out
+
+Packet (forward to Reg10) (2 uses each packet_word)
+
+Loop (0 to packet_word_index-1)
+  Load (reg9 + packet_word_index) to reg11 (1 use)
+ 
+Loop (0 to packet_word_index-1)
+  Store (fresh packet_word) to (reg8 + packet_word_index)
+
+Loop (0 to packet_word_index-1)
+  MAC(fresh packetword, fresh reg11)
+
+If we did multi dispatch:
+  In a VLIW format we don't need to rearrange.
+But we could have a compromise where there are limits but we get some flexilibility for how the instructions are arranged together.
+
+   Load / Store / Mult / Add / Receive / Send 
+RF 1W     1R      2R1W   2R1W  
+
+Can we share the read and write ports?
+
+But start off simple.
+Mult and Add share ports.
+
+0) Packet (forward to Reg10) (2 uses each packet_word)
+    Is the packet receiver free?
+    If it's not then we stall here.
+    Stall until we get a packet.
+    The packet receiver has been told that it should forward the packet on the Reg10.
+      We make a new header with the new destination.
+      We check that the packet length matches the expected length.
+      We know what direction the Reg10 node is.  We check to see if that is available.
+      If it is we create the connection.
+      Otherwise we stall here.
+    Once the connection is made we send the header.
+
+1) We know the packet length so we can try to submit some of the
+   Load, Store and MAC instructions.
+   They go to the reservation stations.
+   We need to be able to reserve the 1st, 2nd, 3rd packetword.
+   We never issue more than X packetwords in the future and we store
+    packet_word_index % X in the reservation station.
+
+   When a packet_word is used we send a message to the packet_receiver.
+   When enough uses are received it brings in the next packet word.
+
+Instruction Line 0 (~58 bits)  (receive packet and do mult-acc with columns)
+------------------
+Packet (forward to Reg10) (expected length reg)
+2      4                  4                                             (10 bits)
+Loop Start (packet_length)
+1          4                                                            (5 bits)
+Load (reg9 + packet_word_index) to reg11
+1      4       4                     3                                  (12 bits)
+Store (fresh packet_word) to (reg8 + packet_word_index)
+1            4                4        4                                (14 bits)
+MAC(fresh packetword, fresh reg11)
+4         4                4         3                                  (15 bits)
+End Loop  /  Next packet word
+1             1                                                         (2 bits)
+
+Instruction Line 1 (output row)
+------------------
+Packet (forward to Reg10)
+
+That seems like a maybe sane approach for the matrix multiplication example.
+
+But how would it work for calculation an FFT???
+
+1) Send a packet to all of the nodes with their twiddle factors.
+2) Send a packet to all of the nodes with their data for the FFT.
+3) Each node does a local FFT with their data.
+4) A stage with 2 nodes.
+5) A stage with 4 nodes ... A final stage with all nodes.
+6) Reorder the data.
+7) Send a packet from each node with it's data.
+
+Let's look at (3) first.
+Line
+0:   Make avail (loop_index-1)
+
+1:   Loop Start (n_stages)
+
+2:   Loops Start (within stage)
+     Load twiddle (can always reorder)
+
+3:   Load A (can reorder loop_index1-1)
+
+4:   Load B (can reorder loop_index1-1)
+     Mult C = B * twiddle
+
+5:   Add D = A + C
+     Store B (can reorder loop_index1)
+
+6:   Add E = A - C
+     Store E (can reorder loop_index1)
+     End Loop
+
+Hmm. Here in the inner loop, the fastest we can do it is 6 cycles, but it should only take 3 cycles.
+
+If we can manually say a reg is unavailable then we can have the use before the creation to even things up.
+
+Line
+0:   Make avail (loop_index-1)
+
+1:   Loop Start (n_stages)
+     Clear B
+
+2:   Loops Start (within stage)
+     Load twiddle (can always reorder)
+     Mult C = B * twiddle
+     Clear A  (this empties the A register,  any references wait on a write)
+
+3:   Load B (can reorder loop_index0-1)
+     Add D = A + C
+     Store D (can reorder loop_indx0)
+
+4:   Load A (can reorder loop_index0-1)
+     Add E = A - C
+     Store E (can reorder loop_index0)
+     Clear B
+     End Loop
+
+The Clear/Make avail will take 5 bits so 58 + 5 = 63 bits for the instruction.
+
+So adding this 'clear' instruction allows us to make the instructions into VLIW more efficiently in this case.
+
+Now let's consider A Pair of nodes working on a FFT stage together.
+Let's just consider a local stage followed by a shuffle. A shuffle will just involve sending half of the outputs to the other node.
+
+Line
+0:    Send Packet (to other node) length
+1:    Receive Packet (from other node) length
+2:    Loop Start (within stage) length
+      Load twiddle (can always reorder)
+3:    Load A
+      Store packet_word_in
+      Clear packet_word_in  (steps to next packet word)
+4:    Load B
+5:    C = B * twiddle
+6:    packet_word_out = A + C
+7:    D = A - C
+      Store D
+      End Loop
+
+Let's think a simple implementation that captures the essense of this idea.
+      
+ISA
+===
+Packet Instructions
+-------------------
+ - Modes
+   0: Receive (if forwarded length is send_length)
+   1: Receive (if forwarded length is old length + send_length)
+   2: Send
+   3: Get Packet Word
+
+ 2 bits for mode
+ 3 bits of location          (read) (should be 0 if don't forward)
+ 3 bit for receive length    (write)
+ 3 bit for send length       (read)
+ 2 bit channel hardcoded
+ 1 bit mask
+
+ 14 bits
+
+Load and Store Instructions
+---------------------------
+Load from address to reg
+Store from reg to address (base address in reg, offset in reg)
+
+  2 bits for mode
+  3 bits for base address
+  3 bits for offset
+  1 bit mask
+
+  9 bits
+
+ALU Instruction
+---------------
+  4 bits mode
+  3 bits src 1
+  3 bits src 2
+  3 bits dest
+  1 bit mask
+
+  14 bits
+
+Loop Instructions
+-----------------
+
+  mode 2 bit (loop0 or loop1 or next)
+  length 3 bits
+  index 3 bits (which reg to write index to)
+
+  11 bits
+   
+
+If we want to make it general the 18 bits
+
+6 bits mode
+4 bits (src1 or offset or location)
+4 bits (src2 or base_address or length)
+3 bits (dest or append length)
+1 bit mask
+
+Let's have a single issue tomasulo design.
+In future we'll make it multi issue.
+
+Instruction memory (18 wide, 128 deep)
+Data memory (32 wide, 128 deep)
+Register File (32 wide, 8 deep)
+ALU
+Load/Store
+Packet Receiver
+Packet Sender
+
+When issueing we substitute registers that are ready.
+
+
+

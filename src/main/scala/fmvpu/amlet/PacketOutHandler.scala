@@ -1,4 +1,4 @@
-package fmvpu.lane
+package fmvpu.amlet
 
 import chisel3._
 import chisel3.util._
@@ -6,7 +6,7 @@ import chisel3.util._
 /**
  * Packet Output Handler IO
  */
-class PacketOutHandlerIO(params: LaneParams) extends Bundle {
+class PacketOutHandlerIO(params: AmletParams) extends Bundle {
   // Output direction this handler serves
   val outputDirection = Input(NetworkDirections())
   
@@ -31,7 +31,7 @@ class PacketOutHandlerIO(params: LaneParams) extends Bundle {
  *   This helps with broadcast instructions (otherwise there are multiple paths to the same dest)
  *   Since routing in horiz then vert it doesn't mess other stuff up.
  */
-class PacketOutHandler(params: LaneParams, isNorthOrSouth: Boolean) extends Module {
+class PacketOutHandler(params: AmletParams, isNorthOrSouth: Boolean) extends Module {
   val io = IO(new PacketOutHandlerIO(params))
   
   // Global priority counter for all 5 directions (North=0, East=1, South=2, West=3, Here=4)
@@ -134,10 +134,10 @@ class PacketOutHandler(params: LaneParams, isNorthOrSouth: Boolean) extends Modu
 object PacketOutHandlerGenerator extends fmvpu.ModuleGenerator {
   override def makeModule(args: Seq[String]): Module = {
     if (args.length < 1) {
-      println("Usage: <command> <outputDir> PacketOutHandler <laneParamsFileName>")
+      println("Usage: <command> <outputDir> PacketOutHandler <amletParamsFileName>")
       null
     } else {
-      val params = LaneParams.fromFile(args(0))
+      val params = AmletParams.fromFile(args(0))
       new PacketOutHandler(params, false)
     }
   }

@@ -14,3 +14,18 @@ object Instr {
   }
 }
 
+class VLIWInstruction(params: AmletParams) extends Bundle {
+  val alu = new ALUInstr.Base(params)
+  val aluLite = new ALULiteInstr.Base(params)
+  val loadStore = new LoadStoreInstr.Base(params)
+  val packet = new PacketInstr.Base(params)
+}
+
+class VLIWResolving(params: AmletParams) extends Bundle {
+  val alu = new ALUInstr.Resolving(params)
+  val aluLite = new ALULiteInstr.Resolving(params)
+  val loadStore = new LoadStoreInstr.Resolving(params)
+  val packetSend = new PacketInstr.SendResolving(params)
+  val packetReceive = new PacketInstr.ReceiveResolving(params)
+}
+

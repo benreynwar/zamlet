@@ -1,4 +1,4 @@
-package fmvpu.lane
+package fmvpu.amlet
 
 import chisel3._
 import chisel3.util._
@@ -6,16 +6,16 @@ import chisel3.util._
 /**
  * Connection state bundle
  */
-class ConnectionState(params: LaneParams) extends Bundle {
+class ConnectionState(params: AmletParams) extends Bundle {
   val active = Bool()
   val channel = UInt(log2Ceil(params.nChannels).W)
   val remainingWords = UInt(8.W)
 }
 
 /**
- * Lane Network Node IO
+ * Amlet Network Node IO
  */
-class LaneNetworkNodeIO(params: LaneParams) extends Bundle {
+class NetworkNodeIO(params: AmletParams) extends Bundle {
   val nChannels = params.nChannels
   
   // Current position
@@ -33,7 +33,7 @@ class LaneNetworkNodeIO(params: LaneParams) extends Bundle {
   val eo = Vec(nChannels, Decoupled(new NetworkWord(params)))
   val wo = Vec(nChannels, Decoupled(new NetworkWord(params)))
   
-  // 'Here' interface to/from local lane
+  // 'Here' interface to/from local amlet
   val hi = Flipped(Decoupled(new FromHereNetworkWord(params)))
   val ho = Decoupled(new NetworkWord(params))
   
@@ -45,10 +45,10 @@ class LaneNetworkNodeIO(params: LaneParams) extends Bundle {
 }
 
 /**
- * Lane Network Node Module
+ * Amlet Network Node Module
  */
-class LaneNetworkNode(params: LaneParams) extends Module {
-  val io = IO(new LaneNetworkNodeIO(params))
+class NetworkNode(params: AmletParams) extends Module {
+  val io = IO(new NetworkNodeIO(params))
   
   // Create PacketSwitches for each channel
   val switches = Seq.fill(params.nChannels)(Module(new PacketSwitch(params)))
@@ -175,16 +175,16 @@ class LaneNetworkNode(params: LaneParams) extends Module {
 }
 
 /**
- * Module generator for LaneNetworkNode
+ * Module generator for NetworkNode
  */
-object LaneNetworkNodeGenerator extends fmvpu.ModuleGenerator {
+object NetworkNodeGenerator extends fmvpu.ModuleGenerator {
   override def makeModule(args: Seq[String]): Module = {
     if (args.length < 1) {
-      println("Usage: <command> <outputDir> LaneNetworkNode <laneParamsFileName>")
+      println("Usage: <command> <outputDir> NetworkNode <amletParamsFileName>")
       null
     } else {
-      val params = LaneParams.fromFile(args(0))
-      new LaneNetworkNode(params)
+      val params = AmletParams.fromFile(args(0))
+      new NetworkNode(params)
     }
   }
 }
