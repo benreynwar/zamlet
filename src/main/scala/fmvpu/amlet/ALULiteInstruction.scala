@@ -52,10 +52,10 @@ object ALULiteInstr {
   
   class Resolving(params: AmletParams) extends Instr.Resolving(params) {
     val mode = Modes()
-    val src1 = new ARegReadInfo(params)
-    val src2 = new ARegReadInfo(params) 
+    val src1 = new ATaggedSource(params)
+    val src2 = new ATaggedSource(params) 
     val mask = new MaskInfo(params)
-    val dst = new BRegWithIdent(params)
+    val dst = new BTaggedReg(params)
 
     def isResolved(): Bool = {
       src1.resolved && 
@@ -76,7 +76,7 @@ object ALULiteInstr {
       resolved
     }
 
-    def update(writes: WriteBacks): Resolving = {
+    def update(writes: ResultBus): Resolving = {
       val resolving = Wire(new Resolving(params))
       resolving.mode := mode
       resolving.src1 := src1.update(writes)
@@ -91,7 +91,7 @@ object ALULiteInstr {
     val mode = Modes()
     val src1 = params.aWord()
     val src2 = params.aWord()
-    val dst = new BRegWithIdent(params)
+    val dst = new BTaggedReg(params)
   }
 
 }

@@ -94,13 +94,13 @@ class ALU(params: AmletParams) extends Module {
     io.result.valid := io.instr.valid
     io.result.value := aluOut
     io.result.address.addr := io.instr.bits.dst.addr
-    io.result.address.ident := io.instr.bits.dst.ident
+    io.result.address.tag := io.instr.bits.dst.tag
     io.result.force := false.B
   } else {
     // Multi-cycle pipeline
     val validPipe = RegInit(VecInit(Seq.fill(params.aluLatency)(false.B)))
     val resultPipe = RegInit(VecInit(Seq.fill(params.aluLatency)(0.U(params.width.W))))
-    val dstAddrPipe = RegInit(VecInit(Seq.fill(params.aluLatency)(0.U.asTypeOf(new DRegWithIdent(params)))))
+    val dstAddrPipe = RegInit(VecInit(Seq.fill(params.aluLatency)(0.U.asTypeOf(new DTaggedReg(params)))))
     
     // Stage 0 (input)
     validPipe(0) := io.instr.valid

@@ -94,13 +94,13 @@ class ALULite(params: AmletParams) extends Module {
     io.result.valid := io.instr.valid
     io.result.value := aluOut.pad(params.width)  // Pad to full width for WriteResult
     io.result.address.addr := io.instr.bits.dst.addr
-    io.result.address.ident := io.instr.bits.dst.ident
+    io.result.address.tag := io.instr.bits.dst.tag
     io.result.force := false.B
   } else {
     // Multi-cycle pipeline
     val validPipe = RegInit(VecInit(Seq.fill(params.aluLatency)(false.B)))
     val resultPipe = RegInit(VecInit(Seq.fill(params.aluLatency)(0.U(params.aWidth.W))))
-    val dstAddrPipe = RegInit(VecInit(Seq.fill(params.aluLatency)(0.U.asTypeOf(new BRegWithIdent(params)))))
+    val dstAddrPipe = RegInit(VecInit(Seq.fill(params.aluLatency)(0.U.asTypeOf(new BTaggedReg(params)))))
     
     // Stage 0 (input)
     validPipe(0) := io.instr.valid

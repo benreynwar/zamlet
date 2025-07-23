@@ -65,6 +65,11 @@ AMLET_STUDIES = [
         "top_level": "NetworkNode",
         "config_file": "//configs:amlet_default.json",
     },
+    {
+        "name": "RegisterFileAndRename_default",
+        "top_level": "RegisterFileAndRename",
+        "config_file": "//configs:amlet_default.json",
+    },
 ]
 
 # Generate all DSE flows and filegroups

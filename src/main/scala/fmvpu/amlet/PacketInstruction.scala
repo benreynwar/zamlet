@@ -35,9 +35,9 @@ object PacketInstr {
   
   class SendResolving(params: AmletParams) extends Instr.Resolving(params) {
     val mode = Modes()
-    val result = new BRegWithIdent(params)
-    val length = new ARegReadInfo(params)
-    val target = new ARegReadInfo(params)
+    val result = new BTaggedReg(params)
+    val length = new ATaggedSource(params)
+    val target = new ATaggedSource(params)
     val channel = UInt(log2Ceil(params.nChannels).W)
     val mask = new MaskInfo(params)
 
@@ -61,7 +61,7 @@ object PacketInstr {
       resolved
     }
 
-    def update(writes: WriteBacks): SendResolving = {
+    def update(writes: ResultBus): SendResolving = {
       val resolving = Wire(new SendResolving(params))
       resolving.mode := mode
       resolving.result := result
@@ -75,7 +75,7 @@ object PacketInstr {
 
   class SendResolved(params: AmletParams) extends Instr.Resolved(params) {
     val mode = Modes()
-    val result = new BRegWithIdent(params)
+    val result = new BTaggedReg(params)
     val length = params.aWord()
     val target = params.aWord()
     val channel = UInt(log2Ceil(params.nChannels).W)
@@ -87,8 +87,8 @@ object PacketInstr {
 
   class ReceiveResolving(params: AmletParams) extends Instr.Resolving(params) {
     val mode = Modes()
-    val result = new BRegWithIdent(params)
-    val target = new ARegReadInfo(params)
+    val result = new BTaggedReg(params)
+    val target = new ATaggedSource(params)
     val mask = new MaskInfo(params)
 
     def isResolved(): Bool = {
@@ -108,7 +108,7 @@ object PacketInstr {
       resolved
     }
 
-    def update(writes: WriteBacks): ReceiveResolving = {
+    def update(writes: ResultBus): ReceiveResolving = {
       val resolving = Wire(new ReceiveResolving(params))
       resolving.mode := mode
       resolving.result := result
@@ -120,7 +120,7 @@ object PacketInstr {
 
   class ReceiveResolved(params: AmletParams) extends Instr.Resolved(params) {
     val mode = Modes()
-    val result = new BRegWithIdent(params)
+    val result = new BTaggedReg(params)
     val target = params.aWord()
     
     // Helper methods to extract X and Y coordinates from packed target

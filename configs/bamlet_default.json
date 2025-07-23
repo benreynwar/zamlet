@@ -1,0 +1,28 @@
+{
+  "nAmletColumns": 2,
+  "nAmletRows": 1,
+  "instrAddrWidth": 16,
+  "instructionMemoryDepth": 32,
+  "amlet": {
+    "width": 32,
+    "regTagWidth": 2,
+    "mIdentWidth": 3,
+    "aWidth": 16,
+    "nDRegs": 16,
+    "nARegs": 16,
+    "dataMemoryDepth": 32,
+    "nResultPorts": 4,
+    "nLoopLevels": 4,
+    "xPosWidth": 8,
+    "yPosWidth": 8,
+    "packetLengthWidth": 8,
+    "aluLatency": 1,
+    "nAluRSSlots": 4,
+    "nAluLiteRSSlots": 4,
+    "nLoadStoreRSSlots": 4,
+    "nSendPacketRSSlots": 2,
+    "nReceivePacketRSSlots": 2,
+    "nPacketOutIdents": 4,
+    "nChannels": 2
+  }
+}

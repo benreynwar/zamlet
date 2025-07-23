@@ -17,8 +17,8 @@ abstract class ReservationStation[U <: Instr.Resolving, R <: Instr.Resolved]
     // Output to Execution Unit when instruction is ready
     val output = Decoupled(Resolved)
     
-    // Write results from execution units for dependency resolution
-    val writeBacks = Input(new WriteBacks(params))
+    // Results from execution units for dependency resolution
+    val resultBus = Input(new ResultBus(params))
   })
 
   // The reservation stores several instructions.
@@ -87,7 +87,7 @@ abstract class ReservationStation[U <: Instr.Resolving, R <: Instr.Resolved]
 
   // Now update them with the effect of the write backs.
   for (i <- 0 until nSlots()) {
-    slotsNext(i) := slotsIntermed(i).update(io.writeBacks)
+    slotsNext(i) := slotsIntermed(i).update(io.resultBus)
   }
 
 

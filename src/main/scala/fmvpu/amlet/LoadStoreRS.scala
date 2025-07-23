@@ -16,13 +16,13 @@ class LoadStoreRS(params: AmletParams) extends ReservationStation[LoadStoreInstr
   def readyToIssue(allResolving: Vec[LoadStoreInstr.Resolving], index: UInt): Bool = {
     val instr = allResolving(index)
     
-    // Instruction must be resolved and valid to be considered for issuing
-    val basicReady = instr.valid && instr.isResolved()
+    // Instruction must be resolved to be considered for issuing
+    val basicReady = instr.isResolved()
     
     // Check dependencies with all instructions ahead of this one (lower indices)
     val noDependencies = (0 until nSlots()).map { i =>
       val ahead = allResolving(i.U)
-      val isAhead = i.U < index && ahead.valid
+      val isAhead = i.U < index && i.U < nUsedSlots
       
       val dependency = Wire(Bool())
       dependency := false.B

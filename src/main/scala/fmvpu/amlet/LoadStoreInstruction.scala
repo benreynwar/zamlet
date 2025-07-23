@@ -14,26 +14,22 @@ object LoadStoreInstr {
   }
   
   class Base(params: AmletParams) extends Instr.Base(params) {
-    val valid = Bool()
     val mode = Modes()
     val addr = params.aReg()
     val reg = params.bReg()
   }
   
   class Resolving(params: AmletParams) extends Instr.Resolving(params) {
-    val valid = Bool()
     val mode = Modes()
-    val addr = new ARegReadInfo(params)
-    val src = new BRegReadInfo(params)
+    val addr = new ATaggedSource(params)
+    val src = new BTaggedSource(params)
     val mask = new MaskInfo(params)
-    val dst = new BRegWithIdent(params)
+    val dst = new BTaggedReg(params)
 
     def isResolved(): Bool = {
-      !valid || (
-        addr.resolved && 
-        src.resolved && 
-        mask.resolved
-      )
+      addr.resolved && 
+      src.resolved && 
+      mask.resolved
     }
 
     def isMasked(): Bool = {
@@ -42,7 +38,6 @@ object LoadStoreInstr {
 
     def resolve(): Resolved = {
       val resolved = Wire(new Resolved(params))
-      resolved.valid := valid
       resolved.mode := mode
       resolved.addr := addr.getData
       resolved.src := src.getData
@@ -50,9 +45,8 @@ object LoadStoreInstr {
       resolved
     }
 
-    def update(writes: WriteBacks): Resolving = {
+    def update(writes: ResultBus): Resolving = {
       val resolving = Wire(new Resolving(params))
-      resolving.valid := valid
       resolving.mode := mode
       resolving.addr := addr.update(writes)
       resolving.src := src.update(writes)
@@ -63,11 +57,10 @@ object LoadStoreInstr {
   }
 
   class Resolved(params: AmletParams) extends Instr.Resolved(params) {
-    val valid = Bool()
     val mode = Modes()
     val addr = params.aWord()
     val src = params.bWord()
-    val dst = new BRegWithIdent(params)
+    val dst = new BTaggedReg(params)
   }
 
 }

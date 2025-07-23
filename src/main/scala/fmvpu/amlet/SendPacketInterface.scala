@@ -17,7 +17,7 @@ class SendPacketInterfaceIO(params: AmletParams) extends Bundle {
   val instr = Flipped(Decoupled(new PacketInstr.SendResolved(params)))
 
   // Write inputs for packet data
-  val writeInputs = Input(Vec(params.nWriteBacks, new WriteResult(params)))
+  val writeInputs = Input(Vec(params.nResultPorts, new WriteResult(params)))
 
   // Error outputs
   val errors = Output(new SendPacketInterfaceErrors)
@@ -57,11 +57,11 @@ class SendPacketInterface(params: AmletParams) extends Module {
   // The next write ident that we should read from the packetOutBuffer
   val packetOutReadPtr = RegInit(1.U(log2Ceil(params.nPacketOutIdents).W))
   // Handle writes to packet output register (register 0)
-  for (i <- 0 until params.nWriteBacks) {
+  for (i <- 0 until params.nResultPorts) {
     when(io.writeInputs(i).valid && 
          io.writeInputs(i).address.addr === 0.U && 
          !io.writeInputs(i).force) {
-      val writeIdent = io.writeInputs(i).address.ident
+      val writeIdent = io.writeInputs(i).address.tag
       packetOutBuffer(writeIdent).valid := true.B
       packetOutBuffer(writeIdent).bits := io.writeInputs(i).value
     }

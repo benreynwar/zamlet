@@ -15,4 +15,9 @@ AMLET_CONFIG_FILES = [
     "amlet_default.json",
 ]
 
-exports_files(LANE_ARRAY_CONFIG_FILES + LANE_CONFIG_FILES + AMLET_CONFIG_FILES, visibility = ["//visibility:public"])
+# List of Bamlet config JSON files
+BAMLET_CONFIG_FILES = [
+    "bamlet_default.json",
+]
+
+exports_files(LANE_ARRAY_CONFIG_FILES + LANE_CONFIG_FILES + AMLET_CONFIG_FILES + BAMLET_CONFIG_FILES, visibility = ["//visibility:public"])

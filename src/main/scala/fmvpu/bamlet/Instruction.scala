@@ -1,18 +1,8 @@
-package fmvpu.amlet
+package fmvpu.bamlet
 
 import chisel3._
 import chisel3.util._
-
-object Instr {
-  abstract class Base(params: AmletParams) extends Bundle
-  abstract class Resolved(params: AmletParams) extends Bundle
-  abstract class Resolving(params: AmletParams) extends Bundle {
-    def isResolved(): Bool
-    def resolve(): Resolved
-    def isMasked(): Bool
-    def update(writes: ResultBus): Resolving
-  }
-}
+import fmvpu.amlet.{AmletParams, ALUInstr, ALULiteInstr, LoadStoreInstr, PacketInstr, ControlInstr}
 
 object VLIWInstr {
 

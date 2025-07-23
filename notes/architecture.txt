@@ -82,18 +82,29 @@ Global  - N_GLOBAL_REGS (16) read-only registers unique to each Bamlet (programm
 Data    - N_DATA_REGS (16) each WIDTH (32) bits wide registers unique to each Amlet (reg 0 reads as 0)
 Address - N_ADDR_REGS (16) each A_WIDTH (16) bits wide unique to each Amlet         (reg 0 reads as 0)
 
-We'll refer to them a greg, dreg, and areg.  An address that could refer to Data or Address is a breg.
+We'll refer to them a greg, dreg, and areg.
+An address that could refer to Data or Address is a breg.
+An address that could refer to Global of Address is a ereg.
+
 
 Control Instructions
 --------------------
 
 Start Loop:
-  2 bits 01
+  2 bits 11
   GREG_WIDTH (4) bits length greg    (read global)
   AREG_WIDTH (4) bits index areg     (write, resolved in the Issuer so no write back)
 
+  2 bits 11
+  AREG_WIDTH (4) bits length greg    (read address) 
+  AREG_WIDTH (4) bits index areg     (write, resolved in the Issuer so no write back)
+    This loop wills start immediately.  We will need special logic to return the return
+    of the condition from all of the amlets.
+    The loop stops when all conditions are resolved and all are less that the loop length.
+    Masks are used within each amlet to make the loop last the correct length.
+
 Start If:
-  2 bits 10
+  2 bits 01
   GREG_WIDTH (4) bits unused
   AREG_WIDTH (4) bits condition reg  (read local)
 
@@ -325,11 +336,32 @@ LoadStateRS.scala
  - Substantiatl changes
  - Mask resolution needs to be updated.
 
+Random Thoughts
+===============
 
-
-
+Possible Approaches to Achieve High Frequencies
+-----------------------------------------------
+- It may be that to get to high frequencies the pipelines will get too
+  long and the reservations stations will get too expensive and we idle for
+  too much time.
+  In this case we could consider putting multiple of the SIMT threads on each
+  amlet.  Number of register would double but shouldn't get twice as expensive
+  as we access the same number every time.
+  Packet routing would get more compliated. We'd want to support multiple
+  packets connected over the handler at the same time.  Probably want InHandler
+  to receive new identifiers from OutHandlers when they send a header, and then
+  send that same identifier from then on.  OutHandlers could say whether they're
+  reader for data (existing connections), and whether they're reading for headers (new connections).
+  We'd also pipeline the network logic more so travel would be slower.
   
-  
+  This would be a latency/throughput tradeoff.
 
+Reservation Stations
+--------------------
 
+Currently these are getting the operand values from the resultBus. These muxes will get really
+expensive.  Instead the reservation stations could just monitor the resultsBus and then work
+out when the result were ready. When they are ready it would read from the register file.
 
+We'd need to do proper register renaming to make this work. There is probably a reservation station
+depth where this makes sense.  I expect it's not very deep.

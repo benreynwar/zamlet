@@ -13,11 +13,13 @@ class AmletIO(params: AmletParams) extends Bundle {
   val thisX = Input(UInt(params.xPosWidth.W))
   val thisY = Input(UInt(params.yPosWidth.W))
   
-  // Input stream of resolved VLIW instructions from Bamlet
-  val instruction = Flipped(Decoupled(new VLIWResolving(params)))
+  // Input stream of VLIW instructions from Bamlet
+  val instruction = Flipped(Decoupled(new VLIWInstr.Base(params)))
   
-  // Write backs to Bamlet (without data, only addresses)
-  val writeBacks = Output(new WriteBacks(params))
+  
+  // Control outputs from ReceivePacketInterface
+  val start = Valid(UInt(16.W)) // start signal for Bamlet control
+  val writeIM = Valid(new IMWrite(params)) // instruction memory write from packets
   
   // Network interfaces for 4 directions (North, South, East, West)
   val ni = Vec(nChannels, Flipped(Decoupled(new NetworkWord(params))))
@@ -37,6 +39,9 @@ class AmletIO(params: AmletParams) extends Bundle {
 class Amlet(params: AmletParams) extends Module {
   val io = IO(new AmletIO(params))
   
+  // Instantiate register file and rename unit
+  val registerFileAndRename = Module(new RegisterFileAndRename(params))
+  
   // Instantiate reservation stations
   val aluRS = Module(new ALURS(params))
   val aluLiteRS = Module(new ALULiteRS(params))
@@ -52,32 +57,15 @@ class Amlet(params: AmletParams) extends Module {
   val receivePacketInterface = Module(new ReceivePacketInterface(params))
   val networkNode = Module(new NetworkNode(params))
   
-  // Connect instruction input to reservation stations
-  val instrValid = io.instruction.valid
-  val instr = io.instruction.bits
+  // Connect instruction input to RegisterFileAndRename
+  registerFileAndRename.io.instr <> io.instruction
   
-  // Connect instruction to each reservation station
-  aluRS.io.input.valid := instrValid
-  aluRS.io.input.bits := instr.alu
-  
-  aluLiteRS.io.input.valid := instrValid
-  aluLiteRS.io.input.bits := instr.aluLite
-  
-  loadStoreRS.io.input.valid := instrValid
-  loadStoreRS.io.input.bits := instr.loadStore
-  
-  sendPacketRS.io.input.valid := instrValid
-  sendPacketRS.io.input.bits := instr.packetSend
-  
-  receivePacketRS.io.input.valid := instrValid
-  receivePacketRS.io.input.bits := instr.packetReceive
-  
-  // Ready when all reservation stations are ready
-  io.instruction.ready := aluRS.io.input.ready && 
-                          aluLiteRS.io.input.ready && 
-                          loadStoreRS.io.input.ready && 
-                          sendPacketRS.io.input.ready && 
-                          receivePacketRS.io.input.ready
+  // Connect RegisterFileAndRename outputs to reservation stations
+  aluRS.io.input <> registerFileAndRename.io.aluInstr
+  aluLiteRS.io.input <> registerFileAndRename.io.aluliteInstr
+  loadStoreRS.io.input <> registerFileAndRename.io.ldstInstr
+  sendPacketRS.io.input <> registerFileAndRename.io.sendPacketInstr
+  receivePacketRS.io.input <> registerFileAndRename.io.recvPacketInstr
   
   // Connect execution units to reservation stations
   alu.io.instr := aluRS.io.output
@@ -92,32 +80,35 @@ class Amlet(params: AmletParams) extends Module {
   sendPacketInterface.io.instr <> sendPacketRS.io.output
   receivePacketInterface.io.instr <> receivePacketRS.io.output
   
-  // Collect all write results for dependency resolution
-  val writeResults = Wire(new WriteBacks(params))
-  writeResults.writes(0) := alu.io.result
-  writeResults.writes(1) := aluLite.io.result
-  writeResults.writes(2) := dataMem.io.result
-  writeResults.writes(3) := receivePacketInterface.io.writeReg
+  // Collect all results for dependency resolution
+  val resultBus = Wire(new ResultBus(params))
+  resultBus.writes(0) := alu.io.result
+  resultBus.writes(1) := aluLite.io.result
+  resultBus.writes(2) := dataMem.io.result
+  resultBus.writes(3) := receivePacketInterface.io.result
   
   // Connect mask results (placeholder for now)
-  for (i <- 0 until params.nWriteBacks) {
-    writeResults.masks(i).valid := false.B
-    writeResults.masks(i).value := false.B
-    writeResults.masks(i).ident := 0.U
+  for (i <- 0 until params.nResultPorts) {
+    resultBus.masks(i).valid := false.B
+    resultBus.masks(i).value := false.B
+    resultBus.masks(i).ident := 0.U
   }
   
-  // Connect write results to all reservation stations for dependency resolution
-  aluRS.io.writeBacks := writeResults
-  aluLiteRS.io.writeBacks := writeResults
-  loadStoreRS.io.writeBacks := writeResults
-  sendPacketRS.io.writeBacks := writeResults
-  receivePacketRS.io.writeBacks := writeResults
+  // Connect results to RegisterFileAndRename and reservation stations for dependency resolution
+  registerFileAndRename.io.resultBus := resultBus.writes
+  aluRS.io.resultBus := resultBus
+  aluLiteRS.io.resultBus := resultBus
+  loadStoreRS.io.resultBus := resultBus
+  sendPacketRS.io.resultBus := resultBus
+  receivePacketRS.io.resultBus := resultBus
   
-  // Connect write results to packet interfaces for dependency resolution
-  sendPacketInterface.io.writeInputs := writeResults.writes
+  // Connect results to packet interfaces for dependency resolution
+  sendPacketInterface.io.writeInputs := resultBus.writes
   
-  // Output write backs to Bamlet
-  io.writeBacks := writeResults
+  
+  // Connect control outputs from ReceivePacketInterface
+  io.start := receivePacketInterface.io.start
+  io.writeIM := receivePacketInterface.io.writeIM
   
   // Connect position to modules that need it
   networkNode.io.thisX := io.thisX

@@ -3,6 +3,7 @@
 
 load("@bazel-orfs//:openroad.bzl", "orfs_flow", "orfs_run")
 load("@bazel-orfs//:yosys.bzl", "yosys")
+load("//:verilog_common.bzl", "generate_dse_verilog_rule")
 
 def dse_component_flows(studies, component_type, pdks = ["asap7", "sky130hd"]):
     """
@@ -17,22 +18,10 @@ def dse_component_flows(studies, component_type, pdks = ["asap7", "sky130hd"]):
     study_names = ["{}__{}".format(study["name"], pdk) for study in studies for pdk in pdks]
     
     # Generate Verilog for components
-    [native.genrule(
-        name = "{}_verilog".format(study["name"]),
-        srcs = [study["config_file"]],
-        outs = ["{}.sv".format(study["name"])],
-        cmd = """
-        TMPDIR=$$(mktemp -d)
-        TOP_LEVEL={}
-        $(location //dse:fmvpu_generator) \\
-            $$TMPDIR/{}_verilog \\
-            $$TOP_LEVEL \\
-            $(location {})
-        # Concatenate all SystemVerilog files and rename the top module
-        find $$TMPDIR/{}_verilog -name "*.sv" -type f | sort | xargs cat | sed 's/^module '$$TOP_LEVEL'(/module {}(/' > $@
-        rm -rf $$TMPDIR
-        """.format(study["top_level"], study["name"], study["config_file"], study["name"], study["name"]),
-        tools = ["//dse:fmvpu_generator"],
+    [generate_dse_verilog_rule(
+        name = study["name"],
+        top_level = study["top_level"],
+        config_file = study["config_file"],
     ) for study in studies]
 
     # OpenROAD flows for each component and PDK

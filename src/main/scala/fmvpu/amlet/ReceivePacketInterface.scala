@@ -21,8 +21,8 @@ class ReceivePacketInterfaceIO(params: AmletParams) extends Bundle {
   // Forward interface
   val forward = Valid(new PacketForward(params))
   
-  // Register write interface
-  val writeReg = new WriteResult(params)
+  // Result interface
+  val result = new WriteResult(params)
   
   // Instruction memory write interface
   val writeIM = Valid(new IMWrite(params))
@@ -103,11 +103,11 @@ class ReceivePacketInterface(params: AmletParams) extends Module {
   io.errors.imWriteCountExceedsPacket := errorIMWriteCountExceedsPacket
   
   // Default outputs
-  io.writeReg.valid := false.B
-  io.writeReg.address.addr := DontCare
-  io.writeReg.address.ident := DontCare
-  io.writeReg.value := DontCare
-  io.writeReg.force := DontCare
+  io.result.valid := false.B
+  io.result.address.addr := DontCare
+  io.result.address.tag := DontCare
+  io.result.value := DontCare
+  io.result.force := DontCare
   io.writeIM.valid := false.B
   io.writeIM.bits := DontCare
   
@@ -209,11 +209,11 @@ class ReceivePacketInterface(params: AmletParams) extends Module {
             }
             
             // Write packet length to the result register specified by instruction
-            io.writeReg.valid := true.B
-            io.writeReg.address.addr := bufferedInstr.bits.result.addr
-            io.writeReg.address.ident := bufferedInstr.bits.result.ident
-            io.writeReg.value := header.length
-            io.writeReg.force := false.B
+            io.result.valid := true.B
+            io.result.address.addr := bufferedInstr.bits.result.addr
+            io.result.address.tag := bufferedInstr.bits.result.tag
+            io.result.value := header.length
+            io.result.force := false.B
           }
           // If no instruction available or instruction is masked, stay in Idle (don't consume header)
         }
@@ -232,11 +232,11 @@ class ReceivePacketInterface(params: AmletParams) extends Module {
         }
         
         // Write to register
-        io.writeReg.valid := true.B
-        io.writeReg.value := bufferedFromNetwork.bits.data
-        io.writeReg.address.addr := bufferedInstr.bits.result.addr
-        io.writeReg.address.ident := bufferedInstr.bits.result.ident
-        io.writeReg.force := false.B
+        io.result.valid := true.B
+        io.result.value := bufferedFromNetwork.bits.data
+        io.result.address.addr := bufferedInstr.bits.result.addr
+        io.result.address.tag := bufferedInstr.bits.result.tag
+        io.result.force := false.B
         
         receiveRemainingWords := receiveRemainingWords - 1.U
         when (receiveRemainingWords === 1.U) {
@@ -273,11 +273,11 @@ class ReceivePacketInterface(params: AmletParams) extends Module {
             }
           }
           is(2.U) { // Write to register command
-            io.writeReg.valid := true.B
-            io.writeReg.address.addr := commandData(params.width-3, params.width-2-params.bRegWidth)
-            io.writeReg.address.ident := 0.U // Command writes don't use write identifiers
-            io.writeReg.value := Cat(0.U(params.bRegWidth.W), commandData(params.width-2-params.bRegWidth-1, 0))
-            io.writeReg.force := true.B // Command writes bypass dependency system
+            io.result.valid := true.B
+            io.result.address.addr := commandData(params.width-3, params.width-2-params.bRegWidth)
+            io.result.address.tag := 0.U // Command writes don't use write identifiers
+            io.result.value := Cat(0.U(params.bRegWidth.W), commandData(params.width-2-params.bRegWidth-1, 0))
+            io.result.force := true.B // Command writes bypass dependency system
           }
         }
       }
