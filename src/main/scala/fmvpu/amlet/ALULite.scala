@@ -32,8 +32,14 @@ class ALULite(params: AmletParams) extends Module {
 
   // Compute ALULite result
   val aluOut = Wire(UInt(params.aWidth.W))
+
+  // Accumulator
+  val accNext = Wire(UInt(params.aWidth.W))
+  val acc = RegNext(accNext, 0.U)
   
   aluOut := 0.U  // Default value
+  accNext := acc  // Default: preserve accumulator value
+  
   switch(io.instr.bits.mode) {
     is(ALULiteInstr.Modes.None) {
       aluOut := 0.U
@@ -54,9 +60,16 @@ class ALULite(params: AmletParams) extends Module {
       aluOut := io.instr.bits.src1 * io.instr.bits.src2
     }
     is(ALULiteInstr.Modes.MultAcc) {
-      // For MultAcc, we assume the accumulator value is already included in the computation
-      // This could be enhanced to track local accumulator state if needed
-      aluOut := io.instr.bits.src1 * io.instr.bits.src2
+      // MultAcc: add multiplication result to accumulator and output the new accumulator value
+      val multResult = io.instr.bits.src1 * io.instr.bits.src2
+      accNext := acc + multResult
+      aluOut := acc + multResult  // Output the new accumulator value
+    }
+    is(ALULiteInstr.Modes.MultAccInit) {
+      // MultAccInit: multiply and write result directly to accumulator (no addition)
+      val multResult = io.instr.bits.src1 * io.instr.bits.src2
+      accNext := multResult
+      aluOut := multResult
     }
     is(ALULiteInstr.Modes.Eq) {
       aluOut := (io.instr.bits.src1 === io.instr.bits.src2).asUInt

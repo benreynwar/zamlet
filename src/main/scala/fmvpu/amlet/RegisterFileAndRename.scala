@@ -234,7 +234,7 @@ class RegisterFileAndRename(params: AmletParams) extends Module {
       packetWriteEnable := false.B
     }
     is (PacketInstr.Modes.GetPacketWord) {
-      packetReceive := false.B
+      packetReceive := true.B
       packetForward := false.B
       packetAppend := false.B
       packetAppendContinuously := false.B
@@ -319,7 +319,13 @@ class RegisterFileAndRename(params: AmletParams) extends Module {
   io.recvPacketInstr.valid := io.instr.valid && packetReceive
   io.recvPacketInstr.bits.mode := io.instr.bits.packet.mode
   io.recvPacketInstr.bits.result := packetWriteInfo
-  io.recvPacketInstr.bits.target := DontCare
+  val packetReadTargetEnable = false.B
+  when (packetReadTargetEnable) {
+    io.recvPacketInstr.bits.target := packetReadTarget
+  } .otherwise {
+    io.recvPacketInstr.bits.target := DontCare
+    io.recvPacketInstr.bits.target.resolved := true.B
+  }
   io.recvPacketInstr.bits.mask := DontCare
 
 
@@ -369,7 +375,17 @@ class RegisterFileAndRename(params: AmletParams) extends Module {
 
   // Read operands for ALU operations
   val aluReadSrc1 = readDReg(statePreALU, io.instr.bits.alu.src1)
-  val aluReadSrc2 = readDReg(statePreALU, io.instr.bits.alu.src2)
+  val aluReadSrc2 = Wire(new DTaggedSource(params))
+  
+  // For immediate instructions (ADDI, SUBI), src2 is an immediate value, not a register
+  val isImmediateInstr = (io.instr.bits.alu.mode === ALUInstr.Modes.Addi) || 
+                        (io.instr.bits.alu.mode === ALUInstr.Modes.Subi)
+  
+  aluReadSrc2 := readDReg(statePreALU, io.instr.bits.alu.src2)
+  when (isImmediateInstr) {
+    aluReadSrc2.resolved := true.B
+    aluReadSrc2.value := io.instr.bits.alu.src2  // Use src2 field as immediate value
+  }
 
   // Allocate a rename tag for the destination register
   val aluTagAlloc = assignWrite(statePreALU, io.instr.bits.alu.dst)

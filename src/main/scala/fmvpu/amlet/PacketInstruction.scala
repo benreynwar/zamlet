@@ -44,7 +44,8 @@ object PacketInstr {
     def isResolved(): Bool = {
       length.resolved && 
       target.resolved && 
-      mask.resolved
+      //mask.resolved &&
+      true.B
     }
 
     def isMasked(): Bool = {
@@ -93,7 +94,8 @@ object PacketInstr {
 
     def isResolved(): Bool = {
       target.resolved && 
-      mask.resolved
+      //mask.resolved &&
+      true.B
     }
 
     def isMasked(): Bool = {

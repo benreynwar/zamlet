@@ -65,11 +65,23 @@ class PacketHeader:
         return cls(**field_values)
 
 
-def create_register_write_command(register: int, value: int, params: AmletParams = AmletParams()) -> int:
-    """Create register write command word"""
+def create_a_register_write_command(register: int, value: int, params: AmletParams = AmletParams()) -> int:
+    """Create A-register write command word"""
     cmd = CommandTypes.WRITE_REGISTER << (params.width - 2)
-    cmd |= (register & ((1 << params.d_reg_width) - 1)) << (params.width - 2 - params.d_reg_width)
-    cmd |= value & ((1 << (params.width - 2 - params.d_reg_width)) - 1)
+    # A-registers have MSB = 0 (index < cutoff), so register address is just the register number
+    reg_addr = register & ((1 << params.a_reg_width) - 1)
+    cmd |= reg_addr << (params.width - 2 - params.b_reg_width)
+    cmd |= value & ((1 << (params.width - 2 - params.b_reg_width)) - 1)
+    return cmd
+
+def create_d_register_write_command(register: int, value: int, params: AmletParams = AmletParams()) -> int:
+    """Create D-register write command word"""
+    cmd = CommandTypes.WRITE_REGISTER << (params.width - 2)
+    # D-registers have MSB = 1 (index >= cutoff), so set the cutoff bit and add register number
+    cutoff = max(params.n_a_regs, params.n_d_regs)
+    reg_addr = cutoff + (register & ((1 << params.d_reg_width) - 1))
+    cmd |= reg_addr << (params.width - 2 - params.b_reg_width)
+    cmd |= value & ((1 << (params.width - 2 - params.b_reg_width)) - 1)
     return cmd
 
 
@@ -88,15 +100,26 @@ def create_start_command(pc: int, params: AmletParams = AmletParams()) -> int:
     return cmd
 
 
-def create_register_write_packet(register: int, value: int, dest_x: int = 0, dest_y: int = 0, params: AmletParams = AmletParams()) -> list[int]:
-    """Create a command packet to write a value to a register"""
+def create_d_register_write_packet(register: int, value: int, dest_x: int = 0, dest_y: int = 0, params: AmletParams = AmletParams()) -> list[int]:
+    """Create a command packet to write a value to a D-register"""
     header = PacketHeader(
         length=1,  # One command word
         dest_x=dest_x,
         dest_y=dest_y,
         mode=PacketHeaderModes.COMMAND
     )
-    command_word = create_register_write_command(register, value, params)
+    command_word = create_d_register_write_command(register, value, params)
+    return [header.encode(), command_word]
+
+def create_a_register_write_packet(register: int, value: int, dest_x: int = 0, dest_y: int = 0, params: AmletParams = AmletParams()) -> list[int]:
+    """Create a command packet to write a value to an A-register"""
+    header = PacketHeader(
+        length=1,  # One command word
+        dest_x=dest_x,
+        dest_y=dest_y,
+        mode=PacketHeaderModes.COMMAND
+    )
+    command_word = create_a_register_write_command(register, value, params)
     return [header.encode(), command_word]
 
 

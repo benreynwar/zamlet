@@ -13,7 +13,7 @@ class ALULiteModes(IntEnum):
     SUBI = 4
     MULT = 5
     MULT_ACC = 6
-    RESERVED7 = 7
+    MULT_ACC_INIT = 7
     EQ = 8
     GTE = 9
     LTE = 10

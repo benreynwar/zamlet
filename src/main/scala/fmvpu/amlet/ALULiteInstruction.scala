@@ -14,7 +14,7 @@ object ALULiteInstr {
     val Subi = Value(4.U)
     val Mult = Value(5.U)
     val MultAcc = Value(6.U)
-    val Reserved7 = Value(7.U)
+    val MultAccInit = Value(7.U)
   
     val Eq = Value(8.U)
     val Gte = Value(9.U)

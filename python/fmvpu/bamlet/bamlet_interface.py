@@ -131,11 +131,11 @@ class BamletInterface:
             cocotb.start_soon(self.drivers[label].drive_packets())
             cocotb.start_soon(self.receivers[label].receive_packets())
 
-    async def write_register(self, reg, value, side='w', index=0, channel=0, offset_x=0, offset_y=0):
+    async def write_d_register(self, reg, value, side='w', index=0, channel=0, offset_x=0, offset_y=0):
         # We can only write width - regaddrwidth - 2 bits
         writeable_width = self.params.amlet.width - self.params.amlet.d_reg_width - 2
         assert value < (1 << writeable_width)
-        coord_packet = create_register_write_packet(
+        coord_packet = packet_utils.create_d_register_write_packet(
             register=reg, value=value, dest_x=self.bamlet_x + offset_x, dest_y=self.bamlet_y + offset_y, params=self.params.amlet
         )
         self.drivers[(side, index, channel)].add_packet(coord_packet)
@@ -143,14 +143,37 @@ class BamletInterface:
         for cycle in range(20):
             await triggers.RisingEdge(self.dut.clock)
 
-        probed_value = getattr(self.dut.rff, f'registers_{reg}_value').value
-        assert probed_value == value
+        amlet = self.get_amlet(0, 0)
+        probed_value = getattr(amlet.registerFileAndRename, f'state_dRegs_{reg}_value').value
+        assert probed_value == value, f"D-register {reg} write failed: expected {value}, got {probed_value}"
 
-    async def read_register(self, reg):
-        """Read the current value of a register"""
-        for cycle in range(40):
+    async def write_a_register(self, reg, value, side='w', index=0, channel=0, offset_x=0, offset_y=0):
+        # We can only write width - regaddrwidth - 2 bits
+        writeable_width = self.params.amlet.width - self.params.amlet.a_reg_width - 2
+        assert value < (1 << writeable_width)
+        coord_packet = packet_utils.create_a_register_write_packet(
+            register=reg, value=value, dest_x=self.bamlet_x + offset_x, dest_y=self.bamlet_y + offset_y, params=self.params.amlet
+        )
+        self.drivers[(side, index, channel)].add_packet(coord_packet)
+        # Wait 20 cycles for packet processing
+        for cycle in range(20):
             await triggers.RisingEdge(self.dut.clock)
-        return int(getattr(self.dut.rff, f'registers_{reg}_value').value)
+
+        amlet = self.get_amlet(0, 0)
+        probed_value = getattr(amlet.registerFileAndRename, f'state_aRegs_{reg}_value').value
+        assert probed_value == value, f"A-register {reg} write failed: expected {value}, got {probed_value}"
+
+    async def read_d_register(self, reg, offset_x=0, offset_y=0):
+        """Read the current value of a D-register"""
+        assert 0 <= reg < self.params.amlet.n_d_regs, f"D-register {reg} out of range [0, {self.params.amlet.n_d_regs})"
+        amlet = self.get_amlet(offset_x, offset_y)
+        return int(getattr(amlet.registerFileAndRename, f'state_dRegs_{reg}_value').value)
+    
+    async def read_a_register(self, reg, offset_x=0, offset_y=0):
+        """Read the current value of an A-register"""
+        assert 0 <= reg < self.params.amlet.n_a_regs, f"A-register {reg} out of range [0, {self.params.amlet.n_a_regs})"
+        amlet = self.get_amlet(offset_x, offset_y)
+        return int(getattr(amlet.registerFileAndRename, f'state_aRegs_{reg}_value').value)
 
     async def write_program(self, program, base_address=0, side='w', index=0, channel=0, offset_x=0, offset_y=0):
         instr_packet = packet_utils.create_instruction_write_packet(
@@ -161,12 +184,13 @@ class BamletInterface:
         for cycle in range(20):
             await triggers.RisingEdge(self.dut.clock)
 
-    async def get_packet_from_side(self, side, timeout=100):
+    async def get_packet_from_side(self, side, index, channel, timeout=100):
         packet = None
+        label = (side, index, channel)
         for cycle in range(timeout):
             await triggers.RisingEdge(self.dut.clock)
-            if self.receivers[side].has_packet():
-                packet = self.receivers[side].get_packet()
+            if self.receivers[label].has_packet():
+                packet = self.receivers[label].get_packet()
                 break
         assert packet is not None
         return packet
@@ -194,6 +218,19 @@ class BamletInterface:
         """Wait 40 cycles for the program to finish execution"""
         for _ in range(40):
             await triggers.RisingEdge(self.dut.clock)
+
+    def get_amlet(self, offset_x, offset_y):
+        """Get access to a specific amlet in the bamlet grid.
+        If row/col not specified, uses the current bamlet position."""
+        x = self.bamlet_x + offset_x
+        y = self.bamlet_y + offset_y
+        index = offset_y * self.params.n_amlet_columns + offset_x
+        if index == 0:
+            label = 'Amlet'
+        else:
+            label = f'Amlet_{index}'
+        amlet_dut = getattr(self.dut, label)
+        return amlet_dut
 
     def direction_from_x_and_y(self, dst_x: int, dst_y: int, offset_x: int = 0, offset_y: int = 0):
         """What direction and label a packet will emerge from given destination and source lane offset."""

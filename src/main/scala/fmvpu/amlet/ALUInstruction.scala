@@ -14,7 +14,7 @@ object ALUInstr {
     val Subi = Value(4.U)
     val Mult = Value(5.U)
     val MultAcc = Value(6.U)
-    val Reserved7 = Value(7.U)
+    val MultAccInit = Value(7.U)
   
     val Eq = Value(8.U)
     val Gte = Value(9.U)
@@ -60,7 +60,8 @@ object ALUInstr {
     def isResolved(): Bool = {
       src1.resolved && 
       src2.resolved && 
-      mask.resolved
+      //mask.resolved &&
+      true.B
     }
 
     def isMasked(): Bool = {
@@ -91,7 +92,7 @@ object ALUInstr {
     val mode = Modes()
     val src1 = params.dWord()
     val src2 = params.dWord()
-    val dst = new DTaggedReg(params)
+    val dst = new BTaggedReg(params)
   }
 
 }

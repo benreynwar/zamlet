@@ -32,8 +32,14 @@ class ALU(params: AmletParams) extends Module {
 
   // Compute ALU result
   val aluOut = Wire(UInt(params.width.W))
+
+  // Accumulator
+  val accNext = Wire(UInt(params.width.W))
+  val acc = RegNext(accNext, 0.U)
   
   aluOut := 0.U  // Default value
+  accNext := acc  // Default: preserve accumulator value
+  
   switch(io.instr.bits.mode) {
     is(ALUInstr.Modes.None) {
       aluOut := 0.U
@@ -54,9 +60,16 @@ class ALU(params: AmletParams) extends Module {
       aluOut := io.instr.bits.src1 * io.instr.bits.src2
     }
     is(ALUInstr.Modes.MultAcc) {
-      // For MultAcc, we assume the accumulator value is already included in the computation
-      // This could be enhanced to track local accumulator state if needed
-      aluOut := io.instr.bits.src1 * io.instr.bits.src2
+      // MultAcc: add multiplication result to accumulator and output the new accumulator value
+      val multResult = io.instr.bits.src1 * io.instr.bits.src2
+      accNext := acc + multResult
+      aluOut := acc + multResult  // Output the new accumulator value
+    }
+    is(ALUInstr.Modes.MultAccInit) {
+      // MultAccInit: multiply and write result directly to accumulator (no addition)
+      val multResult = io.instr.bits.src1 * io.instr.bits.src2
+      accNext := multResult
+      aluOut := multResult
     }
     is(ALUInstr.Modes.Eq) {
       aluOut := (io.instr.bits.src1 === io.instr.bits.src2).asUInt
@@ -100,7 +113,7 @@ class ALU(params: AmletParams) extends Module {
     // Multi-cycle pipeline
     val validPipe = RegInit(VecInit(Seq.fill(params.aluLatency)(false.B)))
     val resultPipe = RegInit(VecInit(Seq.fill(params.aluLatency)(0.U(params.width.W))))
-    val dstAddrPipe = RegInit(VecInit(Seq.fill(params.aluLatency)(0.U.asTypeOf(new DTaggedReg(params)))))
+    val dstAddrPipe = RegInit(VecInit(Seq.fill(params.aluLatency)(0.U.asTypeOf(new BTaggedReg(params)))))
     
     // Stage 0 (input)
     validPipe(0) := io.instr.valid

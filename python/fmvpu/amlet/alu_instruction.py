@@ -5,6 +5,12 @@ from enum import IntEnum
 from fmvpu.control_structures import pack_fields_to_words, unpack_words_to_fields, calculate_total_width, pack_fields_to_int
 
 
+class RegisterType(IntEnum):
+    """Register type for destination mapping"""
+    A_REG = 0  # A-register (address register)
+    D_REG = 1  # D-register (data register)
+
+
 class ALUModes(IntEnum):
     NONE = 0
     ADD = 1
@@ -13,7 +19,7 @@ class ALUModes(IntEnum):
     SUBI = 4
     MULT = 5
     MULT_ACC = 6
-    RESERVED7 = 7
+    MULT_ACC_INIT = 7
     EQ = 8
     GTE = 9
     LTE = 10
@@ -46,7 +52,15 @@ class ALUInstruction:
     mode: ALUModes = ALUModes.NONE
     src1: int = 0  # Source 1 register (d-type register)
     src2: int = 0  # Source 2 register (d-type register)
-    dst: int = 0   # Destination register (b-type register)
+    dst: int = 0   # Encoded destination register (B-register space)
+    a_dst: int = None  # A-register destination (if specified)
+    d_dst: int = None  # D-register destination (if specified)
+    
+    def __post_init__(self):
+        """Set dst based on a_dst or d_dst if specified"""
+        if self.a_dst is not None and self.d_dst is not None:
+            raise ValueError("Cannot specify both a_dst and d_dst")
+        # Note: actual encoding happens in encode() method when params are available
     
     @classmethod
     def get_width(cls, params) -> int:
@@ -65,8 +79,26 @@ class ALUInstruction:
     
     def encode(self, params) -> int:
         """Encode to instruction bits"""
+        # Determine the actual dst value
+        actual_dst = self.dst
+        if self.a_dst is not None:
+            # A-registers map directly to B-register space
+            actual_dst = self.a_dst
+        elif self.d_dst is not None:
+            # D-registers map to B-register space starting at cutoff
+            cutoff = max(params.n_a_regs, params.n_d_regs)
+            actual_dst = cutoff + self.d_dst
+        
+        # Create a temporary object for encoding
+        temp_instr = type(self)(
+            mode=self.mode,
+            src1=self.src1,
+            src2=self.src2,
+            dst=actual_dst
+        )
+        
         field_specs = self.get_field_specs(params)
-        return pack_fields_to_int(self, field_specs)
+        return pack_fields_to_int(temp_instr, field_specs)
     
     @classmethod
     def from_word(cls, word: int) -> 'ALUInstruction':

@@ -59,7 +59,7 @@ class Control(params: BamletParams) extends Module {
 
   // The only change we make to the instruction is that we substitute some Loop for Incr.
   io.instr.bits := io.imResp.bits.instr
-  io.instr.valid := io.imResp.valid
+  io.instr.valid := io.imResp.valid && active
 
   loopActiveCurrent := loopActive
   loopStatesCurrent := loopStates

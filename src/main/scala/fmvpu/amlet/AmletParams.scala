@@ -95,8 +95,13 @@ class DTaggedSource(params: AmletParams) extends Bundle {
 
     // Check each write port for a match
     for (j <- 0 until params.nResultPorts) {
+      val writeAddr = writes.writes(j).address.addr
+      val isDRegWrite = writeAddr(params.bRegWidth-1)  // Upper bit = 1 for D-registers
+      val regIndex = writeAddr(params.dRegWidth-1, 0)  // Lower bits = register index
+      
       when (!resolved && writes.writes(j).valid && 
-            addr === writes.writes(j).address.addr &&
+            isDRegWrite &&  // Upper bit = 1 (D-register)
+            addr === regIndex &&  // Lower bits match our D-register index  
             tag === writes.writes(j).address.tag) {
         // Address matches - resolve this dependency
         result.resolved := true.B
@@ -131,8 +136,13 @@ class ATaggedSource(params: AmletParams) extends Bundle {
 
     // Check each write port for a match
     for (j <- 0 until params.nResultPorts) {
+      val writeAddr = writes.writes(j).address.addr
+      val isARegWrite = !writeAddr(params.bRegWidth-1)  // Upper bit = 0 for A-registers
+      val regIndex = writeAddr(params.aRegWidth-1, 0)  // Lower bits = register index
+      
       when (!resolved && writes.writes(j).valid && 
-            addr === writes.writes(j).address.addr &&
+            isARegWrite &&  // Upper bit = 0 (A-register)
+            addr === regIndex &&  // Lower bits match our A-register index
             tag === writes.writes(j).address.tag) {
         // Address matches - resolve this dependency
         result.resolved := true.B

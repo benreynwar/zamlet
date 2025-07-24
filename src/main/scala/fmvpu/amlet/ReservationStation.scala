@@ -69,17 +69,19 @@ abstract class ReservationStation[U <: Instr.Resolving, R <: Instr.Resolved]
     if (i == nSlots()-1) {
       belowRemoved := false.B
     } else {
-      belowRemoved := removeValid && i.U < removeSlotIndex
+      belowRemoved := (!removeValid) || i.U < removeSlotIndex
     }
-    when (belowRemoved) {
+    when (io.input.fire && (i+1).U === nUsedSlotsNext) {
+      slotsIntermed(i) := io.input.bits
+    } .elsewhen (belowRemoved) {
+      slotsIntermed(i) := slots(i)
+    } .elsewhen (i.U < nUsedSlots) {
       // Bounds check: ensure i+1 doesn't exceed array bounds when shifting slots left
       // The condition shouldn't ever be false, but this resolves it before we
       // generate the verilog so we don't have to trust tools to realize that.
       if (i+1 < nSlots()) {
         slotsIntermed(i) := slots(i+1)
       }
-    } .elsewhen (io.input.fire && i.U === nUsedSlots) {
-      slotsIntermed(i) := io.input.bits
     } .elsewhen (i.U >= nUsedSlots) {
       slotsIntermed(i) := emptySlot()
     }

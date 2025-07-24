@@ -15,6 +15,8 @@ MODULES = [
 # Test definitions: name, test_file, verilog_target, special_args
 TESTS = [
     ("test_write_im", "test_write_im.py", "bamlet", []),
+    ("test_basic", "test_basic.py", "bamlet", []),
+    ("test_alu", "test_alu.py", "bamlet", []),
 ]
 
 # Generate all Verilog, filegroups, and tests

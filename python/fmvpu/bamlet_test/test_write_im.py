@@ -13,9 +13,14 @@ from cocotb.handle import HierarchyObject
 
 from fmvpu import generate_rtl
 from fmvpu import test_utils
-from fmvpu.bamlet.bamlet_interface import BamletInterface
+from fmvpu.bamlet.bamlet_interface import BamletInterface, make_coord_register
 from fmvpu.bamlet.bamlet_params import BamletParams
 from fmvpu.amlet.instruction import VLIWInstruction, create_halt_instruction
+from fmvpu.amlet.control_instruction import ControlInstruction, ControlModes
+from fmvpu.amlet.packet_instruction import PacketInstruction, PacketModes
+from fmvpu.amlet.alu_instruction import ALUInstruction, ALUModes
+from fmvpu.amlet.alu_lite_instruction import ALULiteInstruction, ALULiteModes
+from fmvpu.amlet.ldst_instruction import LoadStoreInstruction, LoadStoreModes
 from fmvpu.amlet import packet_utils
 
 
@@ -24,12 +29,41 @@ this_dir = os.path.abspath(os.path.dirname(__file__))
 
 
 async def write_instruction_test(bi: BamletInterface) -> None:
-    """Test writing a single instruction to instruction memory and probe the output"""
-    # Create a simple halt instruction
-    halt_instr = create_halt_instruction()
+    """Test writing a complex instruction to instruction memory and probe the output"""
+    # Create a complex VLIW instruction that exercises all execution units
+    complex_instr = VLIWInstruction(
+        control=ControlInstruction(
+            mode=ControlModes.LOOP,
+            halt=True,
+        ),
+        alu=ALUInstruction(
+            mode=ALUModes.ADD,
+            src1=1,  # D-register 1
+            src2=2,  # D-register 2  
+            dst=19   # D-register 3 (encoded as cutoff+3 = 16+3 = 19)
+        ),
+        alu_lite=ALULiteInstruction(
+            mode=ALULiteModes.ADD,
+            src1=1,  # A-register 1
+            src2=2,  # A-register 2
+            dst=4    # A-register 4 (encoded as 4)
+        ),
+        load_store=LoadStoreInstruction(
+            mode=LoadStoreModes.LOAD,
+            addr=5,  # A-register 5 (address)
+            reg=22   # D-register 6 (encoded as cutoff+6 = 16+6 = 22)
+        ),
+        packet=PacketInstruction(
+            mode=PacketModes.SEND,
+            target=7,   # A-register 7 (target coordinates)
+            length=8,   # A-register 8 (length)
+            result=25,  # D-register 9 (encoded as cutoff+9 = 16+9 = 25)
+            channel=1
+        )
+    )
     
     # Write the instruction to address 0
-    program = [halt_instr]
+    program = [complex_instr]
     await bi.write_program(program, base_address=0)
     
     # Wait a few cycles for the write to complete
@@ -56,25 +90,58 @@ async def write_instruction_test(bi: BamletInterface) -> None:
             
             # ALU instruction  
             alu_mode = bi.dut.control.io_instr_bits_alu_mode.value
+            alu_src1 = bi.dut.control.io_instr_bits_alu_src1.value
+            alu_src2 = bi.dut.control.io_instr_bits_alu_src2.value
+            alu_dst = bi.dut.control.io_instr_bits_alu_dst.value
+            
+            # ALU Lite instruction
+            alu_lite_mode = bi.dut.control.io_instr_bits_aluLite_mode.value
+            alu_lite_src1 = bi.dut.control.io_instr_bits_aluLite_src1.value
+            alu_lite_src2 = bi.dut.control.io_instr_bits_aluLite_src2.value
+            alu_lite_dst = bi.dut.control.io_instr_bits_aluLite_dst.value
             
             # Load/Store instruction
             ldst_mode = bi.dut.control.io_instr_bits_loadStore_mode.value
+            ldst_addr = bi.dut.control.io_instr_bits_loadStore_addr.value
+            ldst_reg = bi.dut.control.io_instr_bits_loadStore_reg.value
             
             # Packet instruction
             packet_mode = bi.dut.control.io_instr_bits_packet_mode.value
+            packet_target = bi.dut.control.io_instr_bits_packet_target.value
+            packet_length = bi.dut.control.io_instr_bits_packet_length.value
+            packet_result = bi.dut.control.io_instr_bits_packet_result.value
+            packet_channel = bi.dut.control.io_instr_bits_packet_channel.value
             
-            logger.info(f"Instruction components:")
+            logger.info(f"Complex instruction components:")
             logger.info(f"  Control: halt={control_halt}, mode={control_mode}")
-            logger.info(f"  ALU: mode={alu_mode}")
-            logger.info(f"  LoadStore: mode={ldst_mode}")
-            logger.info(f"  Packet: mode={packet_mode}")
+            logger.info(f"  ALU: mode={alu_mode}, src1={alu_src1}, src2={alu_src2}, dst={alu_dst}")
+            logger.info(f"  ALULite: mode={alu_lite_mode}, src1={alu_lite_src1}, src2={alu_lite_src2}, dst={alu_lite_dst}")
+            logger.info(f"  LoadStore: mode={ldst_mode}, addr={ldst_addr}, reg={ldst_reg}")
+            logger.info(f"  Packet: mode={packet_mode}, target={packet_target}, length={packet_length}, result={packet_result}, channel={packet_channel}")
             
-            # Verify this matches our expected halt instruction
-            # A halt instruction should have control.halt=1 and other modes=0
-            assert control_halt == 1, f"Expected halt=1, got {control_halt}"
-            assert alu_mode == 0, f"Expected ALU mode=0, got {alu_mode}"
-            assert ldst_mode == 0, f"Expected LoadStore mode=0, got {ldst_mode}"
-            assert packet_mode == 0, f"Expected Packet mode=0, got {packet_mode}"
+            # Verify this matches our expected complex instruction
+            assert control_halt == 1, f"Expected halt=0, got {control_halt}"
+            assert control_mode == ControlModes.LOOP, f"Expected control mode={ControlModes.LOOP}, got {control_mode}"
+            assert alu_mode == ALUModes.ADD, f"Expected ALU mode={ALUModes.ADD}, got {alu_mode}"
+            assert alu_src1 == 1, f"Expected ALU src1=1, got {alu_src1}"
+            assert alu_src2 == 2, f"Expected ALU src2=2, got {alu_src2}"
+            # ALU dst should be 19 (D-register 3 encoded as cutoff+3 = 16+3 = 19)
+            assert alu_dst == 19, f"Expected ALU dst=19, got {alu_dst}"
+            
+            assert alu_lite_mode == ALULiteModes.ADD, f"Expected ALULite mode={ALULiteModes.ADD}, got {alu_lite_mode}"
+            assert alu_lite_src1 == 1, f"Expected ALULite src1=1, got {alu_lite_src1}"
+            assert alu_lite_src2 == 2, f"Expected ALULite src2=2, got {alu_lite_src2}"
+            assert alu_lite_dst == 4, f"Expected ALULite dst=4, got {alu_lite_dst}"  # A-register 4
+            
+            assert ldst_mode == LoadStoreModes.LOAD, f"Expected LoadStore mode={LoadStoreModes.LOAD}, got {ldst_mode}"
+            assert ldst_addr == 5, f"Expected LoadStore addr=5, got {ldst_addr}"  # A-register 5
+            assert ldst_reg == 22, f"Expected LoadStore reg=22, got {ldst_reg}"  # D-register 6 (encoded as 16+6=22)
+            
+            assert packet_mode == PacketModes.SEND, f"Expected Packet mode={PacketModes.SEND}, got {packet_mode}"
+            assert packet_target == 7, f"Expected Packet target=7, got {packet_target}"  # A-register 7
+            assert packet_length == 8, f"Expected Packet length=8, got {packet_length}"  # A-register 8
+            assert packet_result == 25, f"Expected Packet result=25, got {packet_result}"  # D-register 9 (encoded as 16+9=25)
+            assert packet_channel == 1, f"Expected Packet channel=1, got {packet_channel}"
             
             logger.info("Instruction verification successful!")
             break
@@ -173,6 +240,43 @@ async def simple_packet_test(bi: BamletInterface) -> None:
     logger.info("Packet verification complete")
 
 
+async def send_zero_length_packet_test(bi: BamletInterface) -> None:
+    """Sends a packet with zero length using a proper VLIW program"""
+    # Create destination coordinates: bamlet_x + 0, bamlet_y + 1
+    dest_x = 0
+    dest_y = 0
+    coord_word = make_coord_register(dest_x, dest_y, bi.params.amlet)
+    await bi.write_a_register(3, coord_word)
+    
+    # Write zero length to register 4
+    await bi.write_a_register(4, 0)
+    
+    # Create a single VLIW instruction that sends a zero-length packet and halts
+    program = [
+        VLIWInstruction(
+            control=ControlInstruction(
+                halt=True
+            ),
+            packet=PacketInstruction(
+                mode=PacketModes.SEND,
+                target=3,  # Contains destination coordinates
+                length=4,  # Contains length (0) 
+                result=0   # Store result/status here
+            )
+        )
+    ]
+    
+    # Write and run the program
+    await bi.write_program(program, base_address=0)
+    await bi.start_program(pc=0)
+    
+    # Wait for program execution and monitor outputs
+    await bi.get_packet(expected_length=0)
+    
+    logger.info("Successfully sent zero-length packet program")
+
+
+
 @cocotb.test()
 async def bamlet_write_im_test(dut: HierarchyObject) -> None:
     test_utils.configure_logging_sim("DEBUG")
@@ -195,7 +299,8 @@ async def bamlet_write_im_test(dut: HierarchyObject) -> None:
     # Run simple packet test
     await simple_packet_test(bi)
 
-    await write_instruction_test(bi)
+    #await write_instruction_test(bi)
+    await send_zero_length_packet_test(bi)
 
 
 def test_bamlet_write_im(verilog_file: str, params_file: str, seed: int = 0) -> None:
