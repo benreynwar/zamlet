@@ -31,31 +31,6 @@ def create_register_write_packet(
     return [header.encode(), command_word]
 
 
-def create_instruction_write_packet(
-    instructions: list[int],
-    base_address: int = 0,
-    dest_x: int = 0,
-    dest_y: int = 0,
-    params: AmletParams = AmletParams(),
-    is_broadcast: bool = False,
-) -> list[int]:
-    """Create a command packet to write multiple instructions to instruction memory"""
-    header = packet_utils.PacketHeader(
-        length=len(instructions),  # One command word per instruction
-        dest_x=dest_x,
-        dest_y=dest_y,
-        mode=packet_utils.PacketHeaderModes.COMMAND,
-        is_broadcast=is_broadcast,
-    )
-    command_words = []
-    for i, instruction in enumerate(instructions):
-        address = base_address + i
-        command_word = packet_utils.create_instruction_memory_write_command(
-            address, instruction, params
-        )
-        command_words.append(command_word)
-    return [header.encode()] + command_words
-
 
 def create_start_packet(
         pc: int, dest_x: int = 0, dest_y: int = 0, params: AmletParams = AmletParams(),
@@ -114,7 +89,7 @@ class BamletInterface:
                 ready_signal=getattr(dut, f'io_{side}i_{index}_{channel}_ready'),
                 data_signal=getattr(dut, f'io_{side}i_{index}_{channel}_bits_data'),
                 isheader_signal=getattr(dut, f'io_{side}i_{index}_{channel}_bits_isHeader'),
-                p_valid=0.5,
+                p_valid=1.0,
             )
             self.receivers[(side, index, channel)] = packet_utils.PacketReceiver(
                 name=f'{side}_{index}_{channel}',
@@ -124,6 +99,7 @@ class BamletInterface:
                 ready_signal=getattr(dut, f'io_{side}o_{index}_{channel}_ready'),
                 data_signal=getattr(dut, f'io_{side}o_{index}_{channel}_bits_data'),
                 isheader_signal=getattr(dut, f'io_{side}o_{index}_{channel}_bits_isHeader'),
+                p_ready=1.0,
             )
 
     def get_all_labels(self):
@@ -177,9 +153,8 @@ class BamletInterface:
         return int(getattr(self.dut.rff, f'registers_{reg}_value').value)
 
     async def write_program(self, program, base_address=0, side='w', index=0, channel=0, offset_x=0, offset_y=0):
-        machine_code = [instr.encode() for instr in program]
-        instr_packet = create_instruction_write_packet(
-            machine_code, base_address, dest_x=self.bamlet_x + offset_x, dest_y=self.bamlet_y + offset_y, params=self.params.amlet
+        instr_packet = packet_utils.create_instruction_write_packet(
+            program, base_address, dest_x=self.bamlet_x + offset_x, dest_y=self.bamlet_y + offset_y, params=self.params.amlet
         )
         self.drivers[(side, index, channel)].add_packet(instr_packet)
         # Wait for instruction write

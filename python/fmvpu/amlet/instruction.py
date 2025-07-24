@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from typing import List, Tuple
 
-from fmvpu.control_structures import pack_fields_to_words, unpack_words_to_fields
+from fmvpu.control_structures import pack_fields_to_words, unpack_words_to_fields, int_to_words
 from fmvpu.amlet.control_instruction import ControlInstruction
 from fmvpu.amlet.alu_instruction import ALUInstruction
 from fmvpu.amlet.alu_lite_instruction import ALULiteInstruction
@@ -31,21 +31,55 @@ class VLIWInstruction:
         if self.packet is None:
             self.packet = PacketInstruction()
     
-    def encode(self) -> int:
-        """Encode VLIW instruction to a word"""
-        # This is a simplified encoding - the actual implementation would
-        # pack these into appropriate bit fields within the VLIW word
-        encoded = 0
+    def encode(self, params) -> int:
+        """Encode VLIW instruction to a word based on parameters"""
+        # Get each instruction's encoded value and width
+        control_encoded = self.control.encode(params)
+        alu_encoded = self.alu.encode(params)
+        alu_lite_encoded = self.alu_lite.encode(params)
+        load_store_encoded = self.load_store.encode(params)
+        packet_encoded = self.packet.encode(params)
         
-        # Pack each sub-instruction into different bit ranges
-        # Using a 128-bit VLIW word divided into sections
-        encoded |= (self.control.encode() & 0xFFFF) << 96   # 16 bits for control
-        encoded |= (self.alu.encode() & 0xFFFFFFFF) << 64    # 32 bits for ALU
-        encoded |= (self.alu_lite.encode() & 0xFFFFFFFF) << 32  # 32 bits for ALU Lite
-        encoded |= (self.load_store.encode() & 0xFFFF) << 16    # 16 bits for load/store
-        encoded |= (self.packet.encode() & 0xFFFF)              # 16 bits for packet
+        # Calculate widths based on parameters
+        control_width = self.control.get_width(params)
+        alu_width = self.alu.get_width(params)
+        alu_lite_width = self.alu_lite.get_width(params)
+        load_store_width = self.load_store.get_width(params)
+        packet_width = self.packet.get_width(params)
+        
+        # Pack instructions sequentially with proper bit positions
+        encoded = 0
+        bit_pos = 0
+        
+        # Pack in order: packet, load_store, alu_lite, alu, control
+        encoded |= (packet_encoded & ((1 << packet_width) - 1)) << bit_pos
+        bit_pos += packet_width
+        
+        encoded |= (load_store_encoded & ((1 << load_store_width) - 1)) << bit_pos
+        bit_pos += load_store_width
+        
+        encoded |= (alu_lite_encoded & ((1 << alu_lite_width) - 1)) << bit_pos
+        bit_pos += alu_lite_width
+        
+        encoded |= (alu_encoded & ((1 << alu_width) - 1)) << bit_pos
+        bit_pos += alu_width
+        
+        encoded |= (control_encoded & ((1 << control_width) - 1)) << bit_pos
         
         return encoded
+    
+    def to_words(self, params) -> List[int]:
+        """Convert VLIW instruction to list of words of width params.width"""
+        full_instruction = self.encode(params)
+        
+        # Calculate total VLIW instruction width
+        total_width = (self.control.get_width(params) + 
+                      self.alu.get_width(params) + 
+                      self.alu_lite.get_width(params) + 
+                      self.load_store.get_width(params) + 
+                      self.packet.get_width(params))
+        
+        return int_to_words(full_instruction, total_width, params.width)
     
     @classmethod
     def from_word(cls, word: int) -> 'VLIWInstruction':

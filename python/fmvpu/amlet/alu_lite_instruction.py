@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from typing import List, Tuple
 from enum import IntEnum
 
-from fmvpu.control_structures import pack_fields_to_words, unpack_words_to_fields
+from fmvpu.control_structures import pack_fields_to_words, unpack_words_to_fields, calculate_total_width, pack_fields_to_int
 
 
 class ALULiteModes(IntEnum):
@@ -49,20 +49,24 @@ class ALULiteInstruction:
     dst: int = 0   # Destination register (b-type register)
     
     @classmethod
-    def get_field_specs(cls) -> List[Tuple[str, int]]:
+    def get_width(cls, params) -> int:
+        """Get the bit width of this instruction type based on parameters"""
+        return calculate_total_width(cls.get_field_specs(params))
+    
+    @classmethod
+    def get_field_specs(cls, params) -> List[Tuple[str, int]]:
         """Get field specifications for bit packing."""
         return [
             ('mode', 5),  # 5 bits to support up to 31
-            ('src1', 4),  # Assuming 4 bits for a-reg address
-            ('src2', 4),  # Assuming 4 bits for a-reg address
-            ('dst', 5),   # Assuming 5 bits for b-reg address
+            ('src1', params.a_reg_width),
+            ('src2', params.a_reg_width),
+            ('dst', params.b_reg_width),
         ]
     
-    def encode(self) -> int:
+    def encode(self, params) -> int:
         """Encode to instruction bits"""
-        words = pack_fields_to_words(self, self.get_field_specs(), word_width=32)
-        assert len(words) == 1, f"ALULiteInstruction requires {len(words)} words but should fit in 1 word"
-        return words[0]
+        field_specs = self.get_field_specs(params)
+        return pack_fields_to_int(self, field_specs)
     
     @classmethod
     def from_word(cls, word: int) -> 'ALULiteInstruction':

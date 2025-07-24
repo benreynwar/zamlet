@@ -10,10 +10,10 @@ class PacketHeader(params: AmletParams) extends Bundle {
   val length = UInt(params.packetLengthWidth.W)
   val xDest = UInt(params.xPosWidth.W)
   val yDest = UInt(params.yPosWidth.W)
-  val mode = UInt(8.W) // PacketHeaderModes
+  val mode = PacketHeaderModes()
   val forward = Bool()
   val isBroadcast = Bool()
-  val appendLength = UInt(params.bRegWidth.W)
+  val appendLength = UInt(4.W)
 }
 
 /**
@@ -57,10 +57,11 @@ class IMWrite(params: AmletParams) extends Bundle {
 /**
  * Packet header modes enumeration
  */
-object PacketHeaderModes {
-  val Normal = 0.U
-  val Command = 1.U
-  val Append = 2.U
+object PacketHeaderModes extends ChiselEnum {
+  val Normal = Value(0.U)
+  val Command = Value(1.U)
+  val Append = Value(2.U)
+  val Undefined = Value(3.U)
 }
 
 /**

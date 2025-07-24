@@ -91,3 +91,43 @@ def unpack_words_to_fields(words: List[int], field_specs: List[Tuple[str, int]],
 def calculate_total_width(field_specs: List[Tuple[str, int]]) -> int:
     """Calculate total width in bits from field specifications."""
     return sum(width for _, width in field_specs)
+
+
+def pack_fields_to_int(obj, field_specs: List[Tuple[str, int]]) -> int:
+    """Pack object fields into a single integer using field specifications."""
+    bits = pack_fields_to_bits(obj, field_specs)
+    # Pack bits into a single integer
+    result = 0
+    for i, bit in enumerate(bits):
+        if bit:
+            result |= (1 << i)
+    return result
+
+
+def int_to_words(value: int, original_width: int, word_width: int) -> List[int]:
+    """Convert an integer to a list of words of specified width.
+    
+    Args:
+        value: The integer value to convert
+        original_width: The bit width of the original value
+        word_width: The target word width
+    
+    Returns:
+        List of words, each of word_width bits
+    """
+    words = []
+    mask = (1 << word_width) - 1
+    
+    # Calculate how many words we need
+    num_words = (original_width + word_width - 1) // word_width
+    
+    # Split the value into words of word_width
+    for i in range(num_words):
+        words.append(value & mask)
+        value >>= word_width
+    
+    # Check that there's no remainder - all bits should have been consumed
+    if value != 0:
+        raise ValueError(f"Value {value} has bits beyond original_width {original_width}")
+        
+    return words

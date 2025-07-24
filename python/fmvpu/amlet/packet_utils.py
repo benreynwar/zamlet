@@ -73,12 +73,11 @@ def create_register_write_command(register: int, value: int, params: AmletParams
     return cmd
 
 
-def create_instruction_memory_write_command(address: int, instruction: int, params: AmletParams = AmletParams()) -> int:
-    """Create instruction memory write command word"""
+def create_instruction_memory_write_command(address: int, count: int, params: AmletParams = AmletParams()) -> int:
+    """Create instruction memory write setup command word"""
     cmd = CommandTypes.WRITE_INSTRUCTION_MEMORY << (params.width - 2)
-    # For amlet, instructions are VLIW (larger than 16 bits)
-    cmd |= (instruction & 0xFFFFFFFF) << 16  # 32-bit instruction
-    cmd |= address & 0xFFFF  # 16-bit address
+    cmd |= (count & 0xFF) << 16  # 8-bit count in bits 23-16
+    cmd |= address & 0xFFFF  # 16-bit address in bits 15-0
     return cmd
 
 
@@ -101,20 +100,44 @@ def create_register_write_packet(register: int, value: int, dest_x: int = 0, des
     return [header.encode(), command_word]
 
 
-def create_instruction_write_packet(instructions: list[int], base_address: int = 0, dest_x: int = 0, dest_y: int = 0, params: AmletParams = AmletParams()) -> list[int]:
-    """Create a command packet to write multiple instructions to instruction memory"""
+def pad_words_to_power_of_2(words: list[int]) -> list[int]:
+    """Pad a list of words to the next power of 2 length"""
+    if not words:
+        return []
+    
+    target_length = 1
+    while target_length < len(words):
+        target_length *= 2
+    
+    # Pad with zeros
+    padded_words = words.copy()
+    while len(padded_words) < target_length:
+        padded_words.append(0)
+        
+    return padded_words
+
+
+def create_instruction_write_packet(instructions: list, base_address: int = 0, dest_x: int = 0, dest_y: int = 0, params: AmletParams = AmletParams()) -> list[int]:
+    """Create a command packet to write multiple VLIWInstructions to instruction memory"""
+    # Convert VLIWInstructions to words and pad each to power of 2 length
+    instruction_words = []
+    for instruction in instructions:
+        words = instruction.to_words(params)
+        padded_words = pad_words_to_power_of_2(words)
+        instruction_words.extend(padded_words)
+    
+    # Create header: 1 setup command + len(instruction_words) data words  
     header = PacketHeader(
-        length=len(instructions),  # One command word per instruction
+        length=1 + len(instruction_words),
         dest_x=dest_x,
         dest_y=dest_y,
         mode=PacketHeaderModes.COMMAND
     )
-    command_words = []
-    for i, instruction in enumerate(instructions):
-        address = base_address + i
-        command_word = create_instruction_memory_write_command(address, instruction, params)
-        command_words.append(command_word)
-    return [header.encode()] + command_words
+    
+    # Create setup command word: [cmd_type][count][address]
+    setup_command = create_instruction_memory_write_command(base_address, len(instruction_words), params)
+    
+    return [header.encode()] + [setup_command] + instruction_words
 
 
 def create_start_packet(pc: int, dest_x: int = 0, dest_y: int = 0, params: AmletParams = AmletParams()) -> list[int]:
@@ -191,7 +214,7 @@ class PacketDriver:
 class PacketReceiver:
     """Receives packets from a single network output"""
     
-    def __init__(self, name, dut, seed, valid_signal, ready_signal, data_signal, isheader_signal):
+    def __init__(self, name, dut, seed, valid_signal, ready_signal, data_signal, isheader_signal, p_ready=0.5):
         self.name = name
         self.dut = dut
         self.valid_signal = valid_signal
@@ -201,6 +224,7 @@ class PacketReceiver:
         self.received_packets: deque[List[int]] = deque()
         self.current_packet: List[int] = []
         self.rnd = Random(seed)
+        self.p_ready = p_ready
         
     def has_packet(self) -> bool:
         """Check if a complete packet is available"""
@@ -212,13 +236,12 @@ class PacketReceiver:
         
     async def receive_packets(self):
         """Receive packets from the network output"""
-        self.ready_signal.value = 1
-        
         while True:
             await RisingEdge(self.dut.clock)
+            self.ready_signal.value = 1 if self.rnd.random() < self.p_ready else 0
             await ReadOnly()
             
-            if self.valid_signal.value == 1:
+            if (self.valid_signal.value == 1) and (self.ready_signal.value == 1):
                 word = int(self.data_signal.value)
                 is_header = int(self.isheader_signal.value)
                 
