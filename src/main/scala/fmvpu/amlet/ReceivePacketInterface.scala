@@ -80,6 +80,7 @@ class ReceivePacketInterface(params: AmletParams) extends Module {
     val ReceivingData = Value(1.U)
     val ProcessingCommand = Value(2.U)
     val ProcessingIMWrites = Value(3.U)
+    val ProcessingRegWrite = Value(4.U)
   }
   
   // Receive state  
@@ -89,6 +90,9 @@ class ReceivePacketInterface(params: AmletParams) extends Module {
   // IM write state
   val imWriteAddress = RegInit(0.U(16.W))
   val imWriteCount = RegInit(0.U(8.W))
+  
+  // Register write command state
+  val regWriteAddress = RegInit(0.U(params.bRegWidth.W))
   
   // Forward toggle register
   val forwardToggle = RegInit(false.B)
@@ -272,12 +276,10 @@ class ReceivePacketInterface(params: AmletParams) extends Module {
               receiveState := States.ProcessingIMWrites
             }
           }
-          is(2.U) { // Write to register command
-            io.result.valid := true.B
-            io.result.address.addr := commandData(params.width-3, params.width-2-params.bRegWidth)
-            io.result.address.tag := 0.U // Command writes don't use write identifiers
-            io.result.value := Cat(0.U(params.bRegWidth.W), commandData(params.width-2-params.bRegWidth-1, 0))
-            io.result.force := true.B // Command writes bypass dependency system
+          is(2.U) { // Write to register command header
+            // Store the register address and transition to ProcessingRegWrite state
+            regWriteAddress := commandData(params.bRegWidth-1, 0)
+            receiveState := States.ProcessingRegWrite
           }
         }
       }
@@ -304,6 +306,26 @@ class ReceivePacketInterface(params: AmletParams) extends Module {
           } .otherwise {
             receiveState := States.Idle
           }
+        }
+      }
+      
+      bufferedFromNetwork.ready := true.B
+    }
+    is(States.ProcessingRegWrite) {
+      when (bufferedFromNetwork.valid) {
+        // Write the data value to the register specified in the header
+        io.result.valid := true.B
+        io.result.address.addr := regWriteAddress
+        io.result.address.tag := 0.U // Command writes don't use write identifiers
+        io.result.value := bufferedFromNetwork.bits.data
+        io.result.force := true.B // Command writes bypass dependency system
+        
+        // Update state
+        receiveRemainingWords := receiveRemainingWords - 1.U
+        when(receiveRemainingWords === 1.U) {
+          receiveState := States.Idle
+        } .otherwise {
+          receiveState := States.ProcessingCommand
         }
       }
       

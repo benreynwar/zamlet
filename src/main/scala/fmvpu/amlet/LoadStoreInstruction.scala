@@ -29,7 +29,8 @@ object LoadStoreInstr {
     def isResolved(): Bool = {
       addr.resolved && 
       src.resolved && 
-      mask.resolved
+      //mask.resolved &&
+      true.B
     }
 
     def isMasked(): Bool = {

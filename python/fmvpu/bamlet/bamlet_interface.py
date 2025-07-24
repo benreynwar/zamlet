@@ -11,25 +11,6 @@ from fmvpu.amlet.amlet_params import AmletParams
 logger = logging.getLogger(__name__)
 
 
-def create_register_write_packet(
-    register: int,
-    value: int,
-    dest_x: int = 0,
-    dest_y: int = 0,
-    params: AmletParams = AmletParams(),
-    is_broadcast: bool = False,
-) -> list[int]:
-    """Create a command packet to write a value to a register"""
-    header = packet_utils.PacketHeader(
-        length=1,  # One command word
-        dest_x=dest_x,
-        dest_y=dest_y,
-        mode=packet_utils.PacketHeaderModes.COMMAND,
-        is_broadcast=is_broadcast,
-    )
-    command_word = packet_utils.create_register_write_command(register, value, params)
-    return [header.encode(), command_word]
-
 
 
 def create_start_packet(
@@ -132,9 +113,8 @@ class BamletInterface:
             cocotb.start_soon(self.receivers[label].receive_packets())
 
     async def write_d_register(self, reg, value, side='w', index=0, channel=0, offset_x=0, offset_y=0):
-        # We can only write width - regaddrwidth - 2 bits
-        writeable_width = self.params.amlet.width - self.params.amlet.d_reg_width - 2
-        assert value < (1 << writeable_width)
+        # With two-word approach, D-registers can store full width values
+        assert value < (1 << self.params.amlet.width), f"Value {value} too large for {self.params.amlet.width}-bit D-register"
         coord_packet = packet_utils.create_d_register_write_packet(
             register=reg, value=value, dest_x=self.bamlet_x + offset_x, dest_y=self.bamlet_y + offset_y, params=self.params.amlet
         )
@@ -148,9 +128,8 @@ class BamletInterface:
         assert probed_value == value, f"D-register {reg} write failed: expected {value}, got {probed_value}"
 
     async def write_a_register(self, reg, value, side='w', index=0, channel=0, offset_x=0, offset_y=0):
-        # We can only write width - regaddrwidth - 2 bits
-        writeable_width = self.params.amlet.width - self.params.amlet.a_reg_width - 2
-        assert value < (1 << writeable_width)
+        # A-registers are constrained by their actual width (aWidth from config)
+        assert value < (1 << self.params.amlet.a_width), f"Value {value} too large for {self.params.amlet.a_width}-bit A-register"
         coord_packet = packet_utils.create_a_register_write_packet(
             register=reg, value=value, dest_x=self.bamlet_x + offset_x, dest_y=self.bamlet_y + offset_y, params=self.params.amlet
         )

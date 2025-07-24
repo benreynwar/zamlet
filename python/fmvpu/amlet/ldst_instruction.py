@@ -16,8 +16,16 @@ class LoadStoreModes(IntEnum):
 class LoadStoreInstruction:
     """Load/Store instruction for amlet"""
     mode: LoadStoreModes = LoadStoreModes.NONE
-    addr: int = 0  # Address register (a-type register)
-    reg: int = 0   # Data register (b-type register for load/store data)
+    addr: int = 0   # Address register that points to memory location
+    reg: int = 0    # Encoded data register (B-register space)
+    a_reg: int = None  # A-register for data (if specified)
+    d_reg: int = None  # D-register for data (if specified)
+    
+    def __post_init__(self):
+        """Set reg based on a_reg or d_reg if specified"""
+        if self.a_reg is not None and self.d_reg is not None:
+            raise ValueError("Cannot specify both a_reg and d_reg")
+        # Note: actual encoding happens in encode() method when params are available
     
     @classmethod
     def get_width(cls, params) -> int:
@@ -35,8 +43,25 @@ class LoadStoreInstruction:
     
     def encode(self, params) -> int:
         """Encode to instruction bits"""
+        # Determine the actual reg value
+        actual_reg = self.reg
+        if self.a_reg is not None:
+            # A-registers map directly to B-register space
+            actual_reg = self.a_reg
+        elif self.d_reg is not None:
+            # D-registers map to B-register space starting at cutoff
+            cutoff = max(params.n_a_regs, params.n_d_regs)
+            actual_reg = cutoff + self.d_reg
+        
+        # Create a temporary object for encoding
+        temp_instr = type(self)(
+            mode=self.mode,
+            addr=self.addr,
+            reg=actual_reg
+        )
+        
         field_specs = self.get_field_specs(params)
-        return pack_fields_to_int(self, field_specs)
+        return pack_fields_to_int(temp_instr, field_specs)
     
     @classmethod
     def from_word(cls, word: int) -> 'LoadStoreInstruction':

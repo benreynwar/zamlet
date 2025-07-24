@@ -208,7 +208,7 @@ class RegisterFileAndRename(params: AmletParams) extends Module {
       packetForward := true.B
       packetAppend := true.B
       packetAppendContinuously := false.B
-      packetSend := false.B
+      packetSend := true.B
       packetRead1Enable := false.B
       packetRead2Enable := false.B
       packetWriteEnable := true.B
@@ -218,7 +218,7 @@ class RegisterFileAndRename(params: AmletParams) extends Module {
       packetForward := true.B
       packetAppend := true.B
       packetAppendContinuously := false.B
-      packetSend := false.B
+      packetSend := true.B
       packetRead1Enable := true.B
       packetRead2Enable := false.B
       packetWriteEnable := false.B
@@ -266,9 +266,9 @@ class RegisterFileAndRename(params: AmletParams) extends Module {
     is (PacketInstr.Modes.ReceiveForwardAndAppendContinuously) {
       packetReceive := true.B
       packetForward := true.B
-      packetAppend := false.B
+      packetAppend := true.B
       packetAppendContinuously := true.B
-      packetSend := false.B
+      packetSend := true.B
       packetRead1Enable := false.B
       packetRead2Enable := false.B
       packetWriteEnable := true.B
@@ -278,7 +278,7 @@ class RegisterFileAndRename(params: AmletParams) extends Module {
       packetForward := true.B
       packetAppend := false.B
       packetAppendContinuously := true.B
-      packetSend := false.B
+      packetSend := true.B
       packetRead1Enable := true.B
       packetRead2Enable := false.B
       packetWriteEnable := false.B
@@ -578,7 +578,7 @@ class RegisterFileAndRename(params: AmletParams) extends Module {
     } .otherwise {
       // D-register read - use readDReg and convert to BTaggedSource
       val dRead = readDReg(state, index)
-      result.addr := dRead.addr
+      result.addr := dRead.addr + cutoff.U
       result.tag := dRead.tag
       result.resolved := dRead.resolved
       result.value := dRead.value

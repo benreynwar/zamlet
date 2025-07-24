@@ -65,23 +65,21 @@ class PacketHeader:
         return cls(**field_values)
 
 
-def create_a_register_write_command(register: int, value: int, params: AmletParams = AmletParams()) -> int:
-    """Create A-register write command word"""
+def create_a_register_write_command_header(register: int, params: AmletParams = AmletParams()) -> int:
+    """Create A-register write command header word (contains only register address)"""
     cmd = CommandTypes.WRITE_REGISTER << (params.width - 2)
     # A-registers have MSB = 0 (index < cutoff), so register address is just the register number
     reg_addr = register & ((1 << params.a_reg_width) - 1)
-    cmd |= reg_addr << (params.width - 2 - params.b_reg_width)
-    cmd |= value & ((1 << (params.width - 2 - params.b_reg_width)) - 1)
+    cmd |= reg_addr & ((1 << params.b_reg_width) - 1)
     return cmd
 
-def create_d_register_write_command(register: int, value: int, params: AmletParams = AmletParams()) -> int:
-    """Create D-register write command word"""
+def create_d_register_write_command_header(register: int, params: AmletParams = AmletParams()) -> int:
+    """Create D-register write command header word (contains only register address)"""
     cmd = CommandTypes.WRITE_REGISTER << (params.width - 2)
     # D-registers have MSB = 1 (index >= cutoff), so set the cutoff bit and add register number
     cutoff = max(params.n_a_regs, params.n_d_regs)
     reg_addr = cutoff + (register & ((1 << params.d_reg_width) - 1))
-    cmd |= reg_addr << (params.width - 2 - params.b_reg_width)
-    cmd |= value & ((1 << (params.width - 2 - params.b_reg_width)) - 1)
+    cmd |= reg_addr & ((1 << params.b_reg_width) - 1)
     return cmd
 
 
@@ -100,27 +98,35 @@ def create_start_command(pc: int, params: AmletParams = AmletParams()) -> int:
     return cmd
 
 
-def create_d_register_write_packet(register: int, value: int, dest_x: int = 0, dest_y: int = 0, params: AmletParams = AmletParams()) -> list[int]:
+def create_d_register_write_packet(register: int, value: int, dest_x: int = 0, dest_y: int = 0, params: AmletParams = AmletParams(), is_broadcast: bool = False) -> list[int]:
     """Create a command packet to write a value to a D-register"""
+    assert 0 <= register < params.n_d_regs, f"D-register {register} out of range [0, {params.n_d_regs})"
+    assert 0 <= value < (1 << params.width), f"Value {value} too large for {params.width}-bit register"
+    
     header = PacketHeader(
-        length=1,  # One command word
+        length=2,  # Command header + data word
         dest_x=dest_x,
         dest_y=dest_y,
-        mode=PacketHeaderModes.COMMAND
+        mode=PacketHeaderModes.COMMAND,
+        is_broadcast=is_broadcast
     )
-    command_word = create_d_register_write_command(register, value, params)
-    return [header.encode(), command_word]
+    command_header = create_d_register_write_command_header(register, params)
+    return [header.encode(), command_header, value]
 
-def create_a_register_write_packet(register: int, value: int, dest_x: int = 0, dest_y: int = 0, params: AmletParams = AmletParams()) -> list[int]:
+def create_a_register_write_packet(register: int, value: int, dest_x: int = 0, dest_y: int = 0, params: AmletParams = AmletParams(), is_broadcast: bool = False) -> list[int]:
     """Create a command packet to write a value to an A-register"""
+    assert 0 <= register < params.n_a_regs, f"A-register {register} out of range [0, {params.n_a_regs})"
+    assert 0 <= value < (1 << params.a_width), f"Value {value} too large for {params.a_width}-bit A-register"
+    
     header = PacketHeader(
-        length=1,  # One command word
+        length=2,  # Command header + data word
         dest_x=dest_x,
         dest_y=dest_y,
-        mode=PacketHeaderModes.COMMAND
+        mode=PacketHeaderModes.COMMAND,
+        is_broadcast=is_broadcast
     )
-    command_word = create_a_register_write_command(register, value, params)
-    return [header.encode(), command_word]
+    command_header = create_a_register_write_command_header(register, params)
+    return [header.encode(), command_header, value]
 
 
 def pad_words_to_power_of_2(words: list[int]) -> list[int]:
