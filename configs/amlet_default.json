@@ -18,5 +18,6 @@
   "nSendPacketRSSlots": 2,
   "nReceivePacketRSSlots": 2,
   "nPacketOutIdents": 4,
-  "nChannels": 2
+  "nChannels": 2,
+  "instrAddrWidth": 16
 }

@@ -50,7 +50,9 @@ case class AmletParams(
   nPacketOutIdents: Int = 4,
   
   // Network configuration
-  nChannels: Int = 2
+  nChannels: Int = 2,
+
+  instrAddrWidth: Int = 8
 ) {
   // Calculated parameters
   val nWriteIdents = 1 << regTagWidth

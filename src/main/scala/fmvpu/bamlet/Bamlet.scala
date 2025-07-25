@@ -69,8 +69,8 @@ class Bamlet(params: BamletParams) extends Module {
       
       // Connect loop length feedback from amlet to control (placeholder)
       val linearIndex = row * params.nAmletColumns + col
-      control.io.loopLengths(linearIndex).valid := false.B
-      control.io.loopLengths(linearIndex).bits := 0.U
+      control.io.loopIterations(linearIndex).valid := false.B
+      control.io.loopIterations(linearIndex).bits := 0.U
       
       // Set position based on grid coordinates
       amlet.io.thisX := io.thisX + col.U

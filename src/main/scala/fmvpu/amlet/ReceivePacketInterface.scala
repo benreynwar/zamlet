@@ -41,6 +41,7 @@ class ReceivePacketInterfaceErrors extends Bundle {
   val instrAndCommandPacket = Bool()
   val wrongInstructionMode = Bool()
   val imWriteCountExceedsPacket = Bool()
+  val unexpectedHeader = Bool()
 }
 
 /**
@@ -102,9 +103,11 @@ class ReceivePacketInterface(params: AmletParams) extends Module {
   val errorInstrAndCommandPacket = RegInit(false.B)
   val errorWrongInstructionMode = RegInit(false.B)
   val errorIMWriteCountExceedsPacket = RegInit(false.B)
+  val errorUnexpectedHeader = RegInit(false.B)
   io.errors.instrAndCommandPacket := errorInstrAndCommandPacket
   io.errors.wrongInstructionMode := errorWrongInstructionMode
   io.errors.imWriteCountExceedsPacket := errorIMWriteCountExceedsPacket
+  io.errors.unexpectedHeader := errorUnexpectedHeader
   
   // Default outputs
   io.result.valid := false.B
@@ -163,12 +166,15 @@ class ReceivePacketInterface(params: AmletParams) extends Module {
   errorInstrAndCommandPacket := false.B
   errorWrongInstructionMode := false.B
   errorIMWriteCountExceedsPacket := false.B
-  
+
   val commandType = bufferedFromNetwork.bits.data(params.width-1, params.width-2) // Top 2 bits = command type
   val commandData = bufferedFromNetwork.bits.data(params.width-3, 0)              // Bottom width-2 bits = data
   val forwardDirection = PacketRouting.calculateNextDirection(params, io.thisX, io.thisY, bufferedInstr.bits.xTarget, bufferedInstr.bits.yTarget)
+
+  errorUnexpectedHeader := receivingHeader
   switch(receiveState) {
     is(States.Idle) {
+      errorUnexpectedHeader := false.B
       // Send forward info if we have a forwarding instruction
       when (bufferedInstr.valid &&
            (bufferedInstr.bits.mode === PacketInstr.Modes.ReceiveAndForward ||

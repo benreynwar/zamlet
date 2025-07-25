@@ -1,4 +1,5 @@
 import logging
+from dataclasses import fields
 
 import cocotb
 from cocotb import triggers
@@ -6,51 +7,11 @@ from cocotb import triggers
 from fmvpu.amlet import packet_utils
 from fmvpu.bamlet.bamlet_params import BamletParams
 from fmvpu.amlet.amlet_params import AmletParams
+from fmvpu.utils import make_seed
 
 
 logger = logging.getLogger(__name__)
 
-
-
-
-def create_start_packet(
-        pc: int, dest_x: int = 0, dest_y: int = 0, params: AmletParams = AmletParams(),
-        is_broadcast: bool = False,
-) -> list[int]:
-    """Create a command packet to start execution at a given PC"""
-    header = packet_utils.PacketHeader(
-        length=1,  # One command word
-        dest_x=dest_x,
-        dest_y=dest_y,
-        mode=packet_utils.PacketHeaderModes.COMMAND,
-        is_broadcast=is_broadcast,
-    )
-    command_word = packet_utils.create_start_command(pc, params)
-    return [header.encode(), command_word]
-
-
-def create_data_packet(
-        data: list[int], dest_x: int = 0, dest_y: int = 0, forward: bool = False,
-        append_length: int = 0) -> list[int]:
-    """Send a data packet in"""
-    header = packet_utils.PacketHeader(
-        length=len(data), # One command word
-        dest_x=dest_x,
-        dest_y=dest_y,
-        mode=packet_utils.PacketHeaderModes.NORMAL,
-        forward=forward,
-        append_length=append_length,
-    )
-    return [header.encode()] + data
-
-
-def make_seed(rnd):
-    return rnd.getrandbits(32)
-
-
-def make_coord_register(x: int, y: int, params: AmletParams = AmletParams()) -> int:
-    """Create coordinate register value: (y << x_pos_width) | x"""
-    return (y << params.x_pos_width) | x
 
 class BamletInterface:
 
@@ -71,6 +32,7 @@ class BamletInterface:
                 data_signal=getattr(dut, f'io_{side}i_{index}_{channel}_bits_data'),
                 isheader_signal=getattr(dut, f'io_{side}i_{index}_{channel}_bits_isHeader'),
                 p_valid=1.0,
+                name=f'{side}_{index}_{channel}',
             )
             self.receivers[(side, index, channel)] = packet_utils.PacketReceiver(
                 name=f'{side}_{index}_{channel}',
@@ -111,6 +73,7 @@ class BamletInterface:
         for label in self.get_all_labels():
             cocotb.start_soon(self.drivers[label].drive_packets())
             cocotb.start_soon(self.receivers[label].receive_packets())
+        cocotb.start_soon(self.check_errors())
 
     async def write_d_register(self, reg, value, side='w', index=0, channel=0, offset_x=0, offset_y=0):
         # With two-word approach, D-registers can store full width values
@@ -154,14 +117,11 @@ class BamletInterface:
         amlet = self.get_amlet(offset_x, offset_y)
         return int(getattr(amlet.registerFileAndRename, f'state_aRegs_{reg}_value').value)
 
-    async def write_program(self, program, base_address=0, side='w', index=0, channel=0, offset_x=0, offset_y=0):
+    def write_program(self, program, base_address=0, side='w', index=0, channel=0, offset_x=0, offset_y=0):
         instr_packet = packet_utils.create_instruction_write_packet(
             program, base_address, dest_x=self.bamlet_x + offset_x, dest_y=self.bamlet_y + offset_y, params=self.params.amlet
         )
         self.drivers[(side, index, channel)].add_packet(instr_packet)
-        # Wait for instruction write
-        for cycle in range(20):
-            await triggers.RisingEdge(self.dut.clock)
 
     async def get_packet_from_side(self, side, index, channel, timeout=100):
         packet = None
@@ -184,13 +144,13 @@ class BamletInterface:
         return packet
 
     async def send_packet(self, data, forward=False, side='w', index=0, channel=0, append_length=0, offset_x=0, offset_y=0):
-        data_packet = create_data_packet(
+        data_packet = packet_utils.create_data_packet(
                 data=data, dest_x=self.bamlet_x + offset_x, dest_y=self.bamlet_y + offset_y, forward=forward, append_length=append_length,
                 )
         self.drivers[(side, index, channel)].add_packet(data_packet)
 
     async def start_program(self, pc=0, side='w', index=0, channel=0, offset_x=0, offset_y=0):
-        start_packet = create_start_packet(pc=0, dest_x=self.bamlet_x + offset_x, dest_y=self.bamlet_y + offset_y, params=self.params.amlet)
+        start_packet = packet_utils.create_start_packet(pc=0, dest_x=self.bamlet_x + offset_x, dest_y=self.bamlet_y + offset_y, params=self.params.amlet)
         self.drivers[(side, index, channel)].add_packet(start_packet)
 
     async def wait_for_program_to_run(self):
@@ -237,3 +197,82 @@ class BamletInterface:
         else:
             # South of bamlet - emerges on south edge at dst column index
             return 's', dst_x - bamlet_x_min
+
+    def write_args(self, args, regs, side, channel):
+        # For now we assume that the broadcast goes in at the minimum index on that side.
+        # We assume that the unique packets are sent along the entire side edge.
+        assert side in ('n', 's', 'e', 'w')
+        if side == 'n':
+            broadcast_coord = (self.bamlet_x + self.params.n_amlet_columns - 1,
+                               self.bamlet_y + self.params.n_amlet_rows - 1)
+        elif side == 's':
+            broadcast_coord = (self.bamlet_x + self.params.n_amlet_columns - 1,
+                               self.bamlet_y)
+        elif side == 'e':
+            broadcast_coord = (self.bamlet_x,
+                               self.bamlet_y + self.params.n_amlet_rows - 1)
+        else:
+            broadcast_coord = (self.bamlet_x + self.params.n_amlet_columns - 1,
+                               self.bamlet_y + self.params.n_amlet_rows - 1)
+        amlet_coords = []
+        for y in range(self.params.n_amlet_rows):
+            for x in range(self.params.n_amlet_columns):
+                amlet_coords.append((self.bamlet_x + x, self.bamlet_y + y))
+        broadcast_packet, unique_packets = packet_utils.make_write_args_packets(
+            self.params.amlet, args, regs, broadcast_coord, amlet_coords)
+        broadcast_driver = self.drivers[(side, 0, channel)]
+        broadcast_driver.add_packet(broadcast_packet)
+        if side in ('n', 's'):
+            side_length = self.params.n_amlet_columns
+        else:
+            side_length = self.params.n_amlet_rows
+        drivers = [self.drivers[(side, index, channel)] for index in range(side_length)]
+        for coord, packet in zip(amlet_coords, unique_packets):
+            # For each unique packet send it to the driver for the appropriate
+            # column or row.
+            if side in ('n', 's'):
+                index = coord[0] - self.bamlet_x
+            else:
+                index = coord[1] - self.bamlet_y
+            assert index < side_length
+            drivers[index].add_packet(packet)
+        
+    async def wait_to_send_packets(self, timeout=1000):
+        count = 0
+        while True:
+            all_empty = True
+            for driver in self.drivers.values():
+                if not driver.empty:
+                    all_empty = False
+            if all_empty:
+                break
+            await triggers.RisingEdge(self.dut.clock)
+            count += 1
+            assert count < timeout
+
+        # Wait a bit more to give them time to go
+        # through the network.
+        for i in range(20):
+            await triggers.RisingEdge(self.dut.clock)
+
+    async def check_errors(self):
+        error_wires = [
+            'errors_receivePacketInterface_imWriteCountExceedsPacket',
+            'errors_receivePacketInterface_instrAndCommandPacket',
+            'errors_receivePacketInterface_unexpectedHeader',
+            'errors_receivePacketInterface_wrongInstructionMode',
+            ]
+        while True:
+            await triggers.RisingEdge(self.dut.clock)
+            await triggers.ReadOnly()
+            for x in range(self.params.n_amlet_columns):
+                for y in range(self.params.n_amlet_rows):
+                    amlet = self.get_amlet(x, y)
+                    for error_wire in error_wires:
+                        if getattr(amlet, error_wire).value != 0:
+                            raise Exception(f'Error wire {error_wire} has gone wire on amlet {x} {y}')
+
+    def probe_vdm_data(self, x, y, addr):
+        amlet = self.get_amlet(x, y)
+        probed_data = amlet.dataMem.mem_ext.Memory[addr].value
+        return probed_data

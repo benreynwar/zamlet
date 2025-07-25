@@ -16,17 +16,14 @@ object ControlInstr {
     val Incr = Value(4.U)
     val Reserved5 = Value(5.U)       
     val Reserved6 = Value(6.U)
-    val Reserved7 = Value(7.U)
+    val Halt = Value(7.U)
   }
   
   class Base(params: AmletParams) extends Instr.Base(params) {
     val mode = Modes()
     val src = params.aReg()
     val dst = params.aReg()
-    // End control bits
-    val endif = Bool()
-    val endloop = Bool()
-    val halt = Bool()
+    val length = UInt(params.instrAddrWidth.W)
   }
 
 }

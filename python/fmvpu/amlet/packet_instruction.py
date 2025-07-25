@@ -2,17 +2,19 @@ from dataclasses import dataclass
 from typing import List, Tuple
 from enum import IntEnum
 
-from fmvpu.control_structures import pack_fields_to_words, unpack_words_to_fields, calculate_total_width, pack_fields_to_int
+from fmvpu.control_structures import unpack_words_to_fields
+from fmvpu.control_structures import calculate_total_width, pack_fields_to_int
+from fmvpu.utils import clog2
 
 
 class PacketModes(IntEnum):
-    NULL = 0
+    NONE = 0
     RECEIVE = 1
     RECEIVE_AND_FORWARD = 2
     RECEIVE_FORWARD_AND_APPEND = 3
     FORWARD_AND_APPEND = 4
     SEND = 5
-    GET_PACKET_WORD = 6
+    GET_WORD = 6
     BROADCAST = 7
     UNUSED8 = 8
     UNUSED9 = 9
@@ -27,11 +29,20 @@ class PacketModes(IntEnum):
 @dataclass
 class PacketInstruction:
     """Packet instruction for amlet (send/receive packets)"""
-    mode: PacketModes = PacketModes.NULL
-    result: int = 0   # Result register (b-type register)
+    mode: PacketModes = PacketModes.NONE
     length: int = 0   # Length register (a-type register)
     target: int = 0   # Target register (a-type register)
     channel: int = 0  # Channel number
+    dst: int = None
+    a_dst: int = None
+    d_dst: int = None
+
+    def __post_init__(self):
+        """Set dst based on a_dst or d_dst if specified"""
+        if self.mode != PacketModes.NONE:
+            count = (self.a_dst is not None) + (self.d_dst is not None) + (self.dst is not None)
+            if count != 1:
+                raise ValueError("Must specifiy exactly 1 of a_dst, d_dst and dst")
     
     @classmethod
     def get_width(cls, params) -> int:
@@ -41,10 +52,9 @@ class PacketInstruction:
     @classmethod
     def get_field_specs(cls, params) -> List[Tuple[str, int]]:
         """Get field specifications for bit packing."""
-        from fmvpu.test_utils import clog2
         return [
             ('mode', 4),     # 4 bits to support up to 15
-            ('result', params.b_reg_width),
+            ('dst', params.b_reg_width),
             ('length', params.a_reg_width),
             ('target', params.a_reg_width),
             ('channel', clog2(params.n_channels)),
@@ -52,8 +62,28 @@ class PacketInstruction:
     
     def encode(self, params) -> int:
         """Encode to instruction bits"""
+        # Determine the actual dst value
+        if self.a_dst is not None:
+            # A-registers map directly to B-register space
+            actual_dst = self.a_dst
+        elif self.d_dst is not None:
+            # D-registers map to B-register space starting at cutoff
+            cutoff = max(params.n_a_regs, params.n_d_regs)
+            actual_dst = cutoff + self.d_dst
+        else:
+            actual_dst = 0
+        
+        # Create a temporary object for encoding
+        temp_instr = type(self)(
+            mode=self.mode,
+            length=self.length,
+            target=self.target,
+            channel=self.channel,
+            dst=actual_dst
+        )
+        
         field_specs = self.get_field_specs(params)
-        return pack_fields_to_int(self, field_specs)
+        return pack_fields_to_int(temp_instr, field_specs)
     
     @classmethod
     def from_word(cls, word: int) -> 'PacketInstruction':

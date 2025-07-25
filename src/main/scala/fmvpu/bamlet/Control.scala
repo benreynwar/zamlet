@@ -6,10 +6,11 @@ import fmvpu.amlet.ControlInstr
 
 
 class LoopState(params: BamletParams) extends Bundle {
-  val start = UInt(params.instrAddrWidth.W)
+  val start = UInt(params.amlet.instrAddrWidth.W)
+  val end = UInt(params.amlet.instrAddrWidth.W)
   val index = UInt(params.aWidth.W)
-  val resolvedLength = Vec(params.nAmlets, Bool())
-  val length = UInt(params.aWidth.W)
+  val resolvedIterations = Vec(params.nAmlets, Bool())
+  val iterations = UInt(params.aWidth.W)
   // When we resolve or increment the index we set this to true
   // if we are on or past the last iteration.
   val terminating = Bool()
@@ -17,28 +18,28 @@ class LoopState(params: BamletParams) extends Bundle {
 
 class InstrResp(params: BamletParams) extends Bundle {
   val instr = new VLIWInstr.Base(params.amlet)
-  val pc = UInt(params.instrAddrWidth.W)
+  val pc = UInt(params.amlet.instrAddrWidth.W)
 }
 
 
 class Control(params: BamletParams) extends Module {
   val io = IO(new Bundle {
     // Start signals
-    val start = Input(Valid(UInt(params.instrAddrWidth.W)))
+    val start = Input(Valid(UInt(params.amlet.instrAddrWidth.W)))
     
     // Instruction memory interface
-    val imReq = Output(Valid(UInt(params.instrAddrWidth.W)))
+    val imReq = Output(Valid(UInt(params.amlet.instrAddrWidth.W)))
     val imResp = Input(Valid(new InstrResp(params)))
 
     // Instruction outputs to reservation stations
     val instr = Decoupled(new VLIWInstr.Base(params.amlet))
 
     // For each loop instruction that a receives it 
-    val loopLengths = Input(Vec(params.nAmlets, Valid(UInt(params.aWidth.W))))
+    val loopIterations = Input(Vec(params.nAmlets, Valid(UInt(params.aWidth.W))))
   })
 
   // Program counter and loop state
-  val pcNext = Wire(UInt(params.instrAddrWidth.W))
+  val pcNext = Wire(UInt(params.amlet.instrAddrWidth.W))
   val pc = RegNext(pcNext, 0.U)
   val activeNext = Wire(Bool())
   val active = RegNext(activeNext, false.B)
@@ -75,17 +76,18 @@ class Control(params: BamletParams) extends Module {
           // We're at the start of an new loop (inside another loop).
           loopLevelCurrent := loopLevel + 1.U
           loopStatesCurrent(loopLevelCurrent).index := 0.U
-          loopStatesCurrent(loopLevelCurrent).resolvedLength := VecInit(Seq.fill(params.nAmlets)(false.B))
+          loopStatesCurrent(loopLevelCurrent).resolvedIterations:= VecInit(Seq.fill(params.nAmlets)(false.B))
           loopStatesCurrent(loopLevelCurrent).terminating := false.B
         }
       } .otherwise {
         // We're at the start of a new loop
         loopLevelCurrent := 0.U
         loopStatesCurrent(loopLevelCurrent).index := 0.U
-        loopStatesCurrent(loopLevelCurrent).resolvedLength := VecInit(Seq.fill(params.nAmlets)(false.B))
+        loopStatesCurrent(loopLevelCurrent).resolvedIterations:= VecInit(Seq.fill(params.nAmlets)(false.B))
         loopStatesCurrent(loopLevelCurrent).terminating := false.B
       }
       loopStatesCurrent(loopLevelCurrent).start := io.imResp.bits.pc
+      loopStatesCurrent(loopLevelCurrent).end := io.imResp.bits.pc + io.imResp.bits.instr.control.length
     }
   }
 
@@ -94,7 +96,7 @@ class Control(params: BamletParams) extends Module {
   loopStatesNext := loopStatesCurrent
   pcNext := pc + 1.U
   when (io.imResp.valid) {
-    when (io.imResp.bits.instr.control.endloop) {
+    when (loopStatesCurrent(loopLevelCurrent).end === pc) {
       when (loopStatesCurrent(loopLevelCurrent).terminating) {
         when (loopLevelCurrent === 0.U) {
           loopLevelNext := 0.U
@@ -109,25 +111,25 @@ class Control(params: BamletParams) extends Module {
     }
   }
 
-  // Process the loop lengths received from the amlets.
+  // Process the loop iterations received from the amlets.
 
-  val loopLengthLevelsNext = Wire(Vec(params.nAmlets, UInt(log2Ceil(params.nLoopLevels).W)))
-  val loopLengthLevels = RegNext(loopLengthLevelsNext, VecInit(Seq.fill(params.nAmlets)(0.U)))
+  val loopIterationsLevelsNext = Wire(Vec(params.nAmlets, UInt(log2Ceil(params.nLoopLevels).W)))
+  val loopIterationsLevels = RegNext(loopIterationsLevelsNext, VecInit(Seq.fill(params.nAmlets)(0.U)))
 
-  loopLengthLevelsNext := loopLengthLevels
+  loopIterationsLevelsNext := loopIterationsLevels
   // Loop over the nAmlets
   for (amletIndex <- 0 until params.nAmlets) {
-    val level = loopLengthLevels(amletIndex)
-    when (io.loopLengths(amletIndex).valid) {
-      loopStatesNext(level).resolvedLength(amletIndex) := true.B
-      loopStatesNext(level).length := Mux(loopStates(level).length > io.loopLengths(amletIndex).bits, 
-                                         loopStates(level).length, 
-                                         io.loopLengths(amletIndex).bits)
+    val level = loopIterationsLevels(amletIndex)
+    when (io.loopIterations(amletIndex).valid) {
+      loopStatesNext(level).resolvedIterations(amletIndex) := true.B
+      loopStatesNext(level).iterations := Mux(loopStates(level).iterations > io.loopIterations(amletIndex).bits, 
+                                         loopStates(level).iterations, 
+                                         io.loopIterations(amletIndex).bits)
       
-      // Check if all amlets have resolved their lengths
-      val allResolved = loopStatesNext(level).resolvedLength.asUInt.andR
+      // Check if all amlets have resolved their iterations
+      val allResolved = loopStatesNext(level).resolvedIterations.asUInt.andR
       when (allResolved) {
-        when (loopStatesNext(level).index >= loopStatesNext(level).length - 1.U) {
+        when (loopStatesNext(level).index >= loopStatesNext(level).iterations - 1.U) {
           loopStatesNext(level).terminating := true.B
         }
       }
@@ -136,7 +138,7 @@ class Control(params: BamletParams) extends Module {
 
   activeNext := active
   when (io.imResp.valid) {
-    when (io.imResp.bits.instr.control.halt) {
+    when (io.imResp.bits.instr.control.mode === ControlInstr.Modes.Halt) {
       activeNext := false.B
     }
   }

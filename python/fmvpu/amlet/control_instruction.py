@@ -9,11 +9,11 @@ class ControlModes(IntEnum):
     NONE = 0
     IF = 1
     LOOP = 2
-    RESERVED3 = 3
+    LOOPGLOBAL = 3
     INCR = 4  # Increments the index of the current loop
-    RESERVED5 = 5
-    RESERVED6 = 6
-    RESERVED7 = 7
+    ENDIF = 5
+    ENDLOOP = 6
+    HALT = 7
 
 
 @dataclass

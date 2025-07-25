@@ -17,15 +17,17 @@ class LoadStoreInstruction:
     """Load/Store instruction for amlet"""
     mode: LoadStoreModes = LoadStoreModes.NONE
     addr: int = 0   # Address register that points to memory location
-    reg: int = 0    # Encoded data register (B-register space)
-    a_reg: int = None  # A-register for data (if specified)
-    d_reg: int = None  # D-register for data (if specified)
+    reg: int = None    # Encoded data register (B-register space)
+    a_reg: int = None  # A-register for store result (if specified)
+    d_reg: int = None  # D-register for store result (if specified)
+    # Either a_reg, d_reg or src goes into reg
     
     def __post_init__(self):
         """Set reg based on a_reg or d_reg if specified"""
-        if self.a_reg is not None and self.d_reg is not None:
-            raise ValueError("Cannot specify both a_reg and d_reg")
-        # Note: actual encoding happens in encode() method when params are available
+        if self.mode != LoadStoreModes.NONE:
+            count = (self.a_reg is not None) + (self.d_reg is not None) + (self.reg is not None)
+            if count != 1:
+                raise ValueError("Must specifiy exactly 1 of a_reg, d_reg and reg")
     
     @classmethod
     def get_width(cls, params) -> int:
@@ -52,6 +54,8 @@ class LoadStoreInstruction:
             # D-registers map to B-register space starting at cutoff
             cutoff = max(params.n_a_regs, params.n_d_regs)
             actual_reg = cutoff + self.d_reg
+        else:
+            actual_reg = 0
         
         # Create a temporary object for encoding
         temp_instr = type(self)(

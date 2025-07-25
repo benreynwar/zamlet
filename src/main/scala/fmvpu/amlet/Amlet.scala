@@ -33,11 +33,18 @@ class AmletIO(params: AmletParams) extends Bundle {
   val wo = Vec(nChannels, Decoupled(new NetworkWord(params)))
 }
 
+class AmletErrors extends Bundle {
+  val receivePacketInterface = new ReceivePacketInterfaceErrors()
+}
+
 /**
  * Amlet - Smallest processing unit with reservation stations and execution units
  */
 class Amlet(params: AmletParams) extends Module {
   val io = IO(new AmletIO(params))
+
+  val errors = Wire(new AmletErrors())
+  dontTouch(errors)
   
   // Instantiate register file and rename unit
   val registerFileAndRename = Module(new RegisterFileAndRename(params))
@@ -109,6 +116,8 @@ class Amlet(params: AmletParams) extends Module {
   // Connect control outputs from ReceivePacketInterface
   io.start := receivePacketInterface.io.start
   io.writeIM := receivePacketInterface.io.writeIM
+
+  errors.receivePacketInterface := receivePacketInterface.io.errors
   
   // Connect position to modules that need it
   networkNode.io.thisX := io.thisX

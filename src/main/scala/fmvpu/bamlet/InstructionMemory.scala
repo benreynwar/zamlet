@@ -9,7 +9,7 @@ import fmvpu.amlet.IMWrite
  */
 class InstructionMemoryIO(params: BamletParams) extends Bundle {
   // Read interface (from Control) - same as Control.io.imReq
-  val imReq = Flipped(Valid(UInt(params.instrAddrWidth.W)))
+  val imReq = Flipped(Valid(UInt(params.amlet.instrAddrWidth.W)))
   
   // Response interface (to Control) - same as Control.io.imResp  
   val imResp = Valid(new InstrResp(params))

@@ -5,12 +5,6 @@ from enum import IntEnum
 from fmvpu.control_structures import pack_fields_to_words, unpack_words_to_fields, calculate_total_width, pack_fields_to_int
 
 
-class RegisterType(IntEnum):
-    """Register type for destination mapping"""
-    A_REG = 0  # A-register (address register)
-    D_REG = 1  # D-register (data register)
-
-
 class ALUModes(IntEnum):
     NONE = 0
     ADD = 1
@@ -52,15 +46,16 @@ class ALUInstruction:
     mode: ALUModes = ALUModes.NONE
     src1: int = 0  # Source 1 register (d-type register)
     src2: int = 0  # Source 2 register (d-type register)
-    dst: int = 0   # Encoded destination register (B-register space)
+    dst: int = None   # Encoded destination register (B-register space)
     a_dst: int = None  # A-register destination (if specified)
     d_dst: int = None  # D-register destination (if specified)
     
     def __post_init__(self):
         """Set dst based on a_dst or d_dst if specified"""
-        if self.a_dst is not None and self.d_dst is not None:
-            raise ValueError("Cannot specify both a_dst and d_dst")
-        # Note: actual encoding happens in encode() method when params are available
+        if self.mode != ALUModes.NONE:
+            count = (self.a_dst is not None) + (self.d_dst is not None) + (self.dst is not None)
+            if count != 1:
+                raise ValueError("Must specifiy exactly 1 of a_dst, d_dst and dst")
     
     @classmethod
     def get_width(cls, params) -> int:
@@ -80,7 +75,6 @@ class ALUInstruction:
     def encode(self, params) -> int:
         """Encode to instruction bits"""
         # Determine the actual dst value
-        actual_dst = self.dst
         if self.a_dst is not None:
             # A-registers map directly to B-register space
             actual_dst = self.a_dst
@@ -88,6 +82,8 @@ class ALUInstruction:
             # D-registers map to B-register space starting at cutoff
             cutoff = max(params.n_a_regs, params.n_d_regs)
             actual_dst = cutoff + self.d_dst
+        else:
+            actual_dst = 0
         
         # Create a temporary object for encoding
         temp_instr = type(self)(

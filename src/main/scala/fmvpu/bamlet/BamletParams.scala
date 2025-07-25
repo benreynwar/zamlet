@@ -14,8 +14,6 @@ case class BamletParams(
   nAmletColumns: Int = 2,
   nAmletRows: Int = 1,
   amlet: AmletParams,
-  // Instruction address width
-  instrAddrWidth: Int = 16,
   // Instruction memory depth
   instructionMemoryDepth: Int = 64
 ) {

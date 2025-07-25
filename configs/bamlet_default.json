@@ -1,7 +1,6 @@
 {
   "nAmletColumns": 2,
   "nAmletRows": 1,
-  "instrAddrWidth": 16,
   "instructionMemoryDepth": 32,
   "amlet": {
     "width": 32,
@@ -23,6 +22,7 @@
     "nSendPacketRSSlots": 2,
     "nReceivePacketRSSlots": 2,
     "nPacketOutIdents": 4,
-    "nChannels": 2
+    "nChannels": 2,
+    "instrAddrWidth": 16
   }
 }

@@ -2,7 +2,7 @@ from typing import List, Tuple
 from collections import deque
 import logging
 from random import Random
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from enum import IntEnum
 
 from cocotb.triggers import RisingEdge, ReadOnly
@@ -66,20 +66,29 @@ class PacketHeader:
 
 
 def create_a_register_write_command_header(register: int, params: AmletParams = AmletParams()) -> int:
-    """Create A-register write command header word (contains only register address)"""
+    """Create A-register write command header word"""
+    assert 0 <= register < params.n_a_regs
     cmd = CommandTypes.WRITE_REGISTER << (params.width - 2)
-    # A-registers have MSB = 0 (index < cutoff), so register address is just the register number
-    reg_addr = register & ((1 << params.a_reg_width) - 1)
-    cmd |= reg_addr & ((1 << params.b_reg_width) - 1)
+    cmd |= register
     return cmd
 
+
 def create_d_register_write_command_header(register: int, params: AmletParams = AmletParams()) -> int:
-    """Create D-register write command header word (contains only register address)"""
+    """Create D-register write command header word"""
+    assert 0 <= register < params.n_d_regs
     cmd = CommandTypes.WRITE_REGISTER << (params.width - 2)
-    # D-registers have MSB = 1 (index >= cutoff), so set the cutoff bit and add register number
     cutoff = max(params.n_a_regs, params.n_d_regs)
-    reg_addr = cutoff + (register & ((1 << params.d_reg_width) - 1))
-    cmd |= reg_addr & ((1 << params.b_reg_width) - 1)
+    reg_addr = cutoff + register
+    cmd |= reg_addr
+    return cmd
+
+
+def create_b_register_write_command_header(register: int, params: AmletParams = AmletParams()) -> int:
+    """Create B-register write command header word"""
+    cutoff = max(params.n_a_regs, params.n_d_regs)
+    assert 0 <= register < cutoff + params.n_d_regs
+    cmd = CommandTypes.WRITE_REGISTER << (params.width - 2)
+    cmd |= register
     return cmd
 
 
@@ -197,7 +206,8 @@ def create_data_packet(data: list[int], dest_x: int = 0, dest_y: int = 0, forwar
 class PacketDriver:
     """Drives packets into a single network input"""
     
-    def __init__(self, dut, seed, valid_signal, ready_signal, data_signal, isheader_signal, p_valid=0.5):
+    def __init__(self, dut, seed, valid_signal, ready_signal, data_signal, isheader_signal,
+                 p_valid=0.5, name='none'):
         self.dut = dut
         self.valid_signal = valid_signal
         self.ready_signal = ready_signal
@@ -206,10 +216,14 @@ class PacketDriver:
         self.packet_queue: deque[List[int]] = deque()
         self.p_valid = p_valid
         self.rnd = Random(seed)
+        self.empty = True
+        self.name = name
         
     def add_packet(self, packet: List[int]):
         """Add packet to the queue"""
+        logger.info(f'Added a packet to {self.name}.  {packet}')
         self.packet_queue.append(packet)
+        self.empty = False
         
     async def drive_packets(self):
         await RisingEdge(self.dut.clock)
@@ -217,6 +231,7 @@ class PacketDriver:
 
         while True:
             if self.packet_queue:
+                self.empty = False
                 packet = self.packet_queue.popleft()
                 
                 for index, word in enumerate(packet):
@@ -237,6 +252,8 @@ class PacketDriver:
                         await RisingEdge(self.dut.clock)
                     await RisingEdge(self.dut.clock)
                     self.valid_signal.value = 0
+            else:
+                self.empty = True
             await RisingEdge(self.dut.clock)
 
 
@@ -304,3 +321,74 @@ def packet_to_str(packet):
     if len(packet) > 1:
         result += f" data={packet[1:]}"
     return result
+
+
+def make_coord_register(x: int, y: int, params: AmletParams = AmletParams()) -> int:
+    """Create coordinate register value: (y << x_pos_width) | x"""
+    return (y << params.x_pos_width) | x
+
+
+def make_write_args_packets(params: AmletParams, args, regs, broadcast_coord, amlet_coords=None):
+    """
+    `args` is a dataclass with arguments for the kernel.
+    `regs` is a dataclass with registers for the kernel.
+    """
+    cutoff = max(params.n_a_regs, params.n_d_regs)
+    # Arguments that are the same for all the amlets and can be broadcast
+    broadcast_key_value_pairs = []
+    # Arguments that need to be sent individually to each amlet.
+    if amlet_coords is None:
+        unique_key_value_pairs = None
+    else:
+        unique_key_value_pairs = [[] for i in range(len(amlet_coords))]
+    for field in fields(args):
+        reg_index = getattr(regs, field.name)
+        value = getattr(args, field.name)
+        if field.name[0:2] == 'a_':
+            b_reg = reg_index
+        elif field.name[0:2] == 'd_':
+            b_reg = cutoff + reg_index
+        else:
+            raise ValueError(f'Field must start width a_ or d_ but name is {field.name}')
+        if isinstance(value, list):
+            assert amlet_coords is not None
+            assert len(amlet_coords) == len(value)
+            for index, subvalue in enumerate(value):
+                if field.name[0:2] == 'a_':
+                    assert 0 <= subvalue < pow(2, params.a_width)
+                else:
+                    assert 0 <= subvalue < pow(2, params.width)
+                unique_key_value_pairs[index].append((b_reg, subvalue))
+        else:
+            if field.name[0:2] == 'a_':
+                assert 0 <= value < pow(2, params.a_width)
+            else:
+                assert 0 <= value < pow(2, params.width)
+            broadcast_key_value_pairs.append((b_reg, value))
+    header = PacketHeader(
+        length=2*len(broadcast_key_value_pairs),
+        dest_x=broadcast_coord[0],
+        dest_y=broadcast_coord[1],
+        mode=PacketHeaderModes.COMMAND,
+        is_broadcast=True,
+    )
+    broadcast_packet = [header.encode()]
+    for b_reg, value in broadcast_key_value_pairs:
+        command_header = create_b_register_write_command_header(b_reg, params)
+        broadcast_packet += [command_header, value]
+    unique_packets = []
+    for coords, key_value_pairs in zip(amlet_coords, unique_key_value_pairs):
+        header = PacketHeader(
+            length=2*len(key_value_pairs),
+            dest_x=coords[0],
+            dest_y=coords[1],
+            mode=PacketHeaderModes.COMMAND,
+            is_broadcast=False,
+        )
+        packet = [header.encode()]
+        for b_reg, value in key_value_pairs:
+            command_header = create_b_register_write_command_header(b_reg, params)
+            packet += [command_header, value]
+        unique_packets.append(packet)
+    return broadcast_packet, unique_packets
+

@@ -46,7 +46,17 @@ class ALULiteInstruction:
     mode: ALULiteModes = ALULiteModes.NONE
     src1: int = 0  # Source 1 register (a-type register)
     src2: int = 0  # Source 2 register (a-type register)
-    dst: int = 0   # Destination register (b-type register)
+    dst: int = None
+    a_dst: int = None  # A-register destination (if specified)
+    d_dst: int = None  # D-register destination (if specified)
+    
+    def __post_init__(self):
+        if self.mode != ALULiteModes.NONE:
+            """Set dst based on a_dst or d_dst if specified"""
+            count = (self.a_dst is not None) + (self.d_dst is not None) + (self.dst is not None)
+            if count != 1:
+                raise ValueError("Must specifiy exactly 1 of a_dst, d_dst and dst")
+
     
     @classmethod
     def get_width(cls, params) -> int:
@@ -65,8 +75,28 @@ class ALULiteInstruction:
     
     def encode(self, params) -> int:
         """Encode to instruction bits"""
+        # Determine the actual dst value
+        if self.a_dst is not None:
+            # A-registers map directly to B-register space
+            actual_dst = self.a_dst
+        elif self.d_dst is not None:
+            assert self.d_dst is not None
+            # D-registers map to B-register space starting at cutoff
+            cutoff = max(params.n_a_regs, params.n_d_regs)
+            actual_dst = cutoff + self.d_dst
+        else:
+            actual_dst = 0
+        
+        # Create a temporary object for encoding
+        temp_instr = type(self)(
+            mode=self.mode,
+            src1=self.src1,
+            src2=self.src2,
+            dst=actual_dst
+        )
+        
         field_specs = self.get_field_specs(params)
-        return pack_fields_to_int(self, field_specs)
+        return pack_fields_to_int(temp_instr, field_specs)
     
     @classmethod
     def from_word(cls, word: int) -> 'ALULiteInstruction':

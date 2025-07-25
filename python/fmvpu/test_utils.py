@@ -96,21 +96,6 @@ def run_test(working_dir: str, filenames: List[str], params: Dict[str, Any], top
         sys.exit(1)
 
 
-def clog2(value: int) -> int:
-    """Calculate ceiling log2 - how many bits are required to represent 'value-1'."""
-    value = value - 1
-    bits = 0
-    while value > 0:
-        value = value >> 1
-        bits += 1
-    return bits
-
-
-def make_seed(rnd: Any) -> int:
-    """Generate a 32-bit random seed."""
-    return rnd.getrandbits(32)
-
-
 def concatenate_sv_files(input_filenames: List[str], output_filename: str) -> None:
     """Concatenate SystemVerilog files into a single file.
     
