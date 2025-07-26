@@ -2,7 +2,7 @@ package fmvpu.bamlet
 
 import chisel3._
 import chisel3.util._
-import fmvpu.amlet.IMWrite
+import fmvpu.amlet.{ControlWrite, ControlWriteMode}
 
 /**
  * Instruction memory interface for Bamlet
@@ -15,7 +15,7 @@ class InstructionMemoryIO(params: BamletParams) extends Bundle {
   val imResp = Valid(new InstrResp(params))
   
   // Write interface (from Amlets)
-  val writeIM = Flipped(Valid(new IMWrite(params.amlet)))
+  val writeControl = Flipped(Valid(new ControlWrite(params.amlet)))
   
   // Error output
   val conflict = Output(Bool())
@@ -40,7 +40,7 @@ class InstructionMemory(params: BamletParams) extends Module {
   val mem = SyncReadMem(params.instructionMemoryDepth, Vec(wordsPerInstruction, UInt(writeWidth.W)))
   
   // Arbitration - prioritize writes
-  val writeReq = io.writeIM.valid
+  val writeReq = io.writeControl.valid && (io.writeControl.bits.mode === ControlWriteMode.InstructionMemory)
   val readReq = io.imReq.valid
   val conflict = writeReq && readReq
   
@@ -59,8 +59,8 @@ class InstructionMemory(params: BamletParams) extends Module {
   
   // Write operation - masked write to specific word within instruction
   when(writeReq) {
-    val writeInstrAddr = io.writeIM.bits.address >> wordSelectBits
-    val writeWordSelect = io.writeIM.bits.address(wordSelectBits-1, 0)
+    val writeInstrAddr = io.writeControl.bits.address >> wordSelectBits
+    val writeWordSelect = io.writeControl.bits.address(wordSelectBits-1, 0)
     
     // Create write mask - only enable the selected word
     val writeMask = Wire(Vec(wordsPerInstruction, Bool()))
@@ -71,7 +71,7 @@ class InstructionMemory(params: BamletParams) extends Module {
     // Create write data vector
     val writeDataVec = Wire(Vec(wordsPerInstruction, UInt(writeWidth.W)))
     for (i <- 0 until wordsPerInstruction) {
-      writeDataVec(i) := io.writeIM.bits.data
+      writeDataVec(i) := io.writeControl.bits.data
     }
     
     // Perform masked write - only the selected word will be written

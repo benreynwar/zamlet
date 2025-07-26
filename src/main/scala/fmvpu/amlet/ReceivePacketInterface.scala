@@ -25,8 +25,8 @@ class ReceivePacketInterfaceIO(params: AmletParams) extends Bundle {
   val result = new WriteResult(params)
   
   // Instruction memory write interface
-  val writeIM = Valid(new IMWrite(params))
-  
+  val writeControl = Valid(new ControlWrite(params))
+
   // Control outputs
   val start = Valid(UInt(16.W)) // instrAddrWidth equivalent
   
@@ -93,7 +93,7 @@ class ReceivePacketInterface(params: AmletParams) extends Module {
   val imWriteCount = RegInit(0.U(8.W))
   
   // Register write command state
-  val regWriteAddress = RegInit(0.U(params.bRegWidth.W))
+  val regWriteAddress = RegInit(0.U(params.regWidth.W))
   
   // Forward toggle register
   val forwardToggle = RegInit(false.B)
@@ -115,8 +115,8 @@ class ReceivePacketInterface(params: AmletParams) extends Module {
   io.result.address.tag := DontCare
   io.result.value := DontCare
   io.result.force := DontCare
-  io.writeIM.valid := false.B
-  io.writeIM.bits := DontCare
+  io.writeControl.valid := false.B
+  io.writeControl.bits := DontCare
   
   io.start.valid := false.B
   io.start.bits := DontCare
@@ -284,7 +284,7 @@ class ReceivePacketInterface(params: AmletParams) extends Module {
           }
           is(2.U) { // Write to register command header
             // Store the register address and transition to ProcessingRegWrite state
-            regWriteAddress := commandData(params.bRegWidth-1, 0)
+            regWriteAddress := commandData(params.regWidth-1, 0)
             receiveState := States.ProcessingRegWrite
           }
         }
@@ -295,9 +295,10 @@ class ReceivePacketInterface(params: AmletParams) extends Module {
     is(States.ProcessingIMWrites) {
       when (bufferedFromNetwork.valid) {
         // Write data to instruction memory
-        io.writeIM.valid := true.B
-        io.writeIM.bits.address := imWriteAddress
-        io.writeIM.bits.data := bufferedFromNetwork.bits.data
+        io.writeControl.valid := true.B
+        io.writeControl.bits.mode := ControlWriteMode.InstructionMemory
+        io.writeControl.bits.address := imWriteAddress
+        io.writeControl.bits.data := bufferedFromNetwork.bits.data
         
         // Update state for next write
         imWriteAddress := imWriteAddress + 1.U
@@ -320,11 +321,18 @@ class ReceivePacketInterface(params: AmletParams) extends Module {
     is(States.ProcessingRegWrite) {
       when (bufferedFromNetwork.valid) {
         // Write the data value to the register specified in the header
-        io.result.valid := true.B
         io.result.address.addr := regWriteAddress
         io.result.address.tag := 0.U // Command writes don't use write identifiers
         io.result.value := bufferedFromNetwork.bits.data
         io.result.force := true.B // Command writes bypass dependency system
+        io.writeControl.bits.mode := ControlWriteMode.GlobalRegister
+        io.writeControl.bits.address := regWriteAddress(params.gRegWidth-1, 0)
+        io.writeControl.bits.data := bufferedFromNetwork.bits.data
+        when (!regWriteAddress(params.regWidth-1)) {
+          io.result.valid := true.B
+        } .otherwise {
+          io.writeControl.valid := true.B
+        }
         
         // Update state
         receiveRemainingWords := receiveRemainingWords - 1.U

@@ -11,10 +11,12 @@ from fmvpu.amlet.instruction import VLIWInstruction
 
 @dataclass
 class ReceiveKernelRegs:
-    # Global Config
+    # Global Bamlet Config
+    g_words_per_amlet: int = 2
+    g_amlet_columns: int = 3
+
+    # Global Amlet Config
     a_base_address: int = 1
-    a_words_per_amlet: int = 2
-    a_amlet_columns: int = 3
     a_words_per_row: int = 4
 
     # Local config
@@ -31,9 +33,9 @@ class ReceiveKernelRegs:
 
 @dataclass
 class ReceiveKernelArgs:
+    g_words_per_amlet: int
+    g_amlet_columns: int
     a_base_address: int
-    a_words_per_amlet: int
-    a_amlet_columns: int
     a_words_per_row: int
     a_local_column: list[int]
 
@@ -86,9 +88,9 @@ def make_receive_kernel_args(params: BamletParams, base_address, n, side):
             local_columns.append(offset_x)
 
     args = ReceiveKernelArgs(
+        g_words_per_amlet=n//params.n_amlets,
+        g_amlet_columns=params.n_amlet_columns,
         a_base_address=base_address,
-        a_words_per_amlet=n//params.n_amlets,
-        a_amlet_columns=params.n_amlet_columns,
         a_words_per_row=n//params.n_amlet_rows,
         a_local_column=local_columns,
         )
@@ -169,7 +171,7 @@ def receive_kernel(params: BamletParams, regs: ReceiveKernelRegs, side, channel)
     # Loop n/n_amlets -> outer_index
     instrs.append(ControlInstruction(
         mode=ControlModes.LOOPGLOBAL,
-        src=regs.a_words_per_amlet,
+        src=regs.g_words_per_amlet,
         dst=regs.a_outer_index,
         ))
     #   addr = addr + 1
@@ -182,7 +184,7 @@ def receive_kernel(params: BamletParams, regs: ReceiveKernelRegs, side, channel)
     #   Loop n_amlet_columns -> inner_index
     instrs.append(ControlInstruction(
         mode=ControlModes.LOOPGLOBAL,
-        src=regs.a_amlet_columns,
+        src=regs.g_amlet_columns,
         dst=regs.a_inner_index,
         ))
     #     x = GetWord
@@ -210,5 +212,6 @@ def receive_kernel(params: BamletParams, regs: ReceiveKernelRegs, side, channel)
     instrs.append(ControlInstruction(mode=ControlModes.ENDIF))
     instrs.append(ControlInstruction(mode=ControlModes.ENDLOOP))
     instrs.append(ControlInstruction(mode=ControlModes.ENDLOOP))
+    instrs.append(ControlInstruction(mode=ControlModes.HALT))
 
     return instrs

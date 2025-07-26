@@ -13,7 +13,7 @@ from cocotb.handle import HierarchyObject
 
 from fmvpu import generate_rtl
 from fmvpu import test_utils
-from fmvpu.bamlet.bamlet_interface import BamletInterface, make_coord_register
+from fmvpu.bamlet.bamlet_interface import BamletInterface
 from fmvpu.bamlet.bamlet_params import BamletParams
 from fmvpu.amlet.instruction import VLIWInstruction, create_halt_instruction
 from fmvpu.amlet.control_instruction import ControlInstruction, ControlModes
@@ -34,7 +34,6 @@ async def write_instruction_test(bi: BamletInterface) -> None:
     complex_instr = VLIWInstruction(
         control=ControlInstruction(
             mode=ControlModes.LOOP,
-            halt=True,
         ),
         alu=ALUInstruction(
             mode=ALUModes.ADD,
@@ -57,14 +56,33 @@ async def write_instruction_test(bi: BamletInterface) -> None:
             mode=PacketModes.SEND,
             target=7,   # A-register 7 (target coordinates)
             length=8,   # A-register 8 (length)
-            result=25,  # D-register 9 (encoded as cutoff+9 = 16+9 = 25)
+            dst=25,  # D-register 9 (encoded as cutoff+9 = 16+9 = 25)
             channel=1
         )
     )
+
+    # Calculate expected widths from Python
+    control_width_py = complex_instr.control.get_width(bi.params.amlet)
+    alu_width_py = complex_instr.alu.get_width(bi.params.amlet)
+    alu_lite_width_py = complex_instr.alu_lite.get_width(bi.params.amlet)
+    load_store_width_py = complex_instr.load_store.get_width(bi.params.amlet)
+    packet_width_py = complex_instr.packet.get_width(bi.params.amlet)
+    total_width_py = control_width_py + alu_width_py + alu_lite_width_py + load_store_width_py + packet_width_py
+    
+    logger.info("Python calculated VLIW instruction component widths:")
+    logger.info(f"  Control: {control_width_py} bits")
+    logger.info(f"  ALU: {alu_width_py} bits")
+    logger.info(f"  ALU Lite: {alu_lite_width_py} bits")
+    logger.info(f"  Load/Store: {load_store_width_py} bits")
+    logger.info(f"  Packet: {packet_width_py} bits")
+    logger.info(f"  Total VLIW width: {total_width_py} bits")
+    
+    # We'll compare this to simulation widths after we fetch the instruction
     
     # Write the instruction to address 0
     program = [complex_instr]
-    await bi.write_program(program, base_address=0)
+    bi.write_program(program, base_address=0)
+    await bi.wait_to_send_packets()
     
     # Wait a few cycles for the write to complete
     for _ in range(10):
@@ -85,7 +103,6 @@ async def write_instruction_test(bi: BamletInterface) -> None:
             
             # Probe the VLIW instruction components
             # Control instruction
-            control_halt = bi.dut.control.io_instr_bits_control_halt.value
             control_mode = bi.dut.control.io_instr_bits_control_mode.value
             
             # ALU instruction  
@@ -113,14 +130,49 @@ async def write_instruction_test(bi: BamletInterface) -> None:
             packet_channel = bi.dut.control.io_instr_bits_packet_channel.value
             
             logger.info(f"Complex instruction components:")
-            logger.info(f"  Control: halt={control_halt}, mode={control_mode}")
+            logger.info(f"  Control: mode={control_mode}")
             logger.info(f"  ALU: mode={alu_mode}, src1={alu_src1}, src2={alu_src2}, dst={alu_dst}")
             logger.info(f"  ALULite: mode={alu_lite_mode}, src1={alu_lite_src1}, src2={alu_lite_src2}, dst={alu_lite_dst}")
             logger.info(f"  LoadStore: mode={ldst_mode}, addr={ldst_addr}, reg={ldst_reg}")
             logger.info(f"  Packet: mode={packet_mode}, target={packet_target}, length={packet_length}, result={packet_result}, channel={packet_channel}")
             
+            # Compare Python calculated widths vs simulation signal widths using find_signals_by_prefix
+            control_signals = test_utils.find_signals_by_prefix(bi.dut.control, "io_instr_bits_control_")
+            alu_signals = test_utils.find_signals_by_prefix(bi.dut.control, "io_instr_bits_alu_")
+            alu_lite_signals = test_utils.find_signals_by_prefix(bi.dut.control, "io_instr_bits_aluLite_")
+            load_store_signals = test_utils.find_signals_by_prefix(bi.dut.control, "io_instr_bits_loadStore_")
+            packet_signals = test_utils.find_signals_by_prefix(bi.dut.control, "io_instr_bits_packet_")
+            
+            logger.info(f"Control signals found: {list(control_signals.keys())}")
+            logger.info(f"ALU signals found: {list(alu_signals.keys())}")
+            logger.info(f"ALU Lite signals found: {list(alu_lite_signals.keys())}")
+            logger.info(f"Load/Store signals found: {list(load_store_signals.keys())}")
+            logger.info(f"Packet signals found: {list(packet_signals.keys())}")
+            
+            # Calculate total widths by summing individual signal widths
+            control_width_sim = sum(len(signal) for signal in control_signals.values())
+            alu_width_sim = sum(len(signal) for signal in alu_signals.values())
+            alu_lite_width_sim = sum(len(signal) for signal in alu_lite_signals.values())
+            load_store_width_sim = sum(len(signal) for signal in load_store_signals.values())
+            packet_width_sim = sum(len(signal) for signal in packet_signals.values())
+            
+            logger.info("\nWidth comparison (Python vs Simulation):")
+            logger.info(f"  Control: {control_width_py} vs {control_width_sim}")
+            logger.info(f"  ALU: {alu_width_py} vs {alu_width_sim}")
+            logger.info(f"  ALU Lite: {alu_lite_width_py} vs {alu_lite_width_sim}")
+            logger.info(f"  Load/Store: {load_store_width_py} vs {load_store_width_sim}")
+            logger.info(f"  Packet: {packet_width_py} vs {packet_width_sim}")
+            
+            # Test failures if widths don't match
+            assert control_width_py == control_width_sim, f"Control width mismatch: Python={control_width_py}, Sim={control_width_sim}"
+            assert alu_width_py == alu_width_sim, f"ALU width mismatch: Python={alu_width_py}, Sim={alu_width_sim}"
+            assert alu_lite_width_py == alu_lite_width_sim, f"ALU Lite width mismatch: Python={alu_lite_width_py}, Sim={alu_lite_width_sim}"
+            assert load_store_width_py == load_store_width_sim, f"Load/Store width mismatch: Python={load_store_width_py}, Sim={load_store_width_sim}"
+            assert packet_width_py == packet_width_sim, f"Packet width mismatch: Python={packet_width_py}, Sim={packet_width_sim}"
+            
+            logger.info("✓ All VLIW component widths match between Python and simulation!")
+            
             # Verify this matches our expected complex instruction
-            assert control_halt == 1, f"Expected halt=0, got {control_halt}"
             assert control_mode == ControlModes.LOOP, f"Expected control mode={ControlModes.LOOP}, got {control_mode}"
             assert alu_mode == ALUModes.ADD, f"Expected ALU mode={ALUModes.ADD}, got {alu_mode}"
             assert alu_src1 == 1, f"Expected ALU src1=1, got {alu_src1}"
@@ -245,7 +297,7 @@ async def send_zero_length_packet_test(bi: BamletInterface) -> None:
     # Create destination coordinates: bamlet_x + 0, bamlet_y + 1
     dest_x = 0
     dest_y = 0
-    coord_word = make_coord_register(dest_x, dest_y, bi.params.amlet)
+    coord_word = packet_utils.make_coord_register(dest_x, dest_y, bi.params.amlet)
     await bi.write_a_register(3, coord_word)
     
     # Write zero length to register 4
@@ -254,20 +306,19 @@ async def send_zero_length_packet_test(bi: BamletInterface) -> None:
     # Create a single VLIW instruction that sends a zero-length packet and halts
     program = [
         VLIWInstruction(
-            control=ControlInstruction(
-                halt=True
-            ),
+            control=ControlInstruction(mode=ControlModes.HALT),
             packet=PacketInstruction(
                 mode=PacketModes.SEND,
                 target=3,  # Contains destination coordinates
                 length=4,  # Contains length (0) 
-                result=0   # Store result/status here
+                a_dst=0   # Store result/status here
             )
         )
     ]
     
     # Write and run the program
-    await bi.write_program(program, base_address=0)
+    bi.write_program(program, base_address=0)
+    await bi.wait_to_send_packets()
     await bi.start_program(pc=0)
     
     # Wait for program execution and monitor outputs
@@ -299,8 +350,11 @@ async def bamlet_write_im_test(dut: HierarchyObject) -> None:
     # Run simple packet test
     await simple_packet_test(bi)
 
-    #await write_instruction_test(bi)
     await send_zero_length_packet_test(bi)
+
+    # This one must be the last test.
+    # It leaves packets hanging
+    await write_instruction_test(bi)
 
 
 def test_bamlet_write_im(verilog_file: str, params_file: str, seed: int = 0) -> None:

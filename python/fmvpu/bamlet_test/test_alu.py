@@ -7,18 +7,18 @@ from random import Random
 import json
 
 import cocotb
-from cocotb import triggers
 from cocotb.clock import Clock
 from cocotb.handle import HierarchyObject
 
 from fmvpu import generate_rtl
 from fmvpu import test_utils
-from fmvpu.bamlet.bamlet_interface import BamletInterface, make_coord_register
+from fmvpu.bamlet.bamlet_interface import BamletInterface
 from fmvpu.bamlet.bamlet_params import BamletParams
 from fmvpu.amlet.instruction import VLIWInstruction
-from fmvpu.amlet.control_instruction import ControlInstruction
+from fmvpu.amlet.control_instruction import ControlInstruction, ControlModes
 from fmvpu.amlet.alu_instruction import ALUInstruction, ALUModes
 from fmvpu.amlet.packet_instruction import PacketInstruction, PacketModes
+from fmvpu.amlet import packet_utils
 
 
 logger = logging.getLogger(__name__)
@@ -32,7 +32,7 @@ async def alu_add_test(bi: BamletInterface) -> None:
     
     program = [
         VLIWInstruction(
-            control=ControlInstruction(halt=True),
+            control=ControlInstruction(mode=ControlModes.HALT),
             alu=ALUInstruction(
                 mode=ALUModes.ADD,
                 src1=1,
@@ -41,12 +41,13 @@ async def alu_add_test(bi: BamletInterface) -> None:
             )
         )
     ]
-    await bi.write_program(program, base_address=0)
+    bi.write_program(program, base_address=0)
+    await bi.wait_to_send_packets()
     await bi.start_program(pc=0)
     await bi.wait_for_program_to_run()
     
     # Check result in register 3
-    result = await bi.read_d_register(3)
+    result = bi.probe_d_register(3)
     assert result == 22, f"Expected 22, got {result}"
 
 
@@ -57,7 +58,7 @@ async def alu_addi_test(bi: BamletInterface) -> None:
     
     program = [
         VLIWInstruction(
-            control=ControlInstruction(halt=True),
+            control=ControlInstruction(mode=ControlModes.HALT),
             alu=ALUInstruction(
                 mode=ALUModes.ADDI,
                 src1=1,
@@ -66,12 +67,13 @@ async def alu_addi_test(bi: BamletInterface) -> None:
             )
         )
     ]
-    await bi.write_program(program, base_address=0)
+    bi.write_program(program, base_address=0)
+    await bi.wait_to_send_packets()
     await bi.start_program(pc=0)
     await bi.wait_for_program_to_run()
     
     # Check result in register 3
-    result = await bi.read_d_register(3)
+    result = bi.probe_d_register(3)
     assert result == 12, f"Expected 12, got {result}"
 
 
@@ -82,7 +84,7 @@ async def alu_sub_test(bi: BamletInterface) -> None:
     
     program = [
         VLIWInstruction(
-            control=ControlInstruction(halt=True),
+            control=ControlInstruction(mode=ControlModes.HALT),
             alu=ALUInstruction(
                 mode=ALUModes.SUB,
                 src1=1,
@@ -91,12 +93,13 @@ async def alu_sub_test(bi: BamletInterface) -> None:
             )
         )
     ]
-    await bi.write_program(program, base_address=0)
+    bi.write_program(program, base_address=0)
+    await bi.wait_to_send_packets()
     await bi.start_program(pc=0)
     await bi.wait_for_program_to_run()
     
     # Check result in register 3
-    result = await bi.read_d_register(3)
+    result = bi.probe_d_register(3)
     assert result == 12, f"Expected 12, got {result}"
 
 
@@ -107,7 +110,7 @@ async def alu_subi_test(bi: BamletInterface) -> None:
     
     program = [
         VLIWInstruction(
-            control=ControlInstruction(halt=True),
+            control=ControlInstruction(mode=ControlModes.HALT),
             alu=ALUInstruction(
                 mode=ALUModes.SUBI,
                 src1=1,
@@ -116,12 +119,13 @@ async def alu_subi_test(bi: BamletInterface) -> None:
             )
         )
     ]
-    await bi.write_program(program, base_address=0)
+    bi.write_program(program, base_address=0)
+    await bi.wait_to_send_packets()
     await bi.start_program(pc=0)
     await bi.wait_for_program_to_run()
     
     # Check result in register 3
-    result = await bi.read_d_register(3)
+    result = bi.probe_d_register(3)
     assert result == 23, f"Expected 23, got {result}"
 
 
@@ -132,7 +136,7 @@ async def alu_mult_test(bi: BamletInterface) -> None:
     
     program = [
         VLIWInstruction(
-            control=ControlInstruction(halt=True),
+            control=ControlInstruction(mode=ControlModes.HALT),
             alu=ALUInstruction(
                 mode=ALUModes.MULT,
                 src1=1,
@@ -141,12 +145,13 @@ async def alu_mult_test(bi: BamletInterface) -> None:
             )
         )
     ]
-    await bi.write_program(program, base_address=0)
+    bi.write_program(program, base_address=0)
+    await bi.wait_to_send_packets()
     await bi.start_program(pc=0)
     await bi.wait_for_program_to_run()
     
     # Check result in register 3
-    result = await bi.read_d_register(3)
+    result = bi.probe_d_register(3)
     assert result == 42, f"Expected 42, got {result}"
 
 
@@ -157,7 +162,7 @@ async def alu_mult_acc_test(bi: BamletInterface) -> None:
     
     program = [
         VLIWInstruction(
-            control=ControlInstruction(halt=True),
+            control=ControlInstruction(mode=ControlModes.HALT),
             alu=ALUInstruction(
                 mode=ALUModes.MULT_ACC_INIT,
                 src1=2,
@@ -166,12 +171,13 @@ async def alu_mult_acc_test(bi: BamletInterface) -> None:
             )
         )
     ]
-    await bi.write_program(program, base_address=0)
+    bi.write_program(program, base_address=0)
+    await bi.wait_to_send_packets()
     await bi.start_program(pc=0)
     await bi.wait_for_program_to_run()
     
     # Check result in register 1: 4 * 5 = 20 (MULT_ACC_INIT initializes accumulator)
-    result = await bi.read_d_register(1)
+    result = bi.probe_d_register(1)
     assert result == 20, f"Expected 20, got {result}"
 
 
@@ -203,7 +209,7 @@ async def alu_mult_acc_chain_test(bi: BamletInterface) -> None:
         ),
         # Third MULT_ACC: acc = 10 + (2 * 3) = 16
         VLIWInstruction(
-            control=ControlInstruction(halt=True),
+            control=ControlInstruction(mode=ControlModes.HALT),
             alu=ALUInstruction(
                 mode=ALUModes.MULT_ACC,
                 src1=3,
@@ -212,12 +218,13 @@ async def alu_mult_acc_chain_test(bi: BamletInterface) -> None:
             )
         )
     ]
-    await bi.write_program(program, base_address=0)
+    bi.write_program(program, base_address=0)
+    await bi.wait_to_send_packets()
     await bi.start_program(pc=0)
     await bi.wait_for_program_to_run()
     
     # Check final result in register 1: 6 + 4 + 6 = 16
-    result = await bi.read_d_register(1)
+    result = bi.probe_d_register(1)
     assert result == 16, f"Expected 16, got {result}"
 
 
@@ -247,7 +254,7 @@ async def alu_chain_operations_test(bi: BamletInterface) -> None:
         ),
         # reg6 = reg5 - reg2 (21 - 4 = 17)
         VLIWInstruction(
-            control=ControlInstruction(halt=True),
+            control=ControlInstruction(mode=ControlModes.HALT),
             alu=ALUInstruction(
                 mode=ALUModes.SUB,
                 src1=5,
@@ -256,16 +263,17 @@ async def alu_chain_operations_test(bi: BamletInterface) -> None:
             )
         )
     ]
-    await bi.write_program(program, base_address=0)
+    bi.write_program(program, base_address=0)
+    await bi.wait_to_send_packets()
     await bi.start_program(pc=0)
     await bi.wait_for_program_to_run()
     
     # Check intermediate and final results
-    result4 = await bi.read_d_register(4)
+    result4 = bi.probe_d_register(4)
     assert result4 == 7, f"Expected 7 in register 4, got {result4}"
-    result5 = await bi.read_d_register(5)
+    result5 = bi.probe_d_register(5)
     assert result5 == 21, f"Expected 21 in register 5, got {result5}"
-    result6 = await bi.read_d_register(6)
+    result6 = bi.probe_d_register(6)
     assert result6 == 17, f"Expected 17 in register 6, got {result6}"
 
 
@@ -295,7 +303,7 @@ async def alu_zero_operands_test(bi: BamletInterface) -> None:
         ),
         # 15 - 0 = 15
         VLIWInstruction(
-            control=ControlInstruction(halt=True),
+            control=ControlInstruction(mode=ControlModes.HALT),
             alu=ALUInstruction(
                 mode=ALUModes.SUB,
                 src1=2,
@@ -304,15 +312,16 @@ async def alu_zero_operands_test(bi: BamletInterface) -> None:
             )
         )
     ]
-    await bi.write_program(program, base_address=0)
+    bi.write_program(program, base_address=0)
+    await bi.wait_to_send_packets()
     await bi.start_program(pc=0)
     await bi.wait_for_program_to_run()
     
-    result3 = await bi.read_d_register(3)
+    result3 = bi.probe_d_register(3)
     assert result3 == 15, f"Expected 15 in register 3, got {result3}"
-    result4 = await bi.read_d_register(4)
+    result4 = bi.probe_d_register(4)
     assert result4 == 0, f"Expected 0 in register 4, got {result4}"
-    result5 = await bi.read_d_register(5)
+    result5 = bi.probe_d_register(5)
     assert result5 == 15, f"Expected 15 in register 5, got {result5}"
 
 
@@ -321,7 +330,7 @@ async def alu_with_packet_io_test(bi: BamletInterface) -> None:
     # Set up destination coordinates (echo back to source)
     dest_x = 0
     dest_y = 0
-    coord_word = make_coord_register(dest_x, dest_y, bi.params.amlet)
+    coord_word = packet_utils.make_coord_register(dest_x, dest_y, bi.params.amlet)
     await bi.write_a_register(0, coord_word)
     
     program = [
@@ -329,7 +338,7 @@ async def alu_with_packet_io_test(bi: BamletInterface) -> None:
         VLIWInstruction(
             packet=PacketInstruction(
                 mode=PacketModes.RECEIVE,
-                result=5,  # Store length in A-register 5
+                a_dst=5,  # Store length in A-register 5
                 channel=0
             )
         ),
@@ -345,15 +354,15 @@ async def alu_with_packet_io_test(bi: BamletInterface) -> None:
         # Get two operands from packet
         VLIWInstruction(
             packet=PacketInstruction(
-                mode=PacketModes.GET_PACKET_WORD,
-                result=17,  # D-register 1 (encoded as cutoff+1 = 16+1 = 17)
+                mode=PacketModes.GET_WORD,
+                d_dst=1,  # D-register 1 (encoded as cutoff+1 = 16+1 = 17)
                 channel=0
             )
         ),
         VLIWInstruction(
             packet=PacketInstruction(
-                mode=PacketModes.GET_PACKET_WORD,
-                result=18,  # D-register 2 (encoded as cutoff+2 = 16+2 = 18)
+                mode=PacketModes.GET_WORD,
+                d_dst=2,  # D-register 2 (encoded as cutoff+2 = 16+2 = 18)
                 channel=0
             )
         ),
@@ -367,7 +376,7 @@ async def alu_with_packet_io_test(bi: BamletInterface) -> None:
             )
         ),
         VLIWInstruction(
-            control=ControlInstruction(halt=True),
+            control=ControlInstruction(mode=ControlModes.HALT),
             alu=ALUInstruction(
                 mode=ALUModes.MULT,
                 src1=1,
@@ -376,7 +385,8 @@ async def alu_with_packet_io_test(bi: BamletInterface) -> None:
             )
         )
     ]
-    await bi.write_program(program, base_address=0)
+    bi.write_program(program, base_address=0)
+    await bi.wait_to_send_packets()
     await bi.start_program(pc=0)
     await bi.wait_for_program_to_run()
     

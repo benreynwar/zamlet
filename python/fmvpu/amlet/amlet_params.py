@@ -23,6 +23,9 @@ class AmletParams:
     
     # Number of address registers
     n_a_regs: int = 16
+
+    # Number of global registers
+    n_g_regs: int = 16
     
     # Depth of the data memory
     data_memory_depth: int = 64
@@ -57,6 +60,8 @@ class AmletParams:
     
     # Network configuration
     n_channels: int = 2
+
+    instr_addr_width: int = 16
     
     @property
     def n_write_idents(self) -> int:
@@ -77,6 +82,10 @@ class AmletParams:
     @property
     def addr_width(self) -> int:
         return math.ceil(math.log2(self.data_memory_depth))
+
+    @property
+    def reg_cutoff(self) -> int:
+        return max([self.n_a_regs, self.n_d_regs, self.n_g_regs])
     
     # Field mapping from camelCase JSON to snake_case Python
     _FIELD_MAPPING = {
@@ -86,6 +95,7 @@ class AmletParams:
         'aWidth': 'a_width',
         'nDRegs': 'n_d_regs',
         'nARegs': 'n_a_regs',
+        'nGRegs': 'n_g_regs',
         'dataMemoryDepth': 'data_memory_depth',
         'nResultPorts': 'n_result_ports',
         'nLoopLevels': 'n_loop_levels',
@@ -100,6 +110,7 @@ class AmletParams:
         'nReceivePacketRSSlots': 'n_receive_packet_rs_slots',
         'nPacketOutIdents': 'n_packet_out_idents',
         'nChannels': 'n_channels',
+        'instrAddrWidth': 'instr_addr_width',
     }
     
     @classmethod

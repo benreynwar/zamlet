@@ -2,7 +2,7 @@ package fmvpu.bamlet
 
 import chisel3._
 import chisel3.util._
-import fmvpu.amlet.ControlInstr
+import fmvpu.amlet.{ControlWrite, ControlWriteMode, ControlInstr}
 
 
 class LoopState(params: BamletParams) extends Bundle {
@@ -31,12 +31,23 @@ class Control(params: BamletParams) extends Module {
     val imReq = Output(Valid(UInt(params.amlet.instrAddrWidth.W)))
     val imResp = Input(Valid(new InstrResp(params)))
 
+    val writeControl = Input(Valid(new ControlWrite(params.amlet)))
+
     // Instruction outputs to reservation stations
     val instr = Decoupled(new VLIWInstr.Base(params.amlet))
 
     // For each loop instruction that a receives it 
     val loopIterations = Input(Vec(params.nAmlets, Valid(UInt(params.aWidth.W))))
   })
+
+  val instrBuffered = Wire(Decoupled(new VLIWInstr.Base(params.amlet)))
+
+  val globalsNext = Wire(Vec(params.amlet.nGRegs, UInt(params.aWidth.W)))
+  val globals = RegNext(globalsNext, VecInit(Seq.fill(params.amlet.nGRegs)(0.U)))
+  globalsNext := globals
+  when (io.writeControl.valid && io.writeControl.bits.mode === ControlWriteMode.GlobalRegister) {
+    globalsNext(io.writeControl.bits.address) := io.writeControl.bits.data
+  }
 
   // Program counter and loop state
   val pcNext = Wire(UInt(params.amlet.instrAddrWidth.W))
@@ -59,19 +70,23 @@ class Control(params: BamletParams) extends Module {
   val loopStatesCurrent = Wire(Vec(params.nLoopLevels, new LoopState(params)))
 
   // The only change we make to the instruction is that we substitute some Loop for Incr.
-  io.instr.bits := io.imResp.bits.instr
-  io.instr.valid := io.imResp.valid && active
+  instrBuffered.bits := io.imResp.bits.instr
+  instrBuffered.valid := io.imResp.valid && active
+
+  val instrBuffer = Module(new fmvpu.utils.SkidBuffer(new VLIWInstr.Base(params.amlet)))
+  instrBuffer.io.i <> instrBuffered
+  io.instr <> instrBuffer.io.o
 
   loopActiveCurrent := loopActive
   loopStatesCurrent := loopStates
   loopLevelCurrent := loopLevel
-  when (io.imResp.valid) {
+  when (io.imResp.valid && instrBuffered.ready) {
     when (io.imResp.bits.instr.control.mode === ControlInstr.Modes.Loop) {
       loopActiveCurrent := true.B
       when (loopActive) {
         when (loopStates(loopLevel).start === io.imResp.bits.pc) {
           // We're at the start of the current loop
-          io.instr.bits.control.mode := ControlInstr.Modes.Incr
+          instrBuffered.bits.control.mode := ControlInstr.Modes.Incr
         } .otherwise {
           // We're at the start of an new loop (inside another loop).
           loopLevelCurrent := loopLevel + 1.U
@@ -91,11 +106,43 @@ class Control(params: BamletParams) extends Module {
     }
   }
 
+  when (io.imResp.valid && instrBuffered.ready) {
+    when (io.imResp.bits.instr.control.mode === ControlInstr.Modes.LoopGlobal) {
+      loopActiveCurrent := true.B
+      when (loopActive) {
+        when (loopStates(loopLevel).start === io.imResp.bits.pc) {
+          // We're at the start of the current loop
+          instrBuffered.bits.control.mode := ControlInstr.Modes.Incr
+        } .otherwise {
+          // We're at the start of an new loop (inside another loop).
+          loopLevelCurrent := loopLevel + 1.U
+          loopStatesCurrent(loopLevelCurrent).index := 0.U
+          loopStatesCurrent(loopLevelCurrent).iterations := globals(io.imResp.bits.instr.control.src)
+          loopStatesCurrent(loopLevelCurrent).resolvedIterations:= VecInit(Seq.fill(params.nAmlets)(true.B))
+          // If this loop is 0 or 1 iterations then we immediately set terminating.
+          loopStatesCurrent(loopLevelCurrent).terminating := globals(io.imResp.bits.instr.control.src <= 1.U)
+        }
+      } .otherwise {
+        // We're at the start of a new loop
+        loopLevelCurrent := 0.U
+        loopStatesCurrent(loopLevelCurrent).index := 0.U
+        loopStatesCurrent(loopLevelCurrent).iterations := globals(io.imResp.bits.instr.control.src)
+        loopStatesCurrent(loopLevelCurrent).resolvedIterations:= VecInit(Seq.fill(params.nAmlets)(true.B))
+        loopStatesCurrent(loopLevelCurrent).terminating := globals(io.imResp.bits.instr.control.src <= 1.U)
+      }
+      loopStatesCurrent(loopLevelCurrent).start := io.imResp.bits.pc
+      loopStatesCurrent(loopLevelCurrent).end := io.imResp.bits.pc + io.imResp.bits.instr.control.length
+    }
+  }
+
   loopActiveNext := loopActiveCurrent
   loopLevelNext := loopLevelCurrent
   loopStatesNext := loopStatesCurrent
-  pcNext := pc + 1.U
-  when (io.imResp.valid) {
+  pcNext := pc
+  when (active && instrBuffered.ready) {
+    pcNext := pc + 1.U
+  }
+  when (io.imResp.valid && instrBuffered.ready) {
     when (loopStatesCurrent(loopLevelCurrent).end === pc) {
       when (loopStatesCurrent(loopLevelCurrent).terminating) {
         when (loopLevelCurrent === 0.U) {
@@ -106,6 +153,7 @@ class Control(params: BamletParams) extends Module {
         }
       } .otherwise {
         loopStatesNext(loopLevelCurrent).index := loopStatesCurrent(loopLevelCurrent).index + 1.U
+        loopStatesNext(loopLevelCurrent).terminating := loopStatesCurrent(loopLevelCurrent).index >= loopStatesCurrent(loopLevelCurrent).iterations-2.U
         pcNext := loopStatesCurrent(loopLevelCurrent).start
       }
     }
@@ -118,6 +166,7 @@ class Control(params: BamletParams) extends Module {
 
   loopIterationsLevelsNext := loopIterationsLevels
   // Loop over the nAmlets
+  // FIXME: We still need to add the logic in the Amlet that sends these signals.
   for (amletIndex <- 0 until params.nAmlets) {
     val level = loopIterationsLevels(amletIndex)
     when (io.loopIterations(amletIndex).valid) {

@@ -78,44 +78,51 @@ class BamletInterface:
     async def write_d_register(self, reg, value, side='w', index=0, channel=0, offset_x=0, offset_y=0):
         # With two-word approach, D-registers can store full width values
         assert value < (1 << self.params.amlet.width), f"Value {value} too large for {self.params.amlet.width}-bit D-register"
-        coord_packet = packet_utils.create_d_register_write_packet(
-            register=reg, value=value, dest_x=self.bamlet_x + offset_x, dest_y=self.bamlet_y + offset_y, params=self.params.amlet
-        )
-        self.drivers[(side, index, channel)].add_packet(coord_packet)
-        # Wait 20 cycles for packet processing
-        for cycle in range(20):
-            await triggers.RisingEdge(self.dut.clock)
-
-        amlet = self.get_amlet(0, 0)
-        probed_value = getattr(amlet.registerFileAndRename, f'state_dRegs_{reg}_value').value
-        assert probed_value == value, f"D-register {reg} write failed: expected {value}, got {probed_value}"
+        await self.write_register(self.params.amlet.reg_cutoff+reg, value, side, index, channel, offset_x, offset_y)
 
     async def write_a_register(self, reg, value, side='w', index=0, channel=0, offset_x=0, offset_y=0):
         # A-registers are constrained by their actual width (aWidth from config)
         assert value < (1 << self.params.amlet.a_width), f"Value {value} too large for {self.params.amlet.a_width}-bit A-register"
-        coord_packet = packet_utils.create_a_register_write_packet(
+        await self.write_register(reg, value, side, index, channel, offset_x, offset_y)
+
+    async def write_register(self, reg, value, side='w', index=0, channel=0, offset_x=0, offset_y=0):
+        coord_packet = packet_utils.create_register_write_packet(
             register=reg, value=value, dest_x=self.bamlet_x + offset_x, dest_y=self.bamlet_y + offset_y, params=self.params.amlet
         )
         self.drivers[(side, index, channel)].add_packet(coord_packet)
         # Wait 20 cycles for packet processing
         for cycle in range(20):
             await triggers.RisingEdge(self.dut.clock)
+        probed_value = self.probe_register(reg, offset_x, offset_y)
+        assert probed_value == value, f"D-register {reg} write failed: expected {value}, got {probed_value}"
 
-        amlet = self.get_amlet(0, 0)
-        probed_value = getattr(amlet.registerFileAndRename, f'state_aRegs_{reg}_value').value
-        assert probed_value == value, f"A-register {reg} write failed: expected {value}, got {probed_value}"
+    def probe_register(self, reg, offset_x=0, offset_y=0):
+        """Read the current value of a D-register"""
+        cutoff = self.params.amlet.reg_cutoff
+        amlet = self.get_amlet(offset_x, offset_y)
+        if 0 <= reg < self.params.amlet.n_a_regs:
+            return int(getattr(amlet.registerFileAndRename, f'state_aRegs_{reg}_value').value)
+        elif cutoff <= reg < cutoff + self.params.amlet.n_d_regs:
+            return int(getattr(amlet.registerFileAndRename, f'state_dRegs_{reg-cutoff}_value').value)
+        elif 2*cutoff <= reg < 2*cutoff + self.params.amlet.n_g_regs:
+            return int(getattr(self.dut.control, f'globals_{reg-2*cutoff}').value)
+        else:
+            assert False
 
-    async def read_d_register(self, reg, offset_x=0, offset_y=0):
+    def probe_d_register(self, reg, offset_x=0, offset_y=0):
         """Read the current value of a D-register"""
         assert 0 <= reg < self.params.amlet.n_d_regs, f"D-register {reg} out of range [0, {self.params.amlet.n_d_regs})"
-        amlet = self.get_amlet(offset_x, offset_y)
-        return int(getattr(amlet.registerFileAndRename, f'state_dRegs_{reg}_value').value)
+        return self.probe_register(self.params.amlet.reg_cutoff + reg, offset_x, offset_y)
+
+    def probe_a_register(self, reg, offset_x=0, offset_y=0):
+        """Read the current value of a D-register"""
+        assert 0 <= reg < self.params.amlet.n_a_regs, f"D-register {reg} out of range [0, {self.params.amlet.n_d_regs})"
+        return self.probe_register(reg, offset_x, offset_y)
     
     async def read_a_register(self, reg, offset_x=0, offset_y=0):
         """Read the current value of an A-register"""
         assert 0 <= reg < self.params.amlet.n_a_regs, f"A-register {reg} out of range [0, {self.params.amlet.n_a_regs})"
-        amlet = self.get_amlet(offset_x, offset_y)
-        return int(getattr(amlet.registerFileAndRename, f'state_aRegs_{reg}_value').value)
+        return self.probe_register(reg, offset_x, offset_y)
 
     def write_program(self, program, base_address=0, side='w', index=0, channel=0, offset_x=0, offset_y=0):
         instr_packet = packet_utils.create_instruction_write_packet(
@@ -153,9 +160,15 @@ class BamletInterface:
         start_packet = packet_utils.create_start_packet(pc=0, dest_x=self.bamlet_x + offset_x, dest_y=self.bamlet_y + offset_y, params=self.params.amlet)
         self.drivers[(side, index, channel)].add_packet(start_packet)
 
-    async def wait_for_program_to_run(self):
-        """Wait 40 cycles for the program to finish execution"""
-        for _ in range(40):
+    async def wait_for_program_to_run(self, timeout=1000):
+        for _ in range(10):
+            await triggers.RisingEdge(self.dut.clock)
+        for _ in range(timeout):
+            await triggers.RisingEdge(self.dut.clock)
+            await triggers.ReadOnly()
+            if not self.dut.control.active.value:
+                break
+        for _ in range(20):
             await triggers.RisingEdge(self.dut.clock)
 
     def get_amlet(self, offset_x, offset_y):

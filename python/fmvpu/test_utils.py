@@ -109,3 +109,35 @@ def concatenate_sv_files(input_filenames: List[str], output_filename: str) -> No
                 with open(filename, 'r', encoding='utf-8') as input_file:
                     output_file.write(input_file.read())
                     output_file.write('\n')
+
+
+def find_signals_by_prefix(dut_obj, prefix: str) -> Dict[str, Any]:
+    """Find all signals in a DUT object that start with the given prefix.
+    
+    Args:
+        dut_obj: The DUT object or hierarchy to search
+        prefix: The prefix to match signal names against
+        
+    Returns:
+        Dictionary mapping signal names to signal objects, with _0 suffixed
+        signals filtered out if a signal of the same name without _0 exists
+    """
+    matching_signals = {}
+    
+    # Get all attributes of the DUT object
+    for attr_name in dir(dut_obj):
+        if attr_name.startswith(prefix):
+            signal_obj = getattr(dut_obj, attr_name)
+            matching_signals[attr_name] = signal_obj
+    
+    # Filter out _0 suffixed signals if the base name exists
+    filtered_signals = {}
+    for signal_name, signal_obj in matching_signals.items():
+        if signal_name.endswith('_0'):
+            base_name = signal_name[:-2]  # Remove '_0' suffix
+            if base_name in matching_signals:
+                # Skip the _0 version since base name exists
+                continue
+        filtered_signals[signal_name] = signal_obj
+    
+    return filtered_signals

@@ -60,11 +60,12 @@ object ALULiteInstr {
     def isResolved(): Bool = {
       src1.resolved && 
       src2.resolved && 
-      mask.resolved
+      //mask.resolved &&
+      true.B
     }
 
     def isMasked(): Bool = {
-      mask.resolved && mask.getData
+      false.B //mask.resolved && mask.getData
     }
 
     def resolve(): Resolved = {

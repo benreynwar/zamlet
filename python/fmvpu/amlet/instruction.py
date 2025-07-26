@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from typing import List, Tuple
 
 from fmvpu.control_structures import pack_fields_to_words, unpack_words_to_fields, int_to_words
-from fmvpu.amlet.control_instruction import ControlInstruction
+from fmvpu.amlet.control_instruction import ControlInstruction, ControlModes
 from fmvpu.amlet.alu_instruction import ALUInstruction
 from fmvpu.amlet.alu_lite_instruction import ALULiteInstruction
 from fmvpu.amlet.ldst_instruction import LoadStoreInstruction
@@ -103,8 +103,7 @@ class VLIWInstruction:
 # Convenience functions for creating common VLIW instructions
 def create_halt_instruction() -> VLIWInstruction:
     """Create a VLIW instruction that halts execution"""
-    from fmvpu.amlet.control_instruction import ControlModes
-    control = ControlInstruction(halt=True)
+    control = ControlInstruction(mode=ControlModes.HALT)
     return VLIWInstruction(control=control)
 
 

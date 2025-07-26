@@ -17,6 +17,7 @@ TESTS = [
     ("test_write_im", "test_write_im.py", "bamlet", []),
     ("test_basic", "test_basic.py", "bamlet", []),
     ("test_alu", "test_alu.py", "bamlet", []),
+    ("test_alu_lite", "test_alu_lite.py", "bamlet", []),
     ("test_ldst", "test_ldst.py", "bamlet", []),
     ("test_packet", "test_packet.py", "bamlet", []),
     ("test_receive", "test_receive.py", "bamlet", []),

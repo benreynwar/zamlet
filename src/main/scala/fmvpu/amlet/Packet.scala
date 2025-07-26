@@ -47,11 +47,19 @@ class PacketForward(params: AmletParams) extends Bundle {
 }
 
 /**
- * Instruction memory write
+ * Control Write
+ * Goes from the packet receiver to write the instruction memory
+ * or global registers.
  */
-class IMWrite(params: AmletParams) extends Bundle {
-  val address = UInt(16.W) // instrAddrWidth equivalent
-  val data = UInt(32.W)    // instructionWidth equivalent
+object ControlWriteMode extends ChiselEnum {
+  val InstructionMemory = Value(0.U)
+  val GlobalRegister = Value(1.U)
+}
+
+class ControlWrite(params: AmletParams) extends Bundle {
+  val mode = ControlWriteMode()
+  val address = UInt(params.aWidth.W)
+  val data = UInt(params.width.W)
 }
 
 /**

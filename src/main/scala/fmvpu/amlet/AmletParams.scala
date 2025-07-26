@@ -21,6 +21,8 @@ case class AmletParams(
   nDRegs: Int = 16,
   // Number of address registers
   nARegs: Int = 16,
+  // Number of global registers (at the bamlet level)
+  nGRegs: Int = 16,
   // Depth of the data memory
   dataMemoryDepth: Int = 64,
   // Number of result bus ports for completion events
@@ -59,6 +61,8 @@ case class AmletParams(
   val aRegWidth = log2Ceil(nARegs)
   val dRegWidth = log2Ceil(nDRegs)
   val bRegWidth = scala.math.max(aRegWidth, dRegWidth) + 1
+  val gRegWidth = log2Ceil(nGRegs)
+  val regWidth = scala.math.max(scala.math.max(aRegWidth, dRegWidth), gRegWidth) + 2
 
   val addrWidth = log2Ceil(dataMemoryDepth)
 

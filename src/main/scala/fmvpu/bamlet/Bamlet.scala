@@ -45,19 +45,23 @@ class Bamlet(params: BamletParams) extends Module {
     }
   }
 
+  // Connect instruction memory write interface - arbitrate between amlets
+  val writeControlSignals = VecInit(amlets.flatten.toIndexedSeq.map(_.io.writeControl))
+
   // Connect control to instruction memory
   instructionMemory.io.imReq <> control.io.imReq
   control.io.imResp <> instructionMemory.io.imResp
+
+  control.io.writeControl.valid := writeControlSignals.map(_.valid).reduce(_ || _)
+  control.io.writeControl.bits := Mux1H(writeControlSignals.map(_.valid), writeControlSignals.map(_.bits))
 
   // Collect start signals from all amlets - use OR to start from any amlet
   val startSignals = VecInit(amlets.flatten.toIndexedSeq.map(_.io.start))
   control.io.start.valid := startSignals.map(_.valid).reduce(_ || _)
   control.io.start.bits := Mux1H(startSignals.map(_.valid), startSignals.map(_.bits))
 
-  // Connect instruction memory write interface - arbitrate between amlets
-  val writeIMSignals = VecInit(amlets.flatten.toIndexedSeq.map(_.io.writeIM))
-  instructionMemory.io.writeIM.valid := writeIMSignals.map(_.valid).reduce(_ || _)
-  instructionMemory.io.writeIM.bits := Mux1H(writeIMSignals.map(_.valid), writeIMSignals.map(_.bits))
+  instructionMemory.io.writeControl.valid := writeControlSignals.map(_.valid).reduce(_ || _)
+  instructionMemory.io.writeControl.bits := Mux1H(writeControlSignals.map(_.valid), writeControlSignals.map(_.bits))
 
   // Connect control and positions to all amlets
   for (row <- 0 until params.nAmletRows) {

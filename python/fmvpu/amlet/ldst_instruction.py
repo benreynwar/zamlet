@@ -54,6 +54,8 @@ class LoadStoreInstruction:
             # D-registers map to B-register space starting at cutoff
             cutoff = max(params.n_a_regs, params.n_d_regs)
             actual_reg = cutoff + self.d_reg
+        elif self.reg is not None:
+            actual_reg = self.reg
         else:
             actual_reg = 0
         
@@ -68,8 +70,8 @@ class LoadStoreInstruction:
         return pack_fields_to_int(temp_instr, field_specs)
     
     @classmethod
-    def from_word(cls, word: int) -> 'LoadStoreInstruction':
+    def from_word(cls, word: int, params) -> 'LoadStoreInstruction':
         """Parse instruction from word"""
-        field_specs = cls.get_field_specs()
+        field_specs = cls.get_field_specs(params)
         field_values = unpack_words_to_fields([word], field_specs, word_width=16)
         return cls(**field_values)

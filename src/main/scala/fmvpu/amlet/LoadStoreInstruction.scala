@@ -34,7 +34,7 @@ object LoadStoreInstr {
     }
 
     def isMasked(): Bool = {
-      mask.resolved && mask.getData
+      false.B //mask.resolved && mask.getData
     }
 
     def resolve(): Resolved = {

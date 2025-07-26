@@ -80,10 +80,11 @@ class ALULiteInstruction:
             # A-registers map directly to B-register space
             actual_dst = self.a_dst
         elif self.d_dst is not None:
-            assert self.d_dst is not None
             # D-registers map to B-register space starting at cutoff
             cutoff = max(params.n_a_regs, params.n_d_regs)
             actual_dst = cutoff + self.d_dst
+        elif self.dst is not None:
+            actual_dst = self.dst
         else:
             actual_dst = 0
         
@@ -99,8 +100,8 @@ class ALULiteInstruction:
         return pack_fields_to_int(temp_instr, field_specs)
     
     @classmethod
-    def from_word(cls, word: int) -> 'ALULiteInstruction':
+    def from_word(cls, word: int, params) -> 'ALULiteInstruction':
         """Parse instruction from word"""
-        field_specs = cls.get_field_specs()
+        field_specs = cls.get_field_specs(params)
         field_values = unpack_words_to_fields([word], field_specs, word_width=32)
         return cls(**field_values)

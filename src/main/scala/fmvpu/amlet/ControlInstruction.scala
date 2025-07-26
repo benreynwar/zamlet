@@ -10,7 +10,7 @@ object ControlInstr {
     val None = Value(0.U)
     val If = Value(1.U)       
     val Loop = Value(2.U)
-    val Reserved3 = Value(3.U)
+    val LoopGlobal = Value(3.U)
     // Increments the index of the current loop
     // Only really used in the resolvoing version we pass to amlet.
     val Incr = Value(4.U)

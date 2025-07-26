@@ -22,9 +22,7 @@ class ControlInstruction:
     mode: ControlModes = ControlModes.NONE
     src: int = 0   # Source register (a-type register)
     dst: int = 0   # Destination register (a-type register)
-    endif: bool = False   # End if control bit
-    endloop: bool = False # End loop control bit
-    halt: bool = False    # Halt control bit
+    length: int = 0
     
     @classmethod
     def get_width(cls, params) -> int:
@@ -38,9 +36,7 @@ class ControlInstruction:
             ('mode', 3),
             ('src', params.a_reg_width),
             ('dst', params.a_reg_width),
-            ('endif', 1),
-            ('endloop', 1),
-            ('halt', 1),
+            ('length', params.instr_addr_width),
         ]
     
     def encode(self, params) -> int:
@@ -49,8 +45,8 @@ class ControlInstruction:
         return pack_fields_to_int(self, field_specs)
     
     @classmethod
-    def from_word(cls, word: int) -> 'ControlInstruction':
+    def from_word(cls, word: int, params) -> 'ControlInstruction':
         """Parse instruction from word"""
-        field_specs = cls.get_field_specs()
+        field_specs = cls.get_field_specs(params)
         field_values = unpack_words_to_fields([word], field_specs, word_width=16)
         return cls(**field_values)

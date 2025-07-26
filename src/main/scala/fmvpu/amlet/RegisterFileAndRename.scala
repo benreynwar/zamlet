@@ -417,7 +417,17 @@ class RegisterFileAndRename(params: AmletParams) extends Module {
 
   // Read operands for ALULite operations (uses A-registers)
   val aluliteReadSrc1 = readAReg(statePreALULite, io.instr.bits.aluLite.src1)
-  val aluliteReadSrc2 = readAReg(statePreALULite, io.instr.bits.aluLite.src2)
+  val aluliteReadSrc2 = Wire(new ATaggedSource(params))
+  
+  // For immediate instructions (ADDI, SUBI), src2 is an immediate value, not a register
+  val isALULiteImmediateInstr = (io.instr.bits.aluLite.mode === ALULiteInstr.Modes.Addi) || 
+                               (io.instr.bits.aluLite.mode === ALULiteInstr.Modes.Subi)
+  
+  aluliteReadSrc2 := readAReg(statePreALULite, io.instr.bits.aluLite.src2)
+  when (isALULiteImmediateInstr) {
+    aluliteReadSrc2.resolved := true.B
+    aluliteReadSrc2.value := io.instr.bits.aluLite.src2  // Use src2 field as immediate value
+  }
 
   // Allocate a rename tag for the destination register
   val aluliteTagAlloc = assignWrite(statePreALULite, io.instr.bits.aluLite.dst)

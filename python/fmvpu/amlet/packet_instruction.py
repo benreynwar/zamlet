@@ -1,3 +1,4 @@
+import logging
 from dataclasses import dataclass
 from typing import List, Tuple
 from enum import IntEnum
@@ -5,6 +6,9 @@ from enum import IntEnum
 from fmvpu.control_structures import unpack_words_to_fields
 from fmvpu.control_structures import calculate_total_width, pack_fields_to_int
 from fmvpu.utils import clog2
+
+
+logger = logging.getLogger(__name__)
 
 
 class PacketModes(IntEnum):
@@ -39,7 +43,7 @@ class PacketInstruction:
 
     def __post_init__(self):
         """Set dst based on a_dst or d_dst if specified"""
-        if self.mode != PacketModes.NONE:
+        if self.mode not in (PacketModes.NONE, PacketModes.SEND):
             count = (self.a_dst is not None) + (self.d_dst is not None) + (self.dst is not None)
             if count != 1:
                 raise ValueError("Must specifiy exactly 1 of a_dst, d_dst and dst")
@@ -70,6 +74,8 @@ class PacketInstruction:
             # D-registers map to B-register space starting at cutoff
             cutoff = max(params.n_a_regs, params.n_d_regs)
             actual_dst = cutoff + self.d_dst
+        elif self.dst is not None:
+            actual_dst = self.dst
         else:
             actual_dst = 0
         
@@ -86,8 +92,8 @@ class PacketInstruction:
         return pack_fields_to_int(temp_instr, field_specs)
     
     @classmethod
-    def from_word(cls, word: int) -> 'PacketInstruction':
+    def from_word(cls, word: int, params) -> 'PacketInstruction':
         """Parse instruction from word"""
-        field_specs = cls.get_field_specs()
+        field_specs = cls.get_field_specs(params)
         field_values = unpack_words_to_fields([word], field_specs, word_width=32)
         return cls(**field_values)

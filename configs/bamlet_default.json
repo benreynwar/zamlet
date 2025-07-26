@@ -9,6 +9,7 @@
     "aWidth": 16,
     "nDRegs": 16,
     "nARegs": 16,
+    "nGRegs": 16,
     "dataMemoryDepth": 32,
     "nResultPorts": 4,
     "nLoopLevels": 4,

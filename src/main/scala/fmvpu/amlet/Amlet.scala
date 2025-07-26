@@ -19,7 +19,7 @@ class AmletIO(params: AmletParams) extends Bundle {
   
   // Control outputs from ReceivePacketInterface
   val start = Valid(UInt(16.W)) // start signal for Bamlet control
-  val writeIM = Valid(new IMWrite(params)) // instruction memory write from packets
+  val writeControl = Valid(new ControlWrite(params)) // instruction memory write from packets
   
   // Network interfaces for 4 directions (North, South, East, West)
   val ni = Vec(nChannels, Flipped(Decoupled(new NetworkWord(params))))
@@ -115,7 +115,7 @@ class Amlet(params: AmletParams) extends Module {
   
   // Connect control outputs from ReceivePacketInterface
   io.start := receivePacketInterface.io.start
-  io.writeIM := receivePacketInterface.io.writeIM
+  io.writeControl := receivePacketInterface.io.writeControl
 
   errors.receivePacketInterface := receivePacketInterface.io.errors
   
