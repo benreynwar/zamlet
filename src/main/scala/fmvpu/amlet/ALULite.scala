@@ -19,7 +19,6 @@ import chisel3.util._
  * - Eq, Gte, Lte: Comparison operations
  * - Not, And, Or: Logical operations
  * - ShiftL, ShiftR: Shift operations
- * - Jump: Control flow (handled by setting result appropriately)
  */
 class ALULite(params: AmletParams) extends Module {
   val io = IO(new Bundle {
@@ -29,6 +28,9 @@ class ALULite(params: AmletParams) extends Module {
     // ALULite result output
     val result = Output(new WriteResult(params))
   })
+
+  // Shift amount bit range for address width operations
+  private val shiftBits = log2Ceil(params.aWidth) - 1
 
   // Compute ALULite result
   val aluOut = Wire(UInt(params.aWidth.W))
@@ -90,19 +92,15 @@ class ALULite(params: AmletParams) extends Module {
       aluOut := io.instr.bits.src1 | io.instr.bits.src2
     }
     is(ALULiteInstr.Modes.ShiftL) {
-      aluOut := io.instr.bits.src1 << io.instr.bits.src2(3, 0)  // Use bottom 4 bits for shift amount (16-bit max)
+      aluOut := io.instr.bits.src1 << io.instr.bits.src2(shiftBits, 0)
     }
     is(ALULiteInstr.Modes.ShiftR) {
-      aluOut := io.instr.bits.src1 >> io.instr.bits.src2(3, 0)  // Use bottom 4 bits for shift amount (16-bit max)
-    }
-    is(ALULiteInstr.Modes.Jump) {
-      // For jump instructions, the result might be a target address or control signal
-      aluOut := io.instr.bits.src1  // Could be jump target
+      aluOut := io.instr.bits.src1 >> io.instr.bits.src2(shiftBits, 0)
     }
   }
 
-  // Pipeline the result through the specified latency (reuse aluLatency param)
-  if (params.aluLatency == 0) {
+  // Pipeline the result through the specified latency
+  if (params.aluLiteLatency == 0) {
     // Single cycle latency
     io.result.valid := io.instr.valid
     io.result.value := aluOut.pad(params.width)  // Pad to full width for WriteResult
@@ -111,9 +109,9 @@ class ALULite(params: AmletParams) extends Module {
     io.result.force := false.B
   } else {
     // Multi-cycle pipeline
-    val validPipe = RegInit(VecInit(Seq.fill(params.aluLatency)(false.B)))
-    val resultPipe = RegInit(VecInit(Seq.fill(params.aluLatency)(0.U(params.aWidth.W))))
-    val dstAddrPipe = RegInit(VecInit(Seq.fill(params.aluLatency)(0.U.asTypeOf(new BTaggedReg(params)))))
+    val validPipe = RegInit(VecInit(Seq.fill(params.aluLiteLatency)(false.B)))
+    val resultPipe = RegInit(VecInit(Seq.fill(params.aluLiteLatency)(0.U(params.aWidth.W))))
+    val dstAddrPipe = RegInit(VecInit(Seq.fill(params.aluLiteLatency)(0.U.asTypeOf(new BTaggedReg(params)))))
     
     // Stage 0 (input)
     validPipe(0) := io.instr.valid
@@ -121,16 +119,16 @@ class ALULite(params: AmletParams) extends Module {
     dstAddrPipe(0) := io.instr.bits.dst
     
     // Pipeline stages 1 to latency-1
-    for (i <- 1 until params.aluLatency) {
+    for (i <- 1 until params.aluLiteLatency) {
       validPipe(i) := validPipe(i-1)
       resultPipe(i) := resultPipe(i-1)
       dstAddrPipe(i) := dstAddrPipe(i-1)
     }
     
     // Output
-    io.result.valid := validPipe(params.aluLatency-1)
-    io.result.value := resultPipe(params.aluLatency-1).pad(params.width)  // Pad to full width
-    io.result.address := dstAddrPipe(params.aluLatency-1)
+    io.result.valid := validPipe(params.aluLiteLatency-1)
+    io.result.value := resultPipe(params.aluLiteLatency-1).pad(params.width)  // Pad to full width
+    io.result.address := dstAddrPipe(params.aluLiteLatency-1)
     io.result.force := false.B
   }
 }

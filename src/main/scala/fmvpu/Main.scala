@@ -49,6 +49,7 @@ object Main extends App {
     case "ALULiteRS" => ALULiteRSGenerator
     case "ALU" => ALUGenerator
     case "ALULite" => ALULiteGenerator
+    case "ALUPredicate" => ALUPredicateGenerator
     case "LoadStoreRS" => LoadStoreRSGenerator
     case "DataMemory" => DataMemoryGenerator
     case "SendPacketRS" => SendPacketRSGenerator
@@ -56,9 +57,9 @@ object Main extends App {
     case "SendPacketInterface" => SendPacketInterfaceGenerator
     case "ReceivePacketInterface" => ReceivePacketInterfaceGenerator
     case "NetworkNode" => NetworkNodeGenerator
-    //case "PacketInHandler" => PacketInHandlerGenerator
-    //case "PacketOutHandler" => PacketOutHandlerGenerator
-    //case "PacketSwitch" => PacketSwitchGenerator
+    case "PacketInHandler" => PacketInHandlerGenerator
+    case "PacketOutHandler" => PacketOutHandlerGenerator
+    case "PacketSwitch" => PacketSwitchGenerator
     case "InstructionMemory" => InstructionMemoryGenerator
     //case "Lane" => LaneGenerator
     //case "LaneArray" => LaneArrayGenerator

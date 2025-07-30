@@ -155,9 +155,7 @@ class PacketInHandler(params: AmletParams) extends Module {
   }
 
   // Filter out input direction and check for routing error
-
-  // Todo (3)
-  // We send handlerRequest to all the PacketOutHandlers it wants to go to. (except back in same dir)
+  // Send handlerRequest to all the PacketOutHandlers it wants to go to (except back in same direction)
   val inputDirMask = UIntToOH(io.inputDirection.asUInt, 5)
   val otherDirections = directions & ~inputDirMask
 

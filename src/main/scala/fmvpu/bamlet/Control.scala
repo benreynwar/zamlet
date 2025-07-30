@@ -9,16 +9,43 @@ class LoopState(params: BamletParams) extends Bundle {
   val start = UInt(params.amlet.instrAddrWidth.W)
   val end = UInt(params.amlet.instrAddrWidth.W)
   val index = UInt(params.aWidth.W)
-  val resolvedIterations = Vec(params.nAmlets, Bool())
+  val predicate = params.amlet.pReg()
+  val resolvedIterations = Vec(params.nAmlets, Bool())  // Tracks which Amlets have reported back resolved iteration counts
   val iterations = UInt(params.aWidth.W)
   // When we resolve or increment the index we set this to true
   // if we are on or past the last iteration.
   val terminating = Bool()
+  
+  // NOTE: Bamlet determines loop termination by stopping instruction dispatch
+  // from loop body. No explicit termination signal needed to Amlets.
+  // Predicates (loop_index < loop_iterations) control which Amlets execute.
+  
+  // NOTE: This is the authoritative loop state for the entire Bamlet.
+  // Amlets maintain their own LoopState only to track A-register writes.
+  // 
+  // Loop iteration resolution flow:
+  // - LoopGlobal: Bamlet resolves iteration count from global registers
+  // - LoopLocal: Each Amlet resolves iteration count from local registers/state
+  //   and reports back to Bamlet via resolvedIterations Vec
 }
+
+
+class ControlState(params: BamletParams) extends Bundle {
+  val loopActive = Bool()
+  val loopStates = Vec(params.nLoopLevels, new LoopState(params))
+  val loopLevel = UInt(log2Ceil(params.nLoopLevels).W)
+  val globals = Vec(params.amlet.nGRegs, params.aReg())
+  val pc = UInt(params.amlet.instrAddrWidth.W)
+  val active = Bool()
+  def dWord(): UInt = UInt(params.amlet.width.W)
+  def activeLoopState(): LoopState = loopStates(loopLevel)
+}
+
 
 class InstrResp(params: BamletParams) extends Bundle {
   val instr = new VLIWInstr.Base(params.amlet)
   val pc = UInt(params.amlet.instrAddrWidth.W)
+  val active = Bool()
 }
 
 
@@ -34,133 +61,121 @@ class Control(params: BamletParams) extends Module {
     val writeControl = Input(Valid(new ControlWrite(params.amlet)))
 
     // Instruction outputs to reservation stations
-    val instr = Decoupled(new VLIWInstr.Base(params.amlet))
+    val instr = Decoupled(new VLIWInstr.Expanded(params.amlet))
 
     // For each loop instruction that a receives it 
     val loopIterations = Input(Vec(params.nAmlets, Valid(UInt(params.aWidth.W))))
   })
 
-  val instrBuffered = Wire(Decoupled(new VLIWInstr.Base(params.amlet)))
-
-  val globalsNext = Wire(Vec(params.amlet.nGRegs, UInt(params.aWidth.W)))
-  val globals = RegNext(globalsNext, VecInit(Seq.fill(params.amlet.nGRegs)(0.U)))
-  globalsNext := globals
-  when (io.writeControl.valid && io.writeControl.bits.mode === ControlWriteMode.GlobalRegister) {
-    globalsNext(io.writeControl.bits.address) := io.writeControl.bits.data
+  // The state for the next cycle
+  val stateNext = Wire(new ControlState(params))
+  // The state for the body of this instruction.  After the control has been evaluated but before
+  // the rest.
+  val stateBody = Wire(new ControlState(params))
+  val stateInit = Wire(new ControlState(params))
+  stateInit.loopActive := false.B
+  stateInit.loopLevel := 0.U
+  for (i <- 0 until params.nLoopLevels) {
+    stateInit.loopStates(i).start := 0.U
+    stateInit.loopStates(i).end := 0.U
+    stateInit.loopStates(i).index := 0.U
+    stateInit.loopStates(i).predicate := 0.U
+    stateInit.loopStates(i).resolvedIterations := VecInit(Seq.fill(params.nAmlets)(false.B))
+    stateInit.loopStates(i).iterations := 0.U
+    stateInit.loopStates(i).terminating := false.B
   }
+  for (i <- 0 until params.amlet.nGRegs) {
+    stateInit.globals(i) := 0.U
+  }
+  stateInit.pc := 0.U
+  stateInit.active := false.B
+  
+  val state = RegNext(stateNext, stateInit)
 
-  // Program counter and loop state
-  val pcNext = Wire(UInt(params.amlet.instrAddrWidth.W))
-  val pc = RegNext(pcNext, 0.U)
-  val activeNext = Wire(Bool())
-  val active = RegNext(activeNext, false.B)
-
-  // The loop level at the start of the next instruction.
-  val loopLevelNext = Wire(UInt(log2Ceil(params.nLoopLevels).W))
-  // The loop level at the start of this instruction.
-  val loopLevel = RegNext(loopLevelNext, 0.U)
-  // The loop level in the body of this instruction.
-  val loopLevelCurrent = Wire(UInt(log2Ceil(params.nLoopLevels).W))
-
-  val loopActiveNext = Wire(Bool())
-  val loopActive = RegNext(loopActiveNext, false.B)
-  val loopActiveCurrent = Wire(Bool())
-  val loopStatesNext = Wire(Vec(params.nLoopLevels, new LoopState(params)))
-  val loopStates = RegNext(loopStatesNext)
-  val loopStatesCurrent = Wire(Vec(params.nLoopLevels, new LoopState(params)))
-
+  val instrBuffered = Wire(Decoupled(new VLIWInstr.Base(params.amlet)))
   // The only change we make to the instruction is that we substitute some Loop for Incr.
   instrBuffered.bits := io.imResp.bits.instr
-  instrBuffered.valid := io.imResp.valid && active
+  instrBuffered.valid := io.imResp.valid && state.active
 
   val instrBuffer = Module(new fmvpu.utils.SkidBuffer(new VLIWInstr.Base(params.amlet)))
   instrBuffer.io.i <> instrBuffered
   io.instr <> instrBuffer.io.o
 
-  loopActiveCurrent := loopActive
-  loopStatesCurrent := loopStates
-  loopLevelCurrent := loopLevel
+  stateBody := state     // default
+  stateNext := stateBody // default
+
+  // Update the Loop States if we have a loop instruction
+  val isLocalLoop = io.imResp.bits.instr.control.mode === ControlInstr.Modes.LoopLocal
+  val isGlobalLoop = io.imResp.bits.instr.control.mode === ControlInstr.Modes.LoopGlobal
+
   when (io.imResp.valid && instrBuffered.ready) {
-    when (io.imResp.bits.instr.control.mode === ControlInstr.Modes.Loop) {
-      loopActiveCurrent := true.B
-      when (loopActive) {
-        when (loopStates(loopLevel).start === io.imResp.bits.pc) {
+    when (isLocalLoop || isGlobalLoop) {
+      stateBody.loopActive := true.B
+      // If we were already in a loop.
+      when (state.loopActive) {
+        when (state.activeLoopState().start === io.imResp.bits.pc) {
           // We're at the start of the current loop
           instrBuffered.bits.control.mode := ControlInstr.Modes.Incr
         } .otherwise {
           // We're at the start of an new loop (inside another loop).
-          loopLevelCurrent := loopLevel + 1.U
-          loopStatesCurrent(loopLevelCurrent).index := 0.U
-          loopStatesCurrent(loopLevelCurrent).resolvedIterations:= VecInit(Seq.fill(params.nAmlets)(false.B))
-          loopStatesCurrent(loopLevelCurrent).terminating := false.B
+          stateBody.loopLevel := state.loopLevel + 1.U
+          stateBody.loopStates(stateBody.loopLevel).index := 0.U
+          when (isLocalLoop) {
+            stateBody.loopStates(stateBody.loopLevel).iterations := DontCare
+            stateBody.loopStates(stateBody.loopLevel).resolvedIterations :=
+              VecInit(Seq.fill(params.nAmlets)(false.B))
+            stateBody.loopStates(stateBody.loopLevel).terminating := false.B
+          } .otherwise {
+            stateBody.loopStates(stateBody.loopLevel).iterations := state.globals(io.imResp.bits.instr.control.iterations.value)
+            stateBody.loopStates(stateBody.loopLevel).resolvedIterations :=
+              VecInit(Seq.fill(params.nAmlets)(true.B))
+            stateBody.loopStates(stateBody.loopLevel).terminating :=
+              (state.globals(io.imResp.bits.instr.control.iterations.value) <= 1.U)
+          }
         }
       } .otherwise {
         // We're at the start of a new loop
-        loopLevelCurrent := 0.U
-        loopStatesCurrent(loopLevelCurrent).index := 0.U
-        loopStatesCurrent(loopLevelCurrent).resolvedIterations:= VecInit(Seq.fill(params.nAmlets)(false.B))
-        loopStatesCurrent(loopLevelCurrent).terminating := false.B
+        stateBody.loopLevel := 0.U
+        stateBody.loopStates(stateBody.loopLevel).index := 0.U
+        when (isLocalLoop) {
+          stateBody.loopStates(stateBody.loopLevel).iterations := DontCare
+          stateBody.loopStates(stateBody.loopLevel).resolvedIterations :=
+            VecInit(Seq.fill(params.nAmlets)(false.B))
+          stateBody.loopStates(stateBody.loopLevel).terminating := false.B
+        } .otherwise {
+          stateBody.loopStates(stateBody.loopLevel).iterations := state.globals(io.imResp.bits.instr.control.iterations.value)
+          stateBody.loopStates(stateBody.loopLevel).resolvedIterations :=
+            VecInit(Seq.fill(params.nAmlets)(true.B))
+          stateBody.loopStates(stateBody.loopLevel).terminating :=
+            (state.globals(io.imResp.bits.instr.control.iterations.value) <= 1.U)
+        }
       }
-      loopStatesCurrent(loopLevelCurrent).start := io.imResp.bits.pc
-      loopStatesCurrent(loopLevelCurrent).end := io.imResp.bits.pc + io.imResp.bits.instr.control.length
+      stateBody.loopStates(stateBody.loopLevel).start := io.imResp.bits.pc
+      stateBody.loopStates(stateBody.loopLevel).end :=
+        io.imResp.bits.pc + io.imResp.bits.instr.control.length
     }
   }
 
+  // Update the Loop States if we reached the end of a loop
   when (io.imResp.valid && instrBuffered.ready) {
-    when (io.imResp.bits.instr.control.mode === ControlInstr.Modes.LoopGlobal) {
-      loopActiveCurrent := true.B
-      when (loopActive) {
-        when (loopStates(loopLevel).start === io.imResp.bits.pc) {
-          // We're at the start of the current loop
-          instrBuffered.bits.control.mode := ControlInstr.Modes.Incr
+    when (stateBody.activeLoopState().end === state.pc) {
+      when (stateBody.activeLoopState().terminating) {
+        when (stateBody.loopLevel === 0.U) {
+          stateNext.loopLevel := 0.U
+          stateNext.loopActive := false.B
         } .otherwise {
-          // We're at the start of an new loop (inside another loop).
-          loopLevelCurrent := loopLevel + 1.U
-          loopStatesCurrent(loopLevelCurrent).index := 0.U
-          loopStatesCurrent(loopLevelCurrent).iterations := globals(io.imResp.bits.instr.control.src)
-          loopStatesCurrent(loopLevelCurrent).resolvedIterations:= VecInit(Seq.fill(params.nAmlets)(true.B))
-          // If this loop is 0 or 1 iterations then we immediately set terminating.
-          loopStatesCurrent(loopLevelCurrent).terminating := globals(io.imResp.bits.instr.control.src <= 1.U)
+          stateNext.loopLevel := stateBody.loopLevel - 1.U
         }
       } .otherwise {
-        // We're at the start of a new loop
-        loopLevelCurrent := 0.U
-        loopStatesCurrent(loopLevelCurrent).index := 0.U
-        loopStatesCurrent(loopLevelCurrent).iterations := globals(io.imResp.bits.instr.control.src)
-        loopStatesCurrent(loopLevelCurrent).resolvedIterations:= VecInit(Seq.fill(params.nAmlets)(true.B))
-        loopStatesCurrent(loopLevelCurrent).terminating := globals(io.imResp.bits.instr.control.src <= 1.U)
-      }
-      loopStatesCurrent(loopLevelCurrent).start := io.imResp.bits.pc
-      loopStatesCurrent(loopLevelCurrent).end := io.imResp.bits.pc + io.imResp.bits.instr.control.length
-    }
-  }
-
-  loopActiveNext := loopActiveCurrent
-  loopLevelNext := loopLevelCurrent
-  loopStatesNext := loopStatesCurrent
-  pcNext := pc
-  when (active && instrBuffered.ready) {
-    pcNext := pc + 1.U
-  }
-  when (io.imResp.valid && instrBuffered.ready) {
-    when (loopStatesCurrent(loopLevelCurrent).end === pc) {
-      when (loopStatesCurrent(loopLevelCurrent).terminating) {
-        when (loopLevelCurrent === 0.U) {
-          loopLevelNext := 0.U
-          loopActiveNext := false.B
-        } .otherwise {
-          loopLevelNext := loopLevelCurrent - 1.U
-        }
-      } .otherwise {
-        loopStatesNext(loopLevelCurrent).index := loopStatesCurrent(loopLevelCurrent).index + 1.U
-        loopStatesNext(loopLevelCurrent).terminating := loopStatesCurrent(loopLevelCurrent).index >= loopStatesCurrent(loopLevelCurrent).iterations-2.U
-        pcNext := loopStatesCurrent(loopLevelCurrent).start
+        stateNext.loopStates(stateBody.loopLevel).index := stateBody.activeLoopState().index + 1.U
+        stateNext.loopStates(stateBody.loopLevel).terminating :=
+          stateBody.activeLoopState().index >= stateBody.activeLoopState().iterations-2.U
+        stateNext.pc := stateBody.activeLoopState().start
       }
     }
   }
 
   // Process the loop iterations received from the amlets.
-
   val loopIterationsLevelsNext = Wire(Vec(params.nAmlets, UInt(log2Ceil(params.nLoopLevels).W)))
   val loopIterationsLevels = RegNext(loopIterationsLevelsNext, VecInit(Seq.fill(params.nAmlets)(0.U)))
 
@@ -170,35 +185,46 @@ class Control(params: BamletParams) extends Module {
   for (amletIndex <- 0 until params.nAmlets) {
     val level = loopIterationsLevels(amletIndex)
     when (io.loopIterations(amletIndex).valid) {
-      loopStatesNext(level).resolvedIterations(amletIndex) := true.B
-      loopStatesNext(level).iterations := Mux(loopStates(level).iterations > io.loopIterations(amletIndex).bits, 
-                                         loopStates(level).iterations, 
+      stateNext.loopStates(level).resolvedIterations(amletIndex) := true.B
+      stateNext.loopStates(level).iterations := Mux(state.loopStates(level).iterations > io.loopIterations(amletIndex).bits, 
+                                         state.loopStates(level).iterations, 
                                          io.loopIterations(amletIndex).bits)
       
       // Check if all amlets have resolved their iterations
-      val allResolved = loopStatesNext(level).resolvedIterations.asUInt.andR
+      val allResolved = stateNext.loopStates(level).resolvedIterations.asUInt.andR
       when (allResolved) {
-        when (loopStatesNext(level).index >= loopStatesNext(level).iterations - 1.U) {
-          loopStatesNext(level).terminating := true.B
+        when (stateNext.loopStates(level).index >= stateNext.loopStates(level).iterations - 1.U) {
+          stateNext.loopStates(level).terminating := true.B
         }
       }
     }
   }
 
-  activeNext := active
+  stateNext.active := state.active
   when (io.imResp.valid) {
     when (io.imResp.bits.instr.control.mode === ControlInstr.Modes.Halt) {
-      activeNext := false.B
+      stateNext.active := false.B
     }
   }
 
-  when (io.start.valid) {
-    activeNext := true.B
-    pcNext := io.start.bits
+  when (state.active && instrBuffered.ready) {
+    stateNext.pc := state.pc + 1.U
   }
 
-  io.imReq.valid := active
-  io.imReq.bits := pc
+  when (io.start.valid) {
+    stateNext.active := true.B
+    stateNext.pc := io.start.bits
+  }
+
+  io.imReq.valid := state.active
+  io.imReq.bits := state.pc
+
+  // Update the globals
+  // Do this to stateNext rather than stateBody to help with timing
+  when (io.writeControl.valid && io.writeControl.bits.mode === ControlWriteMode.GlobalRegister) {
+    stateNext.globals(io.writeControl.bits.address) := io.writeControl.bits.data
+  }
+
 
 }
 

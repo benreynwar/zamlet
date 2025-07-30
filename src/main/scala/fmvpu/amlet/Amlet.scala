@@ -21,6 +21,9 @@ class AmletIO(params: AmletParams) extends Bundle {
   val start = Valid(UInt(16.W)) // start signal for Bamlet control
   val writeControl = Valid(new ControlWrite(params)) // instruction memory write from packets
   
+  // Loop iteration reporting to Bamlet control
+  val loopIterations = Valid(UInt(params.aWidth.W))
+  
   // Network interfaces for 4 directions (North, South, East, West)
   val ni = Vec(nChannels, Flipped(Decoupled(new NetworkWord(params))))
   val si = Vec(nChannels, Flipped(Decoupled(new NetworkWord(params))))
@@ -52,6 +55,7 @@ class Amlet(params: AmletParams) extends Module {
   // Instantiate reservation stations
   val aluRS = Module(new ALURS(params))
   val aluLiteRS = Module(new ALULiteRS(params))
+  val aluPredicateRS = Module(new ALUPredicateRS(params))
   val loadStoreRS = Module(new LoadStoreRS(params))
   val sendPacketRS = Module(new SendPacketRS(params))
   val receivePacketRS = Module(new ReceivePacketRS(params))
@@ -59,6 +63,7 @@ class Amlet(params: AmletParams) extends Module {
   // Instantiate execution units
   val alu = Module(new ALU(params))
   val aluLite = Module(new ALULite(params))
+  val aluPredicate = Module(new ALUPredicate(params))
   val dataMem = Module(new DataMemory(params))
   val sendPacketInterface = Module(new SendPacketInterface(params))
   val receivePacketInterface = Module(new ReceivePacketInterface(params))
@@ -70,6 +75,7 @@ class Amlet(params: AmletParams) extends Module {
   // Connect RegisterFileAndRename outputs to reservation stations
   aluRS.io.input <> registerFileAndRename.io.aluInstr
   aluLiteRS.io.input <> registerFileAndRename.io.aluliteInstr
+  aluPredicateRS.io.input <> registerFileAndRename.io.aluPredicateInstr
   loadStoreRS.io.input <> registerFileAndRename.io.ldstInstr
   sendPacketRS.io.input <> registerFileAndRename.io.sendPacketInstr
   receivePacketRS.io.input <> registerFileAndRename.io.recvPacketInstr
@@ -80,6 +86,9 @@ class Amlet(params: AmletParams) extends Module {
   
   aluLite.io.instr := aluLiteRS.io.output
   aluLiteRS.io.output.ready := true.B
+
+  aluPredicate.io.instr := aluPredicateRS.io.output
+  aluPredicateRS.io.output.ready := true.B
   
   dataMem.io.instr := loadStoreRS.io.output
   loadStoreRS.io.output.ready := true.B
@@ -93,18 +102,14 @@ class Amlet(params: AmletParams) extends Module {
   resultBus.writes(1) := aluLite.io.result
   resultBus.writes(2) := dataMem.io.result
   resultBus.writes(3) := receivePacketInterface.io.result
+  resultBus.predicate := aluPredicate.io.result
   
-  // Connect mask results (placeholder for now)
-  for (i <- 0 until params.nResultPorts) {
-    resultBus.masks(i).valid := false.B
-    resultBus.masks(i).value := false.B
-    resultBus.masks(i).ident := 0.U
-  }
   
   // Connect results to RegisterFileAndRename and reservation stations for dependency resolution
   registerFileAndRename.io.resultBus := resultBus.writes
   aluRS.io.resultBus := resultBus
   aluLiteRS.io.resultBus := resultBus
+  aluPredicateRS.io.resultBus := resultBus
   loadStoreRS.io.resultBus := resultBus
   sendPacketRS.io.resultBus := resultBus
   receivePacketRS.io.resultBus := resultBus
@@ -116,6 +121,9 @@ class Amlet(params: AmletParams) extends Module {
   // Connect control outputs from ReceivePacketInterface
   io.start := receivePacketInterface.io.start
   io.writeControl := receivePacketInterface.io.writeControl
+  
+  // Connect loop iteration reporting from RegisterFileAndRename
+  io.loopIterations := registerFileAndRename.io.loopIterations
 
   errors.receivePacketInterface := receivePacketInterface.io.errors
   

@@ -40,13 +40,22 @@ object ALULiteInstr {
     val Reserved28 = Value(28.U)
     val Reserved29 = Value(29.U)
     val Reserved30 = Value(30.U)
-    val Jump = Value(31.U)
+    val Reserved31 = Value(31.U)
   }
   
   class Base(params: AmletParams) extends Instr.Base(params) {
     val mode = Modes()
     val src1 = params.aReg()
     val src2 = params.aReg()
+    val predicate = params.pReg()
+    val dst = params.bReg()
+  }
+
+  class Expanded(params: AmletParams) extends Instr.Expanded(params) {
+    val mode = Modes()
+    val src1 = params.aReg()
+    val src2 = params.aReg()
+    val predicate = params.pReg()
     val dst = params.bReg()
   }
   
@@ -54,18 +63,17 @@ object ALULiteInstr {
     val mode = Modes()
     val src1 = new ATaggedSource(params)
     val src2 = new ATaggedSource(params) 
-    val mask = new MaskInfo(params)
+    val predicate = new PTaggedSource(params)
     val dst = new BTaggedReg(params)
 
     def isResolved(): Bool = {
       src1.resolved && 
       src2.resolved && 
-      //mask.resolved &&
-      true.B
+      predicate.resolved
     }
 
     def isMasked(): Bool = {
-      false.B //mask.resolved && mask.getData
+      predicate.resolved && !predicate.getData
     }
 
     def resolve(): Resolved = {
@@ -82,7 +90,7 @@ object ALULiteInstr {
       resolving.mode := mode
       resolving.src1 := src1.update(writes)
       resolving.src2 := src2.update(writes)
-      resolving.mask := mask.update(writes)
+      resolving.predicate := predicate.update(writes)
       resolving.dst := dst
       resolving
     }

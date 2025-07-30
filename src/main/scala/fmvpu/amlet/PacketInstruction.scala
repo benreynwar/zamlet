@@ -30,6 +30,16 @@ object PacketInstr {
     val result = params.bReg()
     val length = params.aReg()
     val target = params.aReg()
+    val predicate = params.pReg()
+    val channel = UInt(log2Ceil(params.nChannels).W)
+  }
+
+  class Expanded(params: AmletParams) extends Instr.Expanded(params) {
+    val mode = Modes()
+    val result = params.bReg()
+    val length = params.aReg()
+    val target = params.aReg()
+    val predicate = params.pReg()
     val channel = UInt(log2Ceil(params.nChannels).W)
   }
   
@@ -39,17 +49,16 @@ object PacketInstr {
     val length = new ATaggedSource(params)
     val target = new ATaggedSource(params)
     val channel = UInt(log2Ceil(params.nChannels).W)
-    val mask = new MaskInfo(params)
+    val predicate = new PTaggedSource(params)
 
     def isResolved(): Bool = {
       length.resolved && 
       target.resolved && 
-      //mask.resolved &&
-      true.B
+      predicate.resolved
     }
 
     def isMasked(): Bool = {
-      false.B //mask.resolved && mask.getData
+      predicate.resolved && !predicate.getData
     }
 
     def resolve(): SendResolved = {
@@ -69,7 +78,7 @@ object PacketInstr {
       resolving.length := length.update(writes)
       resolving.target := target.update(writes)
       resolving.channel := channel
-      resolving.mask := mask.update(writes)
+      resolving.predicate := predicate.update(writes)
       resolving
     }
   }
@@ -90,16 +99,15 @@ object PacketInstr {
     val mode = Modes()
     val result = new BTaggedReg(params)
     val target = new ATaggedSource(params)
-    val mask = new MaskInfo(params)
+    val predicate = new PTaggedSource(params)
 
     def isResolved(): Bool = {
       target.resolved && 
-      //mask.resolved &&
-      true.B
+      predicate.resolved
     }
 
     def isMasked(): Bool = {
-      mask.resolved && mask.getData
+      predicate.resolved && !predicate.getData
     }
 
     def resolve(): ReceiveResolved = {
@@ -115,7 +123,7 @@ object PacketInstr {
       resolving.mode := mode
       resolving.result := result
       resolving.target := target.update(writes)
-      resolving.mask := mask.update(writes)
+      resolving.predicate := predicate.update(writes)
       resolving
     }
   }

@@ -38,7 +38,7 @@ object SendPacketRSGenerator extends fmvpu.ModuleGenerator {
     */
   override def makeModule(args: Seq[String]): Module = {
     if (args.length < 1) {
-      println("Usage: <command> <outputDir> SendPacketRS <laneParamsFileName>")
+      println("Usage: <command> <outputDir> SendPacketRS <amletParamsFileName>")
       null
     } else {
       val params = AmletParams.fromFile(args(0))

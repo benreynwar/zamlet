@@ -13,8 +13,6 @@ case class AmletParams(
   width: Int = 32,
   // The width of the register rename tag identifier.
   regTagWidth: Int = 2,
-  // Similar but for masks
-  mIdentWidth: Int = 3,
   // Width of the words in the ALULite
   aWidth: Int = 16,
   // Number of data registers
@@ -29,6 +27,14 @@ case class AmletParams(
   nResultPorts: Int = 4,
   // Maximum number of nested loop levels supported
   nLoopLevels: Int = 4,
+
+  // The number of masking predicates
+  // We need at least one of each loop-level and if-statement
+  // level.
+  nPRegs: Int = 16,
+  
+  // Number of predicate rename tags per predicate register
+  nPTags: Int = 4,
   
   // Width of a coordinates
   xPosWidth: Int = 8,
@@ -41,7 +47,11 @@ case class AmletParams(
   nAluRSSlots: Int = 4,
   
   // ALULite configuration
+  aluLiteLatency: Int = 1,
   nAluLiteRSSlots: Int = 4,
+
+  // ALU Predicate configuration
+  aluPredicateLatency: Int = 1,
 
   // Load Store configuration
   nLoadStoreRSSlots: Int = 4,
@@ -60,6 +70,8 @@ case class AmletParams(
   val nWriteIdents = 1 << regTagWidth
   val aRegWidth = log2Ceil(nARegs)
   val dRegWidth = log2Ceil(nDRegs)
+  val pRegWidth = log2Ceil(nPRegs)
+  // B-register width: max(A-reg, D-reg) width + 1 bit for A/D selection
   val bRegWidth = scala.math.max(aRegWidth, dRegWidth) + 1
   val gRegWidth = log2Ceil(nGRegs)
   val regWidth = scala.math.max(scala.math.max(aRegWidth, dRegWidth), gRegWidth) + 2
@@ -70,6 +82,9 @@ case class AmletParams(
   def dReg(): UInt = UInt(dRegWidth.W)
   def aReg(): UInt = UInt(aRegWidth.W)
   def bReg(): UInt = UInt(bRegWidth.W)
+
+  def pReg(): UInt = UInt(pRegWidth.W)
+  def pTagWidth: Int = log2Ceil(nPTags)
 
   def dWord(): UInt = UInt(width.W)
   def aWord(): UInt = UInt(aWidth.W)
@@ -101,27 +116,22 @@ class DTaggedSource(params: AmletParams) extends Bundle {
 
     // Check each write port for a match
     for (j <- 0 until params.nResultPorts) {
-      val writeAddr = writes.writes(j).address.addr
+      val writeAddr = writes.writes(j).bits.address.addr
       val isDRegWrite = writeAddr(params.bRegWidth-1)  // Upper bit = 1 for D-registers
       val regIndex = writeAddr(params.dRegWidth-1, 0)  // Lower bits = register index
       
       when (!resolved && writes.writes(j).valid && 
             isDRegWrite &&  // Upper bit = 1 (D-register)
             addr === regIndex &&  // Lower bits match our D-register index  
-            tag === writes.writes(j).address.tag) {
+            tag === writes.writes(j).bits.address.tag) {
         // Address matches - resolve this dependency
         result.resolved := true.B
-        result.value := writes.writes(j).value
+        result.value := writes.writes(j).bits.value
       }
     }
     
     result
   }
-}
-
-class ATaggedReg(params: AmletParams) extends Bundle {
-  val addr = params.aReg()
-  val tag = UInt(params.regTagWidth.W)
 }
 
 class ATaggedSource(params: AmletParams) extends Bundle {
@@ -142,17 +152,17 @@ class ATaggedSource(params: AmletParams) extends Bundle {
 
     // Check each write port for a match
     for (j <- 0 until params.nResultPorts) {
-      val writeAddr = writes.writes(j).address.addr
+      val writeAddr = writes.writes(j).bits.address.addr
       val isARegWrite = !writeAddr(params.bRegWidth-1)  // Upper bit = 0 for A-registers
       val regIndex = writeAddr(params.aRegWidth-1, 0)  // Lower bits = register index
       
       when (!resolved && writes.writes(j).valid && 
             isARegWrite &&  // Upper bit = 0 (A-register)
             addr === regIndex &&  // Lower bits match our A-register index
-            tag === writes.writes(j).address.tag) {
+            tag === writes.writes(j).bits.address.tag) {
         // Address matches - resolve this dependency
         result.resolved := true.B
-        result.value := writes.writes(j).value
+        result.value := writes.writes(j).bits.value
       }
     }
     
@@ -160,6 +170,17 @@ class ATaggedSource(params: AmletParams) extends Bundle {
   }
 }
 
+/**
+ * B-register addressing system unifies A-registers and D-registers
+ * 
+ * The B-register address space uses an encoding where:
+ * - Upper bit = 0: References an A-register (address registers, 16-bit)
+ * - Upper bit = 1: References a D-register (data registers, 32-bit)
+ * - Lower bits: Index within the A-register or D-register file
+ * 
+ * This allows instructions to reference either address or data registers
+ * using a single address field, simplifying instruction encoding.
+ */
 class BTaggedReg(params: AmletParams) extends Bundle {
   val addr = params.bReg()
   val tag = UInt(params.regTagWidth.W)
@@ -184,11 +205,11 @@ class BTaggedSource(params: AmletParams) extends Bundle {
     // Check each write port for a match
     for (j <- 0 until params.nResultPorts) {
       when (!resolved && writes.writes(j).valid && 
-            addr === writes.writes(j).address.addr &&
-            tag === writes.writes(j).address.tag) {
+            addr === writes.writes(j).bits.address.addr &&
+            tag === writes.writes(j).bits.address.tag) {
         // Address matches - resolve this dependency
         result.resolved := true.B
-        result.value := writes.writes(j).value
+        result.value := writes.writes(j).bits.value
       }
     }
     
@@ -196,8 +217,41 @@ class BTaggedSource(params: AmletParams) extends Bundle {
   }
 }
 
+
+class PTaggedReg(params: AmletParams) extends Bundle {
+  val addr = params.pReg()
+  val tag = UInt(params.pTagWidth.W)
+}
+
+class PTaggedSource(params: AmletParams) extends Bundle {
+  val value = Bool()
+  val resolved = Bool()
+  val addr = params.pReg()
+  val tag = UInt(params.pTagWidth.W)
+  
+  def getData: Bool = value
+  def update(writes: ResultBus): PTaggedSource = {
+    val result = Wire(new PTaggedSource(params))
+    
+    // Start with original values
+    result.value := value
+    result.resolved := resolved
+    result.addr := addr
+    result.tag := tag
+
+    // Check each write port for a match
+    when (!resolved && writes.predicate.valid && 
+          addr === writes.predicate.bits.address.addr &&
+          tag === writes.predicate.bits.address.tag) {
+      // Address matches - resolve this dependency
+      result.resolved := true.B
+      result.value := writes.predicate.bits.value
+    }
+    result
+  }
+}
+
 class WriteResult(params: AmletParams) extends Bundle {
-  val valid = Bool()
   val value = UInt(params.width.W)
   val address = new BTaggedReg(params)
   val force = Bool() // from command packet, bypasses writeIdent system
@@ -208,40 +262,15 @@ class WriteEvent(params: AmletParams) extends Bundle {
   val force = Bool() // from command packet, bypasses writeIdent system
 }
 
-class MaskResult(params: AmletParams) extends Bundle {
-  val valid = Bool()
+class PredicateResult(params: AmletParams) extends Bundle {
   val value = Bool()
-  val ident = UInt(params.mIdentWidth.W)
+  val address = new PTaggedReg(params) 
 }
 
-class MaskInfo(params: AmletParams) extends Bundle {
-  val value = Bool()
-  val resolved = Bool()
-  val ident = UInt(params.mIdentWidth.W)
-
-  def getData: Bool = value
-  def update(writes: ResultBus): MaskInfo = {
-    val result = Wire(new MaskInfo(params))
-    result.value := value
-    result.resolved := resolved
-    result.ident := ident
-    
-    // Check each mask write port for a match
-    for (j <- 0 until params.nResultPorts) {
-      when (!resolved && writes.masks(j).valid && 
-            ident === writes.masks(j).ident) {
-        result.resolved := true.B
-        result.value := writes.masks(j).value
-      }
-    }
-    
-    result
-  }
-}
 
 class ResultBus(params: AmletParams) extends Bundle {
-  val writes = Vec(params.nResultPorts, new WriteResult(params))
-  val masks = Vec(params.nResultPorts, new MaskResult(params))
+  val writes = Vec(params.nResultPorts, new Valid(WriteResult(params)))
+  val predicate = Valid(PredicateResult(params))
 }
 
 

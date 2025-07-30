@@ -19,7 +19,6 @@ import chisel3.util._
  * - Eq, Gte, Lte: Comparison operations
  * - Not, And, Or: Logical operations
  * - ShiftL, ShiftR: Shift operations
- * - Jump: Control flow (handled by setting result appropriately)
  */
 class ALU(params: AmletParams) extends Module {
   val io = IO(new Bundle {
@@ -29,6 +28,9 @@ class ALU(params: AmletParams) extends Module {
     // ALU result output
     val result = Output(new WriteResult(params))
   })
+
+  // Shift amount bit range for data width operations
+  private val shiftBits = log2Ceil(params.width) - 1
 
   // Compute ALU result
   val aluOut = Wire(UInt(params.width.W))
@@ -90,14 +92,10 @@ class ALU(params: AmletParams) extends Module {
       aluOut := io.instr.bits.src1 | io.instr.bits.src2
     }
     is(ALUInstr.Modes.ShiftL) {
-      aluOut := io.instr.bits.src1 << io.instr.bits.src2(4, 0)  // Use bottom 5 bits for shift amount
+      aluOut := io.instr.bits.src1 << io.instr.bits.src2(shiftBits, 0)
     }
     is(ALUInstr.Modes.ShiftR) {
-      aluOut := io.instr.bits.src1 >> io.instr.bits.src2(4, 0)  // Use bottom 5 bits for shift amount
-    }
-    is(ALUInstr.Modes.Jump) {
-      // For jump instructions, the result might be a target address or control signal
-      aluOut := io.instr.bits.src1  // Could be jump target
+      aluOut := io.instr.bits.src1 >> io.instr.bits.src2(shiftBits, 0)
     }
   }
 

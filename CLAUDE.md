@@ -14,7 +14,7 @@ NEVER add imports inside functions - always place them at the top of the file.
 ## Testing
 When running Python tests, always redirect output to a file so you can examine the complete output without needing to rerun the test. For example:
 ```bash
-python test/main/python/fmvpu/test_lane.py > test_output.log 2>&1
+python python/fmvpu/amlet_test/test_alu_basic.py > test_output.log 2>&1
 ```
 This allows you to read the file multiple times to analyze different parts of the output.
 
@@ -29,5 +29,13 @@ When creating new files, especially large ones, create them in small chunks for 
 ## Area Analysis
 To get area analysis for components, add them to the appropriate DSE BUILD file:
 - For amlet components: Add to `dse/amlet/BUILD` in the `AMLET_STUDIES` list
-- For lane components: Add to `dse/lane/BUILD` in the `LANE_STUDIES` list
+- For bamlet components: Add to `dse/bamlet/BUILD` in the `BAMLET_STUDIES` list
 Then run the DSE flows using bazel targets.
+
+## Grep Tool Usage
+When using the Grep tool for searching code:
+- **DO NOT** put extra quotes inside the pattern parameter value
+- **Use simple patterns** rather than overly complex regex when possible
+- **Issue**: Patterns like `"predicate.*new PTaggedSource"` (with quotes inside) will search for literal quote characters
+- **Solution**: Use clean patterns like `predicate.*new PTaggedSource` (without extra quotes)
+- Simple patterns like `isLocal` work better than complex multi-part regex patterns

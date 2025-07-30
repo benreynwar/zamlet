@@ -17,24 +17,33 @@ object LoadStoreInstr {
     val mode = Modes()
     val addr = params.aReg()
     val reg = params.bReg()
+    val predicate = params.pReg()
+    val dst = new BTaggedReg(params)
+  }
+
+  class Expanded(params: AmletParams) extends Instr.Expanded(params) {
+    val mode = Modes()
+    val addr = params.aReg()
+    val reg = params.bReg()
+    val predicate = params.pReg()
+    val dst = new BTaggedReg(params)
   }
   
   class Resolving(params: AmletParams) extends Instr.Resolving(params) {
     val mode = Modes()
     val addr = new ATaggedSource(params)
     val src = new BTaggedSource(params)
-    val mask = new MaskInfo(params)
+    val predicate = new PTaggedSource(params)
     val dst = new BTaggedReg(params)
 
     def isResolved(): Bool = {
       addr.resolved && 
       src.resolved && 
-      //mask.resolved &&
-      true.B
+      predicate.resolved
     }
 
     def isMasked(): Bool = {
-      false.B //mask.resolved && mask.getData
+      predicate.resolved && !predicate.getData
     }
 
     def resolve(): Resolved = {
@@ -51,7 +60,7 @@ object LoadStoreInstr {
       resolving.mode := mode
       resolving.addr := addr.update(writes)
       resolving.src := src.update(writes)
-      resolving.mask := mask.update(writes)
+      resolving.predicate := predicate.update(writes)
       resolving.dst := dst
       resolving
     }

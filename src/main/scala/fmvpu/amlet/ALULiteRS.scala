@@ -37,7 +37,7 @@ object ALULiteRSGenerator extends fmvpu.ModuleGenerator {
     */
   override def makeModule(args: Seq[String]): Module = {
     if (args.length < 1) {
-      println("Usage: <command> <outputDir> ALULiteRS <laneParamsFileName>")
+      println("Usage: <command> <outputDir> ALULiteRS <amletParamsFileName>")
       null
     } else {
       val params = AmletParams.fromFile(args(0))
