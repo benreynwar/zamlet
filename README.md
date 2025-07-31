@@ -1,114 +1,76 @@
 # FMVPU - Flexible Multi-Vector Processing Unit
 
-A research project exploring mesh-based vector processing architectures using Chisel for hardware generation and Cocotb for verification.
+The project is currently a playground for exploring a few things:
 
-This project investigates hybrid CGRA-vector processing architectures, specifically exploring CGRAs that can be dynamically partitioned into independent vector processing units. It also serves as a testbed for Chisel development workflows and LLM-assisted hardware design.
+- Looking at a hybrid CGRA (coarse-grained reconfigurable array) vector-based processing architecture.  The basic idea is that we have a mesh of
+   small compute units, with occasional more powerful processors mixed in.  The processors can gather a region of compute units into a vector processor.
+   It's likely not practical but is a fun idea to explore.
+- Using Chisel to design hardware and combining with cocotb verification.
+- Seeing how LLM can assist with hardware development
+- Using OpenROAD, OpenRAM and Bazel for design space exploration.
 
-**Note**: This project is currently in the early stages of development.
+**Note**: This project is in the early stages of development.
 
-## Project Overview
+## Build system
+   Currently it's using a mix of docker and bazel.  This is the first time I've used bazel and it seems nice but often it's diffcult to
+   get dependencies working.  I'm mostly getting the dependencies working in a Docker container, and then running bazel in that
+   container for the build.
 
-FMVPU implements a 2D mesh of processing lanes, each containing:
-- **ALU**: Arithmetic and logic processing unit (planned)
-- **Network Node**: Configurable router enabling inter-lane communication
-- **Distributed Memory**: Register file (DRF) and data memory (DDM) with multi-banked access patterns
+## RTL Development
 
-## Key Features
-
-- **Parameterizable Architecture**: Grid dimensions, memory configurations, and network topology defined via JSON
-- **Hybrid Network Modes**: Dynamic packet-switched routing with optional circuit-switched overlays
-- **Multi-banked Memory System**: Concurrent access patterns with automatic conflict resolution
-
-## Quick Start
-
-### Prerequisites
-- [Mill](https://mill-build.com/) build tool
-- Scala 2.13.16
-- Python 3.8+ with `pytest` and `cocotb`
-- Chisel 7.0.0-RC1
-
-### Building and Testing
-
-```bash
-# Generate Verilog RTL for the LaneGrid module
-mill fmvpu.runMain fmvpu.Main out/rtl LaneGrid test/main/python/fmvpu/params/default.json
-
-# Run all Python/Cocotb verification tests
-mill pythonTest
-
-# Run both Scala and Python tests
-mill testAll
-```
+Current implementation includes Amlet (processing units) and Bamlet (2D grids) architectures with:
+- Multiple execution units: ALU, ALU-Lite, Load/Store, Packet handling
+- Reservation stations for out-of-order execution
+- Register files with renaming
+- Network packet communication
+- VLIW instruction support
+- The instruction memory is at the Bamlet level, and Amlets run in SIMT fashion making use of 
+  predicates.
+- There has been no work yet on timing.  Pipelining work is needed.
 
 ## Project Structure
 
 ```
 src/main/scala/fmvpu/
-├── core/           # Processing lanes and ALU components
-├── memory/         # Register files, data memory, and memory controllers
-├── network/        # Network routers, switches, and interconnect
-└── utils/          # Utility modules (delays, FIFOs, arbiters)
+├── Main.scala              # RTL generation entry point
+├── ModuleGenerator.scala   # Module generation interface
+├── amlet/                  # Amlet (processing unit) architecture
+│   ├── Amlet.scala        # Main Amlet module
+│   ├── ALU*.scala         # Arithmetic Logic Units
+│   ├── LoadStore*.scala   # Memory operations
+│   ├── Packet*.scala      # Network packet handling
+│   ├── RegisterFile*.scala # Register management
+│   └── ReservationStation.scala # Out-of-order execution
+├── bamlet/                 # Bamlet (grid) architecture
+│   ├── Bamlet.scala       # 2D grid of Amlets
+│   ├── Control.scala      # Instruction dispatch
+│   └── InstructionMemory.scala # Program storage
+└── utils/                  # Shared utilities
+    ├── Fifo.scala         # FIFO implementations
+    └── *Buffer.scala      # Various buffer types
 
-test/main/python/fmvpu/
-├── test_*.py       # Cocotb-based verification testbenches
-├── params/         # JSON configuration files for different architectures
-└── *.py            # Test utilities and Verilog generation scripts
+python/fmvpu/
+├── amlet/                  # Python instruction models
+├── bamlet/                 # Bamlet utilities and interfaces
+├── amlet_test/            # Amlet verification tests
+├── bamlet_test/           # Bamlet verification tests
+├── bamlet_kernels/        # Sample kernels (FFT, etc.)
+└── utils.py               # Common test utilities
+
+dse/                        # Design Space Exploration
+├── amlet/BUILD            # Amlet synthesis configs
+├── bamlet/BUILD           # Bamlet synthesis configs
+├── scripts/               # Analysis tools
+└── openram_scripts/       # Memory compiler integration
+
+configs/                    # Hardware configurations
+├── amlet_default.json     # Default Amlet parameters
+└── bamlet_default.json    # Default Bamlet parameters
+
+docs/                       # Documentation
+├── api/                   # Generated Scaladoc
+└── architecture/          # Design documentation
 ```
-
-## Documentation
-
-Additional documentation available in `docs/`:
-- [Project Overview](docs/project-overview.md) - Research goals, motivation, and development status
-- [Architecture](docs/architecture/) - Detailed technical design documentation
-- [Development Notes](docs/decisions/) - Design decisions and implementation rationales
-
-## License
-
-MIT
-
-## Development Plans
-   Most of the documentation was written by Claude Code, and then edited a bit by me.
-   This I'm going to write myself. It's ok if it sounds a bit crap.
-   This will be very incomplete, but will be somewhere for me to collect my thoughts so I
-   don't get too offtrack.
-
-### Add a network configuration Memory
-   The NetworkNode will contain a small memory (of configurable depth with expected values of
-   8 or 16 or so).  It will be possible to load data from the DDM into this configurable memory.
-   There will add a new instruction that loads data from the DDM into this memory.
-   When a permutation instruction is submitted it will reference this memory and the data from that
-   address will be read and interpreted as a NetworkControl instance.
-
-   Status - Not started
-
-### Implement a basic ALU for the Lane.
-   Initially let's support addition and multiplication.
-
-   Status - Not started
-
-### Add a processor on the north side of the grid.
-
-   We'll add a RISCV processor to the north side of the grid.
-   We need to work out how to drive the VLIW instructions to the grid.
-   As possible approach is that the processor will queue up a bunch of instructions and
-   then submit them to run in a loop for a fixed number of iterations, so that it can be working
-   on something else while that loop runs.  We'll likely explore a few different approaches.
-
-   Status - Not started
-
-### Create a grid with multiple processors embedded
-   Processors can enlist of a number of Lanes to make a dynamic vector processing unit.
-   Not sure if this is actually useful, but it sounds cool.
-   The hardware shouldn't be that hard.  It's just instruction routing.
-   Making this useable for software will be a pain.
-
-   Status - Not started
-
-## Power and Area
-   Get a reliable way to measure area and power.  I'd love for this to be using open-source tools
-   so that the CI can be repeatable.  It would also be nice to get numbers for the closed tools.
-
-   Status - Not started
 
 ## Workloads
    Get some meaningful software running on the hardware.
