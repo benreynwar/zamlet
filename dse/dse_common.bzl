@@ -11,7 +11,7 @@ def dse_component_flows(studies, component_type, pdks = ["asap7", "sky130hd"]):
     
     Args:
         studies: List of study dictionaries with "name", "top_level", and "config_file" keys
-        component_type: String identifier for the component type (e.g., "new_lane", "amlet")
+        component_type: String identifier for the component type (e.g., "amlet")
         pdks: List of PDKs to target (default: ["asap7", "sky130hd"])
     """
     
@@ -92,7 +92,7 @@ def dse_filegroups(studies, component_type, pdks = ["asap7", "sky130hd"]):
     
     Args:
         studies: List of study dictionaries
-        component_type: String identifier for the component type (e.g., "new_lane", "amlet")  
+        component_type: String identifier for the component type (e.g., "amlet")  
         pdks: List of PDKs to target (default: ["asap7", "sky130hd"])
     """
     
