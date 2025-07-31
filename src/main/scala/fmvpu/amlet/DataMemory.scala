@@ -14,7 +14,7 @@ class DataMemory(params: AmletParams) extends Module {
     val instr = Input(Valid(new LoadStoreInstr.Resolved(params)))
     
     // Result output
-    val result = Output(new WriteResult(params))
+    val result = Output(Valid(new WriteResult(params)))
   })
   
   // Memory array
@@ -34,9 +34,9 @@ class DataMemory(params: AmletParams) extends Module {
   
   // Output result for loads only (only when not masked)
   io.result.valid := RegNext(io.instr.valid && isLoad, false.B)
-  io.result.value := readData
-  io.result.address := RegNext(io.instr.bits.dst)
-  io.result.force := false.B
+  io.result.bits.value := readData
+  io.result.bits.address := RegNext(io.instr.bits.dst)
+  io.result.bits.force := false.B
 }
 
 /**

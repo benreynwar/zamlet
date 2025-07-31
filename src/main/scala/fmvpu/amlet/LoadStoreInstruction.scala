@@ -19,6 +19,16 @@ object LoadStoreInstr {
     val reg = params.bReg()
     val predicate = params.pReg()
     val dst = new BTaggedReg(params)
+
+    def expand(): Expanded = {
+      val expanded = Wire(new Expanded(params))
+      expanded.mode := mode
+      expanded.addr := addr
+      expanded.reg := reg
+      expanded.predicate := predicate
+      expanded.dst := dst
+      expanded
+    }
   }
 
   class Expanded(params: AmletParams) extends Instr.Expanded(params) {

@@ -2,7 +2,7 @@ package fmvpu.bamlet
 
 import chisel3._
 import chisel3.util._
-import fmvpu.amlet.{ControlWrite, ControlWriteMode}
+import fmvpu.amlet.{ControlWrite, ControlWriteMode, VLIWInstr}
 
 /**
  * Instruction memory interface for Bamlet

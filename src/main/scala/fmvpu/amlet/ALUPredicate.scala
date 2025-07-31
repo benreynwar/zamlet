@@ -12,7 +12,7 @@ class ALUPredicate(params: AmletParams) extends Module {
     val instr = Input(Valid(new PredicateInstr.Resolved(params)))
     
     // ALUPredicate result output
-    val result = Output(new Valid(PredicateResult(params)))
+    val result = Output(Valid(new PredicateResult(params)))
   })
 
   // Compute ALUPredicate result
@@ -28,7 +28,7 @@ class ALUPredicate(params: AmletParams) extends Module {
       aluOut := io.instr.bits.src1 === io.instr.bits.src2
     }
     is(PredicateInstr.Modes.NEq) {
-      aluOut := io.instr.bits.src1 !== io.instr.bits.src2
+      aluOut := io.instr.bits.src1 =/= io.instr.bits.src2
     }
     is(PredicateInstr.Modes.Gte) {
       aluOut := io.instr.bits.src1 >= io.instr.bits.src2

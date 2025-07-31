@@ -28,10 +28,21 @@ object VLIWInstr {
     val aluLite = new ALULiteInstr.Base(params)
     val loadStore = new LoadStoreInstr.Base(params)
     val packet = new PacketInstr.Base(params)
+
+    def expand(): Expanded = {
+      val expanded = Wire(new Expanded(params))
+      expanded.control := control.expand()
+      expanded.predicate := predicate.expand()
+      expanded.alu := alu.expand()
+      expanded.aluLite := aluLite.expand()
+      expanded.loadStore := loadStore.expand()
+      expanded.packet := packet.expand()
+      expanded
+    }
   }
 
   class Expanded(params: AmletParams) extends Bundle {
-    val control = new ControlInstr.Base(params)
+    val control = new ControlInstr.Expanded(params)
     val predicate = new PredicateInstr.Expanded(params)
     val alu = new ALUInstr.Expanded(params)
     val aluLite = new ALULiteInstr.Expanded(params)

@@ -32,6 +32,17 @@ object PacketInstr {
     val target = params.aReg()
     val predicate = params.pReg()
     val channel = UInt(log2Ceil(params.nChannels).W)
+
+    def expand(): Expanded = {
+      val expanded = Wire(new Expanded(params))
+      expanded.mode := mode
+      expanded.result := result
+      expanded.length := length
+      expanded.target := target
+      expanded.predicate := predicate
+      expanded.channel := channel
+      expanded
+    }
   }
 
   class Expanded(params: AmletParams) extends Instr.Expanded(params) {

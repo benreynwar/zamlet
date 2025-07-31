@@ -43,6 +43,7 @@ def dse_component_flows(studies, component_type, pdks = ["asap7", "sky130hd"]):
             "TNS_END_PERCENT": "0",
             "SYNTH_HIERARCHICAL": "1",
             "SYNTH_MINIMUM_KEEP_SIZE": "50",
+            "SYNTH_MEMORY_MAX_BITS": "8192",
             "PLACE_DENSITY": "0.40",
             "CORE_UTILIZATION": "20",
         },

@@ -1,7 +1,7 @@
 package fmvpu.amlet
 
 import chisel3._
-import chisel3.util.log2Ceil
+import chisel3.util._
 import io.circe._
 import io.circe.parser._
 import io.circe.generic.auto._
@@ -52,6 +52,7 @@ case class AmletParams(
 
   // ALU Predicate configuration
   aluPredicateLatency: Int = 1,
+  nAluPredicateRSSlots: Int = 4,
 
   // Load Store configuration
   nLoadStoreRSSlots: Int = 4,
@@ -174,12 +175,14 @@ class ATaggedSource(params: AmletParams) extends Bundle {
  * B-register addressing system unifies A-registers and D-registers
  * 
  * The B-register address space uses an encoding where:
- * - Upper bit = 0: References an A-register (address registers, 16-bit)
- * - Upper bit = 1: References a D-register (data registers, 32-bit)
+ * - Upper bit = 0: References an A-register (address registers, aWidth bits)
+ * - Upper bit = 1: References a D-register (data registers, width bits)
  * - Lower bits: Index within the A-register or D-register file
  * 
  * This allows instructions to reference either address or data registers
  * using a single address field, simplifying instruction encoding.
+ * 
+ * See readBReg() and assignWrite() for implementation details.
  */
 class BTaggedReg(params: AmletParams) extends Bundle {
   val addr = params.bReg()
@@ -269,8 +272,8 @@ class PredicateResult(params: AmletParams) extends Bundle {
 
 
 class ResultBus(params: AmletParams) extends Bundle {
-  val writes = Vec(params.nResultPorts, new Valid(WriteResult(params)))
-  val predicate = Valid(PredicateResult(params))
+  val writes = Vec(params.nResultPorts, Valid(new WriteResult(params)))
+  val predicate = Valid(new PredicateResult(params))
 }
 
 

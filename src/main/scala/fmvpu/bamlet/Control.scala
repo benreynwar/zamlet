@@ -2,7 +2,7 @@ package fmvpu.bamlet
 
 import chisel3._
 import chisel3.util._
-import fmvpu.amlet.{ControlWrite, ControlWriteMode, ControlInstr}
+import fmvpu.amlet.{ControlWrite, ControlWriteMode, ControlInstr, VLIWInstr}
 
 
 class LoopState(params: BamletParams) extends Bundle {
@@ -34,7 +34,7 @@ class ControlState(params: BamletParams) extends Bundle {
   val loopActive = Bool()
   val loopStates = Vec(params.nLoopLevels, new LoopState(params))
   val loopLevel = UInt(log2Ceil(params.nLoopLevels).W)
-  val globals = Vec(params.amlet.nGRegs, params.aReg())
+  val globals = Vec(params.amlet.nGRegs, params.amlet.aReg())
   val pc = UInt(params.amlet.instrAddrWidth.W)
   val active = Bool()
   def dWord(): UInt = UInt(params.amlet.width.W)
@@ -45,7 +45,6 @@ class ControlState(params: BamletParams) extends Bundle {
 class InstrResp(params: BamletParams) extends Bundle {
   val instr = new VLIWInstr.Base(params.amlet)
   val pc = UInt(params.amlet.instrAddrWidth.W)
-  val active = Bool()
 }
 
 
@@ -92,12 +91,12 @@ class Control(params: BamletParams) extends Module {
   
   val state = RegNext(stateNext, stateInit)
 
-  val instrBuffered = Wire(Decoupled(new VLIWInstr.Base(params.amlet)))
-  // The only change we make to the instruction is that we substitute some Loop for Incr.
-  instrBuffered.bits := io.imResp.bits.instr
+  val instrBuffered = Wire(Decoupled(new VLIWInstr.Expanded(params.amlet)))
+  // Convert from Base to Expanded format and substitute some Loop for Incr.
+  instrBuffered.bits := io.imResp.bits.instr.expand()
   instrBuffered.valid := io.imResp.valid && state.active
 
-  val instrBuffer = Module(new fmvpu.utils.SkidBuffer(new VLIWInstr.Base(params.amlet)))
+  val instrBuffer = Module(new fmvpu.utils.SkidBuffer(new VLIWInstr.Expanded(params.amlet)))
   instrBuffer.io.i <> instrBuffered
   io.instr <> instrBuffer.io.o
 
@@ -121,7 +120,6 @@ class Control(params: BamletParams) extends Module {
           stateBody.loopLevel := state.loopLevel + 1.U
           stateBody.loopStates(stateBody.loopLevel).index := 0.U
           when (isLocalLoop) {
-            stateBody.loopStates(stateBody.loopLevel).iterations := DontCare
             stateBody.loopStates(stateBody.loopLevel).resolvedIterations :=
               VecInit(Seq.fill(params.nAmlets)(false.B))
             stateBody.loopStates(stateBody.loopLevel).terminating := false.B
@@ -138,7 +136,6 @@ class Control(params: BamletParams) extends Module {
         stateBody.loopLevel := 0.U
         stateBody.loopStates(stateBody.loopLevel).index := 0.U
         when (isLocalLoop) {
-          stateBody.loopStates(stateBody.loopLevel).iterations := DontCare
           stateBody.loopStates(stateBody.loopLevel).resolvedIterations :=
             VecInit(Seq.fill(params.nAmlets)(false.B))
           stateBody.loopStates(stateBody.loopLevel).terminating := false.B

@@ -41,6 +41,17 @@ object PredicateInstr {
     val base = params.pReg()
     val notBase = Bool()
     val dst = params.pReg()
+
+    def expand(): Expanded = {
+      val expanded = Wire(new Expanded(params))
+      expanded.mode := mode
+      expanded.src1 := src1.value
+      expanded.src2 := src2
+      expanded.base := base
+      expanded.notBase := notBase
+      expanded.dst := dst
+      expanded
+    }
   }
   
   class Expanded(params: AmletParams) extends Instr.Expanded(params) {
@@ -61,22 +72,35 @@ object PredicateInstr {
     val notBase = Bool()
     val dst = new PTaggedReg(params)
 
+    /** 
+     * Determines if the base predicate evaluates to false after applying notBase.
+     * The predicate logic is: (base XOR notBase)
+     * - If notBase=false: result = base (normal case)  
+     * - If notBase=true:  result = !base (inverted case)
+     * When this returns true, the instruction can be resolved early without evaluating src1/src2.
+     */
     def baseIsFalse: Bool = {
       base.resolved && (base.value ^ notBase)
     }
 
+    /**
+     * An instruction is resolved when either:
+     * 1. The base predicate evaluates to false (early termination), OR
+     * 2. All operands (src2 and base) are resolved (normal evaluation)
+     */
     def isResolved(): Bool = {
-      baseIsFalse() ||
+      baseIsFalse ||
       (src2.resolved && base.resolved)
     }
 
+    /** Predicate instructions are never masked (they compute mask values) */
     def isMasked(): Bool = {
       false.B
     }
 
     def resolve(): Resolved = {
       val resolved = Wire(new Resolved(params))
-      when (baseIsFalse()) {
+      when (baseIsFalse) {
         resolved.mode := mode
         resolved.src1 := src1
         resolved.src2 := DontCare

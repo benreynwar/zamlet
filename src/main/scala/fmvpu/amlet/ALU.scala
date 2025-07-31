@@ -26,7 +26,7 @@ class ALU(params: AmletParams) extends Module {
     val instr = Input(Valid(new ALUInstr.Resolved(params)))
     
     // ALU result output
-    val result = Output(new WriteResult(params))
+    val result = Output(Valid(new WriteResult(params)))
   })
 
   // Shift amount bit range for data width operations
@@ -103,10 +103,10 @@ class ALU(params: AmletParams) extends Module {
   if (params.aluLatency == 0) {
     // Single cycle latency
     io.result.valid := io.instr.valid
-    io.result.value := aluOut
-    io.result.address.addr := io.instr.bits.dst.addr
-    io.result.address.tag := io.instr.bits.dst.tag
-    io.result.force := false.B
+    io.result.bits.value := aluOut
+    io.result.bits.address.addr := io.instr.bits.dst.addr
+    io.result.bits.address.tag := io.instr.bits.dst.tag
+    io.result.bits.force := false.B
   } else {
     // Multi-cycle pipeline
     val validPipe = RegInit(VecInit(Seq.fill(params.aluLatency)(false.B)))
@@ -127,9 +127,9 @@ class ALU(params: AmletParams) extends Module {
     
     // Output
     io.result.valid := validPipe(params.aluLatency-1)
-    io.result.value := resultPipe(params.aluLatency-1)
-    io.result.address := dstAddrPipe(params.aluLatency-1)
-    io.result.force := false.B
+    io.result.bits.value := resultPipe(params.aluLatency-1)
+    io.result.bits.address := dstAddrPipe(params.aluLatency-1)
+    io.result.bits.force := false.B
   }
 }
 

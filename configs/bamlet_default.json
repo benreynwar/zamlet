@@ -13,17 +13,22 @@
     "dataMemoryDepth": 32,
     "nResultPorts": 4,
     "nLoopLevels": 4,
+    "nPRegs": 16,
+    "nPTags": 4,
     "xPosWidth": 8,
     "yPosWidth": 8,
     "packetLengthWidth": 8,
     "aluLatency": 1,
     "nAluRSSlots": 4,
+    "aluLiteLatency": 1,
     "nAluLiteRSSlots": 4,
+    "aluPredicateLatency": 1,
+    "nAluPredicateRSSlots": 4,
     "nLoadStoreRSSlots": 4,
     "nSendPacketRSSlots": 2,
     "nReceivePacketRSSlots": 2,
     "nPacketOutIdents": 4,
     "nChannels": 2,
-    "instrAddrWidth": 16
+    "instrAddrWidth": 8
   }
 }

@@ -22,7 +22,7 @@ class ReceivePacketInterfaceIO(params: AmletParams) extends Bundle {
   val forward = Valid(new PacketForward(params))
   
   // Result interface
-  val result = new WriteResult(params)
+  val result = Valid(new WriteResult(params))
   
   // Instruction memory write interface
   val writeControl = Valid(new ControlWrite(params))
@@ -111,10 +111,10 @@ class ReceivePacketInterface(params: AmletParams) extends Module {
   
   // Default outputs
   io.result.valid := false.B
-  io.result.address.addr := DontCare
-  io.result.address.tag := DontCare
-  io.result.value := DontCare
-  io.result.force := DontCare
+  io.result.bits.address.addr := DontCare
+  io.result.bits.address.tag := DontCare
+  io.result.bits.value := DontCare
+  io.result.bits.force := DontCare
   io.writeControl.valid := false.B
   io.writeControl.bits := DontCare
   
@@ -220,10 +220,10 @@ class ReceivePacketInterface(params: AmletParams) extends Module {
             
             // Write packet length to the result register specified by instruction
             io.result.valid := true.B
-            io.result.address.addr := bufferedInstr.bits.result.addr
-            io.result.address.tag := bufferedInstr.bits.result.tag
-            io.result.value := header.length
-            io.result.force := false.B
+            io.result.bits.address.addr := bufferedInstr.bits.result.addr
+            io.result.bits.address.tag := bufferedInstr.bits.result.tag
+            io.result.bits.value := header.length
+            io.result.bits.force := false.B
           }
           // If no instruction available or instruction is masked, stay in Idle (don't consume header)
         }
@@ -243,10 +243,10 @@ class ReceivePacketInterface(params: AmletParams) extends Module {
         
         // Write to register
         io.result.valid := true.B
-        io.result.value := bufferedFromNetwork.bits.data
-        io.result.address.addr := bufferedInstr.bits.result.addr
-        io.result.address.tag := bufferedInstr.bits.result.tag
-        io.result.force := false.B
+        io.result.bits.value := bufferedFromNetwork.bits.data
+        io.result.bits.address.addr := bufferedInstr.bits.result.addr
+        io.result.bits.address.tag := bufferedInstr.bits.result.tag
+        io.result.bits.force := false.B
         
         receiveRemainingWords := receiveRemainingWords - 1.U
         when (receiveRemainingWords === 1.U) {
@@ -321,10 +321,10 @@ class ReceivePacketInterface(params: AmletParams) extends Module {
     is(States.ProcessingRegWrite) {
       when (bufferedFromNetwork.valid) {
         // Write the data value to the register specified in the header
-        io.result.address.addr := regWriteAddress
-        io.result.address.tag := 0.U // Command writes don't use write identifiers
-        io.result.value := bufferedFromNetwork.bits.data
-        io.result.force := true.B // Command writes bypass dependency system
+        io.result.bits.address.addr := regWriteAddress
+        io.result.bits.address.tag := 0.U // Command writes don't use write identifiers
+        io.result.bits.value := bufferedFromNetwork.bits.data
+        io.result.bits.force := true.B // Command writes bypass dependency system
         io.writeControl.bits.mode := ControlWriteMode.GlobalRegister
         io.writeControl.bits.address := regWriteAddress(params.gRegWidth-1, 0)
         io.writeControl.bits.data := bufferedFromNetwork.bits.data

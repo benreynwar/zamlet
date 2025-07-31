@@ -19,7 +19,7 @@ object ControlInstr {
     val Halt = Value(7.U)
   }
 
-  class SrcMode extends ChiselEnum {
+  object SrcMode extends ChiselEnum {
     val Immediate = Value(0.U)
     val AReg = Value(1.U)
     val GReg = Value(2.U)
@@ -32,7 +32,7 @@ object ControlInstr {
 
   class BaseSrcType(params: AmletParams) extends Bundle {
     val mode = SrcMode()
-    val value = UInt(srcWidth(params))
+    val value = UInt(srcWidth(params).W)
   }
 
   class ExtendedSrcType(params: AmletParams) extends Bundle {
@@ -48,6 +48,18 @@ object ControlInstr {
     val dst = params.aReg()                    // Where the loop index goes.
     val predicate = params.pReg()              // loop_index < iterations put here.
     val length = UInt(params.instrAddrWidth.W) // Number of instructions in the loop body.
+
+    def expand(): Expanded = {
+      val expanded = Wire(new Expanded(params))
+      expanded.mode := mode
+      expanded.iterations.resolved := false.B  
+      expanded.iterations.addr := iterations.value  
+      expanded.iterations.value := DontCare
+      expanded.dst := dst
+      expanded.predicate := predicate
+      expanded.length := length
+      expanded
+    }
   }
 
   class Expanded(params: AmletParams) extends Instr.Expanded(params) {

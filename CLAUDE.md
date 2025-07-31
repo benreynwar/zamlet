@@ -30,7 +30,9 @@ When creating new files, especially large ones, create them in small chunks for 
 To get area analysis for components, add them to the appropriate DSE BUILD file:
 - For amlet components: Add to `dse/amlet/BUILD` in the `AMLET_STUDIES` list
 - For bamlet components: Add to `dse/bamlet/BUILD` in the `BAMLET_STUDIES` list
-Then run the DSE flows using bazel targets.
+
+Run DSE flows using: `bazel build //dse/{component}:{study_name}__{pdk}_results`
+Example: `bazel build //dse/bamlet:Bamlet_default__asap7_results`
 
 ## Grep Tool Usage
 When using the Grep tool for searching code:

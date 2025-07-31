@@ -187,8 +187,6 @@ class RegisterFileAndRename(params: AmletParams) extends Module {
         when (io.instr.bits.control.iterations.resolved) {
           statePostControl.loopStates(loopLevelNew).iterations.value := io.instr.bits.control.iterations.value
           statePostControl.loopStates(loopLevelNew).iterations.resolved := true.B
-          statePostControl.loopStates(loopLevelNew).iterations.addr := DontCare
-          statePostControl.loopStates(loopLevelNew).iterations.tag := DontCare
         } .otherwise {
           statePostControl.loopStates(loopLevelNew).iterations := controlIterations
         }
@@ -224,7 +222,7 @@ class RegisterFileAndRename(params: AmletParams) extends Module {
   }
   io.aluPredicateInstr.valid := io.instr.valid && predicateValid
   io.aluPredicateInstr.bits.mode := io.instr.bits.predicate.mode
-  io.aluPredicateInstr.bits.src1 := io.instr.bits.predicate.src1.value
+  io.aluPredicateInstr.bits.src1 := io.instr.bits.predicate.src1
   io.aluPredicateInstr.bits.src2 := predicateSrc2
   io.aluPredicateInstr.bits.base := predicateBase
   io.aluPredicateInstr.bits.notBase := io.instr.bits.predicate.notBase
@@ -644,20 +642,17 @@ class RegisterFileAndRename(params: AmletParams) extends Module {
   val unreportedLoopLevel = Wire(UInt(log2Ceil(params.nLoopLevels).W))
   val foundUnreportedLoop = Wire(Bool())
   
-  // Find the lowest loop level that needs reporting
-  foundUnreportedLoop := false.B
-  unreportedLoopLevel := 0.U
-  
+  // Find the lowest loop level that needs reporting using priority encoder
+  val needsReporting = Wire(Vec(params.nLoopLevels, Bool()))
   for (i <- 0 until params.nLoopLevels) {
-    when (!foundUnreportedLoop && 
-          i.U <= state.loopLevel && 
-          !state.loopStates(i).reported && 
-          state.loopActive && 
-          state.loopStates(i).resolved) {
-      foundUnreportedLoop := true.B
-      unreportedLoopLevel := i.U
-    }
+    needsReporting(i) := i.U <= state.loopLevel && 
+                         !state.loopStates(i).reported && 
+                         state.loopActive && 
+                         state.loopStates(i).resolved
   }
+  
+  foundUnreportedLoop := needsReporting.asUInt =/= 0.U
+  unreportedLoopLevel := PriorityEncoder(needsReporting)
   
   // Send loop iterations if we found an unreported resolved loop
   io.loopIterations.valid := foundUnreportedLoop

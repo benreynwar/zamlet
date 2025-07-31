@@ -50,6 +50,7 @@ object Main extends App {
     case "ALU" => ALUGenerator
     case "ALULite" => ALULiteGenerator
     case "ALUPredicate" => ALUPredicateGenerator
+    case "ALUPredicateRS" => ALUPredicateRSGenerator
     case "LoadStoreRS" => LoadStoreRSGenerator
     case "DataMemory" => DataMemoryGenerator
     case "SendPacketRS" => SendPacketRSGenerator

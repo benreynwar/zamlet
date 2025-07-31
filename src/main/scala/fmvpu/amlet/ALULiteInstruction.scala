@@ -49,6 +49,16 @@ object ALULiteInstr {
     val src2 = params.aReg()
     val predicate = params.pReg()
     val dst = params.bReg()
+
+    def expand(): Expanded = {
+      val expanded = Wire(new Expanded(params))
+      expanded.mode := mode
+      expanded.src1 := src1
+      expanded.src2 := src2
+      expanded.predicate := predicate
+      expanded.dst := dst
+      expanded
+    }
   }
 
   class Expanded(params: AmletParams) extends Instr.Expanded(params) {

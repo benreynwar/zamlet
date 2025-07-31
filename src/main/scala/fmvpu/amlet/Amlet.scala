@@ -14,7 +14,7 @@ class AmletIO(params: AmletParams) extends Bundle {
   val thisY = Input(UInt(params.yPosWidth.W))
   
   // Input stream of VLIW instructions from Bamlet
-  val instruction = Flipped(Decoupled(new VLIWInstr.Base(params)))
+  val instruction = Flipped(Decoupled(new VLIWInstr.Expanded(params)))
   
   
   // Control outputs from ReceivePacketInterface
@@ -106,7 +106,7 @@ class Amlet(params: AmletParams) extends Module {
   
   
   // Connect results to RegisterFileAndRename and reservation stations for dependency resolution
-  registerFileAndRename.io.resultBus := resultBus.writes
+  registerFileAndRename.io.resultBus := resultBus
   aluRS.io.resultBus := resultBus
   aluLiteRS.io.resultBus := resultBus
   aluPredicateRS.io.resultBus := resultBus
