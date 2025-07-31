@@ -12,7 +12,7 @@ class ControlModes(IntEnum):
     LOOP_LOCAL = 2
     LOOP_GLOBAL = 3
     INCR = 4  # Increments the index of the current loop
-    RESERVED5 = 5
+    END_LOOP = 5 # Removed before going to machinecode
     RESERVED6 = 6
     HALT = 7
 

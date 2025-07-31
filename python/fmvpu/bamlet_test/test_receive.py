@@ -81,7 +81,7 @@ async def receive_test(dut: HierarchyObject) -> None:
     await first_test(bi)
 
 
-def test_bamlet_alu(verilog_file: str, params_file: str, seed: int = 0) -> None:
+def test_bamlet_receive(verilog_file: str, params_file: str, seed: int = 0) -> None:
     """Main test procedure using pre-generated Verilog."""
     filenames = [verilog_file]
     
@@ -97,7 +97,7 @@ def test_bamlet_alu(verilog_file: str, params_file: str, seed: int = 0) -> None:
     test_utils.run_test(verilog_dir, filenames, test_params, toplevel, module)
 
 
-def generate_and_test_bamlet_alu(temp_dir: Optional[str] = None, seed: int = 0) -> None:
+def generate_and_test_bamlet_receive(temp_dir: Optional[str] = None, seed: int = 0) -> None:
     """Generate Verilog and run test (for non-Bazel usage)."""
     with tempfile.TemporaryDirectory() as working_dir:
         if temp_dir is not None:
@@ -116,7 +116,7 @@ def generate_and_test_bamlet_alu(temp_dir: Optional[str] = None, seed: int = 0) 
         concat_filename = os.path.join(working_dir, "bamlet_verilog.sv")
         test_utils.concatenate_sv_files(filenames, concat_filename)
         
-        test_bamlet_alu(concat_filename, config_file, seed)
+        test_bamlet_receive(concat_filename, config_file, seed)
 
 
 def main():
@@ -127,10 +127,10 @@ def main():
         assert len(sys.argv) >= 3
         verilog_file = os.path.abspath(sys.argv[1])
         config_file = os.path.abspath(sys.argv[2])
-        test_bamlet_alu(verilog_file, config_file)
+        test_bamlet_receive(verilog_file, config_file)
     else:
         # Called directly - generate Verilog and test
-        generate_and_test_bamlet_alu()
+        generate_and_test_bamlet_receive()
 
 
 if __name__ == "__main__":

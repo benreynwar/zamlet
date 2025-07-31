@@ -135,6 +135,9 @@ def create_instruction_write_packet(instructions: list, base_address: int = 0, d
         words = instruction.to_words(params)
         padded_words = pad_words_to_power_of_2(words)
         instruction_words.extend(padded_words)
+
+    logger.info(f'create_instruction_write_packet: packet has length {1 + len(instruction_words)}')
+    logger.info(f'content is {[hex(x) for x in instruction_words]}')
     
     # Create header: 1 setup command + len(instruction_words) data words  
     header = PacketHeader(

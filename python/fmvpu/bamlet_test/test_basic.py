@@ -17,7 +17,7 @@ from fmvpu.bamlet.bamlet_interface import BamletInterface
 from fmvpu.amlet.packet_utils import make_coord_register
 from fmvpu.bamlet.bamlet_params import BamletParams
 from fmvpu.amlet.instruction import VLIWInstruction
-from fmvpu.amlet.control_instruction import ControlInstruction
+from fmvpu.amlet.control_instruction import ControlInstruction, ControlModes
 from fmvpu.amlet.packet_instruction import PacketInstruction, PacketModes
 
 
@@ -55,7 +55,7 @@ async def echo_packet_test(bi: BamletInterface) -> None:
         # Third instruction: Get first word and put in send buffer
         VLIWInstruction(
             packet=PacketInstruction(
-                mode=PacketModes.GET_PACKET_WORD,
+                mode=PacketModes.GET_WORD,
                 result=0,   # Put word directly in send buffer
                 channel=0
             )
@@ -63,7 +63,7 @@ async def echo_packet_test(bi: BamletInterface) -> None:
         # Fourth instruction: Get second word and put in send buffer
         VLIWInstruction(
             packet=PacketInstruction(
-                mode=PacketModes.GET_PACKET_WORD,
+                mode=PacketModes.GET_WORD,
                 result=0,   # Put word directly in send buffer
                 channel=0
             )
@@ -71,12 +71,13 @@ async def echo_packet_test(bi: BamletInterface) -> None:
         # Fifth instruction: Halt
         VLIWInstruction(
             control=ControlInstruction(
-                halt=True
+                mode=ControlModes.HALT,
             )
         )
     ]
     
-    await bi.write_program(program, base_address=0)
+    bi.write_program(program, base_address=0)
+    await bi.wait_to_send_packets()
     await bi.start_program(pc=0)
     
     # Send test data

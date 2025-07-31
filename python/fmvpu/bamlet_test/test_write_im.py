@@ -382,13 +382,13 @@ async def bamlet_write_im_test(dut: HierarchyObject) -> None:
     bi.initialize_signals()
     await bi.start()
     
-    # # Run simple packet test
-    # await simple_packet_test(bi)
+    # Run simple packet test
+    await simple_packet_test(bi)
 
-    # await send_zero_length_packet_test(bi)
+    await send_zero_length_packet_test(bi)
 
-    # # This one must be the last test.
-    # # It leaves packets hanging
+    # This one must be the last test.
+    # It leaves packets hanging
     await write_instruction_test(bi)
 
 

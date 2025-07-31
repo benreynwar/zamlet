@@ -170,7 +170,7 @@ def receive_kernel(params: BamletParams, regs: ReceiveKernelRegs, side, channel)
         ))
     # Loop n/n_amlets -> outer_index
     instrs.append(ControlInstruction(
-        mode=ControlModes.LOOPGLOBAL,
+        mode=ControlModes.LOOP_GLOBAL,
         src=regs.g_words_per_amlet,
         dst=regs.a_outer_index,
         ))
@@ -183,7 +183,7 @@ def receive_kernel(params: BamletParams, regs: ReceiveKernelRegs, side, channel)
         ))
     #   Loop n_amlet_columns -> inner_index
     instrs.append(ControlInstruction(
-        mode=ControlModes.LOOPGLOBAL,
+        mode=ControlModes.LOOP_GLOBAL,
         src=regs.g_amlet_columns,
         dst=regs.a_inner_index,
         ))
@@ -210,8 +210,8 @@ def receive_kernel(params: BamletParams, regs: ReceiveKernelRegs, side, channel)
         addr=regs.a_address,
         ))
     instrs.append(ControlInstruction(mode=ControlModes.ENDIF))
-    instrs.append(ControlInstruction(mode=ControlModes.ENDLOOP))
-    instrs.append(ControlInstruction(mode=ControlModes.ENDLOOP))
+    instrs.append(ControlInstruction(mode=ControlModes.END_LOOP))
+    instrs.append(ControlInstruction(mode=ControlModes.END_LOOP))
     instrs.append(ControlInstruction(mode=ControlModes.HALT))
 
     return instrs

@@ -733,10 +733,10 @@ class RegisterFileAndRename(params: AmletParams) extends Module {
     result.addr := index
     result.tag := state.pRegs(pIndex).lastIdent
     
-    // Register 0 always returns false (hardwired constant)
+    // Register 0 always returns true (hardwired constant)
     when (index === 0.U) {
       result.resolved := true.B
-      result.value := false.B
+      result.value := true.B
     } .otherwise {
       val mostRecentTagPending = state.pRegs(pIndex).pendingTags(state.pRegs(pIndex).lastIdent)
       

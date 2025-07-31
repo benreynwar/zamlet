@@ -13,13 +13,13 @@ from cocotb.handle import HierarchyObject
 
 from fmvpu import generate_rtl
 from fmvpu import test_utils
-from fmvpu.bamlet.bamlet_interface import BamletInterface, make_coord_register
+from fmvpu.bamlet.bamlet_interface import BamletInterface
 from fmvpu.bamlet.bamlet_params import BamletParams
 from fmvpu.amlet import packet_utils
-from fmvpu.amlet.packet_utils import packet_to_str
+from fmvpu.amlet.packet_utils import packet_to_str, make_coord_register
 from fmvpu.amlet.instruction import VLIWInstruction
 from fmvpu.amlet.packet_instruction import PacketInstruction, PacketModes
-from fmvpu.amlet.control_instruction import ControlInstruction
+from fmvpu.amlet.control_instruction import ControlInstruction, ControlModes
 from fmvpu.amlet.alu_instruction import ALUInstruction, ALUModes
 
 
@@ -38,15 +38,16 @@ async def packet_receive_test(bi: BamletInterface) -> None:
         ),
         VLIWInstruction(
             packet=PacketInstruction(
-                mode=PacketModes.GET_PACKET_WORD,
+                mode=PacketModes.GET_WORD,
                 result=18,  # D-register 2 (cutoff + 2 = 16 + 2)
             )
         ),
         VLIWInstruction(
-            control=ControlInstruction(halt=True),
+            control=ControlInstruction(mode=ControlModes.HALT),
         )
     ]
-    await bi.write_program(program)
+    bi.write_program(program)
+    await bi.wait_to_send_packets()
     await bi.start_program()
     
     # Send a test packet
@@ -56,9 +57,9 @@ async def packet_receive_test(bi: BamletInterface) -> None:
     await bi.wait_for_program_to_run()
     
     # Check that packet length was stored correctly
-    packet_length = await bi.read_d_register(1)
+    packet_length = bi.probe_d_register(1)
     assert packet_length == len(test_data), f"Expected packet length {len(test_data)}, got {packet_length}"
-    assert test_data[0] == await bi.read_d_register(2)
+    assert test_data[0] == bi.probe_d_register(2)
 
 
 async def packet_send_test(bi: BamletInterface) -> None:
@@ -85,11 +86,12 @@ async def packet_send_test(bi: BamletInterface) -> None:
             alu=ALUInstruction(mode=ALUModes.ADDI, src1=0, src2=2, a_dst=0)
         ),
         VLIWInstruction(
-            control=ControlInstruction(halt=True),
+            control=ControlInstruction(mode=ControlModes.HALT),
             alu=ALUInstruction(mode=ALUModes.ADDI, src1=0, src2=3, a_dst=0)
         ),
     ]
-    await bi.write_program(program)
+    bi.write_program(program)
+    await bi.wait_to_send_packets()
     await bi.start_program()
     
     await bi.wait_for_program_to_run()
@@ -101,7 +103,7 @@ async def packet_send_test(bi: BamletInterface) -> None:
 
 
 async def packet_get_word_test(bi: BamletInterface) -> None:
-    """Test GET_PACKET_WORD packet operation"""
+    """Test GET_WORD packet operation"""
     program = [
         # First receive a packet
         VLIWInstruction(
@@ -113,27 +115,28 @@ async def packet_get_word_test(bi: BamletInterface) -> None:
         # Get first word
         VLIWInstruction(
             packet=PacketInstruction(
-                mode=PacketModes.GET_PACKET_WORD,
+                mode=PacketModes.GET_WORD,
                 result=17,  # D-register 1
             )
         ),
         # Get second word
         VLIWInstruction(
             packet=PacketInstruction(
-                mode=PacketModes.GET_PACKET_WORD,
+                mode=PacketModes.GET_WORD,
                 result=18,  # D-register 2
             )
         ),
         # Get third word
         VLIWInstruction(
-            control=ControlInstruction(halt=True),
+            control=ControlInstruction(mode=ControlModes.HALT),
             packet=PacketInstruction(
-                mode=PacketModes.GET_PACKET_WORD,
+                mode=PacketModes.GET_WORD,
                 result=19,  # D-register 3
             )
         ),
     ]
-    await bi.write_program(program)
+    bi.write_program(program)
+    await bi.wait_to_send_packets()
     await bi.start_program()
     
     # Send test data (values within 27-bit limit)
@@ -143,10 +146,10 @@ async def packet_get_word_test(bi: BamletInterface) -> None:
     await bi.wait_for_program_to_run()
     
     # Check that words were extracted correctly
-    word1 = await bi.read_d_register(1)
-    word2 = await bi.read_d_register(2)
-    word3 = await bi.read_d_register(3)
-    packet_length = await bi.read_d_register(7)
+    word1 = bi.probe_d_register(1)
+    word2 = bi.probe_d_register(2)
+    word3 = bi.probe_d_register(3)
+    packet_length = bi.probe_d_register(7)
     
     assert packet_length == len(test_data), f"Expected packet length {len(test_data)}, got {packet_length}"
     assert word1 == test_data[0], f"Expected word1 {test_data[0]:08x}, got {word1:08x}"
@@ -171,19 +174,20 @@ async def packet_receive_and_forward_test(bi: BamletInterface) -> None:
         ),
         VLIWInstruction(
             packet=PacketInstruction(
-                mode=PacketModes.GET_PACKET_WORD,
+                mode=PacketModes.GET_WORD,
                 result=22,     # D-register 6
             )
         ),
         VLIWInstruction(
-            control=ControlInstruction(halt=True),
+            control=ControlInstruction(mode=ControlModes.HALT),
             packet=PacketInstruction(
-                mode=PacketModes.GET_PACKET_WORD,
+                mode=PacketModes.GET_WORD,
                 result=23,     # D-register 7
             )
         ),
     ]
-    await bi.write_program(program)
+    bi.write_program(program)
+    await bi.wait_to_send_packets()
     await bi.start_program()
     
     # Send a test packet (values within 27-bit limit)
@@ -193,7 +197,7 @@ async def packet_receive_and_forward_test(bi: BamletInterface) -> None:
     await bi.wait_for_program_to_run()
     
     # Check that packet was received
-    packet_length = await bi.read_d_register(5)
+    packet_length = bi.probe_d_register(5)
     assert packet_length == len(test_data), f"Expected packet length {len(test_data)}, got {packet_length}"
     
     # Check that packet was forwarded with new coordinate
@@ -223,13 +227,13 @@ async def packet_receive_forward_and_append_test(bi: BamletInterface) -> None:
         ),
         VLIWInstruction(
             packet=PacketInstruction(
-                mode=PacketModes.GET_PACKET_WORD,
+                mode=PacketModes.GET_WORD,
                 result=20,     # D-register 4
             )
         ),
         VLIWInstruction(
             packet=PacketInstruction(
-                mode=PacketModes.GET_PACKET_WORD,
+                mode=PacketModes.GET_WORD,
                 result=21,     # D-register 5
             )
         ),
@@ -240,11 +244,12 @@ async def packet_receive_forward_and_append_test(bi: BamletInterface) -> None:
             alu=ALUInstruction(mode=ALUModes.ADDI, src1=0, src2=2, a_dst=0)
         ),
         VLIWInstruction(
-            control=ControlInstruction(halt=True),
+            control=ControlInstruction(mode=ControlModes.HALT),
             alu=ALUInstruction(mode=ALUModes.ADDI, src1=0, src2=3, a_dst=0)
         ),
     ]
-    await bi.write_program(program)
+    bi.write_program(program)
+    await bi.wait_to_send_packets()
     await bi.start_program()
     
     # Send a test packet (values within 27-bit limit)  
@@ -254,7 +259,7 @@ async def packet_receive_forward_and_append_test(bi: BamletInterface) -> None:
     await bi.wait_for_program_to_run()
     
     # Check that packet was received
-    packet_length = await bi.read_d_register(7)
+    packet_length = bi.probe_d_register(7)
     assert packet_length == len(test_data), f"Expected packet length {len(test_data)}, got {packet_length}"
     
     # Check that packet was forwarded with appended data
@@ -268,14 +273,15 @@ async def packet_empty_test(bi: BamletInterface) -> None:
     """Test packet operations with empty packets"""
     program = [
         VLIWInstruction(
-            control=ControlInstruction(halt=True),
+            control=ControlInstruction(mode=ControlModes.HALT),
             packet=PacketInstruction(
                 mode=PacketModes.RECEIVE,
                 result=17,  # D-register 1
             )
         ),
     ]
-    await bi.write_program(program)
+    bi.write_program(program)
+    await bi.wait_to_send_packets()
     await bi.start_program()
     
     # Send empty packet
@@ -285,7 +291,7 @@ async def packet_empty_test(bi: BamletInterface) -> None:
     await bi.wait_for_program_to_run()
     
     # Check that packet length is 0
-    packet_length = await bi.read_d_register(1)
+    packet_length = bi.probe_d_register(1)
     assert packet_length == 0, f"Expected empty packet length 0, got {packet_length}"
 
 
@@ -314,7 +320,7 @@ async def broadcast_test(bi: BamletInterface) -> None:
     assert east_packet == write_packet, f'East packet mismatch: {packet_to_str(east_packet)} != {packet_to_str(write_packet)}'
     assert south_packet[1:] == write_packet[1:], f'South packet mismatch: {packet_to_str(south_packet)} != {packet_to_str(write_packet)}'
     
-    probed_value = await bi.read_d_register(reg)
+    probed_value = bi.probe_d_register(reg)
     assert probed_value == value, f"Register value mismatch: expected {value}, got {probed_value}"
 
 

@@ -19,6 +19,7 @@ from fmvpu.amlet.control_instruction import ControlInstruction, ControlModes
 from fmvpu.amlet.alu_instruction import ALUInstruction, ALUModes
 from fmvpu.amlet.packet_instruction import PacketInstruction, PacketModes
 from fmvpu.amlet import packet_utils
+from fmvpu.bamlet_kernels.kernel_utils import instructions_into_vliw
 
 
 logger = logging.getLogger(__name__)
@@ -30,17 +31,16 @@ async def alu_add_test(bi: BamletInterface) -> None:
     await bi.write_d_register(1, 15)
     await bi.write_d_register(2, 7)
     
-    program = [
-        VLIWInstruction(
-            control=ControlInstruction(mode=ControlModes.HALT),
-            alu=ALUInstruction(
-                mode=ALUModes.ADD,
-                src1=1,
-                src2=2,
-                d_dst=3,  # D-register 3
-            )
-        )
-    ]
+    instrs = [
+        ALUInstruction(
+            mode=ALUModes.ADD,
+            src1=1,
+            src2=2,
+            d_dst=3,  # D-register 3
+        ),
+        ControlInstruction(mode=ControlModes.HALT),
+        ]
+    program = instructions_into_vliw(bi.params, instrs)
     bi.write_program(program, base_address=0)
     await bi.wait_to_send_packets()
     await bi.start_program(pc=0)

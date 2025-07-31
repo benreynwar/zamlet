@@ -29,11 +29,8 @@ def instructions_into_vliw(params: BamletParams, instrs):
         if instr is None:
             instr = instrs.pop(0)
         if isinstance(instr, ControlInstruction):
-            if instr.mode not in (ControlModes.ENDIF, ControlModes.ENDLOOP):
-                if instr.mode in (ControlModes.IF,):
-                    if_instructions.append(instr)
-                    if_starts.append(index)
-                if instr.mode in (ControlModes.LOOP, ControlModes.LOOPGLOBAL):
+            if instr.mode not in (ControlModes.END_LOOP,):
+                if instr.mode in (ControlModes.LOOP_LOCAL, ControlModes.LOOP_GLOBAL):
                     loop_instructions.append(instr)
                     loop_starts.append(index)
                 vliw.control = instr
@@ -66,14 +63,7 @@ def instructions_into_vliw(params: BamletParams, instrs):
                 break
             instr = instrs.pop(0)
         if isinstance(instr, ControlInstruction):
-            if instr.mode == ControlModes.ENDIF:
-                if_instructions.pop().length = index - if_starts.pop()
-                logger.info('Adding endif')
-                if not instrs:
-                    break
-                instr = instrs.pop(0)
-        if isinstance(instr, ControlInstruction):
-            if instr.mode == ControlModes.ENDLOOP:
+            if instr.mode == ControlModes.END_LOOP:
                 logger.info('Adding endloop')
                 loop_instructions.pop().length = index - loop_starts.pop()
                 if not instrs:

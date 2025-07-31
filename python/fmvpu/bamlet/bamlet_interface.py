@@ -118,16 +118,12 @@ class BamletInterface:
         """Read the current value of a D-register"""
         assert 0 <= reg < self.params.amlet.n_a_regs, f"D-register {reg} out of range [0, {self.params.amlet.n_d_regs})"
         return self.probe_register(reg, offset_x, offset_y)
-    
-    async def read_a_register(self, reg, offset_x=0, offset_y=0):
-        """Read the current value of an A-register"""
-        assert 0 <= reg < self.params.amlet.n_a_regs, f"A-register {reg} out of range [0, {self.params.amlet.n_a_regs})"
-        return self.probe_register(reg, offset_x, offset_y)
 
     def write_program(self, program, base_address=0, side='w', index=0, channel=0, offset_x=0, offset_y=0):
         instr_packet = packet_utils.create_instruction_write_packet(
             program, base_address, dest_x=self.bamlet_x + offset_x, dest_y=self.bamlet_y + offset_y, params=self.params.amlet
         )
+        logger.info(f'length of instr packet is {len(instr_packet)}')
         self.drivers[(side, index, channel)].add_packet(instr_packet)
 
     async def get_packet_from_side(self, side, index, channel, timeout=100):
@@ -166,7 +162,7 @@ class BamletInterface:
         for _ in range(timeout):
             await triggers.RisingEdge(self.dut.clock)
             await triggers.ReadOnly()
-            if not self.dut.control.active.value:
+            if not self.dut.control.state_active.value:
                 break
         for _ in range(20):
             await triggers.RisingEdge(self.dut.clock)

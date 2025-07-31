@@ -7,16 +7,15 @@ from random import Random
 import json
 
 import cocotb
-from cocotb import triggers
 from cocotb.clock import Clock
 from cocotb.handle import HierarchyObject
 
 from fmvpu import generate_rtl
 from fmvpu import test_utils
-from fmvpu.bamlet.bamlet_interface import BamletInterface, make_coord_register
+from fmvpu.bamlet.bamlet_interface import BamletInterface
 from fmvpu.bamlet.bamlet_params import BamletParams
 from fmvpu.amlet.instruction import VLIWInstruction
-from fmvpu.amlet.control_instruction import ControlInstruction
+from fmvpu.amlet.control_instruction import ControlInstruction, ControlModes
 from fmvpu.amlet.ldst_instruction import LoadStoreInstruction, LoadStoreModes
 
 
@@ -34,7 +33,7 @@ async def loadstore_basic_test(bi: BamletInterface) -> None:
     await bi.write_d_register(4, test_value) # value to store
     
     # Verify A-register was written correctly
-    read_addr = await bi.read_a_register(1)
+    read_addr = bi.probe_a_register(1)
     assert read_addr == base_addr, f"A-register write/read failed: expected {base_addr:08x}, got {read_addr:08x}"
     
     program = [
@@ -48,7 +47,7 @@ async def loadstore_basic_test(bi: BamletInterface) -> None:
         ),
         # Then load it back from the same address
         VLIWInstruction(
-            control=ControlInstruction(halt=True),
+            control=ControlInstruction(mode=ControlModes.HALT),
             load_store=LoadStoreInstruction(
                 mode=LoadStoreModes.LOAD,
                 addr=1,    # address in A-register 1
@@ -56,12 +55,13 @@ async def loadstore_basic_test(bi: BamletInterface) -> None:
             )
         ),
     ]
-    await bi.write_program(program, base_address=0)
+    bi.write_program(program, base_address=0)
+    await bi.wait_to_send_packets()
     await bi.start_program(pc=0)
     await bi.wait_for_program_to_run()
     
     # Verify that the loaded value matches what we stored
-    loaded_value = await bi.read_d_register(3)
+    loaded_value = bi.probe_d_register(3)
     assert loaded_value == test_value, f"Store/load roundtrip failed: expected {test_value:08x}, got {loaded_value:08x}"
 
 
@@ -99,7 +99,7 @@ async def load_store_sequence_test(bi: BamletInterface) -> None:
         ),
         # Load from second location to verify the sequence worked
         VLIWInstruction(
-            control=ControlInstruction(halt=True),
+            control=ControlInstruction(mode=ControlModes.HALT),
             load_store=LoadStoreInstruction(
                 mode=LoadStoreModes.LOAD,
                 addr=2,    # address in A-register 2
@@ -107,14 +107,15 @@ async def load_store_sequence_test(bi: BamletInterface) -> None:
             )
         ),
     ]
-    await bi.write_program(program, base_address=0)
+    bi.write_program(program, base_address=0)
+    await bi.wait_to_send_packets()
     await bi.start_program(pc=0)
     await bi.wait_for_program_to_run()
     
     # Verify the sequence: original value -> first load -> second store -> final load
     original_value = 0x00CDEF0
-    first_loaded = await bi.read_d_register(5)
-    final_loaded = await bi.read_d_register(6)
+    first_loaded = bi.probe_d_register(5)
+    final_loaded = bi.probe_d_register(6)
     
     assert first_loaded == original_value, f"First load failed: expected {original_value:08x}, got {first_loaded:08x}"
     assert final_loaded == original_value, f"Store-load sequence failed: expected {original_value:08x}, got {final_loaded:08x}"
@@ -171,7 +172,7 @@ async def multiple_addresses_test(bi: BamletInterface) -> None:
             )
         ),
         VLIWInstruction(
-            control=ControlInstruction(halt=True),
+            control=ControlInstruction(mode=ControlModes.HALT),
             load_store=LoadStoreInstruction(
                 mode=LoadStoreModes.LOAD,
                 addr=3,    # address in A-register 3
@@ -179,13 +180,14 @@ async def multiple_addresses_test(bi: BamletInterface) -> None:
             )
         ),
     ]
-    await bi.write_program(program, base_address=0)
+    bi.write_program(program, base_address=0)
+    await bi.wait_to_send_packets()
     await bi.start_program(pc=0)
     await bi.wait_for_program_to_run()
     
     # Verify all loaded values match what we stored
     for i, expected_value in enumerate(test_values):
-        loaded_value = await bi.read_d_register(i + 7)
+        loaded_value = bi.probe_d_register(i + 7)
         assert loaded_value == expected_value, f"Multi-address test failed for value {i}: expected {expected_value:08x}, got {loaded_value:08x}"
 
 
@@ -205,7 +207,7 @@ async def zero_value_test(bi: BamletInterface) -> None:
         ),
         # Load zero value back
         VLIWInstruction(
-            control=ControlInstruction(halt=True),
+            control=ControlInstruction(mode=ControlModes.HALT),
             load_store=LoadStoreInstruction(
                 mode=LoadStoreModes.LOAD,
                 addr=1,    # address in A-register 1
@@ -213,12 +215,13 @@ async def zero_value_test(bi: BamletInterface) -> None:
             )
         ),
     ]
-    await bi.write_program(program, base_address=0)
+    bi.write_program(program, base_address=0)
+    await bi.wait_to_send_packets()
     await bi.start_program(pc=0)
     await bi.wait_for_program_to_run()
     
     # Verify that zero value works correctly
-    loaded_value = await bi.read_d_register(3)
+    loaded_value = bi.probe_d_register(3)
     assert loaded_value == 0, f"Zero value test failed: expected 0, got {loaded_value:08x}"
 
 
@@ -239,7 +242,7 @@ async def large_value_test(bi: BamletInterface) -> None:
         ),
         # Load max value back
         VLIWInstruction(
-            control=ControlInstruction(halt=True),
+            control=ControlInstruction(mode=ControlModes.HALT),
             load_store=LoadStoreInstruction(
                 mode=LoadStoreModes.LOAD,
                 addr=1,    # address in A-register 1
@@ -247,12 +250,13 @@ async def large_value_test(bi: BamletInterface) -> None:
             )
         ),
     ]
-    await bi.write_program(program, base_address=0)
+    bi.write_program(program, base_address=0)
+    await bi.wait_to_send_packets()
     await bi.start_program(pc=0)
     await bi.wait_for_program_to_run()
     
     # Verify that large value works correctly
-    loaded_value = await bi.read_d_register(3)
+    loaded_value = bi.probe_d_register(3)
     assert loaded_value == max_value, f"Large value test failed: expected {max_value:08x}, got {loaded_value:08x}"
 
 
@@ -263,12 +267,12 @@ async def a_register_test(bi: BamletInterface) -> None:
     # Test writing and reading back various values to A-registers
     for i, addr in enumerate(test_addresses):
         await bi.write_a_register(i + 1, addr)
-        read_back = await bi.read_a_register(i + 1)
+        read_back = bi.probe_a_register(i + 1)
         assert read_back == addr, f"A-register {i+1} test failed: wrote {addr:08x}, read {read_back:08x}"
     
     # Test that registers don't interfere with each other
     for i, addr in enumerate(test_addresses):
-        read_back = await bi.read_a_register(i + 1)
+        read_back = bi.probe_a_register(i + 1)
         assert read_back == addr, f"A-register {i+1} interference test failed: expected {addr:08x}, got {read_back:08x}"
 
 
@@ -292,7 +296,7 @@ async def a_register_loadstore_test(bi: BamletInterface) -> None:
         ),
         # Load value from memory into A-register 3
         VLIWInstruction(
-            control=ControlInstruction(halt=True),
+            control=ControlInstruction(mode=ControlModes.HALT),
             load_store=LoadStoreInstruction(
                 mode=LoadStoreModes.LOAD,
                 addr=1,    # memory address in A-register 1
@@ -300,12 +304,13 @@ async def a_register_loadstore_test(bi: BamletInterface) -> None:
             )
         ),
     ]
-    await bi.write_program(program, base_address=0)
+    bi.write_program(program, base_address=0)
+    await bi.wait_to_send_packets()
     await bi.start_program(pc=0)
     await bi.wait_for_program_to_run()
     
     # Verify that the loaded value matches what we stored
-    loaded_value = await bi.read_a_register(3)
+    loaded_value = bi.probe_a_register(3)
     assert loaded_value == test_value, f"A-register store/load roundtrip failed: expected {test_value:08x}, got {loaded_value:08x}"
 
 
@@ -349,7 +354,7 @@ async def mixed_register_loadstore_test(bi: BamletInterface) -> None:
         ),
         # Load from second location into D-register 6
         VLIWInstruction(
-            control=ControlInstruction(halt=True),
+            control=ControlInstruction(mode=ControlModes.HALT),
             load_store=LoadStoreInstruction(
                 mode=LoadStoreModes.LOAD,
                 addr=2,    # memory address in A-register 2
@@ -357,13 +362,14 @@ async def mixed_register_loadstore_test(bi: BamletInterface) -> None:
             )
         ),
     ]
-    await bi.write_program(program, base_address=0)
+    bi.write_program(program, base_address=0)
+    await bi.wait_to_send_packets()
     await bi.start_program(pc=0)
     await bi.wait_for_program_to_run()
     
     # Verify cross-register type loading worked correctly
-    loaded_a_value = await bi.read_a_register(5)  # Should have D-register value (truncated to 16 bits)
-    loaded_d_value = await bi.read_d_register(6)  # Should have A-register value (zero-padded to 32 bits)
+    loaded_a_value = bi.probe_a_register(5)  # Should have D-register value (truncated to 16 bits)
+    loaded_d_value = bi.probe_d_register(6)  # Should have A-register value (zero-padded to 32 bits)
     
     # When storing from D-register to memory and loading to A-register, value gets truncated to 16 bits
     expected_a_value = d_test_value & 0xFFFF  # Truncate to 16 bits
