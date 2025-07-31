@@ -75,7 +75,7 @@ case class AmletParams(
   // B-register width: max(A-reg, D-reg) width + 1 bit for A/D selection
   val bRegWidth = scala.math.max(aRegWidth, dRegWidth) + 1
   val gRegWidth = log2Ceil(nGRegs)
-  val regWidth = scala.math.max(scala.math.max(aRegWidth, dRegWidth), gRegWidth) + 2
+  val regWidth = scala.math.max(scala.math.max(scala.math.max(aRegWidth, dRegWidth), gRegWidth), pRegWidth) + 2
 
   val addrWidth = log2Ceil(dataMemoryDepth)
 
@@ -242,13 +242,15 @@ class PTaggedSource(params: AmletParams) extends Bundle {
     result.addr := addr
     result.tag := tag
 
-    // Check each write port for a match
-    when (!resolved && writes.predicate.valid && 
-          addr === writes.predicate.bits.address.addr &&
-          tag === writes.predicate.bits.address.tag) {
-      // Address matches - resolve this dependency
-      result.resolved := true.B
-      result.value := writes.predicate.bits.value
+    // Check each predicate write port for a match
+    for (i <- 0 until 2) {
+      when (!resolved && writes.predicate(i).valid && 
+            addr === writes.predicate(i).bits.address.addr &&
+            tag === writes.predicate(i).bits.address.tag) {
+        // Address matches - resolve this dependency
+        result.resolved := true.B
+        result.value := writes.predicate(i).bits.value
+      }
     }
     result
   }
@@ -273,7 +275,7 @@ class PredicateResult(params: AmletParams) extends Bundle {
 
 class ResultBus(params: AmletParams) extends Bundle {
   val writes = Vec(params.nResultPorts, Valid(new WriteResult(params)))
-  val predicate = Valid(new PredicateResult(params))
+  val predicate = Vec(2, Valid(new PredicateResult(params)))
 }
 
 

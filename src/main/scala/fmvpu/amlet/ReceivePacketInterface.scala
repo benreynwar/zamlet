@@ -23,6 +23,7 @@ class ReceivePacketInterfaceIO(params: AmletParams) extends Bundle {
   
   // Result interface
   val result = Valid(new WriteResult(params))
+  val resultPredicate = Valid(new PredicateResult(params))
   
   // Instruction memory write interface
   val writeControl = Valid(new ControlWrite(params))
@@ -115,6 +116,10 @@ class ReceivePacketInterface(params: AmletParams) extends Module {
   io.result.bits.address.tag := DontCare
   io.result.bits.value := DontCare
   io.result.bits.force := DontCare
+  io.resultPredicate.valid := false.B
+  io.resultPredicate.bits.address.addr := DontCare
+  io.resultPredicate.bits.address.tag := DontCare  
+  io.resultPredicate.bits.value := DontCare
   io.writeControl.valid := false.B
   io.writeControl.bits := DontCare
   
@@ -320,18 +325,38 @@ class ReceivePacketInterface(params: AmletParams) extends Module {
     }
     is(States.ProcessingRegWrite) {
       when (bufferedFromNetwork.valid) {
-        // Write the data value to the register specified in the header
-        io.result.bits.address.addr := regWriteAddress
-        io.result.bits.address.tag := 0.U // Command writes don't use write identifiers
-        io.result.bits.value := bufferedFromNetwork.bits.data
-        io.result.bits.force := true.B // Command writes bypass dependency system
-        io.writeControl.bits.mode := ControlWriteMode.GlobalRegister
-        io.writeControl.bits.address := regWriteAddress(params.gRegWidth-1, 0)
-        io.writeControl.bits.data := bufferedFromNetwork.bits.data
-        when (!regWriteAddress(params.regWidth-1)) {
-          io.result.valid := true.B
-        } .otherwise {
-          io.writeControl.valid := true.B
+        // Decode register type from upper 2 bits: 00=A, 01=D, 10=P, 11=G
+        val regType = regWriteAddress(params.regWidth-1, params.regWidth-2)
+        val regIndex = regWriteAddress(params.regWidth-3, 0)
+        
+        // Route write based on register type
+        switch(regType) {
+          is(0.U) { // A registers (00)
+            io.result.valid := true.B
+            io.result.bits.address.addr := regIndex
+            io.result.bits.address.tag := 0.U // Command writes don't use write identifiers
+            io.result.bits.value := bufferedFromNetwork.bits.data
+            io.result.bits.force := true.B // Command writes bypass dependency system
+          }
+          is(1.U) { // D registers (01)
+            io.result.valid := true.B
+            io.result.bits.address.addr := regIndex | (1.U << (params.bRegWidth-1)) // Set D-register bit
+            io.result.bits.address.tag := 0.U
+            io.result.bits.value := bufferedFromNetwork.bits.data
+            io.result.bits.force := true.B
+          }
+          is(2.U) { // P registers (10)
+            io.resultPredicate.valid := true.B
+            io.resultPredicate.bits.address.addr := regIndex
+            io.resultPredicate.bits.address.tag := 0.U
+            io.resultPredicate.bits.value := bufferedFromNetwork.bits.data(0) // P registers are 1-bit
+          }
+          is(3.U) { // G registers (11)
+            io.writeControl.valid := true.B
+            io.writeControl.bits.mode := ControlWriteMode.GlobalRegister
+            io.writeControl.bits.address := regIndex(params.gRegWidth-1, 0)
+            io.writeControl.bits.data := bufferedFromNetwork.bits.data
+          }
         }
         
         // Update state

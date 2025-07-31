@@ -26,8 +26,8 @@ this_dir = os.path.abspath(os.path.dirname(__file__))
 
 async def alu_lite_add_test(bi: BamletInterface) -> None:
     """Test ADD operation: reg1 + reg2 -> reg3"""
-    await bi.write_a_register(1, 15)
-    await bi.write_a_register(2, 7)
+    await bi.write_register('a', 1, 15)
+    await bi.write_register('a', 2, 7)
     
     program = [
         VLIWInstruction(
@@ -46,14 +46,14 @@ async def alu_lite_add_test(bi: BamletInterface) -> None:
     await bi.wait_for_program_to_run()
     
     # Check result in register 3
-    result = bi.probe_a_register(3)
+    result = bi.probe_register('a', 3)
     assert result == 22, f"Expected 22, got {result}"
 
 
 async def alu_lite_addi_test(bi: BamletInterface) -> None:
     """Test ADDI operation: reg1 + immediate -> reg3"""
-    await bi.write_a_register(1, 10)
-    await bi.write_a_register(2, 5)  # immediate value in reg2
+    await bi.write_register('a', 1, 10)
+    await bi.write_register('a', 2, 5)  # immediate value in reg2
     
     program = [
         VLIWInstruction(
@@ -72,14 +72,14 @@ async def alu_lite_addi_test(bi: BamletInterface) -> None:
     await bi.wait_for_program_to_run()
     
     # Check result in register 3
-    result = bi.probe_a_register(3)
+    result = bi.probe_register('a', 3)
     assert result == 12, f"Expected 12, got {result}"
 
 
 async def alu_lite_sub_test(bi: BamletInterface) -> None:
     """Test SUB operation: reg1 - reg2 -> reg3"""
-    await bi.write_a_register(1, 20)
-    await bi.write_a_register(2, 8)
+    await bi.write_register('a', 1, 20)
+    await bi.write_register('a', 2, 8)
     
     program = [
         VLIWInstruction(
@@ -98,14 +98,14 @@ async def alu_lite_sub_test(bi: BamletInterface) -> None:
     await bi.wait_for_program_to_run()
     
     # Check result in register 3
-    result = bi.probe_a_register(3)
+    result = bi.probe_register('a', 3)
     assert result == 12, f"Expected 12, got {result}"
 
 
 async def alu_lite_mult_test(bi: BamletInterface) -> None:
     """Test MULT operation: reg1 * reg2 -> reg3"""
-    await bi.write_a_register(1, 6)
-    await bi.write_a_register(2, 7)
+    await bi.write_register('a', 1, 6)
+    await bi.write_register('a', 2, 7)
     
     program = [
         VLIWInstruction(
@@ -124,14 +124,14 @@ async def alu_lite_mult_test(bi: BamletInterface) -> None:
     await bi.wait_for_program_to_run()
     
     # Check result in register 3
-    result = bi.probe_a_register(3)
+    result = bi.probe_register('a', 3)
     assert result == 42, f"Expected 42, got {result}"
 
 
 async def alu_lite_chain_operations_test(bi: BamletInterface) -> None:
     """Test chained ALULite operations with dependencies"""
-    await bi.write_a_register(1, 3)
-    await bi.write_a_register(2, 4)
+    await bi.write_register('a', 1, 3)
+    await bi.write_register('a', 2, 4)
     
     program = [
         # reg4 = reg1 + reg2 (3 + 4 = 7)
@@ -169,12 +169,68 @@ async def alu_lite_chain_operations_test(bi: BamletInterface) -> None:
     await bi.wait_for_program_to_run()
     
     # Check intermediate and final results
-    result4 = bi.probe_a_register(4)
+    result4 = bi.probe_register('a', 4)
     assert result4 == 7, f"Expected 7 in register 4, got {result4}"
-    result5 = bi.probe_a_register(5)
+    result5 = bi.probe_register('a', 5)
     assert result5 == 21, f"Expected 21 in register 5, got {result5}"
-    result6 = bi.probe_a_register(6)
+    result6 = bi.probe_register('a', 6)
     assert result6 == 17, f"Expected 17 in register 6, got {result6}"
+
+
+async def alu_lite_predicate_test(bi: BamletInterface) -> None:
+    """Test ALULite instruction predicate field - operations should only execute when predicate is true"""
+    # Initialize source registers
+    await bi.write_register('a', 1, 10)
+    await bi.write_register('a', 2, 5)
+    await bi.write_register('a', 3, 0)  # Clear destination register
+    
+    # Test 1: Set predicate register 1 to false (0), ALULite should not execute
+    await bi.write_register('p', 1, 0)  # Predicate false
+    
+    program = [
+        VLIWInstruction(
+            control=ControlInstruction(mode=ControlModes.HALT),
+            alu_lite=ALULiteInstruction(
+                mode=ALULiteModes.ADD,
+                src1=1,
+                src2=2,
+                a_dst=3,
+                predicate=1,  # Use P-register 1 as predicate
+            )
+        )
+    ]
+    bi.write_program(program, base_address=0)
+    await bi.wait_to_send_packets()
+    await bi.start_program(pc=0)
+    await bi.wait_for_program_to_run()
+    
+    # Check that destination register wasn't modified (predicate was false)
+    result = bi.probe_register('a', 3)
+    assert result == 0, f"Expected 0 (no execution), got {result}"
+    
+    # Test 2: Set predicate register 1 to true (1), ALULite should execute
+    await bi.write_register('p', 1, 1)  # Predicate true
+    
+    program = [
+        VLIWInstruction(
+            control=ControlInstruction(mode=ControlModes.HALT),
+            alu_lite=ALULiteInstruction(
+                mode=ALULiteModes.ADD,
+                src1=1,
+                src2=2,
+                a_dst=3,
+                predicate=1,  # Use P-register 1 as predicate
+            )
+        )
+    ]
+    bi.write_program(program, base_address=0)
+    await bi.wait_to_send_packets()
+    await bi.start_program(pc=0)
+    await bi.wait_for_program_to_run()
+    
+    # Check that operation executed (10 + 5 = 15)
+    result = bi.probe_register('a', 3)
+    assert result == 15, f"Expected 15 (executed), got {result}"
 
 
 @cocotb.test()
@@ -202,6 +258,7 @@ async def bamlet_alu_lite_test(dut: HierarchyObject) -> None:
     await alu_lite_sub_test(bi)
     await alu_lite_mult_test(bi)
     await alu_lite_chain_operations_test(bi)
+    await alu_lite_predicate_test(bi)
 
 
 def test_bamlet_alu_lite(verilog_file: str, params_file: str, seed: int = 0) -> None:

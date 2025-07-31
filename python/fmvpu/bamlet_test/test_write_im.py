@@ -333,10 +333,10 @@ async def send_zero_length_packet_test(bi: BamletInterface) -> None:
     dest_x = 0
     dest_y = 0
     coord_word = packet_utils.make_coord_register(dest_x, dest_y, bi.params.amlet)
-    await bi.write_a_register(3, coord_word)
+    await bi.write_register('a', 3, coord_word)
     
     # Write zero length to register 4
-    await bi.write_a_register(4, 0)
+    await bi.write_register('a', 4, 0)
     
     # Create a single VLIW instruction that sends a zero-length packet and halts
     program = [

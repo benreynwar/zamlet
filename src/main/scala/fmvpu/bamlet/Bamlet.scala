@@ -63,16 +63,28 @@ class Bamlet(params: BamletParams) extends Module {
   instructionMemory.io.writeControl.valid := writeControlSignals.map(_.valid).reduce(_ || _)
   instructionMemory.io.writeControl.bits := Mux1H(writeControlSignals.map(_.valid), writeControlSignals.map(_.bits))
 
+  // Collect ready signals from all amlets
+  val amletReadySignals = VecInit(amlets.flatten.toIndexedSeq.map(_.io.instruction.ready))
+  
+  // Control's ready is high when all amlets are ready
+  control.io.instr.ready := amletReadySignals.asUInt.andR
+  
   // Connect control and positions to all amlets
   for (row <- 0 until params.nAmletRows) {
     for (col <- 0 until params.nAmletColumns) {
       val amlet = amlets(row)(col)
+      val linearIndex = row * params.nAmletColumns + col
       
-      // Connect resolved instruction from control to amlet
-      amlet.io.instruction <> control.io.instr
+      // Connect instruction bits from control to amlet
+      amlet.io.instruction.bits := control.io.instr.bits
+      
+      // Valid to this amlet is high when control has valid instruction AND all OTHER amlets are ready
+      // Create a mask excluding this amlet, then AND all other ready signals
+      val otherReadySignals = amletReadySignals.zipWithIndex.filter(_._2 != linearIndex).map(_._1)
+      val allOtherAmletsReady = otherReadySignals.reduce(_ && _)
+      amlet.io.instruction.valid := control.io.instr.valid && allOtherAmletsReady
       
       // Connect loop length feedback from amlet to control (placeholder)
-      val linearIndex = row * params.nAmletColumns + col
       control.io.loopIterations(linearIndex).valid := false.B
       control.io.loopIterations(linearIndex).bits := 0.U
       

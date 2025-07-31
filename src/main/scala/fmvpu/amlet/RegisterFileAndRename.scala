@@ -161,47 +161,46 @@ class RegisterFileAndRename(params: AmletParams) extends Module {
 
   val controlIterations = readAReg(statePreControl, io.instr.bits.control.iterations.addr)
 
-  when (io.instr.valid) {
-    switch (io.instr.bits.control.mode) {
-      is (ControlInstr.Modes.LoopLocal, ControlInstr.Modes.LoopGlobal) {
-        // Start a new nested loop level
-        val loopLevelNew = Wire(UInt(log2Ceil(params.nLoopLevels).W))
-        when (!statePreControl.loopActive) {
-          loopLevelNew := 0.U  // First loop starts at level 0
-        } .otherwise {
-          loopLevelNew := statePreControl.loopLevel + 1.U  // Nested loop
-        }
-        statePostControl.loopActive := true.B
-        statePostControl.loopLevel := loopLevelNew
-        statePostControl.loopStates(loopLevelNew).index := 0.U  // Initialize new loop index to 0
-        statePostControl.loopStates(loopLevelNew).reg := io.instr.bits.control.dst
-        // We also set the destination register.
-        // We do this directly rather than going through the resultBus.
-        // May become a timing problem.
-        statePostControl.aRegs(io.instr.bits.control.dst).value := 0.U
-        statePostControl.aRegs(io.instr.bits.control.dst).lastIdent := statePreControl.aRegs(io.instr.bits.control.dst).lastIdent + 1.U
-        statePostControl.loopStates(loopLevelNew).resolved := io.instr.bits.control.iterations.resolved
-        // We don't need to report iterations do the bamlet control if we received the values already
-        // from the bamlet control.
-        statePostControl.loopStates(loopLevelNew).reported := io.instr.bits.control.iterations.resolved
-        when (io.instr.bits.control.iterations.resolved) {
-          statePostControl.loopStates(loopLevelNew).iterations.value := io.instr.bits.control.iterations.value
-          statePostControl.loopStates(loopLevelNew).iterations.resolved := true.B
-        } .otherwise {
-          statePostControl.loopStates(loopLevelNew).iterations := controlIterations
-        }
+  switch (io.instr.bits.control.mode) {
+    is (ControlInstr.Modes.LoopLocal, ControlInstr.Modes.LoopGlobal) {
+      // Start a new nested loop level
+      val loopLevelNew = Wire(UInt(log2Ceil(params.nLoopLevels).W))
+      when (!statePreControl.loopActive) {
+        loopLevelNew := 0.U  // First loop starts at level 0
+      } .otherwise {
+        loopLevelNew := statePreControl.loopLevel + 1.U  // Nested loop
       }
-      is (ControlInstr.Modes.Incr) {
-        // Increment the loop index at the current loop level
-        val loopReg = statePreControl.loopStates(statePreControl.loopLevel).reg
-        val newIndex = statePreControl.loopStates(statePreControl.loopLevel).index + 1.U
-        statePostControl.loopStates(statePreControl.loopLevel).index := newIndex
-        // Set register.
-        statePostControl.aRegs(loopReg).value := newIndex
-        statePostControl.aRegs(loopReg).lastIdent := statePreControl.aRegs(loopReg).lastIdent + 1.U
+      statePostControl.loopActive := true.B
+      statePostControl.loopLevel := loopLevelNew
+      statePostControl.loopStates(loopLevelNew).index := 0.U  // Initialize new loop index to 0
+      statePostControl.loopStates(loopLevelNew).reg := io.instr.bits.control.dst
+      // We also set the destination register.
+      // We do this directly rather than going through the resultBus.
+      // May become a timing problem.
+      statePostControl.aRegs(io.instr.bits.control.dst).value := 0.U
+      statePostControl.aRegs(io.instr.bits.control.dst).lastIdent := statePreControl.aRegs(io.instr.bits.control.dst).lastIdent + 1.U
+      statePostControl.loopStates(loopLevelNew).resolved := io.instr.bits.control.iterations.resolved
+      // We don't need to report iterations do the bamlet control if we received the values already
+      // from the bamlet control.
+      statePostControl.loopStates(loopLevelNew).reported := io.instr.bits.control.iterations.resolved
+      when (io.instr.bits.control.iterations.resolved) {
+        statePostControl.loopStates(loopLevelNew).iterations.value := io.instr.bits.control.iterations.value
+        statePostControl.loopStates(loopLevelNew).iterations.resolved := true.B
+      } .otherwise {
+        statePostControl.loopStates(loopLevelNew).iterations := controlIterations
       }
     }
+    is (ControlInstr.Modes.Incr) {
+      // Increment the loop index at the current loop level
+      val loopReg = statePreControl.loopStates(statePreControl.loopLevel).reg
+      val newIndex = statePreControl.loopStates(statePreControl.loopLevel).index + 1.U
+      statePostControl.loopStates(statePreControl.loopLevel).index := newIndex
+      // Set register.
+      statePostControl.aRegs(loopReg).value := newIndex
+      statePostControl.aRegs(loopReg).lastIdent := statePreControl.aRegs(loopReg).lastIdent + 1.U
+    }
   }
+  
 
   // Predicate
   // ---------
@@ -215,12 +214,12 @@ class RegisterFileAndRename(params: AmletParams) extends Module {
   val predicateWriteInfo = predicateTagAlloc.writeReg
 
   val predicateValid = io.instr.bits.predicate.mode =/= PredicateInstr.Modes.None
-  when (io.instr.valid && predicateValid) {
+  when (predicateValid) {
     statePostPredicate := predicateTagAlloc.registers
   } .otherwise {
     statePostPredicate := statePrePredicate
   }
-  io.aluPredicateInstr.valid := io.instr.valid && predicateValid
+  io.aluPredicateInstr.valid := io.instr.valid && io.instr.ready && predicateValid
   io.aluPredicateInstr.bits.mode := io.instr.bits.predicate.mode
   io.aluPredicateInstr.bits.src1 := io.instr.bits.predicate.src1
   io.aluPredicateInstr.bits.src2 := predicateSrc2
@@ -383,14 +382,14 @@ class RegisterFileAndRename(params: AmletParams) extends Module {
   val packetTagAlloc = assignWrite(statePrePacket, io.instr.bits.packet.result)
   val packetWriteInfo = packetTagAlloc.writeReg
   // Update register state if packet instruction writes to a register
-  when (io.instr.valid && packetWriteEnable) {
+  when (packetWriteEnable) {
     statePostPacket := packetTagAlloc.registers
   } .otherwise {
     statePostPacket := statePrePacket
   }
 
   // Send
-  io.sendPacketInstr.valid := io.instr.valid && packetSend
+  io.sendPacketInstr.valid := io.instr.valid && io.instr.ready && packetSend
   io.sendPacketInstr.bits.mode := io.instr.bits.packet.mode
   io.sendPacketInstr.bits.length := packetReadLength
   io.sendPacketInstr.bits.target := packetReadTarget
@@ -399,7 +398,7 @@ class RegisterFileAndRename(params: AmletParams) extends Module {
   io.sendPacketInstr.bits.predicate := packetPredicate
 
   // Receive
-  io.recvPacketInstr.valid := io.instr.valid && packetReceive
+  io.recvPacketInstr.valid := io.instr.valid && io.instr.ready && packetReceive
   io.recvPacketInstr.bits.mode := io.instr.bits.packet.mode
   io.recvPacketInstr.bits.result := packetWriteInfo
   // Only resolve target for receive modes that include forwarding
@@ -442,14 +441,14 @@ class RegisterFileAndRename(params: AmletParams) extends Module {
   val ldstWriteInfo = ldstTagAlloc.writeReg
 
   // Update register state if load operation writes to a register
-  when (io.instr.valid && isLoadOp) {
+  when (isLoadOp) {
     statePostLdSt := ldstTagAlloc.registers
   } .otherwise {
     statePostLdSt := statePreLdSt
   }
 
   // Output to load/store reservation station
-  io.ldstInstr.valid := io.instr.valid && isLdStValid
+  io.ldstInstr.valid := io.instr.valid && io.instr.ready && isLdStValid
   io.ldstInstr.bits.mode := io.instr.bits.loadStore.mode
   io.ldstInstr.bits.addr := ldstReadAddress
   io.ldstInstr.bits.src := ldstReadData
@@ -485,14 +484,14 @@ class RegisterFileAndRename(params: AmletParams) extends Module {
   val aluWriteInfo = aluTagAlloc.writeReg
 
   // Update register state for ALU write
-  when (io.instr.valid && isALUValid) {
+  when (isALUValid) {
     statePostALU := aluTagAlloc.registers
   } .otherwise {
     statePostALU := statePreALU
   }
 
   // Output to ALU reservation station
-  io.aluInstr.valid := io.instr.valid && isALUValid
+  io.aluInstr.valid := io.instr.valid && io.instr.ready && isALUValid
   io.aluInstr.bits.mode := io.instr.bits.alu.mode
   io.aluInstr.bits.src1 := aluReadSrc1
   io.aluInstr.bits.src2 := aluReadSrc2
@@ -528,14 +527,14 @@ class RegisterFileAndRename(params: AmletParams) extends Module {
   val aluliteWriteInfo = aluliteTagAlloc.writeReg
 
   // Update register state for ALULite write
-  when (io.instr.valid && isALULiteValid) {
+  when (isALULiteValid) {
     statePostALULite := aluliteTagAlloc.registers
   } .otherwise {
     statePostALULite := statePreALULite
   }
 
   // Output to ALULite reservation station
-  io.aluliteInstr.valid := io.instr.valid && isALULiteValid
+  io.aluliteInstr.valid := io.instr.valid && io.instr.ready && isALULiteValid
   io.aluliteInstr.bits.mode := io.instr.bits.aluLite.mode
   io.aluliteInstr.bits.src1 := aluliteReadSrc1
   io.aluliteInstr.bits.src2 := aluliteReadSrc2
@@ -547,18 +546,25 @@ class RegisterFileAndRename(params: AmletParams) extends Module {
   val blockedLdSt = isLoadOp && ldstTagAlloc.stallRequired
   val blockedALULite = isALULiteValid && aluliteTagAlloc.stallRequired
   val blockedPacket = packetWriteEnable && packetTagAlloc.stallRequired
+  val blockedPredicate = predicateValid && predicateTagAlloc.stallRequired
 
   val hasALUInstr = io.instr.bits.alu.mode =/= ALUInstr.Modes.None
   val hasLdStInstr = io.instr.bits.loadStore.mode =/= LoadStoreInstr.Modes.None
   val hasALULiteInstr = io.instr.bits.aluLite.mode =/= ALULiteInstr.Modes.None  
   val hasPacketInstr = io.instr.bits.packet.mode =/= PacketInstr.Modes.Null
+  val hasPredicateInstr = io.instr.bits.predicate.mode =/= PredicateInstr.Modes.None
 
   val stallALU = hasALUInstr && (!io.aluInstr.ready || blockedALU)
   val stallLdSt = hasLdStInstr && (!io.ldstInstr.ready || blockedLdSt)
   val stallPacket = hasPacketInstr && ((!io.sendPacketInstr.ready && packetSend) || (!io.recvPacketInstr.ready && packetReceive) || blockedPacket)
   val stallALULite = hasALULiteInstr && (!io.aluliteInstr.ready || blockedALULite)
-  io.instr.ready := !stallALU && !stallALULite && !stallLdSt && !stallPacket
-  val fire = io.instr.valid && io.instr.ready
+  val stallPredicate = hasPredicateInstr && (!io.aluPredicateInstr.ready || blockedPredicate)
+  dontTouch(stallALU)
+  dontTouch(stallALULite)
+  dontTouch(stallLdSt)
+  dontTouch(stallPacket)
+  dontTouch(stallPredicate)
+  io.instr.ready := !stallALU && !stallALULite && !stallLdSt && !stallPacket && !stallPredicate
 
   // Chain register state updates through all instruction types
   val stateFromTagging = Wire(new State(params))
@@ -570,7 +576,7 @@ class RegisterFileAndRename(params: AmletParams) extends Module {
   statePreALULite := statePostALU  // ALULite sees ALU updates
   stateFromTagging := statePostALULite  // Final state after all instruction processing
 
-  when (fire) {
+  when (io.instr.valid && io.instr.ready) {
     // Update the state
     stateNext := stateFromTagging
   } .otherwise {
@@ -625,17 +631,19 @@ class RegisterFileAndRename(params: AmletParams) extends Module {
   }
 
   // Update predicate register state on predicate results
-  when (io.resultBus.predicate.valid) {
-    val pRegAddr = io.resultBus.predicate.bits.address.addr
-    val pRenameTag = io.resultBus.predicate.bits.address.tag
-    val pIndex = pRegAddr(log2Ceil(params.nPRegs)-1, 0)  // Truncate to P-register width
-    
-    // Update predicate register if rename tag matches
-    when (pRenameTag === stateFromTagging.pRegs(pIndex).lastIdent) {
-      stateNext.pRegs(pIndex).value := io.resultBus.predicate.bits.value
+  for (i <- 0 until 2) {
+    when (io.resultBus.predicate(i).valid) {
+      val pRegAddr = io.resultBus.predicate(i).bits.address.addr
+      val pRenameTag = io.resultBus.predicate(i).bits.address.tag
+      val pIndex = pRegAddr(log2Ceil(params.nPRegs)-1, 0)  // Truncate to P-register width
+      
+      // Update predicate register if rename tag matches
+      when (pRenameTag === stateFromTagging.pRegs(pIndex).lastIdent) {
+        stateNext.pRegs(pIndex).value := io.resultBus.predicate(i).bits.value
+      }
+      // Clear in-flight bit for this rename tag
+      stateNext.pRegs(pIndex).pendingTags := stateFromTagging.pRegs(pIndex).pendingTags & ~UIntToOH(pRenameTag)
     }
-    // Clear in-flight bit for this rename tag
-    stateNext.pRegs(pIndex).pendingTags := stateFromTagging.pRegs(pIndex).pendingTags & ~UIntToOH(pRenameTag)
   }
 
   // Send resolved loop iterations to the Bamlet Control

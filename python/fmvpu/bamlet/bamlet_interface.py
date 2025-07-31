@@ -75,49 +75,41 @@ class BamletInterface:
             cocotb.start_soon(self.receivers[label].receive_packets())
         cocotb.start_soon(self.check_errors())
 
-    async def write_d_register(self, reg, value, side='w', index=0, channel=0, offset_x=0, offset_y=0):
-        # With two-word approach, D-registers can store full width values
-        assert value < (1 << self.params.amlet.width), f"Value {value} too large for {self.params.amlet.width}-bit D-register"
-        await self.write_register(self.params.amlet.reg_cutoff+reg, value, side, index, channel, offset_x, offset_y)
 
-    async def write_a_register(self, reg, value, side='w', index=0, channel=0, offset_x=0, offset_y=0):
-        # A-registers are constrained by their actual width (aWidth from config)
-        assert value < (1 << self.params.amlet.a_width), f"Value {value} too large for {self.params.amlet.a_width}-bit A-register"
-        await self.write_register(reg, value, side, index, channel, offset_x, offset_y)
-
-    async def write_register(self, reg, value, side='w', index=0, channel=0, offset_x=0, offset_y=0):
+    async def write_register(self, reg_type, reg, value, side='w', index=0, channel=0, offset_x=0, offset_y=0):
         coord_packet = packet_utils.create_register_write_packet(
-            register=reg, value=value, dest_x=self.bamlet_x + offset_x, dest_y=self.bamlet_y + offset_y, params=self.params.amlet
+            register=reg, value=value, reg_type=reg_type, dest_x=self.bamlet_x + offset_x, dest_y=self.bamlet_y + offset_y, params=self.params.amlet
         )
         self.drivers[(side, index, channel)].add_packet(coord_packet)
         # Wait 20 cycles for packet processing
         for cycle in range(20):
             await triggers.RisingEdge(self.dut.clock)
-        probed_value = self.probe_register(reg, offset_x, offset_y)
-        assert probed_value == value, f"D-register {reg} write failed: expected {value}, got {probed_value}"
+        # Verify the write worked by reading back the value
+        probed_value = self.probe_register(reg_type, reg, offset_x, offset_y)
+        logger.info(f'Wrote {reg_type} {reg} -> {value}')
+        assert probed_value == value, f"{reg_type.upper()}-register {reg} write failed: expected {value}, got {probed_value}"
 
-    def probe_register(self, reg, offset_x=0, offset_y=0):
-        """Read the current value of a D-register"""
-        cutoff = self.params.amlet.reg_cutoff
-        amlet = self.get_amlet(offset_x, offset_y)
-        if 0 <= reg < self.params.amlet.n_a_regs:
+
+    def probe_register(self, reg_type, reg, offset_x=0, offset_y=0):
+        """Read the current value of a register"""
+        if reg_type == 'a':
+            assert 0 <= reg < self.params.amlet.n_a_regs, f"A-register {reg} out of range [0, {self.params.amlet.n_a_regs})"
+            amlet = self.get_amlet(offset_x, offset_y)
             return int(getattr(amlet.registerFileAndRename, f'state_aRegs_{reg}_value').value)
-        elif cutoff <= reg < cutoff + self.params.amlet.n_d_regs:
-            return int(getattr(amlet.registerFileAndRename, f'state_dRegs_{reg-cutoff}_value').value)
-        elif 2*cutoff <= reg < 2*cutoff + self.params.amlet.n_g_regs:
-            return int(getattr(self.dut.control, f'globals_{reg-2*cutoff}').value)
+        elif reg_type == 'd':
+            assert 0 <= reg < self.params.amlet.n_d_regs, f"D-register {reg} out of range [0, {self.params.amlet.n_d_regs})"
+            amlet = self.get_amlet(offset_x, offset_y)
+            return int(getattr(amlet.registerFileAndRename, f'state_dRegs_{reg}_value').value)
+        elif reg_type == 'p':
+            assert 0 <= reg < self.params.amlet.n_p_regs, f"P-register {reg} out of range [0, {self.params.amlet.n_p_regs})"
+            amlet = self.get_amlet(offset_x, offset_y)
+            return int(getattr(amlet.registerFileAndRename, f'state_pRegs_{reg}_value').value)
+        elif reg_type == 'g':
+            assert 0 <= reg < self.params.amlet.n_g_regs, f"G-register {reg} out of range [0, {self.params.amlet.n_g_regs})"
+            return int(getattr(self.dut.control, f'state_globals_{reg}').value)
         else:
-            assert False
+            assert False, f"Invalid register type: {reg_type}"
 
-    def probe_d_register(self, reg, offset_x=0, offset_y=0):
-        """Read the current value of a D-register"""
-        assert 0 <= reg < self.params.amlet.n_d_regs, f"D-register {reg} out of range [0, {self.params.amlet.n_d_regs})"
-        return self.probe_register(self.params.amlet.reg_cutoff + reg, offset_x, offset_y)
-
-    def probe_a_register(self, reg, offset_x=0, offset_y=0):
-        """Read the current value of a D-register"""
-        assert 0 <= reg < self.params.amlet.n_a_regs, f"D-register {reg} out of range [0, {self.params.amlet.n_d_regs})"
-        return self.probe_register(reg, offset_x, offset_y)
 
     def write_program(self, program, base_address=0, side='w', index=0, channel=0, offset_x=0, offset_y=0):
         instr_packet = packet_utils.create_instruction_write_packet(

@@ -102,7 +102,8 @@ class Amlet(params: AmletParams) extends Module {
   resultBus.writes(1) := aluLite.io.result
   resultBus.writes(2) := dataMem.io.result
   resultBus.writes(3) := receivePacketInterface.io.result
-  resultBus.predicate := aluPredicate.io.result
+  resultBus.predicate(0) := aluPredicate.io.result
+  resultBus.predicate(1) := receivePacketInterface.io.resultPredicate
   
   
   // Connect results to RegisterFileAndRename and reservation stations for dependency resolution

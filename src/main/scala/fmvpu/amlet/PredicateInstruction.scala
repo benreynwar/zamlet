@@ -74,13 +74,13 @@ object PredicateInstr {
 
     /** 
      * Determines if the base predicate evaluates to false after applying notBase.
-     * The predicate logic is: (base XOR notBase)
-     * - If notBase=false: result = base (normal case)  
-     * - If notBase=true:  result = !base (inverted case)
+     * The effective predicate is: (base XOR notBase)
+     * - If notBase=false: effective = base (normal case)  
+     * - If notBase=true:  effective = !base (inverted case)
      * When this returns true, the instruction can be resolved early without evaluating src1/src2.
      */
     def baseIsFalse: Bool = {
-      base.resolved && (base.value ^ notBase)
+      base.resolved && !(base.value ^ notBase)
     }
 
     /**
@@ -100,19 +100,11 @@ object PredicateInstr {
 
     def resolve(): Resolved = {
       val resolved = Wire(new Resolved(params))
-      when (baseIsFalse) {
-        resolved.mode := mode
-        resolved.src1 := src1
-        resolved.src2 := DontCare
-        resolved.base := false.B
-        resolved.dst := dst
-      } .otherwise {
-        resolved.mode := mode
-        resolved.src1 := src1
-        resolved.src2 := src2.getData
-        resolved.base := base.getData
-        resolved.dst := dst
-      }
+      resolved.mode := mode
+      resolved.src1 := src1
+      resolved.src2 := src2.getData
+      resolved.base := base.getData ^ notBase  // Apply notBase to get effective base
+      resolved.dst := dst
       resolved
     }
 

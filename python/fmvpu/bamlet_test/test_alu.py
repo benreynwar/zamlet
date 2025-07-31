@@ -28,8 +28,8 @@ this_dir = os.path.abspath(os.path.dirname(__file__))
 
 async def alu_add_test(bi: BamletInterface) -> None:
     """Test ADD operation: reg1 + reg2 -> reg3"""
-    await bi.write_d_register(1, 15)
-    await bi.write_d_register(2, 7)
+    await bi.write_register('d', 1, 15)
+    await bi.write_register('d', 2, 7)
     
     instrs = [
         ALUInstruction(
@@ -47,14 +47,14 @@ async def alu_add_test(bi: BamletInterface) -> None:
     await bi.wait_for_program_to_run()
     
     # Check result in register 3
-    result = bi.probe_d_register(3)
+    result = bi.probe_register('d', 3)
     assert result == 22, f"Expected 22, got {result}"
 
 
 async def alu_addi_test(bi: BamletInterface) -> None:
     """Test ADDI operation: reg1 + immediate -> reg3"""
-    await bi.write_d_register(1, 10)
-    await bi.write_d_register(2, 5)  # immediate value in reg2
+    await bi.write_register('d', 1, 10)
+    await bi.write_register('d', 2, 5)  # immediate value in reg2
     
     program = [
         VLIWInstruction(
@@ -73,14 +73,14 @@ async def alu_addi_test(bi: BamletInterface) -> None:
     await bi.wait_for_program_to_run()
     
     # Check result in register 3
-    result = bi.probe_d_register(3)
+    result = bi.probe_register('d', 3)
     assert result == 12, f"Expected 12, got {result}"
 
 
 async def alu_sub_test(bi: BamletInterface) -> None:
     """Test SUB operation: reg1 - reg2 -> reg3"""
-    await bi.write_d_register(1, 20)
-    await bi.write_d_register(2, 8)
+    await bi.write_register('d', 1, 20)
+    await bi.write_register('d', 2, 8)
     
     program = [
         VLIWInstruction(
@@ -99,14 +99,14 @@ async def alu_sub_test(bi: BamletInterface) -> None:
     await bi.wait_for_program_to_run()
     
     # Check result in register 3
-    result = bi.probe_d_register(3)
+    result = bi.probe_register('d', 3)
     assert result == 12, f"Expected 12, got {result}"
 
 
 async def alu_subi_test(bi: BamletInterface) -> None:
     """Test SUBI operation: reg1 - immediate -> reg3"""
-    await bi.write_d_register(1, 25)
-    await bi.write_d_register(2, 3)  # immediate value in reg2
+    await bi.write_register('d', 1, 25)
+    await bi.write_register('d', 2, 3)  # immediate value in reg2
     
     program = [
         VLIWInstruction(
@@ -125,14 +125,14 @@ async def alu_subi_test(bi: BamletInterface) -> None:
     await bi.wait_for_program_to_run()
     
     # Check result in register 3
-    result = bi.probe_d_register(3)
+    result = bi.probe_register('d', 3)
     assert result == 23, f"Expected 23, got {result}"
 
 
 async def alu_mult_test(bi: BamletInterface) -> None:
     """Test MULT operation: reg1 * reg2 -> reg3"""
-    await bi.write_d_register(1, 6)
-    await bi.write_d_register(2, 7)
+    await bi.write_register('d', 1, 6)
+    await bi.write_register('d', 2, 7)
     
     program = [
         VLIWInstruction(
@@ -151,14 +151,14 @@ async def alu_mult_test(bi: BamletInterface) -> None:
     await bi.wait_for_program_to_run()
     
     # Check result in register 3
-    result = bi.probe_d_register(3)
+    result = bi.probe_register('d', 3)
     assert result == 42, f"Expected 42, got {result}"
 
 
 async def alu_mult_acc_test(bi: BamletInterface) -> None:
     """Test MULT_ACC operation: accumulator + (src1 * src2) -> dst"""
-    await bi.write_d_register(2, 4)
-    await bi.write_d_register(3, 5)
+    await bi.write_register('d', 2, 4)
+    await bi.write_register('d', 3, 5)
     
     program = [
         VLIWInstruction(
@@ -177,16 +177,16 @@ async def alu_mult_acc_test(bi: BamletInterface) -> None:
     await bi.wait_for_program_to_run()
     
     # Check result in register 1: 4 * 5 = 20 (MULT_ACC_INIT initializes accumulator)
-    result = bi.probe_d_register(1)
+    result = bi.probe_register('d', 1)
     assert result == 20, f"Expected 20, got {result}"
 
 
 async def alu_mult_acc_chain_test(bi: BamletInterface) -> None:
     """Test multiple MULT_ACC operations in sequence to verify accumulator chaining"""
-    await bi.write_d_register(2, 3)   # first multiply operand
-    await bi.write_d_register(3, 2)   # second multiply operand
-    await bi.write_d_register(4, 4)   # third multiply operand
-    await bi.write_d_register(5, 1)   # fourth multiply operand
+    await bi.write_register('d', 2, 3)   # first multiply operand
+    await bi.write_register('d', 3, 2)   # second multiply operand
+    await bi.write_register('d', 4, 4)   # third multiply operand
+    await bi.write_register('d', 5, 1)   # fourth multiply operand
     
     program = [
         # First MULT_ACC_INIT: acc = 3 * 2 = 6
@@ -224,14 +224,14 @@ async def alu_mult_acc_chain_test(bi: BamletInterface) -> None:
     await bi.wait_for_program_to_run()
     
     # Check final result in register 1: 6 + 4 + 6 = 16
-    result = bi.probe_d_register(1)
+    result = bi.probe_register('d', 1)
     assert result == 16, f"Expected 16, got {result}"
 
 
 async def alu_chain_operations_test(bi: BamletInterface) -> None:
     """Test chained ALU operations with dependencies"""
-    await bi.write_d_register(1, 3)
-    await bi.write_d_register(2, 4)
+    await bi.write_register('d', 1, 3)
+    await bi.write_register('d', 2, 4)
     
     program = [
         # reg4 = reg1 + reg2 (3 + 4 = 7)
@@ -269,18 +269,18 @@ async def alu_chain_operations_test(bi: BamletInterface) -> None:
     await bi.wait_for_program_to_run()
     
     # Check intermediate and final results
-    result4 = bi.probe_d_register(4)
+    result4 = bi.probe_register('d', 4)
     assert result4 == 7, f"Expected 7 in register 4, got {result4}"
-    result5 = bi.probe_d_register(5)
+    result5 = bi.probe_register('d', 5)
     assert result5 == 21, f"Expected 21 in register 5, got {result5}"
-    result6 = bi.probe_d_register(6)
+    result6 = bi.probe_register('d', 6)
     assert result6 == 17, f"Expected 17 in register 6, got {result6}"
 
 
 async def alu_zero_operands_test(bi: BamletInterface) -> None:
     """Test ALU operations with zero operands"""
-    await bi.write_d_register(1, 0)
-    await bi.write_d_register(2, 15)
+    await bi.write_register('d', 1, 0)
+    await bi.write_register('d', 2, 15)
     
     program = [
         # 0 + 15 = 15
@@ -317,12 +317,68 @@ async def alu_zero_operands_test(bi: BamletInterface) -> None:
     await bi.start_program(pc=0)
     await bi.wait_for_program_to_run()
     
-    result3 = bi.probe_d_register(3)
+    result3 = bi.probe_register('d', 3)
     assert result3 == 15, f"Expected 15 in register 3, got {result3}"
-    result4 = bi.probe_d_register(4)
+    result4 = bi.probe_register('d', 4)
     assert result4 == 0, f"Expected 0 in register 4, got {result4}"
-    result5 = bi.probe_d_register(5)
+    result5 = bi.probe_register('d', 5)
     assert result5 == 15, f"Expected 15 in register 5, got {result5}"
+
+
+async def alu_predicate_test(bi: BamletInterface) -> None:
+    """Test ALU instruction predicate field - operations should only execute when predicate is true"""
+    # Initialize source registers
+    await bi.write_register('d', 1, 10)
+    await bi.write_register('d', 2, 5)
+    await bi.write_register('d', 3, 0)  # Clear destination register
+    
+    # Test 1: Set predicate register 1 to false (0), ALU should not execute
+    await bi.write_register('p', 1, 0)  # Predicate false
+    
+    program = [
+        VLIWInstruction(
+            control=ControlInstruction(mode=ControlModes.HALT),
+            alu=ALUInstruction(
+                mode=ALUModes.ADD,
+                src1=1,
+                src2=2,
+                d_dst=3,
+                predicate=1,  # Use P-register 1 as predicate
+            )
+        )
+    ]
+    bi.write_program(program, base_address=0)
+    await bi.wait_to_send_packets()
+    await bi.start_program(pc=0)
+    await bi.wait_for_program_to_run()
+    
+    # Check that destination register wasn't modified (predicate was false)
+    result = bi.probe_register('d', 3)
+    assert result == 0, f"Expected 0 (no execution), got {result}"
+    
+    # Test 2: Set predicate register 1 to true (1), ALU should execute
+    await bi.write_register('p', 1, 1)  # Predicate true
+    
+    program = [
+        VLIWInstruction(
+            control=ControlInstruction(mode=ControlModes.HALT),
+            alu=ALUInstruction(
+                mode=ALUModes.ADD,
+                src1=1,
+                src2=2,
+                d_dst=3,
+                predicate=1,  # Use P-register 1 as predicate
+            )
+        )
+    ]
+    bi.write_program(program, base_address=0)
+    await bi.wait_to_send_packets()
+    await bi.start_program(pc=0)
+    await bi.wait_for_program_to_run()
+    
+    # Check that operation executed (10 + 5 = 15)
+    result = bi.probe_register('d', 3)
+    assert result == 15, f"Expected 15 (executed), got {result}"
 
 
 async def alu_with_packet_io_test(bi: BamletInterface) -> None:
@@ -331,7 +387,7 @@ async def alu_with_packet_io_test(bi: BamletInterface) -> None:
     dest_x = 0
     dest_y = 0
     coord_word = packet_utils.make_coord_register(dest_x, dest_y, bi.params.amlet)
-    await bi.write_a_register(0, coord_word)
+    await bi.write_register('a', 0, coord_word)
     
     program = [
         # Receive packet and get length
@@ -417,7 +473,7 @@ async def bamlet_alu_test(dut: HierarchyObject) -> None:
     bi.initialize_signals()
     await bi.start()
     
-    # Run ALU tests (excluding mask tests which aren't implemented yet)
+    # Run ALU tests
     await alu_add_test(bi)
     await alu_addi_test(bi)
     await alu_sub_test(bi)
@@ -428,6 +484,7 @@ async def bamlet_alu_test(dut: HierarchyObject) -> None:
     await alu_chain_operations_test(bi)
     await alu_zero_operands_test(bi)
     await alu_with_packet_io_test(bi)
+    await alu_predicate_test(bi)
 
 
 def test_bamlet_alu(verilog_file: str, params_file: str, seed: int = 0) -> None:

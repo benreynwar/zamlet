@@ -65,11 +65,29 @@ class PacketHeader:
         return cls(**field_values)
 
 
-def create_register_write_command_header(register: int, params: AmletParams = AmletParams()) -> int:
-    """Create A-register write command header word"""
-    assert 0 <= register < params.n_a_regs + params.n_d_regs + params.n_g_regs
+def create_register_write_command_header(reg_type: str, register: int, params: AmletParams = AmletParams()) -> int:
+    """Create register write command header word"""
+    # Validate and encode based on register type
+    if reg_type == 'a':
+        type_bits = 0
+        assert 0 <= register < params.n_a_regs
+    elif reg_type == 'd':
+        type_bits = 1
+        assert 0 <= register < params.n_d_regs
+    elif reg_type == 'p':
+        type_bits = 2
+        assert 0 <= register < params.n_p_regs
+    elif reg_type == 'g':
+        type_bits = 3
+        assert 0 <= register < params.n_g_regs
+    else:
+        assert False, f"Invalid register type '{reg_type}'. Must be 'a', 'd', 'p', or 'g'"
+    
+    # Encode register address with 2-bit type prefix
+    encoded_register = (type_bits << (params.reg_width - 2)) | register
+    
     cmd = CommandTypes.WRITE_REGISTER << (params.width - 2)
-    cmd |= register
+    cmd |= encoded_register
     return cmd
 
 
@@ -88,17 +106,14 @@ def create_start_command(pc: int, params: AmletParams = AmletParams()) -> int:
     return cmd
 
 
-def create_register_write_packet(register: int, value: int, dest_x: int = 0, dest_y: int = 0, params: AmletParams = AmletParams(), is_broadcast: bool = False) -> list[int]:
-    """Create a command packet to write a value to a register"""
-    cutoff = max([params.n_a_regs, params.n_d_regs, params.n_g_regs])
-    if 0 <= register < params.n_a_regs:
-        assert 0 <= value < (1 << params.a_width)
-    elif cutoff <= register < cutoff + params.n_d_regs:
-        assert 0 <= value < (1 << params.width)
-    elif 2*cutoff <= register < 2*cutoff + params.n_g_regs:
-        assert 0 <= value < (1 << params.a_width)
-    else:
-        assert False
+def create_register_write_packet(register: int, value: int, reg_type: str, dest_x: int = 0, dest_y: int = 0, params: AmletParams = AmletParams(), is_broadcast: bool = False) -> list[int]:
+    """Create a command packet to write a value to a register
+    
+    Args:
+        register: Register index within the register type
+        value: Value to write 
+        reg_type: Register type - 'a', 'd', 'p', or 'g'
+    """
     header = PacketHeader(
         length=2,  # Command header + data word
         dest_x=dest_x,
@@ -106,7 +121,7 @@ def create_register_write_packet(register: int, value: int, dest_x: int = 0, des
         mode=PacketHeaderModes.COMMAND,
         is_broadcast=is_broadcast
     )
-    command_header = create_register_write_command_header(register, params)
+    command_header = create_register_write_command_header(reg_type, register, params)
     return [header.encode(), command_header, value]
 
 
@@ -320,11 +335,11 @@ def make_write_args_packets(params: AmletParams, args, regs, broadcast_coord, am
         reg_index = getattr(regs, field.name)
         value = getattr(args, field.name)
         if field.name[0:2] == 'a_':
-            b_reg = reg_index
+            reg_key = ('a', reg_index)
         elif field.name[0:2] == 'd_':
-            b_reg = cutoff + reg_index
+            reg_key = ('d', reg_index)
         elif field.name[0:2] == 'g_':
-            b_reg = 2*cutoff + reg_index
+            reg_key = ('g', reg_index)
         else:
             raise ValueError(f'Field must start width a_ or d_ but name is {field.name}')
         if isinstance(value, list):
@@ -335,13 +350,13 @@ def make_write_args_packets(params: AmletParams, args, regs, broadcast_coord, am
                     assert 0 <= subvalue < pow(2, params.a_width)
                 else:
                     assert 0 <= subvalue < pow(2, params.width)
-                unique_key_value_pairs[index].append((b_reg, subvalue))
+                unique_key_value_pairs[index].append((reg_key, subvalue))
         else:
             if field.name[0:2] in ('a_', 'g_'):
                 assert 0 <= value < pow(2, params.a_width)
             else:
                 assert 0 <= value < pow(2, params.width)
-            broadcast_key_value_pairs.append((b_reg, value))
+            broadcast_key_value_pairs.append((reg_key, value))
     header = PacketHeader(
         length=2*len(broadcast_key_value_pairs),
         dest_x=broadcast_coord[0],
@@ -350,8 +365,9 @@ def make_write_args_packets(params: AmletParams, args, regs, broadcast_coord, am
         is_broadcast=True,
     )
     broadcast_packet = [header.encode()]
-    for b_reg, value in broadcast_key_value_pairs:
-        command_header = create_register_write_command_header(b_reg, params)
+    for reg_key, value in broadcast_key_value_pairs:
+        reg_type, register = reg_key
+        command_header = create_register_write_command_header(reg_type, register, params)
         broadcast_packet += [command_header, value]
     unique_packets = []
     for coords, key_value_pairs in zip(amlet_coords, unique_key_value_pairs):
@@ -363,8 +379,9 @@ def make_write_args_packets(params: AmletParams, args, regs, broadcast_coord, am
             is_broadcast=False,
         )
         packet = [header.encode()]
-        for b_reg, value in key_value_pairs:
-            command_header = create_register_write_command_header(b_reg, params)
+        for reg_key, value in key_value_pairs:
+            reg_type, register = reg_key
+            command_header = create_register_write_command_header(reg_type, register, params)
             packet += [command_header, value]
         unique_packets.append(packet)
     return broadcast_packet, unique_packets

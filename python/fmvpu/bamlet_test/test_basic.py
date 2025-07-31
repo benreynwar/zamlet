@@ -31,7 +31,7 @@ async def echo_packet_test(bi: BamletInterface) -> None:
     dest_x = 0
     dest_y = 0
     coord_word = make_coord_register(dest_x, dest_y, bi.params.amlet)
-    await bi.write_a_register(0, coord_word)
+    await bi.write_register('a', 0, coord_word)
 
     # Create VLIW program for packet echo
     program = [

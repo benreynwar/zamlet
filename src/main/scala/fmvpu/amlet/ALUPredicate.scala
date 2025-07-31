@@ -15,43 +15,47 @@ class ALUPredicate(params: AmletParams) extends Module {
     val result = Output(Valid(new PredicateResult(params)))
   })
 
-  // Compute ALUPredicate result
-  val aluOut = Wire(Bool())
+  // Compute comparison result
+  val comparisonResult = Wire(Bool())
 
-  aluOut := false.B  // Default value
+  comparisonResult := true.B  // Default value
 
   switch(io.instr.bits.mode) {
     is(PredicateInstr.Modes.None) {
-      aluOut := false.B
+      comparisonResult := true.B
     }
     is(PredicateInstr.Modes.Eq) {
-      aluOut := io.instr.bits.src1 === io.instr.bits.src2
+      comparisonResult := io.instr.bits.src1 === io.instr.bits.src2
     }
     is(PredicateInstr.Modes.NEq) {
-      aluOut := io.instr.bits.src1 =/= io.instr.bits.src2
+      comparisonResult := io.instr.bits.src1 =/= io.instr.bits.src2
     }
     is(PredicateInstr.Modes.Gte) {
-      aluOut := io.instr.bits.src1 >= io.instr.bits.src2
+      comparisonResult := io.instr.bits.src1 >= io.instr.bits.src2
     }
     is(PredicateInstr.Modes.Gt) {
-      aluOut := io.instr.bits.src1 > io.instr.bits.src2
+      comparisonResult := io.instr.bits.src1 > io.instr.bits.src2
     }
     is(PredicateInstr.Modes.Lte) {
-      aluOut := io.instr.bits.src1 <= io.instr.bits.src2
+      comparisonResult := io.instr.bits.src1 <= io.instr.bits.src2
     }
     is(PredicateInstr.Modes.Lt) {
-      aluOut := io.instr.bits.src1 < io.instr.bits.src2
+      comparisonResult := io.instr.bits.src1 < io.instr.bits.src2
     }
     is(PredicateInstr.Modes.Unused7) {
-      aluOut := false.B
+      comparisonResult := true.B
     }
   }
+
+  // Combine comparison result with base predicate: final = comparison AND base
+  val finalResult = Wire(Bool())
+  finalResult := comparisonResult && io.instr.bits.base
 
   // Pipeline the result through the specified latency (reuse aluLatency param)
   if (params.aluPredicateLatency == 0) {
     // Single cycle latency
     io.result.valid := io.instr.valid
-    io.result.bits.value := aluOut
+    io.result.bits.value := finalResult
     io.result.bits.address.addr := io.instr.bits.dst.addr
     io.result.bits.address.tag := io.instr.bits.dst.tag
   } else {
@@ -62,7 +66,7 @@ class ALUPredicate(params: AmletParams) extends Module {
     
     // Stage 0 (input)
     validPipe(0) := io.instr.valid
-    resultPipe(0) := aluOut
+    resultPipe(0) := finalResult
     dstAddrPipe(0) := io.instr.bits.dst
     
     // Pipeline stages 1 to latency-1

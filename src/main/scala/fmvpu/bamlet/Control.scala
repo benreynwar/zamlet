@@ -226,8 +226,8 @@ class Control(params: BamletParams) extends Module {
   }
 
   stateNext.active := state.active
-  when (io.imResp.valid) {
-    when (io.imResp.bits.instr.control.mode === ControlInstr.Modes.Halt) {
+  when (instrBuffered.valid && instrBuffered.ready) {
+    when (instrBuffered.bits.control.mode === ControlInstr.Modes.Halt) {
       stateNext.active := false.B
     }
   }

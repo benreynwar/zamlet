@@ -92,6 +92,14 @@ class AmletParams:
         return math.ceil(math.log2(self.n_p_regs))
     
     @property
+    def g_reg_width(self) -> int:
+        return math.ceil(math.log2(self.n_g_regs))
+    
+    @property
+    def reg_width(self) -> int:
+        return max(self.a_reg_width, self.d_reg_width, self.g_reg_width, self.p_reg_width) + 2
+    
+    @property
     def addr_width(self) -> int:
         return math.ceil(math.log2(self.data_memory_depth))
 
