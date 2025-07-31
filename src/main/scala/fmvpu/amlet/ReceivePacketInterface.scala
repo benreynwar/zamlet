@@ -237,7 +237,7 @@ class ReceivePacketInterface(params: AmletParams) extends Module {
         bufferedInstr.ready := true.B
         
         // Error if wrong instruction mode
-        when (bufferedInstr.bits.mode =/= PacketInstr.Modes.GetPacketWord) {
+        when (bufferedInstr.bits.mode =/= PacketInstr.Modes.GetWord) {
           errorWrongInstructionMode := true.B
         }
         

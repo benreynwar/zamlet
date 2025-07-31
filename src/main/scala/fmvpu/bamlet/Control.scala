@@ -2,7 +2,7 @@ package fmvpu.bamlet
 
 import chisel3._
 import chisel3.util._
-import fmvpu.amlet.{ControlWrite, ControlWriteMode, ControlInstr, VLIWInstr}
+import fmvpu.amlet.{ControlWrite, ControlWriteMode, ControlInstr, PredicateInstr, VLIWInstr}
 
 
 class LoopState(params: BamletParams) extends Bundle {
@@ -93,7 +93,22 @@ class Control(params: BamletParams) extends Module {
 
   val instrBuffered = Wire(Decoupled(new VLIWInstr.Expanded(params.amlet)))
   // Convert from Base to Expanded format and substitute some Loop for Incr.
-  instrBuffered.bits := io.imResp.bits.instr.expand()
+  val expandedInstr = io.imResp.bits.instr.expand()
+  
+  // Handle predicate src1 mode resolution
+  val predicateSrc1Resolved = Wire(UInt(params.amlet.aWidth.W))
+  when (io.imResp.bits.instr.predicate.src1.mode === PredicateInstr.Src1Mode.Immediate) {
+    predicateSrc1Resolved := io.imResp.bits.instr.predicate.src1.value
+  } .elsewhen (io.imResp.bits.instr.predicate.src1.mode === PredicateInstr.Src1Mode.LoopIndex) {
+    predicateSrc1Resolved := state.loopStates(io.imResp.bits.instr.predicate.src1.value(log2Ceil(params.amlet.nLoopLevels)-1, 0)).index
+  } .elsewhen (io.imResp.bits.instr.predicate.src1.mode === PredicateInstr.Src1Mode.Global) {
+    predicateSrc1Resolved := state.globals(io.imResp.bits.instr.predicate.src1.value(log2Ceil(params.amlet.nGRegs)-1, 0))
+  } .otherwise {
+    predicateSrc1Resolved := 0.U
+  }
+  
+  instrBuffered.bits := expandedInstr
+  instrBuffered.bits.predicate.src1 := predicateSrc1Resolved
   instrBuffered.valid := io.imResp.valid && state.active
 
   val instrBuffer = Module(new fmvpu.utils.SkidBuffer(new VLIWInstr.Expanded(params.amlet)))
@@ -106,9 +121,10 @@ class Control(params: BamletParams) extends Module {
   // Update the Loop States if we have a loop instruction
   val isLocalLoop = io.imResp.bits.instr.control.mode === ControlInstr.Modes.LoopLocal
   val isGlobalLoop = io.imResp.bits.instr.control.mode === ControlInstr.Modes.LoopGlobal
+  val isImmediateLoop = io.imResp.bits.instr.control.mode === ControlInstr.Modes.LoopImmediate
 
   when (io.imResp.valid && instrBuffered.ready) {
-    when (isLocalLoop || isGlobalLoop) {
+    when (isLocalLoop || isGlobalLoop || isImmediateLoop) {
       stateBody.loopActive := true.B
       // If we were already in a loop.
       when (state.loopActive) {
@@ -123,12 +139,18 @@ class Control(params: BamletParams) extends Module {
             stateBody.loopStates(stateBody.loopLevel).resolvedIterations :=
               VecInit(Seq.fill(params.nAmlets)(false.B))
             stateBody.loopStates(stateBody.loopLevel).terminating := false.B
-          } .otherwise {
-            stateBody.loopStates(stateBody.loopLevel).iterations := state.globals(io.imResp.bits.instr.control.iterations.value)
+          } .elsewhen (isGlobalLoop) {
+            stateBody.loopStates(stateBody.loopLevel).iterations := state.globals(io.imResp.bits.instr.control.iterations)
             stateBody.loopStates(stateBody.loopLevel).resolvedIterations :=
               VecInit(Seq.fill(params.nAmlets)(true.B))
             stateBody.loopStates(stateBody.loopLevel).terminating :=
-              (state.globals(io.imResp.bits.instr.control.iterations.value) <= 1.U)
+              (state.globals(io.imResp.bits.instr.control.iterations) <= 1.U)
+          } .otherwise { // isImmediateLoop
+            stateBody.loopStates(stateBody.loopLevel).iterations := io.imResp.bits.instr.control.iterations
+            stateBody.loopStates(stateBody.loopLevel).resolvedIterations :=
+              VecInit(Seq.fill(params.nAmlets)(true.B))
+            stateBody.loopStates(stateBody.loopLevel).terminating :=
+              (io.imResp.bits.instr.control.iterations <= 1.U)
           }
         }
       } .otherwise {
@@ -139,12 +161,18 @@ class Control(params: BamletParams) extends Module {
           stateBody.loopStates(stateBody.loopLevel).resolvedIterations :=
             VecInit(Seq.fill(params.nAmlets)(false.B))
           stateBody.loopStates(stateBody.loopLevel).terminating := false.B
-        } .otherwise {
-          stateBody.loopStates(stateBody.loopLevel).iterations := state.globals(io.imResp.bits.instr.control.iterations.value)
+        } .elsewhen (isGlobalLoop) {
+          stateBody.loopStates(stateBody.loopLevel).iterations := state.globals(io.imResp.bits.instr.control.iterations)
           stateBody.loopStates(stateBody.loopLevel).resolvedIterations :=
             VecInit(Seq.fill(params.nAmlets)(true.B))
           stateBody.loopStates(stateBody.loopLevel).terminating :=
-            (state.globals(io.imResp.bits.instr.control.iterations.value) <= 1.U)
+            (state.globals(io.imResp.bits.instr.control.iterations) <= 1.U)
+        } .otherwise { // isImmediateLoop
+          stateBody.loopStates(stateBody.loopLevel).iterations := io.imResp.bits.instr.control.iterations
+          stateBody.loopStates(stateBody.loopLevel).resolvedIterations :=
+            VecInit(Seq.fill(params.nAmlets)(true.B))
+          stateBody.loopStates(stateBody.loopLevel).terminating :=
+            (io.imResp.bits.instr.control.iterations <= 1.U)
         }
       }
       stateBody.loopStates(stateBody.loopLevel).start := io.imResp.bits.pc
@@ -219,7 +247,7 @@ class Control(params: BamletParams) extends Module {
   // Update the globals
   // Do this to stateNext rather than stateBody to help with timing
   when (io.writeControl.valid && io.writeControl.bits.mode === ControlWriteMode.GlobalRegister) {
-    stateNext.globals(io.writeControl.bits.address) := io.writeControl.bits.data
+    stateNext.globals(io.writeControl.bits.address(log2Ceil(params.amlet.nGRegs)-1, 0)) := io.writeControl.bits.data
   }
 
 

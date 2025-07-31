@@ -50,6 +50,14 @@ class AmletParams:
     # ALULite configuration
     n_alu_lite_rs_slots: int = 4
     
+    # ALU Predicate configuration
+    alu_predicate_latency: int = 1
+    n_alu_predicate_rs_slots: int = 4
+    
+    # Predicate register configuration
+    n_p_regs: int = 16
+    n_p_tags: int = 4
+    
     # Load Store configuration
     n_load_store_rs_slots: int = 4
     
@@ -80,6 +88,10 @@ class AmletParams:
         return max(self.a_reg_width, self.d_reg_width) + 1
     
     @property
+    def p_reg_width(self) -> int:
+        return math.ceil(math.log2(self.n_p_regs))
+    
+    @property
     def addr_width(self) -> int:
         return math.ceil(math.log2(self.data_memory_depth))
 
@@ -105,6 +117,10 @@ class AmletParams:
         'aluLatency': 'alu_latency',
         'nAluRSSlots': 'n_alu_rs_slots',
         'nAluLiteRSSlots': 'n_alu_lite_rs_slots',
+        'aluPredicateLatency': 'alu_predicate_latency',
+        'nAluPredicateRSSlots': 'n_alu_predicate_rs_slots',
+        'nPRegs': 'n_p_regs',
+        'nPTags': 'n_p_tags',
         'nLoadStoreRSSlots': 'n_load_store_rs_slots',
         'nSendPacketRSSlots': 'n_send_packet_rs_slots',
         'nReceivePacketRSSlots': 'n_receive_packet_rs_slots',

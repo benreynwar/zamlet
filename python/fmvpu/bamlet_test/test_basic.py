@@ -13,7 +13,8 @@ from cocotb.handle import HierarchyObject
 
 from fmvpu import generate_rtl
 from fmvpu import test_utils
-from fmvpu.bamlet.bamlet_interface import BamletInterface, make_coord_register
+from fmvpu.bamlet.bamlet_interface import BamletInterface
+from fmvpu.amlet.packet_utils import make_coord_register
 from fmvpu.bamlet.bamlet_params import BamletParams
 from fmvpu.amlet.instruction import VLIWInstruction
 from fmvpu.amlet.control_instruction import ControlInstruction

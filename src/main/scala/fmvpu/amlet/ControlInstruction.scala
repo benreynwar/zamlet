@@ -8,7 +8,7 @@ object ControlInstr {
 
   object Modes extends ChiselEnum {
     val None = Value(0.U)
-    val Reserved1 = Value(1.U)       
+    val LoopImmediate = Value(1.U)       
     val LoopLocal = Value(2.U)
     val LoopGlobal = Value(3.U)
     // Increments the index of the current loop
@@ -44,7 +44,7 @@ object ControlInstr {
   // The number of iterations could come from an areg or a greg or a immediate
   class Base(params: AmletParams) extends Instr.Base(params) {
     val mode = Modes()
-    val iterations = new BaseSrcType(params)   // Where the number of iterations comes from.
+    val iterations = UInt(srcWidth(params).W)  // Value (immediate, A-reg index, or G-reg index)
     val dst = params.aReg()                    // Where the loop index goes.
     val predicate = params.pReg()              // loop_index < iterations put here.
     val length = UInt(params.instrAddrWidth.W) // Number of instructions in the loop body.
@@ -53,7 +53,7 @@ object ControlInstr {
       val expanded = Wire(new Expanded(params))
       expanded.mode := mode
       expanded.iterations.resolved := false.B  
-      expanded.iterations.addr := iterations.value  
+      expanded.iterations.addr := iterations  
       expanded.iterations.value := DontCare
       expanded.dst := dst
       expanded.predicate := predicate

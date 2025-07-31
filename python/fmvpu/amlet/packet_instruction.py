@@ -34,19 +34,20 @@ class PacketModes(IntEnum):
 class PacketInstruction:
     """Packet instruction for amlet (send/receive packets)"""
     mode: PacketModes = PacketModes.NONE
+    result: int = None  # Result register (b-type register) 
     length: int = 0   # Length register (a-type register)
     target: int = 0   # Target register (a-type register)
+    predicate: int = 0  # P-register for predicate
     channel: int = 0  # Channel number
-    dst: int = None
     a_dst: int = None
     d_dst: int = None
 
     def __post_init__(self):
-        """Set dst based on a_dst or d_dst if specified"""
+        """Set result based on a_dst or d_dst if specified"""
         if self.mode not in (PacketModes.NONE, PacketModes.SEND):
-            count = (self.a_dst is not None) + (self.d_dst is not None) + (self.dst is not None)
+            count = (self.a_dst is not None) + (self.d_dst is not None) + (self.result is not None)
             if count != 1:
-                raise ValueError("Must specifiy exactly 1 of a_dst, d_dst and dst")
+                raise ValueError("Must specifiy exactly 1 of a_dst, d_dst and result")
     
     @classmethod
     def get_width(cls, params) -> int:
@@ -55,37 +56,42 @@ class PacketInstruction:
     
     @classmethod
     def get_field_specs(cls, params) -> List[Tuple[str, int]]:
-        """Get field specifications for bit packing."""
+        """Get field specifications for bit packing.
+        
+        Field order must match the Scala bundle definition.
+        """
         return [
             ('mode', 4),     # 4 bits to support up to 15
-            ('dst', params.b_reg_width),
+            ('result', params.b_reg_width),
             ('length', params.a_reg_width),
             ('target', params.a_reg_width),
+            ('predicate', params.p_reg_width),
             ('channel', clog2(params.n_channels)),
         ]
     
     def encode(self, params) -> int:
         """Encode to instruction bits"""
-        # Determine the actual dst value
+        # Determine the actual result value
         if self.a_dst is not None:
             # A-registers map directly to B-register space
-            actual_dst = self.a_dst
+            actual_result = self.a_dst
         elif self.d_dst is not None:
             # D-registers map to B-register space starting at cutoff
             cutoff = max(params.n_a_regs, params.n_d_regs)
-            actual_dst = cutoff + self.d_dst
-        elif self.dst is not None:
-            actual_dst = self.dst
+            actual_result = cutoff + self.d_dst
+        elif self.result is not None:
+            actual_result = self.result
         else:
-            actual_dst = 0
+            actual_result = 0
         
         # Create a temporary object for encoding
         temp_instr = type(self)(
             mode=self.mode,
+            result=actual_result,
             length=self.length,
             target=self.target,
-            channel=self.channel,
-            dst=actual_dst
+            predicate=self.predicate,
+            channel=self.channel
         )
         
         field_specs = self.get_field_specs(params)

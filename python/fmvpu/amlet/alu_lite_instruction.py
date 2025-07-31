@@ -37,7 +37,7 @@ class ALULiteModes(IntEnum):
     RESERVED28 = 28
     RESERVED29 = 29
     RESERVED30 = 30
-    JUMP = 31
+    RESERVED31 = 31
 
 
 @dataclass
@@ -47,6 +47,7 @@ class ALULiteInstruction:
     src1: int = 0  # Source 1 register (a-type register)
     src2: int = 0  # Source 2 register (a-type register)
     dst: int = None
+    predicate: int = 0  # P-register for predicate
     a_dst: int = None  # A-register destination (if specified)
     d_dst: int = None  # D-register destination (if specified)
     
@@ -65,11 +66,15 @@ class ALULiteInstruction:
     
     @classmethod
     def get_field_specs(cls, params) -> List[Tuple[str, int]]:
-        """Get field specifications for bit packing."""
+        """Get field specifications for bit packing.
+        
+        Field order must match the Scala bundle definition.
+        """
         return [
             ('mode', 5),  # 5 bits to support up to 31
             ('src1', params.a_reg_width),
             ('src2', params.a_reg_width),
+            ('predicate', params.p_reg_width),
             ('dst', params.b_reg_width),
         ]
     
@@ -93,7 +98,8 @@ class ALULiteInstruction:
             mode=self.mode,
             src1=self.src1,
             src2=self.src2,
-            dst=actual_dst
+            dst=actual_dst,
+            predicate=self.predicate
         )
         
         field_specs = self.get_field_specs(params)

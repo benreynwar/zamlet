@@ -3,6 +3,7 @@ from typing import List, Tuple
 
 from fmvpu.control_structures import pack_fields_to_words, unpack_words_to_fields, int_to_words
 from fmvpu.amlet.control_instruction import ControlInstruction, ControlModes
+from fmvpu.amlet.predicate_instruction import PredicateInstruction
 from fmvpu.amlet.alu_instruction import ALUInstruction
 from fmvpu.amlet.alu_lite_instruction import ALULiteInstruction
 from fmvpu.amlet.ldst_instruction import LoadStoreInstruction
@@ -13,6 +14,7 @@ from fmvpu.amlet.packet_instruction import PacketInstruction
 class VLIWInstruction:
     """VLIW Instruction containing multiple execution units"""
     control: ControlInstruction = None
+    predicate: PredicateInstruction = None
     alu: ALUInstruction = None
     alu_lite: ALULiteInstruction = None
     load_store: LoadStoreInstruction = None
@@ -22,6 +24,8 @@ class VLIWInstruction:
         # Initialize empty instructions if not provided
         if self.control is None:
             self.control = ControlInstruction()
+        if self.predicate is None:
+            self.predicate = PredicateInstruction()
         if self.alu is None:
             self.alu = ALUInstruction()
         if self.alu_lite is None:
@@ -35,6 +39,7 @@ class VLIWInstruction:
         """Encode VLIW instruction to a word based on parameters"""
         # Get each instruction's encoded value and width
         control_encoded = self.control.encode(params)
+        predicate_encoded = self.predicate.encode(params)
         alu_encoded = self.alu.encode(params)
         alu_lite_encoded = self.alu_lite.encode(params)
         load_store_encoded = self.load_store.encode(params)
@@ -42,6 +47,7 @@ class VLIWInstruction:
         
         # Calculate widths based on parameters
         control_width = self.control.get_width(params)
+        predicate_width = self.predicate.get_width(params)
         alu_width = self.alu.get_width(params)
         alu_lite_width = self.alu_lite.get_width(params)
         load_store_width = self.load_store.get_width(params)
@@ -51,7 +57,7 @@ class VLIWInstruction:
         encoded = 0
         bit_pos = 0
         
-        # Pack in order: packet, load_store, alu_lite, alu, control
+        # Pack in order: packet, load_store, alu_lite, alu, predicate, control
         encoded |= (packet_encoded & ((1 << packet_width) - 1)) << bit_pos
         bit_pos += packet_width
         
@@ -64,6 +70,9 @@ class VLIWInstruction:
         encoded |= (alu_encoded & ((1 << alu_width) - 1)) << bit_pos
         bit_pos += alu_width
         
+        encoded |= (predicate_encoded & ((1 << predicate_width) - 1)) << bit_pos
+        bit_pos += predicate_width
+        
         encoded |= (control_encoded & ((1 << control_width) - 1)) << bit_pos
         
         return encoded
@@ -74,6 +83,7 @@ class VLIWInstruction:
         
         # Calculate total VLIW instruction width
         total_width = (self.control.get_width(params) + 
+                      self.predicate.get_width(params) +
                       self.alu.get_width(params) + 
                       self.alu_lite.get_width(params) + 
                       self.load_store.get_width(params) + 
@@ -82,21 +92,49 @@ class VLIWInstruction:
         return int_to_words(full_instruction, total_width, params.width)
     
     @classmethod
-    def from_word(cls, word: int) -> 'VLIWInstruction':
+    def from_word(cls, word: int, params) -> 'VLIWInstruction':
         """Parse VLIW instruction from word"""
-        # Extract each sub-instruction from bit ranges
-        control_bits = (word >> 96) & 0xFFFF
-        alu_bits = (word >> 64) & 0xFFFFFFFF
-        alu_lite_bits = (word >> 32) & 0xFFFFFFFF
-        load_store_bits = (word >> 16) & 0xFFFF
-        packet_bits = word & 0xFFFF
+        # Calculate widths based on parameters
+        control_width = ControlInstruction.get_width(None, params)
+        predicate_width = PredicateInstruction.get_width(None, params)
+        alu_width = ALUInstruction.get_width(None, params)
+        alu_lite_width = ALULiteInstruction.get_width(None, params)
+        load_store_width = LoadStoreInstruction.get_width(None, params)
+        packet_width = PacketInstruction.get_width(None, params)
+        
+        # Extract fields from LSB to MSB (same order as encode)
+        bit_pos = 0
+        
+        # Extract packet
+        packet_bits = (word >> bit_pos) & ((1 << packet_width) - 1)
+        bit_pos += packet_width
+        
+        # Extract load_store
+        load_store_bits = (word >> bit_pos) & ((1 << load_store_width) - 1)
+        bit_pos += load_store_width
+        
+        # Extract alu_lite
+        alu_lite_bits = (word >> bit_pos) & ((1 << alu_lite_width) - 1)
+        bit_pos += alu_lite_width
+        
+        # Extract alu
+        alu_bits = (word >> bit_pos) & ((1 << alu_width) - 1)
+        bit_pos += alu_width
+        
+        # Extract predicate
+        predicate_bits = (word >> bit_pos) & ((1 << predicate_width) - 1)
+        bit_pos += predicate_width
+        
+        # Extract control
+        control_bits = (word >> bit_pos) & ((1 << control_width) - 1)
         
         return cls(
-            control=ControlInstruction.from_word(control_bits),
-            alu=ALUInstruction.from_word(alu_bits),
-            alu_lite=ALULiteInstruction.from_word(alu_lite_bits),
-            load_store=LoadStoreInstruction.from_word(load_store_bits),
-            packet=PacketInstruction.from_word(packet_bits)
+            control=ControlInstruction.from_word(control_bits, params),
+            predicate=PredicateInstruction.from_word(predicate_bits, params),
+            alu=ALUInstruction.from_word(alu_bits, params),
+            alu_lite=ALULiteInstruction.from_word(alu_lite_bits, params),
+            load_store=LoadStoreInstruction.from_word(load_store_bits, params),
+            packet=PacketInstruction.from_word(packet_bits, params)
         )
 
 
@@ -170,6 +208,7 @@ from fmvpu.amlet.alu_lite_instruction import ALULiteModes
 from fmvpu.amlet.ldst_instruction import LoadStoreModes
 from fmvpu.amlet.packet_instruction import PacketModes
 from fmvpu.amlet.control_instruction import ControlModes
+from fmvpu.amlet.predicate_instruction import PredicateModes
 
 # Legacy aliases for backward compatibility with tests
 HaltInstruction = create_halt_instruction

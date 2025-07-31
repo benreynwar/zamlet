@@ -315,7 +315,7 @@ class RegisterFileAndRename(params: AmletParams) extends Module {
       packetRead2Enable := true.B
       packetWriteEnable := false.B
     }
-    is (PacketInstr.Modes.GetPacketWord) {
+    is (PacketInstr.Modes.GetWord) {
       packetReceive := true.B
       packetForward := false.B
       packetAppend := false.B
@@ -645,7 +645,8 @@ class RegisterFileAndRename(params: AmletParams) extends Module {
   // Find the lowest loop level that needs reporting using priority encoder
   val needsReporting = Wire(Vec(params.nLoopLevels, Bool()))
   for (i <- 0 until params.nLoopLevels) {
-    needsReporting(i) := i.U <= state.loopLevel && 
+    val levelCheck = if (i == 0) true.B else i.U <= state.loopLevel
+    needsReporting(i) := levelCheck && 
                          !state.loopStates(i).reported && 
                          state.loopActive && 
                          state.loopStates(i).resolved

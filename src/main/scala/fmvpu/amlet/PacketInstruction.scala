@@ -13,7 +13,7 @@ object PacketInstr {
     val ReceiveForwardAndAppend = Value(3.U)
     val ForwardAndAppend = Value(4.U)
     val Send = Value(5.U)
-    val GetPacketWord = Value(6.U)
+    val GetWord = Value(6.U)
     val Broadcast = Value(7.U)
     val Unused8 = Value(8.U)
     val Unused9 = Value(9.U)

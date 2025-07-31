@@ -18,7 +18,6 @@ object LoadStoreInstr {
     val addr = params.aReg()
     val reg = params.bReg()
     val predicate = params.pReg()
-    val dst = new BTaggedReg(params)
 
     def expand(): Expanded = {
       val expanded = Wire(new Expanded(params))
@@ -26,7 +25,6 @@ object LoadStoreInstr {
       expanded.addr := addr
       expanded.reg := reg
       expanded.predicate := predicate
-      expanded.dst := dst
       expanded
     }
   }
@@ -36,7 +34,6 @@ object LoadStoreInstr {
     val addr = params.aReg()
     val reg = params.bReg()
     val predicate = params.pReg()
-    val dst = new BTaggedReg(params)
   }
   
   class Resolving(params: AmletParams) extends Instr.Resolving(params) {

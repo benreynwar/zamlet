@@ -18,6 +18,8 @@ class LoadStoreInstruction:
     mode: LoadStoreModes = LoadStoreModes.NONE
     addr: int = 0   # Address register that points to memory location
     reg: int = None    # Encoded data register (B-register space)
+    predicate: int = 0  # P-register for predicate
+    dst: int = None   # Encoded destination register (B-register space)
     a_reg: int = None  # A-register for store result (if specified)
     d_reg: int = None  # D-register for store result (if specified)
     # Either a_reg, d_reg or src goes into reg
@@ -36,11 +38,15 @@ class LoadStoreInstruction:
     
     @classmethod
     def get_field_specs(cls, params) -> List[Tuple[str, int]]:
-        """Get field specifications for bit packing."""
+        """Get field specifications for bit packing.
+        
+        Field order must match the Scala bundle definition.
+        """
         return [
             ('mode', 2),
             ('addr', params.a_reg_width),
             ('reg', params.b_reg_width),
+            ('predicate', params.p_reg_width),
         ]
     
     def encode(self, params) -> int:
@@ -63,7 +69,9 @@ class LoadStoreInstruction:
         temp_instr = type(self)(
             mode=self.mode,
             addr=self.addr,
-            reg=actual_reg
+            reg=actual_reg,
+            predicate=self.predicate,
+            dst=self.dst if self.dst is not None else 0
         )
         
         field_specs = self.get_field_specs(params)

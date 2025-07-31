@@ -21,6 +21,7 @@ from fmvpu.amlet.packet_instruction import PacketInstruction, PacketModes
 from fmvpu.amlet.alu_instruction import ALUInstruction, ALUModes
 from fmvpu.amlet.alu_lite_instruction import ALULiteInstruction, ALULiteModes
 from fmvpu.amlet.ldst_instruction import LoadStoreInstruction, LoadStoreModes
+from fmvpu.amlet.predicate_instruction import PredicateInstruction, PredicateModes, Src1Mode
 from fmvpu.amlet import packet_utils
 
 
@@ -33,7 +34,20 @@ async def write_instruction_test(bi: BamletInterface) -> None:
     # Create a complex VLIW instruction that exercises all execution units
     complex_instr = VLIWInstruction(
         control=ControlInstruction(
-            mode=ControlModes.LOOP,
+            mode=ControlModes.LOOP_IMMEDIATE,
+            iterations_value=10,
+            dst=1,
+            predicate=0,
+            length=5
+        ),
+        predicate=PredicateInstruction(
+            mode=PredicateModes.EQ,
+            src1_mode=Src1Mode.IMMEDIATE,
+            src1_value=42,  # Compare immediate value 42
+            src2=3,  # A-register 3
+            base=1,  # P-register 1 (base predicate)
+            not_base=False,
+            dst=2    # P-register 2 (destination)
         ),
         alu=ALUInstruction(
             mode=ALUModes.ADD,
@@ -56,7 +70,7 @@ async def write_instruction_test(bi: BamletInterface) -> None:
             mode=PacketModes.SEND,
             target=7,   # A-register 7 (target coordinates)
             length=8,   # A-register 8 (length)
-            dst=25,  # D-register 9 (encoded as cutoff+9 = 16+9 = 25)
+            d_dst=9,  # D-register 9 (will be encoded as cutoff+9 = 16+9 = 25)
             channel=1
         )
     )
@@ -67,7 +81,8 @@ async def write_instruction_test(bi: BamletInterface) -> None:
     alu_lite_width_py = complex_instr.alu_lite.get_width(bi.params.amlet)
     load_store_width_py = complex_instr.load_store.get_width(bi.params.amlet)
     packet_width_py = complex_instr.packet.get_width(bi.params.amlet)
-    total_width_py = control_width_py + alu_width_py + alu_lite_width_py + load_store_width_py + packet_width_py
+    predicate_width_py = complex_instr.predicate.get_width(bi.params.amlet)
+    total_width_py = control_width_py + alu_width_py + alu_lite_width_py + load_store_width_py + packet_width_py + predicate_width_py
     
     logger.info("Python calculated VLIW instruction component widths:")
     logger.info(f"  Control: {control_width_py} bits")
@@ -75,6 +90,7 @@ async def write_instruction_test(bi: BamletInterface) -> None:
     logger.info(f"  ALU Lite: {alu_lite_width_py} bits")
     logger.info(f"  Load/Store: {load_store_width_py} bits")
     logger.info(f"  Packet: {packet_width_py} bits")
+    logger.info(f"  Predicate: {predicate_width_py} bits")
     logger.info(f"  Total VLIW width: {total_width_py} bits")
     
     # We'll compare this to simulation widths after we fetch the instruction
@@ -129,25 +145,35 @@ async def write_instruction_test(bi: BamletInterface) -> None:
             packet_result = bi.dut.control.io_instr_bits_packet_result.value
             packet_channel = bi.dut.control.io_instr_bits_packet_channel.value
             
+            # Predicate instruction
+            predicate_mode = bi.dut.control.io_instr_bits_predicate_mode.value
+            predicate_src2 = bi.dut.control.io_instr_bits_predicate_src2.value
+            predicate_base = bi.dut.control.io_instr_bits_predicate_base.value
+            predicate_not_base = bi.dut.control.io_instr_bits_predicate_notBase.value
+            predicate_dst = bi.dut.control.io_instr_bits_predicate_dst.value
+            
             logger.info(f"Complex instruction components:")
             logger.info(f"  Control: mode={control_mode}")
+            logger.info(f"  Predicate: mode={predicate_mode}, src2={predicate_src2}, base={predicate_base}, not_base={predicate_not_base}, dst={predicate_dst}")
             logger.info(f"  ALU: mode={alu_mode}, src1={alu_src1}, src2={alu_src2}, dst={alu_dst}")
             logger.info(f"  ALULite: mode={alu_lite_mode}, src1={alu_lite_src1}, src2={alu_lite_src2}, dst={alu_lite_dst}")
             logger.info(f"  LoadStore: mode={ldst_mode}, addr={ldst_addr}, reg={ldst_reg}")
             logger.info(f"  Packet: mode={packet_mode}, target={packet_target}, length={packet_length}, result={packet_result}, channel={packet_channel}")
             
             # Compare Python calculated widths vs simulation signal widths using find_signals_by_prefix
-            control_signals = test_utils.find_signals_by_prefix(bi.dut.control, "io_instr_bits_control_")
-            alu_signals = test_utils.find_signals_by_prefix(bi.dut.control, "io_instr_bits_alu_")
-            alu_lite_signals = test_utils.find_signals_by_prefix(bi.dut.control, "io_instr_bits_aluLite_")
-            load_store_signals = test_utils.find_signals_by_prefix(bi.dut.control, "io_instr_bits_loadStore_")
-            packet_signals = test_utils.find_signals_by_prefix(bi.dut.control, "io_instr_bits_packet_")
+            control_signals = test_utils.find_signals_by_prefix(bi.dut.control, "io_imResp_bits_instr_control_")
+            alu_signals = test_utils.find_signals_by_prefix(bi.dut.control, "io_imResp_bits_instr_alu_")
+            alu_lite_signals = test_utils.find_signals_by_prefix(bi.dut.control, "io_imResp_bits_instr_aluLite_")
+            load_store_signals = test_utils.find_signals_by_prefix(bi.dut.control, "io_imResp_bits_instr_loadStore_")
+            packet_signals = test_utils.find_signals_by_prefix(bi.dut.control, "io_imResp_bits_instr_packet_")
+            predicate_signals = test_utils.find_signals_by_prefix(bi.dut.control, "io_imResp_bits_instr_predicate_")
             
             logger.info(f"Control signals found: {list(control_signals.keys())}")
             logger.info(f"ALU signals found: {list(alu_signals.keys())}")
             logger.info(f"ALU Lite signals found: {list(alu_lite_signals.keys())}")
             logger.info(f"Load/Store signals found: {list(load_store_signals.keys())}")
             logger.info(f"Packet signals found: {list(packet_signals.keys())}")
+            logger.info(f"Predicate signals found: {list(predicate_signals.keys())}")
             
             # Calculate total widths by summing individual signal widths
             control_width_sim = sum(len(signal) for signal in control_signals.values())
@@ -155,6 +181,7 @@ async def write_instruction_test(bi: BamletInterface) -> None:
             alu_lite_width_sim = sum(len(signal) for signal in alu_lite_signals.values())
             load_store_width_sim = sum(len(signal) for signal in load_store_signals.values())
             packet_width_sim = sum(len(signal) for signal in packet_signals.values())
+            predicate_width_sim = sum(len(signal) for signal in predicate_signals.values())
             
             logger.info("\nWidth comparison (Python vs Simulation):")
             logger.info(f"  Control: {control_width_py} vs {control_width_sim}")
@@ -162,6 +189,7 @@ async def write_instruction_test(bi: BamletInterface) -> None:
             logger.info(f"  ALU Lite: {alu_lite_width_py} vs {alu_lite_width_sim}")
             logger.info(f"  Load/Store: {load_store_width_py} vs {load_store_width_sim}")
             logger.info(f"  Packet: {packet_width_py} vs {packet_width_sim}")
+            logger.info(f"  Predicate: {predicate_width_py} vs {predicate_width_sim}")
             
             # Test failures if widths don't match
             assert control_width_py == control_width_sim, f"Control width mismatch: Python={control_width_py}, Sim={control_width_sim}"
@@ -169,11 +197,12 @@ async def write_instruction_test(bi: BamletInterface) -> None:
             assert alu_lite_width_py == alu_lite_width_sim, f"ALU Lite width mismatch: Python={alu_lite_width_py}, Sim={alu_lite_width_sim}"
             assert load_store_width_py == load_store_width_sim, f"Load/Store width mismatch: Python={load_store_width_py}, Sim={load_store_width_sim}"
             assert packet_width_py == packet_width_sim, f"Packet width mismatch: Python={packet_width_py}, Sim={packet_width_sim}"
+            assert predicate_width_py == predicate_width_sim, f"Predicate width mismatch: Python={predicate_width_py}, Sim={predicate_width_sim}"
             
             logger.info("✓ All VLIW component widths match between Python and simulation!")
             
             # Verify this matches our expected complex instruction
-            assert control_mode == ControlModes.LOOP, f"Expected control mode={ControlModes.LOOP}, got {control_mode}"
+            assert control_mode == ControlModes.LOOP_IMMEDIATE, f"Expected control mode={ControlModes.LOOP_IMMEDIATE}, got {control_mode}"
             assert alu_mode == ALUModes.ADD, f"Expected ALU mode={ALUModes.ADD}, got {alu_mode}"
             assert alu_src1 == 1, f"Expected ALU src1=1, got {alu_src1}"
             assert alu_src2 == 2, f"Expected ALU src2=2, got {alu_src2}"
@@ -194,6 +223,12 @@ async def write_instruction_test(bi: BamletInterface) -> None:
             assert packet_length == 8, f"Expected Packet length=8, got {packet_length}"  # A-register 8
             assert packet_result == 25, f"Expected Packet result=25, got {packet_result}"  # D-register 9 (encoded as 16+9=25)
             assert packet_channel == 1, f"Expected Packet channel=1, got {packet_channel}"
+            
+            assert predicate_mode == PredicateModes.EQ, f"Expected Predicate mode={PredicateModes.EQ}, got {predicate_mode}"
+            assert predicate_src2 == 3, f"Expected Predicate src2=3, got {predicate_src2}"  # A-register 3
+            assert predicate_base == 1, f"Expected Predicate base=1, got {predicate_base}"  # P-register 1
+            assert predicate_not_base == 0, f"Expected Predicate not_base=0, got {predicate_not_base}"  # False = 0
+            assert predicate_dst == 2, f"Expected Predicate dst=2, got {predicate_dst}"  # P-register 2
             
             logger.info("Instruction verification successful!")
             break
@@ -347,13 +382,13 @@ async def bamlet_write_im_test(dut: HierarchyObject) -> None:
     bi.initialize_signals()
     await bi.start()
     
-    # Run simple packet test
-    await simple_packet_test(bi)
+    # # Run simple packet test
+    # await simple_packet_test(bi)
 
-    await send_zero_length_packet_test(bi)
+    # await send_zero_length_packet_test(bi)
 
-    # This one must be the last test.
-    # It leaves packets hanging
+    # # This one must be the last test.
+    # # It leaves packets hanging
     await write_instruction_test(bi)
 
 

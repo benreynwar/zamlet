@@ -17,7 +17,7 @@ object PredicateInstr {
     val Unused7 = Value(7.U)
   }
 
-  class Src1Mode extends ChiselEnum {
+  object Src1Mode extends ChiselEnum {
     val Immediate = Value(0.U)
     val LoopIndex = Value(1.U)
     val Global = Value(2.U)
@@ -29,7 +29,7 @@ object PredicateInstr {
   }
 
   class Src1Type(params: AmletParams) extends Bundle {
-    val mode = new Src1Mode()
+    val mode = Src1Mode()
     val value = UInt(src1Width(params).W)
   }
 
