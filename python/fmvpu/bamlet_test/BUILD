@@ -22,6 +22,7 @@ TESTS = [
     ("test_packet", "test_packet.py", "bamlet", []),
     ("test_receive", "test_receive.py", "bamlet", []),
     ("test_predicate", "test_predicate.py", "bamlet", []),
+    ("test_loops", "test_loops.py", "bamlet", []),
 ]
 
 # Generate all Verilog, filegroups, and tests

@@ -84,9 +84,8 @@ class Bamlet(params: BamletParams) extends Module {
       val allOtherAmletsReady = otherReadySignals.reduce(_ && _)
       amlet.io.instruction.valid := control.io.instr.valid && allOtherAmletsReady
       
-      // Connect loop length feedback from amlet to control (placeholder)
-      control.io.loopIterations(linearIndex).valid := false.B
-      control.io.loopIterations(linearIndex).bits := 0.U
+      // Connect loop iteration feedback from amlet to control
+      control.io.loopIterations(linearIndex) <> amlet.io.loopIterations
       
       // Set position based on grid coordinates
       amlet.io.thisX := io.thisX + col.U

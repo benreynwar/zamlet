@@ -30,7 +30,7 @@ def instructions_into_vliw(params: BamletParams, instrs):
             instr = instrs.pop(0)
         if isinstance(instr, ControlInstruction):
             if instr.mode not in (ControlModes.END_LOOP,):
-                if instr.mode in (ControlModes.LOOP_LOCAL, ControlModes.LOOP_GLOBAL):
+                if instr.mode in (ControlModes.LOOP_LOCAL, ControlModes.LOOP_GLOBAL, ControlModes.LOOP_IMMEDIATE):
                     loop_instructions.append(instr)
                     loop_starts.append(index)
                 vliw.control = instr

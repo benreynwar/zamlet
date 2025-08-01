@@ -57,7 +57,7 @@ object ControlInstr {
       expanded.iterations.value := DontCare
       expanded.dst := dst
       expanded.predicate := predicate
-      expanded.length := length
+      expanded.level := 0.U
       expanded
     }
   }
@@ -67,7 +67,7 @@ object ControlInstr {
     val iterations = new ExtendedSrcType(params) // Where the number of iterations comes from.
     val dst = params.aReg()                    // Where the loop index goes.
     val predicate = params.pReg()              // loop_index < iterations put here.
-    val length = UInt(params.instrAddrWidth.W) // Number of instructions in the loop body.
+    val level = UInt(log2Ceil(params.nLoopLevels).W)
   }
 
 }

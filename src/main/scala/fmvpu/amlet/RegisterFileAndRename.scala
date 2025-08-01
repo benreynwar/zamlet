@@ -7,10 +7,7 @@ import scala.math.max
 
 class LoopState(params: AmletParams) extends Bundle {
   val index = UInt(params.aWidth.W)
-  val resolved = Bool()
   val iterations = new ATaggedSource(params)
-  // What register the index is placed in.
-  val reg = params.aReg()
   // Whether we've reported the resolved loop iterations back to the 
   // bamlet control already.
   val reported = Bool()
@@ -80,8 +77,6 @@ class State(params: AmletParams) extends Bundle {
   val aRegs = Vec(params.nARegs, new ARegisterState(params))
   val pRegs = Vec(params.nPRegs, new PRegisterState(params))
   val loopStates = Vec(params.nLoopLevels, new LoopState(params))
-  val loopLevel = UInt(log2Ceil(params.nLoopLevels).W)
-  val loopActive = Bool()
 }
 
 
@@ -132,16 +127,12 @@ class RegisterFileAndRename(params: AmletParams) extends Module {
   }
   for (i <- 0 until params.nLoopLevels) {
     stateInitial.loopStates(i).index := 0.U
-    stateInitial.loopStates(i).resolved := false.B
     stateInitial.loopStates(i).iterations.resolved := false.B
     stateInitial.loopStates(i).iterations.value := 0.U
     stateInitial.loopStates(i).iterations.addr := 0.U
     stateInitial.loopStates(i).iterations.tag := 0.U
-    stateInitial.loopStates(i).reg := 0.U
-    stateInitial.loopStates(i).reported := false.B
+    stateInitial.loopStates(i).reported := true.B // Default to true so we don't report loop levels that aren't used.
   }
-  stateInitial.loopLevel := 0.U
-  stateInitial.loopActive := false.B
   val stateNext = Wire(new State(params))
   val state = RegNext(stateNext, stateInitial)
   
@@ -162,42 +153,30 @@ class RegisterFileAndRename(params: AmletParams) extends Module {
   val controlIterations = readAReg(statePreControl, io.instr.bits.control.iterations.addr)
 
   switch (io.instr.bits.control.mode) {
-    is (ControlInstr.Modes.LoopLocal, ControlInstr.Modes.LoopGlobal) {
-      // Start a new nested loop level
-      val loopLevelNew = Wire(UInt(log2Ceil(params.nLoopLevels).W))
-      when (!statePreControl.loopActive) {
-        loopLevelNew := 0.U  // First loop starts at level 0
-      } .otherwise {
-        loopLevelNew := statePreControl.loopLevel + 1.U  // Nested loop
-      }
-      statePostControl.loopActive := true.B
-      statePostControl.loopLevel := loopLevelNew
-      statePostControl.loopStates(loopLevelNew).index := 0.U  // Initialize new loop index to 0
-      statePostControl.loopStates(loopLevelNew).reg := io.instr.bits.control.dst
+    is (ControlInstr.Modes.LoopLocal, ControlInstr.Modes.LoopGlobal, ControlInstr.Modes.LoopImmediate) {
+      statePostControl.loopStates(io.instr.bits.control.level).index := 0.U  // Initialize new loop index to 0
       // We also set the destination register.
       // We do this directly rather than going through the resultBus.
       // May become a timing problem.
       statePostControl.aRegs(io.instr.bits.control.dst).value := 0.U
       statePostControl.aRegs(io.instr.bits.control.dst).lastIdent := statePreControl.aRegs(io.instr.bits.control.dst).lastIdent + 1.U
-      statePostControl.loopStates(loopLevelNew).resolved := io.instr.bits.control.iterations.resolved
       // We don't need to report iterations do the bamlet control if we received the values already
       // from the bamlet control.
-      statePostControl.loopStates(loopLevelNew).reported := io.instr.bits.control.iterations.resolved
+      statePostControl.loopStates(io.instr.bits.control.level).reported := io.instr.bits.control.iterations.resolved
       when (io.instr.bits.control.iterations.resolved) {
-        statePostControl.loopStates(loopLevelNew).iterations.value := io.instr.bits.control.iterations.value
-        statePostControl.loopStates(loopLevelNew).iterations.resolved := true.B
+        statePostControl.loopStates(io.instr.bits.control.level).iterations.value := io.instr.bits.control.iterations.value
+        statePostControl.loopStates(io.instr.bits.control.level).iterations.resolved := true.B
       } .otherwise {
-        statePostControl.loopStates(loopLevelNew).iterations := controlIterations
+        statePostControl.loopStates(io.instr.bits.control.level).iterations := controlIterations
       }
     }
     is (ControlInstr.Modes.Incr) {
       // Increment the loop index at the current loop level
-      val loopReg = statePreControl.loopStates(statePreControl.loopLevel).reg
-      val newIndex = statePreControl.loopStates(statePreControl.loopLevel).index + 1.U
-      statePostControl.loopStates(statePreControl.loopLevel).index := newIndex
+      val newIndex = statePreControl.loopStates(io.instr.bits.control.level).index + 1.U
+      statePostControl.loopStates(io.instr.bits.control.level).index := newIndex
       // Set register.
-      statePostControl.aRegs(loopReg).value := newIndex
-      statePostControl.aRegs(loopReg).lastIdent := statePreControl.aRegs(loopReg).lastIdent + 1.U
+      statePostControl.aRegs(io.instr.bits.control.dst).value := newIndex
+      statePostControl.aRegs(io.instr.bits.control.dst).lastIdent := statePreControl.aRegs(io.instr.bits.control.dst).lastIdent + 1.U
     }
   }
   
@@ -653,12 +632,10 @@ class RegisterFileAndRename(params: AmletParams) extends Module {
   // Find the lowest loop level that needs reporting using priority encoder
   val needsReporting = Wire(Vec(params.nLoopLevels, Bool()))
   for (i <- 0 until params.nLoopLevels) {
-    val levelCheck = if (i == 0) true.B else i.U <= state.loopLevel
-    needsReporting(i) := levelCheck && 
-                         !state.loopStates(i).reported && 
-                         state.loopActive && 
-                         state.loopStates(i).resolved
+    needsReporting(i) := !state.loopStates(i).reported && 
+                         state.loopStates(i).iterations.resolved
   }
+  dontTouch(needsReporting)
   
   foundUnreportedLoop := needsReporting.asUInt =/= 0.U
   unreportedLoopLevel := PriorityEncoder(needsReporting)

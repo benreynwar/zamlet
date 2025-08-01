@@ -35,7 +35,6 @@ class ControlState(params: BamletParams) extends Bundle {
   val loopStates = Vec(params.nLoopLevels, new LoopState(params))
   val loopLevel = UInt(log2Ceil(params.nLoopLevels).W)
   val globals = Vec(params.amlet.nGRegs, params.amlet.aReg())
-  val pc = UInt(params.amlet.instrAddrWidth.W)
   val active = Bool()
   def dWord(): UInt = UInt(params.amlet.width.W)
   def activeLoopState(): LoopState = loopStates(loopLevel)
@@ -66,6 +65,9 @@ class Control(params: BamletParams) extends Module {
     val loopIterations = Input(Vec(params.nAmlets, Valid(UInt(params.aWidth.W))))
   })
 
+  val pc = Wire(UInt(params.amlet.instrAddrWidth.W))
+  pc := io.imResp.bits.pc // default
+
   // The state for the next cycle
   val stateNext = Wire(new ControlState(params))
   // The state for the body of this instruction.  After the control has been evaluated but before
@@ -86,12 +88,15 @@ class Control(params: BamletParams) extends Module {
   for (i <- 0 until params.amlet.nGRegs) {
     stateInit.globals(i) := 0.U
   }
-  stateInit.pc := 0.U
   stateInit.active := false.B
   
   val state = RegNext(stateNext, stateInit)
-
   val instrBuffered = Wire(Decoupled(new VLIWInstr.Expanded(params.amlet)))
+
+  when (state.active && instrBuffered.ready) {
+    pc := io.imResp.bits.pc + 1.U
+  } 
+
   // Convert from Base to Expanded format and substitute some Loop for Incr.
   val expandedInstr = io.imResp.bits.instr.expand()
   
@@ -122,6 +127,9 @@ class Control(params: BamletParams) extends Module {
   val isLocalLoop = io.imResp.bits.instr.control.mode === ControlInstr.Modes.LoopLocal
   val isGlobalLoop = io.imResp.bits.instr.control.mode === ControlInstr.Modes.LoopGlobal
   val isImmediateLoop = io.imResp.bits.instr.control.mode === ControlInstr.Modes.LoopImmediate
+
+  // We explicitly send the loop level to the Amlet so they don't need to track that.
+  instrBuffered.bits.control.level := stateBody.loopLevel
 
   when (io.imResp.valid && instrBuffered.ready) {
     when (isLocalLoop || isGlobalLoop || isImmediateLoop) {
@@ -183,7 +191,7 @@ class Control(params: BamletParams) extends Module {
 
   // Update the Loop States if we reached the end of a loop
   when (io.imResp.valid && instrBuffered.ready) {
-    when (stateBody.activeLoopState().end === state.pc) {
+    when (stateBody.activeLoopState().end === io.imResp.bits.pc) {
       when (stateBody.activeLoopState().terminating) {
         when (stateBody.loopLevel === 0.U) {
           stateNext.loopLevel := 0.U
@@ -194,27 +202,27 @@ class Control(params: BamletParams) extends Module {
       } .otherwise {
         stateNext.loopStates(stateBody.loopLevel).index := stateBody.activeLoopState().index + 1.U
         stateNext.loopStates(stateBody.loopLevel).terminating :=
-          stateBody.activeLoopState().index >= stateBody.activeLoopState().iterations-2.U
-        stateNext.pc := stateBody.activeLoopState().start
+          (stateBody.activeLoopState().index >= stateBody.activeLoopState().iterations-2.U) && stateBody.activeLoopState().resolvedIterations.asUInt.andR
+        pc := stateBody.activeLoopState().start
       }
     }
   }
 
-  // Process the loop iterations received from the amlets.
-  val loopIterationsLevelsNext = Wire(Vec(params.nAmlets, UInt(log2Ceil(params.nLoopLevels).W)))
-  val loopIterationsLevels = RegNext(loopIterationsLevelsNext, VecInit(Seq.fill(params.nAmlets)(0.U)))
-
-  loopIterationsLevelsNext := loopIterationsLevels
   // Loop over the nAmlets
-  // FIXME: We still need to add the logic in the Amlet that sends these signals.
   for (amletIndex <- 0 until params.nAmlets) {
-    val level = loopIterationsLevels(amletIndex)
+    // Find the lowest level where this amlet hasn't resolved iterations yet
+    val unresolvedLevels = Wire(Vec(params.nLoopLevels, Bool()))
+    for (i <- 0 until params.nLoopLevels) {
+      unresolvedLevels(i) := !state.loopStates(i).resolvedIterations(amletIndex)
+    }
+    val level = PriorityEncoder(unresolvedLevels)
     when (io.loopIterations(amletIndex).valid) {
       stateNext.loopStates(level).resolvedIterations(amletIndex) := true.B
-      stateNext.loopStates(level).iterations := Mux(state.loopStates(level).iterations > io.loopIterations(amletIndex).bits, 
-                                         state.loopStates(level).iterations, 
-                                         io.loopIterations(amletIndex).bits)
-      
+      when (state.loopStates(level).iterations > io.loopIterations(amletIndex).bits) {
+        stateNext.loopStates(level).iterations := state.loopStates(level).iterations
+      } .otherwise {
+        stateNext.loopStates(level).iterations := io.loopIterations(amletIndex).bits
+      }
       // Check if all amlets have resolved their iterations
       val allResolved = stateNext.loopStates(level).resolvedIterations.asUInt.andR
       when (allResolved) {
@@ -232,17 +240,18 @@ class Control(params: BamletParams) extends Module {
     }
   }
 
-  when (state.active && instrBuffered.ready) {
-    stateNext.pc := state.pc + 1.U
-  }
+  val startReg = RegNext(io.start)
 
   when (io.start.valid) {
     stateNext.active := true.B
-    stateNext.pc := io.start.bits
+    stateNext.loopActive := false.B
+  }
+  when (startReg.valid) {
+    pc := io.start.bits
   }
 
   io.imReq.valid := state.active
-  io.imReq.bits := state.pc
+  io.imReq.bits := pc
 
   // Update the globals
   // Do this to stateNext rather than stateBody to help with timing
