@@ -372,14 +372,15 @@ class RegisterFileAndRename(params: AmletParams) extends Module {
   io.sendPacketInstr.bits.mode := io.instr.bits.packet.mode
   io.sendPacketInstr.bits.length := packetReadLength
   io.sendPacketInstr.bits.target := packetReadTarget
-  io.sendPacketInstr.bits.result := packetWriteInfo
   io.sendPacketInstr.bits.channel := io.instr.bits.packet.channel
   io.sendPacketInstr.bits.predicate := packetPredicate
+  io.sendPacketInstr.bits.appendLength := packetWriteInfo.addr
 
   // Receive
   io.recvPacketInstr.valid := io.instr.valid && io.instr.ready && packetReceive
   io.recvPacketInstr.bits.mode := io.instr.bits.packet.mode
   io.recvPacketInstr.bits.result := packetWriteInfo
+  io.recvPacketInstr.bits.old := readBReg(statePrePacket, io.instr.bits.packet.result)
   // Only resolve target for receive modes that include forwarding
   val receiveNeedsTarget = io.instr.bits.packet.mode === PacketInstr.Modes.ReceiveAndForward ||
                           io.instr.bits.packet.mode === PacketInstr.Modes.ReceiveForwardAndAppend ||
@@ -446,12 +447,15 @@ class RegisterFileAndRename(params: AmletParams) extends Module {
   // Read operands for ALU operations
   val aluReadSrc1 = readDReg(statePreALU, io.instr.bits.alu.src1)
   val aluReadSrc2 = Wire(new DTaggedSource(params))
+  val aluReadOld = Wire(new DTaggedSource(params))
   val aluPredicate = readPReg(statePreALU, io.instr.bits.alu.predicate)
   
   // For immediate instructions (ADDI, SUBI), src2 is an immediate value, not a register
   val isImmediateInstr = (io.instr.bits.alu.mode === ALUInstr.Modes.Addi) || 
                         (io.instr.bits.alu.mode === ALUInstr.Modes.Subi)
   
+  aluReadOld := readBReg(statePreALU, io.instr.bits.alu.dst)
+
   aluReadSrc2 := readDReg(statePreALU, io.instr.bits.alu.src2)
   when (isImmediateInstr) {
     aluReadSrc2.resolved := true.B
@@ -475,6 +479,7 @@ class RegisterFileAndRename(params: AmletParams) extends Module {
   io.aluInstr.bits.src1 := aluReadSrc1
   io.aluInstr.bits.src2 := aluReadSrc2
   io.aluInstr.bits.dst := aluWriteInfo
+  io.aluInstr.bits.old := aluReadOld
   io.aluInstr.bits.predicate := aluPredicate
 
   // 4) ALULite Processing
@@ -489,6 +494,7 @@ class RegisterFileAndRename(params: AmletParams) extends Module {
   // Read operands for ALULite operations (uses A-registers)
   val aluliteReadSrc1 = readAReg(statePreALULite, io.instr.bits.aluLite.src1)
   val aluliteReadSrc2 = Wire(new ATaggedSource(params))
+  val aluliteReadOld = readBReg(statePreALULite, io.instr.bits.aluLite.dst)
   val alulitePredicate = readPReg(statePreALULite, io.instr.bits.aluLite.predicate)
   
   // For immediate instructions (ADDI, SUBI), src2 is an immediate value, not a register
@@ -517,6 +523,7 @@ class RegisterFileAndRename(params: AmletParams) extends Module {
   io.aluliteInstr.bits.mode := io.instr.bits.aluLite.mode
   io.aluliteInstr.bits.src1 := aluliteReadSrc1
   io.aluliteInstr.bits.src2 := aluliteReadSrc2
+  io.aluliteInstr.bits.old := aluliteReadOld
   io.aluliteInstr.bits.dst := aluliteWriteInfo
   io.aluliteInstr.bits.predicate := alulitePredicate
 
@@ -568,6 +575,7 @@ class RegisterFileAndRename(params: AmletParams) extends Module {
       val regAddr = io.resultBus.writes(i).bits.address.addr
       val renameTag = io.resultBus.writes(i).bits.address.tag
       val isForceWrite = io.resultBus.writes(i).bits.force
+      val predicate = io.resultBus.writes(i).bits.predicate
       val isDRegWrite = regAddr(params.bRegWidth-1)  // Upper bit = 1 for D-registers
       
       when (!isDRegWrite) {
@@ -576,7 +584,7 @@ class RegisterFileAndRename(params: AmletParams) extends Module {
         when ((renameTag === stateFromTagging.aRegs(aIndex).lastIdent) || isForceWrite) {
           stateNext.aRegs(aIndex).value := io.resultBus.writes(i).bits.value
         }
-        // Clear in-flight bit for this rename tag (normal writes only)
+        // Always clear in-flight bit for this rename tag
         when (!isForceWrite) {
           stateNext.aRegs(aIndex).pendingTags := stateFromTagging.aRegs(aIndex).pendingTags & ~UIntToOH(renameTag)
         }
@@ -586,6 +594,7 @@ class RegisterFileAndRename(params: AmletParams) extends Module {
         when ((renameTag === stateFromTagging.dRegs(dIndex).lastIdent) || isForceWrite) {
           stateNext.dRegs(dIndex).value := io.resultBus.writes(i).bits.value
         }
+        // Always clear in-flight bit for this rename tag
         when (!isForceWrite) {
           stateNext.dRegs(dIndex).pendingTags := stateFromTagging.dRegs(dIndex).pendingTags & ~UIntToOH(renameTag)
         }
@@ -617,7 +626,7 @@ class RegisterFileAndRename(params: AmletParams) extends Module {
       val pIndex = pRegAddr(log2Ceil(params.nPRegs)-1, 0)  // Truncate to P-register width
       
       // Update predicate register if rename tag matches
-      when (pRenameTag === stateFromTagging.pRegs(pIndex).lastIdent) {
+      when (pRenameTag === stateFromTagging.pRegs(pIndex).lastIdent && pIndex > 0.U) {
         stateNext.pRegs(pIndex).value := io.resultBus.predicate(i).bits.value
       }
       // Clear in-flight bit for this rename tag
@@ -743,10 +752,10 @@ class RegisterFileAndRename(params: AmletParams) extends Module {
     val result = Wire(new BTaggedSource(params))
     val isDRegRead = index(params.bRegWidth-1)  // Upper bit = 1 for D-registers
     
+    result.addr := index
     when (!isDRegRead) {
       // A-register read - use readAReg and convert to BTaggedSource
       val aRead = readAReg(state, index)
-      result.addr := aRead.addr
       result.tag := aRead.tag
       result.resolved := aRead.resolved
       result.value := aRead.value
@@ -754,7 +763,6 @@ class RegisterFileAndRename(params: AmletParams) extends Module {
       // D-register read - use readDReg and convert to BTaggedSource
       val dIndex = index(params.dRegWidth-1, 0)  // Extract lower bits for D-register index
       val dRead = readDReg(state, dIndex)
-      result.addr := index  // Keep original address with upper bit set
       result.tag := dRead.tag
       result.resolved := dRead.resolved
       result.value := dRead.value

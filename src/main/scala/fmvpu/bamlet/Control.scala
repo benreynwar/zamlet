@@ -105,7 +105,7 @@ class Control(params: BamletParams) extends Module {
   when (io.imResp.bits.instr.predicate.src1.mode === PredicateInstr.Src1Mode.Immediate) {
     predicateSrc1Resolved := io.imResp.bits.instr.predicate.src1.value
   } .elsewhen (io.imResp.bits.instr.predicate.src1.mode === PredicateInstr.Src1Mode.LoopIndex) {
-    predicateSrc1Resolved := state.loopStates(io.imResp.bits.instr.predicate.src1.value(log2Ceil(params.amlet.nLoopLevels)-1, 0)).index
+    predicateSrc1Resolved := stateBody.loopStates(io.imResp.bits.instr.predicate.src1.value(log2Ceil(params.amlet.nLoopLevels)-1, 0)).index
   } .elsewhen (io.imResp.bits.instr.predicate.src1.mode === PredicateInstr.Src1Mode.Global) {
     predicateSrc1Resolved := state.globals(io.imResp.bits.instr.predicate.src1.value(log2Ceil(params.amlet.nGRegs)-1, 0))
   } .otherwise {

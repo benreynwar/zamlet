@@ -60,7 +60,8 @@ class SendPacketInterface(params: AmletParams) extends Module {
   for (i <- 0 until params.nResultPorts) {
     when(io.writeInputs(i).valid && 
          io.writeInputs(i).bits.address.addr === 0.U && 
-         !io.writeInputs(i).bits.force) {
+         !io.writeInputs(i).bits.force &&
+         io.writeInputs(i).bits.predicate) {
       val writeIdent = io.writeInputs(i).bits.address.tag
       packetOutBuffer(writeIdent).valid := true.B
       packetOutBuffer(writeIdent).bits := io.writeInputs(i).bits.value
@@ -121,7 +122,7 @@ class SendPacketInterface(params: AmletParams) extends Module {
   switch(sendState) {
     is (States.Idle) {
       bufferedInstr.ready := true.B
-      when(bufferedInstr.valid) {
+      when(bufferedInstr.valid && bufferedInstr.bits.predicate) {
         sendState := States.SendingHeader
         sendRemainingWords := bufferedInstr.bits.length
         sendInstruction := bufferedInstr.bits
@@ -140,7 +141,7 @@ class SendPacketInterface(params: AmletParams) extends Module {
       ))
       header.forward := (sendInstruction.mode === PacketInstr.Modes.SendAndForwardAgain)
       header.isBroadcast := sendInstruction.mode === PacketInstr.Modes.Broadcast
-      header.appendLength := sendInstruction.result.addr
+      header.appendLength := sendInstruction.appendLength
       
       bufferedToNetwork.valid := true.B
       bufferedToNetwork.bits.data := header.asUInt

@@ -12,7 +12,6 @@ object Instr {
   abstract class Resolving(params: AmletParams) extends Bundle {
     def isResolved(): Bool
     def resolve(): Resolved
-    def isMasked(): Bool
     def update(writes: ResultBus): Resolving
   }
   // The instruction after processing by a ReservationState

@@ -21,7 +21,7 @@ class ControlModes(IntEnum):
 class ControlInstruction:
     """Control instruction for amlet (loops, conditionals, halt)"""
     mode: ControlModes = ControlModes.NONE
-    iterations_value: int = 0  # Immediate, A-reg index, or G-reg index (depends on mode)
+    iterations: int = 0  # Immediate, A-reg index, or G-reg index (depends on mode)
     dst: int = 0   # Destination A-register (where loop index goes)
     predicate: int = 0  # P-register (loop_index < iterations result)
     length: int = 0  # Number of instructions in loop body
@@ -42,7 +42,7 @@ class ControlInstruction:
         
         return [
             ('mode', 3),  # 3 bits for 8 modes
-            ('iterations_value', src_width),  # Width based on max reg space
+            ('iterations', src_width),  # Width based on max reg space
             ('dst', params.a_reg_width),  # A-register destination
             ('predicate', params.p_reg_width),  # P-register for predicate
             ('length', params.instr_addr_width),  # Instruction address width
@@ -70,11 +70,11 @@ class ControlInstruction:
         elif self.mode == ControlModes.HALT:
             return "control halt"
         elif self.mode == ControlModes.LOOP_IMMEDIATE:
-            return f"control loop_immediate {self.iterations_value} -> a{self.dst}, p{self.predicate} (len: {self.length})"
+            return f"control loop_immediate {self.iterations} -> a{self.dst}, p{self.predicate} (len: {self.length})"
         elif self.mode == ControlModes.LOOP_LOCAL:
-            return f"control loop_local a{self.iterations_value} -> a{self.dst}, p{self.predicate} (len: {self.length})"
+            return f"control loop_local a{self.iterations} -> a{self.dst}, p{self.predicate} (len: {self.length})"
         elif self.mode == ControlModes.LOOP_GLOBAL:
-            return f"control loop_global g{self.iterations_value} -> a{self.dst}, p{self.predicate} (len: {self.length})"
+            return f"control loop_global g{self.iterations} -> a{self.dst}, p{self.predicate} (len: {self.length})"
         elif self.mode == ControlModes.INCR:
             return "control incr"
         else:

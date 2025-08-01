@@ -38,7 +38,7 @@ class PredicateInstruction:
     src1_value: int = 0  # Immediate value, loop index, or global register index
     src2: int = 0        # A-register index
     base: int = 0        # P-register index for base predicate
-    not_base: bool = True  # Whether to negate the base predicate
+    not_base: bool = False  # Whether to negate the base predicate
     dst: int = 0         # P-register index for destination
     
     @classmethod

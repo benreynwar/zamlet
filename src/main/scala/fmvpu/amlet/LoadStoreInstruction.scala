@@ -44,13 +44,9 @@ object LoadStoreInstr {
     val dst = new BTaggedReg(params)
 
     def isResolved(): Bool = {
-      addr.resolved && 
-      src.resolved && 
-      predicate.resolved
-    }
-
-    def isMasked(): Bool = {
-      predicate.resolved && !predicate.getData
+      (mode === Modes.Store && addr.resolved && src.resolved && predicate.resolved && predicate.getData) ||   // Store
+      (mode === Modes.Load && addr.resolved && predicate.resolved && predicate.getData) ||   // Load
+      (src.resolved && predicate.resolved && !predicate.getData)                   // !Predicate
     }
 
     def resolve(): Resolved = {
@@ -59,6 +55,7 @@ object LoadStoreInstr {
       resolved.addr := addr.getData
       resolved.src := src.getData
       resolved.dst := dst
+      resolved.predicate := predicate.getData
       resolved
     }
 
@@ -78,6 +75,7 @@ object LoadStoreInstr {
     val addr = params.aWord()
     val src = params.bWord()
     val dst = new BTaggedReg(params)
+    val predicate = Bool()
   }
 
 }

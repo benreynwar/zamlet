@@ -74,24 +74,25 @@ object ALUInstr {
     val src1 = new DTaggedSource(params)
     val src2 = new DTaggedSource(params) 
     val predicate = new PTaggedSource(params)
+    val old = new BTaggedSource(params)
     val dst = new BTaggedReg(params)
 
     def isResolved(): Bool = {
-      src1.resolved && 
-      src2.resolved && 
-      predicate.resolved
-    }
-
-    def isMasked(): Bool = {
-      predicate.resolved && !predicate.getData
+      (src1.resolved && src2.resolved && predicate.resolved && predicate.getData) ||
+      (old.resolved && predicate.resolved && !predicate.getData)
     }
 
     def resolve(): Resolved = {
       val resolved = Wire(new Resolved(params))
       resolved.mode := mode
-      resolved.src1 := src1.getData
+      when (predicate.getData) {
+        resolved.src1 := src1.getData
+      } .otherwise {
+        resolved.src1 := old.getData
+      }
       resolved.src2 := src2.getData
       resolved.dst := dst
+      resolved.predicate := predicate.getData
       resolved
     }
 
@@ -100,6 +101,7 @@ object ALUInstr {
       resolving.mode := mode
       resolving.src1 := src1.update(writes)
       resolving.src2 := src2.update(writes)
+      resolving.old := old.update(writes)
       resolving.predicate := predicate.update(writes)
       resolving.dst := dst
       resolving
@@ -111,6 +113,7 @@ object ALUInstr {
     val src1 = params.dWord()
     val src2 = params.dWord()
     val dst = new BTaggedReg(params)
+    val predicate = Bool()
   }
 
 }

@@ -7,6 +7,7 @@ from fmvpu.amlet.packet_instruction import PacketInstruction
 from fmvpu.amlet.ldst_instruction import LoadStoreInstruction
 from fmvpu.amlet.alu_instruction import ALUInstruction
 from fmvpu.amlet.alu_lite_instruction import ALULiteInstruction
+from fmvpu.amlet.predicate_instruction import PredicateInstruction, PredicateModes, Src1Mode
 
 
 logger = logging.getLogger(__name__)
@@ -34,10 +35,15 @@ def instructions_into_vliw(params: BamletParams, instrs):
                     loop_instructions.append(instr)
                     loop_starts.append(index)
                 vliw.control = instr
-                logger.info('Adding control')
                 if not instrs:
                     break
                 instr = instrs.pop(0)
+        if isinstance(instr, PredicateInstruction):
+            vliw.predicate = instr
+            logger.info('Adding predicate')
+            if not instrs:
+                break
+            instr = instrs.pop(0)
         if isinstance(instr, PacketInstruction):
             vliw.packet = instr
             logger.info('Adding packet')
@@ -64,7 +70,6 @@ def instructions_into_vliw(params: BamletParams, instrs):
             instr = instrs.pop(0)
         if isinstance(instr, ControlInstruction):
             if instr.mode == ControlModes.END_LOOP:
-                logger.info('Adding endloop')
                 loop_instructions.pop().length = index - loop_starts.pop()
                 if not instrs:
                     break

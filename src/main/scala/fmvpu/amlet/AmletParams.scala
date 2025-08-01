@@ -260,6 +260,7 @@ class WriteResult(params: AmletParams) extends Bundle {
   val value = UInt(params.width.W)
   val address = new BTaggedReg(params)
   val force = Bool() // from command packet, bypasses writeIdent system
+  val predicate = Bool()
 }
 
 class WriteEvent(params: AmletParams) extends Bundle {

@@ -116,6 +116,7 @@ class ReceivePacketInterface(params: AmletParams) extends Module {
   io.result.bits.address.tag := DontCare
   io.result.bits.value := DontCare
   io.result.bits.force := DontCare
+  io.result.bits.predicate := DontCare
   io.resultPredicate.valid := false.B
   io.resultPredicate.bits.address.addr := DontCare
   io.resultPredicate.bits.address.tag := DontCare  
@@ -177,11 +178,21 @@ class ReceivePacketInterface(params: AmletParams) extends Module {
   val forwardDirection = PacketRouting.calculateNextDirection(params, io.thisX, io.thisY, bufferedInstr.bits.xTarget, bufferedInstr.bits.yTarget)
 
   errorUnexpectedHeader := receivingHeader
+
+  when (bufferedInstr.valid && !bufferedInstr.bits.predicate) {
+    io.result.valid := true.B
+    io.result.bits.address.addr := bufferedInstr.bits.result.addr
+    io.result.bits.address.tag := bufferedInstr.bits.result.tag
+    io.result.bits.value := bufferedInstr.bits.old
+    io.result.bits.predicate := false.B
+    io.result.bits.force := false.B
+  }
+
   switch(receiveState) {
     is(States.Idle) {
       errorUnexpectedHeader := false.B
       // Send forward info if we have a forwarding instruction
-      when (bufferedInstr.valid &&
+      when (bufferedInstr.valid && bufferedInstr.bits.predicate
            (bufferedInstr.bits.mode === PacketInstr.Modes.ReceiveAndForward ||
             bufferedInstr.bits.mode === PacketInstr.Modes.ReceiveForwardAndAppend)) {
         io.forward.valid := true.B
@@ -204,7 +215,7 @@ class ReceivePacketInterface(params: AmletParams) extends Module {
           // Ignore any pending receive instruction for command packets
         } .otherwise {
           // Normal packets need both header and instruction (and instruction not masked)
-          when (bufferedInstr.valid) {
+          when (bufferedInstr.valid && bufferedInstr.bits.predicate) {
             // We have both - consume both and start receiving data
             bufferedFromNetwork.ready := true.B
             bufferedInstr.ready := true.B
@@ -237,7 +248,7 @@ class ReceivePacketInterface(params: AmletParams) extends Module {
     }
     is(States.ReceivingData) {
       // Consume GetWord instruction and data word together
-      when (bufferedInstr.valid && bufferedFromNetwork.valid) {
+      when (bufferedInstr.valid && bufferedFromNetwork.valid && bufferedInstr.bits.predicate) {
         bufferedFromNetwork.ready := true.B
         bufferedInstr.ready := true.B
         

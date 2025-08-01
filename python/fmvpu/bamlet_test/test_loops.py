@@ -18,6 +18,7 @@ from fmvpu.amlet.instruction import VLIWInstruction
 from fmvpu.amlet.control_instruction import ControlInstruction, ControlModes
 from fmvpu.amlet.alu_instruction import ALUInstruction, ALUModes
 from fmvpu.amlet.alu_lite_instruction import ALULiteInstruction, ALULiteModes
+from fmvpu.amlet.predicate_instruction import PredicateInstruction, PredicateModes, Src1Mode
 from fmvpu.bamlet_kernels.kernel_utils import instructions_into_vliw
 
 
@@ -38,7 +39,7 @@ async def simple_loop_test(bi: BamletInterface) -> None:
         # Loop 3 times -> A-register 1 (loop index), P-register 1 (predicate)
         ControlInstruction(
             mode=ControlModes.LOOP_IMMEDIATE,
-            iterations_value=3,
+            iterations=3,
             dst=1,         # A-register 1 gets loop index
             predicate=1,   # P-register 1 gets loop condition
         ),
@@ -83,7 +84,7 @@ async def loop_local_test(bi: BamletInterface) -> None:
         # Loop using A-register 3 for iteration count
         ControlInstruction(
             mode=ControlModes.LOOP_LOCAL,
-            iterations_value=3,  # A-register index containing iteration count
+            iterations=3,  # A-register index containing iteration count
             dst=1,               # A-register 1 gets loop index
             predicate=1,         # P-register 1 gets loop condition
         ),
@@ -130,7 +131,7 @@ async def loop_global_test(bi: BamletInterface) -> None:
         # Loop using G-register 4 for iteration count
         ControlInstruction(
             mode=ControlModes.LOOP_GLOBAL,
-            iterations_value=4,  # G-register index containing iteration count
+            iterations=4,  # G-register index containing iteration count
             dst=1,               # A-register 1 gets loop index
             predicate=1,         # P-register 1 gets loop condition
         ),
@@ -174,14 +175,14 @@ async def nested_loops_test(bi: BamletInterface) -> None:
         # Outer loop: 3 iterations -> A-register 1, P-register 1
         ControlInstruction(
             mode=ControlModes.LOOP_IMMEDIATE,
-            iterations_value=3,
+            iterations=3,
             dst=1,         # A-register 1 gets outer loop index
             predicate=1,   # P-register 1 gets outer loop condition
         ),
         # Inner loop: 2 iterations -> A-register 2, P-register 3
         ControlInstruction(
             mode=ControlModes.LOOP_IMMEDIATE,
-            iterations_value=2,
+            iterations=2,
             dst=2,         # A-register 2 gets inner loop index
             predicate=3,   # P-register 3 gets inner loop condition
         ),
@@ -230,7 +231,7 @@ async def loop_index_usage_test(bi: BamletInterface) -> None:
         # Loop 4 times -> A-register 1 (loop index), P-register 1 (predicate)
         ControlInstruction(
             mode=ControlModes.LOOP_IMMEDIATE,
-            iterations_value=4,
+            iterations=4,
             dst=1,         # A-register 1 gets loop index (0, 1, 2, 3)
             predicate=1,   # P-register 1 gets loop condition
         ),
@@ -323,10 +324,17 @@ async def loop_predicate_different_bounds_test(bi: BamletInterface) -> None:
         # This will run for max(3, 5) = 5 iterations total
         ControlInstruction(
             mode=ControlModes.LOOP_LOCAL,
-            iterations_value=3,  # A-register index containing iteration count
+            iterations=3,  # A-register index containing iteration count
             dst=1,               # A-register 1 gets loop index
             predicate=1,         # P-register 1 gets loop condition (loop_index < iterations)
         ),
+        PredicateInstruction(
+            mode=PredicateModes.LT,
+            src1_mode=Src1Mode.LOOP_INDEX,
+            src1_value=0, # Loop level 0
+            src2=3, # A-reg 3
+            dst=1,
+            ),
         # Conditionally increment counter: d1 = d1 + d2, only when loop predicate is true
         # This will only execute when loop_index < iteration_count for each amlet
         ALUInstruction(
@@ -341,6 +349,21 @@ async def loop_predicate_different_bounds_test(bi: BamletInterface) -> None:
         # Halt
         ControlInstruction(mode=ControlModes.HALT),
     ]
+    # FIXME:  There is a fundamental problem with the way that I'm doing predicates.
+    # If the predicate is false but someone is listening for that write, then when it resolves they
+    # don't know what value they should use.
+    # It needs rethinking.
+
+    # In the RegisterFile we need to store the most latest value (with it's tag) along with the latest
+    # tag issued.  We also need a bitfield that store what tags are pending as well as which ones arrived
+    # but had a false predicate.  Then we can work out whether the value is current.
+
+    # Similary in the Reservation Station we need to store all this information so we know when we can
+    # resolve the value.
+    # 
+    # Actually we just need to know which are pending and what the tag was for the current value.
+    # Once all the tags after the tag for the current value are not pending we know they had false
+    # predicates so we can resolve.
     
     program = instructions_into_vliw(bi.params, instrs)
     bi.write_program(program, base_address=0)
