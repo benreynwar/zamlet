@@ -11,6 +11,7 @@ load(":openram.bzl", "openram_sram")
 exports_files([
     "config/constraints.sdc",
     "scripts/results.tcl",
+    "scripts/timing_reports.tcl",
     "scripts/netlist_hierarchy_report.tcl",
 ])
 

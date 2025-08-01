@@ -64,6 +64,54 @@ def dse_component_flows(studies, component_type, pdks = ["asap7", "sky130hd"]):
         script = "//dse:scripts/results.tcl",
     ) for name in study_names]
 
+    # Timing reports extraction - floorplan stage (estimated timing)
+    [orfs_run(
+        name = "{base}_timing_floorplan".format(base = name),
+        src = "{name}_floorplan".format(name = name),
+        outs = [
+            "{name}_timing_floorplan_summary".format(name = name),
+            "{name}_setup_timing.rpt".format(name = name),
+            "{name}_hold_timing.rpt".format(name = name),
+            "{name}_critical_paths.rpt".format(name = name),
+            "{name}_unconstrained.rpt".format(name = name),
+            "{name}_clock_skew.rpt".format(name = name),
+            "{name}_slack_summary.rpt".format(name = name),
+            "{name}_in2reg_paths.rpt".format(name = name),
+            "{name}_reg2out_paths.rpt".format(name = name),
+            "{name}_reg2reg_paths.rpt".format(name = name),
+            "{name}_in2out_paths.rpt".format(name = name),
+        ],
+        arguments = {
+            "OUTPUT": "$(location :{name}_timing_floorplan_summary)".format(name = name),
+            "TARGET_NAME": name,
+        },
+        script = "//dse:scripts/timing_reports.tcl",
+    ) for name in study_names]
+
+    # Timing reports extraction - route stage (actual routed timing)
+    [orfs_run(
+        name = "{base}_timing_route".format(base = name),
+        src = "{name}_route".format(name = name),
+        outs = [
+            "{name}_timing_route_summary".format(name = name),
+            "{name}_route_setup_timing.rpt".format(name = name),
+            "{name}_route_hold_timing.rpt".format(name = name),
+            "{name}_route_critical_paths.rpt".format(name = name),
+            "{name}_route_unconstrained.rpt".format(name = name),
+            "{name}_route_clock_skew.rpt".format(name = name),
+            "{name}_route_slack_summary.rpt".format(name = name),
+            "{name}_route_in2reg_paths.rpt".format(name = name),
+            "{name}_route_reg2out_paths.rpt".format(name = name),
+            "{name}_route_reg2reg_paths.rpt".format(name = name),
+            "{name}_route_in2out_paths.rpt".format(name = name),
+        ],
+        arguments = {
+            "OUTPUT": "$(location :{name}_timing_route_summary)".format(name = name),
+            "TARGET_NAME": "{name}_route".format(name = name),
+        },
+        script = "//dse:scripts/timing_reports.tcl",
+    ) for name in study_names]
+
     # Netlist extraction
     [native.genrule(
         name = "{name}_netlist".format(name = name),
@@ -102,6 +150,25 @@ def dse_filegroups(studies, component_type, pdks = ["asap7", "sky130hd"]):
     native.filegroup(
         name = "{}_results".format(component_type),
         srcs = [":{name}_results".format(name = name) for name in study_names],
+        visibility = ["//visibility:public"],
+    )
+
+    native.filegroup(
+        name = "{}_timing_floorplan".format(component_type),
+        srcs = [":{name}_timing_floorplan".format(name = name) for name in study_names],
+        visibility = ["//visibility:public"],
+    )
+
+    native.filegroup(
+        name = "{}_timing_route".format(component_type),
+        srcs = [":{name}_timing_route".format(name = name) for name in study_names],
+        visibility = ["//visibility:public"],
+    )
+
+    native.filegroup(
+        name = "{}_timing".format(component_type),
+        srcs = [":{name}_timing_floorplan".format(name = name) for name in study_names] +
+               [":{name}_timing_route".format(name = name) for name in study_names],
         visibility = ["//visibility:public"],
     )
 
