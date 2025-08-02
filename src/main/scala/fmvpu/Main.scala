@@ -6,6 +6,7 @@ import java.io.File
 import fmvpu.utils._
 import fmvpu.amlet._
 import fmvpu.bamlet._
+import fmvpu.gamlet._
 
 /** Main entry point for generating Verilog from FMVPU modules.
   *
@@ -66,6 +67,7 @@ object Main extends App {
     //case "LaneArray" => LaneArrayGenerator
     case "Control" => ControlGenerator
     case "Bamlet" => BamletGenerator
+    case "Rename" => RenameGenerator
     case "Fifo" => FifoGenerator
     case "SkidBuffer" => SkidBufferGenerator
     case "DecoupledBuffer" => DecoupledBufferGenerator

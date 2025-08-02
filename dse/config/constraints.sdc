@@ -13,8 +13,8 @@ create_clock -period $clk_period -waveform [list 0 [expr $clk_period / 2]] -name
 set non_clk_inputs  [lsearch -inline -all -not -exact [all_inputs] $clk_port]
 set all_register_outputs [get_pins -of_objects [all_registers] -filter {direction == output}]
 
-# Set max delay as 30% of clock period for realistic timing constraints
-set max_delay [expr $clk_period * 0.3]
+# Set max delay as 60% of clock period for realistic timing constraints
+set max_delay [expr $clk_period * 0.6]
 
 set_max_delay $max_delay -from $non_clk_inputs -to [all_registers]
 set_max_delay $max_delay -from $all_register_outputs -to [all_outputs]
