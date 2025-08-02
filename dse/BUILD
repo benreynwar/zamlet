@@ -9,7 +9,8 @@ load(":openram.bzl", "openram_sram")
 
 # Export files for use by sub-packages
 exports_files([
-    "config/constraints.sdc",
+    "config/constraints_asap7.sdc",
+    "config/constraints_sky130hd.sdc",
     "scripts/results.tcl",
     "scripts/timing_reports.tcl",
     "scripts/netlist_hierarchy_report.tcl",

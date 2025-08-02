@@ -1,3 +1,10 @@
+//
+// On sky130hd
+//  area is 0.23 mm2
+//  critical path is 25 ns.
+//  So really big and slow.
+//  Could probably sort out the critical path, but I'm not sure how to sort out the area.
+
 package fmvpu.gamlet
 
 import chisel3._
@@ -32,17 +39,21 @@ class RenameState(params: FamletParams) extends Bundle {
   val aRegMap = Vec(params.nARegs, params.aPhysReg())
   val dRegMap = Vec(params.nDRegs, params.dPhysReg())
 
-  val nAvailAPhysRegs = UInt(log2Ceil(params.nAPhysRegs+1).W)
-  val nAvailDPhysRegs = UInt(log2Ceil(params.nAPhysRegs+1).W)
   // A-PhysRegs that are known to be available.
-  val availAPhysRegs = Vec(params.nAWritePorts, params.aPhysReg())
+  val availAPhysRegs = Vec(params.nAWritePorts, Valid(params.aPhysReg()))
   // D-PhysRegs that are known to be available.
-  val availDPhysRegs = Vec(params.nDWritePorts, params.dPhysReg())
+  val availDPhysRegs = Vec(params.nDWritePorts, Valid(params.dPhysReg()))
 
+  // Is mapped to a logical register
   val aIsLive = Vec(params.nAPhysRegs, Bool())
   val dIsLive = Vec(params.nDPhysRegs, Bool())
+
   val aPendingReads = Vec(params.nAPhysRegs, UInt(params.pendingReadsWidth.W))
   val dPendingReads = Vec(params.nDPhysRegs, UInt(params.pendingReadsWidth.W))
+
+  // We've already put the register in our cache of available regs.
+  val aInAvail = Vec(params.nAPhysRegs, Bool())
+  val dInAvail = Vec(params.nDPhysRegs, Bool())
 }
 
 class AReadUpdate(params: FamletParams) extends Bundle {
@@ -58,18 +69,21 @@ class DReadUpdate(params: FamletParams) extends Bundle {
 class AWriteUpdate(params: FamletParams) extends Bundle {
   val state = new RenameState(params)
   val addr = params.aPhysReg()
+  val old = params.aPhysReg()
   val failed = Bool()
 }
 
 class DWriteUpdate(params: FamletParams) extends Bundle {
   val state = new RenameState(params)
   val addr = params.dPhysReg()
+  val old = params.aPhysReg()
   val failed = Bool()
 }
 
 class BWriteUpdate(params: FamletParams) extends Bundle {
   val state = new RenameState(params)
   val addr = params.bPhysReg()
+  val old = params.bPhysReg()
   val failed = Bool()
 }
 
@@ -103,65 +117,79 @@ object RenameHelpers {
     result
   }
   
-  def updateWithAWrite(params: FamletParams)(state: RenameState, enable: Bool, addr: UInt): AWriteUpdate = {
+  def updateWithAWrite(params: FamletParams, portIdx: Int, readOld: Boolean)(state: RenameState, enable: Bool, addr: UInt): AWriteUpdate = {
     val newState = Wire(new RenameState(params))
     newState := state
     // We need to assign a new physical address.
     val oldPhysAddr = state.aRegMap(addr)
     val physAddr = Wire(params.aPhysReg())
     val failed = Wire(Bool())
-    when (state.nAvailAPhysRegs >= params.nAWritePorts.U) {
-      physAddr := state.availAPhysRegs(params.nAWritePorts-1)
+    
+    when (state.availAPhysRegs(portIdx).valid) {
+      physAddr := state.availAPhysRegs(portIdx).bits
       failed := false.B
-    } .elsewhen (state.nAvailAPhysRegs === 0.U) {
+    } .otherwise {
       physAddr := DontCare
       failed := true.B
-    } .otherwise {
-      physAddr := state.availAPhysRegs(state.nAvailAPhysRegs-1.U)
-      failed := false.B
     }
+    
     when (enable && !failed) {
       newState.aIsLive(oldPhysAddr) := false.B
       newState.aRegMap(addr) := physAddr
       newState.aIsLive(physAddr) := true.B
       newState.aPendingReads(physAddr) := 0.U
-      newState.nAvailAPhysRegs := state.nAvailAPhysRegs - 1.U
+      // Mark the consumed register slot as invalid
+      newState.availAPhysRegs(portIdx).valid := false.B
+    }
+    if (readOld) {
+      when (enable && !failed) {
+        // FIXME: Handle overflow
+        newState.aPendingReads(oldPhysAddr) := state.aPendingReads(oldPhysAddr) + 1.U
+      }
     }
     val result = Wire(new AWriteUpdate(params))
     result.state := newState
     result.addr := physAddr
     result.failed := failed
+    result.old := oldPhysAddr
     result
   }
   
-  def updateWithDWrite(params: FamletParams)(state: RenameState, enable: Bool, addr: UInt): DWriteUpdate = {
+  def updateWithDWrite(params: FamletParams, portIdx: Int, readOld: Boolean)(state: RenameState, enable: Bool, addr: UInt): DWriteUpdate = {
     val newState = Wire(new RenameState(params))
     newState := state
     // We need to assign a new physical address.
     val oldPhysAddr = state.dRegMap(addr)
     val physAddr = Wire(params.dPhysReg())
     val failed = Wire(Bool())
-    when (state.nAvailDPhysRegs >= params.nDWritePorts.U) {
-      physAddr := state.availDPhysRegs(params.nDWritePorts-1)
+    
+    when (state.availDPhysRegs(portIdx).valid) {
+      physAddr := state.availDPhysRegs(portIdx).bits
       failed := false.B
-    } .elsewhen (state.nAvailDPhysRegs === 0.U) {
+    } .otherwise {
       physAddr := DontCare
       failed := true.B
-    } .otherwise {
-      physAddr := state.availDPhysRegs(state.nAvailDPhysRegs-1.U)
-      failed := false.B
     }
+    
     when (enable && !failed) {
       newState.dIsLive(oldPhysAddr) := false.B
       newState.dRegMap(addr) := physAddr
       newState.dIsLive(physAddr) := true.B
       newState.dPendingReads(physAddr) := 0.U
-      newState.nAvailDPhysRegs := state.nAvailDPhysRegs - 1.U
+      // Mark the consumed register slot as invalid
+      newState.availDPhysRegs(portIdx).valid := false.B
+    }
+    if (readOld) {
+      when (enable && !failed) {
+        // FIXME: Handle overflow
+        newState.dPendingReads(oldPhysAddr) := state.dPendingReads(oldPhysAddr) + 1.U
+      }
     }
     val result = Wire(new DWriteUpdate(params))
     result.state := newState
     result.addr := physAddr
     result.failed := failed
+    result.old := oldPhysAddr
     result
   }
   
@@ -184,18 +212,22 @@ object RenameHelpers {
     result
   }
   
-  def updateWithBWrite(params: FamletParams)(state: RenameState, enable: Bool, addr: UInt): BWriteUpdate = {
+  def updateWithBWrite(params: FamletParams, bPortIdx: Int, readOld: Boolean)(state: RenameState, enable: Bool, addr: UInt): BWriteUpdate = {
     val result = Wire(new BWriteUpdate(params))
     when (addr(params.bRegWidth-1)) {
-      val dResult = RenameHelpers.updateWithDWrite(params)(state, enable, addr(params.dRegWidth-1, 0))
+      // D register: use D port index = nDOnlyWritePorts + bPortIdx
+      val dResult = RenameHelpers.updateWithDWrite(params, params.nDOnlyWritePorts + bPortIdx, readOld)(state, enable, addr(params.dRegWidth-1, 0))
       result.state := dResult.state
       result.failed := dResult.failed
       result.addr := dResult.addr | (1.U << (params.bPhysRegWidth-1).U)
+      result.old := dResult.old | (1.U << (params.bPhysRegWidth-1).U)
     } .otherwise {
-      val aResult = RenameHelpers.updateWithAWrite(params)(state, enable, addr(params.aRegWidth-1, 0))
+      // A register: use A port index = nAOnlyWritePorts + bPortIdx
+      val aResult = RenameHelpers.updateWithAWrite(params, params.nAOnlyWritePorts + bPortIdx, readOld)(state, enable, addr(params.aRegWidth-1, 0))
       result.state := aResult.state
       result.failed := aResult.failed
       result.addr := aResult.addr
+      result.old := aResult.old
     }
     result
   }
@@ -232,14 +264,14 @@ class Rename(params: GamletParams) extends Module {
   for (i <- 0 until params.famlet.nDRegs) {
     stateInit.dRegMap(i) := i.U
   }
-  stateInit.nAvailAPhysRegs := (params.famlet.nAPhysRegs - params.famlet.nARegs).U
-  stateInit.nAvailDPhysRegs := (params.famlet.nDPhysRegs - params.famlet.nDRegs).U
   // Initialize available physical registers (starting from the first unused ones)
   for (i <- 0 until params.famlet.nAWritePorts) {
-    stateInit.availAPhysRegs(i) := (params.famlet.nARegs + i).U
+    stateInit.availAPhysRegs(i).valid := true.B
+    stateInit.availAPhysRegs(i).bits := (params.famlet.nARegs + i).U
   }
   for (i <- 0 until params.famlet.nDWritePorts) {
-    stateInit.availDPhysRegs(i) := (params.famlet.nDRegs + i).U
+    stateInit.availDPhysRegs(i).valid := true.B
+    stateInit.availDPhysRegs(i).bits := (params.famlet.nDRegs + i).U
   }
   // Mark initial physical registers as live, rest as not live
   for (i <- 0 until params.famlet.nAPhysRegs) {
@@ -255,6 +287,13 @@ class Rename(params: GamletParams) extends Module {
   for (i <- 0 until params.famlet.nDPhysRegs) {
     stateInit.dPendingReads(i) := 0.U
   }
+  // Initialize InAvail bits - mark initial available registers as cached
+  for (i <- 0 until params.famlet.nAPhysRegs) {
+    stateInit.aInAvail(i) := (i >= params.famlet.nARegs && i < params.famlet.nARegs + params.famlet.nAWritePorts).B
+  }
+  for (i <- 0 until params.famlet.nDPhysRegs) {
+    stateInit.dInAvail(i) := (i >= params.famlet.nDRegs && i < params.famlet.nDRegs + params.famlet.nDWritePorts).B
+  }
 
   val stateNext = Wire(new RenameState(params.famlet))
   val state = RegNext(stateNext, stateInit)
@@ -268,7 +307,7 @@ class Rename(params: GamletParams) extends Module {
   val statePreControl = Wire(new RenameState(params.famlet))
   val controlReadUpdate = RenameHelpers.updateWithARead(params.famlet)(
     statePreControl, inputStage.bits.control.iterationsReadEnable(), inputStage.bits.control.iterations.addr)
-  val controlWriteUpdate = RenameHelpers.updateWithAWrite(params.famlet)(
+  val controlWriteUpdate = RenameHelpers.updateWithAWrite(params.famlet, 0, false)(
     controlReadUpdate.state, inputStage.bits.control.writeEnable(), inputStage.bits.control.dst)
   val statePostControl = controlWriteUpdate.state
 
@@ -294,14 +333,12 @@ class Rename(params: GamletParams) extends Module {
     statePreALU, inputStage.bits.alu.src1ReadEnable(), inputStage.bits.alu.src1)
   val aluReadSrc2Update = RenameHelpers.updateWithDRead(params.famlet)(
     aluReadSrc1Update.state, inputStage.bits.alu.src2ReadEnable(), inputStage.bits.alu.src2)
-  val aluReadOldUpdate = RenameHelpers.updateWithBRead(params.famlet)(
-    aluReadSrc2Update.state, inputStage.bits.alu.oldReadEnable(), inputStage.bits.alu.dst)
-  val aluWriteUpdate = RenameHelpers.updateWithBWrite(params.famlet)(
-    aluReadOldUpdate.state, inputStage.bits.alu.writeEnable(), inputStage.bits.alu.dst)
+  val aluWriteUpdate = RenameHelpers.updateWithBWrite(params.famlet, 0, true)(
+    aluReadSrc2Update.state, inputStage.bits.alu.writeEnable(), inputStage.bits.alu.dst)
   val statePostALU = aluWriteUpdate.state
 
   val stallALU = aluWriteUpdate.failed
-  outputStage.bits.alu := inputStage.bits.alu.rename(aluReadSrc1Update.addr, aluReadSrc2Update.addr, aluReadOldUpdate.addr, aluWriteUpdate.addr)
+  outputStage.bits.alu := inputStage.bits.alu.rename(aluReadSrc1Update.addr, aluReadSrc2Update.addr, aluWriteUpdate.old, aluWriteUpdate.addr)
 
   // ALULite
   // Reads: src1, src2 (A-registers), old (if predicated)
@@ -311,14 +348,12 @@ class Rename(params: GamletParams) extends Module {
     statePreALULite, inputStage.bits.aluLite.src1ReadEnable(), inputStage.bits.aluLite.src1)
   val aluLiteReadSrc2Update = RenameHelpers.updateWithARead(params.famlet)(
     aluLiteReadSrc1Update.state, inputStage.bits.aluLite.src2ReadEnable(), inputStage.bits.aluLite.src2)
-  val aluLiteReadOldUpdate = RenameHelpers.updateWithBRead(params.famlet)(
-    aluLiteReadSrc2Update.state, inputStage.bits.aluLite.oldReadEnable(), inputStage.bits.aluLite.dst)
-  val aluLiteWriteUpdate = RenameHelpers.updateWithBWrite(params.famlet)(
-    aluLiteReadOldUpdate.state, inputStage.bits.aluLite.writeEnable(), inputStage.bits.aluLite.dst)
+  val aluLiteWriteUpdate = RenameHelpers.updateWithBWrite(params.famlet, 1, true)(
+    aluLiteReadSrc2Update.state, inputStage.bits.aluLite.writeEnable(), inputStage.bits.aluLite.dst)
   val statePostALULite = aluLiteWriteUpdate.state
 
   val stallALULite = aluLiteWriteUpdate.failed
-  outputStage.bits.aluLite := inputStage.bits.aluLite.rename(aluLiteReadSrc1Update.addr, aluLiteReadSrc2Update.addr, aluLiteReadOldUpdate.addr, aluLiteWriteUpdate.addr)
+  outputStage.bits.aluLite := inputStage.bits.aluLite.rename(aluLiteReadSrc1Update.addr, aluLiteReadSrc2Update.addr, aluLiteWriteUpdate.old, aluLiteWriteUpdate.addr)
 
   // LoadStore
   // Reads: addr (A-register), src (for Store), old (for Load if predicated)
@@ -328,14 +363,12 @@ class Rename(params: GamletParams) extends Module {
     statePreLoadStore, inputStage.bits.loadStore.addrReadEnable(), inputStage.bits.loadStore.addr)
   val loadStoreReadSrcUpdate = RenameHelpers.updateWithBRead(params.famlet)(
     loadStoreReadAddrUpdate.state, inputStage.bits.loadStore.srcReadEnable(), inputStage.bits.loadStore.reg)
-  val loadStoreReadOldUpdate = RenameHelpers.updateWithBRead(params.famlet)(
-    loadStoreReadSrcUpdate.state, inputStage.bits.loadStore.oldReadEnable(), inputStage.bits.loadStore.reg)
-  val loadStoreWriteUpdate = RenameHelpers.updateWithBWrite(params.famlet)(
-    loadStoreReadOldUpdate.state, inputStage.bits.loadStore.writeEnable(), inputStage.bits.loadStore.reg)
+  val loadStoreWriteUpdate = RenameHelpers.updateWithBWrite(params.famlet, 2, true)(
+    loadStoreReadSrcUpdate.state, inputStage.bits.loadStore.writeEnable(), inputStage.bits.loadStore.reg)
   val statePostLoadStore = loadStoreWriteUpdate.state
 
   val stallLoadStore = loadStoreWriteUpdate.failed
-  outputStage.bits.loadStore := inputStage.bits.loadStore.rename(loadStoreReadAddrUpdate.addr, loadStoreReadSrcUpdate.addr, loadStoreReadOldUpdate.addr, loadStoreWriteUpdate.addr)
+  outputStage.bits.loadStore := inputStage.bits.loadStore.rename(loadStoreReadAddrUpdate.addr, loadStoreReadSrcUpdate.addr, loadStoreWriteUpdate.old, loadStoreWriteUpdate.addr)
 
   // Packet
   // Reads: length (for Send operations), target (for operations that use target), result (for forward operations), old (for receive operations if predicated)
@@ -345,16 +378,12 @@ class Rename(params: GamletParams) extends Module {
     statePrePacket, inputStage.bits.packet.lengthReadEnable(), inputStage.bits.packet.length)
   val packetReadTargetUpdate = RenameHelpers.updateWithARead(params.famlet)(
     packetReadLengthUpdate.state, inputStage.bits.packet.targetReadEnable(), inputStage.bits.packet.target)
-  val packetReadResultUpdate = RenameHelpers.updateWithBRead(params.famlet)(
-    packetReadTargetUpdate.state, inputStage.bits.packet.resultReadEnable(), inputStage.bits.packet.result)
-  val packetReadOldUpdate = RenameHelpers.updateWithBRead(params.famlet)(
-    packetReadResultUpdate.state, inputStage.bits.packet.oldReadEnable(), inputStage.bits.packet.result)
-  val packetWriteUpdate = RenameHelpers.updateWithBWrite(params.famlet)(
-    packetReadOldUpdate.state, inputStage.bits.packet.writeEnable(), inputStage.bits.packet.result)
+  val packetWriteUpdate = RenameHelpers.updateWithBWrite(params.famlet, 3, true)(
+    packetReadTargetUpdate.state, inputStage.bits.packet.writeEnable(), inputStage.bits.packet.result)
   val statePostPacket = packetWriteUpdate.state
 
   val stallPacket = packetWriteUpdate.failed
-  outputStage.bits.packet := inputStage.bits.packet.rename(packetReadLengthUpdate.addr, packetReadTargetUpdate.addr, packetReadResultUpdate.addr, packetReadOldUpdate.addr, packetWriteUpdate.addr)
+  outputStage.bits.packet := inputStage.bits.packet.rename(packetReadLengthUpdate.addr, packetReadTargetUpdate.addr, packetWriteUpdate.addr, packetWriteUpdate.old)
 
   // Update available physical registers
   val statePreAvail = Wire(new RenameState(params.famlet))
@@ -364,16 +393,45 @@ class Rename(params: GamletParams) extends Module {
   // Find available A physical registers
   val aRegsAvailable = Wire(Vec(params.famlet.nAPhysRegs, Bool()))
   for (i <- 0 until params.famlet.nAPhysRegs) {
-    aRegsAvailable(i) := !statePreAvail.aIsLive(i) && statePreAvail.aPendingReads(i) === 0.U
+    aRegsAvailable(i) := !statePreAvail.aIsLive(i) && statePreAvail.aPendingReads(i) === 0.U && !statePreAvail.aInAvail(i)
   }
   
-  statePostAvail.nAvailAPhysRegs := PopCount(aRegsAvailable)
+
+  val availAPhysRegsIntermed = Wire(Vec(params.famlet.nAWritePorts, Valid(params.famlet.aPhysReg())))
+  for (i <- 0 until params.famlet.nAWritePorts) {
+    availAPhysRegsIntermed(i).valid := false.B
+    availAPhysRegsIntermed(i).bits := DontCare
+  }
+
+  val aPhysRegsPerWritePort = (params.famlet.nAPhysRegs + params.famlet.nAWritePorts-1)/params.famlet.nAWritePorts
   
-  // Select first nAWritePorts available A registers
+  // Each write port trys to grab a available slot from it's share of the register file.
   for (portIdx <- 0 until params.famlet.nAWritePorts) {
-    for (i <- 0 until params.famlet.nAPhysRegs) {
-      when (aRegsAvailable(i) && PopCount(aRegsAvailable.take(i)) === portIdx.U) {
-        statePostAvail.availAPhysRegs(portIdx) := i.U
+    for (i <- 0 until aPhysRegsPerWritePort) {
+      val idx = (portIdx * aPhysRegsPerWritePort + i)
+      if (idx < params.famlet.nAPhysRegs) {
+        when (aRegsAvailable(idx)) {
+          availAPhysRegsIntermed(portIdx).bits := idx.U
+          availAPhysRegsIntermed(portIdx).valid := true.B
+        }
+      }
+    }
+  }
+  // Then we shuffle them so the same registers don't always go with the same write ports.
+  val shiftNext = Wire(UInt(log2Ceil(params.famlet.nAWritePorts).W))
+  val shift = RegNext(shiftNext, 0.U)
+  when (shift === (params.famlet.nAWritePorts-1).U) {
+    shiftNext := 0.U
+  } .otherwise {
+    shiftNext := shift + 1.U
+  }
+  for (portIdx <- 0 until params.famlet.nAWritePorts) {
+    val shiftedIdx = (portIdx.U + shift) % params.famlet.nAWritePorts.U
+    when (!statePreAvail.availAPhysRegs(portIdx).valid) {
+      statePostAvail.availAPhysRegs(portIdx) := availAPhysRegsIntermed(shiftedIdx)
+      // Update aInAvail when we write a valid register to the available cache
+      when (availAPhysRegsIntermed(shiftedIdx).valid) {
+        statePostAvail.aInAvail(availAPhysRegsIntermed(shiftedIdx).bits) := true.B
       }
     }
   }
@@ -381,17 +439,58 @@ class Rename(params: GamletParams) extends Module {
   // Find available D physical registers
   val dRegsAvailable = Wire(Vec(params.famlet.nDPhysRegs, Bool()))
   for (i <- 0 until params.famlet.nDPhysRegs) {
-    dRegsAvailable(i) := !statePreAvail.dIsLive(i) && statePreAvail.dPendingReads(i) === 0.U
+    dRegsAvailable(i) := !statePreAvail.dIsLive(i) && statePreAvail.dPendingReads(i) === 0.U && !statePreAvail.dInAvail(i)
+  }
+
+  val availDPhysRegsIntermed = Wire(Vec(params.famlet.nDWritePorts, Valid(params.famlet.dPhysReg())))
+  for (i <- 0 until params.famlet.nDWritePorts) {
+    availDPhysRegsIntermed(i).valid := false.B
+    availDPhysRegsIntermed(i).bits := DontCare
+  }
+
+  val dPhysRegsPerWritePort = (params.famlet.nDPhysRegs + params.famlet.nDWritePorts-1)/params.famlet.nDWritePorts
+  
+  // Each write port trys to grab a available slot from it's share of the register file.
+  for (portIdx <- 0 until params.famlet.nDWritePorts) {
+    for (i <- 0 until dPhysRegsPerWritePort) {
+      val idx = (portIdx * dPhysRegsPerWritePort + i)
+      if (idx < params.famlet.nDPhysRegs) {
+        when (dRegsAvailable(idx)) {
+          availDPhysRegsIntermed(portIdx).bits := idx.U
+          availDPhysRegsIntermed(portIdx).valid := true.B
+        }
+      }
+    }
+  }
+  // Then we shuffle them so the same registers don't always go with the same write ports.
+  val dShiftNext = Wire(UInt(log2Ceil(params.famlet.nDWritePorts).W))
+  val dShift = RegNext(dShiftNext, 0.U)
+  when (dShift === (params.famlet.nDWritePorts-1).U) {
+    dShiftNext := 0.U
+  } .otherwise {
+    dShiftNext := dShift + 1.U
+  }
+  for (portIdx <- 0 until params.famlet.nDWritePorts) {
+    val shiftedIdx = (portIdx.U + dShift) % params.famlet.nDWritePorts.U
+    when (!statePreAvail.availDPhysRegs(portIdx).valid) {
+      statePostAvail.availDPhysRegs(portIdx) := availDPhysRegsIntermed(shiftedIdx)
+      // Update dInAvail when we write a valid register to the available cache
+      when (availDPhysRegsIntermed(shiftedIdx).valid) {
+        statePostAvail.dInAvail(availDPhysRegsIntermed(shiftedIdx).bits) := true.B
+      }
+    }
   }
   
-  statePostAvail.nAvailDPhysRegs := PopCount(dRegsAvailable)
+  // Clear InAvail bits for registers that become live
+  for (i <- 0 until params.famlet.nAPhysRegs) {
+    when (statePostAvail.aIsLive(i)) {
+      statePostAvail.aInAvail(i) := false.B
+    }
+  }
   
-  // Select first nDWritePorts available D registers
-  for (portIdx <- 0 until params.famlet.nDWritePorts) {
-    for (i <- 0 until params.famlet.nDPhysRegs) {
-      when (dRegsAvailable(i) && PopCount(dRegsAvailable.take(i)) === portIdx.U) {
-        statePostAvail.availDPhysRegs(portIdx) := i.U
-      }
+  for (i <- 0 until params.famlet.nDPhysRegs) {
+    when (statePostAvail.dIsLive(i)) {
+      statePostAvail.dInAvail(i) := false.B
     }
   }
   
@@ -489,7 +588,6 @@ class Rename(params: GamletParams) extends Module {
   statePreALULite := statePostALU
   statePreLoadStore := statePostALULite
   statePrePacket := statePostLoadStore
-
   statePreAvail := statePostPacket
   statePreNotices := statePostAvail
   

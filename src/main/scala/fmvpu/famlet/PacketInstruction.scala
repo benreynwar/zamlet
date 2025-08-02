@@ -105,14 +105,13 @@ object PacketInstr {
       mode === Modes.ReceiveForwardAndAppendContinuously
     }
     
-    def rename(newLength: UInt, newTarget: UInt, newResult: UInt, newOld: UInt, newDst: UInt): Renamed = {
+    def rename(newLength: UInt, newTarget: UInt, newResult: UInt, newOld: UInt): Renamed = {
       val renamed = Wire(new Renamed(params))
       renamed.mode := mode
       renamed.length := newLength
       renamed.target := newTarget
       renamed.result := newResult
       renamed.old := newOld
-      renamed.dst := newDst
       renamed.predicate := predicate
       renamed.channel := channel
       renamed
@@ -125,7 +124,6 @@ object PacketInstr {
     val target = params.aPhysReg()
     val result = params.bPhysReg()
     val old = params.bPhysReg()
-    val dst = params.bPhysReg()
     val predicate = params.pReg()
     val channel = UInt(log2Ceil(params.nChannels).W)
   }

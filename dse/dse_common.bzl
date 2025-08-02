@@ -48,7 +48,7 @@ def dse_component_flows(studies, component_type, pdks = ["asap7", "sky130hd"]):
             "CORE_UTILIZATION": "20",
         },
         sources = {
-            "SDC_FILE": ["//dse:config/constraints.sdc"],
+            "SDC_FILE": ["//dse:config/constraints_{}.sdc".format(pdk)],
         },
         verilog_files = [":{}.sv".format(study_name)],
     ) for study in studies for pdk in pdks for name, study_name in [("{}__{}".format(study["name"], pdk), study["name"])]]
