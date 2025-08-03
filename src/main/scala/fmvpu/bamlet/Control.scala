@@ -191,7 +191,7 @@ class Control(params: BamletParams) extends Module {
 
   // Update the Loop States if we reached the end of a loop
   when (io.imResp.valid && instrBuffered.ready) {
-    when (stateBody.activeLoopState().end === io.imResp.bits.pc) {
+    when (stateBody.loopActive && stateBody.activeLoopState().end === io.imResp.bits.pc) {
       when (stateBody.activeLoopState().terminating) {
         when (stateBody.loopLevel === 0.U) {
           stateNext.loopLevel := 0.U

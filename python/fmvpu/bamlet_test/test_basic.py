@@ -25,13 +25,25 @@ logger = logging.getLogger(__name__)
 this_dir = os.path.abspath(os.path.dirname(__file__))
 
 
+async def setup_amlet_predicates(bi: BamletInterface) -> None:
+    """Set pReg1=1 for amlet (0,0) and pReg1=0 for all other amlets"""
+    for offset_x in range(bi.params.n_amlet_columns):
+        for offset_y in range(bi.params.n_amlet_rows):
+            if offset_x == 0 and offset_y == 0:
+                await bi.write_register('p', 1, 1, offset_x=offset_x, offset_y=offset_y)
+            else:
+                await bi.write_register('p', 1, 0, offset_x=offset_x, offset_y=offset_y)
+
+
 async def echo_packet_test(bi: BamletInterface) -> None:
     """Echo packet test using VLIW instructions for Bamlet"""
+
+    await setup_amlet_predicates(bi)
     # Set up destination coordinates (echo back to source)
     dest_x = 0
     dest_y = 0
     coord_word = make_coord_register(dest_x, dest_y, bi.params.amlet)
-    await bi.write_register('a', 0, coord_word)
+    await bi.write_register('a', 1, coord_word)
 
     # Create VLIW program for packet echo
     program = [
@@ -40,16 +52,18 @@ async def echo_packet_test(bi: BamletInterface) -> None:
             packet=PacketInstruction(
                 mode=PacketModes.RECEIVE,
                 result=5,  # Store length in A-register 5
-                channel=0
+                channel=0,
+                predicate=1,
             )
         ),
         # Second instruction: Start sending packet with same length
         VLIWInstruction(
             packet=PacketInstruction(
                 mode=PacketModes.SEND,
-                target=0,   # Destination coordinates in A-register 0
+                target=1,   # Destination coordinates in A-register 1
                 length=5,   # Length from A-register 5
-                channel=0
+                channel=0,
+                predicate=1,
             )
         ),
         # Third instruction: Get first word and put in send buffer
@@ -57,7 +71,8 @@ async def echo_packet_test(bi: BamletInterface) -> None:
             packet=PacketInstruction(
                 mode=PacketModes.GET_WORD,
                 result=0,   # Put word directly in send buffer
-                channel=0
+                channel=0,
+                predicate=1,
             )
         ),
         # Fourth instruction: Get second word and put in send buffer
@@ -65,7 +80,8 @@ async def echo_packet_test(bi: BamletInterface) -> None:
             packet=PacketInstruction(
                 mode=PacketModes.GET_WORD,
                 result=0,   # Put word directly in send buffer
-                channel=0
+                channel=0,
+                predicate=1,
             )
         ),
         # Fifth instruction: Halt

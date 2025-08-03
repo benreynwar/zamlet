@@ -375,8 +375,8 @@ async def bamlet_packet_test(dut: HierarchyObject) -> None:
     await bi.start()
     
     # Run packet tests
-    #await packet_receive_test(bi)
-    #await packet_send_test(bi)
+    await packet_receive_test(bi)
+    await packet_send_test(bi)
     await packet_get_word_test(bi)
     await packet_receive_and_forward_test(bi)
     await packet_receive_forward_and_append_test(bi)

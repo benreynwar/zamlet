@@ -35,7 +35,7 @@ async def write_instruction_test(bi: BamletInterface) -> None:
     complex_instr = VLIWInstruction(
         control=ControlInstruction(
             mode=ControlModes.LOOP_IMMEDIATE,
-            iterations_value=10,
+            iterations=10,
             dst=1,
             predicate=0,
             length=5

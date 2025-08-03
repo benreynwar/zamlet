@@ -240,6 +240,7 @@ class ReceivePacketInterface(params: AmletParams) extends Module {
             io.result.bits.address.tag := bufferedInstr.bits.result.tag
             io.result.bits.value := header.length
             io.result.bits.force := false.B
+            io.result.bits.predicate := true.B
           }
           // If no instruction available or instruction is masked, stay in Idle (don't consume header)
         }
@@ -263,6 +264,7 @@ class ReceivePacketInterface(params: AmletParams) extends Module {
         io.result.bits.address.addr := bufferedInstr.bits.result.addr
         io.result.bits.address.tag := bufferedInstr.bits.result.tag
         io.result.bits.force := false.B
+        io.result.bits.predicate := true.B
         
         receiveRemainingWords := receiveRemainingWords - 1.U
         when (receiveRemainingWords === 1.U) {
@@ -348,6 +350,7 @@ class ReceivePacketInterface(params: AmletParams) extends Module {
             io.result.bits.address.tag := 0.U // Command writes don't use write identifiers
             io.result.bits.value := bufferedFromNetwork.bits.data
             io.result.bits.force := true.B // Command writes bypass dependency system
+            io.result.bits.predicate := true.B
           }
           is(1.U) { // D registers (01)
             io.result.valid := true.B
@@ -355,6 +358,7 @@ class ReceivePacketInterface(params: AmletParams) extends Module {
             io.result.bits.address.tag := 0.U
             io.result.bits.value := bufferedFromNetwork.bits.data
             io.result.bits.force := true.B
+            io.result.bits.predicate := true.B
           }
           is(2.U) { // P registers (10)
             io.resultPredicate.valid := true.B
