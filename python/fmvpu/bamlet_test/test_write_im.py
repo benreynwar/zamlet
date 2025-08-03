@@ -37,7 +37,6 @@ async def write_instruction_test(bi: BamletInterface) -> None:
             mode=ControlModes.LOOP_IMMEDIATE,
             iterations=10,
             dst=1,
-            predicate=0,
             length=5
         ),
         predicate=PredicateInstruction(

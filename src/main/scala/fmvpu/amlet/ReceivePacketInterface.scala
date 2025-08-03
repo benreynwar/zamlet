@@ -97,7 +97,9 @@ class ReceivePacketInterface(params: AmletParams) extends Module {
   val regWriteAddress = RegInit(0.U(params.regWidth.W))
   
   // Forward toggle register
-  val forwardToggle = RegInit(false.B)
+  val forwardToggleNext = Wire(Bool())
+  val forwardToggle = RegNext(forwardToggleNext, false.B)
+  forwardToggleNext := forwardToggle //default
   
   
   // Error signals
@@ -121,6 +123,7 @@ class ReceivePacketInterface(params: AmletParams) extends Module {
   io.resultPredicate.bits.address.addr := DontCare
   io.resultPredicate.bits.address.tag := DontCare  
   io.resultPredicate.bits.value := DontCare
+  io.resultPredicate.bits.force := DontCare
   io.writeControl.valid := false.B
   io.writeControl.bits := DontCare
   
@@ -186,13 +189,14 @@ class ReceivePacketInterface(params: AmletParams) extends Module {
     io.result.bits.value := bufferedInstr.bits.old
     io.result.bits.predicate := false.B
     io.result.bits.force := false.B
+    bufferedInstr.ready := true.B
   }
 
   switch(receiveState) {
     is(States.Idle) {
       errorUnexpectedHeader := false.B
       // Send forward info if we have a forwarding instruction
-      when (bufferedInstr.valid && bufferedInstr.bits.predicate
+      when (bufferedInstr.valid && bufferedInstr.bits.predicate &&
            (bufferedInstr.bits.mode === PacketInstr.Modes.ReceiveAndForward ||
             bufferedInstr.bits.mode === PacketInstr.Modes.ReceiveForwardAndAppend)) {
         io.forward.valid := true.B
@@ -225,7 +229,7 @@ class ReceivePacketInterface(params: AmletParams) extends Module {
             }
             
             // Toggle forward signal when consuming any instruction
-            forwardToggle := !forwardToggle
+            forwardToggleNext := !forwardToggle
             
             // Error if wrong instruction mode
             when (!(bufferedInstr.bits.mode === PacketInstr.Modes.Receive ||
@@ -365,6 +369,7 @@ class ReceivePacketInterface(params: AmletParams) extends Module {
             io.resultPredicate.bits.address.addr := regIndex
             io.resultPredicate.bits.address.tag := 0.U
             io.resultPredicate.bits.value := bufferedFromNetwork.bits.data(0) // P registers are 1-bit
+            io.resultPredicate.bits.force := true.B // Command writes bypass dependency system
           }
           is(3.U) { // G registers (11)
             io.writeControl.valid := true.B

@@ -447,7 +447,7 @@ class RegisterFileAndRename(params: AmletParams) extends Module {
   // Read operands for ALU operations
   val aluReadSrc1 = readDReg(statePreALU, io.instr.bits.alu.src1)
   val aluReadSrc2 = Wire(new DTaggedSource(params))
-  val aluReadOld = Wire(new DTaggedSource(params))
+  val aluReadOld = Wire(new BTaggedSource(params))
   val aluPredicate = readPReg(statePreALU, io.instr.bits.alu.predicate)
   
   // For immediate instructions (ADDI, SUBI), src2 is an immediate value, not a register
@@ -553,21 +553,21 @@ class RegisterFileAndRename(params: AmletParams) extends Module {
   io.instr.ready := !stallALU && !stallALULite && !stallLdSt && !stallPacket && !stallPredicate
 
   // Chain register state updates through all instruction types
-  val stateFromTagging = Wire(new State(params))
   statePreControl := state // Start with current register state
   statePrePredicate := statePostControl
   statePrePacket := statePostPredicate 
   statePreLdSt := statePostPacket  // Load/store sees packet updates
   statePreALU := statePostLdSt     // ALU sees load/store updates  
   statePreALULite := statePostALU  // ALULite sees ALU updates
-  stateFromTagging := statePostALULite  // Final state after all instruction processing
 
+  val stateFromTagging = Wire(new State(params))
   when (io.instr.valid && io.instr.ready) {
     // Update the state
-    stateNext := stateFromTagging
+    stateFromTagging := statePostALULite
   } .otherwise {
-    stateNext := state
+    stateFromTagging := state
   }
+  stateNext := stateFromTagging
   
   // Update register state on writes from execution units
   for (i <- 0 until params.nResultPorts) {
@@ -623,10 +623,11 @@ class RegisterFileAndRename(params: AmletParams) extends Module {
     when (io.resultBus.predicate(i).valid) {
       val pRegAddr = io.resultBus.predicate(i).bits.address.addr
       val pRenameTag = io.resultBus.predicate(i).bits.address.tag
+      val isForceWrite = io.resultBus.predicate(i).bits.force
       val pIndex = pRegAddr(log2Ceil(params.nPRegs)-1, 0)  // Truncate to P-register width
       
-      // Update predicate register if rename tag matches
-      when (pRenameTag === stateFromTagging.pRegs(pIndex).lastIdent && pIndex > 0.U) {
+      // Update predicate register if rename tag matches expected or force write
+      when ((pRenameTag === stateFromTagging.pRegs(pIndex).lastIdent || isForceWrite) && pIndex > 0.U) {
         stateNext.pRegs(pIndex).value := io.resultBus.predicate(i).bits.value
       }
       // Clear in-flight bit for this rename tag

@@ -36,12 +36,11 @@ async def simple_loop_test(bi: BamletInterface) -> None:
     
     # Create a simple loop that runs 3 times
     instrs = [
-        # Loop 3 times -> A-register 1 (loop index), P-register 1 (predicate)
+        # Loop 3 times -> A-register 1 (loop index)
         ControlInstruction(
             mode=ControlModes.LOOP_IMMEDIATE,
             iterations=3,
             dst=1,         # A-register 1 gets loop index
-            predicate=1,   # P-register 1 gets loop condition
         ),
         # Increment counter: d1 = d1 + d2
         ALUInstruction(
@@ -86,7 +85,6 @@ async def loop_local_test(bi: BamletInterface) -> None:
             mode=ControlModes.LOOP_LOCAL,
             iterations=3,  # A-register index containing iteration count
             dst=1,               # A-register 1 gets loop index
-            predicate=1,         # P-register 1 gets loop condition
         ),
         # Increment counter: d1 = d1 + d2
         ALUInstruction(
@@ -133,7 +131,6 @@ async def loop_global_test(bi: BamletInterface) -> None:
             mode=ControlModes.LOOP_GLOBAL,
             iterations=4,  # G-register index containing iteration count
             dst=1,               # A-register 1 gets loop index
-            predicate=1,         # P-register 1 gets loop condition
         ),
         # Increment counter: d1 = d1 + d2
         ALUInstruction(
@@ -172,19 +169,17 @@ async def nested_loops_test(bi: BamletInterface) -> None:
             await bi.write_register('d', 2, 1, offset_x=offset_x, offset_y=offset_y)  # Increment value
     
     instrs = [
-        # Outer loop: 3 iterations -> A-register 1, P-register 1
+        # Outer loop: 3 iterations -> A-register 1
         ControlInstruction(
             mode=ControlModes.LOOP_IMMEDIATE,
             iterations=3,
             dst=1,         # A-register 1 gets outer loop index
-            predicate=1,   # P-register 1 gets outer loop condition
         ),
-        # Inner loop: 2 iterations -> A-register 2, P-register 3
+        # Inner loop: 2 iterations -> A-register 2
         ControlInstruction(
             mode=ControlModes.LOOP_IMMEDIATE,
             iterations=2,
             dst=2,         # A-register 2 gets inner loop index
-            predicate=3,   # P-register 3 gets inner loop condition
         ),
         # Increment counter: d1 = d1 + d2
         ALUInstruction(
@@ -228,12 +223,11 @@ async def loop_index_usage_test(bi: BamletInterface) -> None:
             await bi.write_register('a', 2, 10, offset_x=offset_x, offset_y=offset_y)  # Base value
     
     instrs = [
-        # Loop 4 times -> A-register 1 (loop index), P-register 1 (predicate)
+        # Loop 4 times -> A-register 1 (loop index)
         ControlInstruction(
             mode=ControlModes.LOOP_IMMEDIATE,
             iterations=4,
             dst=1,         # A-register 1 gets loop index (0, 1, 2, 3)
-            predicate=1,   # P-register 1 gets loop condition
         ),
         # Add loop index to base value and store to D-register: d2 = a1 + a2 (loop_index + base_value)
         ALULiteInstruction(
@@ -326,7 +320,6 @@ async def loop_predicate_different_bounds_test(bi: BamletInterface) -> None:
             mode=ControlModes.LOOP_LOCAL,
             iterations=3,  # A-register index containing iteration count
             dst=1,               # A-register 1 gets loop index
-            predicate=1,         # P-register 1 gets loop condition (loop_index < iterations)
         ),
         PredicateInstruction(
             mode=PredicateModes.LT,

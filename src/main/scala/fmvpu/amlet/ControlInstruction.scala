@@ -46,7 +46,6 @@ object ControlInstr {
     val mode = Modes()
     val iterations = UInt(srcWidth(params).W)  // Value (immediate, A-reg index, or G-reg index)
     val dst = params.aReg()                    // Where the loop index goes.
-    val predicate = params.pReg()              // loop_index < iterations put here.
     val length = UInt(params.instrAddrWidth.W) // Number of instructions in the loop body.
 
     def expand(): Expanded = {
@@ -56,7 +55,6 @@ object ControlInstr {
       expanded.iterations.addr := iterations  
       expanded.iterations.value := DontCare
       expanded.dst := dst
-      expanded.predicate := predicate
       expanded.level := 0.U
       expanded
     }
@@ -66,7 +64,6 @@ object ControlInstr {
     val mode = Modes()
     val iterations = new ExtendedSrcType(params) // Where the number of iterations comes from.
     val dst = params.aReg()                    // Where the loop index goes.
-    val predicate = params.pReg()              // loop_index < iterations put here.
     val level = UInt(log2Ceil(params.nLoopLevels).W)
   }
 

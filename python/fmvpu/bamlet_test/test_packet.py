@@ -96,14 +96,14 @@ async def packet_send_test(bi: BamletInterface) -> None:
             )
         ),
         VLIWInstruction(
-            alu=ALUInstruction(mode=ALUModes.ADDI, src1=0, src2=1, a_dst=0)
+            alu=ALUInstruction(mode=ALUModes.ADDI, src1=0, src2=1, a_dst=0, predicate=1)
         ),
         VLIWInstruction(
-            alu=ALUInstruction(mode=ALUModes.ADDI, src1=0, src2=2, a_dst=0)
+            alu=ALUInstruction(mode=ALUModes.ADDI, src1=0, src2=2, a_dst=0, predicate=1)
         ),
         VLIWInstruction(
             control=ControlInstruction(mode=ControlModes.HALT),
-            alu=ALUInstruction(mode=ALUModes.ADDI, src1=0, src2=3, a_dst=0)
+            alu=ALUInstruction(mode=ALUModes.ADDI, src1=0, src2=3, a_dst=0, predicate=1)
         ),
     ]
     bi.write_program(program)

@@ -270,7 +270,8 @@ class WriteEvent(params: AmletParams) extends Bundle {
 
 class PredicateResult(params: AmletParams) extends Bundle {
   val value = Bool()
-  val address = new PTaggedReg(params) 
+  val address = new PTaggedReg(params)
+  val force = Bool() // from command packet, bypasses writeIdent system
 }
 
 

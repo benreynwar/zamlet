@@ -58,6 +58,7 @@ class ALUPredicate(params: AmletParams) extends Module {
     io.result.bits.value := finalResult
     io.result.bits.address.addr := io.instr.bits.dst.addr
     io.result.bits.address.tag := io.instr.bits.dst.tag
+    io.result.bits.force := false.B
   } else {
     // Multi-cycle pipeline
     val validPipe = RegInit(VecInit(Seq.fill(params.aluPredicateLatency)(false.B)))
@@ -80,6 +81,7 @@ class ALUPredicate(params: AmletParams) extends Module {
     io.result.valid := validPipe(params.aluPredicateLatency-1)
     io.result.bits.value := resultPipe(params.aluPredicateLatency-1)
     io.result.bits.address := dstAddrPipe(params.aluPredicateLatency-1)
+    io.result.bits.force := false.B
   }
 }
 
