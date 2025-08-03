@@ -46,6 +46,9 @@ class InstrResp(params: BamletParams) extends Bundle {
   val pc = UInt(params.amlet.instrAddrWidth.W)
 }
 
+class ControlErrors(params: BamletParams) extends Bundle {
+  val unexpectedLoopIterations = Vec(params.nAmlets, Bool())
+}
 
 class Control(params: BamletParams) extends Module {
   val io = IO(new Bundle {
@@ -63,6 +66,9 @@ class Control(params: BamletParams) extends Module {
 
     // For each loop instruction that a receives it 
     val loopIterations = Input(Vec(params.nAmlets, Valid(UInt(params.aWidth.W))))
+    
+    // Error outputs
+    val errors = Output(new ControlErrors(params))
   })
 
   val pc = Wire(UInt(params.amlet.instrAddrWidth.W))
@@ -147,18 +153,23 @@ class Control(params: BamletParams) extends Module {
             stateBody.loopStates(stateBody.loopLevel).resolvedIterations :=
               VecInit(Seq.fill(params.nAmlets)(false.B))
             stateBody.loopStates(stateBody.loopLevel).terminating := false.B
+            instrBuffered.bits.control.iterations.resolved := false.B
           } .elsewhen (isGlobalLoop) {
             stateBody.loopStates(stateBody.loopLevel).iterations := state.globals(io.imResp.bits.instr.control.iterations)
             stateBody.loopStates(stateBody.loopLevel).resolvedIterations :=
               VecInit(Seq.fill(params.nAmlets)(true.B))
             stateBody.loopStates(stateBody.loopLevel).terminating :=
               (state.globals(io.imResp.bits.instr.control.iterations) <= 1.U)
+            instrBuffered.bits.control.iterations.value := state.globals(io.imResp.bits.instr.control.iterations)
+            instrBuffered.bits.control.iterations.resolved := true.B
           } .otherwise { // isImmediateLoop
             stateBody.loopStates(stateBody.loopLevel).iterations := io.imResp.bits.instr.control.iterations
             stateBody.loopStates(stateBody.loopLevel).resolvedIterations :=
               VecInit(Seq.fill(params.nAmlets)(true.B))
             stateBody.loopStates(stateBody.loopLevel).terminating :=
               (io.imResp.bits.instr.control.iterations <= 1.U)
+            instrBuffered.bits.control.iterations.value := io.imResp.bits.instr.control.iterations
+            instrBuffered.bits.control.iterations.resolved := true.B
           }
         }
       } .otherwise {
@@ -169,18 +180,23 @@ class Control(params: BamletParams) extends Module {
           stateBody.loopStates(stateBody.loopLevel).resolvedIterations :=
             VecInit(Seq.fill(params.nAmlets)(false.B))
           stateBody.loopStates(stateBody.loopLevel).terminating := false.B
+          instrBuffered.bits.control.iterations.resolved := false.B
         } .elsewhen (isGlobalLoop) {
           stateBody.loopStates(stateBody.loopLevel).iterations := state.globals(io.imResp.bits.instr.control.iterations)
           stateBody.loopStates(stateBody.loopLevel).resolvedIterations :=
             VecInit(Seq.fill(params.nAmlets)(true.B))
           stateBody.loopStates(stateBody.loopLevel).terminating :=
             (state.globals(io.imResp.bits.instr.control.iterations) <= 1.U)
+          instrBuffered.bits.control.iterations.value := state.globals(io.imResp.bits.instr.control.iterations)
+          instrBuffered.bits.control.iterations.resolved := true.B
         } .otherwise { // isImmediateLoop
           stateBody.loopStates(stateBody.loopLevel).iterations := io.imResp.bits.instr.control.iterations
           stateBody.loopStates(stateBody.loopLevel).resolvedIterations :=
             VecInit(Seq.fill(params.nAmlets)(true.B))
           stateBody.loopStates(stateBody.loopLevel).terminating :=
             (io.imResp.bits.instr.control.iterations <= 1.U)
+          instrBuffered.bits.control.iterations.value := io.imResp.bits.instr.control.iterations
+          instrBuffered.bits.control.iterations.resolved := true.B
         }
       }
       stateBody.loopStates(stateBody.loopLevel).start := io.imResp.bits.pc
@@ -208,18 +224,27 @@ class Control(params: BamletParams) extends Module {
     }
   }
 
+  val errorUnexpectedLoopIterations = Wire(Vec(params.nAmlets, Bool()))
   // Loop over the nAmlets
   for (amletIndex <- 0 until params.nAmlets) {
+    errorUnexpectedLoopIterations(amletIndex) := false.B
     // Find the lowest level where this amlet hasn't resolved iterations yet
     val unresolvedLevels = Wire(Vec(params.nLoopLevels, Bool()))
     for (i <- 0 until params.nLoopLevels) {
-      unresolvedLevels(i) := !state.loopStates(i).resolvedIterations(amletIndex)
+      if (i == 0) {
+        // Level 0 is always active when any loops are running
+        unresolvedLevels(i) := !state.loopStates(i).resolvedIterations(amletIndex)
+      } else {
+        unresolvedLevels(i) := (!state.loopStates(i).resolvedIterations(amletIndex)) && (i.U <= state.loopLevel)
+      }
     }
+    val hasUnresolved = unresolvedLevels.asUInt.orR
     val level = PriorityEncoder(unresolvedLevels)
     when (io.loopIterations(amletIndex).valid) {
+      errorUnexpectedLoopIterations(amletIndex) := (!hasUnresolved) || state.loopStates(level).resolvedIterations(amletIndex);
       stateNext.loopStates(level).resolvedIterations(amletIndex) := true.B
       when (state.loopStates(level).iterations > io.loopIterations(amletIndex).bits) {
-        stateNext.loopStates(level).iterations := state.loopStates(level).iterations
+        stateNext.loopStates(level).iterations := stateBody.loopStates(level).iterations
       } .otherwise {
         stateNext.loopStates(level).iterations := io.loopIterations(amletIndex).bits
       }
@@ -232,6 +257,9 @@ class Control(params: BamletParams) extends Module {
       }
     }
   }
+
+  // Wire error outputs
+  io.errors.unexpectedLoopIterations := errorUnexpectedLoopIterations
 
   stateNext.active := state.active
   when (instrBuffered.valid && instrBuffered.ready) {

@@ -257,7 +257,7 @@ class BamletInterface:
             await triggers.RisingEdge(self.dut.clock)
 
     async def check_errors(self):
-        error_wires = [
+        amlet_error_wires = [
             'errors_receivePacketInterface_imWriteCountExceedsPacket',
             'errors_receivePacketInterface_instrAndCommandPacket',
             'errors_receivePacketInterface_unexpectedHeader',
@@ -266,12 +266,21 @@ class BamletInterface:
         while True:
             await triggers.RisingEdge(self.dut.clock)
             await triggers.ReadOnly()
+            
+            # Check bamlet-level control errors
+            for amlet_index in range(self.params.n_amlets):
+                if getattr(self.dut, f'errors_control_unexpectedLoopIterations_{amlet_index}').value != 0:
+                    row = amlet_index // self.params.n_amlet_columns
+                    col = amlet_index % self.params.n_amlet_columns
+                    raise Exception(f'Control error: unexpected loop iterations from amlet ({col},{row}) index {amlet_index}')
+            
+            # Check amlet-level errors
             for x in range(self.params.n_amlet_columns):
                 for y in range(self.params.n_amlet_rows):
                     amlet = self.get_amlet(x, y)
-                    for error_wire in error_wires:
+                    for error_wire in amlet_error_wires:
                         if getattr(amlet, error_wire).value != 0:
-                            raise Exception(f'Error wire {error_wire} has gone wire on amlet {x} {y}')
+                            raise Exception(f'Error wire {error_wire} has gone high on amlet ({x},{y})')
 
     def probe_vdm_data(self, x, y, addr):
         amlet = self.get_amlet(x, y)

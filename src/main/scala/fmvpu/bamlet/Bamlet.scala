@@ -4,6 +4,10 @@ import chisel3._
 import chisel3.util._
 import fmvpu.amlet.{Amlet, NetworkWord}
 
+class BamletErrors(params: BamletParams) extends Bundle {
+  val control = new ControlErrors(params)
+}
+
 /**
  * Bamlet - A 2D grid of Amlets with shared control and instruction memory
  * Contains: InstructionMemory, Control unit, and a 2D grid of internally connected Amlets
@@ -44,6 +48,11 @@ class Bamlet(params: BamletParams) extends Module {
       amlets(row)(col) = Module(new Amlet(params.amlet))
     }
   }
+
+  // Wire up error outputs
+  val errors = Wire(new BamletErrors(params))
+  dontTouch(errors)
+  errors.control := control.io.errors
 
   // Connect instruction memory write interface - arbitrate between amlets
   val writeControlSignals = VecInit(amlets.flatten.toIndexedSeq.map(_.io.writeControl))

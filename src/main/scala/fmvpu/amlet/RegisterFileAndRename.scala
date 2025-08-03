@@ -553,17 +553,23 @@ class RegisterFileAndRename(params: AmletParams) extends Module {
   io.instr.ready := !stallALU && !stallALULite && !stallLdSt && !stallPacket && !stallPredicate
 
   // Chain register state updates through all instruction types
+  // 1) Control
   statePreControl := state // Start with current register state
+  // 2) Predicate calculation
   statePrePredicate := statePostControl
+  // 3) Packet processing
   statePrePacket := statePostPredicate 
-  statePreLdSt := statePostPacket  // Load/store sees packet updates
-  statePreALU := statePostLdSt     // ALU sees load/store updates  
-  statePreALULite := statePostALU  // ALULite sees ALU updates
+  // 4) Address calculation
+  statePreALULite := statePostPacket
+  // 5) Load/Store
+  statePreLdSt := statePostALULite
+  // 6) ALU
+  statePreALU := statePostLdSt
 
   val stateFromTagging = Wire(new State(params))
   when (io.instr.valid && io.instr.ready) {
     // Update the state
-    stateFromTagging := statePostALULite
+    stateFromTagging := statePostALU
   } .otherwise {
     stateFromTagging := state
   }

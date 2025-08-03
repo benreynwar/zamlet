@@ -3,6 +3,7 @@ from fmvpu.bamlet.bamlet_interface import BamletInterface
 from fmvpu.bamlet.bamlet_params import BamletParams
 from fmvpu.amlet import packet_utils
 from fmvpu.amlet.alu_lite_instruction import ALULiteInstruction, ALULiteModes
+from fmvpu.amlet.predicate_instruction import PredicateInstruction, PredicateModes, Src1Mode
 from fmvpu.amlet.alu_instruction import ALUInstruction
 from fmvpu.amlet.packet_instruction import PacketInstruction, PacketModes
 from fmvpu.amlet.control_instruction import ControlInstruction, ControlModes
@@ -27,7 +28,7 @@ class ReceiveKernelRegs:
     a_outer_index: int = 7
     a_inner_index: int = 8
     a_address: int = 9
-    a_condition: int = 10
+    p_condition: int = 1
     d_working: int = 1
 
 
@@ -157,11 +158,13 @@ def receive_kernel(params: BamletParams, regs: ReceiveKernelRegs, side, channel)
     # that packs them into VLIW instructions.  That way we can run the same kernel on both.
 
     instrs = []
-    # addr = base_addr
+    # addr = base_addr-1
+    # We subtract 1 because we'll add one in the loop before using
+    # it the first time.
     instrs.append(ALULiteInstruction(
-        mode=ALULiteModes.ADD,
-        src1=0,
-        src2=regs.a_base_address,
+        mode=ALULiteModes.SUBI,
+        src1=regs.a_base_address,
+        src2=1,
         a_dst=regs.a_address,
         ))
     instrs.append(PacketInstruction(
@@ -171,7 +174,7 @@ def receive_kernel(params: BamletParams, regs: ReceiveKernelRegs, side, channel)
     # Loop n/n_amlets -> outer_index
     instrs.append(ControlInstruction(
         mode=ControlModes.LOOP_GLOBAL,
-        src=regs.g_words_per_amlet,
+        iterations=regs.g_words_per_amlet,
         dst=regs.a_outer_index,
         ))
     #   addr = addr + 1
@@ -184,7 +187,7 @@ def receive_kernel(params: BamletParams, regs: ReceiveKernelRegs, side, channel)
     #   Loop n_amlet_columns -> inner_index
     instrs.append(ControlInstruction(
         mode=ControlModes.LOOP_GLOBAL,
-        src=regs.g_amlet_columns,
+        iterations=regs.g_amlet_columns,
         dst=regs.a_inner_index,
         ))
     #     x = GetWord
@@ -193,23 +196,20 @@ def receive_kernel(params: BamletParams, regs: ReceiveKernelRegs, side, channel)
         d_dst=regs.d_working,
         ))
     #     If inner_index == local_column
-    instrs.append(ALULiteInstruction(
-        mode=ALULiteModes.EQ,
-        src1=regs.a_inner_index,
+    instrs.append(PredicateInstruction(
+        mode=PredicateModes.EQ,
+        src1_mode=Src1Mode.LOOP_INDEX,
+        src1_value=1, # Loop level 1 (inner index)
         src2=regs.a_local_column,
-        a_dst=regs.a_condition,
-        ))
-    instrs.append(ControlInstruction(
-        mode=ControlModes.IF,
-        src=regs.a_condition,
+        dst=regs.p_condition,
         ))
     #       x -> Store(addr)
     instrs.append(LoadStoreInstruction(
         mode=LoadStoreModes.STORE,
         d_reg=regs.d_working,
         addr=regs.a_address,
+        predicate=regs.p_condition,
         ))
-    instrs.append(ControlInstruction(mode=ControlModes.ENDIF))
     instrs.append(ControlInstruction(mode=ControlModes.END_LOOP))
     instrs.append(ControlInstruction(mode=ControlModes.END_LOOP))
     instrs.append(ControlInstruction(mode=ControlModes.HALT))
