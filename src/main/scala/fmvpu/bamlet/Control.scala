@@ -134,6 +134,64 @@ class Control(params: BamletParams) extends Module {
   val isGlobalLoop = io.imResp.bits.instr.control.mode === ControlInstr.Modes.LoopGlobal
   val isImmediateLoop = io.imResp.bits.instr.control.mode === ControlInstr.Modes.LoopImmediate
 
+  // Is this level of the loop hierarchy active.
+  val loopLevelActive = Wire(Vec(params.nLoopLevels, Bool()))
+  // For each level of the loop hierarchy.
+  // Are we on the last instruction in this loop?
+  val loopLevelOnLastInstr = Wire(Vec(params.nLoopLevels, Bool()))
+  // Are we ending the loop body?
+  // Even if we're on the last instruction, if a child loop is also on the last instruction
+  // and not terminating we won't end.
+  val loopLevelEndOfBody = Wire(Vec(params.nLoopLevels, Bool()))
+  // Are we jumping to the start of this loop level next cycle?
+  val loopLevelToStart = Wire(Vec(params.nLoopLevels, Bool()))
+  // This loop level isterminating
+  val loopLevelTerminating = Wire(Vec(params.nLoopLevels, Bool()))
+
+  for (loopIndex <- 0 until params.nLoopLevels) {
+    if (loopIndex == 0) {
+      loopLevelActive(loopIndex) := stateBody.loopActive
+    } else {
+      loopLevelActive(loopIndex) := stateBody.loopActive && (loopIndex.U <= stateBody.loopLevel)
+    }
+    loopLevelOnLastInstr(loopIndex) := (stateBody.loopStates(loopIndex).end === io.imResp.bits.pc)
+    if (loopIndex == params.nLoopLevels-1) {
+      loopLevelEndOfBody(loopIndex) := loopLevelOnLastInstr(loopIndex)
+    } else {
+      // We are at the end of our body if we're on the last instruction and the next level is inactive
+      // or is terminating.
+      loopLevelEndOfBody(loopIndex) := loopLevelOnLastInstr(loopIndex) && (!loopLevelActive(loopIndex+1) || loopLevelTerminating(loopIndex+1))
+    }
+    loopLevelToStart(loopIndex) := loopLevelActive(loopIndex) && loopLevelEndOfBody(loopIndex) && !stateBody.loopStates(loopIndex).terminating
+    loopLevelTerminating(loopIndex) := loopLevelActive(loopIndex) && loopLevelEndOfBody(loopIndex) && stateBody.loopStates(loopIndex).terminating
+  }
+  // So what should our next pc be?
+  // There should be only one loop level that is going to start.
+  val loopToStart = Wire(Valid(UInt(params.amlet.instrAddrWidth.W)))
+  loopToStart.valid := loopLevelToStart.asUInt.orR
+  val loopToStartIndex = PriorityEncoder(loopLevelToStart.asUInt)
+  dontTouch(loopToStartIndex)
+  loopToStart.bits := stateBody.loopStates(loopToStartIndex).start
+
+  // What is our new loop level?
+  // If we didn't finish any loops then it stays the same.
+  // It is the largest loop level that is active and not terminating
+  val loopLevelNext = Wire(UInt(log2Ceil(params.nLoopLevels).W))
+  // Find the highest level that is active and not terminating
+  loopLevelNext := 0.U
+  for (i <- 0 until params.nLoopLevels) {
+    when (loopLevelActive(i) && !loopLevelTerminating(i)) {
+      loopLevelNext := i.U
+    }
+  }
+
+  // False is all loopLevelActive are all false
+  // False if loopLevelActive[0] is true but loopLevelTerminating(0) is also true
+  val loopActiveNext = Wire(Bool())
+  loopActiveNext := loopLevelActive.asUInt.orR && !(loopLevelActive(0) && loopLevelTerminating(0))
+  
+
+
   // We explicitly send the loop level to the Amlet so they don't need to track that.
   instrBuffered.bits.control.level := stateBody.loopLevel
 
@@ -207,20 +265,14 @@ class Control(params: BamletParams) extends Module {
 
   // Update the Loop States if we reached the end of a loop
   when (io.imResp.valid && instrBuffered.ready) {
-    when (stateBody.loopActive && stateBody.activeLoopState().end === io.imResp.bits.pc) {
-      when (stateBody.activeLoopState().terminating) {
-        when (stateBody.loopLevel === 0.U) {
-          stateNext.loopLevel := 0.U
-          stateNext.loopActive := false.B
-        } .otherwise {
-          stateNext.loopLevel := stateBody.loopLevel - 1.U
-        }
-      } .otherwise {
-        stateNext.loopStates(stateBody.loopLevel).index := stateBody.activeLoopState().index + 1.U
-        stateNext.loopStates(stateBody.loopLevel).terminating :=
-          (stateBody.activeLoopState().index >= stateBody.activeLoopState().iterations-2.U) && stateBody.activeLoopState().resolvedIterations.asUInt.andR
-        pc := stateBody.activeLoopState().start
-      }
+    stateNext.loopLevel := loopLevelNext
+    stateNext.loopActive := loopActiveNext
+    when (loopToStart.valid) {
+      val loopState = stateBody.loopStates(loopToStartIndex)
+      pc := loopToStart.bits
+      stateNext.loopStates(loopToStartIndex).index := loopState.index + 1.U
+      stateNext.loopStates(loopToStartIndex).terminating :=
+          (loopState.index >= loopState.iterations-2.U) && loopState.resolvedIterations.asUInt.andR
     }
   }
 

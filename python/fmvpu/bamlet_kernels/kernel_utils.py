@@ -50,6 +50,12 @@ def instructions_into_vliw(params: BamletParams, instrs):
             if not instrs:
                 break
             instr = instrs.pop(0)
+        if isinstance(instr, ALULiteInstruction):
+            vliw.alu_lite = instr
+            logger.info('Adding alulite')
+            if not instrs:
+                break
+            instr = instrs.pop(0)
         if isinstance(instr, LoadStoreInstruction):
             vliw.load_store = instr
             logger.info('Adding ldst')
@@ -62,18 +68,13 @@ def instructions_into_vliw(params: BamletParams, instrs):
             if not instrs:
                 break
             instr = instrs.pop(0)
-        if isinstance(instr, ALULiteInstruction):
-            vliw.alu_lite = instr
-            logger.info('Adding alulite')
+        while isinstance(instr, ControlInstruction) and (instr.mode == ControlModes.END_LOOP):
+            loop_instruction = loop_instructions.pop()
+            loop_instruction.length = index - loop_starts.pop()
+            logger.info(f'Setting loop length to {loop_instruction.length}')
             if not instrs:
                 break
             instr = instrs.pop(0)
-        if isinstance(instr, ControlInstruction):
-            if instr.mode == ControlModes.END_LOOP:
-                loop_instructions.pop().length = index - loop_starts.pop()
-                if not instrs:
-                    break
-                instr = instrs.pop(0)
         logger.info(f'Finishing {vliw}')
         vliws.append(vliw)
         vliw = VLIWInstruction()

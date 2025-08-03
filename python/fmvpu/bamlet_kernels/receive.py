@@ -14,7 +14,7 @@ from fmvpu.amlet.instruction import VLIWInstruction
 class ReceiveKernelRegs:
     # Global Bamlet Config
     g_words_per_amlet: int = 2
-    g_amlet_columns: int = 3
+    g_amlet_columns_minus_one: int = 3
 
     # Global Amlet Config
     a_base_address: int = 1
@@ -22,7 +22,8 @@ class ReceiveKernelRegs:
 
     # Local config
     # The coords of the amlet we'er sending to
-    a_local_column: int = 6
+    a_local_column_minus_one: int = 6
+    a_local_column: int = 5
 
     # Working registeres
     a_outer_index: int = 7
@@ -35,9 +36,10 @@ class ReceiveKernelRegs:
 @dataclass
 class ReceiveKernelArgs:
     g_words_per_amlet: int
-    g_amlet_columns: int
+    g_amlet_columns_minus_one: int
     a_base_address: int
     a_words_per_row: int
+    a_local_column_minus_one: list[int]
     a_local_column: list[int]
 
 
@@ -87,12 +89,15 @@ def make_receive_kernel_args(params: BamletParams, base_address, n, side):
     for offset_y in range(params.n_amlet_rows):
         for offset_x in range(params.n_amlet_columns):
             local_columns.append(offset_x)
+    local_columns_minus_one = [x-1 for x in local_columns]
+    local_columns_minus_one[0] = params.n_amlet_columns  # Sholdn't get used.
 
     args = ReceiveKernelArgs(
         g_words_per_amlet=n//params.n_amlets,
-        g_amlet_columns=params.n_amlet_columns,
+        g_amlet_columns_minus_one=params.n_amlet_columns-1,
         a_base_address=base_address,
         a_words_per_row=n//params.n_amlet_rows,
+        a_local_column_minus_one=local_columns_minus_one,
         a_local_column=local_columns,
         )
 
@@ -158,6 +163,10 @@ def receive_kernel(params: BamletParams, regs: ReceiveKernelRegs, side, channel)
     # that packs them into VLIW instructions.  That way we can run the same kernel on both.
 
     instrs = []
+    instrs.append(PacketInstruction(
+        mode=PacketModes.RECEIVE,
+        a_dst=regs.a_words_per_row,
+        ))
     # addr = base_addr-1
     # We subtract 1 because we'll add one in the loop before using
     # it the first time.
@@ -167,15 +176,24 @@ def receive_kernel(params: BamletParams, regs: ReceiveKernelRegs, side, channel)
         src2=1,
         a_dst=regs.a_address,
         ))
-    instrs.append(PacketInstruction(
-        mode=PacketModes.RECEIVE,
-        a_dst=regs.a_words_per_row,
-        ))
     # Loop n/n_amlets -> outer_index
     instrs.append(ControlInstruction(
         mode=ControlModes.LOOP_GLOBAL,
         iterations=regs.g_words_per_amlet,
         dst=regs.a_outer_index,
+        ))
+    #     If inner_index == local_column
+    instrs.append(PredicateInstruction(
+        mode=PredicateModes.EQ,
+        src1_mode=Src1Mode.IMMEDIATE,
+        src1_value=0,
+        src2=regs.a_local_column,
+        dst=regs.p_condition,
+        ))
+    #     x = GetWord
+    instrs.append(PacketInstruction(
+        mode=PacketModes.GET_WORD,
+        d_dst=regs.d_working,
         ))
     #   addr = addr + 1
     instrs.append(ALULiteInstruction(
@@ -184,24 +202,31 @@ def receive_kernel(params: BamletParams, regs: ReceiveKernelRegs, side, channel)
         src2=1,
         a_dst=regs.a_address,
         ))
+    #       x -> Store(addr)
+    instrs.append(LoadStoreInstruction(
+        mode=LoadStoreModes.STORE,
+        d_reg=regs.d_working,
+        addr=regs.a_address,
+        predicate=regs.p_condition,
+        ))
     #   Loop n_amlet_columns -> inner_index
     instrs.append(ControlInstruction(
         mode=ControlModes.LOOP_GLOBAL,
-        iterations=regs.g_amlet_columns,
+        iterations=regs.g_amlet_columns_minus_one,
         dst=regs.a_inner_index,
-        ))
-    #     x = GetWord
-    instrs.append(PacketInstruction(
-        mode=PacketModes.GET_WORD,
-        d_dst=regs.d_working,
         ))
     #     If inner_index == local_column
     instrs.append(PredicateInstruction(
         mode=PredicateModes.EQ,
         src1_mode=Src1Mode.LOOP_INDEX,
         src1_value=1, # Loop level 1 (inner index)
-        src2=regs.a_local_column,
+        src2=regs.a_local_column_minus_one,
         dst=regs.p_condition,
+        ))
+    #     x = GetWord
+    instrs.append(PacketInstruction(
+        mode=PacketModes.GET_WORD,
+        d_dst=regs.d_working,
         ))
     #       x -> Store(addr)
     instrs.append(LoadStoreInstruction(
