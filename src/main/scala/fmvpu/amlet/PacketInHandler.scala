@@ -51,16 +51,23 @@ class PacketInHandler(params: AmletParams) extends Module {
   val remainingWords = RegInit(0.U(params.packetLengthWidth.W))
   val isAppend = RegInit(false.B)
 
+
+  // Register the 'forward'
+  val bufferedForwardInit = Wire(Valid(new PacketForward(params)))
+  bufferedForwardInit.valid := false.B
+  bufferedForwardInit.bits := DontCare
+  val bufferedForward = RegNext(io.forward, bufferedForwardInit)
+
   // Forward change detection
   val prevForwardValid = RegInit(false.B)
   val prevForwardToggle = RegInit(false.B)
-  prevForwardValid := io.forward.valid
-  prevForwardToggle := io.forward.bits.toggle
+  prevForwardValid := bufferedForward.valid
+  prevForwardToggle := bufferedForward.bits.toggle
   
   val freshForward = RegInit(false.B)
-  when ((io.forward.valid && !prevForwardValid) || (io.forward.bits.toggle =/= prevForwardToggle)) {
+  when ((bufferedForward.valid && !prevForwardValid) || (bufferedForward.bits.toggle =/= prevForwardToggle)) {
     freshForward := true.B
-  } .elsewhen (!io.forward.valid) {
+  } .elsewhen (!bufferedForward.valid) {
     freshForward := false.B
   }
 
@@ -140,7 +147,7 @@ class PacketInHandler(params: AmletParams) extends Module {
   val regularDirections = calculateRegularRouting(bufferedHeader.xDest, bufferedHeader.yDest)
   // What directions we go if this is a broadcast route
   val broadcastDirections = calculateBroadcastRouting(bufferedHeader.xDest, bufferedHeader.yDest)
-  val fwdDir = DirectionBits.directionToMask(io.forward.bits.networkDirection)
+  val fwdDir = DirectionBits.directionToMask(bufferedForward.bits.networkDirection)
 
   // Get the actual directions based on whether we are broadcasting or forwarding or neither
   val directions = Wire(UInt(5.W))
@@ -192,7 +199,7 @@ class PacketInHandler(params: AmletParams) extends Module {
   when(buffered.valid && buffered.bits.isHeader) {
     remainingWords := bufferedHeader.length
     io.errors.routingError := badRegularRoute
-    when(!bufferedHeader.forward || io.forward.valid) {
+    when(!bufferedHeader.forward || bufferedForward.valid) {
       // We send the request unless we don't have forward data.
       io.handlerRequest := VecInit((0 until 5).map(i => requestBits(i)))
       // All our targets are ready to receive
@@ -203,12 +210,12 @@ class PacketInHandler(params: AmletParams) extends Module {
       }
     }
     // Determine append mode from forward data if forwarding, otherwise false
-    when(bufferedHeader.forward && io.forward.valid) {
+    when(bufferedHeader.forward && bufferedForward.valid) {
       // This packet is getting forwarded and we're also 
       // going to append some local data onto it.
       // We tell the PacketOutHandler this so it can switch it's state to
       // accept the data for appending.
-      isAppend := io.forward.bits.append
+      isAppend := bufferedForward.bits.append
       freshForward := false.B
     }.otherwise {
       isAppend := false.B
@@ -234,7 +241,7 @@ class PacketInHandler(params: AmletParams) extends Module {
   // or if we're appending this packet and can discard the header.
   buffered.ready := (
     // The outputs are all ready and we have the forwarding info 
-    (allTargetOutputsReady && (!buffered.bits.isHeader || !bufferedHeader.forward || io.forward.valid)) ||
+    (allTargetOutputsReady && (!buffered.bits.isHeader || !bufferedHeader.forward || bufferedForward.valid)) ||
     // We're appending this packet and discarding the header
     (buffered.bits.isHeader && bufferedHeader.mode === PacketHeaderModes.Append) 
   )
@@ -249,10 +256,10 @@ class PacketInHandler(params: AmletParams) extends Module {
     when (bufferedHeader.forward && connectionFwdDirections(idx) && buffered.bits.isHeader) {
       val newHeader = Wire(new PacketHeader(params))
       newHeader.length := bufferedHeader.length + bufferedHeader.appendLength
-      newHeader.xDest := io.forward.bits.xDest
-      newHeader.yDest := io.forward.bits.yDest
+      newHeader.xDest := bufferedForward.bits.xDest
+      newHeader.yDest := bufferedForward.bits.yDest
       newHeader.mode := bufferedHeader.mode
-      newHeader.forward := io.forward.bits.forward
+      newHeader.forward := bufferedForward.bits.forward
       newHeader.isBroadcast := false.B
       newHeader.appendLength := bufferedHeader.appendLength
       out.bits.data := newHeader.asUInt

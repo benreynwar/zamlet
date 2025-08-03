@@ -2,6 +2,7 @@ package fmvpu.amlet
 
 import chisel3._
 import chisel3.util._
+import fmvpu.utils.SkidBuffer
 
 /**
  * Packet Output Handler IO
@@ -34,6 +35,10 @@ class PacketOutHandlerIO(params: AmletParams) extends Bundle {
 class PacketOutHandler(params: AmletParams, isNorthOrSouth: Boolean) extends Module {
   val io = IO(new PacketOutHandlerIO(params))
   
+  // Add SkidBuffer on output to network
+  val outputBuffer = Module(new SkidBuffer(new NetworkWord(params), params.packetOutBackwardBuffer))
+  io.output <> outputBuffer.io.o
+  
   // Global priority counter for all 5 directions (North=0, East=1, South=2, West=3, Here=4)
   // All output handlers share the same priority sequence
   val globalPriority = RegInit(4.U)  // Start with Here for all output handlers
@@ -41,10 +46,10 @@ class PacketOutHandler(params: AmletParams, isNorthOrSouth: Boolean) extends Mod
   // Update global priority every cycle through all 5 directions
   globalPriority := (globalPriority + 1.U) % 5.U
   
-  // Default outputs
+  // Default outputs - now connect to buffer instead of io.output
   io.connections.foreach(_.ready := false.B)
-  io.output.valid := false.B
-  io.output.bits := DontCare
+  outputBuffer.io.i.valid := false.B
+  outputBuffer.io.i.bits := DontCare
   
   // Helper function to select which input handler gets priority for new connections
   // Uses round-robin scheduling starting from current priority input
@@ -96,14 +101,14 @@ class PacketOutHandler(params: AmletParams, isNorthOrSouth: Boolean) extends Mod
   val newHeader = Wire(new PacketHeader(params))
   newHeader := io.connections(connectedIn).bits.data.asTypeOf(new PacketHeader(params))
   
-  io.output.valid := io.connections(connectedIn).valid
-  io.connections(connectedIn).ready := io.output.ready
+  outputBuffer.io.i.valid := io.connections(connectedIn).valid
+  io.connections(connectedIn).ready := outputBuffer.io.i.ready
   when (io.connections(connectedIn).bits.isHeader) {
-    io.output.bits.data := newHeader.asUInt
+    outputBuffer.io.i.bits.data := newHeader.asUInt
   } .otherwise {
-    io.output.bits.data := io.connections(connectedIn).bits.data
+    outputBuffer.io.i.bits.data := io.connections(connectedIn).bits.data
   }
-  io.output.bits.isHeader := io.connections(connectedIn).bits.isHeader
+  outputBuffer.io.i.bits.isHeader := io.connections(connectedIn).bits.isHeader
   if (isNorthOrSouth) {
     newHeader.xDest := io.thisX
   }
@@ -119,10 +124,10 @@ class PacketOutHandler(params: AmletParams, isNorthOrSouth: Boolean) extends Mod
         connstateIn := selectedInput
       }
     }
-    when (io.output.ready && io.connections(connectedIn).bits.append) {
+    when (outputBuffer.io.i.ready && io.connections(connectedIn).bits.append) {
       connstateIn := NetworkDirections.Here.asUInt
     }
-    when (io.output.ready) {
+    when (outputBuffer.io.i.ready) {
       connstateActive := !io.connections(connectedIn).bits.last
     }
   }

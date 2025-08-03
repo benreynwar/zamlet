@@ -2,6 +2,7 @@ package fmvpu.amlet
 
 import chisel3._
 import chisel3.util._
+import fmvpu.utils.{DecoupledBuffer, SkidBuffer}
 
 /**
  * Amlet I/O interface
@@ -48,6 +49,10 @@ class Amlet(params: AmletParams) extends Module {
 
   val errors = Wire(new AmletErrors())
   dontTouch(errors)
+
+  // Buffer thisX and thisY
+  val bufferedThisX = RegNext(io.thisX)
+  val bufferedThisY = RegNext(io.thisY)
   
   // Instantiate register file and rename unit
   val registerFileAndRename = Module(new RegisterFileAndRename(params))
@@ -69,8 +74,14 @@ class Amlet(params: AmletParams) extends Module {
   val receivePacketInterface = Module(new ReceivePacketInterface(params))
   val networkNode = Module(new NetworkNode(params))
   
-  // Connect instruction input to RegisterFileAndRename
-  registerFileAndRename.io.instr <> io.instruction
+  // Connect instruction input to RegisterFileAndRename with optional buffering
+  val skidBuffer = Module(new SkidBuffer(new VLIWInstr.Expanded(params), params.instructionBackwardBuffer))
+  val decoupledBuffer = Module(new DecoupledBuffer(new VLIWInstr.Expanded(params), params.instructionForwardBuffer))
+  
+  // Chain: instruction -> SkidBuffer -> DecoupledBuffer -> RegisterFileAndRename
+  skidBuffer.io.i <> io.instruction
+  decoupledBuffer.io.i <> skidBuffer.io.o
+  registerFileAndRename.io.instr <> decoupledBuffer.io.o
   
   // Connect RegisterFileAndRename outputs to reservation stations
   aluRS.io.input <> registerFileAndRename.io.aluInstr
@@ -129,10 +140,10 @@ class Amlet(params: AmletParams) extends Module {
   errors.receivePacketInterface := receivePacketInterface.io.errors
   
   // Connect position to modules that need it
-  networkNode.io.thisX := io.thisX
-  networkNode.io.thisY := io.thisY
-  receivePacketInterface.io.thisX := io.thisX
-  receivePacketInterface.io.thisY := io.thisY
+  networkNode.io.thisX := bufferedThisX
+  networkNode.io.thisY := bufferedThisY
+  receivePacketInterface.io.thisX := bufferedThisX
+  receivePacketInterface.io.thisY := bufferedThisY
   
   // Connect external network interfaces
   networkNode.io.ni <> io.ni

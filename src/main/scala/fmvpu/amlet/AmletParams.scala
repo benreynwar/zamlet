@@ -65,7 +65,14 @@ case class AmletParams(
   // Network configuration
   nChannels: Int = 2,
 
-  instrAddrWidth: Int = 8
+  instrAddrWidth: Int = 8,
+  
+  // Instruction buffering configuration
+  instructionForwardBuffer: Boolean = true,
+  instructionBackwardBuffer: Boolean = true,
+  
+  // Packet output buffering configuration
+  packetOutBackwardBuffer: Boolean = true
 ) {
   // Calculated parameters
   val nWriteIdents = 1 << regTagWidth

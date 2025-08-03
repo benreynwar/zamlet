@@ -25,5 +25,8 @@
   "nReceivePacketRSSlots": 2,
   "nPacketOutIdents": 4,
   "nChannels": 2,
-  "instrAddrWidth": 16
+  "instrAddrWidth": 16,
+  "instructionForwardBuffer": true,
+  "instructionBackwardBuffer": true,
+  "packetOutBackwardBuffer": true
 }
