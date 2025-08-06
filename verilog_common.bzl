@@ -54,7 +54,7 @@ def generate_dse_verilog_rule(name, top_level, config_file, extra_args = []):
         cmd = """
         TMPDIR=$$(mktemp -d)
         TOP_LEVEL={top_level}
-        $(location //dse:fmvpu_generator) \\
+        $(location //dse:zamlet_generator) \\
             $$TMPDIR/{name}_verilog \\
             $$TOP_LEVEL \\
             $(location {config_file}) {extra_args}
@@ -67,7 +67,7 @@ def generate_dse_verilog_rule(name, top_level, config_file, extra_args = []):
             config_file=config_file,
             extra_args=" ".join(extra_args)
         ),
-        tools = ["//dse:fmvpu_generator"],
+        tools = ["//dse:zamlet_generator"],
     )
 
 def generate_verilog_filegroup(name):

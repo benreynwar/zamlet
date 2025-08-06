@@ -1,7 +1,7 @@
 services:
-  fmvpu:
+  zamlet:
     build: .
-    container_name: fmvpu
+    container_name: zamlet
     working_dir: /workspace
     volumes:
       - .:/workspace

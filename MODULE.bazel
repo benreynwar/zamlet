@@ -1,5 +1,5 @@
 module(
-    name = "fmvpu",
+    name = "zamlet",
     version = "1.0.0",
 )
 

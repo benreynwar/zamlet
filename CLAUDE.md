@@ -9,22 +9,22 @@ All imports must be placed at the top of the file, not inline within functions. 
 NEVER add imports inside functions - always place them at the top of the file.
 
 ## Module Generation
-**IMPORTANT**: When creating new modules with ModuleGenerator objects, you MUST add them to the case statement in `src/main/scala/fmvpu/Main.scala`.
+**IMPORTANT**: When creating new modules with ModuleGenerator objects, you MUST add them to the case statement in `src/main/scala/zamlet/Main.scala`.
 
 ## Testing
 When running Python tests, always redirect output to a file so you can examine the complete output without needing to rerun the test. For example:
 ```bash
-python python/fmvpu/amlet_test/test_alu_basic.py > test_output.log 2>&1
+python python/zamlet/amlet_test/test_alu_basic.py > test_output.log 2>&1
 ```
 This allows you to read the file multiple times to analyze different parts of the output.
 
 ### Running Tests with Bazel
 Tests are generated with config suffixes. To run a test using bazel:
 ```bash
-bazel test //python/fmvpu/bamlet_test:test_basic_default --test_output=streamed
-bazel test //python/fmvpu/amlet_test:test_alu_basic_default --test_output=streamed
+bazel test //python/zamlet/bamlet_test:test_basic_default --test_output=streamed
+bazel test //python/zamlet/amlet_test:test_alu_basic_default --test_output=streamed
 ```
-The pattern is: `//python/fmvpu/{module}_test:{test_name}_{config_name}`
+The pattern is: `//python/zamlet/{module}_test:{test_name}_{config_name}`
 Always use `--test_output=streamed` to see test output in real-time.
 
 **IMPORTANT**: In cocotb tests, when setting signal values, you MUST use the `.value` attribute. For dynamic signal access, use `getattr` to get the signal object, then set its `.value`:
