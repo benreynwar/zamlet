@@ -6,7 +6,7 @@
 The Bamlet is a parameterizable open source VLIW SIMT Processor.  It is designed to be used
 in a mesh as part of a configurable accelerator.
 
-**A multi-core RISC-V System in a mesh of Bamlets (Implementation Not Started Yet) **
+**A multi-core RISC-V System in a mesh of Bamlets (Implementation Not Started Yet)**
 ![](docs/diagrams/damlet_block.png)
 
 ## Tools Used

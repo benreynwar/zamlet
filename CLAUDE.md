@@ -8,6 +8,12 @@ All imports must be placed at the top of the file, not inline within functions. 
 
 NEVER add imports inside functions - always place them at the top of the file.
 
+## Line Width
+All code and documentation should be formatted to a maximum line width of 100 columns. This improves readability and ensures consistent formatting across the codebase.
+
+## Writing Style
+Avoid unnecessary marketing/promotional words like "comprehensive", "robust", "powerful", "cutting-edge", etc. unless they are truly necessary for technical accuracy. Prefer clear, direct language.
+
 ## Module Generation
 **IMPORTANT**: When creating new modules with ModuleGenerator objects, you MUST add them to the case statement in `src/main/scala/zamlet/Main.scala`.
 

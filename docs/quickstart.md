@@ -1,7 +1,5 @@
 # Quick Start Guide
 
-Get Zamlet running in 15 minutes and see the VLIW SIMT processor in action.
-
 ## Prerequisites
 
 - Docker and Docker Compose
@@ -12,7 +10,7 @@ Get Zamlet running in 15 minutes and see the VLIW SIMT processor in action.
 ### 1. Clone and Start Container
 
 ```bash
-git clone https://github.com/ben-reynwar/zamlet.git
+git clone https://github.com/benreynwar/zamlet.git
 cd zamlet
 
 # Start the development container
@@ -34,8 +32,8 @@ bazel version
 # Check Verilator 
 verilator --version
 
-# Check Python environment
-/opt/python-venv/bin/python --version
+# Check Python environment (venv is auto-activated)
+python --version
 ```
 
 ## Run Your First Example
@@ -47,7 +45,7 @@ verilator --version
 bazel build //dse/bamlet:Bamlet_default_verilog
 
 # View the generated Verilog (optional)
-ls bazel-bin/dse/bamlet/Bamlet_default_verilog/
+ls bazel-bin/dse/bamlet/Bamlet_default.sv
 ```
 
 ### Run Basic Tests
@@ -57,7 +55,7 @@ ls bazel-bin/dse/bamlet/Bamlet_default_verilog/
 bazel test //python/zamlet/bamlet_test:all --test_output=streamed
 ```
 
-You should see output showing:
+You should see debug output showing:
 - Test setup and initialization
 - Instructions being executed
 - Register file updates
@@ -71,47 +69,34 @@ You should see output showing:
 bazel test //python/zamlet/amlet_test:test_alu_basic_default --test_output=streamed
 ```
 
+This test is located at [`python/zamlet/amlet_test/test_alu_basic.py`](../python/zamlet/amlet_test/test_alu_basic.py).
+
 This test demonstrates:
 - Loading instructions into the processor
 - Executing ALU operations (add, subtract, etc.)
 - Reading results from register files
 - Verifying correct computation
 
-## Understanding the Output
-
-The test output shows:
-- **Clock cycles**: Processor state at each cycle
-- **Register updates**: Values being written to D/A/P/G registers  
-- **Instruction execution**: Which functional units are active
-- **Network activity**: Packet sends/receives between processing elements
-
-Look for lines like:
-```
-INFO: Writing to D-register 1: 0x12345678
-INFO: ALU operation: ADD completed
-INFO: Network packet sent to (1,0)
-```
-
 ## Performance Analysis
 
-### Get Area Results
+### Get Post-Synthesis Results
 
 ```bash
-# Synthesize and get area breakdown
+# Synthesize and get the post-synthesis area and timing reports
 bazel build //dse/bamlet:Bamlet_default__sky130hd_results
 
 # View the results
-cat bazel-bin/dse/bamlet/Bamlet_default__sky130hd_results/reports/synthesis/2_synth.stat.rpt
+cat bazel-bin/dse/bamlet/Bamlet_default__sky130hd_stats
 ```
 
-### Check Timing
+### Get Post-Route Results
 
 ```bash
-# Get post-synthesis timing
-bazel build //dse/bamlet:Bamlet_default__sky130hd_timing_floorplan
+# Full place-and-route timing results (takes longer)
+bazel build //dse/bamlet:Bamlet_default__sky130hd_timing_route
 
-# View timing report  
-cat bazel-bin/dse/bamlet/Bamlet_default__sky130hd_timing_floorplan/reports/cts/2_cts.rpt
+# View the routed timing summary
+cat bazel-bin/dse/bamlet/Bamlet_default__sky130hd_timing_route_summary
 ```
 
 ## What to Try Next
@@ -152,20 +137,8 @@ bazel test //python/zamlet/bamlet_test:test_packet_default --test_output=streame
 bazel test //python/zamlet/bamlet_test:test_predicate_default --test_output=streamed
 ```
 
-## Troubleshooting
-
-**Container won't start**: Edit `docker-compose.yml` to fix volume mounts for your system
-
-**Bazel fails**: Make sure you have enough disk space and memory
-
-**Tests timeout**: Some synthesis flows can take 10+ minutes
-
-**Permission errors**: Check that your user can access Docker
-
 ## Next Steps
 
 - Read the [Architecture Guide](architecture.md) to understand the design
 - Check out [Applications](applications.md) for target workloads
 - Explore the [Instruction Set](instruction-set.md) reference
-
-The processor is now running! You've seen a VLIW SIMT processor execute parallel instructions across multiple processing elements.

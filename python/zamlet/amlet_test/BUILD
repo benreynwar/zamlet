@@ -48,7 +48,7 @@ TESTS = [
     name = "{}_{}".format(test_name, config_name),
     srcs = [test_file],
     deps = [
-        "//python/fmvpu:fmvpu",
+        "//python/zamlet:zamlet",
     ],
     data = [
         ":{}_{}_verilog_files".format(verilog_target, config_name),

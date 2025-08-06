@@ -28,7 +28,7 @@ py_test(
     name = "test_dropping_fifo_default",
     srcs = ["test_dropping_fifo.py"],
     deps = [
-        "//python/fmvpu:fmvpu",
+        "//python/zamlet:zamlet",
     ],
     data = [
         ":counting_fifo_default_verilog_files",

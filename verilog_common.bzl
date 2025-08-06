@@ -1,7 +1,7 @@
 # Common Verilog generation utilities
 # Shared functionality for generating Verilog across DSE and test BUILD files
 
-def generate_verilog_rule(name, top_level, config_file, extra_args = [], generator_tool = "//src:verilog_generator", output_suffix = ""):
+def generate_verilog_rule(name, top_level, config_file, extra_args = [], generator_tool = "//src:verilog_generator", output_suffix = "", rename_module = None):
     """
     Generate a single Verilog file from a config.
     
@@ -12,14 +12,31 @@ def generate_verilog_rule(name, top_level, config_file, extra_args = [], generat
         extra_args: Additional arguments to pass to generator
         generator_tool: Tool to use for generation (default: "//src:verilog_generator")
         output_suffix: Optional suffix for output file naming
+        rename_module: If specified, rename the top-level module to this name
     """
     output_name = "{}{}.sv".format(name, output_suffix)
     
-    native.genrule(
-        name = "{}_verilog".format(name),
-        srcs = [config_file],
-        outs = [output_name],
-        cmd = """
+    if rename_module:
+        cmd_template = """
+        TMPDIR=$$(mktemp -d)
+        TOP_LEVEL={top_level}
+        $(location {generator_tool}) \\
+            $$TMPDIR/{name}_verilog \\
+            $$TOP_LEVEL \\
+            $(location {config_file}) {extra_args}
+        # Concatenate all SystemVerilog files and rename the top module
+        find $$TMPDIR/{name}_verilog -name "*.sv" -type f | sort | xargs cat | sed 's/^module '$$TOP_LEVEL'(/module {rename_module}(/' > $@
+        rm -rf $$TMPDIR
+        """.format(
+            generator_tool=generator_tool,
+            name=name,
+            top_level=top_level,
+            config_file=config_file,
+            extra_args=" ".join(extra_args),
+            rename_module=rename_module
+        )
+    else:
+        cmd_template = """
         TMPDIR=$$(mktemp -d)
         $(location {generator_tool}) \\
             $$TMPDIR/{name}_verilog \\
@@ -33,42 +50,16 @@ def generate_verilog_rule(name, top_level, config_file, extra_args = [], generat
             top_level=top_level,
             config_file=config_file,
             extra_args=" ".join(extra_args)
-        ),
-        tools = [generator_tool],
-    )
-
-def generate_dse_verilog_rule(name, top_level, config_file, extra_args = []):
-    """
-    Generate Verilog for DSE with module renaming.
+        )
     
-    Args:
-        name: Name for the genrule and output module
-        top_level: Original top-level module name
-        config_file: Path to config file
-        extra_args: Additional arguments to pass to generator
-    """
     native.genrule(
         name = "{}_verilog".format(name),
         srcs = [config_file],
-        outs = ["{}.sv".format(name)],
-        cmd = """
-        TMPDIR=$$(mktemp -d)
-        TOP_LEVEL={top_level}
-        $(location //dse:zamlet_generator) \\
-            $$TMPDIR/{name}_verilog \\
-            $$TOP_LEVEL \\
-            $(location {config_file}) {extra_args}
-        # Concatenate all SystemVerilog files and rename the top module
-        find $$TMPDIR/{name}_verilog -name "*.sv" -type f | sort | xargs cat | sed 's/^module '$$TOP_LEVEL'(/module {name}(/' > $@
-        rm -rf $$TMPDIR
-        """.format(
-            name=name,
-            top_level=top_level, 
-            config_file=config_file,
-            extra_args=" ".join(extra_args)
-        ),
-        tools = ["//dse:zamlet_generator"],
+        outs = [output_name],
+        cmd = cmd_template,
+        tools = [generator_tool],
     )
+
 
 def generate_verilog_filegroup(name):
     """

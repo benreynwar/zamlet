@@ -1,9 +1,7 @@
 # Bazel stuff
 bazel-*
 MODULE.bazel.lock
-
 .ccache
-
 
 # Mill build outputs
 out/
@@ -36,7 +34,6 @@ generated/
 .DS_Store
 Thumbs.db
 
-docs/diagrams/*.png
 docs/diagrams/*.bkp
 
 # Waveforms

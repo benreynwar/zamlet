@@ -12,7 +12,7 @@ filegroup(
 chisel_binary(
     name = "verilog_generator",
     srcs = [":scala_sources"],
-    main_class = "fmvpu.Main",
+    main_class = "zamlet.Main",
     deps = [
         "@maven//:org_typelevel_cats_core_2_13",
         "@maven//:org_typelevel_cats_kernel_2_13",

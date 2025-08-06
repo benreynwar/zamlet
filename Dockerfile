@@ -117,22 +117,13 @@ RUN apt-get update && \
     apt-get install -y python3.13 python3.13-venv python3.13-dev && \
     rm -rf /var/lib/apt/lists/*
 
+# Copy requirements file
+COPY requirements.txt /tmp/requirements.txt
+
 # Create Python virtual environment for Bazel using Python 3.13
 RUN python3.13 -m venv /opt/python-venv && \
     /opt/python-venv/bin/pip install --upgrade pip && \
-    /opt/python-venv/bin/pip install git+https://github.com/cocotb/cocotb.git && \
-    /opt/python-venv/bin/pip install pyyaml matplotlib
-
-# Install Python dependencies for OpenRAM
-RUN /opt/python-venv/bin/pip install --upgrade pip && \
-    /opt/python-venv/bin/pip install \
-    scikit-learn>=0.22.2 \
-    coverage>=4.5.2 \
-    python-subunit>=1.4.0 \
-    unittest2>=1.1.0 \
-    volare>=0.15.2 \
-    scipy>=1.3.3 \
-    numpy>=1.17.4
+    /opt/python-venv/bin/pip install -r /tmp/requirements.txt
 
 # Clone OpenRAM from git repository and install it
 WORKDIR /opt
@@ -158,6 +149,9 @@ WORKDIR /workspace
 ENV LANG=C.UTF-8
 ENV LC_ALL=C.UTF-8
 RUN locale-gen en_US.UTF-8
+
+# Auto-activate Python virtual environment for interactive shells
+RUN echo 'source /opt/python-venv/bin/activate' >> /root/.bashrc
 
 # Keep container running
 CMD ["tail", "-f", "/dev/null"]

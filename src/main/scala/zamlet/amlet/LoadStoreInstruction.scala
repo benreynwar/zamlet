@@ -18,6 +18,7 @@ object LoadStoreInstr {
     val addr = params.aReg()
     val reg = params.bReg()
     val predicate = params.pReg()
+    // TODO: Add immediate offset field to support memory[addr + offset] addressing
 
     def expand(): Expanded = {
       val expanded = Wire(new Expanded(params))

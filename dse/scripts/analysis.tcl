@@ -1,5 +1,5 @@
-# Detailed timing reports script for FMVPU DSE
-# Generates comprehensive timing analysis reports using OpenSTA
+# Timing and area analysis script for FMVPU DSE
+# Generates both detailed timing reports and machine-readable summary stats
 
 source $::env(SCRIPTS_DIR)/open.tcl
 
@@ -8,6 +8,11 @@ set target_name $::env(TARGET_NAME)
 
 # Get the clock for timing analysis
 set clock [lindex [all_clocks] 0]
+set clock_period [get_property $clock period]
+
+#=============================================================================
+# DETAILED TIMING REPORTS (Human-readable)
+#=============================================================================
 
 # Setup timing reports - worst case paths
 report_checks -path_delay max -format full_clock_expanded -group_count 10 > ${output_base}/${target_name}_setup_timing.rpt
@@ -79,7 +84,35 @@ foreach group {in2reg reg2out reg2reg in2out} {
     }
 }
 
-# Create the required output file (dummy)
-set f [open $::env(OUTPUT) w]
-puts $f "Timing reports generated successfully"
-close $f
+#=============================================================================
+# MACHINE-READABLE SUMMARY STATS
+#=============================================================================
+
+# Find worst slack using proper OpenSTA commands
+set worst_slack "N/A"
+catch {
+    # Capture report_worst_slack output to temporary file
+    report_worst_slack > ${output_base}/tmp_slack.txt
+    set f_slack [open ${output_base}/tmp_slack.txt r]
+    set slack_content [read $f_slack]
+    close $f_slack
+    exec rm -f ${output_base}/tmp_slack.txt
+    
+    # Parse the output that looks like "worst slack max -1.96"
+    if {[regexp {worst slack max\s+(-?\d+\.?\d*)} $slack_content -> slack_value]} {
+        set worst_slack $slack_value
+    }
+} result
+
+# Write machine-readable stats
+set stats_file [open $::env(OUTPUT) w]
+puts $stats_file "name: $::env(DESIGN_NAME)"
+puts $stats_file "instances: [llength [get_cells *]]"
+puts $stats_file "area: [sta::format_area [rsz::design_area] 0]"
+puts $stats_file "clock_period: $clock_period"
+puts $stats_file "worst_slack: $worst_slack"
+close $stats_file
+
+puts "Combined analysis complete:"
+puts "- Detailed reports: ${output_base}/${target_name}_*.rpt"  
+puts "- Machine stats: $::env(OUTPUT)"

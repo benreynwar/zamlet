@@ -1,6 +1,6 @@
 # Bamlet module tests
 
-load("//python/fmvpu:test_common.bzl", "create_module_tests")
+load("//python/zamlet:test_common.bzl", "create_module_tests")
 
 # Config file mapping: short_name -> actual_filename
 CONFIGS = {

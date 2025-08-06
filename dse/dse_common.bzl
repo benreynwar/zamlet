@@ -3,7 +3,7 @@
 
 load("@bazel-orfs//:openroad.bzl", "orfs_flow", "orfs_run")
 load("@bazel-orfs//:yosys.bzl", "yosys")
-load("//:verilog_common.bzl", "generate_dse_verilog_rule")
+load("//:verilog_common.bzl", "generate_verilog_rule")
 
 def dse_component_flows(studies, component_type, pdks = ["asap7", "sky130hd"]):
     """
@@ -18,10 +18,12 @@ def dse_component_flows(studies, component_type, pdks = ["asap7", "sky130hd"]):
     study_names = ["{}__{}".format(study["name"], pdk) for study in studies for pdk in pdks]
     
     # Generate Verilog for components
-    [generate_dse_verilog_rule(
+    [generate_verilog_rule(
         name = study["name"],
         top_level = study["top_level"],
         config_file = study["config_file"],
+        generator_tool = "//dse:zamlet_generator",
+        rename_module = study["name"],
     ) for study in studies]
 
     # OpenROAD flows for each component and PDK
@@ -53,23 +55,12 @@ def dse_component_flows(studies, component_type, pdks = ["asap7", "sky130hd"]):
         verilog_files = [":{}.sv".format(study_name)],
     ) for study in studies for pdk in pdks for name, study_name in [("{}__{}".format(study["name"], pdk), study["name"])]]
 
-    # Results extraction
+    # Combined results and timing analysis - floorplan stage (estimated timing)
     [orfs_run(
         name = "{base}_results".format(base = name),
         src = "{name}_floorplan".format(name = name),
-        outs = ["{name}_stats".format(name = name)],
-        arguments = {
-            "OUTPUT": "$(location :{name}_stats)".format(name = name),
-        },
-        script = "//dse:scripts/results.tcl",
-    ) for name in study_names]
-
-    # Timing reports extraction - floorplan stage (estimated timing)
-    [orfs_run(
-        name = "{base}_timing_floorplan".format(base = name),
-        src = "{name}_floorplan".format(name = name),
         outs = [
-            "{name}_timing_floorplan_summary".format(name = name),
+            "{name}_stats".format(name = name),
             "{name}_setup_timing.rpt".format(name = name),
             "{name}_hold_timing.rpt".format(name = name),
             "{name}_critical_paths.rpt".format(name = name),
@@ -82,10 +73,16 @@ def dse_component_flows(studies, component_type, pdks = ["asap7", "sky130hd"]):
             "{name}_in2out_paths.rpt".format(name = name),
         ],
         arguments = {
-            "OUTPUT": "$(location :{name}_timing_floorplan_summary)".format(name = name),
+            "OUTPUT": "$(location :{name}_stats)".format(name = name),
             "TARGET_NAME": name,
         },
-        script = "//dse:scripts/timing_reports.tcl",
+        script = "//dse:scripts/analysis.tcl",
+    ) for name in study_names]
+
+    # Alias for backward compatibility
+    [native.alias(
+        name = "{base}_timing_floorplan".format(base = name),
+        actual = "{base}_results".format(base = name),
     ) for name in study_names]
 
     # Timing reports extraction - route stage (actual routed timing)
