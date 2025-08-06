@@ -70,6 +70,31 @@ object PacketInstr {
     val target = params.aReg()
     val predicate = params.pReg()
     val channel = UInt(log2Ceil(params.nChannels).W)
+    
+    private val regUtils = new RegUtils(params)
+
+    def getTReads(): Seq[Valid[UInt]] = {
+      val lengthRead = Wire(Valid(params.tReg()))
+      lengthRead.valid := modeUsesLength(mode)
+      lengthRead.bits := regUtils.aRegToTReg(length)
+      
+      val targetRead = Wire(Valid(params.tReg()))
+      targetRead.valid := modeUsesTarget(mode)
+      targetRead.bits := regUtils.aRegToTReg(target)
+      
+      val predicateRead = Wire(Valid(params.tReg()))
+      predicateRead.valid := true.B
+      predicateRead.bits := regUtils.pRegToTReg(predicate)
+      
+      Seq(lengthRead, targetRead, predicateRead)
+    }
+
+    def getTWrites(): Seq[Valid[UInt]] = {
+      val resultWrite = Wire(Valid(params.tReg()))
+      resultWrite.valid := (mode === Modes.Receive) || (mode === Modes.GetWord)
+      resultWrite.bits := regUtils.bRegToTReg(result)
+      Seq(resultWrite)
+    }
   }
   
   class SendResolving(params: AmletParams) extends Instr.Resolving(params) {

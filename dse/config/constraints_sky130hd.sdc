@@ -16,8 +16,8 @@ set all_register_outputs [get_pins -of_objects [all_registers] -filter {directio
 # Set input/output delays as 60% of clock period for realistic timing constraints
 set io_delay [expr $clk_period * 0.6]
 
-set_input_delay $io_delay -clock $clk_name $non_clk_inputs
-set_output_delay $io_delay -clock $clk_name [all_outputs]
+set_input_delay [expr $clk_period * 0.8] -clock $clk_name $non_clk_inputs
+set_output_delay [expr $clk_period * 0.3] -clock $clk_name [all_outputs]
 
 # This allows us to view the different groups
 # in the histogram in the GUI and also includes these

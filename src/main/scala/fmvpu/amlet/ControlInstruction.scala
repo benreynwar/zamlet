@@ -65,6 +65,29 @@ object ControlInstr {
     val iterations = new ExtendedSrcType(params) // Where the number of iterations comes from.
     val dst = params.aReg()                    // Where the loop index goes.
     val level = UInt(log2Ceil(params.nLoopLevels).W)
+    
+    private val regUtils = new RegUtils(params)
+
+    def getTReads(): Seq[Valid[UInt]] = {
+      val iterationsRead = Wire(Valid(params.tReg()))
+      iterationsRead.valid := !iterations.resolved
+      iterationsRead.bits := regUtils.aRegToTReg(iterations.addr)
+      Seq(iterationsRead)
+    }
+
+    def getTWrites(): Seq[Valid[UInt]] = {
+      val dstWrite = Wire(Valid(params.tReg()))
+      dstWrite.valid := mode =/= Modes.Halt
+      dstWrite.bits := regUtils.aRegToTReg(dst)
+      
+      // Also write to the L-register for this loop level to establish dependency
+      // for predicate instructions that use LoopIndex mode
+      val loopLevelWrite = Wire(Valid(params.tReg()))
+      loopLevelWrite.valid := mode =/= Modes.Halt
+      loopLevelWrite.bits := regUtils.lRegToTReg(level)
+      
+      Seq(dstWrite, loopLevelWrite)
+    }
   }
 
 }

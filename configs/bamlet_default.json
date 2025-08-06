@@ -2,6 +2,14 @@
   "nAmletColumns": 2,
   "nAmletRows": 1,
   "instructionMemoryDepth": 32,
+  "dependencyTracker": {
+    "fifoDepth": 4,
+    "countBits": 4,
+    "inputForwardBuffer": true,
+    "inputBackwardBuffer": true,
+    "outputForwardBuffer": true,
+    "outputBackwardBuffer": true
+  },
   "amlet": {
     "width": 32,
     "regTagWidth": 2,

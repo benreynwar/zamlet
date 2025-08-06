@@ -20,6 +20,11 @@ BAMLET_STUDIES = [
         "top_level": "InstructionMemory",
         "config_file": "//configs:bamlet_default.json",
     },
+    {
+        "name": "DependencyTracker_default",
+        "top_level": "DependencyTracker",
+        "config_file": "//configs:bamlet_default.json",
+    },
 ]
 
 # Generate all DSE flows and filegroups

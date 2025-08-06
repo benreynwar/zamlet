@@ -9,13 +9,24 @@ import io.circe.generic.auto._
 import io.circe.generic.semiauto._
 import scala.io.Source
 
+case class DependencyTrackerParams(
+  fifoDepth: Int = 4,
+  countBits: Int = 4,
+  inputForwardBuffer: Boolean = true,
+  inputBackwardBuffer: Boolean = true,
+  outputForwardBuffer: Boolean = true,
+  outputBackwardBuffer: Boolean = true
+)
+
 case class BamletParams(
   // Number of amlet columns and rows
   nAmletColumns: Int = 2,
   nAmletRows: Int = 1,
   amlet: AmletParams,
   // Instruction memory depth
-  instructionMemoryDepth: Int = 64
+  instructionMemoryDepth: Int = 64,
+  // Dependency tracker configuration
+  dependencyTracker: DependencyTrackerParams = DependencyTrackerParams()
 ) {
   // Calculated parameters
   def nAmlets: Int = nAmletColumns * nAmletRows
@@ -29,7 +40,8 @@ case class BamletParams(
 /** Companion object for BamletParams with factory methods. */
 object BamletParams {
   
-  // Explicit decoder for BamletParams
+  // Explicit decoders
+  implicit val DependencyTrackerParamsDecoder: Decoder[DependencyTrackerParams] = deriveDecoder[DependencyTrackerParams]
   implicit val BamletParamsDecoder: Decoder[BamletParams] = deriveDecoder[BamletParams]
 
   /** Load Bamlet parameters from a JSON configuration file.

@@ -7,7 +7,10 @@ object Instr {
   // The instruction stored in the instruction memory.
   abstract class Base(params: AmletParams) extends Bundle
   // The instruction after processing by the Control (Bamlet level)
-  abstract class Expanded(params: AmletParams) extends Bundle
+  abstract class Expanded(params: AmletParams) extends Bundle {
+    def getTReads(): Seq[Valid[UInt]]
+    def getTWrites(): Seq[Valid[UInt]]
+    }
   // The instruction after processing by RegisterAndRename (Amlet Level)
   abstract class Resolving(params: AmletParams) extends Bundle {
     def isResolved(): Bool
@@ -59,4 +62,3 @@ object VLIWInstr {
   }
 
 }
-

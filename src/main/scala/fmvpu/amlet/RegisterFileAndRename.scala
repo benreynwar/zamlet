@@ -17,18 +17,24 @@ class LoopState(params: AmletParams) extends Bundle {
   // gets the loop index written to it during loop execution.
 }
 
-class TagAllocation(params: AmletParams) extends Bundle {
-  // The updated registers.
-  val registers = new State(params)
+class ATagAllocation(params: AmletParams) extends Bundle {
+  val regState = new ARegisterState(params)
   // The write reg with the assigned rename tag.
-  val writeReg = new BTaggedReg(params)
+  val writeReg = new ATaggedReg(params)
+  // Stall required if we were unable to assign a rename tag.
+  val stallRequired = Bool()
+}
+
+class DTagAllocation(params: AmletParams) extends Bundle {
+  val regState = new DRegisterState(params)
+  // The write reg with the assigned rename tag.
+  val writeReg = new DTaggedReg(params)
   // Stall required if we were unable to assign a rename tag.
   val stallRequired = Bool()
 }
 
 class PTagAllocation(params: AmletParams) extends Bundle {
-  // The updated registers.
-  val registers = new State(params)
+  val regState = new PRegisterState(params)
   // The write reg with the assigned rename tag.
   val writeReg = new PTaggedReg(params)
   // Stall required if we were unable to assign a rename tag.
@@ -138,65 +144,58 @@ class RegisterFileAndRename(params: AmletParams) extends Module {
   
   // For register 0 (packet output), always increment - order matters for packet assembly
   // For other registers, find first available write identifier
-  //
-  // To Claude: Let's make a function for processing each of these instructlets that
-  // takes the registers as an input, and returns new registers and a Resolving instruction.
 
   // Update the registers for each of the instructlet.
-  //
+  // Initialize stateUpdate with current state
+  val stateUpdate = Wire(new State(params))
+  stateUpdate := state
+  
   // 1) Control
   // --------------
-  val statePreControl = Wire(new State(params))
-  val statePostControl = Wire(new State(params))
-  statePostControl := statePreControl
-
-  val controlIterations = readAReg(statePreControl, io.instr.bits.control.iterations.addr)
+  val controlIterations = readAReg(state, io.instr.bits.control.iterations.addr)
+  val controlTagAlloc = assignAWrite(state, io.instr.bits.control.dst)
 
   switch (io.instr.bits.control.mode) {
     is (ControlInstr.Modes.LoopLocal, ControlInstr.Modes.LoopGlobal, ControlInstr.Modes.LoopImmediate) {
-      statePostControl.loopStates(io.instr.bits.control.level).index := 0.U  // Initialize new loop index to 0
+      stateUpdate.loopStates(io.instr.bits.control.level).index := 0.U  // Initialize new loop index to 0
       // We also set the destination register.
       // We do this directly rather than going through the resultBus.
       // May become a timing problem.
-      statePostControl.aRegs(io.instr.bits.control.dst).value := 0.U
-      statePostControl.aRegs(io.instr.bits.control.dst).lastIdent := statePreControl.aRegs(io.instr.bits.control.dst).lastIdent + 1.U
-      // We don't need to report iterations do the bamlet control if we received the values already
+      stateUpdate.aRegs(io.instr.bits.control.dst) := controlTagAlloc.regState
+      stateUpdate.aRegs(io.instr.bits.control.dst).value := 0.U
+      stateUpdate.aRegs(io.instr.bits.control.dst).pendingTags := state.aRegs(io.instr.bits.control.dst).pendingTags // Don't update pendingTags
+      // We don't need to report iterations to the bamlet control if we received the values already
       // from the bamlet control.
-      statePostControl.loopStates(io.instr.bits.control.level).reported := io.instr.bits.control.iterations.resolved
+      stateUpdate.loopStates(io.instr.bits.control.level).reported := io.instr.bits.control.iterations.resolved
       when (io.instr.bits.control.iterations.resolved) {
-        statePostControl.loopStates(io.instr.bits.control.level).iterations.value := io.instr.bits.control.iterations.value
-        statePostControl.loopStates(io.instr.bits.control.level).iterations.resolved := true.B
+        stateUpdate.loopStates(io.instr.bits.control.level).iterations.value := io.instr.bits.control.iterations.value
+        stateUpdate.loopStates(io.instr.bits.control.level).iterations.resolved := true.B
       } .otherwise {
-        statePostControl.loopStates(io.instr.bits.control.level).iterations := controlIterations
+        stateUpdate.loopStates(io.instr.bits.control.level).iterations := controlIterations
       }
     }
     is (ControlInstr.Modes.Incr) {
       // Increment the loop index at the current loop level
-      val newIndex = statePreControl.loopStates(io.instr.bits.control.level).index + 1.U
-      statePostControl.loopStates(io.instr.bits.control.level).index := newIndex
+      val newIndex = state.loopStates(io.instr.bits.control.level).index + 1.U
+      stateUpdate.loopStates(io.instr.bits.control.level).index := newIndex
       // Set register.
-      statePostControl.aRegs(io.instr.bits.control.dst).value := newIndex
-      statePostControl.aRegs(io.instr.bits.control.dst).lastIdent := statePreControl.aRegs(io.instr.bits.control.dst).lastIdent + 1.U
+      stateUpdate.aRegs(io.instr.bits.control.dst) := controlTagAlloc.regState
+      stateUpdate.aRegs(io.instr.bits.control.dst).value := newIndex
+      stateUpdate.aRegs(io.instr.bits.control.dst).pendingTags := state.aRegs(io.instr.bits.control.dst).pendingTags // Don't update pendingTags
     }
   }
   
 
   // Predicate
   // ---------
-  val statePrePredicate = Wire(new State(params))
-  val statePostPredicate = Wire(new State(params))
-  statePostPredicate := statePrePredicate
 
-  val predicateSrc2 = readAReg(statePrePredicate, io.instr.bits.predicate.src2)
-  val predicateBase = readPReg(statePrePredicate, io.instr.bits.predicate.base)
-  val predicateTagAlloc = assignPWrite(statePrePredicate, io.instr.bits.predicate.dst)
-  val predicateWriteInfo = predicateTagAlloc.writeReg
+  val predicateSrc2 = readAReg(state, io.instr.bits.predicate.src2)
+  val predicateBase = readPReg(state, io.instr.bits.predicate.base)
+  val predicateTagAlloc = assignPWrite(state, io.instr.bits.predicate.dst)
 
   val predicateValid = io.instr.bits.predicate.mode =/= PredicateInstr.Modes.None
   when (predicateValid) {
-    statePostPredicate := predicateTagAlloc.registers
-  } .otherwise {
-    statePostPredicate := statePrePredicate
+    stateUpdate.pRegs(io.instr.bits.predicate.dst) := predicateTagAlloc.regState
   }
   io.aluPredicateInstr.valid := io.instr.valid && io.instr.ready && predicateValid
   io.aluPredicateInstr.bits.mode := io.instr.bits.predicate.mode
@@ -204,13 +203,10 @@ class RegisterFileAndRename(params: AmletParams) extends Module {
   io.aluPredicateInstr.bits.src2 := predicateSrc2
   io.aluPredicateInstr.bits.base := predicateBase
   io.aluPredicateInstr.bits.notBase := io.instr.bits.predicate.notBase
-  io.aluPredicateInstr.bits.dst := predicateWriteInfo
+  io.aluPredicateInstr.bits.dst := predicateTagAlloc.writeReg
 
   // 1) Packet Processing
   // --------------------
-  val statePrePacket = Wire(new State(params))
-  val statePostPacket = Wire(new State(params))
-  statePostPacket := statePrePacket
 
   // Packet control signals
   val packetReceive = Wire(Bool())
@@ -355,16 +351,27 @@ class RegisterFileAndRename(params: AmletParams) extends Module {
     }
   }
 
-  val packetReadLength = readAReg(statePrePacket, io.instr.bits.packet.length)
-  val packetReadTarget = readAReg(statePrePacket, io.instr.bits.packet.target)
-  val packetPredicate = readPReg(statePrePacket, io.instr.bits.packet.predicate)
-  val packetTagAlloc = assignWrite(statePrePacket, io.instr.bits.packet.result)
-  val packetWriteInfo = packetTagAlloc.writeReg
-  // Update register state if packet instruction writes to a register
-  when (packetWriteEnable) {
-    statePostPacket := packetTagAlloc.registers
+  val packetReadLength = readAReg(state, io.instr.bits.packet.length)
+  val packetReadTarget = readAReg(state, io.instr.bits.packet.target)
+  val packetPredicate = readPReg(state, io.instr.bits.packet.predicate)
+  val packetWriteReg = Wire(new BTaggedReg(params))
+  val packetStallRequired = Wire(Bool())
+  when (bRegIsA(io.instr.bits.packet.result, params)) {
+    val aReg = bRegToAReg(io.instr.bits.packet.result)
+    val packetTagAlloc = assignAWrite(state, aReg)
+    packetWriteReg := aTaggedRegToBTagged(packetTagAlloc.writeReg)
+    when (packetWriteEnable) {
+      stateUpdate.aRegs(aReg) := packetTagAlloc.regState
+    }
+    packetStallRequired := packetTagAlloc.stallRequired
   } .otherwise {
-    statePostPacket := statePrePacket
+    val dReg = bRegToDReg(io.instr.bits.packet.result)
+    val packetTagAlloc = assignDWrite(state, dReg)
+    packetWriteReg := dTaggedRegToBTagged(packetTagAlloc.writeReg)
+    when (packetWriteEnable) {
+      stateUpdate.dRegs(dReg) := packetTagAlloc.regState
+    }
+    packetStallRequired := packetTagAlloc.stallRequired
   }
 
   // Send
@@ -374,13 +381,13 @@ class RegisterFileAndRename(params: AmletParams) extends Module {
   io.sendPacketInstr.bits.target := packetReadTarget
   io.sendPacketInstr.bits.channel := io.instr.bits.packet.channel
   io.sendPacketInstr.bits.predicate := packetPredicate
-  io.sendPacketInstr.bits.appendLength := packetWriteInfo.addr
+  io.sendPacketInstr.bits.appendLength := packetWriteReg.addr
 
   // Receive
   io.recvPacketInstr.valid := io.instr.valid && io.instr.ready && packetReceive
   io.recvPacketInstr.bits.mode := io.instr.bits.packet.mode
-  io.recvPacketInstr.bits.result := packetWriteInfo
-  io.recvPacketInstr.bits.old := readBReg(statePrePacket, io.instr.bits.packet.result)
+  io.recvPacketInstr.bits.result := packetWriteReg
+  io.recvPacketInstr.bits.old := readBReg(state, io.instr.bits.packet.result)
   // Only resolve target for receive modes that include forwarding
   val receiveNeedsTarget = io.instr.bits.packet.mode === PacketInstr.Modes.ReceiveAndForward ||
                           io.instr.bits.packet.mode === PacketInstr.Modes.ReceiveForwardAndAppend ||
@@ -402,29 +409,34 @@ class RegisterFileAndRename(params: AmletParams) extends Module {
   // 2) Load/Store Processing
   // ------------------------
 
-  val statePreLdSt = Wire(new State(params))
-  val statePostLdSt = Wire(new State(params))
-  statePostLdSt := statePreLdSt
-
   // Determine if this is a load or store operation that needs processing
   val isLdStValid = io.instr.bits.loadStore.mode =/= LoadStoreInstr.Modes.None
   val isLoadOp = io.instr.bits.loadStore.mode === LoadStoreInstr.Modes.Load
   val isStoreOp = io.instr.bits.loadStore.mode === LoadStoreInstr.Modes.Store
 
   // Read operands for load/store operations
-  val ldstReadAddress = readAReg(statePreLdSt, io.instr.bits.loadStore.addr)
-  val ldstReadData = readBReg(statePreLdSt, io.instr.bits.loadStore.reg)
-  val ldstPredicate = readPReg(statePreLdSt, io.instr.bits.loadStore.predicate)
+  val ldstReadAddress = readAReg(state, io.instr.bits.loadStore.addr)
+  val ldstReadData = readBReg(state, io.instr.bits.loadStore.reg)
+  val ldstPredicate = readPReg(state, io.instr.bits.loadStore.predicate)
 
-  // For load operations, allocate a rename tag for the destination register
-  val ldstTagAlloc = assignWrite(statePreLdSt, io.instr.bits.loadStore.reg)
-  val ldstWriteInfo = ldstTagAlloc.writeReg
-
-  // Update register state if load operation writes to a register
-  when (isLoadOp) {
-    statePostLdSt := ldstTagAlloc.registers
+  val ldstWriteReg = Wire(new BTaggedReg(params))
+  val ldstStallRequired = Wire(Bool())
+  when (bRegIsA(io.instr.bits.loadStore.reg, params)) {
+    val aReg = bRegToAReg(io.instr.bits.loadStore.reg)
+    val ldstTagAlloc = assignAWrite(state, aReg)
+    ldstWriteReg := aTaggedRegToBTagged(ldstTagAlloc.writeReg)
+    when (isLoadOp) {
+      stateUpdate.aRegs(aReg) := ldstTagAlloc.regState
+    }
+    ldstStallRequired := ldstTagAlloc.stallRequired
   } .otherwise {
-    statePostLdSt := statePreLdSt
+    val dReg = bRegToDReg(io.instr.bits.loadStore.reg)
+    val ldstTagAlloc = assignDWrite(state, dReg)
+    ldstWriteReg := dTaggedRegToBTagged(ldstTagAlloc.writeReg)
+    when (isLoadOp) {
+      stateUpdate.dRegs(dReg) := ldstTagAlloc.regState
+    }
+    ldstStallRequired := ldstTagAlloc.stallRequired
   }
 
   // Output to load/store reservation station
@@ -432,45 +444,51 @@ class RegisterFileAndRename(params: AmletParams) extends Module {
   io.ldstInstr.bits.mode := io.instr.bits.loadStore.mode
   io.ldstInstr.bits.addr := ldstReadAddress
   io.ldstInstr.bits.src := ldstReadData
-  io.ldstInstr.bits.dst := ldstWriteInfo
+  io.ldstInstr.bits.dst := ldstWriteReg
   io.ldstInstr.bits.predicate := ldstPredicate
 
   // 3) ALU Processing
   // -----------------
-  val statePreALU = Wire(new State(params))
-  val statePostALU = Wire(new State(params))
-  statePostALU := statePreALU
-
   // Determine if this is a valid ALU operation
   val isALUValid = io.instr.bits.alu.mode =/= ALUInstr.Modes.None
 
   // Read operands for ALU operations
-  val aluReadSrc1 = readDReg(statePreALU, io.instr.bits.alu.src1)
+  val aluReadSrc1 = readDReg(state, io.instr.bits.alu.src1)
   val aluReadSrc2 = Wire(new DTaggedSource(params))
   val aluReadOld = Wire(new BTaggedSource(params))
-  val aluPredicate = readPReg(statePreALU, io.instr.bits.alu.predicate)
+  val aluPredicate = readPReg(state, io.instr.bits.alu.predicate)
   
   // For immediate instructions (ADDI, SUBI), src2 is an immediate value, not a register
   val isImmediateInstr = (io.instr.bits.alu.mode === ALUInstr.Modes.Addi) || 
                         (io.instr.bits.alu.mode === ALUInstr.Modes.Subi)
   
-  aluReadOld := readBReg(statePreALU, io.instr.bits.alu.dst)
+  aluReadOld := readBReg(state, io.instr.bits.alu.dst)
 
-  aluReadSrc2 := readDReg(statePreALU, io.instr.bits.alu.src2)
+  aluReadSrc2 := readDReg(state, io.instr.bits.alu.src2)
   when (isImmediateInstr) {
     aluReadSrc2.resolved := true.B
     aluReadSrc2.value := io.instr.bits.alu.src2  // Use src2 field as immediate value
   }
 
   // Allocate a rename tag for the destination register
-  val aluTagAlloc = assignWrite(statePreALU, io.instr.bits.alu.dst)
-  val aluWriteInfo = aluTagAlloc.writeReg
-
-  // Update register state for ALU write
-  when (isALUValid) {
-    statePostALU := aluTagAlloc.registers
+  val aluWriteReg = Wire(new BTaggedReg(params))
+  val aluStallRequired = Wire(Bool())
+  when (bRegIsA(io.instr.bits.alu.dst, params)) {
+    val aReg = bRegToAReg(io.instr.bits.alu.dst)
+    val aluTagAlloc = assignAWrite(state, aReg)
+    aluWriteReg := aTaggedRegToBTagged(aluTagAlloc.writeReg)
+    when (isALUValid) {
+      stateUpdate.aRegs(aReg) := aluTagAlloc.regState
+    }
+    aluStallRequired := aluTagAlloc.stallRequired
   } .otherwise {
-    statePostALU := statePreALU
+    val dReg = bRegToDReg(io.instr.bits.alu.dst)
+    val aluTagAlloc = assignDWrite(state, dReg)
+    aluWriteReg := dTaggedRegToBTagged(aluTagAlloc.writeReg)
+    when (isALUValid) {
+      stateUpdate.dRegs(dReg) := aluTagAlloc.regState
+    }
+    aluStallRequired := aluTagAlloc.stallRequired
   }
 
   // Output to ALU reservation station
@@ -478,44 +496,51 @@ class RegisterFileAndRename(params: AmletParams) extends Module {
   io.aluInstr.bits.mode := io.instr.bits.alu.mode
   io.aluInstr.bits.src1 := aluReadSrc1
   io.aluInstr.bits.src2 := aluReadSrc2
-  io.aluInstr.bits.dst := aluWriteInfo
+  io.aluInstr.bits.dst := aluWriteReg
   io.aluInstr.bits.old := aluReadOld
   io.aluInstr.bits.predicate := aluPredicate
 
   // 4) ALULite Processing
   // -----------------
-  val statePreALULite = Wire(new State(params))
-  val statePostALULite = Wire(new State(params))
-  statePostALULite := statePreALULite
 
   // Determine if this is a valid ALULite operation
   val isALULiteValid = io.instr.bits.aluLite.mode =/= ALULiteInstr.Modes.None
 
   // Read operands for ALULite operations (uses A-registers)
-  val aluliteReadSrc1 = readAReg(statePreALULite, io.instr.bits.aluLite.src1)
+  val aluliteReadSrc1 = readAReg(state, io.instr.bits.aluLite.src1)
   val aluliteReadSrc2 = Wire(new ATaggedSource(params))
-  val aluliteReadOld = readBReg(statePreALULite, io.instr.bits.aluLite.dst)
-  val alulitePredicate = readPReg(statePreALULite, io.instr.bits.aluLite.predicate)
+  val aluliteReadOld = readBReg(state, io.instr.bits.aluLite.dst)
+  val alulitePredicate = readPReg(state, io.instr.bits.aluLite.predicate)
   
   // For immediate instructions (ADDI, SUBI), src2 is an immediate value, not a register
   val isALULiteImmediateInstr = (io.instr.bits.aluLite.mode === ALULiteInstr.Modes.Addi) || 
                                (io.instr.bits.aluLite.mode === ALULiteInstr.Modes.Subi)
   
-  aluliteReadSrc2 := readAReg(statePreALULite, io.instr.bits.aluLite.src2)
+  aluliteReadSrc2 := readAReg(state, io.instr.bits.aluLite.src2)
   when (isALULiteImmediateInstr) {
     aluliteReadSrc2.resolved := true.B
     aluliteReadSrc2.value := io.instr.bits.aluLite.src2  // Use src2 field as immediate value
   }
 
   // Allocate a rename tag for the destination register
-  val aluliteTagAlloc = assignWrite(statePreALULite, io.instr.bits.aluLite.dst)
-  val aluliteWriteInfo = aluliteTagAlloc.writeReg
-
-  // Update register state for ALULite write
-  when (isALULiteValid) {
-    statePostALULite := aluliteTagAlloc.registers
+  val aluliteWriteReg = Wire(new BTaggedReg(params))
+  val aluliteStallRequired = Wire(Bool())
+  when (bRegIsA(io.instr.bits.aluLite.dst, params)) {
+    val aReg = bRegToAReg(io.instr.bits.aluLite.dst)
+    val aluliteTagAlloc = assignAWrite(state, aReg)
+    aluliteWriteReg := aTaggedRegToBTagged(aluliteTagAlloc.writeReg)
+    when (isALULiteValid) {
+      stateUpdate.aRegs(aReg) := aluliteTagAlloc.regState
+    }
+    aluliteStallRequired := aluliteTagAlloc.stallRequired
   } .otherwise {
-    statePostALULite := statePreALULite
+    val dReg = bRegToDReg(io.instr.bits.aluLite.dst)
+    val aluliteTagAlloc = assignDWrite(state, dReg)
+    aluliteWriteReg := dTaggedRegToBTagged(aluliteTagAlloc.writeReg)
+    when (isALULiteValid) {
+      stateUpdate.dRegs(dReg) := aluliteTagAlloc.regState
+    }
+    aluliteStallRequired := aluliteTagAlloc.stallRequired
   }
 
   // Output to ALULite reservation station
@@ -524,14 +549,14 @@ class RegisterFileAndRename(params: AmletParams) extends Module {
   io.aluliteInstr.bits.src1 := aluliteReadSrc1
   io.aluliteInstr.bits.src2 := aluliteReadSrc2
   io.aluliteInstr.bits.old := aluliteReadOld
-  io.aluliteInstr.bits.dst := aluliteWriteInfo
+  io.aluliteInstr.bits.dst := aluliteWriteReg
   io.aluliteInstr.bits.predicate := alulitePredicate
 
   // If the reservation stations can't accept the instruction then we stall.
-  val blockedALU = isALUValid && aluTagAlloc.stallRequired
-  val blockedLdSt = isLoadOp && ldstTagAlloc.stallRequired
-  val blockedALULite = isALULiteValid && aluliteTagAlloc.stallRequired
-  val blockedPacket = packetWriteEnable && packetTagAlloc.stallRequired
+  val blockedALU = isALUValid && aluStallRequired
+  val blockedLdSt = isLoadOp && ldstStallRequired
+  val blockedALULite = isALULiteValid && aluliteStallRequired
+  val blockedPacket = packetWriteEnable && packetStallRequired
   val blockedPredicate = predicateValid && predicateTagAlloc.stallRequired
 
   val hasALUInstr = io.instr.bits.alu.mode =/= ALUInstr.Modes.None
@@ -552,24 +577,10 @@ class RegisterFileAndRename(params: AmletParams) extends Module {
   dontTouch(stallPredicate)
   io.instr.ready := !stallALU && !stallALULite && !stallLdSt && !stallPacket && !stallPredicate
 
-  // Chain register state updates through all instruction types
-  // 1) Control
-  statePreControl := state // Start with current register state
-  // 2) Predicate calculation
-  statePrePredicate := statePostControl
-  // 3) Packet processing
-  statePrePacket := statePostPredicate 
-  // 4) Address calculation
-  statePreALULite := statePostPacket
-  // 5) Load/Store
-  statePreLdSt := statePostALULite
-  // 6) ALU
-  statePreALU := statePostLdSt
-
+  // Apply state update when instruction is valid and ready
   val stateFromTagging = Wire(new State(params))
   when (io.instr.valid && io.instr.ready) {
-    // Update the state
-    stateFromTagging := statePostALU
+    stateFromTagging := stateUpdate
   } .otherwise {
     stateFromTagging := state
   }
@@ -587,7 +598,7 @@ class RegisterFileAndRename(params: AmletParams) extends Module {
       when (!isDRegWrite) {
         // A-register write: only update if rename tag matches expected or force write
         val aIndex = regAddr(log2Ceil(params.nARegs)-1, 0)  // Truncate to A-register width
-        when ((renameTag === stateFromTagging.aRegs(aIndex).lastIdent) || isForceWrite) {
+        when ((renameTag === state.aRegs(aIndex).lastIdent) || isForceWrite) {
           stateNext.aRegs(aIndex).value := io.resultBus.writes(i).bits.value
         }
         // Always clear in-flight bit for this rename tag
@@ -597,7 +608,7 @@ class RegisterFileAndRename(params: AmletParams) extends Module {
       } .otherwise {
         // D-register write: same logic as A-registers
         val dIndex = regAddr(log2Ceil(params.nDRegs)-1, 0)  // Truncate to D-register width
-        when ((renameTag === stateFromTagging.dRegs(dIndex).lastIdent) || isForceWrite) {
+        when ((renameTag === state.dRegs(dIndex).lastIdent) || isForceWrite) {
           stateNext.dRegs(dIndex).value := io.resultBus.writes(i).bits.value
         }
         // Always clear in-flight bit for this rename tag
@@ -633,7 +644,7 @@ class RegisterFileAndRename(params: AmletParams) extends Module {
       val pIndex = pRegAddr(log2Ceil(params.nPRegs)-1, 0)  // Truncate to P-register width
       
       // Update predicate register if rename tag matches expected or force write
-      when ((pRenameTag === stateFromTagging.pRegs(pIndex).lastIdent || isForceWrite) && pIndex > 0.U) {
+      when ((pRenameTag === state.pRegs(pIndex).lastIdent || isForceWrite) && pIndex > 0.U) {
         stateNext.pRegs(pIndex).value := io.resultBus.predicate(i).bits.value
       }
       // Clear in-flight bit for this rename tag
@@ -779,45 +790,94 @@ class RegisterFileAndRename(params: AmletParams) extends Module {
 
   // Assign a new rename tag for register write, checking for conflicts
   // Tags increment and wrap around. If the next tag is still pending, we stall.
-  def assignWrite(state: State, index: UInt): TagAllocation = {
-    val result = Wire(new TagAllocation(params))
+
+  // Assign a new rename tag for A-register write
+  // Tags increment and wrap around. If the next tag is still pending, we stall.
+  def assignAWrite(state: State, index: UInt): ATagAllocation = {
+    val regState = state.aRegs(index)
+    val newTag = regState.lastIdent + 1.U
+    val result = Wire(new ATagAllocation(params))
+    val newRegState = Wire(new ARegisterState(params))
+    newRegState := regState
+
     result.writeReg.addr := index
-    val isDRegWrite = index(params.bRegWidth-1)  // Upper bit = 1 for D-registers
-    result.registers := state
-    
-    when (!isDRegWrite) {
-      // A-register write
-      val aIndex = index(log2Ceil(params.nARegs)-1, 0)  // Truncate to A-register width
-      val newRenameTag = state.aRegs(aIndex).lastIdent + 1.U
-      result.writeReg.tag := newRenameTag
-      result.registers.aRegs(aIndex).lastIdent := newRenameTag
-      result.registers.aRegs(aIndex).pendingTags := state.aRegs(aIndex).pendingTags | UIntToOH(newRenameTag)
-      // Stall if this rename tag is already pending (prevents reuse before completion)
-      result.stallRequired := state.aRegs(aIndex).pendingTags(newRenameTag)
-    } .otherwise {
-      // D-register write
-      val dIndex = index(log2Ceil(params.nDRegs)-1, 0)  // Truncate to D-register width
-      val newRenameTag = state.dRegs(dIndex).lastIdent + 1.U
-      result.writeReg.tag := newRenameTag
-      result.registers.dRegs(dIndex).lastIdent := newRenameTag
-      result.registers.dRegs(dIndex).pendingTags := state.dRegs(dIndex).pendingTags | UIntToOH(newRenameTag)
-      result.stallRequired := state.dRegs(dIndex).pendingTags(newRenameTag)
-    }
+    result.writeReg.tag := newTag
+
+    newRegState.lastIdent := newTag
+    newRegState.pendingTags := state.aRegs(index).pendingTags | UIntToOH(newTag)
+    result.regState := newRegState
+
+    // Stall if this rename tag is already pending (prevents reuse before completion)
+    result.stallRequired := regState.pendingTags(newTag)
+    result
+  }
+
+  // Assign a new rename tag for D-register write
+  // Tags increment and wrap around. If the next tag is still pending, we stall.
+  def assignDWrite(state: State, index: UInt): DTagAllocation = {
+    val regState = state.dRegs(index)
+    val newTag = regState.lastIdent + 1.U
+    val result = Wire(new DTagAllocation(params))
+    val newRegState = Wire(new DRegisterState(params))
+    newRegState := regState
+
+    result.writeReg.addr := index
+    result.writeReg.tag := newTag
+
+    newRegState.lastIdent := newTag
+    newRegState.pendingTags := state.dRegs(index).pendingTags | UIntToOH(newTag)
+    result.regState := newRegState
+
+    // Stall if this rename tag is already pending (prevents reuse before completion)
+    result.stallRequired := regState.pendingTags(newTag)
     result
   }
 
   // Assign a new rename tag for predicate write
   // Tags increment and wrap around. If the next tag is still pending, we stall.
   def assignPWrite(state: State, index: UInt): PTagAllocation = {
+    val regState = state.pRegs(index)
+    val newTag = regState.lastIdent + 1.U
     val result = Wire(new PTagAllocation(params))
+    val newRegState = Wire(new PRegisterState(params))
+    newRegState := regState
+
     result.writeReg.addr := index
-    result.registers := state
-    val newRenameTag = state.pRegs(index).lastIdent + 1.U
-    result.writeReg.tag := newRenameTag
-    result.registers.pRegs(index).lastIdent := newRenameTag
-    result.registers.pRegs(index).pendingTags := state.pRegs(index).pendingTags | UIntToOH(newRenameTag)
+    result.writeReg.tag := newTag
+
+    newRegState.lastIdent := newTag
+    newRegState.pendingTags := state.pRegs(index).pendingTags | UIntToOH(newTag)
+    result.regState := newRegState
+
     // Stall if this rename tag is already pending (prevents reuse before completion)
-    result.stallRequired := state.pRegs(index).pendingTags(newRenameTag)
+    result.stallRequired := regState.pendingTags(newTag)
+    result
+  }
+
+  // Helper functions for register type conversions
+  def bRegIsA(bReg: UInt, params: AmletParams): Bool = {
+    !bReg(params.bRegWidth-1)  // Upper bit = 0 for A-registers
+  }
+
+  def bRegToAReg(bReg: UInt): UInt = {
+    bReg(params.bRegWidth-2, 0)  // Extract lower bits for A-register index
+  }
+
+  def bRegToDReg(bReg: UInt): UInt = {
+    bReg(params.bRegWidth-2, 0)  // Extract lower bits for D-register index
+  }
+
+  def aTaggedRegToBTagged(aReg: ATaggedReg): BTaggedReg = {
+    val result = Wire(new BTaggedReg(params))
+    result.addr := aReg.addr
+    result.tag := aReg.tag
+    result
+  }
+
+  def dTaggedRegToBTagged(dReg: DTaggedReg): BTaggedReg = {
+    val result = Wire(new BTaggedReg(params))
+    result.addr := (1.U << (params.bRegWidth-1)) | dReg.addr  // Set upper bit for D-register
+    result.tag := dReg.tag
     result
   }
   

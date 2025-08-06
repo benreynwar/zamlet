@@ -45,6 +45,7 @@ object PredicateInstr {
     def expand(): Expanded = {
       val expanded = Wire(new Expanded(params))
       expanded.mode := mode
+      expanded.src1Mode := src1.mode
       expanded.src1 := src1.value
       expanded.src2 := src2
       expanded.base := base
@@ -57,11 +58,41 @@ object PredicateInstr {
   class Expanded(params: AmletParams) extends Instr.Expanded(params) {
     // The condition 'src1 mode src2' as well as 'base and not notBase' or 'not base and notBase'
     val mode = Modes()
+    val src1Mode = Src1Mode()
     val src1 = UInt(params.aWidth.W)
     val src2 = params.aReg()
     val base = params.pReg()
     val notBase = Bool()
     val dst = params.pReg()
+    
+    private val regUtils = new RegUtils(params)
+
+    def getTReads(): Seq[Valid[UInt]] = {
+      val src2Read = Wire(Valid(params.tReg()))
+      src2Read.valid := true.B
+      src2Read.bits := regUtils.aRegToTReg(src2)
+      
+      val baseRead = Wire(Valid(params.tReg()))
+      baseRead.valid := true.B
+      baseRead.bits := regUtils.pRegToTReg(base)
+      
+      // Add src1 read dependency when src1Mode is LoopIndex
+      val src1Read = Wire(Valid(params.tReg()))
+      src1Read.valid := src1Mode === Src1Mode.LoopIndex
+      // When LoopIndex mode, src1 contains the loop level. We create a dependency
+      // on a synthetic L-register representing that loop level, which control instructions
+      // will write to when managing loop state
+      src1Read.bits := regUtils.lRegToTReg(src1)
+      
+      Seq(src2Read, baseRead, src1Read)
+    }
+
+    def getTWrites(): Seq[Valid[UInt]] = {
+      val dstWrite = Wire(Valid(params.tReg()))
+      dstWrite.valid := true.B
+      dstWrite.bits := regUtils.pRegToTReg(dst)
+      Seq(dstWrite)
+    }
   }
   
   class Resolving(params: AmletParams) extends Instr.Resolving(params) {

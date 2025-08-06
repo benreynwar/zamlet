@@ -10,6 +10,7 @@ CONFIGS = {
 # Module definitions: name, top_level, extra_args
 MODULES = [
     ("bamlet", "Bamlet", []),
+    ("dependency_tracker", "DependencyTracker", []),
 ]
 
 # Test definitions: name, test_file, verilog_target, special_args
@@ -23,6 +24,7 @@ TESTS = [
     ("test_receive", "test_receive.py", "bamlet", []),
     ("test_predicate", "test_predicate.py", "bamlet", []),
     ("test_loops", "test_loops.py", "bamlet", []),
+    ("test_dependency_tracker", "test_dependency_tracker.py", "dependency_tracker", []),
 ]
 
 # Generate all Verilog, filegroups, and tests

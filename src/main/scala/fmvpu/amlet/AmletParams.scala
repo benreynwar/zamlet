@@ -84,6 +84,10 @@ case class AmletParams(
   val gRegWidth = log2Ceil(nGRegs)
   val regWidth = scala.math.max(scala.math.max(scala.math.max(aRegWidth, dRegWidth), gRegWidth), pRegWidth) + 2
 
+  // T-reg can hold A/D/P/L  (where L is loop_level)
+  val lRegWidth = log2Ceil(nLoopLevels)
+  val tRegWidth = scala.math.max(scala.math.max(scala.math.max(aRegWidth, dRegWidth), lRegWidth), pRegWidth) + 2
+
   val addrWidth = log2Ceil(dataMemoryDepth)
 
   // Types
@@ -92,7 +96,13 @@ case class AmletParams(
   def bReg(): UInt = UInt(bRegWidth.W)
 
   def pReg(): UInt = UInt(pRegWidth.W)
+
+  def aTag(): UInt = UInt(regTagWidth.W)
+  def dTag(): UInt = UInt(regTagWidth.W)
+
   def pTagWidth: Int = log2Ceil(nPTags)
+
+  def tReg(): UInt = UInt(tRegWidth.W)
 
   def dWord(): UInt = UInt(width.W)
   def aWord(): UInt = UInt(aWidth.W)
@@ -140,6 +150,11 @@ class DTaggedSource(params: AmletParams) extends Bundle {
     
     result
   }
+}
+
+class ATaggedReg(params: AmletParams) extends Bundle {
+  val addr = params.aReg()
+  val tag = UInt(params.regTagWidth.W)
 }
 
 class ATaggedSource(params: AmletParams) extends Bundle {

@@ -21,13 +21,12 @@ class SkidBuffer[T <: Data](t: T, enable: Boolean = true) extends Module {
       // This will get overridden in the next section if we fill it up.
       bufferValid := false.B
     }
-    when (io.i.valid && io.i.ready) {
-      // We know the buffer is empty since i_ready is 1
-      when (!io.o.ready) {
-        // We have to go into the buffer
-        buffer := io.i.bits
-        bufferValid := true.B
-      }
+    when (!io.o.ready && io.i.ready) {
+      bufferValid := io.i.valid
+    }
+    // Only depend on i_ready.  We flip more, but the enable signal doesn't depend on o_ready.
+    when (io.i.ready) {
+      buffer := io.i.bits
     }
 
     io.o.valid := io.i.valid || bufferValid

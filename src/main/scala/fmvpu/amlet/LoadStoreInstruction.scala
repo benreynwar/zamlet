@@ -34,6 +34,31 @@ object LoadStoreInstr {
     val addr = params.aReg()
     val reg = params.bReg()
     val predicate = params.pReg()
+    
+    private val regUtils = new RegUtils(params)
+
+    def getTReads(): Seq[Valid[UInt]] = {
+      val addrRead = Wire(Valid(params.tReg()))
+      addrRead.valid := true.B
+      addrRead.bits := regUtils.aRegToTReg(addr)
+      
+      val regRead = Wire(Valid(params.tReg()))
+      regRead.valid := mode === Modes.Store
+      regRead.bits := regUtils.bRegToTReg(reg)
+      
+      val predicateRead = Wire(Valid(params.tReg()))
+      predicateRead.valid := true.B
+      predicateRead.bits := regUtils.pRegToTReg(predicate)
+      
+      Seq(addrRead, regRead, predicateRead)
+    }
+
+    def getTWrites(): Seq[Valid[UInt]] = {
+      val regWrite = Wire(Valid(params.tReg()))
+      regWrite.valid := mode === Modes.Load
+      regWrite.bits := regUtils.bRegToTReg(reg)
+      Seq(regWrite)
+    }
   }
   
   class Resolving(params: AmletParams) extends Instr.Resolving(params) {

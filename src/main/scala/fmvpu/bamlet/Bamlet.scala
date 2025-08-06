@@ -40,6 +40,7 @@ class Bamlet(params: BamletParams) extends Module {
   // Instantiate components
   val instructionMemory = Module(new InstructionMemory(params))
   val control = Module(new Control(params))
+  val dependencyTracker = Module(new DependencyTracker(params))
   
   // Create 2D grid of amlets
   val amlets = Array.ofDim[Amlet](params.nAmletRows, params.nAmletColumns)
@@ -72,26 +73,29 @@ class Bamlet(params: BamletParams) extends Module {
   instructionMemory.io.writeControl.valid := writeControlSignals.map(_.valid).reduce(_ || _)
   instructionMemory.io.writeControl.bits := Mux1H(writeControlSignals.map(_.valid), writeControlSignals.map(_.bits))
 
+  // Connect control output to dependency tracker input
+  dependencyTracker.io.i <> control.io.instr
+  
   // Collect ready signals from all amlets
   val amletReadySignals = VecInit(amlets.flatten.toIndexedSeq.map(_.io.instruction.ready))
   
-  // Control's ready is high when all amlets are ready
-  control.io.instr.ready := amletReadySignals.asUInt.andR
+  // Dependency tracker's ready is high when all amlets are ready
+  dependencyTracker.io.o.ready := amletReadySignals.asUInt.andR
   
-  // Connect control and positions to all amlets
+  // Connect dependency tracker and positions to all amlets
   for (row <- 0 until params.nAmletRows) {
     for (col <- 0 until params.nAmletColumns) {
       val amlet = amlets(row)(col)
       val linearIndex = row * params.nAmletColumns + col
       
-      // Connect instruction bits from control to amlet
-      amlet.io.instruction.bits := control.io.instr.bits
+      // Connect instruction bits from dependency tracker to amlet
+      amlet.io.instruction.bits := dependencyTracker.io.o.bits
       
-      // Valid to this amlet is high when control has valid instruction AND all OTHER amlets are ready
+      // Valid to this amlet is high when dependency tracker has valid instruction AND all OTHER amlets are ready
       // Create a mask excluding this amlet, then AND all other ready signals
       val otherReadySignals = amletReadySignals.zipWithIndex.filter(_._2 != linearIndex).map(_._1)
       val allOtherAmletsReady = otherReadySignals.reduce(_ && _)
-      amlet.io.instruction.valid := control.io.instr.valid && allOtherAmletsReady
+      amlet.io.instruction.valid := dependencyTracker.io.o.valid && allOtherAmletsReady
       
       // Connect loop iteration feedback from amlet to control
       control.io.loopIterations(linearIndex) <> amlet.io.loopIterations

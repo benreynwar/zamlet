@@ -86,12 +86,20 @@ async def loop_local_test(bi: BamletInterface) -> None:
             iterations=3,  # A-register index containing iteration count
             dst=1,               # A-register 1 gets loop index
         ),
+        PredicateInstruction(
+            mode=PredicateModes.LT,
+            src1_mode=Src1Mode.LOOP_INDEX,
+            src1_value=0, # Loop level 0
+            src2=3, # A-reg 3
+            dst=1,
+            ),
         # Increment counter: d1 = d1 + d2
         ALUInstruction(
             mode=ALUModes.ADD,
             src1=1,  # counter
             src2=2,  # increment
             d_dst=1, # store back to counter
+            predicate=1,
         ),
         # End of loop
         ControlInstruction(mode=ControlModes.END_LOOP),
@@ -110,8 +118,9 @@ async def loop_local_test(bi: BamletInterface) -> None:
     assert result == 10, f"Expected 10, got {result}"
     
     # Check final loop index value (should be 4 after 5 iterations: 0, 1, 2, 3, 4)
+    # But might go higher since there is no guarantee it won't overrun.
     index_result = bi.probe_register('a', 1)
-    assert index_result == 4, f"Expected final loop index 4, got {index_result}"
+    assert index_result >= 4, f"Expected final loop index 4 or greater, got {index_result}"
 
 
 async def loop_global_test(bi: BamletInterface) -> None:

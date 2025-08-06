@@ -67,12 +67,14 @@ object Main extends App {
     //case "LaneArray" => LaneArrayGenerator
     case "Control" => ControlGenerator
     case "Bamlet" => BamletGenerator
+    case "DependencyTracker" => DependencyTrackerGenerator
     case "Rename" => RenameGenerator
     case "Fifo" => FifoGenerator
     case "SkidBuffer" => SkidBufferGenerator
     case "DecoupledBuffer" => DecoupledBufferGenerator
     case "DoubleBuffer" => DoubleBufferGenerator
     case "ShortQueue" => ShortQueueGenerator
+    case "DroppingFifo" => DroppingFifoGenerator
     case _ => 
       println(s"Module name '${moduleName}' is unknown.")
       System.exit(1)

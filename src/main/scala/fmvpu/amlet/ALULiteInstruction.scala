@@ -67,6 +67,31 @@ object ALULiteInstr {
     val src2 = params.aReg()
     val predicate = params.pReg()
     val dst = params.bReg()
+    
+    private val regUtils = new RegUtils(params)
+
+    def getTReads(): Seq[Valid[UInt]] = {
+      val src1Read = Wire(Valid(params.tReg()))
+      src1Read.valid := true.B
+      src1Read.bits := regUtils.aRegToTReg(src1)
+      
+      val src2Read = Wire(Valid(params.tReg()))
+      src2Read.valid := true.B
+      src2Read.bits := regUtils.aRegToTReg(src2)
+      
+      val predicateRead = Wire(Valid(params.tReg()))
+      predicateRead.valid := true.B
+      predicateRead.bits := regUtils.pRegToTReg(predicate)
+      
+      Seq(src1Read, src2Read, predicateRead)
+    }
+
+    def getTWrites(): Seq[Valid[UInt]] = {
+      val dstWrite = Wire(Valid(params.tReg()))
+      dstWrite.valid := true.B
+      dstWrite.bits := regUtils.bRegToTReg(dst)
+      Seq(dstWrite)
+    }
   }
   
   class Resolving(params: AmletParams) extends Instr.Resolving(params) {
