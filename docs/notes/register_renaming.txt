@@ -1,0 +1,82 @@
+The Reservation Stations in the Amlet are really expensive and they've got more expensive as
+we've added the predicates and they need to also get the old values.  They're also really shallow
+and are still expensive.
+
+Current Bamlet Area 1.25 mm2.
+
+I want to investigate a register renaming approach instead of capturing the operands in the
+reservation stations.
+
+I'll call the new architecture famlet/gamlet for now.
+
+gamlet/Control
+  similar to bamlet/Control, does loop unrolling
+  Base -> Expanded
+
+gamlet/Rename
+  does the logical to physical register renaming for the A-Reg and D-Reg. P-Reg are not renamed
+  but are tagged.  receives info from the RegisterFiles to know when reads completed.  It needs
+  this information so it knows when a physical register is finished with.  There are 14 potential 
+  eads a cycle so if each one is 4 or 5 bits that is about 60 bits (so significant, but not outrageous).
+  Most the register writes in part of the instruction can effect can effect later renaming I'll
+  need to watch out for timing here.  May need some kind of dependency tracking and light reordering
+  to take care of this.
+  Expanded -> Renamed
+
+famlet/Scoreboard
+  This tracks what physical registers have been written to the registerfile.
+  It is used to initialize the states of Sources that get sent to the ReservationStations.
+  It also contains the predicate register file.
+
+famlet/ReservationStation
+  instructions are stored here until all the operands all available in the register file and the
+  predicate resolve.  it monitors the resultBus to update the status of operands in the register
+  file, and to capture the predicates.  (Note: Should try to combine Send and Receive Packets
+  into a single Reservation Station)
+
+famlet/RegisterFile
+  The physical register file for the A-Reg and D-Reg.
+  The instructions issued from the reservation stations read their values from here.
+
+famlet/ALU, ALULite, ALUPredicate, DataMemory, ReceivePacketInterface, SendPacketInterface
+
+
+This time I'd like to pay good attention to timing as I go, so I don't end up going to far down a path that
+will never work for timing.
+
+Rename
+------
+Receive a VLIW instruction (Expanded).
+The state is
+  - Mapping of Logical Registers to Physical Registers.
+  - We have 5 write that might update the mapping.
+      4 of these might assign a new physical registers.  1 just maps to a loop index.
+  - We have 4 physical registers indices that are ready to use. (is available)
+  - The number of physical registers that are available.
+  - The number of outstanding reads we have of each physical register.
+  - For writes to a register with a predicate, the previous physical register for that logical
+    register is read.
+  - Whether each physical register is live.
+  - If a physical register is not live and has no outstanding reads it can be recycled.
+  - We receive about 14 read notices (each 5 bits wide).  These are used to update the outstanding
+    read counts.
+
+Interface:
+  - input instructions with read regs and write regs
+  - output instructions with renamed read regs and write regs
+  - input read completion notices
+
+State:
+  - A-Reg logical to physical mapping
+  - D-Reg logical to physical mapping
+  - For each physical reg
+      - is live
+      - number of outstanding reads
+  - Number of available physical regs
+  - 4 available phyiscal A-Reg
+  - 4 available phyiscal D-Reg
+
+We update this state combinatorially between each of the 6 instructions.
+
+
+

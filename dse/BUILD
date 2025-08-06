@@ -20,9 +20,9 @@ exports_files([
 PDKS = ["asap7", "sky130hd"]
 
 chisel_binary(
-    name = "fmvpu_generator",
+    name = "zamlet_generator",
     srcs = ["//src:scala_sources"],
-    main_class = "fmvpu.Main",
+    main_class = "zamlet.Main",
     visibility = ["//dse/new_lane:__pkg__", "//dse/buffer_experiment:__pkg__", "//dse/amlet:__pkg__", "//dse/bamlet:__pkg__", "//dse/gamlet:__pkg__"],
     deps = [
         "@maven//:io_circe_circe_core_2_13",

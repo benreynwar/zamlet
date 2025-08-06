@@ -1,3 +1,10 @@
+# Bazel stuff
+bazel-*
+MODULE.bazel.lock
+
+.ccache
+
+
 # Mill build outputs
 out/
 .mill-jvm-opts
@@ -30,3 +37,8 @@ generated/
 Thumbs.db
 
 docs/diagrams/*.png
+docs/diagrams/*.bkp
+
+# Waveforms
+*.vcd
+

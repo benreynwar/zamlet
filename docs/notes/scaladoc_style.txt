@@ -1,0 +1,307 @@
+# Scaladoc Style Guide (Based on Chisel Codebase)
+
+This document describes the scaladoc style conventions used in the Chisel codebase that should be followed for consistency.
+
+## General Conventions
+
+1. **First sentence is a brief summary** - Keep it concise and descriptive
+2. **Use proper Markdown formatting** - Code spans with backticks, code blocks with `{{{}}}`
+3. **Cross-reference types** - Use `[[ClassName]]` for type references
+4. **Be specific about behavior** - Explain what happens, when it happens, and any important constraints
+5. **Include warnings and notes** - Use `@note` for important behavioral details
+6. **Document all public parameters** - Every public parameter should have a clear `@param` description
+7. **Specify return values** - Use `@return` to describe what methods return
+
+## Class/Object Documentation
+
+### Basic Pattern:
+```scala
+/** Brief description of the class/object purpose.
+  *
+  * More detailed explanation if needed. Can span multiple paragraphs.
+  *
+  * @param constructor_param Description of constructor parameter
+  */
+class MyClass(constructor_param: Type) extends BaseClass
+```
+
+### Module Documentation:
+```scala
+/** Brief description of what this module does.
+  *
+  * More detailed behavioral description, including any important
+  * implementation details or constraints.
+  *
+  * @note Important behavioral notes or warnings
+  */
+class MyModule extends Module
+```
+
+## Bundle/IO Documentation
+
+### Bundle Class Documentation:
+```scala
+/** Brief description of the Bundle's purpose and interface semantics.
+  *
+  * Detailed explanation of the interface protocol, handshaking behavior,
+  * and any important timing relationships.
+  *
+  * @tparam T the type of data (for parametric bundles)
+  * @param gen the data type generator
+  * @param width address/data width parameter description
+  * @param hasFeature description of boolean feature parameters
+  * @groupdesc Signals The actual hardware fields of the Bundle
+  * @see [[RelatedClass]] for related functionality
+  * @example {{{
+  * val io = IO(new MyBundle(UInt(8.W), 16))
+  * io.input := producer.io.output
+  * consumer.io.input := io.output
+  * }}}
+  */
+class MyBundle[T <: Data](gen: T, width: Int, hasFeature: Boolean = false) extends Bundle
+```
+
+### Individual Port Documentation:
+```scala
+/** Brief description of what this port does.
+  *
+  * More detailed explanation if the port behavior is complex,
+  * including timing relationships and protocol details.
+  *
+  * @group Signals
+  */
+val myPort = Input(UInt(8.W))
+
+/** Conditional port with explanation of when it exists.
+  *
+  * @group Signals
+  */
+val optionalPort = if (hasFeature) Some(Input(Bool())) else None
+```
+
+### Port Documentation Patterns:
+
+#### Input Ports:
+```scala
+/** Address signal for memory access (must be < memorySize)
+  * @group Signals
+  */
+val address = Input(UInt(addressWidth.W))
+
+/** Enable signal - when high, operation executes this cycle
+  * @group Signals
+  */
+val enable = Input(Bool())
+```
+
+#### Output Ports:
+```scala
+/** Data output from memory read operation
+  * @group Signals
+  */
+val readData = Output(UInt(dataWidth.W))
+
+/** Valid signal indicating output data is ready
+  * @group Signals
+  */
+val valid = Output(Bool())
+```
+
+#### Bidirectional/Complex Ports:
+```scala
+/** Memory interface - connects to external memory controller
+  * @group Signals
+  */
+val mem = new MemoryInterface(addressWidth, dataWidth)
+
+/** Ready/Valid interface for data transfer (client is producer)
+  * @group Signals
+  */
+val dataIn = Flipped(DecoupledIO(gen))
+```
+
+## Method Documentation
+
+### Complete Method Documentation:
+```scala
+/** Brief description of what the method does.
+  *
+  * More detailed explanation of the method's behavior, including
+  * any side effects or important implementation details.
+  *
+  * @param param1 Description of first parameter, including what values are valid
+  * @param param2 Description of second parameter. For Boolean parameters, 
+  *               specify what `true` and `false` mean.
+  * @param param3 Optional parameter with default value (mention the default)
+  * @return Description of what is returned, including type information if helpful
+  * @note Important behavioral details, constraints, or warnings
+  * @example {{{
+  * // Realistic usage example
+  * val result = myMethod(value1, value2)
+  * }}}
+  */
+def myMethod(param1: Type1, param2: Boolean, param3: Type3 = defaultValue): ReturnType
+```
+
+### Simple Method Documentation:
+```scala
+/** Brief description of what the method does. */
+def simpleMethod: ReturnType
+```
+
+## Parameter Documentation (@param)
+
+- Each `@param` tag on its own line
+- Clear description of the parameter's purpose
+- For Boolean parameters, specify what `true`/`false` means
+- Mention default values when relevant
+- Include valid value ranges or constraints when applicable
+
+Examples:
+```scala
+/** @param entries The max number of entries in the queue (must be > 0)
+  * @param pipe True if the queue can run at full throughput (pipeline mode)
+  * @param flow True if inputs can be consumed on the same cycle
+  * @param flush Optional flush signal, defaults to None
+  */
+```
+
+## Return Value Documentation (@return)
+
+Be specific about what is returned:
+```scala
+/** @return tuple of the counter value and whether the counter will wrap */
+/** @return a new DecoupledIO interface of the specified type */
+/** @return the implicit Clock signal */
+```
+
+## Examples (@example)
+
+Use realistic, compilable code examples:
+```scala
+/** @example {{{
+  * val queue = Module(new Queue(UInt(8.W), 16))
+  * queue.io.enq <> producer.io.out
+  * consumer.io.in <> queue.io.deq
+  * }}}
+  */
+```
+
+## Notes and Warnings (@note)
+
+Use `@note` for important behavioral details, constraints, or warnings:
+```scala
+/** @note Results are unspecified unless exactly one select signal is high */
+/** @note The width of the returned signal is unchanged */
+/** @note Module instantiations must be wrapped in a Module() call */
+```
+
+## Cross-References
+
+Use `[[ClassName]]` for type references:
+```scala
+/** Returns a [[DecoupledIO]] interface */
+/** Extends [[Module]] with additional functionality */
+/** Compatible with [[chisel3.util.Queue]] */
+```
+
+Use `@see` for related classes and methods:
+```scala
+/** @see [[Decoupled$ DecoupledIO Factory]] for creating instances */
+/** @see [[MyModule]] for usage examples */
+```
+
+## Grouping and Organization (@group)
+
+### Bundle Port Organization:
+```scala
+/** @groupdesc Signals The actual hardware fields of the Bundle
+  * @groupdesc Control Control and status signals  
+  * @groupdesc Data Data path signals
+  */
+class MyBundle extends Bundle {
+  /** Input data
+    * @group Data
+    */
+  val dataIn = Input(UInt(32.W))
+  
+  /** Control enable
+    * @group Control  
+    */
+  val enable = Input(Bool())
+}
+```
+
+## Code Formatting
+
+- Use backticks for inline code: `width of this`
+- Use `{{{` and `}}}` for code blocks
+- Maintain proper indentation (2 spaces after `*`)
+- Keep line length reasonable (aim for < 100 characters)
+
+## Special Cases
+
+### Trait Documentation:
+```scala
+/** Brief description of the trait's purpose.
+  *
+  * Detailed explanation of what implementing this trait provides.
+  * Include any requirements or constraints for implementers.
+  */
+trait MyTrait
+```
+
+### Package Object Documentation:
+```scala
+/** This package contains utilities for [specific purpose].
+  *
+  * Key features include:
+  * - Feature 1
+  * - Feature 2
+  *
+  * @note Important package-level information
+  */
+package object mypackage
+```
+
+### Memory Interface Documentation:
+```scala
+/** Memory port interface for [specific memory type].
+  *
+  * @param addrWidth Width of address signals in bits
+  * @param dataWidth Width of data signals in bits  
+  * @param masked Whether write operations support byte masking
+  * @note Address must be word-aligned for proper operation
+  * @groupdesc Signals The actual hardware fields of the Bundle
+  */
+class MemoryPort(addrWidth: Int, dataWidth: Int, masked: Boolean = false) extends Bundle
+```
+
+## Bundle-Specific Conventions
+
+1. **Always use `@groupdesc Signals`** at the class level
+2. **Every port gets `@group Signals`** (or appropriate group name)
+3. **Document signal direction explicitly** and explain perspective when not obvious
+4. **Explain interface protocols** (handshaking, timing, etc.)
+5. **Document conditional ports** with clear conditions
+6. **Include width calculations** for parameterized signals
+7. **Cross-reference related interfaces** with `@see`
+8. **Provide usage examples** for complex interfaces
+
+## Style Preferences
+
+1. **Consistency over perfection** - Follow the established patterns
+2. **Clarity over brevity** - Better to be clear than concise
+3. **Examples help** - Include examples for complex or non-obvious functionality
+4. **Document the "why"** - Explain purpose and constraints, not just what the code does
+5. **Update docs with code** - Keep documentation in sync with implementation changes
+
+## Common Pitfalls to Avoid
+
+- Don't document obvious functionality without adding value
+- Don't copy implementation details that might change
+- Don't use generic descriptions like "Does something with data"
+- Don't forget to document public parameters and return values
+- Don't use overly technical jargon without explanation
+- Don't forget `@group` tags for Bundle fields
+- Don't omit signal direction documentation (Input/Output)

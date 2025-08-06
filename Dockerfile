@@ -151,9 +151,6 @@ ENV PDK_ROOT=/opt/pdk
 # Disable conda installation in OpenRAM
 ENV OPENRAM_DISABLE_CONDA=1
 
-# Install claude-code CLI
-RUN npm install -g @anthropic-ai/claude-code
-
 # Set working directory
 WORKDIR /workspace
 

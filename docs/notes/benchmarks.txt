@@ -1,0 +1,29 @@
+According to Claude...
+
+Specification-Based Benchmarks:
+  - Graph500 - Defines graph traversal problems (BFS, SSSP) with performance metrics, not implementation
+  - HPCG - Specifies conjugate gradient algorithm requirements, allows custom optimizations
+  - RandomAccess - Defines random memory access pattern, implementation flexibility
+  - Sort - Sorting benchmark with specified input/output requirements
+
+  Algorithm-Focused Suites:
+  - PERFECT - Power Efficiency Revolution For Embedded Computing Technologies (algorithm specs)
+  - DARPA HIVE - Graph analytics problems with performance targets, not code
+  - MLPerf - Machine learning benchmark with model accuracy requirements
+
+  Competition-Style Benchmarks:
+  - STAC - Securities Technology Analysis Center (financial algorithms)
+  - DEBS Grand Challenge - Stream processing problems with dataset specifications
+  - LDBC - Linked Data Benchmark Council (graph database workloads)
+
+  Research Benchmark Frameworks:
+  - GAPBS - Graph Algorithm Platform Benchmark Suite (problem definitions)
+  - TAU - Performance analysis framework allowing custom instrumentation
+
+  These let you implement the algorithms in:
+  - Custom assembly languages
+  - Domain-specific architectures (FPGA, ASIC)
+  - Novel programming models
+  - Hardware accelerators
+
+  You're measured on correctness and performance metrics rather than using specific source code, making them ideal for evaluating non-traditional architectures.

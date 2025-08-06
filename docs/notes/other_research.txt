@@ -1,0 +1,42 @@
+Compiled by Claude
+
+KiloCore (UC Davis)
+
+  Led by Professor Bevan Baas, this 1000-core processor (2016) features:
+  - 992 cores in a 32×31 grid plus 8 orchestrating cores
+  - Each core has independent memory and program counter
+  - 1.78 trillion instructions/second with only 0.7W power
+  - Published in IEEE Journal of Solid-State Circuits
+
+  Intel SCC (Single-chip Cloud Computer)
+
+  48-core research processor (2009) with:
+  - 24 tiles, each containing 2 P54C cores
+  - On-chip network with message passing buffers
+  - Distributed orchestration model mimicking cloud datacenters
+  - Each core can run separate OS instances
+
+  MIT/Tilera TILE64
+
+  Originated from MIT research led by Anant Agarwal:
+  - 64 cores in mesh topology
+  - Homogeneous design with distributed control
+  - VLIW processors with mesh interconnect
+  - Commercialized as one of first successful manycore processors
+
+  HERO Platform (ETH Zurich)
+
+  Heterogeneous research platform combining:
+  - RISC-V manycore accelerator clusters
+  - ARM Cortex-A host processors for orchestration
+  - FPGA-based implementation for flexibility
+
+  Kalray MPPA-256
+
+  Commercial manycore with hierarchical orchestration:
+  - 256 user cores + 32 system cores
+  - 16 compute clusters with dedicated management cores
+  - Network-on-chip with distance-aware routing
+
+  These examples demonstrate various approaches to combining simple processing arrays with more powerful orchestrating processors for different application domains.
+
