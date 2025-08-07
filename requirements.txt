@@ -1,0 +1,23 @@
+# Core test framework
+git+https://github.com/cocotb/cocotb.git
+
+# Data processing and analysis
+numpy>=1.17.4
+scipy>=1.3.3
+matplotlib
+pyyaml
+
+# Testing and coverage (from OpenRAM requirements)
+coverage>=4.5.2
+python-subunit>=1.4.0
+unittest2>=1.1.0
+
+# Scientific computing (from OpenRAM requirements)
+scikit-learn>=0.22.2
+
+# VLSI tools (from OpenRAM requirements)
+volare>=0.15.2
+
+# Documentation
+mkdocs
+mkdocs-material

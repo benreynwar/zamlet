@@ -1,0 +1,54 @@
+site_name: Zamlet - VLIW SIMT Processor
+site_description: A parameterizable open source VLIW SIMT processor designed for mesh accelerators
+site_url: https://github.com/ben-reynwar/zamlet
+
+repo_name: ben-reynwar/zamlet
+repo_url: https://github.com/ben-reynwar/zamlet
+
+theme:
+  name: material
+  palette:
+    # Palette toggle for light mode
+    - scheme: default
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    # Palette toggle for dark mode  
+    - scheme: slate
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.top
+    - search.highlight
+    - search.share
+    - content.code.copy
+    - content.code.annotate
+
+markdown_extensions:
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences
+  - admonition
+  - pymdownx.details
+  - tables
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
+  - Quick Start: quickstart.md
+  - Architecture: architecture.md
+  - Instruction Set: instruction-set.md  
+  - Applications: applications.md
+
+use_directory_urls: false
+
+docs_dir: docs
+site_dir: site

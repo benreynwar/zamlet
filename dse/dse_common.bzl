@@ -46,8 +46,8 @@ def dse_component_flows(studies, component_type, pdks = ["asap7", "sky130hd"]):
             "SYNTH_HIERARCHICAL": "1",
             "SYNTH_MINIMUM_KEEP_SIZE": "50",
             "SYNTH_MEMORY_MAX_BITS": "8192",
-            "PLACE_DENSITY": "0.40",
-            "CORE_UTILIZATION": "20",
+            "PLACE_DENSITY": "0.60",
+            "CORE_UTILIZATION": "40",
         },
         sources = {
             "SDC_FILE": ["//dse:config/constraints_{}.sdc".format(pdk)],
@@ -90,7 +90,7 @@ def dse_component_flows(studies, component_type, pdks = ["asap7", "sky130hd"]):
         name = "{base}_timing_route".format(base = name),
         src = "{name}_route".format(name = name),
         outs = [
-            "{name}_timing_route_summary".format(name = name),
+            "{name}_route_stats".format(name = name),
             "{name}_route_setup_timing.rpt".format(name = name),
             "{name}_route_hold_timing.rpt".format(name = name),
             "{name}_route_critical_paths.rpt".format(name = name),
@@ -103,10 +103,10 @@ def dse_component_flows(studies, component_type, pdks = ["asap7", "sky130hd"]):
             "{name}_route_in2out_paths.rpt".format(name = name),
         ],
         arguments = {
-            "OUTPUT": "$(location :{name}_timing_route_summary)".format(name = name),
+            "OUTPUT": "$(location :{name}_route_stats)".format(name = name),
             "TARGET_NAME": "{name}_route".format(name = name),
         },
-        script = "//dse:scripts/timing_reports.tcl",
+        script = "//dse:scripts/analysis.tcl",
     ) for name in study_names]
 
     # Netlist extraction
