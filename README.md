@@ -37,6 +37,8 @@ bazel build //dse/bamlet:Bamlet_default__sky130hd_results
 
 ## Documentation
 
+Largely LLM generated but I've edited it so that it's not obviously wrong and probably helpful.
+
 - **[Quick Start Guide](docs/quickstart.md)** - Setup and first examples
 - **[Architecture Overview](docs/architecture.md)** - Design and microarchitecture
 - **[Instruction Set](docs/instruction-set.md)** - Complete ISA reference
