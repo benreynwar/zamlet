@@ -25,6 +25,13 @@ python.toolchain(
 )
 
 # Python dependencies managed in virtual environment
+pip = use_extension("@rules_python//python/extensions:pip.bzl", "pip")
+pip.parse(
+    hub_name = "zamlet_pip_deps",
+    python_version = "3.13",
+    requirements_lock = "//:requirements.txt",
+)
+use_repo(pip, "zamlet_pip_deps")
 
 # Scala toolchain
 SCALA_VERSION = "2.13.16"
@@ -65,8 +72,8 @@ bazel_dep(name = "bazel-orfs")
 
 git_override(
     module_name = "bazel-orfs",
-    commit = "396db853dbf00185d1e3fab18c5e68570221e10f",
-    remote = "https://github.com/The-OpenROAD-Project/bazel-orfs.git",
+    remote = "https://github.com/benreynwar/bazel-orfs",
+    commit = "7a98b330fc365c6bf03d0d27c2b1ea7946e8ecb7",
 )
 
 orfs = use_extension("@bazel-orfs//:extension.bzl", "orfs_repositories")
@@ -102,6 +109,16 @@ register_toolchains("@llvm_toolchain//:all")
 # CIRCT for FIRRTL compilation
 http_archive = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
 git_repository = use_repo_rule("@bazel_tools//tools/build_defs/repo:git.bzl", "git_repository")
+
+# HDL tools including Verilator and Cocotb
+bazel_dep(name = "rules_hdl")
+git_override(
+    module_name = "rules_hdl",
+    remote = "https://github.com/benreynwar/bazel_rules_hdl",
+    commit = "67b246fc91353954757932ce28f6b1d39c7e6dd1",
+)
+
+hdl_deps = use_extension("@rules_hdl//:extensions.bzl", "hdl_deps_extension")
 
 
 

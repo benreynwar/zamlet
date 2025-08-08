@@ -3,6 +3,41 @@ package zamlet.utils
 import chisel3._
 import chisel3.util._
 import zamlet.ModuleGenerator
+import io.circe._
+import io.circe.parser._
+import io.circe.generic.auto._
+import io.circe.generic.semiauto._
+import scala.io.Source
+
+/** Parameters for DroppingFifo module loaded from JSON config file. */
+case class DroppingFifoParams(
+  width: Int = 4,
+  depth: Int = 8,
+  countBits: Int = 4
+)
+
+/** Companion object for DroppingFifoParams with factory methods. */
+object DroppingFifoParams {
+  implicit val DroppingFifoParamsDecoder: Decoder[DroppingFifoParams] = deriveDecoder[DroppingFifoParams]
+
+  /** Load DroppingFifo parameters from a JSON configuration file.
+    *
+    * @param fileName Path to the JSON configuration file
+    * @return DroppingFifoParams instance with configuration loaded from file
+    */
+  def fromFile(fileName: String): DroppingFifoParams = {
+    val jsonContent = Source.fromFile(fileName).mkString
+    val paramsResult = decode[DroppingFifoParams](jsonContent)
+    paramsResult match {
+      case Right(params) =>
+        params
+      case Left(error) =>
+        println(s"Failed to parse JSON: ${error}")
+        System.exit(1)
+        null
+    }
+  }
+}
 
 // This FIFO takes an additional input 'drop' that indicates that the input at
 // 'i' can be discarded.
@@ -107,15 +142,18 @@ class DroppingFifo[T <: Data](t: T, depth: Int, countBits: Int) extends Module {
 }
 
 object DroppingFifoGenerator extends ModuleGenerator {
+  /** Create a DroppingFifo module with parameters loaded from a JSON file.
+    *
+    * @param args Command line arguments, where args(0) should be the path to a JSON parameter file
+    * @return DroppingFifo module instance configured with the loaded parameters
+    */
   override def makeModule(args: Seq[String]): Module = {
-    if (args.length < 3) {
-      println("Usage: <command> <outputDir> DroppingFifo <width> <depth> <countBits>")
+    if (args.length < 1) {
+      println("Usage: <command> <outputDir> DroppingFifo <configFileName>")
       null
     } else {
-      val width = args(0).toInt
-      val depth = args(1).toInt
-      val countBits = args(2).toInt
-      new DroppingFifo(UInt(width.W), depth, countBits)
+      val params = DroppingFifoParams.fromFile(args(0))
+      new DroppingFifo(UInt(params.width.W), params.depth, params.countBits)
     }
   }
 }

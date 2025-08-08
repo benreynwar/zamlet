@@ -1,5 +1,6 @@
 # Core test framework
-git+https://github.com/cocotb/cocotb.git
+cocotb==1.9.2
+find-libpython==0.3.0
 
 # Data processing and analysis
 numpy>=1.17.4

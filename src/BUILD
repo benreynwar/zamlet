@@ -1,6 +1,6 @@
 # Scala source files for FMVPU
 
-load("//:chisel.bzl", "chisel_binary")
+load("//bazel:chisel.bzl", "chisel_binary")
 
 filegroup(
     name = "scala_sources",

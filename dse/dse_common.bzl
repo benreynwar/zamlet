@@ -3,7 +3,7 @@
 
 load("@bazel-orfs//:openroad.bzl", "orfs_flow", "orfs_run")
 load("@bazel-orfs//:yosys.bzl", "yosys")
-load("//:verilog_common.bzl", "generate_verilog_rule")
+load("//bazel:verilog.bzl", "generate_verilog_rule")
 
 def dse_component_flows(studies, component_type, pdks = ["asap7", "sky130hd"]):
     """

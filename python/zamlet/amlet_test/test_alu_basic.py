@@ -1,6 +1,6 @@
 # WARNING: This file was created by Claude Code with negligible human oversight.
 # It is not a test that should be trusted.
-
+ 
 import os
 import sys
 import tempfile
@@ -20,6 +20,8 @@ this_dir = os.path.abspath(os.path.dirname(__file__))
 @cocotb.test()
 async def alu_basic_test(dut: HierarchyObject) -> None:
     """Test basic ALU functionality."""
+    test_utils.configure_logging_sim("INFO")
+    test_params = test_utils.get_test_params()
     print("Starting basic ALU test...")
     
     # Start clock
@@ -133,6 +135,8 @@ async def alu_basic_test(dut: HierarchyObject) -> None:
 @cocotb.test()
 async def alu_comparison_test(dut: HierarchyObject) -> None:
     """Test ALU comparison operations."""
+    test_utils.configure_logging_sim("INFO")
+    test_params = test_utils.get_test_params()
     print("Starting ALU comparison test...")
     
     # Start clock
@@ -202,48 +206,3 @@ async def alu_comparison_test(dut: HierarchyObject) -> None:
     print("ALU comparison tests completed successfully!")
 
 
-def test_alu_basic(verilog_file: str, seed: int = 0) -> None:
-    """Main test procedure using pre-generated Verilog."""
-    filenames = [verilog_file]
-    
-    toplevel = 'ALU'
-    module = 'zamlet.amlet_test.test_alu_basic'
-    
-    test_params = {
-        'seed': seed,
-    }
-    
-    verilog_dir = os.path.dirname(verilog_file)
-    test_utils.run_test(verilog_dir, filenames, test_params, toplevel, module)
-
-
-def generate_and_test_alu_basic(temp_dir: Optional[str] = None, seed: int = 0) -> None:
-    """Generate Verilog and run test (for non-Bazel usage)."""
-    with tempfile.TemporaryDirectory() as working_dir:
-        if temp_dir is not None:
-            working_dir = temp_dir
-        
-        # Find the amlet config file
-        config_file = os.path.join(os.path.dirname(this_dir), '..', '..', 'configs', 'amlet_default.json')
-        config_file = os.path.abspath(config_file)
-        
-        # Generate ALU with amlet parameters
-        filenames = generate_rtl.generate('ALU', working_dir, [config_file])
-        
-        # Concatenate all generated .sv files into a single file
-        concat_filename = os.path.join(working_dir, 'alu_verilog.sv')
-        test_utils.concatenate_sv_files(filenames, concat_filename)
-        
-        test_alu_basic(concat_filename, seed)
-
-
-if __name__ == '__main__':
-    test_utils.configure_logging_pre_sim('INFO')
-    
-    if len(sys.argv) >= 2:
-        # Called from Bazel with verilog_file
-        verilog_file = sys.argv[1]
-        test_alu_basic(verilog_file)
-    else:
-        # Called directly - generate Verilog and test
-        generate_and_test_alu_basic()

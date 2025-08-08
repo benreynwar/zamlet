@@ -4,7 +4,7 @@
 load("@bazel-orfs//:openroad.bzl", "orfs_flow", "orfs_run")
 load("@bazel-orfs//:write_binary.bzl", "write_binary")
 load("@bazel-orfs//:yosys.bzl", "yosys")
-load("//:chisel.bzl", "chisel_binary")
+load("//bazel:chisel.bzl", "chisel_binary")
 load(":openram.bzl", "openram_sram")
 
 # Export files for use by sub-packages

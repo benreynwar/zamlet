@@ -6,17 +6,11 @@ A parameterizable open source VLIW SIMT processor designed for mesh accelerators
 
 ## Quick Start
 
-This project uses Bazel as a build system, but it cheats a lot since it uses lots of 
-third-party tools, and that's difficult in Bazel, and I'm not very good with Bazel.
-The way I run this project is to use Docker to create a container with all the required 
-tools, then run Bazel within that container. It also uses the bazel-orfs flow which 
-creates another Docker container for those tools!
+Ideally you should just be able to install bazel and then build
+this project, but I wouldn't bet a whole lot of money on it working.
+It works for me though!
 
 ```bash
-# You may need to edit docker-compose.yml for your system
-docker-compose up -d
-docker-compose exec zamlet bash
-
 # Generate Verilog and run tests
 bazel build //dse/bamlet:Bamlet_default_verilog
 bazel test //python/zamlet/bamlet_test:all --test_output=streamed

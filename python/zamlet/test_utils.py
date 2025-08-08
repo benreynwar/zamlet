@@ -7,9 +7,22 @@ import shutil
 from pathlib import Path
 
 import cocotb
-import cocotb.logging
-from cocotb_tools.check_results import get_results
-from cocotb_tools.runner import get_runner
+
+# Version-compatible imports for cocotb 1.9.2 and 2.0.0
+try:
+    # cocotb 2.0.0+
+    from cocotb_tools.check_results import get_results
+    from cocotb_tools.runner import get_runner
+except ImportError:
+    # cocotb 1.9.2 and earlier
+    try:
+        from cocotb.runner import get_results, get_runner
+    except ImportError:
+        # If neither works, create dummy functions
+        def get_results(*args, **kwargs):
+            raise NotImplementedError("get_results not available in this cocotb version")
+        def get_runner(*args, **kwargs):
+            raise NotImplementedError("get_runner not available in this cocotb version")
 
 
 logger = logging.getLogger(__name__)
@@ -29,7 +42,19 @@ def configure_logging_pre_sim(level: str = 'INFO') -> None:
 
 def configure_logging_sim(level: str = 'INFO') -> None:
     """Configure logging for tests during simulation using cocotb's format."""
-    cocotb.logging.default_config()
+    # Version-compatible logging configuration
+    try:
+        # cocotb 2.0.0+
+        import cocotb.logging
+        cocotb.logging.default_config()
+    except ImportError:
+        # cocotb 1.9.2 and earlier
+        try:
+            import cocotb.log
+            cocotb.log.default_config()
+        except (ImportError, AttributeError):
+            # Fallback to basic logging configuration
+            pass
 
     # Set the desired log level
     numeric_level = getattr(logging, level.upper(), None)
@@ -48,10 +73,27 @@ def write_params(working_dir: str, params: Dict[str, Any]) -> None:
 
 def read_params() -> Dict[str, Any]:
     """Read test parameters from JSON file specified in environment variable."""
-    params_filename = os.environ['FMPVU_TEST_PARAMS_FILENAME']
+    params_filename = os.environ['ZAMLET_TEST_CONFIG_FILENAME']
+    print(f"DEBUG: ZAMLET_TEST_CONFIG_FILENAME = '{params_filename}'")
+    print(f"DEBUG: All environment variables with ZAMLET:")
+    for key, value in os.environ.items():
+        if 'ZAMLET' in key:
+            print(f"  {key} = '{value}'")
+    
     with open(params_filename, 'r', encoding='utf-8') as params_file:
         params = json.loads(params_file.read())
     return params
+
+
+def get_test_params() -> Dict[str, Any]:
+    """Get test parameters from bazel environment variables."""
+    config_filename = os.environ['ZAMLET_TEST_CONFIG_FILENAME']
+    seed = int(os.environ.get('ZAMLET_TEST_SEED', '0'))
+    
+    return {
+        "seed": seed,
+        "params_file": config_filename,
+    }
 
 
 def run_test(working_dir: str, filenames: List[str], params: Dict[str, Any], toplevel: str, module: str) -> None:
@@ -71,12 +113,15 @@ def run_test(working_dir: str, filenames: List[str], params: Dict[str, Any], top
     
     runner.test(hdl_toplevel=toplevel, test_module=module, waves=True)
     
-    # Copy VCD file to workspace for debugging (regardless of test outcome)
+    # Copy VCD file to test outputs directory (regardless of test outcome)
     vcd_file = Path(runner.build_dir) / 'dump.vcd'
     if vcd_file.exists():
         try:
-            shutil.copy(str(vcd_file), '/workspace/last_dump.vcd')
-            logger.info(f"Copied {vcd_file} to /workspace/last_dump.vcd")
+            # Use Bazel's test undeclared outputs directory
+            output_dir = os.environ.get('TEST_UNDECLARED_OUTPUTS_DIR', '.')
+            output_path = os.path.join(output_dir, 'dump.vcd')
+            shutil.copy(str(vcd_file), output_path)
+            logger.info(f"Copied {vcd_file} to {output_path}")
         except Exception as e:
             logger.warning(f"Failed to copy VCD file: {e}")
     else:

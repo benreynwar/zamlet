@@ -25,4 +25,9 @@ GAMLET_CONFIG_FILES = [
     "gamlet_default.json",
 ]
 
-exports_files(LANE_ARRAY_CONFIG_FILES + LANE_CONFIG_FILES + AMLET_CONFIG_FILES + BAMLET_CONFIG_FILES + GAMLET_CONFIG_FILES, visibility = ["//visibility:public"])
+# List of Utils config JSON files
+UTILS_CONFIG_FILES = [
+    "dropping_fifo_default.json",
+]
+
+exports_files(LANE_ARRAY_CONFIG_FILES + LANE_CONFIG_FILES + AMLET_CONFIG_FILES + BAMLET_CONFIG_FILES + GAMLET_CONFIG_FILES + UTILS_CONFIG_FILES, visibility = ["//visibility:public"])

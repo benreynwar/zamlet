@@ -1,6 +1,6 @@
 # FMVPU Python package
 
-load("@rules_python//python:defs.bzl", "py_library")
+load("@rules_python//python:defs.bzl", "py_library", "py_binary")
 
 
 py_library(
@@ -10,3 +10,4 @@ py_library(
     visibility = ["//visibility:public"],
     imports = [".."],
 )
+

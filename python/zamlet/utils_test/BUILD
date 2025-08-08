@@ -1,40 +1,21 @@
 # Utils module tests
 
-load("@rules_python//python:defs.bzl", "py_test")
+load("//bazel:test_common.bzl", "create_module_tests")
 
-# Generate DroppingFifo Verilog with specific parameters
-genrule(
-    name = "counting_fifo_default_verilog",
-    outs = ["counting_fifo_default.sv"],
-    cmd = """
-    TMPDIR=$$(mktemp -d)
-    $(location //src:verilog_generator) \\
-        $$TMPDIR/counting_fifo_verilog \\
-        DroppingFifo \\
-        8 4 4
-    cat $$TMPDIR/counting_fifo_verilog/*.sv > $@
-    rm -rf $$TMPDIR
-    """,
-    tools = ["//src:verilog_generator"],
-)
+# Config file mapping: short_name -> actual_filename
+CONFIGS = {
+    "default": "dropping_fifo_default",
+}
 
-filegroup(
-    name = "counting_fifo_default_verilog_files",
-    srcs = [":counting_fifo_default_verilog"],
-)
+# Module definitions: name, top_level, extra_args
+MODULES = [
+    ("dropping_fifo", "DroppingFifo", []),
+]
 
-# CountingFifo test
-py_test(
-    name = "test_dropping_fifo_default",
-    srcs = ["test_dropping_fifo.py"],
-    deps = [
-        "//python/zamlet:zamlet",
-    ],
-    data = [
-        ":counting_fifo_default_verilog_files",
-    ],
-    args = [
-        "$(location :counting_fifo_default_verilog_files)",
-    ],
-    main = "test_dropping_fifo.py",
-)
+# Test definitions: name, test_file, verilog_target, special_args
+TESTS = [
+    ("test_dropping_fifo", "test_dropping_fifo.py", "dropping_fifo", []),
+]
+
+# Generate all Verilog, filegroups, and tests
+create_module_tests(MODULES, TESTS, CONFIGS)

@@ -56,3 +56,6 @@ When using the Grep tool for searching code:
 - **Issue**: Patterns like `"predicate.*new PTaggedSource"` (with quotes inside) will search for literal quote characters
 - **Solution**: Use clean patterns like `predicate.*new PTaggedSource` (without extra quotes)
 - Simple patterns like `isLocal` work better than complex multi-part regex patterns
+
+## Communication Style
+NEVER claim success with phrases like "The key achievement is" or similar when a task has failed. Be honest about failures and focus on what still needs to be done rather than trying to spin partial progress as success. This is irritating and unhelpful.
