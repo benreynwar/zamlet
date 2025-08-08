@@ -56,14 +56,24 @@ def _cocotb_binary_impl(ctx):
         unsupported_features = ctx.disabled_features,
     )
     
+    # Get Python headers for compilation
+    if not ctx.attr._py_cc_headers or CcInfo not in ctx.attr._py_cc_headers:
+        fail("Python C headers not available. Ensure @rules_python//python/cc:current_py_cc_headers is properly configured.")
+    py_cc_headers = ctx.attr._py_cc_headers[CcInfo]
+    
     # Compile cocotb's verilator.cpp
+    compilation_contexts = [
+        verilator_cc_lib[CcInfo].compilation_context,
+        py_cc_headers.compilation_context,
+    ]
+    
     compilation_context, compilation_outputs = cc_common.compile(
         name = ctx.label.name + "_cocotb_compile",
         actions = ctx.actions,
         feature_configuration = feature_configuration,
         cc_toolchain = cc_toolchain,
         srcs = [cocotb_verilator_cpp],
-        compilation_contexts = [verilator_cc_lib[CcInfo].compilation_context],
+        compilation_contexts = compilation_contexts,
     )
     
     # Get cocotb VPI library paths from the cocotb dependency
@@ -109,28 +119,16 @@ def _cocotb_binary_impl(ctx):
     # Build link flags for Python library
     link_flags = []
     
-    # Add Python library (get version from toolchain)
-    python_toolchain = ctx.toolchains["@rules_python//python:toolchain_type"]
-    if not python_toolchain:
-        fail("Python toolchain not found - ensure @rules_python//python:toolchain_type is available")
+    # Get Python CC libs for linking
+    if not ctx.attr._py_cc_libs or CcInfo not in ctx.attr._py_cc_libs:
+        fail("Python C libraries not available. Ensure @rules_python//python/cc:current_py_cc_libs is properly configured.")
+    py_cc_libs = ctx.attr._py_cc_libs[CcInfo]
     
-    if not hasattr(python_toolchain, "py3_runtime"):
-        fail("Python toolchain missing py3_runtime - toolchain may be misconfigured")
-        
-    py_runtime = python_toolchain.py3_runtime
-    if hasattr(py_runtime, "interpreter_version_info"):
-        version_info = py_runtime.interpreter_version_info
-        major, minor = version_info.major, version_info.minor
-        link_flags.append("-lpython{}.{}".format(major, minor))
-    else:
-        # If we can't get version info, we need to fail or use a reasonable default
-        # For now, let's fail to understand what's available
-        fail("Python runtime missing interpreter_version_info - cannot determine Python version for linking")
-
-    # Link verilator library + cocotb main + all cocotb libraries
+    # Link verilator library + cocotb main + all cocotb libraries + Python libs
     linking_contexts = [
         verilator_cc_lib[CcInfo].linking_context,
         cocotb_linking_context,
+        py_cc_libs.linking_context,
     ]
     
     linking_outputs = cc_common.link(
@@ -193,6 +191,16 @@ _cocotb_binary_attrs = {
         doc = "Cocotb Python dependency for accessing verilator.cpp and VPI libraries",
         default = "@zamlet_pip_deps//cocotb",
         providers = [PyInfo, DefaultInfo],
+    ),
+    "_py_cc_libs": attr.label(
+        doc = "Python C libraries for linking",
+        default = "@rules_python//python/cc:current_py_cc_libs",
+        providers = [CcInfo],
+    ),
+    "_py_cc_headers": attr.label(
+        doc = "Python C headers for compilation",
+        default = "@rules_python//python/cc:current_py_cc_headers",
+        providers = [CcInfo],
     ),
 }
 
