@@ -6,11 +6,7 @@ import chisel3.util._
 /**
  * SendPacket Reservation Station - manages in-order execution for Send Packet operations
  */
-class SendPacketRS(params: AmletParams) extends ReservationStation[PacketInstr.SendResolving, PacketInstr.SendResolved](params, new PacketInstr.SendResolving(params), new PacketInstr.SendResolved(params)) {
-
-  def nSlots(): Int = {
-    params.nSendPacketRSSlots
-  }
+class SendPacketRS(params: AmletParams) extends ReservationStation[PacketInstr.SendResolving, PacketInstr.SendResolved](params, params.sendPacketRSParams, new PacketInstr.SendResolving(params), new PacketInstr.SendResolved(params)) {
 
   def readyToIssue(allResolving: Vec[PacketInstr.SendResolving], index: UInt): Bool = {
     // Only issue from position 0 (no reordering) and must be resolved

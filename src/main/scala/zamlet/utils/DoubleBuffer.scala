@@ -4,14 +4,14 @@ import chisel3._
 import chisel3.util._
 import zamlet.ModuleGenerator
 
-class DoubleBuffer[T <: Data](t: T) extends Module {
+class DoubleBuffer[T <: Data](t: T, enableForward: Boolean = true, enableBackward: Boolean = true) extends Module {
   val io = IO(new Bundle {
     val i = Flipped(DecoupledIO(t))
     val o = DecoupledIO(t)
   })
 
-  val skidBuffer = Module(new SkidBuffer(t))
-  val decoupledBuffer = Module(new DecoupledBuffer(t))
+  val skidBuffer = Module(new SkidBuffer(t, enableForward))
+  val decoupledBuffer = Module(new DecoupledBuffer(t, enableBackward))
 
   skidBuffer.io.i <> io.i
   decoupledBuffer.io.i <> skidBuffer.io.o

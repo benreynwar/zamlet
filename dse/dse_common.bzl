@@ -4,6 +4,7 @@
 load("@bazel-orfs//:openroad.bzl", "orfs_flow", "orfs_run")
 load("@bazel-orfs//:yosys.bzl", "yosys")
 load("//bazel:verilog.bzl", "generate_verilog_rule")
+load("//dse:orfs_config.bzl", "get_orfs_arguments")
 
 def dse_component_flows(studies, component_type, pdks = ["asap7", "sky130hd"]):
     """
@@ -31,24 +32,7 @@ def dse_component_flows(studies, component_type, pdks = ["asap7", "sky130hd"]):
         name = name,
         top = study_name,
         pdk = "@docker_orfs//:{}".format(pdk),
-        arguments = {
-            "FILL_CELLS": "",
-            "TAPCELL_TCL": "",
-            "SKIP_REPORT_METRICS": "1",
-            "SKIP_CTS_REPAIR_TIMING": "1", 
-            "SKIP_INCREMENTAL_REPAIR": "1",
-            "GND_NETS_VOLTAGES": "",
-            "PWR_NETS_VOLTAGES": "",
-            "GPL_ROUTABILITY_DRIVEN": "1",
-            "GPL_TIMING_DRIVEN": "0",
-            "SETUP_SLACK_MARGIN": "-10000",
-            "TNS_END_PERCENT": "0",
-            "SYNTH_HIERARCHICAL": "1",
-            "SYNTH_MINIMUM_KEEP_SIZE": "50",
-            "SYNTH_MEMORY_MAX_BITS": "8192",
-            "PLACE_DENSITY": "0.40",
-            "CORE_UTILIZATION": "20",
-        },
+        arguments = get_orfs_arguments(study["name"], pdk),
         sources = {
             "SDC_FILE": ["//dse:config/constraints_{}.sdc".format(pdk)],
         },

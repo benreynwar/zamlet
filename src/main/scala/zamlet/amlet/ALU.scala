@@ -2,6 +2,7 @@ package zamlet.amlet
 
 import chisel3._
 import chisel3.util._
+import zamlet.utils.{ValidBuffer, ResetStage}
 
 /**
  * ALU for Amlet implementation
@@ -29,116 +30,105 @@ class ALU(params: AmletParams) extends Module {
     val result = Output(Valid(new WriteResult(params)))
   })
 
-  // Shift amount bit range for data width operations
-  private val shiftBits = log2Ceil(params.width) - 1
+  val resetBuffered = ResetStage(clock, reset)
 
-  // Compute ALU result
-  val aluOut = Wire(UInt(params.width.W))
+  withReset(resetBuffered) {
+  
+    // Stage 'i' - Input signals (before inputBuffer)
+    val iInstr = io.instr
+  
+    // Optional input buffer (i to a)
+    val inputBuffer = Module(new ValidBuffer(new ALUInstr.Resolved(params), params.aluParams.iaBuffer))
+    inputBuffer.io.i <> iInstr
+    val aInstr = inputBuffer.io.o
+  
+    // Shift amount bit range for data width operations
+    val shiftBits = log2Ceil(params.width) - 1
 
-  // Accumulator
-  val accNext = Wire(UInt(params.width.W))
-  val acc = RegNext(accNext, 0.U)
-  
-  aluOut := 0.U  // Default value
-  accNext := acc  // Default: preserve accumulator value
-  
-  when (io.instr.bits.predicate) {
-    switch(io.instr.bits.mode) {
-      is(ALUInstr.Modes.None) {
-        aluOut := 0.U
-      }
-      is(ALUInstr.Modes.Add) {
-        aluOut := io.instr.bits.src1 + io.instr.bits.src2
-      }
-      is(ALUInstr.Modes.Addi) {
-        aluOut := io.instr.bits.src1 + io.instr.bits.src2  // src2 is immediate
-      }
-      is(ALUInstr.Modes.Sub) {
-        aluOut := io.instr.bits.src1 - io.instr.bits.src2
-      }
-      is(ALUInstr.Modes.Subi) {
-        aluOut := io.instr.bits.src1 - io.instr.bits.src2  // src2 is immediate
-      }
-      is(ALUInstr.Modes.Mult) {
-        aluOut := io.instr.bits.src1 * io.instr.bits.src2
-      }
-      is(ALUInstr.Modes.MultAcc) {
-        // MultAcc: add multiplication result to accumulator and output the new accumulator value
-        val multResult = io.instr.bits.src1 * io.instr.bits.src2
-        accNext := acc + multResult
-        aluOut := acc + multResult  // Output the new accumulator value
-      }
-      is(ALUInstr.Modes.MultAccInit) {
-        // MultAccInit: multiply and write result directly to accumulator (no addition)
-        val multResult = io.instr.bits.src1 * io.instr.bits.src2
-        accNext := multResult
-        aluOut := multResult
-      }
-      is(ALUInstr.Modes.Eq) {
-        aluOut := (io.instr.bits.src1 === io.instr.bits.src2).asUInt
-      }
-      is(ALUInstr.Modes.Gte) {
-        aluOut := (io.instr.bits.src1 >= io.instr.bits.src2).asUInt
-      }
-      is(ALUInstr.Modes.Lte) {
-        aluOut := (io.instr.bits.src1 <= io.instr.bits.src2).asUInt
-      }
-      is(ALUInstr.Modes.Not) {
-        aluOut := ~io.instr.bits.src1
-      }
-      is(ALUInstr.Modes.And) {
-        aluOut := io.instr.bits.src1 & io.instr.bits.src2
-      }
-      is(ALUInstr.Modes.Or) {
-        aluOut := io.instr.bits.src1 | io.instr.bits.src2
-      }
-      is(ALUInstr.Modes.ShiftL) {
-        aluOut := io.instr.bits.src1 << io.instr.bits.src2(shiftBits, 0)
-      }
-      is(ALUInstr.Modes.ShiftR) {
-        aluOut := io.instr.bits.src1 >> io.instr.bits.src2(shiftBits, 0)
+    // Stage 'a' - Compute and mux non-multiplier instructions, compute multiplier operations
+    val aMultResult = aInstr.bits.src1 * aInstr.bits.src2
+    
+    // Non-multiplier result computation and muxing in stage 'a'
+    val aNonMultiplierResult = Wire(UInt(params.width.W))
+    aNonMultiplierResult := aInstr.bits.src1  // Default when predicate is false
+    
+    when (aInstr.bits.predicate) {
+      switch(aInstr.bits.mode) {
+        is(ALUInstr.Modes.None) { aNonMultiplierResult := 0.U(params.width.W) }
+        is(ALUInstr.Modes.Add) { aNonMultiplierResult := aInstr.bits.src1 + aInstr.bits.src2 }
+        is(ALUInstr.Modes.Addi) { aNonMultiplierResult := aInstr.bits.src1 + aInstr.bits.src2 }
+        is(ALUInstr.Modes.Sub) { aNonMultiplierResult := aInstr.bits.src1 - aInstr.bits.src2 }
+        is(ALUInstr.Modes.Subi) { aNonMultiplierResult := aInstr.bits.src1 - aInstr.bits.src2 }
+        is(ALUInstr.Modes.Eq) { aNonMultiplierResult := (aInstr.bits.src1 === aInstr.bits.src2).asUInt }
+        is(ALUInstr.Modes.Gte) { aNonMultiplierResult := (aInstr.bits.src1 >= aInstr.bits.src2).asUInt }
+        is(ALUInstr.Modes.Lte) { aNonMultiplierResult := (aInstr.bits.src1 <= aInstr.bits.src2).asUInt }
+        is(ALUInstr.Modes.Not) { aNonMultiplierResult := ~aInstr.bits.src1 }
+        is(ALUInstr.Modes.And) { aNonMultiplierResult := aInstr.bits.src1 & aInstr.bits.src2 }
+        is(ALUInstr.Modes.Or) { aNonMultiplierResult := aInstr.bits.src1 | aInstr.bits.src2 }
+        is(ALUInstr.Modes.ShiftL) { aNonMultiplierResult := aInstr.bits.src1 << aInstr.bits.src2(shiftBits, 0) }
+        is(ALUInstr.Modes.ShiftR) { aNonMultiplierResult := aInstr.bits.src1 >> aInstr.bits.src2(shiftBits, 0) }
       }
     }
-  } .otherwise {
-    aluOut := io.instr.bits.src1
-  }
+    
+    // Determine if instruction uses multiplier
+    val aUsesMultiplier = aInstr.bits.mode === ALUInstr.Modes.Mult || 
+                         aInstr.bits.mode === ALUInstr.Modes.MultAcc || 
+                         aInstr.bits.mode === ALUInstr.Modes.MultAccInit
 
-  // Pipeline the result through the specified latency
-  if (params.aluLatency == 0) {
-    // Single cycle latency
-    io.result.valid := io.instr.valid
-    io.result.bits.value := aluOut
-    io.result.bits.address.addr := io.instr.bits.dst.addr
-    io.result.bits.address.tag := io.instr.bits.dst.tag
-    io.result.bits.predicate := io.instr.bits.predicate
-    io.result.bits.force := false.B
-  } else {
-    // Multi-cycle pipeline
-    val validPipe = RegInit(VecInit(Seq.fill(params.aluLatency)(false.B)))
-    val resultPipe = RegInit(VecInit(Seq.fill(params.aluLatency)(0.U(params.width.W))))
-    val dstAddrPipe = RegInit(VecInit(Seq.fill(params.aluLatency)(0.U.asTypeOf(new BTaggedReg(params)))))
-    val dstPredicatePipe = RegInit(VecInit(Seq.fill(params.aluLatency)(false.B)))
-    
-    // Stage 0 (input)
-    validPipe(0) := io.instr.valid
-    resultPipe(0) := aluOut
-    dstAddrPipe(0) := io.instr.bits.dst
-    dstPredicatePipe(0) := io.instr.bits.predicate
-    
-    // Pipeline stages 1 to latency-1
-    for (i <- 1 until params.aluLatency) {
-      validPipe(i) := validPipe(i-1)
-      resultPipe(i) := resultPipe(i-1)
-      dstAddrPipe(i) := dstAddrPipe(i-1)
-      dstPredicatePipe(i) := dstPredicatePipe(i-1)
+    // Apply abBuffer to required signals only (stage 'a' to 'b')
+    val bNonMultiplierResult = RegNext(aNonMultiplierResult)
+    val bMultResult = RegNext(aMultResult) 
+    val bUsesMultiplier = RegNext(aUsesMultiplier)
+    val bInstr = ValidBuffer(aInstr, params.aluParams.abBuffer)
+
+    // Accumulator - current value is at stage 'b'
+    val bAccNext = Wire(UInt(params.width.W))
+    val bAcc = RegNext(bAccNext, 0.U)
+    bAccNext := bAcc  // Default: preserve accumulator value
+
+    // Update accumulator based on bInstr mode
+    when (bInstr.valid && bInstr.bits.predicate) {
+      switch(bInstr.bits.mode) {
+        is(ALUInstr.Modes.MultAcc) {
+          bAccNext := bAcc + bMultResult
+        }
+        is(ALUInstr.Modes.MultAccInit) {
+          bAccNext := bMultResult
+        }
+      }
     }
+
+    // Stage 'b' - Mux between multiplier and non-multiplier results
+    val bResult = Wire(UInt(params.width.W))
     
-    // Output
-    io.result.valid := validPipe(params.aluLatency-1)
-    io.result.bits.value := resultPipe(params.aluLatency-1)
-    io.result.bits.address := dstAddrPipe(params.aluLatency-1)
-    io.result.bits.predicate := dstPredicatePipe(params.aluLatency-1)
-    io.result.bits.force := false.B
+    when (bUsesMultiplier) {
+      // For multiplier operations, handle predicate in stage 'b'
+      bResult := bInstr.bits.src1  // Default when predicate is false
+      when (bInstr.valid && bInstr.bits.predicate) {
+        switch(bInstr.bits.mode) {
+          is(ALUInstr.Modes.Mult) { bResult := bMultResult }
+          is(ALUInstr.Modes.MultAcc) { bResult := bAcc + bMultResult }
+          is(ALUInstr.Modes.MultAccInit) { bResult := bMultResult }
+        }
+      }
+    } .otherwise {
+      // For non-multiplier operations, use pre-computed result from stage 'a'
+      bResult := bNonMultiplierResult
+    }
+
+    // Create result before output buffer (stage 'b')
+    val bWriteResult = Wire(Valid(new WriteResult(params)))
+    bWriteResult.valid := bInstr.valid
+    bWriteResult.bits.value := bResult
+    bWriteResult.bits.address := bInstr.bits.dst
+    bWriteResult.bits.predicate := bInstr.bits.predicate
+    bWriteResult.bits.force := false.B
+
+    // Apply boBuffer (stage 'b' to 'o')
+    val oResult = ValidBuffer(bWriteResult, params.aluParams.boBuffer)
+    
+    // Final output (stage 'o')
+    io.result := oResult
   }
 }
 

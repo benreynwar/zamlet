@@ -6,11 +6,7 @@ import chisel3.util._
 /**
  * ALULite Reservation Station - manages out-of-order execution for ALULite operations
  */
-class ALULiteRS(params: AmletParams) extends ReservationStation[ALULiteInstr.Resolving, ALULiteInstr.Resolved](params, new ALULiteInstr.Resolving(params), new ALULiteInstr.Resolved(params)) {
-
-  def nSlots(): Int = {
-    params.nAluLiteRSSlots
-  }
+class ALULiteRS(params: AmletParams) extends ReservationStation[ALULiteInstr.Resolving, ALULiteInstr.Resolved](params, params.aluLiteRSParams, new ALULiteInstr.Resolving(params), new ALULiteInstr.Resolved(params)) {
 
   def readyToIssue(allResolving: Vec[ALULiteInstr.Resolving], index: UInt): Bool = {
     allResolving(index).isResolved()

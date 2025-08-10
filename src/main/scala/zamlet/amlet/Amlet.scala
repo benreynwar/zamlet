@@ -39,6 +39,12 @@ class AmletIO(params: AmletParams) extends Bundle {
 
 class AmletErrors extends Bundle {
   val receivePacketInterface = new ReceivePacketInterfaceErrors()
+  val aluRS = new ReservationStationErrors()
+  val aluLiteRS = new ReservationStationErrors()
+  val aluPredicateRS = new ReservationStationErrors()
+  val loadStoreRS = new ReservationStationErrors()
+  val sendPacketRS = new ReservationStationErrors()
+  val receivePacketRS = new ReservationStationErrors()
 }
 
 /**
@@ -138,6 +144,12 @@ class Amlet(params: AmletParams) extends Module {
   io.loopIterations := registerFileAndRename.io.loopIterations
 
   errors.receivePacketInterface := receivePacketInterface.io.errors
+  errors.aluRS := aluRS.io.error
+  errors.aluLiteRS := aluLiteRS.io.error
+  errors.aluPredicateRS := aluPredicateRS.io.error
+  errors.loadStoreRS := loadStoreRS.io.error
+  errors.sendPacketRS := sendPacketRS.io.error
+  errors.receivePacketRS := receivePacketRS.io.error
   
   // Connect position to modules that need it
   networkNode.io.thisX := bufferedThisX

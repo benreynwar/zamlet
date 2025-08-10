@@ -8,6 +8,19 @@ import io.circe.generic.auto._
 import io.circe.generic.semiauto._
 import scala.io.Source
 
+case class ALUParams(
+  iaBuffer: Boolean = false,
+  abBuffer: Boolean = false,
+  boBuffer: Boolean = false
+)
+
+case class ReservationStationParams(
+  nSlots: Int = 6,
+  iaBuffer: Boolean = false,
+  boForwardBuffer: Boolean = true,
+  boBackwardBuffer: Boolean = true
+)
+
 case class AmletParams(
   // Width of the words in the ALU and Network
   width: Int = 32,
@@ -43,23 +56,23 @@ case class AmletParams(
   packetLengthWidth: Int = 8,
 
   // ALU configuration
-  aluLatency: Int = 1,
-  nAluRSSlots: Int = 4,
+  aluParams: ALUParams = ALUParams(),
+  aluRSParams: ReservationStationParams = ReservationStationParams(),
   
   // ALULite configuration
   aluLiteLatency: Int = 1,
-  nAluLiteRSSlots: Int = 4,
+  aluLiteRSParams: ReservationStationParams = ReservationStationParams(),
 
   // ALU Predicate configuration
   aluPredicateLatency: Int = 1,
-  nAluPredicateRSSlots: Int = 4,
+  aluPredicateRSParams: ReservationStationParams = ReservationStationParams(),
 
   // Load Store configuration
-  nLoadStoreRSSlots: Int = 4,
+  loadStoreRSParams: ReservationStationParams = ReservationStationParams(),
 
   // Packet configuration
-  nSendPacketRSSlots: Int = 2,
-  nReceivePacketRSSlots: Int = 2,
+  sendPacketRSParams: ReservationStationParams = ReservationStationParams(nSlots = 2),
+  receivePacketRSParams: ReservationStationParams = ReservationStationParams(nSlots = 2),
   nPacketOutIdents: Int = 4,
   
   // Network configuration

@@ -1,6 +1,6 @@
 set clk_name clock
 set clk_port_name clock
-set clk_period 13
+set clk_period 10
 
 set sdc_version 2.0
 
@@ -13,11 +13,8 @@ create_clock -period $clk_period -waveform [list 0 [expr $clk_period / 2]] -name
 set non_clk_inputs  [lsearch -inline -all -not -exact [all_inputs] $clk_port]
 set all_register_outputs [get_pins -of_objects [all_registers] -filter {direction == output}]
 
-# Set input/output delays as 60% of clock period for realistic timing constraints
-set io_delay [expr $clk_period * 0.6]
-
-set_input_delay [expr $clk_period * 0.8] -clock $clk_name $non_clk_inputs
-set_output_delay [expr $clk_period * 0.3] -clock $clk_name [all_outputs]
+set_input_delay [expr $clk_period * 0.6] -clock $clk_name $non_clk_inputs
+set_output_delay [expr $clk_period * 0.6] -clock $clk_name [all_outputs]
 
 # This allows us to view the different groups
 # in the histogram in the GUI and also includes these

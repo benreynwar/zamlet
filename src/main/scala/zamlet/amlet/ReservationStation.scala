@@ -2,11 +2,16 @@ package zamlet.amlet
 
 import chisel3._
 import chisel3.util._
+import zamlet.utils.{DoubleBuffer, RegBuffer, ValidBuffer}
+
+class ReservationStationErrors extends Bundle {
+  val noFreeSlots = Bool()
+}
 
 abstract class ReservationStation[U <: Instr.Resolving, R <: Instr.Resolved]
-    (params: AmletParams, Resolving: U, Resolved: R) extends Module {
+    (params: AmletParams, rsParams: ReservationStationParams, Resolving: U, Resolved: R) extends Module {
 
-  def nSlots(): Int
+  def nSlots(): Int = rsParams.nSlots
   def readyToIssue(allResolving: Vec[U], index: UInt): Bool
   def emptySlot(): U
 
@@ -19,7 +24,22 @@ abstract class ReservationStation[U <: Instr.Resolving, R <: Instr.Resolved]
     
     // Results from execution units for dependency resolution
     val resultBus = Input(new ResultBus(params))
+    
+    // Error outputs
+    val error = Output(new ReservationStationErrors)
   })
+
+  // Add input buffer using ValidBuffer
+  val iFire = Wire(Valid(chiselTypeOf(io.input.bits)))
+  iFire.valid := io.input.valid && io.input.ready
+  iFire.bits := io.input.bits
+  val aInput = ValidBuffer(iFire, rsParams.iaBuffer)
+  
+  // Buffer the resultBus using RegBuffer
+  val aResultBus = RegBuffer(io.resultBus, rsParams.iaBuffer)
+
+  // Internal output before buffering
+  val internalOutput = Wire(Decoupled(Resolved))
 
   // The reservation stores several instructions.
   // They are stored here until all the values that they depend on have been
@@ -45,7 +65,7 @@ abstract class ReservationStation[U <: Instr.Resolving, R <: Instr.Resolved]
   val issueSlotIndex = RegNext(issueSlotIndexNext)
 
   val removeValid = Wire(Bool())
-  removeValid := issueValid && io.output.ready
+  removeValid := issueValid && internalOutput.ready
 
   for (i <- 0 until nSlots()) {
     slotsIntermed(i) := slots(i)
@@ -57,8 +77,8 @@ abstract class ReservationStation[U <: Instr.Resolving, R <: Instr.Resolved]
     } else {
       belowRemoved := (!removeValid) || i.U < issueSlotIndex
     }
-    when (io.input.fire && (i+1).U === nUsedSlotsNext) {
-      slotsIntermed(i) := io.input.bits
+    when (aInput.valid && (i+1).U === nUsedSlotsNext) {
+      slotsIntermed(i) := aInput.bits
     } .elsewhen (belowRemoved) {
       slotsIntermed(i) := slots(i)
     } .elsewhen (i.U < nUsedSlots) {
@@ -75,7 +95,7 @@ abstract class ReservationStation[U <: Instr.Resolving, R <: Instr.Resolved]
 
   // Now update them with the effect of the write backs.
   for (i <- 0 until nSlots()) {
-    slotsNext(i) := slotsIntermed(i).update(io.resultBus)
+    slotsNext(i) := slotsIntermed(i).update(aResultBus)
   }
 
 
@@ -97,25 +117,41 @@ abstract class ReservationStation[U <: Instr.Resolving, R <: Instr.Resolved]
   val inputReadyNext = Wire(Bool())
   val inputReady = RegNext(inputReadyNext, true.B)
 
+  // Determine ready threshold based on iaBuffer setting
+  val readyThreshold = if (rsParams.iaBuffer) (nSlots() - 2).U else (nSlots() - 1).U
+
+  // Error check: if aInput.valid, there should always be at least one free slot
+  val errorNoFreeSlots = Wire(Bool())
+  errorNoFreeSlots := aInput.valid && (nUsedSlots >= nSlots().U)
+  
+  // Register the errors
+  val errorReg = RegNext(errorNoFreeSlots, false.B)
+  io.error.noFreeSlots := errorReg
+
   nUsedSlotsNext := nUsedSlots
   inputReadyNext := inputReady
-  when (removeValid && io.input.fire) {
+  when (removeValid && aInput.valid) {
     // We receive an instruction and we issue one
   } .elsewhen (removeValid) {
     // We issued but didn't receive
     nUsedSlotsNext := nUsedSlots - 1.U
     inputReadyNext := true.B
-  } .elsewhen (io.input.fire) {
+  } .elsewhen (aInput.valid) {
     // We received but didn't issue
     nUsedSlotsNext := nUsedSlots + 1.U
-    when (nUsedSlots === (nSlots()-1).U) {
+    when (nUsedSlots >= readyThreshold) {
       inputReadyNext := false.B
     }
   }
   io.input.ready := inputReady
   
-  io.output.valid := removeValid
+  internalOutput.valid := removeValid
   val issueSlot = slots(issueSlotIndex)
-  io.output.bits := issueSlot.resolve()
+  internalOutput.bits := issueSlot.resolve()
+
+  // Add DoubleBuffer at output with individual enable parameters
+  val outputBuffer = Module(new DoubleBuffer(chiselTypeOf(internalOutput.bits), rsParams.boForwardBuffer, rsParams.boBackwardBuffer))
+  outputBuffer.io.i <> internalOutput
+  io.output <> outputBuffer.io.o
 
 }

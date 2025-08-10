@@ -6,11 +6,7 @@ import chisel3.util._
 /**
  * ALU Predicate Reservation Station - manages out-of-order execution for ALU predicate operations
  */
-class ALUPredicateRS(params: AmletParams) extends ReservationStation[PredicateInstr.Resolving, PredicateInstr.Resolved](params, new PredicateInstr.Resolving(params), new PredicateInstr.Resolved(params)) {
-
-  def nSlots(): Int = {
-    params.nAluPredicateRSSlots
-  }
+class ALUPredicateRS(params: AmletParams) extends ReservationStation[PredicateInstr.Resolving, PredicateInstr.Resolved](params, params.aluPredicateRSParams, new PredicateInstr.Resolving(params), new PredicateInstr.Resolved(params)) {
 
   def readyToIssue(allResolving: Vec[PredicateInstr.Resolving], index: UInt): Bool = {
     allResolving(index).isResolved()

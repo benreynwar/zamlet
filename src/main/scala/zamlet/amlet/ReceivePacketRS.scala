@@ -6,11 +6,7 @@ import chisel3.util._
 /**
  * ReceivePacket Reservation Station - manages in-order execution for Receive Packet operations
  */
-class ReceivePacketRS(params: AmletParams) extends ReservationStation[PacketInstr.ReceiveResolving, PacketInstr.ReceiveResolved](params, new PacketInstr.ReceiveResolving(params), new PacketInstr.ReceiveResolved(params)) {
-
-  def nSlots(): Int = {
-    params.nReceivePacketRSSlots
-  }
+class ReceivePacketRS(params: AmletParams) extends ReservationStation[PacketInstr.ReceiveResolving, PacketInstr.ReceiveResolved](params, params.receivePacketRSParams, new PacketInstr.ReceiveResolving(params), new PacketInstr.ReceiveResolved(params)) {
 
   def readyToIssue(allResolving: Vec[PacketInstr.ReceiveResolving], index: UInt): Bool = {
     // Only issue from position 0 (no reordering) and must be resolved

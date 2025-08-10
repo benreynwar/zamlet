@@ -26,15 +26,50 @@
     "xPosWidth": 8,
     "yPosWidth": 8,
     "packetLengthWidth": 8,
-    "aluLatency": 1,
     "nAluRSSlots": 4,
+    "aluParams": {
+      "iaBuffer": true,
+      "abBuffer": true,
+      "boBuffer": true
+    },
+    "aluRSParams": {
+      "nSlots": 5,
+      "iaBuffer": true,
+      "boForwardBuffer": true,
+      "boBackwardBuffer": true
+    },
     "aluLiteLatency": 1,
-    "nAluLiteRSSlots": 4,
+    "aluLiteRSParams": {
+      "nSlots": 5,
+      "iaBuffer": true,
+      "boForwardBuffer": true,
+      "boBackwardBuffer": true
+    },
     "aluPredicateLatency": 1,
-    "nAluPredicateRSSlots": 4,
-    "nLoadStoreRSSlots": 4,
-    "nSendPacketRSSlots": 2,
-    "nReceivePacketRSSlots": 2,
+    "aluPredicateRSParams": {
+      "nSlots": 5,
+      "iaBuffer": true,
+      "boForwardBuffer": true,
+      "boBackwardBuffer": true
+    },
+    "loadStoreRSParams": {
+      "nSlots": 5,
+      "iaBuffer": true,
+      "boForwardBuffer": true,
+      "boBackwardBuffer": true
+    },
+    "sendPacketRSParams": {
+      "nSlots": 3,
+      "iaBuffer": true,
+      "boForwardBuffer": true,
+      "boBackwardBuffer": true
+    },
+    "receivePacketRSParams": {
+      "nSlots": 3,
+      "iaBuffer": true,
+      "boForwardBuffer": true,
+      "boBackwardBuffer": true
+    },
     "nPacketOutIdents": 4,
     "nChannels": 2,
     "instrAddrWidth": 8,
