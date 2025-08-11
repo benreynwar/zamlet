@@ -34,6 +34,36 @@ def _get_target_overrides(target_name):
             "CORE_UTILIZATION": "60",
             # Target-specific parameters for ALU_default can go here
         }
+    elif target_name == "ALURS_default":
+        return {
+            "PLACE_DENSITY": "0.65",
+            "CORE_UTILIZATION": "55",
+            # Target-specific parameters for ALU_default can go here
+        }
+    elif target_name == "RegisterFile_default":
+        return {
+            "PLACE_DENSITY": "0.50",
+            "CORE_UTILIZATION": "40",
+            # Target-specific parameters for ALU_default can go here
+        }
+    elif target_name == "RegisterFile_D":
+        return {
+            "PLACE_DENSITY": "0.50",
+            "CORE_UTILIZATION": "40",
+            # Target-specific parameters for ALU_default can go here
+        }
+    elif target_name == "RegisterFile_A":
+        return {
+            "PLACE_DENSITY": "0.65",
+            "CORE_UTILIZATION": "55",
+            # Target-specific parameters for ALU_default can go here
+        }
+    elif target_name == "RegisterFile_P":
+        return {
+            "PLACE_DENSITY": "0.65",
+            "CORE_UTILIZATION": "55",
+            # Target-specific parameters for ALU_default can go here
+        }
     else:
         # No specific overrides for this target
         return {}

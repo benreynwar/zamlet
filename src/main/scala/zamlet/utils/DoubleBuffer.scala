@@ -18,6 +18,14 @@ class DoubleBuffer[T <: Data](t: T, enableForward: Boolean = true, enableBackwar
   io.o <> decoupledBuffer.io.o
 }
 
+object DoubleBuffer {
+  def apply[T <: Data](input: DecoupledIO[T], enableForward: Boolean, enableBackward: Boolean): DecoupledIO[T] = {
+    val buffer = Module(new DoubleBuffer(input.bits.cloneType, enableForward, enableBackward))
+    buffer.io.i <> input
+    buffer.io.o
+  }
+}
+
 object DoubleBufferGenerator extends ModuleGenerator {
   override def makeModule(args: Seq[String]): Module = {
     if (args.length < 1) {

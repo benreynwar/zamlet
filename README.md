@@ -6,9 +6,8 @@ A parameterizable open source VLIW SIMT processor designed for mesh accelerators
 
 ## Quick Start
 
-Ideally you should just be able to install bazel and then build
-this project, but I wouldn't bet a whole lot of money on it working.
-It works for me though!
+Install bazel, docker and java. Then you should be able to use bazel to build.
+It will pull in about 30GB of tools.
 
 ```bash
 # Generate Verilog and run tests

@@ -30,6 +30,14 @@ class DecoupledBuffer[T <: Data](t: T, enable: Boolean = true) extends Module {
   }
 }
 
+object DecoupledBuffer {
+  def apply[T <: Data](input: DecoupledIO[T], enable: Boolean): DecoupledIO[T] = {
+    val buffer = Module(new DecoupledBuffer(input.bits.cloneType, enable))
+    buffer.io.i <> input
+    buffer.io.o
+  }
+}
+
 object DecoupledBufferGenerator extends ModuleGenerator {
   override def makeModule(args: Seq[String]): Module = {
     if (args.length < 1) {

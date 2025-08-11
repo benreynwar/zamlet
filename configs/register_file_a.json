@@ -1,0 +1,11 @@
+{
+  "width": 16,
+  "nRegs": 16,
+  "nTags": 8,
+  "nReads": 7,
+  "nWrites": 5,
+  "iaForwardBuffer": true,
+  "iaBackwardBuffer": true,
+  "iaResultsBuffer": true,
+  "aoBuffer": true
+}

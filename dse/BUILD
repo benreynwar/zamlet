@@ -22,7 +22,7 @@ chisel_binary(
     name = "zamlet_generator",
     srcs = ["//src:scala_sources"],
     main_class = "zamlet.Main",
-    visibility = ["//dse/amlet:__pkg__", "//dse/bamlet:__pkg__", "//dse/gamlet:__pkg__"],
+    visibility = ["//dse/amlet:__pkg__", "//dse/bamlet:__pkg__", "//dse/gamlet:__pkg__", "//dse/utils:__pkg__"],
     deps = [
         "@maven//:io_circe_circe_core_2_13",
         "@maven//:io_circe_circe_generic_2_13",
