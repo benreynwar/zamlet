@@ -64,6 +64,12 @@ def _get_target_overrides(target_name):
             "CORE_UTILIZATION": "55",
             # Target-specific parameters for ALU_default can go here
         }
+    elif target_name == "RegisterFileAndRename_default":
+        return {
+            "PLACE_DENSITY": "0.43",
+            "CORE_UTILIZATION": "40",
+            # Target-specific parameters for ALU_default can go here
+        }
     else:
         # No specific overrides for this target
         return {}

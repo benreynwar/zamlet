@@ -22,9 +22,8 @@ bazel build //dse/bamlet:Bamlet_default__sky130hd_results
 
 - **Implementation**: Basic Bamlet processor complete
 - **Testing**: LLM-generated cocotb tests passing
-- **Area**: ~1.4 mm² in sky130hd (2 Amlets)
-- **Timing**: Fails at 100 MHz by 2ns in sky130hd post-synthesis
-- **Routing**: Haven't managed to route it in sky130hd yet
+- **Area**: ~1.4 mm² cell area in sky130hd (2 Amlets)
+- **P&R**: Currently working on getting amlet components through P&R and passing timing at 100 MHz.
 - **Verification**: No real verification yet
 - **Applications**: Starting working on some kernels but not done yet
 
@@ -42,4 +41,4 @@ Largely LLM generated but I've edited it so that it's not obviously wrong and pr
 - **RTL**: Chisel (Scala HDL)
 - **Testing**: Cocotb (Python testbenches)
 - **Build**: Bazel
-- **PPA**: OpenLane via bazel-orfs
+- **PPA**: OpenROAD-flow-scripts via bazel-orfs
