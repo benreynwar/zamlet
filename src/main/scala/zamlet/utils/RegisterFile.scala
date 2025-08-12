@@ -283,26 +283,18 @@ class RegisterFile(params: RFParams) extends Module {
 /**
  * Port wrapper for register file read operations
  */
-class ReadPort(params: RFBuilderParams) {
-  val input = Wire(Valid(UInt(params.addrWidth.W)))
-  var output: Valid[ReadAccessOut] = _
-  
-  // Default values
-  input.valid := false.B
-  input.bits := DontCare
+class ReadPort(params: RFBuilderParams) extends Bundle {
+  val input = Input(Valid(UInt(params.addrWidth.W)))
+  val output = Output(Valid(new ReadAccessOut(params)))
 }
 
 /**
  * Port wrapper for register file write operations
  */
-class WritePort(params: RFBuilderParams) {
-  val input = Wire(Valid(UInt(params.addrWidth.W)))
-  var output: Valid[WriteAccessOut] = _
-  var result: Valid[Result] = _
-  
-  // Default values
-  input.valid := false.B
-  input.bits := DontCare
+class WritePort(params: RFBuilderParams) extends Bundle {
+  val input = Input(Valid(UInt(params.addrWidth.W)))
+  val output = Output(Valid(new WriteAccessOut(params)))
+  val result = Input(Valid(new Result(params)))
 }
 
 /**
@@ -316,7 +308,7 @@ class RegisterFileBuilder(val params: RFBuilderParams) {
    * Create a new read port for the register file
    */
   def makeReadPort(): ReadPort = {
-    val port = new ReadPort(params)
+    val port = Wire(new ReadPort(params))
     readPorts = readPorts :+ port
     port
   }
@@ -325,7 +317,7 @@ class RegisterFileBuilder(val params: RFBuilderParams) {
    * Create a new write port for the register file
    */
   def makeWritePort(): WritePort = {
-    val port = new WritePort(params)
+    val port = Wire(new WritePort(params))
     writePorts = writePorts :+ port
     port
   }
@@ -341,18 +333,6 @@ class RegisterFileBuilder(val params: RFBuilderParams) {
     )
     
     val rf = Module(new RegisterFile(actualParams))
-    
-    // Initialize output wires for ports
-    for (i <- readPorts.indices) {
-      readPorts(i).output = Wire(Valid(new ReadAccessOut(params)))
-    }
-    
-    for (i <- writePorts.indices) {
-      writePorts(i).output = Wire(Valid(new WriteAccessOut(params)))
-      writePorts(i).result = Wire(Valid(new Result(params)))
-      writePorts(i).result.valid := false.B
-      writePorts(i).result.bits := DontCare
-    }
     
     // Connect data ports
     for (i <- readPorts.indices) {

@@ -114,17 +114,19 @@ class Amlet(params: AmletParams) extends Module {
   receivePacketInterface.io.instr <> receivePacketRS.io.output
   
   // Collect all results for dependency resolution
-  val resultBus = Wire(new ResultBus(params))
-  resultBus.writes(0) := alu.io.result
-  resultBus.writes(1) := aluLite.io.result
-  resultBus.writes(2) := dataMem.io.result
-  resultBus.writes(3) := receivePacketInterface.io.result
-  resultBus.predicate(0) := aluPredicate.io.result
-  resultBus.predicate(1) := receivePacketInterface.io.resultPredicate
+  val namedResultBus = Wire(new NamedResultBus(params))
+  namedResultBus.alu := alu.io.result
+  namedResultBus.alulite := aluLite.io.result
+  namedResultBus.ldSt := dataMem.io.result
+  namedResultBus.packet := receivePacketInterface.io.result
+  namedResultBus.aluPredicate := aluPredicate.io.result
+  namedResultBus.packetPredicate := receivePacketInterface.io.resultPredicate
   
+  // Convert to generic result bus for reservation stations
+  val resultBus = namedResultBus.toResultBus()
   
-  // Connect results to RegisterFileAndRename and reservation stations for dependency resolution
-  registerFileAndRename.io.resultBus := resultBus
+  // Connect results to RegisterFileAndRename (uses named bus) and reservation stations (use generic bus)
+  registerFileAndRename.io.resultBus := namedResultBus
   aluRS.io.resultBus := resultBus
   aluLiteRS.io.resultBus := resultBus
   aluPredicateRS.io.resultBus := resultBus

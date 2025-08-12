@@ -2,7 +2,7 @@ package zamlet.amlet
 
 import chisel3._
 import chisel3.util._
-import zamlet.utils.{WriteAccessOut, ReadAccessOut}
+import zamlet.utils.{WriteAccessOut, ReadAccessOut, Result, RFBuilderParams}
 
 /**
  * Utility functions for register type conversions
@@ -86,26 +86,63 @@ class RegUtils(params: AmletParams) {
   /**
    * Convert WriteResult to A-register result format
    */
-  def toAResult(writeResult: Valid[WriteResult]): Valid[ATaggedSource] = {
-    val result = Wire(Valid(new ATaggedSource(params)))
+  def toAResult(writeResult: Valid[WriteResult]): Valid[Result] = {
+    val aRFBuilderParams = RFBuilderParams( 
+      width=params.aWidth,
+      nRegs=params.nARegs,
+      nTags=params.nATags,
+      iaForwardBuffer=params.rfParams.iaForwardBuffer,
+      iaBackwardBuffer=params.rfParams.iaBackwardBuffer,
+      aoBuffer=params.rfParams.aoBuffer
+    )
+    val result = Wire(Valid(new Result(aRFBuilderParams)))
     result.valid := writeResult.valid
     result.bits.value := writeResult.bits.value(params.aWidth - 1, 0)
-    result.bits.resolved := writeResult.valid
     result.bits.addr := writeResult.bits.address.addr(params.aRegWidth - 1, 0)
     result.bits.tag := writeResult.bits.address.tag
+    result.bits.force := writeResult.bits.force
     result
   }
 
   /**
    * Convert WriteResult to D-register result format
    */
-  def toDResult(writeResult: Valid[WriteResult]): Valid[DTaggedSource] = {
-    val result = Wire(Valid(new DTaggedSource(params)))
+  def toDResult(writeResult: Valid[WriteResult]): Valid[Result] = {
+    val dRFBuilderParams = RFBuilderParams( 
+      width=params.width,
+      nRegs=params.nDRegs,
+      nTags=params.nDTags,
+      iaForwardBuffer=params.rfParams.iaForwardBuffer,
+      iaBackwardBuffer=params.rfParams.iaBackwardBuffer,
+      aoBuffer=params.rfParams.aoBuffer
+    )
+    val result = Wire(Valid(new Result(dRFBuilderParams)))
     result.valid := writeResult.valid
     result.bits.value := writeResult.bits.value
-    result.bits.resolved := writeResult.valid
     result.bits.addr := writeResult.bits.address.addr(params.dRegWidth - 1, 0)
     result.bits.tag := writeResult.bits.address.tag
+    result.bits.force := writeResult.bits.force
+    result
+  }
+
+  /**
+   * Convert PredicateResult to P-register result format
+   */
+  def toPResult(predicateResult: Valid[PredicateResult]): Valid[Result] = {
+    val pRFBuilderParams = RFBuilderParams( 
+      width=1,
+      nRegs=params.nPRegs,
+      nTags=params.nPTags,
+      iaForwardBuffer=params.rfParams.iaForwardBuffer,
+      iaBackwardBuffer=params.rfParams.iaBackwardBuffer,
+      aoBuffer=params.rfParams.aoBuffer
+    )
+    val result = Wire(Valid(new Result(pRFBuilderParams)))
+    result.valid := predicateResult.valid
+    result.bits.value := predicateResult.bits.value.asUInt
+    result.bits.addr := predicateResult.bits.address.addr(params.pRegWidth - 1, 0)
+    result.bits.tag := predicateResult.bits.address.tag
+    result.bits.force := predicateResult.bits.force
     result
   }
 

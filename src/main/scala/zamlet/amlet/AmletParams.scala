@@ -334,8 +334,21 @@ class NamedResultBus(params: AmletParams) extends Bundle {
   val ldSt = Valid(new WriteResult(params))
   val packet = Valid(new WriteResult(params))
   
-  // Predicate results
-  val predicate = Vec(2, Valid(new PredicateResult(params)))
+  // Named predicate results
+  val aluPredicate = Valid(new PredicateResult(params))
+  val packetPredicate = Valid(new PredicateResult(params))
+  
+  // Convert to generic ResultBus
+  def toResultBus(): ResultBus = {
+    val resultBus = Wire(new ResultBus(params))
+    resultBus.writes(0) := this.alu
+    resultBus.writes(1) := this.alulite
+    resultBus.writes(2) := this.ldSt
+    resultBus.writes(3) := this.packet
+    resultBus.predicate(0) := this.aluPredicate
+    resultBus.predicate(1) := this.packetPredicate
+    resultBus
+  }
 }
 
 

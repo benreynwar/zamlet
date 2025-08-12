@@ -108,6 +108,9 @@ class RegisterFileAndRename(params: AmletParams) extends Module {
   val stateNext = Wire(new State(params))
   val state = RegNext(stateNext, stateInitial)
   
+  // Output valid when all register files have valid output and instruction pipeline has valid output
+  val outputValid = Wire(Bool())
+  
   // For register 0 (packet output), always increment - order matters for packet assembly
   // For other registers, find first available write identifier
 
@@ -136,6 +139,7 @@ class RegisterFileAndRename(params: AmletParams) extends Module {
   aControlLoopIndexWrite.result.bits.addr := aControlLoopIndexWrite.output.bits.addr
   aControlLoopIndexWrite.result.bits.tag := aControlLoopIndexWrite.output.bits.tag
   aControlLoopIndexWrite.result.bits.force := false.B
+  aControlLoopIndexWrite.result.bits.value := 0.U // Default value, overridden in switch statement
 
   // The loopstates should be updated with the output from the register file.
   when (oInstr.valid) {
@@ -176,6 +180,7 @@ class RegisterFileAndRename(params: AmletParams) extends Module {
   val aPredicateSrc2Read = aRFBuilder.makeReadPort()
   val pPredicateBaseRead = pRFBuilder.makeReadPort()
   val pPredicateDstWrite = pRFBuilder.makeWritePort()
+  val pPacketCommandWrite = pRFBuilder.makeWritePort()
 
   val predicateValid = io.instr.valid && io.instr.bits.predicate.mode =/= PredicateInstr.Modes.None
 
@@ -185,6 +190,13 @@ class RegisterFileAndRename(params: AmletParams) extends Module {
   pPredicateBaseRead.input.bits := io.instr.bits.predicate.base
   pPredicateDstWrite.input.valid := predicateValid
   pPredicateDstWrite.input.bits := io.instr.bits.predicate.dst
+
+  pPredicateDstWrite.result := regUtils.toPResult(io.resultBus.aluPredicate)
+
+  // Packet command predicate write port (not connected to instruction input, only result)
+  pPacketCommandWrite.input.valid := false.B
+  pPacketCommandWrite.input.bits := DontCare
+  pPacketCommandWrite.result := regUtils.toPResult(io.resultBus.packetPredicate)
 
   // Predicate instruction output uses the delayed instruction from register file pipeline
   io.aluPredicateInstr.valid := outputValid && (oInstr.bits.predicate.mode =/= PredicateInstr.Modes.None)
@@ -347,7 +359,10 @@ class RegisterFileAndRename(params: AmletParams) extends Module {
   io.aluInstr.bits.mode := oInstr.bits.alu.mode
   io.aluInstr.bits.src1 := dALUSrc1Read.output.bits
   when (ALUInstr.modeIsImmediate(oInstr.bits.alu.mode)) {
-    io.aluInstr.bits.src2 := oInstr.bits.alu.src2
+    io.aluInstr.bits.src2.resolved := true.B
+    io.aluInstr.bits.src2.value := oInstr.bits.alu.src2
+    io.aluInstr.bits.src2.addr := DontCare
+    io.aluInstr.bits.src2.tag := DontCare
   } .otherwise {
     io.aluInstr.bits.src2 := dALUSrc2Read.output.bits
   }
@@ -437,7 +452,7 @@ class RegisterFileAndRename(params: AmletParams) extends Module {
   dRF.io.iAccess.valid := io.instr.valid && pRF.io.iAccess.ready && aRF.io.iAccess.ready && iInstr.ready
 
   // We remove data when there is data is all outputs.
-  val outputValid = aRF.io.oAccess.valid && dRF.io.oAccess.valid && pRF.io.oAccess.valid && oInstr.valid
+  outputValid := aRF.io.oAccess.valid && dRF.io.oAccess.valid && pRF.io.oAccess.valid && oInstr.valid
   pRF.io.oAccess.ready := outputReady && aRF.io.oAccess.valid && dRF.io.oAccess.valid && oInstr.valid
   dRF.io.oAccess.ready := outputReady && aRF.io.oAccess.valid && pRF.io.oAccess.valid && oInstr.valid
   aRF.io.oAccess.ready := outputReady && dRF.io.oAccess.valid && pRF.io.oAccess.valid && oInstr.valid
