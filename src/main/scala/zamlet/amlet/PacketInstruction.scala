@@ -7,7 +7,7 @@ import chisel3.util._
 object PacketInstr {
 
   object Modes extends ChiselEnum {
-    val Null = Value(0.U)
+    val None = Value(0.U)
     val Receive = Value(1.U)
     val ReceiveAndForward = Value(2.U)
     val ReceiveForwardAndAppend = Value(3.U)
@@ -28,7 +28,8 @@ object PacketInstr {
   def modeUsesLength(mode: Modes.Type): Bool = {
     (mode === Modes.Send) ||
     (mode === Modes.SendAndForwardAgain) ||
-    (mode === Modes.Broadcast)
+    (mode === Modes.Broadcast) ||
+    false.B
   }
 
   def modeUsesTarget(mode: Modes.Type): Bool = {
@@ -40,7 +41,54 @@ object PacketInstr {
     (mode === Modes.ForwardAndAppendContinuously) ||
     (mode === Modes.Send) ||
     (mode === Modes.SendAndForwardAgain) ||
-    (mode === Modes.Broadcast)
+    (mode === Modes.Broadcast) ||
+    false.B
+  }
+
+  def modeGoesToReceive(mode: Modes.Type): Bool = {
+    // Whether the instruction goes to the receive interface.
+    (mode === Modes.Receive) ||
+    (mode === Modes.ReceiveAndForward) ||
+    (mode === Modes.ReceiveForwardAndAppend) ||
+    (mode === Modes.ReceiveAndForwardContinuously) ||
+    (mode === Modes.ReceiveForwardAndAppendContinuously) ||
+    (mode === Modes.GetWord) ||
+    (mode === Modes.ForwardAndAppend) ||
+    (mode === Modes.ForwardAndAppendContinuously) ||
+    false.B
+  }
+
+  def modeGoesToSend(mode: Modes.Type): Bool = {
+    // Whether the instruction goes to the send interface
+    (mode === Modes.Send) ||
+    (mode === Modes.Broadcast) ||
+    (mode === Modes.ReceiveForwardAndAppend) ||
+    (mode === Modes.ReceiveForwardAndAppendContinuously) ||
+    (mode === Modes.ForwardAndAppend) ||
+    (mode === Modes.ForwardAndAppendContinuously) ||
+    false.B
+  }
+
+  def modeForwards(mode: Modes.Type): Bool = {
+    // Whether the instruction is going to the receive interface.
+    (mode === Modes.ReceiveAndForward) ||
+    (mode === Modes.ReceiveForwardAndAppend) ||
+    (mode === Modes.ReceiveAndForwardContinuously) ||
+    (mode === Modes.ReceiveForwardAndAppendContinuously) ||
+    (mode === Modes.ForwardAndAppend) ||
+    (mode === Modes.ForwardAndAppendContinuously) ||
+    false.B
+  }
+
+  def modeWrites(mode: Modes.Type): Bool = {
+    // Whether the instruction goes to the receive interface.
+    (mode === Modes.Receive) ||
+    (mode === Modes.ReceiveAndForward) ||
+    (mode === Modes.ReceiveForwardAndAppend) ||
+    (mode === Modes.ReceiveAndForwardContinuously) ||
+    (mode === Modes.ReceiveForwardAndAppendContinuously) ||
+    (mode === Modes.GetWord) ||
+    false.B
   }
   
   class Base(params: AmletParams) extends Instr.Base(params) {

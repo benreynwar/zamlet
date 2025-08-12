@@ -52,7 +52,7 @@ class DependencyTracker(params: BamletParams) extends Module {
   // Set drop signals based on instruction modes
   controlFifo.io.drop := bufferedInput.bits.control.mode === ControlInstr.Modes.None
   predicateFifo.io.drop := bufferedInput.bits.predicate.mode === PredicateInstr.Modes.None
-  packetFifo.io.drop := bufferedInput.bits.packet.mode === PacketInstr.Modes.Null
+  packetFifo.io.drop := bufferedInput.bits.packet.mode === PacketInstr.Modes.None
   aluLiteFifo.io.drop := bufferedInput.bits.aluLite.mode === ALULiteInstr.Modes.None
   loadStoreFifo.io.drop := bufferedInput.bits.loadStore.mode === LoadStoreInstr.Modes.None
   aluFifo.io.drop := bufferedInput.bits.alu.mode === ALUInstr.Modes.None
@@ -144,7 +144,7 @@ class DependencyTracker(params: BamletParams) extends Module {
   internalOutput.bits.predicate.mode := Mux(canOutput(1), predicateFifo.io.o.bits.mode, PredicateInstr.Modes.None)
   
   internalOutput.bits.packet := packetFifo.io.o.bits
-  internalOutput.bits.packet.mode := Mux(canOutput(2), packetFifo.io.o.bits.mode, PacketInstr.Modes.Null)
+  internalOutput.bits.packet.mode := Mux(canOutput(2), packetFifo.io.o.bits.mode, PacketInstr.Modes.None)
   
   internalOutput.bits.aluLite := aluLiteFifo.io.o.bits
   internalOutput.bits.aluLite.mode := Mux(canOutput(3), aluLiteFifo.io.o.bits.mode, ALULiteInstr.Modes.None)

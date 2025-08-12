@@ -42,6 +42,10 @@ object ALULiteInstr {
     val Reserved30 = Value(30.U)
     val Reserved31 = Value(31.U)
   }
+
+  def modeIsImmediate(mode: Modes.Type): Bool = {
+    mode === Modes.Addi || mode === Modes.Subi
+  }
   
   class Base(params: AmletParams) extends Instr.Base(params) {
     val mode = Modes()

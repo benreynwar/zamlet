@@ -12,11 +12,11 @@
   },
   "amlet": {
     "width": 32,
-    "regTagWidth": 2,
-    "mIdentWidth": 3,
     "aWidth": 16,
     "nDRegs": 16,
     "nARegs": 16,
+    "nATags": 8,
+    "nDTags": 8,
     "nGRegs": 16,
     "dataMemoryDepth": 32,
     "nResultPorts": 4,
@@ -26,7 +26,6 @@
     "xPosWidth": 8,
     "yPosWidth": 8,
     "packetLengthWidth": 8,
-    "nAluRSSlots": 4,
     "aluParams": {
       "iaBuffer": true,
       "abBuffer": true,
@@ -75,6 +74,11 @@
     "instrAddrWidth": 8,
     "instructionForwardBuffer": true,
     "instructionBackwardBuffer": true,
-    "packetOutBackwardBuffer": true
+    "packetOutBackwardBuffer": true,
+    "rfParams": {
+      "iaForwardBuffer": true,
+      "iaBackwardBuffer": true,
+      "aoBuffer": true
+    }
   }
 }

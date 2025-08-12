@@ -60,6 +60,10 @@ object ControlInstr {
     }
   }
 
+  def modeWrites(mode: Modes.Type): Bool = {
+    mode =/= Modes.None && mode =/= Modes.Halt
+  }
+
   class Expanded(params: AmletParams) extends Instr.Expanded(params) {
     val mode = Modes()
     val iterations = new ExtendedSrcType(params) // Where the number of iterations comes from.

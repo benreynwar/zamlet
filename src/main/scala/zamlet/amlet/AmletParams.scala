@@ -21,17 +21,25 @@ case class ReservationStationParams(
   boBackwardBuffer: Boolean = true
 )
 
+case class RFParams(
+  iaForwardBuffer: Boolean = true,
+  iaBackwardBuffer: Boolean = true,
+  aoBuffer: Boolean = true
+)
+
 case class AmletParams(
   // Width of the words in the ALU and Network
   width: Int = 32,
-  // The width of the register rename tag identifier.
-  regTagWidth: Int = 2,
   // Width of the words in the ALULite
   aWidth: Int = 16,
   // Number of data registers
   nDRegs: Int = 16,
   // Number of address registers
   nARegs: Int = 16,
+  // Number of address register rename tags
+  nATags: Int = 8,
+  // Number of data register rename tags  
+  nDTags: Int = 8,
   // Number of global registers (at the bamlet level)
   nGRegs: Int = 16,
   // Depth of the data memory
@@ -85,13 +93,17 @@ case class AmletParams(
   instructionBackwardBuffer: Boolean = true,
   
   // Packet output buffering configuration
-  packetOutBackwardBuffer: Boolean = true
+  packetOutBackwardBuffer: Boolean = true,
+
+  // Register file buffering configuration
+  rfParams: RFParams = RFParams()
 ) {
   // Calculated parameters
-  val nWriteIdents = 1 << regTagWidth
   val aRegWidth = log2Ceil(nARegs)
   val dRegWidth = log2Ceil(nDRegs)
   val pRegWidth = log2Ceil(nPRegs)
+  val aTagWidth = log2Ceil(nATags)
+  val dTagWidth = log2Ceil(nDTags)
   // B-register width: max(A-reg, D-reg) width + 1 bit for A/D selection
   val bRegWidth = scala.math.max(aRegWidth, dRegWidth) + 1
   val gRegWidth = log2Ceil(nGRegs)
@@ -110,8 +122,8 @@ case class AmletParams(
 
   def pReg(): UInt = UInt(pRegWidth.W)
 
-  def aTag(): UInt = UInt(regTagWidth.W)
-  def dTag(): UInt = UInt(regTagWidth.W)
+  def aTag(): UInt = UInt(aTagWidth.W)
+  def dTag(): UInt = UInt(dTagWidth.W)
 
   def pTagWidth: Int = log2Ceil(nPTags)
 
@@ -121,19 +133,19 @@ case class AmletParams(
   def aWord(): UInt = UInt(aWidth.W)
   def bWord(): UInt = UInt(width.W)
 
-  def wIdent(): UInt = UInt(regTagWidth.W)
+  def bTag(): UInt = UInt(scala.math.max(aTagWidth, dTagWidth).W)
 }
 
 class DTaggedReg(params: AmletParams) extends Bundle {
   val addr = params.dReg()
-  val tag = UInt(params.regTagWidth.W)
+  val tag = UInt(params.dTagWidth.W)
 }
 
 class DTaggedSource(params: AmletParams) extends Bundle {
   val value = params.dWord()
   val resolved = Bool()
   val addr = params.dReg()
-  val tag = UInt(params.regTagWidth.W)
+  val tag = UInt(params.dTagWidth.W)
   
   def getData: UInt = value
   def update(writes: ResultBus): DTaggedSource = {
@@ -167,14 +179,14 @@ class DTaggedSource(params: AmletParams) extends Bundle {
 
 class ATaggedReg(params: AmletParams) extends Bundle {
   val addr = params.aReg()
-  val tag = UInt(params.regTagWidth.W)
+  val tag = UInt(params.aTagWidth.W)
 }
 
 class ATaggedSource(params: AmletParams) extends Bundle {
   val value = params.aWord()
   val resolved = Bool()
   val addr = params.aReg()
-  val tag = UInt(params.regTagWidth.W)
+  val tag = UInt(params.aTagWidth.W)
   
   def getData: UInt = value
   def update(writes: ResultBus): ATaggedSource = {
@@ -221,14 +233,14 @@ class ATaggedSource(params: AmletParams) extends Bundle {
  */
 class BTaggedReg(params: AmletParams) extends Bundle {
   val addr = params.bReg()
-  val tag = UInt(params.regTagWidth.W)
+  val tag = params.bTag()
 }
 
 class BTaggedSource(params: AmletParams) extends Bundle {
   val value = params.bWord()
   val resolved = Bool()
   val addr = params.bReg()
-  val tag = UInt(params.regTagWidth.W)
+  val tag = params.bTag()
   
   def getData: UInt = value
   def update(writes: ResultBus): BTaggedSource = {
@@ -312,6 +324,17 @@ class PredicateResult(params: AmletParams) extends Bundle {
 
 class ResultBus(params: AmletParams) extends Bundle {
   val writes = Vec(params.nResultPorts, Valid(new WriteResult(params)))
+  val predicate = Vec(2, Valid(new PredicateResult(params)))
+}
+
+class NamedResultBus(params: AmletParams) extends Bundle {
+  // Named result ports for different execution units
+  val alu = Valid(new WriteResult(params))
+  val alulite = Valid(new WriteResult(params))
+  val ldSt = Valid(new WriteResult(params))
+  val packet = Valid(new WriteResult(params))
+  
+  // Predicate results
   val predicate = Vec(2, Valid(new PredicateResult(params)))
 }
 

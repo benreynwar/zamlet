@@ -23,6 +23,48 @@ case class RFParams(
   // Calculated parameters
   val tagWidth = log2Ceil(nTags)
   val addrWidth = log2Ceil(nRegs)
+  
+  // Create RFBuilderParams from RFParams (excludes port count info)
+  def toBuilderParams(): RFBuilderParams = {
+    RFBuilderParams(
+      width = width,
+      nRegs = nRegs,
+      nTags = nTags,
+      iaForwardBuffer = iaForwardBuffer,
+      iaBackwardBuffer = iaBackwardBuffer,
+      iaResultsBuffer = iaResultsBuffer,
+      aoBuffer = aoBuffer
+    )
+  }
+}
+
+case class RFBuilderParams(
+  width: Int = 32,
+  nRegs: Int = 16,
+  nTags: Int = 8,
+  iaForwardBuffer: Boolean = true,
+  iaBackwardBuffer: Boolean = true,
+  iaResultsBuffer: Boolean = true,
+  aoBuffer: Boolean = true
+) {
+  // Calculated parameters
+  val tagWidth = log2Ceil(nTags)
+  val addrWidth = log2Ceil(nRegs)
+  
+  // Convert to RFParams with specified port counts
+  def toRFParams(nReads: Int, nWrites: Int): RFParams = {
+    RFParams(
+      width = width,
+      nRegs = nRegs,
+      nTags = nTags,
+      nReads = nReads,
+      nWrites = nWrites,
+      iaForwardBuffer = iaForwardBuffer,
+      iaBackwardBuffer = iaBackwardBuffer,
+      iaResultsBuffer = iaResultsBuffer,
+      aoBuffer = aoBuffer
+    )
+  }
 }
 
 object RFParams {
@@ -41,19 +83,19 @@ object RFParams {
   }
 }
 
-class WriteAccessOut(params: RFParams) extends Bundle {
+class WriteAccessOut(params: RFBuilderParams) extends Bundle {
   val addr = UInt(params.addrWidth.W)
   val tag = UInt(params.tagWidth.W)
 }
 
-class ReadAccessOut(params: RFParams) extends Bundle {
+class ReadAccessOut(params: RFBuilderParams) extends Bundle {
   val addr = UInt(params.addrWidth.W)
   val tag = UInt(params.tagWidth.W)
   val value = UInt(params.width.W)
   val resolved = Bool()
 }
 
-class RegisterState(params: RFParams) extends Bundle {
+class RegisterState(params: RFBuilderParams) extends Bundle {
   /** Current value stored in the register */
   val value = UInt(params.width.W)
   
@@ -64,7 +106,7 @@ class RegisterState(params: RFParams) extends Bundle {
   val tag = UInt(params.tagWidth.W)
 }
 
-class Result(params: RFParams) extends Bundle {
+class Result(params: RFBuilderParams) extends Bundle {
   val value = UInt(params.width.W)
   val addr = UInt(params.addrWidth.W)
   val tag = UInt(params.tagWidth.W)
@@ -77,18 +119,21 @@ class AccessIn(params: RFParams) extends Bundle {
 }
 
 class AccessOut(params: RFParams) extends Bundle {
-  val reads = Vec(params.nReads, Valid(new ReadAccessOut(params)))
-  val writes = Vec(params.nWrites, Valid(new WriteAccessOut(params)))
+  val builderParams = params.toBuilderParams()
+  val reads = Vec(params.nReads, Valid(new ReadAccessOut(builderParams)))
+  val writes = Vec(params.nWrites, Valid(new WriteAccessOut(builderParams)))
 }
 
 /**
  * Register File - handles register file and tagging
  */
 class RegisterFile(params: RFParams) extends Module {
+  // Create builder params for internal use
+  val builderParams = params.toBuilderParams()
 
   val io = IO(new Bundle {
     val iAccess = Flipped(Decoupled(new AccessIn(params)))
-    val iResults = Input(Vec(params.nWrites, Valid(new Result(params))))
+    val iResults = Input(Vec(params.nWrites, Valid(new Result(builderParams))))
     val oAccess = Decoupled(new AccessOut(params))
   })
 
@@ -96,7 +141,7 @@ class RegisterFile(params: RFParams) extends Module {
 
   withReset(resetBuffered) {
 
-    val stateInitial = Wire(Vec(params.nRegs, new RegisterState(params)))
+    val stateInitial = Wire(Vec(params.nRegs, new RegisterState(builderParams)))
 
     // Initialize all registers to 0 with no in-flight writes
     for (i <- 0 until params.nRegs) {
@@ -106,7 +151,7 @@ class RegisterFile(params: RFParams) extends Module {
       }
       stateInitial(i).tag := 0.U  // No rename tags issued yet
     }
-    val stateNext = Wire(Vec(params.nRegs, new RegisterState(params)))
+    val stateNext = Wire(Vec(params.nRegs, new RegisterState(builderParams)))
     val state = RegNext(stateNext, stateInitial)
 
     // i -> a
@@ -118,12 +163,21 @@ class RegisterFile(params: RFParams) extends Module {
     // Reads
     for (i <- 0 until params.nReads) {
       aAccessOut.bits.reads(i).valid := aAccessIn.bits.reads(i).valid
-      aAccessOut.bits.reads(i).bits.addr := aAccessIn.bits.reads(i).bits
       val addr = aAccessIn.bits.reads(i).bits
       val tag = state(addr).tag
-      aAccessOut.bits.reads(i).bits.tag := tag
-      aAccessOut.bits.reads(i).bits.value := state(addr).value
-      aAccessOut.bits.reads(i).bits.resolved := !state(addr).pendingTags(tag)
+      when (aAccessIn.bits.reads(i).valid) {
+        aAccessOut.bits.reads(i).bits.resolved := !state(addr).pendingTags(tag)
+        aAccessOut.bits.reads(i).bits.value := state(addr).value
+        aAccessOut.bits.reads(i).bits.tag := tag
+        aAccessOut.bits.reads(i).bits.addr := aAccessIn.bits.reads(i).bits
+      } .otherwise {
+        // If read is not enabled we set resolved to true.
+        // That way we don't wait for this value in Reservation Stations.
+        aAccessOut.bits.reads(i).bits.resolved := true.B
+        aAccessOut.bits.reads(i).bits.value := DontCare
+        aAccessOut.bits.reads(i).bits.tag := DontCare
+        aAccessOut.bits.reads(i).bits.addr := DontCare
+      }
     }
 
     // Writes
@@ -156,7 +210,7 @@ class RegisterFile(params: RFParams) extends Module {
     // Logic to update the state
  
     // Input buffers for write initialization and results
-    val aResults = Wire(Vec(params.nWrites, Valid(new Result(params))))
+    val aResults = Wire(Vec(params.nWrites, Valid(new Result(builderParams))))
     for (i <- 0 until params.nWrites) {
       aResults(i) := ValidBuffer(io.iResults(i), params.iaResultsBuffer)
     }
@@ -177,10 +231,24 @@ class RegisterFile(params: RFParams) extends Module {
         // waiting on this result.
         val result = aResults(writeIndex)
         when (result.valid && result.bits.addr === regIndex.U) {
-          stateNext(regIndex).pendingTags(result.bits.tag) := false.B
-          when (state(regIndex).tag === result.bits.tag || result.bits.force) {
+          val tag = Wire(UInt(params.tagWidth.W))
+          when (result.bits.force) {
+            // If this value is forced it doesn't come with a tag and we
+            // automatically increment the tag.
+
+            // Note: If a CommandPacket writes to a register while the running program is
+            // writing to a register there is no protection against them stomping on
+            // each other and potentially putting us into an unrecoverable state that
+            // requires a reset to recover from.
+
+            tag := state(regIndex).tag + 1.U
+            stateNext(regIndex).value := result.bits.value
+            stateNext(regIndex).tag := tag
+          } .otherwise {
+            tag := result.bits.tag
             stateNext(regIndex).value := result.bits.value
           }
+          stateNext(regIndex).pendingTags(tag) := false.B
         }
         
         // When a write access arrives we need to increment the tag
@@ -212,6 +280,108 @@ class RegisterFile(params: RFParams) extends Module {
   * This object implements the ModuleGenerator interface to enable command-line
   * generation of RegisterFile modules with configurable parameters.
   */
+/**
+ * Port wrapper for register file read operations
+ */
+class ReadPort(params: RFBuilderParams) {
+  val input = Wire(Valid(UInt(params.addrWidth.W)))
+  var output: Valid[ReadAccessOut] = _
+  
+  // Default values
+  input.valid := false.B
+  input.bits := DontCare
+}
+
+/**
+ * Port wrapper for register file write operations
+ */
+class WritePort(params: RFBuilderParams) {
+  val input = Wire(Valid(UInt(params.addrWidth.W)))
+  var output: Valid[WriteAccessOut] = _
+  var result: Valid[Result] = _
+  
+  // Default values
+  input.valid := false.B
+  input.bits := DontCare
+}
+
+/**
+ * Builder class for creating register files with multiple ports
+ */
+class RegisterFileBuilder(val params: RFBuilderParams) {
+  private var readPorts = List[ReadPort]()
+  private var writePorts = List[WritePort]()
+  
+  /**
+   * Create a new read port for the register file
+   */
+  def makeReadPort(): ReadPort = {
+    val port = new ReadPort(params)
+    readPorts = readPorts :+ port
+    port
+  }
+  
+  /**
+   * Create a new write port for the register file
+   */
+  def makeWritePort(): WritePort = {
+    val port = new WritePort(params)
+    writePorts = writePorts :+ port
+    port
+  }
+  
+  /**
+   * Create the actual RegisterFile module and connect all ports
+   */
+  def makeModule(): RegisterFile = {
+    // Convert to RFParams with actual port counts
+    val actualParams = params.toRFParams(
+      nReads = readPorts.length,
+      nWrites = writePorts.length
+    )
+    
+    val rf = Module(new RegisterFile(actualParams))
+    
+    // Initialize output wires for ports
+    for (i <- readPorts.indices) {
+      readPorts(i).output = Wire(Valid(new ReadAccessOut(params)))
+    }
+    
+    for (i <- writePorts.indices) {
+      writePorts(i).output = Wire(Valid(new WriteAccessOut(params)))
+      writePorts(i).result = Wire(Valid(new Result(params)))
+      writePorts(i).result.valid := false.B
+      writePorts(i).result.bits := DontCare
+    }
+    
+    // Connect data ports
+    for (i <- readPorts.indices) {
+      rf.io.iAccess.bits.reads(i) := readPorts(i).input
+      readPorts(i).output := rf.io.oAccess.bits.reads(i)
+    }
+    
+    for (i <- writePorts.indices) {
+      rf.io.iAccess.bits.writes(i) := writePorts(i).input
+      writePorts(i).output := rf.io.oAccess.bits.writes(i)
+      rf.io.iResults(i) := writePorts(i).result
+    }
+    
+    // Note: Control signals (valid/ready) for rf.io.iAccess and rf.io.oAccess
+    // need to be handled by the parent module using this RegisterFile
+    
+    rf
+  }
+}
+
+/**
+ * Factory object for creating RegisterFileBuilder instances
+ */
+object RegisterFileBuilder {
+  def apply(params: RFBuilderParams): RegisterFileBuilder = {
+    new RegisterFileBuilder(params)
+  }
+}
+
 object RegisterFileGenerator extends zamlet.ModuleGenerator {
   /** Create a RegisterFile module with parameters loaded from a JSON file.
     *

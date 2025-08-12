@@ -43,6 +43,12 @@ object ALUInstr {
     val Reserved31 = Value(31.U)
   }
 
+  def modeIsImmediate(mode: Modes.Type): Bool = {
+    (mode === Modes.Subi) ||
+    (mode === Modes.Addi) ||
+    false.B
+  }
+
   class Base(params: AmletParams) extends Instr.Base(params) {
     val mode = Modes()
     val src1 = params.dReg()

@@ -1,10 +1,10 @@
 {
   "width": 32,
-  "regTagWidth": 2,
-  "mIdentWidth": 3,
   "aWidth": 16,
   "nDRegs": 16,
   "nARegs": 16,
+  "nATags": 8,
+  "nDTags": 8,
   "nGRegs": 16,
   "dataMemoryDepth": 64,
   "nResultPorts": 4,
@@ -62,5 +62,10 @@
   "instrAddrWidth": 16,
   "instructionForwardBuffer": true,
   "instructionBackwardBuffer": true,
-  "packetOutBackwardBuffer": true
+  "packetOutBackwardBuffer": true,
+  "rfParams": {
+    "iaForwardBuffer": true,
+    "iaBackwardBuffer": true,
+    "aoBuffer": true
+  }
 }
