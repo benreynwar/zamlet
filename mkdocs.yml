@@ -1,5 +1,5 @@
-site_name: Zamlet - VLIW SIMT Processor
-site_description: A parameterizable open source VLIW SIMT processor designed for mesh accelerators
+site_name: Zamlet - VLIW SIMD Processor
+site_description: A parameterizable open source VLIW SIMD processor designed for mesh accelerators
 site_url: https://github.com/ben-reynwar/zamlet
 
 repo_name: ben-reynwar/zamlet

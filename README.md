@@ -1,6 +1,6 @@
-# Zamlet - VLIW SIMT Processor Mesh
+# Zamlet - VLIW SIMD Processor Mesh
 
-A parameterizable open source VLIW SIMT processor designed for mesh accelerators.
+A parameterizable open source VLIW SIMD processor designed for mesh accelerators.
 
 ![Bamlet Flow](docs/diagrams/bamlet_flow.png)
 

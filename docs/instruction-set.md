@@ -1,6 +1,6 @@
 # Instruction Set Architecture
 
-The Zamlet ISA implements a VLIW (Very Long Instruction Word) SIMT (Single Instruction,
+The Zamlet ISA implements a VLIW (Very Long Instruction Word) SIMD (Single Instruction,
 Multiple Thread) architecture with 6 parallel instruction slots per bundle.
 
 ## VLIW Bundle Format
@@ -65,7 +65,7 @@ Lightweight operations on A-registers for address computation.
 
 ### Predicate Instructions
 
-Generate conditional execution masks for SIMT control flow.
+Generate conditional execution masks for SIMD control flow.
 
 | Instruction | Operands | Description |
 |------------|----------|-------------|

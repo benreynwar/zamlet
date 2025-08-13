@@ -1,6 +1,6 @@
 # Architecture Overview
 
-Zamlet implements a hierarchical VLIW SIMT processor designed for parallel computation 
+Zamlet implements a hierarchical VLIW SIMD processor designed for parallel computation 
 across processing elements in a mesh topology.
 
 ## Design Philosophy
@@ -32,20 +32,20 @@ Multi-core RISC-V system integrated with Bamlet mesh for heterogeneous accelerat
 A RISC-V processor integrated with a Bamlet mesh.
 Initially I plan to try to get the Bamlet mesh to execute vector instructions.
 
-### Bamlet (VLIW SIMT Processor)
+### Bamlet (VLIW SIMD Processor)
 ![Bamlet Architecture](diagrams/bamlet_architecture.png)
 ![Bamlet Block Diagram](diagrams/bamlet_block.png)
 
 The Bamlet is the main processor containing:
 
 - **Instruction Memory**: Stores VLIW instruction bundles, shared across Amlets
-- **Control Unit**: Manages program flow, loop control, and SIMT dispatch  
+- **Control Unit**: Manages program flow, loop control, and SIMD dispatch  
 - **Dependency Tracker**: Does some shuffling of slot contents between VLIW instructions
   so that a single VLIW instruction contains no WAW or RAW dependencies.
 - **2D Amlet Grid**: Configurable array of processing elements
 
 **Key Features:**
-- SIMT execution where all Amlets execute the same instruction stream
+- SIMD execution where all Amlets execute the same instruction stream
 - Predicated execution for conditional control flow
 - Centralized loop control with nested loop support
 - Non-deterministic timing due to network interactions
@@ -137,8 +137,8 @@ Four register file types provide specialized storage:
    multi-issue and VLIW.  I think it probably doesn't make that much difference
    either way but VLIW is a bit simpler.
 
-### Why SIMT?
-- The advantage of SIMT is it let's us share an instruction memory and some
+### Why SIMD?
+- The advantage of SIMD is it let's us share an instruction memory and some
   reordering logic between a group of Amlets.  The instruction memory is expensive
   so that is big advantage.  Given that the Amlets all have to run the same
   instructions adding the predicates gives is a little of the flexibility back

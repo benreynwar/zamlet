@@ -1,12 +1,12 @@
-# Zamlet - VLIW SIMT Processor Mesh
+# Zamlet - VLIW SIMD Processor Mesh
 
-A parameterizable open source VLIW SIMT processor designed for mesh accelerators.
+A parameterizable open source VLIW SIMD processor designed for mesh accelerators.
 
 ![Bamlet Flow](diagrams/bamlet_flow.png)
 
 ## Overview
 
-Zamlet is a research processor implementing a **VLIW (Very Long Instruction Word) SIMT
+Zamlet is a research processor implementing a **VLIW (Very Long Instruction Word) SIMD
 (Single Instruction, Multiple Thread)** architecture designed for parallel computation across
 processing elements in a mesh topology.
 
@@ -17,7 +17,7 @@ accuracy and made some edits (such as this sentence).
 
 - **VLIW Architecture**: 6 parallel instruction slots per bundle (Control, Predicate, Packet,
   ALU Lite, Load/Store, ALU)
-- **SIMT Execution**: Single instruction stream across multiple processing elements with
+- **SIMD Execution**: Single instruction stream across multiple processing elements with
   predication support
 - **Out-of-Order Execution**: Reservation stations with operand capture and dependency
   resolution
@@ -28,7 +28,7 @@ accuracy and made some edits (such as this sentence).
 
 ## Architecture Hierarchy
 
-**Damlet** (Future) → **Camlet** (Future) → **Bamlet** (VLIW SIMT Processor) → **Amlet** (Processing Element)
+**Damlet** (Future) → **Camlet** (Future) → **Bamlet** (VLIW SIMD Processor) → **Amlet** (Processing Element)
 
 - **Damlet**: Planned multi-core RISC-V system integrated with Bamlet mesh
 - **Camlet**: Planned RISC-V core with a Bamlet mesh for acceleration
