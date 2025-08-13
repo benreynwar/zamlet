@@ -13,11 +13,22 @@ create_clock -period $clk_period -waveform [list 0 [expr $clk_period / 2]] -name
 set non_clk_inputs  [lsearch -inline -all -not -exact [all_inputs] $clk_port]
 set all_register_outputs [get_pins -of_objects [all_registers] -filter {direction == output}]
 
-# Set input/output delays as 60% of clock period for realistic timing constraints
-set io_delay [expr $clk_period * 0.6]
+# Parameterized input/output delays as fractions of clock period (required)
+if {![info exists ::env(io_input_delay_fraction)]} {
+    error "io_input_delay_fraction not defined - must be set in ORFS config"
+}
+if {![info exists ::env(io_output_delay_fraction)]} {
+    error "io_output_delay_fraction not defined - must be set in ORFS config"
+}
 
-set_input_delay $io_delay -clock $clk_name $non_clk_inputs
-set_output_delay $io_delay -clock $clk_name [all_outputs]
+set input_delay_fraction $::env(io_input_delay_fraction)
+set output_delay_fraction $::env(io_output_delay_fraction)
+
+set input_delay [expr $clk_period * $input_delay_fraction]
+set output_delay [expr $clk_period * $output_delay_fraction]
+
+set_input_delay $input_delay -clock $clk_name $non_clk_inputs
+set_output_delay $output_delay -clock $clk_name [all_outputs]
 
 # This allows us to view the different groups
 # in the histogram in the GUI and also includes these

@@ -63,12 +63,6 @@ def dse_component_flows(studies, component_type, pdks = ["asap7", "sky130hd"]):
         script = "//dse:scripts/analysis.tcl",
     ) for name in study_names]
 
-    # Alias for backward compatibility
-    [native.alias(
-        name = "{base}_timing_floorplan".format(base = name),
-        actual = "{base}_results".format(base = name),
-    ) for name in study_names]
-
     # Timing reports extraction - route stage (actual routed timing)
     [orfs_run(
         name = "{base}_timing_route".format(base = name),

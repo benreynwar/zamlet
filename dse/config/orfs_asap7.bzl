@@ -2,6 +2,8 @@
 
 # PDK-level overrides
 _ASAP7_OVERRIDES = {
+    "ABC_CLOCK_PERIOD_IN_PS": "1000",  # 1000ps = 1ns clock period
+    "SETUP_SLACK_MARGIN": "-10000",   # Setup slack margin in ps
 }
 
 def get_asap7_orfs_args(target_name):
@@ -27,9 +29,7 @@ def get_asap7_orfs_args(target_name):
 def _get_target_overrides(target_name):
     """Get target-specific overrides for ASAP7 PDK."""
     if target_name == "ALU_default":
-        return {
-            # Target-specific parameters for ALU_default can go here
-        }
+        return {}
     else:
-        # No specific overrides for this target
+        # No specific overrides for this target - uses defaults (0.6/0.6)
         return {}

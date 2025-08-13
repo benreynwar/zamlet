@@ -16,6 +16,8 @@ ORFS_BASE_ARGS = {
     "SYNTH_HIERARCHICAL": "1",
     "SYNTH_MINIMUM_KEEP_SIZE": "50",
     "SYNTH_MEMORY_MAX_BITS": "8192",
-    "PLACE_DENSITY": "0.40",
-    "CORE_UTILIZATION": "20",
+    "PLACE_DENSITY": "0.55",
+    "CORE_UTILIZATION": "50",
+    "io_input_delay_fraction": "0.6",
+    "io_output_delay_fraction": "0.6",
 }
