@@ -62,7 +62,13 @@
   "instrAddrWidth": 16,
   "instructionForwardBuffer": true,
   "instructionBackwardBuffer": true,
-  "packetOutBackwardBuffer": true,
+  "networkNodeParams": {
+    "iaBuffer": false,
+    "abForwardBuffer": true,
+    "abBackwardBuffer": true,
+    "boForwardBuffer": false,
+    "boBackwardBuffer": false
+  },
   "rfParams": {
     "iaForwardBuffer": true,
     "iaBackwardBuffer": true,

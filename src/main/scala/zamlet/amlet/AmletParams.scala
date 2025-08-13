@@ -27,6 +27,14 @@ case class RFParams(
   aoBuffer: Boolean = true
 )
 
+case class NetworkNodeParams(
+  iaBuffer: Boolean = false,
+  abForwardBuffer: Boolean = true,
+  abBackwardBuffer: Boolean = true,
+  boForwardBuffer: Boolean = false,
+  boBackwardBuffer: Boolean = false
+)
+
 case class AmletParams(
   // Width of the words in the ALU and Network
   width: Int = 32,
@@ -92,8 +100,8 @@ case class AmletParams(
   instructionForwardBuffer: Boolean = true,
   instructionBackwardBuffer: Boolean = true,
   
-  // Packet output buffering configuration
-  packetOutBackwardBuffer: Boolean = true,
+  // Network node configuration
+  networkNodeParams: NetworkNodeParams = NetworkNodeParams(),
 
   // Register file buffering configuration
   rfParams: RFParams = RFParams()

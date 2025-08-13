@@ -28,9 +28,6 @@ class PacketInHandlerIO(params: AmletParams) extends Bundle {
   // Forward data input (from PacketInterface for forwarding packets)
   val forward = Flipped(Valid(new PacketForward(params)))
   
-  // Handler arbitration signals
-  val handlerRequest = Output(Vec(5, Bool()))
-  
   // Outputs to packet handlers (5 connections)
   val outputs = Vec(5, Decoupled(new PacketData(params)))
   
@@ -73,7 +70,6 @@ class PacketInHandler(params: AmletParams) extends Module {
 
   // Default outputs
   io.fromNetwork.ready := false.B
-  io.handlerRequest := VecInit(Seq.fill(5)(false.B))
   io.outputs.foreach { out =>
     out.valid := false.B
     out.bits := DontCare
@@ -134,10 +130,7 @@ class PacketInHandler(params: AmletParams) extends Module {
   // When data arrives it goes into a buffer to break the forwards and
   // backwards paths.
   // ---------------------------------------------------------------
-  val buffered = Wire(Decoupled(new NetworkWord(params)))
-  val buffer = Module(new DoubleBuffer(new NetworkWord(params)))
-  buffer.io.i <> io.fromNetwork
-  buffer.io.o <> buffered
+  val buffered = DecoupledBuffer(io.fromNetwork, params.networkNodeParams.iaBuffer)
 
   // From the output of that skid buffer we look at the header.
   // We work out what directions it wants to go.
@@ -192,16 +185,10 @@ class PacketInHandler(params: AmletParams) extends Module {
   // Whenever we have a header coming out of the buffer we are trying to
   // make a new connection.
 
-  io.handlerRequest := VecInit(Seq.fill(5)(false.B))
-
-  val requestBits = connectionDirections & ~inputDirMask
-
   when(buffered.valid && buffered.bits.isHeader) {
     remainingWords := bufferedHeader.length
     io.errors.routingError := badRegularRoute
     when(!bufferedHeader.forward || bufferedForward.valid) {
-      // We send the request unless we don't have forward data.
-      io.handlerRequest := VecInit((0 until 5).map(i => requestBits(i)))
       // All our targets are ready to receive
       when(buffered.ready) {
         // Buffer the routing directions for the reset of the packet.

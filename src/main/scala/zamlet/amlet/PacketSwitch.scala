@@ -105,13 +105,10 @@ class PacketSwitch(params: AmletParams) extends Module {
       if (dstIdx != srcIdx) {
         // Map to correct output index on source handler
         outHandlers(dstIdx).io.connections(srcIdx) <> inHandlers(srcIdx).io.outputs(dstIdx)
-        
-        outHandlers(dstIdx).io.handlerRequest(srcIdx) := inHandlers(srcIdx).io.handlerRequest(dstIdx)
       } else {
         outHandlers(dstIdx).io.connections(srcIdx).valid := false.B
         outHandlers(dstIdx).io.connections(srcIdx).bits := DontCare
         inHandlers(srcIdx).io.outputs(dstIdx).ready := false.B
-        outHandlers(dstIdx).io.handlerRequest(srcIdx) := false.B
       }
     }
   }
