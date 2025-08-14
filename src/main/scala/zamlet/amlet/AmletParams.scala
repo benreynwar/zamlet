@@ -28,11 +28,16 @@ case class RFParams(
 )
 
 case class NetworkNodeParams(
-  iaBuffer: Boolean = false,
+  iaForwardBuffer: Boolean = false,
+  iaBackwardBuffer: Boolean = true,
   abForwardBuffer: Boolean = true,
   abBackwardBuffer: Boolean = true,
   boForwardBuffer: Boolean = false,
-  boBackwardBuffer: Boolean = false
+  boBackwardBuffer: Boolean = false,
+  hiForwardBuffer: Boolean = true,
+  hiBackwardBuffer: Boolean = true,
+  hoForwardBuffer: Boolean = true,
+  hoBackwardBuffer: Boolean = true
 )
 
 case class AmletParams(

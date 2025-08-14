@@ -2,7 +2,7 @@ package zamlet.amlet
 
 import chisel3._
 import chisel3.util._
-import zamlet.utils.ResetStage
+import zamlet.utils.{ResetStage, DoubleBuffer}
 
 /**
  * Connection state bundle
@@ -53,6 +53,11 @@ class NetworkNode(params: AmletParams) extends Module {
 
   val resetBuffered = ResetStage(clock, reset)
 
+  val hiBuffered = Wire(Decoupled(new FromHereNetworkWord(params)))
+  val hoBuffered = Wire(Decoupled(new NetworkWord(params)))
+  hiBuffered <> DoubleBuffer(io.hi, params.networkNodeParams.hiForwardBuffer, params.networkNodeParams.hiBackwardBuffer)
+  io.ho <> DoubleBuffer(hoBuffered, params.networkNodeParams.hoForwardBuffer, params.networkNodeParams.hoBackwardBuffer)
+
   withReset(resetBuffered) {
   
     // Register position inputs
@@ -70,9 +75,9 @@ class NetworkNode(params: AmletParams) extends Module {
     
     // Default outputs
     io.headerError := false.B
-    io.hi.ready := false.B
-    io.ho.valid := false.B
-    io.ho.bits := DontCare
+    hiBuffered.ready := false.B
+    hoBuffered.valid := false.B
+    hoBuffered.bits := DontCare
     
     // Connect network interfaces directly to switches
     for (i <- 0 until params.nChannels) {
@@ -89,15 +94,15 @@ class NetworkNode(params: AmletParams) extends Module {
 
     // Connecting to hi.
     for (channelIdx <- 0 until params.nChannels) {
-      when (channelIdx.U === io.hi.bits.channel) {
-        switches(channelIdx).io.hi.valid := io.hi.valid
-        switches(channelIdx).io.hi.bits := io.hi.bits
+      when (channelIdx.U === hiBuffered.bits.channel) {
+        switches(channelIdx).io.hi.valid := hiBuffered.valid
+        switches(channelIdx).io.hi.bits := hiBuffered.bits
       } .otherwise {
         switches(channelIdx).io.hi.valid := false.B
         switches(channelIdx).io.hi.bits := DontCare
       }
     }
-    io.hi.ready := MuxLookup(io.hi.bits.channel, false.B)(
+    hiBuffered.ready := MuxLookup(io.hi.bits.channel, false.B)(
       (0 until params.nChannels).map(i => i.U -> switches(i).io.hi.ready)
     )
 
@@ -133,15 +138,15 @@ class NetworkNode(params: AmletParams) extends Module {
     // When no outgoing connection is active, look for valid switches
     for (channelIdx <- 0 until params.nChannels) {
       when (channelIdx.U === connectedChannel) {
-        switches(channelIdx).io.ho.ready := io.ho.ready
+        switches(channelIdx).io.ho.ready := hoBuffered.ready
       } .otherwise {
         switches(channelIdx).io.ho.ready := false.B
       }
     }
-    io.ho.valid := MuxLookup(connectedChannel, false.B)(
+    hoBuffered.valid := MuxLookup(connectedChannel, false.B)(
       (0 until params.nChannels).map(i => i.U -> switches(i).io.ho.valid)
     )
-    io.ho.bits := MuxLookup(connectedChannel, switches(0).io.ho.bits)(
+    hoBuffered.bits := MuxLookup(connectedChannel, switches(0).io.ho.bits)(
       (0 until params.nChannels).map(i => i.U -> switches(i).io.ho.bits)
     )
 
@@ -167,7 +172,7 @@ class NetworkNode(params: AmletParams) extends Module {
         }
       } .otherwise {
         io.headerError := !connstateActive
-        when (io.ho.ready) {
+        when (hoBuffered.ready) {
           connstateWordsRemaining := connstateWordsRemaining - 1.U
         }
         when (connstateWordsRemaining === 1.U) {

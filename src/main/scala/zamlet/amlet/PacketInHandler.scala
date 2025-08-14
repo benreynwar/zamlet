@@ -130,7 +130,7 @@ class PacketInHandler(params: AmletParams) extends Module {
   // When data arrives it goes into a buffer to break the forwards and
   // backwards paths.
   // ---------------------------------------------------------------
-  val buffered = DecoupledBuffer(io.fromNetwork, params.networkNodeParams.iaBuffer)
+  val buffered = DoubleBuffer(io.fromNetwork, params.networkNodeParams.iaForwardBuffer, params.networkNodeParams.iaBackwardBuffer)
 
   // From the output of that skid buffer we look at the header.
   // We work out what directions it wants to go.

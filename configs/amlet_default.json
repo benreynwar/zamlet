@@ -63,11 +63,16 @@
   "instructionForwardBuffer": true,
   "instructionBackwardBuffer": true,
   "networkNodeParams": {
-    "iaBuffer": false,
-    "abForwardBuffer": true,
+    "iaForwardBuffer": true,
+    "iaBackwardBuffer": true,
+    "abForwardBuffer": false,
     "abBackwardBuffer": true,
-    "boForwardBuffer": false,
-    "boBackwardBuffer": false
+    "boForwardBuffer": true,
+    "boBackwardBuffer": false,
+    "hiForwardBuffer": true,
+    "hiBackwardBuffer": true,
+    "hoForwardBuffer": true,
+    "hoBackwardBuffer": true
   },
   "rfParams": {
     "iaForwardBuffer": true,

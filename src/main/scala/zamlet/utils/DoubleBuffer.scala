@@ -10,8 +10,8 @@ class DoubleBuffer[T <: Data](t: T, enableForward: Boolean = true, enableBackwar
     val o = DecoupledIO(t)
   })
 
-  val skidBuffer = Module(new SkidBuffer(t, enableForward))
-  val decoupledBuffer = Module(new DecoupledBuffer(t, enableBackward))
+  val skidBuffer = Module(new SkidBuffer(t, enableBackward))
+  val decoupledBuffer = Module(new DecoupledBuffer(t, enableForward))
 
   skidBuffer.io.i <> io.i
   decoupledBuffer.io.i <> skidBuffer.io.o
