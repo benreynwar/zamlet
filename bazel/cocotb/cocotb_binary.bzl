@@ -149,6 +149,9 @@ def _cocotb_binary_impl(ctx):
     # Add verilator cc_library runfiles  
     runfiles = runfiles.merge(verilator_cc_lib[DefaultInfo].default_runfiles)
     
+    # Add cocotb dependency runfiles (including pygpi module)
+    runfiles = runfiles.merge(cocotb_dep[DefaultInfo].default_runfiles)
+    
     # Merge runfiles from Python dependencies (including cocotb)
     for dep in ctx.attr.deps:
         if DefaultInfo in dep:

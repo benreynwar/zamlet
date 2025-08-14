@@ -36,8 +36,8 @@ def create_module_tests(modules, tests, configs):
         module = ":{}_{}_verilog_lib".format(verilog_target, config_name),
         module_top = _get_toplevel_for_target(verilog_target, modules),
         trace = True,
-        # Use --prefix Vtop to match cocotb's expected class names
-        vopts = ["--prefix", "Vtop"],
+        # Use --prefix Vtop to match cocotb's expected class names, --vpi for cocotb support, and --public-flat-rw to expose hierarchy
+        vopts = ["--prefix", "Vtop", "--vpi", "--public-flat-rw"],
     ) for verilog_target, config_name in unique_targets]
     
     # Generate cocotb binaries and tests using our new rules
@@ -61,10 +61,17 @@ def create_module_tests(modules, tests, configs):
     [cocotb_test(
         name = "{}_{}".format(test_name, config_name),
         binary = ":{}_{}_binary".format(test_name, config_name),
+        hdl_toplevel = _get_toplevel_for_target(verilog_target, modules),
         test_module = [test_file],
         deps = [
             "//python/zamlet:zamlet",  # Python dependencies
             "@zamlet_pip_deps//cocotb",  # Cocotb framework
+        ],
+        env = {
+            "ZAMLET_TEST_CONFIG_FILENAME": "configs/{}.json".format(config_file)
+        },
+        data = [
+            "//configs:{}.json".format(config_file),
         ],
     ) for test_name, test_file, verilog_target, special_args in tests 
       for config_name, config_file in configs.items()]
