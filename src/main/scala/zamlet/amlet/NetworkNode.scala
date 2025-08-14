@@ -53,12 +53,13 @@ class NetworkNode(params: AmletParams) extends Module {
 
   val resetBuffered = ResetStage(clock, reset)
 
-  val hiBuffered = Wire(Decoupled(new FromHereNetworkWord(params)))
-  val hoBuffered = Wire(Decoupled(new NetworkWord(params)))
-  hiBuffered <> DoubleBuffer(io.hi, params.networkNodeParams.hiForwardBuffer, params.networkNodeParams.hiBackwardBuffer)
-  io.ho <> DoubleBuffer(hoBuffered, params.networkNodeParams.hoForwardBuffer, params.networkNodeParams.hoBackwardBuffer)
-
   withReset(resetBuffered) {
+
+    val hiBuffered = Wire(Decoupled(new FromHereNetworkWord(params)))
+    val hoBuffered = Wire(Decoupled(new NetworkWord(params)))
+    hiBuffered <> DoubleBuffer(io.hi, params.networkNodeParams.hiForwardBuffer, params.networkNodeParams.hiBackwardBuffer)
+    io.ho <> DoubleBuffer(hoBuffered, params.networkNodeParams.hoForwardBuffer, params.networkNodeParams.hoBackwardBuffer)
+
   
     // Register position inputs
     val thisXReg = RegNext(io.thisX)

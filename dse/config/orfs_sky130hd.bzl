@@ -28,7 +28,12 @@ def get_sky130hd_orfs_args(target_name):
 
 def _get_target_overrides(target_name):
     """Get target-specific overrides for Sky130HD PDK."""
-    if target_name == "ALU_default":
+    if target_name == "Amlet_default":
+        return {
+            "PLACE_DENSITY": "0.43",
+            "CORE_UTILIZATION": "40",
+        }
+    elif target_name == "ALU_default":
         return {
             "PLACE_DENSITY": "0.65",
             "CORE_UTILIZATION": "60",

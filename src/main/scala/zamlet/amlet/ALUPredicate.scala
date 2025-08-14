@@ -2,6 +2,7 @@ package zamlet.amlet
 
 import chisel3._
 import chisel3.util._
+import zamlet.utils.ResetStage
 
 /**
  * ALUPredicate for Amlet implementation
@@ -15,73 +16,77 @@ class ALUPredicate(params: AmletParams) extends Module {
     val result = Output(Valid(new PredicateResult(params)))
   })
 
-  // Compute comparison result
-  val comparisonResult = Wire(Bool())
+  val resetBuffered = ResetStage(clock, reset)
 
-  comparisonResult := true.B  // Default value
+  withReset(resetBuffered) {
+    // Compute comparison result
+    val comparisonResult = Wire(Bool())
 
-  switch(io.instr.bits.mode) {
-    is(PredicateInstr.Modes.None) {
-      comparisonResult := true.B
-    }
-    is(PredicateInstr.Modes.Eq) {
-      comparisonResult := io.instr.bits.src1 === io.instr.bits.src2
-    }
-    is(PredicateInstr.Modes.NEq) {
-      comparisonResult := io.instr.bits.src1 =/= io.instr.bits.src2
-    }
-    is(PredicateInstr.Modes.Gte) {
-      comparisonResult := io.instr.bits.src1 >= io.instr.bits.src2
-    }
-    is(PredicateInstr.Modes.Gt) {
-      comparisonResult := io.instr.bits.src1 > io.instr.bits.src2
-    }
-    is(PredicateInstr.Modes.Lte) {
-      comparisonResult := io.instr.bits.src1 <= io.instr.bits.src2
-    }
-    is(PredicateInstr.Modes.Lt) {
-      comparisonResult := io.instr.bits.src1 < io.instr.bits.src2
-    }
-    is(PredicateInstr.Modes.Unused7) {
-      comparisonResult := true.B
-    }
-  }
+    comparisonResult := true.B  // Default value
 
-  // Combine comparison result with base predicate: final = comparison AND base
-  val finalResult = Wire(Bool())
-  finalResult := comparisonResult && io.instr.bits.base
-
-  // Pipeline the result through the specified latency (reuse aluLatency param)
-  if (params.aluPredicateLatency == 0) {
-    // Single cycle latency
-    io.result.valid := io.instr.valid
-    io.result.bits.value := finalResult
-    io.result.bits.address.addr := io.instr.bits.dst.addr
-    io.result.bits.address.tag := io.instr.bits.dst.tag
-    io.result.bits.force := false.B
-  } else {
-    // Multi-cycle pipeline
-    val validPipe = RegInit(VecInit(Seq.fill(params.aluPredicateLatency)(false.B)))
-    val resultPipe = RegInit(VecInit(Seq.fill(params.aluPredicateLatency)(false.B)))
-    val dstAddrPipe = RegInit(VecInit(Seq.fill(params.aluPredicateLatency)(0.U.asTypeOf(new PTaggedReg(params)))))
-    
-    // Stage 0 (input)
-    validPipe(0) := io.instr.valid
-    resultPipe(0) := finalResult
-    dstAddrPipe(0) := io.instr.bits.dst
-    
-    // Pipeline stages 1 to latency-1
-    for (i <- 1 until params.aluPredicateLatency) {
-      validPipe(i) := validPipe(i-1)
-      resultPipe(i) := resultPipe(i-1)
-      dstAddrPipe(i) := dstAddrPipe(i-1)
+    switch(io.instr.bits.mode) {
+      is(PredicateInstr.Modes.None) {
+        comparisonResult := true.B
+      }
+      is(PredicateInstr.Modes.Eq) {
+        comparisonResult := io.instr.bits.src1 === io.instr.bits.src2
+      }
+      is(PredicateInstr.Modes.NEq) {
+        comparisonResult := io.instr.bits.src1 =/= io.instr.bits.src2
+      }
+      is(PredicateInstr.Modes.Gte) {
+        comparisonResult := io.instr.bits.src1 >= io.instr.bits.src2
+      }
+      is(PredicateInstr.Modes.Gt) {
+        comparisonResult := io.instr.bits.src1 > io.instr.bits.src2
+      }
+      is(PredicateInstr.Modes.Lte) {
+        comparisonResult := io.instr.bits.src1 <= io.instr.bits.src2
+      }
+      is(PredicateInstr.Modes.Lt) {
+        comparisonResult := io.instr.bits.src1 < io.instr.bits.src2
+      }
+      is(PredicateInstr.Modes.Unused7) {
+        comparisonResult := true.B
+      }
     }
-    
-    // Output
-    io.result.valid := validPipe(params.aluPredicateLatency-1)
-    io.result.bits.value := resultPipe(params.aluPredicateLatency-1)
-    io.result.bits.address := dstAddrPipe(params.aluPredicateLatency-1)
-    io.result.bits.force := false.B
+
+    // Combine comparison result with base predicate: final = comparison AND base
+    val finalResult = Wire(Bool())
+    finalResult := comparisonResult && io.instr.bits.base
+
+    // Pipeline the result through the specified latency (reuse aluLatency param)
+    if (params.aluPredicateLatency == 0) {
+      // Single cycle latency
+      io.result.valid := io.instr.valid
+      io.result.bits.value := finalResult
+      io.result.bits.address.addr := io.instr.bits.dst.addr
+      io.result.bits.address.tag := io.instr.bits.dst.tag
+      io.result.bits.force := false.B
+    } else {
+      // Multi-cycle pipeline
+      val validPipe = RegInit(VecInit(Seq.fill(params.aluPredicateLatency)(false.B)))
+      val resultPipe = RegInit(VecInit(Seq.fill(params.aluPredicateLatency)(false.B)))
+      val dstAddrPipe = RegInit(VecInit(Seq.fill(params.aluPredicateLatency)(0.U.asTypeOf(new PTaggedReg(params)))))
+      
+      // Stage 0 (input)
+      validPipe(0) := io.instr.valid
+      resultPipe(0) := finalResult
+      dstAddrPipe(0) := io.instr.bits.dst
+      
+      // Pipeline stages 1 to latency-1
+      for (i <- 1 until params.aluPredicateLatency) {
+        validPipe(i) := validPipe(i-1)
+        resultPipe(i) := resultPipe(i-1)
+        dstAddrPipe(i) := dstAddrPipe(i-1)
+      }
+      
+      // Output
+      io.result.valid := validPipe(params.aluPredicateLatency-1)
+      io.result.bits.value := resultPipe(params.aluPredicateLatency-1)
+      io.result.bits.address := dstAddrPipe(params.aluPredicateLatency-1)
+      io.result.bits.force := false.B
+    }
   }
 }
 
