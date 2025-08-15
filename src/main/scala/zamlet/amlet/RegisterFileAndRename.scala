@@ -3,7 +3,7 @@ package zamlet.amlet
 import chisel3._
 import chisel3.util._
 import scala.math.max
-import zamlet.utils.{DoubleBuffer, DecoupledBuffer, RFBuilderParams, RegisterFileBuilder, WriteAccessOut, ReadAccessOut, ResetStage}
+import zamlet.utils.{DoubleBuffer, DecoupledBuffer, RFBuilderParams, RegisterFileBuilder, WriteAccessOut, ReadAccessOut, ResetStage, ValidBuffer}
 
 
 class LoopState(params: AmletParams) extends Bundle {
@@ -479,8 +479,11 @@ class RegisterFileAndRename(params: AmletParams) extends Module {
     unreportedLoopLevel := PriorityEncoder(needsReporting)
     
     // Send loop iterations if we found an unreported resolved loop
-    io.loopIterations.valid := foundUnreportedLoop
-    io.loopIterations.bits := state.loopStates(unreportedLoopLevel).iterations.value
+    val loopIterationsToBuffer = Wire(Valid(UInt(params.aWidth.W)))
+    loopIterationsToBuffer.valid := foundUnreportedLoop
+    loopIterationsToBuffer.bits := state.loopStates(unreportedLoopLevel).iterations.value
+
+    io.loopIterations := ValidBuffer(loopIterationsToBuffer)
     
     // Mark the loop level as reported in next state
     when (foundUnreportedLoop) {
