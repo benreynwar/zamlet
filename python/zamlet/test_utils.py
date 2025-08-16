@@ -63,33 +63,10 @@ def configure_logging_sim(level: str = 'INFO') -> None:
     logging.getLogger().setLevel(numeric_level)
 
 
-def write_params(working_dir: str, params: Dict[str, Any]) -> None:
-    """Write test parameters to JSON file and set environment variable."""
-    params_filename = os.path.abspath(os.path.join(working_dir, 'test_params.json'))
-    os.environ['FMPVU_TEST_PARAMS_FILENAME'] = params_filename
-    with open(params_filename, 'w', encoding='utf-8') as params_file:
-        params_file.write(json.dumps(params))
-
-
-def read_params() -> Dict[str, Any]:
-    """Read test parameters from JSON file specified in environment variable."""
-    params_filename = os.environ['ZAMLET_TEST_CONFIG_FILENAME']
-    print(f"DEBUG: ZAMLET_TEST_CONFIG_FILENAME = '{params_filename}'")
-    print(f"DEBUG: All environment variables with ZAMLET:")
-    for key, value in os.environ.items():
-        if 'ZAMLET' in key:
-            print(f"  {key} = '{value}'")
-    
-    with open(params_filename, 'r', encoding='utf-8') as params_file:
-        params = json.loads(params_file.read())
-    return params
-
-
 def get_test_params() -> Dict[str, Any]:
     """Get test parameters from bazel environment variables."""
     config_filename = os.environ['ZAMLET_TEST_CONFIG_FILENAME']
     seed = int(os.environ.get('ZAMLET_TEST_SEED', '0'))
-    
     return {
         "seed": seed,
         "params_file": config_filename,

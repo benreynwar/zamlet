@@ -59,3 +59,16 @@ When using the Grep tool for searching code:
 
 ## Communication Style
 NEVER claim success with phrases like "The key achievement is" or similar when a task has failed. Be honest about failures and focus on what still needs to be done rather than trying to spin partial progress as success. This is irritating and unhelpful.
+
+NEVER declare a task "successfully complete" or use similar language until the actual end goal is achieved. Making incremental progress (like builds completing or components initializing) is not the same as task completion. The task is only complete when the final success criteria are met (e.g., tests pass, features work end-to-end). Premature success declarations are frustrating and misleading.
+
+## Debugging bazel out
+
+When debugging Bazel builds, you need to search within the `bazel-out` directory from inside that directory:
+
+```bash
+# Wrong - won't work from project root:
+find bazel-out -name "*cocotb*" -type f
+
+# Correct - change directory first:
+cd bazel-out && find . -name "*cocotb*" -type  f

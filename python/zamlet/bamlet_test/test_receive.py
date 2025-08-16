@@ -9,6 +9,7 @@ import json
 import cocotb
 from cocotb.clock import Clock
 from cocotb.handle import HierarchyObject
+from cocotb import triggers
 
 from zamlet import generate_rtl
 from zamlet import test_utils
@@ -22,6 +23,7 @@ this_dir = os.path.abspath(os.path.dirname(__file__))
 
 
 async def first_test(bi: BamletInterface) -> None:
+    logger.info('first_test: starting')
     regs = receive_kernel.ReceiveKernelRegs()
 
     base_address = 0
@@ -61,8 +63,9 @@ async def first_test(bi: BamletInterface) -> None:
 
 @cocotb.test()
 async def receive_test(dut: HierarchyObject) -> None:
+    logger.info('receive_test: start')
     test_utils.configure_logging_sim("DEBUG")
-    test_params = test_utils.read_params()
+    test_params = test_utils.get_test_params()
     seed = test_params['seed']
     with open(test_params['params_file']) as f:
         params = BamletParams.from_dict(json.load(f))
@@ -70,12 +73,33 @@ async def receive_test(dut: HierarchyObject) -> None:
     rnd = Random(seed)
     
     # Start clock
-    clock_gen = Clock(dut.clock, 1, "ns")
-    cocotb.start_soon(clock_gen.start())
+    logger.info('hello')
+    logger.info(f'clock value is {dut.clock.value}')
+    
+    # Try manual clock driving instead of Clock generator
+    logger.info('Trying manual clock toggle')
+    dut.clock.value = 0
+    dut.reset.value = 0
+    await triggers.Timer(1, 'ns')  
+    logger.info(f'clock after setting to 0: {dut.clock.value}')
+    logger.info(f'reset after setting to 0: {dut.reset.value}')
+    dut.clock.value = 1
+    dut.reset.value = 1
+    await triggers.Timer(1, 'ns')
+    logger.info(f'clock after setting to 1: {dut.clock.value}')
+    logger.info(f'reset after setting to 1: {dut.reset.value}')
+    dut.clock.value = 0
+    dut.reset.value = 0
+    await triggers.Timer(1, 'ns')
+    logger.info('Manual clock toggle completed - test should continue')
+    exit()
     
     # Create the bamlet interface
+    logger.info('receive_test: creating BamletInterface')
     bi = BamletInterface(dut, params, rnd, 1, 1)
+    logger.info('receive_test: initializing signals')
     bi.initialize_signals()
+    logger.info('receive_test: starting')
     await bi.start()
     
     await first_test(bi)

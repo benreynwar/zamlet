@@ -110,7 +110,19 @@ register_toolchains("@llvm_toolchain//:all")
 http_archive = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
 git_repository = use_repo_rule("@bazel_tools//tools/build_defs/repo:git.bzl", "git_repository")
 
-# HDL tools including Verilator and Cocotb
+# Cocotb rules from GitHub
+bazel_dep(name = "rules_cocotb_verilator")
+git_override(
+    module_name = "rules_cocotb_verilator",
+    remote = "https://github.com/benreynwar/bazel_rules_cocotb_verilator",
+    commit = "d51e8a1cd8759fc532faffcb1b8036fb31b986a7",
+)
+
+# Cocotb extension to provide @cocotb repository
+cocotb_ext = use_extension("@rules_cocotb_verilator//:extensions.bzl", "cocotb_extension")
+use_repo(cocotb_ext, "cocotb")
+
+# HDL tools including Verilator 
 bazel_dep(name = "rules_hdl")
 git_override(
     module_name = "rules_hdl",
