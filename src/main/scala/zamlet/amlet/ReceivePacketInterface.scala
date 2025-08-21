@@ -28,7 +28,7 @@ class ReceivePacketInterfaceIO(params: AmletParams) extends Bundle {
   // Instruction memory write interface
   val writeControl = Valid(new ControlWrite(params))
 
-  // Control outputs
+  // control outputs
   val start = Valid(UInt(16.W)) // instrAddrWidth equivalent
   
   // Error outputs
@@ -77,6 +77,11 @@ class ReceivePacketInterface(params: AmletParams) extends Module {
   val resetBuffered = ResetStage(clock, reset)
 
   withReset(resetBuffered) {
+
+    val writeControlToBuffer = Wire(Valid(new ControlWrite(params)))
+    val startToBuffer = Wire(Valid(UInt(16.W)))
+    io.writeControl := ValidBuffer(writeControlToBuffer)
+    io.start := ValidBuffer(startToBuffer)
 
     val thisXBuffered = RegNext(io.thisX)
     val thisYBuffered = RegNext(io.thisY)
@@ -131,11 +136,11 @@ class ReceivePacketInterface(params: AmletParams) extends Module {
     io.resultPredicate.bits.address.tag := DontCare  
     io.resultPredicate.bits.value := DontCare
     io.resultPredicate.bits.force := DontCare
-    io.writeControl.valid := false.B
-    io.writeControl.bits := DontCare
+    writeControlToBuffer.valid := false.B
+    writeControlToBuffer.bits := DontCare
     
-    io.start.valid := false.B
-    io.start.bits := DontCare
+    startToBuffer.valid := false.B
+    startToBuffer.bits := DontCare
     io.forward.valid := false.B
     io.forward.bits := DontCare
     io.fromNetwork.ready := false.B
@@ -294,8 +299,8 @@ class ReceivePacketInterface(params: AmletParams) extends Module {
           // Execute command based on type
           switch(commandType) {
             is(0.U) { // Start processor command
-              io.start.valid := true.B
-              io.start.bits := commandData(15, 0) // instrAddrWidth equivalent
+              startToBuffer.valid := true.B
+              startToBuffer.bits := commandData(15, 0) // instrAddrWidth equivalent
             }
             is(1.U) { // Write to instruction memory command setup
               val requestedCount = commandData(23, 16) // Count in next 8 bits
@@ -324,10 +329,10 @@ class ReceivePacketInterface(params: AmletParams) extends Module {
       is(States.ProcessingIMWrites) {
         when (bufferedFromNetwork.valid) {
           // Write data to instruction memory
-          io.writeControl.valid := true.B
-          io.writeControl.bits.mode := ControlWriteMode.InstructionMemory
-          io.writeControl.bits.address := imWriteAddress
-          io.writeControl.bits.data := bufferedFromNetwork.bits.data
+          writeControlToBuffer.valid := true.B
+          writeControlToBuffer.bits.mode := ControlWriteMode.InstructionMemory
+          writeControlToBuffer.bits.address := imWriteAddress
+          writeControlToBuffer.bits.data := bufferedFromNetwork.bits.data
           
           // Update state for next write
           imWriteAddress := imWriteAddress + 1.U
@@ -379,10 +384,10 @@ class ReceivePacketInterface(params: AmletParams) extends Module {
               io.resultPredicate.bits.force := true.B // Command writes bypass dependency system
             }
             is(3.U) { // G registers (11)
-              io.writeControl.valid := true.B
-              io.writeControl.bits.mode := ControlWriteMode.GlobalRegister
-              io.writeControl.bits.address := regIndex(params.gRegWidth-1, 0)
-              io.writeControl.bits.data := bufferedFromNetwork.bits.data
+              writeControlToBuffer.valid := true.B
+              writeControlToBuffer.bits.mode := ControlWriteMode.GlobalRegister
+              writeControlToBuffer.bits.address := regIndex(params.gRegWidth-1, 0)
+              writeControlToBuffer.bits.data := bufferedFromNetwork.bits.data
             }
           }
           

@@ -500,8 +500,11 @@ class RegisterFileAndRename(params: AmletParams) extends Module {
     unreportedLoopLevel := PriorityEncoder(needsReporting)
     
     // Send loop iterations if we found an unreported resolved loop
-    io.loopIterations.valid := foundUnreportedLoop
-    io.loopIterations.bits := state.loopStates(unreportedLoopLevel).iterations.value
+    val loopIterationsToBuffer = Wire(Valid(UInt(params.aWidth.W)))
+    loopIterationsToBuffer.valid := foundUnreportedLoop
+    loopIterationsToBuffer.bits := state.loopStates(unreportedLoopLevel).iterations.value
+
+    io.loopIterations := ValidBuffer(loopIterationsToBuffer)
     
     // Mark the loop level as reported in next state
     when (foundUnreportedLoop) {
