@@ -3,7 +3,7 @@ package zamlet.amlet
 import chisel3._
 import chisel3.util._
 import scala.math.max
-import zamlet.utils.{DoubleBuffer, DecoupledBuffer, RFBuilderParams, RegisterFileBuilder, WriteAccessOut, ReadAccessOut, ResetStage, HasRoom, HasRoomForwardBuffer}
+import zamlet.utils.{DoubleBuffer, DecoupledBuffer, RFBuilderParams, RegisterFileBuilder, WriteAccessOut, ReadAccessOut, ResetStage, HasRoom, HasRoomForwardBuffer, ValidBuffer}
 
 
 class LoopState(params: AmletParams) extends Bundle {
