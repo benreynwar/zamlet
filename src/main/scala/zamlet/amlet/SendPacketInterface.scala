@@ -35,6 +35,7 @@ class SendPacketInterfaceErrors extends Bundle {
  * Handles packet send operations
  */
 class SendPacketInterface(params: AmletParams) extends Module {
+  val regUtils = new RegUtils(params)
   val io = IO(new SendPacketInterfaceIO(params))
   
   val resetBuffered = ResetStage(clock, reset)
@@ -62,7 +63,17 @@ class SendPacketInterface(params: AmletParams) extends Module {
     // Handle writes to packet output register (register 0)
     for (i <- 0 until params.nResultPorts) {
       when(io.writeInputs(i).valid && 
-           io.writeInputs(i).bits.address.addr === 0.U && 
+           regUtils.bRegIsA(io.writeInputs(i).bits.address.addr) &&
+           regUtils.bRegToA(io.writeInputs(i).bits.address.addr) === 0.U && 
+           !io.writeInputs(i).bits.force &&
+           io.writeInputs(i).bits.predicate) {
+        val writeIdent = io.writeInputs(i).bits.address.tag
+        packetOutBuffer(writeIdent).valid := true.B
+        packetOutBuffer(writeIdent).bits := io.writeInputs(i).bits.value
+      }
+      when(io.writeInputs(i).valid && 
+           regUtils.bRegIsD(io.writeInputs(i).bits.address.addr) &&
+           regUtils.bRegToD(io.writeInputs(i).bits.address.addr) === 0.U && 
            !io.writeInputs(i).bits.force &&
            io.writeInputs(i).bits.predicate) {
         val writeIdent = io.writeInputs(i).bits.address.tag

@@ -1,5 +1,4 @@
 import os
-print('hh')
 import sys
 import tempfile
 from typing import Optional
@@ -388,7 +387,7 @@ async def alu_with_packet_io_test(bi: BamletInterface) -> None:
     dest_x = 0
     dest_y = 0
     coord_word = packet_utils.make_coord_register(dest_x, dest_y, bi.params.amlet)
-    await bi.write_register('a', 0, coord_word)
+    await bi.write_register('a', 1, coord_word)
     
     program = [
         # Receive packet and get length
@@ -403,7 +402,7 @@ async def alu_with_packet_io_test(bi: BamletInterface) -> None:
         VLIWInstruction(
             packet=PacketInstruction(
                 mode=PacketModes.SEND,
-                target=0,   # Destination coordinates in A-register 0
+                target=1,   # Destination coordinates in A-register 0
                 length=5,   # Length from A-register 5
                 channel=0
             )
@@ -429,7 +428,7 @@ async def alu_with_packet_io_test(bi: BamletInterface) -> None:
                 mode=ALUModes.ADD,
                 src1=1,
                 src2=2,
-                a_dst=0,  # Send sum (A-register 0 goes to send buffer)
+                d_dst=0,  # Send sum (D-register 0 goes to send buffer)
             )
         ),
         VLIWInstruction(
@@ -438,7 +437,7 @@ async def alu_with_packet_io_test(bi: BamletInterface) -> None:
                 mode=ALUModes.MULT,
                 src1=1,
                 src2=2,
-                a_dst=0,  # Send product (A-register 0 goes to send buffer)
+                d_dst=0,  # Send product (D-register 0 goes to send buffer)
             )
         )
     ]
@@ -458,7 +457,7 @@ async def alu_with_packet_io_test(bi: BamletInterface) -> None:
 @cocotb.test()
 async def bamlet_alu_test(dut: HierarchyObject) -> None:
     test_utils.configure_logging_sim("DEBUG")
-    test_params = test_utils.read_params()
+    test_params = test_utils.get_test_params()
     seed = test_params['seed']
     with open(test_params['params_file']) as f:
         params = BamletParams.from_dict(json.load(f))

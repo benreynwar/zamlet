@@ -2,7 +2,7 @@ package zamlet.amlet
 
 import chisel3._
 import chisel3.util._
-import zamlet.utils.{DecoupledBuffer, SkidBuffer, ResetStage}
+import zamlet.utils.{DecoupledBuffer, SkidBuffer, ResetStage, ValidBuffer}
 
 /**
  * Amlet I/O interface
@@ -16,7 +16,6 @@ class AmletIO(params: AmletParams) extends Bundle {
   
   // Input stream of VLIW instructions from Bamlet
   val instruction = Flipped(Decoupled(new VLIWInstr.Expanded(params)))
-  
   
   // Control outputs from ReceivePacketInterface
   val start = Valid(UInt(16.W)) // start signal for Bamlet control
@@ -129,19 +128,42 @@ class Amlet(params: AmletParams) extends Module {
     
     // Convert to generic result bus for reservation stations
     val resultBus = namedResultBus.toResultBus()
+
+    // This buffer is here to delay the resultBus so that we don't miss some results
+    // in between the RF and the RS.
+    //
+    // The time for a the effect of a result to get here via the RF is
+    // resultBus -> RF.iaResultsBuffer -> write_cycle -> RF.aoBuffer -> RS.iaBuffer
+    // resultBus -> resultBusBuffer -> RS.iaBuffer
+    //
+    // It should arrive via the resultBus on the same cycle
+    // if it arrived earlier to will have instructions that missed it from the RF and
+    // missed it from the resultBus.
+    // if it arrives later that's just unnecessary latency.
+
+    // This means that resultBusBuffer should have a latency of 1 + RF.iaResultsBuffer + RF.aoBuffer
+    val resultBusDelay = 1 + (if (params.rfParams.iaResultsBuffer) 1 else 0)  + (if (params.rfParams.aoBuffer) 1 else 0)
+    val resultBusInit = Wire(new ResultBus(params))
+    resultBusInit := DontCare
+    for (i <- 0 until params.nResultPorts) {
+      resultBusInit.writes(i).valid := false.B
+    }
+    for (i <- 0 until 2) {
+      resultBusInit.predicate(i).valid := false.B
+    }
+    val delayedResultBus = ShiftRegister(resultBus, resultBusDelay, resultBusInit, true.B)
     
     // Connect results to RegisterFileAndRename (uses named bus) and reservation stations (use generic bus)
     registerFileAndRename.io.resultBus := namedResultBus
-    aluRS.io.resultBus := resultBus
-    aluLiteRS.io.resultBus := resultBus
-    aluPredicateRS.io.resultBus := resultBus
-    loadStoreRS.io.resultBus := resultBus
-    sendPacketRS.io.resultBus := resultBus
-    receivePacketRS.io.resultBus := resultBus
+    aluRS.io.resultBus := delayedResultBus
+    aluLiteRS.io.resultBus := delayedResultBus
+    aluPredicateRS.io.resultBus := delayedResultBus
+    loadStoreRS.io.resultBus := delayedResultBus
+    sendPacketRS.io.resultBus := delayedResultBus
+    receivePacketRS.io.resultBus := delayedResultBus
     
     // Connect results to packet interfaces for dependency resolution
     sendPacketInterface.io.writeInputs := resultBus.writes
-    
     
     // Connect control outputs from ReceivePacketInterface
     io.start := receivePacketInterface.io.start

@@ -14,7 +14,7 @@ case class ALUParams(
   boBuffer: Boolean = false
 )
 
-case class ReservationStationParams(
+case class ReservationStationReducedParams(
   nSlots: Int = 6,
   iaBuffer: Boolean = false,
   boForwardBuffer: Boolean = true,
@@ -24,6 +24,7 @@ case class ReservationStationParams(
 case class RFParams(
   iaForwardBuffer: Boolean = true,
   iaBackwardBuffer: Boolean = true,
+  iaResultsBuffer: Boolean = true,
   aoBuffer: Boolean = true
 )
 
@@ -78,22 +79,22 @@ case class AmletParams(
 
   // ALU configuration
   aluParams: ALUParams = ALUParams(),
-  aluRSParams: ReservationStationParams = ReservationStationParams(),
+  aluRSParams: ReservationStationReducedParams = ReservationStationReducedParams(),
   
   // ALULite configuration
   aluLiteLatency: Int = 1,
-  aluLiteRSParams: ReservationStationParams = ReservationStationParams(),
+  aluLiteRSParams: ReservationStationReducedParams = ReservationStationReducedParams(),
 
   // ALU Predicate configuration
   aluPredicateLatency: Int = 1,
-  aluPredicateRSParams: ReservationStationParams = ReservationStationParams(),
+  aluPredicateRSParams: ReservationStationReducedParams = ReservationStationReducedParams(),
 
   // Load Store configuration
-  loadStoreRSParams: ReservationStationParams = ReservationStationParams(),
+  loadStoreRSParams: ReservationStationReducedParams = ReservationStationReducedParams(),
 
   // Packet configuration
-  sendPacketRSParams: ReservationStationParams = ReservationStationParams(nSlots = 2),
-  receivePacketRSParams: ReservationStationParams = ReservationStationParams(nSlots = 2),
+  sendPacketRSParams: ReservationStationReducedParams = ReservationStationReducedParams(nSlots = 2),
+  receivePacketRSParams: ReservationStationReducedParams = ReservationStationReducedParams(nSlots = 2),
   nPacketOutIdents: Int = 4,
   
   // Network configuration
@@ -145,6 +146,29 @@ case class AmletParams(
   def dWord(): UInt = UInt(width.W)
   def aWord(): UInt = UInt(aWidth.W)
   def bWord(): UInt = UInt(width.W)
+
+  // Calculate the input latency for reservation stations based on register file output buffering
+  // This is the number of cycles between hasRoom going low and data ceasing to arrive at the input to the reservation stations
+  def rsInputLatency(): Int = if (rfParams.aoBuffer) 1 else 0
+
+  // Convert reduced RS params to full RS params with computed inputLatency
+  def getALURSParams(): ReservationStationParams = 
+    ReservationStationParams(aluRSParams.nSlots, aluRSParams.iaBuffer, aluRSParams.boForwardBuffer, aluRSParams.boBackwardBuffer, rsInputLatency())
+  
+  def getALULiteRSParams(): ReservationStationParams = 
+    ReservationStationParams(aluLiteRSParams.nSlots, aluLiteRSParams.iaBuffer, aluLiteRSParams.boForwardBuffer, aluLiteRSParams.boBackwardBuffer, rsInputLatency())
+  
+  def getALUPredicateRSParams(): ReservationStationParams = 
+    ReservationStationParams(aluPredicateRSParams.nSlots, aluPredicateRSParams.iaBuffer, aluPredicateRSParams.boForwardBuffer, aluPredicateRSParams.boBackwardBuffer, rsInputLatency())
+  
+  def getLoadStoreRSParams(): ReservationStationParams = 
+    ReservationStationParams(loadStoreRSParams.nSlots, loadStoreRSParams.iaBuffer, loadStoreRSParams.boForwardBuffer, loadStoreRSParams.boBackwardBuffer, rsInputLatency())
+  
+  def getSendPacketRSParams(): ReservationStationParams = 
+    ReservationStationParams(sendPacketRSParams.nSlots, sendPacketRSParams.iaBuffer, sendPacketRSParams.boForwardBuffer, sendPacketRSParams.boBackwardBuffer, rsInputLatency())
+  
+  def getReceivePacketRSParams(): ReservationStationParams = 
+    ReservationStationParams(receivePacketRSParams.nSlots, receivePacketRSParams.iaBuffer, receivePacketRSParams.boForwardBuffer, receivePacketRSParams.boBackwardBuffer, rsInputLatency())
 
   def bTag(): UInt = UInt(scala.math.max(aTagWidth, dTagWidth).W)
 }

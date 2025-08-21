@@ -2,7 +2,16 @@ package zamlet.amlet
 
 import chisel3._
 import chisel3.util._
-import zamlet.utils.{DoubleBuffer, RegBuffer, ValidBuffer, ResetStage}
+import zamlet.utils.{DoubleBuffer, RegBuffer, ValidBuffer, ResetStage, HasRoom, HasRoomForwardBuffer}
+
+case class ReservationStationParams(
+  nSlots: Int = 6,
+  iaBuffer: Boolean = false,
+  boForwardBuffer: Boolean = true,
+  boBackwardBuffer: Boolean = true,
+  // Number of cycles between hasRoom going low and data ceasing to arrive at the reservation station input
+  inputLatency: Int = 0
+)
 
 class ReservationStationErrors extends Bundle {
   val noFreeSlots = Bool()
@@ -10,6 +19,7 @@ class ReservationStationErrors extends Bundle {
 
 abstract class ReservationStation[U <: Instr.Resolving, R <: Instr.Resolved]
     (params: AmletParams, rsParams: ReservationStationParams, Resolving: U, Resolved: R) extends Module {
+      // inputLatency is how many cycles it takes from setting input.hasRoom low, before data stops arriving
 
   def nSlots(): Int = rsParams.nSlots
   def readyToIssue(allResolving: Vec[U], index: UInt): Bool
@@ -17,7 +27,7 @@ abstract class ReservationStation[U <: Instr.Resolving, R <: Instr.Resolved]
 
   val io = IO(new Bundle {
     // Input instruction from RegisterFileAndFriends
-    val input = Flipped(Decoupled(Resolving))
+    val input = Flipped(HasRoom(Resolving, rsParams.inputLatency))
     
     // Output to Execution Unit when instruction is ready
     val output = Decoupled(Resolved)
@@ -32,10 +42,7 @@ abstract class ReservationStation[U <: Instr.Resolving, R <: Instr.Resolved]
   val resetBuffered = ResetStage(clock, reset)
 
   // Add input buffer using ValidBuffer
-    val iFire = Wire(Valid(chiselTypeOf(io.input.bits)))
-    iFire.valid := io.input.valid && io.input.ready
-    iFire.bits := io.input.bits
-    val aInput = ValidBuffer(iFire, rsParams.iaBuffer)
+    val aInput = HasRoomForwardBuffer(io.input, rsParams.iaBuffer)
     
     // Buffer the resultBus using RegBuffer
     val aResultBus = RegBuffer(io.resultBus, rsParams.iaBuffer)
@@ -128,7 +135,7 @@ abstract class ReservationStation[U <: Instr.Resolving, R <: Instr.Resolved]
     // Set input.ready high if there is a spare slot.
 
     // Determine ready threshold based on iaBuffer setting
-    val readyThreshold = if (rsParams.iaBuffer) (nSlots() - 2).U else (nSlots() - 1).U
+    val readyThreshold = (nSlots() - aInput.latency - 1).U
 
     // Error check: if aInput.valid, there should always be at least one free slot
     val errorNoFreeSlots = Wire(Bool())
@@ -138,23 +145,24 @@ abstract class ReservationStation[U <: Instr.Resolving, R <: Instr.Resolved]
       io.error.noFreeSlots := RegNext(errorNoFreeSlots, false.B)
     }
     
-
     nUsedSlotsNext := nUsedSlots
-    inputReadyNext := inputReady
+    // The latency is the number of items we can receive after
+    // ready has gone low.
     when (removeValid && aInput.valid) {
+      inputReadyNext := nUsedSlots <= readyThreshold
       // We receive an instruction and we issue one
     } .elsewhen (removeValid) {
       // We issued but didn't receive
       nUsedSlotsNext := nUsedSlots - 1.U
-      inputReadyNext := true.B
+      inputReadyNext := nUsedSlots - 1.U <= readyThreshold
     } .elsewhen (aInput.valid) {
       // We received but didn't issue
       nUsedSlotsNext := nUsedSlots + 1.U
-      when (nUsedSlots >= readyThreshold) {
-        inputReadyNext := false.B
-      }
+      inputReadyNext := nUsedSlots + 1.U <= readyThreshold
+    } .otherwise {
+      inputReadyNext := nUsedSlots <= readyThreshold
     }
-    io.input.ready := inputReady
+    aInput.hasRoom := inputReady
     
     internalOutput.valid := removeValid
     val issueSlot = slots(issueSlotIndex)

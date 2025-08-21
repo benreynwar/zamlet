@@ -236,7 +236,7 @@ async def alu_lite_predicate_test(bi: BamletInterface) -> None:
 @cocotb.test()
 async def bamlet_alu_lite_test(dut: HierarchyObject) -> None:
     test_utils.configure_logging_sim("DEBUG")
-    test_params = test_utils.read_params()
+    test_params = test_utils.get_test_params()
     seed = test_params['seed']
     with open(test_params['params_file']) as f:
         params = BamletParams.from_dict(json.load(f))

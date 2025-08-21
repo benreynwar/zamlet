@@ -22,7 +22,7 @@
     "nResultPorts": 4,
     "nLoopLevels": 4,
     "nPRegs": 16,
-    "nPTags": 4,
+    "nPTags": 8,
     "xPosWidth": 8,
     "yPosWidth": 8,
     "packetLengthWidth": 8,
@@ -89,6 +89,7 @@
     "rfParams": {
       "iaForwardBuffer": true,
       "iaBackwardBuffer": true,
+      "iaResultsBuffer": true,
       "aoBuffer": true
     }
   }

@@ -6,7 +6,7 @@ import chisel3.util._
 /**
  * ALU Reservation Station - manages out-of-order execution for ALU operations
  */
-class ALURS(params: AmletParams) extends ReservationStation[ALUInstr.Resolving, ALUInstr.Resolved](params, params.aluRSParams, new ALUInstr.Resolving(params), new ALUInstr.Resolved(params)) {
+class ALURS(params: AmletParams) extends ReservationStation[ALUInstr.Resolving, ALUInstr.Resolved](params, params.getALURSParams(), new ALUInstr.Resolving(params), new ALUInstr.Resolved(params)) {
 
   def readyToIssue(allResolving: Vec[ALUInstr.Resolving], index: UInt): Bool = {
     allResolving(index).isResolved()

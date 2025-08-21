@@ -63,17 +63,22 @@ class BamletInterface:
             getattr(self.dut, f'io_{side}i_{index}_{channel}_valid').value = 0
 
     async def start(self):
+        logger.info('start: starting')
         # Apply reset sequence
         self.dut.reset.value = 0
         await triggers.RisingEdge(self.dut.clock)
         self.dut.reset.value = 1
         await triggers.RisingEdge(self.dut.clock)
         self.dut.reset.value = 0
+        for i in range(3):
+            await triggers.RisingEdge(self.dut.clock)
+        logger.info('start: done reset')
         # Start packet driver and receivers after reset
         for label in self.get_all_labels():
             cocotb.start_soon(self.drivers[label].drive_packets())
             cocotb.start_soon(self.receivers[label].receive_packets())
         cocotb.start_soon(self.check_errors())
+        logger.info('start: finishing')
 
 
     async def write_register(self, reg_type, reg, value, side='w', index=0, channel=0, offset_x=0, offset_y=0):
@@ -95,15 +100,15 @@ class BamletInterface:
         if reg_type == 'a':
             assert 0 <= reg < self.params.amlet.n_a_regs, f"A-register {reg} out of range [0, {self.params.amlet.n_a_regs})"
             amlet = self.get_amlet(offset_x, offset_y)
-            return int(getattr(amlet.registerFileAndRename, f'state_aRegs_{reg}_value').value)
+            return int(getattr(amlet.registerFileAndRename.aRF, f'state_{reg}_value').value)
         elif reg_type == 'd':
             assert 0 <= reg < self.params.amlet.n_d_regs, f"D-register {reg} out of range [0, {self.params.amlet.n_d_regs})"
             amlet = self.get_amlet(offset_x, offset_y)
-            return int(getattr(amlet.registerFileAndRename, f'state_dRegs_{reg}_value').value)
+            return int(getattr(amlet.registerFileAndRename.dRF, f'state_{reg}_value').value)
         elif reg_type == 'p':
             assert 0 <= reg < self.params.amlet.n_p_regs, f"P-register {reg} out of range [0, {self.params.amlet.n_p_regs})"
             amlet = self.get_amlet(offset_x, offset_y)
-            return int(getattr(amlet.registerFileAndRename, f'state_pRegs_{reg}_value').value)
+            return int(getattr(amlet.registerFileAndRename.pRF, f'state_{reg}_value').value)
         elif reg_type == 'g':
             assert 0 <= reg < self.params.amlet.n_g_regs, f"G-register {reg} out of range [0, {self.params.amlet.n_g_regs})"
             return int(getattr(self.dut.control, f'state_globals_{reg}').value)
@@ -156,7 +161,7 @@ class BamletInterface:
             await triggers.ReadOnly()
             if not self.dut.control.state_active.value:
                 break
-        for _ in range(20):
+        for _ in range(100):
             await triggers.RisingEdge(self.dut.clock)
 
     def get_amlet(self, offset_x, offset_y):
@@ -262,6 +267,12 @@ class BamletInterface:
             'errors_receivePacketInterface_instrAndCommandPacket',
             'errors_receivePacketInterface_unexpectedHeader',
             'errors_receivePacketInterface_wrongInstructionMode',
+            'errors_loadStoreRS_noFreeSlots',
+            'errors_aluRS_noFreeSlots',
+            'errors_aluPredicateRS_noFreeSlots',
+            'errors_aluLiteRS_noFreeSlots',
+            'errors_receivePacketRS_noFreeSlots',
+            'errors_sendPacketRS_noFreeSlots',
             ]
         while True:
             await triggers.RisingEdge(self.dut.clock)

@@ -71,28 +71,10 @@ async def receive_test(dut: HierarchyObject) -> None:
         params = BamletParams.from_dict(json.load(f))
 
     rnd = Random(seed)
-    
+
     # Start clock
-    logger.info('hello')
-    logger.info(f'clock value is {dut.clock.value}')
-    
-    # Try manual clock driving instead of Clock generator
-    logger.info('Trying manual clock toggle')
-    dut.clock.value = 0
-    dut.reset.value = 0
-    await triggers.Timer(1, 'ns')  
-    logger.info(f'clock after setting to 0: {dut.clock.value}')
-    logger.info(f'reset after setting to 0: {dut.reset.value}')
-    dut.clock.value = 1
-    dut.reset.value = 1
-    await triggers.Timer(1, 'ns')
-    logger.info(f'clock after setting to 1: {dut.clock.value}')
-    logger.info(f'reset after setting to 1: {dut.reset.value}')
-    dut.clock.value = 0
-    dut.reset.value = 0
-    await triggers.Timer(1, 'ns')
-    logger.info('Manual clock toggle completed - test should continue')
-    exit()
+    clock_gen = Clock(dut.clock, 1, "ns")
+    cocotb.start_soon(clock_gen.start())
     
     # Create the bamlet interface
     logger.info('receive_test: creating BamletInterface')

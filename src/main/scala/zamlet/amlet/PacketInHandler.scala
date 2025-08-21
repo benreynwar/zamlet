@@ -43,10 +43,18 @@ class PacketInHandler(params: AmletParams) extends Module {
   val io = IO(new PacketInHandlerIO(params))
   
   // Register declarations
-  val bufferedDirections = RegInit(0.U(5.W))
-  val bufferedFwdDirections = RegInit(0.U(5.W))
-  val remainingWords = RegInit(0.U(params.packetLengthWidth.W))
-  val isAppend = RegInit(false.B)
+  val bufferedDirectionsNext = Wire(UInt(5.W))
+  val bufferedDirections = RegNext(bufferedDirectionsNext, 0.U)
+  bufferedDirectionsNext := bufferedDirections
+  val bufferedFwdDirectionsNext = Wire(UInt(5.W))
+  val bufferedFwdDirections = RegNext(bufferedFwdDirectionsNext, 0.U)
+  bufferedFwdDirectionsNext := bufferedFwdDirections
+  val remainingWordsNext = Wire(UInt(params.packetLengthWidth.W))
+  val remainingWords = RegNext(remainingWordsNext, 0.U)
+  remainingWordsNext := remainingWords
+  val isAppendNext = Wire(Bool())
+  val isAppend = RegNext(isAppendNext, false.B)
+  isAppendNext := isAppend
 
 
   // Register the 'forward'
@@ -69,7 +77,6 @@ class PacketInHandler(params: AmletParams) extends Module {
   }
 
   // Default outputs
-  io.fromNetwork.ready := false.B
   io.outputs.foreach { out =>
     out.valid := false.B
     out.bits := DontCare
@@ -130,12 +137,14 @@ class PacketInHandler(params: AmletParams) extends Module {
   // When data arrives it goes into a buffer to break the forwards and
   // backwards paths.
   // ---------------------------------------------------------------
-  val buffered = DoubleBuffer(io.fromNetwork, params.networkNodeParams.iaForwardBuffer, params.networkNodeParams.iaBackwardBuffer)
+  val bufferedFromNetwork = Wire(Flipped(Decoupled(new NetworkWord(params))))
+  bufferedFromNetwork <> DoubleBuffer(io.fromNetwork, params.networkNodeParams.iaForwardBuffer, params.networkNodeParams.iaBackwardBuffer)
+  dontTouch(bufferedFromNetwork)
 
   // From the output of that skid buffer we look at the header.
   // We work out what directions it wants to go.
   // ----------------------------------------------------------
-  val bufferedHeader = buffered.bits.data.asTypeOf(new PacketHeader(params))
+  val bufferedHeader = bufferedFromNetwork.bits.data.asTypeOf(new PacketHeader(params))
   // What direction we go if this is a normal route
   val regularDirections = calculateRegularRouting(bufferedHeader.xDest, bufferedHeader.yDest)
   // What directions we go if this is a broadcast route
@@ -158,6 +167,7 @@ class PacketInHandler(params: AmletParams) extends Module {
   // Send handlerRequest to all the PacketOutHandlers it wants to go to (except back in same direction)
   val inputDirMask = UIntToOH(io.inputDirection.asUInt, 5)
   val otherDirections = directions & ~inputDirMask
+  dontTouch(otherDirections)
 
   // This is comes from otherDirections when we're processing the header and
   // otherwise comes from a registered version from the last header.
@@ -165,7 +175,7 @@ class PacketInHandler(params: AmletParams) extends Module {
   val connectionFwdDirections = Wire(UInt(5.W))
 
 
-  when (buffered.bits.isHeader) {
+  when (bufferedFromNetwork.bits.isHeader) {
     connectionDirections := otherDirections
     connectionFwdDirections := fwdDir
   } .otherwise {
@@ -185,15 +195,15 @@ class PacketInHandler(params: AmletParams) extends Module {
   // Whenever we have a header coming out of the buffer we are trying to
   // make a new connection.
 
-  when(buffered.valid && buffered.bits.isHeader) {
-    remainingWords := bufferedHeader.length
+  when(bufferedFromNetwork.valid && bufferedFromNetwork.bits.isHeader) {
+    remainingWordsNext := bufferedHeader.length
     io.errors.routingError := badRegularRoute
     when(!bufferedHeader.forward || bufferedForward.valid) {
       // All our targets are ready to receive
-      when(buffered.ready) {
+      when(bufferedFromNetwork.ready) {
         // Buffer the routing directions for the reset of the packet.
-        bufferedDirections := otherDirections
-        bufferedFwdDirections := fwdDir
+        bufferedDirectionsNext := otherDirections
+        bufferedFwdDirectionsNext := fwdDir
       }
     }
     // Determine append mode from forward data if forwarding, otherwise false
@@ -202,14 +212,14 @@ class PacketInHandler(params: AmletParams) extends Module {
       // going to append some local data onto it.
       // We tell the PacketOutHandler this so it can switch it's state to
       // accept the data for appending.
-      isAppend := bufferedForward.bits.append
+      isAppendNext := bufferedForward.bits.append
       freshForward := false.B
     }.otherwise {
-      isAppend := false.B
+      isAppendNext := false.B
     }
   }
-  when(buffered.valid && buffered.ready && !buffered.bits.isHeader) {
-    remainingWords := remainingWords - 1.U
+  when(bufferedFromNetwork.valid && bufferedFromNetwork.ready && !bufferedFromNetwork.bits.isHeader) {
+    remainingWordsNext := remainingWords - 1.U
   }
   // For each direction, check if all OTHER directions that need outputs are ready
   val otherOutputsReady = Wire(Vec(5, Bool()))
@@ -224,23 +234,26 @@ class PacketInHandler(params: AmletParams) extends Module {
     otherOutputsReady(i) := otherReadys(i).andR
   }
 
+  val missingForwardTarget = (bufferedFromNetwork.bits.isHeader && bufferedHeader.forward && !bufferedForward.valid)
+
   // We consume the buffer if we can send the data
   // or if we're appending this packet and can discard the header.
-  buffered.ready := (
+  bufferedFromNetwork.ready := (
     // The outputs are all ready and we have the forwarding info 
-    (allTargetOutputsReady && (!buffered.bits.isHeader || !bufferedHeader.forward || bufferedForward.valid)) ||
+    (allTargetOutputsReady && (!missingForwardTarget)) ||
     // We're appending this packet and discarding the header
-    (buffered.bits.isHeader && bufferedHeader.mode === PacketHeaderModes.Append) 
+    (bufferedFromNetwork.bits.isHeader && bufferedHeader.mode === PacketHeaderModes.Append) 
   )
 
   io.outputs.zipWithIndex.foreach { case (out, idx) =>
-    when (bufferedHeader.mode === PacketHeaderModes.Append && buffered.bits.isHeader) {
+    when (bufferedHeader.mode === PacketHeaderModes.Append && bufferedFromNetwork.bits.isHeader) {
       // We don't output the header if we're appending this packet.
+      // FIXME: This feels sus. I don't understand why we have this logic.
       out.valid := false.B
     } .otherwise {
-      out.valid := buffered.valid && connectionDirections(idx) && otherOutputsReady(idx)
+      out.valid := bufferedFromNetwork.valid && connectionDirections(idx) && otherOutputsReady(idx) && !missingForwardTarget
     }
-    when (bufferedHeader.forward && connectionFwdDirections(idx) && buffered.bits.isHeader) {
+    when (bufferedHeader.forward && connectionFwdDirections(idx) && bufferedFromNetwork.bits.isHeader) {
       val newHeader = Wire(new PacketHeader(params))
       newHeader.length := bufferedHeader.length + bufferedHeader.appendLength
       newHeader.xDest := bufferedForward.bits.xDest
@@ -251,10 +264,10 @@ class PacketInHandler(params: AmletParams) extends Module {
       newHeader.appendLength := bufferedHeader.appendLength
       out.bits.data := newHeader.asUInt
     } .otherwise {
-      out.bits.data := buffered.bits.data
+      out.bits.data := bufferedFromNetwork.bits.data
     }
-    out.bits.isHeader := buffered.bits.isHeader
-    when ((!buffered.bits.isHeader && remainingWords === 1.U) || (buffered.bits.isHeader && bufferedHeader.length === 0.U)) {
+    out.bits.isHeader := bufferedFromNetwork.bits.isHeader
+    when ((!bufferedFromNetwork.bits.isHeader && remainingWords === 1.U) || (bufferedFromNetwork.bits.isHeader && bufferedHeader.length === 0.U)) {
       if (idx == DirectionBits.HERE_BIT) {
         out.bits.last := true.B
         out.bits.append := false.B

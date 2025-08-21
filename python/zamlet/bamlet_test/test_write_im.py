@@ -280,10 +280,10 @@ async def simple_packet_test(bi: BamletInterface) -> None:
         await triggers.RisingEdge(bi.dut.clock)
         
         # Check buffered_valid signal
-        buffered_valid = bi.dut.Amlet.networkNode.switches_0.inHandlers_3.buffered_valid.value
+        buffered_valid = bi.dut.Amlet.networkNode.switches_0.inHandlers_3.bufferedFromNetwork_valid.value
         if buffered_valid == 1:
             # Check if this is a header word
-            is_header = int(bi.dut.Amlet.networkNode.switches_0.inHandlers_3.buffered_bits_isHeader.value)
+            is_header = int(bi.dut.Amlet.networkNode.switches_0.inHandlers_3.bufferedFromNetwork_bits_isHeader.value)
             if is_header == 1:
                 logger.info("Found valid buffered header!")
                 
@@ -293,7 +293,7 @@ async def simple_packet_test(bi: BamletInterface) -> None:
                 header_length = int(bi.dut.Amlet.networkNode.switches_0.inHandlers_3.bufferedHeader_length.value)
                 
                 # Get the raw header word for comparison
-                raw_header = int(bi.dut.Amlet.networkNode.switches_0.inHandlers_3.buffered_bits_data.value)
+                raw_header = int(bi.dut.Amlet.networkNode.switches_0.inHandlers_3.bufferedFromNetwork_bits_data.value)
                 logger.info(f"Raw header word: 0x{raw_header:08x}")
                 logger.info(f"Expected header: 0x{expected_header_value:08x}")
                 
@@ -365,7 +365,7 @@ async def send_zero_length_packet_test(bi: BamletInterface) -> None:
 @cocotb.test()
 async def bamlet_write_im_test(dut: HierarchyObject) -> None:
     test_utils.configure_logging_sim("DEBUG")
-    test_params = test_utils.read_params()
+    test_params = test_utils.get_test_params()
     seed = test_params['seed']
     with open(test_params['params_file']) as f:
         params = BamletParams.from_dict(json.load(f))

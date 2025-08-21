@@ -57,6 +57,8 @@ class DroppingFifo[T <: Data](t: T, depth: Int, countBits: Int) extends Module {
     val allContents = Output(Vec(depth, t))
     val allCounts = Output(Vec(depth, UInt(countBits.W)))
     val allValids = Output(Vec(depth, Bool()))
+    // Whether they are at the output of the fifo.
+    val allAtOutput = Output(Vec(depth, Bool()))
   })
 
   val contents = Reg(Vec(depth, t))
@@ -116,6 +118,8 @@ class DroppingFifo[T <: Data](t: T, depth: Int, countBits: Int) extends Module {
     } .otherwise {
       validBits(i) := (i.U >= readPtr || iLTWritePtr(i))
     }
+
+    io.allAtOutput(i) := (i.U === readPtr)
 
 
     when (empty) {

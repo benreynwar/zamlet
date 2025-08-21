@@ -7,7 +7,7 @@ import chisel3.util._
  * LoadStore Reservation Station - manages out-of-order execution for Load/Store operations
  * with complex dependency checking to maintain memory ordering semantics
  */
-class LoadStoreRS(params: AmletParams) extends ReservationStation[LoadStoreInstr.Resolving, LoadStoreInstr.Resolved](params, params.loadStoreRSParams, new LoadStoreInstr.Resolving(params), new LoadStoreInstr.Resolved(params)) {
+class LoadStoreRS(params: AmletParams) extends ReservationStation[LoadStoreInstr.Resolving, LoadStoreInstr.Resolved](params, params.getLoadStoreRSParams(), new LoadStoreInstr.Resolving(params), new LoadStoreInstr.Resolved(params)) {
 
   def readyToIssue(allResolving: Vec[LoadStoreInstr.Resolving], index: UInt): Bool = {
     val instr = allResolving(index)

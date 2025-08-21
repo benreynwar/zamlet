@@ -67,6 +67,10 @@ class RegUtils(params: AmletParams) {
     !bReg(params.bRegWidth - 1)
   }
 
+  def bRegIsD(bReg: UInt): Bool = {
+    bReg(params.bRegWidth - 1)
+  }
+
   /**
    * Extract A-register address from B-register
    * Returns the lower bits as A-register index
@@ -96,7 +100,7 @@ class RegUtils(params: AmletParams) {
       aoBuffer=params.rfParams.aoBuffer
     )
     val result = Wire(Valid(new Result(aRFBuilderParams)))
-    result.valid := writeResult.valid
+    result.valid := writeResult.valid && bRegIsA(writeResult.bits.address.addr)
     result.bits.value := writeResult.bits.value(params.aWidth - 1, 0)
     result.bits.addr := writeResult.bits.address.addr(params.aRegWidth - 1, 0)
     result.bits.tag := writeResult.bits.address.tag
@@ -117,7 +121,8 @@ class RegUtils(params: AmletParams) {
       aoBuffer=params.rfParams.aoBuffer
     )
     val result = Wire(Valid(new Result(dRFBuilderParams)))
-    result.valid := writeResult.valid
+    result.valid := writeResult.valid && bRegIsD(writeResult.bits.address.addr)
+    result.bits.value := writeResult.bits.value(params.aWidth - 1, 0)
     result.bits.value := writeResult.bits.value
     result.bits.addr := writeResult.bits.address.addr(params.dRegWidth - 1, 0)
     result.bits.tag := writeResult.bits.address.tag

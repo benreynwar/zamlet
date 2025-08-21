@@ -18,7 +18,8 @@ case class RFParams(
   iaForwardBuffer: Boolean = true,
   iaBackwardBuffer: Boolean = true,
   iaResultsBuffer: Boolean = true,
-  aoBuffer: Boolean = true
+  aoBuffer: Boolean = true,
+  zeroValue: Int = 0
 ) {
   // Calculated parameters
   val tagWidth = log2Ceil(nTags)
@@ -45,7 +46,8 @@ case class RFBuilderParams(
   iaForwardBuffer: Boolean = true,
   iaBackwardBuffer: Boolean = true,
   iaResultsBuffer: Boolean = true,
-  aoBuffer: Boolean = true
+  aoBuffer: Boolean = true,
+  zeroValue: Int = 0
 ) {
   // Calculated parameters
   val tagWidth = log2Ceil(nTags)
@@ -62,7 +64,8 @@ case class RFBuilderParams(
       iaForwardBuffer = iaForwardBuffer,
       iaBackwardBuffer = iaBackwardBuffer,
       iaResultsBuffer = iaResultsBuffer,
-      aoBuffer = aoBuffer
+      aoBuffer = aoBuffer,
+      zeroValue = zeroValue
     )
   }
 }
@@ -130,12 +133,17 @@ class AccessOut(params: RFParams) extends Bundle {
 class RegisterFile(params: RFParams) extends Module {
   // Create builder params for internal use
   val builderParams = params.toBuilderParams()
+  val oAccessLatency = if (params.aoBuffer) 1 else 0
 
   val io = IO(new Bundle {
     val iAccess = Flipped(Decoupled(new AccessIn(params)))
     val iResults = Input(Vec(params.nWrites, Valid(new Result(builderParams))))
-    val oAccess = Decoupled(new AccessOut(params))
+    val oAccess = HasRoom(new AccessOut(params))
+    val localStall = Output(Bool())
+    val externalStall = Input(Bool())
   })
+
+  val stalled = io.localStall || io.externalStall
 
   val resetBuffered = ResetStage(clock, reset)
 
@@ -156,7 +164,7 @@ class RegisterFile(params: RFParams) extends Module {
 
     // i -> a
     val aAccessIn = DoubleBuffer(io.iAccess, params.iaForwardBuffer, params.iaBackwardBuffer)
-    val aAccessOut = Wire(Decoupled(new AccessOut(params)))
+    val aAccessOut = Wire(HasRoom(new AccessOut(params)))
 
     // Combinational 'a' logic
 
@@ -166,8 +174,13 @@ class RegisterFile(params: RFParams) extends Module {
       val addr = aAccessIn.bits.reads(i).bits
       val tag = state(addr).tag
       when (aAccessIn.bits.reads(i).valid) {
-        aAccessOut.bits.reads(i).bits.resolved := !state(addr).pendingTags(tag)
-        aAccessOut.bits.reads(i).bits.value := state(addr).value
+        when (addr > 0.U) {
+          aAccessOut.bits.reads(i).bits.resolved := !state(addr).pendingTags(tag)
+          aAccessOut.bits.reads(i).bits.value := state(addr).value
+        } .otherwise {
+          aAccessOut.bits.reads(i).bits.resolved := true.B
+          aAccessOut.bits.reads(i).bits.value := params.zeroValue.U
+        }
         aAccessOut.bits.reads(i).bits.tag := tag
         aAccessOut.bits.reads(i).bits.addr := aAccessIn.bits.reads(i).bits
       } .otherwise {
@@ -182,9 +195,9 @@ class RegisterFile(params: RFParams) extends Module {
 
     // Writes
     for (i <- 0 until params.nWrites) {
-      aAccessOut.bits.writes(i).valid := aAccessIn.bits.writes(i).valid
-      aAccessOut.bits.writes(i).bits.addr := aAccessIn.bits.writes(i).bits
       val addr = aAccessIn.bits.writes(i).bits
+      aAccessOut.bits.writes(i).valid := aAccessIn.bits.writes(i).valid
+      aAccessOut.bits.writes(i).bits.addr := addr
       val nextTag = Wire(UInt(params.tagWidth.W))
       when (state(addr).tag === (params.nTags-1).U) {
         nextTag := 0.U
@@ -196,15 +209,14 @@ class RegisterFile(params: RFParams) extends Module {
 
     // Indicates that one of the write access wasn't able to acquire a new
     // tag and so we stall.
-    val stalled = Wire(Bool())
-    stalled := false.B
+    io.localStall := false.B
     
     // Backpressure: ready when output can accept and no tag stalls
-    aAccessOut.valid := aAccessIn.valid && !stalled
-    aAccessIn.ready := aAccessOut.ready && !stalled
+    aAccessOut.valid := aAccessIn.valid && !stalled && aAccessOut.hasRoom
+    aAccessIn.ready := aAccessOut.hasRoom && !stalled
 
     // a -> o
-    val oAccess = DecoupledBuffer(aAccessOut, params.aoBuffer)
+    val oAccess = HasRoomForwardBuffer(aAccessOut, params.aoBuffer)
     io.oAccess <> oAccess
 
     // Logic to update the state
@@ -263,10 +275,12 @@ class RegisterFile(params: RFParams) extends Module {
             nextTag := state(regIndex).tag + 1.U
           }
           when (state(regIndex).pendingTags(nextTag)) {
-            stalled := true.B
+            io.localStall := true.B
           } .otherwise {
-            stateNext(regIndex).tag := nextTag
-            stateNext(regIndex).pendingTags(nextTag) := true.B
+            when (aAccessIn.ready) {
+              stateNext(regIndex).tag := nextTag
+              stateNext(regIndex).pendingTags(nextTag) := true.B
+            }
           }
         }
       }

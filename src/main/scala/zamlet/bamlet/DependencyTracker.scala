@@ -42,12 +42,12 @@ class DependencyTracker(params: BamletParams) extends Module {
   aluFifo.io.i.bits := bufferedInput.bits.alu
 
   // Set valid signals based on instruction modes (drop if mode is NULL/None)
-  controlFifo.io.i.valid := bufferedInput.valid
-  predicateFifo.io.i.valid := bufferedInput.valid
-  packetFifo.io.i.valid := bufferedInput.valid
-  aluLiteFifo.io.i.valid := bufferedInput.valid
-  loadStoreFifo.io.i.valid := bufferedInput.valid
-  aluFifo.io.i.valid := bufferedInput.valid
+  controlFifo.io.i.valid := bufferedInput.valid    && predicateFifo.io.i.ready && packetFifo.io.i.ready && aluLiteFifo.io.i.ready && loadStoreFifo.io.i.ready && aluFifo.io.i.ready
+  predicateFifo.io.i.valid := bufferedInput.valid  && controlFifo.io.i.ready && packetFifo.io.i.ready && aluLiteFifo.io.i.ready && loadStoreFifo.io.i.ready && aluFifo.io.i.ready
+  packetFifo.io.i.valid := bufferedInput.valid     && controlFifo.io.i.ready && predicateFifo.io.i.ready && aluLiteFifo.io.i.ready && loadStoreFifo.io.i.ready && aluFifo.io.i.ready
+  aluLiteFifo.io.i.valid := bufferedInput.valid    && controlFifo.io.i.ready && predicateFifo.io.i.ready && packetFifo.io.i.ready && loadStoreFifo.io.i.ready && aluFifo.io.i.ready
+  loadStoreFifo.io.i.valid := bufferedInput.valid  && controlFifo.io.i.ready && predicateFifo.io.i.ready && packetFifo.io.i.ready && aluLiteFifo.io.i.ready && aluFifo.io.i.ready
+  aluFifo.io.i.valid := bufferedInput.valid        && controlFifo.io.i.ready && predicateFifo.io.i.ready && packetFifo.io.i.ready && aluLiteFifo.io.i.ready && loadStoreFifo.io.i.ready
 
   // Set drop signals based on instruction modes
   controlFifo.io.drop := bufferedInput.bits.control.mode === ControlInstr.Modes.None
@@ -70,7 +70,6 @@ class DependencyTracker(params: BamletParams) extends Module {
   val canOutput = Wire(Vec(6, Bool()))
   
   // Debug signals for waveform visibility - extracted from loops
-  val instrIsOlder = Wire(Vec(6, Vec(6, Vec(fifoDepth, Bool()))))
   val hasBlockingDependency = Wire(Vec(6, Bool()))
   
   // Create DependencyChecker modules for each possible comparison
@@ -84,7 +83,7 @@ class DependencyTracker(params: BamletParams) extends Module {
   )
   
   val dependencyCheckers = Array.tabulate(6, 6, fifoDepth) { (i, j, k) =>
-    Module(new DependencyChecker(instructionTypes(i), instructionTypes(j))).suggestName(s"depChecker_${i}_${j}_${k}")
+    Module(new DependencyChecker(instructionTypes(i), instructionTypes(j), countBits)).suggestName(s"depChecker_${i}_${j}_${k}")
   }
   
   for (i <- 0 until 6) {
@@ -93,11 +92,14 @@ class DependencyTracker(params: BamletParams) extends Module {
     // Initialize all debug signals and connect DependencyCheckers
     for (j <- 0 until 6) {
       for (k <- 0 until fifoDepth) {
-        instrIsOlder(i)(j)(k) := false.B
-        
         // Connect DependencyChecker inputs
         dependencyCheckers(i)(j)(k).io.instr1 := fifoOutputs(i).bits
+        dependencyCheckers(i)(j)(k).io.instr1Count := fifoCounts(i)
+        dependencyCheckers(i)(j)(k).io.instr1Index := i.U
         dependencyCheckers(i)(j)(k).io.instr2 := fifos(j).io.allContents(k)
+        dependencyCheckers(i)(j)(k).io.instr2Count := fifos(j).io.allCounts(k)
+        dependencyCheckers(i)(j)(k).io.instr2Index := j.U
+        dependencyCheckers(i)(j)(k).io.instr2AtOutput := fifos(j).io.allAtOutput(k)
       }
     }
     
@@ -108,17 +110,8 @@ class DependencyTracker(params: BamletParams) extends Module {
       // Check against all internal entries in FIFO j
       for (k <- 0 until fifoDepth) {
         when (jFifo.io.allValids(k) && fifoOutputs(i).valid) {
-          // Determine age: larger count is older, tie-break by slot precedence
-          when (jFifo.io.allCounts(k) > fifoCounts(i)) {
-            instrIsOlder(i)(j)(k) := true.B
-          } .elsewhen (jFifo.io.allCounts(k) === fifoCounts(i)) {
-            instrIsOlder(i)(j)(k) := j.U < i.U // Earlier slots have higher precedence
-          } .otherwise {
-            instrIsOlder(i)(j)(k) := false.B
-          }
-          
           // Check for dependency if j is older using DependencyChecker module
-          when (instrIsOlder(i)(j)(k) && dependencyCheckers(i)(j)(k).io.hasDependency) {
+          when (dependencyCheckers(i)(j)(k).io.blockedByDependency) {
             hasBlockingDependency(i) := true.B
           }
         }
@@ -169,45 +162,85 @@ class DependencyTracker(params: BamletParams) extends Module {
 
 }
 
-class DependencyChecker[T1 <: Instr.Expanded, T2 <: Instr.Expanded](instr1Type: T1, instr2Type: T2) extends Module {
+class DependencyChecker[T1 <: Instr.Expanded, T2 <: Instr.Expanded](instr1Type: T1, instr2Type: T2, countBits: Int) extends Module {
   val io = IO(new Bundle {
+    // The instruction we're trying to work out if we can issue in this VLIW batch.
     val instr1 = Input(instr1Type)
+    // The queue index it is coming from (in order of precedence)
+    // (control, predicate, packet, aluLite, loadStore, alu)   
+    val instr1Index = Input(UInt(3.W))
+    // How old the instruction is (older instructions have precedence)
+    val instr1Count = Input(UInt(countBits.W))
     val instr2 = Input(instr2Type)
-    val hasDependency = Output(Bool())
+    val instr2Index = Input(UInt(3.W))
+    val instr2Count = Input(UInt(countBits.W))
+    // Whether instr2 can possibly be submitted (i.e. is it at the output of the fifo)
+    // If it can't be submitted we don't consider that we could send both instr1 and instr2 this cycle.
+    val instr2AtOutput = Input(Bool())
+    val blockedByDependency = Output(Bool())
     
     // Debug outputs for waveform visibility
-    val rawDependency = Output(Bool())
-    val wawDependency = Output(Bool())
+    val r2aw1Clash = Output(Bool())
+    val w2ar1Clash = Output(Bool())
+    val w2aw1Clash = Output(Bool())
   })
 
   val reads1 = io.instr1.getTReads()
   val writes1 = io.instr1.getTWrites()
   val reads2 = io.instr2.getTReads()
   val writes2 = io.instr2.getTWrites()
-  
-  // RAW: instr1 reads what instr2 writes
-  // But skip dependencies for hardwired register 0 values
-  io.rawDependency := reads1.map(r1 => 
+
+  val rwDependency = reads1.map(r1 => 
     writes2.map(w2 => {
       val validDependency = r1.valid && w2.valid && (r1.bits === w2.bits)
       val isHardwiredRead = DependencyUtils.isRegister0Read(r1.bits)
       validDependency && !isHardwiredRead
     }).reduceOption(_ || _).getOrElse(false.B)
   ).reduceOption(_ || _).getOrElse(false.B)
-  
+
+  val wrDependency = writes1.map(w1 => 
+    reads2.map(r2 => {
+      val validDependency = w1.valid && r2.valid && (w1.bits === r2.bits)
+      val isHardwiredRead = DependencyUtils.isRegister0Read(r2.bits)
+      validDependency && !isHardwiredRead
+    }).reduceOption(_ || _).getOrElse(false.B)
+  ).reduceOption(_ || _).getOrElse(false.B)
+
   // WAW: both instructions write to same register
   // Special cases for address 0:
   // - A-reg 0 and P-reg 0: no WAW dependencies (hardwired)
   // - D-reg 0: WAW still matters for ordering
-  io.wawDependency := writes1.map(w1 =>
+  val wwDependency = writes1.map(w1 =>
     writes2.map(w2 => {
       val validWAW = w1.valid && w2.valid && (w1.bits === w2.bits)
       val isHardwiredWrite = DependencyUtils.isRegister0WriteNoWAW(w1.bits)
       validWAW && !isHardwiredWrite
     }).reduceOption(_ || _).getOrElse(false.B)
   ).reduceOption(_ || _).getOrElse(false.B)
+
+  io.w2aw1Clash := wwDependency && (
+    (io.instr2Count > io.instr1Count) || // The other one is older so we can't submit this.
+    ((io.instr2Count === io.instr1Count) && (io.instr2Index < io.instr1Index))  // Same age, but instr2 comes first.
+    )
+
+  io.w2ar1Clash := rwDependency && (
+    // The other one is older, so that write needs to happen first.
+    (io.instr2Count > io.instr1Count) || 
+    // The instructions are from the same VLIW instruction.  As long as r1 can first in the VLIW instruction we're fine.
+    ((io.instr2Count === io.instr1Count) && (io.instr2Index < io.instr1Index)))
+
+  io.r2aw1Clash := wrDependency &&
+    // Instruction 2 is at the output and will be submitted with this then we don't have a clash
+    // since the read will be processed before the write.
+    (!io.instr2AtOutput) && (
+    // The other instruction is reading a value that we're writing to and is older.
+    (io.instr2Count > io.instr1Count) ||
+    // The two instructions were in the same VLIW instruction.
+    // If r2 is at the output (so they could be sent together) and r2 comes before w1 in the order.
+    ((io.instr2Count === io.instr1Count) && (io.instr2Index < io.instr1Index)))
   
-  io.hasDependency := io.rawDependency || io.wawDependency
+  
+  io.blockedByDependency := io.w2aw1Clash || io.w2ar1Clash || io.r2aw1Clash
 }
 
 object DependencyUtils {

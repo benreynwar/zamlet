@@ -52,19 +52,18 @@ def create_module_tests(modules, tests, configs):
         ],
     ) for test_file in unique_test_files]
 
-    # Generate cocotb executables and test scripts using bazel_rules_cocotb_verilator
-    # First create the cocotb_exe targets (combines binary creation and compilation)
+    # Generate shared cocotb executables using bazel_rules_cocotb_verilator
+    # Create one exe per unique verilog_target + config combination (reuse unique_targets)
     [cocotb_exe(
-        name = "{}_{}_exe".format(test_name, config_name),
+        name = "{}_{}_exe".format(verilog_target, config_name),
         verilog_library = ":{}_{}_verilog_lib".format(verilog_target, config_name),
         module_top = _get_toplevel_for_target(verilog_target, modules),
-    ) for test_name, test_file, verilog_target, special_args in tests 
-      for config_name, config_file in configs.items()]
+    ) for verilog_target, config_name in unique_targets]
     
     # Then create the cocotb_script targets that run the tests
     [cocotb_script(
         name = "{}_{}".format(test_name, config_name),
-        binary = ":{}_{}_exe".format(test_name, config_name),
+        binary = ":{}_{}_exe".format(verilog_target, config_name),
         script = ":{}".format(_make_script_name(test_file)),
         module = test_file.replace(".py", "").split("/")[-1],  # Extract module name from file path
         toplevel = _get_toplevel_for_target(verilog_target, modules),

@@ -3,7 +3,7 @@ package zamlet.amlet
 import chisel3._
 import chisel3.util._
 import scala.math.max
-import zamlet.utils.{DoubleBuffer, DecoupledBuffer, RFBuilderParams, RegisterFileBuilder, WriteAccessOut, ReadAccessOut, ResetStage}
+import zamlet.utils.{DoubleBuffer, DecoupledBuffer, RFBuilderParams, RegisterFileBuilder, WriteAccessOut, ReadAccessOut, ResetStage, HasRoom, HasRoomForwardBuffer}
 
 
 class LoopState(params: AmletParams) extends Bundle {
@@ -30,6 +30,9 @@ class State(params: AmletParams) extends Bundle {
  */
 class RegisterFileAndRename(params: AmletParams) extends Module {
   val regUtils = new RegUtils(params)
+
+  val rfOutputLatency = if (params.rfParams.aoBuffer) 1 else 0
+  val outputLatency: Int = rfOutputLatency
   
   val io = IO(new Bundle {
 
@@ -38,14 +41,14 @@ class RegisterFileAndRename(params: AmletParams) extends Module {
     // Write inputs from ALU, load/store, and packets
     // Result bus carries completed results back to register files for dependency resolution
     val resultBus = Input(new NamedResultBus(params))
-    
+
     // Instruction outputs to reservation stations
-    val aluInstr = Decoupled(new ALUInstr.Resolving(params))
-    val aluliteInstr = Decoupled(new ALULiteInstr.Resolving(params))
-    val aluPredicateInstr = Decoupled(new PredicateInstr.Resolving(params))
-    val ldstInstr = Decoupled(new LoadStoreInstr.Resolving(params))
-    val sendPacketInstr = Decoupled(new PacketInstr.SendResolving(params))
-    val recvPacketInstr = Decoupled(new PacketInstr.ReceiveResolving(params))
+    val aluInstr = HasRoom(new ALUInstr.Resolving(params), outputLatency)
+    val aluliteInstr = HasRoom(new ALULiteInstr.Resolving(params), outputLatency)
+    val aluPredicateInstr = HasRoom(new PredicateInstr.Resolving(params), outputLatency)
+    val ldstInstr = HasRoom(new LoadStoreInstr.Resolving(params), outputLatency)
+    val sendPacketInstr = HasRoom(new PacketInstr.SendResolving(params), outputLatency)
+    val recvPacketInstr = HasRoom(new PacketInstr.ReceiveResolving(params), outputLatency)
 
     // Tells the Bamlet control how many iterations there are in a loop.
     val loopIterations = Output(Valid(UInt(params.aWidth.W)))
@@ -64,7 +67,9 @@ class RegisterFileAndRename(params: AmletParams) extends Module {
       nTags=params.nPTags,
       iaForwardBuffer=params.rfParams.iaForwardBuffer,
       iaBackwardBuffer=params.rfParams.iaBackwardBuffer,
-      aoBuffer=params.rfParams.aoBuffer
+      iaResultsBuffer=params.rfParams.iaResultsBuffer,
+      aoBuffer=params.rfParams.aoBuffer,
+      zeroValue=1
     )
     val pRFBuilder = RegisterFileBuilder(pRFBuilderParams)
 
@@ -74,7 +79,9 @@ class RegisterFileAndRename(params: AmletParams) extends Module {
       nTags=params.nATags,
       iaForwardBuffer=params.rfParams.iaForwardBuffer,
       iaBackwardBuffer=params.rfParams.iaBackwardBuffer,
-      aoBuffer=params.rfParams.aoBuffer
+      iaResultsBuffer=params.rfParams.iaResultsBuffer,
+      aoBuffer=params.rfParams.aoBuffer,
+      zeroValue=0
     )
     val aRFBuilder = RegisterFileBuilder(aRFBuilderParams)
 
@@ -84,9 +91,13 @@ class RegisterFileAndRename(params: AmletParams) extends Module {
       nTags=params.nDTags,
       iaForwardBuffer=params.rfParams.iaForwardBuffer,
       iaBackwardBuffer=params.rfParams.iaBackwardBuffer,
-      aoBuffer=params.rfParams.aoBuffer
+      iaResultsBuffer=params.rfParams.iaResultsBuffer,
+      aoBuffer=params.rfParams.aoBuffer,
+      zeroValue=0
     )
     val dRFBuilder = RegisterFileBuilder(dRFBuilderParams)
+
+    val stalled = Wire(Bool())
 
     // Create instruction pipeline buffers (moved early for use in control logic)
     // Pipeline stages: iInstr -> [input buffer] -> aInstr -> [register file reads/writes] -> [output buffer] -> oInstr
@@ -95,7 +106,11 @@ class RegisterFileAndRename(params: AmletParams) extends Module {
     // - oInstr: Instruction coming out of output buffer
     val iInstr = Wire(Decoupled(new VLIWInstr.Expanded(params)))
     val aInstr = DoubleBuffer(iInstr, params.rfParams.iaForwardBuffer, params.rfParams.iaBackwardBuffer)
-    val oInstr = DecoupledBuffer(aInstr, params.rfParams.aoBuffer)
+    val aInstrHR = Wire(HasRoom(new VLIWInstr.Expanded(params)))
+    aInstrHR.valid := aInstr.valid && !stalled && aInstrHR.hasRoom
+    aInstrHR.bits := aInstr.bits
+    aInstr.ready := !stalled && aInstrHR.hasRoom
+    val oInstr = HasRoomForwardBuffer(aInstrHR, params.rfParams.aoBuffer)
 
     // State management: tracks loop indices and iteration counts
     // Uses stateNext/state pattern: stateNext is computed combinationally, 
@@ -137,9 +152,7 @@ class RegisterFileAndRename(params: AmletParams) extends Module {
     // The write is just a fake since the result is forced.
     aControlLoopIndexWrite.input.valid := io.instr.valid && ControlInstr.modeWrites(io.instr.bits.control.mode)
     aControlLoopIndexWrite.input.bits := io.instr.bits.control.dst
-    val debugValid = Wire(Bool())
-    debugValid := aControlLoopIndexWrite.output.valid
-    aControlLoopIndexWrite.result.valid := debugValid
+    aControlLoopIndexWrite.result.valid := oInstr.valid && aControlLoopIndexWrite.output.valid
     aControlLoopIndexWrite.result.bits.addr := aControlLoopIndexWrite.output.bits.addr
     aControlLoopIndexWrite.result.bits.tag := aControlLoopIndexWrite.output.bits.tag
     aControlLoopIndexWrite.result.bits.force := false.B
@@ -159,6 +172,7 @@ class RegisterFileAndRename(params: AmletParams) extends Module {
             stateNext.loopStates(oInstr.bits.control.level).iterations.value := oInstr.bits.control.iterations.value
             stateNext.loopStates(oInstr.bits.control.level).iterations.resolved := true.B
           } .otherwise {
+            stateNext.loopStates(oInstr.bits.control.level).reported := false.B
             stateNext.loopStates(oInstr.bits.control.level).iterations := aControlIterationsRead.output.bits
           }
         }
@@ -203,14 +217,13 @@ class RegisterFileAndRename(params: AmletParams) extends Module {
     pPacketCommandWrite.result := regUtils.toPResult(io.resultBus.packetPredicate)
 
     // Predicate instruction output uses the delayed instruction from register file pipeline
-    io.aluPredicateInstr.valid := outputValid && (oInstr.bits.predicate.mode =/= PredicateInstr.Modes.None)
+    val aluPredicateNone = (oInstr.bits.predicate.mode === PredicateInstr.Modes.None)
+    val aluPredicateHasRoom = io.aluPredicateInstr.hasRoom || aluPredicateNone
+    io.aluPredicateInstr.valid := outputValid && !aluPredicateNone
     io.aluPredicateInstr.bits.mode := oInstr.bits.predicate.mode
     // src1 handling based on src1Mode
-    when (oInstr.bits.predicate.src1Mode === PredicateInstr.Src1Mode.LoopIndex) {
-      io.aluPredicateInstr.bits.src1 := state.loopStates(oInstr.bits.predicate.src1).index
-    } .otherwise { // Immediate or Global mode - value is already in src1
-      io.aluPredicateInstr.bits.src1 := oInstr.bits.predicate.src1
-    }
+
+    io.aluPredicateInstr.bits.src1 := oInstr.bits.predicate.src1
     io.aluPredicateInstr.bits.src2 := aPredicateSrc2Read.output.bits
     io.aluPredicateInstr.bits.base := pPredicateBaseRead.output.bits
     io.aluPredicateInstr.bits.notBase := oInstr.bits.predicate.notBase
@@ -263,7 +276,9 @@ class RegisterFileAndRename(params: AmletParams) extends Module {
     dPacketResultWrite.result := regUtils.toDResult(io.resultBus.packet)
 
     // Send
-    io.sendPacketInstr.valid := outputValid && PacketInstr.modeGoesToSend(oInstr.bits.packet.mode)
+    val sendPacketNone = !PacketInstr.modeGoesToSend(oInstr.bits.packet.mode)
+    val sendPacketHasRoom = io.sendPacketInstr.hasRoom || sendPacketNone
+    io.sendPacketInstr.valid := outputValid && !sendPacketNone
     io.sendPacketInstr.bits.mode := oInstr.bits.packet.mode
     io.sendPacketInstr.bits.length := aPacketLengthRead.output.bits
     io.sendPacketInstr.bits.target := aPacketTargetRead.output.bits
@@ -273,7 +288,9 @@ class RegisterFileAndRename(params: AmletParams) extends Module {
     io.sendPacketInstr.bits.appendLength := aPacketResultWrite.output.bits.addr
 
     // Receive
-    io.recvPacketInstr.valid := outputValid && PacketInstr.modeGoesToReceive(oInstr.bits.packet.mode)
+    val recvPacketNone = !PacketInstr.modeGoesToReceive(oInstr.bits.packet.mode)
+    val recvPacketHasRoom = io.recvPacketInstr.hasRoom || recvPacketNone
+    io.recvPacketInstr.valid := outputValid && !recvPacketNone
     io.recvPacketInstr.bits.mode := oInstr.bits.packet.mode
     io.recvPacketInstr.bits.result := regUtils.toBWrite(oInstr.bits.packet.result, aPacketResultWrite.output.bits, dPacketResultWrite.output.bits)
     io.recvPacketInstr.bits.old := regUtils.toBRead(oInstr.bits.packet.result, aPacketResultRead.output.bits, dPacketResultRead.output.bits)
@@ -316,7 +333,9 @@ class RegisterFileAndRename(params: AmletParams) extends Module {
     dLdStRegWrite.result := regUtils.toDResult(io.resultBus.ldSt)
 
     // Output to load/store reservation station
-    io.ldstInstr.valid := outputValid && (oInstr.bits.loadStore.mode =/=  LoadStoreInstr.Modes.None)
+    val ldstNone = (oInstr.bits.loadStore.mode ===  LoadStoreInstr.Modes.None)
+    val ldstHasRoom = io.ldstInstr.hasRoom || ldstNone
+    io.ldstInstr.valid := outputValid && !ldstNone
     io.ldstInstr.bits.mode := oInstr.bits.loadStore.mode
     io.ldstInstr.bits.addr := aLdStAddrRead.output.bits
     io.ldstInstr.bits.src := regUtils.toBRead(oInstr.bits.loadStore.reg, aLdStRegRead.output.bits, dLdStRegRead.output.bits)
@@ -359,7 +378,9 @@ class RegisterFileAndRename(params: AmletParams) extends Module {
     dALURegWrite.result := regUtils.toDResult(io.resultBus.alu)
 
     // Output to ALU reservation station
-    io.aluInstr.valid := outputValid && (oInstr.bits.alu.mode =/= ALUInstr.Modes.None)
+    val aluNone = oInstr.bits.alu.mode === ALUInstr.Modes.None
+    val aluHasRoom = io.aluInstr.hasRoom || aluNone
+    io.aluInstr.valid := outputValid && !aluNone
     io.aluInstr.bits.mode := oInstr.bits.alu.mode
     io.aluInstr.bits.src1 := dALUSrc1Read.output.bits
     when (ALUInstr.modeIsImmediate(oInstr.bits.alu.mode)) {
@@ -411,7 +432,9 @@ class RegisterFileAndRename(params: AmletParams) extends Module {
     dALULiteDstWrite.result := regUtils.toDResult(io.resultBus.alulite)
 
     // Output to ALULite reservation station
-    io.aluliteInstr.valid := outputValid && (oInstr.bits.aluLite.mode =/= ALULiteInstr.Modes.None)
+    val aluliteNone = oInstr.bits.aluLite.mode === ALULiteInstr.Modes.None
+    val aluliteHasRoom = io.aluliteInstr.hasRoom || aluliteNone
+    io.aluliteInstr.valid := outputValid && !aluliteNone
     io.aluliteInstr.bits.mode := oInstr.bits.aluLite.mode
     io.aluliteInstr.bits.src1 := aALULiteSrc1Read.output.bits
     when (ALULiteInstr.modeIsImmediate(oInstr.bits.aluLite.mode)) {
@@ -435,14 +458,8 @@ class RegisterFileAndRename(params: AmletParams) extends Module {
     // Input side: Accept new instruction only when all register files and pipeline are ready
     // Output side: Advance pipeline only when all downstream reservation stations (for which the instruction has valid slots) are ready
     
-    // outputReady is high when all valid output instructions have ready signals high
-    val outputReady = Wire(Bool())
-    outputReady := (!io.aluInstr.valid || io.aluInstr.ready) &&
-                   (!io.aluliteInstr.valid || io.aluliteInstr.ready) &&
-                   (!io.ldstInstr.valid || io.ldstInstr.ready) &&
-                   (!io.sendPacketInstr.valid || io.sendPacketInstr.ready) &&
-                   (!io.recvPacketInstr.valid || io.recvPacketInstr.ready) &&
-                   (!io.aluPredicateInstr.valid || io.aluPredicateInstr.ready)
+    val outputHasRoom = Wire(Bool())
+    outputHasRoom :=             aluHasRoom && aluliteHasRoom && ldstHasRoom && sendPacketHasRoom && recvPacketHasRoom && aluPredicateHasRoom
 
     io.instr.ready := aRF.io.iAccess.ready && dRF.io.iAccess.ready && pRF.io.iAccess.ready && iInstr.ready
 
@@ -457,10 +474,14 @@ class RegisterFileAndRename(params: AmletParams) extends Module {
 
     // We remove data when there is data is all outputs.
     outputValid := aRF.io.oAccess.valid && dRF.io.oAccess.valid && pRF.io.oAccess.valid && oInstr.valid
-    pRF.io.oAccess.ready := outputReady && aRF.io.oAccess.valid && dRF.io.oAccess.valid && oInstr.valid
-    dRF.io.oAccess.ready := outputReady && aRF.io.oAccess.valid && pRF.io.oAccess.valid && oInstr.valid
-    aRF.io.oAccess.ready := outputReady && dRF.io.oAccess.valid && pRF.io.oAccess.valid && oInstr.valid
-    oInstr.ready := outputReady && dRF.io.oAccess.valid && pRF.io.oAccess.valid && aRF.io.oAccess.valid
+    pRF.io.oAccess.hasRoom := outputHasRoom
+    dRF.io.oAccess.hasRoom := outputHasRoom
+    aRF.io.oAccess.hasRoom := outputHasRoom
+    pRF.io.externalStall := dRF.io.localStall || aRF.io.localStall
+    aRF.io.externalStall := dRF.io.localStall || pRF.io.localStall
+    dRF.io.externalStall := aRF.io.localStall || pRF.io.localStall
+    stalled := aRF.io.localStall || dRF.io.localStall || pRF.io.localStall
+    oInstr.hasRoom := outputHasRoom
 
 
     // Send resolved loop iterations to the Bamlet Control

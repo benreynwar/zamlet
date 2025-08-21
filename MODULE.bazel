@@ -110,12 +110,16 @@ register_toolchains("@llvm_toolchain//:all")
 http_archive = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
 git_repository = use_repo_rule("@bazel_tools//tools/build_defs/repo:git.bzl", "git_repository")
 
-# Cocotb rules from GitHub
+# Cocotb rules 
 bazel_dep(name = "rules_cocotb_verilator")
+#local_path_override(
+#    module_name = "rules_cocotb_verilator",
+#    path = "../bazel_rules_cocotb_verilator",
+#)
 git_override(
     module_name = "rules_cocotb_verilator",
     remote = "https://github.com/benreynwar/bazel_rules_cocotb_verilator",
-    commit = "d51e8a1cd8759fc532faffcb1b8036fb31b986a7",
+    commit = "c1ee20d7cdc16381bbf030cb56c03cd974c51d50",
 )
 
 # Cocotb extension to provide @cocotb repository

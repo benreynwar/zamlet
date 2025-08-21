@@ -191,14 +191,14 @@ async def packet_receive_and_forward_test(bi: BamletInterface) -> None:
             packet=PacketInstruction(
                 mode=PacketModes.RECEIVE_AND_FORWARD,
                 target=4,      # new coordinate
-                result=21,     # D-register 5 (cutoff + 5 = 16 + 5)
+                d_dst=5,
                 predicate=1,
             )
         ),
         VLIWInstruction(
             packet=PacketInstruction(
                 mode=PacketModes.GET_WORD,
-                result=22,     # D-register 6
+                d_dst=6,
                 predicate=1,
             )
         ),
@@ -206,7 +206,7 @@ async def packet_receive_and_forward_test(bi: BamletInterface) -> None:
             control=ControlInstruction(mode=ControlModes.HALT),
             packet=PacketInstruction(
                 mode=PacketModes.GET_WORD,
-                result=23,     # D-register 7
+                d_dst=7,
                 predicate=1,
             )
         ),
@@ -350,6 +350,9 @@ async def broadcast_test(bi: BamletInterface) -> None:
     
     assert east_packet == write_packet, f'East packet mismatch: {packet_to_str(east_packet)} != {packet_to_str(write_packet)}'
     assert south_packet[1:] == write_packet[1:], f'South packet mismatch: {packet_to_str(south_packet)} != {packet_to_str(write_packet)}'
+
+    for i in range(10):
+        await triggers.RisingEdge(bi.dut.clock)
     
     probed_value = bi.probe_register('d', reg)
     assert probed_value == value, f"Register value mismatch: expected {value}, got {probed_value}"
@@ -358,7 +361,7 @@ async def broadcast_test(bi: BamletInterface) -> None:
 @cocotb.test()
 async def bamlet_packet_test(dut: HierarchyObject) -> None:
     test_utils.configure_logging_sim("DEBUG")
-    test_params = test_utils.read_params()
+    test_params = test_utils.get_test_params()
     seed = test_params['seed']
     with open(test_params['params_file']) as f:
         params = BamletParams.from_dict(json.load(f))
