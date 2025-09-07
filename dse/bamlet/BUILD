@@ -30,3 +30,15 @@ BAMLET_STUDIES = [
 # Generate all DSE flows and filegroups
 dse_component_flows(BAMLET_STUDIES, "bamlet")
 dse_filegroups(BAMLET_STUDIES, "bamlet")
+
+# Convenience target to build all sky130hd area results
+filegroup(
+    name = "all_default__sky130hd_results",
+    visibility = ["//dse:__pkg__"],
+    srcs = [
+        ":Control_default__sky130hd_results",
+        ":Bamlet_default__sky130hd_results",
+        ":InstructionMemory_default__sky130hd_results",
+        ":DependencyTracker_default__sky130hd_results",
+    ],
+)

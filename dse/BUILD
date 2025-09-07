@@ -4,6 +4,7 @@
 load("@bazel-orfs//:openroad.bzl", "orfs_flow", "orfs_run")
 load("@bazel-orfs//:write_binary.bzl", "write_binary")
 load("@bazel-orfs//:yosys.bzl", "yosys")
+load("@rules_python//python:defs.bzl", "py_binary")
 load("//bazel:chisel.bzl", "chisel_binary")
 load(":openram.bzl", "openram_sram")
 
@@ -34,7 +35,32 @@ chisel_binary(
     ],
 )
 
+# Area analysis pie chart generator
+py_binary(
+    name = "area_pie_chart_script",
+    srcs = ["area_pie_chart.py"],
+    main = "area_pie_chart.py",
+    data = [
+        "//dse/amlet:all_default__sky130hd_results",
+        "//dse/bamlet:all_default__sky130hd_results",
+    ],
+    deps = [
+        "@rules_python//python/runfiles",
+        "@zamlet_pip_deps//matplotlib:pkg",
+    ],
+)
 
+# Pie chart as a build target
+genrule(
+    name = "area_pie_chart",
+    srcs = [
+        "//dse/amlet:all_default__sky130hd_results",
+        "//dse/bamlet:all_default__sky130hd_results",
+    ],
+    outs = ["zamlet_area_pie_chart.png"],
+    tools = [":area_pie_chart_script"],
+    cmd = "$(location :area_pie_chart_script) && cp zamlet_area_pie_chart.png $@",
+)
 
 # Test OpenRAM SRAM generation
 openram_sram(

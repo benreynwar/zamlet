@@ -18,7 +18,3 @@ scikit-learn>=0.22.2
 
 # VLSI tools (from OpenRAM requirements)
 volare>=0.15.2
-
-# Documentation
-mkdocs
-mkdocs-material

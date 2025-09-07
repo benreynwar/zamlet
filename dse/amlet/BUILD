@@ -31,6 +31,16 @@ AMLET_STUDIES = [
         "config_file": "//configs:amlet_default.json",
     },
     {
+        "name": "ALUPredicate_default",
+        "top_level": "ALUPredicate",
+        "config_file": "//configs:amlet_default.json",
+    },
+    {
+        "name": "ALUPredicateRS_default",
+        "top_level": "ALUPredicateRS",
+        "config_file": "//configs:amlet_default.json",
+    },
+    {
         "name": "LoadStoreRS_default",
         "top_level": "LoadStoreRS",
         "config_file": "//configs:amlet_default.json",
@@ -75,3 +85,26 @@ AMLET_STUDIES = [
 # Generate all DSE flows and filegroups
 dse_component_flows(AMLET_STUDIES, "amlet")
 dse_filegroups(AMLET_STUDIES, "amlet")
+
+# Convenience target to build all sky130hd area results
+filegroup(
+    name = "all_default__sky130hd_results",
+    visibility = ["//dse:__pkg__"],
+    srcs = [
+        ":Amlet_default__sky130hd_results",
+        ":ALURS_default__sky130hd_results", 
+        ":ALU_default__sky130hd_results",
+        ":ALULite_default__sky130hd_results",
+        ":ALULiteRS_default__sky130hd_results",
+        ":ALUPredicate_default__sky130hd_results",
+        ":ALUPredicateRS_default__sky130hd_results",
+        ":LoadStoreRS_default__sky130hd_results",
+        ":DataMemory_default__sky130hd_results",
+        ":SendPacketRS_default__sky130hd_results",
+        ":ReceivePacketRS_default__sky130hd_results",
+        ":SendPacketInterface_default__sky130hd_results",
+        ":ReceivePacketInterface_default__sky130hd_results",
+        ":NetworkNode_default__sky130hd_results",
+        ":RegisterFileAndRename_default__sky130hd_results",
+    ],
+)
