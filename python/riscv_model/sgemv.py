@@ -20,7 +20,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-def run():
+def run(use_physical=False):
     filename = 'vec-sgemv.riscv'
     p_info = program_info.get_program_info(filename)
     
@@ -31,83 +31,70 @@ def run():
             scalar_memory_bytes=1<<20,
             sram_bytes=1<<16,
             n_lanes=4,
+            n_vpu_memories=2,
             page_size=1<<10,
             )
 
-    s = state.State(params)
+    s = state.State(params, use_physical=use_physical)
 
     s.set_pc(p_info['pc'])
 
-    scalar_start = 0x80000000
-    vpu_start = 0x90000000
-    scalar_min = None
-    scalar_max = None
-    vpu_min = None
-    vpu_max = None
+    # Allocate memory for all segments, with extra for scalar regions (stack/heap)
     for segment in p_info['segments']:
         address = segment['address']
-        data = segment['contents']
-        if (address >= scalar_start) and (address < vpu_start):
-            assert address + len(data) < vpu_start
-            if scalar_min is None:
-                scalar_min = address
-            else:
-                scalar_min = min(scalar_min, address)
-            if scalar_max is None:
-                scalar_max = address + len(data)
-            else:
-                scalar_max = max(scalar_max, address + len(data))
+        size = len(segment['contents'])
+        page_start = address // params.page_size * params.page_size
+        page_end = (address + size + params.page_size - 1) // params.page_size * params.page_size
+
+        # Determine if this is VPU memory (0x20000000 for static VPU data, 0x90000000 for pools)
+        is_vpu = ((address >= 0x20000000 and address < 0x30000000) or
+                  (address >= 0x90000000 and address < 0xa0000000))
+
+        # For scalar memory at 0x10000000, allocate extra for stack/heap (32MB total)
+        if address >= 0x10000000 and address < 0x20000000:
+            alloc_size = 32 * 1024 * 1024  # 32MB to cover data + stack + heap
         else:
-            assert address >= vpu_start
-            if vpu_min is None:
-                vpu_min = address
-            else:
-                vpu_min = min(vpu_min, address)
-            if vpu_max is None:
-                vpu_max = address + len(data)
-            else:
-                vpu_max = max(vpu_max, address + len(data))
+            alloc_size = page_end - page_start
 
-        
-    scalar_page_start = scalar_min//params.page_size
-    scalar_page_end = (scalar_max + params.page_size-1)//params.page_size
-    vpu_page_start = vpu_min//params.page_size
-    vpu_page_end = (vpu_max + params.page_size-1)//params.page_size
+        # For VPU static data at 0x20000000, use element_width=32 (float data)
+        ew = 32 if (address >= 0x20000000 and address < 0x30000000) else None
+        s.allocate_memory(page_start, alloc_size, is_vpu=is_vpu, element_width=ew)
 
-    s.allocate_memory(scalar_page_start * params.page_size, (scalar_page_end - scalar_page_start) * params.page_size, is_vpu=False, element_width=None)
-
-    # Allocate VPU memory including data segments + stack space
-    # The stack is placed right after the VPU data (see crt.S), so allocate extra space
-    vpu_stack_size = 256 * 1024  # 256KB for stack (128KB per hart + margin)
-    vpu_total_size = (vpu_page_end - vpu_page_start) * params.page_size + vpu_stack_size
-    s.allocate_memory(vpu_page_start * params.page_size, vpu_total_size, is_vpu=True, element_width=32)
-
-    # Allocate stack memory at top of address space
-    stack_size = 64 * 1024  # 64KB stack
-    stack_start = (2**64 - stack_size) // params.page_size * params.page_size
-    s.allocate_memory(stack_start, stack_size, is_vpu=False, element_width=None)
+    # Allocate VPU memory pools with fixed element widths
+    # Each pool is 2MB as defined in vpu_alloc.c
+    pool_size = 2 * 1024 * 1024
+    s.allocate_memory(0x90000000, pool_size, is_vpu=True, element_width=1)   # 1-bit pool (masks)
+    s.allocate_memory(0x90200000, pool_size, is_vpu=True, element_width=8)   # 8-bit pool
+    s.allocate_memory(0x90400000, pool_size, is_vpu=True, element_width=16)  # 16-bit pool
+    s.allocate_memory(0x90600000, pool_size, is_vpu=True, element_width=32)  # 32-bit pool
+    s.allocate_memory(0x90800000, pool_size, is_vpu=True, element_width=64)  # 64-bit pool
 
     for segment in p_info['segments']:
         address = segment['address']
         data = segment['contents']
-        s.set_memory(address, data)
+        s.set_memory(address, data, force_vpu=True)
 
     trace = disasm_trace.parse_objdump(filename)
     logger.info(f"Loaded {len(trace)} instructions from objdump")
 
-    results_addr = None
-    verify_addr = 0x90000400
-    vec_sgemv_call_pc = 0x800028ae
+    # Verify data will be in .data.vpu section at 0x20000000
+    # The offset is the same as before (~0x400 into the data)
+    verify_addr = 0x20000400
+    # Results are written to the first allocation from the 32-bit pool at 0x90600000
+    results_addr = 0x90600000
 
     for i in range(10000):
-        if s.pc == vec_sgemv_call_pc and results_addr is None:
-            results_addr = s.scalar.read_reg(14)
-            logger.info(f"Results pointer: {hex(results_addr)}")
-
         s.step(disasm_trace=trace)
 
         if s.exit_code is not None:
             logger.info(f"Program exited with code {s.exit_code}")
+            logger.info(f"Final VL register: {s.vl}")
+            logger.info(f"Final VTYPE register: {hex(s.vtype)}")
+
+            logger.info("Verifying results from vector register file:")
+            verify_results_from_vrf(s, verify_addr)
+
+            logger.info("\nVerifying results from memory:")
             verify_results(s, results_addr, verify_addr)
             break
 
@@ -115,7 +102,48 @@ def run():
 def read_float_array(state, address, count):
     import struct
     data = state.get_memory(address, count * 4)
+
+    logger.debug(f"Reading {count} floats from {hex(address)}")
+    logger.debug(f"First 40 bytes: {bytes(data[:40]).hex()}")
+
     return [struct.unpack('<f', bytes(data[i*4:(i+1)*4]))[0] for i in range(count)]
+
+
+def read_float_array_from_vrf(state, vreg_start, count):
+    import struct
+    floats = []
+    vreg = vreg_start
+    byte_offset = 0
+
+    for i in range(count):
+        vrf_data = state.vpu_logical.vrf[vreg]
+        float_bytes = bytes(vrf_data[byte_offset:byte_offset+4])
+        floats.append(struct.unpack('<f', float_bytes)[0])
+
+        byte_offset += 4
+        if byte_offset >= len(vrf_data):
+            vreg += 1
+            byte_offset = 0
+
+    return floats
+
+
+def verify_results_from_vrf(state, verify_addr):
+    expected = read_float_array(state, verify_addr, 128)
+    logger.info(f"Expected first 10: {expected[:10]}")
+
+    computed = read_float_array_from_vrf(state, 16, 128)
+    logger.info(f"VRF v16+ first 10: {computed[:10]}")
+
+    mismatches = [(i, computed[i], expected[i])
+                  for i in range(128) if computed[i] != expected[i]]
+
+    if mismatches:
+        logger.error("FAILURE: VRF results do not match!")
+        for i, comp, exp in mismatches[:10]:
+            logger.error(f"  Index {i}: got {comp}, expected {exp}")
+    else:
+        logger.info("SUCCESS: All 128 VRF results match expected values!")
 
 
 def verify_results(state, results_addr, verify_addr):
@@ -155,4 +183,4 @@ if __name__ == '__main__':
 
     root_logger.debug('Starting main')
 
-    run()
+    run(use_physical=False)

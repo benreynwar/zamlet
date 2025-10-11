@@ -28,7 +28,7 @@ RISCV_LINK_OPTS="-static -nostdlib -nostartfiles -lm -lgcc -Tcommon/test.ld"
 
 # Source files
 SGEMV_SRCS="vec-sgemv_main.c vec-sgemv.S"
-COMMON_SRCS="common/crt.S common/syscalls.c common/ara/util.c"
+COMMON_SRCS="common/crt.S common/syscalls.c common/ara/util.c common/vpu_alloc.c"
 
 # Output file
 OUTPUT="vec-sgemv.riscv"

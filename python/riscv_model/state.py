@@ -28,13 +28,15 @@ logger = logging.getLogger(__name__)
 
 class Params:
 
-    def __init__(self, maxvl_words, word_width_bytes, scalar_memory_bytes, vpu_memory_bytes, sram_bytes, n_lanes, page_size, tohost_addr=0x80001000, fromhost_addr=0x80001040):
+    def __init__(self, maxvl_words, word_width_bytes, scalar_memory_bytes, vpu_memory_bytes, sram_bytes, n_lanes, n_vpu_memories,
+                 page_size, tohost_addr=0x80001000, fromhost_addr=0x80001040):
         self.maxvl_words = maxvl_words
         self.word_width_bytes = word_width_bytes
         self.scalar_memory_bytes = scalar_memory_bytes
         self.vpu_memory_bytes = vpu_memory_bytes
         self.sram_bytes = sram_bytes
         self.n_lanes = n_lanes
+        self.n_vpu_memories = n_vpu_memories
         self.page_size = page_size
         self.tohost_addr = tohost_addr
         self.fromhost_addr = fromhost_addr
@@ -94,12 +96,16 @@ class VPULogicalState:
         self.memory = {}
 
     def set_memory(self, address, b, info):
-        #logger.debug(f'Writing to vpu address {address}')
         local_address = info.local_address + address - self.params.page_size*(address//self.params.page_size)
+        #logger.debug(f'VPU write: logical={hex(address)} local={hex(local_address)} value={hex(b)}')
         self.memory[local_address] = b
 
     def get_memory(self, address, info):
         local_address = info.local_address + address - self.params.page_size*(address//self.params.page_size)
+        #logger.debug(f'VPU read: logical={hex(address)} local={hex(local_address)}')
+        if local_address not in self.memory:
+            logger.error(f'VPU read from uninitialized memory: logical={hex(address)} local={hex(local_address)}')
+            raise KeyError(f'Uninitialized VPU memory at logical address {hex(address)}, local address {hex(local_address)}')
         return self.memory[local_address]
 
 
@@ -137,12 +143,34 @@ class PageMapping:
         self.n_lanes = n_lanes
 
 
+class VPULaneState:
+
+    def __init__(self, index, params: Params):
+        self.index = index
+        self.params = params
+        self.sram = bytearray([0]*(params.sram_bytes//params.n_lanes))
+
+
+class VPUMemoryState:
+
+    def __init__(self, index, params: Params):
+        self.index = index
+        self.params = params
+        self.memory = bytearray([0]*(params.vpu_memory_bytes//params.n_vpu_memories))
+
+    def set_memory(self, address, b):
+        self.memory[address] = b
+
+    def get_memory(self, address):
+        return self.memory[address]
+
+
 class VPUPhysicalState:
 
     def __init__(self, params: Params):
         self.params = params
-        self.sram = bytearray([0]*params.sram_bytes)
-        self.memory = bytearray([0]*params.sram_bytes)
+        self.lanes = [VPULaneState(index, params) for index in range(params.n_lanes)]
+        self.memories = [VPUMemoryState(index, params) for index in range(params.n_vpu_memories)]
         self.vrf_mapping = [VRFMapping(
             address=index*params.maxvl_words*params.word_width_bytes,
             element_width_bits=64,
@@ -157,7 +185,50 @@ class VPUPhysicalState:
             cache_state=CacheState.R if index < 32 else CacheState.I,
             register_index=index if index < 32 else None,
             ) for index in range(params.sram_bytes//params.page_size)]
-        self.page_mapping = {}
+
+    def address_to_physical_address(self, address, info):
+        '''
+        We get a global address, and we convert it to first a vpu address and then
+        an address in a specific memory
+        '''
+        ew_bytes = info.element_width // 8
+        word_bytes = self.params.word_width_bytes
+        ew_in_word = word_bytes // ew_bytes
+        lanes_per_memory = self.params.n_lanes // self.params.n_vpu_memories
+
+        offset = address % self.params.page_size
+        element = offset // ew_bytes
+        byte_in_element = offset % ew_bytes
+
+        # Determine which lane this element belongs to
+        lane = element % self.params.n_lanes
+        element_in_lane = element // self.params.n_lanes
+
+        # Determine which memory this lane's data goes to
+        memory_index = lane // lanes_per_memory
+
+        # Determine position of this lane's word within its memory
+        # Each memory holds lanes_per_memory consecutive lane words
+        word_index_in_memory = lane % lanes_per_memory
+        word_in_lane = element_in_lane // ew_in_word
+        element_in_word = element_in_lane % ew_in_word
+
+        # Calculate offset within the page for this memory
+        page_offset_in_memory = (word_in_lane * lanes_per_memory + word_index_in_memory) * word_bytes
+        page_offset_in_memory += element_in_word * ew_bytes + byte_in_element
+
+        # Convert local_address (in combined VPU space) to physical address in single memory
+        # local_address is the base of this page in the combined VPU memory space
+        # We need to map it to the physical memory
+        page_base_in_memory = info.local_address // self.params.n_vpu_memories
+        physical_address = page_base_in_memory + page_offset_in_memory
+
+        return memory_index, physical_address
+
+    def set_memory(self, address, b, info):
+        assert info.is_vpu
+        memory_index, address_in_memory = self.address_to_physical_address(address, info)
+        self.memories[memory_index].set_memory(address_in_memory, b)
 
 
 def regions_overlap(start_a, size_a, start_b, size_b):
@@ -178,6 +249,12 @@ class PageInfo:
         # Local address in the scalar or VPU memory
         self.local_address = local_address
         self.element_width = element_width
+
+    def __str__(self):
+        mem_type = "VPU" if self.is_vpu else "Scalar"
+        ew = f"ew={self.element_width}" if self.element_width else "ew=None"
+        return (f"PageInfo({mem_type}, logical={hex(self.address)}, "
+                f"local={hex(self.local_address)}, {ew})")
 
 
 class TLB:
@@ -237,16 +314,19 @@ class TLB:
 
 class State:
 
-    def __init__(self, params):
+    def __init__(self, params, use_physical=False):
         self.params = params
         self.pc = None
         self.scalar = ScalarState(params)
-        self.vpu_logical = VPULogicalState(params)
-        self.vpu_physical = VPUPhysicalState(params)
+        if use_physical:
+            self.vpu_physical = VPUPhysicalState(params)
+        else:
+            self.vpu_logical = VPULogicalState(params)
         self.tlb = TLB(params)
         self.vl = 0
         self.vtype = 0
         self.exit_code = None
+        self.use_physical = use_physical
 
     def set_pc(self, pc):
         self.pc = pc
@@ -254,7 +334,7 @@ class State:
     def allocate_memory(self, address, size, is_vpu, element_width):
         self.tlb.allocate_memory(address, size, is_vpu, element_width)
 
-    def set_memory(self, address, data):
+    def set_memory(self, address, data, force_vpu=False):
         # Check for HTIF tohost write (8-byte aligned)
         if address == self.params.tohost_addr and len(data) == 8:
             tohost_value = int.from_bytes(data, byteorder='little')
@@ -266,8 +346,10 @@ class State:
             offset_in_page = address + index - page * self.params.page_size
             info = self.tlb.get_page_info(page * self.params.page_size)
             if info.is_vpu:
+                if self.use_physical and not force_vpu:
+                    raise Exception('Can not set_memory in vpu memory in physical mode')
                 #logger.debug(f'Try to write address {address+index}={hex(address+index)}')
-                self.set_vpu_memory(address+index, b, info)
+                self.set_vpu_memory(address+index, b, info, force=force_vpu)
             else:
                 #logger.debug(f'Try to write address {address+index}={hex(address+index)}')
                 local_address = info.local_address + offset_in_page
@@ -281,15 +363,19 @@ class State:
             info = self.tlb.get_page_info(page * self.params.page_size)
             #logger.debug(f'Try to get address {address+index}={hex(address+index)}')
             if info.is_vpu:
+                if self.use_physical:
+                    raise Exception('Can not get_memory in vpu memory in physical mode')
                 bs.append(self.get_vpu_memory(address+index, info))
             else:
                 local_address = info.local_address + offset_in_page
                 bs.append(self.scalar.get_memory(local_address))
         return bs
 
-    def set_vpu_memory(self, address, b, info):
-        self.vpu_logical.set_memory(address, b, info)
-        #self.vpu_physical.set_memory(address, b, info)
+    def set_vpu_memory(self, address, b, info, force=False):
+        if self.use_physical and force:
+            self.vpu_physical.set_memory(address, b, info)
+        else:
+            self.vpu_logical.set_memory(address, b, info)
 
     def get_vpu_memory(self, address, info):
         return self.vpu_logical.get_memory(address, info)
@@ -299,7 +385,14 @@ class State:
         # Check if this is an exit code (LSB = 1)
         if tohost_value & 1:
             self.exit_code = tohost_value >> 1
-            logger.info(f'Program exit: code={self.exit_code}')
+            if self.exit_code == 1:
+                logger.error(f'Program exit: VPU allocation error - invalid element width')
+            elif self.exit_code == 2:
+                logger.error(f'Program exit: VPU allocation error - out of memory')
+            elif self.exit_code == 0:
+                logger.info(f'Program exit: code={self.exit_code} (success)')
+            else:
+                logger.info(f'Program exit: code={self.exit_code}')
             return
 
         # Otherwise it's a pointer to magic_mem
@@ -371,17 +464,3 @@ class State:
                 raise ValueError(error)
 
         instruction.update_state(self)
-
-
-if __name__ == '__main__':
-    params = Params(
-            maxvl_words=16,
-            word_width_bytes=8,
-            vpu_memory_bytes=1<<20,
-            scalar_memory_bytes=1<<20,
-            sram_bytes=1<<16,
-            n_lanes=4,
-            page_size=1<<10,
-            )
-    logical_state = VPULogicalState(params)
-    physical_state = VPUPhysicalState(params)

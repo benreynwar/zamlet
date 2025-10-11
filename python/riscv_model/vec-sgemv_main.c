@@ -9,6 +9,7 @@
 #include <string.h>
 #include <stdio.h>
 #include "util.h"
+#include "vpu_alloc.h"
 
 //--------------------------------------------------------------------------
 // Input/Reference Data
@@ -22,13 +23,14 @@ void *vec_sgemv (size_t, size_t, const float*, const float*, float*);
 
 int main( int argc, char* argv[] )
 {
-  float results_data[N_DIM] = {0};
+  float* results_data = vpu_alloc(N_DIM * sizeof(float), 32);
+  memset(results_data, 0, N_DIM * sizeof(float));
 
   printf("sgemv M,N = %ld,%ld\n", M_DIM, N_DIM);
 #if PREALLOCATE
   // If needed we preallocate everything in the caches
   vec_sgemv(M_DIM, N_DIM, input_data_x, input_data_A, results_data);
-  memset(results_data, 0, sizeof(results_data));
+  memset(results_data, 0, N_DIM * sizeof(float));
 #endif
 
   // Do the sgemv

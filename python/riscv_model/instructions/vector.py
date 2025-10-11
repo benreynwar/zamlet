@@ -3,6 +3,8 @@
 Reference: riscv-isa-manual/src/v-st-ext.adoc
 """
 
+import logging
+import struct
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -10,6 +12,8 @@ from register_names import reg_name, freg_name
 
 if TYPE_CHECKING:
     import state
+
+logger = logging.getLogger(__name__)
 
 
 def compute_emul(eew_bits: int, s: 'state.State') -> tuple[float, int]:
@@ -166,6 +170,8 @@ class Vse32V:
         addr = s.scalar.read_reg(self.rs1)
         elem_width_bytes = 4
 
+        logger.debug(f'VSE32.V: addr={hex(addr)}, vl={s.vl}, vs3=v{self.vs3}')
+
         for i in range(s.vl):
             if is_masked(s, i, self.vm):
                 continue
@@ -174,6 +180,8 @@ class Vse32V:
             elem_bytes = s.vpu_logical.vrf[vreg_num][elem_offset:elem_offset+elem_width_bytes]
 
             elem_addr = addr + i * elem_width_bytes
+            if i < 5 or i >= s.vl - 5:
+                logger.debug(f'  Store elem[{i}]: vreg={vreg_num} offset={elem_offset} -> addr={hex(elem_addr)}')
             s.set_memory(elem_addr, elem_bytes)
 
         s.pc += 4
@@ -197,11 +205,11 @@ class VfmaccVf:
         return f'vfmacc.vf\tv{self.vd},{freg_name(self.rs1)},v{self.vs2}{vm_str}'
 
     def update_state(self, s: 'state.State'):
-        import struct
-
         scalar_bits = s.scalar.read_freg(self.rs1)
         scalar_val = struct.unpack('f', struct.pack('I', scalar_bits & 0xffffffff))[0]
         elem_width_bytes = 4
+
+        logger.info(f'VFMACC.VF: vd=v{self.vd}, rs1={freg_name(self.rs1)}={scalar_val:.2f}, vs2=v{self.vs2}, vl={s.vl}')
 
         for i in range(s.vl):
             if is_masked(s, i, self.vm):
@@ -217,6 +225,9 @@ class VfmaccVf:
 
             result = acc_val + (scalar_val * vec_val)
             result_bytes = struct.pack('f', result)
+
+            if i < 5:
+                logger.info(f'  elem[{i}]: {acc_val:.2f} + ({scalar_val:.2f} * {vec_val:.2f}) = {result:.2f}')
 
             s.vpu_logical.vrf[vreg_vd][offset_vd:offset_vd+elem_width_bytes] = result_bytes
 

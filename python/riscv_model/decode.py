@@ -345,6 +345,15 @@ def decode_standard(instruction_bytes: bytes) -> Instruction:
     elif opcode == 0x1b:
         if funct3 == 0x0:
             return I.Addiw(rd=rd, rs1=rs1, imm=decode_i_imm(inst))
+        elif funct3 == 0x1:
+            shamt = (inst >> 20) & 0x1f
+            return I.Slliw(rd=rd, rs1=rs1, shamt=shamt)
+        elif funct3 == 0x5:
+            shamt = (inst >> 20) & 0x1f
+            if funct7 == 0x00:
+                return I.Srliw(rd=rd, rs1=rs1, shamt=shamt)
+            elif funct7 == 0x20:
+                return I.Sraiw(rd=rd, rs1=rs1, shamt=shamt)
 
     elif opcode == 0x73:
         if funct3 == 0x1:
@@ -383,6 +392,18 @@ def decode_standard(instruction_bytes: bytes) -> Instruction:
             return I.And(rd=rd, rs1=rs1, rs2=rs2)
         elif funct3 == 0x7 and funct7 == 0x01:
             return MUL.Remu(rd=rd, rs1=rs1, rs2=rs2)
+
+    elif opcode == 0x3b:
+        if funct3 == 0x0 and funct7 == 0x00:
+            return I.Addw(rd=rd, rs1=rs1, rs2=rs2)
+        elif funct3 == 0x0 and funct7 == 0x20:
+            return I.Subw(rd=rd, rs1=rs1, rs2=rs2)
+        elif funct3 == 0x1 and funct7 == 0x00:
+            return I.Sllw(rd=rd, rs1=rs1, rs2=rs2)
+        elif funct3 == 0x5 and funct7 == 0x00:
+            return I.Srlw(rd=rd, rs1=rs1, rs2=rs2)
+        elif funct3 == 0x5 and funct7 == 0x20:
+            return I.Sraw(rd=rd, rs1=rs1, rs2=rs2)
 
     elif opcode == 0x03:
         imm = decode_i_imm(inst)

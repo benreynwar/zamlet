@@ -162,7 +162,10 @@ class Sub:
     rs2: int
 
     def __str__(self):
-        return f'sub\t{reg_name(self.rd)},{reg_name(self.rs1)},{reg_name(self.rs2)}'
+        if self.rs1 == 0:
+            return f'neg\t{reg_name(self.rd)},{reg_name(self.rs2)}'
+        else:
+            return f'sub\t{reg_name(self.rd)},{reg_name(self.rs1)},{reg_name(self.rs2)}'
 
     def update_state(self, s: 'state.State'):
         s.scalar.write_reg(self.rd, s.scalar.read_reg(self.rs1) - s.scalar.read_reg(self.rs2))
@@ -274,6 +277,211 @@ class Addiw:
     def update_state(self, s: 'state.State'):
         s.pc += 4
         result = (s.scalar.read_reg(self.rs1) + self.imm) & 0xffffffff
+        if result & 0x80000000:
+            result = result - 0x100000000
+        s.scalar.write_reg(self.rd, result)
+
+
+@dataclass
+class Addw:
+    """ADDW - Add Word (RV64I).
+
+    Adds rs1 and rs2, produces 32-bit result,
+    sign-extended to 64 bits and written to rd.
+
+    Reference: riscv-isa-manual/src/rv64.adoc
+    """
+    rd: int
+    rs1: int
+    rs2: int
+
+    def __str__(self):
+        return f'addw\t{reg_name(self.rd)},{reg_name(self.rs1)},{reg_name(self.rs2)}'
+
+    def update_state(self, s: 'state.State'):
+        s.pc += 4
+        result = (s.scalar.read_reg(self.rs1) + s.scalar.read_reg(self.rs2)) & 0xffffffff
+        if result & 0x80000000:
+            result = result - 0x100000000
+        s.scalar.write_reg(self.rd, result)
+
+
+@dataclass
+class Subw:
+    """SUBW - Subtract Word (RV64I).
+
+    Subtracts rs2 from rs1, produces 32-bit result,
+    sign-extended to 64 bits and written to rd.
+
+    Reference: riscv-isa-manual/src/rv64.adoc
+    """
+    rd: int
+    rs1: int
+    rs2: int
+
+    def __str__(self):
+        return f'subw\t{reg_name(self.rd)},{reg_name(self.rs1)},{reg_name(self.rs2)}'
+
+    def update_state(self, s: 'state.State'):
+        s.pc += 4
+        result = (s.scalar.read_reg(self.rs1) - s.scalar.read_reg(self.rs2)) & 0xffffffff
+        if result & 0x80000000:
+            result = result - 0x100000000
+        s.scalar.write_reg(self.rd, result)
+
+
+@dataclass
+class Slliw:
+    """SLLIW - Shift Left Logical Immediate Word (RV64I).
+
+    Logical left shift of lower 32 bits of rs1 by shamt,
+    sign-extended to 64 bits and written to rd.
+
+    Reference: riscv-isa-manual/src/rv64.adoc
+    """
+    rd: int
+    rs1: int
+    shamt: int
+
+    def __str__(self):
+        return f'slliw\t{reg_name(self.rd)},{reg_name(self.rs1)},0x{self.shamt:x}'
+
+    def update_state(self, s: 'state.State'):
+        s.pc += 4
+        val = s.scalar.read_reg(self.rs1) & 0xffffffff
+        result = (val << self.shamt) & 0xffffffff
+        if result & 0x80000000:
+            result = result - 0x100000000
+        s.scalar.write_reg(self.rd, result)
+
+
+@dataclass
+class Srliw:
+    """SRLIW - Shift Right Logical Immediate Word (RV64I).
+
+    Logical right shift of lower 32 bits of rs1 by shamt,
+    sign-extended to 64 bits and written to rd.
+
+    Reference: riscv-isa-manual/src/rv64.adoc
+    """
+    rd: int
+    rs1: int
+    shamt: int
+
+    def __str__(self):
+        return f'srliw\t{reg_name(self.rd)},{reg_name(self.rs1)},0x{self.shamt:x}'
+
+    def update_state(self, s: 'state.State'):
+        s.pc += 4
+        val = s.scalar.read_reg(self.rs1) & 0xffffffff
+        result = (val >> self.shamt) & 0xffffffff
+        if result & 0x80000000:
+            result = result - 0x100000000
+        s.scalar.write_reg(self.rd, result)
+
+
+@dataclass
+class Sraiw:
+    """SRAIW - Shift Right Arithmetic Immediate Word (RV64I).
+
+    Arithmetic right shift of lower 32 bits of rs1 by shamt,
+    sign-extended to 64 bits and written to rd.
+
+    Reference: riscv-isa-manual/src/rv64.adoc
+    """
+    rd: int
+    rs1: int
+    shamt: int
+
+    def __str__(self):
+        return f'sraiw\t{reg_name(self.rd)},{reg_name(self.rs1)},0x{self.shamt:x}'
+
+    def update_state(self, s: 'state.State'):
+        s.pc += 4
+        val = s.scalar.read_reg(self.rs1) & 0xffffffff
+        if val & 0x80000000:
+            val = val | 0xffffffff00000000
+        result = (val >> self.shamt) & 0xffffffff
+        if result & 0x80000000:
+            result = result - 0x100000000
+        s.scalar.write_reg(self.rd, result)
+
+
+@dataclass
+class Sllw:
+    """SLLW - Shift Left Logical Word (RV64I).
+
+    Logical left shift of lower 32 bits of rs1 by rs2[4:0],
+    sign-extended to 64 bits and written to rd.
+
+    Reference: riscv-isa-manual/src/rv64.adoc
+    """
+    rd: int
+    rs1: int
+    rs2: int
+
+    def __str__(self):
+        return f'sllw\t{reg_name(self.rd)},{reg_name(self.rs1)},{reg_name(self.rs2)}'
+
+    def update_state(self, s: 'state.State'):
+        s.pc += 4
+        val = s.scalar.read_reg(self.rs1) & 0xffffffff
+        shamt = s.scalar.read_reg(self.rs2) & 0x1f
+        result = (val << shamt) & 0xffffffff
+        if result & 0x80000000:
+            result = result - 0x100000000
+        s.scalar.write_reg(self.rd, result)
+
+
+@dataclass
+class Srlw:
+    """SRLW - Shift Right Logical Word (RV64I).
+
+    Logical right shift of lower 32 bits of rs1 by rs2[4:0],
+    sign-extended to 64 bits and written to rd.
+
+    Reference: riscv-isa-manual/src/rv64.adoc
+    """
+    rd: int
+    rs1: int
+    rs2: int
+
+    def __str__(self):
+        return f'srlw\t{reg_name(self.rd)},{reg_name(self.rs1)},{reg_name(self.rs2)}'
+
+    def update_state(self, s: 'state.State'):
+        s.pc += 4
+        val = s.scalar.read_reg(self.rs1) & 0xffffffff
+        shamt = s.scalar.read_reg(self.rs2) & 0x1f
+        result = (val >> shamt) & 0xffffffff
+        if result & 0x80000000:
+            result = result - 0x100000000
+        s.scalar.write_reg(self.rd, result)
+
+
+@dataclass
+class Sraw:
+    """SRAW - Shift Right Arithmetic Word (RV64I).
+
+    Arithmetic right shift of lower 32 bits of rs1 by rs2[4:0],
+    sign-extended to 64 bits and written to rd.
+
+    Reference: riscv-isa-manual/src/rv64.adoc
+    """
+    rd: int
+    rs1: int
+    rs2: int
+
+    def __str__(self):
+        return f'sraw\t{reg_name(self.rd)},{reg_name(self.rs1)},{reg_name(self.rs2)}'
+
+    def update_state(self, s: 'state.State'):
+        s.pc += 4
+        val = s.scalar.read_reg(self.rs1) & 0xffffffff
+        if val & 0x80000000:
+            val = val | 0xffffffff00000000
+        shamt = s.scalar.read_reg(self.rs2) & 0x1f
+        result = (val >> shamt) & 0xffffffff
         if result & 0x80000000:
             result = result - 0x100000000
         s.scalar.write_reg(self.rd, result)
