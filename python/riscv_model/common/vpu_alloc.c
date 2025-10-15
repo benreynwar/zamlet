@@ -3,11 +3,11 @@
 #include <stdlib.h>
 
 #define VPU_BASE_1   0x90000000
-#define VPU_BASE_8   0x90200000
-#define VPU_BASE_16  0x90400000
-#define VPU_BASE_32  0x90600000
-#define VPU_BASE_64  0x90800000
-#define VPU_POOL_SIZE (2 * 1024 * 1024)  // 2MB per pool
+#define VPU_BASE_8   0x90040000
+#define VPU_BASE_16  0x90080000
+#define VPU_BASE_32  0x900C0000
+#define VPU_BASE_64  0x90100000
+#define VPU_POOL_SIZE (256 * 1024)  // 256KB per pool
 
 #define N_LANES 4
 #define WORD_WIDTH 8

@@ -107,6 +107,7 @@ class Vsetvli:
 
         vlen_bits = s.params.maxvl_words * s.params.word_width_bytes * 8
         vlmax = int((vlen_bits / sew) * lmul)
+        logger.info(f'sew is {sew} and lmul is {lmul} vlmax is {vlmax} to avl is {avl}')
 
         if avl <= vlmax:
             s.vl = avl
@@ -115,6 +116,10 @@ class Vsetvli:
 
         s.scalar.write_reg(self.rd, s.vl)
         s.pc += 4
+
+    def update_state_physical(self, s: 'state.State'):
+        self.update_state(s)
+        logger.info(f'Set vl to {s.vl}')
 
 
 @dataclass
@@ -148,6 +153,22 @@ class Vle32V:
             s.vpu_logical.vrf[vreg_num][elem_offset:elem_offset+elem_width_bytes] = elem_bytes
 
         s.pc += 4
+
+    def update_state_physical(self, s: 'state.State'):
+        '''
+        A physical update state that operates on lanes rather than a logical model.
+        '''
+        # We have a new register (i.e. with fresh data)
+        addr = s.scalar.read_reg(self.rs1)
+        if self.vm:
+            mask_reg=None
+        else:
+            mask_reg=0
+        s.vpu_physical.load(self.vd, addr, 32, s.vl, mask_reg)
+        s.pc += 4
+        logger.info(f'Loaded vector into vd={self.vd}')
+        logger.info(s.vpu_physical.reg_to_slot)
+
 
 
 @dataclass
@@ -185,6 +206,9 @@ class Vse32V:
             s.set_memory(elem_addr, elem_bytes)
 
         s.pc += 4
+
+    def update_state_physical(self, s: 'state.State'):
+        raise NotImplemented()
 
 
 @dataclass
@@ -232,3 +256,12 @@ class VfmaccVf:
             s.vpu_logical.vrf[vreg_vd][offset_vd:offset_vd+elem_width_bytes] = result_bytes
 
         s.pc += 4
+
+    def update_state_physical(self, s: 'state.State'):
+        scalar_bits = s.scalar.read_freg(self.rs1)
+        scalar_val = struct.pack('I', scalar_bits & 0xffffffff)
+
+        addr = s.scalar.read_reg(self.rs1)
+        s.vpu_physical.VfMaccVf(self.vd, scalar_val, self.vs2, s.vl, use_mask=self.vm==0)
+        s.pc += 4
+

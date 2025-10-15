@@ -27,9 +27,9 @@ def run(use_physical=False):
     params = state.Params(
             maxvl_words=16,
             word_width_bytes=8,
-            vpu_memory_bytes=1<<20,
-            scalar_memory_bytes=1<<20,
-            sram_bytes=1<<16,
+            vpu_memory_bytes=2<<20,
+            scalar_memory_bytes=3<<20,
+            sram_bytes=2<<20,
             n_lanes=4,
             n_vpu_memories=2,
             page_size=1<<10,
@@ -50,9 +50,9 @@ def run(use_physical=False):
         is_vpu = ((address >= 0x20000000 and address < 0x30000000) or
                   (address >= 0x90000000 and address < 0xa0000000))
 
-        # For scalar memory at 0x10000000, allocate extra for stack/heap (32MB total)
+        # For scalar memory at 0x10000000, allocate extra for stack/heap (2MB total)
         if address >= 0x10000000 and address < 0x20000000:
-            alloc_size = 32 * 1024 * 1024  # 32MB to cover data + stack + heap
+            alloc_size = 2 * 1024 * 1024  # 2MB to cover data + stack + heap
         else:
             alloc_size = page_end - page_start
 
@@ -61,13 +61,13 @@ def run(use_physical=False):
         s.allocate_memory(page_start, alloc_size, is_vpu=is_vpu, element_width=ew)
 
     # Allocate VPU memory pools with fixed element widths
-    # Each pool is 2MB as defined in vpu_alloc.c
-    pool_size = 2 * 1024 * 1024
+    # Each pool is 256KB as defined in vpu_alloc.c
+    pool_size = 256 * 1024
     s.allocate_memory(0x90000000, pool_size, is_vpu=True, element_width=1)   # 1-bit pool (masks)
-    s.allocate_memory(0x90200000, pool_size, is_vpu=True, element_width=8)   # 8-bit pool
-    s.allocate_memory(0x90400000, pool_size, is_vpu=True, element_width=16)  # 16-bit pool
-    s.allocate_memory(0x90600000, pool_size, is_vpu=True, element_width=32)  # 32-bit pool
-    s.allocate_memory(0x90800000, pool_size, is_vpu=True, element_width=64)  # 64-bit pool
+    s.allocate_memory(0x90040000, pool_size, is_vpu=True, element_width=8)   # 8-bit pool
+    s.allocate_memory(0x90080000, pool_size, is_vpu=True, element_width=16)  # 16-bit pool
+    s.allocate_memory(0x900C0000, pool_size, is_vpu=True, element_width=32)  # 32-bit pool
+    s.allocate_memory(0x90100000, pool_size, is_vpu=True, element_width=64)  # 64-bit pool
 
     for segment in p_info['segments']:
         address = segment['address']
@@ -80,8 +80,8 @@ def run(use_physical=False):
     # Verify data will be in .data.vpu section at 0x20000000
     # The offset is the same as before (~0x400 into the data)
     verify_addr = 0x20000400
-    # Results are written to the first allocation from the 32-bit pool at 0x90600000
-    results_addr = 0x90600000
+    # Results are written to the first allocation from the 32-bit pool at 0x900C0000
+    results_addr = 0x900C0000
 
     for i in range(10000):
         s.step(disasm_trace=trace)
@@ -183,4 +183,4 @@ if __name__ == '__main__':
 
     root_logger.debug('Starting main')
 
-    run(use_physical=False)
+    run(use_physical=True)
