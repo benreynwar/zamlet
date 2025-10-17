@@ -518,6 +518,16 @@ class CLwsp:
             value = value | 0xffffffff00000000
         s.scalar.write_reg(self.rd, value)
 
+    async def update_state_lamlet(self, s: 'state.State'):
+        s.pc += 2
+        sp = s.scalar.read_reg(2)
+        address = sp + self.offset
+        data = await s.get_memory(address, 4)
+        value = int.from_bytes(data, byteorder='little')
+        if value & 0x80000000:
+            value = value | 0xffffffff00000000
+        s.scalar.write_reg(self.rd, value)
+
 
 @dataclass
 class CLdsp:
@@ -539,6 +549,14 @@ class CLdsp:
         sp = s.scalar.read_reg(2)
         address = sp + self.offset
         data = s.get_memory(address, 8)
+        value = int.from_bytes(data, byteorder='little')
+        s.scalar.write_reg(self.rd, value)
+
+    async def update_state_lamlet(self, s: 'state.State'):
+        s.pc += 2
+        sp = s.scalar.read_reg(2)
+        address = sp + self.offset
+        data = await s.get_memory(address, 8)
         value = int.from_bytes(data, byteorder='little')
         s.scalar.write_reg(self.rd, value)
 
@@ -569,6 +587,15 @@ class CLw:
             value = value | 0xffffffff00000000
         s.scalar.write_reg(self.rd, value)
 
+    async def update_state_lamlet(self, s: 'state.State'):
+        s.pc += 2
+        address = s.scalar.read_reg(self.rs1) + self.offset
+        data = await s.get_memory(address, 4)
+        value = int.from_bytes(data, byteorder='little')
+        if value & 0x80000000:
+            value = value | 0xffffffff00000000
+        s.scalar.write_reg(self.rd, value)
+
 
 @dataclass
 class CLd:
@@ -591,6 +618,13 @@ class CLd:
         s.pc += 2
         address = s.scalar.read_reg(self.rs1) + self.offset
         data = s.get_memory(address, 8)
+        value = int.from_bytes(data, byteorder='little')
+        s.scalar.write_reg(self.rd, value)
+
+    async def update_state_lamlet(self, s: 'state.State'):
+        s.pc += 2
+        address = s.scalar.read_reg(self.rs1) + self.offset
+        data = await s.get_memory(address, 8)
         value = int.from_bytes(data, byteorder='little')
         s.scalar.write_reg(self.rd, value)
 

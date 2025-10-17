@@ -56,6 +56,13 @@ class Flw:
         s.scalar.write_freg(self.fd, value)
         s.pc += 4
 
+    async def update_state_lamlet(self, s: 'state.State'):
+        addr = s.scalar.read_reg(self.rs1) + self.imm
+        data = await s.get_memory(addr, 4)
+        value = int.from_bytes(data, byteorder='little', signed=False)
+        s.scalar.write_freg(self.fd, value)
+        s.pc += 4
+
 
 @dataclass
 class Fld:
@@ -76,6 +83,13 @@ class Fld:
     def update_state(self, s: 'state.State'):
         addr = s.scalar.read_reg(self.rs1) + self.imm
         data = s.get_memory(addr, 8)
+        value = int.from_bytes(data, byteorder='little', signed=False)
+        s.scalar.write_freg(self.fd, value)
+        s.pc += 4
+
+    async def update_state_lamlet(self, s: 'state.State'):
+        addr = s.scalar.read_reg(self.rs1) + self.imm
+        data = await s.get_memory(addr, 8)
         value = int.from_bytes(data, byteorder='little', signed=False)
         s.scalar.write_freg(self.fd, value)
         s.pc += 4

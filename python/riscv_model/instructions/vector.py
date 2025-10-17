@@ -105,7 +105,7 @@ class Vsetvli:
 
         sew = 8 << vsew
 
-        vlen_bits = s.params.maxvl_words * s.params.word_width_bytes * 8
+        vlen_bits = s.params.maxvl_bytes * 8
         vlmax = int((vlen_bits / sew) * lmul)
         logger.info(f'sew is {sew} and lmul is {lmul} vlmax is {vlmax} to avl is {avl}')
 
@@ -117,7 +117,7 @@ class Vsetvli:
         s.scalar.write_reg(self.rd, s.vl)
         s.pc += 4
 
-    def update_state_physical(self, s: 'state.State'):
+    async def update_state_lamlet(self, s: 'state.State'):
         self.update_state(s)
         logger.info(f'Set vl to {s.vl}')
 
@@ -154,7 +154,7 @@ class Vle32V:
 
         s.pc += 4
 
-    def update_state_physical(self, s: 'state.State'):
+    async def update_state_lamlet(self, s: 'state.State'):
         '''
         A physical update state that operates on lanes rather than a logical model.
         '''
@@ -164,10 +164,9 @@ class Vle32V:
             mask_reg=None
         else:
             mask_reg=0
-        s.vpu_physical.load(self.vd, addr, 32, s.vl, mask_reg)
+        s.vload(self.vd, addr, 32, s.vl, mask_reg)
         s.pc += 4
         logger.info(f'Loaded vector into vd={self.vd}')
-        logger.info(s.vpu_physical.reg_to_slot)
 
 
 
