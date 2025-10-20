@@ -35,6 +35,7 @@ class Sb:
         s.pc += 4
         address = s.scalar.read_reg(self.rs1) + self.imm
         value = s.scalar.read_reg(self.rs2) & 0xff
+        logger.info(f'Setting memory address {hex(address)} reg {self.rs1} imm {self.imm} reg contents {s.scalar.read_reg(self.rs1)}')
         s.set_memory(address, value.to_bytes(1, byteorder='little'))
 
 
@@ -101,7 +102,7 @@ class Sd:
         s.pc += 4
         address = s.scalar.read_reg(self.rs1) + self.imm
         value = s.scalar.read_reg(self.rs2)
-        s.set_memory(address, value.to_bytes(8, byteorder='little'), force_vpu=True)
+        s.set_memory(address, value.to_bytes(8, byteorder='little'))
 
 
 @dataclass

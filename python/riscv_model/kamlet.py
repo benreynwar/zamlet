@@ -1,7 +1,8 @@
 from dataclasses import dataclass
 from collections import deque
 
-from params import LamletParams, CacheState
+from addresses import CacheState
+from params import LamletParams
 from jamlet import Jamlet
 
 
@@ -66,11 +67,13 @@ class Kamlet:
 
     def __init__(self, params: LamletParams, min_x: int, min_y: int):
         self.params = params
+        self.min_x = min_x
+        self.min_y = min_y
         self.n_columns = params.j_cols
         self.n_rows = params.j_rows
         self.n_jamlets = self.n_columns * self.n_rows
         
-        self.jamlets = [Jamlet(params, index % self.n_columns, index//self.n_columns)
+        self.jamlets = [Jamlet(params, min_x+index % self.n_columns, min_y+index//self.n_columns)
                         for index in range(self.n_jamlets)]
 
         n_cache_lines = params.jamlet_sram_bytes * params.j_rows * params.j_cols // params.cache_line_bytes
@@ -82,25 +85,28 @@ class Kamlet:
 
         self.instruction_queue = deque()
 
+    def get_jamlet(self, x, y):
+        assert self.min_x <= x < self.min_x + self.n_columns
+        assert self.min_y <= y < self.min_y + self.n_rows
+        jamlet = self.jamlets[(y - self.min_y) * self.n_columns + (x - self.min_x)]
+        assert jamlet.x == x
+        assert jamlet.y == y
+        return jamlet
 
-    async def run(self, clock):
+    def step(self):
 
-        for jamlet in range(self.jamlets):
-            clock.spawn(jamlet.run())
+        for jamlet in self.jamlets:
+            jamlet.step()
 
-        while True:
-            # If we have an instruction then do it
-            if self.instruction_queue:
-                instr = self.instruction_queue[0]
+        # If we have an instruction then do it
+        if self.instruction_queue:
+            instr = self.instruction_queue[0]
+            instr.update_kamlet(self)
 
-            # Get received instructions from jamlets
-            for jamlet in range(self.jamlets):
-
-                await jamlet.finished
-
-                if jamlet.instruction_buffer is not None:
+        # Get received instructions from jamlets
+        for index, jamlet in enumerate(self.jamlets):
+            if jamlet.instruction_buffer is not None:
+                if index == 0:
                     self.instruction_queue.append(jamlet.instruction_buffer)
                     assert len(self.instruction_queue) < self.params.instruction_queue_length
-                    jamlet.instruction_buffer = None
-
-            await NextCycle
+                jamlet.instruction_buffer = None

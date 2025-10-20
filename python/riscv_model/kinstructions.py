@@ -15,18 +15,29 @@ Send             src (6 bit)    target (6 bit) mask (5 bit)  length (3)  =  26 b
 Instructions for sending to a kamlet
 '''
 
+import logging
 from dataclasses import dataclass
+
+from addresses import JSAddr
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
 class WriteImmByteToSRAM:
-    k_sram_address: int       # An address in the kamlet sram space
+    j_saddr: JSAddr
     imm: int
+
+    def update_kamlet(self, kamlet):
+        assert 0 <= self.imm < (1 << 8)
+        assert self.j_saddr.bit_addr % 8 == 0
+        jamlet = kamlet.jamlets[j_saddr.j_in_k_index]
+        jamlet.sram[self.j_addr.addr] = self.imm
 
 
 @dataclass
 class ReadByteFromSRAM:
-    k_sram_address: int       # An address in the kamlet sram space
+    j_saddr: JSAddr
 
 
 @dataclass

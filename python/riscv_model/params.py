@@ -1,31 +1,8 @@
+import dataclasses
 from dataclasses import dataclass
 from enum import Enum
 
 from asyncio import Event
-
-
-class PageInfo:
-
-    def __init__(self, global_address, local_address, is_vpu, element_width):
-        # Logical address
-        self.global_address = global_address
-        self.is_vpu = is_vpu
-        # Local address in the scalar or VPU memory
-        self.local_address = local_address
-        self.element_width = element_width
-
-
-class CacheLineState:
-
-    def __init__(self):
-        self.state = CacheState.I
-        self.ident = None
-
-
-class CacheState(Enum):
-    I = 0  # Invalid
-    S = 1  # Shared
-    M = 2  # Modified
 
 
 class SendType(Enum):
@@ -68,6 +45,9 @@ class Header:
     address: int = None  # 63: 48
     value: int = None
 
+    def copy(self):
+        return dataclasses.replace(self)
+
 
 class Direction(Enum):
     N = 0
@@ -99,6 +79,9 @@ class LamletParams:
     tohost_addr: int = 0x80001000
     fromhost_addr: int = 0x80001040
     receive_buffer_depth: int = 16
+    router_output_buffer_length: int = 2
+    router_input_buffer_length: int = 2
+    instruction_queue_length: int = 16
 
     def __post_init__(self):
         # Page must be bigger than a vector

@@ -21,14 +21,14 @@ RISCV_GCC_OPTS="-DPREALLOCATE=1 -mcmodel=medany -static -O2 -g -ffast-math \
 -march=rv${XLEN}gcv_zfh_zvfh -mabi=lp64d -std=gnu99"
 
 # Include directories
-INCLUDES="-I. -Icommon"
+INCLUDES="-I. -I../common"
 
 # Link options
-RISCV_LINK_OPTS="-static -nostdlib -nostartfiles -lm -lgcc -Tcommon/test.ld"
+RISCV_LINK_OPTS="-static -nostdlib -nostartfiles -lm -lgcc -T../common/test.ld"
 
 # Source files
 SGEMV_SRCS="vec-sgemv_main.c vec-sgemv.S"
-COMMON_SRCS="common/crt.S common/syscalls.c common/ara/util.c common/vpu_alloc.c"
+COMMON_SRCS="../common/crt.S ../common/syscalls.c ../common/ara/util.c ../common/vpu_alloc.c"
 
 # Output file
 OUTPUT="vec-sgemv.riscv"

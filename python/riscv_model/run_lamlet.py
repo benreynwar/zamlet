@@ -7,12 +7,13 @@ import program_info
 import lamlet
 from runner import Clock
 from params import LamletParams
+from addresses import GlobalAddress
 
 logger = logging.getLogger(__name__)
 
 
 async def run(clock: Clock):
-    filename = 'vec-sgemv.riscv'
+    filename = 'tests/readwritebyte/readwritebyte.riscv'
     p_info = program_info.get_program_info(filename)
 
     params = LamletParams(
@@ -22,7 +23,8 @@ async def run(clock: Clock):
         j_rows=2,
         )
 
-    s = lamlet.Lamlet(params, 4, 4)
+    s = lamlet.Lamlet(clock, params, 4, 4)
+    clock.spawn(s.run())
 
     s.set_pc(p_info['pc'])
 
@@ -45,21 +47,22 @@ async def run(clock: Clock):
 
         # For VPU static data at 0x20000000, use element_width=32 (float data)
         ew = 32 if (address >= 0x20000000 and address < 0x30000000) else None
-        s.allocate_memory(page_start, alloc_size, is_vpu=is_vpu, element_width=ew)
+        s.allocate_memory(GlobalAddress(bit_addr=page_start*8), alloc_size, is_vpu=is_vpu, element_width=ew)
 
     # Allocate VPU memory pools with fixed element widths
     # Each pool is 256KB as defined in vpu_alloc.c
     pool_size = 256 * 1024
-    s.allocate_memory(0x90000000, pool_size, is_vpu=True, element_width=1)   # 1-bit pool (masks)
-    s.allocate_memory(0x90040000, pool_size, is_vpu=True, element_width=8)   # 8-bit pool
-    s.allocate_memory(0x90080000, pool_size, is_vpu=True, element_width=16)  # 16-bit pool
-    s.allocate_memory(0x900C0000, pool_size, is_vpu=True, element_width=32)  # 32-bit pool
-    s.allocate_memory(0x90100000, pool_size, is_vpu=True, element_width=64)  # 64-bit pool
+    s.allocate_memory(GlobalAddress(bit_addr=0x90000000*8), pool_size, is_vpu=True, element_width=1)   # 1-bit pool (masks)
+    s.allocate_memory(GlobalAddress(bit_addr=0x90040000*8), pool_size, is_vpu=True, element_width=8)   # 8-bit pool
+    s.allocate_memory(GlobalAddress(bit_addr=0x90080000*8), pool_size, is_vpu=True, element_width=16)  # 16-bit pool
+    s.allocate_memory(GlobalAddress(bit_addr=0x900C0000*8), pool_size, is_vpu=True, element_width=32)  # 32-bit pool
+    s.allocate_memory(GlobalAddress(bit_addr=0x90100000*8), pool_size, is_vpu=True, element_width=64)  # 64-bit pool
 
     for segment in p_info['segments']:
         address = segment['address']
         data = segment['contents']
-        s.set_memory(address, data, force_vpu=True)
+        s.set_memory(address, data)
+        logger.info(f'Segment {hex(address)} Size {len(data)} {data}')
 
     trace = disasm_trace.parse_objdump(filename)
     logger.info(f"Loaded {len(trace)} instructions from objdump")
@@ -70,9 +73,8 @@ async def run(clock: Clock):
     # Results are written to the first allocation from the 32-bit pool at 0x900C0000
     results_addr = 0x900C0000
 
+    clock.spawn(s.run_instructions(disasm_trace=trace))
     for i in range(10000):
-        # Currently we wait for scalar state to fully update before moving onto the next instruction
-        await s.step(disasm_trace=trace)
 
         if s.exit_code is not None:
             logger.info(f"Program exited with code {s.exit_code}")
@@ -89,13 +91,14 @@ async def run(clock: Clock):
 
 
 async def main():
-    clock = Clock()
+    clock = Clock(max_cycles=20)
     clock.spawn(run(clock))
     await clock.clock_driver()
 
 
 if __name__ == '__main__':
     import sys
+    import os
     root_logger = logging.getLogger()
     root_logger.setLevel(logging.DEBUG)
     handler = logging.StreamHandler(sys.stdout)
@@ -104,5 +107,15 @@ if __name__ == '__main__':
     handler.setFormatter(formatter)
     root_logger.addHandler(handler)
 
-    root_logger.debug('Starting main')
-    asyncio.run(main())
+    root_logger.info('Starting main')
+
+    if os.environ.get('PDB_ON_EXCEPTION'):
+        import pdb
+        try:
+            asyncio.run(main())
+        except (AssertionError, Exception) as e:
+            import traceback
+            traceback.print_exc()
+            pdb.post_mortem()
+    else:
+        asyncio.run(main())
