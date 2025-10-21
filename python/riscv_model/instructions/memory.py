@@ -38,6 +38,13 @@ class Sb:
         logger.info(f'Setting memory address {hex(address)} reg {self.rs1} imm {self.imm} reg contents {s.scalar.read_reg(self.rs1)}')
         s.set_memory(address, value.to_bytes(1, byteorder='little'))
 
+    async def update_lamlet(self, s):
+        s.pc += 4
+        address = s.scalar.read_reg(self.rs1) + self.imm
+        value = s.scalar.read_reg(self.rs2) & 0xff
+        logger.info(f'Setting memory address {hex(address)} reg {self.rs1} imm {self.imm} reg contents {s.scalar.read_reg(self.rs1)}')
+        await s.set_memory(address, value.to_bytes(1, byteorder='little'))
+
 
 @dataclass
 class Sh:
@@ -59,6 +66,12 @@ class Sh:
         address = s.scalar.read_reg(self.rs1) + self.imm
         value = s.scalar.read_reg(self.rs2) & 0xffff
         s.set_memory(address, value.to_bytes(2, byteorder='little'))
+
+    async def update_lamlet(self, s):
+        s.pc += 4
+        address = s.scalar.read_reg(self.rs1) + self.imm
+        value = s.scalar.read_reg(self.rs2) & 0xffff
+        await s.set_memory(address, value.to_bytes(2, byteorder='little'))
 
 
 @dataclass
@@ -82,6 +95,11 @@ class Sw:
         value = s.scalar.read_reg(self.rs2) & 0xffffffff
         s.set_memory(address, value.to_bytes(4, byteorder='little'))
 
+    async def update_lamlet(self, s: 'state.State'):
+        s.pc += 4
+        address = s.scalar.read_reg(self.rs1) + self.imm
+        value = s.scalar.read_reg(self.rs2) & 0xffffffff
+        await s.set_memory(address, value.to_bytes(4, byteorder='little'))
 
 @dataclass
 class Sd:
@@ -104,6 +122,11 @@ class Sd:
         value = s.scalar.read_reg(self.rs2)
         s.set_memory(address, value.to_bytes(8, byteorder='little'))
 
+    async def update_lamlet(self, s: 'state.State'):
+        s.pc += 4
+        address = s.scalar.read_reg(self.rs1) + self.imm
+        value = s.scalar.read_reg(self.rs2)
+        await s.set_memory(address, value.to_bytes(8, byteorder='little'))
 
 @dataclass
 class Lb:
@@ -129,7 +152,7 @@ class Lb:
             value = value - 0x100
         s.scalar.write_reg(self.rd, value)
 
-    async def update_state_lamlet(self, s: 'state.State'):
+    async def update_lamlet(self, s: 'state.State'):
         s.pc += 4
         address = s.scalar.read_reg(self.rs1) + self.imm
         data = await s.get_memory(address, 1)
@@ -161,7 +184,7 @@ class Lbu:
         value = int.from_bytes(data, byteorder='little')
         s.scalar.write_reg(self.rd, value)
 
-    async def update_state_lamlet(self, s: 'state.State'):
+    async def update_lamlet(self, s: 'state.State'):
         s.pc += 4
         address = s.scalar.read_reg(self.rs1) + self.imm
         data = await s.get_memory(address, 1)
@@ -192,7 +215,7 @@ class Lh:
             value = value - 0x10000
         s.scalar.write_reg(self.rd, value)
 
-    async def update_state_lamlet(self, s: 'state.State'):
+    async def update_lamlet(self, s: 'state.State'):
         s.pc += 4
         address = s.scalar.read_reg(self.rs1) + self.imm
         data = await s.get_memory(address, 2)
@@ -224,7 +247,7 @@ class Lhu:
         value = int.from_bytes(data, byteorder='little')
         s.scalar.write_reg(self.rd, value)
 
-    async def update_state_lamlet(self, s: 'state.State'):
+    async def update_lamlet(self, s: 'state.State'):
         s.pc += 4
         address = s.scalar.read_reg(self.rs1) + self.imm
         data = await s.get_memory(address, 2)
@@ -256,7 +279,7 @@ class Lw:
             value = value - 0x100000000
         s.scalar.write_reg(self.rd, value)
 
-    async def update_state_lamlet(self, s: 'state.State'):
+    async def update_lamlet(self, s: 'state.State'):
         s.pc += 4
         address = s.scalar.read_reg(self.rs1) + self.imm
         data = await s.get_memory(address, 4)
@@ -288,7 +311,7 @@ class Lwu:
         value = int.from_bytes(data, byteorder='little')
         s.scalar.write_reg(self.rd, value)
 
-    async def update_state_lamlet(self, s: 'state.State'):
+    async def update_lamlet(self, s: 'state.State'):
         s.pc += 4
         address = s.scalar.read_reg(self.rs1) + self.imm
         data = await s.get_memory(address, 4)
@@ -318,7 +341,7 @@ class Ld:
         value = int.from_bytes(data, byteorder='little')
         s.scalar.write_reg(self.rd, value)
 
-    async def update_state_lamlet(self, s: 'state.State'):
+    async def update_lamlet(self, s: 'state.State'):
         s.pc += 4
         address = s.scalar.read_reg(self.rs1) + self.imm
         data = await s.get_memory(address, 8)

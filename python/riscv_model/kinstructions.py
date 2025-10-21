@@ -18,44 +18,79 @@ Instructions for sending to a kamlet
 import logging
 from dataclasses import dataclass
 
-from addresses import JSAddr
+from addresses import JSAddr, KMAddr
 
 logger = logging.getLogger(__name__)
 
 
+class KInstr:
+    pass
+
+
 @dataclass
-class WriteImmByteToSRAM:
+class WriteImmByteToSRAM(KInstr):
     j_saddr: JSAddr
     imm: int
 
     def update_kamlet(self, kamlet):
+        logger.debug(f'kamlet ({kamlet.min_x} {kamlet.min_y}): WriteImmByteToSRAM')
         assert 0 <= self.imm < (1 << 8)
         assert self.j_saddr.bit_addr % 8 == 0
-        jamlet = kamlet.jamlets[j_saddr.j_in_k_index]
-        jamlet.sram[self.j_addr.addr] = self.imm
+        jamlet = kamlet.jamlets[self.j_saddr.j_in_k_index]
+        jamlet.sram[self.j_saddr.addr] = self.imm
 
 
 @dataclass
-class ReadByteFromSRAM:
+class ReadByteFromSRAM(KInstr):
     j_saddr: JSAddr
+    target_x: int
+    target_y: int
+
+    def blocking(self, kamlet):
+        assert self.j_saddr.bit_addr % 8 == 0
+        jamlet = kamlet.jamlets[self.j_saddr.j_in_k_index]
+        blocking = not jamlet.ready_for_read_byte_from_sram(self)
+        if blocking:
+            logger.debug(f'kamlet ({kamlet.min_x} {kamlet.min_y}): ReadByteFromSRAM - blocking')
+
+    def update_kamlet(self, kamlet):
+        logger.debug(f'kamlet ({kamlet.min_x} {kamlet.min_y}): ReadByteFromSRAM')
+        assert self.j_saddr.bit_addr % 8 == 0
+        jamlet = kamlet.jamlets[self.j_saddr.j_in_k_index]
+        jamlet.process_read_byte_from_sram(self)
 
 
 @dataclass
-class ReadLine:
-    k_memory_address: int  # An address in the kamlet memory space
-    k_sram_address: int    # An address in the kamlet sram space
+class ReadLine(KInstr):
+    k_maddr: KMAddr  # An address in the kamlet memory space
+    j_saddr: JSAddr    # An address in the kamlet sram space
     n_cache_lines: int   # The number of cache lines to read.
 
 
 @dataclass
-class WriteLine:
-    k_memory_address: int  # An address in the kamlet memory space
-    k_sram_address: int    # An address in the kamlet sram space
+class ZeroLine(KInstr):
+    j_saddr: JSAddr    # An address in the kamlet sram space
     n_cache_lines: int   # The number of cache lines to read.
 
+    def update_kamlet(self, kamlet):
+        logger.debug(f'kamlet ({kamlet.min_x} {kamlet.min_y}): ZeroLine')
+        params = kamlet.params
+        n_bytes = self.n_cache_lines * params.cache_line_bytes // params.j_in_k
+        for jamlet in kamlet.jamlets:
+            for index in range(n_bytes):
+                jamlet.sram[self.j_saddr.addr+index] = 0
+
+
 @dataclass
-class Load:
+class WriteLine(KInstr):
+    k_maddr: KMAddr  # An address in the kamlet memory space
+    j_saddr: JSAddr    # An address in the kamlet sram space
+    n_cache_lines: int   # The number of cache lines to read.
+
+
+@dataclass
+class Load(KInstr):
     dst: int
-    j_sram_address: int  # An address in the jamlet sram space
+    j_saddr: JSAddr  # An address in the jamlet sram space
     n_vlines: int   # The number of address from each jamlet sram to load
     

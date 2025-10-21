@@ -4,7 +4,8 @@ from dataclasses import dataclass
 from enum import Enum
 
 from addresses import CacheState
-from params import Direction, LamletParams, directions, Header, SendType
+from params import LamletParams
+from message import Direction, directions, Header, SendType, MessageType
 
 
 logger = logging.getLogger(__name__)
@@ -86,14 +87,14 @@ class Router:
             buffer = self.input_buffers[input_direction]
             if (input_direction not in self.input_connections) and buffer:
                 header = buffer[0]
-                if not isinstance(header, Header):
-                    logger.error(f'({self.x}, {self.y}): from {input_direction} we got a non-header')
+                #if not isinstance(header, Header):
+                #    logger.error(f'({self.x}, {self.y}): from {input_direction} we got a non-header')
                 assert isinstance(header, Header)
                 headers_and_output_directions = self.get_output_directions(header)
                 output_dirs = set(x[1] for x in headers_and_output_directions)
                 if all(output_direction not in self.output_connections for output_direction in output_dirs):
                     for new_header, output_direction in headers_and_output_directions:
-                        logger.debug(f'Make a new connection from {input_direction} to {output_direction} length {header.length} in router ({self.x}, {self.y})')
+                        #logger.debug(f'Make a new connection from {input_direction} to {output_direction} length {header.length} in router ({self.x}, {self.y}) target=({header.target_x}, {header.target_y})')
                         assert output_direction not in self.output_connections
                         self.output_connections[output_direction] = input_direction
                         assert output_direction not in self.output_headers
@@ -105,8 +106,8 @@ class Router:
             if (output_direction in self.output_connections) and len(self.output_buffers[output_direction]) < self.params.router_output_buffer_length:
                 input_direction = self.output_connections[output_direction]
                 buffer = self.input_buffers[input_direction]
-                if input_direction not in self.input_connections:
-                    logger.error(f'({self.x}, {self.y}): output_dir = {output_direction} input_dir = {input_direction} cannot find input conn')
+                #if input_direction not in self.input_connections:
+                #    logger.error(f'({self.x}, {self.y}): output_dir = {output_direction} input_dir = {input_direction} cannot find input conn')
                 conn = self.input_connections[input_direction]
                 if buffer and (output_direction in conn.unconsumed):
                     word = self.input_buffers[input_direction][0]
@@ -131,7 +132,7 @@ class Router:
                     if conn.remaining == 0:
                         del self.output_connections[output_direction]
                         if not conn.unconsumed:
-                            logger.debug(f'({self.x}, {self.y}): from {input_direction} closing connection')
+                            #logger.debug(f'({self.x}, {self.y}): from {input_direction} closing connection')
                             del self.input_connections[input_direction]
                     if not conn.unconsumed:
                         conn.unconsumed = set(conn.dests)
@@ -153,6 +154,25 @@ class Jamlet:
         self.router = Router(x, y, params)
         self.receive_header = None
 
+    def ready_for_read_byte_from_sram(self, instr: 'ReadByteFromSRAM'):
+        return len(self.router.input_buffers[Direction.H]) < self.params.router_input_buffer_length
+
+    def process_read_byte_from_sram(self, instr: 'ReadByteFromSRAM'):
+        assert self.ready_for_read_byte_from_sram(instr)
+        value = self.sram[instr.j_saddr.addr]
+        header = Header(
+            message_type=MessageType.READ_BYTE_FROM_SRAM_RESP,
+            send_type=SendType.SINGLE,
+            value=value,
+            target_x=instr.target_x,
+            target_y=instr.target_y,
+            source_x=self.x,
+            source_y=self.y,
+            address=instr.j_saddr,
+            length=1,
+            )
+        self.router.input_buffers[Direction.H].append(header)
+
     def step(self):
         self.router.step()
 
@@ -163,18 +183,21 @@ class Jamlet:
                 self.receive_header = queue.popleft().copy()
                 self.receive_header.length -= 1
             else:
+                assert not isinstance(queue[0], Header)
                 if self.receive_header.message_type.INSTRUCTIONS:
                     assert self.instruction_buffer is None
                     self.instruction_buffer = queue.popleft()
-                    logger.debug(f'jamlet({self.x}, {self.y}): adding {self.instruction_buffer} to queue')
+                    #logger.debug(f'jamlet({self.x}, {self.y}): adding {self.instruction_buffer} to queue')
                     self.receive_header.length -= 1
                 elif self.receive_header.message_type == MessageType.SEND:
-                    self.receive_buffer[self.receive_header.address % self.receive_buffer_depth] = (
+                    self.receive_buffer[self.receive_header.address % self.params.receive_buffer_depth] = (
                             queue.popleft())
                     self.receive_header.length -= 1
                     self.receive_header.address += 1
                 else:
-                    raise NotImplmented()
+                    raise NotImplementedError
+                if self.receive_header.length == 0:
+                    self.receive_header = None
 
     SEND = 0
     INSTRUCTIONS = 1

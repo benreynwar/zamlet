@@ -15,70 +15,48 @@ We want to check that when we apply a vector instruction to the state the
 result is the same as applying the micro-ops to the state.
 '''
 
-import enum
 import logging
-import sys
-import struct
-from collections import deque
 from asyncio import Future
 
 import decode
-from addresses import PageInfo, CacheLineState, CacheState, SizeBytes, SizeBits, TLB, CacheTable
-from addresses import AddressConverter
-from params import LamletParams, Header, MessageType, Direction, SendType
+from addresses import CacheState, SizeBytes, SizeBits, TLB, CacheTable
+from addresses import AddressConverter, Ordering, GlobalAddress, JSAddr
+from params import LamletParams
+from message import Header, MessageType, Direction, SendType
 from kamlet import Kamlet
 import kinstructions
-from addresses import GlobalAddress
 
 
 logger = logging.getLogger(__name__)
 
 
-def element_width_valid(element_width):
-    return element_width == 1 or (element_width >= 8 and is_power_of_two(element_width))
-
-def element_width_valid_and_not_1(element_width):
-    return (element_width >= 8 and is_power_of_two(element_width))
-
-def is_power_of_two(value):
-    return (value == 2) or ((value > 1) and (value % 2 == 0) and (is_power_of_two(value//2)))
+#def element_width_valid(element_width):
+#    return element_width == 1 or (element_width >= 8 and is_power_of_two(element_width))
 
 
-def log2ceil(value):
-    assert value >= 0
-    n_bits = 0
-    while value > 0:
-        n_bits += 1
-        value = value >> 1
-    return n_bits
+#def element_width_valid_and_not_1(element_width):
+#    return (element_width >= 8 and is_power_of_two(element_width))
 
 
-def extract_bit(byt, index):
-    assert byt < 1 << 8
-    assert 0 <= index < 8
-    return (byt >> index) % 2
 
 
-def replace_bit(byt, index, bit):
-    assert byt < 1 << 8
-    assert 0 <= index < 8
-    mask = 1 << index
-    assert bit in (0, 1)
-    removed = byt & (~mask)
-    updated = removed | (bit << index)
-    return updated
+
+#def extract_bit(byt, index):
+#    assert byt < 1 << 8
+#    assert 0 <= index < 8
+#    return (byt >> index) % 2
+#
+#
+#def replace_bit(byt, index, bit):
+#    assert byt < 1 << 8
+#    assert 0 <= index < 8
+#    mask = 1 << index
+#    assert bit in (0, 1)
+#    removed = byt & (~mask)
+#    updated = removed | (bit << index)
+#    return updated
 
 
-def bytes_to_float(byts):
-    assert len(byts) == 4
-    float_val = struct.unpack('f', byts)[0]
-    return float_val
-
-
-def float_to_bytes(fl):
-    byts = struct.pack('f', fl)
-    assert len(byts) == 4
-    return byts
 
 
 class ScalarState:
@@ -106,7 +84,8 @@ class ScalarState:
         if reg_num == 0:
             return
         value = value & 0xffffffffffffffff
-        logger.debug(f'write_reg: x{reg_num} = 0x{value:016x} (signed: {value if value < 0x8000000000000000 else value - 0x10000000000000000})')
+        signed = value if value < 0x8000000000000000 else value - 0x10000000000000000
+        logger.debug(f'write_reg: x{reg_num} = 0x{value:016x} (signed: {signed})')
         self.rf[reg_num] = value
 
     def read_freg(self, reg_num):
@@ -129,8 +108,6 @@ class ScalarState:
 
     def write_csr(self, csr_addr, value):
         self.csr[csr_addr] = value
-
-
 
 
 class Lamlet:
@@ -159,6 +136,8 @@ class Lamlet:
         # Used for handling responses back from the kamlet grid.
         self.waiting = {}
         self.conv = AddressConverter(self.params, self.tlb, self.cache_table)
+        self.reply_monitor = self.monitor_replys()
+        self.finished = False
 
     def set_pc(self, pc):
         self.pc = pc
@@ -173,84 +152,9 @@ class Lamlet:
         jamlet = kamlet.get_jamlet(x, y)
         return jamlet
 
-    def allocate_memory(self, address: GlobalAddress, size: SizeBytes, is_vpu: bool, element_width: SizeBits):
+    def allocate_memory(self, address: GlobalAddress, size: SizeBytes, is_vpu: bool, ordering: Ordering):
         page_bytes_per_memory = self.params.page_bytes // self.params.k_in_l
-        self.tlb.allocate_memory(address, size, is_vpu, element_width)
-        if is_vpu:
-            for index in range(size//self.params.page_bytes):
-                logical_page_address = address.addr + index * self.params.page_bytes
-                page_info = self.tlb.pages[logical_page_address]
-                page_slot = page_info.local_address.addr//page_bytes_per_memory
-
-    #def get_k_sram_address(self, address):
-    #    page_address = self.get_page(address)
-    #    page_info = self.tlb.get_page_info(page_address)
-    #    assert page_info.is_vpu
-    #    assert page_info.element_width >= 8
-    #    assert page_info.element_width % 8 == 0
-    #    page_offset = address - page_address
-    #    vpu_address = page_info.local_address + page_offset
-
-    #    cache_ident = self.cache_table.address_to_ident(vpu_address)
-    #    cache_slot = self.cache_table.ident_to_cache_line_slot(cache_ident)
-
-    #    element_index = (page_offset*8)//page_info.element_width
-    #    j_index = element_index % self.params.j_in_l
-    #    k_index, j_index_in_k = self.j_index_to_k_indices(j_index)
-
-    #    elements_in_a_word = self.params.word_bytes//element_bytes
-    #    vline_words = self.params.j_in_l * elements_in_a_word
-
-
-
-    #    element_bytes = page_info.element_width//8
-    #    elements_in_a_line = self.params.j_in_l * elements_in_a_word
-
-    #    j_memory_word_address = element_index//elements_in_a_line
-
-
-    #    l_cache_line_address = cache_slot * self.params.cache_line_bytes * self.params.k_in_l
-
-
-    #    byte_in_word = (
-    #            # Which element in that jamlet word
-    #            ((element_index % elements_in_a_line)//self.params.j_in_l) * element_bytes +
-    #            # Byte in element
-    #            address % element_bytes
-    #            )
-
-    #    # Address in the combined lamlet sram
-    #    l_sram_address = (
-    #            # Local base address of the page
-    #            local_address +
-    #            # What 'line' in the page we are at.
-    #            j_sram_word_address * self.params.j_in_l * self.params.word_bytes +
-    #            # Which 'jamlet' we're in.
-    #            j_index * self.params.word_bytes +
-    #            byte_in_word
-    #            )
-
-    #    # Address in the kamlet sram
-    #    k_sram_address = (
-    #            # Local base address of the page
-    #            local_address//self.params.k_in_l +
-    #            # What 'line' in the page we are at
-    #            j_sram_word_address * self.params.j_in_k * self.params.word_bytes +
-    #            # Which 'jamlet' we're in
-    #            j_index_in_k * self.params.word_bytes +
-    #            byte_in_word
-    #            )
-
-    #    j_sram_address = (
-    #            # Local base address of the page
-    #            local_address//self.params.j_in_l +
-    #            # What 'line' in the page we are at
-    #            j_sram_word_address * self.params.word_bytes +
-    #            byte_in_word
-    #            )
-    #    assert k_sram_address < self.params.j_in_k * self.params.jamlet_sram_bytes
-
-    #    return k_index, k_sram_address
+        self.tlb.allocate_memory(address, size, is_vpu, ordering)
 
     def to_global_addr(self, addr):
         return self.conv.to_global_addr(addr)
@@ -264,6 +168,9 @@ class Lamlet:
     def to_j_saddr(self, addr):
         return self.conv.to_j_saddr(addr)
 
+    def to_vpu_addr(self, addr):
+        return self.conv.to_vpu_addr(addr)
+
     def write_byte_instruction(self, address: GlobalAddress, value: int):
         j_saddr = self.to_j_saddr(address)
         kinstr = kinstructions.WriteImmByteToSRAM(
@@ -276,28 +183,37 @@ class Lamlet:
         j_saddr = address.to_j_saddr(self.params, self.tlb, self.cache_table)
         kinstr = kinstructions.ReadByteFromSRAM(
             j_saddr=j_saddr,
+            target_x=self.instr_x,
+            target_y=self.instr_y,
             )
         return j_saddr.k_index, kinstr
 
-    def send_write_byte_instruction(self, address, value):
+    def send_write_byte_instruction(self, address: GlobalAddress, value: int):
         k_index, instruction = self.write_byte_instruction(address, value)
         self.send_instruction(instruction, k_index)
+        vpu_address = self.to_vpu_addr(address)
+        slot_state = self.cache_table.get_state(vpu_address)
+        slot_state.state = CacheState.M
 
-    async def read_byte(self, address):
-        cache_line_address = self.get_cache_line_address(address)
-        self.require_cache(cache_line_address)
+    async def read_byte(self, address: GlobalAddress):
+        self.require_cache(address)
         k_index, instruction = self.read_byte_instruction(address)
         self.send_instruction(instruction, k_index)
         value = await self.get_instruction_response(instruction, k_index)
         return value
 
+    def write_byte(self, address: GlobalAddress, value: int):
+        self.require_cache(address)
+        self.send_write_byte_instruction(address, value)
+
     async def get_instruction_response(self, instruction, k_index=None):
         assert isinstance(instruction, kinstructions.ReadByteFromSRAM)
         assert k_index is not None
         future = Future()
-        self.waiting[(MessageType.READ_BYTE_FROM_SRAM_RESP, k_index, instruction.k_sram_address)] = future
+        tag = (MessageType.READ_BYTE_FROM_SRAM_RESP, k_index, instruction.j_saddr)
+        self.waiting[tag] = future
         response = await self.clock.wait_future(future)
-        return result
+        return response
 
     def get_header_source_k_index(self, header):
         x_offset = header.source_x - self.left_x
@@ -332,32 +248,36 @@ class Lamlet:
                     if north_buffer:
                         north_jamlet = self.get_jamlet(x, y-1)
                         if north_jamlet.router.has_input_room(Direction.S):
-                            north_jamlet.router.receive(Direction.S, north_buffer.popleft())
-                            logger.debug('Moving word north')
+                            word = north_buffer.popleft()
+                            north_jamlet.router.receive(Direction.S, word)
+                            #logger.debug(f'Moving word north ({x}, {y}) -> ({x}, {y-1}) {word}')
                 if y < self.top_y+n_rows-1:
                     # Send to the south
                     south_buffer = jamlet.router.output_buffers[Direction.S]
                     if south_buffer:
                         south_jamlet = self.get_jamlet(x, y+1)
                         if south_jamlet.router.has_input_room(Direction.N):
-                            south_jamlet.router.receive(Direction.N, south_buffer.popleft())
-                            logger.debug('Moving word south')
+                            word = south_buffer.popleft()
+                            south_jamlet.router.receive(Direction.N, word)
+                            #logger.debug(f'Moving word south, ({x}, {y} -> ({x}, {y+1}) {word}')
                 if x < self.left_x + n_cols-1:
                     # Send to the east
                     east_buffer = jamlet.router.output_buffers[Direction.E]
                     if east_buffer:
                         east_jamlet = self.get_jamlet(x+1, y)
                         if east_jamlet.router.has_input_room(Direction.W):
-                            east_jamlet.router.receive(Direction.W, east_buffer.popleft())
-                            logger.debug('Moving word east')
+                            word = east_buffer.popleft()
+                            east_jamlet.router.receive(Direction.W, word)
+                            #logger.debug(f'Moving word east, ({x}, {y} -> ({x+1}, {y}) {word}')
                 if x > self.left_x:
                     # Send to the west
                     west_buffer = jamlet.router.output_buffers[Direction.W]
                     if west_buffer:
                         west_jamlet = self.get_jamlet(x-1, y)
                         if west_jamlet.router.has_input_room(Direction.E):
-                            west_jamlet.router.receive(Direction.E, west_buffer.popleft())
-                            logger.debug('Moving word west')
+                            word = west_buffer.popleft()
+                            west_jamlet.router.receive(Direction.E, word)
+                            #logger.debug(f'Moving word west, ({x}, {y} -> ({x-1}, {y}) {word}')
 
 
     def monitor_replys(self):
@@ -376,8 +296,8 @@ class Lamlet:
                 header.length = header.length - 1
                 if header.length == 0:
                     self.process_packet(packet)
-                self.header = None
-                self.packet = []
+                header = None
+                packet = []
             yield
 
     def send_instruction(self, instruction, k_index=None):
@@ -402,7 +322,7 @@ class Lamlet:
             source_y=self.instr_y,
             length=2,
             message_type=MessageType.INSTRUCTIONS,
-            send_type=SendType.BROADCAST,
+            send_type=send_type,
             )
         packet = [header, instruction]
         jamlet = self.kamlets[0].jamlets[0]
@@ -413,18 +333,20 @@ class Lamlet:
         for word in packet:
             jamlet.router.input_buffers[direction].append(word)
 
-    def set_memory(self, address: int, data):
+    async def set_memory(self, address: int, data: bytes):
         global_addr = GlobalAddress(bit_addr=address*8)
         # Check for HTIF tohost write (8-byte aligned)
         if global_addr.addr == self.params.tohost_addr and len(data) == 8:
             tohost_value = int.from_bytes(data, byteorder='little')
             if tohost_value != 0:
-                self.handle_tohost(tohost_value)
+                await self.handle_tohost(tohost_value)
 
         for index, b in enumerate(data):
             byt_address = GlobalAddress(bit_addr=global_addr.addr*8+index*8)
+            # If this cache line is fresh then we need to set it to all 0.
+            # If the cache line is not loaded then we need to load it.
             if byt_address.is_vpu(self.params, self.tlb):
-                self.send_write_byte_instruction(byt_address, b)
+                self.write_byte(byt_address, b)
             else:
                 scalar_address = self.to_scalar_addr(byt_address)
                 self.scalar.set_memory(scalar_address, b)
@@ -462,6 +384,7 @@ class Lamlet:
         """Handle HTIF syscall via tohost write."""
         # Check if this is an exit code (LSB = 1)
         if tohost_value & 1:
+            self.finished = True
             self.exit_code = tohost_value >> 1
             if self.exit_code == 1:
                 logger.error(f'Program exit: VPU allocation error - invalid element width')
@@ -508,99 +431,119 @@ class Lamlet:
             ret_value = -1
 
         # Write return value to magic_mem[0]
-        self.set_memory(magic_mem_addr, ret_value.to_bytes(8, byteorder='little', signed=True))
+        await self.set_memory(magic_mem_addr, ret_value.to_bytes(8, byteorder='little', signed=True))
 
         # Signal completion by writing to fromhost
-        self.set_memory(self.params.fromhost_addr, (1).to_bytes(8, byteorder='little'))
+        await self.set_memory(self.params.fromhost_addr, (1).to_bytes(8, byteorder='little'))
 
-    def is_cache_line_aligned(self, addr: GlobalAddress):
+    def is_cache_line_aligned(self, address: GlobalAddress):
         cache_line_size = self.params.k_in_l * self.params.cache_line_bytes
-        return addr % cache_line_size == 0
+        return address.bit_addr % (cache_line_size*8) == 0
 
     def j_saddr_is_aligned(self, j_saddr):
-        j_cache_line_bits == params.cache_line_bytes * 8 // params.j_in_k
+        j_cache_line_bits = self.params.cache_line_bytes * 8 // self.params.j_in_k
         return (j_saddr.k_index == 0 and
                 j_saddr.j_in_k_index == 0 and
                 j_saddr.bit_addr % j_cache_line_bits)
 
+    def k_maddr_is_aligned(self, k_maddr):
+        k_cache_line_bits = self.params.cache_line_bytes * 8
+        return (k_maddr.k_index == 0 and
+                k_maddr.bit_addr % k_cache_line_bits == 0)
+
     def flush_cache_address(self, address: GlobalAddress):
-        k_maddr = address.to_k_maddr(params, self.tlb)
-        j_saddr = address.to_j_saddr(params, self.tlb, self.cache_table)
-        assert check_j_saddr_is_aligned(self, j_saddr)
+        k_maddr = self.to_k_maddr(address)
+        j_saddr = self.to_j_saddr(address)
+        assert self.j_saddr_is_aligned(j_saddr)
         assert k_maddr.k_index == 0
         kinstr = kinstructions.WriteLine(
             k_maddr=k_maddr,
-            k_saddr=k_saddr,
+            j_saddr=j_saddr,
             n_cache_lines=1,
             )
         self.send_instruction(kinstr)
 
     def evict_cache_address(self, address: GlobalAddress):
-        slot_state = self.cache_table.get_state(address)
+        vpu_address = self.to_vpu_addr(address)
+        slot_state = self.cache_table.get_state(vpu_address)
         if slot_state.state == CacheState.M:
-            self.flush_cache_slot(address)
+            self.flush_cache_address(address)
 
     def slot_to_address(self, slot: int):
         j_cache_line_bits = self.params.cache_line_bytes * 8 // self.params.j_in_k
+        l_cache_line_bits = self.params.cache_line_bytes * 8 * self.params.k_in_l
         bit_addr_in_j_sram = slot * j_cache_line_bits
+        vpu_address = slot * l_cache_line_bits
+        page_info = self.tlb.vpu_pages[vpu_address]
         j_saddr = JSAddr(
             k_index=0,
             j_in_k_index=0,
             bit_addr=bit_addr_in_j_sram,
+            ordering=page_info.ordering,
             )
         self.to_global_addr(j_saddr)
 
     def assign_cache_slot(self, address: GlobalAddress):
-        k_maddr = address.to_k_maddr(params, self.tlb)
-        j_saddr = address.to_j_saddr(params, self.tlb, self.cache_table)
+        k_maddr = self.to_k_maddr(address)
         # Check that it is aligned to a cache slot
-        assert check_j_saddr_is_aligned(self, j_saddr)
+        assert self.k_maddr_is_aligned(k_maddr)
         assert k_maddr.k_index == 0
         slot = self.cache_table.get_free_slot()
         if slot is None:
             slot = self.cache_table.get_eviction_slot()
             self.slot_to_address(slot)
-            self.evict_cache_slot(address)
+            self.evict_cache_address(address)
         slot_state = self.cache_table.slot_states[slot]
-        slot_state.ident = ident
+        slot_state.ident = k_maddr.addr//self.params.cache_line_bytes
         slot_state.state = CacheState.I
         return slot
 
-#    def get_cache_line_address(self, address: GlobalAddress):
-#        l_cache_line_bytes = self.params.cache_line_bytes * self.params.k_in_l
-#        return (address//l_cache_line_bytes)*l_cache_line_bytes
-#
     def require_cache(self, address: GlobalAddress):
+        is_fresh = self.tlb.get_is_fresh(address)
+        if is_fresh:
+            self.tlb.set_not_fresh(address)
+        k_maddr = self.to_k_maddr(address)
         assert self.is_cache_line_aligned(address)
-        vpu_address = address.to_vpu_address(params, self.tlb)
+        vpu_address = self.to_vpu_addr(address)
         slot = self.cache_table.vpu_address_to_cache_slot(vpu_address)
+        if is_fresh:
+            # If it's fresh it shouldn't be cached.
+            assert slot is None
         if slot is None:
             # We don't have a slot allocated for this.
             slot = self.assign_cache_slot(address)
         slot_state = self.cache_table.get_state(vpu_address)
+        j_saddr = self.to_j_saddr(address)
         if slot_state.state == CacheState.I:
-            # We need to read data into this line.
-            k_sram_address = slot * self.params.cache_line_bytes
-            kinstr = kinstructions.ReadLine(
-                k_memory_address=cache_line_address,
-                k_sram_address=k_sram_address,
-                n_cache_lines=1,
-                )
-            self.send_instruction(kinstr)
+            if is_fresh:
+                kinstr = kinstructions.ZeroLine(
+                    j_saddr=j_saddr,
+                    n_cache_lines=1,
+                    )
+                self.send_instruction(kinstr)
+                slot_state.state = CacheState.M
+            else:
+                # We need to read data into this line.
+                kinstr = kinstructions.ReadLine(
+                    k_maddr=k_maddr,
+                    j_saddr=j_saddr,
+                    n_cache_lines=1,
+                    )
+                self.send_instruction(kinstr)
+                slot_state.state = CacheState.S
 
-#    def get_cache_line_sram_address(self, cache_line_address):
-#        assert self.cache_table.is_cached(cache_line_address)
-#        cache_ident = self.cache
-#
-    def vload(self, vd: int, addr: GlobalAddress, element_width: SizeBits, n_elements: int, mask_reg: int):
+    def vload(self, vd: int, addr: GlobalAddress, element_width: SizeBits,
+              n_elements: int, mask_reg: int):
+        # TODO: Support masking
+        assert mask_reg is None
         # Require all the cache lines that page to this
         l_cache_line_bytes = self.params.cache_line_bytes * self.params.k_in_l
         last_addr = None
         last_page = None
         page_infos = []
         for some_address in range(addr.addr, addr.addr+(element_width*n_elements)//8):
-            cache_line_address = (addr.addr//l_cache_line_bytes) * l_cache_line_bytes
-            page_address = (addr.addr//self.params.page_bytes) * self.params_page_bytes
+            cache_line_address = (some_address//l_cache_line_bytes) * l_cache_line_bytes
+            page_address = (some_address//self.params.page_bytes) * self.params.page_bytes
             if cache_line_address != last_addr:
                 global_addr = GlobalAddress(bit_addr=cache_line_address*8)
                 self.require_cache(global_addr)
@@ -610,20 +553,14 @@ class Lamlet:
                 assert page_info.element_width == element_width
                 assert page_info.is_vpu
                 page_infos.append(page_info)
-
         # TODO: Support load that spans pages. Split into multiple kinstructions.
         assert len(page_infos) == 1
-
         n_vlines = n_elements * (element_width//8) // (self.params.vline_bytes)
         assert n_elements % (self.params.vline_bytes // (element_width//8)) == 0
-
-        local_address = addr - page
-        assert local_address % self.params.vline_bytes == 0
-        j_address_in_sram = local_address//self.params.vline_bytes
-
+        j_saddr = self.to_j_saddr(addr)
         kinstr = kinstructions.Load(
             dst=vd,
-            j_sram_address=j_address_in_sram,
+            j_saddr=j_saddr,
             n_vlines=n_vlines,
             )
 
@@ -632,25 +569,23 @@ class Lamlet:
     def step(self):
         for kamlet in self.kamlets:
             kamlet.step()
-        self.monitor_replys()
+        next(self.reply_monitor)
         self.router_connections()
 
     async def run(self):
         while True:
             self.step()
             await self.clock.next_cycle()
-    
+
     async def run_instructions(self, disasm_trace=None):
-        while True:
+        while not self.finished:
             instruction_bytes = self.get_scalar_memory(GlobalAddress(bit_addr=self.pc*8), 4)
             is_compressed = decode.is_compressed(instruction_bytes)
 
             if is_compressed:
                 inst_hex = int.from_bytes(instruction_bytes[0:2], byteorder='little')
-                num_bytes = 2
             else:
                 inst_hex = int.from_bytes(instruction_bytes[0:4], byteorder='little')
-                num_bytes = 4
 
             instruction = decode.decode(instruction_bytes)
 
@@ -669,8 +604,8 @@ class Lamlet:
                     logger.error(error)
                     raise ValueError(error)
 
-            if hasattr(instruction, 'update_state_lamlet'):
-                await instruction.update_state_lamlet(self)
+            if hasattr(instruction, 'update_lamlet'):
+                await instruction.update_lamlet(self)
             else:
                 instruction.update_state(self)
 

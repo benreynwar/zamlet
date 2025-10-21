@@ -56,7 +56,7 @@ class Flw:
         s.scalar.write_freg(self.fd, value)
         s.pc += 4
 
-    async def update_state_lamlet(self, s: 'state.State'):
+    async def update_lamlet(self, s: 'state.State'):
         addr = s.scalar.read_reg(self.rs1) + self.imm
         data = await s.get_memory(addr, 4)
         value = int.from_bytes(data, byteorder='little', signed=False)
@@ -87,7 +87,7 @@ class Fld:
         s.scalar.write_freg(self.fd, value)
         s.pc += 4
 
-    async def update_state_lamlet(self, s: 'state.State'):
+    async def update_lamlet(self, s: 'state.State'):
         addr = s.scalar.read_reg(self.rs1) + self.imm
         data = await s.get_memory(addr, 8)
         value = int.from_bytes(data, byteorder='little', signed=False)
@@ -115,8 +115,15 @@ class Fsw:
         addr = s.scalar.read_reg(self.rs1) + self.imm
         value = s.scalar.read_freg(self.rs2) & 0xffffffff
         data = value.to_bytes(4, byteorder='little', signed=False)
-        s.set_memory(addr, data)
         s.pc += 4
+        s.set_memory(addr, data)
+
+    async def update_lamlet(self, s: 'state.State'):
+        addr = s.scalar.read_reg(self.rs1) + self.imm
+        value = s.scalar.read_freg(self.rs2) & 0xffffffff
+        data = value.to_bytes(4, byteorder='little', signed=False)
+        s.pc += 4
+        await s.set_memory(addr, data)
 
 
 @dataclass
@@ -139,8 +146,15 @@ class Fsd:
         addr = s.scalar.read_reg(self.rs1) + self.imm
         value = s.scalar.read_freg(self.rs2)
         data = value.to_bytes(8, byteorder='little', signed=False)
-        s.set_memory(addr, data)
         s.pc += 4
+        s.set_memory(addr, data)
+
+    async def update_lamlet(self, s: 'state.State'):
+        addr = s.scalar.read_reg(self.rs1) + self.imm
+        value = s.scalar.read_freg(self.rs2)
+        data = value.to_bytes(8, byteorder='little', signed=False)
+        s.pc += 4
+        await s.set_memory(addr, data)
 
 
 @dataclass

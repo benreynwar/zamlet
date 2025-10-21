@@ -7,7 +7,7 @@ import program_info
 import lamlet
 from runner import Clock
 from params import LamletParams
-from addresses import GlobalAddress
+from addresses import GlobalAddress, Ordering, WordOrder
 
 logger = logging.getLogger(__name__)
 
@@ -46,22 +46,26 @@ async def run(clock: Clock):
             alloc_size = page_end - page_start
 
         # For VPU static data at 0x20000000, use element_width=32 (float data)
-        ew = 32 if (address >= 0x20000000 and address < 0x30000000) else None
-        s.allocate_memory(GlobalAddress(bit_addr=page_start*8), alloc_size, is_vpu=is_vpu, element_width=ew)
+        if is_vpu:
+            ew = 32 if (address >= 0x20000000 and address < 0x30000000) else 8
+            ordering = Ordering(WordOrder.STANDARD, ew)
+        else:
+            ordering = None
+        s.allocate_memory(GlobalAddress(bit_addr=page_start*8), alloc_size, is_vpu=is_vpu, ordering=ordering)
 
     # Allocate VPU memory pools with fixed element widths
     # Each pool is 256KB as defined in vpu_alloc.c
     pool_size = 256 * 1024
-    s.allocate_memory(GlobalAddress(bit_addr=0x90000000*8), pool_size, is_vpu=True, element_width=1)   # 1-bit pool (masks)
-    s.allocate_memory(GlobalAddress(bit_addr=0x90040000*8), pool_size, is_vpu=True, element_width=8)   # 8-bit pool
-    s.allocate_memory(GlobalAddress(bit_addr=0x90080000*8), pool_size, is_vpu=True, element_width=16)  # 16-bit pool
-    s.allocate_memory(GlobalAddress(bit_addr=0x900C0000*8), pool_size, is_vpu=True, element_width=32)  # 32-bit pool
-    s.allocate_memory(GlobalAddress(bit_addr=0x90100000*8), pool_size, is_vpu=True, element_width=64)  # 64-bit pool
+    s.allocate_memory(GlobalAddress(bit_addr=0x90000000*8), pool_size, is_vpu=True, ordering=Ordering(WordOrder.STANDARD, 1))   # 1-bit pool (masks)
+    s.allocate_memory(GlobalAddress(bit_addr=0x90040000*8), pool_size, is_vpu=True, ordering=Ordering(WordOrder.STANDARD, 8))   # 8-bit pool
+    s.allocate_memory(GlobalAddress(bit_addr=0x90080000*8), pool_size, is_vpu=True, ordering=Ordering(WordOrder.STANDARD, 16))  # 16-bit pool
+    s.allocate_memory(GlobalAddress(bit_addr=0x900C0000*8), pool_size, is_vpu=True, ordering=Ordering(WordOrder.STANDARD, 32))  # 32-bit pool
+    s.allocate_memory(GlobalAddress(bit_addr=0x90100000*8), pool_size, is_vpu=True, ordering=Ordering(WordOrder.STANDARD, 64))  # 64-bit pool
 
     for segment in p_info['segments']:
         address = segment['address']
         data = segment['contents']
-        s.set_memory(address, data)
+        await s.set_memory(address, data)
         logger.info(f'Segment {hex(address)} Size {len(data)} {data}')
 
     trace = disasm_trace.parse_objdump(filename)
@@ -91,9 +95,11 @@ async def run(clock: Clock):
 
 
 async def main():
-    clock = Clock(max_cycles=20)
-    clock.spawn(run(clock))
-    await clock.clock_driver()
+    clock = Clock(max_cycles=30)
+    #clock.spawn(run(clock))
+    #await clock.clock_driver()
+    clock.spawn(clock.clock_driver())
+    await run(clock)
 
 
 if __name__ == '__main__':

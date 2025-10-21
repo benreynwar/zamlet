@@ -117,7 +117,7 @@ class Vsetvli:
         s.scalar.write_reg(self.rd, s.vl)
         s.pc += 4
 
-    async def update_state_lamlet(self, s: 'state.State'):
+    async def update_lamlet(self, s: 'state.State'):
         self.update_state(s)
         logger.info(f'Set vl to {s.vl}')
 
@@ -154,7 +154,7 @@ class Vle32V:
 
         s.pc += 4
 
-    async def update_state_lamlet(self, s: 'state.State'):
+    async def update_lamlet(self, s: 'state.State'):
         '''
         A physical update state that operates on lanes rather than a logical model.
         '''
@@ -206,8 +206,8 @@ class Vse32V:
 
         s.pc += 4
 
-    def update_state_physical(self, s: 'state.State'):
-        raise NotImplemented()
+    async def update_lamlet(self, s: 'state.State'):
+        raise NotImplementedError
 
 
 @dataclass
