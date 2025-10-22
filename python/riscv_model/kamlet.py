@@ -5,7 +5,8 @@ from addresses import CacheState
 from params import LamletParams
 from jamlet import Jamlet
 from kinstructions import KInstr
-from message import Header, MessageType
+from message import Header, MessageType, SendType
+from utils import Queue
 
 
 class KamletScoreBoard:
@@ -19,7 +20,8 @@ class KamletScoreBoard:
 
 class Kamlet:
 
-    def __init__(self, params: LamletParams, min_x: int, min_y: int):
+    def __init__(self, clock, params: LamletParams, min_x: int, min_y: int):
+        self.clock = clock
         self.params = params
         self.min_x = min_x
         self.min_y = min_y
@@ -27,10 +29,30 @@ class Kamlet:
         self.n_rows = params.j_rows
         self.n_jamlets = self.n_columns * self.n_rows
 
-        self.jamlets = [Jamlet(params, min_x+index % self.n_columns, min_y+index//self.n_columns)
-                        for index in range(self.n_jamlets)]
+        self.jamlets = []
+        for index in range(self.n_jamlets):
+            x = min_x+index % self.n_columns
+            y = min_y+index//self.n_columns
+            # Put the memories on the left and right hand sides.
+            n_cols = self.params.j_cols * self.params.k_cols
+            if x >= n_cols//2:
+                mem_x = n_cols
+            else:
+                mem_x = -1
+            mem_y = y
+            self.jamlets.append(Jamlet(clock, params, x, y, mem_x, mem_y))
 
-        self.instruction_queue = deque()
+        # Local State
+        self._instruction_queue = Queue(self.params.instruction_queue_length)
+
+    def update(self):
+        self._instruction_queue.update()
+        for jamlet in self.jamlets:
+            jamlet.update()
+
+    @property
+    def k_index(self):
+        return self.min_y // self.params.j_rows * self.params.k_cols + self.min_x // self.params.j_cols
 
     def get_jamlet(self, x, y):
         assert self.min_x <= x < self.min_x + self.n_columns
@@ -42,24 +64,20 @@ class Kamlet:
 
     def add_to_instruction_queue(self, instr: KInstr):
         assert isinstance(instr, KInstr)
-        self.instruction_queue.append(instr)
-        assert len(self.instruction_queue) < self.params.instruction_queue_length
+        self._instruction_queue.append(instr)
 
-    def step(self):
-
+    async def run(self):
         for jamlet in self.jamlets:
-            jamlet.step()
-
-        # If we have an instruction then do it
-        if self.instruction_queue:
-            instr = self.instruction_queue[0]
-            if (not hasattr(instr, 'blocking')) or not instr.blocking(self):
-                instr.update_kamlet(self)
-                self.instruction_queue.popleft()
-
-        # Get received instructions from jamlets
-        for index, jamlet in enumerate(self.jamlets):
-            if jamlet.instruction_buffer is not None:
-                if index == 0:
-                    self.add_to_instruction_queue(jamlet.instruction_buffer)
-                jamlet.instruction_buffer = None
+            self.clock.create_task(jamlet.run())
+        while True:
+            await self.clock.next_cycle
+            # If we have an instruction then do it
+            if self._instruction_queue:
+                instruction = self._instruction_queue.popleft()
+                self.clock.create_task(instruction.update_kamlet(self))
+            # Get received instructions from jamlets
+            for index, jamlet in enumerate(self.jamlets):
+                if jamlet._instruction_buffer:
+                    instr = jamlet._instruction_buffer.popleft()
+                    if index == 0:
+                        self.add_to_instruction_queue(instr)

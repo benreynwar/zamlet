@@ -26,22 +26,32 @@ INCLUDES="-I../common"
 # Link options
 RISCV_LINK_OPTS="-static -nostdlib -nostartfiles -lgcc -T../common/test.ld"
 
-# Source files
-TEST_SRCS="simple_vpu_test.c"
+# Common source files
 COMMON_SRCS="minimal_crt.S"
 
-# Output file
-OUTPUT="readwritebyte.riscv"
+# Test source files
+TEST_FILES=(
+    "simple_vpu_test.c"
+    "write_then_read_many_bytes.c"
+)
 
-# Build command
-echo "Building readwritebyte test..."
-${RISCV_GCC} ${INCLUDES} ${RISCV_GCC_OPTS} -o ${OUTPUT} \
-    ${TEST_SRCS} ${COMMON_SRCS} ${RISCV_LINK_OPTS}
+# Build each test
+for TEST_SRC in "${TEST_FILES[@]}"; do
+    # Generate output filename (replace .c with .riscv)
+    OUTPUT="${TEST_SRC%.c}.riscv"
 
-if [ $? -eq 0 ]; then
-    echo "Build successful: ${OUTPUT}"
-    ls -lh ${OUTPUT}
-else
-    echo "Build failed"
-    exit 1
-fi
+    echo "Building ${TEST_SRC}..."
+    ${RISCV_GCC} ${INCLUDES} ${RISCV_GCC_OPTS} -o ${OUTPUT} \
+        ${TEST_SRC} ${COMMON_SRCS} ${RISCV_LINK_OPTS}
+
+    if [ $? -eq 0 ]; then
+        echo "Build successful: ${OUTPUT}"
+        ls -lh ${OUTPUT}
+    else
+        echo "Build failed for ${TEST_SRC}"
+        exit 1
+    fi
+    echo ""
+done
+
+echo "All builds completed successfully"

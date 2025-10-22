@@ -178,7 +178,7 @@ class TLB:
 
     def get_is_fresh(self, address: 'GlobalAddress') -> bool:
         page_addr = address.get_page(self.params)
-        page_info = self.get_page_info(address)
+        page_info = self.get_page_info(page_addr)
         page_offset = address.addr - page_addr.addr
         cache_line_index = page_offset // self.params.cache_line_bytes // self.params.k_in_l
         cache_lines_in_page = self.params.page_bytes // self.params.cache_line_bytes // self.params.k_in_l
@@ -186,7 +186,8 @@ class TLB:
         return page_info.fresh[cache_line_index]
 
     def set_not_fresh(self, address: 'GlobalAddress'):
-        page_info = self.get_page_info(address)
+        page_address = address.get_page(self.params)
+        page_info = self.get_page_info(page_address)
         page_offset = address.addr - page_info.global_address.addr
         cache_line_index = page_offset // self.params.cache_line_bytes // self.params.k_in_l
         is_fresh = page_info.fresh[cache_line_index]
@@ -219,27 +220,47 @@ class CacheTable:
     def __init__(self, params: LamletParams):
         self.params = params
         self.n_slots = params.jamlet_sram_bytes * params.j_in_k // params.cache_line_bytes
+        assert (params.jamlet_sram_bytes * params.j_in_k) % params.cache_line_bytes == 0
+        assert self.n_slots >= 4
         self.k_cache_line_bytes = params.cache_line_bytes
         self.l_cache_line_bytes = params.cache_line_bytes * params.k_in_l
         # For now assume that we're using all of the SRAM for global cache.
         self.slot_states = [CacheLineState() for index in range(self.n_slots)]
         self.free_slots = deque(list(range(self.n_slots)))
         self.used_slots = []
+        self.check_slots()
+
+    def check_slots(self):
+        assert len(self.free_slots) + len(self.used_slots) == self.n_slots
 
     def get_state(self, address: 'VPUAddress'):
         j_saddr = address.to_j_saddr(self.params, self)
         slot = j_saddr.addr//(self.params.cache_line_bytes//self.params.j_in_k)
         return self.slot_states[slot]
 
-    def get_free_slot(self):
+    def get_free_slot(self, ident):
+        self.check_slots()
         if self.free_slots:
-            return self.free_slots.popleft()
+            slot = self.free_slots.popleft()
+            slot_state = self.slot_states[slot]
+            slot_state.state = CacheState.I
+            slot_state.ident = ident
+            self.used_slots.append(slot)
         else:
-            return None
+            slot = None
+        self.check_slots()
+        return slot
 
-    def get_eviction_slot(self):
+    def get_eviction_slot(self, ident):
+        self.check_slots()
         assert self.used_slots
-        return self.used_slots.pop(0)
+        slot = self.used_slots.pop(0)
+        old_state = self.slot_states[slot]
+        self.slot_states[slot] = CacheLineState()
+        self.slot_states[slot].ident = ident
+        self.used_slots.append(slot)
+        self.check_slots()
+        return slot, old_state
 
     def touch_slot(self, slot):
         assert slot in self.used_slots
@@ -527,13 +548,14 @@ class KMAddr:
         cache_line_bytes_per_jamlet = params.cache_line_bytes//params.j_in_k
         assert cache_line_bytes_per_jamlet % params.word_bytes == 0
         assert cache_line_bytes_per_jamlet >= params.word_bytes
-        k_vline_bytes = params.word_bytes * params.j_in_k
-        vline_index_in_cache_line = cache_line_offset // k_vline_bytes
+        k_vline_bits = params.word_bytes * params.j_in_k * 8
+        vline_index_in_cache_line = cache_line_offset // k_vline_bits
         offset_in_word = self.bit_addr % (params.word_bytes * 8)
         address_in_sram = (
                 # Base address of the cache line in the sram
                 (cache_slot * cache_line_bytes_per_jamlet * 8) +
-                vline_index_in_cache_line * params.word_bytes +
+                # Offset of the vline in the sram
+                vline_index_in_cache_line * params.word_bytes * 8 +
                 offset_in_word
                 )
         return JSAddr(
@@ -588,13 +610,14 @@ class JSAddr:
         j_cache_line_bits = params.cache_line_bytes * 8 // params.j_in_k
         cache_slot = self.bit_addr//j_cache_line_bits
         slot_info = cache_table.cache_slots[cache_slot]
+        vlines_in_cache_line = params.cache_line_bytes // (params.word_bytes * params.j_in_k)
 
         k_cache_line_bits = params.cache_line_bytes * 8
         k_memory_bit_addr = (
             # Base address of the cache line in the k memory
             slot_info.ident * k_cache_line_bits +
             # Address of the j word
-            self.j_in_k_index * params.word_bytes * 8 +
+            self.j_in_k_index * params.word_bytes * vlines_in_cache_line * 8 +
             self.bit_addr % (params.word_bytes * 8)
             )
 

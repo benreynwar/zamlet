@@ -164,7 +164,7 @@ class Vle32V:
             mask_reg=None
         else:
             mask_reg=0
-        s.vload(self.vd, addr, 32, s.vl, mask_reg)
+        await s.vload(self.vd, addr, 32, s.vl, mask_reg)
         s.pc += 4
         logger.info(f'Loaded vector into vd={self.vd}')
 

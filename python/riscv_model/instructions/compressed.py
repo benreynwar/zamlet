@@ -110,7 +110,7 @@ class CAddiw:
 
     def __str__(self):
         if self.imm == 0:
-            return f'sext.w\t{reg_name(self.rd)}'
+            return f'sext.w\t{reg_name(self.rd)},{reg_name(self.rd)}'
         else:
             return f'addiw\t{reg_name(self.rd)},{reg_name(self.rd)},{self.imm}'
 

@@ -16,11 +16,10 @@ result is the same as applying the micro-ops to the state.
 '''
 
 import logging
-from asyncio import Future
 
 import decode
 from addresses import CacheState, SizeBytes, SizeBits, TLB, CacheTable
-from addresses import AddressConverter, Ordering, GlobalAddress, JSAddr
+from addresses import AddressConverter, Ordering, GlobalAddress, JSAddr, KMAddr, VPUAddress
 from params import LamletParams
 from message import Header, MessageType, Direction, SendType
 from kamlet import Kamlet
@@ -28,35 +27,6 @@ import kinstructions
 
 
 logger = logging.getLogger(__name__)
-
-
-#def element_width_valid(element_width):
-#    return element_width == 1 or (element_width >= 8 and is_power_of_two(element_width))
-
-
-#def element_width_valid_and_not_1(element_width):
-#    return (element_width >= 8 and is_power_of_two(element_width))
-
-
-
-
-
-#def extract_bit(byt, index):
-#    assert byt < 1 << 8
-#    assert 0 <= index < 8
-#    return (byt >> index) % 2
-#
-#
-#def replace_bit(byt, index, bit):
-#    assert byt < 1 << 8
-#    assert 0 <= index < 8
-#    mask = 1 << index
-#    assert bit in (0, 1)
-#    removed = byt & (~mask)
-#    updated = removed | (bit << index)
-#    return updated
-
-
 
 
 class ScalarState:
@@ -101,6 +71,8 @@ class ScalarState:
         self.memory[address] = b
 
     def get_memory(self, address: int):
+        if address not in self.memory:
+            raise Exception(f'Address {hex(address)} is not initialized')
         return self.memory[address]
 
     def read_csr(self, csr_addr):
@@ -112,7 +84,7 @@ class ScalarState:
 
 class Lamlet:
 
-    def __init__(self, clock, params: LamletParams, left_x, top_y):
+    def __init__(self, clock, params: LamletParams, left_x=0, top_y=0):
         self.clock = clock
         self.params = params
         self.pc = None
@@ -127,24 +99,24 @@ class Lamlet:
         self.instr_x = self.left_x
         self.instr_y = self.top_y - 1
         self.kamlets = [Kamlet(
-                    params,
-                    left_x+params.j_cols*(kamlet_index%params.k_cols),
-                    top_y+params.j_rows*(kamlet_index//params.k_cols),
+                    clock=clock,
+                    params=params,
+                    min_x=left_x+params.j_cols*(kamlet_index%params.k_cols),
+                    min_y=top_y+params.j_rows*(kamlet_index//params.k_cols),
                     ) for kamlet_index in range(params.k_in_l)]
         self.cache_table = CacheTable(params)
         # A dictionary that maps labels to futures
         # Used for handling responses back from the kamlet grid.
         self.waiting = {}
         self.conv = AddressConverter(self.params, self.tlb, self.cache_table)
-        self.reply_monitor = self.monitor_replys()
         self.finished = False
 
     def set_pc(self, pc):
         self.pc = pc
 
     def get_kamlet(self, x, y):
-        kamlet_column = (x - self.left_x)//self.params.k_cols
-        kamlet_row = (y - self.top_y)//self.params.k_rows
+        kamlet_column = (x - self.left_x)//self.params.j_cols
+        kamlet_row = (y - self.top_y)//self.params.j_rows
         return self.kamlets[kamlet_row*self.params.k_cols+kamlet_column]
 
     def get_jamlet(self, x, y):
@@ -188,31 +160,52 @@ class Lamlet:
             )
         return j_saddr.k_index, kinstr
 
-    def send_write_byte_instruction(self, address: GlobalAddress, value: int):
+    async def send_write_byte_instruction(self, address: GlobalAddress, value: int):
         k_index, instruction = self.write_byte_instruction(address, value)
-        self.send_instruction(instruction, k_index)
+        await self.send_instruction(instruction, k_index)
         vpu_address = self.to_vpu_addr(address)
         slot_state = self.cache_table.get_state(vpu_address)
         slot_state.state = CacheState.M
 
     async def read_byte(self, address: GlobalAddress):
-        self.require_cache(address)
+        logger.debug('** Trying to read_byte from vpu')
+        cache_line_address = self.get_cache_line_address(address)
+        logger.debug('** Requring cache')
+        await self.require_cache(cache_line_address)
+        logger.debug('** Finished requring cache')
+        await self.require_cache(cache_line_address)
         k_index, instruction = self.read_byte_instruction(address)
-        self.send_instruction(instruction, k_index)
+        logger.debug('** About the send instruction')
+        await self.send_instruction(instruction, k_index)
+        logger.debug('** Sent instruction')
+        assert k_index == instruction.j_saddr.k_index
+        logger.debug('** Waiting for response')
         value = await self.get_instruction_response(instruction, k_index)
+        logger.debug('** Got for response')
         return value
 
-    def write_byte(self, address: GlobalAddress, value: int):
-        self.require_cache(address)
-        self.send_write_byte_instruction(address, value)
+    def get_cache_line_address(self, address: GlobalAddress):
+        l_cache_line_bits = self.params.cache_line_bytes * self.params.k_in_l * 8
+        cache_line_address = GlobalAddress(
+            bit_addr=(address.bit_addr//l_cache_line_bits)*l_cache_line_bits,
+            )
+        return cache_line_address
+
+    async def write_byte(self, address: GlobalAddress, value: int):
+        cache_line_address = self.get_cache_line_address(address)
+        await self.require_cache(cache_line_address)
+        await self.send_write_byte_instruction(address, value)
 
     async def get_instruction_response(self, instruction, k_index=None):
         assert isinstance(instruction, kinstructions.ReadByteFromSRAM)
         assert k_index is not None
-        future = Future()
+        assert k_index == instruction.j_saddr.k_index
+        future = self.clock.create_future()
         tag = (MessageType.READ_BYTE_FROM_SRAM_RESP, k_index, instruction.j_saddr)
+        assert tag not in self.waiting
         self.waiting[tag] = future
-        response = await self.clock.wait_future(future)
+        await future
+        response = future.result()
         return response
 
     def get_header_source_k_index(self, header):
@@ -221,70 +214,75 @@ class Lamlet:
         k_x = x_offset // self.params.j_cols
         k_y = y_offset // self.params.j_rows
         k_index = k_y * self.params.k_cols  + k_x
+        logger.debug(f'({x_offset},{y_offset}) -> k_index {k_index}')
         return k_index
 
     def process_packet(self, packet):
         header = packet[0]
         # Currently we only expect messages of type
         assert header.message_type == MessageType.READ_BYTE_FROM_SRAM_RESP
+        assert header.value is not None
+        logger.debug(f'Got a message from ({header.source_x}, {header.source_y})')
         k_index = self.get_header_source_k_index(header)
         assert len(packet) == 1
         label = (header.message_type, k_index, header.address)
         future = self.waiting[label]
         future.set_result(header.value)
 
-    def router_connections(self):
+    async def router_connections(self):
         '''
         Move words between router buffers
         '''
-        n_cols = self.params.j_cols * self.params.k_cols
-        n_rows = self.params.j_rows * self.params.k_rows
-        for x in range(self.left_x, self.left_x + n_cols):
-            for y in range(self.top_y, self.top_y + n_rows):
-                jamlet = self.get_jamlet(x, y)
-                if y > self.top_y:
-                    # Send to the north
-                    north_buffer = jamlet.router.output_buffers[Direction.N]
-                    if north_buffer:
-                        north_jamlet = self.get_jamlet(x, y-1)
-                        if north_jamlet.router.has_input_room(Direction.S):
-                            word = north_buffer.popleft()
-                            north_jamlet.router.receive(Direction.S, word)
-                            #logger.debug(f'Moving word north ({x}, {y}) -> ({x}, {y-1}) {word}')
-                if y < self.top_y+n_rows-1:
-                    # Send to the south
-                    south_buffer = jamlet.router.output_buffers[Direction.S]
-                    if south_buffer:
-                        south_jamlet = self.get_jamlet(x, y+1)
-                        if south_jamlet.router.has_input_room(Direction.N):
-                            word = south_buffer.popleft()
-                            south_jamlet.router.receive(Direction.N, word)
-                            #logger.debug(f'Moving word south, ({x}, {y} -> ({x}, {y+1}) {word}')
-                if x < self.left_x + n_cols-1:
-                    # Send to the east
-                    east_buffer = jamlet.router.output_buffers[Direction.E]
-                    if east_buffer:
-                        east_jamlet = self.get_jamlet(x+1, y)
-                        if east_jamlet.router.has_input_room(Direction.W):
-                            word = east_buffer.popleft()
-                            east_jamlet.router.receive(Direction.W, word)
-                            #logger.debug(f'Moving word east, ({x}, {y} -> ({x+1}, {y}) {word}')
-                if x > self.left_x:
-                    # Send to the west
-                    west_buffer = jamlet.router.output_buffers[Direction.W]
-                    if west_buffer:
-                        west_jamlet = self.get_jamlet(x-1, y)
-                        if west_jamlet.router.has_input_room(Direction.E):
-                            word = west_buffer.popleft()
-                            west_jamlet.router.receive(Direction.E, word)
-                            #logger.debug(f'Moving word west, ({x}, {y} -> ({x-1}, {y}) {word}')
+        while True:
+            await self.clock.next_cycle
+            n_cols = self.params.j_cols * self.params.k_cols
+            n_rows = self.params.j_rows * self.params.k_rows
+            for x in range(self.left_x, self.left_x + n_cols):
+                for y in range(self.top_y, self.top_y + n_rows):
+                    jamlet = self.get_jamlet(x, y)
+                    if y > self.top_y:
+                        # Send to the north
+                        north_buffer = jamlet.router._output_buffers[Direction.N]
+                        if north_buffer:
+                            north_jamlet = self.get_jamlet(x, y-1)
+                            if north_jamlet.router.has_input_room(Direction.S):
+                                word = north_buffer.popleft()
+                                north_jamlet.router.receive(Direction.S, word)
+                                logger.debug(f'{self.clock.cycle}: Moving word north ({x}, {y}) -> ({x}, {y-1}) {word}')
+                    if y < self.top_y+n_rows-1:
+                        # Send to the south
+                        south_buffer = jamlet.router._output_buffers[Direction.S]
+                        if south_buffer:
+                            south_jamlet = self.get_jamlet(x, y+1)
+                            if south_jamlet.router.has_input_room(Direction.N):
+                                word = south_buffer.popleft()
+                                south_jamlet.router.receive(Direction.N, word)
+                                logger.debug(f'{self.clock.cycle}: Moving word south, ({x}, {y} -> ({x}, {y+1}) {word}')
+                    if x < self.left_x + n_cols-1:
+                        # Send to the east
+                        east_buffer = jamlet.router._output_buffers[Direction.E]
+                        if east_buffer:
+                            east_jamlet = self.get_jamlet(x+1, y)
+                            if east_jamlet.router.has_input_room(Direction.W):
+                                word = east_buffer.popleft()
+                                east_jamlet.router.receive(Direction.W, word)
+                                logger.debug(f'{self.clock.cycle}: Moving word east, ({x}, {y} -> ({x+1}, {y}) {word}')
+                    if x > self.left_x:
+                        # Send to the west
+                        west_buffer = jamlet.router._output_buffers[Direction.W]
+                        if west_buffer:
+                            west_jamlet = self.get_jamlet(x-1, y)
+                            if west_jamlet.router.has_input_room(Direction.E):
+                                word = west_buffer.popleft()
+                                west_jamlet.router.receive(Direction.E, word)
+                                logger.debug(f'{self.clock.cycle}: Moving word west, ({x}, {y} -> ({x-1}, {y}) {word}')
 
-
-    def monitor_replys(self):
-        buffer = self.kamlets[0].jamlets[0].router.output_buffers[Direction.N]
+    async def monitor_replys(self):
+        buffer = self.kamlets[0].jamlets[0].router._output_buffers[Direction.N]
         header = None
         packet = []
         while True:
+            await self.clock.next_cycle
             if buffer:
                 word = buffer.popleft()
                 if header is None:
@@ -298,9 +296,8 @@ class Lamlet:
                     self.process_packet(packet)
                 header = None
                 packet = []
-            yield
 
-    def send_instruction(self, instruction, k_index=None):
+    async def send_instruction(self, instruction, k_index=None):
         '''
         Send an instruction.
         If k_index=None then we broadcast to all the kamlets in this
@@ -311,8 +308,8 @@ class Lamlet:
             k_index = self.params.k_in_l-1
         else:
             send_type = SendType.SINGLE
-        k_x = k_index//self.params.k_cols
-        k_y = k_index % self.params.k_cols
+        k_x = k_index % self.params.k_cols
+        k_y = k_index // self.params.k_cols
         x = self.left_x + k_x * self.params.j_cols
         y = self.top_y + k_y * self.params.j_rows
         header = Header(
@@ -326,14 +323,20 @@ class Lamlet:
             )
         packet = [header, instruction]
         jamlet = self.kamlets[0].jamlets[0]
-        self.send_packet(packet, jamlet, Direction.N, port=0)
+        logger.debug(f'Sending instruction to {k_index}, -> ({x}, {y})')
+        await self.send_packet(packet, jamlet, Direction.N, port=0)
 
-    def send_packet(self, packet, jamlet, direction, port):
+    async def send_packet(self, packet, jamlet, direction, port):
+        queue = jamlet.router._input_buffers[direction]
         assert port == 0
-        for word in packet:
-            jamlet.router.input_buffers[direction].append(word)
+        while packet:
+            await self.clock.next_cycle
+            if len(queue) < queue.length:
+                logger.info(f'{self.clock.cycle}: Adding a word to the queue')
+                queue.append(packet.pop(0))
 
     async def set_memory(self, address: int, data: bytes):
+        logger.debug(f'Writing to memory from {hex(address)} to {hex(address+len(data)-1)}')
         global_addr = GlobalAddress(bit_addr=address*8)
         # Check for HTIF tohost write (8-byte aligned)
         if global_addr.addr == self.params.tohost_addr and len(data) == 8:
@@ -346,7 +349,7 @@ class Lamlet:
             # If this cache line is fresh then we need to set it to all 0.
             # If the cache line is not loaded then we need to load it.
             if byt_address.is_vpu(self.params, self.tlb):
-                self.write_byte(byt_address, b)
+                await self.write_byte(byt_address, b)
             else:
                 scalar_address = self.to_scalar_addr(byt_address)
                 self.scalar.set_memory(scalar_address, b)
@@ -451,54 +454,63 @@ class Lamlet:
         return (k_maddr.k_index == 0 and
                 k_maddr.bit_addr % k_cache_line_bits == 0)
 
-    def flush_cache_address(self, address: GlobalAddress):
-        k_maddr = self.to_k_maddr(address)
-        j_saddr = self.to_j_saddr(address)
-        assert self.j_saddr_is_aligned(j_saddr)
-        assert k_maddr.k_index == 0
-        kinstr = kinstructions.WriteLine(
-            k_maddr=k_maddr,
-            j_saddr=j_saddr,
-            n_cache_lines=1,
-            )
-        self.send_instruction(kinstr)
+    async def flush_slot(self, slot, old_state):
+        # Get the ordering for the slot we're flushing.
+        # We can't use the to_j_saddr conversion functions since
+        # we've already updated the cache table.
+        # That's why we're passing in old_ident.
+        if old_state.state == CacheState.M:
+            page_bits = self.params.page_bytes * 8
+            bit_addr = old_state.ident * self.params.cache_line_bytes * 8
+            vpu_page_address = VPUAddress(
+                bit_addr=(bit_addr//page_bits) * page_bits,
+                ordering=None,
+                )
+            info = self.tlb.get_page_info_from_vpu_addr(vpu_page_address)
+            vpu_address = VPUAddress(bit_addr=bit_addr, ordering=info.local_address.ordering)
+            write_line_label = self.waiting_write_line_label(vpu_address)
+            if write_line_label in self.waiting:
+                # We want to flush this cache line but there is already a flush
+                # of this cache line in progress. Wait for that to complete
+                # first.
+                await self.waiting[write_line_label]
+            k_maddr = KMAddr(
+                k_index=0,
+                bit_addr=bit_addr,
+                ordering=info.local_address.ordering,
+                )
+            j_saddr = JSAddr(
+                k_index=0,
+                j_in_k_index=0,
+                bit_addr=slot*self.params.cache_line_bytes//self.params.j_in_k*8,
+                ordering=info.local_address.ordering,
+                )
+            kinstr = kinstructions.WriteLine(
+                k_maddr=k_maddr,
+                j_saddr=j_saddr,
+                n_cache_lines=1,
+                )
+            await self.send_instruction(kinstr)
+            # Register the flushing of this cache line as something that is happening and
+            # can be waited on.
+            self.waiting[write_line_label] = self.clock.create_future()
 
-    def evict_cache_address(self, address: GlobalAddress):
-        vpu_address = self.to_vpu_addr(address)
-        slot_state = self.cache_table.get_state(vpu_address)
-        if slot_state.state == CacheState.M:
-            self.flush_cache_address(address)
-
-    def slot_to_address(self, slot: int):
-        j_cache_line_bits = self.params.cache_line_bytes * 8 // self.params.j_in_k
-        l_cache_line_bits = self.params.cache_line_bytes * 8 * self.params.k_in_l
-        bit_addr_in_j_sram = slot * j_cache_line_bits
-        vpu_address = slot * l_cache_line_bits
-        page_info = self.tlb.vpu_pages[vpu_address]
-        j_saddr = JSAddr(
-            k_index=0,
-            j_in_k_index=0,
-            bit_addr=bit_addr_in_j_sram,
-            ordering=page_info.ordering,
-            )
-        self.to_global_addr(j_saddr)
-
-    def assign_cache_slot(self, address: GlobalAddress):
+    async def assign_cache_slot(self, address: GlobalAddress):
         k_maddr = self.to_k_maddr(address)
         # Check that it is aligned to a cache slot
         assert self.k_maddr_is_aligned(k_maddr)
         assert k_maddr.k_index == 0
-        slot = self.cache_table.get_free_slot()
+        ident = k_maddr.addr//self.params.cache_line_bytes
+        slot = self.cache_table.get_free_slot(ident)
         if slot is None:
-            slot = self.cache_table.get_eviction_slot()
-            self.slot_to_address(slot)
-            self.evict_cache_address(address)
-        slot_state = self.cache_table.slot_states[slot]
-        slot_state.ident = k_maddr.addr//self.params.cache_line_bytes
-        slot_state.state = CacheState.I
+            slot, old_state = self.cache_table.get_eviction_slot(ident)
+            await self.flush_slot(slot, old_state)
         return slot
 
-    def require_cache(self, address: GlobalAddress):
+    def waiting_write_line_label(self, vpu_address):
+        return ('WRITE_LINE', vpu_address)
+
+    async def require_cache(self, address: GlobalAddress):
         is_fresh = self.tlb.get_is_fresh(address)
         if is_fresh:
             self.tlb.set_not_fresh(address)
@@ -511,7 +523,10 @@ class Lamlet:
             assert slot is None
         if slot is None:
             # We don't have a slot allocated for this.
-            slot = self.assign_cache_slot(address)
+            slot = await self.assign_cache_slot(address)
+        else:
+            # Mark that we've used this cache slot recently.
+            self.cache_table.touch_slot(slot)
         slot_state = self.cache_table.get_state(vpu_address)
         j_saddr = self.to_j_saddr(address)
         if slot_state.state == CacheState.I:
@@ -520,19 +535,25 @@ class Lamlet:
                     j_saddr=j_saddr,
                     n_cache_lines=1,
                     )
-                self.send_instruction(kinstr)
+                await self.send_instruction(kinstr)
                 slot_state.state = CacheState.M
             else:
+                # If the cache is being written then we need to
+                # wait until until the write completes
+                wait_label = self.waiting_write_line_label(vpu_address)
+                if wait_label in self.waiting:
+                    await self.waiting[wait_label]
                 # We need to read data into this line.
+                logger.debug('Sending a read line instruction to kamlet')
                 kinstr = kinstructions.ReadLine(
                     k_maddr=k_maddr,
                     j_saddr=j_saddr,
                     n_cache_lines=1,
                     )
-                self.send_instruction(kinstr)
+                await self.send_instruction(kinstr)
                 slot_state.state = CacheState.S
 
-    def vload(self, vd: int, addr: GlobalAddress, element_width: SizeBits,
+    async def vload(self, vd: int, addr: GlobalAddress, element_width: SizeBits,
               n_elements: int, mask_reg: int):
         # TODO: Support masking
         assert mask_reg is None
@@ -546,7 +567,7 @@ class Lamlet:
             page_address = (some_address//self.params.page_bytes) * self.params.page_bytes
             if cache_line_address != last_addr:
                 global_addr = GlobalAddress(bit_addr=cache_line_address*8)
-                self.require_cache(global_addr)
+                await self.require_cache(global_addr)
                 last_addr = cache_line_address
             if page_address != last_page:
                 page_info = self.tlb.get_page_info(page_address)
@@ -564,27 +585,32 @@ class Lamlet:
             n_vlines=n_vlines,
             )
 
-        self.send_instruction(kinstr)
+        await self.send_instruction(kinstr)
 
-    def step(self):
+    def update(self):
+        assert len(self.waiting) < 20
         for kamlet in self.kamlets:
-            kamlet.step()
-        next(self.reply_monitor)
-        self.router_connections()
+            kamlet.update()
 
     async def run(self):
-        while True:
-            self.step()
-            await self.clock.next_cycle()
+        for kamlet in self.kamlets:
+            self.clock.create_task(kamlet.run())
+        self.clock.create_task(self.router_connections())
+        self.clock.create_task(self.monitor_replys())
 
     async def run_instructions(self, disasm_trace=None):
         while not self.finished:
-            instruction_bytes = self.get_scalar_memory(GlobalAddress(bit_addr=self.pc*8), 4)
-            is_compressed = decode.is_compressed(instruction_bytes)
+
+            await self.clock.next_cycle
+
+            first_bytes = self.get_scalar_memory(GlobalAddress(bit_addr=self.pc*8), 2)
+            is_compressed = decode.is_compressed(first_bytes)
 
             if is_compressed:
+                instruction_bytes = first_bytes
                 inst_hex = int.from_bytes(instruction_bytes[0:2], byteorder='little')
             else:
+                instruction_bytes = self.get_scalar_memory(GlobalAddress(bit_addr=self.pc*8), 4)
                 inst_hex = int.from_bytes(instruction_bytes[0:4], byteorder='little')
 
             instruction = decode.decode(instruction_bytes)
@@ -595,7 +621,7 @@ class Lamlet:
             else:
                 inst_str = str(instruction)
 
-            logger.debug(f'pc={hex(self.pc)} bytes={hex(inst_hex)} instruction={inst_str}')
+            logger.debug(f'{self.clock.cycle}: pc={hex(self.pc)} bytes={hex(inst_hex)} instruction={inst_str}')
 
             if disasm_trace is not None:
                 import disasm_trace as dt
@@ -609,4 +635,3 @@ class Lamlet:
             else:
                 instruction.update_state(self)
 
-            await self.clock.next_cycle()

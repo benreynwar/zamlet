@@ -12,19 +12,22 @@ from addresses import GlobalAddress, Ordering, WordOrder
 logger = logging.getLogger(__name__)
 
 
+async def update(clock, lamlet):
+    while True:
+        await clock.next_update
+        lamlet.update()
+
+
 async def run(clock: Clock):
-    filename = 'tests/readwritebyte/readwritebyte.riscv'
+    filename = 'tests/readwritebyte/write_then_read_many_bytes.riscv'
+    #filename = 'tests/readwritebyte/simple_vpu_test.riscv'
     p_info = program_info.get_program_info(filename)
 
-    params = LamletParams(
-        k_cols=2,
-        k_rows=2,
-        j_cols=2,
-        j_rows=2,
-        )
+    params = LamletParams()
 
-    s = lamlet.Lamlet(clock, params, 4, 4)
-    clock.spawn(s.run())
+    s = lamlet.Lamlet(clock, params, 0, 0)
+    clock.create_task(update(clock, s))
+    clock.create_task(s.run())
 
     s.set_pc(p_info['pc'])
 
@@ -66,7 +69,7 @@ async def run(clock: Clock):
         address = segment['address']
         data = segment['contents']
         await s.set_memory(address, data)
-        logger.info(f'Segment {hex(address)} Size {len(data)} {data}')
+        #logger.info(f'Segment {hex(address)} Size {len(data)} {data}')
 
     trace = disasm_trace.parse_objdump(filename)
     logger.info(f"Loaded {len(trace)} instructions from objdump")
@@ -77,9 +80,8 @@ async def run(clock: Clock):
     # Results are written to the first allocation from the 32-bit pool at 0x900C0000
     results_addr = 0x900C0000
 
-    clock.spawn(s.run_instructions(disasm_trace=trace))
-    for i in range(10000):
-
+    clock.create_task(s.run_instructions(disasm_trace=trace))
+    while clock.running:
         if s.exit_code is not None:
             logger.info(f"Program exited with code {s.exit_code}")
             logger.info(f"Final VL register: {s.vl}")
@@ -91,15 +93,16 @@ async def run(clock: Clock):
             logger.info("\nVerifying results from memory:")
             #verify_results(s, results_addr, verify_addr)
             break
-        await clock.next_cycle()
+        await clock.next_cycle
 
 
-async def main():
-    clock = Clock(max_cycles=30)
-    #clock.spawn(run(clock))
-    #await clock.clock_driver()
-    clock.spawn(clock.clock_driver())
-    await run(clock)
+
+async def main(clock):
+    clock.register_main()
+    run_task = clock.create_task(run(clock))
+    clock_driver_task = clock.create_task(clock.clock_driver())
+    await run_task
+    clock.stop()
 
 
 if __name__ == '__main__':
@@ -114,14 +117,5 @@ if __name__ == '__main__':
     root_logger.addHandler(handler)
 
     root_logger.info('Starting main')
-
-    if os.environ.get('PDB_ON_EXCEPTION'):
-        import pdb
-        try:
-            asyncio.run(main())
-        except (AssertionError, Exception) as e:
-            import traceback
-            traceback.print_exc()
-            pdb.post_mortem()
-    else:
-        asyncio.run(main())
+    clock = Clock(max_cycles=30000)
+    asyncio.run(main(clock))

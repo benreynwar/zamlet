@@ -13,6 +13,9 @@ class MessageType(Enum):
     INSTRUCTIONS = 1
 
     READ_BYTE_FROM_SRAM_RESP = 2
+    WRITE_LINE = 3
+    READ_LINE = 4
+    READ_LINE_RESP = 5
 
     WRITE_REG_REQ = 8
     WRITE_SP_REQ = 9
@@ -42,6 +45,7 @@ class Header:
     send_type: SendType
     address: int = None  # 63: 48
     value: int = None
+    words_requested: int = None
 
     def copy(self):
         return dataclasses.replace(self)

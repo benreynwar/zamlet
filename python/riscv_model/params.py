@@ -3,20 +3,20 @@ from dataclasses import dataclass
 
 @dataclass
 class LamletParams:
-    k_cols: int
-    k_rows: int
+    k_cols: int = 2
+    k_rows: int = 1
 
-    j_cols: int
-    j_rows: int
+    j_cols: int = 1
+    j_rows: int = 2
 
     n_vregs: int = 40
     maxvl_bytes: int = 1024
-    cache_line_bytes: int = 512
+    cache_line_bytes: int = 32 #64
     word_bytes: int = 8
-    page_bytes: int = 1 << 12
+    page_bytes: int = 1 << 10 # 12
     scalar_memory_bytes: int = 3 << 20
     kamlet_memory_bytes: int = 1 << 20
-    jamlet_sram_bytes: int = 2 << 10
+    jamlet_sram_bytes: int = 2 << 5 # 2 << 5
     tohost_addr: int = 0x80001000
     fromhost_addr: int = 0x80001040
     receive_buffer_depth: int = 16
