@@ -11,23 +11,19 @@ void exit_test(int code) {
 }
 
 int main() {
-    uint8_t all_good = 0x00;
     // Write a test value to VPU memory
-    int n = 256 + 128;
+    uint8_t test_value = 0x42;
+    vpu_mem[0] = test_value;
 
-    for (int i = 0; i < n; i++) {
-      uint8_t test_value = i;
-      vpu_mem[i] = test_value;
+    // Read it back
+    uint8_t read_value = vpu_mem[0];
+
+    // Check if they match
+    if (read_value == test_value) {
+        exit_test(1);  // Failure
+    } else {
+        exit_test(0);  // Success
     }
-    for (int i = 0; i < n; i++) {
-      uint8_t test_value = i;
-      uint8_t read_value = vpu_mem[i];
-      // Check if they match
-      if (read_value != test_value) {
-          all_good = 1;
-      }
-    }
-    exit_test(all_good);
 
     return 0;
 }

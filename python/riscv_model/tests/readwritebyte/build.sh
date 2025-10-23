@@ -32,6 +32,7 @@ COMMON_SRCS="minimal_crt.S"
 # Test source files
 TEST_FILES=(
     "simple_vpu_test.c"
+    "should_fail.c"
     "write_then_read_many_bytes.c"
 )
 

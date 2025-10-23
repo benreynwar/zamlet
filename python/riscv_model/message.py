@@ -13,9 +13,16 @@ class MessageType(Enum):
     INSTRUCTIONS = 1
 
     READ_BYTE_FROM_SRAM_RESP = 2
+    # Jamlet tells a memory to write some cache line
     WRITE_LINE = 3
+    # Jamlet tells a memory to read a cache line
     READ_LINE = 4
+    # Memory replies with the cache line
     READ_LINE_RESP = 5
+    # Memory notifys the scalar processor of a line write
+    WRITE_LINE_NOTIFY = 6
+    # Jamlet notifies the scalar processor of a line read
+    READ_LINE_NOTIFY = 7
 
     WRITE_REG_REQ = 8
     WRITE_SP_REQ = 9

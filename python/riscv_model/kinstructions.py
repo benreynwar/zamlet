@@ -65,7 +65,7 @@ class ReadLine(KInstr):
     async def update_kamlet(self, kamlet):
         logger.debug(f'kamlet ({kamlet.min_x} {kamlet.min_y}): ReadLine')
         for jamlet in kamlet.jamlets:
-            jamlet.read_line(self.k_maddr, self.j_saddr, self.n_cache_lines)
+            await jamlet.read_line(self.k_maddr, self.j_saddr, self.n_cache_lines)
 
 @dataclass
 class ZeroLine(KInstr):
@@ -90,7 +90,7 @@ class WriteLine(KInstr):
     async def update_kamlet(self, kamlet):
         logger.debug(f'kamlet ({kamlet.min_x} {kamlet.min_y}): WriteLine')
         for jamlet in kamlet.jamlets:
-            jamlet.write_line(self.k_maddr, self.j_saddr, self.n_cache_lines)
+            await jamlet.write_line(self.k_maddr, self.j_saddr, self.n_cache_lines)
 
 
 @dataclass

@@ -19,6 +19,7 @@ async def update(clock, lamlet):
 
 
 async def run(clock: Clock):
+    #filename = 'tests/readwritebyte/should_fail.riscv'
     filename = 'tests/readwritebyte/write_then_read_many_bytes.riscv'
     #filename = 'tests/readwritebyte/simple_vpu_test.riscv'
     p_info = program_info.get_program_info(filename)
@@ -106,12 +107,13 @@ async def main(clock):
 
 
 if __name__ == '__main__':
+    level = logging.DEBUG
     import sys
     import os
     root_logger = logging.getLogger()
-    root_logger.setLevel(logging.DEBUG)
+    root_logger.setLevel(level)
     handler = logging.StreamHandler(sys.stdout)
-    handler.setLevel(logging.DEBUG)
+    handler.setLevel(level)
     formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
     handler.setFormatter(formatter)
     root_logger.addHandler(handler)

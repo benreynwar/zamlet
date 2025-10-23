@@ -54,9 +54,13 @@ class Queue:
         return self.head()
 
     def append(self, value):
+        assert not self.appended
         self.to_append = value
         self.appended = True
         assert len(self.queue) < self.length
+
+    def can_append(self):
+        return len(self.queue) < self.length
 
     def update(self):
         if self.popped:
@@ -66,3 +70,11 @@ class Queue:
         self.popped = False
         self.appended = False
         self.to_append = None
+
+
+async def combine_futures(combined_future, futures):
+    x = []
+    for future in futures:
+        await future
+        x.append(future.result)
+    combined_future.set_result(x)

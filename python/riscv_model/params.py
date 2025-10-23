@@ -16,7 +16,7 @@ class LamletParams:
     page_bytes: int = 1 << 10 # 12
     scalar_memory_bytes: int = 3 << 20
     kamlet_memory_bytes: int = 1 << 20
-    jamlet_sram_bytes: int = 2 << 5 # 2 << 5
+    jamlet_sram_bytes: int = 1 << 6
     tohost_addr: int = 0x80001000
     fromhost_addr: int = 0x80001040
     receive_buffer_depth: int = 16

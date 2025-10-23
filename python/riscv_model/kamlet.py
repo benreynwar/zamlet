@@ -33,14 +33,7 @@ class Kamlet:
         for index in range(self.n_jamlets):
             x = min_x+index % self.n_columns
             y = min_y+index//self.n_columns
-            # Put the memories on the left and right hand sides.
-            n_cols = self.params.j_cols * self.params.k_cols
-            if x >= n_cols//2:
-                mem_x = n_cols
-            else:
-                mem_x = -1
-            mem_y = y
-            self.jamlets.append(Jamlet(clock, params, x, y, mem_x, mem_y))
+            self.jamlets.append(Jamlet(clock, params, x, y))
 
         # Local State
         self._instruction_queue = Queue(self.params.instruction_queue_length)
