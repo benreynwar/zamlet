@@ -19,7 +19,7 @@ vec_add_scalar:
 
 loop:
     # Set vector length for 32-bit integers
-    vsetvli t0, n, e32, m1, ta, ma
+    vsetvli t0, n, e32, m8, ta, ma
 
     # Load vector from source
     vle32.v v0, (srcp)

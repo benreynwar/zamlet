@@ -7,6 +7,7 @@ import logging
 import struct
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
+import kinstructions
 
 from register_names import reg_name, freg_name
 
@@ -52,10 +53,9 @@ def get_vreg_location(vreg_base: int, elem_idx: int, elem_width_bytes: int,
 
     Handles register groups when EMUL > 1.
     """
-    reg_size_bytes = s.params.maxvl_words * s.params.word_width_bytes
     byte_offset = elem_idx * elem_width_bytes
-    vreg_num = vreg_base + byte_offset // reg_size_bytes
-    elem_offset = byte_offset % reg_size_bytes
+    vreg_num = vreg_base + byte_offset // s.params.maxvl_bytes
+    elem_offset = byte_offset % s.params.maxvl_bytes
     return vreg_num, elem_offset
 
 
@@ -258,12 +258,28 @@ class VaddVx:
         s.pc += 4
 
     async def update_lamlet(self, s: 'state.State'):
-        import kinstructions
+        if self.vm:
+            mask_reg = None
+        else:
+            mask_reg = 0
+
+        element_width = 32
+        assert s.vrf_ordering[self.vd].ew == element_width
+        assert s.vrf_ordering[self.vs2].ew == element_width
+
         scalar_val = s.scalar.read_reg(self.rs1)
+        logger.debug(f'VADD.VX: vd=v{self.vd}, rs1={reg_name(self.rs1)}={scalar_val}, vs2=v{self.vs2}, vl={s.vl}')
+
+        vline_bytes = s.params.word_bytes * s.params.j_in_l
+        assert (s.vl * element_width) % (vline_bytes * 8) == 0
+        n_vlines = (s.vl * element_width)//(vline_bytes * 8)
+
         kinstr = kinstructions.VaddVxOp(
             dst=self.vd,
             src=self.vs2,
             scalar=scalar_val,
+            mask_reg=mask_reg,
+            n_vlines=n_vlines,
             )
         await s.send_instruction(kinstr)
         s.pc += 4
@@ -315,11 +331,30 @@ class VfmaccVf:
 
         s.pc += 4
 
-    def update_state_physical(self, s: 'state.State'):
+    async def update_lamlet(self, s: 'state.State'):
         scalar_bits = s.scalar.read_freg(self.rs1)
-        scalar_val = struct.pack('I', scalar_bits & 0xffffffff)
 
-        addr = s.scalar.read_reg(self.rs1)
-        s.vpu_physical.VfMaccVf(self.vd, scalar_val, self.vs2, s.vl, use_mask=self.vm==0)
+        if self.vm:
+            mask_reg = None
+        else:
+            mask_reg = 0
+
+        element_width = 32
+        assert s.vrf_ordering[self.vd].ew == element_width
+        assert s.vrf_ordering[self.vs2].ew == element_width
+
+        logger.info(f'VFMACC.VF: vd=v{self.vd}, rs1={freg_name(self.rs1)}={scalar_bits:.2f}, vs2=v{self.vs2}, vl={s.vl}')
+
+        vline_bytes = s.params.word_bytes * s.params.j_in_l
+        assert (s.vl * element_width) % (vline_bytes * 8) == 0
+        n_vlines = (s.vl * element_width)//(vline_bytes * 8)
+
+        kinstr = kinstructions.VfmaccVfOp(
+            dst=self.vd,
+            src=self.vs2,
+            scalar_bits=scalar_bits,
+            mask_reg=mask_reg,
+            n_vlines=n_vlines,
+            )
+        await s.send_instruction(kinstr)
         s.pc += 4
-

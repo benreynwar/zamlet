@@ -22,7 +22,10 @@ async def run(clock: Clock):
     #filename = 'tests/readwritebyte/should_fail.riscv'
     #filename = 'tests/readwritebyte/write_then_read_many_bytes.riscv'
     #filename = 'tests/readwritebyte/simple_vpu_test.riscv'
-    filename = 'tests/vecadd/vec-add.riscv'
+    filename = 'tests/sgemv/vec-sgemv-large.riscv'
+    #filename = 'tests/sgemv/vec-sgemv.riscv'
+    #filename = 'tests/vecadd/vec-add-evict.riscv'
+    #filename = 'tests/vecadd/vec-add.riscv'
     p_info = program_info.get_program_info(filename)
 
     params = LamletParams()
@@ -70,8 +73,8 @@ async def run(clock: Clock):
     for segment in p_info['segments']:
         address = segment['address']
         data = segment['contents']
+        logger.info(f'Segment {hex(address)} Size {len(data)}')
         await s.set_memory(address, data)
-        #logger.info(f'Segment {hex(address)} Size {len(data)} {data}')
 
     trace = disasm_trace.parse_objdump(filename)
     logger.info(f"Loaded {len(trace)} instructions from objdump")
@@ -108,7 +111,7 @@ async def main(clock):
 
 
 if __name__ == '__main__':
-    level = logging.DEBUG
+    level = logging.INFO
     import sys
     import os
     root_logger = logging.getLogger()

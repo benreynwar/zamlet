@@ -1,3 +1,4 @@
+import logging
 from dataclasses import dataclass
 from collections import deque
 
@@ -9,13 +10,7 @@ from message import Header, MessageType, SendType
 from utils import Queue
 
 
-class KamletScoreBoard:
-
-    def __init__(self, params: LamletParams):
-        self.registers_updating = [False] * params.n_vregs
-        # Instructions that produce results are put
-        max_pipeline_length = 4
-        self.in_flight_funcs = [[] for i in range(max_pipeline_length)]
+logger = logging.getLogger(__name__)
 
 
 class Kamlet:
@@ -67,6 +62,7 @@ class Kamlet:
             # If we have an instruction then do it
             if self._instruction_queue:
                 instruction = self._instruction_queue.popleft()
+                logger.debug(f'{self.clock.cycle}: ({self.min_x}, {self.min_y}): kamlet: Running {instruction}')
                 self.clock.create_task(instruction.update_kamlet(self))
             # Get received instructions from jamlets
             for index, jamlet in enumerate(self.jamlets):

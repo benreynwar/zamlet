@@ -120,7 +120,7 @@ class Router:
                             assert output_direction not in self._output_headers
                             self._output_headers[output_direction] = new_header
                         self._input_connections[input_direction] = Connection(header.length, set(output_dirs), set(output_dirs), 0, header.copy())
-                if buffer:
+                if (input_direction in self._input_connections) and buffer:
                     # We have some data and we've already made a connection.
                     # Just make sure that we have headers when we expect them.
                     conn = self._input_connections[input_direction]

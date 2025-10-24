@@ -26,15 +26,29 @@ INCLUDES="-I. -I../common"
 # Link options
 RISCV_LINK_OPTS="-static -nostdlib -nostartfiles -lm -lgcc -T../common/test.ld"
 
-# Source files
-VECADD_SRCS="vec-add_main.c vec-add.S"
+# Common source files
 COMMON_SRCS="../common/crt.S ../common/syscalls.c"
 
-# Output file
+# Build original vec-add (32 elements)
+echo "Building vec-add (32 elements)..."
+VECADD_SRCS="vec-add_main.c vec-add.S"
 OUTPUT="vec-add.riscv"
+${RISCV_GCC} ${INCLUDES} ${RISCV_GCC_OPTS} -o ${OUTPUT} \
+    ${VECADD_SRCS} ${COMMON_SRCS} ${RISCV_LINK_OPTS}
 
-# Build command
-echo "Building vec-add..."
+if [ $? -eq 0 ]; then
+    echo "Build successful: ${OUTPUT}"
+    ls -lh ${OUTPUT}
+else
+    echo "Build failed"
+    exit 1
+fi
+
+# Build cache eviction test (3 x 128 elements = 1536 bytes, forces cache evictions)
+echo ""
+echo "Building vec-add-evict (3 arrays x 128 elements = 1536 bytes)..."
+VECADD_SRCS="vec-add-evict_main.c vec-add.S"
+OUTPUT="vec-add-evict.riscv"
 ${RISCV_GCC} ${INCLUDES} ${RISCV_GCC_OPTS} -o ${OUTPUT} \
     ${VECADD_SRCS} ${COMMON_SRCS} ${RISCV_LINK_OPTS}
 

@@ -428,6 +428,10 @@ def decode_standard(instruction_bytes: bytes) -> Instruction:
         width = funct3
         if mop == 0x0 and width == 0x6:
             return V.Vle32V(vd=rd, rs1=rs1, vm=vm)
+        elif width == 0x2:
+            return F.Flw(fd=rd, rs1=rs1, imm=decode_i_imm(inst))
+        elif width == 0x3:
+            return F.Fld(fd=rd, rs1=rs1, imm=decode_i_imm(inst))
 
     elif opcode == 0x23:
         imm = decode_s_imm(inst)
@@ -447,6 +451,10 @@ def decode_standard(instruction_bytes: bytes) -> Instruction:
         vs3 = rd
         if mop == 0x0 and width == 0x6:
             return V.Vse32V(vs3=vs3, rs1=rs1, vm=vm)
+        elif width == 0x2:
+            return F.Fsw(rs2=rs2, rs1=rs1, imm=decode_s_imm(inst))
+        elif width == 0x3:
+            return F.Fsd(rs2=rs2, rs1=rs1, imm=decode_s_imm(inst))
 
     elif opcode == 0x63:
         imm = decode_b_imm(inst)
@@ -468,29 +476,6 @@ def decode_standard(instruction_bytes: bytes) -> Instruction:
             pred = (inst >> 24) & 0xf
             succ = (inst >> 20) & 0xf
             return S.Fence(pred=pred, succ=succ)
-
-    elif opcode == 0x07:
-        vm = (inst >> 25) & 0x1
-        mop = (inst >> 26) & 0x3
-        width = funct3
-        if mop == 0 and width == 6:
-            return V.Vle32V(vd=rd, rs1=rs1, vm=vm)
-        elif width == 2:
-            return F.Flw(fd=rd, rs1=rs1, imm=decode_i_imm(inst))
-        elif width == 3:
-            return F.Fld(fd=rd, rs1=rs1, imm=decode_i_imm(inst))
-
-    elif opcode == 0x27:
-        vm = (inst >> 25) & 0x1
-        mop = (inst >> 26) & 0x3
-        width = funct3
-        vs3 = rd
-        if mop == 0 and width == 6:
-            return V.Vse32V(vs3=vs3, rs1=rs1, vm=vm)
-        elif width == 2:
-            return F.Fsw(rs2=rs2, rs1=rs1, imm=decode_s_imm(inst))
-        elif width == 3:
-            return F.Fsd(rs2=rs2, rs1=rs1, imm=decode_s_imm(inst))
 
     elif opcode == 0x57:
         bit31 = (inst >> 31) & 0x1

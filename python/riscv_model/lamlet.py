@@ -93,6 +93,7 @@ class Lamlet:
         self.pc = None
         self.scalar = ScalarState(params)
         self.tlb = TLB(params)
+        self.vrf_ordering = [Ordering(None, None) for _ in range(params.n_vregs)]
         self.vl = 0
         self.vtype = 0
         self.exit_code = None
@@ -212,7 +213,7 @@ class Lamlet:
         slot_state.state = CacheState.M
 
     async def read_byte(self, address: GlobalAddress):
-        logger.debug(f'Lamlet.read_byte {address.addr}')
+        logger.debug(f'Lamlet.read_byte {hex(address.addr)}')
         cache_line_address = self.get_cache_line_address(address)
         await self.require_cache(cache_line_address)
         k_index, instruction = self.read_byte_instruction(address)
@@ -378,8 +379,11 @@ class Lamlet:
                     packet = []
 
     async def send_instruction(self, instruction, k_index=None):
+        await self.send_instructions([instruction], k_index)
+
+    async def send_instructions(self, instructions, k_index=None):
         '''
-        Send an instruction.
+        Send instructions.
         If k_index=None then we broadcast to all the kamlets in this
         lamlet.
         '''
@@ -397,13 +401,13 @@ class Lamlet:
             target_y=y,
             source_x=self.instr_x,
             source_y=self.instr_y,
-            length=2,
+            length=1+len(instructions),
             message_type=MessageType.INSTRUCTIONS,
             send_type=send_type,
             )
-        packet = [header, instruction]
+        packet = [header] + instructions
         jamlet = self.kamlets[0].jamlets[0]
-        logger.debug(f'Sending instruction to {k_index}, -> ({x}, {y})')
+        logger.debug(f'Sending instructions to {k_index}, -> ({x}, {y})')
         await self.send_packet(packet, jamlet, Direction.N, port=0)
 
     async def send_packet(self, packet, jamlet, direction, port):
@@ -673,59 +677,100 @@ class Lamlet:
                     await self.read_line(k_maddr, j_saddr, slot_state)
                 assert slot_state.state == CacheState.S
                 
+    def split_access_by_cacheline(self, addr: GlobalAddress, n_vlines: int):
+        """
+        We take an address and a number of vector lines, and we split it into
+        separate access where each access lies within a single cache line.
+        """
+        vline_bytes = self.params.j_in_l * self.params.word_bytes
+        base_vline_index = None
+        last_cl_addr = None
+        continuous_loads = []
+        for vline_index in range(n_vlines):
+            vline_addr = GlobalAddress(bit_addr=(addr.addr + vline_index*vline_bytes)*8)
+            cl_addr = vline_addr.get_cache_line(self.params)
+            if cl_addr != last_cl_addr:
+                last_cl_addr = cl_addr
+                if base_vline_index is not None:
+                    continuous_loads.append((base_vline_index, vline_index-base_vline_index))
+                base_vline_index = vline_index
+        continuous_loads.append((base_vline_index, n_vlines-base_vline_index))
+        return continuous_loads
 
     async def vload(self, vd: int, addr: int, element_width: SizeBits, n_elements: int, mask_reg: int):
         g_addr = GlobalAddress(bit_addr=addr*8)
         end_addr = GlobalAddress(bit_addr=addr*8 + element_width * n_elements - 1)
         # TODO: Support masking
         assert mask_reg is None
-        assert element_width * n_elements == self.params.maxvl_bytes * 8
 
-        # Require the cache line
-        cl_addr = g_addr.get_cache_line(self.params)
-        await self.require_cache(cl_addr)
-        assert end_addr.get_cache_line(self.params) == cl_addr
+        n_vlines = element_width * n_elements//(self.params.maxvl_bytes * 8)
+        assert (element_width * n_elements) % (self.params.maxvl_bytes * 8) == 0
 
-        n_vlines = n_elements * (element_width//8) // (self.params.vline_bytes)
-        assert n_elements % (self.params.vline_bytes // (element_width//8)) == 0
-        j_saddr = self.to_j_saddr(g_addr)
-        kinstr = kinstructions.Load(
-            dst=vd,
-            j_saddr=j_saddr,
-            )
+        # Split the load into a continous load for each cache line
+        split_loads = self.split_access_by_cacheline(g_addr, n_vlines)
 
-        await self.send_instruction(kinstr)
+        vline_bytes = self.params.j_in_l * self.params.word_bytes
+        for vline_index, n_vlines in split_loads:
+            vline_addr = GlobalAddress(bit_addr=(addr + vline_index*vline_bytes)*8)
+            logger.info(f'{self.clock.cycle}: Loading to {hex(vline_addr.addr)} -> {vd+vline_index} vlines={n_vlines}')
+            cl_addr = vline_addr.get_cache_line(self.params)
+            await self.require_cache(cl_addr)
+
+            page_address = (vline_addr.addr//self.params.page_bytes) * self.params.page_bytes
+            page_info = self.tlb.get_page_info(GlobalAddress(bit_addr=page_address*8))
+            assert page_info.local_address.ordering.ew == element_width
+            assert page_info.local_address.is_vpu
+
+            for index in range(vline_index, vline_index+n_vlines):
+                r = vd + index
+                self.vrf_ordering[r] = page_info.local_address.ordering
+
+            j_saddr = self.to_j_saddr(vline_addr)
+            kinstr = kinstructions.Load(
+                dst=vd+vline_index,
+                j_saddr=j_saddr,
+                n_vlines=n_vlines,
+                )
+            await self.send_instruction(kinstr)
 
     async def vstore(self, vs3: int, addr: int, element_width: SizeBits,
                      n_elements: int, mask_reg: int):
+        logger.debug(f'{self.clock.cycle}: vstore from {vs3} to {hex(addr)}')
         g_addr = GlobalAddress(bit_addr=addr*8)
         end_addr = GlobalAddress(bit_addr=addr*8 + element_width * n_elements - 1)
         # TODO: Support masking
         assert mask_reg is None
-        assert element_width * n_elements == self.params.maxvl_bytes * 8
 
-        # Require the cache line
-        cl_addr = g_addr.get_cache_line(self.params)
-        await self.require_cache(cl_addr)
-        assert end_addr.get_cache_line(self.params) == cl_addr
+        n_vlines = element_width * n_elements//(self.params.maxvl_bytes * 8)
+        assert (element_width * n_elements) % (self.params.maxvl_bytes * 8) == 0
 
-        page_address = (g_addr.addr//self.params.page_bytes) * self.params.page_bytes
-        page_info = self.tlb.get_page_info(GlobalAddress(bit_addr=page_address*8))
-        assert page_info.local_address.ordering.ew == element_width
-        assert page_info.local_address.is_vpu
+        # Split the load into a continous load for each cache line
+        split_stores = self.split_access_by_cacheline(g_addr, n_vlines)
 
-        j_saddr = self.to_j_saddr(g_addr)
+        vline_bytes = self.params.j_in_l * self.params.word_bytes
+        for vline_index, n_vlines in split_stores:
+            vline_addr = GlobalAddress(bit_addr=(addr + vline_index*vline_bytes)*8)
+            logger.info(f'{self.clock.cycle}: Storing to {hex(vline_addr.addr)}->{vs3+vline_index} vlines={n_vlines}')
+            cl_addr = vline_addr.get_cache_line(self.params)
+            await self.require_cache(cl_addr)
 
-        kinstr_store = kinstructions.Store(
-            src=vs3,
-            j_saddr=j_saddr,
-            )
-        await self.send_instruction(kinstr_store)
+            page_address = (vline_addr.addr//self.params.page_bytes) * self.params.page_bytes
+            page_info = self.tlb.get_page_info(GlobalAddress(bit_addr=page_address*8))
+            assert page_info.local_address.ordering.ew == element_width
+            assert page_info.local_address.is_vpu
 
-        # Mark cache as modified (dirty)
-        vpu_address = self.to_vpu_addr(g_addr)
-        slot_state = self.cache_table.get_state(vpu_address)
-        slot_state.state = CacheState.M
+            j_saddr = self.to_j_saddr(vline_addr)
+
+            kinstr_store = kinstructions.Store(
+                src=vs3+vline_index,
+                j_saddr=j_saddr,
+                n_vlines=n_vlines,
+                )
+            await self.send_instruction(kinstr_store)
+            # Mark cache as modified (dirty)
+            vpu_address = self.to_vpu_addr(vline_addr)
+            slot_state = self.cache_table.get_state(vpu_address)
+            slot_state.state = CacheState.M
 
     def update(self):
         assert len(self.waiting) < 200
@@ -743,6 +788,7 @@ class Lamlet:
         self.clock.create_task(self.monitor_replys())
 
     async def run_instructions(self, disasm_trace=None):
+        logger.warning('run_instructions')
         while not self.finished:
 
             await self.clock.next_cycle

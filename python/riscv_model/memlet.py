@@ -270,6 +270,7 @@ class Memlet:
                                 response_packets[router_index] += packets
                         else:
                             raise NotImplementedError
+                        del actions_in_progress[label]
             for router_index, packets in enumerate(response_packets):
                 if packets:
                     packet = packets.popleft()

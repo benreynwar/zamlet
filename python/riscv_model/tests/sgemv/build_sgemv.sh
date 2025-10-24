@@ -26,15 +26,29 @@ INCLUDES="-I. -I../common"
 # Link options
 RISCV_LINK_OPTS="-static -nostdlib -nostartfiles -lm -lgcc -T../common/test.ld"
 
-# Source files
-SGEMV_SRCS="vec-sgemv_main.c vec-sgemv.S"
+# Common source files
 COMMON_SRCS="../common/crt.S ../common/syscalls.c ../common/ara/util.c ../common/vpu_alloc.c"
 
-# Output file
+# Build small version (8x8)
+echo "Building vec-sgemv (8x8)..."
+SGEMV_SRCS="vec-sgemv_main.c vec-sgemv.S"
 OUTPUT="vec-sgemv.riscv"
+${RISCV_GCC} ${INCLUDES} ${RISCV_GCC_OPTS} -o ${OUTPUT} \
+    ${SGEMV_SRCS} ${COMMON_SRCS} ${RISCV_LINK_OPTS}
 
-# Build command
-echo "Building vec-sgemv..."
+if [ $? -eq 0 ]; then
+    echo "Build successful: ${OUTPUT}"
+    ls -lh ${OUTPUT}
+else
+    echo "Build failed"
+    exit 1
+fi
+
+# Build large version (16x16 = 1024 bytes, exceeds 256-byte cache)
+echo ""
+echo "Building vec-sgemv-large (16x16 = 1024 bytes, exceeds 256-byte cache)..."
+SGEMV_SRCS="vec-sgemv-large_main.c vec-sgemv.S"
+OUTPUT="vec-sgemv-large.riscv"
 ${RISCV_GCC} ${INCLUDES} ${RISCV_GCC_OPTS} -o ${OUTPUT} \
     ${SGEMV_SRCS} ${COMMON_SRCS} ${RISCV_LINK_OPTS}
 

@@ -10,7 +10,7 @@ class LamletParams:
     j_rows: int = 2
 
     n_vregs: int = 40
-    cache_line_bytes: int = 32 #64
+    cache_line_bytes: int = 32
     word_bytes: int = 8
     page_bytes: int = 1 << 10 # 12
     scalar_memory_bytes: int = 3 << 20
