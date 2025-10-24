@@ -674,39 +674,58 @@ class Lamlet:
                 assert slot_state.state == CacheState.S
                 
 
-    async def vload(self, vd: int, addr: GlobalAddress, element_width: SizeBits,
-              n_elements: int, mask_reg: int):
+    async def vload(self, vd: int, addr: int, element_width: SizeBits, n_elements: int, mask_reg: int):
+        g_addr = GlobalAddress(bit_addr=addr*8)
+        end_addr = GlobalAddress(bit_addr=addr*8 + element_width * n_elements - 1)
         # TODO: Support masking
         assert mask_reg is None
-        # Require all the cache lines that page to this
-        l_cache_line_bytes = self.params.cache_line_bytes * self.params.k_in_l
-        last_addr = None
-        last_page = None
-        page_infos = []
-        for some_address in range(addr.addr, addr.addr+(element_width*n_elements)//8):
-            cache_line_address = (some_address//l_cache_line_bytes) * l_cache_line_bytes
-            page_address = (some_address//self.params.page_bytes) * self.params.page_bytes
-            if cache_line_address != last_addr:
-                global_addr = GlobalAddress(bit_addr=cache_line_address*8)
-                await self.require_cache(global_addr)
-                last_addr = cache_line_address
-            if page_address != last_page:
-                page_info = self.tlb.get_page_info(page_address)
-                assert page_info.element_width == element_width
-                assert page_info.is_vpu
-                page_infos.append(page_info)
-        # TODO: Support load that spans pages. Split into multiple kinstructions.
-        assert len(page_infos) == 1
+        assert element_width * n_elements == self.params.maxvl_bytes * 8
+
+        # Require the cache line
+        cl_addr = g_addr.get_cache_line(self.params)
+        await self.require_cache(cl_addr)
+        assert end_addr.get_cache_line(self.params) == cl_addr
+
         n_vlines = n_elements * (element_width//8) // (self.params.vline_bytes)
         assert n_elements % (self.params.vline_bytes // (element_width//8)) == 0
-        j_saddr = self.to_j_saddr(addr)
+        j_saddr = self.to_j_saddr(g_addr)
         kinstr = kinstructions.Load(
             dst=vd,
             j_saddr=j_saddr,
-            n_vlines=n_vlines,
             )
 
         await self.send_instruction(kinstr)
+
+    async def vstore(self, vs3: int, addr: int, element_width: SizeBits,
+                     n_elements: int, mask_reg: int):
+        g_addr = GlobalAddress(bit_addr=addr*8)
+        end_addr = GlobalAddress(bit_addr=addr*8 + element_width * n_elements - 1)
+        # TODO: Support masking
+        assert mask_reg is None
+        assert element_width * n_elements == self.params.maxvl_bytes * 8
+
+        # Require the cache line
+        cl_addr = g_addr.get_cache_line(self.params)
+        await self.require_cache(cl_addr)
+        assert end_addr.get_cache_line(self.params) == cl_addr
+
+        page_address = (g_addr.addr//self.params.page_bytes) * self.params.page_bytes
+        page_info = self.tlb.get_page_info(GlobalAddress(bit_addr=page_address*8))
+        assert page_info.local_address.ordering.ew == element_width
+        assert page_info.local_address.is_vpu
+
+        j_saddr = self.to_j_saddr(g_addr)
+
+        kinstr_store = kinstructions.Store(
+            src=vs3,
+            j_saddr=j_saddr,
+            )
+        await self.send_instruction(kinstr_store)
+
+        # Mark cache as modified (dirty)
+        vpu_address = self.to_vpu_addr(g_addr)
+        slot_state = self.cache_table.get_state(vpu_address)
+        slot_state.state = CacheState.M
 
     def update(self):
         assert len(self.waiting) < 200

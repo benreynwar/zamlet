@@ -20,8 +20,9 @@ async def update(clock, lamlet):
 
 async def run(clock: Clock):
     #filename = 'tests/readwritebyte/should_fail.riscv'
-    filename = 'tests/readwritebyte/write_then_read_many_bytes.riscv'
+    #filename = 'tests/readwritebyte/write_then_read_many_bytes.riscv'
     #filename = 'tests/readwritebyte/simple_vpu_test.riscv'
+    filename = 'tests/vecadd/vec-add.riscv'
     p_info = program_info.get_program_info(filename)
 
     params = LamletParams()

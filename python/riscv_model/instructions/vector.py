@@ -207,7 +207,66 @@ class Vse32V:
         s.pc += 4
 
     async def update_lamlet(self, s: 'state.State'):
-        raise NotImplementedError
+        addr = s.scalar.read_reg(self.rs1)
+        if self.vm:
+            mask_reg = None
+        else:
+            mask_reg = 0
+        await s.vstore(self.vs3, addr, 32, s.vl, mask_reg)
+        s.pc += 4
+        logger.info(f'Stored vector from vs3={self.vs3}')
+
+
+@dataclass
+class VaddVx:
+    """VADD.VX - Vector-Scalar Integer Add.
+
+    vd[i] = vs2[i] + rs1
+
+    Reference: riscv-isa-manual/src/v-st-ext.adoc
+    """
+    vd: int
+    rs1: int
+    vs2: int
+    vm: int
+
+    def __str__(self):
+        vm_str = '' if self.vm else ',v0.t'
+        return f'vadd.vx\tv{self.vd},v{self.vs2},{reg_name(self.rs1)}{vm_str}'
+
+    def update_state(self, s: 'state.State'):
+        scalar_val = s.scalar.read_reg(self.rs1)
+        elem_width_bytes = 4
+
+        logger.debug(f'VADD.VX: vd=v{self.vd}, rs1={reg_name(self.rs1)}={scalar_val}, vs2=v{self.vs2}, vl={s.vl}')
+
+        for i in range(s.vl):
+            if is_masked(s, i, self.vm):
+                continue
+
+            vreg_vs2, offset_vs2 = get_vreg_location(self.vs2, i, elem_width_bytes, s)
+            vec_elem_bytes = s.vpu_logical.vrf[vreg_vs2][offset_vs2:offset_vs2+elem_width_bytes]
+            vec_val = int.from_bytes(vec_elem_bytes, byteorder='little', signed=True)
+
+            result = (vec_val + scalar_val) & 0xffffffff
+            result_signed = struct.unpack('i', struct.pack('I', result))[0]
+            result_bytes = struct.pack('i', result_signed)
+
+            vreg_vd, offset_vd = get_vreg_location(self.vd, i, elem_width_bytes, s)
+            s.vpu_logical.vrf[vreg_vd][offset_vd:offset_vd+elem_width_bytes] = result_bytes
+
+        s.pc += 4
+
+    async def update_lamlet(self, s: 'state.State'):
+        import kinstructions
+        scalar_val = s.scalar.read_reg(self.rs1)
+        kinstr = kinstructions.VaddVxOp(
+            dst=self.vd,
+            src=self.vs2,
+            scalar=scalar_val,
+            )
+        await s.send_instruction(kinstr)
+        s.pc += 4
 
 
 @dataclass

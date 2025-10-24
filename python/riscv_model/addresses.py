@@ -308,6 +308,10 @@ class GlobalAddress:
     def get_page(self, params: LamletParams):
         return GlobalAddress(bit_addr=(self.addr//params.page_bytes)*params.page_bytes*8)
 
+    def get_cache_line(self, params: LamletParams):
+        l_cache_bytes = params.cache_line_bytes * params.k_in_l
+        return GlobalAddress(bit_addr=(self.addr//l_cache_bytes) * l_cache_bytes * 8)
+
     def is_vpu(self, params, tlb):
         page_address = self.get_page(params)
         page_info = tlb.get_page_info(page_address)

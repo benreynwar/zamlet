@@ -10,7 +10,6 @@ class LamletParams:
     j_rows: int = 2
 
     n_vregs: int = 40
-    maxvl_bytes: int = 1024
     cache_line_bytes: int = 32 #64
     word_bytes: int = 8
     page_bytes: int = 1 << 10 # 12
@@ -43,6 +42,10 @@ class LamletParams:
         # Sane kamlet memory
         assert self.kamlet_memory_bytes > self.cache_line_bytes
         assert self.kamlet_memory_bytes % self.cache_line_bytes == 0
+
+    @property
+    def maxvl_bytes(self):
+        return self.j_in_l * self.word_bytes
 
     @property
     def k_in_l(self):

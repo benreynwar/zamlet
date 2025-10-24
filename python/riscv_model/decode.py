@@ -422,6 +422,13 @@ def decode_standard(instruction_bytes: bytes) -> Instruction:
         elif funct3 == 0x6:
             return M.Lwu(rd=rd, rs1=rs1, imm=imm)
 
+    elif opcode == 0x07:
+        mop = (inst >> 26) & 0x3
+        vm = (inst >> 25) & 0x1
+        width = funct3
+        if mop == 0x0 and width == 0x6:
+            return V.Vle32V(vd=rd, rs1=rs1, vm=vm)
+
     elif opcode == 0x23:
         imm = decode_s_imm(inst)
         if funct3 == 0x0:
@@ -432,6 +439,14 @@ def decode_standard(instruction_bytes: bytes) -> Instruction:
             return M.Sw(rs1=rs1, rs2=rs2, imm=imm)
         elif funct3 == 0x3:
             return M.Sd(rs1=rs1, rs2=rs2, imm=imm)
+
+    elif opcode == 0x27:
+        mop = (inst >> 26) & 0x3
+        vm = (inst >> 25) & 0x1
+        width = funct3
+        vs3 = rd
+        if mop == 0x0 and width == 0x6:
+            return V.Vse32V(vs3=vs3, rs1=rs1, vm=vm)
 
     elif opcode == 0x63:
         imm = decode_b_imm(inst)
@@ -488,6 +503,8 @@ def decode_standard(instruction_bytes: bytes) -> Instruction:
             return V.Vsetvli(rd=rd, rs1=rs1, vtypei=vtypei)
         elif funct6 == 0x2c and funct3 == 0x5:
             return V.VfmaccVf(vd=rd, rs1=rs1, vs2=vs2, vm=vm)
+        elif funct6 == 0x00 and funct3 == 0x4:
+            return V.VaddVx(vd=rd, rs1=rs1, vs2=vs2, vm=vm)
 
     logger.error(f'Unknown 32-bit instruction: 0x{inst:08x} '
                  f'(opcode: 0x{opcode:02x}, funct3: {funct3:03b}, funct7: {funct7:07b}, '

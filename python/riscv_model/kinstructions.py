@@ -97,5 +97,55 @@ class WriteLine(KInstr):
 class Load(KInstr):
     dst: int
     j_saddr: JSAddr  # An address in the jamlet sram space
-    n_vlines: int   # The number of address from each jamlet sram to load
-    
+
+    async def update_kamlet(self, kamlet):
+        logger.debug(f'kamlet ({kamlet.min_x} {kamlet.min_y}): Load dst=v{self.dst}')
+        params = kamlet.params
+        bytes_per_jamlet = params.vline_bytes // params.j_in_l
+        vreg_bytes_per_jamlet = params.maxvl_bytes // params.j_in_l
+        vreg_base_offset = self.dst * vreg_bytes_per_jamlet
+        assert bytes_per_jamlet == vreg_bytes_per_jamlet
+        sram_offset = self.j_saddr.addr
+        for jamlet in kamlet.jamlets:
+            jamlet.rf_slice[vreg_base_offset: vreg_base_offset + bytes_per_jamlet] = jamlet.sram[sram_offset: sram_offset + bytes_per_jamlet]
+
+
+@dataclass
+class Store(KInstr):
+    src: int
+    j_saddr: JSAddr  # An address in the jamlet sram space
+
+    async def update_kamlet(self, kamlet):
+        logger.debug(f'kamlet ({kamlet.min_x} {kamlet.min_y}): Store src=v{self.src}')
+        params = kamlet.params
+        bytes_per_jamlet = params.vline_bytes // params.j_in_l
+        vreg_bytes_per_jamlet = params.maxvl_bytes // params.j_in_l
+        vreg_base_offset = self.src * vreg_bytes_per_jamlet
+        assert bytes_per_jamlet == vreg_bytes_per_jamlet
+        sram_offset = self.j_saddr.addr
+        for jamlet in kamlet.jamlets:
+            jamlet.sram[sram_offset: sram_offset + bytes_per_jamlet] = jamlet.rf_slice[vreg_base_offset: vreg_base_offset + bytes_per_jamlet]
+
+
+@dataclass
+class VaddVxOp(KInstr):
+    dst: int
+    src: int
+    scalar: int
+
+    async def update_kamlet(self, kamlet):
+        logger.debug(f'kamlet ({kamlet.min_x} {kamlet.min_y}): VaddVx dst=v{self.dst} src=v{self.src} scalar={self.scalar}')
+        params = kamlet.params
+        vreg_bytes_per_jamlet = params.maxvl_bytes // params.j_in_l
+        src_offset = self.src * vreg_bytes_per_jamlet
+        dst_offset = self.dst * vreg_bytes_per_jamlet
+        elem_bytes = 4
+
+        for jamlet in kamlet.jamlets:
+            for byte_offset in range(0, vreg_bytes_per_jamlet, elem_bytes):
+                src_bytes = jamlet.rf_slice[src_offset + byte_offset:src_offset + byte_offset + elem_bytes]
+                src_val = int.from_bytes(src_bytes, byteorder='little', signed=True)
+                result = src_val + self.scalar
+                result_bytes = result.to_bytes(elem_bytes, byteorder='little', signed=True)
+                jamlet.rf_slice[dst_offset + byte_offset:dst_offset + byte_offset + elem_bytes] = result_bytes
+
