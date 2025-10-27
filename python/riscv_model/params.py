@@ -10,12 +10,12 @@ class LamletParams:
     j_rows: int = 2
 
     n_vregs: int = 40
-    cache_line_bytes: int = 32
+    cache_line_bytes: int = 128
     word_bytes: int = 8
     page_bytes: int = 1 << 10 # 12
     scalar_memory_bytes: int = 3 << 20
     kamlet_memory_bytes: int = 1 << 20
-    jamlet_sram_bytes: int = 1 << 6
+    jamlet_sram_bytes: int = 1 << 10
     tohost_addr: int = 0x80001000
     fromhost_addr: int = 0x80001040
     receive_buffer_depth: int = 16

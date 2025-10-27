@@ -25,64 +25,156 @@ from message import Header, MessageType, Direction, SendType
 from kamlet import Kamlet
 import memlet
 from memlet import Memlet
-from utils import combine_futures
+from utils import combine_futures, bytes_to_float
+from runner import Clock, Future
 import kinstructions
 
 
 logger = logging.getLogger(__name__)
 
 
+class RegisterFileSlot:
+
+    def __init__(self, clock, params, name):
+        self.clock = clock
+        self.params = params
+        self.name = name
+        self.value = bytes([0]*8)
+        self.next_value = None
+        self.has_next_value = False
+        # This is a future that when it is resolved will
+        # update the contents of the register file.
+        self.future = None
+        self.next_future = None
+        self.has_next_future = None
+
+    def updating(self):
+        return self.future is not None
+
+    def get_value(self):
+        assert not self.updating()
+        as_int = int.from_bytes(self.value, byteorder='little', signed=True)
+        logger.debug(f'read_reg: {self.name} = 0x{as_int:016x}')
+        return self.value
+
+    def set_value(self, value):
+        assert not self.has_next_value
+        self.has_next_value = True
+        assert isinstance(value, bytes)
+        assert len(value) == 8
+        self.next_value = value
+        assert not self.has_next_future
+        self.has_next_future = False
+        self.next_future = None
+        as_int = int.from_bytes(value, byteorder='little', signed=True)
+        logger.debug(f'write_reg: {self.name} = 0x{as_int:016x}')
+
+    def set_future(self, future):
+        assert not self.has_next_future
+        self.has_next_future = True
+        self.next_future = future
+
+    async def apply_future(self, future):
+        await future
+        value = future.result()
+        int_value = int.from_bytes(value, byteorder='little', signed=False)
+        if self.future == future:
+            assert not self.has_next_value
+            self.has_next_value = True
+            if not self.has_next_future:
+                self.has_next_future = True
+                self.next_future = None
+            assert isinstance(value, bytes)
+            assert len(value) == self.params.word_bytes
+            self.next_value = value
+            logger.debug(f'write_reg: {self.name} = 0x{int_value:016x}')
+        else:
+            logger.debug(f'write_reg: {self.name} = 0x{int_value:016x} wont apply overwritten')
+
+    def update(self):
+        if self.has_next_value:
+            self.value = self.next_value
+        if self.has_next_future:
+            self.future = self.next_future
+            if self.future is not None:
+                assert isinstance(self.future, Future)
+                self.clock.create_task(self.apply_future(self.future))
+        self.has_next_value = False
+        self.has_next_future = False
+
+
 class ScalarState:
 
-    def __init__(self, params: LamletParams):
+    def __init__(self, clock: Clock, params: LamletParams):
+        self.clock = clock
         self.params = params
-        self.rf = [0 for i in range(32)]
-        self.frf = [0 for i in range(32)]
-
-        self.rf_updating = [False for i in range(32)]
-        self.frf_updating = [False for i in range(32)]
+        self._rf = [RegisterFileSlot(clock, params, f'x{i}') for i in range(32)]
+        self._frf = [RegisterFileSlot(clock, params, f'f{i}') for i in range(32)]
 
         self.memory = {}
         self.csr = {}
 
+    def regs_ready(self, regs, fregs):
+        return all(not self._rf[r].updating() for r in regs) and all(not self._frf[fr].updating() for fr in fregs)
+
+    async def wait_all_regs_ready(self, regs, fregs):
+        while not self.regs_ready(regs, fregs):
+            await self.clock.next_cycle
+
     def read_reg(self, reg_num):
-        """Read integer register, always returns 0 for x0."""
         if reg_num == 0:
-            return 0
-        value = self.rf[reg_num]
-        return value & 0xffffffffffffffff
+            return bytes([0]*8)
+        return self._rf[reg_num].get_value()
 
-    def write_reg(self, reg_num, value):
-        """Write integer register, masking to 64 bits. Writes to x0 are ignored."""
-        if reg_num == 0:
-            return
-        value = value & 0xffffffffffffffff
-        signed = value if value < 0x8000000000000000 else value - 0x10000000000000000
-        logger.debug(f'write_reg: x{reg_num} = 0x{value:016x} (signed: {signed})')
-        self.rf[reg_num] = value
+    def read_freg(self, freg_num):
+        return self._frf[freg_num].get_value()
 
-    def read_freg(self, reg_num):
-        """Read floating-point register."""
-        return self.frf[reg_num]
+    def write_reg(self, reg_num, value: bytes):
+        assert isinstance(value, bytes)
+        assert len(value) == 8
+        self._rf[reg_num].set_value(value)
 
-    def write_freg(self, reg_num, value):
-        """Write floating-point register."""
-        logger.debug(f'write_freg: f{reg_num} = 0x{value:016x}')
-        self.frf[reg_num] = value
+    def write_freg(self, freg_num, value: bytes):
+        assert isinstance(value, bytes)
+        assert len(value) == 8
+        self._frf[freg_num].set_value(value)
+
+    def write_reg_future(self, reg_num, future):
+        self._rf[reg_num].set_future(future)
+
+    def write_freg_future(self, freg_num, future):
+        self._frf[freg_num].set_future(future)
 
     def set_memory(self, address: int, b):
         self.memory[address] = b
 
-    def get_memory(self, address: int):
+    async def get_memory(self, address: int):
+        """
+        Returns a future that will resolve with the memory value.
+        (currently resolves immediately)
+        """
         if address not in self.memory:
             raise Exception(f'Address {hex(address)} is not initialized')
-        return self.memory[address]
+        future = self.clock.create_future()
+        future.set_result(self.memory[address])
+        return future
 
     def read_csr(self, csr_addr):
-        return self.csr.get(csr_addr, 0)
+        """Read CSR, returns bytes of length word_bytes."""
+        if csr_addr not in self.csr:
+            return bytes(self.params.word_bytes)
+        return self.csr[csr_addr]
 
     def write_csr(self, csr_addr, value):
+        """Write CSR, value should be bytes."""
+        assert isinstance(value, bytes), f"CSR value must be bytes, got {type(value)}"
         self.csr[csr_addr] = value
+
+    def update(self):
+        for cb in self._rf:
+            cb.update()
+        for cb in self._frf:
+            cb.update()
 
 
 class Lamlet:
@@ -91,7 +183,7 @@ class Lamlet:
         self.clock = clock
         self.params = params
         self.pc = None
-        self.scalar = ScalarState(params)
+        self.scalar = ScalarState(clock, params)
         self.tlb = TLB(params)
         self.vrf_ordering = [Ordering(None, None) for _ in range(params.n_vregs)]
         self.vl = 0
@@ -212,15 +304,24 @@ class Lamlet:
         slot_state = self.cache_table.get_state(vpu_address)
         slot_state.state = CacheState.M
 
+    async def read_byte_resolve(self, future, instruction, k_index):
+        value = await self.get_instruction_response(instruction, k_index)
+        future.set_result(value)
+
     async def read_byte(self, address: GlobalAddress):
+        """
+        This blocks until the cache is ready an the instruction is received.
+        It returns a future that resolves when the value is returned.
+        """
         logger.debug(f'Lamlet.read_byte {hex(address.addr)}')
         cache_line_address = self.get_cache_line_address(address)
         await self.require_cache(cache_line_address)
         k_index, instruction = self.read_byte_instruction(address)
         await self.send_instruction(instruction, k_index)
         assert k_index == instruction.j_saddr.k_index
-        value = await self.get_instruction_response(instruction, k_index)
-        return value
+        future = self.clock.create_future()
+        self.clock.create_task(self.read_byte_resolve(future, instruction, k_index))
+        return future
 
     def get_cache_line_address(self, address: GlobalAddress):
         l_cache_line_bits = self.params.cache_line_bytes * self.params.k_in_l * 8
@@ -423,6 +524,7 @@ class Lamlet:
         global_addr = GlobalAddress(bit_addr=address*8)
         # Check for HTIF tohost write (8-byte aligned)
         if global_addr.addr == self.params.tohost_addr and len(data) == 8:
+            logger.debug(f'It is a HTIF addres. finished is {self.finished}')
             tohost_value = int.from_bytes(data, byteorder='little')
             if tohost_value != 0:
                 await self.handle_tohost(tohost_value)
@@ -437,34 +539,41 @@ class Lamlet:
                 scalar_address = self.to_scalar_addr(byt_address)
                 self.scalar.set_memory(scalar_address, b)
 
-    def get_scalar_memory(self, address: GlobalAddress, size: SizeBytes):
+    async def get_memory_resolve(self, future, byte_futures, address):
         bs = bytearray([])
-        for index in range(size):
-            local_address = self.to_scalar_addr(GlobalAddress(bit_addr=address.bit_addr+index*8))
-            read_byte = self.scalar.get_memory(local_address)
-            bs.append(read_byte)
-        return bs
-
+        for f in byte_futures:
+            await f
+            b = f.result()
+            assert isinstance(b, int)
+            bs.append(b)
+        logger.debug(f'Read memory address {address}, result is {int.from_bytes(bytes(bs), byteorder="little", signed=True)}')
+        future.set_result(bytes(bs))
 
     async def get_memory(self, address: int, size):
-        results = []
+        """
+        This blocks but only on things that should block the frontend.
+        It returns a future that resolves when the value has been
+        returned.
+        """
+        byte_futures = []
         for index in range(size):
             byte_addr = GlobalAddress(bit_addr=(address+index)*8)
             is_vpu = byte_addr.is_vpu(self.params, self.tlb)
-            read_task = None
-            read_byte = None
             if is_vpu:
-                read_task = self.read_byte(byte_addr)
+                read_future = await self.read_byte(byte_addr)
             else:
                 local_address = byte_addr.to_scalar_addr(self.params, self.tlb)
-                read_byte = self.scalar.get_memory(local_address)
-            results.append((read_byte, read_task))
-        bs = bytearray([])
-        for byt, task in results:
-            if byt is None:
-                byt = await task
-            bs.append(byt)
-        return bs
+                read_future = await self.scalar.get_memory(local_address)
+            byte_futures.append(read_future)
+        future = self.clock.create_future()
+        logger.debug(f'Trying to read memory {address} size {size}')
+        self.clock.create_task(self.get_memory_resolve(future, byte_futures, address))
+        return future
+
+    async def get_memory_blocking(self, address: int, size):
+        future = await self.get_memory(address, size)
+        await future
+        return future.result()
 
     async def handle_tohost(self, tohost_value):
         """Handle HTIF syscall via tohost write."""
@@ -486,10 +595,10 @@ class Lamlet:
         magic_mem_addr = tohost_value
 
         # Read magic_mem[0:4] = [syscall_num, arg0, arg1, arg2]
-        syscall_num = int.from_bytes(await self.get_memory(magic_mem_addr, 8), byteorder='little')
-        arg0 = int.from_bytes(await self.get_memory(magic_mem_addr + 8, 8), byteorder='little')
-        arg1 = int.from_bytes(await self.get_memory(magic_mem_addr + 16, 8), byteorder='little')
-        arg2 = int.from_bytes(await self.get_memory(magic_mem_addr + 24, 8), byteorder='little')
+        syscall_num = int.from_bytes(await self.get_memory_blocking(magic_mem_addr, 8), byteorder='little')
+        arg0 = int.from_bytes(await self.get_memory_blocking(magic_mem_addr + 8, 8), byteorder='little')
+        arg1 = int.from_bytes(await self.get_memory_blocking(magic_mem_addr + 16, 8), byteorder='little')
+        arg2 = int.from_bytes(await self.get_memory_blocking(magic_mem_addr + 24, 8), byteorder='little')
 
         logger.debug(f'HTIF syscall: num={syscall_num}, args=({arg0}, {arg1}, {arg2})')
 
@@ -500,7 +609,7 @@ class Lamlet:
             length = arg2
 
             # Read the buffer
-            buf = await self.get_memory(buf_addr, length)
+            buf = await self.get_memory_blocking(buf_addr, length)
             msg = buf.decode('utf-8', errors='replace')
 
             if fd == 1:  # stdout
@@ -712,7 +821,7 @@ class Lamlet:
         vline_bytes = self.params.j_in_l * self.params.word_bytes
         for vline_index, n_vlines in split_loads:
             vline_addr = GlobalAddress(bit_addr=(addr + vline_index*vline_bytes)*8)
-            logger.info(f'{self.clock.cycle}: Loading to {hex(vline_addr.addr)} -> {vd+vline_index} vlines={n_vlines}')
+            logger.debug(f'{self.clock.cycle}: Loading to {hex(vline_addr.addr)} -> {vd+vline_index} vlines={n_vlines}')
             cl_addr = vline_addr.get_cache_line(self.params)
             await self.require_cache(cl_addr)
 
@@ -778,6 +887,7 @@ class Lamlet:
             kamlet.update()
         for memlet in self.memlets:
             memlet.update()
+        self.scalar.update()
 
     async def run(self):
         for kamlet in self.kamlets:
@@ -793,14 +903,14 @@ class Lamlet:
 
             await self.clock.next_cycle
 
-            first_bytes = self.get_scalar_memory(GlobalAddress(bit_addr=self.pc*8), 2)
+            first_bytes = await self.get_memory_blocking(self.pc, 2)
             is_compressed = decode.is_compressed(first_bytes)
 
             if is_compressed:
                 instruction_bytes = first_bytes
                 inst_hex = int.from_bytes(instruction_bytes[0:2], byteorder='little')
             else:
-                instruction_bytes = self.get_scalar_memory(GlobalAddress(bit_addr=self.pc*8), 4)
+                instruction_bytes = await self.get_memory_blocking(self.pc, 4)
                 inst_hex = int.from_bytes(instruction_bytes[0:4], byteorder='little')
 
             instruction = decode.decode(instruction_bytes)
@@ -811,7 +921,7 @@ class Lamlet:
             else:
                 inst_str = str(instruction)
 
-            logger.debug(f'{self.clock.cycle}: pc={hex(self.pc)} bytes={hex(inst_hex)} instruction={inst_str}')
+            logger.info(f'{self.clock.cycle}: pc={hex(self.pc)} bytes={hex(inst_hex)} instruction={inst_str}')
 
             if disasm_trace is not None:
                 import disasm_trace as dt
@@ -820,8 +930,5 @@ class Lamlet:
                     logger.error(error)
                     raise ValueError(error)
 
-            if hasattr(instruction, 'update_lamlet'):
-                await instruction.update_lamlet(self)
-            else:
-                instruction.update_state(self)
+            await instruction.update_state(self)
 

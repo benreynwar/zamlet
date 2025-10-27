@@ -12,14 +12,24 @@ def log2ceil(value):
 
 
 def bytes_to_float(byts):
-    assert len(byts) == 4
-    float_val = struct.unpack('f', byts)[0]
+    length = len(byts)
+    if length == 4:
+        float_val = struct.unpack('f', byts)[0]
+    elif length == 8:
+        float_val = struct.unpack('d', byts)[0]
+    else:
+        raise NotImplementedError
     return float_val
 
 
-def float_to_bytes(fl):
-    byts = struct.pack('f', fl)
-    assert len(byts) == 4
+def float_to_bytes(fl, length=4):
+    if length == 4:
+        byts = struct.pack('f', fl)
+    elif length == 8:
+        byts = struct.pack('d', fl)
+    else:
+        raise NotImplementedError
+    assert len(byts) == length
     return byts
 
 
@@ -78,3 +88,9 @@ async def combine_futures(combined_future, futures):
         await future
         x.append(future.result)
     combined_future.set_result(x)
+
+
+def pad(data, n_bytes):
+    assert isinstance(data, bytes)
+    assert len(data) <= n_bytes
+    return data + bytes([0] * (n_bytes - len(data)))

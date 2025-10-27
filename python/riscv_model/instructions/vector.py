@@ -88,8 +88,10 @@ class Vsetvli:
 
         return f'vsetvli\t{reg_name(self.rd)},{reg_name(self.rs1)},{sew_str},{lmul_str},{ta_str},{ma_str}'
 
-    def update_state(self, s: 'state.State'):
-        avl = s.scalar.read_reg(self.rs1)
+    async def update_state(self, s: 'state.State'):
+        await s.scalar.wait_all_regs_ready([self.rs1], [])
+        rs1_bytes = s.scalar.read_reg(self.rs1)
+        avl = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
 
         s.vtype = self.vtypei
 
@@ -114,12 +116,10 @@ class Vsetvli:
         else:
             s.vl = vlmax
 
-        s.scalar.write_reg(self.rd, s.vl)
-        s.pc += 4
-
-    async def update_lamlet(self, s: 'state.State'):
-        self.update_state(s)
+        vl_bytes = s.vl.to_bytes(s.params.word_bytes, byteorder='little', signed=False)
+        s.scalar.write_reg(self.rd, vl_bytes)
         logger.info(f'Set vl to {s.vl}')
+        s.pc += 4
 
 
 @dataclass
@@ -138,35 +138,17 @@ class Vle32V:
         vm_str = '' if self.vm else ',v0.t'
         return f'vle32.v\tv{self.vd},({reg_name(self.rs1)}){vm_str}'
 
-    def update_state(self, s: 'state.State'):
-        addr = s.scalar.read_reg(self.rs1)
-        elem_width_bytes = 4
-
-        for i in range(s.vl):
-            if is_masked(s, i, self.vm):
-                continue
-
-            elem_addr = addr + i * elem_width_bytes
-            elem_bytes = s.get_memory(elem_addr, elem_width_bytes)
-
-            vreg_num, elem_offset = get_vreg_location(self.vd, i, elem_width_bytes, s)
-            s.vpu_logical.vrf[vreg_num][elem_offset:elem_offset+elem_width_bytes] = elem_bytes
-
-        s.pc += 4
-
-    async def update_lamlet(self, s: 'state.State'):
-        '''
-        A physical update state that operates on lanes rather than a logical model.
-        '''
-        # We have a new register (i.e. with fresh data)
-        addr = s.scalar.read_reg(self.rs1)
+    async def update_state(self, s: 'state.State'):
+        await s.scalar.wait_all_regs_ready([self.rs1], [])
+        rs1_bytes = s.scalar.read_reg(self.rs1)
+        addr = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
         if self.vm:
             mask_reg=None
         else:
             mask_reg=0
         await s.vload(self.vd, addr, 32, s.vl, mask_reg)
         s.pc += 4
-        logger.info(f'Loaded vector into vd={self.vd}')
+        logger.debug(f'Loaded vector into vd={self.vd}')
 
 
 
@@ -186,35 +168,17 @@ class Vse32V:
         vm_str = '' if self.vm else ',v0.t'
         return f'vse32.v\tv{self.vs3},({reg_name(self.rs1)}){vm_str}'
 
-    def update_state(self, s: 'state.State'):
-        addr = s.scalar.read_reg(self.rs1)
-        elem_width_bytes = 4
-
-        logger.debug(f'VSE32.V: addr={hex(addr)}, vl={s.vl}, vs3=v{self.vs3}')
-
-        for i in range(s.vl):
-            if is_masked(s, i, self.vm):
-                continue
-
-            vreg_num, elem_offset = get_vreg_location(self.vs3, i, elem_width_bytes, s)
-            elem_bytes = s.vpu_logical.vrf[vreg_num][elem_offset:elem_offset+elem_width_bytes]
-
-            elem_addr = addr + i * elem_width_bytes
-            if i < 5 or i >= s.vl - 5:
-                logger.debug(f'  Store elem[{i}]: vreg={vreg_num} offset={elem_offset} -> addr={hex(elem_addr)}')
-            s.set_memory(elem_addr, elem_bytes)
-
-        s.pc += 4
-
-    async def update_lamlet(self, s: 'state.State'):
-        addr = s.scalar.read_reg(self.rs1)
+    async def update_state(self, s: 'state.State'):
+        await s.scalar.wait_all_regs_ready([self.rs1], [])
+        rs1_bytes = s.scalar.read_reg(self.rs1)
+        addr = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
         if self.vm:
             mask_reg = None
         else:
             mask_reg = 0
         await s.vstore(self.vs3, addr, 32, s.vl, mask_reg)
         s.pc += 4
-        logger.info(f'Stored vector from vs3={self.vs3}')
+        logger.debug(f'Stored vector from vs3={self.vs3}')
 
 
 @dataclass
@@ -234,30 +198,8 @@ class VaddVx:
         vm_str = '' if self.vm else ',v0.t'
         return f'vadd.vx\tv{self.vd},v{self.vs2},{reg_name(self.rs1)}{vm_str}'
 
-    def update_state(self, s: 'state.State'):
-        scalar_val = s.scalar.read_reg(self.rs1)
-        elem_width_bytes = 4
-
-        logger.debug(f'VADD.VX: vd=v{self.vd}, rs1={reg_name(self.rs1)}={scalar_val}, vs2=v{self.vs2}, vl={s.vl}')
-
-        for i in range(s.vl):
-            if is_masked(s, i, self.vm):
-                continue
-
-            vreg_vs2, offset_vs2 = get_vreg_location(self.vs2, i, elem_width_bytes, s)
-            vec_elem_bytes = s.vpu_logical.vrf[vreg_vs2][offset_vs2:offset_vs2+elem_width_bytes]
-            vec_val = int.from_bytes(vec_elem_bytes, byteorder='little', signed=True)
-
-            result = (vec_val + scalar_val) & 0xffffffff
-            result_signed = struct.unpack('i', struct.pack('I', result))[0]
-            result_bytes = struct.pack('i', result_signed)
-
-            vreg_vd, offset_vd = get_vreg_location(self.vd, i, elem_width_bytes, s)
-            s.vpu_logical.vrf[vreg_vd][offset_vd:offset_vd+elem_width_bytes] = result_bytes
-
-        s.pc += 4
-
-    async def update_lamlet(self, s: 'state.State'):
+    async def update_state(self, s: 'state.State'):
+        await s.scalar.wait_all_regs_ready([self.rs1], [])
         if self.vm:
             mask_reg = None
         else:
@@ -267,8 +209,9 @@ class VaddVx:
         assert s.vrf_ordering[self.vd].ew == element_width
         assert s.vrf_ordering[self.vs2].ew == element_width
 
-        scalar_val = s.scalar.read_reg(self.rs1)
-        logger.debug(f'VADD.VX: vd=v{self.vd}, rs1={reg_name(self.rs1)}={scalar_val}, vs2=v{self.vs2}, vl={s.vl}')
+        rs1_bytes = s.scalar.read_reg(self.rs1)
+        scalar_val = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
+        logger.info(f'VADD.VX: vd=v{self.vd}, rs1={reg_name(self.rs1)}={scalar_val}, vs2=v{self.vs2}, vl={s.vl}')
 
         vline_bytes = s.params.word_bytes * s.params.j_in_l
         assert (s.vl * element_width) % (vline_bytes * 8) == 0
@@ -302,37 +245,10 @@ class VfmaccVf:
         vm_str = '' if self.vm else ',v0.t'
         return f'vfmacc.vf\tv{self.vd},{freg_name(self.rs1)},v{self.vs2}{vm_str}'
 
-    def update_state(self, s: 'state.State'):
-        scalar_bits = s.scalar.read_freg(self.rs1)
-        scalar_val = struct.unpack('f', struct.pack('I', scalar_bits & 0xffffffff))[0]
-        elem_width_bytes = 4
-
-        logger.info(f'VFMACC.VF: vd=v{self.vd}, rs1={freg_name(self.rs1)}={scalar_val:.2f}, vs2=v{self.vs2}, vl={s.vl}')
-
-        for i in range(s.vl):
-            if is_masked(s, i, self.vm):
-                continue
-
-            vreg_vs2, offset_vs2 = get_vreg_location(self.vs2, i, elem_width_bytes, s)
-            vec_elem_bytes = s.vpu_logical.vrf[vreg_vs2][offset_vs2:offset_vs2+elem_width_bytes]
-            vec_val = struct.unpack('f', vec_elem_bytes)[0]
-
-            vreg_vd, offset_vd = get_vreg_location(self.vd, i, elem_width_bytes, s)
-            acc_elem_bytes = s.vpu_logical.vrf[vreg_vd][offset_vd:offset_vd+elem_width_bytes]
-            acc_val = struct.unpack('f', acc_elem_bytes)[0]
-
-            result = acc_val + (scalar_val * vec_val)
-            result_bytes = struct.pack('f', result)
-
-            if i < 5:
-                logger.info(f'  elem[{i}]: {acc_val:.2f} + ({scalar_val:.2f} * {vec_val:.2f}) = {result:.2f}')
-
-            s.vpu_logical.vrf[vreg_vd][offset_vd:offset_vd+elem_width_bytes] = result_bytes
-
-        s.pc += 4
-
-    async def update_lamlet(self, s: 'state.State'):
-        scalar_bits = s.scalar.read_freg(self.rs1)
+    async def update_state(self, s: 'state.State'):
+        await s.scalar.wait_all_regs_ready([], [self.rs1])
+        scalar_bytes = s.scalar.read_freg(self.rs1)
+        scalar_bits = int.from_bytes(scalar_bytes[:4], byteorder='little', signed=False)
 
         if self.vm:
             mask_reg = None
@@ -343,7 +259,7 @@ class VfmaccVf:
         assert s.vrf_ordering[self.vd].ew == element_width
         assert s.vrf_ordering[self.vs2].ew == element_width
 
-        logger.info(f'VFMACC.VF: vd=v{self.vd}, rs1={freg_name(self.rs1)}={scalar_bits:.2f}, vs2=v{self.vs2}, vl={s.vl}')
+        logger.debug(f'VFMACC.VF: vd=v{self.vd}, rs1={freg_name(self.rs1)}={scalar_bits}, vs2=v{self.vs2}, vl={s.vl}')
 
         vline_bytes = s.params.word_bytes * s.params.j_in_l
         assert (s.vl * element_width) % (vline_bytes * 8) == 0

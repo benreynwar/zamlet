@@ -53,7 +53,7 @@ class Fence:
     def __str__(self):
         return 'fence'
 
-    def update_state(self, s: 'state.State'):
+    async def update_state(self, s: 'state.State'):
         s.pc += 4
 
 
@@ -96,12 +96,14 @@ class Csrrw:
         else:
             return f'csrrw\t{reg_name(self.rd)},{csr_name},{reg_name(self.rs1)}'
 
-    def update_state(self, s: 'state.State'):
-        s.pc += 4
+    async def update_state(self, s: 'state.State'):
+        await s.scalar.wait_all_regs_ready([self.rs1], [])
         if self.rd != 0:
-            csr_val = s.scalar.read_csr(self.csr)
-            s.scalar.write_reg(self.rd, csr_val)
-        s.scalar.write_csr(self.csr, s.scalar.read_reg(self.rs1))
+            csr_bytes = s.scalar.read_csr(self.csr)
+            s.scalar.write_reg(self.rd, csr_bytes)
+        rs1_bytes = s.scalar.read_reg(self.rs1)
+        s.scalar.write_csr(self.csr, rs1_bytes)
+        s.pc += 4
 
 
 @dataclass
@@ -130,10 +132,15 @@ class Csrrs:
         else:
             return f'csrrs\t{reg_name(self.rd)},{csr_name},{reg_name(self.rs1)}'
 
-    def update_state(self, s: 'state.State'):
-        s.pc += 4
-        csr_val = s.scalar.read_csr(self.csr)
-        s.scalar.write_reg(self.rd, csr_val)
+    async def update_state(self, s: 'state.State'):
+        await s.scalar.wait_all_regs_ready([self.rs1], [])
+        csr_bytes = s.scalar.read_csr(self.csr)
+        csr_val = int.from_bytes(csr_bytes, byteorder='little', signed=False)
+        s.scalar.write_reg(self.rd, csr_bytes)
         if self.rs1 != 0:
-            new_val = csr_val | s.scalar.read_reg(self.rs1)
-            s.scalar.write_csr(self.csr, new_val)
+            rs1_bytes = s.scalar.read_reg(self.rs1)
+            rs1_val = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
+            new_val = csr_val | rs1_val
+            new_bytes = new_val.to_bytes(s.params.word_bytes, byteorder='little', signed=False)
+            s.scalar.write_csr(self.csr, new_bytes)
+        s.pc += 4

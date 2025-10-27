@@ -33,8 +33,12 @@ class Addi:
         else:
             return f'addi\t{reg_name(self.rd)},{reg_name(self.rs1)},{self.imm}'
 
-    def update_state(self, s: 'state.State'):
-        s.scalar.write_reg(self.rd, s.scalar.read_reg(self.rs1) + self.imm)
+    async def update_state(self, s: 'state.State'):
+        await s.scalar.wait_all_regs_ready([self.rs1], [])
+        rs1_val = int.from_bytes(s.scalar.read_reg(self.rs1), byteorder='little', signed=False)
+        result = rs1_val + self.imm
+        result_bytes = result.to_bytes(s.params.word_bytes, byteorder='little', signed=False)
+        s.scalar.write_reg(self.rd, result_bytes)
         s.pc += 4
 
 
@@ -57,8 +61,12 @@ class Andi:
         else:
             return f'andi\t{reg_name(self.rd)},{reg_name(self.rs1)},{self.imm}'
 
-    def update_state(self, s: 'state.State'):
-        s.scalar.write_reg(self.rd, s.scalar.read_reg(self.rs1) & self.imm)
+    async def update_state(self, s: 'state.State'):
+        await s.scalar.wait_all_regs_ready([self.rs1], [])
+        rs1_val = int.from_bytes(s.scalar.read_reg(self.rs1), byteorder='little', signed=False)
+        result = rs1_val & self.imm
+        result_bytes = result.to_bytes(s.params.word_bytes, byteorder='little', signed=False)
+        s.scalar.write_reg(self.rd, result_bytes)
         s.pc += 4
 
 
@@ -78,8 +86,12 @@ class Ori:
     def __str__(self):
         return f'ori\t{reg_name(self.rd)},{reg_name(self.rs1)},{self.imm}'
 
-    def update_state(self, s: 'state.State'):
-        s.scalar.write_reg(self.rd, s.scalar.read_reg(self.rs1) | self.imm)
+    async def update_state(self, s: 'state.State'):
+        await s.scalar.wait_all_regs_ready([self.rs1], [])
+        rs1_val = int.from_bytes(s.scalar.read_reg(self.rs1), byteorder='little', signed=False)
+        result = rs1_val | self.imm
+        result_bytes = result.to_bytes(s.params.word_bytes, byteorder='little', signed=False)
+        s.scalar.write_reg(self.rd, result_bytes)
         s.pc += 4
 
 
@@ -103,8 +115,12 @@ class Xori:
         else:
             return f'xori\t{reg_name(self.rd)},{reg_name(self.rs1)},{self.imm}'
 
-    def update_state(self, s: 'state.State'):
-        s.scalar.write_reg(self.rd, s.scalar.read_reg(self.rs1) ^ self.imm)
+    async def update_state(self, s: 'state.State'):
+        await s.scalar.wait_all_regs_ready([self.rs1], [])
+        rs1_val = int.from_bytes(s.scalar.read_reg(self.rs1), byteorder='little', signed=False)
+        result = rs1_val ^ self.imm
+        result_bytes = result.to_bytes(s.params.word_bytes, byteorder='little', signed=False)
+        s.scalar.write_reg(self.rd, result_bytes)
         s.pc += 4
 
 
@@ -124,8 +140,12 @@ class Slli:
     def __str__(self):
         return f'slli\t{reg_name(self.rd)},{reg_name(self.rs1)},0x{self.shamt:x}'
 
-    def update_state(self, s: 'state.State'):
-        s.scalar.write_reg(self.rd, s.scalar.read_reg(self.rs1) << self.shamt)
+    async def update_state(self, s: 'state.State'):
+        await s.scalar.wait_all_regs_ready([self.rs1], [])
+        rs1_val = int.from_bytes(s.scalar.read_reg(self.rs1), byteorder='little', signed=False)
+        result = rs1_val << self.shamt
+        result_bytes = result.to_bytes(s.params.word_bytes, byteorder='little', signed=False)
+        s.scalar.write_reg(self.rd, result_bytes)
         s.pc += 4
 
 
@@ -144,8 +164,13 @@ class Add:
     def __str__(self):
         return f'add\t{reg_name(self.rd)},{reg_name(self.rs1)},{reg_name(self.rs2)}'
 
-    def update_state(self, s: 'state.State'):
-        s.scalar.write_reg(self.rd, s.scalar.read_reg(self.rs1) + s.scalar.read_reg(self.rs2))
+    async def update_state(self, s: 'state.State'):
+        await s.scalar.wait_all_regs_ready([self.rs1, self.rs2], [])
+        rs1_val = int.from_bytes(s.scalar.read_reg(self.rs1), byteorder='little', signed=False)
+        rs2_val = int.from_bytes(s.scalar.read_reg(self.rs2), byteorder='little', signed=False)
+        result = rs1_val + rs2_val
+        result_bytes = result.to_bytes(s.params.word_bytes, byteorder='little', signed=False)
+        s.scalar.write_reg(self.rd, result_bytes)
         s.pc += 4
 
 
@@ -167,8 +192,13 @@ class Sub:
         else:
             return f'sub\t{reg_name(self.rd)},{reg_name(self.rs1)},{reg_name(self.rs2)}'
 
-    def update_state(self, s: 'state.State'):
-        s.scalar.write_reg(self.rd, s.scalar.read_reg(self.rs1) - s.scalar.read_reg(self.rs2))
+    async def update_state(self, s: 'state.State'):
+        await s.scalar.wait_all_regs_ready([self.rs1, self.rs2], [])
+        rs1_val = int.from_bytes(s.scalar.read_reg(self.rs1), byteorder='little', signed=False)
+        rs2_val = int.from_bytes(s.scalar.read_reg(self.rs2), byteorder='little', signed=False)
+        result = rs1_val - rs2_val
+        result_bytes = result.to_bytes(s.params.word_bytes, byteorder='little', signed=False)
+        s.scalar.write_reg(self.rd, result_bytes)
         s.pc += 4
 
 
@@ -187,8 +217,13 @@ class And:
     def __str__(self):
         return f'and\t{reg_name(self.rd)},{reg_name(self.rs1)},{reg_name(self.rs2)}'
 
-    def update_state(self, s: 'state.State'):
-        s.scalar.write_reg(self.rd, s.scalar.read_reg(self.rs1) & s.scalar.read_reg(self.rs2))
+    async def update_state(self, s: 'state.State'):
+        await s.scalar.wait_all_regs_ready([self.rs1, self.rs2], [])
+        rs1_val = int.from_bytes(s.scalar.read_reg(self.rs1), byteorder='little', signed=False)
+        rs2_val = int.from_bytes(s.scalar.read_reg(self.rs2), byteorder='little', signed=False)
+        result = rs1_val & rs2_val
+        result_bytes = result.to_bytes(s.params.word_bytes, byteorder='little', signed=False)
+        s.scalar.write_reg(self.rd, result_bytes)
         s.pc += 4
 
 
@@ -207,8 +242,13 @@ class Or:
     def __str__(self):
         return f'or\t{reg_name(self.rd)},{reg_name(self.rs1)},{reg_name(self.rs2)}'
 
-    def update_state(self, s: 'state.State'):
-        s.scalar.write_reg(self.rd, s.scalar.read_reg(self.rs1) | s.scalar.read_reg(self.rs2))
+    async def update_state(self, s: 'state.State'):
+        await s.scalar.wait_all_regs_ready([self.rs1, self.rs2], [])
+        rs1_val = int.from_bytes(s.scalar.read_reg(self.rs1), byteorder='little', signed=False)
+        rs2_val = int.from_bytes(s.scalar.read_reg(self.rs2), byteorder='little', signed=False)
+        result = rs1_val | rs2_val
+        result_bytes = result.to_bytes(s.params.word_bytes, byteorder='little', signed=False)
+        s.scalar.write_reg(self.rd, result_bytes)
         s.pc += 4
 
 
@@ -227,8 +267,13 @@ class Xor:
     def __str__(self):
         return f'xor\t{reg_name(self.rd)},{reg_name(self.rs1)},{reg_name(self.rs2)}'
 
-    def update_state(self, s: 'state.State'):
-        s.scalar.write_reg(self.rd, s.scalar.read_reg(self.rs1) ^ s.scalar.read_reg(self.rs2))
+    async def update_state(self, s: 'state.State'):
+        await s.scalar.wait_all_regs_ready([self.rs1, self.rs2], [])
+        rs1_val = int.from_bytes(s.scalar.read_reg(self.rs1), byteorder='little', signed=False)
+        rs2_val = int.from_bytes(s.scalar.read_reg(self.rs2), byteorder='little', signed=False)
+        result = rs1_val ^ rs2_val
+        result_bytes = result.to_bytes(s.params.word_bytes, byteorder='little', signed=False)
+        s.scalar.write_reg(self.rd, result_bytes)
         s.pc += 4
 
 
@@ -247,12 +292,14 @@ class Lui:
     def __str__(self):
         return f'lui\t{reg_name(self.rd)},0x{self.imm & 0xfffff:x}'
 
-    def update_state(self, s: 'state.State'):
+    async def update_state(self, s: 'state.State'):
+        await s.scalar.wait_all_regs_ready([], [])
         s.pc += 4
         value = self.imm << 12
         if value & 0x80000000:
             value = value - 0x100000000
-        s.scalar.write_reg(self.rd, value)
+        value_bytes = value.to_bytes(s.params.word_bytes, byteorder='little', signed=True)
+        s.scalar.write_reg(self.rd, value_bytes)
 
 
 @dataclass
@@ -274,12 +321,16 @@ class Addiw:
         else:
             return f'addiw\t{reg_name(self.rd)},{reg_name(self.rs1)},{self.imm}'
 
-    def update_state(self, s: 'state.State'):
+    async def update_state(self, s: 'state.State'):
+        await s.scalar.wait_all_regs_ready([self.rs1], [])
         s.pc += 4
-        result = (s.scalar.read_reg(self.rs1) + self.imm) & 0xffffffff
+        rs1_bytes = s.scalar.read_reg(self.rs1)
+        rs1_val = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
+        result = (rs1_val + self.imm) & 0xffffffff
         if result & 0x80000000:
             result = result - 0x100000000
-        s.scalar.write_reg(self.rd, result)
+        result_bytes = result.to_bytes(s.params.word_bytes, byteorder='little', signed=True)
+        s.scalar.write_reg(self.rd, result_bytes)
 
 
 @dataclass
@@ -298,12 +349,16 @@ class Addw:
     def __str__(self):
         return f'addw\t{reg_name(self.rd)},{reg_name(self.rs1)},{reg_name(self.rs2)}'
 
-    def update_state(self, s: 'state.State'):
+    async def update_state(self, s: 'state.State'):
+        await s.scalar.wait_all_regs_ready([self.rs1, self.rs2], [])
         s.pc += 4
-        result = (s.scalar.read_reg(self.rs1) + s.scalar.read_reg(self.rs2)) & 0xffffffff
+        rs1_val = int.from_bytes(s.scalar.read_reg(self.rs1), byteorder='little', signed=False)
+        rs2_val = int.from_bytes(s.scalar.read_reg(self.rs2), byteorder='little', signed=False)
+        result = (rs1_val + rs2_val) & 0xffffffff
         if result & 0x80000000:
             result = result - 0x100000000
-        s.scalar.write_reg(self.rd, result)
+        result_bytes = result.to_bytes(s.params.word_bytes, byteorder='little', signed=True)
+        s.scalar.write_reg(self.rd, result_bytes)
 
 
 @dataclass
@@ -322,12 +377,16 @@ class Subw:
     def __str__(self):
         return f'subw\t{reg_name(self.rd)},{reg_name(self.rs1)},{reg_name(self.rs2)}'
 
-    def update_state(self, s: 'state.State'):
+    async def update_state(self, s: 'state.State'):
+        await s.scalar.wait_all_regs_ready([self.rs1, self.rs2], [])
         s.pc += 4
-        result = (s.scalar.read_reg(self.rs1) - s.scalar.read_reg(self.rs2)) & 0xffffffff
+        rs1_val = int.from_bytes(s.scalar.read_reg(self.rs1), byteorder='little', signed=False)
+        rs2_val = int.from_bytes(s.scalar.read_reg(self.rs2), byteorder='little', signed=False)
+        result = (rs1_val - rs2_val) & 0xffffffff
         if result & 0x80000000:
             result = result - 0x100000000
-        s.scalar.write_reg(self.rd, result)
+        result_bytes = result.to_bytes(s.params.word_bytes, byteorder='little', signed=True)
+        s.scalar.write_reg(self.rd, result_bytes)
 
 
 @dataclass
@@ -346,13 +405,16 @@ class Slliw:
     def __str__(self):
         return f'slliw\t{reg_name(self.rd)},{reg_name(self.rs1)},0x{self.shamt:x}'
 
-    def update_state(self, s: 'state.State'):
+    async def update_state(self, s: 'state.State'):
+        await s.scalar.wait_all_regs_ready([self.rs1], [])
         s.pc += 4
-        val = s.scalar.read_reg(self.rs1) & 0xffffffff
+        rs1_val = int.from_bytes(s.scalar.read_reg(self.rs1), byteorder='little', signed=False)
+        val = rs1_val & 0xffffffff
         result = (val << self.shamt) & 0xffffffff
         if result & 0x80000000:
             result = result - 0x100000000
-        s.scalar.write_reg(self.rd, result)
+        result_bytes = result.to_bytes(s.params.word_bytes, byteorder='little', signed=True)
+        s.scalar.write_reg(self.rd, result_bytes)
 
 
 @dataclass
@@ -371,13 +433,16 @@ class Srliw:
     def __str__(self):
         return f'srliw\t{reg_name(self.rd)},{reg_name(self.rs1)},0x{self.shamt:x}'
 
-    def update_state(self, s: 'state.State'):
+    async def update_state(self, s: 'state.State'):
+        await s.scalar.wait_all_regs_ready([self.rs1], [])
         s.pc += 4
-        val = s.scalar.read_reg(self.rs1) & 0xffffffff
+        rs1_val = int.from_bytes(s.scalar.read_reg(self.rs1), byteorder='little', signed=False)
+        val = rs1_val & 0xffffffff
         result = (val >> self.shamt) & 0xffffffff
         if result & 0x80000000:
             result = result - 0x100000000
-        s.scalar.write_reg(self.rd, result)
+        result_bytes = result.to_bytes(s.params.word_bytes, byteorder='little', signed=True)
+        s.scalar.write_reg(self.rd, result_bytes)
 
 
 @dataclass
@@ -396,15 +461,18 @@ class Sraiw:
     def __str__(self):
         return f'sraiw\t{reg_name(self.rd)},{reg_name(self.rs1)},0x{self.shamt:x}'
 
-    def update_state(self, s: 'state.State'):
+    async def update_state(self, s: 'state.State'):
+        await s.scalar.wait_all_regs_ready([self.rs1], [])
         s.pc += 4
-        val = s.scalar.read_reg(self.rs1) & 0xffffffff
+        rs1_val = int.from_bytes(s.scalar.read_reg(self.rs1), byteorder='little', signed=False)
+        val = rs1_val & 0xffffffff
         if val & 0x80000000:
             val = val | 0xffffffff00000000
         result = (val >> self.shamt) & 0xffffffff
         if result & 0x80000000:
             result = result - 0x100000000
-        s.scalar.write_reg(self.rd, result)
+        result_bytes = result.to_bytes(s.params.word_bytes, byteorder='little', signed=True)
+        s.scalar.write_reg(self.rd, result_bytes)
 
 
 @dataclass
@@ -423,14 +491,18 @@ class Sllw:
     def __str__(self):
         return f'sllw\t{reg_name(self.rd)},{reg_name(self.rs1)},{reg_name(self.rs2)}'
 
-    def update_state(self, s: 'state.State'):
+    async def update_state(self, s: 'state.State'):
+        await s.scalar.wait_all_regs_ready([self.rs1, self.rs2], [])
         s.pc += 4
-        val = s.scalar.read_reg(self.rs1) & 0xffffffff
-        shamt = s.scalar.read_reg(self.rs2) & 0x1f
+        rs1_val = int.from_bytes(s.scalar.read_reg(self.rs1), byteorder='little', signed=False)
+        rs2_val = int.from_bytes(s.scalar.read_reg(self.rs2), byteorder='little', signed=False)
+        val = rs1_val & 0xffffffff
+        shamt = rs2_val & 0x1f
         result = (val << shamt) & 0xffffffff
         if result & 0x80000000:
             result = result - 0x100000000
-        s.scalar.write_reg(self.rd, result)
+        result_bytes = result.to_bytes(s.params.word_bytes, byteorder='little', signed=True)
+        s.scalar.write_reg(self.rd, result_bytes)
 
 
 @dataclass
@@ -449,14 +521,18 @@ class Srlw:
     def __str__(self):
         return f'srlw\t{reg_name(self.rd)},{reg_name(self.rs1)},{reg_name(self.rs2)}'
 
-    def update_state(self, s: 'state.State'):
+    async def update_state(self, s: 'state.State'):
+        await s.scalar.wait_all_regs_ready([self.rs1, self.rs2], [])
         s.pc += 4
-        val = s.scalar.read_reg(self.rs1) & 0xffffffff
-        shamt = s.scalar.read_reg(self.rs2) & 0x1f
+        rs1_val = int.from_bytes(s.scalar.read_reg(self.rs1), byteorder='little', signed=False)
+        rs2_val = int.from_bytes(s.scalar.read_reg(self.rs2), byteorder='little', signed=False)
+        val = rs1_val & 0xffffffff
+        shamt = rs2_val & 0x1f
         result = (val >> shamt) & 0xffffffff
         if result & 0x80000000:
             result = result - 0x100000000
-        s.scalar.write_reg(self.rd, result)
+        result_bytes = result.to_bytes(s.params.word_bytes, byteorder='little', signed=True)
+        s.scalar.write_reg(self.rd, result_bytes)
 
 
 @dataclass
@@ -475,16 +551,20 @@ class Sraw:
     def __str__(self):
         return f'sraw\t{reg_name(self.rd)},{reg_name(self.rs1)},{reg_name(self.rs2)}'
 
-    def update_state(self, s: 'state.State'):
+    async def update_state(self, s: 'state.State'):
+        await s.scalar.wait_all_regs_ready([self.rs1, self.rs2], [])
         s.pc += 4
-        val = s.scalar.read_reg(self.rs1) & 0xffffffff
+        rs1_val = int.from_bytes(s.scalar.read_reg(self.rs1), byteorder='little', signed=False)
+        rs2_val = int.from_bytes(s.scalar.read_reg(self.rs2), byteorder='little', signed=False)
+        val = rs1_val & 0xffffffff
         if val & 0x80000000:
             val = val | 0xffffffff00000000
-        shamt = s.scalar.read_reg(self.rs2) & 0x1f
+        shamt = rs2_val & 0x1f
         result = (val >> shamt) & 0xffffffff
         if result & 0x80000000:
             result = result - 0x100000000
-        s.scalar.write_reg(self.rd, result)
+        result_bytes = result.to_bytes(s.params.word_bytes, byteorder='little', signed=True)
+        s.scalar.write_reg(self.rd, result_bytes)
 
 
 @dataclass
@@ -502,12 +582,15 @@ class Slti:
     def __str__(self):
         return f'slti\t{reg_name(self.rd)},{reg_name(self.rs1)},{self.imm}'
 
-    def update_state(self, s: 'state.State'):
+    async def update_state(self, s: 'state.State'):
+        await s.scalar.wait_all_regs_ready([self.rs1], [])
         s.pc += 4
-        val = s.scalar.read_reg(self.rs1)
-        if val & 0x8000000000000000:
-            val = val - 0x10000000000000000
-        s.scalar.write_reg(self.rd, 1 if val < self.imm else 0)
+        rs1_val = int.from_bytes(s.scalar.read_reg(self.rs1), byteorder='little', signed=False)
+        if rs1_val & 0x8000000000000000:
+            rs1_val = rs1_val - 0x10000000000000000
+        result = 1 if rs1_val < self.imm else 0
+        result_bytes = result.to_bytes(s.params.word_bytes, byteorder='little', signed=False)
+        s.scalar.write_reg(self.rd, result_bytes)
 
 
 @dataclass
@@ -529,12 +612,14 @@ class Sltiu:
         else:
             return f'sltiu\t{reg_name(self.rd)},{reg_name(self.rs1)},{self.imm}'
 
-    def update_state(self, s: 'state.State'):
+    async def update_state(self, s: 'state.State'):
+        await s.scalar.wait_all_regs_ready([self.rs1], [])
         s.pc += 4
-        val = s.scalar.read_reg(self.rs1)
-        # Immediate is sign-extended then compared unsigned
+        rs1_val = int.from_bytes(s.scalar.read_reg(self.rs1), byteorder='little', signed=False)
         imm_unsigned = self.imm if self.imm >= 0 else self.imm + 0x10000000000000000
-        s.scalar.write_reg(self.rd, 1 if val < imm_unsigned else 0)
+        result = 1 if rs1_val < imm_unsigned else 0
+        result_bytes = result.to_bytes(s.params.word_bytes, byteorder='little', signed=False)
+        s.scalar.write_reg(self.rd, result_bytes)
 
 
 @dataclass
@@ -555,15 +640,18 @@ class Slt:
         else:
             return f'slt\t{reg_name(self.rd)},{reg_name(self.rs1)},{reg_name(self.rs2)}'
 
-    def update_state(self, s: 'state.State'):
+    async def update_state(self, s: 'state.State'):
+        await s.scalar.wait_all_regs_ready([self.rs1, self.rs2], [])
         s.pc += 4
-        val1 = s.scalar.read_reg(self.rs1)
-        val2 = s.scalar.read_reg(self.rs2)
-        if val1 & 0x8000000000000000:
-            val1 = val1 - 0x10000000000000000
-        if val2 & 0x8000000000000000:
-            val2 = val2 - 0x10000000000000000
-        s.scalar.write_reg(self.rd, 1 if val1 < val2 else 0)
+        rs1_val = int.from_bytes(s.scalar.read_reg(self.rs1), byteorder='little', signed=False)
+        rs2_val = int.from_bytes(s.scalar.read_reg(self.rs2), byteorder='little', signed=False)
+        if rs1_val & 0x8000000000000000:
+            rs1_val = rs1_val - 0x10000000000000000
+        if rs2_val & 0x8000000000000000:
+            rs2_val = rs2_val - 0x10000000000000000
+        result = 1 if rs1_val < rs2_val else 0
+        result_bytes = result.to_bytes(s.params.word_bytes, byteorder='little', signed=False)
+        s.scalar.write_reg(self.rd, result_bytes)
 
 
 @dataclass
@@ -585,8 +673,11 @@ class Sltu:
         else:
             return f'sltu\t{reg_name(self.rd)},{reg_name(self.rs1)},{reg_name(self.rs2)}'
 
-    def update_state(self, s: 'state.State'):
+    async def update_state(self, s: 'state.State'):
+        await s.scalar.wait_all_regs_ready([self.rs1, self.rs2], [])
         s.pc += 4
-        val1 = s.scalar.read_reg(self.rs1)
-        val2 = s.scalar.read_reg(self.rs2)
-        s.scalar.write_reg(self.rd, 1 if val1 < val2 else 0)
+        rs1_val = int.from_bytes(s.scalar.read_reg(self.rs1), byteorder='little', signed=False)
+        rs2_val = int.from_bytes(s.scalar.read_reg(self.rs2), byteorder='little', signed=False)
+        result = 1 if rs1_val < rs2_val else 0
+        result_bytes = result.to_bytes(s.params.word_bytes, byteorder='little', signed=False)
+        s.scalar.write_reg(self.rd, result_bytes)

@@ -33,8 +33,11 @@ class Auipc:
     def __str__(self):
         return f'auipc\t{reg_name(self.rd)},0x{self.imm & 0xfffff:x}'
 
-    def update_state(self, s: 'state.State'):
-        s.scalar.write_reg(self.rd, s.pc + (self.imm << 12))
+    async def update_state(self, s: 'state.State'):
+        await s.scalar.wait_all_regs_ready([], [])
+        result = s.pc + (self.imm << 12)
+        result_bytes = result.to_bytes(s.params.word_bytes, byteorder='little', signed=False)
+        s.scalar.write_reg(self.rd, result_bytes)
         s.pc += 4
 
 
@@ -67,8 +70,11 @@ class Jal:
         else:
             return f'jal\t{reg_name(self.rd)},{target}'
 
-    def update_state(self, s: 'state.State'):
-        s.scalar.write_reg(self.rd, s.pc + 4)
+    async def update_state(self, s: 'state.State'):
+        await s.scalar.wait_all_regs_ready([], [])
+        result = s.pc + 4
+        result_bytes = result.to_bytes(s.params.word_bytes, byteorder='little', signed=False)
+        s.scalar.write_reg(self.rd, result_bytes)
         s.pc += self.imm
 
 
@@ -96,9 +102,10 @@ class Beq:
         else:
             return f'beq\t{reg_name(self.rs1)},{reg_name(self.rs2)},{target}'
 
-    def update_state(self, s: 'state.State'):
-        val1 = s.scalar.read_reg(self.rs1)
-        val2 = s.scalar.read_reg(self.rs2)
+    async def update_state(self, s: 'state.State'):
+        await s.scalar.wait_all_regs_ready([self.rs1, self.rs2], [])
+        val1 = int.from_bytes(s.scalar.read_reg(self.rs1), byteorder='little', signed=False)
+        val2 = int.from_bytes(s.scalar.read_reg(self.rs2), byteorder='little', signed=False)
         if val1 == val2:
             s.pc += self.imm
         else:
@@ -129,9 +136,10 @@ class Bne:
         else:
             return f'bne\t{reg_name(self.rs1)},{reg_name(self.rs2)},{target}'
 
-    def update_state(self, s: 'state.State'):
-        val1 = s.scalar.read_reg(self.rs1)
-        val2 = s.scalar.read_reg(self.rs2)
+    async def update_state(self, s: 'state.State'):
+        await s.scalar.wait_all_regs_ready([self.rs1, self.rs2], [])
+        val1 = int.from_bytes(s.scalar.read_reg(self.rs1), byteorder='little', signed=False)
+        val2 = int.from_bytes(s.scalar.read_reg(self.rs2), byteorder='little', signed=False)
         if val1 != val2:
             s.pc += self.imm
         else:
@@ -169,9 +177,10 @@ class Blt:
         else:
             return f'blt\t{reg_name(self.rs1)},{reg_name(self.rs2)},{target}'
 
-    def update_state(self, s: 'state.State'):
-        val1 = s.scalar.read_reg(self.rs1)
-        val2 = s.scalar.read_reg(self.rs2)
+    async def update_state(self, s: 'state.State'):
+        await s.scalar.wait_all_regs_ready([self.rs1, self.rs2], [])
+        val1 = int.from_bytes(s.scalar.read_reg(self.rs1), byteorder='little', signed=False)
+        val2 = int.from_bytes(s.scalar.read_reg(self.rs2), byteorder='little', signed=False)
         if val1 & 0x8000000000000000:
             val1 = val1 - 0x10000000000000000
         if val2 & 0x8000000000000000:
@@ -213,9 +222,10 @@ class Bge:
         else:
             return f'bge\t{reg_name(self.rs1)},{reg_name(self.rs2)},{target}'
 
-    def update_state(self, s: 'state.State'):
-        val1 = s.scalar.read_reg(self.rs1)
-        val2 = s.scalar.read_reg(self.rs2)
+    async def update_state(self, s: 'state.State'):
+        await s.scalar.wait_all_regs_ready([self.rs1, self.rs2], [])
+        val1 = int.from_bytes(s.scalar.read_reg(self.rs1), byteorder='little', signed=False)
+        val2 = int.from_bytes(s.scalar.read_reg(self.rs2), byteorder='little', signed=False)
         if val1 & 0x8000000000000000:
             val1 = val1 - 0x10000000000000000
         if val2 & 0x8000000000000000:
@@ -247,9 +257,10 @@ class Bltu:
         target = format_branch_target(pc, self.imm)
         return f'bltu\t{reg_name(self.rs1)},{reg_name(self.rs2)},{target}'
 
-    def update_state(self, s: 'state.State'):
-        val1 = s.scalar.read_reg(self.rs1)
-        val2 = s.scalar.read_reg(self.rs2)
+    async def update_state(self, s: 'state.State'):
+        await s.scalar.wait_all_regs_ready([self.rs1, self.rs2], [])
+        val1 = int.from_bytes(s.scalar.read_reg(self.rs1), byteorder='little', signed=False)
+        val2 = int.from_bytes(s.scalar.read_reg(self.rs2), byteorder='little', signed=False)
         if val1 < val2:
             s.pc += self.imm
         else:
@@ -277,9 +288,10 @@ class Bgeu:
         target = format_branch_target(pc, self.imm)
         return f'bgeu\t{reg_name(self.rs1)},{reg_name(self.rs2)},{target}'
 
-    def update_state(self, s: 'state.State'):
-        val1 = s.scalar.read_reg(self.rs1)
-        val2 = s.scalar.read_reg(self.rs2)
+    async def update_state(self, s: 'state.State'):
+        await s.scalar.wait_all_regs_ready([self.rs1, self.rs2], [])
+        val1 = int.from_bytes(s.scalar.read_reg(self.rs1), byteorder='little', signed=False)
+        val2 = int.from_bytes(s.scalar.read_reg(self.rs2), byteorder='little', signed=False)
         if val1 >= val2:
             s.pc += self.imm
         else:

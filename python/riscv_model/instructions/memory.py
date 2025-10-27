@@ -31,19 +31,15 @@ class Sb:
     def __str__(self):
         return f'sb\t{reg_name(self.rs2)},{self.imm}({reg_name(self.rs1)})'
 
-    def update_state(self, s: 'state.State'):
+    async def update_state(self, s):
+        await s.scalar.wait_all_regs_ready([self.rs1, self.rs2], [])
+        rs1_bytes = s.scalar.read_reg(self.rs1)
+        rs1_val = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
+        address = rs1_val + self.imm
+        rs2_bytes = s.scalar.read_reg(self.rs2)
+        logger.debug(f'Setting memory address {hex(address)} reg {self.rs1} imm {self.imm} reg contents {rs1_val}')
+        await s.set_memory(address, rs2_bytes[:1])
         s.pc += 4
-        address = s.scalar.read_reg(self.rs1) + self.imm
-        value = s.scalar.read_reg(self.rs2) & 0xff
-        logger.debug(f'Setting memory address {hex(address)} reg {self.rs1} imm {self.imm} reg contents {s.scalar.read_reg(self.rs1)}')
-        s.set_memory(address, value.to_bytes(1, byteorder='little'))
-
-    async def update_lamlet(self, s):
-        s.pc += 4
-        address = s.scalar.read_reg(self.rs1) + self.imm
-        value = s.scalar.read_reg(self.rs2) & 0xff
-        logger.debug(f'Setting memory address {hex(address)} reg {self.rs1} imm {self.imm} reg contents {s.scalar.read_reg(self.rs1)}')
-        await s.set_memory(address, value.to_bytes(1, byteorder='little'))
 
 
 @dataclass
@@ -61,17 +57,14 @@ class Sh:
     def __str__(self):
         return f'sh\t{reg_name(self.rs2)},{self.imm}({reg_name(self.rs1)})'
 
-    def update_state(self, s: 'state.State'):
+    async def update_state(self, s):
+        await s.scalar.wait_all_regs_ready([self.rs1, self.rs2], [])
+        rs1_bytes = s.scalar.read_reg(self.rs1)
+        rs1_val = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
+        address = rs1_val + self.imm
+        rs2_bytes = s.scalar.read_reg(self.rs2)
+        await s.set_memory(address, rs2_bytes[:2])
         s.pc += 4
-        address = s.scalar.read_reg(self.rs1) + self.imm
-        value = s.scalar.read_reg(self.rs2) & 0xffff
-        s.set_memory(address, value.to_bytes(2, byteorder='little'))
-
-    async def update_lamlet(self, s):
-        s.pc += 4
-        address = s.scalar.read_reg(self.rs1) + self.imm
-        value = s.scalar.read_reg(self.rs2) & 0xffff
-        await s.set_memory(address, value.to_bytes(2, byteorder='little'))
 
 
 @dataclass
@@ -89,17 +82,14 @@ class Sw:
     def __str__(self):
         return f'sw\t{reg_name(self.rs2)},{self.imm}({reg_name(self.rs1)})'
 
-    def update_state(self, s: 'state.State'):
+    async def update_state(self, s):
+        await s.scalar.wait_all_regs_ready([self.rs1, self.rs2], [])
+        rs1_bytes = s.scalar.read_reg(self.rs1)
+        rs1_val = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
+        address = rs1_val + self.imm
+        rs2_bytes = s.scalar.read_reg(self.rs2)
+        await s.set_memory(address, rs2_bytes[:4])
         s.pc += 4
-        address = s.scalar.read_reg(self.rs1) + self.imm
-        value = s.scalar.read_reg(self.rs2) & 0xffffffff
-        s.set_memory(address, value.to_bytes(4, byteorder='little'))
-
-    async def update_lamlet(self, s: 'state.State'):
-        s.pc += 4
-        address = s.scalar.read_reg(self.rs1) + self.imm
-        value = s.scalar.read_reg(self.rs2) & 0xffffffff
-        await s.set_memory(address, value.to_bytes(4, byteorder='little'))
 
 @dataclass
 class Sd:
@@ -116,17 +106,15 @@ class Sd:
     def __str__(self):
         return f'sd\t{reg_name(self.rs2)},{self.imm}({reg_name(self.rs1)})'
 
-    def update_state(self, s: 'state.State'):
+    async def update_state(self, s):
+        await s.scalar.wait_all_regs_ready([self.rs1, self.rs2], [])
+        rs1_bytes = s.scalar.read_reg(self.rs1)
+        rs1_val = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
+        address = rs1_val + self.imm
+        rs2_bytes = s.scalar.read_reg(self.rs2)
+        logger.debug(f'About to set memory {address} to {rs2_bytes[:8]}')
+        await s.set_memory(address, rs2_bytes[:8])
         s.pc += 4
-        address = s.scalar.read_reg(self.rs1) + self.imm
-        value = s.scalar.read_reg(self.rs2)
-        s.set_memory(address, value.to_bytes(8, byteorder='little'))
-
-    async def update_lamlet(self, s: 'state.State'):
-        s.pc += 4
-        address = s.scalar.read_reg(self.rs1) + self.imm
-        value = s.scalar.read_reg(self.rs2)
-        await s.set_memory(address, value.to_bytes(8, byteorder='little'))
 
 @dataclass
 class Lb:
@@ -143,23 +131,23 @@ class Lb:
     def __str__(self):
         return f'lb\t{reg_name(self.rd)},{self.imm}({reg_name(self.rs1)})'
 
-    def update_state(self, s: 'state.State'):
-        s.pc += 4
-        address = s.scalar.read_reg(self.rs1) + self.imm
-        data = s.get_memory(address, 1)
-        value = int.from_bytes(data, byteorder='little')
-        if value & 0x80:
-            value = value - 0x100
-        s.scalar.write_reg(self.rd, value)
+    async def update_resolve(self, s, result_future, data_future):
+        await data_future
+        data = data_future.result()
+        value = int.from_bytes(data, byteorder='little', signed=True)
+        result_bytes = value.to_bytes(s.params.word_bytes, byteorder='little', signed=True)
+        result_future.set_result(result_bytes)
 
-    async def update_lamlet(self, s: 'state.State'):
+    async def update_state(self, s):
+        await s.scalar.wait_all_regs_ready([self.rs1], [])
+        rs1_bytes = s.scalar.read_reg(self.rs1)
+        rs1_val = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
+        address = rs1_val + self.imm
+        data_future = await s.get_memory(address, 1)
+        result_future = s.clock.create_future()
+        s.clock.create_task(self.update_resolve(s, result_future, data_future))
+        s.scalar.write_reg_future(self.rd, result_future)
         s.pc += 4
-        address = s.scalar.read_reg(self.rs1) + self.imm
-        data = await s.get_memory(address, 1)
-        value = int.from_bytes(data, byteorder='little')
-        if value & 0x80:
-            value = value - 0x100
-        s.scalar.write_reg(self.rd, value)
 
 
 @dataclass
@@ -177,19 +165,23 @@ class Lbu:
     def __str__(self):
         return f'lbu\t{reg_name(self.rd)},{self.imm}({reg_name(self.rs1)})'
 
-    def update_state(self, s: 'state.State'):
-        s.pc += 4
-        address = s.scalar.read_reg(self.rs1) + self.imm
-        data = s.get_memory(address, 1)
-        value = int.from_bytes(data, byteorder='little')
-        s.scalar.write_reg(self.rd, value)
+    async def update_resolve(self, s, result_future, data_future):
+        await data_future
+        data = data_future.result()
+        value = int.from_bytes(data, byteorder='little', signed=False)
+        result_bytes = value.to_bytes(s.params.word_bytes, byteorder='little', signed=False)
+        result_future.set_result(result_bytes)
 
-    async def update_lamlet(self, s: 'state.State'):
+    async def update_state(self, s):
+        await s.scalar.wait_all_regs_ready([self.rs1], [])
+        rs1_bytes = s.scalar.read_reg(self.rs1)
+        rs1_val = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
+        address = rs1_val + self.imm
+        data_future = await s.get_memory(address, 1)
+        result_future = s.clock.create_future()
+        s.clock.create_task(self.update_resolve(s, result_future, data_future))
+        s.scalar.write_reg_future(self.rd, result_future)
         s.pc += 4
-        address = s.scalar.read_reg(self.rs1) + self.imm
-        data = await s.get_memory(address, 1)
-        value = int.from_bytes(data, byteorder='little')
-        s.scalar.write_reg(self.rd, value)
 
 @dataclass
 class Lh:
@@ -206,23 +198,25 @@ class Lh:
     def __str__(self):
         return f'lh\t{reg_name(self.rd)},{self.imm}({reg_name(self.rs1)})'
 
-    def update_state(self, s: 'state.State'):
-        s.pc += 4
-        address = s.scalar.read_reg(self.rs1) + self.imm
-        data = s.get_memory(address, 2)
-        value = int.from_bytes(data, byteorder='little')
+    async def update_resolve(self, s, result_future, data_future):
+        await data_future
+        data = data_future.result()
+        value = int.from_bytes(data, byteorder='little', signed=False)
         if value & 0x8000:
-            value = value - 0x10000
-        s.scalar.write_reg(self.rd, value)
+            value = value | 0xffffffffffff0000
+        result_bytes = value.to_bytes(s.params.word_bytes, byteorder='little', signed=False)
+        result_future.set_result(result_bytes)
 
-    async def update_lamlet(self, s: 'state.State'):
+    async def update_state(self, s):
+        await s.scalar.wait_all_regs_ready([self.rs1], [])
+        rs1_bytes = s.scalar.read_reg(self.rs1)
+        rs1_val = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
+        address = rs1_val + self.imm
+        data_future = await s.get_memory(address, 2)
+        result_future = s.clock.create_future()
+        s.clock.create_task(self.update_resolve(s, result_future, data_future))
+        s.scalar.write_reg_future(self.rd, result_future)
         s.pc += 4
-        address = s.scalar.read_reg(self.rs1) + self.imm
-        data = await s.get_memory(address, 2)
-        value = int.from_bytes(data, byteorder='little')
-        if value & 0x8000:
-            value = value - 0x10000
-        s.scalar.write_reg(self.rd, value)
 
 
 @dataclass
@@ -240,19 +234,23 @@ class Lhu:
     def __str__(self):
         return f'lhu\t{reg_name(self.rd)},{self.imm}({reg_name(self.rs1)})'
 
-    def update_state(self, s: 'state.State'):
-        s.pc += 4
-        address = s.scalar.read_reg(self.rs1) + self.imm
-        data = s.get_memory(address, 2)
-        value = int.from_bytes(data, byteorder='little')
-        s.scalar.write_reg(self.rd, value)
+    async def update_resolve(self, s, result_future, data_future):
+        await data_future
+        data = data_future.result()
+        value = int.from_bytes(data, byteorder='little', signed=False)
+        result_bytes = value.to_bytes(s.params.word_bytes, byteorder='little', signed=False)
+        result_future.set_result(result_bytes)
 
-    async def update_lamlet(self, s: 'state.State'):
+    async def update_state(self, s):
+        await s.scalar.wait_all_regs_ready([self.rs1], [])
+        rs1_bytes = s.scalar.read_reg(self.rs1)
+        rs1_val = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
+        address = rs1_val + self.imm
+        data_future = await s.get_memory(address, 2)
+        result_future = s.clock.create_future()
+        s.clock.create_task(self.update_resolve(s, result_future, data_future))
+        s.scalar.write_reg_future(self.rd, result_future)
         s.pc += 4
-        address = s.scalar.read_reg(self.rs1) + self.imm
-        data = await s.get_memory(address, 2)
-        value = int.from_bytes(data, byteorder='little')
-        s.scalar.write_reg(self.rd, value)
 
 
 @dataclass
@@ -270,23 +268,25 @@ class Lw:
     def __str__(self):
         return f'lw\t{reg_name(self.rd)},{self.imm}({reg_name(self.rs1)})'
 
-    def update_state(self, s: 'state.State'):
-        s.pc += 4
-        address = s.scalar.read_reg(self.rs1) + self.imm
-        data = s.get_memory(address, 4)
-        value = int.from_bytes(data, byteorder='little')
+    async def update_resolve(self, s, result_future, data_future):
+        await data_future
+        data = data_future.result()
+        value = int.from_bytes(data, byteorder='little', signed=False)
         if value & 0x80000000:
-            value = value - 0x100000000
-        s.scalar.write_reg(self.rd, value)
+            value = value | 0xffffffff00000000
+        result_bytes = value.to_bytes(s.params.word_bytes, byteorder='little', signed=False)
+        result_future.set_result(result_bytes)
 
-    async def update_lamlet(self, s: 'state.State'):
+    async def update_state(self, s):
+        await s.scalar.wait_all_regs_ready([self.rs1], [])
+        rs1_bytes = s.scalar.read_reg(self.rs1)
+        rs1_val = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
+        address = rs1_val + self.imm
+        data_future = await s.get_memory(address, 4)
+        result_future = s.clock.create_future()
+        s.clock.create_task(self.update_resolve(s, result_future, data_future))
+        s.scalar.write_reg_future(self.rd, result_future)
         s.pc += 4
-        address = s.scalar.read_reg(self.rs1) + self.imm
-        data = await s.get_memory(address, 4)
-        value = int.from_bytes(data, byteorder='little')
-        if value & 0x80000000:
-            value = value - 0x100000000
-        s.scalar.write_reg(self.rd, value)
 
 
 @dataclass
@@ -304,19 +304,23 @@ class Lwu:
     def __str__(self):
         return f'lwu\t{reg_name(self.rd)},{self.imm}({reg_name(self.rs1)})'
 
-    def update_state(self, s: 'state.State'):
-        s.pc += 4
-        address = s.scalar.read_reg(self.rs1) + self.imm
-        data = s.get_memory(address, 4)
-        value = int.from_bytes(data, byteorder='little')
-        s.scalar.write_reg(self.rd, value)
+    async def update_resolve(self, s, result_future, data_future):
+        await data_future
+        data = data_future.result()
+        value = int.from_bytes(data, byteorder='little', signed=False)
+        result_bytes = value.to_bytes(s.params.word_bytes, byteorder='little', signed=False)
+        result_future.set_result(result_bytes)
 
-    async def update_lamlet(self, s: 'state.State'):
+    async def update_state(self, s):
+        await s.scalar.wait_all_regs_ready([self.rs1], [])
+        rs1_bytes = s.scalar.read_reg(self.rs1)
+        rs1_val = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
+        address = rs1_val + self.imm
+        data_future = await s.get_memory(address, 4)
+        result_future = s.clock.create_future()
+        s.clock.create_task(self.update_resolve(s, result_future, data_future))
+        s.scalar.write_reg_future(self.rd, result_future)
         s.pc += 4
-        address = s.scalar.read_reg(self.rs1) + self.imm
-        data = await s.get_memory(address, 4)
-        value = int.from_bytes(data, byteorder='little')
-        s.scalar.write_reg(self.rd, value)
 
 
 @dataclass
@@ -334,16 +338,11 @@ class Ld:
     def __str__(self):
         return f'ld\t{reg_name(self.rd)},{self.imm}({reg_name(self.rs1)})'
 
-    def update_state(self, s: 'state.State'):
+    async def update_state(self, s):
+        await s.scalar.wait_all_regs_ready([self.rs1], [])
+        rs1_bytes = s.scalar.read_reg(self.rs1)
+        rs1_val = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
+        address = rs1_val + self.imm
+        data_future = await s.get_memory(address, 8)
+        s.scalar.write_reg_future(self.rd, data_future)
         s.pc += 4
-        address = s.scalar.read_reg(self.rs1) + self.imm
-        data = s.get_memory(address, 8)
-        value = int.from_bytes(data, byteorder='little')
-        s.scalar.write_reg(self.rd, value)
-
-    async def update_lamlet(self, s: 'state.State'):
-        s.pc += 4
-        address = s.scalar.read_reg(self.rs1) + self.imm
-        data = await s.get_memory(address, 8)
-        value = int.from_bytes(data, byteorder='little')
-        s.scalar.write_reg(self.rd, value)
