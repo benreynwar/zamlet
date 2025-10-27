@@ -3,6 +3,12 @@ from dataclasses import dataclass
 
 @dataclass
 class LamletParams:
+    #k_cols: int = 2
+    #k_rows: int = 2
+
+    #j_cols: int = 2
+    #j_rows: int = 2
+
     k_cols: int = 2
     k_rows: int = 1
 

@@ -59,3 +59,19 @@ else
     echo "Build failed"
     exit 1
 fi
+
+# Build 64x64 version (16384 bytes)
+echo ""
+echo "Building vec-sgemv-64x64 (64x64 = 16384 bytes)..."
+SGEMV_SRCS="vec-sgemv-64x64_main.c vec-sgemv.S"
+OUTPUT="vec-sgemv-64x64.riscv"
+${RISCV_GCC} ${INCLUDES} ${RISCV_GCC_OPTS} -o ${OUTPUT} \
+    ${SGEMV_SRCS} ${COMMON_SRCS} ${RISCV_LINK_OPTS}
+
+if [ $? -eq 0 ]; then
+    echo "Build successful: ${OUTPUT}"
+    ls -lh ${OUTPUT}
+else
+    echo "Build failed"
+    exit 1
+fi

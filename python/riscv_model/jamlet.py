@@ -127,7 +127,7 @@ class Jamlet:
         as_int = []
         for word in packet[2:]:
             as_int += [int(x) for x in word]
-        logger.warning(f'{self.clock.cycle}: ({self.x}, {self.y}): write_line: {hex(k_maddr.addr)} Sent data {as_int}')
+        logger.debug(f'{self.clock.cycle}: ({self.x}, {self.y}): write_line: {hex(k_maddr.addr)} Sent data {as_int}')
         send_queue = self.send_queues[header.message_type]
         while not send_queue.can_append():
             await self.clock.next_cycle
@@ -137,7 +137,7 @@ class Jamlet:
         """
         address: A word address in the local sram.
         """
-        #logger.warning(f'{self.clock.cycle}: ({self.x}, {self.y}): read_line {hex(k_maddr.addr)}')
+        #logger.debug(f'{self.clock.cycle}: ({self.x}, {self.y}): read_line {hex(k_maddr.addr)}')
         n_words = (self.params.cache_line_bytes // self.params.j_in_k //
                    self.params.word_bytes * n_cache_lines)
         address_in_sram = j_saddr.addr
@@ -181,7 +181,7 @@ class Jamlet:
         as_int = []
         for word in data:
             as_int += [int(x) for x in word]
-        logger.warning(f'{self.clock.cycle}: ({self.x}, {self.y}): {hex(m_address)} read_line: Wrote data {as_int}')
+        logger.debug(f'{self.clock.cycle}: ({self.x}, {self.y}): {hex(m_address)} read_line: Wrote data {as_int}')
         # Send a reply to the scalar proc
         response_header = Header(
             message_type=MessageType.READ_LINE_NOTIFY,

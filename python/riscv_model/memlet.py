@@ -82,12 +82,20 @@ def m_router_coords(params: LamletParams, m_index: int, router_index: int) -> (i
     m_cols, n_routers_in_memlet = get_cols_routers(params)
     if m_index % params.k_cols < params.k_cols//2:
         # We're on the west side
-        m_y = m_index // m_cols * n_routers_in_memlet + router_index
-        m_x = -m_cols + (m_index % m_cols)
+        # m_side_index should number them 
+        # 0 1
+        # 2 3 ...
+        m_side_index = m_index//params.k_cols*(params.k_cols//2) + m_index % (params.k_cols//2)
+        m_x = -m_cols + (m_side_index % m_cols)
     else:
-        rev_index = params.k_cols - 1  - m_index
-        m_y = rev_index // m_cols * n_routers_in_memlet + router_index
-        m_x = params.j_cols * params.k_cols + m_cols - 1 - (m_index % m_cols)
+        # We're on the east side
+        # m_side_index should number them
+        # 1 0
+        # 3 2 ...
+        m_side_index = m_index//params.k_cols*(params.k_cols//2) + params.k_cols//2 - 1 - (m_index % params.k_cols//2)
+        m_x = params.j_cols * params.k_cols + m_cols - 1 - (m_side_index % m_cols)
+    m_y = m_side_index // m_cols * n_routers_in_memlet + router_index
+    assert 0 <= m_y < params.j_rows * params.k_rows
     return (m_x, m_y)
 
 
@@ -101,6 +109,7 @@ def jamlet_coords_to_m_router_coords(params: LamletParams, j_x: int, j_y: int) -
     router_index = j_in_k_to_m_router(params, j_in_k_index)
     m_index = k_index
     r_x, r_y = m_router_coords(params, m_index, router_index)
+    assert 0 <= r_y < params.j_rows * params.k_rows
     return (r_x, r_y)
 
 

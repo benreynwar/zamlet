@@ -433,7 +433,7 @@ class Lamlet:
                 for y in range(0, n_rows):
                     router = routers[(x, y)]
                     for conn in router._input_connections.values():
-                        if conn.age > 50:
+                        if conn.age > 500:
                             import pdb
                             pdb.set_trace()
                     north = (x, y-1)
