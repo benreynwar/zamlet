@@ -23,6 +23,10 @@ class LamletParams:
     router_input_buffer_length: int = 2
     instruction_queue_length: int = 16
 
+    instruction_buffer_length: int = 16
+    instructions_in_packet: int = 4
+
+
     def __post_init__(self):
         # Page must be bigger than a vector
         assert self.page_bytes > 0

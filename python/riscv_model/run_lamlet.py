@@ -22,9 +22,9 @@ async def run(clock: Clock):
     #filename = 'tests/readwritebyte/should_fail.riscv'
     #filename = 'tests/readwritebyte/write_then_read_many_bytes.riscv'
     #filename = 'tests/readwritebyte/simple_vpu_test.riscv'
-    filename = 'tests/sgemv/vec-sgemv-large.riscv'
+    #filename = 'tests/sgemv/vec-sgemv-large.riscv'
     #filename = 'tests/sgemv/vec-sgemv.riscv'
-    #filename = 'tests/vecadd/vec-add-evict.riscv'
+    filename = 'tests/vecadd/vec-add-evict.riscv'
     #filename = 'tests/vecadd/vec-add.riscv'
     p_info = program_info.get_program_info(filename)
 
@@ -33,6 +33,7 @@ async def run(clock: Clock):
     s = lamlet.Lamlet(clock, params, 0, 0)
     clock.create_task(update(clock, s))
     clock.create_task(s.run())
+    await clock.next_cycle
 
     s.set_pc(p_info['pc'])
 

@@ -37,7 +37,7 @@ class Jamlet:
         self._instruction_buffer = Queue(2)
 
         self.send_queues = {
-            MessageType.READ_BYTE_FROM_SRAM_RESP: Queue(2),
+            MessageType.READ_BYTES_FROM_SRAM_RESP: Queue(2),
             MessageType.WRITE_LINE: Queue(2),
             MessageType.READ_LINE: Queue(2),
             MessageType.READ_LINE_NOTIFY: Queue(2),
@@ -73,11 +73,13 @@ class Jamlet:
     def has_instruction(self):
         bool(self._instruction_buffer)
 
-    async def read_byte_from_sram(self, instr: 'ReadByteFromSRAM'):
+    async def read_bytes_from_sram(self, instr: 'ReadBytesFromSRAM', size: int):
         logger.debug(f'jamlet ({self.x}, {self.y}) reading byte from sram')
-        value = self.sram[instr.j_saddr.addr]
+        # The access must be all inside a word
+        assert instr.j_saddr.addr//self.params.word_bytes == (instr.j_saddr.addr+size-1)//self.params.word_bytes
+        value = bytes(self.sram[instr.j_saddr.addr: instr.j_saddr.addr+size])
         header = Header(
-            message_type=MessageType.READ_BYTE_FROM_SRAM_RESP,
+            message_type=MessageType.READ_BYTES_FROM_SRAM_RESP,
             send_type=SendType.SINGLE,
             value=value,
             target_x=instr.target_x,

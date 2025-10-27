@@ -224,7 +224,7 @@ class VaddVx:
             mask_reg=mask_reg,
             n_vlines=n_vlines,
             )
-        await s.send_instruction(kinstr)
+        await s.add_to_instruction_buffer(kinstr)
         s.pc += 4
 
 
@@ -246,7 +246,9 @@ class VfmaccVf:
         return f'vfmacc.vf\tv{self.vd},{freg_name(self.rs1)},v{self.vs2}{vm_str}'
 
     async def update_state(self, s: 'state.State'):
+        logger.warning(f'{s.clock.cycle}: VfmaccVf waiting for regs')
         await s.scalar.wait_all_regs_ready([], [self.rs1])
+        logger.warning(f'{s.clock.cycle}: VfmaccVf got regs')
         scalar_bytes = s.scalar.read_freg(self.rs1)
         scalar_bits = int.from_bytes(scalar_bytes[:4], byteorder='little', signed=False)
 
@@ -272,5 +274,5 @@ class VfmaccVf:
             mask_reg=mask_reg,
             n_vlines=n_vlines,
             )
-        await s.send_instruction(kinstr)
+        await s.add_to_instruction_buffer(kinstr)
         s.pc += 4

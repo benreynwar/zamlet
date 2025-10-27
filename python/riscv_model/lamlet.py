@@ -28,6 +28,7 @@ from memlet import Memlet
 from utils import combine_futures, bytes_to_float
 from runner import Clock, Future
 import kinstructions
+import utils
 
 
 logger = logging.getLogger(__name__)
@@ -148,7 +149,7 @@ class ScalarState:
     def set_memory(self, address: int, b):
         self.memory[address] = b
 
-    async def get_memory(self, address: int):
+    async def get_memory(self, address: int, size: int=1):
         """
         Returns a future that will resolve with the memory value.
         (currently resolves immediately)
@@ -156,7 +157,10 @@ class ScalarState:
         if address not in self.memory:
             raise Exception(f'Address {hex(address)} is not initialized')
         future = self.clock.create_future()
-        future.set_result(self.memory[address])
+        bs = []
+        for index in range(size):
+            bs.append(self.memory[address+index])
+        future.set_result(bytes(bs))
         return future
 
     def read_csr(self, csr_addr):
@@ -194,6 +198,8 @@ class Lamlet:
         # Send instructions from left/top
         self.instr_x = self.left_x
         self.instr_y = self.top_y - 1
+
+        self.instruction_buffer = utils.Queue(params.instruction_buffer_length)
 
         # Need this for how we arrange memlets
         assert self.params.k_cols % 2 == 0
@@ -288,10 +294,11 @@ class Lamlet:
             )
         return j_saddr.k_index, kinstr
 
-    def read_byte_instruction(self, address: GlobalAddress):
+    def read_bytes_instruction(self, address: GlobalAddress, size: int):
         j_saddr = address.to_j_saddr(self.params, self.tlb, self.cache_table)
-        kinstr = kinstructions.ReadByteFromSRAM(
+        kinstr = kinstructions.ReadBytesFromSRAM(
             j_saddr=j_saddr,
+            size=size,
             target_x=self.instr_x,
             target_y=self.instr_y,
             )
@@ -299,28 +306,32 @@ class Lamlet:
 
     async def send_write_byte_instruction(self, address: GlobalAddress, value: int):
         k_index, instruction = self.write_byte_instruction(address, value)
-        await self.send_instruction(instruction, k_index)
+        await self.add_to_instruction_buffer(instruction, k_index)
         vpu_address = self.to_vpu_addr(address)
         slot_state = self.cache_table.get_state(vpu_address)
         slot_state.state = CacheState.M
 
-    async def read_byte_resolve(self, future, instruction, k_index):
+    async def read_bytes_resolve(self, future, instruction, k_index):
         value = await self.get_instruction_response(instruction, k_index)
         future.set_result(value)
 
-    async def read_byte(self, address: GlobalAddress):
+    async def read_bytes(self, address: GlobalAddress, size=1):
         """
         This blocks until the cache is ready an the instruction is received.
         It returns a future that resolves when the value is returned.
         """
-        logger.debug(f'Lamlet.read_byte {hex(address.addr)}')
+        logger.debug(f'Lamlet.read_bytes {hex(address.addr)}')
+        # It must all be on one cache line
+        end_address = address.offset_bytes(size-1)
         cache_line_address = self.get_cache_line_address(address)
+        final_cache_line_address = self.get_cache_line_address(end_address)
+        assert cache_line_address == final_cache_line_address
         await self.require_cache(cache_line_address)
-        k_index, instruction = self.read_byte_instruction(address)
-        await self.send_instruction(instruction, k_index)
+        k_index, instruction = self.read_bytes_instruction(address, size)
+        await self.add_to_instruction_buffer(instruction, k_index)
         assert k_index == instruction.j_saddr.k_index
         future = self.clock.create_future()
-        self.clock.create_task(self.read_byte_resolve(future, instruction, k_index))
+        self.clock.create_task(self.read_bytes_resolve(future, instruction, k_index))
         return future
 
     def get_cache_line_address(self, address: GlobalAddress):
@@ -336,11 +347,11 @@ class Lamlet:
         await self.send_write_byte_instruction(address, value)
 
     async def get_instruction_response(self, instruction, k_index=None):
-        assert isinstance(instruction, kinstructions.ReadByteFromSRAM)
+        assert isinstance(instruction, kinstructions.ReadBytesFromSRAM)
         assert k_index is not None
         assert k_index == instruction.j_saddr.k_index
         future = self.clock.create_future()
-        tag = (MessageType.READ_BYTE_FROM_SRAM_RESP, k_index, instruction.j_saddr)
+        tag = (MessageType.READ_BYTES_FROM_SRAM_RESP, k_index, instruction.j_saddr)
         future = self.create_wait_future(tag)
         await future
         response = future.result()
@@ -359,7 +370,7 @@ class Lamlet:
         header = packet[0]
         assert header.length == len(packet)
         # Currently we only expect messages of type
-        if header.message_type == MessageType.READ_BYTE_FROM_SRAM_RESP:
+        if header.message_type == MessageType.READ_BYTES_FROM_SRAM_RESP:
             # A jamlet is replying with the content of an sram read.
             assert header.value is not None
             k_index = self.get_header_source_k_index(header)
@@ -479,8 +490,39 @@ class Lamlet:
                     header = None
                     packet = []
 
-    async def send_instruction(self, instruction, k_index=None):
-        await self.send_instructions([instruction], k_index)
+    async def add_to_instruction_buffer(self, instruction, k_index=None):
+        logger.debug(f'{self.clock.cycle}: Adding {instruction} to buffer')
+        while not self.instruction_buffer.can_append():
+            await self.clock.next_cycle
+        self.instruction_buffer.append((instruction, k_index))
+
+    async def monitor_instruction_buffer(self):
+        inactive_count = 0
+        old_length = 0
+        while True:
+            logger.debug(f'{self.clock.cycle}: {len(self.instruction_buffer)} instrs in the buffer')
+            if self.instruction_buffer:
+                k_indices = [x[1] for x in self.instruction_buffer.queue]
+                k_indices_same = all(k_indices[0] == x for x in k_indices)
+                if len(self.instruction_buffer) >= self.params.instructions_in_packet or (not k_indices_same) or inactive_count > 2:
+                    instructions = []
+                    while self.instruction_buffer:
+                        if self.instruction_buffer.head()[1] == k_indices[0]:
+                            instructions.append(self.instruction_buffer.queue.popleft()[0])
+                        else:
+                            break
+                    assert instructions
+                    await self.send_instructions(instructions, k_indices[0])
+                    old_length = 0
+                    inactive_count = 0
+                else:
+                    new_length = len(self.instruction_buffer)
+                    if new_length == old_length:
+                        inactive_count += 1
+                    else:
+                        inactive_count = 0
+                    old_length = new_length
+            await self.clock.next_cycle
 
     async def send_instructions(self, instructions, k_index=None):
         '''
@@ -488,6 +530,7 @@ class Lamlet:
         If k_index=None then we broadcast to all the kamlets in this
         lamlet.
         '''
+        logger.debug(f'{self.clock.cycle}: Sending instructions {instructions}')
         if k_index is None:
             send_type = SendType.BROADCAST
             k_index = self.params.k_in_l-1
@@ -534,7 +577,10 @@ class Lamlet:
             # If this cache line is fresh then we need to set it to all 0.
             # If the cache line is not loaded then we need to load it.
             if byt_address.is_vpu(self.params, self.tlb):
+                logger.debug(f'{self.clock.cycle}: Writing  byte {hex(byt_address.addr)}')
                 await self.write_byte(byt_address, b)
+                # TODO: Be a bit more careful about whether we need to add this.
+                await self.clock.next_cycle
             else:
                 scalar_address = self.to_scalar_addr(byt_address)
                 self.scalar.set_memory(scalar_address, b)
@@ -549,26 +595,39 @@ class Lamlet:
         logger.debug(f'Read memory address {address}, result is {int.from_bytes(bytes(bs), byteorder="little", signed=True)}')
         future.set_result(bytes(bs))
 
-    async def get_memory(self, address: int, size):
+    async def get_memory(self, address: int, size: int):
         """
         This blocks but only on things that should block the frontend.
         It returns a future that resolves when the value has been
         returned.
         """
         byte_futures = []
-        for index in range(size):
-            byte_addr = GlobalAddress(bit_addr=(address+index)*8)
-            is_vpu = byte_addr.is_vpu(self.params, self.tlb)
-            if is_vpu:
-                read_future = await self.read_byte(byte_addr)
-            else:
-                local_address = byte_addr.to_scalar_addr(self.params, self.tlb)
-                read_future = await self.scalar.get_memory(local_address)
-            byte_futures.append(read_future)
-        future = self.clock.create_future()
-        logger.debug(f'Trying to read memory {address} size {size}')
-        self.clock.create_task(self.get_memory_resolve(future, byte_futures, address))
-        return future
+        #for index in range(size):
+        #    byte_addr = GlobalAddress(bit_addr=(address+index)*8)
+        #    is_vpu = byte_addr.is_vpu(self.params, self.tlb)
+        #    if is_vpu:
+        #        logger.warning(f'{self.clock.cycle}: Try to read a byte from vpu')
+        #        read_future = await self.read_bytes(byte_addr, size)
+        #        logger.warning(f'{self.clock.cycle}: read the byte')
+        #    else:
+        #        local_address = byte_addr.to_scalar_addr(self.params, self.tlb)
+        #        read_future = await self.scalar.get_memory(local_address, size)
+        #    byte_futures.append(read_future)
+        # Check that the start and end are in the same word.
+        start_addr = GlobalAddress(bit_addr=address*8)
+        is_vpu = start_addr.is_vpu(self.params, self.tlb)
+        if is_vpu:
+            end_addr = start_addr.offset_bytes(size-1)
+            assert start_addr.addr//self.params.word_bytes == end_addr.addr//self.params.word_bytes
+            read_future = await self.read_bytes(start_addr, size)
+        else:
+            local_address = start_addr.to_scalar_addr(self.params, self.tlb)
+            read_future = await self.scalar.get_memory(local_address, size)
+        #future = self.clock.create_future()
+        #logger.debug(f'Trying to read memory {address} size {size}')
+        #self.clock.create_task(self.get_memory_resolve(future, byte_futures, address))
+        #return future
+        return read_future
 
     async def get_memory_blocking(self, address: int, size):
         future = await self.get_memory(address, size)
@@ -697,7 +756,7 @@ class Lamlet:
             # can be waited on.
             combined_future = self.create_wait_future(write_line_label)
             self.clock.create_task(combine_futures(combined_future, k_futures))
-            await self.send_instruction(kinstr)
+            await self.add_to_instruction_buffer(kinstr)
 
     async def assign_cache_slot(self, address: GlobalAddress):
         k_maddr = self.to_k_maddr(address)
@@ -740,11 +799,11 @@ class Lamlet:
         self.clock.create_task(combine_futures(future, j_futures))
         slot_state.state = CacheState.S
         logger.debug('Norp norp')
-        await self.send_instruction(kinstr)
+        await self.add_to_instruction_buffer(kinstr)
         await future
 
     async def require_cache(self, address: GlobalAddress):
-        logger.debug(f'Requiring cache for {address.addr}')
+        logger.debug(f'{self.clock.cycle}: Requiring cache for {hex(address.addr)}')
         is_fresh = self.tlb.get_is_fresh(address)
         if is_fresh:
             self.tlb.set_not_fresh(address)
@@ -769,7 +828,8 @@ class Lamlet:
                     j_saddr=j_saddr,
                     n_cache_lines=1,
                     )
-                await self.send_instruction(kinstr)
+                await self.add_to_instruction_buffer(kinstr)
+                await self.clock.next_cycle
                 slot_state.state = CacheState.M
             else:
                 # If the cache is being written then we need to
@@ -840,7 +900,7 @@ class Lamlet:
                 j_saddr=j_saddr,
                 n_vlines=n_vlines,
                 )
-            await self.send_instruction(kinstr)
+            await self.add_to_instruction_buffer(kinstr)
 
     async def vstore(self, vs3: int, addr: int, element_width: SizeBits,
                      n_elements: int, mask_reg: int):
@@ -875,7 +935,7 @@ class Lamlet:
                 j_saddr=j_saddr,
                 n_vlines=n_vlines,
                 )
-            await self.send_instruction(kinstr_store)
+            await self.add_to_instruction_buffer(kinstr_store)
             # Mark cache as modified (dirty)
             vpu_address = self.to_vpu_addr(vline_addr)
             slot_state = self.cache_table.get_state(vpu_address)
@@ -888,6 +948,7 @@ class Lamlet:
         for memlet in self.memlets:
             memlet.update()
         self.scalar.update()
+        self.instruction_buffer.update()
 
     async def run(self):
         for kamlet in self.kamlets:
@@ -896,6 +957,7 @@ class Lamlet:
             self.clock.create_task(memlet.run())
         self.clock.create_task(self.router_connections())
         self.clock.create_task(self.monitor_replys())
+        self.clock.create_task(self.monitor_instruction_buffer())
 
     async def run_instructions(self, disasm_trace=None):
         logger.warning('run_instructions')

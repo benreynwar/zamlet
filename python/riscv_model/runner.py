@@ -190,15 +190,15 @@ class Clock:
     async def clock_driver(self):
         while self.running:
             await self.run_until_stuck()
-            #logger.debug(f"{self.cycle}: Running time step")
             # Trigger the next_cycle events
             self.next_cycle.set()
             self.next_cycle = self.create_event()
             await self.run_until_stuck()
             # Triggers the next_update events
-            self.next_update.set()
-            self.next_update = self.create_event()
             self.cycle += 1
+            old_event = self.next_update
+            self.next_update = self.create_event()
+            old_event.set()
             if self.max_cycles is not None and self.cycle >= self.max_cycles:
                 logger.error(f"Timeout: reached maximum cycles ({self.max_cycles})")
                 self.stop()

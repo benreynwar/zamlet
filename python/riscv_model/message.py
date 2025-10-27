@@ -12,7 +12,7 @@ class MessageType(Enum):
     SEND = 0
     INSTRUCTIONS = 1
 
-    READ_BYTE_FROM_SRAM_RESP = 2
+    READ_BYTES_FROM_SRAM_RESP = 2
     # Jamlet tells a memory to write some cache line
     WRITE_LINE = 3
     # Jamlet tells a memory to read a cache line

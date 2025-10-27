@@ -305,6 +305,9 @@ class GlobalAddress:
     def addr(self):
         return self.bit_addr//8
 
+    def offset_bytes(self, offset):
+        return GlobalAddress(self.bit_addr + offset*8)
+
     def get_page(self, params: LamletParams):
         return GlobalAddress(bit_addr=(self.addr//params.page_bytes)*params.page_bytes*8)
 

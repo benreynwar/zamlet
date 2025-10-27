@@ -41,8 +41,9 @@ class WriteImmByteToSRAM(KInstr):
 
 
 @dataclass
-class ReadByteFromSRAM(KInstr):
+class ReadBytesFromSRAM(KInstr):
     j_saddr: JSAddr
+    size: int
     target_x: int
     target_y: int
 
@@ -50,7 +51,7 @@ class ReadByteFromSRAM(KInstr):
         assert self.j_saddr.bit_addr % 8 == 0
         if self.j_saddr.k_index == kamlet.k_index:
             jamlet = kamlet.jamlets[self.j_saddr.j_in_k_index]
-            await jamlet.read_byte_from_sram(self)
+            await jamlet.read_bytes_from_sram(self, self.size)
             logger.debug(f'kamlet ({kamlet.min_x} {kamlet.min_y}): ReadByteFromSRAM - here ({kamlet.k_index})')
         else:
             logger.debug(f'kamlet ({kamlet.min_x} {kamlet.min_y}): ReadByteFromSRAM - not here ({kamlet.k_index})')
