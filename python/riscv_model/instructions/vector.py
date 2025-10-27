@@ -89,7 +89,7 @@ class Vsetvli:
         return f'vsetvli\t{reg_name(self.rd)},{reg_name(self.rs1)},{sew_str},{lmul_str},{ta_str},{ma_str}'
 
     async def update_state(self, s: 'state.State'):
-        await s.scalar.wait_all_regs_ready([self.rs1], [])
+        await s.scalar.wait_all_regs_ready(self.rd, None, [self.rs1], [])
         rs1_bytes = s.scalar.read_reg(self.rs1)
         avl = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
 
@@ -139,7 +139,7 @@ class Vle32V:
         return f'vle32.v\tv{self.vd},({reg_name(self.rs1)}){vm_str}'
 
     async def update_state(self, s: 'state.State'):
-        await s.scalar.wait_all_regs_ready([self.rs1], [])
+        await s.scalar.wait_all_regs_ready(None, None, [self.rs1], [])
         rs1_bytes = s.scalar.read_reg(self.rs1)
         addr = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
         if self.vm:
@@ -169,7 +169,7 @@ class Vse32V:
         return f'vse32.v\tv{self.vs3},({reg_name(self.rs1)}){vm_str}'
 
     async def update_state(self, s: 'state.State'):
-        await s.scalar.wait_all_regs_ready([self.rs1], [])
+        await s.scalar.wait_all_regs_ready(None, None, [self.rs1], [])
         rs1_bytes = s.scalar.read_reg(self.rs1)
         addr = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
         if self.vm:
@@ -199,7 +199,7 @@ class VaddVx:
         return f'vadd.vx\tv{self.vd},v{self.vs2},{reg_name(self.rs1)}{vm_str}'
 
     async def update_state(self, s: 'state.State'):
-        await s.scalar.wait_all_regs_ready([self.rs1], [])
+        await s.scalar.wait_all_regs_ready(None, None, [self.rs1], [])
         if self.vm:
             mask_reg = None
         else:
@@ -247,7 +247,7 @@ class VfmaccVf:
 
     async def update_state(self, s: 'state.State'):
         logger.warning(f'{s.clock.cycle}: VfmaccVf waiting for regs')
-        await s.scalar.wait_all_regs_ready([], [self.rs1])
+        await s.scalar.wait_all_regs_ready(None, None, [], [self.rs1])
         logger.warning(f'{s.clock.cycle}: VfmaccVf got regs')
         scalar_bytes = s.scalar.read_freg(self.rs1)
         scalar_bits = int.from_bytes(scalar_bytes[:4], byteorder='little', signed=False)

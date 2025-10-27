@@ -34,7 +34,7 @@ class FmvWX:
         return f'fmv.w.x\t{freg_name(self.fd)},{reg_name(self.rs1)}'
 
     async def update_state(self, s: 'state.State'):
-        await s.scalar.wait_all_regs_ready([self.rs1], [])
+        await s.scalar.wait_all_regs_ready(None, self.fd, [self.rs1], [])
         rs1_bytes = s.scalar.read_reg(self.rs1)
         value = int.from_bytes(rs1_bytes, byteorder='little', signed=False) & 0xffffffff
         value_bytes = value.to_bytes(8, byteorder='little', signed=False)
@@ -69,7 +69,7 @@ class Flw:
         logger.debug(f'{s.clock.cycle} freg: {self.fd} padding the flw result, set result {scalar_val} ')
 
     async def update_state(self, s: 'state.State'):
-        await s.scalar.wait_all_regs_ready([self.rs1], [])
+        await s.scalar.wait_all_regs_ready(None, self.fd, [self.rs1], [])
         rs1_bytes = s.scalar.read_reg(self.rs1)
         rs1_val = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
         addr = rs1_val + self.imm
@@ -97,7 +97,7 @@ class Fld:
         return f'fld\t{freg_name(self.fd)},{self.imm}({reg_name(self.rs1)})'
 
     async def update_state(self, s: 'state.State'):
-        await s.scalar.wait_all_regs_ready([self.rs1], [])
+        await s.scalar.wait_all_regs_ready(None, self.fd, [self.rs1], [])
         rs1_bytes = s.scalar.read_reg(self.rs1)
         rs1_val = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
         addr = rs1_val + self.imm
@@ -123,7 +123,7 @@ class Fsw:
         return f'fsw\t{freg_name(self.rs2)},{self.imm}({reg_name(self.rs1)})'
 
     async def update_state(self, s: 'state.State'):
-        await s.scalar.wait_all_regs_ready([self.rs1], [self.rs2])
+        await s.scalar.wait_all_regs_ready(None, None, [self.rs1], [self.rs2])
         rs1_bytes = s.scalar.read_reg(self.rs1)
         rs1_val = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
         addr = rs1_val + self.imm
@@ -150,7 +150,7 @@ class Fsd:
         return f'fsd\t{freg_name(self.rs2)},{self.imm}({reg_name(self.rs1)})'
 
     async def update_state(self, s: 'state.State'):
-        await s.scalar.wait_all_regs_ready([self.rs1], [self.rs2])
+        await s.scalar.wait_all_regs_ready(None, None, [self.rs1], [self.rs2])
         rs1_bytes = s.scalar.read_reg(self.rs1)
         rs1_val = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
         addr = rs1_val + self.imm
@@ -177,7 +177,7 @@ class FeqS:
 
     async def update_state(self, s: 'state.State'):
         import struct
-        await s.scalar.wait_all_regs_ready([], [self.rs1, self.rs2])
+        await s.scalar.wait_all_regs_ready(self.rd, None, [], [self.rs1, self.rs2])
         val1_bytes = s.scalar.read_freg(self.rs1)
         val2_bytes = s.scalar.read_freg(self.rs2)
         val1 = struct.unpack('f', val1_bytes[:4])[0]
@@ -206,7 +206,7 @@ class FleS:
 
     async def update_state(self, s: 'state.State'):
         import struct
-        await s.scalar.wait_all_regs_ready([], [self.rs1, self.rs2])
+        await s.scalar.wait_all_regs_ready(self.rd, None, [], [self.rs1, self.rs2])
         val1_bytes = s.scalar.read_freg(self.rs1)
         val2_bytes = s.scalar.read_freg(self.rs2)
         val1 = struct.unpack('f', val1_bytes[:4])[0]
@@ -235,7 +235,7 @@ class FleD:
 
     async def update_state(self, s: 'state.State'):
         import struct
-        await s.scalar.wait_all_regs_ready([], [self.rs1, self.rs2])
+        await s.scalar.wait_all_regs_ready(self.rd, None, [], [self.rs1, self.rs2])
         val1_bytes = s.scalar.read_freg(self.rs1)
         val2_bytes = s.scalar.read_freg(self.rs2)
         val1 = struct.unpack('d', val1_bytes[:8])[0]
@@ -263,7 +263,7 @@ class FsubS:
 
     async def update_state(self, s: 'state.State'):
         import struct
-        await s.scalar.wait_all_regs_ready([], [self.rs1, self.rs2])
+        await s.scalar.wait_all_regs_ready(None, self.fd, [], [self.rs1, self.rs2])
         val1_bytes = s.scalar.read_freg(self.rs1)
         val2_bytes = s.scalar.read_freg(self.rs2)
         val1 = struct.unpack('f', val1_bytes[:4])[0]
@@ -291,7 +291,7 @@ class FsubD:
 
     async def update_state(self, s: 'state.State'):
         import struct
-        await s.scalar.wait_all_regs_ready([], [self.rs1, self.rs2])
+        await s.scalar.wait_all_regs_ready(None, self.fd, [], [self.rs1, self.rs2])
         val1_bytes = s.scalar.read_freg(self.rs1)
         val2_bytes = s.scalar.read_freg(self.rs2)
         val1 = struct.unpack('d', val1_bytes[:8])[0]
@@ -319,7 +319,7 @@ class FabsS:
 
     async def update_state(self, s: 'state.State'):
         import struct
-        await s.scalar.wait_all_regs_ready([], [self.rs1])
+        await s.scalar.wait_all_regs_ready(None, self.fd, [], [self.rs1])
         val_bytes = s.scalar.read_freg(self.rs1)
         val = struct.unpack('f', val_bytes[:4])[0]
         result = abs(val)
@@ -345,7 +345,7 @@ class FabsD:
 
     async def update_state(self, s: 'state.State'):
         import struct
-        await s.scalar.wait_all_regs_ready([], [self.rs1])
+        await s.scalar.wait_all_regs_ready(None, self.fd, [], [self.rs1])
         val_bytes = s.scalar.read_freg(self.rs1)
         val = struct.unpack('d', val_bytes[:8])[0]
         result = abs(val)

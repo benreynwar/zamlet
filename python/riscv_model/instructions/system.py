@@ -97,7 +97,7 @@ class Csrrw:
             return f'csrrw\t{reg_name(self.rd)},{csr_name},{reg_name(self.rs1)}'
 
     async def update_state(self, s: 'state.State'):
-        await s.scalar.wait_all_regs_ready([self.rs1], [])
+        await s.scalar.wait_all_regs_ready(self.rd, None, [self.rs1], [])
         if self.rd != 0:
             csr_bytes = s.scalar.read_csr(self.csr)
             s.scalar.write_reg(self.rd, csr_bytes)
@@ -133,7 +133,7 @@ class Csrrs:
             return f'csrrs\t{reg_name(self.rd)},{csr_name},{reg_name(self.rs1)}'
 
     async def update_state(self, s: 'state.State'):
-        await s.scalar.wait_all_regs_ready([self.rs1], [])
+        await s.scalar.wait_all_regs_ready(self.rd, None, [self.rs1], [])
         csr_bytes = s.scalar.read_csr(self.csr)
         csr_val = int.from_bytes(csr_bytes, byteorder='little', signed=False)
         s.scalar.write_reg(self.rd, csr_bytes)

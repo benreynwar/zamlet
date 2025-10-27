@@ -22,9 +22,9 @@ async def run(clock: Clock):
     #filename = 'tests/readwritebyte/should_fail.riscv'
     #filename = 'tests/readwritebyte/write_then_read_many_bytes.riscv'
     #filename = 'tests/readwritebyte/simple_vpu_test.riscv'
-    #filename = 'tests/sgemv/vec-sgemv-large.riscv'
+    filename = 'tests/sgemv/vec-sgemv-large.riscv'
     #filename = 'tests/sgemv/vec-sgemv.riscv'
-    filename = 'tests/vecadd/vec-add-evict.riscv'
+    #filename = 'tests/vecadd/vec-add-evict.riscv'
     #filename = 'tests/vecadd/vec-add.riscv'
     p_info = program_info.get_program_info(filename)
 
@@ -124,5 +124,5 @@ if __name__ == '__main__':
     root_logger.addHandler(handler)
 
     root_logger.info('Starting main')
-    clock = Clock(max_cycles=30000)
+    clock = Clock(max_cycles=20000)
     asyncio.run(main(clock))

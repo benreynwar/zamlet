@@ -16,6 +16,7 @@ result is the same as applying the micro-ops to the state.
 '''
 
 import logging
+from collections import deque
 
 import decode
 from addresses import CacheState, SizeBytes, SizeBits, TLB, CacheTable
@@ -25,10 +26,9 @@ from message import Header, MessageType, Direction, SendType
 from kamlet import Kamlet
 import memlet
 from memlet import Memlet
-from utils import combine_futures, bytes_to_float
+from utils import combine_futures
 from runner import Clock, Future
 import kinstructions
-import utils
 
 
 logger = logging.getLogger(__name__)
@@ -47,10 +47,13 @@ class RegisterFileSlot:
         # update the contents of the register file.
         self.future = None
         self.next_future = None
-        self.has_next_future = None
+        self.has_next_future = False
 
     def updating(self):
-        return self.future is not None
+        return (self.future is not None) or ((self.has_next_future) and (self.next_future is not None)) or self.has_next_value
+
+    def can_write(self):
+        return (not self.has_next_future) and (not self.has_next_value)
 
     def get_value(self):
         assert not self.updating()
@@ -115,11 +118,15 @@ class ScalarState:
         self.memory = {}
         self.csr = {}
 
-    def regs_ready(self, regs, fregs):
-        return all(not self._rf[r].updating() for r in regs) and all(not self._frf[fr].updating() for fr in fregs)
+    def regs_ready(self, dst_reg, dst_freg, src_regs, src_fregs):
+        dst_reg_ready = dst_reg is None or dst_reg == 0 or self._rf[dst_reg].can_write()
+        dst_freg_ready = dst_freg is None or self._frf[dst_freg].can_write()
+        src_regs_ready = all(not self._rf[r].updating() for r in src_regs if r != 0)
+        src_fregs_ready = all(not self._frf[fr].updating() for fr in src_fregs)
+        return dst_reg_ready and dst_freg_ready and src_regs_ready and src_fregs_ready
 
-    async def wait_all_regs_ready(self, regs, fregs):
-        while not self.regs_ready(regs, fregs):
+    async def wait_all_regs_ready(self, dst_reg, dst_freg, src_regs, src_fregs):
+        while not self.regs_ready(dst_reg, dst_freg, src_regs, src_fregs):
             await self.clock.next_cycle
 
     def read_reg(self, reg_num):
@@ -199,7 +206,7 @@ class Lamlet:
         self.instr_x = self.left_x
         self.instr_y = self.top_y - 1
 
-        self.instruction_buffer = utils.Queue(params.instruction_buffer_length)
+        self.instruction_buffer = deque()
 
         # Need this for how we arrange memlets
         assert self.params.k_cols % 2 == 0
@@ -492,7 +499,7 @@ class Lamlet:
 
     async def add_to_instruction_buffer(self, instruction, k_index=None):
         logger.debug(f'{self.clock.cycle}: Adding {instruction} to buffer')
-        while not self.instruction_buffer.can_append():
+        while len(self.instruction_buffer) >= self.params.instruction_buffer_length:
             await self.clock.next_cycle
         self.instruction_buffer.append((instruction, k_index))
 
@@ -502,13 +509,13 @@ class Lamlet:
         while True:
             logger.debug(f'{self.clock.cycle}: {len(self.instruction_buffer)} instrs in the buffer')
             if self.instruction_buffer:
-                k_indices = [x[1] for x in self.instruction_buffer.queue]
+                k_indices = [x[1] for x in self.instruction_buffer]
                 k_indices_same = all(k_indices[0] == x for x in k_indices)
                 if len(self.instruction_buffer) >= self.params.instructions_in_packet or (not k_indices_same) or inactive_count > 2:
                     instructions = []
                     while self.instruction_buffer:
-                        if self.instruction_buffer.head()[1] == k_indices[0]:
-                            instructions.append(self.instruction_buffer.queue.popleft()[0])
+                        if self.instruction_buffer[0][1] == k_indices[0]:
+                            instructions.append(self.instruction_buffer.popleft()[0])
                         else:
                             break
                     assert instructions
@@ -948,7 +955,6 @@ class Lamlet:
         for memlet in self.memlets:
             memlet.update()
         self.scalar.update()
-        self.instruction_buffer.update()
 
     async def run(self):
         for kamlet in self.kamlets:
@@ -959,38 +965,41 @@ class Lamlet:
         self.clock.create_task(self.monitor_replys())
         self.clock.create_task(self.monitor_instruction_buffer())
 
+    async def run_instruction(self, disasm_trace=None):
+        first_bytes = await self.get_memory_blocking(self.pc, 2)
+        is_compressed = decode.is_compressed(first_bytes)
+
+        if is_compressed:
+            instruction_bytes = first_bytes
+            inst_hex = int.from_bytes(instruction_bytes[0:2], byteorder='little')
+        else:
+            instruction_bytes = await self.get_memory_blocking(self.pc, 4)
+            inst_hex = int.from_bytes(instruction_bytes[0:4], byteorder='little')
+
+        instruction = decode.decode(instruction_bytes)
+
+        # Use disasm(pc) method if available, otherwise use str()
+        if hasattr(instruction, 'disasm'):
+            inst_str = instruction.disasm(self.pc)
+        else:
+            inst_str = str(instruction)
+
+        logger.info(f'{self.clock.cycle}: pc={hex(self.pc)} bytes={hex(inst_hex)} instruction={inst_str}')
+
+        if disasm_trace is not None:
+            import disasm_trace as dt
+            error = dt.check_instruction(disasm_trace, self.pc, inst_hex, inst_str)
+            if error:
+                logger.error(error)
+                raise ValueError(error)
+
+        await instruction.update_state(self)
+
     async def run_instructions(self, disasm_trace=None):
         logger.warning('run_instructions')
         while not self.finished:
 
             await self.clock.next_cycle
-
-            first_bytes = await self.get_memory_blocking(self.pc, 2)
-            is_compressed = decode.is_compressed(first_bytes)
-
-            if is_compressed:
-                instruction_bytes = first_bytes
-                inst_hex = int.from_bytes(instruction_bytes[0:2], byteorder='little')
-            else:
-                instruction_bytes = await self.get_memory_blocking(self.pc, 4)
-                inst_hex = int.from_bytes(instruction_bytes[0:4], byteorder='little')
-
-            instruction = decode.decode(instruction_bytes)
-
-            # Use disasm(pc) method if available, otherwise use str()
-            if hasattr(instruction, 'disasm'):
-                inst_str = instruction.disasm(self.pc)
-            else:
-                inst_str = str(instruction)
-
-            logger.info(f'{self.clock.cycle}: pc={hex(self.pc)} bytes={hex(inst_hex)} instruction={inst_str}')
-
-            if disasm_trace is not None:
-                import disasm_trace as dt
-                error = dt.check_instruction(disasm_trace, self.pc, inst_hex, inst_str)
-                if error:
-                    logger.error(error)
-                    raise ValueError(error)
-
-            await instruction.update_state(self)
+            await self.run_instruction(disasm_trace)
+            await self.run_instruction(disasm_trace)
 

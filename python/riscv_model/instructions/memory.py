@@ -32,7 +32,7 @@ class Sb:
         return f'sb\t{reg_name(self.rs2)},{self.imm}({reg_name(self.rs1)})'
 
     async def update_state(self, s):
-        await s.scalar.wait_all_regs_ready([self.rs1, self.rs2], [])
+        await s.scalar.wait_all_regs_ready(None, None, [self.rs1, self.rs2], [])
         rs1_bytes = s.scalar.read_reg(self.rs1)
         rs1_val = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
         address = rs1_val + self.imm
@@ -58,7 +58,7 @@ class Sh:
         return f'sh\t{reg_name(self.rs2)},{self.imm}({reg_name(self.rs1)})'
 
     async def update_state(self, s):
-        await s.scalar.wait_all_regs_ready([self.rs1, self.rs2], [])
+        await s.scalar.wait_all_regs_ready(None, None, [self.rs1, self.rs2], [])
         rs1_bytes = s.scalar.read_reg(self.rs1)
         rs1_val = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
         address = rs1_val + self.imm
@@ -83,7 +83,7 @@ class Sw:
         return f'sw\t{reg_name(self.rs2)},{self.imm}({reg_name(self.rs1)})'
 
     async def update_state(self, s):
-        await s.scalar.wait_all_regs_ready([self.rs1, self.rs2], [])
+        await s.scalar.wait_all_regs_ready(None, None, [self.rs1, self.rs2], [])
         rs1_bytes = s.scalar.read_reg(self.rs1)
         rs1_val = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
         address = rs1_val + self.imm
@@ -107,7 +107,7 @@ class Sd:
         return f'sd\t{reg_name(self.rs2)},{self.imm}({reg_name(self.rs1)})'
 
     async def update_state(self, s):
-        await s.scalar.wait_all_regs_ready([self.rs1, self.rs2], [])
+        await s.scalar.wait_all_regs_ready(None, None, [self.rs1, self.rs2], [])
         rs1_bytes = s.scalar.read_reg(self.rs1)
         rs1_val = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
         address = rs1_val + self.imm
@@ -139,7 +139,7 @@ class Lb:
         result_future.set_result(result_bytes)
 
     async def update_state(self, s):
-        await s.scalar.wait_all_regs_ready([self.rs1], [])
+        await s.scalar.wait_all_regs_ready(self.rd, None, [self.rs1], [])
         rs1_bytes = s.scalar.read_reg(self.rs1)
         rs1_val = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
         address = rs1_val + self.imm
@@ -173,7 +173,7 @@ class Lbu:
         result_future.set_result(result_bytes)
 
     async def update_state(self, s):
-        await s.scalar.wait_all_regs_ready([self.rs1], [])
+        await s.scalar.wait_all_regs_ready(self.rd, None, [self.rs1], [])
         rs1_bytes = s.scalar.read_reg(self.rs1)
         rs1_val = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
         address = rs1_val + self.imm
@@ -208,7 +208,7 @@ class Lh:
         result_future.set_result(result_bytes)
 
     async def update_state(self, s):
-        await s.scalar.wait_all_regs_ready([self.rs1], [])
+        await s.scalar.wait_all_regs_ready(self.rd, None, [self.rs1], [])
         rs1_bytes = s.scalar.read_reg(self.rs1)
         rs1_val = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
         address = rs1_val + self.imm
@@ -242,7 +242,7 @@ class Lhu:
         result_future.set_result(result_bytes)
 
     async def update_state(self, s):
-        await s.scalar.wait_all_regs_ready([self.rs1], [])
+        await s.scalar.wait_all_regs_ready(self.rd, None, [self.rs1], [])
         rs1_bytes = s.scalar.read_reg(self.rs1)
         rs1_val = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
         address = rs1_val + self.imm
@@ -278,7 +278,7 @@ class Lw:
         result_future.set_result(result_bytes)
 
     async def update_state(self, s):
-        await s.scalar.wait_all_regs_ready([self.rs1], [])
+        await s.scalar.wait_all_regs_ready(self.rd, None, [self.rs1], [])
         rs1_bytes = s.scalar.read_reg(self.rs1)
         rs1_val = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
         address = rs1_val + self.imm
@@ -312,7 +312,7 @@ class Lwu:
         result_future.set_result(result_bytes)
 
     async def update_state(self, s):
-        await s.scalar.wait_all_regs_ready([self.rs1], [])
+        await s.scalar.wait_all_regs_ready(self.rd, None, [self.rs1], [])
         rs1_bytes = s.scalar.read_reg(self.rs1)
         rs1_val = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
         address = rs1_val + self.imm
@@ -339,7 +339,7 @@ class Ld:
         return f'ld\t{reg_name(self.rd)},{self.imm}({reg_name(self.rs1)})'
 
     async def update_state(self, s):
-        await s.scalar.wait_all_regs_ready([self.rs1], [])
+        await s.scalar.wait_all_regs_ready(self.rd, None, [self.rs1], [])
         rs1_bytes = s.scalar.read_reg(self.rs1)
         rs1_val = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
         address = rs1_val + self.imm

@@ -21,7 +21,7 @@ float input_data_A[M_DIM * N_DIM] __attribute__((section(".data.vpu"), aligned(0
   4.0, 4.0, 4.0, 0.0, 0.0, 4.0, 0.0, 4.0, 4.0, 2.0, 0.0, 0.0, 2.0, 0.0, 0.0, 1.0,
 };
 
-float input_data_x[M_DIM] __attribute__((section(".data.vpu"), aligned(0x400))) = {
+float input_data_x[M_DIM] __attribute__((section(".data"), aligned(0x400))) = {
   2.0, 1.0, 0.0, 0.0, 1.0, 2.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 1.0, 1.0,
 };
 
