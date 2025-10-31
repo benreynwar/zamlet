@@ -27,6 +27,8 @@ async def run(clock: Clock):
     #filename = 'tests/sgemv/vec-sgemv.riscv'
     #filename = 'tests/vecadd/vec-add-evict.riscv'
     #filename = 'tests/vecadd/vec-add.riscv'
+    #filename = 'tests/daxpy/vec-daxpy.riscv'
+    #filename = 'tests/daxpy/vec-daxpy-small.riscv'
     p_info = program_info.get_program_info(filename)
 
     params = LamletParams()
@@ -45,8 +47,11 @@ async def run(clock: Clock):
         page_start = (address // params.page_bytes) * params.page_bytes
         page_end = (address + size + params.page_bytes - 1) // params.page_bytes * params.page_bytes
 
-        # Determine if this is VPU memory (0x20000000 for static VPU data, 0x90000000 for pools)
-        is_vpu = ((address >= 0x20000000 and address < 0x30000000) or
+        # Determine if this is VPU memory
+        # 0x20000000-0x20FFFFFF: .data.vpu32 (32-bit static data)
+        # 0x21000000-0x21FFFFFF: .data.vpu64 (64-bit static data)
+        # 0x90000000-0x9FFFFFFF: VPU dynamic allocation pools
+        is_vpu = ((address >= 0x20000000 and address < 0x22000000) or
                   (address >= 0x90000000 and address < 0xa0000000))
 
         # For scalar memory at 0x10000000, allocate extra for stack/heap (2MB total)
@@ -55,9 +60,14 @@ async def run(clock: Clock):
         else:
             alloc_size = page_end - page_start
 
-        # For VPU static data at 0x20000000, use element_width=32 (float data)
+        # Determine element width based on memory region
         if is_vpu:
-            ew = 32 if (address >= 0x20000000 and address < 0x30000000) else 8
+            if address >= 0x20000000 and address < 0x21000000:
+                ew = 32  # .data.vpu32
+            elif address >= 0x21000000 and address < 0x22000000:
+                ew = 64  # .data.vpu64
+            else:
+                ew = 8   # Dynamic pools (will be overridden below)
             ordering = Ordering(WordOrder.STANDARD, ew)
         else:
             ordering = None

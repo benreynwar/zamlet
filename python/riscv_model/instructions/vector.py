@@ -185,6 +185,67 @@ class Vse32V:
 
 
 @dataclass
+class Vle64V:
+    """VLE64.V - Vector Load 64-bit Elements.
+
+    Unit-stride load of 64-bit elements from memory into a vector register.
+
+    Reference: riscv-isa-manual/src/v-st-ext.adoc
+    """
+    vd: int
+    rs1: int
+    vm: int
+
+    def __str__(self):
+        vm_str = '' if self.vm else ',v0.t'
+        return f'vle64.v\tv{self.vd},({reg_name(self.rs1)}){vm_str}'
+
+    async def update_state(self, s: 'state.State'):
+        logger.debug(f'{s.clock.cycle}: waiting for ready regs')
+        await s.scalar.wait_all_regs_ready(None, None, [self.rs1], [])
+        rs1_bytes = s.scalar.read_reg(self.rs1)
+        addr = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
+        if self.vm:
+            mask_reg=None
+        else:
+            mask_reg=0
+        logger.debug(f'{s.clock.cycle}: do load')
+        await s.vload(self.vd, addr, 64, s.vl, mask_reg)
+        logger.debug(f'{s.clock.cycle}: kicked off load')
+        s.pc += 4
+        logger.debug(f'Loaded vector into vd={self.vd}')
+
+
+@dataclass
+class Vse64V:
+    """VSE64.V - Vector Store 64-bit Elements.
+
+    Unit-stride store of 64-bit elements from vector register to memory.
+
+    Reference: riscv-isa-manual/src/v-st-ext.adoc
+    """
+    vs3: int
+    rs1: int
+    vm: int
+
+    def __str__(self):
+        vm_str = '' if self.vm else ',v0.t'
+        return f'vse64.v\tv{self.vs3},({reg_name(self.rs1)}){vm_str}'
+
+    async def update_state(self, s: 'state.State'):
+        await s.scalar.wait_all_regs_ready(None, None, [self.rs1], [])
+        rs1_bytes = s.scalar.read_reg(self.rs1)
+        addr = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
+        if self.vm:
+            mask_reg = None
+        else:
+            mask_reg = 0
+        await s.vstore(self.vs3, addr, 64, s.vl, mask_reg)
+        s.pc += 4
+        logger.debug(f'Stored vector from vs3={self.vs3}')
+
+
+@dataclass
 class VaddVx:
     """VADD.VX - Vector-Scalar Integer Add.
 
@@ -252,19 +313,29 @@ class VfmaccVf:
         logger.debug(f'{s.clock.cycle}: VfmaccVf waiting for regs')
         await s.scalar.wait_all_regs_ready(None, None, [], [self.rs1])
         logger.debug(f'{s.clock.cycle}: VfmaccVf got regs')
+
+        # Get element width from vtype (set by vsetvli)
+        vsew = (s.vtype >> 3) & 0x7
+        element_width = 8 << vsew  # vsew: 0=e8, 1=e16, 2=e32, 3=e64
+        assert s.vrf_ordering[self.vd].ew == element_width
+        assert s.vrf_ordering[self.vs2].ew == element_width
+
+        # Read scalar with appropriate width (4 bytes for float, 8 for double)
         scalar_bytes = s.scalar.read_freg(self.rs1)
-        scalar_bits = int.from_bytes(scalar_bytes[:4], byteorder='little', signed=False)
+        scalar_byte_count = element_width // 8
+        scalar_bits = int.from_bytes(scalar_bytes[:scalar_byte_count], byteorder='little', signed=False)
+
+        if element_width == 64:
+            scalar_value = struct.unpack('d', scalar_bytes[:8])[0]
+        else:
+            scalar_value = struct.unpack('f', scalar_bytes[:4])[0]
 
         if self.vm:
             mask_reg = None
         else:
             mask_reg = 0
 
-        element_width = 32
-        assert s.vrf_ordering[self.vd].ew == element_width
-        assert s.vrf_ordering[self.vs2].ew == element_width
-
-        logger.debug(f'VFMACC.VF: vd=v{self.vd}, rs1={freg_name(self.rs1)}={scalar_bits}, vs2=v{self.vs2}, vl={s.vl}')
+        logger.debug(f'VFMACC.VF: vd=v{self.vd}, rs1={freg_name(self.rs1)}={scalar_value}, vs2=v{self.vs2}, vl={s.vl}, ew={element_width}')
 
         vline_bytes = s.params.word_bytes * s.params.j_in_l
         assert (s.vl * element_width) % (vline_bytes * 8) == 0
@@ -276,6 +347,7 @@ class VfmaccVf:
             scalar_bits=scalar_bits,
             mask_reg=mask_reg,
             n_vlines=n_vlines,
+            element_width=element_width,
             )
         await s.add_to_instruction_buffer(kinstr)
         s.pc += 4

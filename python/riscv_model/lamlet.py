@@ -134,7 +134,7 @@ class Lamlet:
         """
         k_maddr = address.to_k_maddr(self.params, self.tlb)
         j_in_k_index = (k_maddr.addr//self.params.word_bytes) % self.params.j_in_k
-        logger.warning(f'Lamlet.read_bytes {hex(address.addr)} k_maddr {k_maddr} j_in_k {j_in_k_index}')
+        logger.debug(f'Lamlet.read_bytes {hex(address.addr)} k_maddr {k_maddr} j_in_k {j_in_k_index}')
         jamlet = self.kamlets[k_maddr.k_index].jamlets[j_in_k_index]
         label = ('READ_BYTES', address, size)
         src_coords_to_methods = {

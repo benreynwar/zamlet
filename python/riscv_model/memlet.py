@@ -151,7 +151,7 @@ class Memlet:
         for i in range(len(data)//n):
             word = data[i*n: (i+1)*n]
             as_int.append(int.from_bytes(word, byteorder='little'))
-        logger.warning(f'{self.clock.cycle}: Writing cache line {hex(index)} {as_int}')
+        logger.debug(f'{self.clock.cycle}: Writing cache line {hex(index)} {as_int}')
         self.lines[index] = data
 
     def read_cache_line(self, index):
@@ -165,8 +165,7 @@ class Memlet:
         for i in range(len(data)//n):
             word = data[i*n: (i+1)*n]
             as_int.append(int.from_bytes(word, byteorder='little'))
-        logger.warning(f'{self.clock.cycle}: Reading cache line {hex(index)} {as_int}')
-        logger.warning(f'{self.clock.cycle}: Reading cache line {data}')
+        logger.debug(f'{self.clock.cycle}: Reading cache line {hex(index)} {as_int}')
         return data
 
     def update(self):

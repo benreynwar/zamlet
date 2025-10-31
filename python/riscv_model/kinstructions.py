@@ -171,7 +171,7 @@ class VaddVxOp(KInstr):
         regs = [self.src+index for index in range(self.n_vlines)]
         regs += [self.dst+index for index in range(self.n_vlines)]
         await kamlet.wait_for_rf_available(regs)
-        logger.error(f'kamlet ({kamlet.min_x} {kamlet.min_y}): VaddVx dst=v{self.dst} src=v{self.src} scalar={self.scalar}')
+        logger.debug(f'kamlet ({kamlet.min_x} {kamlet.min_y}): VaddVx dst=v{self.dst} src=v{self.src} scalar={self.scalar}')
         params = kamlet.params
         vreg_bytes_per_jamlet = params.maxvl_bytes // params.j_in_l
         src_offset = self.src * vreg_bytes_per_jamlet
@@ -187,7 +187,7 @@ class VaddVxOp(KInstr):
                 src_val = int.from_bytes(src_bytes, byteorder='little', signed=True)
                 src_elements.append(src_val)
         dst_elements = [src_val + self.scalar for src_val in src_elements]
-        logger.error(f'src {src_elements} -> dst {dst_elements}')
+        logger.debug(f'src {src_elements} -> dst {dst_elements}')
 
         for byte_offset in range(0, self.n_vlines*vreg_bytes_per_jamlet, elem_bytes):
             for jamlet in kamlet.jamlets:
@@ -205,6 +205,7 @@ class VfmaccVfOp(KInstr):
     scalar_bits: int
     mask_reg: int
     n_vlines: int
+    element_width: int
 
     async def update_kamlet(self, kamlet):
         regs = [self.src+index for index in range(self.n_vlines)]
@@ -216,32 +217,40 @@ class VfmaccVfOp(KInstr):
         vreg_bytes_per_jamlet = params.maxvl_bytes // params.j_in_l
         src_offset = self.src * vreg_bytes_per_jamlet
         dst_offset = self.dst * vreg_bytes_per_jamlet
-        elem_bytes = 4
+        elem_bytes = self.element_width // 8
 
         assert self.mask_reg is None
 
-        scalar_val = struct.unpack('f', struct.pack('I', self.scalar_bits & 0xffffffff))[0]
+        if self.element_width == 64:
+            scalar_val = struct.unpack('d', struct.pack('Q', self.scalar_bits))[0]
+        else:
+            scalar_val = struct.unpack('f', struct.pack('I', self.scalar_bits & 0xffffffff))[0]
 
         src_elements = []
         old_elements = []
         result_elements = []
 
+        if self.element_width == 64:
+            fmt_code = 'd'
+        else:
+            fmt_code = 'f'
+
         for byte_offset in range(0, vreg_bytes_per_jamlet*self.n_vlines, elem_bytes):
             for jamlet in kamlet.jamlets:
                 src_bytes = jamlet.rf_slice[src_offset + byte_offset:src_offset + byte_offset + elem_bytes]
-                src_val = struct.unpack('f', src_bytes)[0]
+                src_val = struct.unpack(fmt_code, src_bytes)[0]
                 src_elements.append(src_val)
 
                 dst_bytes = jamlet.rf_slice[dst_offset + byte_offset:dst_offset + byte_offset + elem_bytes]
-                acc_val = struct.unpack('f', dst_bytes)[0]
+                acc_val = struct.unpack(fmt_code, dst_bytes)[0]
                 old_elements.append(acc_val)
 
                 result = acc_val + (scalar_val * src_val)
                 result_elements.append(result)
-                result_bytes = struct.pack('f', result)
+                result_bytes = struct.pack(fmt_code, result)
                 jamlet.rf_slice[dst_offset + byte_offset:dst_offset + byte_offset + elem_bytes] = result_bytes
 
         if kamlet.min_x == 0 and kamlet.min_y == 0:
-            logger.info(f'VfmaccVfOp scalar {scalar_val} src {src_elements} old {old_elements} -> dst {result_elements}')
+            logger.debug(f'VfmaccVfOp scalar {scalar_val} src {src_elements} old {old_elements} -> dst {result_elements}')
         logger.debug(f'VfmaccVfOp scalar {scalar_val} src {src_elements} old {old_elements} -> dst {result_elements}')
 

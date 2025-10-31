@@ -53,6 +53,18 @@ def decode_compressed(instruction_bytes: bytes) -> Instruction:
             # Reconstruct the immediate (scaled by 4, so shift left by 2)
             nzuimm = (uimm_9_6 << 6) | (uimm_5_4 << 4) | (uimm_3 << 3) | (uimm_2 << 2)
             return C.CAddi4spn(rd=rd, imm=nzuimm)
+        elif funct3 == 0b001:
+            # C.FLD - Floating-Point Load Double (RV32DC/RV64DC)
+            fd_prime = (inst >> 2) & 0b111
+            fd = 8 + fd_prime
+            rs1_prime = (inst >> 7) & 0b111
+            rs1 = 8 + rs1_prime
+            # Offset encoding: uimm[5:3] at inst[12:10], uimm[7:6] at inst[6:5]
+            offset_bits_5_3 = (inst >> 10) & 0b111
+            offset_bit_7_6 = (inst >> 5) & 0b11
+            uimm_7_3 = (offset_bit_7_6 << 3) | offset_bits_5_3
+            offset = uimm_7_3 << 3  # Scaled by 8
+            return C.CFld(fd=fd, rs1=rs1, offset=offset)
         elif funct3 == 0b010:
             # C.LW - Load Word
             rd_prime = (inst >> 2) & 0b111
@@ -81,6 +93,19 @@ def decode_compressed(instruction_bytes: bytes) -> Instruction:
             uimm_7_3 = (offset_bit_7_6 << 3) | offset_bits_5_3
             offset = uimm_7_3 << 3
             return C.CLd(rd=rd, rs1=rs1, offset=offset)
+
+        elif funct3 == 0b101:
+            # C.FSD - Floating-Point Store Double (RV32DC/RV64DC)
+            fs2_prime = (inst >> 2) & 0b111
+            fs2 = 8 + fs2_prime
+            rs1_prime = (inst >> 7) & 0b111
+            rs1 = 8 + rs1_prime
+            # Offset encoding: uimm[5:3] at inst[12:10], uimm[7:6] at inst[6:5]
+            offset_bits_5_3 = (inst >> 10) & 0b111
+            offset_bit_7_6 = (inst >> 5) & 0b11
+            uimm_7_3 = (offset_bit_7_6 << 3) | offset_bits_5_3
+            offset = uimm_7_3 << 3  # Scaled by 8
+            return C.CFsd(rs1=rs1, fs2=fs2, offset=offset)
 
         elif funct3 == 0b110:
             # C.SW - Store Word
@@ -225,6 +250,13 @@ def decode_compressed(instruction_bytes: bytes) -> Instruction:
             shamt = shamt_low | (shamt_high << 5)
             return C.CSlli(rd=rd, shamt=shamt)
 
+        elif funct3 == 0b001:
+            # C.FLDSP - Floating-Point Load Double from Stack Pointer (RV32DC/RV64DC)
+            fd = (inst >> 7) & 0b11111
+            # Offset encoding: offset[5|4:3|8:6] = inst[12|6:5|4:2], scaled by 8
+            offset = ((inst >> 12) & 0b1) << 5 | ((inst >> 5) & 0b11) << 3 | ((inst >> 2) & 0b111) << 6
+            return C.CFldsp(fd=fd, offset=offset)
+
         elif funct3 == 0b010:
             # C.LWSP - Load Word from Stack Pointer
             rd = (inst >> 7) & 0b11111
@@ -256,6 +288,13 @@ def decode_compressed(instruction_bytes: bytes) -> Instruction:
                 return C.CJalr(rs1=rd_rs1)
             elif bit12 == 1 and rs2 != 0:
                 return C.CAdd(rd=rd_rs1, rs2=rs2)
+
+        elif funct3 == 0b101:
+            # C.FSDSP - Floating-Point Store Double to Stack Pointer (RV32DC/RV64DC)
+            fs2 = (inst >> 2) & 0b11111
+            # Offset encoding: uimm[5:3|8:6] at inst[12:7], scaled by 8
+            offset = ((inst >> 7) & 0b111) << 6 | ((inst >> 10) & 0b111) << 3
+            return C.CFsdsp(fs2=fs2, offset=offset)
 
         elif funct3 == 0b110:
             # C.SWSP - Store Word to Stack Pointer
@@ -294,7 +333,43 @@ def decode_standard(instruction_bytes: bytes) -> Instruction:
     imm_i = (inst >> 20) & 0xfff
     csr = (inst >> 20) & 0xfff
 
-    if opcode == 0x13:
+    if opcode == 0x03:
+        imm = decode_i_imm(inst)
+        if funct3 == 0x0:
+            return M.Lb(rd=rd, rs1=rs1, imm=imm)
+        elif funct3 == 0x1:
+            return M.Lh(rd=rd, rs1=rs1, imm=imm)
+        elif funct3 == 0x2:
+            return M.Lw(rd=rd, rs1=rs1, imm=imm)
+        elif funct3 == 0x3:
+            return M.Ld(rd=rd, rs1=rs1, imm=imm)
+        elif funct3 == 0x4:
+            return M.Lbu(rd=rd, rs1=rs1, imm=imm)
+        elif funct3 == 0x5:
+            return M.Lhu(rd=rd, rs1=rs1, imm=imm)
+        elif funct3 == 0x6:
+            return M.Lwu(rd=rd, rs1=rs1, imm=imm)
+
+    elif opcode == 0x07:
+        mop = (inst >> 26) & 0x3
+        vm = (inst >> 25) & 0x1
+        width = funct3
+        if mop == 0x0 and width == 0x6:
+            return V.Vle32V(vd=rd, rs1=rs1, vm=vm)
+        elif mop == 0x0 and width == 0x7:
+            return V.Vle64V(vd=rd, rs1=rs1, vm=vm)
+        elif width == 0x2:
+            return F.Flw(fd=rd, rs1=rs1, imm=decode_i_imm(inst))
+        elif width == 0x3:
+            return F.Fld(fd=rd, rs1=rs1, imm=decode_i_imm(inst))
+
+    elif opcode == 0x0f:
+        if funct3 == 0x0:
+            pred = (inst >> 24) & 0xf
+            succ = (inst >> 20) & 0xf
+            return S.Fence(pred=pred, succ=succ)
+
+    elif opcode == 0x13:
         if funct3 == 0x0:
             return I.Addi(rd=rd, rs1=rs1, imm=decode_i_imm(inst))
         elif funct3 == 0x1:
@@ -311,36 +386,8 @@ def decode_standard(instruction_bytes: bytes) -> Instruction:
         elif funct3 == 0x7:
             return I.Andi(rd=rd, rs1=rs1, imm=decode_i_imm(inst))
 
-    elif opcode == 0x53:
-        funct7_full = (inst >> 25) & 0x7f
-        funct5 = (inst >> 27) & 0x1f
-        fmt = (inst >> 25) & 0x3
-
-        if funct7_full == 0x78 and funct3 == 0x0:
-            return F.FmvWX(fd=rd, rs1=rs1)
-        elif funct7_full == 0x08 and fmt == 0x0:
-            return F.FsubS(fd=rd, rs1=rs1, rs2=rs2)
-        elif funct7_full == 0x08 and fmt == 0x1:
-            return F.FsubD(fd=rd, rs1=rs1, rs2=rs2)
-        elif funct7_full == 0x50 and funct3 == 0x2:
-            return F.FeqS(rd=rd, rs1=rs1, rs2=rs2)
-        elif funct7_full == 0x50 and funct3 == 0x0:
-            return F.FleS(rd=rd, rs1=rs1, rs2=rs2)
-        elif funct7_full == 0x51 and funct3 == 0x0:
-            return F.FleD(rd=rd, rs1=rs1, rs2=rs2)
-        elif funct7_full == 0x10 and rs2 == rs1 and fmt == 0x0:
-            return F.FabsS(fd=rd, rs1=rs1)
-        elif funct7_full == 0x11 and rs2 == rs1 and fmt == 0x0:
-            return F.FabsD(fd=rd, rs1=rs1)
-
     elif opcode == 0x17:
         return CF.Auipc(rd=rd, imm=decode_u_imm(inst))
-
-    elif opcode == 0x37:
-        return I.Lui(rd=rd, imm=decode_u_imm(inst))
-
-    elif opcode == 0x6f:
-        return CF.Jal(rd=rd, imm=decode_j_imm(inst))
 
     elif opcode == 0x1b:
         if funct3 == 0x0:
@@ -355,11 +402,30 @@ def decode_standard(instruction_bytes: bytes) -> Instruction:
             elif funct7 == 0x20:
                 return I.Sraiw(rd=rd, rs1=rs1, shamt=shamt)
 
-    elif opcode == 0x73:
-        if funct3 == 0x1:
-            return S.Csrrw(rd=rd, rs1=rs1, csr=csr)
+    elif opcode == 0x23:
+        imm = decode_s_imm(inst)
+        if funct3 == 0x0:
+            return M.Sb(rs1=rs1, rs2=rs2, imm=imm)
+        elif funct3 == 0x1:
+            return M.Sh(rs1=rs1, rs2=rs2, imm=imm)
         elif funct3 == 0x2:
-            return S.Csrrs(rd=rd, rs1=rs1, csr=csr)
+            return M.Sw(rs1=rs1, rs2=rs2, imm=imm)
+        elif funct3 == 0x3:
+            return M.Sd(rs1=rs1, rs2=rs2, imm=imm)
+
+    elif opcode == 0x27:
+        mop = (inst >> 26) & 0x3
+        vm = (inst >> 25) & 0x1
+        width = funct3
+        vs3 = rd
+        if mop == 0x0 and width == 0x6:
+            return V.Vse32V(vs3=vs3, rs1=rs1, vm=vm)
+        elif mop == 0x0 and width == 0x7:
+            return V.Vse64V(vs3=vs3, rs1=rs1, vm=vm)
+        elif width == 0x2:
+            return F.Fsw(rs2=rs2, rs1=rs1, imm=decode_s_imm(inst))
+        elif width == 0x3:
+            return F.Fsd(rs2=rs2, rs1=rs1, imm=decode_s_imm(inst))
 
     elif opcode == 0x33:
         if funct3 == 0x0 and funct7 == 0x00:
@@ -393,6 +459,9 @@ def decode_standard(instruction_bytes: bytes) -> Instruction:
         elif funct3 == 0x7 and funct7 == 0x01:
             return MUL.Remu(rd=rd, rs1=rs1, rs2=rs2)
 
+    elif opcode == 0x37:
+        return I.Lui(rd=rd, imm=decode_u_imm(inst))
+
     elif opcode == 0x3b:
         if funct3 == 0x0 and funct7 == 0x00:
             return I.Addw(rd=rd, rs1=rs1, rs2=rs2)
@@ -405,56 +474,63 @@ def decode_standard(instruction_bytes: bytes) -> Instruction:
         elif funct3 == 0x5 and funct7 == 0x20:
             return I.Sraw(rd=rd, rs1=rs1, rs2=rs2)
 
-    elif opcode == 0x03:
-        imm = decode_i_imm(inst)
-        if funct3 == 0x0:
-            return M.Lb(rd=rd, rs1=rs1, imm=imm)
-        elif funct3 == 0x1:
-            return M.Lh(rd=rd, rs1=rs1, imm=imm)
-        elif funct3 == 0x2:
-            return M.Lw(rd=rd, rs1=rs1, imm=imm)
-        elif funct3 == 0x3:
-            return M.Ld(rd=rd, rs1=rs1, imm=imm)
-        elif funct3 == 0x4:
-            return M.Lbu(rd=rd, rs1=rs1, imm=imm)
-        elif funct3 == 0x5:
-            return M.Lhu(rd=rd, rs1=rs1, imm=imm)
-        elif funct3 == 0x6:
-            return M.Lwu(rd=rd, rs1=rs1, imm=imm)
+    elif opcode == 0x43:
+        fmt = (inst >> 25) & 0x3
+        rs3 = (inst >> 27) & 0x1f
+        if fmt == 0x1:
+            return F.FmaddD(fd=rd, rs1=rs1, rs2=rs2, rs3=rs3)
 
-    elif opcode == 0x07:
-        mop = (inst >> 26) & 0x3
+    elif opcode == 0x53:
+        funct7_full = (inst >> 25) & 0x7f
+        funct5 = (inst >> 27) & 0x1f
+        fmt = (inst >> 25) & 0x3
+
+        if funct7_full == 0x71 and rs2 == 0 and funct3 == 0x0:
+            return F.FmvXD(rd=rd, rs1=rs1)
+        elif funct7_full == 0x78 and funct3 == 0x0:
+            return F.FmvWX(fd=rd, rs1=rs1)
+        elif funct7_full == 0x79 and rs2 == 0 and funct3 == 0x0:
+            return F.FmvDX(fd=rd, rs1=rs1)
+        elif funct7_full == 0x04:
+            return F.FsubS(fd=rd, rs1=rs1, rs2=rs2)
+        elif funct7_full == 0x05:
+            return F.FsubD(fd=rd, rs1=rs1, rs2=rs2)
+        elif funct7_full == 0x50 and funct3 == 0x2:
+            return F.FeqS(rd=rd, rs1=rs1, rs2=rs2)
+        elif funct7_full == 0x50 and funct3 == 0x1:
+            return F.FltS(rd=rd, rs1=rs1, rs2=rs2)
+        elif funct7_full == 0x50 and funct3 == 0x0:
+            return F.FleS(rd=rd, rs1=rs1, rs2=rs2)
+        elif funct7_full == 0x51 and funct3 == 0x2:
+            return F.FeqD(rd=rd, rs1=rs1, rs2=rs2)
+        elif funct7_full == 0x51 and funct3 == 0x1:
+            return F.FltD(rd=rd, rs1=rs1, rs2=rs2)
+        elif funct7_full == 0x51 and funct3 == 0x0:
+            return F.FleD(rd=rd, rs1=rs1, rs2=rs2)
+        elif funct7_full == 0x10 and rs2 == rs1 and funct3 == 0x2:
+            return F.FabsS(fd=rd, rs1=rs1)
+        elif funct7_full == 0x11 and rs2 == rs1 and funct3 == 0x2:
+            return F.FabsD(fd=rd, rs1=rs1)
+        elif funct7_full == 0x11 and rs2 == rs1 and funct3 == 0x0:
+            return F.FmvD(fd=rd, rs1=rs1)
+        elif funct7_full == 0x69 and rs2 == 0x2:
+            return F.FcvtDL(fd=rd, rs1=rs1)
+        elif funct7_full == 0x61 and rs2 == 0x2:
+            return F.FcvtLD(rd=rd, rs1=rs1)
+
+    elif opcode == 0x57:
+        bit31 = (inst >> 31) & 0x1
+        funct6 = (inst >> 26) & 0x3f
         vm = (inst >> 25) & 0x1
-        width = funct3
-        if mop == 0x0 and width == 0x6:
-            return V.Vle32V(vd=rd, rs1=rs1, vm=vm)
-        elif width == 0x2:
-            return F.Flw(fd=rd, rs1=rs1, imm=decode_i_imm(inst))
-        elif width == 0x3:
-            return F.Fld(fd=rd, rs1=rs1, imm=decode_i_imm(inst))
+        vs2 = rs2
 
-    elif opcode == 0x23:
-        imm = decode_s_imm(inst)
-        if funct3 == 0x0:
-            return M.Sb(rs1=rs1, rs2=rs2, imm=imm)
-        elif funct3 == 0x1:
-            return M.Sh(rs1=rs1, rs2=rs2, imm=imm)
-        elif funct3 == 0x2:
-            return M.Sw(rs1=rs1, rs2=rs2, imm=imm)
-        elif funct3 == 0x3:
-            return M.Sd(rs1=rs1, rs2=rs2, imm=imm)
-
-    elif opcode == 0x27:
-        mop = (inst >> 26) & 0x3
-        vm = (inst >> 25) & 0x1
-        width = funct3
-        vs3 = rd
-        if mop == 0x0 and width == 0x6:
-            return V.Vse32V(vs3=vs3, rs1=rs1, vm=vm)
-        elif width == 0x2:
-            return F.Fsw(rs2=rs2, rs1=rs1, imm=decode_s_imm(inst))
-        elif width == 0x3:
-            return F.Fsd(rs2=rs2, rs1=rs1, imm=decode_s_imm(inst))
+        if bit31 == 0 and funct3 == 0x7:
+            vtypei = (inst >> 20) & 0x7ff
+            return V.Vsetvli(rd=rd, rs1=rs1, vtypei=vtypei)
+        elif funct6 == 0x2c and funct3 == 0x5:
+            return V.VfmaccVf(vd=rd, rs1=rs1, vs2=vs2, vm=vm)
+        elif funct6 == 0x00 and funct3 == 0x4:
+            return V.VaddVx(vd=rd, rs1=rs1, vs2=vs2, vm=vm)
 
     elif opcode == 0x63:
         imm = decode_b_imm(inst)
@@ -471,25 +547,14 @@ def decode_standard(instruction_bytes: bytes) -> Instruction:
         elif funct3 == 0x7:
             return CF.Bgeu(rs1=rs1, rs2=rs2, imm=imm)
 
-    elif opcode == 0x0f:
-        if funct3 == 0x0:
-            pred = (inst >> 24) & 0xf
-            succ = (inst >> 20) & 0xf
-            return S.Fence(pred=pred, succ=succ)
+    elif opcode == 0x6f:
+        return CF.Jal(rd=rd, imm=decode_j_imm(inst))
 
-    elif opcode == 0x57:
-        bit31 = (inst >> 31) & 0x1
-        funct6 = (inst >> 26) & 0x3f
-        vm = (inst >> 25) & 0x1
-        vs2 = rs2
-
-        if bit31 == 0 and funct3 == 0x7:
-            vtypei = (inst >> 20) & 0x7ff
-            return V.Vsetvli(rd=rd, rs1=rs1, vtypei=vtypei)
-        elif funct6 == 0x2c and funct3 == 0x5:
-            return V.VfmaccVf(vd=rd, rs1=rs1, vs2=vs2, vm=vm)
-        elif funct6 == 0x00 and funct3 == 0x4:
-            return V.VaddVx(vd=rd, rs1=rs1, vs2=vs2, vm=vm)
+    elif opcode == 0x73:
+        if funct3 == 0x1:
+            return S.Csrrw(rd=rd, rs1=rs1, csr=csr)
+        elif funct3 == 0x2:
+            return S.Csrrs(rd=rd, rs1=rs1, csr=csr)
 
     logger.error(f'Unknown 32-bit instruction: 0x{inst:08x} '
                  f'(opcode: 0x{opcode:02x}, funct3: {funct3:03b}, funct7: {funct7:07b}, '

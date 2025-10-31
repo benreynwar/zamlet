@@ -31,11 +31,17 @@ SECTIONS
   . = ALIGN(0x1000);
   .text : { *(.text) }
 
-  /* VPU data segment - large arrays for VPU operations */
+  /* VPU data segments - large arrays for VPU operations with different element widths */
   . = 0x20000000;
-  .data.vpu : {
-    *(.data.vpu)
-    *(.rodata.vpu)
+  .data.vpu32 : {
+    *(.data.vpu32)
+    *(.rodata.vpu32)
+  }
+
+  . = 0x21000000;
+  .data.vpu64 : {
+    *(.data.vpu64)
+    *(.rodata.vpu64)
   }
 
   /* Scalar data segment */

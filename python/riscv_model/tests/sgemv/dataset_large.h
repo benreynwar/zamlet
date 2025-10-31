@@ -2,7 +2,7 @@
 #define N_DIM 16
 #define DIM_SIZE 256
 
-float input_data_A[M_DIM * N_DIM] __attribute__((section(".data.vpu"), aligned(0x400))) = {
+float input_data_A[M_DIM * N_DIM] __attribute__((section(".data.vpu32"), aligned(0x400))) = {
   0.0, 4.0, 1.0, 1.0, 0.0, 0.0, 0.0, 2.0, 1.0, 1.0, 0.0, 4.0, 2.0, 0.0, 0.0, 0.0,
   0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 2.0, 0.0, 1.0, 1.0, 0.0, 1.0, 0.0,
   0.0, 4.0, 4.0, 2.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 4.0, 0.0, 1.0, 0.0, 1.0,
@@ -25,7 +25,7 @@ float input_data_x[M_DIM] __attribute__((section(".data"), aligned(0x400))) = {
   2.0, 1.0, 0.0, 0.0, 1.0, 2.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 1.0, 1.0,
 };
 
-float verify_data[N_DIM] __attribute__((section(".data.vpu"), aligned(0x400))) = {
+float verify_data[N_DIM] __attribute__((section(".data.vpu32"), aligned(0x400))) = {
   9.0, 18.0, 16.0, 6.0, 3.0, 11.0, 18.0, 13.0, 12.0, 11.0, 8.0, 18.0, 20.0, 4.0, 7.0, 4.0,
 };
 

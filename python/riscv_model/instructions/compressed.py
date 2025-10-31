@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     import state
 
-from register_names import reg_name
+from register_names import reg_name, freg_name
 from instructions.control_flow import format_branch_target
 import utils
 
@@ -535,6 +535,58 @@ class CSdsp:
 
 
 @dataclass
+class CFldsp:
+    """C.FLDSP - Compressed Floating-Point Load Double from Stack Pointer (RV32DC/RV64DC).
+
+    Loads a double-precision floating-point value from memory at sp + offset*8
+    into floating-point register fd.
+    Expands to: fld fd, offset(x2)
+
+    Reference: riscv-isa-manual/src/c-st-ext.adoc
+    """
+    fd: int
+    offset: int
+
+    def __str__(self):
+        return f'fld\t{freg_name(self.fd)},{self.offset}(sp)'
+
+    async def update_state(self, s: 'state.State'):
+        await s.scalar.wait_all_regs_ready(None, self.fd, [2], [])
+        sp_bytes = s.scalar.read_reg(2)
+        sp = int.from_bytes(sp_bytes, byteorder='little', signed=False)
+        address = sp + self.offset
+        data_future = await s.get_memory(address, 8)
+        s.scalar.write_freg_future(self.fd, data_future)
+        s.pc += 2
+
+
+@dataclass
+class CFsdsp:
+    """C.FSDSP - Compressed Floating-Point Store Double to Stack Pointer (RV32DC/RV64DC).
+
+    Stores a double-precision floating-point value from floating-point register
+    fs2 to memory at sp + offset*8.
+    Expands to: fsd fs2, offset(x2)
+
+    Reference: riscv-isa-manual/src/c-st-ext.adoc
+    """
+    fs2: int
+    offset: int
+
+    def __str__(self):
+        return f'fsd\t{freg_name(self.fs2)},{self.offset}(sp)'
+
+    async def update_state(self, s: 'state.State'):
+        await s.scalar.wait_all_regs_ready(None, None, [2], [self.fs2])
+        sp_bytes = s.scalar.read_reg(2)
+        sp = int.from_bytes(sp_bytes, byteorder='little', signed=False)
+        address = sp + self.offset
+        freg_bytes = s.scalar.read_freg(self.fs2)
+        await s.set_memory(address, freg_bytes[:8])
+        s.pc += 2
+
+
+@dataclass
 class CSwsp:
     """C.SWSP - Compressed Store Word to Stack Pointer (RV32C/RV64C).
 
@@ -736,6 +788,60 @@ class CSd:
         address = rs1_val + self.offset
         value_bytes = s.scalar.read_reg(self.rs2)
         await s.set_memory(address, value_bytes[:8])
+        s.pc += 2
+
+
+@dataclass
+class CFld:
+    """C.FLD - Compressed Floating-Point Load Double (RV32DC/RV64DC).
+
+    Loads a double-precision floating-point value from memory at rs1 + offset
+    into floating-point register fd. The offset is zero-extended and scaled by 8.
+    Expands to: fld fd, offset(rs1)
+
+    Reference: riscv-isa-manual/src/c-st-ext.adoc
+    """
+    fd: int
+    rs1: int
+    offset: int
+
+    def __str__(self):
+        return f'fld\t{freg_name(self.fd)},{self.offset}({reg_name(self.rs1)})'
+
+    async def update_state(self, s: 'state.State'):
+        await s.scalar.wait_all_regs_ready(None, self.fd, [self.rs1], [])
+        rs1_bytes = s.scalar.read_reg(self.rs1)
+        rs1_val = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
+        address = rs1_val + self.offset
+        data_future = await s.get_memory(address, 8)
+        s.scalar.write_freg_future(self.fd, data_future)
+        s.pc += 2
+
+
+@dataclass
+class CFsd:
+    """C.FSD - Compressed Floating-Point Store Double (RV32DC/RV64DC).
+
+    Stores a double-precision floating-point value from floating-point register
+    fs2 to memory at rs1 + offset. The offset is zero-extended and scaled by 8.
+    Expands to: fsd fs2, offset(rs1)
+
+    Reference: riscv-isa-manual/src/c-st-ext.adoc
+    """
+    rs1: int
+    fs2: int
+    offset: int
+
+    def __str__(self):
+        return f'fsd\t{freg_name(self.fs2)},{self.offset}({reg_name(self.rs1)})'
+
+    async def update_state(self, s: 'state.State'):
+        await s.scalar.wait_all_regs_ready(None, None, [self.rs1], [self.fs2])
+        rs1_bytes = s.scalar.read_reg(self.rs1)
+        rs1_val = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
+        address = rs1_val + self.offset
+        freg_bytes = s.scalar.read_freg(self.fs2)
+        await s.set_memory(address, freg_bytes[:8])
         s.pc += 2
 
 
