@@ -92,6 +92,9 @@ class Task:
         self.task.cancel()
         self.clock.check_counts_good()
 
+    def result(self):
+        return self.task.result()
+
     def _task_done(self, task):
         if self.clock.running:
             self.clock.check_counts_good()

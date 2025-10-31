@@ -3,25 +3,26 @@ from dataclasses import dataclass
 
 @dataclass
 class LamletParams:
-    #k_cols: int = 2
-    #k_rows: int = 2
-
-    #j_cols: int = 2
-    #j_rows: int = 2
-
     k_cols: int = 2
-    k_rows: int = 1
+    k_rows: int = 2
 
-    j_cols: int = 1
+    j_cols: int = 2
     j_rows: int = 2
 
+    #k_cols: int = 2
+    #k_rows: int = 1
+
+    #j_cols: int = 1
+    #j_rows: int = 2
+
     n_vregs: int = 40
-    cache_line_bytes: int = 128
+    vlines_in_cache_line: int = 2
     word_bytes: int = 8
     page_bytes: int = 1 << 10 # 12
     scalar_memory_bytes: int = 3 << 20
     kamlet_memory_bytes: int = 1 << 20
-    jamlet_sram_bytes: int = 1 << 10
+    #jamlet_sram_bytes: int = 1 << 10
+    jamlet_sram_bytes: int = 1 << 6
     tohost_addr: int = 0x80001000
     fromhost_addr: int = 0x80001040
     receive_buffer_depth: int = 16
@@ -31,7 +32,7 @@ class LamletParams:
 
     instruction_buffer_length: int = 16
     instructions_in_packet: int = 4
-
+    n_response_idents: int = 32
 
     def __post_init__(self):
         # Page must be bigger than a vector
@@ -52,6 +53,14 @@ class LamletParams:
         # Sane kamlet memory
         assert self.kamlet_memory_bytes > self.cache_line_bytes
         assert self.kamlet_memory_bytes % self.cache_line_bytes == 0
+
+    @property
+    def cache_line_bytes(self) -> int:
+        return self.vline_bytes * self.vlines_in_cache_line // self.k_in_l
+
+    @property
+    def k_vline_bytes(self) -> int:
+        return self.j_in_k * self.word_bytes
 
     @property
     def maxvl_bytes(self):

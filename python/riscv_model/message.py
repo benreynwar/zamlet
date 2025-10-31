@@ -12,17 +12,16 @@ class MessageType(Enum):
     SEND = 0
     INSTRUCTIONS = 1
 
-    READ_BYTES_FROM_SRAM_RESP = 2
+    # Jamlet responds to scalar processor instruction  with some bytes
+    READ_BYTES_RESP = 2
     # Jamlet tells a memory to write some cache line
     WRITE_LINE = 3
-    # Jamlet tells a memory to read a cache line
+    # Kamlet tells a memory to read a cache line
     READ_LINE = 4
-    # Memory replies with the cache line
+    # Memory replies to jamlets with the cache line
     READ_LINE_RESP = 5
-    # Memory notifys the scalar processor of a line write
-    WRITE_LINE_NOTIFY = 6
-    # Jamlet notifies the scalar processor of a line read
-    READ_LINE_NOTIFY = 7
+    # Memory notifys the kamlet of a line write
+    WRITE_LINE_RESP = 6
 
     WRITE_REG_REQ = 8
     WRITE_SP_REQ = 9
@@ -43,16 +42,19 @@ class MessageType(Enum):
 
 @dataclass
 class Header:
-    target_x: int    # 7: 0
-    target_y: int    # 15: 8
-    source_x: int    # 23: 16
-    source_y: int    # 32: 24 
-    length: int    # 35: 32
-    message_type: MessageType  # 43: 36
-    send_type: SendType
-    address: int = None  # 63: 48
-    value: int = None
-    words_requested: int = None
+    # Limited to 64 bit  total
+    target_x: int    # 8 bits
+    target_y: int    # 8 bits
+    source_x: int    # 8 bits
+    source_y: int    # 8 bits
+    length: int      # 4 bits
+    # Used to tie requests and responses together
+    message_type: MessageType  # 5 bits
+    send_type: SendType        # 2 bits
+    ident: int = None      # 5 bits
+    address: int = None  # 12 or 16 bits   (either address or value)
+    value: int = None    # 16 bits
+    words_requested: int = None  # 4 bits  (if used address is 12 bits)
 
     def copy(self):
         return dataclasses.replace(self)

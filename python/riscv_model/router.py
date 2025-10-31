@@ -34,7 +34,6 @@ class Router:
         self._input_connections = {}
         self._output_connections = {}
         self._output_headers = {}
-        self._priority = list(directions)
 
     def get_output_directions(self, header):
         new_header = header.copy()
@@ -93,10 +92,12 @@ class Router:
             buffer.update()
 
     async def run(self):
+        new_priority = list(directions)
         while True:
+            shift_priority = False
             await self.clock.next_cycle
-            self._priority = self._priority[1:] + self._priority[0:1]
-            for input_direction in self._priority:
+            priority = new_priority[:]
+            for input_direction in priority:
                 buffer = self._input_buffers[input_direction]
                 if (input_direction not in self._input_connections) and buffer:
                     # We have some input data, and it's not made a connection yet.
@@ -112,7 +113,7 @@ class Router:
                         # All the required output directions are free.
                         # We create a new connection.
                         for new_header, output_direction in headers_and_output_directions:
-                            logger.debug(f'{self.clock.cycle}: Make a new connection from {input_direction} to {output_direction} length {header.length} in router ({self.x}, {self.y}) target=({header.target_x}, {header.target_y})')
+                            logger.debug(f'{self.clock.cycle}: ({self.x}, {self.y}): Make a new connection from {input_direction} to {output_direction} length {header.length} in router ({self.x}, {self.y}) target=({header.target_x}, {header.target_y})')
                             assert output_direction not in self._output_connections
                             self._output_connections[output_direction] = input_direction
                             # Put the new headers in self._output_headers
@@ -120,6 +121,13 @@ class Router:
                             assert output_direction not in self._output_headers
                             self._output_headers[output_direction] = new_header
                         self._input_connections[input_direction] = Connection(header.length, set(output_dirs), set(output_dirs), 0, header.copy())
+                        # We made a connection, put this at lowest priority
+                        new_priority.remove(input_direction)
+                        new_priority.append(input_direction)
+                else:
+                    # It doesn't have any packets, put it at low priority
+                    new_priority.remove(input_direction)
+                    new_priority.append(input_direction)
                 if (input_direction in self._input_connections) and buffer:
                     # We have some data and we've already made a connection.
                     # Just make sure that we have headers when we expect them.
@@ -151,32 +159,65 @@ class Router:
                             logger.debug(f'{self.clock.cycle}: ({self.x}, {self.y}) {input_direction} -> {output_direction} {updated_header}')
                         else:
                             assert not isinstance(word, Header)
+                            import kinstructions
                             logger.debug(f'{self.clock.cycle}: ({self.x}, {self.y}) {input_direction} -> {output_direction} {word}')
                             output_buffer.append(word)
                         conn.unconsumed.remove(output_direction)
-                        if not conn.unconsumed:
-                            # No other outputs are waiting on this word so we
-                            # can pop it off the input queue.
-                            input_buffer.popleft()
-                            conn.remaining -= 1
-                            if conn.remaining == 0:
-                                logger.debug(f'{self.clock.cycle}: ({self.x}, {self.y}): from {input_direction} closing connection')
-                                del self._input_connections[input_direction]
-                                del self._output_connections[output_direction]
-                            # We finished with that word.
-                            # So we update this to indicate that noone has consumed the next word yet.
-                            conn.unconsumed = set(conn.dests)
-                        else:
-                            # Other outputs are still waiting on this word.
-                            # But this output isn't anymore so remove this output connection.
-                            if conn.remaining == 1:
-                                # There still stuff left but it's not going to our output.
-                                del self._output_connections[output_direction]
-            # Just debugging to catch when our network gets jammed.
-            for conn in self._input_connections.values():
-                conn.age +=1 
-                if conn.age > 100:
-                    import pdb
-                    pdb.set_trace()
+                        #if not conn.unconsumed:
+                        #    import kinstructions
+                        #    if isinstance(word, kinstructions.ReadLine) and word.ident == 4:
+                        #        logger.error(f'************** {self.clock.cycle}: ({self.x}, {self.y}) {input_direction} -> {output_direction} consuming value')
+                        #    # No other outputs are waiting on this word so we
+                        #    # can pop it off the input queue.
+                        #    input_buffer.popleft()
+                        #    conn.remaining -= 1
+                        #    if conn.remaining == 0:
+                        #        logger.debug(f'{self.clock.cycle}: ({self.x}, {self.y}): from {input_direction} closing connection age={conn.age}')
+                        #        del self._input_connections[input_direction]
+                        #        del self._output_connections[output_direction]
+                        #    # We finished with that word.
+                        #    # So we update this to indicate that noone has consumed the next word yet.
+                        #    conn.unconsumed = set(conn.dests)
+                        #else:
+                        #    # Other outputs are still waiting on this word.
+                        #    # But this output isn't anymore so remove this output connection.
+                        #    if conn.remaining == 1:
+                        #        # There still stuff left but it's not going to our output.
+                        #        del self._output_connections[output_direction]
+
+                        # ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+                        #if self.x == 0 and self.y == 0 and isinstance(word, kinstructions.ReadLine):
+                        #    logger.error(f'jamlet got {word}')
+
+            # If we're on the last word delete the output connections as we send the final word.
+            to_delete_output_dirs = set()
+            for output_direction, input_direction in self._output_connections.items():
+                conn = self._input_connections[input_direction]
+                if output_direction not in conn.unconsumed and conn.remaining == 1:
+                    to_delete_output_dirs.add(output_direction)
+            for output_direction in to_delete_output_dirs:
+                del self._output_connections[output_direction]
+
+            to_delete_input_dirs = set()
+            for input_direction, conn in self._input_connections.items():
+                # Pop a word is nowhere is needs it.
+                if not conn.unconsumed:
+                    input_buffer = self._input_buffers[input_direction]
+                    input_buffer.popleft()
+                    conn.remaining -= 1
+                    if conn.remaining == 0:
+                        logger.debug(f'{self.clock.cycle}: ({self.x}, {self.y}): from {input_direction} closing connection age={conn.age}')
+                        to_delete_input_dirs.add(input_direction)
+                    # We finished with that word.
+                    # So we update this to indicate that noone has consumed the next word yet.
+                    conn.unconsumed = set(conn.dests)
+                # Just debugging to catch when our network gets jammed.
+                conn.age +=1
+                #if conn.age > 100:
+                #    import pdb
+                #    pdb.set_trace()
+
+            for input_direction in to_delete_input_dirs:
+                del self._input_connections[input_direction]
 
 

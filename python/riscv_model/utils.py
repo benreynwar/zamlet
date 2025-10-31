@@ -1,5 +1,9 @@
+import logging
 from collections import deque
 import struct
+
+
+logger = logging.getLogger(__name__)
 
 
 def log2ceil(value):
@@ -70,7 +74,7 @@ class Queue:
         assert len(self.queue) < self.length
 
     def can_append(self):
-        return len(self.queue) < self.length
+        return (len(self.queue) < self.length) and (not self.appended)
 
     def update(self):
         if self.popped:
@@ -84,7 +88,7 @@ class Queue:
 
 async def combine_futures(combined_future, futures):
     x = []
-    for future in futures:
+    for index, future in enumerate(futures):
         await future
         x.append(future.result)
     combined_future.set_result(x)

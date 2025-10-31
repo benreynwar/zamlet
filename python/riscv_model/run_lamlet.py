@@ -31,7 +31,7 @@ async def run(clock: Clock):
 
     params = LamletParams()
 
-    s = lamlet.Lamlet(clock, params, 0, 0)
+    s = lamlet.Lamlet(clock, params)
     clock.create_task(update(clock, s))
     clock.create_task(s.run())
     await clock.next_cycle

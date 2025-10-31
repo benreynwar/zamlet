@@ -730,15 +730,12 @@ class CSd:
         return f'sd\t{reg_name(self.rs2)},{self.offset}({reg_name(self.rs1)})'
 
     async def update_state(self, s: 'state.State'):
-        logger.info('Waiting for regs to be ready')
         await s.scalar.wait_all_regs_ready(None, None, [self.rs1, self.rs2], [])
-        logger.info('regs are ready')
         rs1_bytes = s.scalar.read_reg(self.rs1)
         rs1_val = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
         address = rs1_val + self.offset
         value_bytes = s.scalar.read_reg(self.rs2)
         await s.set_memory(address, value_bytes[:8])
-        logger.info('set memory')
         s.pc += 2
 
 

@@ -4,12 +4,12 @@ Here we create some classes to try to keep track of and standardize the options.
 """
 
 import logging
-from collections import deque
 from dataclasses import dataclass
 from enum import Enum
-from typing import List, Tuple
+from typing import List
 
 from params import LamletParams
+from cache_table import CacheTable
 
 
 logger = logging.getLogger(__name__)
@@ -201,99 +201,6 @@ class TLB:
         return self.vpu_pages[address.addr]
 
 
-
-class CacheLineState:
-
-    def __init__(self):
-        self.state = CacheState.I
-        self.ident = None
-
-
-class CacheState(Enum):
-    I = 0  # Invalid
-    S = 1  # Shared
-    M = 2  # Modified
-
-
-class CacheTable:
-
-    def __init__(self, params: LamletParams):
-        self.params = params
-        self.n_slots = params.jamlet_sram_bytes * params.j_in_k // params.cache_line_bytes
-        assert (params.jamlet_sram_bytes * params.j_in_k) % params.cache_line_bytes == 0
-        assert self.n_slots >= 4
-        self.k_cache_line_bytes = params.cache_line_bytes
-        self.l_cache_line_bytes = params.cache_line_bytes * params.k_in_l
-        # For now assume that we're using all of the SRAM for global cache.
-        self.slot_states = [CacheLineState() for index in range(self.n_slots)]
-        self.free_slots = deque(list(range(self.n_slots)))
-        self.used_slots = []
-        self.check_slots()
-
-    def check_slots(self):
-        assert len(self.free_slots) + len(self.used_slots) == self.n_slots
-
-    def get_state(self, address: 'VPUAddress'):
-        j_saddr = address.to_j_saddr(self.params, self)
-        slot = j_saddr.addr//(self.params.cache_line_bytes//self.params.j_in_k)
-        return self.slot_states[slot]
-
-    def get_free_slot(self, ident):
-        self.check_slots()
-        if self.free_slots:
-            slot = self.free_slots.popleft()
-            slot_state = self.slot_states[slot]
-            slot_state.state = CacheState.I
-            slot_state.ident = ident
-            self.used_slots.append(slot)
-        else:
-            slot = None
-        self.check_slots()
-        return slot
-
-    def get_eviction_slot(self, ident):
-        self.check_slots()
-        assert self.used_slots
-        slot = self.used_slots.pop(0)
-        old_state = self.slot_states[slot]
-        self.slot_states[slot] = CacheLineState()
-        self.slot_states[slot].ident = ident
-        self.used_slots.append(slot)
-        self.check_slots()
-        return slot, old_state
-
-    def touch_slot(self, slot):
-        assert slot in self.used_slots
-        # Move it to the end.
-        # We want to keep the used slots in reverse last used order
-        self.used_slots.remove(slot)
-        self.used_slots.append(slot)
-
-    def ident_to_cache_slot(self, ident):
-        matching_slots = []
-        for slot, slot_state in enumerate(self.slot_states):
-            if slot_state.ident == ident:
-                matching_slots.append(slot)
-        assert len(matching_slots) <= 1
-        if matching_slots:
-            return matching_slots[0]
-        else:
-            return None
-
-    def vpu_address_to_ident(self, vpu_address: 'VPUAddress'):
-        ident = vpu_address.addr // self.l_cache_line_bytes
-        return ident
-
-    def vpu_address_to_cache_slot(self, vpu_address: 'VPUAddress'):
-        ident = self.vpu_address_to_ident(vpu_address)
-        slot = self.ident_to_cache_slot(ident)
-        return slot
-
-    def is_cached(self, address: 'VPUAddress'):
-        slot = self.vpu_address_to_cache_slot(address)
-        return slot is not None
-
-
 @dataclass(frozen=True)
 class GlobalAddress:
     """
@@ -387,9 +294,9 @@ class VPUAddress:
             ordering=self.ordering
             )
 
-    def to_j_saddr(self, params, cache_table):
-        logical_vline_addr = self.to_logical_vline_addr(params)
-        return logical_vline_addr.to_j_saddr(params, cache_table)
+    #def to_j_saddr(self, params, cache_table):
+    #    logical_vline_addr = self.to_logical_vline_addr(params)
+    #    return logical_vline_addr.to_j_saddr(params, cache_table)
 
     def to_global_addr(self, params, tlb):
         vpu_page_address = (self.bit_addr // params.page_bytes // 8) * params.page_bytes
@@ -438,9 +345,9 @@ class LogicalVLineAddress:
             ordering=self.ordering,
             bit_addr=physical_vline_bit_addr)
 
-    def to_j_saddr(self, params, cache_table):
-        physical_vline_addr = self.to_physical_vline_addr(params)
-        return physical_vline_addr.to_j_saddr(params, cache_table)
+    #def to_j_saddr(self, params, cache_table):
+    #    physical_vline_addr = self.to_physical_vline_addr(params)
+    #    return physical_vline_addr.to_j_saddr(params, cache_table)
 
     def to_vpu_addr(self, params):
         vline_bits = params.j_in_l * params.word_bytes * 8
@@ -499,9 +406,9 @@ class PhysicalVLineAddress:
             )
         return k_maddr
 
-    def to_j_saddr(self, params, cache_table):
-        k_maddr = self.to_k_maddr(params)
-        return k_maddr.to_j_saddr(params, cache_table)
+    #def to_j_saddr(self, params, cache_table):
+    #    k_maddr = self.to_k_maddr(params)
+    #    return k_maddr.to_j_saddr(params, cache_table)
 
     def to_logical_vline_addr(self, params):
 
@@ -540,8 +447,7 @@ class KMAddr:
         return self.bit_addr//8
 
     def to_cache_slot(self, params, cache_table):
-        cache_ident = self.addr // params.cache_line_bytes
-        cache_slot = cache_table.ident_to_cache_slot(cache_ident)
+        cache_slot = cache_table.addr_to_slot(self)
         return cache_slot
 
     def to_j_saddr(self, params, cache_table):
@@ -612,7 +518,7 @@ class JSAddr:
     def addr(self):
         return self.bit_addr//8
 
-    def to_k_maddr(self, params: LamletParams, tlb: TLB, cache_table: CacheTable):
+    def to_k_maddr(self, params: LamletParams, cache_table: CacheTable):
         # First we need to check the cache state
         j_cache_line_bits = params.cache_line_bytes * 8 // params.j_in_k
         cache_slot = self.bit_addr//j_cache_line_bits
@@ -635,21 +541,16 @@ class JSAddr:
             )
 
     def to_global_addr(self, params: LamletParams, tlb: TLB, cache_table: CacheTable):
-        km_addr = self.to_k_maddr(params, tlb, cache_table)
+        km_addr = self.to_k_maddr(params, cache_table)
         return km_addr.to_global_addr(params, tlb)
 
 
 class AddressConverter:
 
-    def __init__(self, params: LamletParams, tlb: TLB, cache_table: CacheTable):
+    def __init__(self, params: LamletParams, tlb: TLB):
         self.params = params
         self.tlb = tlb
-        self.cache_table = cache_table
-
-    def to_global_addr(self, addr):
-        if isinstance(addr, JSAddr):
-            return addr.to_global_addr(self.params, self.tlb, self.cache_table)
-        raise NotImplementedError
+        #self.cache_table = cache_table
 
     def to_scalar_addr(self, addr: GlobalAddress):
         assert isinstance(addr, GlobalAddress)
@@ -663,9 +564,4 @@ class AddressConverter:
     def to_k_maddr(self, addr):
         if isinstance(addr, GlobalAddress):
             return addr.to_k_maddr(self.params, self.tlb)
-        raise NotImplementedError
-
-    def to_j_saddr(self, addr):
-        if isinstance(addr, GlobalAddress):
-            return addr.to_j_saddr(self.params, self.tlb, self.cache_table)
         raise NotImplementedError

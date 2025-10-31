@@ -139,6 +139,7 @@ class Vle32V:
         return f'vle32.v\tv{self.vd},({reg_name(self.rs1)}){vm_str}'
 
     async def update_state(self, s: 'state.State'):
+        logger.debug(f'{s.clock.cycle}: waiting for ready regs')
         await s.scalar.wait_all_regs_ready(None, None, [self.rs1], [])
         rs1_bytes = s.scalar.read_reg(self.rs1)
         addr = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
@@ -146,7 +147,9 @@ class Vle32V:
             mask_reg=None
         else:
             mask_reg=0
+        logger.debug(f'{s.clock.cycle}: do load')
         await s.vload(self.vd, addr, 32, s.vl, mask_reg)
+        logger.debug(f'{s.clock.cycle}: kicked off load')
         s.pc += 4
         logger.debug(f'Loaded vector into vd={self.vd}')
 
@@ -211,7 +214,7 @@ class VaddVx:
 
         rs1_bytes = s.scalar.read_reg(self.rs1)
         scalar_val = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
-        logger.info(f'VADD.VX: vd=v{self.vd}, rs1={reg_name(self.rs1)}={scalar_val}, vs2=v{self.vs2}, vl={s.vl}')
+        logger.debug(f'VADD.VX: vd=v{self.vd}, rs1={reg_name(self.rs1)}={scalar_val}, vs2=v{self.vs2}, vl={s.vl}')
 
         vline_bytes = s.params.word_bytes * s.params.j_in_l
         assert (s.vl * element_width) % (vline_bytes * 8) == 0
@@ -246,9 +249,9 @@ class VfmaccVf:
         return f'vfmacc.vf\tv{self.vd},{freg_name(self.rs1)},v{self.vs2}{vm_str}'
 
     async def update_state(self, s: 'state.State'):
-        logger.warning(f'{s.clock.cycle}: VfmaccVf waiting for regs')
+        logger.debug(f'{s.clock.cycle}: VfmaccVf waiting for regs')
         await s.scalar.wait_all_regs_ready(None, None, [], [self.rs1])
-        logger.warning(f'{s.clock.cycle}: VfmaccVf got regs')
+        logger.debug(f'{s.clock.cycle}: VfmaccVf got regs')
         scalar_bytes = s.scalar.read_freg(self.rs1)
         scalar_bits = int.from_bytes(scalar_bytes[:4], byteorder='little', signed=False)
 

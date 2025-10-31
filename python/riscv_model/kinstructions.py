@@ -11,14 +11,11 @@ Operation        dst (6 bit) src1 (6 bit) src2 (6 bit)  mask (5 bit) (length 3) 
 Send             src (6 bit)    target (6 bit) mask (5 bit)  length (3)  =  26 bit
 '''
 
-'''
-Instructions for sending to a kamlet
-'''
-
 import logging
 from dataclasses import dataclass
 
-from addresses import JSAddr, KMAddr
+from addresses import KMAddr
+
 
 logger = logging.getLogger(__name__)
 
@@ -28,107 +25,138 @@ class KInstr:
 
 
 @dataclass
-class WriteImmByteToSRAM(KInstr):
-    j_saddr: JSAddr
-    imm: int
+class WriteImmBytes(KInstr):
+    """
+    This instruction writes an immediate to the VPU memory.
+    The scalar processor does not receive a response.
+    """
+    k_maddr: KMAddr
+    imm: bytes
 
     async def update_kamlet(self, kamlet):
-        logger.debug(f'kamlet ({kamlet.min_x} {kamlet.min_y}): WriteImmByteToSRAM')
-        assert 0 <= self.imm < (1 << 8)
-        assert self.j_saddr.bit_addr % 8 == 0
-        jamlet = kamlet.jamlets[self.j_saddr.j_in_k_index]
-        jamlet.sram[self.j_saddr.addr] = self.imm
+        await kamlet.handle_write_imm_bytes_instr(self)
+        #logger.error(f'Writing {int(self.imm[0])} to {hex(self.k_maddr.addr)}')
 
 
 @dataclass
-class ReadBytesFromSRAM(KInstr):
-    j_saddr: JSAddr
+class ReadBytes(KInstr):
+    """
+    This instruction reads from the VPU memory.
+    The scalar processor receives a response packet.
+    """
+    k_maddr: KMAddr
     size: int
-    target_x: int
-    target_y: int
+    ident: int
 
     async def update_kamlet(self, kamlet):
-        assert self.j_saddr.bit_addr % 8 == 0
-        if self.j_saddr.k_index == kamlet.k_index:
-            jamlet = kamlet.jamlets[self.j_saddr.j_in_k_index]
-            await jamlet.read_bytes_from_sram(self, self.size)
-            logger.debug(f'kamlet ({kamlet.min_x} {kamlet.min_y}): ReadByteFromSRAM - here ({kamlet.k_index})')
-        else:
-            logger.debug(f'kamlet ({kamlet.min_x} {kamlet.min_y}): ReadByteFromSRAM - not here ({kamlet.k_index})')
+        await kamlet.handle_read_bytes_instr(self)
+
+#@dataclass
+#class ReadLine(KInstr):
+#    k_maddr: KMAddr      # An address in the kamlet memory space (~40 bits)  
+#    j_saddr: JSAddr      # An address in the kamlet sram space   (12-16 bit)
+#    n_cache_lines: int   # The number of cache lines to read.    (4 bits)
+#    ident: int           # Used for tagging responses with       (5 bits)
+#    # This is tough to fit in 64 bits with the opcode.
+#    # 38 + 12 + 4 + 5 = 59 bits + 5 for opcode
+#    # So it is doable.  Good for now.
+#
+#    async def update_kamlet(self, kamlet):
+#        logger.debug(f'kamlet ({kamlet.min_x} {kamlet.min_y}): ReadLine')
+#        future = await kamlet.handle_read_line_instruction(self)
 
 
 @dataclass
-class ReadLine(KInstr):
-    k_maddr: KMAddr  # An address in the kamlet memory space
-    j_saddr: JSAddr    # An address in the kamlet sram space
-    n_cache_lines: int   # The number of cache lines to read.
+class ZeroLines(KInstr):
+    """
+    Sets an entire cache line to 0.
+    This is useful since we can create a cache line in the SRAM
+    without having to load from memory.
+    """
+    k_maddr: KMAddr
+    n_cache_lines: int
 
     async def update_kamlet(self, kamlet):
-        logger.debug(f'kamlet ({kamlet.min_x} {kamlet.min_y}): ReadLine')
-        for jamlet in kamlet.jamlets:
-            await jamlet.read_line(self.k_maddr, self.j_saddr, self.n_cache_lines)
-
-@dataclass
-class ZeroLine(KInstr):
-    j_saddr: JSAddr    # An address in the kamlet sram space
-    n_cache_lines: int   # The number of cache lines to read.
-
-    async def update_kamlet(self, kamlet):
-        logger.debug(f'kamlet ({kamlet.min_x} {kamlet.min_y}): ZeroLine')
-        params = kamlet.params
-        n_bytes = self.n_cache_lines * params.cache_line_bytes // params.j_in_k
-        for jamlet in kamlet.jamlets:
-            for index in range(n_bytes):
-                jamlet.sram[self.j_saddr.addr+index] = 0
+        await kamlet.handle_zero_lines_instr(self)
 
 
 @dataclass
-class WriteLine(KInstr):
-    k_maddr: KMAddr  # An address in the kamlet memory space
-    j_saddr: JSAddr    # An address in the kamlet sram space
-    n_cache_lines: int   # The number of cache lines to read.
+class DiscardLines(KInstr):
+    """
+    Throws away cache lines.
+    Says we will never use this data so you don't need to flush to
+    memory and you can free those cache slots.
+    """
+    k_maddr: KMAddr
+    n_cache_lines: int
 
     async def update_kamlet(self, kamlet):
-        logger.debug(f'kamlet ({kamlet.min_x} {kamlet.min_y}): WriteLine')
-        for jamlet in kamlet.jamlets:
-            await jamlet.write_line(self.k_maddr, self.j_saddr, self.n_cache_lines)
+        await kamlet.handle_discard_lines_instr(self)
+
+
+#@dataclass
+#class WriteLine(KInstr):
+#    k_maddr: KMAddr  # An address in the kamlet memory space
+#    j_saddr: JSAddr    # An address in the kamlet sram space
+#    n_cache_lines: int   # The number of cache lines to read.
+#    ident: int   # An identifier that we will use to tag responses with.
+#
+#    async def update_kamlet(self, kamlet):
+#        logger.debug(f'kamlet ({kamlet.min_x} {kamlet.min_y}): WriteLine')
+#        future = await kamlet.handle_write_line_instruction(self)
 
 
 @dataclass
 class Load(KInstr):
     dst: int
-    j_saddr: JSAddr  # An address in the jamlet sram space
+    k_maddr: KMAddr  # An address in the kamlet address space
     n_vlines: int
 
     async def update_kamlet(self, kamlet):
-        logger.debug(f'{kamlet.clock.cycle}: kamlet ({kamlet.min_x} {kamlet.min_y}): Load dst=v{self.dst}')
-        params = kamlet.params
-        bytes_per_jamlet = params.vline_bytes // params.j_in_l * self.n_vlines
-        vreg_bytes_per_jamlet = params.maxvl_bytes // params.j_in_l
-        vreg_base_offset = self.dst * vreg_bytes_per_jamlet
-        assert bytes_per_jamlet == vreg_bytes_per_jamlet * self.n_vlines
-        sram_offset = self.j_saddr.addr
-        for jamlet in kamlet.jamlets:
-            jamlet.rf_slice[vreg_base_offset: vreg_base_offset + bytes_per_jamlet] = jamlet.sram[sram_offset: sram_offset + bytes_per_jamlet]
+        regs = [self.dst+index for index in range(self.n_vlines)]
+        await kamlet.wait_for_rf_available(regs)
+        await kamlet.handle_load_instr(self)
+
+    #async def update_kamlet(self, kamlet):
+    #    logger.debug(f'{kamlet.clock.cycle}: kamlet ({kamlet.min_x} {kamlet.min_y}): Load dst=v{self.dst}')
+    #    params = kamlet.params
+    #    bytes_per_jamlet = params.vline_bytes // params.j_in_l * self.n_vlines
+    #    vreg_bytes_per_jamlet = params.maxvl_bytes // params.j_in_l
+    #    vreg_base_offset = self.dst * vreg_bytes_per_jamlet
+    #    assert bytes_per_jamlet == vreg_bytes_per_jamlet * self.n_vlines
+    #    sram_offset = self.j_saddr.addr
+    #    for jamlet in kamlet.jamlets:
+    #        jamlet.rf_slice[vreg_base_offset: vreg_base_offset + bytes_per_jamlet] = jamlet.sram[sram_offset: sram_offset + bytes_per_jamlet]
 
 
 @dataclass
 class Store(KInstr):
     src: int
-    j_saddr: JSAddr  # An address in the jamlet sram space
+    k_maddr: KMAddr  # An address in the kamlet address space
     n_vlines: int
 
     async def update_kamlet(self, kamlet):
-        logger.debug(f'kamlet ({kamlet.min_x} {kamlet.min_y}): Store src=v{self.src}')
-        params = kamlet.params
-        bytes_per_jamlet = params.vline_bytes // params.j_in_l * self.n_vlines
-        vreg_bytes_per_jamlet = params.maxvl_bytes // params.j_in_l
-        vreg_base_offset = self.src * vreg_bytes_per_jamlet
-        assert bytes_per_jamlet == vreg_bytes_per_jamlet * self.n_vlines
-        sram_offset = self.j_saddr.addr
-        for jamlet in kamlet.jamlets:
-            #logger.debug(f'storing {[int(x) for x in jamlet.rf_slice[vreg_base_offset: vreg_base_offset + bytes_per_jamlet]]}')
-            jamlet.sram[sram_offset: sram_offset + bytes_per_jamlet] = jamlet.rf_slice[vreg_base_offset: vreg_base_offset + bytes_per_jamlet]
+        regs = [self.src+index for index in range(self.n_vlines)]
+        await kamlet.wait_for_rf_available(regs)
+        await kamlet.handle_store_instr(self)
+
+#@dataclass
+#class Store(KInstr):
+#    src: int
+#    j_saddr: JSAddr  # An address in the jamlet sram space
+#    n_vlines: int
+#
+#    async def update_kamlet(self, kamlet):
+#        logger.debug(f'kamlet ({kamlet.min_x} {kamlet.min_y}): Store src=v{self.src}')
+#        params = kamlet.params
+#        bytes_per_jamlet = params.vline_bytes // params.j_in_l * self.n_vlines
+#        vreg_bytes_per_jamlet = params.maxvl_bytes // params.j_in_l
+#        vreg_base_offset = self.src * vreg_bytes_per_jamlet
+#        assert bytes_per_jamlet == vreg_bytes_per_jamlet * self.n_vlines
+#        sram_offset = self.j_saddr.addr
+#        for jamlet in kamlet.jamlets:
+#            #logger.debug(f'storing {[int(x) for x in jamlet.rf_slice[vreg_base_offset: vreg_base_offset + bytes_per_jamlet]]}')
+#            jamlet.sram[sram_offset: sram_offset + bytes_per_jamlet] = jamlet.rf_slice[vreg_base_offset: vreg_base_offset + bytes_per_jamlet]
 
 
 @dataclass
@@ -140,7 +168,10 @@ class VaddVxOp(KInstr):
     n_vlines: int
 
     async def update_kamlet(self, kamlet):
-        logger.debug(f'kamlet ({kamlet.min_x} {kamlet.min_y}): VaddVx dst=v{self.dst} src=v{self.src} scalar={self.scalar}')
+        regs = [self.src+index for index in range(self.n_vlines)]
+        regs += [self.dst+index for index in range(self.n_vlines)]
+        await kamlet.wait_for_rf_available(regs)
+        logger.error(f'kamlet ({kamlet.min_x} {kamlet.min_y}): VaddVx dst=v{self.dst} src=v{self.src} scalar={self.scalar}')
         params = kamlet.params
         vreg_bytes_per_jamlet = params.maxvl_bytes // params.j_in_l
         src_offset = self.src * vreg_bytes_per_jamlet
@@ -156,7 +187,7 @@ class VaddVxOp(KInstr):
                 src_val = int.from_bytes(src_bytes, byteorder='little', signed=True)
                 src_elements.append(src_val)
         dst_elements = [src_val + self.scalar for src_val in src_elements]
-        logger.debug(f'src {src_elements} -> dst {dst_elements}')
+        logger.error(f'src {src_elements} -> dst {dst_elements}')
 
         for byte_offset in range(0, self.n_vlines*vreg_bytes_per_jamlet, elem_bytes):
             for jamlet in kamlet.jamlets:
@@ -176,6 +207,9 @@ class VfmaccVfOp(KInstr):
     n_vlines: int
 
     async def update_kamlet(self, kamlet):
+        regs = [self.src+index for index in range(self.n_vlines)]
+        regs += [self.dst+index for index in range(self.n_vlines)]
+        await kamlet.wait_for_rf_available(regs)
         import struct
         logger.debug(f'kamlet ({kamlet.min_x} {kamlet.min_y}): VfmaccVf dst=v{self.dst} src=v{self.src}')
         params = kamlet.params
@@ -207,5 +241,7 @@ class VfmaccVfOp(KInstr):
                 result_bytes = struct.pack('f', result)
                 jamlet.rf_slice[dst_offset + byte_offset:dst_offset + byte_offset + elem_bytes] = result_bytes
 
+        if kamlet.min_x == 0 and kamlet.min_y == 0:
+            logger.info(f'VfmaccVfOp scalar {scalar_val} src {src_elements} old {old_elements} -> dst {result_elements}')
         logger.debug(f'VfmaccVfOp scalar {scalar_val} src {src_elements} old {old_elements} -> dst {result_elements}')
 

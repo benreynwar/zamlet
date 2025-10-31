@@ -24,10 +24,9 @@ int main() {
       uint8_t read_value = vpu_mem[i];
       // Check if they match
       if (read_value != test_value) {
-          all_good = 1;
+          exit_test(i+1);
       }
     }
-    exit_test(all_good);
 
     return 0;
 }
