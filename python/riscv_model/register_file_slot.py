@@ -82,3 +82,51 @@ class RegisterFileSlot:
         self.has_next_value = False
         self.has_next_future = False
 
+
+class KamletRegisterFileSlot:
+
+    def __init__(self, name):
+        self.name = name
+        self.reads = []
+        self.write = None
+        self._next_token = 0
+
+    def get_token(self):
+        token = self._next_token
+        self._next_token += 1
+        return token
+
+    def can_read(self):
+        value = self.write is None
+        #logger.info(f'Can read {self.name} is {value}')
+        return value
+
+    def start_read(self):
+        assert self.can_read()
+        token = self.get_token()
+        self.reads.append(token)
+        #logger.info(f'Staring a read of {self.name} token={token}')
+        return token
+
+    def finish_read(self, token):
+        assert token in self.reads
+        self.reads.remove(token)
+        #logger.info(f'Finishing a read of {self.name} token={token}')
+
+    def can_write(self):
+        value = self.write is None and not self.reads
+        #logger.info(f'Can write {self.name} is {value}')
+        return value
+
+    def start_write(self):
+        assert self.can_write()
+        token = self.get_token()
+        self.write = token
+        #logger.info(f'Staring a write of {self.name} token={token}')
+        return token
+
+    def finish_write(self, token):
+        assert self.write == token
+        self.write = None
+        #logger.info(f'Finishing a write of {self.name} token={token}')
+

@@ -3,6 +3,9 @@
 #ifndef __UTIL_H
 #define __UTIL_H
 
+/* Hardware configuration: Maximum vector length in bytes (j_in_l * word_bytes) */
+#define VLMAX_BYTES 128
+
 extern void setStats(int enable);
 
 #include <stdint.h>

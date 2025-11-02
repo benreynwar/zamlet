@@ -295,7 +295,6 @@ class Lamlet:
         available_tokens = [0 for _ in range(self.params.k_in_l)]
         while True:
             self.update_tokens(available_tokens)
-            logger.debug(f'{self.clock.cycle}: {len(self.instruction_buffer)} instrs in the buffer')
             if self.instruction_buffer and available_tokens:
                 k_indices = [x[1] for x in self.instruction_buffer]
                 k_indices_same = all(k_indices[0] == x for x in k_indices)
@@ -404,6 +403,7 @@ class Lamlet:
         is_vpu = start_addr.is_vpu(self.params, self.tlb)
         if is_vpu:
             end_addr = start_addr.offset_bytes(size-1)
+            logger.info(f'get_memory: VPU read addr=0x{address:x}, size={size}, start_addr.addr={start_addr.addr}, end_addr.addr={end_addr.addr}')
             assert start_addr.addr//self.params.word_bytes == end_addr.addr//self.params.word_bytes
             read_future = await self.read_bytes(start_addr, size)
         else:
@@ -422,11 +422,7 @@ class Lamlet:
         if tohost_value & 1:
             self.finished = True
             self.exit_code = tohost_value >> 1
-            if self.exit_code == 1:
-                logger.error(f'Program exit: VPU allocation error - invalid element width')
-            elif self.exit_code == 2:
-                logger.error(f'Program exit: VPU allocation error - out of memory')
-            elif self.exit_code == 0:
+            if self.exit_code == 0:
                 logger.info(f'Program exit: code={self.exit_code} (success)')
             else:
                 logger.info(f'Program exit: code={self.exit_code}')
@@ -494,19 +490,22 @@ class Lamlet:
         return jamlets
 
     async def vload(self, vd: int, addr: int, element_width: SizeBits, n_elements: int, mask_reg: int):
+        logger.info(f'vload: addr=0x{addr:x}, element_width={element_width}, n_elements={n_elements}')
         g_addr = GlobalAddress(bit_addr=addr*8)
         self.check_element_width(g_addr, (n_elements*element_width)//8, element_width)
         k_maddr = self.to_k_maddr(g_addr)
-        # TODO: Support masking
-        assert mask_reg is None
-        n_vlines = element_width * n_elements//(self.params.maxvl_bytes * 8)
+        logger.info(f'vload: after to_k_maddr, k_maddr={k_maddr}')
+        vline_bits = self.params.maxvl_bytes * 8
+        n_vlines = (element_width * n_elements + vline_bits - 1) // vline_bits
         for reg in range(vd, vd+n_vlines):
             self.vrf_ordering[reg] = Ordering(word_order=None, ew=element_width)
-        assert (element_width * n_elements) % (self.params.maxvl_bytes * 8) == 0
         kinstr = kinstructions.Load(
             dst=vd,
             k_maddr=k_maddr,
-            n_vlines=n_vlines,
+            n_elements=n_elements,
+            element_width=element_width,
+            word_order=k_maddr.ordering.word_order,
+            mask_reg=mask_reg,
             )
         await self.add_to_instruction_buffer(kinstr)
 
@@ -515,16 +514,16 @@ class Lamlet:
         g_addr = GlobalAddress(bit_addr=addr*8)
         self.check_element_width(g_addr, (n_elements*element_width)//8, element_width)
         k_maddr = self.to_k_maddr(g_addr)
-        # TODO: Support masking
-        assert mask_reg is None
         n_vlines = element_width * n_elements//(self.params.maxvl_bytes * 8)
         for reg in range(vs3, vs3+n_vlines):
             assert self.vrf_ordering[reg] == Ordering(word_order=None, ew=element_width)
-        assert (element_width * n_elements) % (self.params.maxvl_bytes * 8) == 0
         kinstr = kinstructions.Store(
             src=vs3,
             k_maddr=k_maddr,
-            n_vlines=n_vlines,
+            n_elements=n_elements,
+            element_width=element_width,
+            word_order=k_maddr.ordering.word_order,
+            mask_reg=mask_reg,
             )
         await self.add_to_instruction_buffer(kinstr)
 
@@ -588,7 +587,6 @@ class Lamlet:
         await instruction.update_state(self)
 
     async def run_instructions(self, disasm_trace=None):
-        logger.warning('run_instructions')
         while not self.finished:
 
             await self.clock.next_cycle

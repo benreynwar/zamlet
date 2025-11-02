@@ -18,17 +18,7 @@ async def update(clock, lamlet):
         lamlet.update()
 
 
-async def run(clock: Clock):
-    #filename = 'tests/readwritebyte/should_fail.riscv'
-    #filename = 'tests/readwritebyte/write_then_read_many_bytes.riscv'
-    #filename = 'tests/readwritebyte/simple_vpu_test.riscv'
-    #filename = 'tests/sgemv/vec-sgemv-large.riscv'
-    filename = 'tests/sgemv/vec-sgemv-64x64.riscv'
-    #filename = 'tests/sgemv/vec-sgemv.riscv'
-    #filename = 'tests/vecadd/vec-add-evict.riscv'
-    #filename = 'tests/vecadd/vec-add.riscv'
-    #filename = 'tests/daxpy/vec-daxpy.riscv'
-    #filename = 'tests/daxpy/vec-daxpy-small.riscv'
+async def run(clock: Clock, filename):
     p_info = program_info.get_program_info(filename)
 
     params = LamletParams()
@@ -48,8 +38,10 @@ async def run(clock: Clock):
         page_end = (address + size + params.page_bytes - 1) // params.page_bytes * params.page_bytes
 
         # Determine if this is VPU memory
-        # 0x20000000-0x20FFFFFF: .data.vpu32 (32-bit static data)
-        # 0x21000000-0x21FFFFFF: .data.vpu64 (64-bit static data)
+        # 0x20000000-0x207FFFFF: .data.vpu8 (8-bit static data)
+        # 0x20800000-0x20FFFFFF: .data.vpu16 (16-bit static data)
+        # 0x21000000-0x217FFFFF: .data.vpu32 (32-bit static data)
+        # 0x21800000-0x21FFFFFF: .data.vpu64 (64-bit static data)
         # 0x90000000-0x9FFFFFFF: VPU dynamic allocation pools
         is_vpu = ((address >= 0x20000000 and address < 0x22000000) or
                   (address >= 0x90000000 and address < 0xa0000000))
@@ -62,9 +54,13 @@ async def run(clock: Clock):
 
         # Determine element width based on memory region
         if is_vpu:
-            if address >= 0x20000000 and address < 0x21000000:
+            if address >= 0x20000000 and address < 0x20800000:
+                ew = 8   # .data.vpu8
+            elif address >= 0x20800000 and address < 0x21000000:
+                ew = 16  # .data.vpu16
+            elif address >= 0x21000000 and address < 0x21800000:
                 ew = 32  # .data.vpu32
-            elif address >= 0x21000000 and address < 0x22000000:
+            elif address >= 0x21800000 and address < 0x22000000:
                 ew = 64  # .data.vpu64
             else:
                 ew = 8   # Dynamic pools (will be overridden below)
@@ -100,7 +96,7 @@ async def run(clock: Clock):
     clock.create_task(s.run_instructions(disasm_trace=trace))
     while clock.running:
         if s.exit_code is not None:
-            logger.info(f"Program exited with code {s.exit_code}")
+            logger.warning(f"Program exited with code {s.exit_code}")
             logger.info(f"Final VL register: {s.vl}")
             logger.info(f"Final VTYPE register: {hex(s.vtype)}")
 
@@ -109,21 +105,44 @@ async def run(clock: Clock):
 
             logger.info("\nVerifying results from memory:")
             #verify_results(s, results_addr, verify_addr)
-            break
+
+            # Signal clock to stop gracefully
+            clock.running = False
+            logger.warning(f"run() about to return exit_code={s.exit_code}")
+            return s.exit_code
         await clock.next_cycle
+    logger.warning(f"run() exiting with clock.running=False, exit_code={s.exit_code}")
+    return None
 
 
 
-async def main(clock):
+async def main(clock, filename):
+    import signal
+
+    def signal_handler(signum, frame):
+        clock.stop()
+        raise KeyboardInterrupt()
+
+    signal.signal(signal.SIGINT, signal_handler)
+
     clock.register_main()
-    run_task = clock.create_task(run(clock))
+    run_task = clock.create_task(run(clock, filename))
     clock_driver_task = clock.create_task(clock.clock_driver())
+
+    # Wait for run_task to complete - it will set clock.running = False
     await run_task
-    clock.stop()
+    exit_code = run_task.result()
+    logger.warning(f"run_task completed with exit_code: {exit_code}")
+
+    # Now wait for clock_driver to finish naturally
+    await clock_driver_task
+    logger.warning(f"clock_driver_task completed")
+
+    return exit_code
 
 
 if __name__ == '__main__':
-    level = logging.INFO
+    level = logging.WARNING
     import sys
     import os
     root_logger = logging.getLogger()
@@ -134,6 +153,44 @@ if __name__ == '__main__':
     handler.setFormatter(formatter)
     root_logger.addHandler(handler)
 
-    root_logger.info('Starting main')
-    clock = Clock(max_cycles=100000)
-    asyncio.run(main(clock))
+    filenames = [
+       #'tests/readwritebyte/should_fail.riscv',
+       'tests/readwritebyte/simple_vpu_test.riscv',
+       'tests/readwritebyte/write_then_read_many_bytes.riscv',
+       #'tests/sgemv/vec-sgemv-large.riscv', (too small)
+       'tests/sgemv/vec-sgemv-64x64.riscv',
+       # #'tests/sgemv/vec-sgemv.riscv',  (too small) (it tries to step through rows in a matrix but one row is less than vline so it gets misaligned)
+       'tests/vecadd/vec-add-evict.riscv',
+       'tests/vecadd/vec-add.riscv',
+       'tests/daxpy/vec-daxpy.riscv',
+       'tests/daxpy/vec-daxpy-small.riscv',
+       'tests/conditional/vec-conditional.riscv',
+       'tests/conditional/vec-conditional-small.riscv',
+    ]
+
+    for filename in filenames:
+        root_logger.warning(f'========== Starting test: {filename} ==========')
+        clock = Clock(max_cycles=100000)
+        exit_code = None
+        try:
+            exit_code = asyncio.run(main(clock, filename))
+        except KeyboardInterrupt:
+            root_logger.warning(f'========== Test interrupted by user ==========')
+            sys.exit(1)
+        except asyncio.CancelledError:
+            # This happens when clock.stop() cancels tasks - it's normal
+            pass
+        except Exception as e:
+            root_logger.error(f'========== Test FAILED: {filename} - {e} ==========')
+            import traceback
+            traceback.print_exc()
+            continue
+
+        # Log result based on exit code
+        if exit_code is not None:
+            if exit_code == 0:
+                root_logger.warning(f'========== Test PASSED: {filename} (exit code: {exit_code}) ==========')
+            else:
+                root_logger.warning(f'========== Test FAILED: {filename} (exit code: {exit_code}) ==========')
+        else:
+            root_logger.warning(f'========== Test completed: {filename} (no exit code) ==========')

@@ -197,17 +197,20 @@ def decode_compressed(instruction_bytes: bytes) -> Instruction:
             rs2 = 8 + rs2_prime
             funct2 = (inst >> 5) & 0b11
 
-            if bits_12_10 == 0b000:
+            if bits_12_10 == 0b000 or bits_12_10 == 0b100:
+                # C.SRLI: bits[11:10]=00, bit[12] is part of shamt
                 shamt_low = (inst >> 2) & 0b11111
                 shamt_high = (inst >> 12) & 0b1
                 shamt = shamt_low | (shamt_high << 5)
                 return C.CSrli(rd_rs1=rd_rs1, shamt=shamt)
-            elif bits_12_10 == 0b001:
+            elif bits_12_10 == 0b001 or bits_12_10 == 0b101:
+                # C.SRAI: bits[11:10]=01, bit[12] is part of shamt
                 shamt_low = (inst >> 2) & 0b11111
                 shamt_high = (inst >> 12) & 0b1
                 shamt = shamt_low | (shamt_high << 5)
                 return C.CSrai(rd_rs1=rd_rs1, shamt=shamt)
-            elif bits_12_10 == 0b010:
+            elif bits_12_10 == 0b010 or bits_12_10 == 0b110:
+                # C.ANDI: bits[11:10]=10, bit[12] is part of immediate
                 imm_low = (inst >> 2) & 0b11111
                 imm_high = (inst >> 12) & 0b1
                 imm = imm_low | (imm_high << 5)
@@ -354,7 +357,11 @@ def decode_standard(instruction_bytes: bytes) -> Instruction:
         mop = (inst >> 26) & 0x3
         vm = (inst >> 25) & 0x1
         width = funct3
-        if mop == 0x0 and width == 0x6:
+        if mop == 0x0 and width == 0x0:
+            return V.Vle8V(vd=rd, rs1=rs1, vm=vm)
+        elif mop == 0x0 and width == 0x5:
+            return V.Vle16V(vd=rd, rs1=rs1, vm=vm)
+        elif mop == 0x0 and width == 0x6:
             return V.Vle32V(vd=rd, rs1=rs1, vm=vm)
         elif mop == 0x0 and width == 0x7:
             return V.Vle64V(vd=rd, rs1=rs1, vm=vm)
@@ -418,7 +425,11 @@ def decode_standard(instruction_bytes: bytes) -> Instruction:
         vm = (inst >> 25) & 0x1
         width = funct3
         vs3 = rd
-        if mop == 0x0 and width == 0x6:
+        if mop == 0x0 and width == 0x0:
+            return V.Vse8V(vs3=vs3, rs1=rs1, vm=vm)
+        elif mop == 0x0 and width == 0x5:
+            return V.Vse16V(vs3=vs3, rs1=rs1, vm=vm)
+        elif mop == 0x0 and width == 0x6:
             return V.Vse32V(vs3=vs3, rs1=rs1, vm=vm)
         elif mop == 0x0 and width == 0x7:
             return V.Vse64V(vs3=vs3, rs1=rs1, vm=vm)
@@ -531,6 +542,12 @@ def decode_standard(instruction_bytes: bytes) -> Instruction:
             return V.VfmaccVf(vd=rd, rs1=rs1, vs2=vs2, vm=vm)
         elif funct6 == 0x00 and funct3 == 0x4:
             return V.VaddVx(vd=rd, rs1=rs1, vs2=vs2, vm=vm)
+        elif funct6 == 0x1d and funct3 == 0x3:
+            simm5 = rs1
+            return V.VmsleVi(vd=rd, vs2=vs2, simm5=simm5, vm=vm)
+        elif funct6 == 0x1d and funct3 == 0x2:
+            vs1 = rs1
+            return V.VmnandMm(vd=rd, vs2=vs2, vs1=vs1)
 
     elif opcode == 0x63:
         imm = decode_b_imm(inst)

@@ -36,6 +36,9 @@ void* vpu_alloc(size_t size, int element_width) {
             exit(1);
     }
 
+    // Align the current brk pointer before using it
+    *brk = (*brk + ALIGNMENT - 1) & ~(ALIGNMENT - 1);
+
     void* ptr = (void*)*brk;
     *brk += size;
 

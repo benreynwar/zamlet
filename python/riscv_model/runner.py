@@ -172,9 +172,8 @@ class Clock:
         return event
 
     def check_counts_good(self):
-        if len(self.running_tasks) != self.n_tasks - self.n_waiting:
-            import pdb
-            pdb.set_trace()
+        if not self.running:
+            return
         assert len(self.running_tasks) == self.n_tasks - self.n_waiting, f'n running tasks is {len(self.running_tasks)} n_tasks {self.n_tasks} n_waiting {self.n_waiting}'
 
     async def run_until_stuck(self):

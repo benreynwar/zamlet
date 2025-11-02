@@ -11,6 +11,9 @@
    argument is one of the names used in the BFD library. More
    specifically one of the entires in bfd/cpu-mips.c */
 
+/* Hardware configuration */
+VLMAX_BYTES = 128;  /* Maximum vector length in bytes (j_in_l * word_bytes) */
+
 OUTPUT_ARCH( "riscv" )
 ENTRY(_start)
 
@@ -32,14 +35,27 @@ SECTIONS
   .text : { *(.text) }
 
   /* VPU data segments - large arrays for VPU operations with different element widths */
+  /* Align to VLMAX_BYTES for proper vector load/store alignment */
   . = 0x20000000;
-  .data.vpu32 : {
+  .data.vpu8 : ALIGN(VLMAX_BYTES) {
+    *(.data.vpu8)
+    *(.rodata.vpu8)
+  }
+
+  . = 0x20800000;
+  .data.vpu16 : ALIGN(VLMAX_BYTES) {
+    *(.data.vpu16)
+    *(.rodata.vpu16)
+  }
+
+  . = 0x21000000;
+  .data.vpu32 : ALIGN(VLMAX_BYTES) {
     *(.data.vpu32)
     *(.rodata.vpu32)
   }
 
-  . = 0x21000000;
-  .data.vpu64 : {
+  . = 0x21800000;
+  .data.vpu64 : ALIGN(VLMAX_BYTES) {
     *(.data.vpu64)
     *(.rodata.vpu64)
   }

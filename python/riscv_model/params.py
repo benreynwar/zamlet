@@ -19,7 +19,7 @@ class LamletParams:
     vlines_in_cache_line: int = 2
     word_bytes: int = 8
     page_bytes: int = 1 << 10 # 12
-    scalar_memory_bytes: int = 3 << 20
+    scalar_memory_bytes: int = 8 << 20
     kamlet_memory_bytes: int = 1 << 20
     #jamlet_sram_bytes: int = 1 << 10
     jamlet_sram_bytes: int = 1 << 6

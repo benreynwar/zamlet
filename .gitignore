@@ -39,3 +39,5 @@ docs/diagrams/*.bkp
 # Waveforms
 *.vcd
 
+*.riscv
+

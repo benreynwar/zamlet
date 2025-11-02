@@ -24,47 +24,51 @@ class WordOrder(Enum):
     LOOP = 1
 
 
+def vw_index_to_j_coords(params: LamletParams, word_order: WordOrder, vw_index: int):
+    if word_order == WordOrder.STANDARD:
+        j_x = vw_index % (params.j_cols * params.k_cols)
+        j_y = vw_index // (params.j_cols * params.k_cols)
+        return j_x, j_y
+    raise NotImplementedError
+
+
+def j_coords_to_vw_index(params, word_order, j_x, j_y):
+    if word_order == WordOrder.STANDARD:
+        vw_index = j_y * (params.j_cols * params.k_cols) + j_x
+        return vw_index
+    raise NotImplementedError
+
+
+def vw_index_to_k_indices(params: LamletParams, word_order, vw_index: int):
+    """
+    Convert the word index in a vector line into a jamlet index.
+    """
+    j_x, j_y = vw_index_to_j_coords(params, word_order, vw_index)
+    k_x = j_x // params.j_cols
+    k_y = j_y // params.j_rows
+    k_index = k_y * params.k_cols + k_x
+    j_in_k_x = j_x % params.j_cols
+    j_in_k_y = j_y % params.j_rows
+    j_in_k_index = j_in_k_y * params.j_cols + j_in_k_x
+    return k_index, j_in_k_index
+
+
+def k_indices_to_vw_index(params: LamletParams, word_order, k_index: int, j_in_k_index: int):
+    k_x = k_index % params.k_cols
+    k_y = k_index // params.k_cols
+    j_in_k_x = j_in_k_index % params.j_cols
+    j_in_k_y = j_in_k_index // params.j_cols
+    j_x = k_x * params.j_cols + j_in_k_x
+    j_y = k_y * params.j_rows + j_in_k_y
+    vw_index = j_coords_to_vw_index(params, word_order, j_x, j_y)
+    return vw_index
+
+
 @dataclass(frozen=True)
 class Ordering:
 
     word_order: WordOrder
     ew: SizeBits
-
-    def vw_index_to_j_coords(self, params, vw_index):
-        if self.word_order == WordOrder.STANDARD:
-            j_x = vw_index % (params.j_cols * params.k_cols)
-            j_y = vw_index // (params.j_cols * params.k_cols)
-            return j_x, j_y
-        raise NotImplementedError
-
-    def j_coords_to_vw_index(self, params, j_x, j_y):
-        if self.word_order == WordOrder.STANDARD:
-            vw_index = j_y * (params.j_cols * params.k_cols) + j_x
-            return vw_index
-        raise NotImplementedError
-
-    def vw_index_to_k_indices(self, params: LamletParams, vw_index: int):
-        """
-        Convert the word index in a vector line into a jamlet index.
-        """
-        j_x, j_y = self.vw_index_to_j_coords(params, vw_index)
-        k_x = j_x // params.j_cols
-        k_y = j_y // params.j_rows
-        k_index = k_y * params.k_cols + k_x
-        j_in_k_x = j_x % params.j_cols
-        j_in_k_y = j_y % params.j_rows
-        j_in_k_index = j_in_k_y * params.j_cols + j_in_k_x
-        return k_index, j_in_k_index
-
-    def k_indices_to_vw_index(self, params: LamletParams, k_index: int, j_in_k_index: int):
-        k_x = k_index % params.k_cols
-        k_y = k_index // params.k_cols
-        j_in_k_x = j_in_k_index % params.j_cols
-        j_in_k_y = j_in_k_index // params.j_cols
-        j_x = k_x * params.j_cols + j_in_k_x
-        j_y = k_y * params.j_rows + j_in_k_y
-        vw_index = self.j_coords_to_vw_index(params, j_x, j_y)
-        return vw_index
 
 
 def make_basic_ordering(params: LamletParams, element_width: int):
@@ -388,7 +392,7 @@ class PhysicalVLineAddress:
 
         # This is the step that considers which vector word is mapped to which jamlet.
         # This mapping changes if we change the word order.
-        k_index, j_in_k_index = self.ordering.vw_index_to_k_indices(params, vw_index)
+        k_index, j_in_k_index = vw_index_to_k_indices(params, self.ordering.word_order, vw_index)
 
         k_vline_bits = params.word_bytes * 8 * params.j_in_k
         k_memory_bit_addr = (
@@ -483,7 +487,7 @@ class KMAddr:
         index = self.bit_addr // k_vline_bits
         # We need to rearrange the words in a vline so that they match the order in a vector.
         j_in_k_index = (self.bit_addr // (params.word_bytes * 8)) % params.j_in_k
-        vw_index = self.ordering.k_indices_to_vw_index(params, self.k_index, j_in_k_index)
+        vw_index = k_indices_to_vw_index(params, self.ordering.word_order, self.k_index, j_in_k_index)
         bit_addr_in_physical_vline = (
             vw_index * params.word_bytes * 8 +
             self.bit_addr % (params.word_bytes * 8)

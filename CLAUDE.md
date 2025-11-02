@@ -24,6 +24,8 @@ python python/zamlet/amlet_test/test_alu_basic.py > test_output.log 2>&1
 ```
 This allows you to read the file multiple times to analyze different parts of the output.
 
+**IMPORTANT**: DO NOT use `timeout` command when running tests. If a test hangs, the user will interrupt it manually.
+
 ### Running Tests with Bazel
 Tests are generated with config suffixes. To run a test using bazel:
 ```bash
