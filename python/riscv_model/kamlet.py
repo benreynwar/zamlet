@@ -382,6 +382,44 @@ class Kamlet:
             self.rf_info[instr.mask_reg].finish_read(read_tokens[1])
         logger.info(f'kamlet: _handle_store_instr_resolve, masks are is {mask_values}')
 
+    async def handle_read_reg_element_instr(self, instr: kinstructions.ReadRegElement):
+        """Handle reading an element from vector register."""
+        logger.debug(f'kamlet: handle_read_reg_element_instr src=v{instr.src} element={instr.element_index}')
+        await self.wait_for_rf_available(read_regs=[instr.src])
+
+        params = self.params
+        vreg_bytes_per_jamlet = params.maxvl_bytes // params.j_in_l
+        eb = instr.element_width // 8
+
+        # Calculate which jamlet and offset within that jamlet
+        vw_index = instr.element_index % params.j_in_l
+        k_index, j_in_k_index = addresses.vw_index_to_k_indices(params, addresses.WordOrder.STANDARD, vw_index)
+        element_in_jamlet = instr.element_index // params.j_in_l
+
+        if k_index == self.k_index:
+            jamlet = self.jamlets[j_in_k_index]
+            src_offset = instr.src * vreg_bytes_per_jamlet + element_in_jamlet * eb
+            value_bytes = bytes(jamlet.rf_slice[src_offset:src_offset + eb])
+
+            # Send response message back to lamlet
+            header = Header(
+                message_type=MessageType.READ_BYTES_RESP,
+                send_type=SendType.SINGLE,
+                value=value_bytes,
+                target_x=jamlet.front_x,
+                target_y=jamlet.front_y,
+                source_x=jamlet.x,
+                source_y=jamlet.y,
+                address=None,
+                length=1,
+                ident=instr.ident,
+            )
+            packet = [header]
+            send_queue = jamlet.send_queues[header.message_type]
+            while not send_queue.can_append():
+                await self.clock.next_cycle
+            send_queue.append(packet)
+
     async def _send_packets(self):
         while True:
             await self.clock.next_cycle

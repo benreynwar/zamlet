@@ -89,20 +89,21 @@ class Vsetvli:
 
 
 @dataclass
-class Vle8V:
-    """VLE8.V - Vector Load 8-bit Elements.
+class VleV:
+    """VLE.V - Vector Load Elements (generic for all element widths).
 
-    Unit-stride load of 8-bit elements from memory into a vector register.
+    Unit-stride load of elements from memory into a vector register.
 
     Reference: riscv-isa-manual/src/v-st-ext.adoc
     """
     vd: int
     rs1: int
     vm: int
+    element_width: int
 
     def __str__(self):
         vm_str = '' if self.vm else ',v0.t'
-        return f'vle8.v\tv{self.vd},({reg_name(self.rs1)}){vm_str}'
+        return f'vle{self.element_width}.v\tv{self.vd},({reg_name(self.rs1)}){vm_str}'
 
     async def update_state(self, s: 'state.State'):
         logger.debug(f'{s.clock.cycle}: waiting for ready regs')
@@ -114,27 +115,28 @@ class Vle8V:
         else:
             mask_reg=0
         logger.debug(f'{s.clock.cycle}: do load')
-        await s.vload(self.vd, addr, 8, s.vl, mask_reg)
+        await s.vload(self.vd, addr, self.element_width, s.vl, mask_reg)
         logger.debug(f'{s.clock.cycle}: kicked off load')
         s.pc += 4
         logger.debug(f'Loaded vector into vd={self.vd}')
 
 
 @dataclass
-class Vse8V:
-    """VSE8.V - Vector Store 8-bit Elements.
+class VseV:
+    """VSE.V - Vector Store Elements (generic for all element widths).
 
-    Unit-stride store of 8-bit elements from vector register to memory.
+    Unit-stride store of elements from vector register to memory.
 
     Reference: riscv-isa-manual/src/v-st-ext.adoc
     """
     vs3: int
     rs1: int
     vm: int
+    element_width: int
 
     def __str__(self):
         vm_str = '' if self.vm else ',v0.t'
-        return f'vse8.v\tv{self.vs3},({reg_name(self.rs1)}){vm_str}'
+        return f'vse{self.element_width}.v\tv{self.vs3},({reg_name(self.rs1)}){vm_str}'
 
     async def update_state(self, s: 'state.State'):
         await s.scalar.wait_all_regs_ready(None, None, [self.rs1], [])
@@ -144,294 +146,58 @@ class Vse8V:
             mask_reg = None
         else:
             mask_reg = 0
-        await s.vstore(self.vs3, addr, 8, s.vl, mask_reg)
+        await s.vstore(self.vs3, addr, self.element_width, s.vl, mask_reg)
         s.pc += 4
         logger.debug(f'Stored vector from vs3={self.vs3}')
 
 
 @dataclass
-class Vle16V:
-    """VLE16.V - Vector Load 16-bit Elements.
+class VArithVxFloat:
+    """Generic vector-scalar floating-point arithmetic instruction.
 
-    Unit-stride load of 16-bit elements from memory into a vector register.
-
-    Reference: riscv-isa-manual/src/v-st-ext.adoc
-    """
-    vd: int
-    rs1: int
-    vm: int
-
-    def __str__(self):
-        vm_str = '' if self.vm else ',v0.t'
-        return f'vle16.v\tv{self.vd},({reg_name(self.rs1)}){vm_str}'
-
-    async def update_state(self, s: 'state.State'):
-        logger.debug(f'{s.clock.cycle}: waiting for ready regs')
-        await s.scalar.wait_all_regs_ready(None, None, [self.rs1], [])
-        rs1_bytes = s.scalar.read_reg(self.rs1)
-        addr = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
-        if self.vm:
-            mask_reg=None
-        else:
-            mask_reg=0
-        logger.debug(f'{s.clock.cycle}: do load')
-        await s.vload(self.vd, addr, 16, s.vl, mask_reg)
-        logger.debug(f'{s.clock.cycle}: kicked off load')
-        s.pc += 4
-        logger.debug(f'Loaded vector into vd={self.vd}')
-
-
-@dataclass
-class Vse16V:
-    """VSE16.V - Vector Store 16-bit Elements.
-
-    Unit-stride store of 16-bit elements from vector register to memory.
-
-    Reference: riscv-isa-manual/src/v-st-ext.adoc
-    """
-    vs3: int
-    rs1: int
-    vm: int
-
-    def __str__(self):
-        vm_str = '' if self.vm else ',v0.t'
-        return f'vse16.v\tv{self.vs3},({reg_name(self.rs1)}){vm_str}'
-
-    async def update_state(self, s: 'state.State'):
-        await s.scalar.wait_all_regs_ready(None, None, [self.rs1], [])
-        rs1_bytes = s.scalar.read_reg(self.rs1)
-        addr = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
-        if self.vm:
-            mask_reg = None
-        else:
-            mask_reg = 0
-        await s.vstore(self.vs3, addr, 16, s.vl, mask_reg)
-        s.pc += 4
-        logger.debug(f'Stored vector from vs3={self.vs3}')
-
-
-@dataclass
-class Vle32V:
-    """VLE32.V - Vector Load 32-bit Elements.
-
-    Unit-stride load of 32-bit elements from memory into a vector register.
-
-    Reference: riscv-isa-manual/src/v-st-ext.adoc
-    """
-    vd: int
-    rs1: int
-    vm: int
-
-    def __str__(self):
-        vm_str = '' if self.vm else ',v0.t'
-        return f'vle32.v\tv{self.vd},({reg_name(self.rs1)}){vm_str}'
-
-    async def update_state(self, s: 'state.State'):
-        logger.debug(f'{s.clock.cycle}: waiting for ready regs')
-        await s.scalar.wait_all_regs_ready(None, None, [self.rs1], [])
-        rs1_bytes = s.scalar.read_reg(self.rs1)
-        addr = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
-        if self.vm:
-            mask_reg=None
-        else:
-            mask_reg=0
-        logger.debug(f'{s.clock.cycle}: do load')
-        await s.vload(self.vd, addr, 32, s.vl, mask_reg)
-        logger.debug(f'{s.clock.cycle}: kicked off load')
-        s.pc += 4
-        logger.debug(f'Loaded vector into vd={self.vd}')
-
-
-
-@dataclass
-class Vse32V:
-    """VSE32.V - Vector Store 32-bit Elements.
-
-    Unit-stride store of 32-bit elements from vector register to memory.
-
-    Reference: riscv-isa-manual/src/v-st-ext.adoc
-    """
-    vs3: int
-    rs1: int
-    vm: int
-
-    def __str__(self):
-        vm_str = '' if self.vm else ',v0.t'
-        return f'vse32.v\tv{self.vs3},({reg_name(self.rs1)}){vm_str}'
-
-    async def update_state(self, s: 'state.State'):
-        await s.scalar.wait_all_regs_ready(None, None, [self.rs1], [])
-        rs1_bytes = s.scalar.read_reg(self.rs1)
-        addr = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
-        if self.vm:
-            mask_reg = None
-        else:
-            mask_reg = 0
-        await s.vstore(self.vs3, addr, 32, s.vl, mask_reg)
-        s.pc += 4
-        logger.debug(f'Stored vector from vs3={self.vs3}')
-
-
-@dataclass
-class Vle64V:
-    """VLE64.V - Vector Load 64-bit Elements.
-
-    Unit-stride load of 64-bit elements from memory into a vector register.
-
-    Reference: riscv-isa-manual/src/v-st-ext.adoc
-    """
-    vd: int
-    rs1: int
-    vm: int
-
-    def __str__(self):
-        vm_str = '' if self.vm else ',v0.t'
-        return f'vle64.v\tv{self.vd},({reg_name(self.rs1)}){vm_str}'
-
-    async def update_state(self, s: 'state.State'):
-        logger.debug(f'{s.clock.cycle}: waiting for ready regs')
-        await s.scalar.wait_all_regs_ready(None, None, [self.rs1], [])
-        rs1_bytes = s.scalar.read_reg(self.rs1)
-        addr = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
-        if self.vm:
-            mask_reg=None
-        else:
-            mask_reg=0
-        logger.debug(f'{s.clock.cycle}: do load')
-        await s.vload(self.vd, addr, 64, s.vl, mask_reg)
-        logger.debug(f'{s.clock.cycle}: kicked off load')
-        s.pc += 4
-        logger.debug(f'Loaded vector into vd={self.vd}')
-
-
-@dataclass
-class Vse64V:
-    """VSE64.V - Vector Store 64-bit Elements.
-
-    Unit-stride store of 64-bit elements from vector register to memory.
-
-    Reference: riscv-isa-manual/src/v-st-ext.adoc
-    """
-    vs3: int
-    rs1: int
-    vm: int
-
-    def __str__(self):
-        vm_str = '' if self.vm else ',v0.t'
-        return f'vse64.v\tv{self.vs3},({reg_name(self.rs1)}){vm_str}'
-
-    async def update_state(self, s: 'state.State'):
-        await s.scalar.wait_all_regs_ready(None, None, [self.rs1], [])
-        rs1_bytes = s.scalar.read_reg(self.rs1)
-        addr = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
-        if self.vm:
-            mask_reg = None
-        else:
-            mask_reg = 0
-        await s.vstore(self.vs3, addr, 64, s.vl, mask_reg)
-        s.pc += 4
-        logger.debug(f'Stored vector from vs3={self.vs3}')
-
-
-@dataclass
-class VaddVx:
-    """VADD.VX - Vector-Scalar Integer Add.
-
-    vd[i] = vs2[i] + rs1
-
-    Reference: riscv-isa-manual/src/v-st-ext.adoc
+    Used for vfmacc.vf, etc.
     """
     vd: int
     rs1: int
     vs2: int
     vm: int
+    op: kinstructions.VArithOp
 
     def __str__(self):
         vm_str = '' if self.vm else ',v0.t'
-        return f'vadd.vx\tv{self.vd},v{self.vs2},{reg_name(self.rs1)}{vm_str}'
+        return f'vf{self.op.value}.vf\tv{self.vd},{freg_name(self.rs1)},v{self.vs2}{vm_str}'
 
     async def update_state(self, s: 'state.State'):
-        await s.scalar.wait_all_regs_ready(None, None, [self.rs1], [])
-        if self.vm:
-            mask_reg = None
-        else:
-            mask_reg = 0
-
-        element_width = 32
-        assert s.vrf_ordering[self.vd].ew == element_width
-        assert s.vrf_ordering[self.vs2].ew == element_width
-
-        rs1_bytes = s.scalar.read_reg(self.rs1)
-        scalar_val = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
-        logger.debug(f'VADD.VX: vd=v{self.vd}, rs1={reg_name(self.rs1)}={scalar_val}, vs2=v{self.vs2}, vl={s.vl}')
-
-        kinstr = kinstructions.VaddVxOp(
-            dst=self.vd,
-            src=self.vs2,
-            scalar=scalar_val,
-            mask_reg=mask_reg,
-            n_elements=s.vl,
-            element_width=element_width,
-            )
-        await s.add_to_instruction_buffer(kinstr)
-        s.pc += 4
-
-
-@dataclass
-class VfmaccVf:
-    """VFMACC.VF - Vector Floating-Point Multiply-Accumulate.
-
-    vd[i] = vd[i] + (rs1 * vs2[i])
-
-    Reference: riscv-isa-manual/src/v-st-ext.adoc
-    """
-    vd: int
-    rs1: int
-    vs2: int
-    vm: int
-
-    def __str__(self):
-        vm_str = '' if self.vm else ',v0.t'
-        return f'vfmacc.vf\tv{self.vd},{freg_name(self.rs1)},v{self.vs2}{vm_str}'
-
-    async def update_state(self, s: 'state.State'):
-        logger.debug(f'{s.clock.cycle}: VfmaccVf waiting for regs')
+        logger.debug(f'{s.clock.cycle}: VArithVxFloat waiting for regs')
         await s.scalar.wait_all_regs_ready(None, None, [], [self.rs1])
-        logger.debug(f'{s.clock.cycle}: VfmaccVf got regs')
+        logger.debug(f'{s.clock.cycle}: VArithVxFloat got regs')
 
-        # Get element width from vtype (set by vsetvli)
         vsew = (s.vtype >> 3) & 0x7
-        element_width = 8 << vsew  # vsew: 0=e8, 1=e16, 2=e32, 3=e64
+        element_width = 8 << vsew
         word_order = addresses.WordOrder.STANDARD
         assert s.vrf_ordering[self.vd].ew == element_width
         assert s.vrf_ordering[self.vs2].ew == element_width
 
-        # Read scalar with appropriate width (4 bytes for float, 8 for double)
         scalar_bytes = s.scalar.read_freg(self.rs1)
-        scalar_byte_count = element_width // 8
-        scalar_bits = int.from_bytes(scalar_bytes[:scalar_byte_count], byteorder='little', signed=False)
-
-        if element_width == 64:
-            scalar_value = struct.unpack('d', scalar_bytes[:8])[0]
-        else:
-            scalar_value = struct.unpack('f', scalar_bytes[:4])[0]
 
         if self.vm:
             mask_reg = None
         else:
             mask_reg = 0
 
-        logger.debug(f'VFMACC.VF: vd=v{self.vd}, rs1={freg_name(self.rs1)}={scalar_value}, vs2=v{self.vs2}, vl={s.vl}, ew={element_width}')
+        logger.debug(f'VF{self.op.value.upper()}.VF: vd=v{self.vd}, rs1={freg_name(self.rs1)}, vs2=v{self.vs2}, vl={s.vl}, ew={element_width}')
 
-        kinstr = kinstructions.VfmaccVfOp(
+        kinstr = kinstructions.VArithVxOp(
+            op=self.op,
             dst=self.vd,
-            src=self.vs2,
-            scalar_bits=scalar_bits,
+            scalar_bytes=scalar_bytes,
+            src2=self.vs2,
             mask_reg=mask_reg,
             n_elements=s.vl,
-            word_order=word_order,
             element_width=element_width,
-            )
+            word_order=word_order,
+            is_float=True,
+        )
         await s.add_to_instruction_buffer(kinstr)
         s.pc += 4
 
@@ -527,6 +293,304 @@ class VmnandMm:
             dst=self.vd,
             src1=self.vs2,
             src2=self.vs1,
+        )
+        await s.add_to_instruction_buffer(kinstr)
+        s.pc += 4
+
+
+@dataclass
+class VmvVi:
+    """VMV.V.I - Vector Move Immediate.
+
+    vd[i] = imm (splat immediate to all active elements)
+
+    Reference: riscv-isa-manual/src/v-st-ext.adoc
+    """
+    vd: int
+    simm5: int
+
+    def __str__(self):
+        return f'vmv.v.i\tv{self.vd},{self.simm5}'
+
+    async def update_state(self, s: 'state.State'):
+        vsew = (s.vtype >> 3) & 0x7
+        element_width = 8 << vsew
+        word_order = addresses.WordOrder.STANDARD
+
+        s.vrf_ordering[self.vd] = addresses.Ordering(word_order, element_width)
+
+        sign_extended_imm = self.simm5 if self.simm5 < 16 else self.simm5 - 32
+
+        kinstr = kinstructions.VBroadcastOp(
+            dst=self.vd,
+            scalar=sign_extended_imm,
+            n_elements=s.vl,
+            element_width=element_width,
+            word_order=word_order,
+        )
+        await s.add_to_instruction_buffer(kinstr)
+        s.pc += 4
+
+
+@dataclass
+class VmvVx:
+    """VMV.V.X - Vector Move Scalar Register.
+
+    vd[i] = x[rs1] (splat scalar to all active elements)
+
+    Reference: riscv-isa-manual/src/v-st-ext.adoc
+    """
+    vd: int
+    rs1: int
+
+    def __str__(self):
+        return f'vmv.v.x\tv{self.vd},{reg_name(self.rs1)}'
+
+    async def update_state(self, s: 'state.State'):
+        await s.scalar.wait_all_regs_ready(None, None, [self.rs1], [])
+
+        vsew = (s.vtype >> 3) & 0x7
+        element_width = 8 << vsew
+        word_order = addresses.WordOrder.STANDARD
+
+        rs1_bytes = s.scalar.read_reg(self.rs1)
+        scalar_val = int.from_bytes(rs1_bytes, byteorder='little', signed=True)
+
+        s.vrf_ordering[self.vd] = addresses.Ordering(word_order, element_width)
+
+        kinstr = kinstructions.VBroadcastOp(
+            dst=self.vd,
+            scalar=scalar_val,
+            n_elements=s.vl,
+            element_width=element_width,
+            word_order=word_order,
+        )
+        await s.add_to_instruction_buffer(kinstr)
+        s.pc += 4
+
+
+@dataclass
+class VmvVv:
+    """VMV.V.V - Vector Move Vector Register.
+
+    vd[i] = vs1[i] (copy vector register to all active elements)
+
+    Reference: riscv-isa-manual/src/v-st-ext.adoc
+    """
+    vd: int
+    vs1: int
+
+    def __str__(self):
+        return f'vmv.v.v\tv{self.vd},v{self.vs1}'
+
+    async def update_state(self, s: 'state.State'):
+        vsew = (s.vtype >> 3) & 0x7
+        element_width = 8 << vsew
+        word_order = addresses.WordOrder.STANDARD
+
+        assert s.vrf_ordering[self.vs1].ew == element_width
+
+        s.vrf_ordering[self.vd] = addresses.Ordering(word_order, element_width)
+
+        kinstr = kinstructions.VmvVvOp(
+            dst=self.vd,
+            src=self.vs1,
+            n_elements=s.vl,
+            element_width=element_width,
+            word_order=word_order,
+        )
+        await s.add_to_instruction_buffer(kinstr)
+        s.pc += 4
+
+
+@dataclass
+class VmvXs:
+    """VMV.X.S - Vector Move to Scalar Register.
+
+    x[rd] = vs2[0] (extract element 0 from vector register)
+
+    Reference: riscv-isa-manual/src/v-st-ext.adoc
+    """
+    rd: int
+    vs2: int
+
+    def __str__(self):
+        return f'vmv.x.s\t{reg_name(self.rd)},v{self.vs2}'
+
+    async def update_state(self, s: 'state.State'):
+        vsew = (s.vtype >> 3) & 0x7
+        element_width = 8 << vsew
+
+        assert s.vrf_ordering[self.vs2].ew == element_width
+
+        # Read element 0 from the vector register
+        value_future = await s.read_register_element(self.vs2, element_index=0, element_width=element_width)
+        s.scalar.write_reg_future(self.rd, value_future)
+        s.pc += 4
+
+
+@dataclass
+class VreductionVs:
+    """Generic Vector Single-Width Integer Reduction.
+
+    vd[0] = reduce_op(vs1[0], vs2[*])
+    Reduces all active elements of vs2 with element 0 of vs1 using the specified operation.
+
+    Used for vredsum.vs, vredmax.vs, vredmin.vs, etc.
+
+    Reference: riscv-isa-manual/src/v-st-ext.adoc Section 15.3
+    """
+    vd: int
+    vs2: int
+    vs1: int
+    vm: int
+    op: kinstructions.VRedOp
+
+    def __str__(self):
+        vm_str = '' if self.vm else ',v0.t'
+        op_name = f'vred{self.op.value}'
+        return f'{op_name}.vs\tv{self.vd},v{self.vs2},v{self.vs1}{vm_str}'
+
+    async def update_state(self, s: 'state.State'):
+        if s.vstart != 0:
+            raise ValueError(f'vred{self.op.value}.vs requires vstart == 0')
+
+        if s.vl == 0:
+            s.pc += 4
+            return
+
+        vsew = (s.vtype >> 3) & 0x7
+        element_width = 8 << vsew
+
+        if not self.vm:
+            mask_reg = 0
+        else:
+            mask_reg = None
+
+        assert s.vrf_ordering[self.vs2].ew == element_width
+        assert s.vrf_ordering[self.vs1].ew == element_width
+
+        word_order = addresses.WordOrder.STANDARD
+        s.vrf_ordering[self.vd] = addresses.Ordering(word_order, element_width)
+
+        await s.handle_vreduction_vs_instr(
+            op=self.op,
+            dst=self.vd,
+            src_vector=self.vs2,
+            src_scalar_reg=self.vs1,
+            mask_reg=mask_reg,
+            n_elements=s.vl,
+            element_width=element_width,
+            word_order=word_order,
+        )
+        s.pc += 4
+
+
+@dataclass
+class VArithVv:
+    """Generic vector-vector arithmetic instruction.
+
+    Used for vmul.vv, vmacc.vv, etc.
+    """
+    vd: int
+    vs1: int
+    vs2: int
+    vm: int
+    op: kinstructions.VArithOp
+
+    def __str__(self):
+        vm_str = '' if self.vm else ',v0.t'
+        # MACC uses vs1,vs2 order; MUL uses vs2,vs1 order
+        if self.op == kinstructions.VArithOp.MACC:
+            return f'v{self.op.value}.vv\tv{self.vd},v{self.vs1},v{self.vs2}{vm_str}'
+        else:
+            return f'v{self.op.value}.vv\tv{self.vd},v{self.vs2},v{self.vs1}{vm_str}'
+
+    async def update_state(self, s: 'state.State'):
+        if self.vm:
+            mask_reg = None
+        else:
+            mask_reg = 0
+
+        vsew = (s.vtype >> 3) & 0x7
+        element_width = 8 << vsew
+        word_order = addresses.WordOrder.STANDARD
+
+        if self.op == kinstructions.VArithOp.MACC and self.vd not in s.vrf_ordering:
+            s.vrf_ordering[self.vd] = addresses.Ordering(word_order, element_width)
+
+        assert s.vrf_ordering[self.vs1].ew == element_width
+        assert s.vrf_ordering[self.vs2].ew == element_width
+
+        if self.op != kinstructions.VArithOp.MACC:
+            s.vrf_ordering[self.vd] = addresses.Ordering(word_order, element_width)
+
+        kinstr = kinstructions.VArithVvOp(
+            op=self.op,
+            dst=self.vd,
+            src1=self.vs1,
+            src2=self.vs2,
+            mask_reg=mask_reg,
+            n_elements=s.vl,
+            element_width=element_width,
+            word_order=word_order,
+        )
+        await s.add_to_instruction_buffer(kinstr)
+        s.pc += 4
+
+
+@dataclass
+class VArithVx:
+    """Generic vector-scalar arithmetic instruction.
+
+    Used for vmul.vx, vmacc.vx, etc.
+    """
+    vd: int
+    rs1: int
+    vs2: int
+    vm: int
+    op: kinstructions.VArithOp
+
+    def __str__(self):
+        vm_str = '' if self.vm else ',v0.t'
+        if self.op == kinstructions.VArithOp.ADD:
+            return f'v{self.op.value}.vx\tv{self.vd},v{self.vs2},{reg_name(self.rs1)}{vm_str}'
+        else:
+            return f'v{self.op.value}.vx\tv{self.vd},{reg_name(self.rs1)},v{self.vs2}{vm_str}'
+
+    async def update_state(self, s: 'state.State'):
+        await s.scalar.wait_all_regs_ready(None, None, [self.rs1], [])
+
+        if self.vm:
+            mask_reg = None
+        else:
+            mask_reg = 0
+
+        vsew = (s.vtype >> 3) & 0x7
+        element_width = 8 << vsew
+        word_order = addresses.WordOrder.STANDARD
+
+        if self.op == kinstructions.VArithOp.MACC and self.vd not in s.vrf_ordering:
+            s.vrf_ordering[self.vd] = addresses.Ordering(word_order, element_width)
+
+        assert s.vrf_ordering[self.vs2].ew == element_width
+        if self.op == kinstructions.VArithOp.MACC:
+            assert s.vrf_ordering[self.vd].ew == element_width
+
+        rs1_bytes = s.scalar.read_reg(self.rs1)
+
+        if self.op != kinstructions.VArithOp.MACC:
+            s.vrf_ordering[self.vd] = addresses.Ordering(word_order, element_width)
+
+        kinstr = kinstructions.VArithVxOp(
+            op=self.op,
+            dst=self.vd,
+            scalar_bytes=rs1_bytes,
+            src2=self.vs2,
+            mask_reg=mask_reg,
+            n_elements=s.vl,
+            element_width=element_width,
+            word_order=word_order,
         )
         await s.add_to_instruction_buffer(kinstr)
         s.pc += 4

@@ -19,6 +19,7 @@ import logging
 from collections import deque
 
 import decode
+import addresses
 from addresses import SizeBytes, SizeBits, TLB
 from addresses import AddressConverter, Ordering, GlobalAddress, KMAddr, VPUAddress
 from cache_table import CacheTable, CacheState
@@ -46,6 +47,7 @@ class Lamlet:
         self.vrf_ordering = [Ordering(None, None) for _ in range(params.n_vregs)]
         self.vl = 0
         self.vtype = 0
+        self.vstart = 0
         self.exit_code = None
 
         self.min_x = 0
@@ -156,6 +158,35 @@ class Lamlet:
         header = packet[0]
         assert isinstance(header, Header)
         return header.value
+
+    async def read_register_element(self, vreg: int, element_index: int, element_width: int):
+        """
+        Read an element from a vector register.
+        Returns a future that resolves to the value as bytes.
+        """
+        # Determine which jamlet/kamlet holds this element
+        vw_index = element_index % self.params.j_in_l
+        k_index, j_in_k_index = addresses.vw_index_to_k_indices(
+            self.params, addresses.WordOrder.STANDARD, vw_index)
+
+        jamlet = self.kamlets[k_index].jamlets[j_in_k_index]
+        label = ('READ_REGISTER_ELEMENT', vreg, element_index)
+        src_coords_to_methods = {
+            (jamlet.x, jamlet.y): self._read_bytes_resolve,
+        }
+        ident, src_coords_to_future = await self.tracker.register_srcs(
+            src_coords_to_methods=src_coords_to_methods, label=label)
+        future = src_coords_to_future[(jamlet.x, jamlet.y)]
+
+        kinstr = kinstructions.ReadRegElement(
+            rd=0,
+            src=vreg,
+            element_index=element_index,
+            element_width=element_width,
+            ident=ident,
+        )
+        await self.add_to_instruction_buffer(kinstr, k_index=k_index)
+        return future
 
     def get_header_source_k_index(self, header):
         x_offset = header.source_x - self.min_x
@@ -498,7 +529,7 @@ class Lamlet:
         vline_bits = self.params.maxvl_bytes * 8
         n_vlines = (element_width * n_elements + vline_bits - 1) // vline_bits
         for reg in range(vd, vd+n_vlines):
-            self.vrf_ordering[reg] = Ordering(word_order=None, ew=element_width)
+            self.vrf_ordering[reg] = Ordering(word_order=addresses.WordOrder.STANDARD, ew=element_width)
         kinstr = kinstructions.Load(
             dst=vd,
             k_maddr=k_maddr,
@@ -516,7 +547,7 @@ class Lamlet:
         k_maddr = self.to_k_maddr(g_addr)
         n_vlines = element_width * n_elements//(self.params.maxvl_bytes * 8)
         for reg in range(vs3, vs3+n_vlines):
-            assert self.vrf_ordering[reg] == Ordering(word_order=None, ew=element_width)
+            assert self.vrf_ordering[reg] == Ordering(word_order=addresses.WordOrder.STANDARD, ew=element_width)
         kinstr = kinstructions.Store(
             src=vs3,
             k_maddr=k_maddr,
@@ -592,6 +623,15 @@ class Lamlet:
             await self.clock.next_cycle
             await self.run_instruction(disasm_trace)
             await self.run_instruction(disasm_trace)
+
+    async def handle_vreduction_vs_instr(self, op, dst, src_vector, src_scalar_reg, mask_reg,
+                                          n_elements, element_width, word_order):
+        """Handle vector reduction instruction.
+
+        Creates and sends a VreductionVsOp instruction to kamlet.
+        TODO: Implement this method.
+        """
+        raise NotImplementedError("handle_vreduction_vs_instr not yet implemented")
 
     def ident_status(self, ident):
         """

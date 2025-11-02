@@ -153,20 +153,24 @@ if __name__ == '__main__':
     handler.setFormatter(formatter)
     root_logger.addHandler(handler)
 
-    filenames = [
-       #'tests/readwritebyte/should_fail.riscv',
-       'tests/readwritebyte/simple_vpu_test.riscv',
-       'tests/readwritebyte/write_then_read_many_bytes.riscv',
-       #'tests/sgemv/vec-sgemv-large.riscv', (too small)
-       'tests/sgemv/vec-sgemv-64x64.riscv',
-       # #'tests/sgemv/vec-sgemv.riscv',  (too small) (it tries to step through rows in a matrix but one row is less than vline so it gets misaligned)
-       'tests/vecadd/vec-add-evict.riscv',
-       'tests/vecadd/vec-add.riscv',
-       'tests/daxpy/vec-daxpy.riscv',
-       'tests/daxpy/vec-daxpy-small.riscv',
-       'tests/conditional/vec-conditional.riscv',
-       'tests/conditional/vec-conditional-small.riscv',
-    ]
+    # Check if a file was provided as argument
+    if len(sys.argv) > 1:
+        filenames = [sys.argv[1]]
+    else:
+        filenames = [
+           #'tests/readwritebyte/should_fail.riscv',
+           'tests/readwritebyte/simple_vpu_test.riscv',
+           'tests/readwritebyte/write_then_read_many_bytes.riscv',
+           #'tests/sgemv/vec-sgemv-large.riscv', (too small)
+           'tests/sgemv/vec-sgemv-64x64.riscv',
+           # #'tests/sgemv/vec-sgemv.riscv',  (too small) (it tries to step through rows in a matrix but one row is less than vline so it gets misaligned)
+           'tests/vecadd/vec-add-evict.riscv',
+           'tests/vecadd/vec-add.riscv',
+           'tests/daxpy/vec-daxpy.riscv',
+           'tests/daxpy/vec-daxpy-small.riscv',
+           'tests/conditional/vec-conditional.riscv',
+           'tests/conditional/vec-conditional-small.riscv',
+        ]
 
     for filename in filenames:
         root_logger.warning(f'========== Starting test: {filename} ==========')

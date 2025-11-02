@@ -16,6 +16,7 @@ import instructions.vector as V
 import instructions.float as F
 import instructions.memory as M
 import instructions.multiply as MUL
+import kinstructions
 
 decode_i_imm = decode_helpers.decode_i_imm
 decode_b_imm = decode_helpers.decode_b_imm
@@ -358,13 +359,13 @@ def decode_standard(instruction_bytes: bytes) -> Instruction:
         vm = (inst >> 25) & 0x1
         width = funct3
         if mop == 0x0 and width == 0x0:
-            return V.Vle8V(vd=rd, rs1=rs1, vm=vm)
+            return V.VleV(vd=rd, rs1=rs1, vm=vm, element_width=8)
         elif mop == 0x0 and width == 0x5:
-            return V.Vle16V(vd=rd, rs1=rs1, vm=vm)
+            return V.VleV(vd=rd, rs1=rs1, vm=vm, element_width=16)
         elif mop == 0x0 and width == 0x6:
-            return V.Vle32V(vd=rd, rs1=rs1, vm=vm)
+            return V.VleV(vd=rd, rs1=rs1, vm=vm, element_width=32)
         elif mop == 0x0 and width == 0x7:
-            return V.Vle64V(vd=rd, rs1=rs1, vm=vm)
+            return V.VleV(vd=rd, rs1=rs1, vm=vm, element_width=64)
         elif width == 0x2:
             return F.Flw(fd=rd, rs1=rs1, imm=decode_i_imm(inst))
         elif width == 0x3:
@@ -426,13 +427,13 @@ def decode_standard(instruction_bytes: bytes) -> Instruction:
         width = funct3
         vs3 = rd
         if mop == 0x0 and width == 0x0:
-            return V.Vse8V(vs3=vs3, rs1=rs1, vm=vm)
+            return V.VseV(vs3=vs3, rs1=rs1, vm=vm, element_width=8)
         elif mop == 0x0 and width == 0x5:
-            return V.Vse16V(vs3=vs3, rs1=rs1, vm=vm)
+            return V.VseV(vs3=vs3, rs1=rs1, vm=vm, element_width=16)
         elif mop == 0x0 and width == 0x6:
-            return V.Vse32V(vs3=vs3, rs1=rs1, vm=vm)
+            return V.VseV(vs3=vs3, rs1=rs1, vm=vm, element_width=32)
         elif mop == 0x0 and width == 0x7:
-            return V.Vse64V(vs3=vs3, rs1=rs1, vm=vm)
+            return V.VseV(vs3=vs3, rs1=rs1, vm=vm, element_width=64)
         elif width == 0x2:
             return F.Fsw(rs2=rs2, rs1=rs1, imm=decode_s_imm(inst))
         elif width == 0x3:
@@ -539,15 +540,53 @@ def decode_standard(instruction_bytes: bytes) -> Instruction:
             vtypei = (inst >> 20) & 0x7ff
             return V.Vsetvli(rd=rd, rs1=rs1, vtypei=vtypei)
         elif funct6 == 0x2c and funct3 == 0x5:
-            return V.VfmaccVf(vd=rd, rs1=rs1, vs2=vs2, vm=vm)
+            return V.VArithVxFloat(vd=rd, rs1=rs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.MACC)
+        elif funct6 == 0x00 and funct3 == 0x2:
+            vs1 = rs1
+            return V.VreductionVs(vd=rd, vs2=vs2, vs1=vs1, vm=vm, op=kinstructions.VRedOp.SUM)
         elif funct6 == 0x00 and funct3 == 0x4:
-            return V.VaddVx(vd=rd, rs1=rs1, vs2=vs2, vm=vm)
+            return V.VArithVx(vd=rd, rs1=rs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.ADD)
         elif funct6 == 0x1d and funct3 == 0x3:
             simm5 = rs1
             return V.VmsleVi(vd=rd, vs2=vs2, simm5=simm5, vm=vm)
         elif funct6 == 0x1d and funct3 == 0x2:
             vs1 = rs1
             return V.VmnandMm(vd=rd, vs2=vs2, vs1=vs1)
+        elif funct6 == 0x17 and funct3 == 0x0:
+            vs1 = rs1
+            return V.VmvVv(vd=rd, vs1=vs1)
+        elif funct6 == 0x17 and funct3 == 0x3:
+            simm5 = rs1
+            return V.VmvVi(vd=rd, simm5=simm5)
+        elif funct6 == 0x17 and funct3 == 0x4:
+            return V.VmvVx(vd=rd, rs1=rs1)
+        elif funct6 == 0x10 and funct3 == 0x2 and rs1 == 0:
+            return V.VmvXs(rd=rd, vs2=vs2)
+        elif funct6 == 0x25 and funct3 == 0x2:
+            vs1 = rs1
+            return V.VArithVv(vd=rd, vs1=vs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.MUL)
+        elif funct6 == 0x25 and funct3 == 0x6:
+            return V.VArithVx(vd=rd, rs1=rs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.MUL)
+        elif funct6 == 0x2d and funct3 == 0x2:
+            vs1 = rs1
+            return V.VArithVv(vd=rd, vs1=vs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.MACC)
+        elif funct6 == 0x2d and funct3 == 0x6:
+            return V.VArithVx(vd=rd, rs1=rs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.MACC)
+        elif funct6 == 0x2f and funct3 == 0x2:
+            vs1 = rs1
+            return V.VnmsacVv(vd=rd, vs1=vs1, vs2=vs2, vm=vm)
+        elif funct6 == 0x2f and funct3 == 0x6:
+            return V.VnmsacVx(vd=rd, rs1=rs1, vs2=vs2, vm=vm)
+        elif funct6 == 0x29 and funct3 == 0x2:
+            vs1 = rs1
+            return V.VmaddVv(vd=rd, vs1=vs1, vs2=vs2, vm=vm)
+        elif funct6 == 0x29 and funct3 == 0x6:
+            return V.VmaddVx(vd=rd, rs1=rs1, vs2=vs2, vm=vm)
+        elif funct6 == 0x2b and funct3 == 0x2:
+            vs1 = rs1
+            return V.VnmsubVv(vd=rd, vs1=vs1, vs2=vs2, vm=vm)
+        elif funct6 == 0x2b and funct3 == 0x6:
+            return V.VnmsubVx(vd=rd, rs1=rs1, vs2=vs2, vm=vm)
 
     elif opcode == 0x63:
         imm = decode_b_imm(inst)
