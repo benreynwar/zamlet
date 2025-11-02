@@ -1,0 +1,331 @@
+VECTOR MASK OPERATIONS
+======================
+
+Spec Reference: riscv-isa-manual/src/v-st-ext.adoc
+Lines: 4037-4422
+
+Overview
+--------
+Vector mask instructions operate on mask registers where each element is a single
+bit. These instructions help manipulate predicate masks for conditional execution.
+
+Key behaviors:
+- Operate on single vector registers regardless of LMUL
+- Always unmasked (vm=0 encodings reserved)
+- Elements < vstart unchanged, vstart reset to zero after execution
+- Tail elements updated with tail-agnostic policy
+- Most instructions require vstart == 0 (raise illegal instruction exception otherwise)
+
+External Test Suite
+-------------------
+Repository: riscv-vector-tests
+Test configs: 16 mask operation tests (8 logical ops, vcpop, vfirst, vmsbf,
+vmsif, vmsof, viota, vid). See test_suite_reference.txt for complete list
+
+Implementation Summary
+----------------------
+Currently implemented: 1 instruction (VMNAND.MM)
+Total in spec: 16 mask instructions
+Coverage: ~6%
+
+MASK-REGISTER LOGICAL OPERATIONS (Status: ⚠ Partial)
+=====================================================
+
+Spec: v-st-ext.adoc lines 4043-4128
+
+These operate on mask registers with 1-bit elements. All 8 instructions together
+can generate any of the 16 possible binary logical functions.
+
+VMAND.MM (Status: ✗)
+  Spec: v-st-ext.adoc line 4060
+  Encoding: funct6=0x19, funct3=OPMVV (0x2)
+  Format: vmand.mm vd, vs2, vs1
+  Implementation: Not implemented
+  Description: vd.mask[i] = vs2.mask[i] && vs1.mask[i]
+  Notes:
+    - Bitwise AND of masks
+    - Pseudoinstruction: vmmv.m vd,vs = vmand.mm vd,vs,vs (copy mask)
+
+VMNAND.MM (Status: ✓)
+  Spec: v-st-ext.adoc line 4061
+  Encoding: funct6=0x1d, funct3=OPMVV
+  Format: vmnand.mm vd, vs2, vs1
+  Implementation: class VmnandMm in instructions/vector.py line 260
+  Decoding: decode.py line 554
+  Description: vd.mask[i] = !(vs2.mask[i] && vs1.mask[i])
+  Notes:
+    - Fully implemented
+    - Pseudoinstruction: vmnot.m vd,vs = vmnand.mm vd,vs,vs (invert mask)
+    - Used in conditional test
+
+VMANDN.MM (Status: ✗)
+  Spec: v-st-ext.adoc line 4062
+  Encoding: funct6=0x18, funct3=OPMVV
+  Format: vmandn.mm vd, vs2, vs1
+  Implementation: Not implemented
+  Description: vd.mask[i] = vs2.mask[i] && !vs1.mask[i]
+  Notes:
+    - AND-NOT operation
+    - Old mnemonic vmandnot can be retained as alias
+
+VMXOR.MM (Status: ✗)
+  Spec: v-st-ext.adoc line 4063
+  Encoding: funct6=0x1b, funct3=OPMVV
+  Format: vmxor.mm vd, vs2, vs1
+  Implementation: Not implemented
+  Description: vd.mask[i] = vs2.mask[i] ^^ vs1.mask[i]
+  Notes:
+    - Bitwise XOR of masks
+    - Pseudoinstruction: vmclr.m vd = vmxor.mm vd,vd,vd (clear mask)
+
+VMOR.MM (Status: ✗)
+  Spec: v-st-ext.adoc line 4064
+  Encoding: funct6=0x1a, funct3=OPMVV
+  Format: vmor.mm vd, vs2, vs1
+  Implementation: Not implemented
+  Description: vd.mask[i] = vs2.mask[i] || vs1.mask[i]
+  Notes: Bitwise OR of masks
+
+VMNOR.MM (Status: ✗)
+  Spec: v-st-ext.adoc line 4065
+  Encoding: funct6=0x1e, funct3=OPMVV
+  Format: vmnor.mm vd, vs2, vs1
+  Implementation: Not implemented
+  Description: vd.mask[i] = !(vs2.mask[i] || vs1.mask[i])
+  Notes: Bitwise NOR of masks
+
+VMORN.MM (Status: ✗)
+  Spec: v-st-ext.adoc line 4066
+  Encoding: funct6=0x1c, funct3=OPMVV
+  Format: vmorn.mm vd, vs2, vs1
+  Implementation: Not implemented
+  Description: vd.mask[i] = vs2.mask[i] || !vs1.mask[i]
+  Notes:
+    - OR-NOT operation
+    - Old mnemonic vmornot can be retained as alias
+
+VMXNOR.MM (Status: ✗)
+  Spec: v-st-ext.adoc line 4067
+  Encoding: funct6=0x1f, funct3=OPMVV
+  Format: vmxnor.mm vd, vs2, vs1
+  Implementation: Not implemented
+  Description: vd.mask[i] = !(vs2.mask[i] ^^ vs1.mask[i])
+  Notes:
+    - Bitwise XNOR of masks
+    - Pseudoinstruction: vmset.m vd = vmxnor.mm vd,vd,vd (set all bits)
+
+MASK POPULATION COUNT (Status: ✗)
+==================================
+
+Spec: v-st-ext.adoc lines 4131-4161
+
+VCPOP.M (Status: ✗)
+  Spec: v-st-ext.adoc lines 4134-4157
+  Encoding: funct6=0x10, vs1=0x10, funct3=OPMVV, writes to x register
+  Format: vcpop.m rd, vs2, vm
+  Implementation: Not implemented
+  Description: Count number of 1s in active mask elements
+  Notes:
+    - Writes count to scalar x register
+    - Can be masked (only counts masked elements)
+    - Writes x[rd] even if vl=0 (with value 0)
+    - vstart must be 0
+    - Old mnemonic vpopc.m can be retained as alias
+
+FIND-FIRST-SET (Status: ✗)
+===========================
+
+Spec: v-st-ext.adoc lines 4163-4183
+
+VFIRST.M (Status: ✗)
+  Spec: v-st-ext.adoc lines 4166-4181
+  Encoding: funct6=0x10, vs1=0x11, funct3=OPMVV, writes to x register
+  Format: vfirst.m rd, vs2, vm
+  Implementation: Not implemented
+  Description: Find index of first set bit in active mask elements
+  Notes:
+    - Writes element index to x[rd], or -1 if none found
+    - Can be masked
+    - Writes x[rd] even if vl=0 (with value -1)
+    - vstart must be 0
+
+SET-BEFORE/INCLUDING/ONLY-FIRST (Status: ✗)
+============================================
+
+Spec: v-st-ext.adoc lines 4185-4300
+
+These instructions scan for the first set bit and set/clear surrounding bits.
+
+VMSBF.M (Status: ✗)
+  Spec: v-st-ext.adoc lines 4188-4227
+  Encoding: funct6=0x14, vs1=0x01, funct3=OPMVV
+  Format: vmsbf.m vd, vs2, vm
+  Implementation: Not implemented
+  Description: Set all bits before first set bit
+  Notes:
+    - Writes 1 to elements before first 1, then 0 to that element and all following
+    - If no 1 found, all active elements written with 1
+    - vstart must be 0
+    - vd cannot overlap vs2 or v0 (if masked)
+
+VMSIF.M (Status: ✗)
+  Spec: v-st-ext.adoc lines 4232-4263
+  Encoding: funct6=0x14, vs1=0x03, funct3=OPMVV
+  Format: vmsif.m vd, vs2, vm
+  Implementation: Not implemented
+  Description: Set all bits before and including first set bit
+  Notes:
+    - Like vmsbf but also includes the first 1
+    - vstart must be 0
+    - vd cannot overlap vs2 or v0 (if masked)
+
+VMSOF.M (Status: ✗)
+  Spec: v-st-ext.adoc lines 4268-4300
+  Encoding: funct6=0x14, vs1=0x02, funct3=OPMVV
+  Format: vmsof.m vd, vs2, vm
+  Implementation: Not implemented
+  Description: Set only the first set bit
+  Notes:
+    - Only sets the first 1, clears all other bits
+    - vstart must be 0
+    - vd cannot overlap vs2 or v0 (if masked)
+
+VECTOR IOTA (Status: ✗)
+========================
+
+Spec: v-st-ext.adoc lines 4313-4399
+
+VIOTA.M (Status: ✗)
+  Spec: v-st-ext.adoc lines 4315-4355
+  Encoding: funct6=0x14, vs1=0x10, funct3=OPMVV
+  Format: viota.m vd, vs2, vm
+  Implementation: Not implemented
+  Description: Parallel prefix sum of mask values
+  Notes:
+    - For each element, writes sum of all bits with lower index
+    - Result zero-extended if SEW > result width
+    - Least-significant SEW bits retained if overflow
+    - Can be masked (only enabled elements contribute)
+    - vstart must be 0
+    - vd cannot overlap vs2 or v0 (if masked)
+    - Used with indexed stores for vector compress (see spec example)
+
+ELEMENT INDEX (Status: ✗)
+==========================
+
+Spec: v-st-ext.adoc lines 4401-4421
+
+VID.V (Status: ✗)
+  Spec: v-st-ext.adoc lines 4403-4418
+  Encoding: funct6=0x14, vs1=0x11, vs2=v0, funct3=OPMVV
+  Format: vid.v vd, vm
+  Implementation: Not implemented
+  Description: Write element index to each element (0 to vl-1)
+  Notes:
+    - Can be masked (masking doesn't change index values)
+    - vs2 field must be v0 (otherwise reserved)
+    - Result zero-extended if SEW > result width
+    - Least-significant SEW bits retained if overflow
+    - Can use same datapath as viota with implicit set mask
+
+IMPLEMENTATION INFRASTRUCTURE
+==============================
+
+Existing Support:
+- VmnandMm class in instructions/vector.py (single mask logical operation)
+- VmnandMmOp in kinstructions.py (kernel instruction)
+- Decoding for vmnand.mm in decode.py
+
+What's Missing:
+- Classes for other 7 mask logical operations
+- Classes for vcpop, vfirst, vmsbf, vmsif, vmsof, viota, vid
+- Kernel operations for count/find/prefix operations
+- vstart==0 checking for most mask operations
+- Overlap checking (vd cannot overlap vs2/v0 for some operations)
+- Special handling for operations that write to x registers (vcpop, vfirst)
+
+Test Coverage
+-------------
+- vmnand.mm tested in tests/conditional/ (mask manipulation)
+- No tests for: other mask logicals, vcpop, vfirst, vmsbf, vmsif, vmsof, viota, vid
+
+TODO Items
+----------
+1. Implement remaining mask logical operations
+   - Add vmand, vmandn, vmxor, vmor, vmnor, vmorn, vmxnor classes
+   - Similar structure to VmnandMm
+   - Add decoding entries
+   - Support pseudoinstructions (vmmv, vmclr, vmset, vmnot)
+
+2. Implement vcpop.m (population count)
+   - Count 1s in mask register
+   - Write result to x register (not vector register)
+   - Support masking
+   - Handle vl=0 case (write 0)
+   - Verify vstart == 0
+
+3. Implement vfirst.m (find-first-set)
+   - Find index of first 1 in mask
+   - Write to x register (-1 if not found)
+   - Support masking
+   - Handle vl=0 case (write -1)
+   - Verify vstart == 0
+
+4. Implement set-before/including/only-first
+   - vmsbf.m (set all before first)
+   - vmsif.m (set all up to and including first)
+   - vmsof.m (set only first)
+   - All scan for first 1 and manipulate surrounding bits
+   - Add overlap checking (vd vs vs2/v0)
+   - Verify vstart == 0
+
+5. Implement viota.m (parallel prefix sum)
+   - For each element, sum of all mask bits with lower index
+   - Handle overflow (retain LSBs)
+   - Support masking
+   - Add overlap checking
+   - Verify vstart == 0
+
+6. Implement vid.v (element index)
+   - Write 0, 1, 2, ... vl-1 to elements
+   - Support masking (doesn't affect index values)
+   - Handle overflow (retain LSBs)
+   - Verify vs2 == v0
+
+7. Add comprehensive mask tests
+   - Test all 8 logical operations
+   - Verify truth table completeness (all 16 functions)
+   - Test pseudoinstructions
+   - Test vcpop with various mask patterns
+   - Test vfirst (found and not-found cases)
+   - Test vmsbf/vmsif/vmsof with examples from spec
+   - Test viota for compress operations
+   - Test vid with various vl values
+   - Test masking behavior
+   - Test vstart != 0 exceptions
+   - Test overlap restrictions
+
+Summary
+-------
+Minimal mask operation support exists. Only 1 of 16 instructions implemented:
+- ✓ vmnand.mm (mask NAND and vmnot pseudoinstruction)
+- ✗ 7 other mask logical operations
+- ✗ vcpop.m (population count to x register)
+- ✗ vfirst.m (find-first-set to x register)
+- ✗ vmsbf.m, vmsif.m, vmsof.m (set-before/including/only-first)
+- ✗ viota.m (parallel prefix sum, used for compress)
+- ✗ vid.v (element index)
+
+Mask operations are critical for:
+- Conditional execution and predication
+- Dynamic loop control (vfirst for early exit)
+- Vector compress/expand (viota + indexed stores)
+- Mask manipulation and combination
+- Efficient predicate computation
+
+Priority for implementation:
+1. Remaining mask logical operations - simple, similar to vmnand
+2. vcpop and vfirst - commonly used for control flow
+3. viota - essential for compress operations
+4. vid - useful for index generation
+5. vmsbf/vmsif/vmsof - specialized string/search operations

@@ -1,0 +1,314 @@
+VECTOR REDUCTION OPERATIONS
+===========================
+
+Spec Reference: riscv-isa-manual/src/v-st-ext.adoc
+Lines: 3829-4035
+
+Overview
+--------
+Vector reduction operations reduce a vector register group of elements using a
+binary operator, combining them with a scalar held in element 0 of a vector
+register to produce a scalar result in element 0 of a vector register.
+
+The scalar input and output are in element 0 of a single vector register (not
+a vector register group), allowing any vector register to be the scalar
+source/destination regardless of LMUL.
+
+Key behaviors:
+- Inactive elements are excluded from reduction
+- Scalar operand is always included regardless of mask
+- vl=0 performs no operation, destination not updated
+- vstart must be 0 (raises illegal instruction exception otherwise)
+- Destination can overlap source operands including mask register
+- Assembler syntax: .vs suffix (vector register group and scalar)
+
+External Test Suite
+-------------------
+Repository: riscv-vector-tests
+Test configs: 16 reduction tests (integer: sum/and/or/xor/min/max, widening;
+floating-point: ordered/unordered sum, min/max, widening)
+See test_suite_reference.txt for complete list
+
+Implementation Summary
+----------------------
+Currently implemented: 0 instructions (vredsum.vs has infrastructure but is a stub)
+Total in spec: 18 reduction instructions
+Coverage: 0%
+
+SINGLE-WIDTH INTEGER REDUCTIONS (Status: ⚠ Partial)
+====================================================
+
+Spec: v-st-ext.adoc lines 3882-3897
+
+All operands and results have the same SEW width. Arithmetic overflows wrap.
+
+VREDSUM.VS (Status: ⚠)
+  Spec: v-st-ext.adoc line 3889
+  Encoding: funct6=0x00, funct3=OPMVV (0x2)
+  Format: vredsum.vs vd, vs2, vs1, vm
+  Implementation: class VreductionVs in instructions/vector.py line 433
+  Decoding: decode.py line 546
+  Description: vd[0] = sum(vs1[0], vs2[*])
+  Notes:
+    - Infrastructure exists but not fully implemented (stub)
+    - Uses VRedOp.SUM enum
+    - Overflows wrap around
+    - Used in dotprod test
+
+VREDMAXU.VS (Status: ✗)
+  Spec: v-st-ext.adoc line 3890
+  Encoding: funct6=0x06, funct3=OPMVV
+  Format: vredmaxu.vs vd, vs2, vs1, vm
+  Implementation: Not implemented
+  Description: vd[0] = maxu(vs1[0], vs2[*])
+  Notes: Unsigned maximum reduction, VRedOp.MAXU enum exists
+
+VREDMAX.VS (Status: ✗)
+  Spec: v-st-ext.adoc line 3891
+  Encoding: funct6=0x07, funct3=OPMVV
+  Format: vredmax.vs vd, vs2, vs1, vm
+  Implementation: Not implemented
+  Description: vd[0] = max(vs1[0], vs2[*])
+  Notes: Signed maximum reduction, VRedOp.MAX enum exists
+
+VREDMINU.VS (Status: ✗)
+  Spec: v-st-ext.adoc line 3892
+  Encoding: funct6=0x04, funct3=OPMVV
+  Format: vredminu.vs vd, vs2, vs1, vm
+  Implementation: Not implemented
+  Description: vd[0] = minu(vs1[0], vs2[*])
+  Notes: Unsigned minimum reduction, VRedOp.MINU enum exists
+
+VREDMIN.VS (Status: ✗)
+  Spec: v-st-ext.adoc line 3893
+  Encoding: funct6=0x05, funct3=OPMVV
+  Format: vredmin.vs vd, vs2, vs1, vm
+  Implementation: Not implemented
+  Description: vd[0] = min(vs1[0], vs2[*])
+  Notes: Signed minimum reduction, VRedOp.MIN enum exists
+
+VREDAND.VS (Status: ✗)
+  Spec: v-st-ext.adoc line 3894
+  Encoding: funct6=0x01, funct3=OPMVV
+  Format: vredand.vs vd, vs2, vs1, vm
+  Implementation: Not implemented
+  Description: vd[0] = and(vs1[0], vs2[*])
+  Notes: Bitwise AND reduction, VRedOp.AND enum exists
+
+VREDOR.VS (Status: ✗)
+  Spec: v-st-ext.adoc line 3895
+  Encoding: funct6=0x02, funct3=OPMVV
+  Format: vredor.vs vd, vs2, vs1, vm
+  Implementation: Not implemented
+  Description: vd[0] = or(vs1[0], vs2[*])
+  Notes: Bitwise OR reduction, VRedOp.OR enum exists
+
+VREDXOR.VS (Status: ✗)
+  Spec: v-st-ext.adoc line 3896
+  Encoding: funct6=0x03, funct3=OPMVV
+  Format: vredxor.vs vd, vs2, vs1, vm
+  Implementation: Not implemented
+  Description: vd[0] = xor(vs1[0], vs2[*])
+  Notes: Bitwise XOR reduction, VRedOp.XOR enum exists
+
+WIDENING INTEGER REDUCTIONS (Status: ✗)
+========================================
+
+Spec: v-st-ext.adoc lines 3900-3917
+
+Vector elements are SEW wide, scalar input/output are 2*SEW wide.
+Overflows wrap around.
+
+VWREDSUMU.VS (Status: ✗)
+  Spec: v-st-ext.adoc lines 3902-3913
+  Encoding: funct6=0x30, funct3=OPMVV
+  Format: vwredsumu.vs vd, vs2, vs1, vm
+  Implementation: Not implemented
+  Description: 2*SEW = 2*SEW + sum(zero-extend(SEW))
+  Notes:
+    - Zero-extends SEW vector elements before summing
+    - Adds to 2*SEW scalar element
+    - Stores 2*SEW result
+
+VWREDSUM.VS (Status: ✗)
+  Spec: v-st-ext.adoc lines 3906-3916
+  Encoding: funct6=0x31, funct3=OPMVV
+  Format: vwredsum.vs vd, vs2, vs1, vm
+  Implementation: Not implemented
+  Description: 2*SEW = 2*SEW + sum(sign-extend(SEW))
+  Notes: Sign-extends SEW vector elements before summing
+
+SINGLE-WIDTH FP REDUCTIONS (Status: ✗)
+=======================================
+
+Spec: v-st-ext.adoc lines 3920-4014
+
+VFREDOSUM.VS (Status: ✗)
+  Spec: v-st-ext.adoc lines 3924, 3932-3955
+  Encoding: funct6=0x03, funct3=OPFVV (0x1)
+  Format: vfredosum.vs vd, vs2, vs1, vm
+  Implementation: Not implemented
+  Description: Ordered FP sum reduction
+  Notes:
+    - Must sum in element order: vd[0] = (((vs1[0]+vs2[0])+vs2[1])+...)+vs2[vl-1]
+    - Each addition operates like scalar FP (exceptions, special values)
+    - Supports compiler auto-vectorization
+    - Masked-off elements don't affect result or exception flags
+    - vl=0: scalar copied without canonicalizing NaN or setting flags
+
+VFREDUSUM.VS (Status: ✗)
+  Spec: v-st-ext.adoc lines 3925, 3957-3999
+  Encoding: funct6=0x01, funct3=OPFVV
+  Format: vfredusum.vs vd, vs2, vs1, vm
+  Implementation: Not implemented
+  Description: Unordered FP sum reduction
+  Notes:
+    - Allows faster implementation via reduction tree
+    - Must use deterministic tree structure for given vtype/vl
+    - Each tree node: exact sum → rounded to ≥SEW precision
+    - Additive identity: +0.0 (RDN mode) or -0.0 (other modes)
+    - May canonicalize NaN when no active elements
+    - vfredosum is valid implementation of vfredusum
+    - Older mnemonic 'vfredsum' is alias
+
+VFREDMAX.VS (Status: ✗)
+  Spec: v-st-ext.adoc lines 3926, 4001-4013
+  Encoding: funct6=0x07, funct3=OPFVV
+  Format: vfredmax.vs vd, vs2, vs1, vm
+  Implementation: Not implemented
+  Description: FP maximum reduction using maximumNumber
+  Notes:
+    - Same result and flags regardless of operation order
+    - vl=0: scalar copied without canonicalizing NaN or setting flags
+
+VFREDMIN.VS (Status: ✗)
+  Spec: v-st-ext.adoc lines 3927, 4001-4013
+  Encoding: funct6=0x05, funct3=OPFVV
+  Format: vfredmin.vs vd, vs2, vs1, vm
+  Implementation: Not implemented
+  Description: FP minimum reduction using minimumNumber
+  Notes: Same behavior as vfredmax regarding order-independence
+
+WIDENING FP REDUCTIONS (Status: ✗)
+===================================
+
+Spec: v-st-ext.adoc lines 4016-4035
+
+Read SEW-width elements, write 2*SEW-width result. Elements promoted to
+2*SEW before adding to 2*SEW accumulator.
+
+VFWREDOSUM.VS (Status: ✗)
+  Spec: v-st-ext.adoc lines 4023-4033
+  Encoding: funct6=0x33, funct3=OPFVV
+  Format: vfwredosum.vs vd, vs2, vs1, vm
+  Implementation: Not implemented
+  Description: Widening ordered FP sum reduction
+  Notes:
+    - Elements in vs2 promoted to 2*SEW before adding
+    - Handles inactive elements and NaN like vfredosum
+
+VFWREDUSUM.VS (Status: ✗)
+  Spec: v-st-ext.adoc lines 4024-4034
+  Encoding: funct6=0x31, funct3=OPFVV
+  Format: vfwredusum.vs vd, vs2, vs1, vm
+  Implementation: Not implemented
+  Description: Widening unordered FP sum reduction
+  Notes:
+    - Handles inactive elements and NaN like vfredusum
+    - Older mnemonic 'vfwredsum' is alias
+
+IMPLEMENTATION INFRASTRUCTURE
+==============================
+
+Existing Support:
+- VreductionVs class in instructions/vector.py (generic reduction handler)
+- VRedOp enum in kinstructions.py with all 8 integer reduction operations
+- VreductionVsOp in kinstructions.py (kernel instruction)
+- handle_vreduction_vs_instr in state.py
+- Decoding infrastructure for reductions (decode.py)
+
+What's Missing:
+- Decoding for non-SUM integer reductions (MAX, MIN, AND, OR, XOR)
+- Widening integer reduction classes and kernel operations
+- All FP reduction classes and kernel operations
+- FP reduction tree implementation for unordered sums
+- Ordered vs unordered FP sum distinction
+
+Test Coverage
+-------------
+- vredsum.vs tested in tests/dotprod/ (dot product uses reduction)
+- No tests for: max/min, bitwise, widening, or any FP reductions
+
+TODO Items
+----------
+1. Implement remaining single-width integer reductions
+   - Add decode entries for vredmax, vredmin, vredmaxu, vredminu
+   - Add decode entries for vredand, vredor, vredxor
+   - VredOp enum already has all operations defined
+   - Should work with existing VreductionVs class
+
+2. Implement widening integer reductions
+   - Create VWreductionVs class for widening reductions
+   - Add vwredsumu.vs, vwredsum.vs
+   - Handle 2*SEW scalar input/output correctly
+   - Add widening reduction kernel operation
+
+3. Implement single-width FP reductions
+   - Create VFredOp enum (OSUM, USUM, MAX, MIN)
+   - Create VFreductionVs class
+   - Implement ordered sum (vfredosum) with sequential additions
+   - Implement unordered sum (vfredusum) with reduction tree
+   - Implement max/min using minimumNumber/maximumNumber
+   - Handle FP exceptions and special values correctly
+   - Handle NaN canonicalization based on active elements
+
+4. Implement widening FP reductions
+   - Create VFWreductionVs class
+   - Add vfwredosum.vs, vfwredusum.vs
+   - Promote SEW elements to 2*SEW before reduction
+   - Handle 2*SEW scalar correctly
+
+5. Add reduction tree infrastructure for unordered FP sums
+   - Must be deterministic for given vtype/vl
+   - Each node: exact sum → round to ≥SEW precision
+   - Support dynamic rounding modes
+   - Handle additive identity correctly (+0.0 or -0.0)
+
+6. Add comprehensive reduction tests
+   - Test all integer reductions with various data patterns
+   - Test widening integer reductions (overflow scenarios)
+   - Test ordered FP sum (verify sequential order)
+   - Test unordered FP sum (verify determinism)
+   - Test FP max/min with NaN, infinity
+   - Test with masking
+   - Test vl=0 behavior
+   - Test vstart != 0 exception
+   - Test FP exception flag handling
+
+Summary
+-------
+Basic reduction infrastructure exists but none of the 18 instructions are fully implemented:
+- ⚠ vredsum.vs (has class and decoding, but is stub/not fully functional)
+- ✗ 7 other integer reductions (infrastructure ready, just need decoding)
+- ✗ 2 widening integer reductions
+- ✗ 4 single-width FP reductions
+- ✗ 2 widening FP reductions
+
+The VreductionVs class and VRedOp enum support all 8 integer reduction
+operations, but only SUM is decoded. Adding the other 7 integer reductions
+should be straightforward.
+
+FP reductions require more work:
+- Ordered vs unordered distinction for sums
+- Reduction tree implementation for unordered
+- Proper NaN and exception handling
+- minimumNumber/maximumNumber for max/min
+
+Priority for implementation:
+1. Integer max/min reductions - commonly used, infrastructure ready
+2. Integer bitwise reductions - useful for bit masks
+3. FP ordered sum - needed for auto-vectorization
+4. Widening integer reductions - prevent overflow in accumulation
+5. FP unordered sum - performance optimization
+6. FP max/min - useful but less critical
+7. Widening FP reductions - specialized use cases

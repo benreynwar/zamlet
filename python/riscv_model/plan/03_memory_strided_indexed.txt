@@ -1,0 +1,394 @@
+STRIDED AND INDEXED VECTOR MEMORY OPERATIONS
+=============================================
+
+Spec Reference: riscv-isa-manual/src/v-st-ext.adoc
+Lines: 1602-1647 (Constant-stride instructions)
+Lines: 1648-1691 (Indexed instructions)
+
+Overview
+--------
+Strided and indexed memory operations provide non-contiguous memory access
+patterns for vector operations.
+
+Constant-stride instructions access memory at regular intervals (stride)
+from a base address. The stride can be positive, negative, or zero.
+
+Indexed instructions use a vector of byte offsets to access memory at
+arbitrary locations. They come in ordered and unordered variants:
+- Unordered: Memory accesses can happen in any order (better performance)
+- Ordered: Memory accesses happen in element order (required for atomicity)
+
+These operations are essential for accessing non-contiguous data structures
+like matrix columns, sparse matrices, and gather/scatter operations.
+
+External Test Suite
+-------------------
+Repository: riscv-vector-tests
+Test configs: 24 tests (8 strided + 16 indexed load/store operations)
+See test_suite_reference.txt for complete list
+
+Instructions in This Category
+------------------------------
+
+CONSTANT-STRIDE LOADS
+---------------------
+
+VLSE8.V (Status: ✗)
+  Spec: v-st-ext.adoc line 1608, vmem-format.edn
+  Format: vlse8.v vd, (rs1), rs2, vm
+  Tests: vlse8.v.toml
+  Encoding: nf|mew|10|vm|rs2|rs1|000|vd|0000111
+           mop=10 (strided), width=000 (8-bit), opcode=0x07
+  Implementation: Not implemented
+  Description: Constant-stride load of 8-bit elements
+  Notes:
+    - Load from addr[i] = rs1 + i * rs2
+    - rs2 contains byte stride (signed)
+    - Supports negative and zero strides
+    - Element accesses are unordered
+    - Special behavior when rs2=x0 (may optimize away accesses)
+    - TODO: Add decode pattern for mop=10 to decode.py
+    - TODO: Create instruction class in vector.py
+
+VLSE16.V (Status: ✗)
+  Spec: v-st-ext.adoc line 1609, vmem-format.edn
+  Format: vlse16.v vd, (rs1), rs2, vm
+  Tests: vlse16.v.toml
+  Encoding: nf|mew|10|vm|rs2|rs1|101|vd|0000111
+           mop=10 (strided), width=101 (16-bit), opcode=0x07
+  Implementation: Not implemented
+  Description: Constant-stride load of 16-bit elements
+
+VLSE32.V (Status: ✗)
+  Spec: v-st-ext.adoc line 1610, vmem-format.edn
+  Format: vlse32.v vd, (rs1), rs2, vm
+  Tests: vlse32.v.toml
+  Encoding: nf|mew|10|vm|rs2|rs1|110|vd|0000111
+           mop=10 (strided), width=110 (32-bit), opcode=0x07
+  Implementation: Not implemented
+  Description: Constant-stride load of 32-bit elements
+
+VLSE64.V (Status: ✗)
+  Spec: v-st-ext.adoc line 1611, vmem-format.edn
+  Format: vlse64.v vd, (rs1), rs2, vm
+  Tests: vlse64.v.toml
+  Encoding: nf|mew|10|vm|rs2|rs1|111|vd|0000111
+           mop=10 (strided), width=111 (64-bit), opcode=0x07
+  Implementation: Not implemented
+  Description: Constant-stride load of 64-bit elements
+
+CONSTANT-STRIDE STORES
+-----------------------
+
+VSSE8.V (Status: ✗)
+  Spec: v-st-ext.adoc line 1614, vmem-format.edn
+  Format: vsse8.v vs3, (rs1), rs2, vm
+  Tests: vsse8.v.toml
+  Encoding: nf|mew|10|vm|rs2|rs1|000|vs3|0100111
+           mop=10 (strided), width=000 (8-bit), opcode=0x27
+  Implementation: Not implemented
+  Description: Constant-stride store of 8-bit elements
+  Notes:
+    - Store to addr[i] = rs1 + i * rs2
+    - rs2 contains byte stride (signed)
+    - TODO: Add decode pattern for mop=10 to decode.py
+    - TODO: Create instruction class in vector.py
+
+VSSE16.V (Status: ✗)
+  Spec: v-st-ext.adoc line 1615, vmem-format.edn
+  Format: vsse16.v vs3, (rs1), rs2, vm
+  Tests: vsse16.v.toml
+  Encoding: nf|mew|10|vm|rs2|rs1|101|vs3|0100111
+           mop=10 (strided), width=101 (16-bit), opcode=0x27
+  Implementation: Not implemented
+  Description: Constant-stride store of 16-bit elements
+
+VSSE32.V (Status: ✗)
+  Spec: v-st-ext.adoc line 1616, vmem-format.edn
+  Format: vsse32.v vs3, (rs1), rs2, vm
+  Tests: vsse32.v.toml
+  Encoding: nf|mew|10|vm|rs2|rs1|110|vs3|0100111
+           mop=10 (strided), width=110 (32-bit), opcode=0x27
+  Implementation: Not implemented
+  Description: Constant-stride store of 32-bit elements
+
+VSSE64.V (Status: ✗)
+  Spec: v-st-ext.adoc line 1617, vmem-format.edn
+  Format: vsse64.v vs3, (rs1), rs2, vm
+  Tests: vsse64.v.toml
+  Encoding: nf|mew|10|vm|rs2|rs1|111|vs3|0100111
+           mop=10 (strided), width=111 (64-bit), opcode=0x27
+  Implementation: Not implemented
+  Description: Constant-stride store of 64-bit elements
+
+INDEXED UNORDERED LOADS
+------------------------
+
+VLUXEI8.V (Status: ✗)
+  Spec: v-st-ext.adoc line 1655, vmem-format.edn
+  Format: vluxei8.v vd, (rs1), vs2, vm
+  Tests: vluxei8.v.toml
+  Encoding: nf|mew|01|vm|vs2|rs1|000|vd|0000111
+           mop=01 (indexed-unordered), width=000 (8-bit index), opcode=0x07
+  Implementation: Not implemented
+  Description: Unordered indexed load with 8-bit indices
+  Notes:
+    - Load SEW-width data from addr[i] = rs1 + vs2[i]
+    - vs2 contains byte offsets (8-bit elements)
+    - Data width determined by SEW, not index width
+    - Element accesses are unordered (can be reordered for performance)
+    - TODO: Add decode pattern for mop=01 to decode.py
+    - TODO: Create instruction class in vector.py
+
+VLUXEI16.V (Status: ✗)
+  Spec: v-st-ext.adoc line 1656, vmem-format.edn
+  Format: vluxei16.v vd, (rs1), vs2, vm
+  Tests: vluxei16.v.toml
+  Encoding: nf|mew|01|vm|vs2|rs1|101|vd|0000111
+           mop=01 (indexed-unordered), width=101 (16-bit index), opcode=0x07
+  Implementation: Not implemented
+  Description: Unordered indexed load with 16-bit indices
+
+VLUXEI32.V (Status: ✗)
+  Spec: v-st-ext.adoc line 1657, vmem-format.edn
+  Format: vluxei32.v vd, (rs1), vs2, vm
+  Tests: vluxei32.v.toml
+  Encoding: nf|mew|01|vm|vs2|rs1|110|vd|0000111
+           mop=01 (indexed-unordered), width=110 (32-bit index), opcode=0x07
+  Implementation: Not implemented
+  Description: Unordered indexed load with 32-bit indices
+
+VLUXEI64.V (Status: ✗)
+  Spec: v-st-ext.adoc line 1658, vmem-format.edn
+  Format: vluxei64.v vd, (rs1), vs2, vm
+  Tests: vluxei64.v.toml
+  Encoding: nf|mew|01|vm|vs2|rs1|111|vd|0000111
+           mop=01 (indexed-unordered), width=111 (64-bit index), opcode=0x07
+  Implementation: Not implemented
+  Description: Unordered indexed load with 64-bit indices
+
+INDEXED ORDERED LOADS
+----------------------
+
+VLOXEI8.V (Status: ✗)
+  Spec: v-st-ext.adoc line 1662, vmem-format.edn
+  Format: vloxei8.v vd, (rs1), vs2, vm
+  Tests: vloxei8.v.toml
+  Encoding: nf|mew|11|vm|vs2|rs1|000|vd|0000111
+           mop=11 (indexed-ordered), width=000 (8-bit index), opcode=0x07
+  Implementation: Not implemented
+  Description: Ordered indexed load with 8-bit indices
+  Notes:
+    - Like vluxei8.v but memory accesses must be in element order
+    - Required when atomicity or ordering matters
+    - Less efficient than unordered variant
+    - TODO: Add decode pattern for mop=11 to decode.py
+    - TODO: Create instruction class in vector.py
+
+VLOXEI16.V (Status: ✗)
+  Spec: v-st-ext.adoc line 1663, vmem-format.edn
+  Format: vloxei16.v vd, (rs1), vs2, vm
+  Tests: vloxei16.v.toml
+  Encoding: nf|mew|11|vm|vs2|rs1|101|vd|0000111
+           mop=11 (indexed-ordered), width=101 (16-bit index), opcode=0x07
+  Implementation: Not implemented
+  Description: Ordered indexed load with 16-bit indices
+
+VLOXEI32.V (Status: ✗)
+  Spec: v-st-ext.adoc line 1664, vmem-format.edn
+  Format: vloxei32.v vd, (rs1), vs2, vm
+  Encoding: nf|mew|11|vm|vs2|rs1|110|vd|0000111
+           mop=11 (indexed-ordered), width=110 (32-bit index), opcode=0x07
+  Implementation: Not implemented
+  Description: Ordered indexed load with 32-bit indices
+
+VLOXEI64.V (Status: ✗)
+  Spec: v-st-ext.adoc line 1665, vmem-format.edn
+  Format: vloxei64.v vd, (rs1), vs2, vm
+  Encoding: nf|mew|11|vm|vs2|rs1|111|vd|0000111
+           mop=11 (indexed-ordered), width=111 (64-bit index), opcode=0x07
+  Implementation: Not implemented
+  Description: Ordered indexed load with 64-bit indices
+
+INDEXED UNORDERED STORES
+-------------------------
+
+VSUXEI8.V (Status: ✗)
+  Spec: v-st-ext.adoc line 1669, vmem-format.edn
+  Format: vsuxei8.v vs3, (rs1), vs2, vm
+  Encoding: nf|mew|01|vm|vs2|rs1|000|vs3|0100111
+           mop=01 (indexed-unordered), width=000 (8-bit index), opcode=0x27
+  Implementation: Not implemented
+  Description: Unordered indexed store with 8-bit indices
+  Notes:
+    - Store SEW-width data to addr[i] = rs1 + vs2[i]
+    - vs2 contains byte offsets (8-bit elements)
+    - Data width determined by SEW, not index width
+    - Element accesses are unordered
+    - TODO: Add decode pattern for mop=01 to decode.py
+    - TODO: Create instruction class in vector.py
+
+VSUXEI16.V (Status: ✗)
+  Spec: v-st-ext.adoc line 1670, vmem-format.edn
+  Format: vsuxei16.v vs3, (rs1), vs2, vm
+  Encoding: nf|mew|01|vm|vs2|rs1|101|vs3|0100111
+           mop=01 (indexed-unordered), width=101 (16-bit index), opcode=0x27
+  Implementation: Not implemented
+  Description: Unordered indexed store with 16-bit indices
+
+VSUXEI32.V (Status: ✗)
+  Spec: v-st-ext.adoc line 1671, vmem-format.edn
+  Format: vsuxei32.v vs3, (rs1), vs2, vm
+  Encoding: nf|mew|01|vm|vs2|rs1|110|vs3|0100111
+           mop=01 (indexed-unordered), width=110 (32-bit index), opcode=0x27
+  Implementation: Not implemented
+  Description: Unordered indexed store with 32-bit indices
+
+VSUXEI64.V (Status: ✗)
+  Spec: v-st-ext.adoc line 1672, vmem-format.edn
+  Format: vsuxei64.v vs3, (rs1), vs2, vm
+  Encoding: nf|mew|01|vm|vs2|rs1|111|vs3|0100111
+           mop=01 (indexed-unordered), width=111 (64-bit index), opcode=0x27
+  Implementation: Not implemented
+  Description: Unordered indexed store with 64-bit indices
+
+INDEXED ORDERED STORES
+-----------------------
+
+VSOXEI8.V (Status: ✗)
+  Spec: v-st-ext.adoc line 1676, vmem-format.edn
+  Format: vsoxei8.v vs3, (rs1), vs2, vm
+  Encoding: nf|mew|11|vm|vs2|rs1|000|vs3|0100111
+           mop=11 (indexed-ordered), width=000 (8-bit index), opcode=0x27
+  Implementation: Not implemented
+  Description: Ordered indexed store with 8-bit indices
+  Notes:
+    - Like vsuxei8.v but memory accesses must be in element order
+    - TODO: Add decode pattern for mop=11 to decode.py
+    - TODO: Create instruction class in vector.py
+
+VSOXEI16.V (Status: ✗)
+  Spec: v-st-ext.adoc line 1677, vmem-format.edn
+  Format: vsoxei16.v vs3, (rs1), vs2, vm
+  Encoding: nf|mew|11|vm|vs2|rs1|101|vs3|0100111
+           mop=11 (indexed-ordered), width=101 (16-bit index), opcode=0x27
+  Implementation: Not implemented
+  Description: Ordered indexed store with 16-bit indices
+
+VSOXEI32.V (Status: ✗)
+  Spec: v-st-ext.adoc line 1678, vmem-format.edn
+  Format: vsoxei32.v vs3, (rs1), vs2, vm
+  Encoding: nf|mew|11|vm|vs2|rs1|110|vs3|0100111
+           mop=11 (indexed-ordered), width=110 (32-bit index), opcode=0x27
+  Implementation: Not implemented
+  Description: Ordered indexed store with 32-bit indices
+
+VSOXEI64.V (Status: ✗)
+  Spec: v-st-ext.adoc line 1679, vmem-format.edn
+  Format: vsoxei64.v vs3, (rs1), vs2, vm
+  Encoding: nf|mew|11|vm|vs2|rs1|111|vs3|0100111
+           mop=11 (indexed-ordered), width=111 (64-bit index), opcode=0x27
+  Implementation: Not implemented
+  Description: Ordered indexed store with 64-bit indices
+
+Special Behaviors
+-----------------
+
+Stride Zero Handling (Constant-Stride)
+  Spec: v-st-ext.adoc lines 1620-1646
+  Notes:
+    - When rs2=x0: May optimize away redundant memory accesses
+    - When rs2!=x0 but x[rs2]=0: Must perform all memory accesses (unordered)
+    - Compilers must use non-x0 register if all accesses are required
+    - Useful for broadcasting/replication from single memory location
+
+Negative Strides (Constant-Stride)
+  Spec: v-st-ext.adoc line 1620
+  Notes:
+    - Fully supported
+    - Can access memory backwards from base address
+    - Useful for reverse iteration
+
+Element Ordering (Indexed)
+  Spec: v-st-ext.adoc lines 1622-1623, 1682-1691
+  Notes:
+    - Unordered (U suffix): Accesses can be reordered for performance
+    - Ordered (O suffix): Accesses must occur in element order
+    - Use ordered when atomicity or memory ordering matters
+    - Use unordered for better performance when ordering doesn't matter
+
+Index Width vs Data Width (Indexed)
+  Spec: v-st-ext.adoc lines 1682-1684
+  Notes:
+    - Width encoding (ei8/ei16/ei32/ei64) specifies INDEX element width
+    - Data width comes from SEW in vtype
+    - "ei" instead of "e" indicates encoding is for index, not data
+    - Must ensure index vector has correct EMUL for index width
+
+Test Coverage
+-------------
+- No strided memory operations tested
+- No indexed memory operations tested
+- Test files reference these instructions but don't execute them:
+  - tests/common/encoding.h has encoding macros
+  - tests/common/ara/spmv.c references indexed ops
+
+TODO Items
+----------
+1. Implement constant-stride loads (vlse*.v)
+   - Add mop field extraction to decode.py
+   - Add decode patterns for mop=10 (strided) in opcode 0x07 block
+   - Create VlseV instruction class in vector.py
+   - Implement stride calculation: addr[i] = base + i * stride
+   - Handle negative and zero strides correctly
+   - Support rs2=x0 optimization hint
+
+2. Implement constant-stride stores (vsse*.v)
+   - Add decode patterns for mop=10 in opcode 0x27 block
+   - Create VsseV instruction class in vector.py
+   - Mirror stride behavior from loads
+
+3. Implement indexed unordered loads (vluxei*.v)
+   - Add decode patterns for mop=01 in opcode 0x07 block
+   - Create VluxeiV instruction class in vector.py
+   - Read offsets from vs2 vector register
+   - Implement address calculation: addr[i] = base + vs2[i]
+   - Data width from SEW, index width from instruction encoding
+   - Allow reordering for performance
+
+4. Implement indexed ordered loads (vloxei*.v)
+   - Add decode patterns for mop=11 in opcode 0x07 block
+   - Create VloxeiV instruction class in vector.py
+   - Must preserve element order in memory accesses
+   - Otherwise same as unordered loads
+
+5. Implement indexed unordered stores (vsuxei*.v)
+   - Add decode patterns for mop=01 in opcode 0x27 block
+   - Create VsuxeiV instruction class in vector.py
+   - Mirror indexed load behavior for stores
+
+6. Implement indexed ordered stores (vsoxei*.v)
+   - Add decode patterns for mop=11 in opcode 0x27 block
+   - Create VsoxeiV instruction class in vector.py
+   - Must preserve element order in memory accesses
+
+7. Add comprehensive tests
+   - Test strided access for matrix column access
+   - Test zero stride for broadcast
+   - Test negative stride for reverse access
+   - Test indexed access for sparse operations
+   - Compare ordered vs unordered performance
+   - Test various index widths (8/16/32/64)
+   - Test index/data width combinations
+
+Summary
+-------
+None of the strided or indexed memory operations are currently implemented.
+These are critical for many real-world vector applications:
+- Strided: Matrix operations, structure-of-arrays access patterns
+- Indexed: Sparse matrix operations, gather/scatter, histogram operations
+
+Implementation priority should be:
+1. Constant-stride operations (most common after unit-stride)
+2. Indexed unordered operations (high performance gather/scatter)
+3. Indexed ordered operations (when ordering is required)

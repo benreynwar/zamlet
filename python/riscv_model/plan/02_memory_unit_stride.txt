@@ -1,0 +1,272 @@
+UNIT-STRIDE VECTOR MEMORY OPERATIONS
+=====================================
+
+Spec Reference: riscv-isa-manual/src/v-st-ext.adoc
+Lines: 1549-1601 (Unit-stride instructions)
+Lines: 1340-1374 (Load/Store encoding format)
+
+Overview
+--------
+Unit-stride vector load and store instructions transfer contiguous elements
+between memory and vector registers. Memory addresses are sequential starting
+from the base address in rs1. The number of elements transferred is determined
+by vl, and can be masked using v0.
+
+These are the most common vector memory operations, used for accessing
+arrays and contiguous data structures.
+
+External Test Suite
+-------------------
+Repository: riscv-vector-tests
+Test configs: 10 unit-stride tests (vle/vse for 8/16/32/64-bit, plus vlm/vsm)
+
+Instructions in This Category
+------------------------------
+
+VLE8.V (Status: ✓)
+  Spec: v-st-ext.adoc line 1555, vmem-format.edn
+  Format: vle8.v vd, (rs1), vm
+  Encoding: nf|mew|mop|vm|lumop|rs1|000|vd|0000111
+           mop=00 (unit-stride), width=000 (8-bit), opcode=0x07
+  Tests: vle8.v.toml
+  Implementation: class VleV in instructions/vector.py
+  Decoding: Search decode.py for "opcode == 0x07" and "mop == 0x0 and width == 0x0"
+  Description: Unit-stride load of 8-bit elements
+  Notes:
+    - Fully implemented with masking support
+    - Loads vl elements from memory starting at address in rs1
+    - Generic VleV class handles all element widths
+    - Calls state.vload() method
+
+VLE16.V (Status: ✓)
+  Spec: v-st-ext.adoc line 1556, vmem-format.edn
+  Format: vle16.v vd, (rs1), vm
+  Encoding: nf|mew|mop|vm|lumop|rs1|101|vd|0000111
+           mop=00 (unit-stride), width=101 (16-bit), opcode=0x07
+  Tests: vle16.v.toml
+  Implementation: class VleV in instructions/vector.py
+  Decoding: Search decode.py for "mop == 0x0 and width == 0x5"
+  Description: Unit-stride load of 16-bit elements
+  Notes:
+    - Fully implemented with masking support
+    - Uses same VleV class with element_width=16
+
+VLE32.V (Status: ✓)
+  Spec: v-st-ext.adoc line 1557, vmem-format.edn
+  Tests: vle32.v.toml
+  Format: vle32.v vd, (rs1), vm
+  Encoding: nf|mew|mop|vm|lumop|rs1|110|vd|0000111
+           mop=00 (unit-stride), width=110 (32-bit), opcode=0x07
+  Implementation: class VleV in instructions/vector.py
+  Decoding: Search decode.py for "mop == 0x0 and width == 0x6"
+  Description: Unit-stride load of 32-bit elements
+  Notes:
+    - Fully implemented with masking support
+    - Uses same VleV class with element_width=32
+
+VLE64.V (Status: ✓)
+  Spec: v-st-ext.adoc line 1558, vmem-format.edn
+  Tests: vle64.v.toml
+  Format: vle64.v vd, (rs1), vm
+  Encoding: nf|mew|mop|vm|lumop|rs1|111|vd|0000111
+           mop=00 (unit-stride), width=111 (64-bit), opcode=0x07
+  Implementation: class VleV in instructions/vector.py
+  Decoding: Search decode.py for "mop == 0x0 and width == 0x7"
+  Description: Unit-stride load of 64-bit elements
+  Notes:
+    - Fully implemented with masking support
+    - Uses same VleV class with element_width=64
+
+VSE8.V (Status: ✓)
+  Spec: v-st-ext.adoc line 1561, vmem-format.edn
+  Tests: vse8.v.toml
+  Format: vse8.v vs3, (rs1), vm
+  Encoding: nf|mew|mop|vm|sumop|rs1|000|vs3|0100111
+           mop=00 (unit-stride), width=000 (8-bit), opcode=0x27
+  Implementation: class VseV in instructions/vector.py
+  Decoding: Search decode.py for "opcode == 0x27" and "mop == 0x0 and width == 0x0"
+  Description: Unit-stride store of 8-bit elements
+  Notes:
+    - Fully implemented with masking support
+    - Stores vl elements to memory starting at address in rs1
+    - Generic VseV class handles all element widths
+    - Calls state.vstore() method
+
+VSE16.V (Status: ✓)
+  Spec: v-st-ext.adoc line 1562, vmem-format.edn
+  Tests: vse16.v.toml
+  Format: vse16.v vs3, (rs1), vm
+  Encoding: nf|mew|mop|vm|sumop|rs1|101|vs3|0100111
+           mop=00 (unit-stride), width=101 (16-bit), opcode=0x27
+  Implementation: class VseV in instructions/vector.py
+  Decoding: Search decode.py for "mop == 0x0 and width == 0x5"
+  Description: Unit-stride store of 16-bit elements
+  Notes:
+    - Fully implemented with masking support
+    - Uses same VseV class with element_width=16
+
+VSE32.V (Status: ✓)
+  Spec: v-st-ext.adoc line 1563, vmem-format.edn
+  Tests: vse32.v.toml
+  Format: vse32.v vs3, (rs1), vm
+  Encoding: nf|mew|mop|vm|sumop|rs1|110|vs3|0100111
+           mop=00 (unit-stride), width=110 (32-bit), opcode=0x27
+  Implementation: class VseV in instructions/vector.py
+  Decoding: Search decode.py for "mop == 0x0 and width == 0x6"
+  Description: Unit-stride store of 32-bit elements
+  Notes:
+    - Fully implemented with masking support
+    - Uses same VseV class with element_width=32
+
+VSE64.V (Status: ✓)
+  Spec: v-st-ext.adoc line 1564, vmem-format.edn
+  Tests: vse64.v.toml
+  Format: vse64.v vs3, (rs1), vm
+  Encoding: nf|mew|mop|vm|sumop|rs1|111|vs3|0100111
+           mop=00 (unit-stride), width=111 (64-bit), opcode=0x27
+  Implementation: class VseV in instructions/vector.py
+  Decoding: Search decode.py for "mop == 0x0 and width == 0x7"
+  Description: Unit-stride store of 64-bit elements
+  Notes:
+    - Fully implemented with masking support
+    - Uses same VseV class with element_width=64
+
+VLM.V (Status: ✗)
+  Spec: v-st-ext.adoc lines 1567-1600, vmem-format.edn
+  Format: vlm.v vd, (rs1)
+  Encoding: nf|mew|00|1|lumop|rs1|000|vd|0000111
+           mop=00, width=000, vm=1 (unmasked), special lumop encoding
+  Tests: vlm.v.toml
+  Implementation: Not implemented
+  Description: Unit-stride mask load
+  Notes:
+    - Loads mask bits from memory
+    - Effective vector length is ceil(vl/8)
+    - Operates as byte load with EEW=8, EMUL=1
+    - Always uses tail-agnostic policy
+    - vstart is in units of bytes for this instruction
+    - Distinguished from vle8.v by lumop field
+    - Assembly alias: vle1.v (legacy)
+    - TODO: Add decode pattern and instruction class
+    - TODO: Implement mask-specific load behavior
+
+VSM.V (Status: ✗)
+  Spec: v-st-ext.adoc lines 1567-1600, vmem-format.edn
+  Format: vsm.v vs3, (rs1)
+  Encoding: nf|mew|00|1|sumop|rs1|000|vs3|0100111
+           mop=00, width=000, vm=1 (unmasked), special sumop encoding
+  Tests: vsm.v.toml
+  Implementation: Not implemented
+  Description: Unit-stride mask store
+  Notes:
+    - Stores mask bits to memory
+    - Effective vector length is ceil(vl/8)
+    - Operates as byte store with EEW=8, EMUL=1
+    - vstart is in units of bytes for this instruction
+    - Distinguished from vse8.v by sumop field
+    - Assembly alias: vse1.v (legacy)
+    - TODO: Add decode pattern and instruction class
+    - TODO: Implement mask-specific store behavior
+
+Memory Access Behavior
+-----------------------
+
+Addressing (Status: ✓)
+  Spec: v-st-ext.adoc lines 1375-1497 (search spec for "Vector Load/Store Addressing Modes")
+  Implementation: VleV.update_state() and VseV.update_state() methods
+  Notes:
+    - Base address from rs1 (integer register)
+    - Elements accessed sequentially: addr[i] = rs1 + i * element_width_bytes
+    - Number of elements determined by vl
+    - Implementation correctly passes address and element_width to vload/vstore
+
+Masking (Status: ✓)
+  Spec: v-st-ext.adoc lines 990-1058 (search spec for "Vector Masking")
+  Implementation: VleV.update_state() and VseV.update_state() methods
+  Notes:
+    - vm=1: unmasked (all elements active)
+    - vm=0: masked (use v0 as mask register)
+    - Implementation correctly passes mask_reg=0 when vm=0, None when vm=1
+    - Masked-off elements not accessed in memory
+
+Element Width (Status: ✓)
+  Spec: v-st-ext.adoc lines 1498-1548 (search spec for "Vector Load/Store Width Encoding")
+  Implementation: VleV and VseV classes take element_width parameter
+  Notes:
+    - Element width encoded statically in instruction (not from vtype)
+    - Allows mixed-width memory access without vtype changes
+    - Supported widths: 8, 16, 32, 64 bits
+    - Implementation correctly uses element_width from instruction encoding
+
+LMUL and Register Groups (Status: ⚠)
+  Spec: v-st-ext.adoc lines 228-342 (search spec for "Vector Register Grouping")
+  Implementation: Implicit in vload/vstore methods
+  Notes:
+    - LMUL > 1 uses multiple consecutive vector registers
+    - LMUL < 1 uses fractional registers
+    - Register group starting at vd must be properly aligned
+    - TODO: Verify register group alignment checking
+    - TODO: Document how vload/vstore handle register groups
+
+Tail Elements (Status: ⚠)
+  Spec: v-st-ext.adoc lines 343-451 (search spec for "Vector Tail Agnostic")
+  Implementation: Partial
+  Notes:
+    - Elements beyond vl are tail elements
+    - vtype.vta determines behavior: agnostic (set to 1s) or undisturbed
+    - Current implementation may not properly handle tail elements
+    - TODO: Verify tail element handling in vload method
+
+Test Coverage
+-------------
+- All element widths (8/16/32/64) tested in various test files
+- Basic loads/stores tested in daxpy, sgemv, dotprod tests
+- Masking tested in conditional test
+- Tests verify correct data transfer
+- No dedicated unit-stride memory test file
+- No tests for:
+  - vlm.v / vsm.v mask loads/stores
+  - Misaligned accesses
+  - Register group boundary cases
+  - Tail element handling
+  - LMUL interaction with loads/stores
+
+TODO Items
+----------
+1. Implement vlm.v (mask load)
+   - Add lumop field extraction to decode.py
+   - Create mask load instruction class
+   - Implement ceil(vl/8) element length calculation
+   - Handle vstart in bytes
+   - Always use tail-agnostic policy
+
+2. Implement vsm.v (mask store)
+   - Add sumop field extraction to decode.py
+   - Create mask store instruction class
+   - Implement ceil(vl/8) element length calculation
+   - Handle vstart in bytes
+
+3. Verify register group handling
+   - Ensure proper alignment checks for LMUL > 1
+   - Verify fractional LMUL behavior
+   - Add alignment violation detection
+
+4. Improve tail element handling
+   - Implement vta-based tail element behavior
+   - Set tail elements to 1s when vta=1
+   - Leave tail elements undisturbed when vta=0
+
+5. Add comprehensive memory tests
+   - Test all element widths
+   - Test masked and unmasked variants
+   - Test LMUL register groups
+   - Test alignment and boundaries
+   - Test mask load/store when implemented
+
+Summary
+-------
+Unit-stride vector loads and stores are fully functional for all standard
+element widths (8, 16, 32, 64 bits) with masking support. The implementation
+correctly handles addressing, masking, and element width encoding. However,
+mask-specific loads/stores (vlm.v/vsm.v) are not implemented, and tail element
+handling may need verification.

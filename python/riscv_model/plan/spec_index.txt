@@ -1,0 +1,232 @@
+RISC-V Vector Extension Specification Index
+============================================
+
+File: riscv-isa-manual/src/v-st-ext.adoc
+Total Lines: 5322
+
+MAJOR SECTIONS
+==============
+
+Introduction & Model (Lines 12-643)
+------------------------------------
+PLAN: See 01_configuration.txt for CSR state (vtype, vl, vstart, etc.)
+      Mapping and formats sections not yet covered by plan documents
+
+12:   Introduction
+18:   Implementation-defined Constant Parameters
+52:   Vector Extension Programmer's Model
+  76:   Vector Registers
+  83:   Vector Context Status in `mstatus`
+  113:  Vector Context Status in `vsstatus`
+  138:  Vector Type (`vtype`) Register         → 01_configuration.txt
+    179:  Vector Selected Element Width (`vsew[2:0]`)
+    228:  Vector Register Grouping (`vlmul[2:0]`)
+    343:  Vector Tail Agnostic and Vector Mask Agnostic `vta` and `vma`
+    452:  Vector Type Illegal (`vill`)
+  469:  Vector Length (`vl`) Register          → 01_configuration.txt
+  485:  Vector Byte Length (`vlenb`) Register  → 01_configuration.txt
+  497:  Vector Start Index (`vstart`) Register → 01_configuration.txt
+  563:  Vector Fixed-Point Rounding Mode (`vxrm`) Register  → 01_configuration.txt
+  602:  Vector Fixed-Point Saturation Flag (`vxsat`)        → 01_configuration.txt
+  611:  Vector Control and Status (`vcsr`) Register         → 01_configuration.txt
+  627:  State of Vector Extension at Reset
+
+Mapping & Formats (Lines 644-1120)
+-----------------------------------
+644:  Mapping of Vector Elements to Vector Register State
+  664:  Mapping for LMUL = 1
+  718:  Mapping for LMUL < 1
+  734:  Mapping for LMUL > 1
+  803:  Mapping across Mixed-Width Operations
+  857:  Mask Register Layout
+866:  Vector Instruction Formats
+  892:  Scalar Operands
+  916:  Vector Operands
+  990:  Vector Masking
+    1024: Mask Encoding
+  1059: Prestart, Active, Inactive, Body, and Tail Element Definitions
+
+Configuration Instructions (Lines 1121-1328)
+---------------------------------------------
+PLAN: See 01_configuration.txt
+
+1121: Configuration-Setting Instructions (`vsetvli`/`vsetivli`/`vsetvl`)
+  1149: `vtype` encoding
+    1181: Unsupported `vtype` Values
+  1209: AVL encoding
+  1263: Constraints on Setting `vl`
+  1299: Example of strip mining and changes to SEW
+
+Vector Memory Operations (Lines 1329-2117)
+-------------------------------------------
+PLAN: See 02_memory_unit_stride.txt (unit-stride only)
+      See 03_memory_strided_indexed.txt (strided and indexed)
+      See 04_memory_segment.txt (segments, whole register, fault-only-first)
+
+1329: Vector Loads and Stores
+  1340: Vector Load/Store Instruction Encoding
+  1375: Vector Load/Store Addressing Modes
+  1498: Vector Load/Store Width Encoding
+  1549: Vector Unit-Stride Instructions         → 02_memory_unit_stride.txt
+  1602: Vector Constant-Stride Instructions     → 03_memory_strided_indexed.txt
+  1648: Vector Indexed Instructions             → 03_memory_strided_indexed.txt
+  1693: Unit-stride Fault-Only-First Loads     → 04_memory_segment.txt
+  1758: Vector Load/Store Segment Instructions  → 04_memory_segment.txt
+    1825: Vector Unit-Stride Segment Loads and Stores
+    1889: Vector Constant-Stride Segment Loads and Stores
+    1918: Vector Indexed Segment Loads and Stores
+  1959: Vector Load/Store Whole Register Instructions  → 04_memory_segment.txt
+2118: Vector Memory Alignment Constraints
+2136: Vector Memory Consistency Model
+
+Arithmetic Instruction Formats (Lines 2169-2366)
+-------------------------------------------------
+2169: Vector Arithmetic Instruction Formats
+  2178: Vector Arithmetic Instruction encoding
+  2298: Widening Vector Arithmetic Instructions
+  2332: Narrowing Vector Arithmetic Instructions
+
+Vector Integer Arithmetic (Lines 2367-3046)
+--------------------------------------------
+PLAN: See 05_integer_arithmetic.txt (single-width operations)
+      See 06_integer_widening_narrowing.txt (widening and narrowing)
+
+2367: Vector Integer Arithmetic Instructions → 05_integer_arithmetic.txt
+  2372: Vector Single-Width Integer Add and Subtract → 05_integer_arithmetic.txt
+  2396: Vector Widening Integer Add/Subtract → 06_integer_widening_narrowing.txt
+  2433: Vector Integer Extension → 06_integer_widening_narrowing.txt
+  2463: Vector Integer Add-with-Carry / Subtract-with-Borrow Instructions
+  2572: Vector Bitwise Logical Instructions
+  2593: Vector Single-Width Shift Instructions
+  2619: Vector Narrowing Integer Right Shift Instructions → 06_integer_widening_narrowing.txt
+  2648: Vector Integer Compare Instructions → 05_integer_arithmetic.txt
+  2818: Vector Integer Min/Max Instructions → 05_integer_arithmetic.txt
+  2841: Vector Single-Width Integer Multiply Instructions → 05_integer_arithmetic.txt
+  2879: Vector Integer Divide Instructions → 05_integer_arithmetic.txt
+  2912: Vector Widening Integer Multiply Instructions → 06_integer_widening_narrowing.txt
+  2931: Vector Single-Width Integer Multiply-Add Instructions → 05_integer_arithmetic.txt
+  2963: Vector Widening Integer Multiply-Add Instructions → 06_integer_widening_narrowing.txt
+  2987: Vector Integer Merge Instructions
+  3010: Vector Integer Move Instructions
+
+Vector Fixed-Point Arithmetic (Lines 3047-3225)
+------------------------------------------------
+PLAN: See 12_fixed_point.txt
+
+3047: Vector Fixed-Point Arithmetic Instructions                             → 12_fixed_point.txt
+  3065: Vector Single-Width Saturating Add and Subtract                      → 12_fixed_point.txt
+  3092: Vector Single-Width Averaging Add and Subtract                       → 12_fixed_point.txt
+  3126: Vector Single-Width Fractional Multiply with Rounding and Saturation → 12_fixed_point.txt
+  3155: Vector Single-Width Scaling Shift Instructions                       → 12_fixed_point.txt
+  3178: Vector Narrowing Fixed-Point Clip Instructions                       → 12_fixed_point.txt
+
+Vector Floating-Point (Lines 3226-3828)
+----------------------------------------
+PLAN: See 07_float_arithmetic.txt (single-width FP arithmetic)
+      See 08_float_widening_conversions.txt (widening FP and conversions)
+
+3226: Vector Floating-Point Instructions
+  3268: Vector Floating-Point Exception Flags
+  3274: Vector Single-Width Floating-Point Add/Subtract Instructions       → 07_float_arithmetic.txt
+  3287: Vector Widening Floating-Point Add/Subtract Instructions           → 08_float_widening_conversions.txt
+  3303: Vector Single-Width Floating-Point Multiply/Divide Instructions    → 07_float_arithmetic.txt
+  3318: Vector Widening Floating-Point Multiply                            → 08_float_widening_conversions.txt
+  3326: Vector Single-Width Floating-Point Fused Multiply-Add Instructions → 07_float_arithmetic.txt
+  3371: Vector Widening Floating-Point Fused Multiply-Add Instructions     → 08_float_widening_conversions.txt
+  3395: Vector Floating-Point Square-Root Instruction                      → 07_float_arithmetic.txt
+  3404: Vector Floating-Point Reciprocal Square-Root Estimate Instruction  → 07_float_arithmetic.txt
+  3473: Vector Floating-Point Reciprocal Estimate Instruction              → 07_float_arithmetic.txt
+  3568: Vector Floating-Point MIN/MAX Instructions                         → 07_float_arithmetic.txt
+  3585: Vector Floating-Point Sign-Injection Instructions                  → 07_float_arithmetic.txt
+  3610: Vector Floating-Point Compare Instructions                         → 07_float_arithmetic.txt
+  3692: Vector Floating-Point Classify Instruction                         → 07_float_arithmetic.txt
+  3707: Vector Floating-Point Merge Instruction                            → 07_float_arithmetic.txt
+  3722: Vector Floating-Point Move Instruction                             → 07_float_arithmetic.txt
+  3738: Single-Width Floating-Point/Integer Type-Convert Instructions      → 08_float_widening_conversions.txt
+  3763: Widening Floating-Point/Integer Type-Convert Instructions          → 08_float_widening_conversions.txt
+  3796: Narrowing Floating-Point/Integer Type-Convert Instructions         → 08_float_widening_conversions.txt
+
+Vector Reductions (Lines 3829-4036)
+------------------------------------
+PLAN: See 09_reductions.txt
+
+3829: Vector Reduction Operations                                            → 09_reductions.txt
+  3882: Vector Single-Width Integer Reduction Instructions                   → 09_reductions.txt
+  3900: Vector Widening Integer Reduction Instructions                       → 09_reductions.txt
+  3920: Vector Single-Width Floating-Point Reduction Instructions            → 09_reductions.txt
+    3932: Vector Ordered Single-Width Floating-Point Sum Reduction           → 09_reductions.txt
+    3957: Vector Unordered Single-Width Floating-Point Sum Reduction         → 09_reductions.txt
+    4001: Vector Single-Width Floating-Point Max and Min Reductions          → 09_reductions.txt
+  4016: Vector Widening Floating-Point Reduction Instructions                → 09_reductions.txt
+
+Vector Mask Operations (Lines 4037-4423)
+-----------------------------------------
+PLAN: See 10_mask_operations.txt
+
+4037: Vector Mask Instructions                                               → 10_mask_operations.txt
+  4043: Vector Mask-Register Logical Instructions                            → 10_mask_operations.txt
+  4131: Vector count population in mask `vcpop.m`                            → 10_mask_operations.txt
+  4163: `vfirst` find-first-set mask bit                                     → 10_mask_operations.txt
+  4185: `vmsbf.m` set-before-first mask bit                                  → 10_mask_operations.txt
+  4229: `vmsif.m` set-including-first mask bit                               → 10_mask_operations.txt
+  4265: `vmsof.m` set-only-first mask bit                                    → 10_mask_operations.txt
+  4302: Example using vector mask instructions                               → 10_mask_operations.txt
+  4313: Vector Iota Instruction                                              → 10_mask_operations.txt
+  4401: Vector Element Index Instruction                                     → 10_mask_operations.txt
+
+Vector Permutation (Lines 4424-4854)
+-------------------------------------
+PLAN: See 11_permutations.txt
+
+4424: Vector Permutation Instructions                                       → 11_permutations.txt
+  4429: Integer Scalar Move Instructions                                    → 11_permutations.txt
+  4461: Floating-Point Scalar Move Instructions                             → 11_permutations.txt
+  4491: Vector Slide Instructions                                           → 11_permutations.txt
+    4515: Vector Slide-up Instructions                                      → 11_permutations.txt
+    4548: Vector Slide-down Instructions                                    → 11_permutations.txt
+    4576: Vector Slide-1-up                                                 → 11_permutations.txt
+    4617: Vector Floating-Point Slide-1-up Instruction                      → 11_permutations.txt
+    4626: Vector Slide-1-down Instruction                                   → 11_permutations.txt
+    4665: Vector Floating-Point Slide-1-down Instruction                    → 11_permutations.txt
+  4674: Vector Register Gather Instructions                                 → 11_permutations.txt
+  4722: Vector Compress Instruction                                         → 11_permutations.txt
+    4770: Synthesizing `vdecompress`                                        → 11_permutations.txt
+  4802: Whole Vector Register Move                                          → 11_permutations.txt
+
+Exception Handling & Extensions (Lines 4855-5322)
+--------------------------------------------------
+4855: Exception Handling
+  4873: Precise vector traps
+  4906: Imprecise vector traps
+  4925: Selectable precise/imprecise traps
+  4936: Swappable traps
+4950: Standard Vector Extensions
+  4963: Zvl*: Minimum Vector Length Standard Extensions
+  4997: Zve*: Vector Extensions for Embedded Processors
+  5082: V: Vector Extension for Application Processors
+  5144: Zvfhmin: Vector Extension for Minimal Half-Precision Floating-Point
+  5155: Zvfh: Vector Extension for Half-Precision Floating-Point
+5181: Vector Element Groups
+  5195: Element Group Size
+  5222: Setting `vl`
+  5256: Determining EEW
+  5276: Determining EMUL
+  5290: Element Group Width
+  5312: Masking
+5320: Vector Instruction Listing
+
+
+QUICK REFERENCE FOR READING SPECIFIC SECTIONS
+==============================================
+
+To read a specific section, use:
+  Read file_path with offset and limit parameters
+
+Examples:
+  Configuration instructions:     offset=1121, limit=207  (lines 1121-1328)
+  Integer arithmetic:             offset=2367, limit=679  (lines 2367-3046)
+  Floating-point instructions:    offset=3226, limit=602  (lines 3226-3828)
+  Memory operations:              offset=1329, limit=788  (lines 1329-2117)
+  Mask operations:                offset=4037, limit=386  (lines 4037-4423)
+  Permutation instructions:       offset=4424, limit=430  (lines 4424-4854)
+  Reductions:                     offset=3829, limit=207  (lines 3829-4036)

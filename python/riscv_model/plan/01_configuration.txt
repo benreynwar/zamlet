@@ -1,0 +1,255 @@
+CONFIGURATION-SETTING INSTRUCTIONS
+===================================
+
+Spec Reference: riscv-isa-manual/src/v-st-ext.adoc
+Lines: 1121-1328 (Configuration instructions)
+Lines: 138-627 (CSR definitions in programmer's model)
+
+Overview
+--------
+Configuration instructions set up the vector execution environment by configuring:
+- Vector length (vl): Number of elements to process
+- Vector type (vtype): Element width, register grouping, and tail/mask handling
+- Application Vector Length (AVL): Requested number of elements
+
+These instructions enable "strip mining" where loops process vectors in chunks,
+with the hardware determining the optimal chunk size (vl) based on available
+resources and the requested configuration.
+
+External Test Suite
+-------------------
+Repository: riscv-vector-tests
+Test configs: 3 configuration instruction tests (vsetvli, vsetivli, vsetvl)
+
+Instructions in This Category
+------------------------------
+
+VSETVLI (Status: ✓)
+  Spec: v-st-ext.adoc line 1142, vcfg-format.edn
+  Format: vsetvli rd, rs1, vtypei
+  Encoding: 0|vtypei[10:0]|rs1|111|rd|1010111
+           bit[31]=0, funct3=7, opcode=0x57
+  Tests: vsetvli.toml
+  Implementation: class Vsetvli in instructions/vector.py
+  Decoding: Search decode.py for "Vsetvli"
+  Description: Set vl and vtype based on AVL from rs1 and immediate vtype
+  Notes:
+    - Fully implemented with proper AVL encoding handling
+    - Correctly handles rd=x0, rs1=x0 case (keep existing vl)
+    - Correctly handles rs1=x0, rd!=x0 case (set vl to VLMAX)
+    - Writes new vl to rd
+    - Updates vtype and vl CSRs in Vsetvli.update_state()
+    - Implements VLMAX calculation: (VLEN / SEW) * LMUL
+
+VSETIVLI (Status: ✗)
+  Spec: v-st-ext.adoc lines 1143, 1252-1260, vcfg-format.edn
+  Format: vsetivli rd, uimm, vtypei
+  Encoding: 11|vtypei[9:0]|uimm[4:0]|111|rd|1010111
+           bit[31:30]=11, funct3=7, opcode=0x57
+  Tests: vsetivli.toml
+  Implementation: Not implemented
+  Description: Set vl and vtype with AVL as 5-bit zero-extended immediate (0-31)
+  Notes:
+    - Similar to vsetvli but AVL comes from uimm[4:0] immediate field
+    - Used for small, known-size vectors
+    - More compact encoding when dimensions fit in registers
+    - TODO: Add decode pattern to opcode 0x57 block in decode.py
+    - TODO: Create class Vsetivli in instructions/vector.py
+
+VSETVL (Status: ✗)
+  Spec: v-st-ext.adoc lines 1144, 1178-1179, vcfg-format.edn
+  Format: vsetvl rd, rs1, rs2
+  Encoding: 1|000000|rs2|rs1|111|rd|1010111
+           bit[31]=1, funct6=0x00, funct3=7, opcode=0x57
+  Tests: vsetvl.toml
+  Implementation: Not implemented
+  Description: Set vl and vtype with AVL from rs1 and vtype from rs2 register
+  Notes:
+    - Takes vtype value from register instead of immediate
+    - Useful for context restore
+    - TODO: Add decode pattern to opcode 0x57 block in decode.py
+    - TODO: Create class Vsetvl in instructions/vector.py
+
+CSR/State Requirements
+----------------------
+
+VTYPE Register (Status: ✓)
+  Spec: v-st-ext.adoc lines 138-452 (search spec for "Vector Type (`vtype`) Register")
+  Implementation: self.vtype in class State (search lamlet.py for "self.vtype")
+  Width: XLEN bits
+  Fields:
+    vill [XLEN-1]:     Illegal vtype value (Status: ⚠ - field exists but not validated)
+    vma [7]:           Vector mask agnostic (Status: ⚠ - stored but not used in masking)
+    vta [6]:           Vector tail agnostic (Status: ⚠ - stored but not used for tail handling)
+    vsew[2:0] [5:3]:   Selected Element Width (Status: ✓)
+      000 = 8 bits
+      001 = 16 bits
+      010 = 32 bits
+      011 = 64 bits
+      1xx = Reserved
+    vlmul[2:0] [2:0]:  Vector register grouping (Status: ✓)
+      000 = LMUL=1
+      001 = LMUL=2
+      010 = LMUL=4
+      011 = LMUL=8
+      100 = LMUL=1/8
+      101 = LMUL=1/4
+      110 = LMUL=1/2
+      111 = Reserved
+  Notes:
+    - vtype is updated only by vset{i}vl{i} instructions
+    - Currently implemented as raw integer, fields extracted on use
+    - vill handling incomplete: should set vill=1, vl=0 for unsupported configs
+    - vma/vta fields not currently used for agnostic element handling
+
+VL Register (Status: ✓)
+  Spec: v-st-ext.adoc lines 469-484 (search spec for "Vector Length (`vl`) Register")
+  Implementation: self.vl in class State (search lamlet.py for "self.vl")
+  Description: Vector length - number of elements to process
+  Notes:
+    - Updated by vset{i}vl{i} instructions
+    - Constrains vl according to spec rules (search spec for "Constraints on Setting `vl`")
+    - Used by all vector operations to determine active elements
+
+VSTART Register (Status: ⚠)
+  Spec: v-st-ext.adoc lines 497-562 (search spec for "Vector Start Index (`vstart`)")
+  Implementation: self.vstart in class State (search lamlet.py for "self.vstart")
+  Description: Vector start index for resuming after exceptions
+  Notes:
+    - Initialized to 0
+    - Should be set by hardware on vector exceptions
+    - Should be reset to 0 by most vector instructions on completion
+    - Currently not properly maintained or checked by instructions
+    - Reductions explicitly check vstart == 0 (search vector.py for "vstart")
+
+VLENB Register (Status: ✗)
+  Spec: v-st-ext.adoc lines 485-496 (search spec for "Vector Byte Length (`vlenb`)")
+  Implementation: Not implemented as CSR
+  Description: Read-only CSR containing VLEN in bytes
+  Notes:
+    - Value = VLEN / 8
+    - Can be calculated from params.maxvl_bytes
+    - TODO: Expose as readable CSR
+
+VXRM Register (Status: ✗)
+  Spec: v-st-ext.adoc lines 563-601 (search spec for "Vector Fixed-Point Rounding Mode")
+  Implementation: Not implemented
+  Description: Fixed-point rounding mode
+  Values:
+    00 = rnu (round-to-nearest-up)
+    01 = rne (round-to-nearest-even)
+    10 = rdn (round-down)
+    11 = rod (round-to-odd)
+  Notes:
+    - Required for fixed-point arithmetic instructions
+    - Part of vcsr register
+    - TODO: Add CSR and use in fixed-point ops
+
+VXSAT Register (Status: ✗)
+  Spec: v-st-ext.adoc lines 602-610 (search spec for "Vector Fixed-Point Saturation Flag")
+  Implementation: Not implemented
+  Description: Fixed-point saturation flag (sticky bit)
+  Notes:
+    - Set when saturation occurs in fixed-point operations
+    - Part of vcsr register
+    - TODO: Add CSR and maintain in fixed-point ops
+
+VCSR Register (Status: ✗)
+  Spec: v-st-ext.adoc lines 611-626 (search spec for "Vector Control and Status (`vcsr`)")
+  Implementation: Not implemented
+  Description: Vector control and status register
+  Format: {vxrm[1:0], vxsat}
+  Notes:
+    - Combines vxrm and vxsat
+    - Can be read/written to save/restore state
+    - TODO: Implement as alias to vxrm and vxsat
+
+AVL Encoding Handling (Status: ⚠)
+  Spec: v-st-ext.adoc lines 1209-1261 (search spec for "AVL encoding")
+  Implementation: Partial in Vsetvli.update_state() method
+  Current behavior:
+    ✓ rs1=x0, rd=x0: Keep existing vl (vsetvli only)
+    ✓ rs1=x0, rd!=x0: Set vl to VLMAX (vsetvli only)
+    ✓ rs1!=x0: Use value from register
+    ✗ vsetivli: 5-bit immediate encoding not implemented
+    ⚠ Reserved cases: No check for illegal rd=x0,rs1=x0 with vtype change
+
+VL Setting Constraints (Status: ✓)
+  Spec: v-st-ext.adoc lines 1263-1296 (search spec for "Constraints on Setting `vl`")
+  Implementation: Vsetvli.update_state() method (search vector.py for "elif avl <= vlmax")
+  Rules implemented:
+    ✓ vl = AVL if AVL <= VLMAX
+    ✓ vl = VLMAX if AVL > VLMAX
+  Notes:
+    - Implementation uses simple rule: vl = min(AVL, VLMAX)
+    - Spec allows flexibility for VLMAX < AVL < 2*VLMAX
+    - Current implementation is compliant but not optimized
+
+Test Coverage
+-------------
+- Basic vsetvli tested in multiple test files (daxpy, sgemv, dotprod tests)
+- All vector tests implicitly test vsetvli as it's required to set vl
+- No dedicated configuration instruction test file
+- No tests for vsetivli or vsetvl (since not implemented)
+- No tests for edge cases:
+  - Unsupported vtype values (vill handling)
+  - Reserved LMUL/SEW combinations
+  - AVL encoding special cases
+  - Context switching with vsetvl
+
+TODO Items
+----------
+1. Implement vsetivli instruction
+   - Add decode pattern to decode.py
+   - Create Vsetivli class in vector.py
+   - Handle 5-bit zero-extended immediate AVL
+   - Add test cases
+
+2. Implement vsetvl instruction
+   - Add decode pattern to decode.py
+   - Create Vsetvl class in vector.py
+   - Read vtype from rs2 register
+   - Add test cases for context restore
+
+3. Improve vtype validation
+   - Check for reserved vsew values (100-111)
+   - Check for reserved vlmul values (111)
+   - Set vill=1 and vl=0 for unsupported configurations
+   - Check all bits of vtype, not just fields in use
+
+4. Implement vstart handling
+   - Check vstart at beginning of vector instructions
+   - Resume operation from vstart element
+   - Reset vstart to 0 on successful completion
+   - Handle vstart in exception cases
+
+5. Implement missing CSRs
+   - Add vlenb as read-only CSR
+   - Add vxrm for fixed-point rounding mode
+   - Add vxsat for saturation flag
+   - Add vcsr as alias to {vxrm, vxsat}
+
+6. Implement tail/mask agnostic handling
+   - Use vta bit to determine tail element behavior
+   - Use vma bit to determine masked element behavior
+   - Tail elements: either undisturbed or set to 1s
+   - Masked elements: either undisturbed or set to 1s
+
+7. Add configuration edge case tests
+   - Test all AVL encoding combinations
+   - Test unsupported vtype values
+   - Test LMUL/SEW interactions
+   - Test vl constraints with various AVL values
+   - Test strip-mining loop patterns
+
+Summary
+-------
+Basic configuration support is functional with vsetvli fully implemented,
+allowing vector operations to work with configurable element widths and
+vector lengths. However, the following significant gaps remain:
+- Missing vsetivli and vsetvl instructions
+- Incomplete vtype validation (no vill handling)
+- Missing fixed-point CSRs (vxrm, vxsat, vcsr)
+- Incomplete vstart handling for exceptions
+- No tail/mask agnostic element handling
+- Missing vlenb CSR

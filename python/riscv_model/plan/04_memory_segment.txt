@@ -1,0 +1,429 @@
+SEGMENT LOADS/STORES AND WHOLE REGISTER OPERATIONS
+===================================================
+
+Spec Reference: riscv-isa-manual/src/v-st-ext.adoc
+Lines: 1758-1957 (Segment load/store instructions)
+Lines: 1959-2117 (Whole register load/store instructions)
+Lines: 1693-1756 (Fault-only-first loads)
+
+Overview
+--------
+This category covers three types of specialized memory operations:
+
+1. **Segment Loads/Stores**: Move multiple contiguous fields (segments)
+   between memory and consecutively numbered vector registers. Used for
+   array-of-structures (AoS) access patterns and transposing data.
+
+2. **Whole Register Loads/Stores**: Save/restore entire vector registers
+   without depending on vtype/vl. Used for context switches, spills, and
+   function calls.
+
+3. **Fault-Only-First Loads**: Unit-stride loads that gracefully handle
+   page faults by reducing vl instead of trapping (except for element 0).
+
+External Test Suite
+-------------------
+Repository: riscv-vector-tests
+Test configs: 96 tests (segment loads/stores for 2-8 fields, whole register,
+fault-only-first variants). See test_suite_reference.txt for complete list
+
+SEGMENT LOAD/STORE INSTRUCTIONS
+================================
+
+Segment operations treat memory as containing structures with multiple
+fields, loading/storing each field into a separate vector register.
+The nf field encodes NFIELDS (number of fields) from 1 to 8.
+
+UNIT-STRIDE SEGMENT LOADS
+--------------------------
+
+VLSEG2E8.V through VLSEG8E8.V (Status: ✗)
+  Spec: v-st-ext.adoc lines 1825-1888, vmem-format.edn
+  Format: vlseg<nf>e8.v vd, (rs1), vm
+  Encoding: nf|mew|00|vm|lumop|rs1|000|vd|0000111
+           mop=00, width=000, nf encodes NFIELDS-1
+  Implementation: Not implemented
+  Description: Unit-stride segment load of 8-bit fields
+  Notes:
+    - NFIELDS from 2-8 (nf from 1-7, when nf=0 it's regular vle8)
+    - Loads NFIELDS consecutive vector registers starting at vd
+    - Example: vlseg3e8 loads 3 bytes per segment into v[vd], v[vd+1], v[vd+2]
+    - Constraint: EMUL * NFIELDS ≤ 8
+    - vl specifies number of segments (not total elements)
+    - Masking applies at segment granularity
+    - vstart is in units of whole segments
+    - TODO: Add segment decoding logic to decode.py
+    - TODO: Create instruction classes for each NFIELDS/EEW combination
+
+VLSEG2E16.V through VLSEG8E16.V (Status: ✗)
+  Spec: v-st-ext.adoc lines 1825-1888, vmem-format.edn
+  Format: vlseg<nf>e16.v vd, (rs1), vm
+  Encoding: nf|mew|00|vm|lumop|rs1|101|vd|0000111
+           mop=00, width=101, nf encodes NFIELDS-1
+  Implementation: Not implemented
+  Description: Unit-stride segment load of 16-bit fields
+
+VLSEG2E32.V through VLSEG8E32.V (Status: ✗)
+  Spec: v-st-ext.adoc lines 1825-1888, vmem-format.edn
+  Format: vlseg<nf>e32.v vd, (rs1), vm
+  Encoding: nf|mew|00|vm|lumop|rs1|110|vd|0000111
+           mop=00, width=110, nf encodes NFIELDS-1
+  Implementation: Not implemented
+  Description: Unit-stride segment load of 32-bit fields
+
+VLSEG2E64.V through VLSEG8E64.V (Status: ✗)
+  Spec: v-st-ext.adoc lines 1825-1888, vmem-format.edn
+  Format: vlseg<nf>e64.v vd, (rs1), vm
+  Encoding: nf|mew|00|vm|lumop|rs1|111|vd|0000111
+           mop=00, width=111, nf encodes NFIELDS-1
+  Implementation: Not implemented
+  Description: Unit-stride segment load of 64-bit fields
+
+UNIT-STRIDE SEGMENT STORES
+---------------------------
+
+VSSEG2E8.V through VSSEG8E8.V (Status: ✗)
+  Spec: v-st-ext.adoc lines 1825-1888, vmem-format.edn
+  Format: vsseg<nf>e8.v vs3, (rs1), vm
+  Encoding: nf|mew|00|vm|sumop|rs1|000|vs3|0100111
+           mop=00, width=000, nf encodes NFIELDS-1
+  Implementation: Not implemented
+  Description: Unit-stride segment store of 8-bit fields
+  Notes:
+    - Stores NFIELDS consecutive vector registers starting at vs3
+    - TODO: Add segment decoding logic to decode.py
+    - TODO: Create instruction classes for each NFIELDS/EEW combination
+
+VSSEG2E16.V through VSSEG8E16.V (Status: ✗)
+VSSEG2E32.V through VSSEG8E32.V (Status: ✗)
+VSSEG2E64.V through VSSEG8E64.V (Status: ✗)
+  Spec: v-st-ext.adoc lines 1825-1888
+  Similar to 8-bit variants with different element widths
+  Implementation: Not implemented
+
+STRIDED SEGMENT LOADS
+----------------------
+
+VLSSEG2E8.V through VLSSEG8E8.V (Status: ✗)
+  Spec: v-st-ext.adoc lines 1889-1917, vmem-format.edn
+  Format: vlsseg<nf>e8.v vd, (rs1), rs2, vm
+  Encoding: nf|mew|10|vm|rs2|rs1|000|vd|0000111
+           mop=10 (strided), width=000, nf encodes NFIELDS-1
+  Implementation: Not implemented
+  Description: Constant-stride segment load of 8-bit fields
+  Notes:
+    - rs2 contains byte stride between segments (not between fields)
+    - Fields within a segment are contiguous
+    - Supports negative and zero strides
+    - Accesses to fields within segment are unordered
+    - TODO: Implement strided segment addressing
+
+VLSSEG2E16.V through VLSSEG8E16.V (Status: ✗)
+VLSSEG2E32.V through VLSSEG8E32.V (Status: ✗)
+VLSSEG2E64.V through VLSSEG8E64.V (Status: ✗)
+  Similar to 8-bit variants with different element widths
+  Implementation: Not implemented
+
+STRIDED SEGMENT STORES
+-----------------------
+
+VSSSEG2E8.V through VSSSEG8E8.V (Status: ✗)
+  Spec: v-st-ext.adoc lines 1889-1917, vmem-format.edn
+  Format: vssseg<nf>e8.v vs3, (rs1), rs2, vm
+  Encoding: nf|mew|10|vm|rs2|rs1|000|vs3|0100111
+  Implementation: Not implemented
+  Description: Constant-stride segment store of 8-bit fields
+
+VSSSEG2E16.V through VSSSEG8E16.V (Status: ✗)
+VSSSEG2E32.V through VSSSEG8E32.V (Status: ✗)
+VSSSEG2E64.V through VSSSEG8E64.V (Status: ✗)
+  Similar to 8-bit variants
+  Implementation: Not implemented
+
+INDEXED SEGMENT LOADS (UNORDERED)
+----------------------------------
+
+VLUXSEG2EI8.V through VLUXSEG8EI8.V (Status: ✗)
+  Spec: v-st-ext.adoc lines 1918-1957, vmem-format.edn
+  Format: vluxseg<nf>ei8.v vd, (rs1), vs2, vm
+  Encoding: nf|mew|01|vm|vs2|rs1|000|vd|0000111
+           mop=01 (indexed-unordered), width=000 (8-bit index)
+  Implementation: Not implemented
+  Description: Indexed-unordered segment load with 8-bit indices
+  Notes:
+    - vs2 contains byte offsets for each segment
+    - Each segment located at address rs1 + vs2[i]
+    - Fields within segment are contiguous from that address
+    - Segment accesses can be reordered
+    - Fields within individual segments are unordered
+    - Constraint: vd cannot overlap vs2
+    - TODO: Implement indexed segment addressing with overlap checking
+
+VLUXSEG2EI16.V through VLUXSEG8EI16.V (Status: ✗)
+VLUXSEG2EI32.V through VLUXSEG8EI32.V (Status: ✗)
+VLUXSEG2EI64.V through VLUXSEG8EI64.V (Status: ✗)
+  Similar to 8-bit index variants
+  Implementation: Not implemented
+
+INDEXED SEGMENT LOADS (ORDERED)
+--------------------------------
+
+VLOXSEG2EI8.V through VLOXSEG8EI8.V (Status: ✗)
+  Spec: v-st-ext.adoc lines 1918-1957, vmem-format.edn
+  Format: vloxseg<nf>ei8.v vd, (rs1), vs2, vm
+  Encoding: nf|mew|11|vm|vs2|rs1|000|vd|0000111
+           mop=11 (indexed-ordered), width=000 (8-bit index)
+  Implementation: Not implemented
+  Description: Indexed-ordered segment load with 8-bit indices
+  Notes:
+    - Like vluxseg but segment accesses must be in element order
+    - Fields within individual segments still unordered
+
+VLOXSEG2EI16.V through VLOXSEG8EI16.V (Status: ✗)
+VLOXSEG2EI32.V through VLOXSEG8EI32.V (Status: ✗)
+VLOXSEG2EI64.V through VLOXSEG8EI64.V (Status: ✗)
+  Similar to 8-bit index variants
+  Implementation: Not implemented
+
+INDEXED SEGMENT STORES (UNORDERED)
+-----------------------------------
+
+VSUXSEG2EI8.V through VSUXSEG8EI8.V (Status: ✗)
+  Spec: v-st-ext.adoc lines 1918-1957, vmem-format.edn
+  Format: vsuxseg<nf>ei8.v vs3, (rs1), vs2, vm
+  Encoding: nf|mew|01|vm|vs2|rs1|000|vs3|0100111
+  Implementation: Not implemented
+  Description: Indexed-unordered segment store with 8-bit indices
+
+VSUXSEG2EI16.V through VSUXSEG8EI16.V (Status: ✗)
+VSUXSEG2EI32.V through VSUXSEG8EI32.V (Status: ✗)
+VSUXSEG2EI64.V through VSUXSEG8EI64.V (Status: ✗)
+  Similar to 8-bit index variants
+  Implementation: Not implemented
+
+INDEXED SEGMENT STORES (ORDERED)
+---------------------------------
+
+VSOXSEG2EI8.V through VSOXSEG8EI8.V (Status: ✗)
+  Spec: v-st-ext.adoc lines 1918-1957, vmem-format.edn
+  Format: vsoxseg<nf>ei8.v vs3, (rs1), vs2, vm
+  Encoding: nf|mew|11|vm|vs2|rs1|000|vs3|0100111
+  Implementation: Not implemented
+  Description: Indexed-ordered segment store with 8-bit indices
+
+VSOXSEG2EI16.V through VSOXSEG8EI16.V (Status: ✗)
+VSOXSEG2EI32.V through VSOXSEG8EI32.V (Status: ✗)
+VSOXSEG2EI64.V through VSOXSEG8EI64.V (Status: ✗)
+  Similar to 8-bit index variants
+  Implementation: Not implemented
+
+FAULT-ONLY-FIRST SEGMENT LOADS
+-------------------------------
+
+VLSEG2E8FF.V through VLSEG8E8FF.V (Status: ✗)
+  Spec: v-st-ext.adoc lines 1871-1888, vmem-format.edn
+  Format: vlseg<nf>e<eew>ff.v vd, (rs1), vm
+  Encoding: Similar to unit-stride but with special lumop encoding
+  Implementation: Not implemented
+  Description: Fault-only-first unit-stride segment loads
+  Notes:
+    - Exception in segment 0: trap is taken
+    - Exception in segment >0: vl reduced to that segment index
+    - May overwrite destination registers past exception point
+    - TODO: Implement fault-only-first behavior for segments
+
+VLSEG2E16FF.V through VLSEG8E16FF.V (Status: ✗)
+VLSEG2E32FF.V through VLSEG8E32FF.V (Status: ✗)
+VLSEG2E64FF.V through VLSEG8E64FF.V (Status: ✗)
+  Similar to 8-bit variants
+  Implementation: Not implemented
+
+WHOLE REGISTER LOAD/STORE INSTRUCTIONS
+=======================================
+
+These operations load/store entire vector registers independent of vtype
+and vl. Used for context switches, register spills, and function calls.
+
+WHOLE REGISTER LOADS
+---------------------
+
+VL1RE8.V, VL1RE16.V, VL1RE32.V, VL1RE64.V (Status: ✗)
+  Spec: v-st-ext.adoc lines 1959-2117
+  Format: vl1re<eew>.v vd, (rs1)
+  Encoding: 000|mew|00|1|01000|rs1|width|vd|0000111
+           nf=000 (NFIELDS=1), mop=00, vm=1, lumop=01000
+  Implementation: Not implemented
+  Description: Load 1 whole vector register
+  Notes:
+    - Loads VLEN/EEW elements (entire register)
+    - Effective vl = VLEN/EEW (ignores vtype.vl)
+    - EEW provides hint for future access pattern
+    - Pseudoinstruction: vl1r.v is alias for vl1re8.v
+    - TODO: Add decode patterns for lumop=01000
+    - TODO: Implement whole register load logic
+
+VL2RE8.V, VL2RE16.V, VL2RE32.V, VL2RE64.V (Status: ✗)
+  Spec: v-st-ext.adoc lines 1959-2117
+  Format: vl2re<eew>.v vd, (rs1)
+  Encoding: 001|mew|00|1|01000|rs1|width|vd|0000111
+           nf=001 (NFIELDS=2)
+  Implementation: Not implemented
+  Description: Load 2 whole vector registers (vd, vd+1)
+  Notes:
+    - vd must be aligned to 2 (even register number)
+    - Loads 2*VLEN/EEW total elements
+    - Pseudoinstruction: vl2r.v is alias for vl2re8.v
+
+VL4RE8.V, VL4RE16.V, VL4RE32.V, VL4RE64.V (Status: ✗)
+  Spec: v-st-ext.adoc lines 1959-2117
+  Format: vl4re<eew>.v vd, (rs1)
+  Encoding: 011|mew|00|1|01000|rs1|width|vd|0000111
+           nf=011 (NFIELDS=4)
+  Implementation: Not implemented
+  Description: Load 4 whole vector registers (vd through vd+3)
+  Notes:
+    - vd must be aligned to 4
+    - Loads 4*VLEN/EEW total elements
+    - Pseudoinstruction: vl4r.v is alias for vl4re8.v
+
+VL8RE8.V, VL8RE16.V, VL8RE32.V, VL8RE64.V (Status: ✗)
+  Spec: v-st-ext.adoc lines 1959-2117
+  Format: vl8re<eew>.v vd, (rs1)
+  Encoding: 111|mew|00|1|01000|rs1|width|vd|0000111
+           nf=111 (NFIELDS=8)
+  Implementation: Not implemented
+  Description: Load 8 whole vector registers (vd through vd+7)
+  Notes:
+    - vd must be aligned to 8
+    - Loads 8*VLEN/EEW total elements
+    - Pseudoinstruction: vl8r.v is alias for vl8re8.v
+
+WHOLE REGISTER STORES
+----------------------
+
+VS1R.V (Status: ✗)
+  Spec: v-st-ext.adoc lines 1959-2117
+  Format: vs1r.v vs3, (rs1)
+  Encoding: 000|0|00|1|01000|rs1|000|vs3|0100111
+           nf=000 (NFIELDS=1), mop=00, vm=1, sumop=01000, width=000
+  Implementation: Not implemented
+  Description: Store 1 whole vector register
+  Notes:
+    - Stores VLEN/8 bytes (treated as EEW=8)
+    - Effective vl = VLEN/8 (ignores vtype.vl)
+    - TODO: Add decode patterns for sumop=01000
+    - TODO: Implement whole register store logic
+
+VS2R.V (Status: ✗)
+  Spec: v-st-ext.adoc lines 1959-2117
+  Format: vs2r.v vs3, (rs1)
+  Encoding: 001|0|00|1|01000|rs1|000|vs3|0100111
+           nf=001 (NFIELDS=2)
+  Implementation: Not implemented
+  Description: Store 2 whole vector registers (vs3, vs3+1)
+  Notes:
+    - vs3 must be aligned to 2
+
+VS4R.V (Status: ✗)
+  Spec: v-st-ext.adoc lines 1959-2117
+  Format: vs4r.v vs3, (rs1)
+  Encoding: 011|0|00|1|01000|rs1|000|vs3|0100111
+           nf=011 (NFIELDS=4)
+  Implementation: Not implemented
+  Description: Store 4 whole vector registers (vs3 through vs3+3)
+  Notes:
+    - vs3 must be aligned to 4
+
+VS8R.V (Status: ✗)
+  Spec: v-st-ext.adoc lines 1959-2117
+  Format: vs8r.v vs3, (rs1)
+  Encoding: 111|0|00|1|01000|rs1|000|vs3|0100111
+           nf=111 (NFIELDS=8)
+  Implementation: Not implemented
+  Description: Store 8 whole vector registers (vs3 through vs3+7)
+  Notes:
+    - vs3 must be aligned to 8
+
+FAULT-ONLY-FIRST LOADS (NON-SEGMENT)
+=====================================
+
+VLE8FF.V, VLE16FF.V, VLE32FF.V, VLE64FF.V (Status: ✗)
+  Spec: v-st-ext.adoc lines 1693-1756
+  Format: vle<eew>ff.v vd, (rs1), vm
+  Encoding: Similar to unit-stride but with special lumop encoding
+  Implementation: Not implemented
+  Description: Fault-only-first unit-stride loads
+  Notes:
+    - Exception on element 0: trap is taken
+    - Exception on element >0: vl reduced to that element index
+    - Used for vector strlen, memchr, etc.
+    - TODO: Implement fault-only-first behavior
+
+Test Coverage
+-------------
+- No segment operations tested
+- No whole register operations tested
+- No fault-only-first loads tested
+- test/common/encoding.h has encoding macros but no execution
+
+TODO Items
+----------
+1. Implement unit-stride segment loads/stores
+   - Extract nf field from instruction encoding
+   - Calculate NFIELDS = nf + 1
+   - Verify EMUL * NFIELDS ≤ 8 constraint
+   - Verify register numbers don't exceed 31
+   - Load/store NFIELDS consecutive registers
+   - Handle vl as segment count (not element count)
+   - Handle vstart as segment index
+
+2. Implement strided segment loads/stores
+   - Combine segment logic with stride logic
+   - Stride is between segments, not fields
+   - Fields within segment remain contiguous
+
+3. Implement indexed segment loads/stores
+   - Combine segment logic with indexed addressing
+   - Add overlap checking (vd vs vs2)
+   - Support both ordered and unordered variants
+
+4. Implement fault-only-first segment loads
+   - Handle exceptions specially based on segment index
+   - Reduce vl instead of trapping (except segment 0)
+
+5. Implement whole register loads/stores
+   - Add lumop/sumop=01000 decode patterns
+   - Calculate effective vl = NFIELDS*VLEN/EEW
+   - Ignore current vtype and vl settings
+   - Verify register alignment (2/4/8 for multi-register)
+   - Only allow NFIELDS = 1, 2, 4, 8
+
+6. Implement fault-only-first unit-stride loads
+   - Add lumop field for FF encoding
+   - Handle exceptions with vl reduction
+   - Support all element widths
+
+7. Add comprehensive tests
+   - Test segment loads/stores for AoS patterns
+   - Test RGB pixel unpacking example
+   - Test complex number operations
+   - Test whole register context save/restore
+   - Test fault-only-first for string operations
+   - Verify alignment constraints
+   - Verify EMUL*NFIELDS constraint
+
+Summary
+-------
+None of the segment, whole register, or fault-only-first operations are
+currently implemented. These are important for:
+
+- Segment ops: Efficient AoS access, structure unpacking, transposition
+- Whole register ops: Context switches, spills, function calls
+- Fault-only-first: String operations, bounds checking, vectorized search
+
+Total unimplemented instructions:
+- ~112 segment load/store variants (28 each for unit/strided/indexed-U/indexed-O)
+- 20 whole register load/store variants
+- 4+ fault-only-first variants
+
+This represents a significant portion of the memory operation category.

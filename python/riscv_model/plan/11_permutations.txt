@@ -1,0 +1,401 @@
+VECTOR PERMUTATION INSTRUCTIONS
+================================
+
+Spec Reference: riscv-isa-manual/src/v-st-ext.adoc
+Lines: 4424-4853
+
+Overview
+--------
+Vector permutation instructions move elements around within vector registers,
+enabling data reorganization, sliding window operations, and gather/scatter patterns.
+
+External Test Suite
+-------------------
+Repository: riscv-vector-tests
+Test configs: 21 permutation tests (slides, gather, compress, register moves)
+See test_suite_reference.txt for complete list
+
+Implementation Summary
+----------------------
+Currently implemented: 4 instructions (VMV.X.S, VMV.V.V, VMV.V.X, VMV.V.I)
+Total in spec: ~20 permutation instructions
+Coverage: ~20%
+
+INTEGER SCALAR MOVE (Status: ⚠ Partial)
+========================================
+
+Spec: v-st-ext.adoc lines 4429-4458
+
+Transfer single value between scalar x register and element 0 of vector register.
+Ignores LMUL and vector register groups.
+
+VMV.X.S (Status: ✓)
+  Spec: v-st-ext.adoc lines 4436, 4440-4445
+  Encoding: funct6=0x10, vs1=0x00, funct3=OPMVV
+  Format: vmv.x.s rd, vs2
+  Implementation: class VmvXs in instructions/vector.py line 407
+  Decoding: decode.py line 564
+  Description: x[rd] = vs2[0]
+  Notes:
+    - Fully implemented
+    - Copies SEW-wide element 0 to x register
+    - If SEW > XLEN: transfers LSBs, ignores upper bits
+    - If SEW < XLEN: sign-extends to XLEN
+    - Operates even if vstart >= vl or vl=0
+    - Masked version (vm=0) reserved
+
+VMV.S.X (Status: ✗)
+  Spec: v-st-ext.adoc lines 4437, 4447-4455
+  Encoding: funct6=0x10, vs2=0x00, funct3=OPMVX
+  Format: vmv.s.x vd, rs1
+  Implementation: Not implemented
+  Description: vd[0] = x[rs1]
+  Notes:
+    - Copies scalar x register to vector element 0
+    - If SEW < XLEN: transfers LSBs, ignores upper bits
+    - If SEW > XLEN: sign-extends to SEW
+    - Other elements are tail (follow tail policy)
+    - No operation if vstart >= vl
+    - When vl=0, no elements updated
+    - Masked version (vm=0) reserved
+
+FLOATING-POINT SCALAR MOVE (Status: ✗)
+=======================================
+
+Spec: v-st-ext.adoc lines 4461-4489
+
+Transfer single value between scalar f register and element 0 of vector register.
+
+VFMV.F.S (Status: ✗)
+  Spec: v-st-ext.adoc lines 4468, 4472-4476
+  Encoding: funct6=0x10, rs1=0x00, funct3=OPFVV
+  Format: vfmv.f.s rd, vs2
+  Implementation: Not implemented
+  Description: f[rd] = vs2[0]
+  Notes:
+    - Copies SEW-wide element 0 to f register
+    - Operates even if vstart >= vl or vl=0
+    - Masked version (vm=0) reserved
+
+VFMV.S.F (Status: ✗)
+  Spec: v-st-ext.adoc lines 4469, 4478-4486
+  Encoding: funct6=0x10, vs2=0x00, funct3=OPFVF
+  Format: vfmv.s.f vd, rs1
+  Implementation: Not implemented
+  Description: vd[0] = f[rs1]
+  Notes:
+    - Copies scalar f register to vector element 0
+    - Other elements are tail (follow tail policy)
+    - No operation if vstart >= vl
+    - When vl=0, no elements updated
+    - Masked version (vm=0) reserved
+
+VECTOR SLIDE INSTRUCTIONS (Status: ✗)
+======================================
+
+Spec: v-st-ext.adoc lines 4491-4672
+
+Move elements up/down within a vector register group.
+If vstart >= vl, no operation performed.
+
+Vector Slide-up (Status: ✗)
+----------------------------
+
+Spec: v-st-ext.adoc lines 4515-4546
+
+VSLIDEUP.VX (Status: ✗)
+  Spec: v-st-ext.adoc line 4518
+  Encoding: funct6=0x0e, funct3=OPIVX
+  Format: vslideup.vx vd, vs2, rs1, vm
+  Implementation: Not implemented
+  Description: vd[i+x[rs1]] = vs2[i]
+  Notes:
+    - Slide elements up by OFFSET from x[rs1]
+    - Elements OFFSET through vl-1 written if unmasked
+    - Elements 0 through min(vl, max(vstart, OFFSET))-1 unchanged
+    - vd cannot overlap vs2 (reserved if overlap)
+    - Power-of-2 offsets may be faster
+
+VSLIDEUP.VI (Status: ✗)
+  Spec: v-st-ext.adoc line 4519
+  Encoding: funct6=0x0e, funct3=OPIVI
+  Format: vslideup.vi vd, vs2, uimm, vm
+  Implementation: Not implemented
+  Description: vd[i+uimm] = vs2[i]
+  Notes: Like vslideup.vx but immediate offset (5-bit, zero-extended)
+
+Vector Slide-down (Status: ✗)
+------------------------------
+
+Spec: v-st-ext.adoc lines 4548-4574
+
+VSLIDEDOWN.VX (Status: ✗)
+  Spec: v-st-ext.adoc line 4551
+  Encoding: funct6=0x0f, funct3=OPIVX
+  Format: vslidedown.vx vd, vs2, rs1, vm
+  Implementation: Not implemented
+  Description: vd[i] = vs2[i+x[rs1]]
+  Notes:
+    - Slide elements down by OFFSET from x[rs1]
+    - If i+OFFSET >= VLMAX, src[i] = 0
+    - Remaining elements past vl follow tail policy
+
+VSLIDEDOWN.VI (Status: ✗)
+  Spec: v-st-ext.adoc line 4552
+  Encoding: funct6=0x0f, funct3=OPIVI
+  Format: vslidedown.vi vd, vs2, uimm, vm
+  Implementation: Not implemented
+  Description: vd[i] = vs2[i+uimm]
+  Notes: Like vslidedown.vx but immediate offset (5-bit, zero-extended)
+
+Vector Slide-1-up (Status: ✗)
+------------------------------
+
+Spec: v-st-ext.adoc lines 4576-4624
+
+VSLIDE1UP.VX (Status: ✗)
+  Spec: v-st-ext.adoc lines 4583-4614
+  Encoding: funct6=0x0e, funct3=OPMVX
+  Format: vslide1up.vx vd, vs2, rs1, vm
+  Implementation: Not implemented
+  Description: vd[0]=x[rs1], vd[i+1]=vs2[i]
+  Notes:
+    - Inserts x[rs1] at element 0, shifts others up
+    - If XLEN < SEW: sign-extend
+    - If XLEN > SEW: use LSBs
+    - vd cannot overlap vs2 (reserved if overlap)
+
+VFSLIDE1UP.VF (Status: ✗)
+  Spec: v-st-ext.adoc lines 4620-4624
+  Encoding: funct6=0x0e, funct3=OPFVF
+  Format: vfslide1up.vf vd, vs2, rs1, vm
+  Implementation: Not implemented
+  Description: vd[0]=f[rs1], vd[i+1]=vs2[i]
+  Notes: Like vslide1up.vx but sources from f register
+
+Vector Slide-1-down (Status: ✗)
+--------------------------------
+
+Spec: v-st-ext.adoc lines 4626-4672
+
+VSLIDE1DOWN.VX (Status: ✗)
+  Spec: v-st-ext.adoc lines 4638-4662
+  Encoding: funct6=0x0f, funct3=OPMVX
+  Format: vslide1down.vx vd, vs2, rs1, vm
+  Implementation: Not implemented
+  Description: vd[i]=vs2[i+1], vd[vl-1]=x[rs1]
+  Notes:
+    - Shifts elements down, inserts x[rs1] at vl-1
+    - Can load values into vector without memory
+    - Useful for debuggers to modify vector registers
+
+VFSLIDE1DOWN.VF (Status: ✗)
+  Spec: v-st-ext.adoc lines 4668-4672
+  Encoding: funct6=0x0f, funct3=OPFVF
+  Format: vfslide1down.vf vd, vs2, rs1, vm
+  Implementation: Not implemented
+  Description: vd[i]=vs2[i+1], vd[vl-1]=f[rs1]
+  Notes: Like vslide1down.vx but sources from f register
+
+VECTOR REGISTER GATHER (Status: ✗)
+===================================
+
+Spec: v-st-ext.adoc lines 4674-4720
+
+Read elements from source vector at indices given by second vector.
+
+VRGATHER.VV (Status: ✗)
+  Spec: v-st-ext.adoc lines 4687-4693
+  Encoding: funct6=0x0c, funct3=OPIVV
+  Format: vrgather.vv vd, vs2, vs1, vm
+  Implementation: Not implemented
+  Description: vd[i] = (vs1[i] >= VLMAX) ? 0 : vs2[vs1[i]]
+  Notes:
+    - Indices in vs1 treated as unsigned
+    - Uses SEW/LMUL for both data and indices
+    - Out-of-range indices return 0
+    - vd cannot overlap vs2 or vs1 (reserved if overlap)
+
+VRGATHEREI16.VV (Status: ✗)
+  Spec: v-st-ext.adoc lines 4688-4698
+  Encoding: funct6=0x0e, funct3=OPIVV
+  Format: vrgatherei16.vv vd, vs2, vs1, vm
+  Implementation: Not implemented
+  Description: vd[i] = (vs1[i] >= VLMAX) ? 0 : vs2[vs1[i]]
+  Notes:
+    - Uses SEW/LMUL for data in vs2
+    - Uses EEW=16, EMUL=(16/SEW)*LMUL for indices in vs1
+    - Can index 64K elements (vs vrgather.vv limited to 255 when SEW=8)
+    - Reduces register capacity for indices when SEW > 16
+
+VRGATHER.VX (Status: ✗)
+  Spec: v-st-ext.adoc lines 4714-4715
+  Encoding: funct6=0x0c, funct3=OPIVX
+  Format: vrgather.vx vd, vs2, rs1, vm
+  Implementation: Not implemented
+  Description: vd[i] = (x[rs1] >= VLMAX) ? 0 : vs2[x[rs1]]
+  Notes:
+    - Splat single element to all active elements
+    - Index in x[rs1] treated as unsigned, zero-extended
+
+VRGATHER.VI (Status: ✗)
+  Spec: v-st-ext.adoc lines 4715-4716
+  Encoding: funct6=0x0c, funct3=OPIVI
+  Format: vrgather.vi vd, vs2, uimm, vm
+  Implementation: Not implemented
+  Description: vd[i] = (uimm >= VLMAX) ? 0 : vs2[uimm]
+  Notes: Splat using 5-bit immediate index, zero-extended
+
+VECTOR COMPRESS (Status: ✗)
+============================
+
+Spec: v-st-ext.adoc lines 4722-4800
+
+Pack elements selected by mask into contiguous elements at start of destination.
+
+VCOMPRESS.VM (Status: ✗)
+  Spec: v-st-ext.adoc lines 4730-4768
+  Encoding: funct6=0x17, vm=1, funct3=OPMVV
+  Format: vcompress.vm vd, vs2, vs1
+  Implementation: Not implemented
+  Description: Compress into vd elements of vs2 where vs1 mask is enabled
+  Notes:
+    - Elements selected by vs1 mask packed contiguously in vd
+    - Remaining elements are tail (follow tail policy)
+    - Unmasked instruction (vm=1), masked version (vm=0) reserved
+    - vd cannot overlap vs2 or vs1 (reserved if overlap)
+    - vstart must be 0 (raises illegal instruction exception)
+    - Restart always from element 0 after trap
+    - Synthesize vdecompress using viota + vrgather (see spec example)
+
+WHOLE VECTOR REGISTER MOVE (Status: ⚠ Partial)
+===============================================
+
+Spec: v-st-ext.adoc lines 4802-4853
+
+Copy whole vector registers or register groups, ignoring vl.
+
+VMV.V.V, VMV.V.X, VMV.V.I (Status: ✓)
+  Spec: v-st-ext.adoc (referenced in integer arithmetic section)
+  Encoding: funct6=0x17, funct3=OPIVV/OPIVX/OPIVI
+  Implementation: class VmvVv, VmvVx, VmvVi in instructions/vector.py lines 373, 336, 302
+  Notes:
+    - VMV.V.V: Copy vector register
+    - VMV.V.X: Splat scalar x register to vector
+    - VMV.V.I: Splat immediate to vector
+    - These are single-register moves, not whole register group moves
+
+VMV<NR>R.V (Status: ✗)
+  Spec: v-st-ext.adoc lines 4804-4850
+  Encoding: funct6=0x27, funct3=OPIVI, simm[2:0]=NREG-1
+  Format: vmv1r.v/vmv2r.v/vmv4r.v/vmv8r.v vd, vs2
+  Implementation: Not implemented
+  Description: Copy whole vector register groups
+  Notes:
+    - Copies all VLEN bits of NREG registers
+    - NREG must be 1, 2, 4, or 8
+    - simm[2:0] = NREG-1 (0, 1, 3, 7)
+    - Other simm values reserved
+    - Operates as if EEW=SEW, EMUL=NREG, evl=EMUL*VLEN/SEW
+    - No elements written if vstart >= evl (not vl!)
+    - Source and dest must be aligned to NREG
+    - vd=vs2 is no-op but hints at EEW=SEW access pattern
+    - Used by compilers to shuffle registers without knowing vl
+
+IMPLEMENTATION INFRASTRUCTURE
+==============================
+
+Existing Support:
+- VmvXs class (extract element 0 to x register)
+- VmvVv, VmvVx, VmvVi classes (single vector moves/splat)
+- VmvVvOp kernel operation
+
+What's Missing:
+- VmvSx class (insert element 0 from x register)
+- VfmvFs, VfmvSf classes (FP scalar moves)
+- All slide instructions (up/down/1up/1down)
+- All gather instructions (vv/ei16/vx/vi)
+- Vcompress class
+- Vmv<nr>r classes (whole register group moves)
+- Non-overlap checking for slides, gathers, compress
+- vstart==0 checking for compress
+
+Test Coverage
+-------------
+- vmv.x.s tested in various tests (extract element 0)
+- vmv.v.v, vmv.v.x, vmv.v.i tested across multiple tests
+- No tests for: vmv.s.x, FP moves, slides, gathers, compress, whole register moves
+
+TODO Items
+----------
+1. Implement remaining scalar moves
+   - vmv.s.x (insert element 0 from x register)
+   - vfmv.f.s, vfmv.s.f (FP scalar moves)
+   - Handle SEW vs XLEN/FLEN conversions
+
+2. Implement slide instructions
+   - vslideup.vx/vi (slide elements up)
+   - vslidedown.vx/vi (slide elements down)
+   - vslide1up.vx, vfslide1up.vf (slide up by 1, insert scalar)
+   - vslide1down.vx, vfslide1down.vf (slide down by 1, insert scalar)
+   - Add non-overlap checking (vd vs vs2)
+   - Handle vstart >= vl (no operation)
+
+3. Implement register gather
+   - vrgather.vv (vector indices)
+   - vrgatherei16.vv (16-bit indices)
+   - vrgather.vx (scalar index, splat)
+   - vrgather.vi (immediate index, splat)
+   - Handle out-of-range indices (return 0)
+   - Add non-overlap checking
+
+4. Implement compress
+   - vcompress.vm
+   - Pack selected elements contiguously
+   - Verify vstart == 0
+   - Add non-overlap checking (vd vs vs2/vs1)
+
+5. Implement whole register group moves
+   - vmv1r.v, vmv2r.v, vmv4r.v, vmv8r.v
+   - Handle NREG encoding in simm field
+   - Check register alignment
+   - Use evl instead of vl
+
+6. Add comprehensive permutation tests
+   - Test all scalar move variants
+   - Test slide with various offsets
+   - Test slide1 with different SEW vs XLEN
+   - Test gather with in-range and out-of-range indices
+   - Test compress with example from spec
+   - Test vdecompress synthesis (viota + vrgather)
+   - Test whole register moves with different NREG
+   - Test non-overlap constraints
+   - Test vstart behavior
+
+Summary
+-------
+Basic permutation support exists. 4 of ~20 instructions implemented:
+- ✓ vmv.x.s (extract element 0 to x register)
+- ✓ vmv.v.v, vmv.v.x, vmv.v.i (single vector moves/splat)
+- ✗ vmv.s.x (insert element 0 from x register)
+- ✗ vfmv.f.s, vfmv.s.f (FP scalar moves)
+- ✗ 8 slide instructions (up/down/1up/1down, int/fp)
+- ✗ 4 gather instructions (vv/ei16/vx/vi)
+- ✗ vcompress.vm (compress selected elements)
+- ✗ vmv<nr>r.v (whole register group moves)
+
+Permutation instructions are critical for:
+- Data reorganization and shuffling
+- Sliding window algorithms
+- Element extraction and insertion
+- Scatter/gather patterns
+- Vector compress/expand operations
+- Register management in compilers
+
+Priority for implementation:
+1. vmv.s.x - complement to existing vmv.x.s
+2. Slide instructions - common in windowing algorithms
+3. Gather instructions - flexible data access patterns
+4. Compress - data packing operations
+5. FP scalar moves - less common than integer variants
+6. Whole register moves - compiler optimization

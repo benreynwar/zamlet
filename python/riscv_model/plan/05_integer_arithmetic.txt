@@ -1,0 +1,388 @@
+VECTOR INTEGER ARITHMETIC INSTRUCTIONS
+=======================================
+
+Spec Reference: riscv-isa-manual/src/v-st-ext.adoc
+Lines: 2367-3046
+
+Overview
+--------
+Vector integer arithmetic provides add, subtract, multiply, divide, shifts,
+bitwise operations, comparisons, and min/max operations on integer elements.
+Most operations support .vv (vector-vector), .vx (vector-scalar), and .vi
+(vector-immediate) forms. Unless stated, operations wrap on overflow.
+
+Note: This file covers SINGLE-WIDTH operations only. Widening/narrowing operations
+are in 06_integer_widening_narrowing.txt.
+
+External Test Suite
+-------------------
+Repository: riscv-vector-tests
+Test configs: 77 integer arithmetic tests covering add/sub, bitwise, shifts,
+compares, min/max, multiply, divide, carry/borrow, merge/move operations
+See test_suite_reference.txt for complete list
+
+Implementation Summary
+----------------------
+Currently implemented: 5 instructions (ADD, MUL, MACC vector ops, VMSLE.VI compare)
+Total in spec: ~70 single-width integer arithmetic instructions
+Coverage: ~7%
+
+ADDITION AND SUBTRACTION (Status: ⚠ Partial)
+=============================================
+
+Spec: v-st-ext.adoc lines 2372-2395
+
+VADD.VV, VADD.VX (Status: ✓ Partial)
+  Format: vadd.vv vd, vs2, vs1, vm / vadd.vx vd, vs2, rs1, vm
+  Implementation: VArithVx class with VArithOp.ADD in instructions/vector.py
+  Decoding: Search decode.py for "VArithOp.ADD"
+  Notes:
+    - Only .vx form implemented
+    - Missing .vv and .vi forms
+    - TODO: Add decode for .vv and .vi variants
+
+VADD.VI (Status: ✗)
+  Format: vadd.vi vd, vs2, imm, vm
+  Implementation: Not implemented
+  Notes: Vector-immediate add
+
+VSUB.VV, VSUB.VX (Status: ✗)
+  Spec: v-st-ext.adoc line 2384-2385
+  Format: vsub.vv vd, vs2, vs1, vm / vsub.vx vd, vs2, rs1, vm
+  Implementation: Not implemented
+  Notes: Vector subtract operations
+
+VRSUB.VX, VRSUB.VI (Status: ✗)
+  Spec: v-st-ext.adoc line 2388-2389
+  Format: vrsub.vx vd, vs2, rs1, vm / vrsub.vi vd, vs2, imm, vm
+  Implementation: Not implemented
+  Description: Reverse subtract vd[i] = rs1/imm - vs2[i]
+  Notes: Used for negation with x0 (pseudoinstruction vneg.v)
+
+BITWISE LOGICAL OPERATIONS (Status: ✗)
+=======================================
+
+Spec: v-st-ext.adoc lines 2572-2592
+
+VAND.VV, VAND.VX, VAND.VI (Status: ✗)
+VOR.VV, VOR.VX, VOR.VI (Status: ✗)
+VXOR.VV, VXOR.VX, VXOR.VI (Status: ✗)
+  Spec: v-st-ext.adoc lines 2576-2586
+  Implementation: Not implemented
+  Notes: Basic bitwise AND, OR, XOR operations
+        vnot.v pseudoinstruction = vxor.vi vd,vs,-1
+
+SHIFT OPERATIONS (Status: ✗)
+=============================
+
+Spec: v-st-ext.adoc lines 2593-2618
+
+VSLL.VV, VSLL.VX, VSLL.VI (Status: ✗)
+  Description: Shift left logical
+  Notes: Only low lg2(SEW) bits of shift amount used
+
+VSRL.VV, VSRL.VX, VSRL.VI (Status: ✗)
+  Description: Shift right logical (zero-extending)
+
+VSRA.VV, VSRA.VX, VSRA.VI (Status: ✗)
+  Description: Shift right arithmetic (sign-extending)
+
+COMPARISON OPERATIONS (Status: ⚠ Partial)
+==========================================
+
+Spec: v-st-ext.adoc lines 2648-2817
+Note: Comparisons write 1-bit mask values to destination
+
+VMSEQ.VV, VMSEQ.VX, VMSEQ.VI (Status: ✗)
+  Description: Set if equal
+
+VMSNE.VV, VMSNE.VX, VMSNE.VI (Status: ✗)
+  Description: Set if not equal
+
+VMSLTU.VV, VMSLTU.VX (Status: ✗)
+  Description: Set if less than, unsigned
+
+VMSLT.VV, VMSLT.VX (Status: ✗)
+  Description: Set if less than, signed
+
+VMSLEU.VV, VMSLEU.VX, VMSLEU.VI (Status: ✗)
+  Description: Set if less than or equal, unsigned
+
+VMSLE.VV, VMSLE.VX (Status: ✗)
+  Description: Set if less than or equal, signed
+
+VMSLE.VI (Status: ✓)
+  Spec: v-st-ext.adoc line 2684
+  Format: vmsle.vi vd, vs2, simm5, vm
+  Implementation: class VmsleVi in instructions/vector.py
+  Decoding: Search decode.py for "VmsleVi"
+  Notes:
+    - Fully implemented
+    - Sets mask register with 1-bit elements
+    - Used in conditional test
+
+VMSGTU.VX, VMSGTU.VI (Status: ✗)
+  Description: Set if greater than, unsigned
+  Notes: Only .vx and .vi forms (no .vv)
+
+VMSGT.VX, VMSGT.VI (Status: ✗)
+  Description: Set if greater than, signed
+  Notes: Only .vx and .vi forms (no .vv)
+
+Pseudoinstructions for Missing Compares:
+  - vmsgt{u}.vv: Swap operands and use vmslt{u}.vv
+  - vmsge{u}.vv: Swap operands and use vmsle{u}.vv
+  - vmsge{u}.vx: Decrement scalar and use vmsgt{u}.vx
+  - vmslt{u}.vi: Decrement immediate and use vmsle{u}.vi
+  - vmsge{u}.vi: Decrement immediate and use vmsgt{u}.vi
+
+MIN/MAX OPERATIONS (Status: ✗)
+===============================
+
+Spec: v-st-ext.adoc lines 2818-2840
+
+VMINU.VV, VMINU.VX (Status: ✗)
+  Description: Unsigned minimum
+
+VMIN.VV, VMIN.VX (Status: ✗)
+  Description: Signed minimum
+
+VMAXU.VV, VMAXU.VX (Status: ✗)
+  Description: Unsigned maximum
+
+VMAX.VV, VMAX.VX (Status: ✗)
+  Description: Signed maximum
+
+MULTIPLY OPERATIONS (Status: ⚠ Partial)
+========================================
+
+Spec: v-st-ext.adoc lines 2841-2878
+
+VMUL.VV, VMUL.VX (Status: ✓ Partial)
+  Spec: v-st-ext.adoc line 2852-2853
+  Format: vmul.vv vd, vs2, vs1, vm / vmul.vx vd, vs2, rs1, vm
+  Implementation: VArithVv/VArithVx with VArithOp.MUL in instructions/vector.py
+  Decoding: Search decode.py for "VArithOp.MUL"
+  Notes:
+    - Both .vv and .vx implemented
+    - Returns low SEW bits of product
+    - Missing .vi form (not in spec either)
+
+VMULH.VV, VMULH.VX (Status: ✗)
+  Description: Signed multiply, return high SEW bits of product
+
+VMULHU.VV, VMULHU.VX (Status: ✗)
+  Description: Unsigned multiply, return high SEW bits
+
+VMULHSU.VV, VMULHSU.VX (Status: ✗)
+  Description: Signed-Unsigned multiply, return high bits
+
+DIVIDE AND REMAINDER (Status: ✗)
+=================================
+
+Spec: v-st-ext.adoc lines 2879-2911
+
+VDIVU.VV, VDIVU.VX (Status: ✗)
+  Description: Unsigned divide
+
+VDIV.VV, VDIV.VX (Status: ✗)
+  Description: Signed divide
+
+VREMU.VV, VREMU.VX (Status: ✗)
+  Description: Unsigned remainder
+
+VREM.VV, VREM.VX (Status: ✗)
+  Description: Signed remainder
+  Notes: Same semantics as RISC-V scalar divide/remainder
+
+MULTIPLY-ADD OPERATIONS (Status: ⚠ Partial)
+============================================
+
+Spec: v-st-ext.adoc lines 2931-2962
+
+VMACC.VV, VMACC.VX (Status: ✓)
+  Spec: v-st-ext.adoc lines 2931-2962
+  Format: vmacc.vv vd, vs1, vs2, vm / vmacc.vx vd, rs1, vs2, vm
+  Implementation: VArithVv/VArithVx with VArithOp.MACC in instructions/vector.py
+  Decoding: Search decode.py for "VArithOp.MACC"
+  Description: vd[i] = vd[i] + (vs1[i] * vs2[i])
+  Notes:
+    - Both .vv and .vx fully implemented
+    - Used in dot product operations
+    - vd is both source and destination (accumulator)
+
+VNMSAC.VV, VNMSAC.VX (Status: ✗)
+  Description: vd[i] = vd[i] - (vs1[i] * vs2[i])
+  Notes: Negative multiply-subtract-accumulate
+
+VMADD.VV, VMADD.VX (Status: ✗)
+  Description: vd[i] = (vs1[i] * vd[i]) + vs2[i]
+  Notes: Different operand order than vmacc
+
+VNMSUB.VV, VNMSUB.VX (Status: ✗)
+  Description: vd[i] = (vs1[i] * vd[i]) - vs2[i]
+
+ADD-WITH-CARRY / SUBTRACT-WITH-BORROW (Status: ✗)
+==================================================
+
+Spec: v-st-ext.adoc lines 2463-2571
+Note: For multi-word integer arithmetic
+
+VADC.VVM, VADC.VXM, VADC.VIM (Status: ✗)
+  Description: Add with carry-in from v0
+  Notes: Encoded as masked but operates on all elements
+        vm=0 encoding used, vm=1 reserved
+
+VMADC.VVM, VMADC.VXM, VMADC.VIM (Status: ✗)
+  Description: Add and generate carry-out mask
+  Notes: Can be masked or unmasked
+
+VMADC.VV, VMADC.VX, VMADC.VI (Status: ✗)
+  Description: Add and generate carry-out (no carry-in)
+
+VSBC.VVM, VSBC.VXM (Status: ✗)
+  Description: Subtract with borrow-in from v0
+
+VMSBC.VVM, VMSBC.VXM (Status: ✗)
+  Description: Subtract and generate borrow-out mask
+
+VMSBC.VV, VMSBC.VX (Status: ✗)
+  Description: Subtract and generate borrow-out (no borrow-in)
+
+MERGE AND MOVE OPERATIONS (Status: ⚠ Partial)
+==============================================
+
+Spec: v-st-ext.adoc lines 2987-3009, 3010-3046
+
+VMERGE.VVM, VMERGE.VXM, VMERGE.VIM (Status: ✗)
+  Spec: v-st-ext.adoc lines 2987-3009
+  Description: vd[i] = v0.mask[i] ? vs1[i]/rs1/imm : vs2[i]
+  Notes: Used to select between two sources based on mask
+
+VMV.V.V (Status: ✓)
+  Spec: v-st-ext.adoc line 3010-3046
+  Format: vmv.v.v vd, vs1
+  Implementation: class VmvVv in instructions/vector.py
+  Decoding: Search decode.py for "VmvVv"
+  Description: Copy vector register
+  Notes: Unmasked instruction (vm must be 1)
+
+VMV.V.X (Status: ✓)
+  Format: vmv.v.x vd, rs1
+  Implementation: class VmvVx in instructions/vector.py
+  Description: Splat scalar to vector
+  Notes: Broadcasts rs1 value to all elements
+
+VMV.V.I (Status: ✓)
+  Format: vmv.v.i vd, simm5
+  Implementation: class VmvVi in instructions/vector.py
+  Description: Splat immediate to vector
+  Notes: Sign-extends 5-bit immediate
+
+VMV.X.S (Status: ✓)
+  Format: vmv.x.s rd, vs2
+  Implementation: class VmvXs in instructions/vector.py
+  Description: Extract element 0 from vector to scalar
+  Notes: rd = vs2[0]
+
+VMV.S.X (Status: ✗)
+  Description: vs2[0] = rs1, vs2[i>0] unchanged
+  Notes: Opposite of vmv.x.s
+
+Test Coverage
+-------------
+- vadd.vx tested in various arithmetic tests
+- vmul.vv, vmul.vx tested in dotprod and daxpy tests
+- vmacc.vv, vmacc.vx tested in sgemv and dotprod tests
+- vmsle.vi tested in conditional test
+- vmv operations tested across multiple tests
+- No tests for: subtract, bitwise, shifts, most compares, div/rem, carry ops
+
+TODO Items
+----------
+1. Implement remaining add/subtract operations
+   - vadd.vv, vadd.vi
+   - vsub.vv, vsub.vx
+   - vrsub.vx, vrsub.vi
+
+2. Implement bitwise logical operations
+   - vand.vv/vx/vi, vor.vv/vx/vi, vxor.vv/vx/vi
+   - Add VArithOp enum values for AND, OR, XOR
+
+3. Implement shift operations
+   - vsll.vv/vx/vi (shift left logical)
+   - vsrl.vv/vx/vi (shift right logical)
+   - vsra.vv/vx/vi (shift right arithmetic)
+
+4. Implement remaining comparison operations
+   - vmseq, vmsne (equality comparisons)
+   - vmsltu, vmslt (less than)
+   - vmsleu, vmsle.vv/vx (less than or equal)
+   - vmsgtu, vmsgt (greater than)
+   - Note: Some are pseudoinstructions using operand swaps
+
+5. Implement min/max operations
+   - vmin.vv/vx, vminu.vv/vx
+   - vmax.vv/vx, vmaxu.vv/vx
+
+6. Implement high-multiply operations
+   - vmulh.vv/vx (signed high multiply)
+   - vmulhu.vv/vx (unsigned high multiply)
+   - vmulhsu.vv/vx (signed-unsigned high multiply)
+
+7. Implement divide and remainder
+   - vdiv.vv/vx, vdivu.vv/vx
+   - vrem.vv/vx, vremu.vv/vx
+   - Match scalar RISC-V divide semantics
+
+8. Implement remaining multiply-add operations
+   - vnmsac.vv/vx (negative multiply-subtract)
+   - vmadd.vv/vx, vnmsub.vv/vx
+
+9. Implement carry/borrow operations
+   - vadc, vmadc (add with carry)
+   - vsbc, vmsbc (subtract with borrow)
+   - Handle v0 implicit carry-in/out
+   - Handle masked vs unmasked forms
+
+10. Implement merge and remaining move operations
+    - vmerge.vvm/vxm/vim (conditional merge)
+    - vmv.s.x (scalar to vector element 0)
+
+11. Refactor VArithOp enum
+    - Add enum values for all operation types
+    - Keep existing ADD, MUL, MACC working
+    - Add: SUB, RSUB, AND, OR, XOR, SLL, SRL, SRA, MIN, MAX, etc.
+
+12. Add comprehensive arithmetic tests
+    - Test all variants (.vv, .vx, .vi where applicable)
+    - Test edge cases (overflow, negative, zero)
+    - Test with masking
+    - Test carry/borrow chains for multi-word arithmetic
+
+Summary
+-------
+Basic integer arithmetic support is minimal. Only 5 operations are implemented:
+- vadd.vx (vector-scalar add)
+- vmul.vv/vx (vector multiply)
+- vmacc.vv/vx (multiply-accumulate)
+- vmsle.vi (comparison)
+- vmv.* (move operations)
+
+Missing ~65 instructions including:
+- Most add/subtract variants
+- All bitwise operations (and, or, xor)
+- All shift operations
+- Most comparison operations
+- All min/max operations
+- Divide and remainder
+- High multiply variants
+- Carry/borrow operations
+- Merge operations
+
+Priority for implementation:
+1. Basic operations (sub, bitwise, shifts) - most commonly used
+2. Comparisons - needed for conditional code
+3. Min/max - common in many algorithms
+4. Divide/remainder - less common but sometimes necessary
+5. Carry/borrow - specialized multi-word arithmetic

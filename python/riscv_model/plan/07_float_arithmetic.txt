@@ -1,0 +1,435 @@
+VECTOR FLOATING-POINT ARITHMETIC INSTRUCTIONS
+==============================================
+
+Spec Reference: riscv-isa-manual/src/v-st-ext.adoc
+Lines: 3226-3828
+
+Overview
+--------
+Vector floating-point instructions treat elements as IEEE-754/2008-compatible values.
+All FP instructions require corresponding scalar FP extension support and mstatus.FS
+must not be Off. FP exceptions set flags in fflags register for active elements only.
+
+Note: This file covers SINGLE-WIDTH FP arithmetic only. Widening FP operations and
+type conversions are in 08_float_widening_conversions.txt.
+
+External Test Suite
+-------------------
+Repository: riscv-vector-tests
+Test configs: 119 floating-point tests covering add/sub, mul/div, fma, sqrt,
+reciprocal, min/max, sign-injection, compare, classify, conversions, widening/
+narrowing operations. See test_suite_reference.txt for complete list
+
+Implementation Summary
+----------------------
+Currently implemented: 1 instruction (VFMACC.VF)
+Total in spec: ~60 single-width FP arithmetic instructions
+Coverage: ~2%
+
+SINGLE-WIDTH FP ADD/SUBTRACT (Status: ✗)
+=========================================
+
+Spec: v-st-ext.adoc lines 3274-3285
+
+VFADD.VV, VFADD.VF (Status: ✗)
+  Spec: v-st-ext.adoc lines 3278-3279
+  Encoding: funct6=0x00, funct3=OPFVV/OPFVF
+  Format: vfadd.vv vd, vs2, vs1, vm / vfadd.vf vd, vs2, rs1, vm
+  Implementation: Not implemented
+  Description: Floating-point add
+  Notes: Uses dynamic rounding mode from frm
+
+VFSUB.VV, VFSUB.VF (Status: ✗)
+  Spec: v-st-ext.adoc lines 3282-3283
+  Encoding: funct6=0x02, funct3=OPFVV/OPFVF
+  Format: vfsub.vv vd, vs2, vs1, vm / vfsub.vf vd, vs2, rs1, vm
+  Implementation: Not implemented
+  Description: Floating-point subtract, vd[i] = vs2[i] - vs1[i]/f[rs1]
+
+VFRSUB.VF (Status: ✗)
+  Spec: v-st-ext.adoc line 3284
+  Encoding: funct6=0x27, funct3=OPFVF
+  Format: vfrsub.vf vd, vs2, rs1, vm
+  Implementation: Not implemented
+  Description: Reverse subtract, vd[i] = f[rs1] - vs2[i]
+  Notes: Only .vf form (no .vv)
+
+SINGLE-WIDTH FP MULTIPLY/DIVIDE (Status: ✗)
+============================================
+
+Spec: v-st-ext.adoc lines 3303-3316
+
+VFMUL.VV, VFMUL.VF (Status: ✗)
+  Spec: v-st-ext.adoc lines 3307-3308
+  Encoding: funct6=0x24, funct3=OPFVV/OPFVF
+  Format: vfmul.vv vd, vs2, vs1, vm / vfmul.vf vd, vs2, rs1, vm
+  Implementation: Not implemented
+  Description: Floating-point multiply
+
+VFDIV.VV, VFDIV.VF (Status: ✗)
+  Spec: v-st-ext.adoc lines 3311-3312
+  Encoding: funct6=0x20, funct3=OPFVV/OPFVF
+  Format: vfdiv.vv vd, vs2, vs1, vm / vfdiv.vf vd, vs2, rs1, vm
+  Implementation: Not implemented
+  Description: Floating-point divide, vd[i] = vs2[i] / vs1[i]/f[rs1]
+
+VFRDIV.VF (Status: ✗)
+  Spec: v-st-ext.adoc line 3315
+  Encoding: funct6=0x21, funct3=OPFVF
+  Format: vfrdiv.vf vd, vs2, rs1, vm
+  Implementation: Not implemented
+  Description: Reverse divide, vd[i] = f[rs1] / vs2[i]
+  Notes: Only .vf form (no .vv)
+
+SINGLE-WIDTH FP FUSED MULTIPLY-ADD (Status: ⚠ Partial)
+=======================================================
+
+Spec: v-st-ext.adoc lines 3326-3364
+
+All FMA operations are destructive (overwrite one operand). There are two forms:
+- MACC/NMACC/MSAC/NMSAC: Overwrite addend (vd is accumulator)
+- MADD/NMADD/MSUB/NMSUB: Overwrite multiplicand (vd is multiplier)
+
+VFMACC.VV, VFMACC.VF (Status: ⚠ Partial)
+  Spec: v-st-ext.adoc lines 3334-3335
+  Encoding: funct6=0x2c, funct3=OPFVV/OPFVF
+  Format: vfmacc.vv vd, vs1, vs2, vm / vfmacc.vf vd, rs1, vs2, vm
+  Implementation: class VArithVxFloat in instructions/vector.py line 155
+  Decoding: decode.py line 543
+  Description: vd[i] = (vs1[i]/f[rs1] * vs2[i]) + vd[i]
+  Notes:
+    - Only .vf variant implemented
+    - Missing .vv form
+    - Used in daxpy test (tests/daxpy/)
+    - vd is both source and destination (accumulator)
+
+VFNMACC.VV, VFNMACC.VF (Status: ✗)
+  Spec: v-st-ext.adoc lines 3338-3339
+  Encoding: funct6=0x2d, funct3=OPFVV/OPFVF
+  Format: vfnmacc.vv vd, vs1, vs2, vm / vfnmacc.vf vd, rs1, vs2, vm
+  Implementation: Not implemented
+  Description: vd[i] = -(vs1[i]/f[rs1] * vs2[i]) - vd[i]
+  Notes: Negated multiply-accumulate
+
+VFMSAC.VV, VFMSAC.VF (Status: ✗)
+  Spec: v-st-ext.adoc lines 3342-3343
+  Encoding: funct6=0x2e, funct3=OPFVV/OPFVF
+  Format: vfmsac.vv vd, vs1, vs2, vm / vfmsac.vf vd, rs1, vs2, vm
+  Implementation: Not implemented
+  Description: vd[i] = (vs1[i]/f[rs1] * vs2[i]) - vd[i]
+  Notes: Multiply-subtract-accumulator
+
+VFNMSAC.VV, VFNMSAC.VF (Status: ✗)
+  Spec: v-st-ext.adoc lines 3346-3347
+  Encoding: funct6=0x2f, funct3=OPFVV/OPFVF
+  Format: vfnmsac.vv vd, vs1, vs2, vm / vfnmsac.vf vd, rs1, vs2, vm
+  Implementation: Not implemented
+  Description: vd[i] = -(vs1[i]/f[rs1] * vs2[i]) + vd[i]
+  Notes: Negated multiply-subtract-accumulator
+
+VFMADD.VV, VFMADD.VF (Status: ✗)
+  Spec: v-st-ext.adoc lines 3350-3351
+  Encoding: funct6=0x28, funct3=OPFVV/OPFVF
+  Format: vfmadd.vv vd, vs1, vs2, vm / vfmadd.vf vd, rs1, vs2, vm
+  Implementation: Not implemented
+  Description: vd[i] = (vs1[i]/f[rs1] * vd[i]) + vs2[i]
+  Notes: vd is multiplicand (different from vfmacc)
+
+VFNMADD.VV, VFNMADD.VF (Status: ✗)
+  Spec: v-st-ext.adoc lines 3354-3355
+  Encoding: funct6=0x29, funct3=OPFVV/OPFVF
+  Format: vfnmadd.vv vd, vs1, vs2, vm / vfnmadd.vf vd, rs1, vs2, vm
+  Implementation: Not implemented
+  Description: vd[i] = -(vs1[i]/f[rs1] * vd[i]) - vs2[i]
+
+VFMSUB.VV, VFMSUB.VF (Status: ✗)
+  Spec: v-st-ext.adoc lines 3358-3359
+  Encoding: funct6=0x2a, funct3=OPFVV/OPFVF
+  Format: vfmsub.vv vd, vs1, vs2, vm / vfmsub.vf vd, rs1, vs2, vm
+  Implementation: Not implemented
+  Description: vd[i] = (vs1[i]/f[rs1] * vd[i]) - vs2[i]
+
+VFNMSUB.VV, VFNMSUB.VF (Status: ✗)
+  Spec: v-st-ext.adoc lines 3362-3363
+  Encoding: funct6=0x2b, funct3=OPFVV/OPFVF
+  Format: vfnmsub.vv vd, vs1, vs2, vm / vfnmsub.vf vd, rs1, vs2, vm
+  Implementation: Not implemented
+  Description: vd[i] = -(vs1[i]/f[rs1] * vd[i]) + vs2[i]
+
+FP SQUARE ROOT (Status: ✗)
+===========================
+
+Spec: v-st-ext.adoc lines 3395-3402
+
+VFSQRT.V (Status: ✗)
+  Spec: v-st-ext.adoc lines 3400-3401
+  Encoding: funct6=0x13, vs1=0x00, funct3=OPFVV
+  Format: vfsqrt.v vd, vs2, vm
+  Implementation: Not implemented
+  Description: Unary vector-vector square root
+  Notes: vs1 field must be 0x00
+
+FP RECIPROCAL ESTIMATES (Status: ✗)
+====================================
+
+Spec: v-st-ext.adoc lines 3404-3566
+
+VFRSQRT7.V (Status: ✗)
+  Spec: v-st-ext.adoc lines 3407-3471
+  Encoding: funct6=0x13, vs1=0x04, funct3=OPFVV
+  Format: vfrsqrt7.v vd, vs2, vm
+  Implementation: Not implemented
+  Description: Reciprocal square root estimate to 7 bits (1/sqrt(x))
+  Notes:
+    - 7-bit accuracy chosen for Newton-Raphson convergence
+    - Requires 0,1,2,3 iterations for bfloat16, FP16, FP32, FP64
+    - Uses lookup table (see spec lines 3440-3464)
+    - Output independent of rounding mode
+
+VFREC7.V (Status: ✗)
+  Spec: v-st-ext.adoc lines 3476-3566
+  Encoding: funct6=0x13, vs1=0x05, funct3=OPFVV
+  Format: vfrec7.v vd, vs2, vm
+  Implementation: Not implemented
+  Description: Reciprocal estimate to 7 bits (1/x)
+  Notes:
+    - 7-bit accuracy for Newton-Raphson convergence
+    - Output may depend on rounding mode for overflow cases
+    - Uses lookup table (see spec lines 3526-3551)
+
+FP MIN/MAX (Status: ✗)
+=======================
+
+Spec: v-st-ext.adoc lines 3568-3583
+
+VFMIN.VV, VFMIN.VF (Status: ✗)
+  Spec: v-st-ext.adoc lines 3577-3578
+  Encoding: funct6=0x04, funct3=OPFVV/OPFVF
+  Format: vfmin.vv vd, vs2, vs1, vm / vfmin.vf vd, vs2, rs1, vm
+  Implementation: Not implemented
+  Description: Floating-point minimum (minimumNumber operation)
+  Notes: Same behavior as RISC-V F/D/Q v2.2 scalar instructions
+
+VFMAX.VV, VFMAX.VF (Status: ✗)
+  Spec: v-st-ext.adoc lines 3581-3582
+  Encoding: funct6=0x06, funct3=OPFVV/OPFVF
+  Format: vfmax.vv vd, vs2, vs1, vm / vfmax.vf vd, vs2, rs1, vm
+  Implementation: Not implemented
+  Description: Floating-point maximum (maximumNumber operation)
+
+FP SIGN-INJECTION (Status: ✗)
+==============================
+
+Spec: v-st-ext.adoc lines 3585-3609
+
+VFSGNJ.VV, VFSGNJ.VF (Status: ✗)
+  Spec: v-st-ext.adoc lines 3591-3592
+  Encoding: funct6=0x08, funct3=OPFVV/OPFVF
+  Format: vfsgnj.vv vd, vs2, vs1, vm / vfsgnj.vf vd, vs2, rs1, vm
+  Implementation: Not implemented
+  Description: Sign-injection, copy sign from vs1/rs1 to magnitude of vs2
+
+VFSGNJN.VV, VFSGNJN.VF (Status: ✗)
+  Spec: v-st-ext.adoc lines 3594-3595
+  Encoding: funct6=0x09, funct3=OPFVV/OPFVF
+  Format: vfsgnjn.vv vd, vs2, vs1, vm / vfsgnjn.vf vd, vs2, rs1, vm
+  Implementation: Not implemented
+  Description: Negated sign-injection
+  Notes: Pseudoinstruction vfneg.v vd,vs = vfsgnjn.vv vd,vs,vs
+
+VFSGNJX.VV, VFSGNJX.VF (Status: ✗)
+  Spec: v-st-ext.adoc lines 3597-3598
+  Encoding: funct6=0x0a, funct3=OPFVV/OPFVF
+  Format: vfsgnjx.vv vd, vs2, vs1, vm / vfsgnjx.vf vd, vs2, rs1, vm
+  Implementation: Not implemented
+  Description: XOR sign bits
+  Notes: Pseudoinstruction vfabs.v vd,vs = vfsgnjx.vv vd,vs,vs
+
+FP COMPARE (Status: ✗)
+=======================
+
+Spec: v-st-ext.adoc lines 3610-3691
+
+All comparisons write 1-bit mask values to destination.
+
+VMFEQ.VV, VMFEQ.VF (Status: ✗)
+  Spec: v-st-ext.adoc lines 3631-3632
+  Encoding: funct6=0x18, funct3=OPFVV/OPFVF
+  Format: vmfeq.vv vd, vs2, vs1, vm / vmfeq.vf vd, vs2, rs1, vm
+  Implementation: Not implemented
+  Description: Compare equal
+  Notes: Only raises invalid on signaling NaN
+
+VMFNE.VV, VMFNE.VF (Status: ✗)
+  Spec: v-st-ext.adoc lines 3635-3636
+  Encoding: funct6=0x1c, funct3=OPFVV/OPFVF
+  Format: vmfne.vv vd, vs2, vs1, vm / vmfne.vf vd, vs2, rs1, vm
+  Implementation: Not implemented
+  Description: Compare not equal
+  Notes: Writes 1 when either operand is NaN
+
+VMFLT.VV, VMFLT.VF (Status: ✗)
+  Spec: v-st-ext.adoc lines 3639-3640
+  Encoding: funct6=0x1b, funct3=OPFVV/OPFVF
+  Format: vmflt.vv vd, vs2, vs1, vm / vmflt.vf vd, vs2, rs1, vm
+  Implementation: Not implemented
+  Description: Compare less than
+  Notes: Raises invalid on any NaN (quiet or signaling)
+
+VMFLE.VV, VMFLE.VF (Status: ✗)
+  Spec: v-st-ext.adoc lines 3643-3644
+  Encoding: funct6=0x19, funct3=OPFVV/OPFVF
+  Format: vmfle.vv vd, vs2, vs1, vm / vmfle.vf vd, vs2, rs1, vm
+  Implementation: Not implemented
+  Description: Compare less than or equal
+  Notes: Raises invalid on any NaN
+
+VMFGT.VF (Status: ✗)
+  Spec: v-st-ext.adoc line 3647
+  Encoding: funct6=0x1d, funct3=OPFVF
+  Format: vmfgt.vf vd, vs2, rs1, vm
+  Implementation: Not implemented
+  Description: Compare greater than
+  Notes: Only .vf form (no .vv), vmfgt.vv is pseudoinstruction using vmflt.vv
+
+VMFGE.VF (Status: ✗)
+  Spec: v-st-ext.adoc line 3650
+  Encoding: funct6=0x1f, funct3=OPFVF
+  Format: vmfge.vf vd, vs2, rs1, vm
+  Implementation: Not implemented
+  Description: Compare greater than or equal
+  Notes: Only .vf form (no .vv), vmfge.vv is pseudoinstruction using vmfle.vv
+
+Pseudoinstructions for Missing Compares:
+  - vmfgt.vv vd, va, vb, vm: Use vmflt.vv vd, vb, va, vm (swap operands)
+  - vmfge.vv vd, va, vb, vm: Use vmfle.vv vd, vb, va, vm (swap operands)
+
+FP CLASSIFY (Status: ✗)
+========================
+
+Spec: v-st-ext.adoc lines 3692-3705
+
+VFCLASS.V (Status: ✗)
+  Spec: v-st-ext.adoc lines 3698-3699
+  Encoding: funct6=0x13, vs1=0x10, funct3=OPFVV
+  Format: vfclass.v vd, vs2, vm
+  Implementation: Not implemented
+  Description: Classify FP value, returns 10-bit mask
+  Notes:
+    - Unary operation
+    - 10-bit mask in low bits, upper bits zeroed
+    - Only defined for SEW >= 16
+
+FP MERGE/MOVE (Status: ✗)
+==========================
+
+Spec: v-st-ext.adoc lines 3707-3736
+
+VFMERGE.VFM (Status: ✗)
+  Spec: v-st-ext.adoc lines 3713-3719
+  Encoding: funct6=0x17, vm=0, funct3=OPFVF
+  Format: vfmerge.vfm vd, vs2, rs1, v0
+  Implementation: Not implemented
+  Description: vd[i] = v0.mask[i] ? f[rs1] : vs2[i]
+  Notes:
+    - Encoded as masked (vm=0)
+    - Operates on all body elements regardless of mask
+    - Mask selects between scalar and vector source
+
+VFMV.V.F (Status: ✗)
+  Spec: v-st-ext.adoc lines 3724-3732
+  Encoding: funct6=0x17, vm=1, vs2=v0, funct3=OPFVF
+  Format: vfmv.v.f vd, rs1
+  Implementation: Not implemented
+  Description: Splat FP scalar to vector, vd[i] = f[rs1]
+  Notes:
+    - Unmasked (vm=1)
+    - vs2 field must be v0
+    - Shares encoding with vfmerge.vfm
+
+Test Coverage
+-------------
+- vfmacc.vf tested in tests/daxpy/ (double-precision AXPY)
+- Dot product test in tests/dotprod/ may use FP operations
+- tests/sgemv/ has single-precision matrix-vector multiply
+- No tests for: add, sub, mul, div, sqrt, min/max, compare, classify
+
+TODO Items
+----------
+1. Implement basic FP arithmetic
+   - vfadd.vv/vf (add)
+   - vfsub.vv/vf, vfrsub.vf (subtract)
+   - vfmul.vv/vf (multiply)
+   - vfdiv.vv/vf, vfrdiv.vf (divide)
+
+2. Complete FMA instruction family
+   - vfmacc.vv (currently only .vf implemented)
+   - vfnmacc.vv/vf, vfmsac.vv/vf, vfnmsac.vv/vf (other accumulating forms)
+   - vfmadd.vv/vf, vfnmadd.vv/vf, vfmsub.vv/vf, vfnmsub.vv/vf (multiplicand-destructive forms)
+   - Extend VArithVxFloat to support all operation types
+
+3. Implement square root and reciprocal estimates
+   - vfsqrt.v (square root)
+   - vfrsqrt7.v (reciprocal sqrt estimate)
+   - vfrec7.v (reciprocal estimate)
+   - Implement lookup tables for estimate instructions
+
+4. Implement min/max operations
+   - vfmin.vv/vf, vfmax.vv/vf
+   - Follow IEEE-754 minimumNumber/maximumNumber semantics
+
+5. Implement sign-injection operations
+   - vfsgnj.vv/vf, vfsgnjn.vv/vf, vfsgnjx.vv/vf
+   - Support vfneg.v and vfabs.v pseudoinstructions
+
+6. Implement FP comparisons
+   - vmfeq.vv/vf, vmfne.vv/vf (equality)
+   - vmflt.vv/vf, vmfle.vv/vf (less than)
+   - vmfgt.vf, vmfge.vf (greater than, .vf only)
+   - Handle NaN signaling correctly
+
+7. Implement FP classify
+   - vfclass.v
+   - Return proper 10-bit classification mask
+
+8. Implement FP merge/move
+   - vfmerge.vfm
+   - vfmv.v.f (splat scalar to vector)
+
+9. Add FP exception handling
+   - Set fflags on FP exceptions
+   - Only set for active elements
+   - Handle mstatus.FS checking
+
+10. Add comprehensive FP tests
+    - Test all rounding modes
+    - Test NaN handling (quiet vs signaling)
+    - Test denormal numbers
+    - Test infinity and zero
+    - Test FP exception flags
+    - Test with masking
+
+Summary
+-------
+Minimal FP arithmetic support exists. Only 1 of ~60 instructions implemented:
+- vfmacc.vf (FP multiply-accumulate, vector-scalar only)
+
+Missing ~59 instructions including:
+- All basic arithmetic (add, sub, mul, div)
+- 7 other FMA variants (.vv forms and other operations)
+- Square root
+- Reciprocal estimates
+- Min/max operations
+- Sign-injection (negate, abs)
+- All comparisons
+- Classify
+- Merge and move
+
+Priority for implementation:
+1. Basic arithmetic (add, sub, mul, div) - most commonly used
+2. Complete vfmacc family - extend existing implementation
+3. Min/max - common in ML and signal processing
+4. Comparisons - needed for conditional operations
+5. Sign-injection - cheap operations for negate/abs
+6. Square root and estimates - DSP and scientific computing
+7. Classify and merge - less common utility operations

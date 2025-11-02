@@ -1,0 +1,333 @@
+WIDENING AND NARROWING INTEGER OPERATIONS
+==========================================
+
+Spec Reference: riscv-isa-manual/src/v-st-ext.adoc
+Lines: 2396-2432 (Widening add/subtract)
+Lines: 2433-2462 (Integer extension)
+Lines: 2619-2647 (Narrowing shifts)
+Lines: 2912-2930 (Widening multiply)
+Lines: 2963-2986 (Widening multiply-add)
+
+Overview
+--------
+Widening operations take SEW-bit operands and produce 2*SEW-bit results.
+Narrowing operations take 2*SEW-bit operands and produce SEW-bit results.
+These are essential for mixed-precision arithmetic, avoiding overflow, and
+implementing larger integer operations.
+
+Extension operations zero- or sign-extend narrow values to wider destinations
+without arithmetic.
+
+External Test Suite
+-------------------
+Repository: riscv-vector-tests
+Test configs: 27 widening/narrowing integer tests (add/sub, multiply,
+multiply-add, narrowing shifts, extensions). See test_suite_reference.txt
+
+Implementation Summary
+----------------------
+Currently implemented: 0 instructions
+Total in spec: ~40 widening/narrowing instructions
+Coverage: 0%
+
+WIDENING ADD/SUBTRACT (Status: ✗)
+==================================
+
+Spec: v-st-ext.adoc lines 2396-2432
+
+These come in two forms:
+1. SEW + SEW → 2*SEW (both operands narrow)
+2. 2*SEW + SEW → 2*SEW (one operand wide, .w suffix)
+
+VWADDU.VV, VWADDU.VX (Status: ✗)
+  Spec: v-st-ext.adoc line 2404-2405
+  Format: vwaddu.vv vd, vs2, vs1, vm / vwaddu.vx vd, vs2, rs1, vm
+  Implementation: Not implemented
+  Description: Widening unsigned add, 2*SEW = SEW + SEW
+  Notes: Zero-extend operands before adding
+
+VWADD.VV, VWADD.VX (Status: ✗)
+  Spec: v-st-ext.adoc line 2410-2411
+  Format: vwadd.vv vd, vs2, vs1, vm / vwadd.vx vd, vs2, rs1, vm
+  Implementation: Not implemented
+  Description: Widening signed add, 2*SEW = SEW + SEW
+  Notes:
+    - Sign-extend operands before adding
+    - Pseudoinstruction: vwcvt.x.x.v vd,vs,vm = vwadd.vx vd,vs,x0,vm
+      (widen integer with x0 add)
+
+VWSUBU.VV, VWSUBU.VX (Status: ✗)
+  Spec: v-st-ext.adoc line 2406-2407
+  Format: vwsubu.vv vd, vs2, vs1, vm / vwsubu.vx vd, vs2, rs1, vm
+  Implementation: Not implemented
+  Description: Widening unsigned subtract, 2*SEW = SEW - SEW
+
+VWSUB.VV, VWSUB.VX (Status: ✗)
+  Spec: v-st-ext.adoc line 2412-2413
+  Format: vwsub.vv vd, vs2, vs1, vm / vwsub.vx vd, vs2, rs1, vm
+  Implementation: Not implemented
+  Description: Widening signed subtract, 2*SEW = SEW - SEW
+
+VWADDU.WV, VWADDU.WX (Status: ✗)
+  Spec: v-st-ext.adoc line 2416-2417
+  Format: vwaddu.wv vd, vs2, vs1, vm / vwaddu.wx vd, vs2, rs1, vm
+  Implementation: Not implemented
+  Description: Widening unsigned add, 2*SEW = 2*SEW + SEW
+  Notes:
+    - vs2 is 2*SEW (wide), vs1/rs1 is SEW (narrow)
+    - .w suffix indicates first operand is wide
+    - Useful for accumulating into wider register
+
+VWADD.WV, VWADD.WX (Status: ✗)
+  Spec: v-st-ext.adoc line 2422-2423
+  Format: vwadd.wv vd, vs2, vs1, vm / vwadd.wx vd, vs2, rs1, vm
+  Implementation: Not implemented
+  Description: Widening signed add, 2*SEW = 2*SEW + SEW
+
+VWSUBU.WV, VWSUBU.WX (Status: ✗)
+  Spec: v-st-ext.adoc line 2418-2419
+  Format: vwsubu.wv vd, vs2, vs1, vm / vwsubu.wx vd, vs2, rs1, vm
+  Implementation: Not implemented
+  Description: Widening unsigned subtract, 2*SEW = 2*SEW - SEW
+
+VWSUB.WV, VWSUB.WX (Status: ✗)
+  Spec: v-st-ext.adoc line 2424-2425
+  Format: vwsub.wv vd, vs2, vs1, vm / vwsub.wx vd, vs2, rs1, vm
+  Implementation: Not implemented
+  Description: Widening signed subtract, 2*SEW = 2*SEW - SEW
+
+INTEGER EXTENSION (Status: ✗)
+==============================
+
+Spec: v-st-ext.adoc lines 2433-2462
+
+These extend narrow values to wider without arithmetic. Source EEW is
+SEW/2, SEW/4, or SEW/8. Source EMUL is (EEW/SEW)*LMUL.
+
+VZEXT.VF2 (Status: ✗)
+  Spec: v-st-ext.adoc line 2442
+  Format: vzext.vf2 vd, vs2, vm
+  Implementation: Not implemented
+  Description: Zero-extend SEW/2 source to SEW destination
+  Notes: vf2 means "from 1/2 width"
+
+VSEXT.VF2 (Status: ✗)
+  Spec: v-st-ext.adoc line 2443
+  Format: vsext.vf2 vd, vs2, vm
+  Implementation: Not implemented
+  Description: Sign-extend SEW/2 source to SEW destination
+
+VZEXT.VF4 (Status: ✗)
+  Spec: v-st-ext.adoc line 2444
+  Format: vzext.vf4 vd, vs2, vm
+  Implementation: Not implemented
+  Description: Zero-extend SEW/4 source to SEW destination
+  Notes: vf4 means "from 1/4 width"
+
+VSEXT.VF4 (Status: ✗)
+  Spec: v-st-ext.adoc line 2445
+  Format: vsext.vf4 vd, vs2, vm
+  Implementation: Not implemented
+  Description: Sign-extend SEW/4 source to SEW destination
+
+VZEXT.VF8 (Status: ✗)
+  Spec: v-st-ext.adoc line 2446
+  Format: vzext.vf8 vd, vs2, vm
+  Implementation: Not implemented
+  Description: Zero-extend SEW/8 source to SEW destination
+  Notes: vf8 means "from 1/8 width"
+
+VSEXT.VF8 (Status: ✗)
+  Spec: v-st-ext.adoc line 2447
+  Format: vsext.vf8 vd, vs2, vm
+  Implementation: Not implemented
+  Description: Sign-extend SEW/8 source to SEW destination
+
+NARROWING SHIFTS (Status: ✗)
+=============================
+
+Spec: v-st-ext.adoc lines 2619-2647
+
+Take 2*SEW source, shift right, store SEW-bit result. Essentially combines
+shift and narrowing into one operation.
+
+VNSRL.WV, VNSRL.WX, VNSRL.WI (Status: ✗)
+  Spec: v-st-ext.adoc line 2631-2633
+  Format: vnsrl.wv vd, vs2, vs1, vm / vnsrl.wx vd, vs2, rs1, vm /
+          vnsrl.wi vd, vs2, uimm, vm
+  Implementation: Not implemented
+  Description: Narrowing shift right logical, SEW = (2*SEW) >> shift
+  Notes:
+    - vs2 has 2*SEW elements, result has SEW elements
+    - Low lg2(2*SEW) bits of shift amount used
+    - Zero-extending (logical) shift
+    - Pseudoinstruction: vncvt.x.x.w vd,vs,vm = vnsrl.wx vd,vs,x0,vm
+      (narrow without shift)
+
+VNSRA.WV, VNSRA.WX, VNSRA.WI (Status: ✗)
+  Spec: v-st-ext.adoc line 2636-2638
+  Format: vnsra.wv vd, vs2, vs1, vm / vnsra.wx vd, vs2, rs1, vm /
+          vnsra.wi vd, vs2, uimm, vm
+  Implementation: Not implemented
+  Description: Narrowing shift right arithmetic, SEW = (2*SEW) >> shift
+  Notes: Sign-extending (arithmetic) shift
+
+WIDENING MULTIPLY (Status: ✗)
+==============================
+
+Spec: v-st-ext.adoc lines 2912-2930
+
+Returns full 2*SEW-bit product from SEW * SEW multiply.
+
+VWMUL.VV, VWMUL.VX (Status: ✗)
+  Spec: v-st-ext.adoc line 2919-2920
+  Format: vwmul.vv vd, vs2, vs1, vm / vwmul.vx vd, vs2, rs1, vm
+  Implementation: Not implemented
+  Description: Widening signed multiply, 2*SEW = SEW * SEW
+  Notes: Unlike vmul, returns full product (not just low bits)
+
+VWMULU.VV, VWMULU.VX (Status: ✗)
+  Spec: v-st-ext.adoc line 2923-2924
+  Format: vwmulu.vv vd, vs2, vs1, vm / vwmulu.vx vd, vs2, rs1, vm
+  Implementation: Not implemented
+  Description: Widening unsigned multiply, 2*SEW = SEW * SEW
+
+VWMULSU.VV, VWMULSU.VX (Status: ✗)
+  Spec: v-st-ext.adoc line 2927-2928
+  Format: vwmulsu.vv vd, vs2, vs1, vm / vwmulsu.vx vd, vs2, rs1, vm
+  Implementation: Not implemented
+  Description: Widening signed(vs2)-unsigned(vs1) multiply
+
+WIDENING MULTIPLY-ADD (Status: ✗)
+==================================
+
+Spec: v-st-ext.adoc lines 2963-2986
+
+Multiply SEW * SEW → 2*SEW, then add to 2*SEW accumulator.
+Result is 2*SEW.
+
+VWMACCU.VV, VWMACCU.VX (Status: ✗)
+  Spec: v-st-ext.adoc line 2972-2973
+  Format: vwmaccu.vv vd, vs1, vs2, vm / vwmaccu.vx vd, rs1, vs2, vm
+  Implementation: Not implemented
+  Description: Widening unsigned multiply-add
+  Notes:
+    - vd is 2*SEW (both source and dest)
+    - vd[i] = (vs1[i] * vs2[i]) + vd[i]
+    - vs1, vs2 are SEW, product is 2*SEW, added to 2*SEW vd
+
+VWMACC.VV, VWMACC.VX (Status: ✗)
+  Spec: v-st-ext.adoc line 2976-2977
+  Format: vwmacc.vv vd, vs1, vs2, vm / vwmacc.vx vd, rs1, vs2, vm
+  Implementation: Not implemented
+  Description: Widening signed multiply-add
+  Notes: Like vwmaccu but signed operands
+
+VWMACCSU.VV, VWMACCSU.VX (Status: ✗)
+  Spec: v-st-ext.adoc line 2980-2981
+  Format: vwmaccsu.vv vd, vs1, vs2, vm / vwmaccsu.vx vd, rs1, vs2, vm
+  Implementation: Not implemented
+  Description: Widening signed(vs1)-unsigned(vs2) multiply-add
+  Notes: vs1 is signed, vs2 is unsigned
+
+VWMACCUS.VX (Status: ✗)
+  Spec: v-st-ext.adoc line 2984
+  Format: vwmaccus.vx vd, rs1, vs2, vm
+  Implementation: Not implemented
+  Description: Widening unsigned(rs1)-signed(vs2) multiply-add
+  Notes: Only .vx form (no .vv form)
+
+REGISTER CONSTRAINTS
+====================
+
+Widening Operations:
+  - Destination vd has EEW=2*SEW, EMUL=2*LMUL
+  - Source operands (for SEW+SEW→2*SEW) have EEW=SEW, EMUL=LMUL
+  - For 2*SEW+SEW→2*SEW (.w forms), first source is 2*LMUL
+  - vd cannot overlap source register groups
+
+Narrowing Operations:
+  - Source vs2 has EEW=2*SEW, EMUL=2*LMUL
+  - Destination vd has EEW=SEW, EMUL=LMUL
+  - vd cannot overlap vs2
+
+Extension Operations:
+  - Source EMUL = (source_EEW / SEW) * LMUL
+  - For vf2: source EMUL = LMUL/2
+  - For vf4: source EMUL = LMUL/4
+  - For vf8: source EMUL = LMUL/8
+
+Test Coverage
+-------------
+- No widening or narrowing operations tested
+- test/common/encoding.h has encoding macros but no execution
+
+TODO Items
+----------
+1. Implement widening add/subtract (SEW+SEW→2*SEW)
+   - vwaddu.vv/vx, vwadd.vv/vx (add)
+   - vwsubu.vv/vx, vwsub.vv/vx (subtract)
+   - Handle signed vs unsigned extension
+   - Verify destination register width
+
+2. Implement widening add/subtract (2*SEW+SEW→2*SEW)
+   - vwaddu.wv/wx, vwadd.wv/wx
+   - vwsubu.wv/wx, vwsub.wv/wx
+   - .w suffix indicates first operand is wide
+
+3. Implement integer extension operations
+   - vzext.vf2/vf4/vf8 (zero-extend)
+   - vsext.vf2/vf4/vf8 (sign-extend)
+   - Calculate source EMUL correctly
+   - Verify source EEW is supported
+
+4. Implement narrowing shifts
+   - vnsrl.wv/wx/wi (logical right shift + narrow)
+   - vnsra.wv/wx/wi (arithmetic right shift + narrow)
+   - Handle 2*SEW source to SEW destination
+
+5. Implement widening multiply
+   - vwmul.vv/vx (signed)
+   - vwmulu.vv/vx (unsigned)
+   - vwmulsu.vv/vx (signed-unsigned)
+   - Return full 2*SEW product
+
+6. Implement widening multiply-add
+   - vwmaccu.vv/vx (unsigned)
+   - vwmacc.vv/vx (signed)
+   - vwmaccsu.vv/vx (signed-unsigned)
+   - vwmaccus.vx (unsigned-signed, .vx only)
+   - Accumulator is 2*SEW
+
+7. Add overlap checking
+   - Verify vd doesn't overlap source operands
+   - Check EMUL constraints for register groups
+   - Reserve encoding for illegal overlap cases
+
+8. Add comprehensive tests
+   - Test widening from 8→16, 16→32, 32→64 bits
+   - Test narrowing from 16→8, 32→16, 64→32 bits
+   - Test signed vs unsigned behavior
+   - Test with various LMUL settings
+   - Test register overlap detection
+   - Test extension from different fractional widths
+
+Summary
+-------
+No widening or narrowing operations are currently implemented. These operations
+are critical for:
+- Mixed-precision arithmetic (e.g., 8-bit multiply accumulating to 32-bit)
+- Avoiding overflow in intermediate results
+- Efficient type conversions
+- Multi-word arithmetic
+- DSP applications
+
+Total unimplemented: ~40 instructions
+- 16 widening add/subtract variants
+- 6 integer extension operations
+- 6 narrowing shift operations
+- 6 widening multiply variants
+- 7 widening multiply-add variants
+
+Priority: High - These are commonly used in DSP, machine learning, and
+numerical computation workloads where precision management is critical.

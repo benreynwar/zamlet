@@ -1,0 +1,406 @@
+WIDENING FLOATING-POINT AND TYPE CONVERSION INSTRUCTIONS
+==========================================================
+
+Spec Reference: riscv-isa-manual/src/v-st-ext.adoc
+Lines: 3287-3301 (Widening FP add/subtract)
+Lines: 3318-3324 (Widening FP multiply)
+Lines: 3371-3393 (Widening FP fused multiply-add)
+Lines: 3738-3762 (Single-width FP/integer conversions)
+Lines: 3763-3794 (Widening FP/integer conversions)
+Lines: 3796-3827 (Narrowing FP/integer conversions)
+
+Overview
+--------
+Widening FP operations take SEW-bit operands and produce 2*SEW-bit results,
+essential for avoiding loss of precision in intermediate computations.
+
+Conversion operations transform between floating-point and integer types,
+supporting same-width, widening, and narrowing conversions.
+
+External Test Suite
+-------------------
+Repository: riscv-vector-tests
+Test configs: Widening/narrowing FP tests included in 07_float_arithmetic.txt
+test count (119 total FP tests). See test_suite_reference.txt for complete list
+
+Implementation Summary
+----------------------
+Currently implemented: 0 instructions
+Total in spec: ~36 widening/conversion instructions
+Coverage: 0%
+
+WIDENING FP ADD/SUBTRACT (Status: ✗)
+=====================================
+
+Spec: v-st-ext.adoc lines 3287-3301
+
+These come in two forms:
+1. SEW + SEW → 2*SEW (both operands narrow)
+2. 2*SEW + SEW → 2*SEW (one operand wide, .w suffix)
+
+VFWADD.VV, VFWADD.VF (Status: ✗)
+  Spec: v-st-ext.adoc lines 3291-3292
+  Encoding: funct6=0x30, funct3=OPFVV/OPFVF
+  Format: vfwadd.vv vd, vs2, vs1, vm / vfwadd.vf vd, vs2, rs1, vm
+  Implementation: Not implemented
+  Description: Widening FP add, 2*SEW = SEW + SEW
+  Notes: Uses dynamic rounding mode from frm
+
+VFWSUB.VV, VFWSUB.VF (Status: ✗)
+  Spec: v-st-ext.adoc lines 3293-3294
+  Encoding: funct6=0x32, funct3=OPFVV/OPFVF
+  Format: vfwsub.vv vd, vs2, vs1, vm / vfwsub.vf vd, vs2, rs1, vm
+  Implementation: Not implemented
+  Description: Widening FP subtract, 2*SEW = SEW - SEW
+
+VFWADD.WV, VFWADD.WF (Status: ✗)
+  Spec: v-st-ext.adoc lines 3297-3298
+  Encoding: funct6=0x34, funct3=OPFVV/OPFVF
+  Format: vfwadd.wv vd, vs2, vs1, vm / vfwadd.wf vd, vs2, rs1, vm
+  Implementation: Not implemented
+  Description: Widening FP add, 2*SEW = 2*SEW + SEW
+  Notes:
+    - vs2 is 2*SEW (wide), vs1/rs1 is SEW (narrow)
+    - .w suffix indicates first operand is wide
+    - Useful for accumulating into wider register
+
+VFWSUB.WV, VFWSUB.WF (Status: ✗)
+  Spec: v-st-ext.adoc lines 3299-3300
+  Encoding: funct6=0x36, funct3=OPFVV/OPFVF
+  Format: vfwsub.wv vd, vs2, vs1, vm / vfwsub.wf vd, vs2, rs1, vm
+  Implementation: Not implemented
+  Description: Widening FP subtract, 2*SEW = 2*SEW - SEW
+
+WIDENING FP MULTIPLY (Status: ✗)
+=================================
+
+Spec: v-st-ext.adoc lines 3318-3324
+
+VFWMUL.VV, VFWMUL.VF (Status: ✗)
+  Spec: v-st-ext.adoc lines 3322-3323
+  Encoding: funct6=0x38, funct3=OPFVV/OPFVF
+  Format: vfwmul.vv vd, vs2, vs1, vm / vfwmul.vf vd, vs2, rs1, vm
+  Implementation: Not implemented
+  Description: Widening FP multiply, 2*SEW = SEW * SEW
+  Notes:
+    - Returns full 2*SEW product
+    - Common for avoiding rounding in intermediate products
+
+WIDENING FP FUSED MULTIPLY-ADD (Status: ✗)
+===========================================
+
+Spec: v-st-ext.adoc lines 3371-3393
+
+All widening FMA operations overwrite the wide addend (vd). The multiplier
+inputs are SEW wide, while the addend and destination are 2*SEW bits wide.
+
+VFWMACC.VV, VFWMACC.VF (Status: ✗)
+  Spec: v-st-ext.adoc lines 3379-3380
+  Encoding: funct6=0x3c, funct3=OPFVV/OPFVF
+  Format: vfwmacc.vv vd, vs1, vs2, vm / vfwmacc.vf vd, rs1, vs2, vm
+  Implementation: Not implemented
+  Description: vd[i] = (vs1[i] * vs2[i]) + vd[i]
+  Notes:
+    - vd is 2*SEW (both source and dest)
+    - vs1, vs2 are SEW
+    - Product is widened to 2*SEW, then added to 2*SEW vd
+
+VFWNMACC.VV, VFWNMACC.VF (Status: ✗)
+  Spec: v-st-ext.adoc lines 3383-3384
+  Encoding: funct6=0x3d, funct3=OPFVV/OPFVF
+  Format: vfwnmacc.vv vd, vs1, vs2, vm / vfwnmacc.vf vd, rs1, vs2, vm
+  Implementation: Not implemented
+  Description: vd[i] = -(vs1[i] * vs2[i]) - vd[i]
+
+VFWMSAC.VV, VFWMSAC.VF (Status: ✗)
+  Spec: v-st-ext.adoc lines 3387-3388
+  Encoding: funct6=0x3e, funct3=OPFVV/OPFVF
+  Format: vfwmsac.vv vd, vs1, vs2, vm / vfwmsac.vf vd, rs1, vs2, vm
+  Implementation: Not implemented
+  Description: vd[i] = (vs1[i] * vs2[i]) - vd[i]
+
+VFWNMSAC.VV, VFWNMSAC.VF (Status: ✗)
+  Spec: v-st-ext.adoc lines 3391-3392
+  Encoding: funct6=0x3f, funct3=OPFVV/OPFVF
+  Format: vfwnmsac.vv vd, vs1, vs2, vm / vfwnmsac.vf vd, rs1, vs2, vm
+  Implementation: Not implemented
+  Description: vd[i] = -(vs1[i] * vs2[i]) + vd[i]
+
+SINGLE-WIDTH FP/INTEGER CONVERSIONS (Status: ✗)
+================================================
+
+Spec: v-st-ext.adoc lines 3738-3762
+
+Convert between floating-point and integer values where both source and
+destination are SEW wide.
+
+VFCVT.XU.F.V (Status: ✗)
+  Spec: v-st-ext.adoc line 3745
+  Encoding: funct6=0x12, vs1=0x00, funct3=OPFVV
+  Format: vfcvt.xu.f.v vd, vs2, vm
+  Implementation: Not implemented
+  Description: Convert float to unsigned integer
+  Notes: Uses dynamic rounding mode from frm
+
+VFCVT.X.F.V (Status: ✗)
+  Spec: v-st-ext.adoc line 3746
+  Encoding: funct6=0x12, vs1=0x01, funct3=OPFVV
+  Format: vfcvt.x.f.v vd, vs2, vm
+  Implementation: Not implemented
+  Description: Convert float to signed integer
+
+VFCVT.RTZ.XU.F.V (Status: ✗)
+  Spec: v-st-ext.adoc line 3748
+  Encoding: funct6=0x12, vs1=0x06, funct3=OPFVV
+  Format: vfcvt.rtz.xu.f.v vd, vs2, vm
+  Implementation: Not implemented
+  Description: Convert float to unsigned integer, truncating
+  Notes:
+    - Round towards zero (RTZ)
+    - Accelerates C/Java-style truncating conversions
+
+VFCVT.RTZ.X.F.V (Status: ✗)
+  Spec: v-st-ext.adoc line 3749
+  Encoding: funct6=0x12, vs1=0x07, funct3=OPFVV
+  Format: vfcvt.rtz.x.f.v vd, vs2, vm
+  Implementation: Not implemented
+  Description: Convert float to signed integer, truncating
+
+VFCVT.F.XU.V (Status: ✗)
+  Spec: v-st-ext.adoc line 3751
+  Encoding: funct6=0x12, vs1=0x02, funct3=OPFVV
+  Format: vfcvt.f.xu.v vd, vs2, vm
+  Implementation: Not implemented
+  Description: Convert unsigned integer to float
+
+VFCVT.F.X.V (Status: ✗)
+  Spec: v-st-ext.adoc line 3752
+  Encoding: funct6=0x12, vs1=0x03, funct3=OPFVV
+  Format: vfcvt.f.x.v vd, vs2, vm
+  Implementation: Not implemented
+  Description: Convert signed integer to float
+
+WIDENING FP/INTEGER CONVERSIONS (Status: ✗)
+============================================
+
+Spec: v-st-ext.adoc lines 3763-3794
+
+Convert between narrower datatypes to a type of twice the width.
+
+VFWCVT.XU.F.V (Status: ✗)
+  Spec: v-st-ext.adoc line 3770
+  Encoding: funct6=0x12, vs1=0x08, funct3=OPFVV
+  Format: vfwcvt.xu.f.v vd, vs2, vm
+  Implementation: Not implemented
+  Description: Convert float to double-width unsigned integer
+
+VFWCVT.X.F.V (Status: ✗)
+  Spec: v-st-ext.adoc line 3771
+  Encoding: funct6=0x12, vs1=0x09, funct3=OPFVV
+  Format: vfwcvt.x.f.v vd, vs2, vm
+  Implementation: Not implemented
+  Description: Convert float to double-width signed integer
+
+VFWCVT.RTZ.XU.F.V (Status: ✗)
+  Spec: v-st-ext.adoc line 3773
+  Encoding: funct6=0x12, vs1=0x0e, funct3=OPFVV
+  Format: vfwcvt.rtz.xu.f.v vd, vs2, vm
+  Implementation: Not implemented
+  Description: Convert float to double-width unsigned integer, truncating
+
+VFWCVT.RTZ.X.F.V (Status: ✗)
+  Spec: v-st-ext.adoc line 3774
+  Encoding: funct6=0x12, vs1=0x0f, funct3=OPFVV
+  Format: vfwcvt.rtz.x.f.v vd, vs2, vm
+  Implementation: Not implemented
+  Description: Convert float to double-width signed integer, truncating
+
+VFWCVT.F.XU.V (Status: ✗)
+  Spec: v-st-ext.adoc line 3776
+  Encoding: funct6=0x12, vs1=0x0a, funct3=OPFVV
+  Format: vfwcvt.f.xu.v vd, vs2, vm
+  Implementation: Not implemented
+  Description: Convert unsigned integer to double-width float
+  Notes: Double-width FP can always represent single-width integer exactly
+
+VFWCVT.F.X.V (Status: ✗)
+  Spec: v-st-ext.adoc line 3777
+  Encoding: funct6=0x12, vs1=0x0b, funct3=OPFVV
+  Format: vfwcvt.f.x.v vd, vs2, vm
+  Implementation: Not implemented
+  Description: Convert signed integer to double-width float
+
+VFWCVT.F.F.V (Status: ✗)
+  Spec: v-st-ext.adoc line 3779
+  Encoding: funct6=0x12, vs1=0x0c, funct3=OPFVV
+  Format: vfwcvt.f.f.v vd, vs2, vm
+  Implementation: Not implemented
+  Description: Convert single-width float to double-width float
+  Notes: Double-width FP can always represent single-width FP exactly
+
+NARROWING FP/INTEGER CONVERSIONS (Status: ✗)
+=============================================
+
+Spec: v-st-ext.adoc lines 3796-3827
+
+Convert wider datatypes to a type of half the width.
+
+VFNCVT.XU.F.W (Status: ✗)
+  Spec: v-st-ext.adoc line 3802
+  Encoding: funct6=0x12, vs1=0x10, funct3=OPFVV
+  Format: vfncvt.xu.f.w vd, vs2, vm
+  Implementation: Not implemented
+  Description: Convert double-width float to unsigned integer
+  Notes: vs2 has 2*SEW elements, vd has SEW elements
+
+VFNCVT.X.F.W (Status: ✗)
+  Spec: v-st-ext.adoc line 3803
+  Encoding: funct6=0x12, vs1=0x11, funct3=OPFVV
+  Format: vfncvt.x.f.w vd, vs2, vm
+  Implementation: Not implemented
+  Description: Convert double-width float to signed integer
+
+VFNCVT.RTZ.XU.F.W (Status: ✗)
+  Spec: v-st-ext.adoc line 3805
+  Encoding: funct6=0x12, vs1=0x16, funct3=OPFVV
+  Format: vfncvt.rtz.xu.f.w vd, vs2, vm
+  Implementation: Not implemented
+  Description: Convert double-width float to unsigned integer, truncating
+
+VFNCVT.RTZ.X.F.W (Status: ✗)
+  Spec: v-st-ext.adoc line 3806
+  Encoding: funct6=0x12, vs1=0x17, funct3=OPFVV
+  Format: vfncvt.rtz.x.f.w vd, vs2, vm
+  Implementation: Not implemented
+  Description: Convert double-width float to signed integer, truncating
+
+VFNCVT.F.XU.W (Status: ✗)
+  Spec: v-st-ext.adoc line 3808
+  Encoding: funct6=0x12, vs1=0x12, funct3=OPFVV
+  Format: vfncvt.f.xu.w vd, vs2, vm
+  Implementation: Not implemented
+  Description: Convert double-width unsigned integer to float
+
+VFNCVT.F.X.W (Status: ✗)
+  Spec: v-st-ext.adoc line 3809
+  Encoding: funct6=0x12, vs1=0x13, funct3=OPFVV
+  Format: vfncvt.f.x.w vd, vs2, vm
+  Implementation: Not implemented
+  Description: Convert double-width signed integer to float
+
+VFNCVT.F.F.W (Status: ✗)
+  Spec: v-st-ext.adoc line 3811
+  Encoding: funct6=0x12, vs1=0x14, funct3=OPFVV
+  Format: vfncvt.f.f.w vd, vs2, vm
+  Implementation: Not implemented
+  Description: Convert double-width float to single-width float
+  Notes: Uses dynamic rounding mode from frm
+
+VFNCVT.ROD.F.F.W (Status: ✗)
+  Spec: v-st-ext.adoc lines 3812-3813
+  Encoding: funct6=0x12, vs1=0x15, funct3=OPFVV
+  Format: vfncvt.rod.f.f.w vd, vs2, vm
+  Implementation: Not implemented
+  Description: Convert double-width float to single-width float, round-odd
+  Notes:
+    - Round towards odd (ROD)
+    - Used in multi-step narrowing to preserve exception flags
+    - All but last step use ROD, final step uses desired rounding
+    - Finite overflow converts to largest finite value (not infinity)
+
+REGISTER CONSTRAINTS
+====================
+
+Widening Operations:
+  - Destination vd has EEW=2*SEW, EMUL=2*LMUL
+  - Source operands (for SEW+SEW→2*SEW) have EEW=SEW, EMUL=LMUL
+  - For 2*SEW+SEW→2*SEW (.w forms), first source is 2*LMUL
+  - vd cannot overlap source register groups
+
+Narrowing Operations:
+  - Source vs2 has EEW=2*SEW, EMUL=2*LMUL
+  - Destination vd has EEW=SEW, EMUL=LMUL
+  - vd cannot overlap vs2
+
+Same-Width Conversions:
+  - Both source and destination have EEW=SEW, EMUL=LMUL
+  - Standard register group rules apply
+
+Test Coverage
+-------------
+- No widening FP or conversion operations tested
+- tests/common/encoding.h has encoding macros but no execution
+
+TODO Items
+----------
+1. Implement widening FP add/subtract
+   - vfwadd.vv/vf, vfwsub.vv/vf (SEW+SEW→2*SEW)
+   - vfwadd.wv/wf, vfwsub.wv/wf (2*SEW+SEW→2*SEW)
+   - Handle destination register width correctly
+   - Verify no register overlap
+
+2. Implement widening FP multiply
+   - vfwmul.vv/vf
+   - Returns full 2*SEW product
+
+3. Implement widening FP multiply-add
+   - vfwmacc.vv/vf, vfwnmacc.vv/vf
+   - vfwmsac.vv/vf, vfwnmsac.vv/vf
+   - Accumulator is 2*SEW
+
+4. Implement single-width FP/integer conversions
+   - vfcvt.xu.f.v, vfcvt.x.f.v (float to integer)
+   - vfcvt.f.xu.v, vfcvt.f.x.v (integer to float)
+   - vfcvt.rtz.xu.f.v, vfcvt.rtz.x.f.v (truncating float to int)
+   - Handle rounding modes correctly
+   - Follow scalar FP conversion exception semantics
+
+5. Implement widening FP/integer conversions
+   - vfwcvt.xu.f.v, vfwcvt.x.f.v (float to 2*int)
+   - vfwcvt.f.xu.v, vfwcvt.f.x.v (int to 2*float)
+   - vfwcvt.f.f.v (float to 2*float)
+   - vfwcvt.rtz.xu.f.v, vfwcvt.rtz.x.f.v (truncating)
+   - Verify exact representation guarantees
+
+6. Implement narrowing FP/integer conversions
+   - vfncvt.xu.f.w, vfncvt.x.f.w (2*float to int)
+   - vfncvt.f.xu.w, vfncvt.f.x.w (2*int to float)
+   - vfncvt.f.f.w (2*float to float)
+   - vfncvt.rod.f.f.w (round-odd for multi-step)
+   - vfncvt.rtz.xu.f.w, vfncvt.rtz.x.f.w (truncating)
+   - Implement round-odd correctly
+   - Handle overflow to largest finite value for ROD
+
+7. Add overlap checking
+   - Verify vd doesn't overlap source operands for widening/narrowing
+   - Check EMUL constraints for register groups
+   - Reserve encoding for illegal overlap cases
+
+8. Add comprehensive tests
+   - Test conversions FP16↔FP32, FP32↔FP64
+   - Test integer conversions with various bit widths
+   - Test rounding modes (dynamic frm and RTZ)
+   - Test round-odd for narrowing sequences
+   - Test exception handling
+   - Test with various LMUL settings
+   - Test register overlap detection
+
+Summary
+-------
+No widening FP or conversion operations are currently implemented. These operations
+are critical for:
+- Mixed-precision arithmetic (e.g., FP16 multiply accumulating to FP32)
+- Avoiding loss of precision in intermediate results
+- Efficient type conversions between FP and integer
+- Multi-precision calculations
+- ML inference workloads (mixed precision training/inference)
+
+Total unimplemented: ~36 instructions
+- 8 widening FP add/subtract/multiply variants
+- 8 widening FP multiply-add variants
+- 6 single-width FP/integer conversions
+- 7 widening FP/integer conversions
+- 8 narrowing FP/integer conversions
+
+Priority: High - These are essential for ML workloads, scientific computing,
+and any mixed-precision arithmetic where maintaining accuracy is critical.

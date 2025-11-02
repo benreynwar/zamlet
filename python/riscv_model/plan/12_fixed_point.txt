@@ -1,0 +1,365 @@
+VECTOR FIXED-POINT ARITHMETIC INSTRUCTIONS
+===========================================
+
+Spec Reference: riscv-isa-manual/src/v-st-ext.adoc
+Lines: 3047-3225
+
+Overview
+--------
+Fixed-point arithmetic instructions support operations on two's-complement signed
+or unsigned integers interpreted as numerators in fractions with implicit denominators.
+These instructions help preserve precision in narrow operands through scaling, rounding,
+and saturation. The rounding mode is controlled by the vxrm CSR, and overflow detection
+is tracked by the vxsat CSR flag.
+
+Key concepts:
+- Saturating operations: Results that would overflow are clamped to min/max values
+- Averaging operations: Results are right-shifted by 1 with rounding
+- Scaling shifts: Right shifts with rounding based on vxrm mode
+- Narrowing clips: Shift, round, and saturate from 2*SEW to SEW
+
+External Test Suite
+-------------------
+Repository: riscv-vector-tests (github.com/chipsalliance/riscv-vector-tests)
+Test configs: configs/v/*.toml (32 fixed-point instruction tests)
+- Tests generate self-checking assembly using Spike as reference
+- Cover multiple SEW (e8-e64) and LMUL (mf8-m8) configurations
+- Include edge cases: overflow, underflow, saturation, max values
+
+Implementation Summary
+----------------------
+Currently implemented: 0 instructions
+Total in spec: 33 fixed-point instructions
+Coverage: 0%
+
+Status:
+- CSRs: vxrm and vxsat are NOT implemented in processor.py
+- Instructions: No fixed-point instructions implemented
+- Tests: No fixed-point tests exist
+
+SATURATING ADD AND SUBTRACT (Status: ✗)
+========================================
+
+Spec: v-st-ext.adoc lines 3065-3090
+
+These instructions perform addition or subtraction with saturation. On overflow,
+the result is clamped to the closest representable value and vxsat is set.
+
+VSADDU.VV, VSADDU.VX, VSADDU.VI (Status: ✗)
+  Format: vsaddu.vv vd, vs2, vs1, vm / vsaddu.vx vd, vs2, rs1, vm / vsaddu.vi vd, vs2, imm, vm
+  Encoding: Available in encoding.h (lines 4436-4438)
+  Tests: vsaddu.vv.toml, vsaddu.vx.toml, vsaddu.vi.toml
+  Description: Unsigned saturating add
+  Notes:
+    - If vs2[i] + vs1[i]/rs1/imm > MAX_UINT, result = MAX_UINT and vxsat set
+    - Supports .vv, .vx, and .vi forms
+
+VSADD.VV, VSADD.VX, VSADD.VI (Status: ✗)
+  Format: vsadd.vv vd, vs2, vs1, vm / vsadd.vx vd, vs2, rs1, vm / vsadd.vi vd, vs2, imm, vm
+  Encoding: Available in encoding.h (lines 4433-4435)
+  Tests: vsadd.vv.toml, vsadd.vx.toml, vsadd.vi.toml
+  Description: Signed saturating add
+  Notes:
+    - If result overflows signed range, saturate to MAX_INT or MIN_INT
+    - Set vxsat on saturation
+    - Supports .vv, .vx, and .vi forms
+
+VSSUBU.VV, VSSUBU.VX (Status: ✗)
+  Spec: v-st-ext.adoc lines 3083-3086
+  Format: vssubu.vv vd, vs2, vs1, vm / vssubu.vx vd, vs2, rs1, vm
+  Encoding: Available in encoding.h (lines 4497-4498)
+  Tests: vssubu.vv.toml, vssubu.vx.toml
+  Description: Unsigned saturating subtract
+  Notes:
+    - If vs2[i] < vs1[i]/rs1, result = 0 and vxsat set
+    - Only .vv and .vx forms (no immediate form)
+
+VSSUB.VV, VSSUB.VX (Status: ✗)
+  Spec: v-st-ext.adoc lines 3087-3090
+  Format: vssub.vv vd, vs2, vs1, vm / vssub.vx vd, vs2, rs1, vm
+  Encoding: Available in encoding.h (lines 4495-4496)
+  Tests: vssub.vv.toml, vssub.vx.toml
+  Description: Signed saturating subtract
+  Notes:
+    - Saturate to MAX_INT or MIN_INT on overflow
+    - Set vxsat on saturation
+    - Only .vv and .vx forms
+
+AVERAGING ADD AND SUBTRACT (Status: ✗)
+=======================================
+
+Spec: v-st-ext.adoc lines 3092-3124
+
+These instructions compute (a + b) >> 1 or (a - b) >> 1 with rounding according
+to vxrm. Computation is performed in infinite precision before rounding. For averaging
+adds, there can be no overflow. For averaging subtracts, overflow is ignored and wraps.
+
+VAADDU.VV, VAADDU.VX (Status: ✗)
+  Spec: v-st-ext.adoc lines 3107-3109
+  Format: vaaddu.vv vd, vs2, vs1, vm / vaaddu.vx vd, vs2, rs1, vm
+  Encoding: Available in encoding.h (lines 4101-4102)
+  Tests: vaaddu.vv.toml, vaaddu.vx.toml
+  Description: Unsigned averaging add = roundoff_unsigned(vs2[i] + vs1[i]/rs1, 1)
+  Notes:
+    - Right shift by 1 with rounding per vxrm
+    - No overflow possible
+    - Only .vv and .vx forms
+
+VAADD.VV, VAADD.VX (Status: ✗)
+  Spec: v-st-ext.adoc lines 3111-3113
+  Format: vaadd.vv vd, vs2, vs1, vm / vaadd.vx vd, vs2, rs1, vm
+  Encoding: Available in encoding.h (lines 4099-4100)
+  Tests: vaadd.vv.toml, vaadd.vx.toml
+  Description: Signed averaging add = roundoff_signed(vs2[i] + vs1[i]/rs1, 1)
+  Notes:
+    - Right shift by 1 with rounding per vxrm
+    - No overflow possible
+    - Only .vv and .vx forms
+
+VASUBU.VV, VASUBU.VX (Status: ✗)
+  Spec: v-st-ext.adoc lines 3117-3119
+  Format: vasubu.vv vd, vs2, vs1, vm / vasubu.vx vd, vs2, rs1, vm
+  Encoding: Available in encoding.h (lines 4150-4151)
+  Tests: vasubu.vv.toml, vasubu.vx.toml
+  Description: Unsigned averaging subtract = roundoff_unsigned(vs2[i] - vs1[i]/rs1, 1)
+  Notes:
+    - Right shift by 1 with rounding per vxrm
+    - Overflow wraps around
+    - Only .vv and .vx forms
+
+VASUB.VV, VASUB.VX (Status: ✗)
+  Spec: v-st-ext.adoc lines 3121-3123
+  Format: vasub.vv vd, vs2, vs1, vm / vasub.vx vd, vs2, rs1, vm
+  Encoding: Available in encoding.h (lines 4148-4149)
+  Tests: vasub.vv.toml, vasub.vx.toml
+  Description: Signed averaging subtract = roundoff_signed(vs2[i] - vs1[i]/rs1, 1)
+  Notes:
+    - Right shift by 1 with rounding per vxrm
+    - Overflow wraps (only when subtracting min from max under rnu/rne rounding)
+    - Only .vv and .vx forms
+
+FRACTIONAL MULTIPLY WITH ROUNDING AND SATURATION (Status: ✗)
+=============================================================
+
+Spec: v-st-ext.adoc lines 3126-3154
+
+This instruction produces a 2*SEW product, then shifts right by SEW-1 bits with
+rounding according to vxrm, then saturates to SEW bits. Used for Q-format fractional
+arithmetic.
+
+VSMUL.VV, VSMUL.VX (Status: ✗)
+  Spec: v-st-ext.adoc lines 3135-3138
+  Format: vsmul.vv vd, vs2, vs1, vm / vsmul.vx vd, vs2, rs1, vm
+  Encoding: Available in encoding.h (lines 4465-4466)
+  Tests: vsmul.vv.toml, vsmul.vx.toml
+  Description: Signed saturating fractional multiply
+  Computation: vd[i] = clip(roundoff_signed(vs2[i] * vs1[i]/rs1, SEW-1))
+  Notes:
+    - Multiplies two N-bit signed numbers producing 2N-bit product
+    - Shifts right by N-1 bits (not N) to retain extra precision bit
+    - Saturates if result overflows N bits
+    - Sets vxsat on saturation
+    - Most products have 2 sign bits; largest (-2^N-1 * -2^N-1) has 1 sign bit
+    - Only .vv and .vx forms (no immediate form)
+
+SCALING SHIFT INSTRUCTIONS (Status: ✗)
+=======================================
+
+Spec: v-st-ext.adoc lines 3155-3176
+
+These instructions shift right with rounding according to vxrm. Both zero-extending
+(logical) and sign-extending (arithmetic) forms are provided.
+
+VSSRL.VV, VSSRL.VX, VSSRL.VI (Status: ✗)
+  Spec: v-st-ext.adoc lines 3167-3170
+  Format: vssrl.vv vd, vs2, vs1, vm / vssrl.vx vd, vs2, rs1, vm / vssrl.vi vd, vs2, uimm, vm
+  Encoding: Available in encoding.h (lines 4492-4494)
+  Tests: vssrl.vv.toml, vssrl.vx.toml, vssrl.vi.toml
+  Description: Scaling shift right logical (zero-extending)
+  Computation: vd[i] = roundoff_unsigned(vs2[i], vs1[i]/rs1/uimm)
+  Notes:
+    - Only low lg2(SEW) bits of shift amount used
+    - Rounding based on shifted-out bits per vxrm
+    - Supports .vv, .vx, and .vi forms
+
+VSSRA.VV, VSSRA.VX, VSSRA.VI (Status: ✗)
+  Spec: v-st-ext.adoc lines 3172-3175
+  Format: vssra.vv vd, vs2, vs1, vm / vssra.vx vd, vs2, rs1, vm / vssra.vi vd, vs2, uimm, vm
+  Encoding: Available in encoding.h (lines 4489-4491)
+  Tests: vssra.vv.toml, vssra.vx.toml, vssra.vi.toml
+  Description: Scaling shift right arithmetic (sign-extending)
+  Computation: vd[i] = roundoff_signed(vs2[i], vs1[i]/rs1/uimm)
+  Notes:
+    - Only low lg2(SEW) bits of shift amount used
+    - Rounding based on shifted-out bits per vxrm
+    - Sign-extends the result
+    - Supports .vv, .vx, and .vi forms
+
+NARROWING FIXED-POINT CLIP INSTRUCTIONS (Status: ✗)
+====================================================
+
+Spec: v-st-ext.adoc lines 3178-3223
+
+These instructions pack a fixed-point value from 2*SEW to SEW with scaling (right shift),
+rounding (per vxrm), and saturation. Used to narrow results after widening operations.
+
+VNCLIPU.WV, VNCLIPU.WX, VNCLIPU.WI (Status: ✗)
+  Spec: v-st-ext.adoc lines 3190-3194
+  Format: vnclipu.wv vd, vs2, vs1, vm / vnclipu.wx vd, vs2, rs1, vm / vnclipu.wi vd, vs2, uimm, vm
+  Encoding: Available in encoding.h (lines 4395-4397)
+  Tests: vnclipu.wv.toml, vnclipu.wx.toml, vnclipu.wi.toml
+  Description: Narrowing unsigned clip
+  Computation: vd[i] = clip(roundoff_unsigned(vs2[i], vs1[i]/rs1/uimm))
+  Source width: 2*SEW, Destination width: SEW
+  Notes:
+    - vs2 is 2*SEW, vd is SEW
+    - Low lg2(2*SEW) bits of shift amount used (e.g., 6 bits for 64->32 bit narrow)
+    - Shifted rounded value treated as unsigned
+    - Saturates to unsigned destination range
+    - Sets vxsat on saturation
+    - Supports .wv, .wx, and .wi forms
+
+VNCLIP.WV, VNCLIP.WX, VNCLIP.WI (Status: ✗)
+  Spec: v-st-ext.adoc lines 3196-3220
+  Format: vnclip.wv vd, vs2, vs1, vm / vnclip.wx vd, vs2, rs1, vm / vnclip.wi vd, vs2, uimm, vm
+  Encoding: Available in encoding.h (lines 4392-4394)
+  Tests: vnclip.wv.toml, vnclip.wx.toml, vnclip.wi.toml
+  Description: Narrowing signed clip
+  Computation: vd[i] = clip(roundoff_signed(vs2[i], vs1[i]/rs1/uimm))
+  Source width: 2*SEW, Destination width: SEW
+  Notes:
+    - vs2 is 2*SEW, vd is SEW
+    - Low lg2(2*SEW) bits of shift amount used
+    - Shifted rounded value treated as signed
+    - Saturates to signed destination range
+    - Sets vxsat on saturation
+    - Supports .wv, .wx, and .wi forms
+    - No direct instruction for signed->unsigned saturation; requires two-step
+      sequence: vmax with 0, then vnclipu (with vsetvli to change SEW between)
+
+ROUNDING MODES (vxrm CSR)
+=========================
+
+Spec: v-st-ext.adoc line 563
+
+The vxrm CSR controls rounding for fixed-point operations:
+  - 0 (rnu): Round to nearest, ties up
+  - 1 (rne): Round to nearest, ties to even
+  - 2 (rdn): Round down (truncate)
+  - 3 (rod): Round to odd
+
+Status: vxrm CSR not implemented in processor.py
+
+SATURATION FLAG (vxsat CSR)
+===========================
+
+Spec: v-st-ext.adoc line 602
+
+The vxsat CSR is a single-bit flag that is set (sticky) when any fixed-point
+instruction saturates a result. Software must clear it explicitly using CSRRW/CSRRS/CSRRC.
+
+Status: vxsat CSR not implemented in processor.py
+
+Test Coverage
+-------------
+Local tests: None in python/riscv_model/tests/
+External tests: All 32 fixed-point instructions have test configs (see "Tests:" fields above)
+
+TODO Items
+----------
+1. Implement vxrm CSR (vector fixed-point rounding mode)
+   - Add to processor.py CSR registers
+   - Support read/write via CSR instructions
+   - Default value: implementation-defined (recommend rdn/truncate)
+
+2. Implement vxsat CSR (vector fixed-point saturation flag)
+   - Add to processor.py CSR registers
+   - Single bit, sticky flag
+   - Set by any fixed-point saturating operation
+   - Cleared by explicit CSR write
+
+3. Implement rounding functions
+   - roundoff_unsigned(value, shift_amount) based on vxrm
+   - roundoff_signed(value, shift_amount) based on vxrm
+   - Apply rounding to shifted-out bits before truncation
+
+4. Implement saturation/clipping functions
+   - clip_unsigned(value, target_width)
+   - clip_signed(value, target_width)
+   - Set vxsat flag when saturation occurs
+
+5. Implement saturating add/subtract instructions
+   - vsaddu.vv/vx/vi (unsigned saturating add)
+   - vsadd.vv/vx/vi (signed saturating add)
+   - vssubu.vv/vx (unsigned saturating subtract)
+   - vssub.vv/vx (signed saturating subtract)
+   - Create instruction classes in instructions/vector.py
+   - Add decode entries in decode.py
+
+6. Implement averaging add/subtract instructions
+   - vaaddu.vv/vx (unsigned averaging add)
+   - vaadd.vv/vx (signed averaging add)
+   - vasubu.vv/vx (unsigned averaging subtract)
+   - vasub.vv/vx (signed averaging subtract)
+   - Handle wrap-around for subtracts
+
+7. Implement fractional multiply
+   - vsmul.vv/vx (signed saturating fractional multiply)
+   - Compute 2*SEW product
+   - Shift right by SEW-1 with rounding
+   - Saturate to SEW bits
+
+8. Implement scaling shift instructions
+   - vssrl.vv/vx/vi (scaling shift right logical)
+   - vssra.vv/vx/vi (scaling shift right arithmetic)
+   - Apply rounding to shifted-out bits
+
+9. Implement narrowing clip instructions
+   - vnclipu.wv/wx/wi (narrowing unsigned clip)
+   - vnclip.wv/wx/wi (narrowing signed clip)
+   - Handle 2*SEW source to SEW destination
+   - Support proper shift amount bit width (lg2(2*SEW))
+
+10. Create comprehensive fixed-point tests
+    - Test all rounding modes (rnu, rne, rdn, rod)
+    - Test saturation detection and vxsat flag
+    - Test edge cases (overflow, underflow, maximum values)
+    - Test with masking
+    - Test narrowing operations with various shift amounts
+
+11. Consider integration with existing widening operations
+    - Fixed-point instructions often follow widening integer ops
+    - Common pattern: widen multiply -> narrowing clip
+    - Example: vwmul followed by vnclip for scaled multiply
+
+Summary
+-------
+Fixed-point arithmetic is completely unimplemented:
+- 0 of 33 instructions implemented
+- vxrm and vxsat CSRs not implemented
+- No rounding or saturation logic exists
+- No tests exist
+
+Missing instruction groups:
+- 10 saturating add/subtract instructions (4 operations x 2-3 forms each)
+- 8 averaging add/subtract instructions (4 operations x 2 forms each)
+- 2 fractional multiply instructions (1 operation x 2 forms)
+- 6 scaling shift instructions (2 operations x 3 forms each)
+- 6 narrowing clip instructions (2 operations x 3 forms each)
+- 1 vxrm CSR
+- 1 vxsat CSR
+
+Priority for implementation:
+1. CSRs (vxrm, vxsat) - required by all other operations
+2. Helper functions (rounding, saturation) - shared infrastructure
+3. Narrowing clips - commonly used after widening operations
+4. Scaling shifts - useful for general fixed-point scaling
+5. Fractional multiply - specialized but important for Q-format arithmetic
+6. Saturating operations - less common in typical workloads
+7. Averaging operations - specialized use cases
+
+These instructions are primarily used in:
+- DSP applications (audio, signal processing)
+- Image processing (scaling, color space conversion)
+- Fixed-point neural network inference
+- Embedded systems without floating-point hardware

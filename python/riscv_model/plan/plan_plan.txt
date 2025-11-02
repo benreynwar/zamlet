@@ -1,0 +1,46 @@
+RISC-V Vector Extension Implementation Planning Strategy
+=========================================================
+
+Goal: Track which RISC-V vector extension features are implemented vs needed
+      in python/riscv_model
+
+Progress: 12/12 files complete (Config + Memory + Integer + FP + Reductions + Masks + Permutations + Fixed-Point)
+
+Files
+-----
+Supporting:
+  - spec_index.txt (DONE) - Spec section index with pointers to plan files
+  - plan_plan.txt (THIS FILE) - Meta-plan
+  - test_suite_reference.txt (DONE) - External test suite catalog (629 tests)
+
+Tracking Files:
+  01. 01_configuration.txt (DONE) - vsetvl* and CSRs
+  02. 02_memory_unit_stride.txt (DONE) - vle/vse
+  03. 03_memory_strided_indexed.txt (DONE) - Strided/indexed loads/stores
+  04. 04_memory_segment.txt (DONE) - Segments, whole register, fault-only-first
+  05. 05_integer_arithmetic.txt (DONE) - Add/sub/mul/div/shifts/bitwise/compare/min/max
+  06. 06_integer_widening_narrowing.txt (DONE) - Widening/narrowing integer ops
+  07. 07_float_arithmetic.txt (DONE) - FP add/sub/mul/div/fma/sqrt/reciprocal/min/max/compare
+  08. 08_float_widening_conversions.txt (DONE) - FP widening and type conversions
+  09. 09_reductions.txt (DONE) - Reduction operations (integer and FP)
+  10. 10_mask_operations.txt (DONE) - Mask logical, vcpop, vfirst, vmsbf, vmsif, vmsof
+  11. 11_permutations.txt (DONE) - Slides, gather, compress, scalar moves
+  12. 12_fixed_point.txt (DONE) - Saturating, averaging, fractional multiply, clipping
+
+Key Guidelines (IMPORTANT!)
+---------------------------
+1. Spec paths: Use "riscv-isa-manual/src/..." NOT "/home/ben/Code/..."
+2. Code references: Use class/method names or search patterns, NOT line numbers
+3. Encodings: Get from spec .edn files (vmem-format.edn, etc), NOT Python code
+4. After each file: Update spec_index.txt to point sections to new plan file
+5. Keep updating this plan_plan.txt with useful info as you discover it!
+6. Test references: Use filename only (e.g., "vadd.vv.toml"), full catalog in test_suite_reference.txt
+
+Process
+-------
+1. Read existing plan files to understand the format before creating new ones
+2. Read spec (use spec_index.txt for line numbers)
+3. Search implementation: Grep for classes, check decode.py by opcode/pattern
+4. Check tests in tests/ directories
+5. Document with ✓ (done), ⚠ (partial), ✗ (not done)
+6. Update spec_index.txt and this file's progress counter
