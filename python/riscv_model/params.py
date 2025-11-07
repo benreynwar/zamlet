@@ -29,6 +29,8 @@ class LamletParams:
     router_output_buffer_length: int = 2
     router_input_buffer_length: int = 2
     instruction_queue_length: int = 16
+    n_channels: int = 2
+
 
     instruction_buffer_length: int = 16
     instructions_in_packet: int = 4

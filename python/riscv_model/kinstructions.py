@@ -58,6 +58,79 @@ class WriteImmBytes(KInstr):
 
 
 @dataclass
+class LoadImmByte(KInstr):
+    """
+    This instruction writes an immediate to a byte of a vector register.
+    """
+    dst: addresses.RegAddr
+    imm: int
+    # Which bits of the byte we write.
+    bit_mask: int
+    # An identifier. Writes with the same writeset_ident are guaranteed not to clash.
+    writeset_ident: int
+    mask_reg: int
+    # Offset of the mask in the mask register (in multiples of j_in_l)
+    # Needed since we may be writing into the middle of a vector group.
+    mask_index: int
+
+    async def update_kamlet(self, kamlet):
+        await kamlet.handle_load_imm_byte_instr(self)
+
+
+@dataclass
+class LoadByte(KInstr):
+    """
+    This instruction load a byte from memory to a location in a vector register.
+    """
+    dst: addresses.RegAddr
+    src: KMAddr
+    # Which bits of the byte we write.
+    bit_mask: int
+    # An identifier. Writes with the same writeset_ident are guaranteed not to clash.
+    writeset_ident: int
+    mask_reg: int
+    mask_index: int
+
+    async def update_kamlet(self, kamlet):
+        await kamlet.handle_load_byte_instr(self)
+
+
+@dataclass
+class LoadWord(KInstr):
+    """
+    This instruction load a word from memory to a location in a vector register.
+    """
+    dst: addresses.RegAddr
+    src: KMAddr
+    # Which bytes to the word we write
+    byte_mask: int
+    # An identifier. Writes with the same writeset_ident are guaranteed not to clash.
+    writeset_ident: int
+    mask_reg: int
+    mask_index: int
+
+    async def update_kamlet(self, kamlet):
+        await kamlet.handle_load_word_instr(self)
+
+
+@dataclass
+class LoadImmWord(KInstr):
+    """
+    This instruction writes an immediate to a byte of a vector register.
+    """
+    dst: addresses.RegAddr
+    imm: bytes
+    # Which bytes of the word we write
+    byte_mask: int
+    # An identifier. Writes with the same writeset_ident are guaranteed not to clash.
+    writeset_ident: int
+    mask_reg: int
+    mask_index: int
+
+    async def update_kamlet(self, kamlet):
+        await kamlet.handle_load_imm_word_instr(self)
+
+@dataclass
 class ReadBytes(KInstr):
     """
     This instruction reads from the VPU memory.
@@ -125,28 +198,98 @@ class DiscardLines(KInstr):
 #        future = await kamlet.handle_write_line_instruction(self)
 
 
+"""
+We can have several differnt kinds of aligned loads.
+
+The load is aligned with a vline:
+    straightforward case.
+
+The load is not aligned
+    we might access an extra cache line
+    we probably need an extra cycle read from the sram cache
+    we need to mix data from different cache words to make the register
+    words.
+    we need to do a barrel shift of the vector
+    We'll split this into a unaligned load and a vector barrel shift.
+"""
+
+
+@dataclass
+class ExpectRead(KInstr):
+    """
+    An instruction that let's the kamlet know to expect a read.
+    This is used to update the cache state so that this kamlet
+    doesn't process a write before the read completes.
+
+    We if we send a load instruction to a single kamlet, we should
+    send a ExpectRead instruction to the kamlet that it will be
+    reading the cache from.
+    """
+
+    async def update_kamlet(self, kamlet):
+        await kamlet.handle_load_aligned_instr(self)
+
+
 @dataclass
 class Load(KInstr):
+    """
+    A load from the VPU memory into a vecto register.
+    if k_maddr.addr is the first byte in a page, then src_offset may be used.  If
+    src_offset is 1 that means that k_maddr.addr corresponds to the second byte
+    of the first element.  We don't write anything to the first byte.
+    If the last element is split across two pages, only the first half is
+    written.
+    The other elements are guaranteed to be on the same page.
+    """
     dst: int
     k_maddr: KMAddr  # An address in the kamlet address space
+    start_index: int
+    n_elements: int
+    dst_ordering: addresses.Ordering  # src ordering is held in k_maddr
+    src_offset: int
+    mask_reg: int
+    writeset_ident: int
+
+    async def update_kamlet(self, kamlet):
+        await kamlet.handle_load_aligned_instr(self)
+
+
+@dataclass
+class LoadUnaligned(KInstr):
+    """
+    Loads a vectors that is not aligned to the vector line.
+    It does not do the barrel shifting of the data in the register.
+    """
+    dst: int
+    k_maddr: KMAddr  # An address in the kamlet address space
+    start_index: int
     n_elements: int
     element_width: int
     word_order: addresses.WordOrder
     mask_reg: int
+    writeset_ident: int
 
     async def update_kamlet(self, kamlet):
-        await kamlet.handle_load_instr(self)
+        await kamlet.handle_load_unaligned_instr(self)
 
-    #async def update_kamlet(self, kamlet):
-    #    logger.debug(f'{kamlet.clock.cycle}: kamlet ({kamlet.min_x} {kamlet.min_y}): Load dst=v{self.dst}')
-    #    params = kamlet.params
-    #    bytes_per_jamlet = params.vline_bytes // params.j_in_l * self.n_vlines
-    #    vreg_bytes_per_jamlet = params.maxvl_bytes // params.j_in_l
-    #    vreg_base_offset = self.dst * vreg_bytes_per_jamlet
-    #    assert bytes_per_jamlet == vreg_bytes_per_jamlet * self.n_vlines
-    #    sram_offset = self.j_saddr.addr
-    #    for jamlet in kamlet.jamlets:
-    #        jamlet.rf_slice[vreg_base_offset: vreg_base_offset + bytes_per_jamlet] = jamlet.sram[sram_offset: sram_offset + bytes_per_jamlet]
+
+@dataclass
+class BarrelShift(KInstr):
+    """
+    Barrelshifts a vector or vector group.
+    """
+    dst: int
+    src: int
+    start_index: int
+    n_elements: int
+    bytes_to_shift: int
+    element_width: int
+    word_order: addresses.WordOrder
+    mask_reg: int
+    writeset_ident: int
+
+    async def update_kamlet(self, kamlet):
+        await kamlet.handle_barrel_shift_instr(self)
 
 
 @dataclass

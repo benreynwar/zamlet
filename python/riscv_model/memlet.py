@@ -127,7 +127,8 @@ class Memlet:
         self.clock = clock
         self.params = params
         self.coords = coords
-        self.routers = [Router(clock, params, x, y) for x, y in coords]
+        self.routers = [[Router(clock, params, x, y) for x, y in coords]
+                        for channel in params.n_channels]
         self.lines = {}
         self.n_lines = params.kamlet_memory_bytes // params.cache_line_bytes
         self.m_cols, self.n_routers = get_cols_routers(self.params)
@@ -136,7 +137,7 @@ class Memlet:
         self.receive_write_line_queues = [Queue(2) for _ in range(self.params.j_in_k)]
         self.receive_read_line_queue = Queue(2)
         self.send_write_line_response_queue = Queue(2)
-        self.send_read_line_response_queues = [Queue(2) for _ in self.routers]
+        self.send_read_line_response_queues = [Queue(2) for _ in coords]
 
         self.kamlet_coords = kamlet_coords
         self.jamlet_coords = []
@@ -169,8 +170,9 @@ class Memlet:
         return data
 
     def update(self):
-        for router in self.routers:
-            router.update()
+        for channel_routers in self.routers:
+            for router in channel_routers:
+                router.update()
         for queue in self.receive_write_line_queues:
             queue.update()
         self.receive_read_line_queue.update()
@@ -178,18 +180,18 @@ class Memlet:
             queue.update()
         self.send_write_line_response_queue.update()
 
-    async def receive_packets(self, index):
+    async def receive_packets(self, channel, index):
         """
         This takes care of receiving packets from a router
         and placing them in a receive queue.
         """
         assert index < len(self.coords)
-        queue = self.routers[index]._output_buffers[Direction.H]
+        queue = self.routers[channel][index]._output_buffers[Direction.H]
         header = None
         packet = []
         while True:
             await self.clock.next_cycle
-            r = self.routers[index]
+            r = self.routers[channel][index]
             if queue:
                 word = queue.popleft()
                 if not header:
@@ -215,13 +217,13 @@ class Memlet:
                     header = None
                     packet = []
 
-    async def send_packets(self, index):
+    async def send_packets(self, channel, index):
         """
         This takes care of taking packets from a send queue and
         sending them out over a router.
         """
         assert index < len(self.coords)
-        queue = self.routers[index]._input_buffers[Direction.H]
+        queue = self.routers[channel][index]._input_buffers[Direction.H]
         await self.clock.next_cycle
         read_next = True
         while True:
@@ -278,8 +280,8 @@ class Memlet:
                 header = Header(
                     target_x=self.kamlet_coords[0],
                     target_y=self.kamlet_coords[1],
-                    source_x=self.routers[WRITE_LINE_RESPONSE_R_INDEX].x,
-                    source_y=self.routers[WRITE_LINE_RESPONSE_R_INDEX].y,
+                    source_x=self.routers[WRITE_LINE_RESPONSE_CHANNEL][WRITE_LINE_RESPONSE_R_INDEX].x,
+                    source_y=self.routers[WRITE_LINE_RESPONSE_CHANNEL][WRITE_LINE_RESPONSE_R_INDEX].y,
                     message_type=MessageType.WRITE_LINE_RESP,
                     length=1,
                     send_type=SendType.SINGLE,

@@ -211,36 +211,37 @@ class GlobalAddress:
     An address in the overal address space
     """
     bit_addr: int
+    params: LamletParams
 
     @property
     def addr(self):
         return self.bit_addr//8
 
     def offset_bytes(self, offset):
-        return GlobalAddress(self.bit_addr + offset*8)
+        return GlobalAddress(self.bit_addr + offset*8, self.params)
 
-    def get_page(self, params: LamletParams):
-        return GlobalAddress(bit_addr=(self.addr//params.page_bytes)*params.page_bytes*8)
+    def get_page(self):
+        return GlobalAddress(bit_addr=(self.addr//self.params.page_bytes)*self.params.page_bytes*8, params=self.params)
 
-    def get_cache_line(self, params: LamletParams):
-        l_cache_bytes = params.cache_line_bytes * params.k_in_l
-        return GlobalAddress(bit_addr=(self.addr//l_cache_bytes) * l_cache_bytes * 8)
+    def get_cache_line(self):
+        l_cache_bytes = self.params.cache_line_bytes * self.params.k_in_l
+        return GlobalAddress(bit_addr=(self.addr//l_cache_bytes) * l_cache_bytes * 8, params=self.params)
 
-    def is_vpu(self, params, tlb):
-        page_address = self.get_page(params)
+    def is_vpu(self, tlb):
+        page_address = self.get_page()
         page_info = tlb.get_page_info(page_address)
         return page_info.local_address.is_vpu
 
-    def to_vpu_addr(self, params, tlb):
-        page_address = self.get_page(params)
+    def to_vpu_addr(self, tlb):
+        page_address = self.get_page()
         page_info = tlb.get_page_info(page_address)
         assert page_info.local_address.is_vpu
         page_bit_offset = self.bit_addr - page_address.bit_addr
         return VPUAddress(bit_addr=page_info.local_address.addr*8 + page_bit_offset,
-                          ordering=page_info.local_address.ordering)
+                          ordering=page_info.local_address.ordering, params=self.params)
 
-    def to_scalar_addr(self, params, tlb):
-        page_address = self.get_page(params)
+    def to_scalar_addr(self, tlb):
+        page_address = self.get_page()
         page_info = tlb.get_page_info(page_address)
         assert not page_info.local_address.is_vpu
         page_bit_offset = self.bit_addr - page_address.bit_addr
@@ -248,21 +249,21 @@ class GlobalAddress:
         scalar_addr = page_info.local_address.addr + page_bit_offset//8
         return scalar_addr
 
-    def to_logical_vline_addr(self, params, tlb):
-        vpu_addr = self.to_vpu_addr(params, tlb)
-        return vpu_addr.to_logical_vline_addr(params)
+    def to_logical_vline_addr(self, tlb):
+        vpu_addr = self.to_vpu_addr(tlb)
+        return vpu_addr.to_logical_vline_addr()
 
-    def to_physical_vline_addr(self, params, tlb):
-        logical_vline_addr = self.to_logical_vline_addr(params, tlb)
-        return logical_vline_addr.to_physical_vline_addr(params)
+    def to_physical_vline_addr(self, tlb):
+        logical_vline_addr = self.to_logical_vline_addr(tlb)
+        return logical_vline_addr.to_physical_vline_addr()
 
-    def to_k_maddr(self, params, tlb):
-        physical_vline_addr = self.to_physical_vline_addr(params, tlb)
-        return physical_vline_addr.to_k_maddr(params)
+    def to_k_maddr(self, tlb):
+        physical_vline_addr = self.to_physical_vline_addr(tlb)
+        return physical_vline_addr.to_k_maddr()
 
-    def to_j_saddr(self, params, tlb, cache_table):
-        k_maddr = self.to_k_maddr(params, tlb)
-        return k_maddr.to_j_saddr(params, cache_table)
+    def to_j_saddr(self, tlb, cache_table):
+        k_maddr = self.to_k_maddr(tlb)
+        return k_maddr.to_j_saddr(cache_table)
 
 
 @dataclass(frozen=True)
@@ -283,31 +284,33 @@ class VPUAddress:
     """
     bit_addr: int
     ordering: Ordering
+    params: LamletParams
 
     @property
     def addr(self):
         return self.bit_addr//8
 
-    def to_logical_vline_addr(self, params):
-        vline_bytes = params.word_bytes * params.j_in_l
+    def to_logical_vline_addr(self):
+        vline_bytes = self.params.word_bytes * self.params.j_in_l
         vline_index = self.addr//vline_bytes
         bit_addr_in_vline = self.bit_addr % (vline_bytes * 8)
         return LogicalVLineAddress(
             index=vline_index,
             bit_addr=bit_addr_in_vline,
-            ordering=self.ordering
+            ordering=self.ordering,
+            params=self.params,
             )
 
     #def to_j_saddr(self, params, cache_table):
     #    logical_vline_addr = self.to_logical_vline_addr(params)
     #    return logical_vline_addr.to_j_saddr(params, cache_table)
 
-    def to_global_addr(self, params, tlb):
-        vpu_page_address = (self.bit_addr // params.page_bytes // 8) * params.page_bytes
+    def to_global_addr(self, tlb):
+        vpu_page_address = (self.bit_addr // self.params.page_bytes // 8) * self.params.page_bytes
         page_offset_bits = self.bit_addr - vpu_page_address * 8
         info = tlb.get_page_info_from_vpu_addr(vpu_page_address)
         return GlobalAddress(
-            bit_addr = info.global_address*8 + page_offset_bits
+            bit_addr = info.global_address*8 + page_offset_bits, params=self.params
             )
 
 
@@ -322,12 +325,13 @@ class LogicalVLineAddress:
     ordering: Ordering
     # The bit address with the Vline.
     bit_addr: int
+    params: LamletParams
 
     @property
     def addr(self):
         return self.bit_addr//8
 
-    def to_physical_vline_addr(self, params):
+    def to_physical_vline_addr(self):
         '''
         Converts a bit address in a logical vline to a bit address in a
         physical vline.
@@ -340,21 +344,23 @@ class LogicalVLineAddress:
         # This is after we've moved elements around but before we've reorganized the
         # jamlet order.
         physical_vline_bit_addr = (
-                (element_index % params.j_in_l) * params.word_bytes*8 +
-                (element_index // params.j_in_l) * self.ordering.ew +
+                (element_index % self.params.j_in_l) * self.params.word_bytes*8 +
+                (element_index // self.params.j_in_l) * self.ordering.ew +
                 bit_in_element
                 )
         return PhysicalVLineAddress(
             index=self.index,
             ordering=self.ordering,
-            bit_addr=physical_vline_bit_addr)
+            bit_addr=physical_vline_bit_addr,
+            params=self.params,
+            )
 
     #def to_j_saddr(self, params, cache_table):
     #    physical_vline_addr = self.to_physical_vline_addr(params)
     #    return physical_vline_addr.to_j_saddr(params, cache_table)
 
-    def to_vpu_addr(self, params):
-        vline_bits = params.j_in_l * params.word_bytes * 8
+    def to_vpu_addr(self):
+        vline_bits = self.params.j_in_l * self.params.word_bytes * 8
         vpu_bit_addr = (
             self.index * vline_bits +
             self.bit_addr
@@ -362,11 +368,12 @@ class LogicalVLineAddress:
         return VPUAddress(
             ordering=self.ordering,
             bit_addr=vpu_bit_addr,
+            params=self.params,
             )
 
-    def to_global_addr(self, params: LamletParams, tlb: TLB):
-        vpu_addr = self.to_vpu_addr(params)
-        return vpu_addr.to_global_addr(params, tlb)
+    def to_global_addr(self, tlb: TLB):
+        vpu_addr = self.to_vpu_addr()
+        return vpu_addr.to_global_addr(tlb)
 
 
 
@@ -382,31 +389,33 @@ class PhysicalVLineAddress:
     ordering: Ordering
     # The bit address with the Vline.
     bit_addr: int
+    params: LamletParams
 
     @property
     def addr(self):
         return self.bit_addr//8
 
-    def to_k_maddr(self, params):
-        vw_index = self.addr//params.word_bytes
+    def to_k_maddr(self):
+        vw_index = self.addr//self.params.word_bytes
 
         # This is the step that considers which vector word is mapped to which jamlet.
         # This mapping changes if we change the word order.
-        k_index, j_in_k_index = vw_index_to_k_indices(params, self.ordering.word_order, vw_index)
+        k_index, j_in_k_index = vw_index_to_k_indices(self.params, self.ordering.word_order, vw_index)
 
-        k_vline_bits = params.word_bytes * 8 * params.j_in_k
+        k_vline_bits = self.params.word_bytes * 8 * self.params.j_in_k
         k_memory_bit_addr = (
             # Base address of this vline in the k memory.
             self.index * k_vline_bits +
             # Offset for this jamlet
-            j_in_k_index * params.word_bytes * 8 +
+            j_in_k_index * self.params.word_bytes * 8 +
             # Offset within that word
-            self.bit_addr % (params.word_bytes * 8)
+            self.bit_addr % (self.params.word_bytes * 8)
             )
         k_maddr = KMAddr(
             k_index=k_index,
             ordering=self.ordering,
             bit_addr=k_memory_bit_addr,
+            params=self.params,
             )
         return k_maddr
 
@@ -414,12 +423,12 @@ class PhysicalVLineAddress:
     #    k_maddr = self.to_k_maddr(params)
     #    return k_maddr.to_j_saddr(params, cache_table)
 
-    def to_logical_vline_addr(self, params):
+    def to_logical_vline_addr(self):
 
-        vw_index = self.bit_addr // (params.word_bytes * 8)
-        assert params.word_bytes * 8 > self.ordering.ew
-        assert (params.word_bytes * 8) % self.ordering.ew == 0
-        elements_in_word = (params.word_bytes * 8)//self.ordering.ew
+        vw_index = self.bit_addr // (self.params.word_bytes * 8)
+        assert self.params.word_bytes * 8 > self.ordering.ew
+        assert (self.params.word_bytes * 8) % self.ordering.ew == 0
+        elements_in_word = (self.params.word_bytes * 8)//self.ordering.ew
         element_in_word_index = (self.bit_addr // self.ordering.ew) % elements_in_word
         element_index = vw_index*elements_in_word + element_in_word_index
         logical_bit_addr = (
@@ -430,11 +439,12 @@ class PhysicalVLineAddress:
             index=self.index,
             ordering=self.ordering,
             bit_addr=logical_bit_addr,
+            params=self.params,
             )
 
-    def to_global_addr(self, params: LamletParams, tlb: TLB):
-        logical_vline_addr = self.to_logical_vline_addr(params)
-        return logical_vline_addr.to_global_addr(params, tlb)
+    def to_global_addr(self, tlb: TLB):
+        logical_vline_addr = self.to_logical_vline_addr()
+        return logical_vline_addr.to_global_addr(tlb)
 
 
 @dataclass(frozen=True)
@@ -445,62 +455,71 @@ class KMAddr:
     k_index: int 
     ordering: Ordering
     bit_addr: int
+    params: LamletParams
 
     @property
     def addr(self):
         return self.bit_addr//8
 
-    def to_cache_slot(self, params, cache_table):
+    def to_cache_slot(self, cache_table):
         cache_slot = cache_table.addr_to_slot(self)
         return cache_slot
 
-    def to_j_saddr(self, params, cache_table):
+    @property
+    def j_in_k_index(self):
+        j_in_k_index = (self.bit_addr // (self.params.word_bytes * 8)) % self.params.j_in_k
+        return j_in_k_index
+
+    def to_j_saddr(self, cache_table):
+        wb = self.params.word_bytes
         # We're assuming for know that cache_line is bigger or equal to vline
-        # We put one word from the cache line in each jamlet.
+        # We put one word from the cache params, line in each jamlet.
         # Then repeat that until we've distributed the cache line.
-        cache_slot = self.to_cache_slot(params, cache_table)
+        cache_slot = self.to_cache_slot(cache_table)
         assert cache_slot is not None
-        j_in_k_index = (self.bit_addr // (params.word_bytes * 8)) % params.j_in_k
-        cache_line_offset = self.bit_addr % (params.cache_line_bytes * 8)
-        cache_line_bytes_per_jamlet = params.cache_line_bytes//params.j_in_k
-        assert cache_line_bytes_per_jamlet % params.word_bytes == 0
-        assert cache_line_bytes_per_jamlet >= params.word_bytes
-        k_vline_bits = params.word_bytes * params.j_in_k * 8
+        cache_line_offset = self.bit_addr % (self.params.cache_line_bytes * 8)
+        cache_line_bytes_per_jamlet = self.params.cache_line_bytes//self.params.j_in_k
+        assert cache_line_bytes_per_jamlet % wb == 0
+        assert cache_line_bytes_per_jamlet >= wb
+        k_vline_bits = wb * self.params.j_in_k * 8
         vline_index_in_cache_line = cache_line_offset // k_vline_bits
-        offset_in_word = self.bit_addr % (params.word_bytes * 8)
+        offset_in_word = self.bit_addr % (wb * 8)
         address_in_sram = (
                 # Base address of the cache line in the sram
                 (cache_slot * cache_line_bytes_per_jamlet * 8) +
                 # Offset of the vline in the sram
-                vline_index_in_cache_line * params.word_bytes * 8 +
+                vline_index_in_cache_line * wb * 8 +
                 offset_in_word
                 )
         return JSAddr(
             k_index=self.k_index,
-            j_in_k_index=j_in_k_index,
+            j_in_k_index=self.j_in_k_index,
             ordering=self.ordering,
             bit_addr=address_in_sram,
+            params=self.params,
             )
 
-    def to_physical_vline_addr(self, params):
-        k_vline_bits = params.j_in_k * params.word_bytes * 8
+    def to_physical_vline_addr(self):
+        wb = self.params.word_bytes
+        k_vline_bits = self.params.j_in_k * wb * 8
         index = self.bit_addr // k_vline_bits
         # We need to rearrange the words in a vline so that they match the order in a vector.
-        j_in_k_index = (self.bit_addr // (params.word_bytes * 8)) % params.j_in_k
-        vw_index = k_indices_to_vw_index(params, self.ordering.word_order, self.k_index, j_in_k_index)
+        j_in_k_index = (self.bit_addr // (wb * 8)) % self.params.j_in_k
+        vw_index = k_indices_to_vw_index(self.params, self.ordering.word_order, self.k_index, j_in_k_index)
         bit_addr_in_physical_vline = (
-            vw_index * params.word_bytes * 8 +
-            self.bit_addr % (params.word_bytes * 8)
+            vw_index * wb * 8 +
+            self.bit_addr % (wb * 8)
             )
         return PhysicalVLineAddress(
             index=index,
             bit_addr=bit_addr_in_physical_vline,
             ordering=self.ordering,
+            params=self.params,
             )
 
-    def to_global_addr(self, params: LamletParams, tlb: TLB):
-        physical_vline_addr = self.to_physical_vline_addr(params)
-        return physical_vline_addr.to_global_addr(params, tlb)
+    def to_global_addr(self, tlb: TLB):
+        physical_vline_addr = self.to_physical_vline_addr()
+        return physical_vline_addr.to_global_addr(tlb)
 
 
 @dataclass(frozen=True)
@@ -517,36 +536,95 @@ class JSAddr:
     j_in_k_index: int
     ordering: Ordering
     bit_addr: int
+    params: LamletParams
 
     @property
     def addr(self):
         return self.bit_addr//8
 
-    def to_k_maddr(self, params: LamletParams, cache_table: CacheTable):
+    def to_k_maddr(self, cache_table: CacheTable):
         # First we need to check the cache state
-        j_cache_line_bits = params.cache_line_bytes * 8 // params.j_in_k
+        j_cache_line_bits = self.params.cache_line_bytes * 8 // self.params.j_in_k
         cache_slot = self.bit_addr//j_cache_line_bits
         slot_info = cache_table.cache_slots[cache_slot]
-        vlines_in_cache_line = params.cache_line_bytes // (params.word_bytes * params.j_in_k)
+        vlines_in_cache_line = self.params.cache_line_bytes // (self.params.word_bytes * self.params.j_in_k)
 
-        k_cache_line_bits = params.cache_line_bytes * 8
+        k_cache_line_bits = self.params.cache_line_bytes * 8
         k_memory_bit_addr = (
             # Base address of the cache line in the k memory
             slot_info.ident * k_cache_line_bits +
             # Address of the j word
-            self.j_in_k_index * params.word_bytes * vlines_in_cache_line * 8 +
-            self.bit_addr % (params.word_bytes * 8)
+            self.j_in_k_index * self.params.word_bytes * vlines_in_cache_line * 8 +
+            self.bit_addr % (self.params.word_bytes * 8)
             )
 
         return KMAddr(
             k_index=self.k_index,
             ordering=self.ordering,
             bit_addr=k_memory_bit_addr,
+            params=self.params,
             )
 
-    def to_global_addr(self, params: LamletParams, tlb: TLB, cache_table: CacheTable):
-        km_addr = self.to_k_maddr(params, cache_table)
-        return km_addr.to_global_addr(params, tlb)
+    def to_global_addr(self, tlb: TLB, cache_table: CacheTable):
+        km_addr = self.to_k_maddr(cache_table)
+        return km_addr.to_global_addr(tlb)
+
+
+@dataclass(frozen=True)
+class RegAddr:
+    """
+    A byte in a vector register.
+    """
+    # The register
+    reg: int
+    # The logical byte offset in that register
+    addr: int
+    ordering: Ordering
+    params: LamletParams
+
+    def valid(self):
+        valid = 0 < self.addr < self.params.vline_bytes
+        valid &= 0 < self.reg < self.params.n_vregs
+        valid &= self.ordering.ew % 8 == 0
+        return valid
+
+    @property
+    def eb(self):
+        return self.ordering.ew // 8
+
+    @property
+    def element_index(self):
+        assert self.valid()
+        element_index = self.addr // self.eb
+        return element_index
+
+    @property
+    def offset_in_element(self):
+        assert self.valid()
+        offset = self.addr % self.eb
+        return offset
+
+    @property
+    def k_index(self):
+        assert self.valid()
+        k_index, _ = vw_index_to_k_indices(self.params, self.ordering.word_order, self.element_index)
+        return k_index
+
+    @property
+    def j_in_k_index(self):
+        assert self.valid()
+        _, j_in_k_index = vw_index_to_k_indices(self.params, self.ordering.word_order, self.element_index)
+        return j_in_k_index
+
+    @property
+    def offset_in_word(self):
+        assert self.valid()
+        # which element in the jamlet
+        in_j_index = self.element_index//self.params.j_in_l
+        # which byte in that element
+        in_e_index = self.addr % self.eb
+        offset = in_j_index * self.eb + in_e_index
+        return offset
 
 
 class AddressConverter:

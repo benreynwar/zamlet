@@ -1,7 +1,7 @@
 import logging
 
 from params import LamletParams
-from message import Direction, Header, SendType, MessageType
+from message import Direction, Header, SendType, MessageType, CHANNEL_MAPPING
 from utils import Queue
 from router import Router
 import  kinstructions
@@ -46,7 +46,8 @@ class Jamlet:
         # It's used to reorder the messages so that we get deterministic ordering.
         self.receive_buffer = [None] * params.receive_buffer_depth
 
-        self.router = Router(clock=clock, params=params, x=x, y=y)
+        self.routers = [Router(clock=clock, params=params, x=x, y=y)
+                         for _ in range(params.n_channels)]
 
         # This is just a queue to hand instructions up to kamlet.
         self._instruction_buffer = Queue(2)
@@ -66,12 +67,12 @@ class Jamlet:
 
         self.response_tracker = response_tracker
 
-
     async def _send_packet(self, packet):
         assert isinstance(packet[0], Header)
         assert len(packet) == packet[0].length
         # This is only called from _send_packets
-        queue = self.router._input_buffers[Direction.H]
+        channel = CHANNEL_MAPPING[packet[0].message_type]
+        queue = self.routers[channel]._input_buffers[Direction.H]
         while True:
             if queue.can_append():
                 word = packet.pop(0)
@@ -178,59 +179,62 @@ class Jamlet:
             as_int += [int(x) for x in word]
 
     def update(self):
-        self.router.update()
+        for router in self.routers:
+            router.update()
         self._instruction_buffer.update()
         for queue in self.send_queues.values():
             queue.update()
 
     async def run(self):
-        self.clock.create_task(self.router.run())
+        for router in self.routers:
+            self.clock.create_task(router.run())
         self.clock.create_task(self._send_packets())
         receive_header = None
         packet = []
         while True:
             await self.clock.next_cycle
-            queue = self.router._output_buffers[Direction.H]
-            if queue:
-                if not receive_header:
-                    word = queue.popleft()
-                    assert isinstance(word, Header)
-                    receive_header = word.copy()
-                    receive_header.length -= 1
-                    packet.append(word)
-                else:
-                    assert not isinstance(queue.head(), Header)
-                    if receive_header.message_type == MessageType.INSTRUCTIONS:
-                        assert isinstance(queue.head(), kinstructions.KInstr)
-                        if self._instruction_buffer.can_append():
-                            word = queue.popleft()
-                            self._instruction_buffer.append(word)
-                            receive_header.length -= 1
-                            packet.append(word)
-                        assert receive_header.ident is None
-                    elif receive_header.message_type == MessageType.SEND:
+            for router in self.routers:
+                queue = self.router._output_buffers[Direction.H]
+                if queue:
+                    if not receive_header:
                         word = queue.popleft()
-                        rb_addr = receive_header.address % self.params.receive_buffer_depth
-                        self.receive_buffer[rb_addr] = word
-                        receive_header.length -= 1
-                        receive_header.address += 1
-                        packet.append(word)
-                    elif receive_header.message_type == MessageType.WRITE_LINE:
-                        raise Exception('A jamlet should not receive a WRITE_LINE message')
-                    elif receive_header.message_type == MessageType.READ_LINE_RESP:
-                        word = queue.popleft()
+                        assert isinstance(word, Header)
+                        receive_header = word.copy()
                         receive_header.length -= 1
                         packet.append(word)
                     else:
-                        raise NotImplementedError
-                if receive_header.length == 0:
-                    if receive_header.message_type in (MessageType.READ_LINE_RESP, MessageType.WRITE_LINE_RESP):
-                        self.response_tracker.check_packet(packet)
-                    receive_header = None
-                    packet = []
-            else:
-                #logger.debug(f'{self.clock.cycle}: jamlet({self.x}, {self.y}): No input queue')
-                pass
+                        assert not isinstance(queue.head(), Header)
+                        if receive_header.message_type == MessageType.INSTRUCTIONS:
+                            assert isinstance(queue.head(), kinstructions.KInstr)
+                            if self._instruction_buffer.can_append():
+                                word = queue.popleft()
+                                self._instruction_buffer.append(word)
+                                receive_header.length -= 1
+                                packet.append(word)
+                            assert receive_header.ident is None
+                        elif receive_header.message_type == MessageType.SEND:
+                            word = queue.popleft()
+                            rb_addr = receive_header.address % self.params.receive_buffer_depth
+                            self.receive_buffer[rb_addr] = word
+                            receive_header.length -= 1
+                            receive_header.address += 1
+                            packet.append(word)
+                        elif receive_header.message_type == MessageType.WRITE_LINE:
+                            raise Exception('A jamlet should not receive a WRITE_LINE message')
+                        elif receive_header.message_type == MessageType.READ_LINE_RESP:
+                            word = queue.popleft()
+                            receive_header.length -= 1
+                            packet.append(word)
+                        else:
+                            raise NotImplementedError
+                    if receive_header.length == 0:
+                        if receive_header.message_type in (MessageType.READ_LINE_RESP, MessageType.WRITE_LINE_RESP):
+                            self.response_tracker.check_packet(packet)
+                        receive_header = None
+                        packet = []
+                else:
+                    #logger.debug(f'{self.clock.cycle}: jamlet({self.x}, {self.y}): No input queue')
+                    pass
 
     SEND = 0
     INSTRUCTIONS = 1

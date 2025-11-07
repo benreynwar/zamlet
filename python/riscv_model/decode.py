@@ -607,10 +607,26 @@ def decode_standard(instruction_bytes: bytes) -> Instruction:
         return CF.Jal(rd=rd, imm=decode_j_imm(inst))
 
     elif opcode == 0x73:
-        if funct3 == 0x1:
+        if funct3 == 0x0:
+            # PRIV instructions (ECALL, EBREAK, xRET, WFI, etc.)
+            funct12 = imm_i
+            if funct12 == 0x302:
+                return S.Mret()
+            elif funct12 == 0x102:
+                return S.Sret()
+        elif funct3 == 0x1:
             return S.Csrrw(rd=rd, rs1=rs1, csr=csr)
         elif funct3 == 0x2:
             return S.Csrrs(rd=rd, rs1=rs1, csr=csr)
+        elif funct3 == 0x5:
+            zimm = rs1
+            return S.Csrrwi(rd=rd, zimm=zimm, csr=csr)
+        elif funct3 == 0x6:
+            zimm = rs1
+            return S.Csrrsi(rd=rd, zimm=zimm, csr=csr)
+        elif funct3 == 0x7:
+            zimm = rs1
+            return S.Csrrci(rd=rd, zimm=zimm, csr=csr)
 
     logger.error(f'Unknown 32-bit instruction: 0x{inst:08x} '
                  f'(opcode: 0x{opcode:02x}, funct3: {funct3:03b}, funct7: {funct7:07b}, '
