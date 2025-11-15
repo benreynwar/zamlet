@@ -1,17 +1,19 @@
 import logging
+from typing import List, Tuple
+from dataclasses import dataclass
 
-from cache_table import CacheTable
 import addresses
 from addresses import KMAddr
 from params import LamletParams
 from jamlet import Jamlet
-from message import Header, MessageType, SendType
+from message import Header, MessageType, SendType, AddressHeader
 from utils import Queue
 import kinstructions
 import memlet
-from response_tracker import ResponseTracker
+from kinstructions import KInstr
 import utils
 import register_file_slot
+from cache_table import CacheRequestType, CacheState, CacheTable
 
 
 logger = logging.getLogger(__name__)
@@ -48,17 +50,13 @@ class Kamlet:
 
         # We pass methods to the cache table to flush and read lines.
         name = f'CacheTable ({self.min_x}, {self.min_y})'
-        self.cache_table = CacheTable(clock, params, self.write_cache_line, self.read_cache_line, name)
-
-        # Keeps track of the messages that we've sent where we
-        # are expecting a response.
-        self.response_tracker = ResponseTracker(clock, params)
+        self.cache_table = CacheTable(clock, params, name)
 
         self.jamlets = []
         for index in range(self.n_jamlets):
             x = min_x+index % self.n_columns
             y = min_y+index//self.n_columns
-            self.jamlets.append(Jamlet(clock, params, x, y, self.response_tracker))
+            self.jamlets.append(Jamlet(clock, params, x, y, self.cache_table))
 
         # Local State
         self._instruction_queue = Queue(self.params.instruction_queue_length)
@@ -90,6 +88,7 @@ class Kamlet:
     def update(self):
         self._instruction_queue.update()
         self._instr_send_queue.update()
+        self.cache_table.update()
         for jamlet in self.jamlets:
             jamlet.update()
 
@@ -116,44 +115,64 @@ class Kamlet:
             if self._instruction_queue:
                 self.available_instruction_tokens += 1
                 instruction = self._instruction_queue.popleft()
-                logger.debug(f'{self.clock.cycle}: kamlet {(self.min_x, self.min_y)}: running {instruction}')
+                logger.warning(f'{self.clock.cycle}: kamlet {(self.min_x, self.min_y)}: running {instruction}')
                 await instruction.update_kamlet(self)
+                logger.warning(f'{self.clock.cycle}: kamlet {(self.min_x, self.min_y)}: finished instruction')
 
     def take_instruction_token(self):
         assert self.available_instruction_tokens > 0
         self.available_instruction_tokens -= 1
 
-    async def run(self):
-        for jamlet in self.jamlets:
-            self.clock.create_task(jamlet.run())
-        self.clock.create_task(self._run_instructions())
-        self.clock.create_task(self._send_packets())
+    async def _monitor_cache_requests(self):
+        while True:
+            await self.clock.next_cycle
+            for request in self.cache_table.cache_requests:
+                if request is None:
+                    continue
+                if not all(request.sent):
+                    if request.request_type == CacheRequestType.READ_LINE:
+                        await self.read_cache_line(cache_slot=request.slot, address_in_memory=request.addr, ident=request.ident)
+                        self.cache_table.report_sent_request(request)
+                    else:
+                        # Don't do anything for WRITE_LINE or WRITE_LINE_READ_LINE
+                        # since those messages are sent at the jamlet level.
+                        pass
+
+    async def _get_instructions_from_jamlets(self):
         while True:
             await self.clock.next_cycle
             # Get received instructions from jamlets
             for index, jamlet in enumerate(self.jamlets):
                 if jamlet._instruction_buffer:
                     if index == 0:
+                        logger.warning('Got an instruction from jamlet')
                         if self._instruction_queue.can_append():
                             instr = jamlet._instruction_buffer.popleft()
+                            logger.warning(f'Adding {type(instr)} to queue')
                             self.add_to_instruction_queue(instr)
                     else:
                         instr = jamlet._instruction_buffer.popleft()
 
-    async def read_cache_line(self, cache_slot: int, address_in_memory: int):
+    async def run(self):
+        for jamlet in self.jamlets:
+            self.clock.create_task(jamlet.run())
+        self.clock.create_task(self._run_instructions())
+        self.clock.create_task(self._send_packets())
+        self.clock.create_task(self._get_instructions_from_jamlets())
+        self.clock.create_task(self._monitor_cache_requests())
+        self.clock.create_task(self._monitor_items())
+        self.clock.create_task(self.cache_table.run())
+
+    async def read_cache_line(self, cache_slot: int, address_in_memory: int, ident: int):
         """
         Reads from memory into the cache line.
         This function should only be called by our CacheTable.
         We pass it to the cache table's constructor.
         """
+        logger.warning('Reading cache line')
         address_in_sram = cache_slot * self.params.cache_line_bytes // self.params.j_in_k
-        # Here we're registering what callback we'll use for each received response based on the
-        # target of the received packet.
-        dest_to_method = {(jamlet.x, jamlet.y): jamlet.read_cache_line_resolve for jamlet in self.jamlets}
-        label = ('READ_LINE', address_in_memory)
-        response_ident, dest_to_futures = await self.response_tracker.register_dsts(dest_to_method, label)
 
-        header = Header(
+        header = AddressHeader(
             message_type=MessageType.READ_LINE, #4
             send_type=SendType.SINGLE,          #1
             target_x=self.mem_x,                #8
@@ -162,7 +181,7 @@ class Kamlet:
             source_y=self.min_y,                #8
             address=address_in_sram,            #12
             length=2,                           #5
-            ident=response_ident,               #5 bits
+            ident=ident,               #5 bits
             )
         packet = [header, address_in_memory]
 
@@ -170,68 +189,108 @@ class Kamlet:
             await self.clock.next_cycle
         self._instr_send_queue.append(packet)
 
-        # Create a future that will resolve when all of the jamlet callbacks have completed.
-        combined_future = self.clock.create_future()
-        futures = list(dest_to_futures.values())
-        self.clock.create_task(utils.combine_futures(combined_future, futures))
-        return combined_future
+    #async def write_cache_line(self, cache_slot: int, address_in_memory: int):
+    #    """
+    #    Write from cache line into the memory
+    #    This function should only be called by our CacheTable.
+    #    We pass it to the cache table's constructor.
+    #    """
+    #    label = ('WRITE_LINE', (self.min_x, self.min_y), address_in_memory)
+    #    response_ident, futures = await self.response_tracker.register_count([None], label)
+    #    future = futures[0]
+    #    tasks = []
+    #    for jamlet in self.jamlets:
+    #        # Create tasks so these jamlets can run in parallel.
+    #        tasks.append(self.clock.create_task(jamlet.write_cache_line(cache_slot, address_in_memory, response_ident)))
+    #    # Block until the jamlets all send the packets.
+    #    for task in tasks:
+    #        await task
+    #    return future
 
-    async def write_cache_line(self, cache_slot: int, address_in_memory: int):
-        """
-        Write from cache line into the memory
-        This function should only be called by our CacheTable.
-        We pass it to the cache table's constructor.
-        """
-        label = ('WRITE_LINE', (self.min_x, self.min_y), address_in_memory)
-        response_ident, futures = await self.response_tracker.register_count([None], label)
-        future = futures[0]
-        tasks = []
-        for jamlet in self.jamlets:
-            # Create tasks so these jamlets can run in parallel.
-            tasks.append(self.clock.create_task(jamlet.write_cache_line(cache_slot, address_in_memory, response_ident)))
-        # Block until the jamlets all send the packets.
-        for task in tasks:
-            await task
-        return future
-
-    async def handle_write_imm_bytes_instr(self, instr: kinstructions.WriteImmBytes):
+    async def handle_write_imm_bytes_instr(self, instr: kinstructions.WriteImmBytes, step=0):
         """
         Writes bytes to memory.
         They must all be within one word.
         """
-        logger.debug(f'{self.clock.cycle}: {(self.min_x, self.min_y)}: handle_write_imm_bytes_instr: {hex(instr.k_maddr.addr)}')
-        # This is the corouine that will do the writing.
-        coro = self._handle_write_imm_bytes_instr_resolve(instr)
-        # But we don't actually run it until we have the cache ready.
-        future = await self.cache_table.request_write(instr.k_maddr, coro)
-        return future
+        if step == 0:
+            logger.warning(f'{self.clock.cycle}: {(self.min_x, self.min_y)}: handle_write_imm_bytes_instr: {hex(instr.k_maddr.addr)}')
+            if not self.cache_table.can_write(instr.k_maddr):
+                logger.warning('Requesting cache')
+                item_index = await self.cache_table.request_write(instr.k_maddr, instr, step=1)
+                logger.warning(f'item index is {item_index}')
+            else:
+                await self.handle_write_imm_bytes_instr(instr, step=1)
+        elif step == 1:
+            logger.warning('Got cache. Updated jamlet sram')
+            assert instr.k_maddr.bit_addr % 8 == 0
+            if instr.k_maddr.k_index == self.k_index:
+                assert self.cache_table.can_write(instr.k_maddr)
+                j_saddr = instr.k_maddr.to_j_saddr(self.cache_table)
+                jamlet = self.jamlets[j_saddr.j_in_k_index]
+                size = len(instr.imm)
+                jamlet.sram[j_saddr.addr: j_saddr.addr+size] = instr.imm
+        else:
+            raise NotImplementedError()
 
-    async def _handle_write_imm_bytes_instr_resolve(self, instr: kinstructions.WriteImmBytes):
-        # Now we can write to the cache.
-        assert instr.k_maddr.bit_addr % 8 == 0
-        if instr.k_maddr.k_index == self.k_index:
-            assert self.cache_table.can_write(instr.k_maddr)
-            j_saddr = instr.k_maddr.to_j_saddr(self.params, self.cache_table)
-            jamlet = self.jamlets[j_saddr.j_in_k_index]
-            size = len(instr.imm)
-            jamlet.sram[j_saddr.addr: j_saddr.addr+size] = instr.imm
+    async def handle_read_byte_instr(self, instr: kinstructions.ReadByte, step: int):
+        if step == 0:
+            logger.warning('kamlet: handle_ready_bytes_instr')
+            if not self.cache_table.can_read(instr.k_maddr):
+                await self.cache_table.request_read(instr.k_maddr, item=instr, step=1)
+            else:
+                await self.handle_read_byte_instr(instr=instr, step=1)
+        elif step == 1:
+            logger.warning('We handling the read. The cache should be updated')
+            assert instr.k_maddr.bit_addr % 8 == 0
+            if instr.k_maddr.k_index == self.k_index:
+                assert self.cache_table.can_read(instr.k_maddr)
+                j_saddr = instr.k_maddr.to_j_saddr(self.cache_table)
+                jamlet = self.jamlets[j_saddr.j_in_k_index]
+                await jamlet.handle_read_byte_instr(instr, j_saddr.addr)
+        else:
+            raise NotImplementedError()
 
-    async def handle_read_bytes_instr(self, instr: kinstructions.ReadBytes):
-        logger.debug('kamlet: handle_ready_bytes_instr')
-        # This is the corouine that will do the writing.
-        coro = self._handle_read_bytes_instr_resolve(instr)
-        # But we don't actually run it until we have the cache ready.
-        future = await self.cache_table.request_read(instr.k_maddr, coro)
-        return future
+    async def handle_load_byte_instr(self, instr: kinstructions.LoadByte):
+        # We need to load a byte from memory.
+        # There are two aspects to this.
+        # 1) We are the kamlet that it will be loaded from. We need to update our
+        #    cache state to indicate that we are in the process of reading. If
+        #    we have it in the cache we can send a LOAD_BYTE_RESP message to the
+        #    target.
+        # 2) We are the kamlet that is loading.  We mark our register as
+        #    updating.
+        is_src = instr.src.k_index == self.k_index
+        is_dst = instr.dst.k_index == self.k_index
+        done = False
+        if is_src and is_dst and instr.src.j_in_k_index == instr.dst.j_in_k_index:
+            # It's the same jamlet.
+            slot = self.cache_table.get_state(instr.src)
+            if slot is not None:
+                jamlet = self.jamlets[instr.dst.j_in_k_index]
+                src_offset_in_word = instr.src.addr % self.params.word_bytes
+                rf_addr = instr.dst.reg * self.params.word_bytes + instr.dst.offset_in_word
+                sram_addr = slot * self.params.word_bytes + src_offset_in_word
+                jamlet.rf_slice[rf_addr] = jamlet.sram[sram_addr]
+                done = True
+        if not done:
+            if is_src:
+                slot = self.cache_table.get_state(instr.src)
+                if slot is None:
+                    future = await self.cache_table.request_read(instr.k_maddr, coro)
 
-    async def _handle_read_bytes_instr_resolve(self, instr: kinstructions.WriteImmBytes):
-        logger.debug('We handling the read. The cache should be updated')
-        assert instr.k_maddr.bit_addr % 8 == 0
-        if instr.k_maddr.k_index == self.k_index:
-            assert self.cache_table.can_read(instr.k_maddr)
-            j_saddr = instr.k_maddr.to_j_saddr(self.params, self.cache_table)
-            jamlet = self.jamlets[j_saddr.j_in_k_index]
-            future = await jamlet.handle_read_bytes_instr(instr, j_saddr.addr)
+
+        if is_src:
+            src_jamlet = self.jamlets[instr.src.j_in_k_index]
+            await src_jamlet.handle_load_byte(instr)
+            if is_dst and instr.src_j_in_k_index != instr.dst.j_in_k_index:
+                dst_jamlet = self.jamlets[instr.dst.j_in_k_index]
+                await dst_jamlet.handle_load_byte(instr)
+        elif is_dst:
+            dst_jamlet = self.jamlets[instr.dst.j_in_k_index]
+            await dst_jamlet.handle_load_byte(instr)
+
+    async def handle_load_word_instr(self, instr: kinstructions.LoadWord):
+        raise NotImplementedError()
 
     async def handle_load_instr(self, instr: kinstructions.Load):
         logger.debug(f'kamlet: handle_load_instr {hex(instr.k_maddr.addr)}')
@@ -419,6 +478,27 @@ class Kamlet:
             while not send_queue.can_append():
                 await self.clock.next_cycle
             send_queue.append(packet)
+
+    async def handle_item(self, item):
+        if isinstance(item.item, kinstructions.WriteImmBytes):
+            await self.handle_write_imm_bytes_instr(item.item, step=1)
+        elif isinstance(item.item, kinstructions.ReadByte):
+            await self.handle_read_byte_instr(item.item, step=1)
+        else:
+            raise NotImplementedError()
+
+    async def _monitor_items(self):
+        while True:
+            await self.clock.next_cycle
+            for index, item in enumerate(self.cache_table.waiting_items):
+                if item is None:
+                    continue
+                if any(x.dropped_notification for x in item.response_infos):
+                    assert False
+                if (all(x.received for x in item.response_infos) and item.cache_slot is None
+                        or item.cache_is_avail):
+                    await self.handle_item(item)
+                    self.cache_table.waiting_items[index] = None
 
     async def _send_packets(self):
         while True:

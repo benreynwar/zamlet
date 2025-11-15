@@ -5,7 +5,7 @@ Some tests to make sure address conversion is working.
 import logging
 from params import LamletParams
 from lamlet import Lamlet
-from addresses import GlobalAddress, TLB, make_basic_ordering, Ordering, WordOrder
+from addresses import GlobalAddress, TLB, Ordering, WordOrder
 
 
 def test_addresses():
@@ -19,13 +19,13 @@ def test_addresses():
     allocation_size = params.page_bytes * 16
     base_addr = params.page_bytes * 8
     lamlet.allocate_memory(
-            GlobalAddress(bit_addr=base_addr*8), allocation_size, is_vpu=True,
+            GlobalAddress(bit_addr=base_addr*8, params=params), allocation_size, is_vpu=True,
             ordering=Ordering(WordOrder.STANDARD, 32))
 
     # Check that we get the correct vpu address when we convert.
-    address0 = GlobalAddress(bit_addr=base_addr*8)
-    address1 = GlobalAddress(bit_addr=base_addr*8 + 32)
-    address2 = GlobalAddress(bit_addr=base_addr*8 + 97)
+    address0 = GlobalAddress(bit_addr=base_addr*8, params=params)
+    address1 = GlobalAddress(bit_addr=base_addr*8 + 32, params=params)
+    address2 = GlobalAddress(bit_addr=base_addr*8 + 97, params=params)
 
     lamlet.require_cache(address0)
 

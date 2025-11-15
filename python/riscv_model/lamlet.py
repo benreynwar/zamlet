@@ -17,14 +17,15 @@ result is the same as applying the micro-ops to the state.
 
 import logging
 from collections import deque
+from typing import List
 
 import decode
 import addresses
 from addresses import SizeBytes, SizeBits, TLB
 from addresses import AddressConverter, Ordering, GlobalAddress, KMAddr, VPUAddress
-from cache_table import CacheTable, CacheState
+from cache_table import CacheTable, CacheState, WaitingItem, ResponseInfo
 from params import LamletParams
-from message import Header, MessageType, Direction, SendType
+from message import Header, MessageType, Direction, SendType, TaggedHeader, CHANNEL_MAPPING
 from kamlet import Kamlet
 from memlet import Memlet
 from runner import Future
@@ -90,11 +91,36 @@ class Lamlet:
                 ))
         # A dictionary that maps labels to futures
         # Used for handling responses back from the kamlet grid.
-        self.tracker = ResponseTracker(self.clock, self.params)
+        #self.tracker = ResponseTracker(self.clock, self.params)
         self.conv = AddressConverter(self.params, self.tlb)
         self.finished = False
 
+        # These are actions that are waiting on a cache state to update, or for messages to be received.
+        self.waiting_items: List[WaitingItem|None] = [None for _ in range(params.n_items)]
+
         self.next_writeset_ident = 0
+
+    async def get_free_item_index(self):
+        while True:
+            valid_indices = [index for index, x in enumerate(self.waiting_items) if x is None]
+            if valid_indices:
+                break
+            await self.clock.next_cycle
+        return valid_indices[0]
+
+    async def add_item(self, new_item, response_tags, cache_is_write, cache_slot, step):
+        response_infos = [ResponseInfo(received=False, drop_notification=False) for req in response_tags]
+        item = WaitingItem(
+            item=new_item,
+            response_infos=response_infos,
+            cache_is_write=cache_is_write,
+            cache_is_avail=True,
+            cache_slot=cache_slot,
+            step=step,
+            )
+        new_item_index = await self.get_free_item_index()
+        self.waiting_items[new_item_index] = item
+        return new_item_index
 
     def set_pc(self, pc):
         self.pc = pc
@@ -109,7 +135,7 @@ class Lamlet:
         jamlet = kamlet.get_jamlet(x, y)
         return jamlet
 
-    def allocate_memory(self, address: GlobalAddress, size: SizeBytes, is_vpu: bool, ordering: Ordering):
+    def allocate_memory(self, address: GlobalAddress, size: SizeBytes, is_vpu: bool, ordering: Ordering|None):
         page_bytes_per_memory = self.params.page_bytes // self.params.k_in_l
         self.tlb.allocate_memory(address, size, is_vpu, ordering)
 
@@ -131,27 +157,25 @@ class Lamlet:
             )
         await self.add_to_instruction_buffer(kinstr, k_maddr.k_index)
 
-    async def read_bytes(self, address: GlobalAddress, size=1):
+    async def read_byte(self, address: GlobalAddress):
         """
         This blocks until the cache is ready an the instruction is received.
         It returns a future that resolves when the value is returned.
         """
-        k_maddr = address.to_k_maddr(self.params, self.tlb)
+        k_maddr = address.to_k_maddr(self.tlb)
         j_in_k_index = (k_maddr.addr//self.params.word_bytes) % self.params.j_in_k
         logger.debug(f'Lamlet.read_bytes {hex(address.addr)} k_maddr {k_maddr} j_in_k {j_in_k_index}')
-        jamlet = self.kamlets[k_maddr.k_index].jamlets[j_in_k_index]
-        label = ('READ_BYTES', address, size)
-        src_coords_to_methods = {
-                (jamlet.x, jamlet.y): self._read_bytes_resolve,
-                }
-        # Block if we don't have any response idents available
-        ident, src_coords_to_future = await self.tracker.register_srcs(
-                src_coords_to_methods=src_coords_to_methods, label=label)
-        future = src_coords_to_future[(jamlet.x, jamlet.y)]
-        kinstr = kinstructions.ReadBytes(
+        logger.warning('read_bytes a')
+        item_index = await self.get_free_item_index()
+        logger.warning('read_bytes b')
+        # The waiting item indicates that we are waiting for a response.
+        future = self.clock.create_future()
+        self.waiting_items[item_index] = WaitingItem(
+            item=future,
+            response_infos=[ResponseInfo()])
+        kinstr = kinstructions.ReadByte(
             k_maddr=k_maddr,
-            size=size,
-            ident=ident,
+            ident=item_index,
             )
         await self.add_to_instruction_buffer(kinstr, k_maddr.k_index)
         return future
@@ -276,27 +300,45 @@ class Lamlet:
                                 logger.debug(f'{self.clock.cycle}: Moving word west, ({x}, {y}) -> ({x-1}, {y}) {word}')
 
     async def monitor_replys(self):
-        buffer = self.kamlets[0].jamlets[0].router._output_buffers[Direction.N]
         header = None
         packet = []
         while True:
             await self.clock.next_cycle
-            if buffer:
-                word = buffer.popleft()
-                if header is None:
-                    assert isinstance(word, Header)
-                    header = word.copy()
-                else:
-                    assert not isinstance(word, Header)
-                packet.append(word)
-                header.length = header.length - 1
-                if header.length == 0:
-                    self.tracker.check_packet(packet)
-                    header = None
-                    packet = []
+            for channel in range(self.params.n_channels):
+                buffer = self.kamlets[0].jamlets[0].routers[channel]._output_buffers[Direction.N]
+                if buffer:
+                    word = buffer.popleft()
+                    if header is None:
+                        assert isinstance(word, Header)
+                        header = word.copy()
+                    else:
+                        assert not isinstance(word, Header)
+                    packet.append(word)
+                    header.length = header.length - 1
+                    if header.length == 0:
+                        waiting_item = self.waiting_items[header.ident]
+                        assert waiting_item is not None
+                        if len(waiting_item.response_infos) > 1:
+                            assert isinstance(word, TaggedHeader)
+                            response_info = waiting_item.response_infos[header.tag]
+                        else:
+                            response_info = waiting_item.response_infos[0]
+                        assert not response_info.received
+                        response_info.received = True
+                        if all(x.received for x in waiting_item.response_infos):
+                            if isinstance(waiting_item.item, Future):
+                                if header.message_type == MessageType.READ_BYTE_RESP:
+                                    waiting_item.item.set_result(header.value)
+                                    assert len(packet) == 1
+                                elif header.message_type == MessageType.READ_WORDS_RESP:
+                                    waiting_item.item.set_result(packet[1:])
+                            else:
+                                raise NotImplementedError()
+                        header = None
+                        packet = []
 
     async def add_to_instruction_buffer(self, instruction, k_index=None):
-        logger.debug(f'{self.clock.cycle}: Adding {instruction} to buffer')
+        logger.warning(f'{self.clock.cycle}: Adding {type(instruction)} to buffer')
         while len(self.instruction_buffer) >= self.params.instruction_buffer_length:
             await self.clock.next_cycle
         self.instruction_buffer.append((instruction, k_index))
@@ -385,7 +427,8 @@ class Lamlet:
         await self.send_packet(packet, jamlet, Direction.N, port=0)
 
     async def send_packet(self, packet, jamlet, direction, port):
-        queue = jamlet.router._input_buffers[direction]
+        channel = CHANNEL_MAPPING[packet[0].message_type]
+        queue = jamlet.routers[channel]._input_buffers[direction]
         assert port == 0
         while packet:
             await self.clock.next_cycle
@@ -425,29 +468,39 @@ class Lamlet:
         logger.debug(f'Read memory address {address}, result is {int.from_bytes(bytes(bs), byteorder="little", signed=True)}')
         future.set_result(bytes(bs))
 
-    async def get_memory(self, address: int, size: int):
+    async def combine_read_futures(self, combined_future: Future, read_futures: List[Future]):
+        for future in read_futures:
+            await future
+        byts = [future.result() for future in read_futures]
+        all_byts = bytes()
+        for byt in byts:
+            all_byts += byt
+        combined_future.set_result(all_byts)
+
+    async def get_memory(self, address: int, size: int) -> Future:
         """
         This blocks but only on things that should block the frontend.
         It returns a future that resolves when the value has been
         returned.
         """
-        byte_futures = []
         start_addr = GlobalAddress(bit_addr=address*8, params=self.params)
         is_vpu = start_addr.is_vpu(self.tlb)
         if is_vpu:
-            end_addr = start_addr.offset_bytes(size-1)
-            logger.info(f'get_memory: VPU read addr=0x{address:x}, size={size}, start_addr.addr={start_addr.addr}, end_addr.addr={end_addr.addr}')
-            assert start_addr.addr//self.params.word_bytes == end_addr.addr//self.params.word_bytes
-            read_future = await self.read_bytes(start_addr, size)
+            logger.info(f'get_memory: VPU read addr=0x{address:x}, start_addr.addr={start_addr.addr}')
+            read_futures = [await self.read_byte(GlobalAddress(bit_addr=(start_addr.addr+offset)*8, params=self.params))
+                            for offset in range(size)]
+            read_future = self.clock.create_future()
+            self.clock.create_task(self.combine_read_futures(read_future, read_futures))
         else:
             local_address = start_addr.to_scalar_addr(self.tlb)
-            read_future = await self.scalar.get_memory(local_address, size)
+            read_future = await self.scalar.get_memory(local_address, size=size)
         return read_future
 
-    async def get_memory_blocking(self, address: int, size):
+    async def get_memory_blocking(self, address: int, size: int):
         future = await self.get_memory(address, size)
         await future
-        return future.result()
+        result = future.result()
+        return result
 
     async def handle_tohost(self, tohost_value):
         """Handle HTIF syscall via tohost write."""
@@ -549,6 +602,7 @@ class Lamlet:
         while start_index < n_elements:
             page_address = (start_addr//self.params.page_bytes) * self.params.page_bytes
             page_info = self.tlb.get_page_info(GlobalAddress(bit_addr=page_address*8, params=self.params))
+            remaining_elements = n_elements - start_index
             end_addr = min(start_addr + (remaining_elements * element_width + 7)//8, page_address + self.params.page_bytes)
             if not lumps:
                 # Add whether the address range and whether it is in the VPU memory
@@ -601,8 +655,8 @@ class Lamlet:
         """
         We have 3 different kinds of vector loads.
         - In VPU memory and aligned (this is the fastest by far)
-        - In VPU memory but no aligned
-            (We need to move from memory if not cached and then do a shuffle).
+        - In VPU memory but not aligned
+            (We need to read from another jamlets memory).
         - In Scalar memory. We need to send the data element by element.
 
         And we could have a load that spans scalar and VPU regions of memory. Potentially
@@ -617,6 +671,7 @@ class Lamlet:
 
         size = (n_elements*ew)//8
         eb = ew // 8
+        wb = self.params.word_bytes
 
         # This is an identifier that groups a number of writes to a vector register together.
         # These writes are guanteed to work on separate bytes so that the write order does not matter.
@@ -630,71 +685,75 @@ class Lamlet:
         for is_vpu, is_partial_element, starting_index, starting_addr, ending_addr in self.get_memory_split(
                 g_addr, ew, n_elements, start_index):
             if is_partial_element:
+                # The partial is either the start of an element or the end of an element.
+                # Either the starting_addr or the ending_addr must be a page boundary
+                start_is_page_boundary = starting_addr % self.params.page_bytes == 0
+                end_is_page_boundary = ending_addr % self.params.page_bytes == 0
+                assert start_is_page_boundary or end_is_page_boundary
+                assert not (start_is_page_boundary and end_is_page_boundary)
                 starting_g_addr = GlobalAddress(bit_addr=starting_addr*8, params=self.params)
                 k_maddr = self.to_k_maddr(starting_g_addr)
                 assert ew % 8 == 0
+                mask_index = starting_index // self.params.j_in_l
+                size = ending_addr - starting_addr
                 if is_vpu:
                     dst = vd + (starting_index * ew)//(self.params.vl_bytes * 8)
-                    dst_offset = ((starting_index * ew) % (self.params.vl_bytes * 8))//8//self.params.j_in_l
-                    size = ending_addr - starting_addr
-                    await self.vload_vpu_bytes(
-                            dst=dst, dst_offset=dst_offset, addr=starting_g_addr.addr, size=size,
-                            dst_ordering=ordering, mask_reg=mask_reg, writeset_ident=writeset_ident)
+                    if size <= 1:
+                        dst_offset = ((starting_index * ew) % (self.params.vl_bytes * 8))//8
+                        reg_addr = addresses.RegAddr(
+                                reg=dst, addr=dst_offset, params=self.params, ordering=ordering)
+                        bit_mask=[1] * 8
+                        kinstr = kinstructions.LoadByte(
+                            dst=reg_addr,
+                            src=k_maddr,
+                            bit_mask=bit_mask,
+                            writeset_ident=writeset_ident,
+                            mask_reg=mask_reg,
+                            mask_index=mask_index,
+                            )
+                    else:
+                        dst_offset = ((starting_index * ew) % (self.params.vl_bytes * 8))//8
+                        dst_offset = dst_offset//wb * wb
+                        reg_addr = addresses.RegAddr(
+                                reg=dst, addr=dst_offset, params=self.params, ordering=ordering)
+                        byte_mask = [0] * wb
+                        start_word_byte = starting_g_addr % wb
+                        for byte_index in range(start_word_byte, start_word_byte + size):
+                            byte_mask[byte_index] = 1
+                        kinstr = kinstructions.LoadWord(
+                            dst=reg_addr,
+                            src=k_maddr,
+                            byte_mask=byte_mask,
+                            writeset_ident=writeset_ident,
+                            mask_reg=mask_reg,
+                            mask_index=mask_index,
+                        )
+                    await self.add_to_instruction_buffer(kinstr)
                 else:
-                    self.vload_scalar_partial(vd, starting_addr, ew, mask_reg, starting_index,
-                                              writeset_ident)
+                    start_byte = None
+                    self.vload_scalar_partial(
+                            vd=vd, addr=starting_addr, size=size, dst_ordering=ordering,
+                            mask_reg=mask_reg, mask_index=mask_index, element_index=starting_index,
+                            writeset_ident=writeset_ident, start_byte=start_byte)
             else:
                 if is_vpu:
-                    # Is this index aligned to the vector line.
                     section_elements = ((ending_addr - starting_addr) * 8)//ew
                     starting_g_addr = GlobalAddress(bit_addr=starting_addr*8, params=self.params)
                     self.check_element_width(starting_g_addr, ending_addr - starting_addr, ew)
                     k_maddr = self.to_k_maddr(starting_g_addr)
-                    if vline_aligned:
-                        kinstr = kinstructions.Load(
-                            dst=vd,
-                            k_maddr=k_maddr,
-                            start_index=starting_index,
-                            n_elements=section_elements,
-                            element_width=ew,
-                            word_order=k_maddr.ordering.word_order,
-                            mask_reg=mask_reg,
+                    kinstr = kinstructions.Load(
+                        dst=vd,
+                        k_maddr=k_maddr,
+                        start_index=starting_index,
+                        n_elements=section_elements,
+                        dst_ordering=ordering,
+                        mask_reg=mask_reg,
                         writeset_ident=writeset_ident,
-                            )
-                        await self.add_to_instruction_buffer(kinstr)
-                    else:
-                        temp_reg = self.get_temp_reg()
-                        kinstrs = []
-                        kinstrs.append(kinstructions.LoadUnaligned(
-                            dst=temp_reg,
-                            k_maddr=k_maddr,
-                            start_index=starting_index,
-                            n_elements=section_elements,
-                            element_width=ew,
-                            word_order=k_maddr.ordering.word_order,
-                            mask_reg=mask_reg,
-                            writeset_ident=writeset_ident,
-                            ))
-                        bytes_to_shift = starting_g_addr % self.params.word_bytes
-                        kinstrs.append(kinstructions.BarrelShift(
-                            dst=vd,
-                            src=temp_reg,
-                            bytes_to_shift=bytes_to_shift,
-                            start_index=starting_index,
-                            n_elements=section_elements,
-                            element_width=ew,
-                            word_order=k_maddr.ordering.word_order,
-                            mask_reg=mask_reg,
-                            writeset_ident=writeset_ident,
-                            ))
-                        for kinstr in kinstrs:
-                            await self.add_to_instruction_buffer(kinstr)
+                        )
+                    await self.add_to_instruction_buffer(kinstr)
                 else:
                     self.vload_scalar(vd, starting_addr, ew, ordering.word_order,
                                       section_elements, mask_reg, starting_index, writeset_ident)
-
-    def get_temp_reg(self):
-        return self.params.n_vregs
 
     async def vload_scalar(self, vd: int, addr: int, element_width: SizeBits, word_order: Ordering, n_elements: int, mask_reg: int, start_index: int, writeset_ident: int):
         """
@@ -747,81 +806,45 @@ class Lamlet:
                     )
             await self.add_to_instruction_buffer(kinstr, k_index=k_index)
 
-
-    async def vload_vpu_bytes(self, dst: int, dst_offset:int, addr: int, size: int,
-                              dst_ordering: Ordering, mask_reg: int, writeset_ident: int):
-        """
-        Used for loading bytes from the VPU. Contained within a single word.
-        Args:
-          dst: The destination vector register.
-          dst_offset: The offset in the vector regsiter we load to.
-          addr: The address in the VPU memory
-          size: The number of bytes to transfer
-          mask_reg: The register usd for the mask
-        """
-        # We need to loop through and work out what loadword or loadbyte commands we
-        # should use.
-        wb = self.params.word_bytes
-        transfers = []
-        for index in range(size):
-            src_addr = addr + index
-            src_g_addr = GlobalAddress(bit_addr=src_addr*8, params=self.params)
-            src_k_maddr = src_g_addr.to_k_maddr(self.tlb)
-            dst_addr = (dst * self.params.vline_bytes) + dst_offset + index
-            reg = dst_addr//self.params.vline_bytes
-            offset = dst_addr % self.params.vline_bytes
-            dst_reg_addr = addresses.RegAddr(reg=reg, addr=offset, params=self.params, ordering=dst_ordering)
-            # If the src_j_saddr has just incremented an address inside a jamlet
-            # and the dst_reg_addr has just increment an address inside a jamlet
-            # then we combine into a transfer.
-            if not transfers:
-                transfers.append((src_k_maddr, dst_reg_addr, 1))
-            else:
-                last_src_k_maddr = transfers[-1][0]
-                last_dst_reg_addr = transfers[-1][1]
-                if ((last_src_k_maddr.k_index == src_k_maddr.k_index) and
-                    (last_src_k_maddr.j_in_k_index == src_k_maddr.j_in_k_index) and
-                    (last_src_k_maddr.addr + 1 == src_k_maddr.addr) and
-                    (last_dst_reg_addr.k_index == dst_reg_addr.k_index) and
-                    (last_dst_reg_addr.j_in_k_index == dst_reg_addr.j_in_k_index) and
-                    (last_dst_reg_addr.reg == dst_reg_addr.reg) and
-                    (last_dst_reg_addr.offset_in_word + 1 == dst_reg_addr.offset_in_word) and
-                    True):
-                    transfers[-1] = (transfers[-1][0], transfers[-1][1], transfers[-1][2] + 1)
-                else:
-                    transfers.append((src_k_maddr, dst_reg_addr, 1))
-        for src_k_maddr, dst_reg_addr, size in transfers:
-            assert self.vrf_ordering[mask_reg].word_order == dst_reg_addr.word_order
-            if size == 1:
-                bit_mask = (1 << 8) - 1
-                kinstr = kinstructions.LoadByte(
-                        dst=dst_reg_addr,
-                        src=src_k_maddr,
-                        bit_mask=bit_mask,
-                        writeset_ident=writeset_ident,
-                        mask_reg=mask_reg,
-                        mask_index=mask_index,
-                        )
-            else:
-                dst_reg_word_addr = dst_reg_addr.copy()
-                dst_reg_word_addr.addr = (dst_reg_addr.addr//wb) * wb
-                kinstr = kinstructions.LoadWord(
-                        dst=dst_reg_addr,
-                        src=k_maddr,
-                        byte_mask=byte_mask,
-                        writeset_ident=writeset_ident,
-                        mask_reg=mask_reg,
-                        mask_index=mask_index,
-                        )
-
-            await self.add_to_instruction_buffer(kinstr)
-
-    async def vload_scalar_partial(self, vd: int, addr: int, element_width: SizeBits, mask_reg: int, start_index: int, writeset_ident: int):
+    async def vload_scalar_partial(self, vd: int, addr: int, size: int, dst_ordering: Ordering,
+                                   mask_reg: int, mask_index: int, element_index: int,
+                                   start_byte: int, writeset_ident: int):
         """
         Reads a partial element from the scalar memory and sends it to the appropriate jamlet where it will update a
         vector register.
         """
-        raise NotImplementedError()
+        assert start_byte + size < self.params.word_bytes
+        g_addr = GlobalAddress(bit_addr=addr*8, params=self.params)
+        scalar_addr = g_addr.to_scalar_addr(self.tlb)
+        vw_index = element_index % self.params.j_in_l
+        k_index, j_in_k_index = addresses.vw_index_to_k_indices(
+                self.params, dst_ordering.word_order, vw_index)
+        if size == 1:
+            bit_mask = [1] * 8
+            byte_imm = self.scalar.memory[scalar_addr.addr]
+            kinstr = kinstructions.LoadImmByte(
+                dst=vd,
+                imm=byte_imm,
+                bit_mask=bit_mask,
+                mask_reg=mask_reg,
+                mask_index=mask_index,
+                writeset_ident=writeset_ident,
+                )
+        else:
+            word_addr = scalar_addr.addr - start_byte
+            word_imm = self.scalar.memory[word_addr: word_addr+self.params.word_bytes]
+            byte_mask = [0]*self.params.word_bytes
+            for byte_index in range(start_byte, start_byte+size):
+                byte_mask[byte_index] = 1
+            kinstr = kinstructions.LoadImmWord(
+                dst=vd,
+                imm=word_imm,
+                byte_mask=byte_mask,
+                mask_reg=mask_reg,
+                mask_index=mask_index,
+                writeset_ident=writeset_ident,
+                )
+        await self.add_to_instruction_buffer(kinstr, k_index=k_index)
 
     async def vstore(self, vs3: int, addr: int, element_width: SizeBits,
                      n_elements: int, mask_reg: int):
@@ -849,7 +872,7 @@ class Lamlet:
         base_addr = addr.addr
         for offset in range(0, size, self.params.page_bytes):
             page_address = ((base_addr+offset)//self.params.page_bytes) * self.params.page_bytes
-            page_info = self.tlb.get_page_info(GlobalAddress(bit_addr=page_address*8))
+            page_info = self.tlb.get_page_info(GlobalAddress(bit_addr=page_address*8, params=self.params))
             assert page_info.local_address.ordering.ew == element_width
             assert page_info.local_address.is_vpu
 
@@ -866,7 +889,8 @@ class Lamlet:
             self.clock.create_task(kamlet.run())
         for memlet in self.memlets:
             self.clock.create_task(memlet.run())
-        self.clock.create_task(self.router_connections())
+        for channel in range(self.params.n_channels):
+            self.clock.create_task(self.router_connections(channel))
         self.clock.create_task(self.monitor_replys())
         self.clock.create_task(self.monitor_instruction_buffer())
 

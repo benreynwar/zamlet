@@ -35,6 +35,14 @@ class LamletParams:
     instruction_buffer_length: int = 16
     instructions_in_packet: int = 4
     n_response_idents: int = 32
+    #n_waiting: int = 16
+    n_response_tags: int = 8
+    max_response_tags: int = 128 # 7 bits
+
+    # The number of outstanding instructions or responses waiting
+    n_items: int = 16
+    # The number of outstanding cache read_line and write_line allowed
+    n_cache_requests: int = 16
 
     def __post_init__(self):
         # Page must be bigger than a vector

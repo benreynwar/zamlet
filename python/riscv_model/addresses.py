@@ -6,7 +6,7 @@ Here we create some classes to try to keep track of and standardize the options.
 import logging
 from dataclasses import dataclass
 from enum import Enum
-from typing import List
+from typing import List, Dict
 
 from params import LamletParams
 from cache_table import CacheTable
@@ -71,17 +71,10 @@ class Ordering:
     ew: SizeBits
 
 
-def make_basic_ordering(params: LamletParams, element_width: int):
-    word_order = []
-    for j_y in range(params.j_rows * params.k_rows):
-        for j_x in range(params.j_cols * params.k_cols):
-            word_order.append((j_x, j_y))
-    return Ordering(ew=element_width, word_order=word_order)
-
-
 class PageInfo:
 
-    def __init__(self, global_address: 'GlobalAddress', local_address: 'LocalAddress', fresh: List[bool]):
+    def __init__(self, global_address: 'GlobalAddress', local_address: 'LocalAddress',
+                 fresh: List[bool]):
         # Logical address
         self.global_address = global_address
         # Local address in the scalar or VPU memory
@@ -97,19 +90,19 @@ class TLB:
     def __init__(self, params: LamletParams):
         self.params = params
         # Maps global address to page infos
-        self.pages = {}
+        self.pages: Dict[int, PageInfo] = {}
         # Maps vpu addresses to page infos
-        self.vpu_pages = {}
+        self.vpu_pages: Dict[int, PageInfo] = {}
         # maps scalar addresses to page infos
-        self.scalar_pages = {}
+        self.scalar_pages: Dict[int, PageInfo] = {}
 
-        self.scalar_freed_pages = []
+        self.scalar_freed_pages: List[int] = []
         self.scalar_lowest_never_used_page = 0
 
-        self.vpu_freed_pages = []
+        self.vpu_freed_pages: List[int] = []
         self.vpu_lowest_never_used_page = 0
 
-    def get_lowest_free_page(self, is_vpu):
+    def get_lowest_free_page(self, is_vpu: bool):
         if not is_vpu:
             if self.scalar_freed_pages:
                 page = self.scalar_freed_pages.pop(0)
@@ -137,12 +130,12 @@ class TLB:
                 self.vpu_lowest_never_used_page = next_page
         return page
 
-    def allocate_memory(self, address: 'GlobalAddress', size: SizeBytes, is_vpu: bool, ordering: Ordering):
+    def allocate_memory(self, address: 'GlobalAddress', size: SizeBytes, is_vpu: bool, ordering: Ordering|None):
         logger.info(f'Allocating memory to address {hex(address.addr)}')
         assert size % self.params.page_bytes == 0
         for index in range(size//self.params.page_bytes):
             logical_page_address = address.addr + index * self.params.page_bytes
-            global_address = GlobalAddress(bit_addr=logical_page_address*8)
+            global_address = GlobalAddress(bit_addr=logical_page_address*8, params=self.params)
             physical_page_address = self.get_lowest_free_page(is_vpu)
             local_address = LocalAddress(
                 is_vpu=is_vpu,
@@ -167,7 +160,7 @@ class TLB:
         for index in range(size//self.params.page_bytes):
             logical_page_address = address.addr + index * self.params.page_bytes
             info = self.pages.pop(logical_page_address)
-            if info.is_vpu:
+            if info.local_address.is_vpu:
                 self.vpu_freed_pages.append(info.local_address.addr)
                 self.vpu_pages.pop(info.local_address.addr)
             else:
@@ -181,16 +174,17 @@ class TLB:
         return self.pages[address.addr]
 
     def get_is_fresh(self, address: 'GlobalAddress') -> bool:
-        page_addr = address.get_page(self.params)
+        page_addr = address.get_page()
         page_info = self.get_page_info(page_addr)
         page_offset = address.addr - page_addr.addr
         cache_line_index = page_offset // self.params.cache_line_bytes // self.params.k_in_l
-        cache_lines_in_page = self.params.page_bytes // self.params.cache_line_bytes // self.params.k_in_l
+        cache_lines_in_page = (
+                self.params.page_bytes // self.params.cache_line_bytes // self.params.k_in_l)
         assert cache_line_index < cache_lines_in_page
         return page_info.fresh[cache_line_index]
 
     def set_not_fresh(self, address: 'GlobalAddress'):
-        page_address = address.get_page(self.params)
+        page_address = address.get_page()
         page_info = self.get_page_info(page_address)
         page_offset = address.addr - page_info.global_address.addr
         cache_line_index = page_offset // self.params.cache_line_bytes // self.params.k_in_l
@@ -270,7 +264,7 @@ class GlobalAddress:
 class LocalAddress:
     is_vpu: bool
     bit_addr: int
-    ordering: Ordering
+    ordering: Ordering|None
 
     @property
     def addr(self):
@@ -546,7 +540,7 @@ class JSAddr:
         # First we need to check the cache state
         j_cache_line_bits = self.params.cache_line_bytes * 8 // self.params.j_in_k
         cache_slot = self.bit_addr//j_cache_line_bits
-        slot_info = cache_table.cache_slots[cache_slot]
+        slot_info = cache_table.slot_states[cache_slot]
         vlines_in_cache_line = self.params.cache_line_bytes // (self.params.word_bytes * self.params.j_in_k)
 
         k_cache_line_bits = self.params.cache_line_bytes * 8
@@ -605,9 +599,15 @@ class RegAddr:
         return offset
 
     @property
+    def vw_index(self):
+        e_index = self.element_index()
+        vw_index = e_index % self.params.j_in_l
+        return vw_index
+
+    @property
     def k_index(self):
         assert self.valid()
-        k_index, _ = vw_index_to_k_indices(self.params, self.ordering.word_order, self.element_index)
+        k_index, _ = vw_index_to_k_indices(self.params, self.ordering.word_order, self.vw_index)
         return k_index
 
     @property
@@ -636,14 +636,14 @@ class AddressConverter:
 
     def to_scalar_addr(self, addr: GlobalAddress):
         assert isinstance(addr, GlobalAddress)
-        return addr.to_scalar_addr(self.params, self.tlb)
+        return addr.to_scalar_addr(self.tlb)
 
     def to_vpu_addr(self, addr):
         if isinstance(addr, GlobalAddress):
-            return addr.to_vpu_addr(self.params, self.tlb)
+            return addr.to_vpu_addr(self.tlb)
         raise NotImplementedError
 
     def to_k_maddr(self, addr):
         if isinstance(addr, GlobalAddress):
-            return addr.to_k_maddr(self.params, self.tlb)
+            return addr.to_k_maddr(self.tlb)
         raise NotImplementedError

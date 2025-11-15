@@ -1,11 +1,12 @@
 import logging
-from typing import List, Tuple
+from typing import List, Tuple, Dict
 from collections import deque
 import random
 
 from params import LamletParams
 from runner import Clock
-from router import Router, Direction, Header
+from router import Router, Direction
+from message import Header, IdentHeader, AddressHeader
 from utils import Queue
 from message import MessageType, SendType
 
@@ -41,7 +42,7 @@ def get_cols_routers(params):
     return m_cols, n_routers_in_memlet
 
 
-def memlet_coords_to_index(params: LamletParams, x: int, y: int) -> (int, int):
+def memlet_coords_to_index(params: LamletParams, x: int, y: int) -> Tuple[int, int]:
     """
     For a given (x, y) coord we want to know what the m_index of that
     memlet is, which is equal to the k_index of the kamlet it communicates
@@ -82,7 +83,7 @@ def j_in_k_to_m_router(params: LamletParams, j_in_k_index) -> int:
     return j_in_k_index//jamlets_per_router
 
 
-def m_router_coords(params: LamletParams, m_index: int, router_index: int) -> (int, int):
+def m_router_coords(params: LamletParams, m_index: int, router_index: int) -> Tuple[int, int]:
     m_cols, n_routers_in_memlet = get_cols_routers(params)
     if m_index % params.k_cols < params.k_cols//2:
         # We're on the west side
@@ -103,7 +104,7 @@ def m_router_coords(params: LamletParams, m_index: int, router_index: int) -> (i
     return (m_x, m_y)
 
 
-def jamlet_coords_to_m_router_coords(params: LamletParams, j_x: int, j_y: int) -> (int, int):
+def jamlet_coords_to_m_router_coords(params: LamletParams, j_x: int, j_y: int) -> Tuple[int, int]:
     k_x  = j_x // params.j_cols
     k_y  = j_y // params.j_rows
     k_index = k_y * params.k_cols + k_x
@@ -128,8 +129,8 @@ class Memlet:
         self.params = params
         self.coords = coords
         self.routers = [[Router(clock, params, x, y) for x, y in coords]
-                        for channel in params.n_channels]
-        self.lines = {}
+                        for channel in range(params.n_channels)]
+        self.lines: Dict[int, bytes] = {}
         self.n_lines = params.kamlet_memory_bytes // params.cache_line_bytes
         self.m_cols, self.n_routers = get_cols_routers(self.params)
         # Make send and receive queues for each router
@@ -180,78 +181,80 @@ class Memlet:
             queue.update()
         self.send_write_line_response_queue.update()
 
-    async def receive_packets(self, channel, index):
+    async def receive_packets(self, index):
         """
         This takes care of receiving packets from a router
         and placing them in a receive queue.
         """
         assert index < len(self.coords)
-        queue = self.routers[channel][index]._output_buffers[Direction.H]
         header = None
         packet = []
         while True:
             await self.clock.next_cycle
-            r = self.routers[channel][index]
-            if queue:
-                word = queue.popleft()
-                if not header:
-                    assert isinstance(word, Header)
-                    header = word.copy()
-                else:
-                    assert not isinstance(word, Header)
-                    assert header
-                packet.append(word)
-                header.length -= 1
-                if header.length == 0:
-                    if packet[0].message_type == MessageType.READ_LINE:
-                        while not self.receive_read_line_queue.can_append():
-                            await self.clock.next_cycle
-                        self.receive_read_line_queue.append(packet)
-                    elif packet[0].message_type == MessageType.WRITE_LINE:
-                        j_x = packet[0].source_x % self.params.j_cols
-                        j_y = packet[0].source_y % self.params.j_rows
-                        j_index = j_y * self.params.j_cols + j_x
-                        while not self.receive_write_line_queues[j_index].can_append():
-                            await self.clock.next_cycle
-                        self.receive_write_line_queues[j_index].append(packet)
-                    header = None
-                    packet = []
+            for channel in range(self.params.n_channels):
+                queue = self.routers[channel][index]._output_buffers[Direction.H]
+                r = self.routers[channel][index]
+                if queue:
+                    word = queue.popleft()
+                    if not header:
+                        assert isinstance(word, Header)
+                        header = word.copy()
+                    else:
+                        assert not isinstance(word, Header)
+                        assert header
+                    packet.append(word)
+                    header.length -= 1
+                    if header.length == 0:
+                        if packet[0].message_type == MessageType.READ_LINE:
+                            while not self.receive_read_line_queue.can_append():
+                                await self.clock.next_cycle
+                            self.receive_read_line_queue.append(packet)
+                        elif packet[0].message_type == MessageType.WRITE_LINE:
+                            j_x = packet[0].source_x % self.params.j_cols
+                            j_y = packet[0].source_y % self.params.j_rows
+                            j_index = j_y * self.params.j_cols + j_x
+                            while not self.receive_write_line_queues[j_index].can_append():
+                                await self.clock.next_cycle
+                            self.receive_write_line_queues[j_index].append(packet)
+                        header = None
+                        packet = []
 
-    async def send_packets(self, channel, index):
+    async def send_packets(self, index):
         """
         This takes care of taking packets from a send queue and
         sending them out over a router.
         """
         assert index < len(self.coords)
-        queue = self.routers[channel][index]._input_buffers[Direction.H]
         await self.clock.next_cycle
         read_next = True
         while True:
-            if read_next and self.send_read_line_response_queues[index]:
-                packet = self.send_read_line_response_queues[index].popleft()
-                if index == WRITE_LINE_RESPONSE_R_INDEX:
-                    read_next = False
-            elif index == WRITE_LINE_RESPONSE_R_INDEX and self.send_write_line_response_queue:
-                packet = self.send_write_line_response_queue.popleft()
-                read_next = True
-            elif self.send_read_line_response_queues[index]:
-                packet = self.send_read_line_response_queues[index].popleft()
-                if index == WRITE_LINE_RESPONSE_R_INDEX:
-                    read_next = False
-            else:
-                packet = None
-            if packet is not None:
-                for word in packet:
-                    while True:
-                        if queue.can_append():
-                            queue.append(word)
+            for channel in range(self.params.n_channels):
+                queue = self.routers[channel][index]._input_buffers[Direction.H]
+                if read_next and self.send_read_line_response_queues[index]:
+                    packet = self.send_read_line_response_queues[index].popleft()
+                    if index == WRITE_LINE_RESPONSE_R_INDEX:
+                        read_next = False
+                elif index == WRITE_LINE_RESPONSE_R_INDEX and self.send_write_line_response_queue:
+                    packet = self.send_write_line_response_queue.popleft()
+                    read_next = True
+                elif self.send_read_line_response_queues[index]:
+                    packet = self.send_read_line_response_queues[index].popleft()
+                    if index == WRITE_LINE_RESPONSE_R_INDEX:
+                        read_next = False
+                else:
+                    packet = None
+                if packet is not None:
+                    for word in packet:
+                        while True:
+                            if queue.can_append():
+                                queue.append(word)
+                                await self.clock.next_cycle
+                                break
+                            else:
+                                pass
                             await self.clock.next_cycle
-                            break
-                        else:
-                            pass
-                        await self.clock.next_cycle
-            else:
-                await self.clock.next_cycle
+                else:
+                    await self.clock.next_cycle
 
     async def handle_write_line_packets(self):
         """
@@ -277,7 +280,7 @@ class Memlet:
                 self.write_cache_line(index, data)
                 # Send a response back to the kamlet telling it the
                 # write was done.
-                header = Header(
+                header = IdentHeader(
                     target_x=self.kamlet_coords[0],
                     target_y=self.kamlet_coords[1],
                     source_x=self.routers[WRITE_LINE_RESPONSE_CHANNEL][WRITE_LINE_RESPONSE_R_INDEX].x,
@@ -315,11 +318,11 @@ class Memlet:
                 for j_in_k_index, payload in enumerate(packet_payloads):
                     router_index = j_in_k_to_m_router(self.params, j_in_k_index)
                     target_x, target_y = self.jamlet_coords[j_in_k_index]
-                    resp_header = Header(
+                    resp_header = AddressHeader(
                         target_x=target_x,
                         target_y=target_y,
-                        source_x=self.routers[router_index].x,
-                        source_y=self.routers[router_index].y,
+                        source_x=self.routers[router_index][0].x,
+                        source_y=self.routers[router_index][0].y,
                         message_type=MessageType.READ_LINE_RESP,
                         length=1 + len(payload),
                         send_type=SendType.SINGLE,
@@ -341,8 +344,9 @@ class Memlet:
                 await self.clock.next_cycle
 
     async def run(self):
-        for router in self.routers:
-            self.clock.create_task(router.run())
+        for router_channels in self.routers:
+            for router in router_channels:
+                self.clock.create_task(router.run())
         for index in range(len(self.coords)):
             self.clock.create_task(self.receive_packets(index))
             self.clock.create_task(self.send_packets(index))

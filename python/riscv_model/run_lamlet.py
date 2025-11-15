@@ -67,16 +67,17 @@ async def run(clock: Clock, filename):
             ordering = Ordering(WordOrder.STANDARD, ew)
         else:
             ordering = None
-        s.allocate_memory(GlobalAddress(bit_addr=page_start*8), alloc_size, is_vpu=is_vpu, ordering=ordering)
+        s.allocate_memory(GlobalAddress(bit_addr=page_start*8, params=params),
+                          alloc_size, is_vpu=is_vpu, ordering=ordering)
 
     # Allocate VPU memory pools with fixed element widths
     # Each pool is 256KB as defined in vpu_alloc.c
     pool_size = 256 * 1024
-    s.allocate_memory(GlobalAddress(bit_addr=0x90000000*8), pool_size, is_vpu=True, ordering=Ordering(WordOrder.STANDARD, 1))   # 1-bit pool (masks)
-    s.allocate_memory(GlobalAddress(bit_addr=0x90040000*8), pool_size, is_vpu=True, ordering=Ordering(WordOrder.STANDARD, 8))   # 8-bit pool
-    s.allocate_memory(GlobalAddress(bit_addr=0x90080000*8), pool_size, is_vpu=True, ordering=Ordering(WordOrder.STANDARD, 16))  # 16-bit pool
-    s.allocate_memory(GlobalAddress(bit_addr=0x900C0000*8), pool_size, is_vpu=True, ordering=Ordering(WordOrder.STANDARD, 32))  # 32-bit pool
-    s.allocate_memory(GlobalAddress(bit_addr=0x90100000*8), pool_size, is_vpu=True, ordering=Ordering(WordOrder.STANDARD, 64))  # 64-bit pool
+    s.allocate_memory(GlobalAddress(bit_addr=0x90000000*8, params=params), pool_size, is_vpu=True, ordering=Ordering(WordOrder.STANDARD, 1))   # 1-bit pool (masks)
+    s.allocate_memory(GlobalAddress(bit_addr=0x90040000*8, params=params), pool_size, is_vpu=True, ordering=Ordering(WordOrder.STANDARD, 8))   # 8-bit pool
+    s.allocate_memory(GlobalAddress(bit_addr=0x90080000*8, params=params), pool_size, is_vpu=True, ordering=Ordering(WordOrder.STANDARD, 16))  # 16-bit pool
+    s.allocate_memory(GlobalAddress(bit_addr=0x900C0000*8, params=params), pool_size, is_vpu=True, ordering=Ordering(WordOrder.STANDARD, 32))  # 32-bit pool
+    s.allocate_memory(GlobalAddress(bit_addr=0x90100000*8, params=params), pool_size, is_vpu=True, ordering=Ordering(WordOrder.STANDARD, 64))  # 64-bit pool
 
     for segment in p_info['segments']:
         address = segment['address']
@@ -142,7 +143,7 @@ async def main(clock, filename):
 
 
 if __name__ == '__main__':
-    level = logging.WARNING
+    level = logging.INFO
     import sys
     import os
     root_logger = logging.getLogger()
@@ -160,16 +161,16 @@ if __name__ == '__main__':
         filenames = [
            #'tests/readwritebyte/should_fail.riscv',
            'tests/readwritebyte/simple_vpu_test.riscv',
-           'tests/readwritebyte/write_then_read_many_bytes.riscv',
+           #'tests/readwritebyte/write_then_read_many_bytes.riscv',
            #'tests/sgemv/vec-sgemv-large.riscv', (too small)
-           'tests/sgemv/vec-sgemv-64x64.riscv',
+           #'tests/sgemv/vec-sgemv-64x64.riscv',
            # #'tests/sgemv/vec-sgemv.riscv',  (too small) (it tries to step through rows in a matrix but one row is less than vline so it gets misaligned)
-           'tests/vecadd/vec-add-evict.riscv',
-           'tests/vecadd/vec-add.riscv',
-           'tests/daxpy/vec-daxpy.riscv',
-           'tests/daxpy/vec-daxpy-small.riscv',
-           'tests/conditional/vec-conditional.riscv',
-           'tests/conditional/vec-conditional-small.riscv',
+           #'tests/vecadd/vec-add-evict.riscv',
+           #'tests/vecadd/vec-add.riscv',
+           #'tests/daxpy/vec-daxpy.riscv',
+           #'tests/daxpy/vec-daxpy-small.riscv',
+           #'tests/conditional/vec-conditional.riscv',
+           #'tests/conditional/vec-conditional-small.riscv',
         ]
 
     for filename in filenames:

@@ -98,3 +98,24 @@ def pad(data, n_bytes):
     assert isinstance(data, bytes)
     assert len(data) <= n_bytes
     return data + bytes([0] * (n_bytes - len(data)))
+
+
+class SettableBool:
+
+    def __init__(self, value):
+        self.value = value
+        self.has_next_value = False
+        self.next_value = False
+
+    def set(self, value):
+        assert not self.has_next_value
+        self.has_next_value = True
+        self.next_value = value
+
+    def update(self):
+        if self.has_next_value:
+            self.value = self.next_value
+        self.has_next_value = False
+
+    def __bool__(self):
+        return self.value

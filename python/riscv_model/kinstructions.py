@@ -90,6 +90,7 @@ class LoadByte(KInstr):
     writeset_ident: int
     mask_reg: int
     mask_index: int
+    ident: int
 
     async def update_kamlet(self, kamlet):
         await kamlet.handle_load_byte_instr(self)
@@ -131,17 +132,16 @@ class LoadImmWord(KInstr):
         await kamlet.handle_load_imm_word_instr(self)
 
 @dataclass
-class ReadBytes(KInstr):
+class ReadByte(KInstr):
     """
     This instruction reads from the VPU memory.
     The scalar processor receives a response packet.
     """
     k_maddr: KMAddr
-    size: int
     ident: int
 
-    async def update_kamlet(self, kamlet):
-        await kamlet.handle_read_bytes_instr(self)
+    async def update_kamlet(self, kamlet: 'Kamlet'):
+        await kamlet.handle_read_byte_instr(self, step=0)
 
 #@dataclass
 #class ReadLine(KInstr):
@@ -246,12 +246,11 @@ class Load(KInstr):
     start_index: int
     n_elements: int
     dst_ordering: addresses.Ordering  # src ordering is held in k_maddr
-    src_offset: int
     mask_reg: int
     writeset_ident: int
 
     async def update_kamlet(self, kamlet):
-        await kamlet.handle_load_aligned_instr(self)
+        await kamlet.handle_load_instr(self)
 
 
 @dataclass
