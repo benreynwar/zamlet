@@ -182,11 +182,8 @@ class Lamlet:
         """
         k_maddr = address.to_k_maddr(self.tlb)
         j_in_k_index = (k_maddr.addr//self.params.word_bytes) % self.params.j_in_k
-        logger.debug(f'Lamlet.read_bytes {hex(address.addr)} k_maddr {k_maddr} j_in_k {j_in_k_index}')
-        logger.warning('read_bytes a')
-        logger.warning(f'items are {self.waiting_items}')
+        logger.debug(f'{self.clock.cycle}: lamlet: Lamlet.read_bytes {hex(address.addr)} k_maddr {k_maddr} j_in_k {j_in_k_index}')
         item_index = await self.get_free_item_index()
-        logger.warning('read_bytes b')
         # The waiting item indicates that we are waiting for a response.
         future = self.clock.create_future()
         self.waiting_items[item_index] = WaitingItem(
@@ -349,16 +346,18 @@ class Lamlet:
             assert isinstance(item.item, Future)
             item.item.set_result(header.value)
             self.waiting_items[header.ident] = None
+            logger.warning(f'{self.clock.cycle}: lamlet: Got a READ_BYTE_RESP from ({header.source_x, header.source_y}) is {header.value}')
         elif header.message_type == MessageType.READ_WORDS_RESP:
             item = self.waiting_items[header.ident]
             assert isinstance(item.item, Future)
             item.item.set_result(packet[1:])
             self.waiting_items[header.ident] = None
+            logger.warning(f'{self.clock.cycle}: lamlet: Got a READ_WORDS_RESP from ({header.source_x, header.source_y}) is {packet[1:]}')
         else:
             raise NotImplementedError()
 
     async def add_to_instruction_buffer(self, instruction, k_index=None):
-        logger.warning(f'{self.clock.cycle}: Adding {type(instruction)} to buffer')
+        logger.warning(f'{self.clock.cycle}: lamlet: >>>>>>>>>>>>>> Adding {type(instruction)} to buffer')
         while len(self.instruction_buffer) >= self.params.instruction_buffer_length:
             await self.clock.next_cycle
         self.instruction_buffer.append((instruction, k_index))
@@ -397,7 +396,6 @@ class Lamlet:
                     instructions = []
                     dest_k_index = self.instruction_buffer[0][1]
                     while self.instruction_buffer and self.have_tokens(available_tokens, k_indices[0]):
-                        logger.debug('doo doo')
                         if self.instruction_buffer[0][1] == k_indices[0]:
                             instructions.append(self.instruction_buffer.popleft()[0])
                             self.decrement_tokens(available_tokens, k_indices[0])

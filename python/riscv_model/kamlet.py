@@ -112,7 +112,7 @@ class Kamlet:
             if self._instruction_queue:
                 self.available_instruction_tokens += 1
                 instruction = self._instruction_queue.popleft()
-                logger.warning(f'{self.clock.cycle}: kamlet {(self.min_x, self.min_y)}: running {instruction}')
+                logger.warning(f'{self.clock.cycle}: kamlet {(self.min_x, self.min_y)}: running {type(instruction)}')
                 await instruction.update_kamlet(self)
                 logger.warning(f'{self.clock.cycle}: kamlet {(self.min_x, self.min_y)}: finished instruction')
 
@@ -128,7 +128,6 @@ class Kamlet:
                     continue
                 if not all(request.sent):
                     if request.request_type == CacheRequestType.READ_LINE:
-                        logger.warning(f'{self.clock.cycle}: ***********************READING A CACHE LINE')
                         await self.read_cache_line(cache_slot=request.slot, address_in_memory=request.addr, ident=request.ident)
                         self.cache_table.report_sent_request(request)
                     else:
@@ -143,10 +142,8 @@ class Kamlet:
             for index, jamlet in enumerate(self.jamlets):
                 if jamlet._instruction_buffer:
                     if index == 0:
-                        logger.warning('Got an instruction from jamlet')
                         if self._instruction_queue.can_append():
                             instr = jamlet._instruction_buffer.popleft()
-                            logger.warning(f'Adding {type(instr)} to queue')
                             self.add_to_instruction_queue(instr)
                     else:
                         instr = jamlet._instruction_buffer.popleft()
@@ -181,6 +178,7 @@ class Kamlet:
             length=2,                           #5
             ident=ident,               #5 bits
             )
+        assert address_in_memory % self.params.cache_line_bytes == 0
         packet = [header, address_in_memory]
 
         while not self._instr_send_queue.can_append():
@@ -225,7 +223,7 @@ class Kamlet:
             jamlet.sram[j_saddr.addr: j_saddr.addr+size] = instr.imm
 
     async def handle_read_byte_instr(self, instr: kinstructions.ReadByte):
-        logger.warning('kamlet: handle_ready_bytes_instr')
+        logger.debug('{self.clock.cycle}: kamlet {(self.x, self.y)}: handl_read_bytes_instr')
         if not self.cache_table.can_read(instr.k_maddr):
             await self.cache_table.add_item(witem_type=WItemType.READ_BYTE, new_item=instr, k_maddr=instr.k_maddr)
         else:
@@ -274,7 +272,10 @@ class Kamlet:
         self.handle_load_instr_simple_final(item.item, item.rf_ident)
 
     async def handle_load_instr_simple(self, instr: kinstructions.Load) -> None:
-        rf_write_ident = self.rf_info[instr.dst].start_write()
+        rf_slot = self.rf_info[instr.dst]
+        while not rf_slot.can_write():
+            await self.clock.next_cycle
+        rf_write_ident = rf_slot.start_write()
         if self.cache_table.can_read(instr.k_maddr):
             self.handle_load_instr_simple_final(instr, rf_write_ident)
         else:
@@ -334,7 +335,10 @@ class Kamlet:
             await self.handle_store_instr_notsimple(instr)
 
     async def handle_store_instr_simple(self, instr: kinstructions.Store) -> None:
-        rf_read_ident = self.rf_info[instr.src].start_read()
+        rf_slot = self.rf_info[instr.src]
+        while not rf_slot.can_read():
+            await self.clock.next_cycle
+        rf_read_ident = rf_slot.start_read()
         if self.cache_table.can_read(instr.k_maddr):
             self.handle_store_instr_simple_final(instr, rf_read_ident)
         else:

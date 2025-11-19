@@ -489,9 +489,11 @@ class VArithVvOp(KInstr):
         regs = [self.src1+index for index in range(n_vlines)]
         regs += [self.src2+index for index in range(n_vlines)]
         regs += [self.dst+index for index in range(n_vlines)]
+        logger.warning('@@@@@@@@@@ waiting for rf')
         await kamlet.wait_for_rf_available(regs)
+        logger.warning('@@@@@@@@@@ finished waiting for rf')
 
-        logger.debug(f'kamlet ({kamlet.min_x} {kamlet.min_y}): V{self.op.value}Vv dst=v{self.dst} src1=v{self.src1} src2=v{self.src2}')
+        logger.warning(f'kamlet ({kamlet.min_x} {kamlet.min_y}): V{self.op.value}Vv dst=v{self.dst} src1=v{self.src1} src2=v{self.src2}')
         params = kamlet.params
         vreg_bytes_per_jamlet = params.maxvl_bytes // params.j_in_l
         src1_offset = self.src1 * vreg_bytes_per_jamlet
@@ -514,6 +516,7 @@ class VArithVvOp(KInstr):
                         src2_val = int.from_bytes(src2_bytes, byteorder='little', signed=True)
 
                         if self.op == VArithOp.ADD:
+                            logger.warning(f'j_in_k_index={j_in_k_index}, vline_index={vline_index}, index_in_j={index_in_j}, src1_val={src1_val}, src2_val={src2_val}, result={result}')
                             result = src1_val + src2_val
                         elif self.op == VArithOp.MUL:
                             result = src1_val * src2_val
@@ -572,10 +575,12 @@ class VArithVxOp(KInstr):
 
                     if valid_element and mask_bit:
                         src2_bytes = jamlet.rf_slice[src2_offset + byte_offset:src2_offset + byte_offset + eb]
+                        logger.warning(f'src2_bytes = {[int(x) for x in src2_bytes]}')
                         src2_val = unpack(src2_bytes)
 
                         if self.op == VArithOp.ADD:
                             result = src2_val + scalar_val
+                            logger.warning(f'{src2_val} + {scalar_val} = {result}')
                         elif self.op == VArithOp.MUL:
                             result = src2_val * scalar_val
                         elif self.op == VArithOp.MACC:

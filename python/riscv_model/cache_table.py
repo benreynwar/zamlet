@@ -306,7 +306,7 @@ class CacheTable:
                 break
             await self.clock.next_cycle
         state = self.get_state(k_maddr)
-        assert state in (CacheState.SHARED, CacheState.MODIFIED)
+        assert state.state in (CacheState.SHARED, CacheState.MODIFIED)
 
     async def add_item(self, witem_type: WItemType, new_item: Any,
                        protocol_states: List[ProtocolState]|None=None,
@@ -375,7 +375,7 @@ class CacheTable:
         assert self.cache_requests[cache_request_index] is None
         cache_request = CacheRequestState(
                 ident=cache_request_index,
-                addr=slot_state.memory_loc,
+                addr=slot_state.memory_loc * self.params.cache_line_bytes,
                 slot=slot,
                 sent=[SettableBool(False) for x in range(n_sent)],
                 received=[SettableBool(False) for x in range(self.params.j_in_k)],
@@ -553,6 +553,8 @@ class CacheTable:
 
     def _check_slots(self):
         assert len(self.free_slots) + len(self.used_slots) == self.n_slots
+        assert len(set(self.free_slots)) == len(self.free_slots)
+        assert len(set(self.used_slots)) == len(self.used_slots)
 
     def get_state(self, k_maddr):
         slot = self.addr_to_slot(k_maddr)
@@ -700,12 +702,14 @@ class CacheTable:
         else:
             for check_slot in self.used_slots:
                 # Check to see if there are any waiting items using this slot.
-                slot_in_use = self.slot_in_use(slot)
+                slot_in_use = self.slot_in_use(check_slot)
                 if not slot_in_use:
                     slot = check_slot
                     self.used_slots.remove(slot)
+                    break
         if slot is not None:
             self.used_slots.append(slot)
+        self._check_slots()
         return slot
 
 
@@ -742,6 +746,7 @@ class CacheTable:
         else:
             raise ValueError('Bad cache state')
         logger.debug('got a new slot')
+        self._check_slots()
         return slot
 
     #def evict_slot(self, slot):

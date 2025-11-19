@@ -3,7 +3,7 @@ from typing import Set, List, Any
 
 import addresses
 from params import LamletParams
-from cache_table import CacheTable
+from cache_table import CacheTable, WItemType, LoadSrcState, LoadDstState
 from message import Direction, SendType, MessageType, CHANNEL_MAPPING
 from message import Header, IdentHeader, AddressHeader, ValueHeader, TaggedHeader
 from utils import Queue
@@ -423,12 +423,12 @@ class Jamlet:
             mask_word_int = int.from_bytes(mask_word, byteorder='little')
             mask_bits = utils.uint_to_list_of_uints(mask_word_int, width=1, size=ww)
             el_mask = [0] * (ww//ew)
-            el_mask[0: final_v-start_v+1] = mask_bits[start_v-base_v: final_v-base_v]
+            el_mask[0: final_v-start_v+1] = mask_bits[start_v-base_v: final_v-base_v+1]
         else:
             el_mask = [1] * (ww//ew)
 
         masks = []
-        for v_index in range(start_v, final_v):
+        for v_index in range(start_v, final_v+1):
             el_mask_bits = []
             for word_element in range(0, ww//ew):
                 element_index = (start_v - base_v) * vw//ew + word_element * j_in_l + vw_index
@@ -441,14 +441,16 @@ class Jamlet:
                 el_mask_bits += [mask_bit and in_range] * ew
             masks.append(utils.list_of_uints_to_uint(el_mask_bits, width=1))
 
+        logger.warning(f'{self.clock.cycle}: jamlet {(self.x, self.y)}: Running the vector load')
         cache_base_v = start_c * self.params.vlines_in_cache_line
-        for mask, v_index in zip(masks, range(start_v, final_v)):
+        for mask, v_index in zip(masks, range(start_v, final_v+1)):
             sram_addr = (slot + v_index - cache_base_v) * ww//8
             word = self.sram[sram_addr: sram_addr + ww//8]
             word_as_int = int.from_bytes(word, byteorder='little')
             masked = word_as_int & mask
-            masked_as_bytes = masked.to_bytes(ww//8)
+            masked_as_bytes = masked.to_bytes(ww//8, byteorder='little')
             rf_word_addr = instr.dst + start_v - base_v
+            logger.warning(f'{self.clock.cycle}: jamlet {(self.x, self.y)}: Loading {[int(x) for x in masked_as_bytes]}')
             self.rf_slice[rf_word_addr * ww//8: (rf_word_addr+1) * ww//8] = masked_as_bytes
         
 
@@ -599,7 +601,7 @@ class Jamlet:
             el_mask = [1] * (ww//ew)
 
         masks = []
-        for v_index in range(start_v, final_v):
+        for v_index in range(start_v, final_v+1):
             el_mask_bits = []
             for word_element in range(0, ww//ew):
                 element_index = (start_v - base_v) * vw//ew + word_element * j_in_l + vw_index
@@ -613,13 +615,14 @@ class Jamlet:
             masks.append(utils.list_of_uints_to_uint(el_mask_bits, width=1))
 
         cache_base_v = start_c * self.params.vlines_in_cache_line
-        for mask, v_index in zip(masks, range(start_v, final_v)):
+        for mask, v_index in zip(masks, range(start_v, final_v+1)):
             rf_word_addr = instr.src + start_v - base_v
             word = self.rf_slice[rf_word_addr * ww//8: (rf_word_addr+1) * ww//8]
             word_as_int = int.from_bytes(word, byteorder='little')
             masked = word_as_int & mask
             sram_addr = (slot + v_index - cache_base_v) * ww//8
-            masked_as_bytes = masked.to_bytes(ww//8)
+            masked_as_bytes = masked.to_bytes(ww//8, byteorder='little')
+            logger.warning(f'{self.clock.cycle}: jamlet {(self.x, self.y)}: storing {[int(x) for x in masked_as_bytes]}')
             self.sram[sram_addr: sram_addr + ww//8] = masked_as_bytes
 
     async def store_j2j_words_send(self, item_index: int, tag: int, assert_sends: bool) -> None:
@@ -1055,8 +1058,9 @@ class Jamlet:
                 if item is None:
                     continue
                 instr: kinstructions.KInstr
-                if isinstance(item.item, kinstructions.Load):
+                if item.witem_type == WItemType.LOAD_J2J_WORDS:
                     instr = item.item
+                    assert isinstance(instr, kinstructions.Load)
                     vw_index = addresses.j_coords_to_vw_index(
                             self.params, instr.dst_ordering.word_order, self.x, self.y)
                     src_ordering = instr.k_maddr.ordering
@@ -1065,14 +1069,12 @@ class Jamlet:
                     n_tags = instr.n_tags()
                     for tag in range(n_tags):
                         response_index = j_in_k_index * n_tags + tag
-                        response_info = item.response_infos[response_index]
-                        if not response_info.sent:
+                        protocol_state = item.protocol_states[response_index]
+                        if not protocol_state.src_state == LoadSrcState.NEED_TO_SEND:
                             await self.load_j2j_words_send(item_index, tag, assert_sends=False)
-                        if response_info.dropped:
-                            # TODO: Should we wait for a bit before resending??
-                            await self.load_j2j_words_send(item_index, tag, assert_sends=True)
-                elif isinstance(item.item, kinstructions.Store):
+                elif item.witem_type == WItemType.STORE_J2J_WORDS:
                     instr = item.item
+                    assert isinstance(instr, kinstructions.Store)
                     vw_index = addresses.j_coords_to_vw_index(
                             self.params, instr.src_ordering.word_order, self.x, self.y)
                     src_ordering = instr.k_maddr.ordering
@@ -1081,13 +1083,10 @@ class Jamlet:
                     n_tags = instr.n_tags()
                     for tag in range(n_tags):
                         response_index = j_in_k_index * n_tags + tag
-                        response_info = item.response_infos[response_index]
-                        if not response_info.sent:
+                        protocol_state = item.protocol_states[response_index]
+                        if not protocol_state.src_state == LoadSrcState.NEED_TO_SEND:
                             await self.store_j2j_words_send(item_index, tag, assert_sends=False)
-                        if response_info.dropped:
-                            # TODO: Should we wait for a bit before resending??
-                            await self.store_j2j_words_send(item_index, tag, assert_sends=True)
-                        if response_info.retry:
+                        if not protocol_state.dst_state == LoadDstState.NEED_TO_ASK_FOR_RESEND:
                             await self.send_store_j2j_words_retry(item, tag)
 
     async def run(self):
