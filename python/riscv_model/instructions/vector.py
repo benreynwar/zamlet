@@ -115,7 +115,10 @@ class VleV:
         else:
             mask_reg=0
         logger.debug(f'{s.clock.cycle}: do load')
-        await s.vload(self.vd, addr, self.element_width, s.vl, mask_reg)
+    #async def vload(self, vd: int, addr: int, ordering: addresses.Ordering,
+    #                n_elements: int, mask_reg: int, start_index: int):
+        ordering = addresses.Ordering(s.word_order, self.element_width)
+        await s.vload(self.vd, addr, ordering, s.vl, mask_reg, s.vstart)
         logger.debug(f'{s.clock.cycle}: kicked off load')
         s.pc += 4
         logger.debug(f'Loaded vector into vd={self.vd}')
@@ -146,7 +149,8 @@ class VseV:
             mask_reg = None
         else:
             mask_reg = 0
-        await s.vstore(self.vs3, addr, self.element_width, s.vl, mask_reg)
+        ordering = addresses.Ordering(s.word_order, self.element_width)
+        await s.vstore(self.vs3, addr, ordering, s.vl, mask_reg, s.vstart)
         s.pc += 4
         logger.debug(f'Stored vector from vs3={self.vs3}')
 

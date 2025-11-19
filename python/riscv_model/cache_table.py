@@ -9,6 +9,9 @@ from runner import Clock, Future
 from params import LamletParams
 from utils import SettableBool
 from message import Header, IdentHeader
+import kinstructions
+import addresses
+from addresses import KMAddr
 
 
 logger = logging.getLogger(__name__)
@@ -37,61 +40,163 @@ class CacheRequestState:
             x.update()
 
 
+class StoreSrcState(Enum):
+    NEED_TO_SEND = 'NEED_TO_SEND'
+    WAITING_FOR_RESPONSE = 'WAITING_FOR_RESPONSE'
+    COMPLETE = 'COMPLETE'
+
+
+class StoreDstState(Enum):
+    WAITING_FOR_REQUEST = 'WAITING_FOR_REQUEST'
+    NEED_TO_ASK_FOR_RESEND = 'NEED_TO_ASK_FOR_RESEND'
+    COMPLETE = 'COMPLETE'
+
+
 @dataclass
-class ResponseInfo:
-    # The response has been received.
-    received: bool = False
-    # The response let's us know the request was dropped.
-    # Used to resent the request.
-    drop_notification: bool = False
+class ProtocolState:
+    pass
+
+    def finished(self) -> bool:
+        raise NotImplementedError()
 
 
-#@dataclass
-#class LoadRequest:
-#    addr: KMAddr
-#    n_words: int
-#    src_x: int
-#    src_y: int
+@dataclass
+class StoreProtocolState(ProtocolState):
+    """
+    Each store instruction requires that for each jamlet and each tag:
+      - src: The src sends a request to store (with the data)
+                message = LOAD_J2J_WORDS
+              when it sends this it sets the src state is WAITING_FOR_RESPONSE
+      - dst: If the dst can't process it, it response with
+             message = LOAD_J2J_WORDS_DROP
+             it doesn't have a state for this yet, that's way it dropped it so it
+             can't update the state.
+      - dst: If it has a state, but doesn't have the cache line ready then it goes
+             to the NEED_TO_ASK_FOR_RESENT state, but it doesn't send a message yet.
+             When the cache line is ready it sends a LOAD_J2J_WORDS_RETRY message
+             and sets it's state to WAITING_FOR_REQUEST
+      - dst: If the the cache line is ready when it gets a LOAD_J2J_WORDS message then
+             it sets the state to COMPLETE and writes to the cache line.
+             It sends a LOAD_J2J_WORD_RESP message
+      - src: If the src receives a LOAD_J2J_WORDS_DROP message then it sets it's state 
+             back to NEED_TO_SEND
+      - src: If the src receives a LOAD_J2J_WORDS_RETRY message then it also sets the 
+             state back to NEED_TO_SEND
+      - src: If it receives a LOAD_J2J_WORDS_RESP message then it sets it's state to
+             complete.
+
+    Once the state is COMPLETE for src and dst for all tags then the store is complete.
+    """
+    src_state: StoreSrcState = StoreSrcState.NEED_TO_SEND
+    dst_state: StoreDstState = StoreDstState.WAITING_FOR_REQUEST
+
+    def finished(self) -> bool:
+        return self.src_state == StoreSrcState.COMPLETE and self.dst_state == StoreDstState.COMPLETE
+
+
+class LoadSrcState(Enum):
+    NEED_TO_SEND = 'NEED_TO_SEND'
+    WAITING_FOR_RESPONSE = 'WAITING_FOR_RESPONSE'
+    COMPLETE = 'COMPLETE'
+
+
+class LoadDstState(Enum):
+    WAITING_FOR_REQUEST = 'WAITING_FOR_RESPONSE'
+    NEED_TO_ASK_FOR_RESEND = 'NEED_TO_ASK_FOR_RESEND'
+    COMPLETE = 'COMPLETE'
+
+
+@dataclass
+class LoadProtocolState(ProtocolState):
+    src_state: LoadSrcState = LoadSrcState.NEED_TO_SEND
+    dst_state: LoadDstState = LoadDstState.WAITING_FOR_REQUEST
+
+    def finished(self) -> bool:
+        return self.src_state == LoadSrcState.COMPLETE and self.dst_state == LoadDstState.COMPLETE
+
+
+class WItemType(Enum):
+    STORE_J2J_WORDS = 'STORE_J2J_WORDS'
+    LOAD_J2J_WORDS = 'LOAD_J2J_WORDS'
+    WRITE_IMM_BYTES = 'WRITE_IMM_BYTES'
+    READ_BYTE = 'READ_BYTE'
+    # An aligned matching-ew vector load
+    LOAD_SIMPLE = 'LOAD_SIMPLE'
+    # An aligned matching-ew vector store
+    STORE_SIMPLE = 'STORE_SIMPLE'
+    # Just triggers a future when the item is ready.
+    FUTURE = 'FUTURE'
+
+
+WITEM_TO_ITEM_TYPE = {
+    WItemType.STORE_J2J_WORDS: kinstructions.Store,
+    WItemType.LOAD_J2J_WORDS: kinstructions.Load,
+    WItemType.WRITE_IMM_BYTES: kinstructions.WriteImmBytes,
+    WItemType.READ_BYTE: kinstructions.ReadByte,
+    WItemType.STORE_SIMPLE: kinstructions.Store,
+    WItemType.LOAD_SIMPLE: kinstructions.Load,
+    WItemType.FUTURE: Future,
+    }
+
+
+WITEM_TO_PROTOCOL_STATE_TYPE = {
+    WItemType.STORE_J2J_WORDS: StoreProtocolState,
+    WItemType.LOAD_J2J_WORDS: LoadProtocolState,
+    WItemType.WRITE_IMM_BYTES: None,
+    WItemType.READ_BYTE: None,
+    WItemType.STORE_SIMPLE: None,
+    WItemType.LOAD_SIMPLE: None,
+    WItemType.FUTURE: None,
+    }
 
 
 @dataclass
 class WaitingItem:
+    """
+    Represents something that must be done in the future once some preconditions are
+    met.  This could be cache becoming available or responses being received.
+    If the hardware we'll have a small buffer to keep these in.
+
+    It's ok if there are multiple WaitingItem with 'cache_is_read' for the same
+    cache slot, but we can't have some with 'cache_is_read' and some with
+    'cache_is_write'. We can have one item with 'cache_is_write' or several with
+    'cache_is_read'.
+
+    When creating a waiting item the cache_slot must be allocated at the same time.
+    """
+    witem_type: WItemType
+    protocol_states: List[ProtocolState]
     item: Any   # LoadRequest or KInstr
-    response_infos: List[ResponseInfo]
-    step: int = 0
+    cache_is_read: bool = False
     cache_is_write: bool = False
     cache_is_avail: bool = False
     cache_slot: int|None = None
-
-
-@dataclass
-class WriteBatch:
-    coro: Coroutine
-    address: int
-
-
-@dataclass
-class ReadBatch:
-    coros: List[Coroutine]
+    # This is used when two kamlets are communicating with one another to know
+    # that this is the same instruction.
+    # TODO: We should be able to work out a way to use this as the item_index so
+    # we don't have to match on it.
+    instr_ident: int|None = None
+    # A debug index to check that the same object is requesting a RF write and then
+    # releasing it.
+    rf_ident: int|None = None
+    # We can have multiple cache writes to the same slot if they all have the same
+    # writeset_ident. These are guaranteed to access different parts of the cache line.
+    # TODO: Currently  this is not used.
+    writeset_ident: int|None = None
 
 
 class CacheLineState:
 
     def __init__(self):
+        '''
+        Keeps track of the state of the cache lines and what location in
+        memory they represent.
+        '''
         self.state = CacheState.UNALLOCATED
         # The memory address divided by the cache line size
         self.memory_loc = None
         # The memory address of something that we're in the process of evicting
         self.old_memory_loc = None
-        self.batch_queue = []
-
-    def add_read_request(self, coro):
-        if not self.batch_queue or not isinstance(self.batch_queue[-1], ReadBatch):
-            self.batch_queue.append(ReadBatch([]))
-        self.batch_queue[-1].coros.append(coro)
-
-    def add_write_request(self, coro, address=None):
-        self.batch_queue.append(WriteBatch(coro, address))
 
 
 class CacheState(Enum):
@@ -103,8 +208,6 @@ class CacheState(Enum):
     WRITING_READING = 5  # In middle of writing data to the memory and reading new data
     UNALLOCATED = 6    # Not allocated to any address.
     OLD_MODIFIED = 10  # Has updated data compared to the memory (for old location)
-    #OLD_READING = 11   # In middle of reading data from the memory (for old location)
-    #OLD_WRITING = 12   # In middle of writing data to the memory (for old location)
 
 
 class CacheTable:
@@ -132,7 +235,7 @@ class CacheTable:
 
         self.acquiring_slot = False
 
-    def receive_cache_response(self, header: IdentHeader):
+    def receive_cache_response(self, header: IdentHeader) -> None:
         """
         Jamlet's pass us the headers of any WRITE_LINE_RESP or READ_LINE_RESP packets that they
         receive.
@@ -145,19 +248,37 @@ class CacheTable:
         assert state.ident == ident
         assert not state.received[tag]
         state.received[tag].set(True)
+        logger.warning(f'We got a cache response. received is now {[x.peek() for x in state.received]}')
 
-    async def get_free_item_index(self):
+    def can_get_free_item_index(self) -> bool:
+        return self.get_free_item_index_if_exists() is not None
+
+    def get_free_item_index_if_exists(self) -> int|None:
+        valid_indices = [index for index, x in enumerate(self.waiting_items) if x is None]
+        if valid_indices:
+            return valid_indices[0]
+        else:
+            return None
+
+    async def get_free_item_index(self) -> int:
         while True:
-            valid_indices = [index for index, x in enumerate(self.waiting_items) if x is None]
-            if valid_indices:
+            free_item = self.get_free_item_index_if_exists()
+            if free_item is not None:
                 break
             await self.clock.next_cycle
-        return valid_indices[0]
+        return free_item
 
-    def get_cache_request(self, slot):
+    def can_get_free_cache_request(self) -> bool:
+        valid_indices = [index for index, x in enumerate(self.cache_requests) if x is None]
+        return len(valid_indices) > 0
+
+    def get_cache_request_if_exists(self, slot):
         valid_indices = [index for index, x in enumerate(self.cache_requests) if x is not None and x.slot == slot]
-        assert len(valid_indices) == 1
-        return valid_indices[0]
+        assert len(valid_indices) in (0, 1)
+        if valid_indices:
+            return valid_indices[0]
+        else:
+            return None
 
     async def get_free_cache_request(self):
         logger.debug('get_free_cache_request: start')
@@ -169,70 +290,143 @@ class CacheTable:
         logger.debug('get_free_cache_request: end')
         return valid_indices[0]
 
-    async def add_item(self, new_item, response_tags, cache_is_write, cache_slot, step):
-        response_infos = [ResponseInfo(received=False, drop_notification=False) for req in response_tags]
-        cache_is_avail = self.slot_states[cache_slot].state in (CacheState.SHARED, CacheState.MODIFIED)
+    async def wait_for_slot_to_be_writeable(self, slot: int, k_maddr: KMAddr) -> None:
+        while True:
+            assert slot == self.addr_to_slot(k_maddr)
+            if not self.slot_in_use(slot):
+                break
+            await self.clock.next_cycle
+        state = self.get_state(k_maddr)
+        assert state.state in (CacheState.SHARED, CacheState.MODIFIED)
+
+    async def wait_for_slot_to_be_readable(self, slot: int, k_maddr: KMAddr) -> None:
+        while True:
+            assert slot == self.addr_to_slot(k_maddr)
+            if not self.slot_has_write(slot):
+                break
+            await self.clock.next_cycle
+        state = self.get_state(k_maddr)
+        assert state in (CacheState.SHARED, CacheState.MODIFIED)
+
+    async def add_item(self, witem_type: WItemType, new_item: Any,
+                       protocol_states: List[ProtocolState]|None=None,
+                       cache_is_write: bool=False, k_maddr: KMAddr|None=None,
+                       rf_ident: int|None=None,
+                       ):
+        if protocol_states is None:
+            protocol_states = []
+        if cache_is_write:
+            assert k_maddr is not None
+        slot = self.addr_to_slot(k_maddr)
+        if slot is None:
+            logger.warning('******************* ggetting a new slot')
+            slot = await self._get_new_slot(k_maddr)
+            logger.warning('******************* got it')
+        else:
+            if k_maddr is not None:
+                if cache_is_write:
+                    if self.slot_in_use(slot):
+                        # If there are other items in the midst of a read or write we need to wait for them to complete
+                        await self.wait_for_slot_to_be_writeable(slot, k_maddr)
+                else:
+                    if self.slot_has_write(slot):
+                        await self.wait_for_slot_to_be_readable(slot, k_maddr)
+            else:
+                assert not cache_is_write
+        cache_is_avail = self.slot_states[slot].state in (CacheState.SHARED, CacheState.MODIFIED)
         item = WaitingItem(
+            witem_type=witem_type,
             item=new_item,
-            response_infos=response_infos,
+            protocol_states=protocol_states,
             cache_is_write=cache_is_write,
+            cache_is_read=(k_maddr is not None) and not cache_is_write,
             cache_is_avail=cache_is_avail,
-            cache_slot=cache_slot,
-            step=step,
+            cache_slot=slot,
+            rf_ident=rf_ident,
             )
         new_item_index = await self.get_free_item_index()
+        logger.warning('******************* Added an item to waiting items')
         self.waiting_items[new_item_index] = item
         return new_item_index
 
-    def get_read_id(self):
-        read_id = self.next_read_id
-        self.next_read_id += 1
-        return read_id
-
-    async def request_read(self, k_maddr, item, step):
+    async def update_cache(self, slot):
         """
         The item with handled with the argument 'step' once the cache read is done.
         """
-        logger.debug(f'{self.clock.cycle}: {self.name}: Requesting a read for {hex(k_maddr.addr)}')
+        logger.debug(f'{self.clock.cycle}: {self.name}: Updating cache')
         # We want to read an address.
         # We might be given a slot that is ready to go.
         # We might be given slot and told we need to evict the current contents.
         # We might be given a slot and told we need to read in the contents.
-        slot = self.addr_to_slot(k_maddr)
-        if slot is None:
-            cache_request_index = await self.get_free_cache_request()
-            # There is not slot for this memory address. We need to get a slot.
-            slot = await self._get_new_slot(k_maddr)
-            slot_state = self.slot_states[slot]
-            if slot_state.state == CacheState.INVALID:
-                request_type=CacheRequestType.READ_LINE
-                n_sent = 1
-            elif slot_state.state == CacheState.OLD_MODIFIED:
-                request_type=CacheRequestType.WRITE_LINE_READ_LINE
-                n_sent = self.params.j_in_k
-            else:
-                assert False
-            assert self.cache_requests[cache_request_index] is None
-            cache_request = CacheRequestState(
-                    ident=cache_request_index,
-                    addr=k_maddr.addr,
-                    slot=slot,
-                    sent=[SettableBool(False) for x in range(n_sent)],
-                    received=[SettableBool(False) for x in range(self.params.j_in_k)],
-                    request_type=request_type,
-                    )
-            self.cache_requests[cache_request_index] = cache_request
+
+        slot_state = self.slot_states[slot]
+        logger.warning('************* getting a cache request')
+        cache_request_index = await self.get_free_cache_request()
+        logger.warning('************* got a cache request')
+        # There is not slot for this memory address. We need to get a slot.
+        if slot_state.state == CacheState.INVALID:
+            request_type=CacheRequestType.READ_LINE
+            n_sent = 1
+        elif slot_state.state == CacheState.OLD_MODIFIED:
+            request_type=CacheRequestType.WRITE_LINE_READ_LINE
+            n_sent = self.params.j_in_k
         else:
-            # We have a slot but it might be in the process of loading in.
-            slot_state = self.slot_states[slot]
-            assert slot_state.state in (CacheState.READING, CacheState.WRITING, CacheState.WRITING_READING)
-            # If it was shared or modified we can use it immediately and this
-            # function shouldn't have been called.
-            cache_request_index = self.get_cache_request(slot)
-            # Mark the slot as recently used
-            self.used_slots.remove(slot)
-            self.used_slots.append(slot)
-        await self.add_item(item, [], cache_is_write=False, cache_slot=slot, step=step)
+            assert False
+        assert self.cache_requests[cache_request_index] is None
+        cache_request = CacheRequestState(
+                ident=cache_request_index,
+                addr=slot_state.memory_loc,
+                slot=slot,
+                sent=[SettableBool(False) for x in range(n_sent)],
+                received=[SettableBool(False) for x in range(self.params.j_in_k)],
+                request_type=request_type,
+                )
+        self.cache_requests[cache_request_index] = cache_request
+
+    #async def request_read(self, k_maddr, item, step):
+    #    """
+    #    The item with handled with the argument 'step' once the cache read is done.
+    #    """
+    #    logger.debug(f'{self.clock.cycle}: {self.name}: Requesting a read for {hex(k_maddr.addr)}')
+    #    # We want to read an address.
+    #    # We might be given a slot that is ready to go.
+    #    # We might be given slot and told we need to evict the current contents.
+    #    # We might be given a slot and told we need to read in the contents.
+    #    slot = self.addr_to_slot(k_maddr)
+    #    if slot is None:
+    #        cache_request_index = await self.get_free_cache_request()
+    #        # There is not slot for this memory address. We need to get a slot.
+    #        slot = await self._get_new_slot(k_maddr)
+    #        slot_state = self.slot_states[slot]
+    #        if slot_state.state == CacheState.INVALID:
+    #            request_type=CacheRequestType.READ_LINE
+    #            n_sent = 1
+    #        elif slot_state.state == CacheState.OLD_MODIFIED:
+    #            request_type=CacheRequestType.WRITE_LINE_READ_LINE
+    #            n_sent = self.params.j_in_k
+    #        else:
+    #            assert False
+    #        assert self.cache_requests[cache_request_index] is None
+    #        cache_request = CacheRequestState(
+    #                ident=cache_request_index,
+    #                addr=k_maddr.addr,
+    #                slot=slot,
+    #                sent=[SettableBool(False) for x in range(n_sent)],
+    #                received=[SettableBool(False) for x in range(self.params.j_in_k)],
+    #                request_type=request_type,
+    #                )
+    #        self.cache_requests[cache_request_index] = cache_request
+    #    else:
+    #        # We have a slot but it might be in the process of loading in.
+    #        slot_state = self.slot_states[slot]
+    #        assert slot_state.state in (CacheState.READING, CacheState.WRITING, CacheState.WRITING_READING)
+    #        # If it was shared or modified we can use it immediately and this
+    #        # function shouldn't have been called.
+    #        cache_request_index = self.get_cache_request(slot)
+    #        # Mark the slot as recently used
+    #        self.used_slots.remove(slot)
+    #        self.used_slots.append(slot)
+    #    await self.add_item(item, [], cache_is_write=False, cache_slot=slot, step=step)
 
     #async def _prepare_cache(self, slot, cache_request_index):
     #    slot_state = self.slot_states[slot]
@@ -287,52 +481,52 @@ class CacheTable:
     #    if not this_batch.coros:
     #        slot_state.batch_queue.pop(0)
                 
-    async def request_write(self, k_maddr, item, step):
-        """
-        The coroutine will be run once k_maddr is available to write in the cache.
-        """
-        logger.debug(f'{self.clock.cycle}: {self.name}: Requesting a write for {hex(k_maddr.addr)}')
+    #async def request_write(self, k_maddr, item, step):
+    #    """
+    #    The coroutine will be run once k_maddr is available to write in the cache.
+    #    """
+    #    logger.debug(f'{self.clock.cycle}: {self.name}: Requesting a write for {hex(k_maddr.addr)}')
 
-        logger.warning('adding item')
-        logger.warning('added item')
+    #    logger.warning('adding item')
+    #    logger.warning('added item')
 
-        slot = self.addr_to_slot(k_maddr)
-        if slot is None:
-            cache_request_index = await self.get_free_cache_request()
-            # There is not slot for this memory address. We need to get a slot.
-            slot = await self._get_new_slot(k_maddr)
-            await self.add_item(item, [], cache_is_write=True, cache_slot=slot, step=step)
-            slot_state = self.slot_states[slot]
-            if slot_state.state == CacheState.INVALID:
-                request_type=CacheRequestType.READ_LINE
-                n_send = 1
-            elif slot_state.state == CacheState.OLD_MODIFIED:
-                request_type=CacheRequestType.WRITE_LINE_READ_LINE
-                n_send = self.params.j_in_k
-            else:
-                assert False
-            assert self.cache_requests[cache_request_index] is None
-            cache_request = CacheRequestState(
-                    ident=cache_request_index,
-                    slot=slot,
-                    addr=k_maddr.addr,
-                    sent=[SettableBool(False) for x in range(n_send)],
-                    received=[SettableBool(False) for x in range(self.params.j_in_k)],
-                    request_type=request_type,
-                    )
-            self.cache_requests[cache_request_index] = cache_request
-        else:
-            await self.add_item(item, [], cache_is_write=True, cache_slot=slot, step=step)
-            # We have a slot but it might be in the process of loading in.
-            slot_state = self.slot_states[slot]
-            assert slot_state.state in (CacheState.READING, CacheState.WRITING, CacheState.WRITING_READING)
-            # If it was shared or modified we can use it immediately and this
-            # function shouldn't have been called.
-            cache_request_index = self.get_cache_request(slot)
-            # Mark the slot as recently used
-            self.used_slots.remove(slot)
-            self.used_slots.append(slot)
-        return cache_request_index
+    #    slot = self.addr_to_slot(k_maddr)
+    #    if slot is None:
+    #        cache_request_index = await self.get_free_cache_request()
+    #        # There is not slot for this memory address. We need to get a slot.
+    #        slot = await self._get_new_slot(k_maddr)
+    #        await self.add_item(item, [], cache_is_write=True, cache_slot=slot, step=step)
+    #        slot_state = self.slot_states[slot]
+    #        if slot_state.state == CacheState.INVALID:
+    #            request_type=CacheRequestType.READ_LINE
+    #            n_send = 1
+    #        elif slot_state.state == CacheState.OLD_MODIFIED:
+    #            request_type=CacheRequestType.WRITE_LINE_READ_LINE
+    #            n_send = self.params.j_in_k
+    #        else:
+    #            assert False
+    #        assert self.cache_requests[cache_request_index] is None
+    #        cache_request = CacheRequestState(
+    #                ident=cache_request_index,
+    #                slot=slot,
+    #                addr=k_maddr.addr,
+    #                sent=[SettableBool(False) for x in range(n_send)],
+    #                received=[SettableBool(False) for x in range(self.params.j_in_k)],
+    #                request_type=request_type,
+    #                )
+    #        self.cache_requests[cache_request_index] = cache_request
+    #    else:
+    #        await self.add_item(item, [], cache_is_write=True, cache_slot=slot, step=step)
+    #        # We have a slot but it might be in the process of loading in.
+    #        slot_state = self.slot_states[slot]
+    #        assert slot_state.state in (CacheState.READING, CacheState.WRITING, CacheState.WRITING_READING)
+    #        # If it was shared or modified we can use it immediately and this
+    #        # function shouldn't have been called.
+    #        cache_request_index = self.get_cache_request(slot)
+    #        # Mark the slot as recently used
+    #        self.used_slots.remove(slot)
+    #        self.used_slots.append(slot)
+    #    return cache_request_index
 
     #async def _request_write_resolve(self, slot, coro, k_maddr):
     #    logger.debug(f'{self.clock.cycle}: {self.name}: started _request_write_resolve {hex(k_maddr.addr)}')
@@ -370,7 +564,9 @@ class CacheTable:
             return False
         else:
             state = self.get_state(k_maddr)
-            return state.state in (CacheState.SHARED, CacheState.MODIFIED)
+            good_state = state.state in (CacheState.SHARED, CacheState.MODIFIED)
+            has_write = self.slot_has_write(slot)
+            return good_state and not has_write
 
     def can_write(self, k_maddr):
         slot = self.addr_to_slot(k_maddr)
@@ -378,7 +574,9 @@ class CacheTable:
             return False
         else:
             state = self.get_state(k_maddr)
-            return state.state in (CacheState.SHARED, CacheState.MODIFIED)
+            good_state = state.state in (CacheState.SHARED, CacheState.MODIFIED)
+            in_use = self.slot_in_use(slot)
+            return good_state and not in_use
 
     #def get_free_slot(self):
     #    """
@@ -446,6 +644,71 @@ class CacheTable:
     #    assert state.state == CacheState.READING
     #    state.state = CacheState.SHARED
 
+    def slot_has_write(self, slot):
+        # Check to see if there are any waiting items using this slot.
+        slot_in_use = False
+        for item in self.waiting_items:
+            if item is None:
+                continue
+            using_cache = item.cache_is_write
+            if item.cache_slot == slot and using_cache:
+                slot_in_use = True
+        if slot_in_use:
+            assert slot in self.used_slots
+        return slot_in_use
+
+    def slot_in_use(self, slot):
+        # Check to see if there are any waiting items using this slot.
+        slot_in_use = False
+        for item in self.waiting_items:
+            if item is None:
+                continue
+            using_cache = item.cache_is_read or item.cache_is_write
+            if item.cache_slot == slot and using_cache:
+                slot_in_use = True
+        if slot_in_use:
+            assert slot in self.used_slots
+        return slot_in_use
+
+    def get_waiting_item_by_instr_ident(self, instr_ident: int) -> int|None:
+        valid_indices = [index for index, item in enumerate(self.waiting_items)
+                       if item is not None and item.instr_ident == instr_ident]
+        if not valid_indices:
+            return None
+        assert len(valid_indices) == 1
+        return valid_indices[0]
+
+    def _can_get_new_slot(self, k_maddr: KMAddr) -> bool:
+        if self.free_slots:
+            return True
+        else:
+            for check_slot in self.used_slots:
+                # Check to see if there are any waiting items using this slot.
+                slot_in_use = self.slot_in_use(check_slot)
+                if not slot_in_use:
+                    return True
+        return False
+
+    def _get_new_slot_if_exists(self, k_maddr: KMAddr, check: bool=True) -> int|None:
+        assert self.addr_to_slot(k_maddr) is None
+        self._check_slots()
+        if check:
+            assert not self.acquiring_slot
+        slot = None
+        if self.free_slots:
+            slot = self.free_slots.popleft()
+        else:
+            for check_slot in self.used_slots:
+                # Check to see if there are any waiting items using this slot.
+                slot_in_use = self.slot_in_use(slot)
+                if not slot_in_use:
+                    slot = check_slot
+                    self.used_slots.remove(slot)
+        if slot is not None:
+            self.used_slots.append(slot)
+        return slot
+
+
     async def _get_new_slot(self, k_maddr):
         """
         This returns a free slot if it can, otherwise it returns a slot to be evicted.
@@ -456,27 +719,16 @@ class CacheTable:
         # Adding some assert statements to make sure we don't call one request_read
         # until the previous is finished.
         assert not self.acquiring_slot
-        self.aquiring_slot = True
+        self.acquiring_slot = True
         slot = None
         while True:
-            if self.free_slots:
-                slot = self.free_slots.popleft()
-            else:
-                for check_slot in self.used_slots:
-                    state = self.slot_states[check_slot]
-                    #assert len(state.batch_queue) < 4
-                    if not state.batch_queue:
-                        slot = check_slot
-                        self.used_slots.remove(slot)
-                        break
+            slot = self._get_new_slot_if_exists(k_maddr, check=False)
             if slot is not None:
                 break
             await self.clock.next_cycle
-        self.aquiring_slot = False
-        self.used_slots.append(slot)
+        self.acquiring_slot = False
 
         slot_state = self.slot_states[slot]
-        assert slot_state.batch_queue == []
         slot_state.old_memory_loc = slot_state.memory_loc
         slot_state.memory_loc = k_maddr.addr//self.cache_line_bytes
         if slot_state.state == CacheState.SHARED:
@@ -552,6 +804,7 @@ class CacheTable:
         for item in self.waiting_items:
             if item is not None and item.cache_slot == request.slot:
                 logger.warning(f'item {item} has available cache')
+                assert not item.cache_is_avail
                 item.cache_is_avail = True
 
     def resolve_write_line_read_line(self, request: CacheRequestState):
@@ -600,6 +853,25 @@ class CacheTable:
     #    Detect cache lines that are invalid but should have data.
     #    Probably we've flushed but haven't read yet.  Submit the read.
     #    """
+
+    async def _monitor_items(self) -> None:
+        """
+        Creates cache requests for items that have cache slots that need updating.
+        """
+        while True:
+            await self.clock.next_cycle
+            for item in self.waiting_items:
+                if item is None:
+                    continue
+                slot = item.cache_slot
+                if slot is not None:
+                    assert item.cache_is_write or item.cache_is_read
+                    slot_state = self.slot_states[slot]
+                    if slot_state.state in (CacheState.INVALID, CacheState.OLD_MODIFIED):
+                        logger.warning(f'********** Updating cache for {slot}')
+                        # The cache needs updating.
+                        await self.update_cache(slot)
+
     async def _monitor_cache_responses(self):
         """
         Check to see if any of the open cache requests have received all of their responses.
@@ -623,6 +895,7 @@ class CacheTable:
 
     async def run(self):
         self.clock.create_task(self._monitor_cache_responses())
+        self.clock.create_task(self._monitor_items())
 
     def update(self):
         for index, state in enumerate(self.cache_requests):

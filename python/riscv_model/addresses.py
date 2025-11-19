@@ -9,7 +9,6 @@ from enum import Enum
 from typing import List, Dict
 
 from params import LamletParams
-from cache_table import CacheTable
 
 
 logger = logging.getLogger(__name__)
@@ -32,14 +31,14 @@ def vw_index_to_j_coords(params: LamletParams, word_order: WordOrder, vw_index: 
     raise NotImplementedError
 
 
-def j_coords_to_vw_index(params, word_order, j_x, j_y):
+def j_coords_to_vw_index(params: LamletParams, word_order: WordOrder, j_x: int, j_y: int):
     if word_order == WordOrder.STANDARD:
         vw_index = j_y * (params.j_cols * params.k_cols) + j_x
         return vw_index
     raise NotImplementedError
 
 
-def vw_index_to_k_indices(params: LamletParams, word_order, vw_index: int):
+def vw_index_to_k_indices(params: LamletParams, word_order: WordOrder, vw_index: int):
     """
     Convert the word index in a vector line into a jamlet index.
     """
@@ -307,11 +306,18 @@ class VPUAddress:
             bit_addr = info.global_address*8 + page_offset_bits, params=self.params
             )
 
+    def offset_bits(self, n_bits):
+        return VPUAddress(
+            self.bit_addr+n_bits,
+            ordering=self.ordering,
+            params=self.params,
+            )
+
 
 @dataclass(frozen=True)
 class LogicalVLineAddress:
     """
-    A bit address in a vline of the global address space before reordering
+    A bit address in a vline in the VPU address space.
     """
     # Which vline in the VPU memory this is.
     index: int
@@ -324,6 +330,13 @@ class LogicalVLineAddress:
     @property
     def addr(self):
         return self.bit_addr//8
+
+    def offset_bits(self, n_bits):
+        new_bit_addr = self.bit_addr + n_bits
+        new_index = self.index + new_bit_addr//(self.params.vline_bytes*8)
+        new_bit_addr = new_bit_addr % (self.params.vline_bytes*8)
+        return LogicalVLineAddress(index=new_index, ordering=self.ordering,
+                                   bit_addr=new_bit_addr, params=self.params)
 
     def to_physical_vline_addr(self):
         '''
@@ -365,6 +378,10 @@ class LogicalVLineAddress:
             params=self.params,
             )
 
+    def to_k_maddr(self):
+        physical_addr = self.to_physical_vline_addr()
+        return physical_addr.to_k_maddr()
+
     def to_global_addr(self, tlb: TLB):
         vpu_addr = self.to_vpu_addr()
         return vpu_addr.to_global_addr(tlb)
@@ -388,6 +405,15 @@ class PhysicalVLineAddress:
     @property
     def addr(self):
         return self.bit_addr//8
+
+    def offset_bits(self, n_bits: int):
+        incremented = self.bit_addr + n_bits
+        return PhysicalVLineAddress(
+            index=self.index + incremented//(self.params.vline_bytes*8),
+            ordering=self.ordering,
+            bit_addr=incremented % (self.params.vline_bytes * 8),
+            params=self.params,
+            )
 
     def to_k_maddr(self):
         vw_index = self.addr//self.params.word_bytes
@@ -493,7 +519,7 @@ class KMAddr:
             params=self.params,
             )
 
-    def to_physical_vline_addr(self):
+    def to_physical_vline_addr(self) -> PhysicalVLineAddress:
         wb = self.params.word_bytes
         k_vline_bits = self.params.j_in_k * wb * 8
         index = self.bit_addr // k_vline_bits
@@ -511,7 +537,12 @@ class KMAddr:
             params=self.params,
             )
 
-    def to_global_addr(self, tlb: TLB):
+    def to_logical_vline_addr(self) -> LogicalVLineAddress:
+        physical_vline_addr = self.to_physical_vline_addr()
+        logical_vline_addr = physical_vline_addr.to_logical_vline_addr()
+        return logical_vline_addr
+
+    def to_global_addr(self, tlb: TLB) -> GlobalAddress:
         physical_vline_addr = self.to_physical_vline_addr()
         return physical_vline_addr.to_global_addr(tlb)
 
@@ -536,7 +567,7 @@ class JSAddr:
     def addr(self):
         return self.bit_addr//8
 
-    def to_k_maddr(self, cache_table: CacheTable):
+    def to_k_maddr(self, cache_table: 'cache_table.CacheTable'):
         # First we need to check the cache state
         j_cache_line_bits = self.params.cache_line_bytes * 8 // self.params.j_in_k
         cache_slot = self.bit_addr//j_cache_line_bits
@@ -559,7 +590,7 @@ class JSAddr:
             params=self.params,
             )
 
-    def to_global_addr(self, tlb: TLB, cache_table: CacheTable):
+    def to_global_addr(self, tlb: TLB, cache_table: 'cache_table.CacheTable'):
         km_addr = self.to_k_maddr(cache_table)
         return km_addr.to_global_addr(tlb)
 

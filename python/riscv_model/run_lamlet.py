@@ -143,7 +143,7 @@ async def main(clock, filename):
 
 
 if __name__ == '__main__':
-    level = logging.INFO
+    level = logging.WARNING
     import sys
     import os
     root_logger = logging.getLogger()
@@ -160,13 +160,13 @@ if __name__ == '__main__':
     else:
         filenames = [
            #'tests/readwritebyte/should_fail.riscv',
-           'tests/readwritebyte/simple_vpu_test.riscv',
+           #'tests/readwritebyte/simple_vpu_test.riscv',
            #'tests/readwritebyte/write_then_read_many_bytes.riscv',
            #'tests/sgemv/vec-sgemv-large.riscv', (too small)
            #'tests/sgemv/vec-sgemv-64x64.riscv',
            # #'tests/sgemv/vec-sgemv.riscv',  (too small) (it tries to step through rows in a matrix but one row is less than vline so it gets misaligned)
            #'tests/vecadd/vec-add-evict.riscv',
-           #'tests/vecadd/vec-add.riscv',
+           'tests/vecadd/vec-add.riscv',
            #'tests/daxpy/vec-daxpy.riscv',
            #'tests/daxpy/vec-daxpy-small.riscv',
            #'tests/conditional/vec-conditional.riscv',

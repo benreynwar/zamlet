@@ -37,6 +37,24 @@ class MessageType(Enum):
     LOAD_BYTE_RESP = 14
     LOAD_WORDS_RESP = 15
 
+    # Sending data to another jamlet to be written to a register.
+    LOAD_J2J_WORDS = 16
+    # But the receiving jamlet might not be ready to write to that
+    # register. It must also be processing this instruction.
+    # If it is not ready it can drop this.
+    LOAD_J2J_WORDS_RESP = 17
+    LOAD_J2J_WORDS_DROP = 18
+
+    # Sending data to another jamlet to tell it to store it.
+    STORE_J2J_WORDS = 20
+    # The receiving jamlet must also be processing this instruction.
+    # Otherwise these are dropped.
+    STORE_J2J_WORDS_RESP = 21
+    # The receiver can immediately send a drop response
+    STORE_J2J_WORDS_DROP = 22
+    # Or it can wait until it is ready and then send a retry response.
+    STORE_J2J_WORDS_RETRY = 23
+
     #WRITE_REG_REQ = 8
     #WRITE_SP_REQ = 9
     #WRITE_MEM_REQ = 10
@@ -60,10 +78,17 @@ CHANNEL_MAPPING = {
     MessageType.READ_LINE_RESP: 0,
     MessageType.WRITE_LINE_RESP: 0,
     MessageType.READ_BYTE_RESP: 0,
+    MessageType.LOAD_J2J_WORDS_RESP: 0,
+    MessageType.LOAD_J2J_WORDS_DROP: 0,
+    MessageType.STORE_J2J_WORDS_RESP: 0,
+    MessageType.STORE_J2J_WORDS_DROP: 0,
+
 
     # Which channel require to send a always consumable message for them to be consumed
     MessageType.READ_LINE: 1,
     MessageType.WRITE_LINE: 1,
+    MessageType.LOAD_J2J_WORDS: 1,
+    MessageType.STORE_J2J_WORDS: 1,
 
     # This is always consumable because we will explicitly track how much buffer room there is.
     MessageType.INSTRUCTIONS: 0,
@@ -92,14 +117,16 @@ class Header:
 @dataclass
 class IdentHeader(Header):
     # ident is used to tie requests and responses together
-    ident: int     # 5 bits
+    ident: int     # 5 bits   # 48 bits specified (16 remaining)
 
 
 @dataclass
-class TaggedHeader(Header):
+class TaggedHeader(IdentHeader):
     # Used to distinguish replys when we expect lots
     # of replys.  Maybe simpler that using source_x, source_y?
     tag: int     # 4 bits
+    words_requested: int = 1 # 4 bits
+    mask: int = 0 #12 bits (can't use with words_requested)
 
 
 @dataclass

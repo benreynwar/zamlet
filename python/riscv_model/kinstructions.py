@@ -17,6 +17,7 @@ from enum import Enum
 
 import addresses
 from addresses import KMAddr
+from params import LamletParams
 
 
 logger = logging.getLogger(__name__)
@@ -141,7 +142,7 @@ class ReadByte(KInstr):
     ident: int
 
     async def update_kamlet(self, kamlet: 'Kamlet'):
-        await kamlet.handle_read_byte_instr(self, step=0)
+        await kamlet.handle_read_byte_instr(self)
 
 #@dataclass
 #class ReadLine(KInstr):
@@ -233,75 +234,60 @@ class ExpectRead(KInstr):
 @dataclass
 class Load(KInstr):
     """
-    A load from the VPU memory into a vecto register.
-    if k_maddr.addr is the first byte in a page, then src_offset may be used.  If
-    src_offset is 1 that means that k_maddr.addr corresponds to the second byte
-    of the first element.  We don't write anything to the first byte.
-    If the last element is split across two pages, only the first half is
-    written.
-    The other elements are guaranteed to be on the same page.
+    A load from the VPU memory into a vector register.
+    The k_maddr points to the location of the start_index element.
     """
     dst: int
-    k_maddr: KMAddr  # An address in the kamlet address space
+    # The address of the start_index element in the kamlet address space.
+    k_maddr: KMAddr
     start_index: int
     n_elements: int
     dst_ordering: addresses.Ordering  # src ordering is held in k_maddr
-    mask_reg: int
+    mask_reg: int|None
     writeset_ident: int
+    instr_ident: int
 
     async def update_kamlet(self, kamlet):
         await kamlet.handle_load_instr(self)
 
-
-@dataclass
-class LoadUnaligned(KInstr):
-    """
-    Loads a vectors that is not aligned to the vector line.
-    It does not do the barrel shifting of the data in the register.
-    """
-    dst: int
-    k_maddr: KMAddr  # An address in the kamlet address space
-    start_index: int
-    n_elements: int
-    element_width: int
-    word_order: addresses.WordOrder
-    mask_reg: int
-    writeset_ident: int
-
-    async def update_kamlet(self, kamlet):
-        await kamlet.handle_load_unaligned_instr(self)
-
-
-@dataclass
-class BarrelShift(KInstr):
-    """
-    Barrelshifts a vector or vector group.
-    """
-    dst: int
-    src: int
-    start_index: int
-    n_elements: int
-    bytes_to_shift: int
-    element_width: int
-    word_order: addresses.WordOrder
-    mask_reg: int
-    writeset_ident: int
-
-    async def update_kamlet(self, kamlet):
-        await kamlet.handle_barrel_shift_instr(self)
+    def n_tags(self):
+        """
+        Returns the number of tags per jamlet.
+        """
+        src_ew = self.k_maddr.ordering.ew
+        dst_ew = self.dst_ordering.ew
+        if src_ew < dst_ew:
+            ratio = dst_ew//src_ew
+        else:
+            ratio = src_ew//dst_ew
+        return ratio * 2
 
 
 @dataclass
 class Store(KInstr):
     src: int
     k_maddr: KMAddr  # An address in the kamlet address space
+    start_index: int
     n_elements: int
-    element_width: int
-    word_order: addresses.WordOrder
+    src_ordering: addresses.Ordering
     mask_reg: int
+    writeset_ident: int
+    instr_ident: int
 
     async def update_kamlet(self, kamlet):
         await kamlet.handle_store_instr(self)
+
+    def n_tags(self):
+        """
+        Returns the number of tags per jamlet.
+        """
+        dst_ew = self.k_maddr.ordering.ew
+        src_ew = self.src_ordering.ew
+        if src_ew < dst_ew:
+            ratio = dst_ew//src_ew
+        else:
+            ratio = src_ew//dst_ew
+        return ratio * 2
 
 #@dataclass
 #class Store(KInstr):

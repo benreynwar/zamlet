@@ -307,7 +307,7 @@ class Memlet:
                 assert address % self.params.cache_line_bytes == 0
                 index = address//self.params.cache_line_bytes
                 wb = self.params.word_bytes
-                logger.debug(f'handle_read_line_packet: ident={ident} address={hex(address)}')
+                logger.warning(f'handle_read_line_packet: ident={ident} address={hex(address)}')
                 cache_line = self.read_cache_line(index)
                 packet_payloads = [[] for i in range(self.params.j_in_k)]
                 for word_index in range(len(cache_line)//wb):

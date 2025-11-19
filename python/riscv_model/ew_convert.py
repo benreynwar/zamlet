@@ -1,13 +1,14 @@
 from random import Random
 from dataclasses import dataclass
-from typing import List
+from typing import List, Dict, Tuple
 
 from params import LamletParams
+import utils
 
 
 def get_rand_bytes(rnd: Random, n: int):
-    ints = [rnd.getrandbits(8) for i in range(n)]
-    #ints = [i % 256 for i in range(n)]
+    #ints = [rnd.getrandbits(8) for i in range(n)]
+    ints = [i % 256 for i in range(n)]
     return bytes(ints)
 
 
@@ -28,7 +29,7 @@ def bytes_to_bits(byts: bytes):
     return bits
 
 
-def bits_to_bytes(bits: List[int]):
+def bits_to_bytes(bits: List[int]) -> bytes:
     assert len(bits) % 8 == 0
     assert all(bit in (0, 1) for bit in bits)
     byt = 0
@@ -41,8 +42,8 @@ def bits_to_bytes(bits: List[int]):
             byts.append(byt)
             byt = 0
             f = 1
-    byts = bytes(byts)
-    return byts
+    byts_as_bytes = bytes(byts)
+    return byts_as_bytes
 
 
 def uint_to_list_of_uints(value: int, width: int, length: int):
@@ -64,6 +65,96 @@ def bits_to_int(bits: List[int]):
     return value
 
 
+@dataclass(frozen=True)
+class MemMapping:
+    # The vector line index in the small-ew-mapped vector
+    src_v: int
+    # The word index inside a vector in the small-ew-mapped vector
+    src_vw: int
+    # The element index inside a vector in the small-ew-mapped vector
+    src_ve: int
+    # The bit in the word
+    src_wb: int
+    # The vector line index in the large-ew-mapped vector
+    dst_v: int
+    # The word index inside a vector in the large-ew-mapped vector
+    dst_vw: int
+    # The element index inside a vector in the large-ew-mapped vector
+    dst_ve: int
+    # The bit in the word
+    dst_wb: int
+    # The number of bits that are mapped
+    n_bits: int
+
+    # # The amount of bits that we shift the bits to the left inside the word
+    # # when going from the large-ew-mapped vector to the small-ew-mapped vector
+    # shift: int
+    # # The bit mask to apply when updating the word in the small-ew-mapped vector
+    # mask: int
+
+    # The tag use to refer to this mapping for a small-ew-mapped word
+    src_tag: int
+    # The tag use to refer to this mapping for a large-ew-mapped word
+    dst_tag: int
+
+    def dst_mask(self) -> int:
+        return ((1 << self.n_bits) - 1) << self.dst_wb
+            
+
+
+
+
+@dataclass(frozen=True)
+class SmallLargeMapping:
+    # The vector line index in the small-ew-mapped vector
+    small_v: int
+    # The word index inside a vector in the small-ew-mapped vector
+    small_vw: int
+    # The element index inside a vector in the small-ew-mapped vector
+    small_ve: int
+    # The bit in the word
+    small_wb: int
+    # The vector line index in the large-ew-mapped vector
+    large_v: int
+    # The word index inside a vector in the large-ew-mapped vector
+    large_vw: int
+    # The element index inside a vector in the large-ew-mapped vector
+    large_ve: int
+    # The bit in the word
+    large_wb: int
+    # The number of bits that are mapped
+    n_bits: int
+
+    # # The amount of bits that we shift the bits to the left inside the word
+    # # when going from the large-ew-mapped vector to the small-ew-mapped vector
+    # shift: int
+    # # The bit mask to apply when updating the word in the small-ew-mapped vector
+    # mask: int
+
+    # The tag use to refer to this mapping for a small-ew-mapped word
+    small_tag: int
+    # The tag use to refer to this mapping for a large-ew-mapped word
+    large_tag: int
+
+    def normalize(self):
+        # Normalize to small_v = 0
+        return SmallLargeMapping(
+            small_v=0,
+            small_vw=self.small_vw,
+            small_ve=self.small_ve,
+            small_wb=self.small_wb,
+            large_v=self.large_v - self.small_v,
+            large_vw=self.large_vw,
+            large_ve=self.large_ve,
+            large_wb=self.large_wb,
+            n_bits=self.n_bits,
+            #shift=self.shift,
+            #mask=self.mask,
+            small_tag=self.small_tag,
+            large_tag=self.large_tag,
+            )
+
+
 def encode_into_words(params: LamletParams, data: bytes, ew: int):
     #print(f'encoding to ew {ew} data {[int(x) for x in data]}')
     assert len(data) % params.vline_bytes == 0
@@ -74,14 +165,15 @@ def encode_into_words(params: LamletParams, data: bytes, ew: int):
         n_elements = params.vline_bytes*8//ew
         elements = [bits[n*ew: (n+1)*ew] for n in range(n_elements)]
         n_words = params.j_in_l
-        vline_words = [[] for i in range(n_words)]
+        vline_words: List[List[int]] = [[] for i in range(n_words)]
+        vline_words_as_bytes: List[bytes] = [bytes() for i in range(n_words)]
         for el_index in range(n_elements):
             vline_words[el_index % n_words] += elements[el_index]
         for index in range(n_words):
             assert len(vline_words[index]) == params.word_bytes * 8
-            vline_words[index] = bits_to_bytes(vline_words[index])
+            vline_words_as_bytes[index] = bits_to_bytes(vline_words[index])
         #print(f'result is {[[int(x) for x in data] for data in words]}')
-        words += vline_words
+        words += vline_words_as_bytes
     for word in words:
         assert len(word) == params.word_bytes
     return words
@@ -107,44 +199,62 @@ def decode_from_words(params: LamletParams, words: List[bytes], ew: int):
     return data
 
 
-@dataclass
-class GetWordMessage:
-
-    v_index: int
-    vw_index: int
-    shift_left: int
-    bit_mask: int
-
-
-def extract_words(params: LamletParams, src_words: List[List[int]], messages: List[List[GetWordMessage]]):
+def extract_words(params: LamletParams, src_words: List[bytes], src_ew: int, dst_ew: int, src_offset: int):
     """
     src_words is three vectors
     We want to get the middle dst vector.
     """
     assert len(src_words) == params.j_in_l * 3
     word_mask = (1 << params.word_bytes*8) - 1
+    small_ew = min(src_ew, dst_ew)
+    ww = params.word_bytes * 8
+    n_tags = ww//small_ew * 2
     words = []
-    for word_index, word_messages in enumerate(messages):
-        word = 0
-        for msg_index, message in enumerate(word_messages):
-            src_word = src_words[message.vw_index + params.j_in_l*(1+message.v_index)]
-            src_word_int = int.from_bytes(src_word, byteorder='little', signed=False)
-            #print(f'vw_index {word_index} msg_index {msg_index}')
-            #print(f'src_word is {[int(x) for x in src_word]}')
-            if message.shift_left < 0:
-                shifted = (src_word_int << (-message.shift_left)) & word_mask
+    dst_v = 1
+    for dst_vw in range(params.j_in_l):
+        updating_word = 0
+        for tag in range(n_tags):
+            if dst_ew > src_ew:
+                src_is_small = True
+                mapping = get_mapping_from_large_tag(
+                        params=params, small_ew=src_ew, large_ew=dst_ew, small_offset=src_offset,
+                        large_offset=0, large_v=dst_v, large_vw=dst_vw, large_tag=tag)
+                if mapping is None:
+                    continue
+                src_word = src_words[mapping.small_vw + params.j_in_l*mapping.small_v]
             else:
-                shifted = src_word_int >> message.shift_left
+                src_is_small = False
+                mapping = get_mapping_from_small_tag(
+                        params=params, small_ew=dst_ew, large_ew=src_ew, small_offset=0,
+                        large_offset=src_offset, small_v=dst_v, small_vw=dst_vw, small_tag=tag)
+                if mapping is None:
+                    continue
+                src_word = src_words[mapping.large_vw + params.j_in_l*mapping.large_v]
+            src_word_as_int = int.from_bytes(src_word, byteorder='little')
+            #print(f'dst vw_index {word_index} msg_index {msg_index} tag={message.tag}')
+            #print(f'src_word is {[int(x) for x in src_word]}')
+            if not src_is_small:
+                # Work out shift to lsb
+                shift = mapping.large_wb - mapping.small_wb
+                mask = ((1 << mapping.n_bits)-1) << mapping.small_wb
+            else:
+                shift = mapping.small_wb - mapping.large_wb
+                mask = ((1 << mapping.n_bits)-1) << mapping.large_wb
+            if shift < 0:
+                shifted = (src_word_as_int << (-shift)) & word_mask
+            else:
+                shifted = src_word_as_int >> shift
+            masked = shifted & mask
             #print(f'shifted is {uint_to_list_of_uints(shifted, 8, params.word_bytes)}')
-            masked = shifted & message.bit_mask
+            #print(f'bit_mask is {bin(mask)}')
             #print(f'masked is {uint_to_list_of_uints(masked, 8, params.word_bytes)}')
-            old_word = word
-            word = word & (~message.bit_mask)
-            word = word | masked
-            #print(f'word is {uint_to_list_of_uints(word, 8, params.word_bytes)}')
-            old_word_bytes = old_word.to_bytes(params.word_bytes, byteorder='little', signed=False)
-            word_bytes = word.to_bytes(params.word_bytes, byteorder='little', signed=False)
-        byts = word.to_bytes(params.word_bytes, byteorder='little', signed=False)
+            masked_word = updating_word & (~mask)
+            new_word = masked_word | masked
+            #print(f'word is {uint_to_list_of_uints(new_word, 8, params.word_bytes)}')
+            old_word_bytes = src_word
+            word_bytes = new_word.to_bytes(params.word_bytes, byteorder='little', signed=False)
+            updating_word = new_word
+        byts = updating_word.to_bytes(params.word_bytes, byteorder='little', signed=False)
         words.append(byts)
     return words
 
@@ -169,174 +279,270 @@ def join_by_factors(values, factors):
         f *= factor
     return total
 
-def create_messages_large_src_ew(params: LamletParams, src_ew: int, dst_ew: int, offset: int, start_element: int, n_elements: int):
-    n_vectors = 4
-    ww = params.word_bytes * 8
-    assert src_ew >= dst_ew
-    ratio = src_ew//dst_ew
-    messages = []
-    for dst_vw in range(params.j_in_l):   # word in vector
-        uses = {}
-        for dst_we in range(ww//dst_ew):
-            dst_ve = join_by_factors([dst_vw, dst_we], [params.j_in_l, ww//dst_ew])
-            if dst_ve < start_element or dst_ve >= start_element + n_elements:
-                continue
-            dst_eb = 0
-            dst_wb = join_by_factors([dst_eb, dst_we],  [dst_ew, ww//dst_ew])
-            logical_address = join_by_factors([dst_eb, dst_vw, dst_we], [dst_ew, params.j_in_l, ww//dst_ew])
-            offset_address = logical_address + offset
-            src_eb, src_vw, src_we, src_v = split_by_factors(offset_address, [src_ew, params.j_in_l, ww//src_ew, n_vectors])
-            src_wb = join_by_factors([src_eb, src_we], [src_ew, ww/src_ew])
-            shift = src_wb - dst_wb
-            mask = [0] * ww
-            # Can we get the full dst_ew bits?
-            if (src_eb + dst_ew) < src_ew:
-                # Yes we can
-                avail_bits = dst_ew
-            else:
-                avail_bits = src_ew - src_eb
-            mask[dst_we*dst_ew+dst_eb: dst_we*dst_ew+dst_eb + avail_bits] = [1] * avail_bits
-            if src_vw not in uses:
-                uses[src_vw] = []
-            uses[src_vw].append((src_v, shift, mask))
-            #print(f'------')
-            #print(f'dst_vw = {dst_vw}, dst_eb = {dst_eb}, dst_we = {dst_we}')
-            #print(f'offset address is {offset_address}')
-            #print(f'src_v = {src_v}, src_vw = {src_vw}, src_eb = {src_eb}, src_we = {src_we}')
-            #print(f'shift is {shift}, mask is {mask}')
-            if avail_bits < dst_ew:
-                dst_eb = avail_bits
-                dst_wb = join_by_factors([dst_eb, dst_we],  [dst_ew, ww//dst_ew])
-                logical_address = join_by_factors([dst_eb, dst_vw, dst_we], [dst_ew, params.j_in_l, ww//dst_ew])
-                offset_address = logical_address + offset
-                src_eb, src_vw, src_we, src_v = split_by_factors(offset_address, [src_ew, params.j_in_l, ww//src_ew, n_vectors])
-                src_wb = join_by_factors([src_eb, src_we], [src_ew, ww/src_ew])
-                shift = src_wb - dst_wb
-                mask = [0] * ww
-                mask[dst_we*dst_ew+dst_eb: dst_we*dst_ew+dst_eb + (dst_ew - avail_bits)] = [1] * (dst_ew - avail_bits)
-                if src_vw not in uses:
-                    uses[src_vw] = []
-                uses[src_vw].append((src_v, shift, mask))
-                #print(f'------')
-                #print(f'dst_vw = {dst_vw}, dst_eb = {dst_eb}, dst_we = {dst_we}')
-                #print(f'offset address is {offset_address}')
-                #print(f'src_v = {src_v}, src_vw = {src_vw}, src_eb = {src_eb}, src_we = {src_we}')
-                #print(f'shift is {shift}, mask is {mask}')
-        word_messages = []
-        for src_vw, addrs_shifts_and_masks in uses.items():
-            for src_v, shift, mask in addrs_shifts_and_masks:
-                bit_mask = bits_to_int(mask)
-                message = GetWordMessage(
-                    v_index=src_v,
-                    vw_index=src_vw,
-                    shift_left=shift,
-                    bit_mask=bit_mask,
-                    )
-                word_messages.append(message)
-        messages.append(word_messages)
-    return messages
-
-
-def create_messages_small_src_ew(params: LamletParams, src_ew: int, dst_ew: int, offset: int, start_element: int, n_elements: int):
-    n_vectors = 4
-    ww = params.word_bytes * 8
-    assert dst_ew >= src_ew
-    ratio = dst_ew//src_ew
-    messages = []
-    for dst_vw in range(params.j_in_l):   # word in vector
-        uses = {}
-        for index in range(dst_ew//src_ew):
-            dst_eb = src_ew * index
-            src_ebs = []
-            for dst_we in range(ww//dst_ew):
-                dst_ve = join_by_factors([dst_vw, dst_we], [params.j_in_l, ww//dst_ew])
-                if dst_ve < start_element or dst_ve >= start_element + n_elements:
-                    continue
-                dst_wb = join_by_factors([dst_eb, dst_we],  [dst_ew, ww//dst_ew])
-                #dst_vw_U, dst_vw_L = split_by_factors(dst_vw, [ratio, params.j_in_l//ratio])
-                #dst_eb_U, dst_eb_L = split_by_factors(dst_eb, [ratio, src_ew])
-                logical_address = join_by_factors([dst_eb, dst_vw, dst_we], [dst_ew, params.j_in_l, ww//dst_ew])
-                offset_address = logical_address + offset
-                src_eb, src_vw, src_we, src_v = split_by_factors(offset_address, [src_ew, params.j_in_l, ww//src_ew, n_vectors])
-                src_wb = join_by_factors([src_eb, src_we], [src_ew, ww/src_ew])
-                shift = src_wb - dst_wb
-                mask = [0] * ww
-                mask[dst_we*dst_ew+dst_eb: dst_we*dst_ew+dst_eb + (src_ew-src_eb)] = [1] * (src_ew - src_eb)
-                #mask[src_we*src_ew+src_eb: (src_we+1)*src_ew] = [1] * (src_ew-src_eb)
-                if src_vw not in uses:
-                    uses[src_vw] = []
-                uses[src_vw].append((src_v, shift, mask))
-                src_ebs.append(src_eb)
-                #print(f'------')
-                #print(f'dst_vw = {dst_vw}, dst_eb = {dst_eb}, dst_we = {dst_we}')
-                #print(f'offset address is {offset_address}')
-                #print(f'src_v = {src_v}, src_vw = {src_vw}, src_eb = {src_eb}, src_we = {src_we}')
-                #print(f'shift is {shift}, mask is {mask}')
-            # # As we increment dst_we we increment src_we_U. That will give us a similar segment for a different element in the word.
-            # # Because src_we_U maps to the upper bits of the logical address any increase by a multiple of the src_we_U
-            # # factor cannot effect any other bits in the address, since it can't overflow into another region.
-            # # The shift won't change because this will change the src_wb and dst_wb by the same amount.
-            # # The mask will change in a simple way that just shifts the ones.
-            # # The src_vw should stay the same
-            # assert len(uses) == 1
-            # assert len(set(x.shift for x in uses.values())) == 1
-            # assert len(set(src_ebs)) == 1
-            prev_src_eb = src_ebs[0]
-
-            # Now let's get the other half of those segments if we only got partial segments.
-            if prev_src_eb != 0:
-                required_bits = prev_src_eb
-                dst_eb = index*src_ew + src_ew - prev_src_eb
-                for dst_we in range(ww//dst_ew):
-                    dst_ve = join_by_factors([dst_vw, dst_we], [params.j_in_l, ww//dst_ew])
-                    if dst_ve < start_element or dst_ve >= start_element + n_elements:
-                        continue
-                    dst_wb = join_by_factors([dst_eb, dst_we],  [dst_ew, ww//dst_ew])
-                    logical_address = join_by_factors([dst_eb, dst_vw, dst_we], [dst_ew, params.j_in_l, ww//dst_ew])
-                    offset_address = logical_address + offset
-                    src_eb, src_vw, src_we, src_v = split_by_factors(offset_address, [src_ew, params.j_in_l, ww//src_ew, n_vectors])
-                    src_wb = join_by_factors([src_eb, src_we], [src_ew, ww//src_ew])
-                    # We expect that the src_vw has incremented since the overflow from src_eb will flow into that
-                    # The shift will also be different since the overflow will effect the wb in src and dst differently.
-                    shift = src_wb - dst_wb
-                    mask = [0] * ww
-                    mask[dst_we*dst_ew+dst_eb: dst_we*dst_ew+dst_eb + required_bits] = [1] * required_bits
-                    if src_vw not in uses:
-                        uses[src_vw] = []
-                    uses[src_vw].append((src_v, shift, mask))
-                    #print(f'------')
-                    #print(f'dst_vw = {dst_vw}, dst_eb = {dst_eb}, dst_we = {dst_we}')
-                    #print(f'offset address is {offset_address}')
-                    #print(f'src_v = {src_v}, src_vw = {src_vw}, src_eb = {src_eb}, src_we = {src_we}')
-                    #print(f'shift is {shift}, mask is {mask}')
-        word_messages = []
-        for src_vw, addrs_shifts_and_masks in uses.items():
-            for src_v, shift, mask in addrs_shifts_and_masks:
-                bit_mask = bits_to_int(mask)
-                message = GetWordMessage(
-                    v_index=src_v,
-                    vw_index=src_vw,
-                    shift_left=shift,
-                    bit_mask=bit_mask,
-                    )
-                word_messages.append(message)
-        messages.append(word_messages)
-    return messages
-
-
-def create_messages(params: LamletParams, src_ew: int, dst_ew: int, offset: int, start_element: int, n_elements: int):
-    """
-    Works out what READ_WORD messages need to be sent
-      src_ew: The src element width
-      dst_ew: The dst element width
-      offset: The src offset in bits
-      start_element: Which element in the vector we start on.
-      n_elements: The number of elements to copy.
-    """
-    if src_ew <= dst_ew:
-        return create_messages_small_src_ew(params, src_ew, dst_ew, offset, start_element, n_elements)
+def get_mapping_for_dst(
+        params: LamletParams, src_ew: int, dst_ew: int,
+        dst_v: int, dst_vw: int, dst_tag: int, src_offset: int=0, dst_offset: int=0):
+    if src_ew > dst_ew:
+        small_ew = dst_ew
+        large_ew = src_ew
+        small_offset = dst_offset
+        large_offset = src_offset
+        small_v = dst_v
+        small_vw = dst_vw
+        small_tag = dst_tag
+        mapping = get_mapping_from_small_tag(
+                params=params, small_ew=small_ew, large_ew=large_ew,
+                small_offset=small_offset, large_offset=large_offset,
+                small_v=small_v, small_vw=small_vw, small_tag=small_tag)
+        if mapping is None:
+            return None
+        mem_mapping = MemMapping(
+                src_v=mapping.large_v,
+                src_vw=mapping.large_vw,
+                src_ve=mapping.large_ve,
+                src_wb=mapping.large_wb,
+                dst_v=mapping.small_v,
+                dst_vw=mapping.small_vw,
+                dst_ve=mapping.small_ve,
+                dst_wb=mapping.small_wb,
+                n_bits=mapping.n_bits,
+                src_tag=mapping.large_tag,
+                dst_tag=mapping.small_tag,
+                )
     else:
-        return create_messages_large_src_ew(params, src_ew, dst_ew, offset, start_element, n_elements)
+        small_ew = src_ew
+        large_ew = dst_ew
+        small_offset = src_offset
+        large_offset = 0
+        large_v = dst_v
+        large_vw = dst_vw
+        large_tag = dst_tag
+        mapping = get_mapping_from_large_tag(
+                params=params, small_ew=small_ew, large_ew=large_ew,
+                small_offset=small_offset, large_offset=large_offset,
+                large_v=large_v, large_vw=large_vw, large_tag=large_tag)
+        if mapping is None:
+            return None
+        mem_mapping = MemMapping(
+                src_v=mapping.large_v,
+                src_vw=mapping.small_vw,
+                src_ve=mapping.small_ve,
+                src_wb=mapping.small_wb,
+                dst_v=mapping.small_v,
+                dst_vw=mapping.large_vw,
+                dst_ve=mapping.large_ve,
+                dst_wb=mapping.large_wb,
+                n_bits=mapping.n_bits,
+                src_tag=mapping.small_tag,
+                dst_tag=mapping.large_tag,
+                )
+    return mem_mapping
+
+
+def get_mapping_for_src(
+        params: LamletParams, src_ew: int, dst_ew: int,
+        src_v: int, src_vw: int, src_tag: int, src_offset:int=0, dst_offset:int=0):
+    if dst_ew > src_ew:
+        small_ew = src_ew
+        large_ew = dst_ew
+        small_offset = src_offset
+        large_offset = dst_offset
+        small_v = src_v
+        small_vw = src_vw
+        small_tag = src_tag
+        mapping = get_mapping_from_small_tag(
+                params=params, small_ew=small_ew, large_ew=large_ew,
+                small_offset=small_offset, large_offset=large_offset,
+                small_v=small_v, small_vw=small_vw, small_tag=small_tag)
+        if mapping is None:
+            return None
+        mem_mapping = MemMapping(
+                src_v=mapping.large_v,
+                src_vw=mapping.large_vw,
+                src_ve=mapping.large_ve,
+                src_wb=mapping.large_wb,
+                dst_v=mapping.small_v,
+                dst_vw=mapping.small_vw,
+                dst_ve=mapping.small_ve,
+                dst_wb=mapping.small_wb,
+                n_bits=mapping.n_bits,
+                src_tag=mapping.large_tag,
+                dst_tag=mapping.small_tag,
+                )
+    else:
+        small_ew = dst_ew
+        large_ew = src_ew
+        small_offset = dst_offset
+        large_offset = 0
+        large_v = src_v
+        large_vw = src_vw
+        large_tag = src_tag
+        mapping = get_mapping_from_large_tag(
+                params=params, small_ew=small_ew, large_ew=large_ew,
+                small_offset=small_offset, large_offset=large_offset,
+                large_v=large_v, large_vw=large_vw, large_tag=large_tag)
+        if mapping is None:
+            return None
+        mem_mapping = MemMapping(
+                src_v=mapping.large_v,
+                src_vw=mapping.small_vw,
+                src_ve=mapping.small_ve,
+                src_wb=mapping.small_wb,
+                dst_v=mapping.small_v,
+                dst_vw=mapping.large_vw,
+                dst_ve=mapping.large_ve,
+                dst_wb=mapping.large_wb,
+                n_bits=mapping.n_bits,
+                src_tag=mapping.small_tag,
+                dst_tag=mapping.large_tag,
+                )
+    return mem_mapping
+
+
+def get_large_small_mapping(vw: int, ww: int, small_ew: int, large_ew: int,
+                large_v: int, large_vw: int, large_we: int, large_eb: int,
+                small_v: int, small_vw: int, small_we: int, small_eb: int):
+
+    large_is_second_segment = (large_eb % small_ew) != 0
+    large_tag = (large_we * large_ew//small_ew + large_eb//small_ew) * 2 + large_is_second_segment
+
+    small_is_second_segment = (small_eb % small_ew) != 0
+    small_tag = small_we * 2 + small_is_second_segment
+
+    bits_to_end_of_large_element = large_ew - large_eb
+    bits_to_end_of_small_element = small_ew - small_eb
+    n_bits = min(bits_to_end_of_large_element, bits_to_end_of_small_element)
+    mask = [0] * ww
+    mask[small_we*small_ew+small_eb: small_we*small_ew+small_eb + n_bits] = [1] * n_bits
+    mask_as_int = utils.list_of_uints_to_uint(mask, width=1)
+
+    small_wb = join_by_factors([small_eb, small_we], [small_ew, ww//small_ew])
+    small_ve = join_by_factors([small_we, small_vw], [ww//small_ew, vw//ww])
+    large_wb = join_by_factors([large_eb, large_we], [large_ew, ww/large_ew])
+    large_ve = join_by_factors([large_we, large_vw], [ww//large_ew, vw//ww])
+    shift = large_wb - small_wb
+
+    return SmallLargeMapping(
+        small_v=small_v,
+        small_vw=small_vw,
+        small_ve=small_ve,
+        small_wb=small_wb,
+        large_v= large_v,
+        large_vw=large_vw,
+        large_ve=large_ve,
+        large_wb=large_wb,
+        n_bits=n_bits,
+        #shift=shift,
+        #mask=mask_as_int,
+        small_tag=small_tag,
+        large_tag=large_tag,
+        )
+
+
+def get_mapping_from_large_tag(
+        params: LamletParams, small_ew: int, large_ew: int,
+        small_offset: int, large_offset: int,
+        large_v: int, large_vw: int, large_tag: int):
+    """
+    small_ew: The element width in the small-ew mapped vector
+    large_ew: The element width in the large-ew mapped vector
+    small_offset: The logical offset in bits of the small-ew mapped vector relative to the vector line.
+    large_offset: The logical offset in bits of the large-ew mapped vector relative to the vector line.
+    large_vw: Which word in the large-ew mapped vector we want the mapping for.
+    large_tag: Which mapping tag.  Represent which segment of the word we want the mapping for.
+    """
+
+    vw = params.vline_bytes * 8
+    ww = params.word_bytes * 8
+
+    small_element_in_large_word_index = large_tag//2
+    is_second_segment = large_tag % 2
+    large_we = small_element_in_large_word_index * small_ew // large_ew
+    large_eb = small_element_in_large_word_index * small_ew - large_we * large_ew
+
+    if is_second_segment:
+        # If we're in the second segment we need to increment large_eb forward to the
+        # start of the next src element.
+        if (large_offset - small_offset) % small_ew == 0:
+            return None
+        large_eb += small_ew - (large_eb + small_offset - large_offset) % small_ew
+    else:
+        # We're in the first segment. But has this segment been included in the previous
+        # second segment.
+        if (large_offset - small_offset) % small_ew != 0:
+            small_element_in_large_element = large_eb//small_ew
+            if small_element_in_large_element > 0:
+                return None
+
+    # n_vectors is the maximum number of vectors that we might access past the first
+    # one. It's just used for splitting up the address.  It can be safely changed to
+    # a larger power of two, and we'll get an error if it is too small.
+    n_vectors = 4
+    ww = params.word_bytes * 8  # word width in bits
+    # Work out what the destination address is in the logical address space.
+    large_logical_address = join_by_factors([large_eb, large_vw, large_we, large_v], [large_ew, params.j_in_l, ww//large_ew, n_vectors])
+    address_in_large_vector = large_logical_address - large_offset
+    # We're just copying the vector over.
+    # This is where we would make a change if we where doing a strided access or something like that.
+    address_in_small_vector = address_in_large_vector
+    # In this space we do the offset to work out what the source address is in the logical address space.
+    small_logical_address = address_in_small_vector + small_offset
+    small_eb, small_vw, small_we, small_v = split_by_factors(small_logical_address, [small_ew, params.j_in_l, ww//small_ew, n_vectors])
+
+    mapping = get_large_small_mapping(vw, ww, small_ew, large_ew,
+                          large_v, large_vw, large_we, large_eb,
+                          small_v, small_vw, small_we, small_eb)
+    return mapping
+
+def get_mapping_from_small_tag(
+        params: LamletParams, small_ew: int, large_ew: int,
+        small_offset: int, large_offset: int,
+        small_v: int, small_vw: int, small_tag: int):
+    """
+    """
+    vw = params.vline_bytes * 8
+    ww = params.word_bytes * 8
+
+    n_vectors = 4
+    small_we = small_tag//2
+    is_second_segment = small_tag % 2
+    small_eb = 0
+
+    # If we're in the second segment we need to increment small_eb forward to the
+    # start of the next src element.
+    if is_second_segment:
+        # We need a second segment if the dst element spans 2 large_elements
+        ww = params.word_bytes * 8  # word width in bits
+        # FIXME: Quite a bit of work to see if we use the second segment.
+        # Probably a better way exists.
+        small_logical_address = join_by_factors([small_eb, small_vw, small_we, small_v], [small_ew, params.j_in_l, ww//small_ew, n_vectors])
+        address_in_small_vector = small_logical_address - small_offset
+        address_in_large_vector = address_in_small_vector
+        large_logical_address = address_in_large_vector + large_offset
+        large_eb, _, _, _ = split_by_factors(large_logical_address, [large_ew, params.j_in_l, ww//large_ew, n_vectors])
+        bits_to_end_of_large_element = large_ew - large_eb
+        bits_to_end_of_small_element = small_ew - small_eb
+        if bits_to_end_of_large_element >= bits_to_end_of_small_element:
+            return None
+        small_eb += bits_to_end_of_large_element
+    # n_vectors is the maximum number of vectors that we might access past the first
+    # one. It's just used for splitting up the address.  It can be safely changed to
+    # a larger power of two, and we'll get an error if it is too small.
+    n_vectors = 4
+    small_ve = join_by_factors([small_vw, small_we], [params.j_in_l, ww//small_ew])
+    small_wb = join_by_factors([small_eb, small_we],  [small_ew, ww//small_ew])
+    small_logical_address = join_by_factors(
+            [small_eb, small_vw, small_we, small_v], [small_ew, params.j_in_l, ww//small_ew, n_vectors])
+    address_in_small_vector = small_logical_address - small_offset
+    address_in_large_vector = address_in_small_vector
+    large_logical_address = address_in_large_vector + large_offset
+    large_eb, large_vw, large_we, large_v = split_by_factors(large_logical_address, [large_ew, params.j_in_l, ww//large_ew, n_vectors])
+    large_ve = join_by_factors([large_vw, large_we], [params.j_in_l, ww//large_ew])
+
+    mapping = get_large_small_mapping(vw, ww, small_ew, large_ew,
+                          large_v, large_vw, large_we, large_eb,
+                          small_v, small_vw, small_we, small_eb)
+    return mapping
 
 
 @dataclass
@@ -352,11 +558,11 @@ class SmallParams:
 
 def apply_offset(rnd, data: bytes, offset: int):
     bits = bytes_to_bits(data)
-    fresh_bits = [rnd.randint(0, 1) for _ in range(offset)]
+    fresh_bits = [rnd.randint(0, 1) for _ in range(abs(offset))]
     if offset > 0:
         bits = fresh_bits + bits[:-offset]
     else:
-        bits = bits[offset:] + fresh_bits
+        bits = bits[-offset:] + fresh_bits
     byts = bits_to_bytes(bits)
     return byts
 
@@ -365,14 +571,16 @@ def test_convertion(params: LamletParams, src_ew: int, dst_ew: int, offset: int)
     rnd = Random(0)
     vlb = params.vline_bytes
     random_data = get_rand_bytes(rnd, vlb*3)
-    shifted_data = apply_offset(rnd, random_data, offset)
+    shifted_data = apply_offset(rnd, random_data, -offset)
     src_words = encode_into_words(params, random_data, src_ew)
     expected_dst_words = encode_into_words(params, shifted_data[vlb: 2*vlb], dst_ew)
     print(f'src_words = {[[int(x) for x in word] for word in src_words]}')
     print(f'expected_dst_words = {[[int(x) for x in word] for word in expected_dst_words]}')
     n_elements = params.vline_bytes * 8 // dst_ew
-    messages = create_messages(params=params, src_ew=src_ew, dst_ew=dst_ew, offset=offset, start_element=0, n_elements=n_elements)
-    dst_words = extract_words(params, src_words, messages)
+    #messages = create_messages(params=params, src_ew=src_ew, dst_ew=dst_ew, offset=offset, start_element=0, n_elements=n_elements)
+    #dst_words = extract_words(params, src_words, messages)
+#def extract_words(params: LamletParams, src_words: List[bytes], src_ew: bool, dst_ew: bool, src_offset: int):
+    dst_words = extract_words(params, src_words, src_ew, dst_ew, offset)
     rcvd_data = decode_from_words(params, dst_words, dst_ew)
     if offset % 8 == 0:
         expected_data = random_data[params.vline_bytes + offset//8: 2*params.vline_bytes + offset//8]
@@ -383,12 +591,47 @@ def test_convertion(params: LamletParams, src_ew: int, dst_ew: int, offset: int)
     assert expected_data == rcvd_data
 
 
+def test_mappings(params: LamletParams, small_ew: int, large_ew: int, small_offset: int, large_offset: int):
+    assert small_ew <= large_ew
+    ratio = large_ew//small_ew
+    n_tags = (params.word_bytes * 8)//small_ew * 2
+
+    from_large = []#set()
+    from_small = []#set()
+    for vw_index in range(params.j_in_l):
+        for tag in range(n_tags):
+            large_mapping = get_mapping_from_large_tag(
+                params=params, small_ew=small_ew, large_ew=large_ew, small_offset=small_offset,
+                large_offset=large_offset, large_v=1, large_vw=vw_index, large_tag=tag)
+            #if large_mapping is not None:
+            from_large.append(large_mapping)
+            small_mapping = get_mapping_from_small_tag(
+                params=params, small_ew=small_ew, large_ew=large_ew, small_offset=small_offset,
+                large_offset=large_offset, small_v=1, small_vw=vw_index, small_tag=tag)
+            #if small_mapping is not None:
+            from_small.append(small_mapping)
+    # Normalize to small_v = 0
+    normalized_small = [None if m is None else m.normalize() for m in from_small]
+    normalized_large = [None if m is None else m.normalize() for m in from_large]
+    assert set(normalized_small) == set(normalized_large)
+
+
+
 def main():
     params = SmallParams(word_bytes=8)
     for src_ew in (1, 2, 4, 8, 16, 32, 64):
         for dst_ew in (1, 2, 4, 8, 16, 32, 64):
-            for offset in range(params.vline_bytes*8):
-                test_convertion(params, src_ew, dst_ew, offset)
+            for src_offset in range(params.vline_bytes*8):
+    #for src_ew in (32,):
+    #    for dst_ew in (64,):
+    #        for src_offset in (16,):
+                small_offset = 0
+                #print(src_ew, dst_ew, large_offset, small_offset)
+                #if src_ew > dst_ew:
+                #    continue
+                #small_offset, large_offset = large_offset, small_offset
+                test_convertion(params, src_ew, dst_ew, src_offset)
+                #test_mappings(params, src_ew, dst_ew, small_offset, large_offset)
 
 
 if __name__ == '__main__':

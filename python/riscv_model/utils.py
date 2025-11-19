@@ -1,6 +1,7 @@
 import logging
 from collections import deque
 import struct
+from typing import List
 
 
 logger = logging.getLogger(__name__)
@@ -100,6 +101,24 @@ def pad(data, n_bytes):
     return data + bytes([0] * (n_bytes - len(data)))
 
 
+def list_of_uints_to_uint(values: List[int], width: int) -> int:
+    total = 0
+    for value in reversed(values):
+        assert 0 <= value < (1 << width)
+        total = (total << width) + value
+    return total
+
+
+def uint_to_list_of_uints(value: int, width: int, size: int) -> List[int]:
+    ll = []
+    f = 1 << width
+    for _ in range(size):
+        ll.append(value % f)
+        value = value >> width
+    assert value == 0
+    return list(reversed(ll))
+
+
 class SettableBool:
 
     def __init__(self, value):
@@ -119,3 +138,9 @@ class SettableBool:
 
     def __bool__(self):
         return self.value
+
+    def peek(self):
+        if self.has_next_value:
+            return self.next_value
+        else:
+            return self.value
