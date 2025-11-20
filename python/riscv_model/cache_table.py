@@ -101,7 +101,7 @@ class LoadSrcState(Enum):
 
 
 class LoadDstState(Enum):
-    WAITING_FOR_REQUEST = 'WAITING_FOR_RESPONSE'
+    WAITING_FOR_REQUEST = 'WAITING_FOR_REQUEST'
     NEED_TO_ASK_FOR_RESEND = 'NEED_TO_ASK_FOR_RESEND'
     COMPLETE = 'COMPLETE'
 
@@ -232,7 +232,7 @@ class WaitingStoreJ2JWords(WaitingItemRequiresCache):
     cache_is_write = True
 
     def __init__(self, params: LamletParams, instr: kinstructions.Store, rf_ident: int|None=None):
-        super().__init__(item=instr, writeset_ident=instr.writeset_ident, rf_ident=rf_ident)
+        super().__init__(item=instr, instr_ident=instr.instr_ident, writeset_ident=instr.writeset_ident, rf_ident=rf_ident)
         n_tags = instr.n_tags() * params.j_in_k
         self.protocol_states: List[StoreProtocolState] = [
                 StoreProtocolState() for _ in range(n_tags)]
@@ -246,7 +246,7 @@ class WaitingLoadJ2JWords(WaitingItemRequiresCache):
     cache_is_read = True
 
     def __init__(self, params: LamletParams, instr: kinstructions.Load, rf_ident: int|None=None):
-        super().__init__(item=instr, writeset_ident=instr.writeset_ident, rf_ident=rf_ident)
+        super().__init__(item=instr, instr_ident=instr.instr_ident, writeset_ident=instr.writeset_ident, rf_ident=rf_ident)
         n_tags = instr.n_tags() * params.j_in_k
         self.protocol_states: List[LoadProtocolState] = [
                 LoadProtocolState() for _ in range(n_tags)]

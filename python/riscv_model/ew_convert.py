@@ -4,6 +4,7 @@ from typing import List, Dict, Tuple
 
 from params import LamletParams
 import utils
+from utils import uint_to_list_of_uints
 
 
 def get_rand_bytes(rnd: Random, n: int):
@@ -44,17 +45,6 @@ def bits_to_bytes(bits: List[int]) -> bytes:
             f = 1
     byts_as_bytes = bytes(byts)
     return byts_as_bytes
-
-
-def uint_to_list_of_uints(value: int, width: int, length: int):
-    reduced = value
-    ints = []
-    f = 1 << width
-    for index in range(length):
-        ints.append(reduced % f)
-        reduced = reduced >> width
-    assert reduced == 0
-    return ints
 
 
 def bits_to_int(bits: List[int]):
@@ -321,11 +311,11 @@ def get_mapping_for_dst(
         if mapping is None:
             return None
         mem_mapping = MemMapping(
-                src_v=mapping.large_v,
+                src_v=mapping.small_v,
                 src_vw=mapping.small_vw,
                 src_ve=mapping.small_ve,
                 src_wb=mapping.small_wb,
-                dst_v=mapping.small_v,
+                dst_v=mapping.large_v,
                 dst_vw=mapping.large_vw,
                 dst_ve=mapping.large_ve,
                 dst_wb=mapping.large_wb,
@@ -354,17 +344,17 @@ def get_mapping_for_src(
         if mapping is None:
             return None
         mem_mapping = MemMapping(
-                src_v=mapping.large_v,
-                src_vw=mapping.large_vw,
-                src_ve=mapping.large_ve,
-                src_wb=mapping.large_wb,
-                dst_v=mapping.small_v,
-                dst_vw=mapping.small_vw,
-                dst_ve=mapping.small_ve,
-                dst_wb=mapping.small_wb,
+                src_v=mapping.small_v,
+                src_vw=mapping.small_vw,
+                src_ve=mapping.small_ve,
+                src_wb=mapping.small_wb,
+                dst_v=mapping.large_v,
+                dst_vw=mapping.large_vw,
+                dst_ve=mapping.large_ve,
+                dst_wb=mapping.large_wb,
                 n_bits=mapping.n_bits,
-                src_tag=mapping.large_tag,
-                dst_tag=mapping.small_tag,
+                src_tag=mapping.small_tag,
+                dst_tag=mapping.large_tag,
                 )
     else:
         small_ew = dst_ew
@@ -382,16 +372,16 @@ def get_mapping_for_src(
             return None
         mem_mapping = MemMapping(
                 src_v=mapping.large_v,
-                src_vw=mapping.small_vw,
-                src_ve=mapping.small_ve,
-                src_wb=mapping.small_wb,
+                src_vw=mapping.large_vw,
+                src_ve=mapping.large_ve,
+                src_wb=mapping.large_wb,
                 dst_v=mapping.small_v,
-                dst_vw=mapping.large_vw,
-                dst_ve=mapping.large_ve,
-                dst_wb=mapping.large_wb,
+                dst_vw=mapping.small_vw,
+                dst_ve=mapping.small_ve,
+                dst_wb=mapping.small_wb,
                 n_bits=mapping.n_bits,
-                src_tag=mapping.small_tag,
-                dst_tag=mapping.large_tag,
+                src_tag=mapping.large_tag,
+                dst_tag=mapping.small_tag,
                 )
     return mem_mapping
 
@@ -415,7 +405,7 @@ def get_large_small_mapping(vw: int, ww: int, small_ew: int, large_ew: int,
 
     small_wb = join_by_factors([small_eb, small_we], [small_ew, ww//small_ew])
     small_ve = join_by_factors([small_we, small_vw], [ww//small_ew, vw//ww])
-    large_wb = join_by_factors([large_eb, large_we], [large_ew, ww/large_ew])
+    large_wb = join_by_factors([large_eb, large_we], [large_ew, ww//large_ew])
     large_ve = join_by_factors([large_we, large_vw], [ww//large_ew, vw//ww])
     shift = large_wb - small_wb
 
@@ -429,8 +419,6 @@ def get_large_small_mapping(vw: int, ww: int, small_ew: int, large_ew: int,
         large_ve=large_ve,
         large_wb=large_wb,
         n_bits=n_bits,
-        #shift=shift,
-        #mask=mask_as_int,
         small_tag=small_tag,
         large_tag=large_tag,
         )

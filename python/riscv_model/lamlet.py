@@ -247,7 +247,8 @@ class Lamlet:
         n_rows = self.params.j_rows * self.params.k_rows
         n_cols = self.params.j_cols * self.params.k_cols
         for memlet in self.memlets:
-            for r in memlet.routers[channel]:
+            for router_channels in memlet.routers:
+                r = router_channels[channel]
                 coords = (r.x, r.y)
                 assert coords not in routers
                 routers[coords] = r

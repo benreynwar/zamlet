@@ -8,7 +8,7 @@ from runner import Clock
 from router import Router, Direction
 from message import Header, IdentHeader, AddressHeader
 from utils import Queue
-from message import MessageType, SendType
+from message import MessageType, SendType, CHANNEL_MAPPING
 
 
 logger = logging.getLogger(__name__)
@@ -128,8 +128,9 @@ class Memlet:
         self.clock = clock
         self.params = params
         self.coords = coords
-        self.routers = [[Router(clock, params, x, y) for x, y in coords]
-                        for channel in range(params.n_channels)]
+        self.routers = [[Router(clock, params, x, y)
+                         for channel in range(params.n_channels)]
+                        for x, y in coords]
         self.lines: Dict[int, bytes] = {}
         self.n_lines = params.kamlet_memory_bytes // params.cache_line_bytes
         self.m_cols, self.n_routers = get_cols_routers(self.params)
@@ -171,8 +172,8 @@ class Memlet:
         return data
 
     def update(self):
-        for channel_routers in self.routers:
-            for router in channel_routers:
+        for router_channels in self.routers:
+            for router in router_channels:
                 router.update()
         for queue in self.receive_write_line_queues:
             queue.update()
@@ -192,8 +193,8 @@ class Memlet:
         while True:
             await self.clock.next_cycle
             for channel in range(self.params.n_channels):
-                queue = self.routers[channel][index]._output_buffers[Direction.H]
-                r = self.routers[channel][index]
+                queue = self.routers[index][channel]._output_buffers[Direction.H]
+                r = self.routers[index][channel]
                 if queue:
                     word = queue.popleft()
                     if not header:
@@ -229,7 +230,7 @@ class Memlet:
         read_next = True
         while True:
             for channel in range(self.params.n_channels):
-                queue = self.routers[channel][index]._input_buffers[Direction.H]
+                queue = self.routers[index][channel]._input_buffers[Direction.H]
                 if read_next and self.send_read_line_response_queues[index]:
                     packet = self.send_read_line_response_queues[index].popleft()
                     if index == WRITE_LINE_RESPONSE_R_INDEX:
@@ -280,11 +281,12 @@ class Memlet:
                 self.write_cache_line(index, data)
                 # Send a response back to the kamlet telling it the
                 # write was done.
+                channel = CHANNEL_MAPPING[MessageType.WRITE_LINE_RESP]
                 header = IdentHeader(
                     target_x=self.kamlet_coords[0],
                     target_y=self.kamlet_coords[1],
-                    source_x=self.routers[WRITE_LINE_RESPONSE_CHANNEL][WRITE_LINE_RESPONSE_R_INDEX].x,
-                    source_y=self.routers[WRITE_LINE_RESPONSE_CHANNEL][WRITE_LINE_RESPONSE_R_INDEX].y,
+                    source_x=self.routers[WRITE_LINE_RESPONSE_R_INDEX][channel].x,
+                    source_y=self.routers[WRITE_LINE_RESPONSE_R_INDEX][channel].y,
                     message_type=MessageType.WRITE_LINE_RESP,
                     length=1,
                     send_type=SendType.SINGLE,
@@ -318,11 +320,12 @@ class Memlet:
                 for j_in_k_index, payload in enumerate(packet_payloads):
                     router_index = j_in_k_to_m_router(self.params, j_in_k_index)
                     target_x, target_y = self.jamlet_coords[j_in_k_index]
+                    channel = CHANNEL_MAPPING[MessageType.READ_LINE_RESP]
                     resp_header = AddressHeader(
                         target_x=target_x,
                         target_y=target_y,
-                        source_x=self.routers[router_index][0].x,
-                        source_y=self.routers[router_index][0].y,
+                        source_x=self.routers[router_index][channel].x,
+                        source_y=self.routers[router_index][channel].y,
                         message_type=MessageType.READ_LINE_RESP,
                         length=1 + len(payload),
                         send_type=SendType.SINGLE,

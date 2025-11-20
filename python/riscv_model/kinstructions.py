@@ -516,8 +516,8 @@ class VArithVvOp(KInstr):
                         src2_val = int.from_bytes(src2_bytes, byteorder='little', signed=True)
 
                         if self.op == VArithOp.ADD:
-                            logger.warning(f'j_in_k_index={j_in_k_index}, vline_index={vline_index}, index_in_j={index_in_j}, src1_val={src1_val}, src2_val={src2_val}, result={result}')
                             result = src1_val + src2_val
+                            logger.warning(f'j_in_k_index={j_in_k_index}, vline_index={vline_index}, index_in_j={index_in_j}, src1_val={src1_val}, src2_val={src2_val}, result={result}')
                         elif self.op == VArithOp.MUL:
                             result = src1_val * src2_val
                         elif self.op == VArithOp.MACC:

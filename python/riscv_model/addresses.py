@@ -608,8 +608,8 @@ class RegAddr:
     params: LamletParams
 
     def valid(self):
-        valid = 0 < self.addr < self.params.vline_bytes
-        valid &= 0 < self.reg < self.params.n_vregs
+        valid = 0 <= self.addr < self.params.vline_bytes
+        valid &= 0 <= self.reg < self.params.n_vregs
         valid &= self.ordering.ew % 8 == 0
         return valid
 
@@ -631,7 +631,7 @@ class RegAddr:
 
     @property
     def vw_index(self):
-        e_index = self.element_index()
+        e_index = self.element_index
         vw_index = e_index % self.params.j_in_l
         return vw_index
 
@@ -644,7 +644,7 @@ class RegAddr:
     @property
     def j_in_k_index(self):
         assert self.valid()
-        _, j_in_k_index = vw_index_to_k_indices(self.params, self.ordering.word_order, self.element_index)
+        _, j_in_k_index = vw_index_to_k_indices(self.params, self.ordering.word_order, self.vw_index)
         return j_in_k_index
 
     @property

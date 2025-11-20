@@ -99,10 +99,10 @@ class Kamlet:
         Given a start_index and n_elements and a base register work out which vector registers
         get touched (in any kamlet, but that's good enough)
         '''
-        elements_in_vline = self.params.vline_bytes // ew
+        elements_in_vline = self.params.vline_bytes * 8 // ew
         start_vline = start_index // elements_in_vline
-        end_vline = (start_index + n_elements + elements_in_vline - 1)//elements_in_vline
-        regs = [base_reg + vline_offset for vline_offset in range(start_vline, end_vline+1)]
+        end_vline = (start_index + n_elements - 1) // elements_in_vline
+        regs = [base_reg + vline_offset for vline_offset in range(start_vline, end_vline + 1)]
         return regs
 
     def get_jamlet(self, x, y):
@@ -234,7 +234,7 @@ class Kamlet:
             jamlet.sram[j_saddr.addr: j_saddr.addr+size] = instr.imm
 
     async def handle_read_byte_instr(self, instr: kinstructions.ReadByte):
-        logger.debug('{self.clock.cycle}: kamlet {(self.x, self.y)}: handl_read_bytes_instr')
+        logger.debug(f'{self.clock.cycle}: kamlet {(self.min_x, self.min_y)}: handle_read_bytes_instr')
         if not self.cache_table.can_read(instr.k_maddr):
             witem = cache_table.WaitingReadByte(instr)
             await self.cache_table.add_witem(witem=witem, k_maddr=instr.k_maddr)
@@ -332,7 +332,7 @@ class Kamlet:
                 start_index=instr.start_index, n_elements=instr.n_elements,
                 ew=instr.dst_ordering.ew, base_reg=instr.dst)
         assert witem.rf_ident is not None
-        self.rf_info.finish_write(dst_regs, witem.rf_ident)
+        self.rf_info.finish_writes(dst_regs, witem.rf_ident)
 
     #
     #  Dealing with Store instruction
@@ -388,6 +388,7 @@ class Kamlet:
         src_regs = self.get_regs(
                 start_index=instr.start_index, n_elements=instr.n_elements,
                 ew=instr.src_ordering.ew, base_reg=instr.src)
+        await self.wait_for_rf_available(read_regs=src_regs)
         rf_read_ident = self.rf_info.start_reads(src_regs)
         witem = cache_table.WaitingStoreJ2JWords(
                 params=self.params, instr=instr, rf_ident=rf_read_ident)
@@ -408,7 +409,7 @@ class Kamlet:
         src_regs = self.get_regs(
                 start_index=instr.start_index, n_elements=instr.n_elements,
                 ew=instr.src_ordering.ew, base_reg=instr.src)
-        self.rf_info.finish_read(src_regs, witem.rf_ident)
+        self.rf_info.finish_reads(src_regs, witem.rf_ident)
 
 
     #async def handle_load_instr_cache_line(self, instr: kinstructions.Load):

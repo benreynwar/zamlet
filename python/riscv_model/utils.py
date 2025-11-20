@@ -116,7 +116,7 @@ def uint_to_list_of_uints(value: int, width: int, size: int) -> List[int]:
         ll.append(value % f)
         value = value >> width
     assert value == 0
-    return list(reversed(ll))
+    return ll
 
 
 class SettableBool:
