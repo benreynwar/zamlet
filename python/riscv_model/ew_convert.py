@@ -101,9 +101,6 @@ class MemMapping:
         return ((1 << self.n_bits) - 1) << self.dst_wb
             
 
-
-
-
 @dataclass(frozen=True)
 class SmallLargeMapping:
     # The vector line index in the small-ew-mapped vector

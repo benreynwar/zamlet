@@ -38,7 +38,7 @@ class MessageType(Enum):
     LOAD_WORDS_RESP = 15
 
     # Sending data to another jamlet to be written to a register.
-    LOAD_J2J_WORDS = 16
+    LOAD_J2J_WORDS_REQ = 16
     # But the receiving jamlet might not be ready to write to that
     # register. It must also be processing this instruction.
     # If it is not ready it can drop this.
@@ -46,7 +46,7 @@ class MessageType(Enum):
     LOAD_J2J_WORDS_DROP = 18
 
     # Sending data to another jamlet to tell it to store it.
-    STORE_J2J_WORDS = 20
+    STORE_J2J_WORDS_REQ = 20
     # The receiving jamlet must also be processing this instruction.
     # Otherwise these are dropped.
     STORE_J2J_WORDS_RESP = 21
@@ -87,8 +87,8 @@ CHANNEL_MAPPING = {
     # Which channel require to send a always consumable message for them to be consumed
     MessageType.READ_LINE: 1,
     MessageType.WRITE_LINE: 1,
-    MessageType.LOAD_J2J_WORDS: 1,
-    MessageType.STORE_J2J_WORDS: 1,
+    MessageType.LOAD_J2J_WORDS_REQ: 1,
+    MessageType.STORE_J2J_WORDS_REQ: 1,
 
     # This is always consumable because we will explicitly track how much buffer room there is.
     MessageType.INSTRUCTIONS: 0,

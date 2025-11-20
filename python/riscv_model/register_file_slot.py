@@ -1,4 +1,5 @@
 import logging
+from typing import List
 
 from runner import Future
 
@@ -83,50 +84,73 @@ class RegisterFileSlot:
         self.has_next_future = False
 
 
-class KamletRegisterFileSlot:
+class KamletRegisterFile:
 
-    def __init__(self, name):
-        self.name = name
-        self.reads = []
-        self.write = None
+    def __init__(self, n_regs: int):
+        self.reads: List[List[int]] = [[] for i in range(n_regs)]
+        self.write: List[int|None] = [None for i in range(n_regs)]
         self._next_token = 0
 
-    def get_token(self):
+    def get_token(self) -> int:
         token = self._next_token
         self._next_token += 1
         return token
 
-    def can_read(self):
-        value = self.write is None
+    def can_read(self, reg: int) -> bool:
+        value = self.write[reg] is None
         #logger.info(f'Can read {self.name} is {value}')
         return value
 
-    def start_read(self):
-        assert self.can_read()
+    def start_read(self, reg: int) -> int:
+        assert self.can_read(reg)
         token = self.get_token()
-        self.reads.append(token)
+        self.reads[reg].append(token)
         #logger.info(f'Staring a read of {self.name} token={token}')
         return token
 
-    def finish_read(self, token):
-        assert token in self.reads
-        self.reads.remove(token)
+    def start_reads(self, regs: List[int]) -> int:
+        token = self.get_token()
+        for reg in regs:
+            assert self.can_read(reg)
+            self.reads[reg].append(token)
+        return token
+
+    def finish_read(self, reg: int, token: int) -> None:
+        assert token in self.reads[reg]
+        self.reads[reg].remove(token)
         #logger.info(f'Finishing a read of {self.name} token={token}')
 
-    def can_write(self):
-        value = self.write is None and not self.reads
-        #logger.info(f'Can write {self.name} is {value}')
+    def finish_reads(self, regs: List[int], token: int) -> None:
+        for reg in regs:
+            assert token in self.reads[reg]
+            self.reads[reg].remove(token)
+
+    def can_write(self, reg: int, token: int|None=None) -> bool:
+        if self.write[reg] is None:
+            value = not self.reads[reg]
+        else:
+            value = self.write[reg] == token
         return value
 
-    def start_write(self):
-        assert self.can_write()
+    def start_write(self, reg: int) -> int:
+        assert self.can_write(reg)
         token = self.get_token()
-        self.write = token
+        self.write[reg] = token
         #logger.info(f'Staring a write of {self.name} token={token}')
         return token
 
-    def finish_write(self, token):
-        assert self.write == token
-        self.write = None
+    def start_writes(self, regs: List[int]) -> int:
+        token = self.get_token()
+        for reg in regs:
+            assert self.can_write(reg)
+            self.write[reg] = token
+        return token
+
+    def finish_write(self, reg: int, token: int) -> None:
+        assert self.write[reg] == token
+        self.write[reg] = None
         #logger.info(f'Finishing a write of {self.name} token={token}')
 
+    def finish_writes(self, regs: List[int], token: int) -> None:
+        for reg in regs:
+            self.finish_write(reg, token)

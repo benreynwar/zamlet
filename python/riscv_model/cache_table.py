@@ -124,7 +124,7 @@ class WItemType(Enum):
     LOAD_SIMPLE = 'LOAD_SIMPLE'
     # An aligned matching-ew vector store
     STORE_SIMPLE = 'STORE_SIMPLE'
-    # Just triggers a future when the item is ready.
+    # Just triggers a future when the witem is ready.
     FUTURE = 'FUTURE'
 
 
@@ -150,39 +150,143 @@ WITEM_TO_PROTOCOL_STATE_TYPE = {
     }
 
 
-@dataclass
 class WaitingItem:
-    """
-    Represents something that must be done in the future once some preconditions are
-    met.  This could be cache becoming available or responses being received.
-    If the hardware we'll have a small buffer to keep these in.
 
-    It's ok if there are multiple WaitingItem with 'cache_is_read' for the same
-    cache slot, but we can't have some with 'cache_is_read' and some with
-    'cache_is_write'. We can have one item with 'cache_is_write' or several with
-    'cache_is_read'.
+    cache_is_write = False
+    cache_is_read = False
 
-    When creating a waiting item the cache_slot must be allocated at the same time.
-    """
-    witem_type: WItemType
-    protocol_states: List[ProtocolState]
-    item: Any   # LoadRequest or KInstr
-    cache_is_read: bool = False
-    cache_is_write: bool = False
-    cache_is_avail: bool = False
-    cache_slot: int|None = None
-    # This is used when two kamlets are communicating with one another to know
-    # that this is the same instruction.
-    # TODO: We should be able to work out a way to use this as the item_index so
-    # we don't have to match on it.
-    instr_ident: int|None = None
-    # A debug index to check that the same object is requesting a RF write and then
-    # releasing it.
-    rf_ident: int|None = None
-    # We can have multiple cache writes to the same slot if they all have the same
-    # writeset_ident. These are guaranteed to access different parts of the cache line.
-    # TODO: Currently  this is not used.
-    writeset_ident: int|None = None
+    def __init__(self, item: Any, instr_ident: int|None=None, rf_ident: int|None=None):
+        self.item = item
+        self.instr_ident = instr_ident
+        self.rf_ident = rf_ident
+
+    def ready(self):
+        raise NotImplementedError()
+
+
+class WaitingItemRequiresCache(WaitingItem):
+
+    def __init__(self, item: Any, instr_ident: int|None=None,
+                 cache_slot: int|None=None, cache_is_avail: bool=False,
+                 writeset_ident: int|None=None, rf_ident: int|None=None):
+        super().__init__(item, instr_ident, rf_ident)
+        self.cache_slot = cache_slot
+        self.cache_is_avail = cache_is_avail
+        self.writeset_ident = writeset_ident
+        assert self.cache_is_write or self.cache_is_read
+        assert not (self.cache_is_write and self.cache_is_read)
+
+    def set_cache_slot(self, slot):
+        assert not self.cache_is_avail
+        assert self.cache_slot is None
+        self.cache_slot = slot
+
+    def ready(self):
+        return self.cache_is_avail
+
+
+class WaitingWriteImmBytes(WaitingItemRequiresCache):
+
+    cache_is_write = True
+
+    def __init__(self, instr: kinstructions.WriteImmBytes):
+        super().__init__(item=instr)
+
+
+class WaitingReadByte(WaitingItemRequiresCache):
+
+    cache_is_read = True
+
+    def __init__(self, instr: kinstructions.ReadByte):
+        super().__init__(item=instr)
+
+
+class WaitingStoreSimple(WaitingItemRequiresCache):
+
+    cache_is_write = True
+
+    def __init__(self, instr: kinstructions.Store, rf_ident: int|None=None):
+        super().__init__(
+                item=instr, writeset_ident=instr.writeset_ident, rf_ident=rf_ident)
+
+
+class WaitingLoadSimple(WaitingItemRequiresCache):
+
+    cache_is_read = True
+
+    def __init__(self, instr: kinstructions.Load, rf_ident: int|None=None):
+        super().__init__(
+                item=instr, writeset_ident=instr.writeset_ident, rf_ident=rf_ident)
+
+
+class WaitingFuture(WaitingItemRequiresCache):
+    
+    def __init__(self, future: Future,  cache_is_write: bool):
+        super().__init__(item=future)
+        self.cache_is_write = cache_is_write
+        self.cache_is_read = not cache_is_write
+
+
+class WaitingStoreJ2JWords(WaitingItemRequiresCache):
+
+    cache_is_write = True
+
+    def __init__(self, params: LamletParams, instr: kinstructions.Store, rf_ident: int|None=None):
+        super().__init__(item=instr, writeset_ident=instr.writeset_ident, rf_ident=rf_ident)
+        n_tags = instr.n_tags() * params.j_in_k
+        self.protocol_states: List[StoreProtocolState] = [
+                StoreProtocolState() for _ in range(n_tags)]
+
+    def ready(self):
+        return all(state.finished() for state in self.protocol_states) and self.cache_is_avail
+
+
+class WaitingLoadJ2JWords(WaitingItemRequiresCache):
+
+    cache_is_read = True
+
+    def __init__(self, params: LamletParams, instr: kinstructions.Load, rf_ident: int|None=None):
+        super().__init__(item=instr, writeset_ident=instr.writeset_ident, rf_ident=rf_ident)
+        n_tags = instr.n_tags() * params.j_in_k
+        self.protocol_states: List[LoadProtocolState] = [
+                LoadProtocolState() for _ in range(n_tags)]
+
+    def ready(self):
+        return all(state.finished() for state in self.protocol_states) and self.cache_is_avail
+
+#@dataclass
+#class WaitingItem:
+#    """
+#    Represents something that must be done in the future once some preconditions are
+#    met.  This could be cache becoming available or responses being received.
+#    If the hardware we'll have a small buffer to keep these in.
+#
+#    It's ok if there are multiple WaitingItem with 'cache_is_read' for the same
+#    cache slot, but we can't have some with 'cache_is_read' and some with
+#    'cache_is_write'. We can have one item with 'cache_is_write' or several with
+#    'cache_is_read'.
+#
+#    When creating a waiting item the cache_slot must be allocated at the same time.
+#    """
+#    witem_type: WItemType
+#    protocol_states: List[ProtocolState]
+#    item: Any   # LoadRequest or KInstr
+#    cache_is_read: bool = False
+#    cache_is_write: bool = False
+#    cache_is_avail: bool = False
+#    cache_slot: int|None = None
+#    # This is used when two kamlets are communicating with one another to know
+#    # that this is the same instruction.
+#    # TODO: We should be able to work out a way to use this as the item_index so
+#    # we don't have to match on it.
+#    instr_ident: int|None = None
+#    # A debug index to check that the same object is requesting a RF write and then
+#    # releasing it.
+#    rf_ident: int|None = None
+#    # We can have multiple cache writes to the same slot if they all have the same
+#    # writeset_ident. These are guaranteed to access different parts of the cache line.
+#    # TODO: Currently  this is not used.
+#    writeset_ident: int|None = None
 
 
 class CacheLineState:
@@ -250,19 +354,19 @@ class CacheTable:
         state.received[tag].set(True)
         logger.warning(f'We got a cache response. received is now {[x.peek() for x in state.received]}')
 
-    def can_get_free_item_index(self) -> bool:
-        return self.get_free_item_index_if_exists() is not None
+    def can_get_free_witem_index(self) -> bool:
+        return self.get_free_witem_index_if_exists() is not None
 
-    def get_free_item_index_if_exists(self) -> int|None:
+    def get_free_witem_index_if_exists(self) -> int|None:
         valid_indices = [index for index, x in enumerate(self.waiting_items) if x is None]
         if valid_indices:
             return valid_indices[0]
         else:
             return None
 
-    async def get_free_item_index(self) -> int:
+    async def get_free_witem_index(self) -> int:
         while True:
-            free_item = self.get_free_item_index_if_exists()
+            free_item = self.get_free_witem_index_if_exists()
             if free_item is not None:
                 break
             await self.clock.next_cycle
@@ -308,46 +412,30 @@ class CacheTable:
         state = self.get_state(k_maddr)
         assert state.state in (CacheState.SHARED, CacheState.MODIFIED)
 
-    async def add_item(self, witem_type: WItemType, new_item: Any,
-                       protocol_states: List[ProtocolState]|None=None,
-                       cache_is_write: bool=False, k_maddr: KMAddr|None=None,
-                       rf_ident: int|None=None,
-                       ):
-        if protocol_states is None:
-            protocol_states = []
-        if cache_is_write:
+    async def add_witem(self, witem: WaitingItem, k_maddr: KMAddr|None=None):
+        if isinstance(witem, WaitingItemRequiresCache):
             assert k_maddr is not None
-        slot = self.addr_to_slot(k_maddr)
-        if slot is None:
-            logger.warning('******************* ggetting a new slot')
-            slot = await self._get_new_slot(k_maddr)
-            logger.warning('******************* got it')
-        else:
-            if k_maddr is not None:
-                if cache_is_write:
+            assert not (witem.cache_is_read and witem.cache_is_write)
+            assert witem.cache_is_read or witem.cache_is_write
+            slot = self.addr_to_slot(k_maddr)
+            if slot is None:
+                slot = await self._get_new_slot(k_maddr)
+                witem.set_cache_slot(slot)
+            else:
+                witem.set_cache_slot(slot)
+                if witem.cache_is_write:
                     if self.slot_in_use(slot):
-                        # If there are other items in the midst of a read or write we need to wait for them to complete
+                        # If there are other witems in the midst of a read or write we need
+                        # to wait for them to complete
                         await self.wait_for_slot_to_be_writeable(slot, k_maddr)
-                else:
+                if witem.cache_is_read:
                     if self.slot_has_write(slot):
                         await self.wait_for_slot_to_be_readable(slot, k_maddr)
-            else:
-                assert not cache_is_write
-        cache_is_avail = self.slot_states[slot].state in (CacheState.SHARED, CacheState.MODIFIED)
-        item = WaitingItem(
-            witem_type=witem_type,
-            item=new_item,
-            protocol_states=protocol_states,
-            cache_is_write=cache_is_write,
-            cache_is_read=(k_maddr is not None) and not cache_is_write,
-            cache_is_avail=cache_is_avail,
-            cache_slot=slot,
-            rf_ident=rf_ident,
-            )
-        new_item_index = await self.get_free_item_index()
-        logger.warning('******************* Added an item to waiting items')
-        self.waiting_items[new_item_index] = item
-        return new_item_index
+                witem.cache_is_avail = (
+                        self.slot_states[slot].state in (CacheState.SHARED, CacheState.MODIFIED))
+        witem_index = await self.get_free_witem_index()
+        self.waiting_items[witem_index] = witem
+        return witem_index
 
     async def update_cache(self, slot):
         """
@@ -672,13 +760,15 @@ class CacheTable:
             assert slot in self.used_slots
         return slot_in_use
 
-    def get_waiting_item_by_instr_ident(self, instr_ident: int) -> int|None:
+    def get_waiting_item_by_instr_ident(self, instr_ident: int) -> WaitingItem|None:
         valid_indices = [index for index, item in enumerate(self.waiting_items)
                        if item is not None and item.instr_ident == instr_ident]
         if not valid_indices:
             return None
         assert len(valid_indices) == 1
-        return valid_indices[0]
+        index = valid_indices[0]
+        item = self.waiting_items[index]
+        return item
 
     def _can_get_new_slot(self, k_maddr: KMAddr) -> bool:
         if self.free_slots:
