@@ -61,6 +61,12 @@ class MessageType(Enum):
     LOAD_WORD_DROP = 26
     LOAD_WORD_RETRY = 27
 
+    # Store a partial word from register to cache (for unaligned stores)
+    STORE_WORD_REQ = 28
+    STORE_WORD_RESP = 29
+    STORE_WORD_DROP = 30
+    STORE_WORD_RETRY = 31
+
     #WRITE_REG_REQ = 8
     #WRITE_SP_REQ = 9
     #WRITE_MEM_REQ = 10
@@ -91,6 +97,9 @@ CHANNEL_MAPPING = {
     MessageType.LOAD_WORD_RESP: 0,
     MessageType.LOAD_WORD_DROP: 0,
     MessageType.LOAD_WORD_RETRY: 0,
+    MessageType.STORE_WORD_RESP: 0,
+    MessageType.STORE_WORD_DROP: 0,
+    MessageType.STORE_WORD_RETRY: 0,
 
 
     # Which channel require to send a always consumable message for them to be consumed
@@ -99,6 +108,7 @@ CHANNEL_MAPPING = {
     MessageType.LOAD_J2J_WORDS_REQ: 1,
     MessageType.STORE_J2J_WORDS_REQ: 1,
     MessageType.LOAD_WORD_REQ: 1,
+    MessageType.STORE_WORD_REQ: 1,
 
     # This is always consumable because we will explicitly track how much buffer room there is.
     MessageType.INSTRUCTIONS: 0,

@@ -11,7 +11,7 @@ import kinstructions
 import memlet
 import register_file_slot
 import cache_table
-from cache_table import CacheRequestType, CacheTable, WaitingItem, LoadSrcState, LoadDstState
+from cache_table import CacheRequestType, CacheTable, WaitingItem, LoadSrcState, LoadDstState, StoreSrcState, StoreDstState
 
 
 logger = logging.getLogger(__name__)
@@ -290,6 +290,48 @@ class Kamlet:
         assert witem.rf_ident is not None
         instr = witem.item
         self.rf_info.finish_writes([instr.dst.reg], witem.rf_ident)
+
+    async def handle_store_word_instr(self, instr: kinstructions.StoreWord):
+        """Handle StoreWord instruction - store partial word from register to cache."""
+        is_src_kamlet = (instr.src.k_index == self.k_index)
+        is_dst_kamlet = (instr.dst.k_index == self.k_index)
+
+        logger.debug(
+            f'kamlet ({self.min_x}, {self.min_y}): handle_store_word_instr '
+            f'ident={instr.instr_ident} src_k={instr.src.k_index} '
+            f'dst_k={instr.dst.k_index} is_src={is_src_kamlet} is_dst={is_dst_kamlet}')
+
+        if not (is_src_kamlet or is_dst_kamlet):
+            return
+
+        if is_src_kamlet:
+            logger.warning(f'kamlet ({self.min_x}, {self.min_y}): is waiting for rf {instr.src.reg} to become avail')
+            await self.wait_for_rf_available(read_regs=[instr.src.reg])
+            logger.warning(f'kamlet ({self.min_x}, {self.min_y}): rf {instr.src.reg} is avail')
+            rf_read_ident = self.rf_info.start_reads([instr.src.reg])
+            witem_src = cache_table.WaitingStoreWordSrc(params=self.params, instr=instr, rf_ident=rf_read_ident)
+            await self.cache_table.add_witem(witem=witem_src)
+            logger.warning(f'kamlet ({self.min_x}, {self.min_y}): added WaitingStoreWordSrc ident={witem_src.instr_ident}')
+            for jamlet in self.jamlets:
+                jamlet.init_store_word_src_state(witem_src)
+
+        if is_dst_kamlet:
+            witem_dst = cache_table.WaitingStoreWordDst(params=self.params, instr=instr)
+            await self.cache_table.add_witem(witem=witem_dst, k_maddr=instr.dst)
+            logger.warning(f'kamlet ({self.min_x}, {self.min_y}): added WaitingStoreWordDst ident={witem_dst.instr_ident}')
+            for jamlet in self.jamlets:
+                jamlet.init_store_word_dst_state(witem_dst)
+
+    async def handle_store_word_src_witem(self, witem: cache_table.WaitingStoreWordSrc):
+        """Called when StoreWord SRC operation completes."""
+        assert all(state == StoreSrcState.COMPLETE for state in witem.protocol_states)
+        assert witem.rf_ident is not None
+        instr = witem.item
+        self.rf_info.finish_reads([instr.src.reg], witem.rf_ident)
+
+    async def handle_store_word_dst_witem(self, witem: cache_table.WaitingStoreWordDst):
+        """Called when StoreWord DST operation completes."""
+        assert all(state == StoreDstState.COMPLETE for state in witem.protocol_states)
 
     #
     #  Dealing with Load instruction
@@ -636,6 +678,10 @@ class Kamlet:
             await self.handle_load_word_src_witem(witem=witem)
         elif isinstance(witem, cache_table.WaitingLoadWordDst):
             await self.handle_load_word_dst_witem(witem=witem)
+        elif isinstance(witem, cache_table.WaitingStoreWordSrc):
+            await self.handle_store_word_src_witem(witem=witem)
+        elif isinstance(witem, cache_table.WaitingStoreWordDst):
+            await self.handle_store_word_dst_witem(witem=witem)
         elif isinstance(witem, cache_table.WaitingStoreSimple):
             await self.handle_store_instr_simple_witem(witem=witem)
         elif isinstance(witem, cache_table.WaitingLoadJ2JWords):

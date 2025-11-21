@@ -785,6 +785,7 @@ class Lamlet:
                                    f'src=0x{section.start_address:x}-0x{section.end_address:x}, '
                                    f'dst_reg={dst}, dst_offset={reg_addr.offset_in_word}, byte_mask=0x{byte_mask_as_int:x}, '
                                    f'k_maddr={k_maddr}')
+                        instr_ident = self.get_instr_ident(2)
                         if is_store:
                             kinstr = kinstructions.StoreWord(
                                 src=reg_addr,
@@ -793,9 +794,9 @@ class Lamlet:
                                 writeset_ident=writeset_ident,
                                 mask_reg=mask_reg,
                                 mask_index=mask_index,
+                                instr_ident=instr_ident,
                             )
                         else:
-                            instr_ident = self.get_instr_ident(2)
                             kinstr = kinstructions.LoadWord(
                                 dst=reg_addr,
                                 src=k_maddr,
@@ -1034,13 +1035,7 @@ class Lamlet:
                     byte_mask[byte_index] = 1
                 bytes_mask_as_int = utils.list_of_uints_to_uint(byte_mask, width=1)
                 if is_store:
-                    kinstr = kinstructions.StoreWord(
-                        src=vd,
-                        byte_mask=byte_mask_as_int,
-                        mask_reg=mask_reg,
-                        mask_index=mask_index,
-                        writeset_ident=writeset_ident,
-                        )
+                    raise NotImplementedError("StoreWord for scalar memory not yet implemented")
                 else:
                     word_imm = self.scalar.memory[word_addr: word_addr + wb]
                     kinstr = kinstructions.LoadImmWord(

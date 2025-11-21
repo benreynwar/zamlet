@@ -211,6 +211,32 @@ class WaitingLoadWordDst(WaitingItem):
         return all(state == LoadDstState.COMPLETE for state in self.protocol_states)
 
 
+class WaitingStoreWordSrc(WaitingItem):
+
+    def __init__(self, params: LamletParams, instr: kinstructions.StoreWord, rf_ident: int):
+        super().__init__(item=instr, rf_ident=rf_ident)
+        self.protocol_states = [StoreSrcState.COMPLETE for _ in range(params.j_in_k)]
+        self.instr_ident = instr.instr_ident
+        self.writeset_ident = instr.writeset_ident
+
+    def ready(self):
+        return all(state == StoreSrcState.COMPLETE for state in self.protocol_states)
+
+
+class WaitingStoreWordDst(WaitingItemRequiresCache):
+
+    cache_is_write = True
+
+    def __init__(self, params: LamletParams, instr: kinstructions.StoreWord):
+        super().__init__(
+                item=instr, instr_ident=instr.instr_ident + 1,
+                writeset_ident=instr.writeset_ident, rf_ident=None)
+        self.protocol_states = [StoreDstState.COMPLETE for _ in range(params.j_in_k)]
+
+    def ready(self):
+        return all(state == StoreDstState.COMPLETE for state in self.protocol_states) and self.cache_is_avail
+
+
 class WaitingFuture(WaitingItem):
     
     def __init__(self, future: Future):
@@ -774,7 +800,7 @@ class CacheTable:
             if other_witem is None or other_witem == witem:
                 continue
             using_cache = other_witem.cache_is_read or other_witem.cache_is_write
-            if other_witem.cache_slot == slot and using_cache:
+            if using_cache and other_witem.cache_slot == slot:
                 slot_in_use = True
                 logger.debug(f'slot {slot} in use by witem {other_witem_index}')
         if slot_in_use:

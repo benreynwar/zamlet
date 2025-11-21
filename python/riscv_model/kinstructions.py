@@ -134,6 +134,24 @@ class LoadImmWord(KInstr):
         await kamlet.handle_load_imm_word_instr(self)
 
 @dataclass
+class StoreWord(KInstr):
+    """
+    This instruction stores a word from a vector register to memory.
+    """
+    src: addresses.RegAddr
+    dst: KMAddr
+    # Which bytes of the word we write
+    byte_mask: int
+    # An identifier. Writes with the same writeset_ident are guaranteed not to clash.
+    writeset_ident: int
+    mask_reg: int
+    mask_index: int
+    instr_ident: int
+
+    async def update_kamlet(self, kamlet):
+        await kamlet.handle_store_word_instr(self)
+
+@dataclass
 class ReadByte(KInstr):
     """
     This instruction reads from the VPU memory.
