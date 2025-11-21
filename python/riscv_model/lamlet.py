@@ -24,7 +24,7 @@ import decode
 import addresses
 from addresses import SizeBytes, SizeBits, TLB, WordOrder
 from addresses import AddressConverter, Ordering, GlobalAddress, KMAddr, VPUAddress
-from cache_table import CacheTable, CacheState, WaitingItem, ProtocolState, WItemType, WaitingItem
+from cache_table import CacheTable, CacheState, WaitingItem, WaitingFuture, ProtocolState
 from params import LamletParams
 from message import Header, MessageType, Direction, SendType, TaggedHeader, CHANNEL_MAPPING
 from kamlet import Kamlet
@@ -186,8 +186,7 @@ class Lamlet:
         item_index = await self.get_free_item_index()
         # The waiting item indicates that we are waiting for a response.
         future = self.clock.create_future()
-        self.waiting_items[item_index] = WaitingItem(
-                witem_type=WItemType.FUTURE, item=future, protocol_states=[])
+        self.waiting_items[item_index] = WaitingFuture(future=future)
         kinstr = kinstructions.ReadByte(
             k_maddr=k_maddr,
             ident=item_index,
@@ -347,18 +346,18 @@ class Lamlet:
             assert isinstance(item.item, Future)
             item.item.set_result(header.value)
             self.waiting_items[header.ident] = None
-            logger.warning(f'{self.clock.cycle}: lamlet: Got a READ_BYTE_RESP from ({header.source_x, header.source_y}) is {header.value}')
+            logger.debug(f'{self.clock.cycle}: lamlet: Got a READ_BYTE_RESP from ({header.source_x, header.source_y}) is {header.value}')
         elif header.message_type == MessageType.READ_WORDS_RESP:
             item = self.waiting_items[header.ident]
             assert isinstance(item.item, Future)
             item.item.set_result(packet[1:])
             self.waiting_items[header.ident] = None
-            logger.warning(f'{self.clock.cycle}: lamlet: Got a READ_WORDS_RESP from ({header.source_x, header.source_y}) is {packet[1:]}')
+            logger.debug(f'{self.clock.cycle}: lamlet: Got a READ_WORDS_RESP from ({header.source_x, header.source_y}) is {packet[1:]}')
         else:
             raise NotImplementedError()
 
     async def add_to_instruction_buffer(self, instruction, k_index=None):
-        logger.warning(f'{self.clock.cycle}: lamlet: >>>>>>>>>>>>>> Adding {type(instruction)} to buffer')
+        logger.debug(f'{self.clock.cycle}: lamlet: Adding {type(instruction)} to buffer')
         while len(self.instruction_buffer) >= self.params.instruction_buffer_length:
             await self.clock.next_cycle
         self.instruction_buffer.append((instruction, k_index))
@@ -620,21 +619,20 @@ class Lamlet:
         eb = element_width//8
 
         while start_index < n_elements:
+            current_element_addr = g_addr.addr + start_index * eb
             page_address = (start_addr//self.params.page_bytes) * self.params.page_bytes
             page_info = self.tlb.get_page_info(GlobalAddress(bit_addr=page_address*8, params=self.params))
             remaining_elements = n_elements - start_index
-            end_addr = min(start_addr + (remaining_elements * element_width + 7)//8, page_address + self.params.page_bytes)
-            if not lumps:
-                # Add whether the address range and whether it is in the VPU memory
-                lumps.append((page_info.local_address.is_vpu, start_index, start_addr, end_addr))
-            else:
-                last_is_vpu, last_start_index, last_start_addr, last_end_addr = lumps[-1]
-                if last_is_vpu == page_info.local_address.is_vpu:
-                    # If this page is in the same location merge this access into the last one.
-                    lumps[-1] = (last_is_vpu, last_start_index, last_start_addr, end_addr)
-                else:
-                    lumps.append((page_info.local_address.is_vpu, start_index, start_addr, end_addr))
+
+            cache_line_boundary = ((start_addr // self.params.cache_line_bytes) + 1) * self.params.cache_line_bytes
+            page_boundary = page_address + self.params.page_bytes
+            next_boundary = min(cache_line_boundary, page_boundary)
+
+            end_addr = min(current_element_addr + remaining_elements * eb, next_boundary)
+
+            lumps.append((page_info.local_address.is_vpu, start_index, start_addr, end_addr))
             start_index = (end_addr - g_addr.addr)//eb
+            start_addr = end_addr
 
         # Now loop through the regions and see if there are any elements that span regions.
         # i.e. a single element that is partially in the scalar memory and partially in the VPU memory.
@@ -646,23 +644,43 @@ class Lamlet:
         else:
             sections = []
             next_index = first_index
-            for is_vpu, start_index, start_addr, end_addr in lumps:
-                assert next_index == start_index
-                if start_addr % eb != 0:
-                    start_whole_addr = ((start_addr + eb)//eb) * eb
-                    sections.append(SectionInfo(is_vpu, True, next_index, start_addr, start_whole_addr))
+            logger.info(f'get_memory_split: Processing lumps with element_offset={element_offset}')
+            for lump_is_vpu, lump_start_index, lump_start_addr, lump_end_addr in lumps:
+                logger.info(f'  Lump: is_vpu={lump_is_vpu}, start_idx={lump_start_index}, '
+                           f'start_addr=0x{lump_start_addr:x}, end_addr=0x{lump_end_addr:x}')
+                assert next_index == lump_start_index
+
+                start_offset = (lump_start_addr - g_addr.addr) % eb
+                if start_offset != 0:
+                    start_whole_addr = lump_start_addr + (eb - start_offset)
+                    assert start_whole_addr-1 <= lump_end_addr
+                    logger.info(f'    Adding partial start: idx={next_index}, '
+                               f'start=0x{lump_start_addr:x}, end=0x{start_whole_addr:x}')
+                    sections.append(SectionInfo(lump_is_vpu, True, next_index, lump_start_addr, start_whole_addr))
                     next_index += 1
                 else:
-                    start_whole_addr = start_addr
-                if end_addr % eb != 0:
-                    end_whole_addr = (end_addr//eb) * eb
+                    start_whole_addr = lump_start_addr
+
+                end_offset = (lump_end_addr - g_addr.addr) % eb
+                if end_offset != 0:
+                    end_whole_addr = lump_end_addr - end_offset
                 else:
-                    end_whole_addr = end_addr
+                    end_whole_addr = lump_end_addr
+
                 if end_whole_addr - start_whole_addr > 0:
-                    sections.append(SectionInfo(is_vpu, False, next_index, start_whole_addr, end_whole_addr))
+                    logger.info(f'    Adding whole elements: idx={next_index}, '
+                               f'start=0x{start_whole_addr:x}, end=0x{end_whole_addr:x}')
+                    sections.append(SectionInfo(lump_is_vpu, False, next_index, start_whole_addr, end_whole_addr))
                     next_index += (end_whole_addr - start_whole_addr) // eb
-                if end_addr != end_whole_addr:
-                    sections.append(SectionInfo(is_vpu, True, next_index, end_whole_addr, end_addr))
+                if lump_end_addr != end_whole_addr:
+                    logger.info(f'    Adding partial end: idx={next_index}, '
+                               f'start=0x{end_whole_addr:x}, end=0x{lump_end_addr:x}')
+                    sections.append(SectionInfo(lump_is_vpu, True, next_index, end_whole_addr, lump_end_addr))
+        logger.info(f'get_memory_split: Generated {len(sections)} sections')
+        for i, section in enumerate(sections):
+            logger.info(f'  Section {i}: is_vpu={section.is_vpu}, partial={section.is_a_partial_element}, '
+                       f'idx={section.start_index}, start=0x{section.start_address:x}, '
+                       f'end=0x{section.end_address:x}')
         return sections
 
     def get_writeset_ident(self):
@@ -670,9 +688,10 @@ class Lamlet:
         self.next_writeset_ident += 1
         return ident
 
-    def get_instr_ident(self):
+    def get_instr_ident(self, n_idents=1):
+        assert n_idents >= 1
         ident = self.next_instr_ident
-        self.next_instr_ident += 1
+        self.next_instr_ident += n_idents
         return ident
 
     async def vload(self, vd: int, addr: int, ordering: addresses.Ordering,
@@ -705,23 +724,26 @@ class Lamlet:
         # These writes are guanteed to work on separate bytes so that the write order does not matter.
         writeset_ident = self.get_writeset_ident()
 
-        # The identifies what instruction we're taking part in.
-        # So messages from different kamlets know they are part of the same instruction.
-        instr_ident = self.get_instr_ident()
-
         vline_bits = self.params.maxvl_bytes * 8
         n_vlines = (ew * n_elements + vline_bits - 1) // vline_bits
         for reg in range(vd, vd+n_vlines):
             self.vrf_ordering[reg] = Ordering(word_order=addresses.WordOrder.STANDARD, ew=ew)
 
+        base_reg_addr = addresses.RegAddr(
+            reg=vd, addr=0, params=self.params, ordering=ordering)
+
         for section in self.get_memory_split(g_addr, ew, n_elements, start_index):
             if section.is_a_partial_element:
+                reg_addr = base_reg_addr.offset_bytes(section.start_address - g_addr.addr)
                 # The partial is either the start of an element or the end of an element.
-                # Either the starting_addr or the ending_addr must be a page boundary
-                start_is_page_boundary = section.start_address % self.params.page_bytes == 0
-                end_is_page_boundary = section.end_address % self.params.page_bytes == 0
-                assert start_is_page_boundary or end_is_page_boundary
-                assert not (start_is_page_boundary and end_is_page_boundary)
+                # Either the starting_addr or the ending_addr must be a cache line boundary
+                start_is_cacheline_boundary = section.start_address % self.params.cache_line_bytes == 0
+                end_is_cacheline_boundary = section.end_address % self.params.cache_line_bytes == 0
+                if not (start_is_cacheline_boundary or end_is_cacheline_boundary):
+                    logger.error(f'Partial element not at cache line boundary: start=0x{section.start_address:x}, end=0x{section.end_address:x}, '
+                                f'cache_line_bytes={self.params.cache_line_bytes}, start_idx={section.start_index}')
+                assert start_is_cacheline_boundary or end_is_cacheline_boundary
+                assert not (start_is_cacheline_boundary and end_is_cacheline_boundary)
                 starting_g_addr = GlobalAddress(bit_addr=section.start_address*8, params=self.params)
                 k_maddr = self.to_k_maddr(starting_g_addr)
                 assert ew % 8 == 0
@@ -732,8 +754,6 @@ class Lamlet:
                     kinstr: kinstructions.KInstr
                     if size <= 1:
                         dst_offset = ((section.start_index * ew) % (self.params.vline_bytes * 8))//8
-                        reg_addr = addresses.RegAddr(
-                                reg=dst, addr=dst_offset, params=self.params, ordering=ordering)
                         bit_mask = (1 << 8) - 1
                         if is_store:
                             kinstr = kinstructions.StoreByte(
@@ -756,15 +776,15 @@ class Lamlet:
                                 ident=writeset_ident,
                                 )
                     else:
-                        dst_offset = ((section.start_index * ew) % (self.params.vline_bytes * 8))//8
-                        dst_offset = dst_offset//wb * wb
-                        reg_addr = addresses.RegAddr(
-                                reg=dst, addr=dst_offset, params=self.params, ordering=ordering)
                         byte_mask = [0] * wb
-                        start_word_byte = starting_g_addr.addr % wb
+                        start_word_byte = reg_addr.offset_in_word % wb
                         for byte_index in range(start_word_byte, start_word_byte + size):
                             byte_mask[byte_index] = 1
                         byte_mask_as_int = utils.list_of_uints_to_uint(byte_mask, width=1)
+                        logger.info(f'LoadWord partial: idx={section.start_index}, '
+                                   f'src=0x{section.start_address:x}-0x{section.end_address:x}, '
+                                   f'dst_reg={dst}, dst_offset={reg_addr.offset_in_word}, byte_mask=0x{byte_mask_as_int:x}, '
+                                   f'k_maddr={k_maddr}')
                         if is_store:
                             kinstr = kinstructions.StoreWord(
                                 src=reg_addr,
@@ -775,6 +795,7 @@ class Lamlet:
                                 mask_index=mask_index,
                             )
                         else:
+                            instr_ident = self.get_instr_ident(2)
                             kinstr = kinstructions.LoadWord(
                                 dst=reg_addr,
                                 src=k_maddr,
@@ -782,6 +803,7 @@ class Lamlet:
                                 writeset_ident=writeset_ident,
                                 mask_reg=mask_reg,
                                 mask_index=mask_index,
+                                instr_ident=instr_ident,
                             )
                     await self.add_to_instruction_buffer(kinstr)
                 else:
@@ -811,6 +833,7 @@ class Lamlet:
                     self.check_element_width(starting_g_addr, section.end_address - section.start_address, ew)
                     k_maddr = self.to_k_maddr(starting_g_addr)
                     if is_store:
+                        instr_ident = self.get_instr_ident()
                         kinstr = kinstructions.Store(
                             src=vd,
                             k_maddr=k_maddr,
@@ -822,6 +845,7 @@ class Lamlet:
                             instr_ident=instr_ident,
                             )
                     else:
+                        instr_ident = self.get_instr_ident()
                         kinstr = kinstructions.Load(
                             dst=vd,
                             k_maddr=k_maddr,
@@ -1123,7 +1147,9 @@ class Lamlet:
         self.clock.create_task(self.monitor_instruction_buffer())
 
     async def run_instruction(self, disasm_trace=None):
+        logger.debug(f'{self.clock.cycle}: run_instruction: fetching at pc={hex(self.pc)}')
         first_bytes = await self.get_memory_blocking(self.pc, 2)
+        logger.debug(f'{self.clock.cycle}: run_instruction: got first_bytes={first_bytes.hex()}')
         is_compressed = decode.is_compressed(first_bytes)
 
         if is_compressed:
@@ -1156,7 +1182,9 @@ class Lamlet:
         while not self.finished:
 
             await self.clock.next_cycle
+            logger.debug(f'{self.clock.cycle}: run_instructions: about to run first instruction')
             await self.run_instruction(disasm_trace)
+            logger.debug(f'{self.clock.cycle}: run_instructions: about to run second instruction')
             await self.run_instruction(disasm_trace)
 
     async def handle_vreduction_vs_instr(self, op, dst, src_vector, src_scalar_reg, mask_reg,

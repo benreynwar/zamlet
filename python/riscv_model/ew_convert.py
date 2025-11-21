@@ -246,24 +246,30 @@ def extract_words(params: LamletParams, src_words: List[bytes], src_ew: int, dst
     return words
 
 
-def split_by_factors(value, factors):
+def split_by_factors(value, factors, allow_remainder=True):
     reduced = value
     pieces = []
     for factor in factors:
         pieces.append(reduced % factor)
         reduced = reduced//factor
-    assert reduced == 0
+    if allow_remainder:
+        pieces.append(reduced)
+    else:
+        assert reduced == 0
     return pieces
 
 
 def join_by_factors(values, factors):
-    assert len(values) == len(factors)
+    assert len(values) in (len(factors) + 1, len(factors))
     f = 1
     total = 0
-    for value, factor in zip(values, factors):
+    for value, factor in zip(values[:-1], factors):
         assert value < factor
         total += value * f
         f *= factor
+    if len(values) == len(factors):
+        assert values[-1] < factors[-1]
+    total += values[-1] * f
     return total
 
 def get_mapping_for_dst(
@@ -360,7 +366,7 @@ def get_mapping_for_src(
         small_ew = dst_ew
         large_ew = src_ew
         small_offset = dst_offset
-        large_offset = 0
+        large_offset = src_offset
         large_v = src_v
         large_vw = src_vw
         large_tag = src_tag
@@ -427,7 +433,7 @@ def get_large_small_mapping(vw: int, ww: int, small_ew: int, large_ew: int,
 def get_mapping_from_large_tag(
         params: LamletParams, small_ew: int, large_ew: int,
         small_offset: int, large_offset: int,
-        large_v: int, large_vw: int, large_tag: int):
+        large_v: int, large_vw: int, large_tag: int, check_consistency: bool = True):
     """
     small_ew: The element width in the small-ew mapped vector
     large_ew: The element width in the large-ew mapped vector
@@ -459,36 +465,41 @@ def get_mapping_from_large_tag(
             if small_element_in_large_element > 0:
                 return None
 
-    # n_vectors is the maximum number of vectors that we might access past the first
-    # one. It's just used for splitting up the address.  It can be safely changed to
-    # a larger power of two, and we'll get an error if it is too small.
-    n_vectors = 4
     ww = params.word_bytes * 8  # word width in bits
     # Work out what the destination address is in the logical address space.
-    large_logical_address = join_by_factors([large_eb, large_vw, large_we, large_v], [large_ew, params.j_in_l, ww//large_ew, n_vectors])
+    large_logical_address = join_by_factors([large_eb, large_vw, large_we, large_v], [large_ew, params.j_in_l, ww//large_ew])
     address_in_large_vector = large_logical_address - large_offset
     # We're just copying the vector over.
     # This is where we would make a change if we where doing a strided access or something like that.
     address_in_small_vector = address_in_large_vector
     # In this space we do the offset to work out what the source address is in the logical address space.
     small_logical_address = address_in_small_vector + small_offset
-    small_eb, small_vw, small_we, small_v = split_by_factors(small_logical_address, [small_ew, params.j_in_l, ww//small_ew, n_vectors])
+    small_eb, small_vw, small_we, small_v = split_by_factors(small_logical_address, [small_ew, params.j_in_l, ww//small_ew])
 
     mapping = get_large_small_mapping(vw, ww, small_ew, large_ew,
                           large_v, large_vw, large_we, large_eb,
                           small_v, small_vw, small_we, small_eb)
+
+    # Verify consistency with get_mapping_from_small_tag
+    if check_consistency and mapping is not None:
+        reverse_mapping = get_mapping_from_small_tag(
+                params=params, small_ew=small_ew, large_ew=large_ew,
+                small_offset=small_offset, large_offset=large_offset,
+                small_v=mapping.small_v, small_vw=mapping.small_vw, small_tag=mapping.small_tag,
+                check_consistency=False)
+        assert reverse_mapping == mapping, f"Mapping mismatch: {reverse_mapping} != {mapping}"
+
     return mapping
 
 def get_mapping_from_small_tag(
         params: LamletParams, small_ew: int, large_ew: int,
         small_offset: int, large_offset: int,
-        small_v: int, small_vw: int, small_tag: int):
+        small_v: int, small_vw: int, small_tag: int, check_consistency: bool = True):
     """
     """
     vw = params.vline_bytes * 8
     ww = params.word_bytes * 8
 
-    n_vectors = 4
     small_we = small_tag//2
     is_second_segment = small_tag % 2
     small_eb = 0
@@ -500,33 +511,39 @@ def get_mapping_from_small_tag(
         ww = params.word_bytes * 8  # word width in bits
         # FIXME: Quite a bit of work to see if we use the second segment.
         # Probably a better way exists.
-        small_logical_address = join_by_factors([small_eb, small_vw, small_we, small_v], [small_ew, params.j_in_l, ww//small_ew, n_vectors])
+        small_logical_address = join_by_factors([small_eb, small_vw, small_we, small_v], [small_ew, params.j_in_l, ww//small_ew])
         address_in_small_vector = small_logical_address - small_offset
         address_in_large_vector = address_in_small_vector
         large_logical_address = address_in_large_vector + large_offset
-        large_eb, _, _, _ = split_by_factors(large_logical_address, [large_ew, params.j_in_l, ww//large_ew, n_vectors])
+        large_eb, _, _, _ = split_by_factors(large_logical_address, [large_ew, params.j_in_l, ww//large_ew])
         bits_to_end_of_large_element = large_ew - large_eb
         bits_to_end_of_small_element = small_ew - small_eb
         if bits_to_end_of_large_element >= bits_to_end_of_small_element:
             return None
         small_eb += bits_to_end_of_large_element
-    # n_vectors is the maximum number of vectors that we might access past the first
-    # one. It's just used for splitting up the address.  It can be safely changed to
-    # a larger power of two, and we'll get an error if it is too small.
-    n_vectors = 4
     small_ve = join_by_factors([small_vw, small_we], [params.j_in_l, ww//small_ew])
     small_wb = join_by_factors([small_eb, small_we],  [small_ew, ww//small_ew])
     small_logical_address = join_by_factors(
-            [small_eb, small_vw, small_we, small_v], [small_ew, params.j_in_l, ww//small_ew, n_vectors])
+            [small_eb, small_vw, small_we, small_v], [small_ew, params.j_in_l, ww//small_ew])
     address_in_small_vector = small_logical_address - small_offset
     address_in_large_vector = address_in_small_vector
     large_logical_address = address_in_large_vector + large_offset
-    large_eb, large_vw, large_we, large_v = split_by_factors(large_logical_address, [large_ew, params.j_in_l, ww//large_ew, n_vectors])
+    large_eb, large_vw, large_we, large_v = split_by_factors(large_logical_address, [large_ew, params.j_in_l, ww//large_ew])
     large_ve = join_by_factors([large_vw, large_we], [params.j_in_l, ww//large_ew])
 
     mapping = get_large_small_mapping(vw, ww, small_ew, large_ew,
                           large_v, large_vw, large_we, large_eb,
                           small_v, small_vw, small_we, small_eb)
+
+    # Verify consistency with get_mapping_from_large_tag
+    if check_consistency and mapping is not None:
+        reverse_mapping = get_mapping_from_large_tag(
+                params=params, small_ew=small_ew, large_ew=large_ew,
+                small_offset=small_offset, large_offset=large_offset,
+                large_v=mapping.large_v, large_vw=mapping.large_vw, large_tag=mapping.large_tag,
+                check_consistency=False)
+        assert reverse_mapping == mapping, f"Mapping mismatch: {reverse_mapping} != {mapping}"
+
     return mapping
 
 

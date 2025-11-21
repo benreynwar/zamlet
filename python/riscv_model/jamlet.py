@@ -3,7 +3,7 @@ from typing import Set, List, Any, Tuple
 
 import addresses
 from params import LamletParams
-from cache_table import CacheTable, WItemType, LoadSrcState, LoadDstState
+from cache_table import CacheTable, LoadSrcState, LoadDstState
 from message import Direction, SendType, MessageType, CHANNEL_MAPPING
 from message import Header, IdentHeader, AddressHeader, ValueHeader, TaggedHeader
 from utils import Queue
@@ -84,6 +84,10 @@ class Jamlet:
             MessageType.STORE_J2J_WORDS_REQ: Queue(2),
             MessageType.STORE_J2J_WORDS_RESP: Queue(2),
             MessageType.STORE_J2J_WORDS_DROP: Queue(2),
+            MessageType.LOAD_WORD_REQ: Queue(2),
+            MessageType.LOAD_WORD_RESP: Queue(2),
+            MessageType.LOAD_WORD_DROP: Queue(2),
+            MessageType.LOAD_WORD_RETRY: Queue(2),
             }
 
         self.cache_table = cache_table
@@ -246,7 +250,6 @@ class Jamlet:
             await self.clock.next_cycle
 
     async def _receive_read_line_resp_packet(self, header, queue):
-        logger.warning('&&&&&&&&&&&&&&&&&&&&&& Got a read line resp packet')
         # The packet should say where to put the data.
         # It only needs the 'slot' which should fit fine in the packet.
         remaining = header.length - 1
@@ -299,6 +302,18 @@ class Jamlet:
         elif header.message_type == MessageType.STORE_J2J_WORDS_DROP:
             packet = await self._receive_packet_body(queue, header)
             await self.handle_store_j2j_words_drop(packet)
+        elif header.message_type == MessageType.LOAD_WORD_REQ:
+            packet = await self._receive_packet_body(queue, header)
+            await self.handle_load_word_req(packet)
+        elif header.message_type == MessageType.LOAD_WORD_RESP:
+            packet = await self._receive_packet_body(queue, header)
+            await self.handle_load_word_resp(packet)
+        elif header.message_type == MessageType.LOAD_WORD_DROP:
+            packet = await self._receive_packet_body(queue, header)
+            await self.handle_load_word_drop(packet)
+        elif header.message_type == MessageType.LOAD_WORD_RETRY:
+            packet = await self._receive_packet_body(queue, header)
+            await self.handle_load_word_retry(packet)
         else:
             raise NotImplementedError
 
@@ -374,11 +389,12 @@ class Jamlet:
         j_in_l = self.params.j_in_l
         ww = self.params.word_bytes * 8
         vw = self.params.vline_bytes * 8
-        n_vectors = 1 << 20
 
-        start_eb, start_vw, start_we, start_v = ew_convert.split_by_factors(start_addr_bit, [ew, j_in_l, ww//ew, n_vectors])
+        start_eb, start_vw, start_we, start_v = ew_convert.split_by_factors(
+                start_addr_bit, [ew, j_in_l, ww//ew])
         final_addr_bit = start_addr_bit + instr.n_elements * ew - 1
-        final_eb, final_vw, final_we, final_v = ew_convert.split_by_factors(final_addr_bit, [ew, j_in_l, ww//ew, n_vectors])
+        final_eb, final_vw, final_we, final_v = ew_convert.split_by_factors(
+                final_addr_bit, [ew, j_in_l, ww//ew])
 
         start_ve = ew_convert.join_by_factors([start_we, start_vw], [ww//ew, vw//ww])
         assert instr.start_index == start_ve
@@ -420,20 +436,44 @@ class Jamlet:
             rf_word_addr = instr.src + start_v - base_v
             word = self.rf_slice[rf_word_addr * ww//8: (rf_word_addr+1) * ww//8]
             word_as_int = int.from_bytes(word, byteorder='little')
-            masked = word_as_int & mask
             sram_addr = slot * cache_line_bytes_per_jamlet + (v_index - cache_base_v) * ww//8
-            masked_as_bytes = masked.to_bytes(ww//8, byteorder='little')
-            logger.warning(f'{self.clock.cycle}: jamlet {(self.x, self.y)}: storing {[int(x) for x in masked_as_bytes]}')
-            self.sram[sram_addr: sram_addr + ww//8] = masked_as_bytes
+            old_word = self.sram[sram_addr: sram_addr + ww//8]
+            old_word_as_int = int.from_bytes(old_word, byteorder='little')
+            new_word = (old_word_as_int & ~mask) | (word_as_int & mask)
+            new_word_bytes = new_word.to_bytes(ww//8, byteorder='little')
+            self.sram[sram_addr: sram_addr + ww//8] = new_word_bytes
+            logger.info(f'STORE_SIMPLE: jamlet ({self.x},{self.y}): wrote to sram[{sram_addr}] bytes={new_word_bytes.hex()} mask=0x{mask:016x} rf_word_addr={rf_word_addr} word_from_rf={word.hex()}')
 
-    async def handle_store_j2j_words_witem(self, witem: cache_table.WaitingStoreJ2JWords) -> None:
+    def init_store_j2j_words_dst_state(
+            self, witem: cache_table.WaitingStoreJ2JWords, tag: int) -> None:
         '''
-        The jamlet deals with the waiting item for the STORE_J2J_WORDS.
-        It sends a message for each tag.
+        Initialize the dst_state for a given tag by checking if we will receive
+        data for this tag. If not, mark it complete immediately.
         '''
         instr = witem.item
-        for tag in range(instr.n_tags()):
-            await self.send_store_j2j_words_req(witem=witem, tag=tag, assert_sends=False)
+        src_ordering = instr.src_ordering
+        dst_ordering = instr.k_maddr.ordering
+        src_ew = src_ordering.ew
+        dst_ew = dst_ordering.ew
+        logical_addr = instr.k_maddr.to_logical_vline_addr()
+        start_logical_addr = logical_addr.offset_bits(-instr.start_index * dst_ew)
+        dst_offset = start_logical_addr.bit_addr
+
+        dst_vw_index = addresses.j_coords_to_vw_index(
+                self.params, dst_ordering.word_order, self.x, self.y)
+
+        mapping = ew_convert.get_mapping_for_dst(
+                params=self.params, src_ew=src_ew, dst_ew=dst_ew,
+                dst_v=0, dst_vw=dst_vw_index, dst_tag=tag, dst_offset=dst_offset)
+
+        response_tag = self.j_in_k_index * instr.n_tags() + tag
+        if mapping is None:
+            witem.protocol_states[response_tag].dst_state = cache_table.StoreDstState.COMPLETE
+        else:
+            vline_offsets = self.get_vline_offsets(
+                    dst_ew, mapping.dst_ve, instr.start_index, instr.n_elements)
+            if not vline_offsets:
+                witem.protocol_states[response_tag].dst_state = cache_table.StoreDstState.COMPLETE
 
     async def send_store_j2j_words_req(
             self, witem: cache_table.WaitingStoreJ2JWords, tag: int, assert_sends: bool) -> None:
@@ -469,15 +509,14 @@ class Jamlet:
                     start_index=instr.start_index, n_elements=instr.n_elements)
 
         if not vline_offsets:
-            # We don't need to send this message so we mark it already sent and received
             assert not assert_sends
             witem.protocol_states[response_tag].src_state = cache_table.StoreSrcState.COMPLETE
-            witem.protocol_states[response_tag].dst_state = cache_table.StoreDstState.COMPLETE
             return
         witem.protocol_states[response_tag].src_state = cache_table.StoreSrcState.WAITING_FOR_RESPONSE
 
         target_x, target_y = addresses.vw_index_to_j_coords(
                 self.params, dst_ordering.word_order, mapping.dst_vw)
+        logger.debug(f'jamlet ({self.x}, {self.y}): send_store_j2j_words_req tag={tag} -> ({target_x}, {target_y})')
 
         word_bytes = self.params.word_bytes
         words = [self.rf_slice[(instr.src+index)*word_bytes: (instr.src+index+1)*word_bytes]
@@ -538,24 +577,29 @@ class Jamlet:
             # We not expected this message.
             # Presumably we haven't processed that instruction yet.
             # Drop the packet.
+            logger.debug(f'jamlet ({self.x}, {self.y}): handle_store_j2j_words_req from ({header.source_x}, {header.source_y}) tag={header.tag} ident={header.ident} - no witem, dropping')
             await self.send_store_j2j_words_drop(header)
             return
+        logger.debug(f'jamlet ({self.x}, {self.y}): handle_store_j2j_words_req from ({header.source_x}, {header.source_y}) tag={header.tag} ident={header.ident}')
         assert isinstance(witem, cache_table.WaitingStoreJ2JWords)
         slot = witem.cache_slot
         assert slot is not None
         instr = witem.item
         assert isinstance(instr, kinstructions.Store)
-        response_tag = self.j_in_k_index * instr.n_tags() + header.tag
 
-        if self.cache_table.can_write(instr.k_maddr):
+        src_ew = instr.src_ordering.ew
+        dst_ew = instr.k_maddr.ordering.ew
+        src_vw_index = addresses.j_coords_to_vw_index(
+                self.params, instr.src_ordering.word_order, header.source_x, header.source_y)
+        mapping = ew_convert.get_mapping_for_src(
+                params=self.params, src_ew=src_ew, dst_ew=dst_ew,
+                src_v=0, src_vw=src_vw_index, src_tag=header.tag)
+        assert mapping is not None
+        dst_tag = mapping.dst_tag
+        response_tag = self.j_in_k_index * instr.n_tags() + dst_tag
+
+        if self.cache_table.can_write(instr.k_maddr, witem=witem):
             assert witem.cache_is_avail
-            src_ew = instr.src_ordering.ew
-            dst_ew = instr.k_maddr.ordering.ew
-            vw_index = addresses.j_coords_to_vw_index(
-                    self.params, instr.k_maddr.ordering.word_order, self.x, self.y)
-            mapping = ew_convert.get_mapping_for_dst(
-                    params=self.params, src_ew=src_ew, dst_ew=dst_ew,
-                    dst_v=0, dst_vw=vw_index, dst_tag=header.tag)
             # Workout how much we need to shift the word.
             shift = mapping.src_wb - mapping.dst_wb
             # Work out what mask to apply
@@ -584,10 +628,12 @@ class Jamlet:
                     new_word = old_word_masked | shifted
                     new_word_bytes = new_word.to_bytes(word_bytes, byteorder='little')
                     self.sram[cache_addr: cache_addr + word_bytes] = new_word_bytes
+                    logger.info(f'STORE_J2J: jamlet ({self.x},{self.y}): wrote to sram[{cache_addr}] bytes={new_word_bytes.hex()} (shifted from {word.hex()})')
             witem.protocol_states[response_tag].dst_state = cache_table.StoreDstState.COMPLETE
             cache_state = self.cache_table.slot_states[slot]
             assert cache_state.state in (CacheState.SHARED, CacheState.MODIFIED)
             cache_state.state = CacheState.MODIFIED
+            logger.debug(f'jamlet ({self.x}, {self.y}): handle_store_j2j_words_req - wrote to cache, sending resp')
             await self.send_store_j2j_words_resp(header)
         else:
             # We can't write to the cache table.
@@ -595,6 +641,7 @@ class Jamlet:
             witem.protocol_states[response_tag].dst_state = (
                     cache_table.StoreDstState.NEED_TO_ASK_FOR_RESEND)
             assert not witem.cache_is_avail
+            logger.debug(f'jamlet ({self.x}, {self.y}): handle_store_j2j_words_req - can\'t write, waiting for cache')
 
     async def handle_store_j2j_words_drop(self, packet: List[Any]) -> None:
         '''
@@ -620,6 +667,7 @@ class Jamlet:
         assert isinstance(witem, cache_table.WaitingStoreJ2JWords)
         instr = witem.item
         response_tag = self.j_in_k_index * instr.n_tags() + header.tag
+        logger.debug(f'jamlet ({self.x}, {self.y}): handle_store_j2j_words_resp from ({header.source_x}, {header.source_y}) tag={header.tag} ident={header.ident}')
         assert witem.protocol_states[response_tag].src_state == cache_table.StoreSrcState.WAITING_FOR_RESPONSE
         witem.protocol_states[response_tag].src_state = cache_table.StoreSrcState.COMPLETE
 
@@ -737,11 +785,12 @@ class Jamlet:
         j_in_l = self.params.j_in_l
         ww = self.params.word_bytes * 8
         vw = self.params.vline_bytes * 8
-        n_vectors = 1 << 20
 
-        start_eb, start_vw, start_we, start_v = ew_convert.split_by_factors(start_addr_bit, [ew, j_in_l, ww//ew, n_vectors])
+        start_eb, start_vw, start_we, start_v = ew_convert.split_by_factors(
+                start_addr_bit, [ew, j_in_l, ww//ew])
         final_addr_bit = start_addr_bit + instr.n_elements * ew - 1
-        final_eb, final_vw, final_we, final_v = ew_convert.split_by_factors(final_addr_bit, [ew, j_in_l, ww//ew, n_vectors])
+        final_eb, final_vw, final_we, final_v = ew_convert.split_by_factors(
+                final_addr_bit, [ew, j_in_l, ww//ew])
 
         start_ve = ew_convert.join_by_factors([start_we, start_vw], [ww//ew, vw//ww])
         assert instr.start_index == start_ve
@@ -777,7 +826,7 @@ class Jamlet:
                 el_mask_bits += [mask_bit and in_range] * ew
             masks.append(utils.list_of_uints_to_uint(el_mask_bits, width=1))
 
-        logger.warning(f'{self.clock.cycle}: jamlet {(self.x, self.y)}: Running the vector load')
+        logger.debug(f'{self.clock.cycle}: jamlet {(self.x, self.y)}: Running the vector load')
         cache_base_v = start_c * self.params.vlines_in_cache_line
         cache_line_bytes_per_jamlet = self.params.cache_line_bytes // self.params.j_in_k
         for mask, v_index in zip(masks, range(start_v, final_v+1)):
@@ -787,18 +836,10 @@ class Jamlet:
             masked = word_as_int & mask
             masked_as_bytes = masked.to_bytes(ww//8, byteorder='little')
             rf_word_addr = instr.dst + start_v - base_v
-            logger.warning(f'{self.clock.cycle}: jamlet {(self.x, self.y)}: Loading {[int(x) for x in masked_as_bytes]}')
+            logger.debug(f'{self.clock.cycle}: jamlet {(self.x, self.y)}: Loading {[int(x) for x in masked_as_bytes]}')
+            logger.warning(f'{self.clock.cycle}: LOAD: jamlet ({self.x},{self.y}): vw_index={vw_index}, reg={instr.dst}, rf_word_addr={rf_word_addr}, bytes={masked_as_bytes.hex()}, start_v={start_v}, base_v={base_v}')
             self.rf_slice[rf_word_addr * ww//8: (rf_word_addr+1) * ww//8] = masked_as_bytes
 
-    async def handle_load_j2j_words_witem(self, witem: cache_table.WaitingLoadJ2JWords) -> None:
-        '''
-        The jamlet deals with the waiting item for the LOAD_J2J_WORDS.
-        It sends a message for each tag.
-        '''
-        instr = witem.item
-        for tag in range(instr.n_tags()):
-            await self.send_load_j2j_words_req(witem=witem, tag=tag, assert_sends=False)
-             
     async def send_load_j2j_words_req(
             self, witem: cache_table.WaitingLoadJ2JWords, tag: int, assert_sends: bool) -> None:
         '''
@@ -816,9 +857,18 @@ class Jamlet:
         start_logical_addr = logical_addr.offset_bits(-instr.start_index * src_ew)
         offset = start_logical_addr.bit_addr
 
+        logger.info(f'jamlet ({self.x}, {self.y}): send_load_j2j_words_req tag={tag} '
+                    f'k_maddr.bit_addr={instr.k_maddr.bit_addr} ({instr.k_maddr.bit_addr//8} bytes) '
+                    f'vw_index={vw_index} offset={offset} bits ({offset//8} bytes) '
+                    f'logical_addr.index={logical_addr.index} logical_addr.bit_addr={logical_addr.bit_addr} '
+                    f'start_index={instr.start_index} start_logical_addr.index={start_logical_addr.index}')
+
         mapping = ew_convert.get_mapping_for_src(
             params=self.params, src_ew=src_ew, dst_ew=dst_ew,
             src_offset=offset, src_v=0, src_vw=vw_index, src_tag=tag)
+
+        logger.info(f'jamlet ({self.x}, {self.y}): send_load_j2j_words_req tag={tag} '
+                    f'mapping={mapping}')
 
         if mapping is None:
             vline_offsets = []
@@ -827,12 +877,23 @@ class Jamlet:
                     dst_ve=mapping.dst_ve, dst_ew=dst_ew,
                     start_index=instr.start_index, n_elements=instr.n_elements)
 
+        logger.info(f'jamlet ({self.x}, {self.y}): send_load_j2j_words_req tag={tag} '
+                    f'vline_offsets={vline_offsets}')
+
         word_bytes = self.params.word_bytes
         assert witem.cache_slot is not None
         words = []
+
+        kamlet_vline_bytes = self.params.vline_bytes // self.params.k_in_l
+        base_vline_in_cache = (instr.k_maddr.addr % self.params.cache_line_bytes) // kamlet_vline_bytes
+        logger.warning(f'jamlet ({self.x}, {self.y}): k_maddr.addr={instr.k_maddr.addr} (0x{instr.k_maddr.addr:x}), '
+                      f'cache_line_bytes={self.params.cache_line_bytes}, kamlet_vline_bytes={kamlet_vline_bytes}, '
+                      f'base_vline_in_cache={base_vline_in_cache}, cache_slot={witem.cache_slot}')
+
         for vline_offset in vline_offsets:
             cache_base_addr = witem.cache_slot * self.params.vlines_in_cache_line * word_bytes
-            cache_addr = cache_base_addr + vline_offset
+            cache_addr = cache_base_addr + (base_vline_in_cache + vline_offset) * word_bytes
+            logger.warning(f'jamlet ({self.x}, {self.y}): vline_offset={vline_offset}, cache_addr={cache_addr} (0x{cache_addr:x})')
             words.append(self.sram[cache_addr: cache_addr + word_bytes])
 
         response_tag = self.j_in_k_index * instr.n_tags() + tag
@@ -840,11 +901,11 @@ class Jamlet:
             assert not assert_sends
             witem.protocol_states[response_tag].src_state = LoadSrcState.COMPLETE
             return
-        witem.protocol_states[response_tag].src_state = LoadSrcState.WAITING_FOR_RESPONSE
 
-        # We need to read the words out of the cache slot
         target_x, target_y = addresses.vw_index_to_j_coords(
                 self.params, dst_ordering.word_order, mapping.dst_vw)
+        logger.debug(f'jamlet ({self.x}, {self.y}): send_load_j2j_words_req tag={tag} -> ({target_x}, {target_y})')
+        witem.protocol_states[response_tag].src_state = LoadSrcState.WAITING_FOR_RESPONSE
 
         header = TaggedHeader(
             target_x=target_x,
@@ -859,6 +920,55 @@ class Jamlet:
             )
         packet = [header] + words
         await self.send_packet(packet)
+
+    def init_load_j2j_words_dst_state(
+            self, witem: cache_table.WaitingLoadJ2JWords, tag: int) -> None:
+        '''
+        Initialize the dst_state for a given tag by checking if we will receive
+        data for this tag. If not, mark it complete immediately.
+        '''
+        instr = witem.item
+        src_ordering = instr.k_maddr.ordering
+        dst_ordering = instr.dst_ordering
+        src_ew = src_ordering.ew
+        dst_ew = dst_ordering.ew
+        logical_addr = instr.k_maddr.to_logical_vline_addr()
+        start_logical_addr = logical_addr.offset_bits(-instr.start_index * src_ew)
+        offset = start_logical_addr.bit_addr
+
+        dst_vw_index = addresses.j_coords_to_vw_index(
+                self.params, dst_ordering.word_order, self.x, self.y)
+
+        mapping = ew_convert.get_mapping_for_dst(
+                params=self.params, src_ew=src_ew, dst_ew=dst_ew,
+                dst_v=0, dst_vw=dst_vw_index, dst_tag=tag, src_offset=offset)
+
+        response_tag = self.j_in_k_index * instr.n_tags() + tag
+        if mapping is None:
+            witem.protocol_states[response_tag].dst_state = LoadDstState.COMPLETE
+        else:
+            vline_offsets = self.get_vline_offsets(
+                    dst_ew, mapping.dst_ve, instr.start_index, instr.n_elements)
+            if not vline_offsets:
+                witem.protocol_states[response_tag].dst_state = LoadDstState.COMPLETE
+
+    def init_load_word_src_state(self, witem: cache_table.WaitingLoadWordSrc):
+        """Initialize protocol state for SRC jamlet."""
+        instr = witem.item
+        is_src = (instr.src.k_index == self.k_index and
+                  instr.src.j_in_k_index == self.j_in_k_index)
+        if is_src:
+            logger.warning(f'{self.clock.cycle}: jamlet {(self.x, self.y)}: setting j_in_k={self.j_in_k_index} to NEED_TO_SEND')
+            witem.protocol_states[self.j_in_k_index] = LoadSrcState.NEED_TO_SEND
+
+    def init_load_word_dst_state(self, witem: cache_table.WaitingLoadWordDst):
+        """Initialize protocol state for DST jamlet."""
+        instr = witem.item
+        is_dst = (instr.dst.k_index == self.k_index and
+                  instr.dst.j_in_k_index == self.j_in_k_index)
+        if is_dst:
+            logger.warning(f'{self.clock.cycle}: jamlet {(self.x, self.y)}: setting j_in_k={self.j_in_k_index} to WAITING_FOR_REQUEST')
+            witem.protocol_states[self.j_in_k_index] = LoadDstState.WAITING_FOR_REQUEST
 
     def get_vline_offsets(
             self, dst_ew: int, dst_ve: int, start_index: int, n_elements: int) -> List[int]:
@@ -897,21 +1007,26 @@ class Jamlet:
             return
         assert isinstance(item, cache_table.WaitingLoadJ2JWords)
         instr = item.item
-        response_index = self.j_in_k_index * instr.n_tags() + header.tag
         dst_ordering = instr.dst_ordering
         src_ew = instr.k_maddr.ordering.ew
         dst_ew = dst_ordering.ew
         logical_addr = instr.k_maddr.to_logical_vline_addr()
         start_logical_addr = logical_addr.offset_bits(-instr.start_index * src_ew)
         offset = start_logical_addr.bit_addr
-        vw_index = addresses.j_coords_to_vw_index(
-                self.params, instr.dst_ordering.word_order, self.x, self.y)
 
-        mapping = ew_convert.get_mapping_for_dst(
+        src_vw_index = addresses.j_coords_to_vw_index(
+                self.params, instr.dst_ordering.word_order, header.source_x, header.source_y)
+
+        mapping = ew_convert.get_mapping_for_src(
                 params=self.params, src_ew=src_ew, dst_ew=dst_ew,
-                dst_v=0, dst_vw=vw_index, dst_tag=header.tag, src_offset=offset)
+                src_v=0, src_vw=src_vw_index, src_tag=header.tag, src_offset=offset)
 
         assert mapping is not None
+        dst_tag = mapping.dst_tag
+        response_index = self.j_in_k_index * instr.n_tags() + dst_tag
+        current_dst_state = item.protocol_states[response_index].dst_state
+        logger.debug(f'jamlet ({self.x}, {self.y}): handle_load_j2j_words_req from ({header.source_x}, {header.source_y}) src_tag={header.tag} -> dst_tag={dst_tag} response_index={response_index} current_dst_state={current_dst_state}')
+
         assert len(packet) >= 2
         words = packet[1:]
         shift = mapping.src_wb - mapping.dst_wb
@@ -942,10 +1057,12 @@ class Jamlet:
             masked_shifted = shifted & mask
             updated_word = masked_old_word | masked_shifted
             updated_word_bytes = updated_word.to_bytes(word_bytes, byteorder='little')
+            logger.warning(f'{self.clock.cycle}: LOAD_J2J: jamlet ({self.x},{self.y}): dst_vw={mapping.dst_vw}, vline_offset={vline_offset}, dst_reg={dst_reg}, bytes={updated_word_bytes.hex()}')
             self.rf_slice[dst_reg * word_bytes: (dst_reg+1) * word_bytes] = updated_word_bytes
 
         assert item.protocol_states[response_index].dst_state == LoadDstState.WAITING_FOR_REQUEST
         item.protocol_states[response_index].dst_state = LoadDstState.COMPLETE
+        await self.send_load_j2j_words_resp(header)
 
     def get_load_item_and_response_index(
             self, header: TaggedHeader) -> Tuple[WaitingItem, int]:
@@ -1000,12 +1117,7 @@ class Jamlet:
         packet = [header]
         await self.send_packet(packet)
 
-    async def send_load_j2j_words_resp(self, rcvd_header: TaggedHeader, k_maddr: addresses.KMAddr):
-        slot = self.cache_table.addr_to_slot(k_maddr)
-        cache_line_offset = k_maddr.addr % self.params.cache_line_bytes
-        sram_addr = slot * self.params.cache_line_bytes + cache_line_offset
-        assert cache_line_offset % self.params.word_bytes == 0
-        word = self.sram[sram_addr: sram_addr + self.params.word_bytes]
+    async def send_load_j2j_words_resp(self, rcvd_header: TaggedHeader):
         assert self.x == rcvd_header.target_x
         assert self.y == rcvd_header.target_y
         header = TaggedHeader(
@@ -1015,12 +1127,181 @@ class Jamlet:
             source_y=self.y,
             send_type=SendType.SINGLE,
             message_type=MessageType.LOAD_J2J_WORDS_RESP,
-            length=2,
+            length=1,
             ident=rcvd_header.ident,
             tag=rcvd_header.tag,
             )
-        packet = [header, word]
+        packet = [header]
         await self.send_packet(packet)
+
+    async def send_load_word_req(self, witem: cache_table.WaitingLoadWordSrc):
+        """SRC jamlet sends request with data to DST jamlet."""
+        instr = witem.item
+
+        # Convert dst k_index and j_in_k_index to absolute jamlet coordinates
+        target_x, target_y = addresses.k_indices_to_j_coords(
+            self.params, instr.dst.k_index, instr.dst.j_in_k_index)
+
+        witem.protocol_states[self.j_in_k_index] = LoadSrcState.WAITING_FOR_RESPONSE
+
+        cache_slot = witem.cache_slot
+        assert cache_slot is not None
+
+        j_saddr = instr.src.to_j_saddr(self.cache_table)
+        wb = self.params.word_bytes
+        sram_addr = (j_saddr.addr // wb) * wb
+        word = self.sram[sram_addr : sram_addr + self.params.word_bytes]
+
+        logger.warning(f'{self.clock.cycle}: LOAD_WORD: jamlet ({self.x}, {self.y}): send_load_word_req to ({target_x}, {target_y}) ident={instr.instr_ident} sram_addr={sram_addr} k_maddr.bit_addr={instr.src.bit_addr} word={word.hex()}')
+
+        header = TaggedHeader(
+            target_x=target_x, target_y=target_y,
+            source_x=self.x, source_y=self.y,
+            message_type=MessageType.LOAD_WORD_REQ,
+            send_type=SendType.SINGLE,
+            length=2,
+            ident=instr.instr_ident, tag=0)
+
+        await self.send_packet([header, word])
+
+    async def handle_load_word_req(self, packet: List[Any]):
+        """DST jamlet receives request with data, writes to register, sends response."""
+        header = packet[0]
+        word = packet[1]
+
+        logger.warning(f'{self.clock.cycle}: LOAD_WORD: jamlet ({self.x}, {self.y}): handle_load_word_req from ({header.source_x}, {header.source_y}) ident={header.ident}')
+
+        dst_ident = header.ident + 1
+        witem = self.cache_table.get_waiting_item_by_instr_ident(dst_ident)
+        if witem is None:
+            # Debug: show all waiting items with their instr_idents
+            witems_debug = [(i, w.instr_ident, type(w).__name__) for i, w in enumerate(self.cache_table.waiting_items) if w is not None]
+            logger.warning(f'{self.clock.cycle}: LOAD_WORD: jamlet ({self.x}, {self.y}): DROP - no witem. Waiting items: {witems_debug}')
+            await self.send_load_word_drop(header)
+            return
+
+        assert isinstance(witem, cache_table.WaitingLoadWordDst)
+        assert witem.protocol_states[self.j_in_k_index] == LoadDstState.WAITING_FOR_REQUEST
+        instr = witem.item
+        word_as_int = int.from_bytes(word, byteorder='little')
+
+        old_word = self.rf_slice[instr.dst.reg * self.params.word_bytes :
+                                 (instr.dst.reg + 1) * self.params.word_bytes]
+        old_word_as_int = int.from_bytes(old_word, byteorder='little')
+
+        # Calculate shift amount: dst position - src position
+        src_word_offset = instr.src.addr % self.params.word_bytes
+        dst_word_offset = instr.dst.offset_in_word
+        shift_bytes = src_word_offset - dst_word_offset
+        shift_bits = shift_bytes * 8
+
+        logger.warning(f'{self.clock.cycle}: LOAD_WORD: jamlet ({self.x}, {self.y}): '
+                      f'src.addr={instr.src.addr}, src_word_offset={src_word_offset}, '
+                      f'dst.offset_in_word={dst_word_offset}, shift_bytes={shift_bytes}')
+
+        # Expand byte_mask from bit-per-byte to full byte mask
+        # byte_mask tells us which bytes in the SOURCE word are valid
+        dst_expanded_mask = 0
+        for byte_idx in range(self.params.word_bytes):
+            if instr.byte_mask & (1 << byte_idx):
+                dst_expanded_mask |= (0xFF << (byte_idx * 8))
+
+        # Shift both the data and the mask to destination positions
+        if shift_bits < 0:
+            shifted_word = word_as_int << (-shift_bits)
+        else:
+            shifted_word = word_as_int >> shift_bits
+
+        # Merge shifted data with old register value using shifted mask
+        masked_new = shifted_word & dst_expanded_mask
+        masked_old = old_word_as_int & (~dst_expanded_mask)
+        result = masked_old | masked_new
+
+        logger.warning(f'{self.clock.cycle}: LOAD_WORD: jamlet ({self.x}, {self.y}): '
+                      f'word=0x{word_as_int:016x}, dst_mask=0x{dst_expanded_mask:016x}, '
+                      f'shift_bits={shift_bits}, shifted=0x{shifted_word:016x}, '
+                      f'dst_mask=0x{dst_expanded_mask:016x}, old=0x{old_word_as_int:016x}, '
+                      f'masked_new=0x{masked_new:016x}')
+
+        result_bytes = result.to_bytes(self.params.word_bytes, byteorder='little')
+        self.rf_slice[instr.dst.reg * self.params.word_bytes :
+                      (instr.dst.reg + 1) * self.params.word_bytes] = result_bytes
+
+        witem.protocol_states[self.j_in_k_index] = LoadDstState.COMPLETE
+
+        logger.warning(f'{self.clock.cycle}: LOAD_WORD: jamlet ({self.x}, {self.y}): wrote to reg={instr.dst.reg} result={result_bytes.hex()}')
+
+        await self.send_load_word_resp(header)
+
+    async def send_load_word_resp(self, rcvd_header: TaggedHeader):
+        """DST sends acknowledgment response to SRC."""
+        header = TaggedHeader(
+            target_x=rcvd_header.source_x, target_y=rcvd_header.source_y,
+            source_x=self.x, source_y=self.y,
+            message_type=MessageType.LOAD_WORD_RESP,
+            send_type=SendType.SINGLE,
+            length=1,
+            ident=rcvd_header.ident, tag=0)
+        await self.send_packet([header])
+
+    async def send_load_word_drop(self, rcvd_header: TaggedHeader):
+        """DST sends drop to SRC when not ready."""
+        header = TaggedHeader(
+            target_x=rcvd_header.source_x, target_y=rcvd_header.source_y,
+            source_x=self.x, source_y=self.y,
+            message_type=MessageType.LOAD_WORD_DROP,
+            send_type=SendType.SINGLE,
+            length=1,
+            ident=rcvd_header.ident, tag=0)
+        await self.send_packet([header])
+
+    async def handle_load_word_resp(self, packet: List[Any]):
+        """SRC jamlet receives acknowledgment response."""
+        header = packet[0]
+        witem = self.cache_table.get_waiting_item_by_instr_ident(header.ident)
+        assert isinstance(witem, cache_table.WaitingLoadWordSrc)
+
+        logger.warning(f'{self.clock.cycle}: LOAD_WORD: jamlet ({self.x}, {self.y}): handle_load_word_resp from ({header.source_x}, {header.source_y}) - COMPLETE')
+
+        witem.protocol_states[self.j_in_k_index] = LoadSrcState.COMPLETE
+
+    async def handle_load_word_drop(self, packet: List[Any]):
+        """SRC jamlet receives drop, will retry request."""
+        header = packet[0]
+        witem = self.cache_table.get_waiting_item_by_instr_ident(header.ident)
+        assert isinstance(witem, cache_table.WaitingLoadWordSrc)
+
+        logger.warning(f'{self.clock.cycle}: LOAD_WORD: jamlet ({self.x}, {self.y}): handle_load_word_drop from ({header.source_x}, {header.source_y}) - will RETRY')
+
+        witem.protocol_states[self.j_in_k_index] = LoadSrcState.NEED_TO_SEND
+
+    async def send_load_word_retry(self, witem: cache_table.WaitingLoadWordDst):
+        """DST jamlet sends retry to SRC when it becomes ready."""
+        instr = witem.item
+
+        src_j_in_k = instr.src.j_in_k_index
+        target_x = src_j_in_k % self.params.j_cols
+        target_y = src_j_in_k // self.params.j_cols
+
+        witem.protocol_states[self.j_in_k_index] = LoadDstState.WAITING_FOR_REQUEST
+
+        header = TaggedHeader(
+            target_x=target_x, target_y=target_y,
+            source_x=self.x, source_y=self.y,
+            message_type=MessageType.LOAD_WORD_RETRY,
+            send_type=SendType.SINGLE,
+            length=1,
+            ident=instr.instr_ident, tag=0)
+
+        await self.send_packet([header])
+
+    async def handle_load_word_retry(self, packet: List[Any]):
+        """SRC jamlet receives retry, resend request."""
+        header = packet[0]
+        witem = self.cache_table.get_waiting_item_by_instr_ident(header.ident)
+        assert isinstance(witem, cache_table.WaitingLoadWordSrc)
+
+        witem.protocol_states[self.j_in_k_index] = LoadSrcState.NEED_TO_SEND
 
 
     async def _monitor_waiting_items(self) -> None:
@@ -1032,12 +1313,13 @@ class Jamlet:
                 if isinstance(witem, cache_table.WaitingLoadJ2JWords):
                     instr = witem.item
                     assert isinstance(instr, kinstructions.Load)
-                    n_tags = instr.n_tags()
-                    for tag in range(n_tags):
-                        response_index = self.j_in_k_index * n_tags + tag
-                        protocol_state = witem.protocol_states[response_index]
-                        if protocol_state.src_state == LoadSrcState.NEED_TO_SEND:
-                            await self.send_load_j2j_words_req(witem, tag, assert_sends=False)
+                    if witem.cache_is_avail:
+                        n_tags = instr.n_tags()
+                        for tag in range(n_tags):
+                            response_index = self.j_in_k_index * n_tags + tag
+                            protocol_state = witem.protocol_states[response_index]
+                            if protocol_state.src_state == LoadSrcState.NEED_TO_SEND:
+                                await self.send_load_j2j_words_req(witem, tag, assert_sends=False)
                 elif isinstance(witem, cache_table.WaitingStoreJ2JWords):
                     instr = witem.item
                     assert isinstance(instr, kinstructions.Store)
@@ -1050,6 +1332,13 @@ class Jamlet:
                         if protocol_state.dst_state == cache_table.StoreDstState.NEED_TO_ASK_FOR_RESEND:
                             if witem.cache_is_avail:
                                 await self.send_store_j2j_words_retry(witem, tag)
+                elif isinstance(witem, cache_table.WaitingLoadWordSrc):
+                    if witem.protocol_states[self.j_in_k_index] == LoadSrcState.NEED_TO_SEND:
+                        if witem.cache_is_avail:
+                            await self.send_load_word_req(witem)
+                elif isinstance(witem, cache_table.WaitingLoadWordDst):
+                    if witem.protocol_states[self.j_in_k_index] == LoadDstState.NEED_TO_ASK_FOR_RESEND:
+                        await self.send_load_word_retry(witem)
 
     async def run(self):
         for router in self.routers:

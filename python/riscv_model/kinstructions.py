@@ -110,6 +110,7 @@ class LoadWord(KInstr):
     writeset_ident: int
     mask_reg: int
     mask_index: int
+    instr_ident: int
 
     async def update_kamlet(self, kamlet):
         await kamlet.handle_load_word_instr(self)

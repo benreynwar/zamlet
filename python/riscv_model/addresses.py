@@ -52,13 +52,19 @@ def vw_index_to_k_indices(params: LamletParams, word_order: WordOrder, vw_index:
     return k_index, j_in_k_index
 
 
-def k_indices_to_vw_index(params: LamletParams, word_order, k_index: int, j_in_k_index: int):
+def k_indices_to_j_coords(params: LamletParams, k_index: int, j_in_k_index: int):
+    """Convert (k_index, j_in_k_index) to absolute jamlet coordinates (j_x, j_y)."""
     k_x = k_index % params.k_cols
     k_y = k_index // params.k_cols
     j_in_k_x = j_in_k_index % params.j_cols
     j_in_k_y = j_in_k_index // params.j_cols
     j_x = k_x * params.j_cols + j_in_k_x
     j_y = k_y * params.j_rows + j_in_k_y
+    return j_x, j_y
+
+
+def k_indices_to_vw_index(params: LamletParams, word_order, k_index: int, j_in_k_index: int):
+    j_x, j_y = k_indices_to_j_coords(params, k_index, j_in_k_index)
     vw_index = j_coords_to_vw_index(params, word_order, j_x, j_y)
     return vw_index
 
@@ -446,7 +452,7 @@ class PhysicalVLineAddress:
     def to_logical_vline_addr(self):
 
         vw_index = self.bit_addr // (self.params.word_bytes * 8)
-        assert self.params.word_bytes * 8 > self.ordering.ew
+        assert self.params.word_bytes * 8 >= self.ordering.ew
         assert (self.params.word_bytes * 8) % self.ordering.ew == 0
         elements_in_word = (self.params.word_bytes * 8)//self.ordering.ew
         element_in_word_index = (self.bit_addr // self.ordering.ew) % elements_in_word
@@ -656,6 +662,15 @@ class RegAddr:
         in_e_index = self.addr % self.eb
         offset = in_j_index * self.eb + in_e_index
         return offset
+
+    def offset_bytes(self, n_bytes):
+        new_addr = self.addr + n_bytes
+        return RegAddr(
+            reg=self.reg+new_addr//self.params.vline_bytes,
+            addr=new_addr%(self.params.vline_bytes),
+            ordering=self.ordering,
+            params=self.params,
+            )
 
 
 class AddressConverter:
