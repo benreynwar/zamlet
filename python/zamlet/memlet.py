@@ -3,12 +3,12 @@ from typing import List, Tuple, Dict
 from collections import deque
 import random
 
-from params import LamletParams
-from runner import Clock
-from router import Router, Direction
-from message import Header, IdentHeader, AddressHeader
-from utils import Queue
-from message import MessageType, SendType, CHANNEL_MAPPING
+from zamlet.params import LamletParams
+from zamlet.runner import Clock
+from zamlet.router import Router, Direction
+from zamlet.message import Header, IdentHeader, AddressHeader
+from zamlet.utils import Queue
+from zamlet.message import MessageType, SendType, CHANNEL_MAPPING
 
 
 logger = logging.getLogger(__name__)

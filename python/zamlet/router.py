@@ -1,9 +1,10 @@
 from dataclasses import dataclass
 import logging
+from typing import Set
 
-from message import Direction, directions, Header, SendType
-from params import LamletParams
-from utils import Queue
+from zamlet.message import Direction, directions, Header, SendType
+from zamlet.params import LamletParams
+from zamlet.utils import Queue
 
 
 logger = logging.getLogger(__name__)
@@ -12,8 +13,8 @@ logger = logging.getLogger(__name__)
 @dataclass
 class Connection:
     remaining: int
-    dests: set(Direction)
-    unconsumed: set(Direction)
+    dests: Set[Direction]
+    unconsumed: Set[Direction]
     age: int
     header: Header
 

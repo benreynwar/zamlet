@@ -5,12 +5,8 @@ Reference: riscv-isa-manual/src/rv32.adoc
 
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
 
-if TYPE_CHECKING:
-    import state
-
-from register_names import reg_name
+from zamlet.register_names import reg_name
 
 
 logger = logging.getLogger(__name__)

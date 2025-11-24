@@ -10,9 +10,9 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     import state
 
-from register_names import reg_name, freg_name
-from instructions.control_flow import format_branch_target
-import utils
+from zamlet.register_names import reg_name, freg_name
+from zamlet.instructions.control_flow import format_branch_target
+from zamlet import utils
 
 
 logger = logging.getLogger(__name__)

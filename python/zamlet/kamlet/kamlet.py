@@ -1,17 +1,15 @@
 import logging
 from typing import List
 
-import addresses
-from addresses import KMAddr
-from params import LamletParams
-from jamlet import Jamlet
-from message import Header, MessageType, SendType, AddressHeader
-from utils import Queue
-import kinstructions
-import memlet
-import register_file_slot
-import cache_table
-from cache_table import CacheRequestType, CacheTable, WaitingItem, LoadSrcState, LoadDstState, StoreSrcState, StoreDstState
+import zamlet.addresses
+from zamlet.addresses import KMAddr
+from zamlet.params import LamletParams
+from zamlet.jamlet.jamlet import Jamlet
+from zamlet.message import Header, MessageType, SendType, AddressHeader
+from zamlet.utils import Queue
+from zamlet.kamlet import kinstructions, cache_table
+from zamlet import memlet, register_file_slot
+from zamlet.kamlet.cache_table import CacheRequestType, CacheTable, WaitingItem, LoadSrcState, LoadDstState, StoreSrcState, StoreDstState
 
 
 logger = logging.getLogger(__name__)

@@ -2,12 +2,12 @@ import asyncio
 import logging
 import struct
 
-import disasm_trace
-import program_info
-import lamlet
-from runner import Clock
-from params import LamletParams
-from addresses import GlobalAddress, Ordering, WordOrder
+from zamlet import disasm_trace
+from zamlet import program_info
+from zamlet.lamlet import lamlet
+from zamlet.runner import Clock
+from zamlet.params import LamletParams
+from zamlet.addresses import GlobalAddress, Ordering, WordOrder
 
 logger = logging.getLogger(__name__)
 

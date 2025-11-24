@@ -1,8 +1,8 @@
 import logging
 
-from runner import Clock
-from params import LamletParams
-from register_file_slot import RegisterFileSlot
+from zamlet.runner import Clock
+from zamlet.params import LamletParams
+from zamlet.register_file_slot import RegisterFileSlot
 
 
 logger = logging.getLogger(__name__)

@@ -2,9 +2,9 @@ from random import Random
 from dataclasses import dataclass
 from typing import List, Dict, Tuple
 
-from params import LamletParams
-import utils
-from utils import uint_to_list_of_uints
+from zamlet.params import LamletParams
+from zamlet import utils
+from zamlet.utils import uint_to_list_of_uints
 
 
 def get_rand_bytes(rnd: Random, n: int):

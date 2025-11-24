@@ -7,13 +7,10 @@ import logging
 import struct
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
-import kinstructions
-import addresses
+from zamlet.kamlet import kinstructions
+from zamlet import addresses
 
-from register_names import reg_name, freg_name
-
-if TYPE_CHECKING:
-    import state
+from zamlet.register_names import reg_name, freg_name
 
 logger = logging.getLogger(__name__)
 

@@ -15,9 +15,9 @@ import logging
 from dataclasses import dataclass
 from enum import Enum
 
-import addresses
-from addresses import KMAddr
-from params import LamletParams
+from zamlet import addresses
+from zamlet.addresses import KMAddr
+from zamlet.params import LamletParams
 
 
 logger = logging.getLogger(__name__)

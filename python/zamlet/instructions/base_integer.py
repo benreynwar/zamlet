@@ -4,12 +4,9 @@ Reference: riscv-isa-manual/src/rv32.adoc, rv64.adoc
 """
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
 
-if TYPE_CHECKING:
-    import state
 
-from register_names import reg_name
+from zamlet.register_names import reg_name
 
 
 @dataclass

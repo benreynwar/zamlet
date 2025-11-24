@@ -6,13 +6,9 @@ Reference: riscv-isa-manual/src/f-st-ext.adoc
 import struct
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
 
-if TYPE_CHECKING:
-    import state
-
-from register_names import reg_name, freg_name
-import utils
+from zamlet.register_names import reg_name, freg_name
+import zamlet.utils
 
 
 logger = logging.getLogger(__name__)

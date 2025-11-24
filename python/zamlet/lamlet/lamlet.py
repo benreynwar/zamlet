@@ -20,19 +20,19 @@ from collections import deque
 from typing import List, Tuple, Deque, Any
 from dataclasses import dataclass
 
-import decode
-import addresses
-from addresses import SizeBytes, SizeBits, TLB, WordOrder
-from addresses import AddressConverter, Ordering, GlobalAddress, KMAddr, VPUAddress
-from cache_table import CacheTable, CacheState, WaitingItem, WaitingFuture, ProtocolState
-from params import LamletParams
-from message import Header, MessageType, Direction, SendType, TaggedHeader, CHANNEL_MAPPING
-from kamlet import Kamlet
-from memlet import Memlet
-from runner import Future
-import kinstructions
-from scalar import ScalarState
-import utils
+from zamlet import decode
+from zamlet import addresses
+from zamlet.addresses import SizeBytes, SizeBits, TLB, WordOrder
+from zamlet.addresses import AddressConverter, Ordering, GlobalAddress, KMAddr, VPUAddress
+from zamlet.kamlet.cache_table import CacheTable, CacheState, WaitingItem, WaitingFuture, ProtocolState
+from zamlet.params import LamletParams
+from zamlet.message import Header, MessageType, Direction, SendType, TaggedHeader, CHANNEL_MAPPING
+from zamlet.kamlet.kamlet import Kamlet
+from zamlet.memlet import Memlet
+from zamlet.runner import Future
+from zamlet.kamlet import kinstructions
+from zamlet.lamlet.scalar import ScalarState
+from zamlet import utils
 
 
 logger = logging.getLogger(__name__)

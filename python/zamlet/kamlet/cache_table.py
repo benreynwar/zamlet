@@ -5,13 +5,13 @@ from collections import deque
 import random
 from typing import Coroutine, List, Any
 
-from runner import Clock, Future
-from params import LamletParams
-from utils import SettableBool
-from message import Header, IdentHeader
-import kinstructions
-import addresses
-from addresses import KMAddr
+from zamlet.runner import Clock, Future
+from zamlet.params import LamletParams
+from zamlet.utils import SettableBool
+from zamlet.message import Header, IdentHeader
+from zamlet.kamlet import kinstructions
+from zamlet import addresses
+from zamlet.addresses import KMAddr
 
 
 logger = logging.getLogger(__name__)

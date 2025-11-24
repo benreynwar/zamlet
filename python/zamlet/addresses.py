@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import List, Dict
 
-from params import LamletParams
+from zamlet.params import LamletParams
 
 
 logger = logging.getLogger(__name__)

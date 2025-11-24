@@ -1,7 +1,7 @@
 import logging
 from typing import List
 
-from runner import Future
+from zamlet.runner import Future
 
 
 logger = logging.getLogger(__name__)

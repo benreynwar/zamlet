@@ -6,17 +6,17 @@ Decodes both 32-bit standard and 16-bit compressed RISC-V instructions.
 import logging
 import struct
 
-import decode_helpers
-from instructions import Instruction
-import instructions.base_integer as I
-import instructions.compressed as C
-import instructions.control_flow as CF
-import instructions.system as S
-import instructions.vector as V
-import instructions.float as F
-import instructions.memory as M
-import instructions.multiply as MUL
-import kinstructions
+from zamlet import decode_helpers
+from zamlet.instructions import Instruction
+from zamlet.instructions import base_integer as I
+from zamlet.instructions import compressed as C
+from zamlet.instructions import control_flow as CF
+from zamlet.instructions import system as S
+from zamlet.instructions import vector as V
+from zamlet.instructions import float as F
+from zamlet.instructions import memory as M
+from zamlet.instructions import multiply as MUL
+from zamlet.kamlet import kinstructions
 
 decode_i_imm = decode_helpers.decode_i_imm
 decode_b_imm = decode_helpers.decode_b_imm
