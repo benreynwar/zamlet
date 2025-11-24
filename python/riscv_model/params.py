@@ -3,17 +3,17 @@ from dataclasses import dataclass
 
 @dataclass
 class LamletParams:
-    k_cols: int = 2
-    k_rows: int = 2
-
-    j_cols: int = 2
-    j_rows: int = 2
-
     #k_cols: int = 2
-    #k_rows: int = 1
+    #k_rows: int = 2
 
-    #j_cols: int = 1
+    #j_cols: int = 2
     #j_rows: int = 2
+
+    k_cols: int = 2
+    k_rows: int = 1
+
+    j_cols: int = 1
+    j_rows: int = 1
 
     n_vregs: int = 40
     vlines_in_cache_line: int = 2
@@ -91,3 +91,7 @@ class LamletParams:
     @property
     def vline_bytes(self):
         return self.j_in_l * self.word_bytes
+
+    @property
+    def send_read_line_j_index(self):
+        return 1 % self.j_in_k

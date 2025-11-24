@@ -144,3 +144,19 @@ class SettableBool:
             return self.next_value
         else:
             return self.value
+
+def update_int_word(old_word: int, new_word: int, mask: int):
+    old_masked = old_word & (~mask)
+    new_masked = new_word & mask
+    updated = old_masked | new_masked
+    return updated
+
+def update_bytes_word(old_word: bytes, new_word: bytes, mask: int) -> bytes:
+    n_bytes = len(old_word)
+    assert len(new_word) == n_bytes
+    assert mask < 1 << (n_bytes * 8)
+    old_int = int.from_bytes(old_word, byteorder='little')
+    new_int = int.from_bytes(new_word, byteorder='little')
+    updated_int = update_int_word(old_int, new_int, mask)
+    updated = updated_int.to_bytes(n_bytes, byteorder='little')
+    return updated

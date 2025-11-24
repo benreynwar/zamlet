@@ -115,6 +115,7 @@ class VleV:
         else:
             mask_reg=0
         logger.debug(f'{s.clock.cycle}: do load')
+        logger.warning(f'{s.clock.cycle}: VLE{self.element_width}.V: vd=v{self.vd}, addr=0x{addr:x}, vl={s.vl}, masked={not self.vm}, mask_reg={mask_reg}')
     #async def vload(self, vd: int, addr: int, ordering: addresses.Ordering,
     #                n_elements: int, mask_reg: int, start_index: int):
         ordering = addresses.Ordering(s.word_order, self.element_width)
@@ -149,6 +150,7 @@ class VseV:
             mask_reg = None
         else:
             mask_reg = 0
+        logger.warning(f'{s.clock.cycle}: VSE{self.element_width}.V: vs3=v{self.vs3}, addr=0x{addr:x}, vl={s.vl}, masked={not self.vm}, mask_reg={mask_reg}')
         ordering = addresses.Ordering(s.word_order, self.element_width)
         await s.vstore(self.vs3, addr, ordering, s.vl, mask_reg, s.vstart)
         s.pc += 4
@@ -226,6 +228,8 @@ class VmsleVi:
         return f'vmsle.vi\tv{self.vd},v{self.vs2},{self.simm5}{vm_str}'
 
     async def update_state(self, s: 'state.State'):
+        logger.warning(f'{s.clock.cycle}: VMSLE.VI at PC={hex(s.pc)}: vd=v{self.vd}, vs2=v{self.vs2}, simm5={self.simm5}, vl={s.vl}')
+
         vsew = (s.vtype >> 3) & 0x7
         element_width = 8 << vsew
 
@@ -257,6 +261,7 @@ class VmsleVi:
             ordering=s.vrf_ordering[self.vs2],
         )
         await s.add_to_instruction_buffer(kinstr)
+        logger.warning(f'{s.clock.cycle}: VMSLE.VI QUEUED VmsleViOp to instruction buffer')
         s.pc += 4
 
 

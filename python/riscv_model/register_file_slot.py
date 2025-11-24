@@ -86,7 +86,8 @@ class RegisterFileSlot:
 
 class KamletRegisterFile:
 
-    def __init__(self, n_regs: int):
+    def __init__(self, n_regs: int, name: str = ""):
+        self.name = name
         self.reads: List[List[int]] = [[] for i in range(n_regs)]
         self.write: List[int|None] = [None for i in range(n_regs)]
         self._next_token = 0
@@ -100,6 +101,36 @@ class KamletRegisterFile:
         value = self.write[reg] is None
         #logger.info(f'Can read {self.name} is {value}')
         return value
+
+    def finish(self, token: int, write_regs: List[int]|None = None, read_regs: List[int]|None = None) -> None:
+        if read_regs is None:
+            read_regs = []
+        if write_regs is None:
+            write_regs = []
+        for reg in read_regs:
+            assert token in self.reads[reg]
+            self.reads[reg].remove(token)
+        for reg in write_regs:
+            assert self.write[reg] == token
+            self.write[reg] = None
+        logger.warning(f'{self.name} RF FINISH token={token} read_regs={read_regs} write_regs={write_regs}')
+
+    def start(self, read_regs: List[int]|None=None, write_regs: List[int]|None=None) -> int:
+        token = self.get_token()
+        if read_regs is None:
+            read_regs = []
+        if write_regs is None:
+            write_regs = []
+        for reg in read_regs:
+            assert self.can_read(reg), f"Cannot read reg {reg}, write lock held by {self.write[reg]}"
+            self.reads[reg].append(token)
+        for reg in write_regs:
+            if not self.can_write(reg):
+                logger.error(f'LOCK VIOLATION: Cannot write reg {reg}, write={self.write[reg]}, reads={self.reads[reg]}')
+            assert self.can_write(reg), f"Cannot write reg {reg}, write={self.write[reg]}, reads={self.reads[reg]}"
+            self.write[reg] = token
+        logger.warning(f'{self.name} RF START token={token} read_regs={read_regs} write_regs={write_regs}')
+        return token
 
     def start_read(self, reg: int) -> int:
         assert self.can_read(reg)

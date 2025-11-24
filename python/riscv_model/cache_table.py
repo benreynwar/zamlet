@@ -126,6 +126,7 @@ class WaitingItem:
         self.item = item
         self.instr_ident = instr_ident
         self.rf_ident = rf_ident
+        self.cache_slot: int|None = None
 
     def ready(self):
         raise NotImplementedError()
@@ -479,14 +480,7 @@ class CacheTable:
         return witem_index
 
     async def update_cache(self, slot):
-        """
-        The item with handled with the argument 'step' once the cache read is done.
-        """
         slot_state = self.slot_states[slot]
-        logger.debug(
-            f'{self.clock.cycle}: {self.name}: update_cache slot={slot} '
-            f'state={slot_state.state} memory_loc={slot_state.memory_loc}'
-        )
         # We want to read an address.
         # We might be given a slot that is ready to go.
         # We might be given slot and told we need to evict the current contents.
@@ -497,25 +491,30 @@ class CacheTable:
         if slot_state.state == CacheState.INVALID:
             request_type=CacheRequestType.READ_LINE
             n_sent = 1
+            request_addr = slot_state.memory_loc * self.params.cache_line_bytes
         elif slot_state.state == CacheState.OLD_MODIFIED:
             request_type=CacheRequestType.WRITE_LINE_READ_LINE
             n_sent = self.params.j_in_k
+            # For WRITE_LINE_READ_LINE, addr is the OLD address to flush
+            request_addr = slot_state.old_memory_loc * self.params.cache_line_bytes
         else:
             assert False
         assert self.cache_requests[cache_request_index] is None
         cache_request = CacheRequestState(
                 ident=cache_request_index,
-                addr=slot_state.memory_loc * self.params.cache_line_bytes,
+                addr=request_addr,
                 slot=slot,
                 sent=[SettableBool(False) for x in range(n_sent)],
                 received=[SettableBool(False) for x in range(self.params.j_in_k)],
                 request_type=request_type,
                 )
         self.cache_requests[cache_request_index] = cache_request
-        logger.debug(
-            f'{self.clock.cycle}: {self.name}: Created cache_request={cache_request_index} '
-            f'type={request_type} addr={hex(cache_request.addr)}'
-        )
+
+        # Update the slot state immediately to prevent duplicate cache requests
+        if request_type == CacheRequestType.READ_LINE:
+            slot_state.state = CacheState.READING
+        elif request_type == CacheRequestType.WRITE_LINE_READ_LINE:
+            slot_state.state = CacheState.WRITING_READING
 
     #async def request_read(self, k_maddr, item, step):
     #    """
@@ -854,7 +853,7 @@ class CacheTable:
         """
         This returns a free slot if it can, otherwise it returns a slot to be evicted.
         """
-        logger.debug('Trying to get a new slot')
+        logger.info(f'[CACHE_ALLOC] Trying to get new slot for k_maddr=0x{k_maddr.addr:x}')
         assert self.addr_to_slot(k_maddr) is None
         self._check_slots()
         # Adding some assert statements to make sure we don't call one request_read
@@ -872,6 +871,13 @@ class CacheTable:
         slot_state = self.slot_states[slot]
         slot_state.old_memory_loc = slot_state.memory_loc
         slot_state.memory_loc = k_maddr.addr//self.cache_line_bytes
+
+        logger.warning(
+            f'{self.clock.cycle}: CACHE_LINE_ALLOC: {self.name} slot={slot} '
+            f'memory_loc=0x{slot_state.memory_loc:x}'
+        )
+
+        old_state = slot_state.state
         if slot_state.state == CacheState.SHARED:
             slot_state.state = CacheState.INVALID
         elif slot_state.state == CacheState.MODIFIED:
@@ -927,41 +933,25 @@ class CacheTable:
         assert self.cache_requests[request.ident] == request
         assert len(request.sent) == 1
         request.sent[0].set(True)
+        # State transitions now happen in update_cache(), so just verify they're correct
         if request.request_type == CacheRequestType.READ_LINE:
-            assert self.slot_states[request.slot].state == CacheState.INVALID
-            self.slot_states[request.slot].state = CacheState.READING
-            logger.debug(
-                f'{self.clock.cycle}: {self.name}: report_sent_request '
-                f'req={request.ident} slot={request.slot} INVALID->READING'
-            )
+            assert self.slot_states[request.slot].state == CacheState.READING
         elif request.request_type == CacheRequestType.WRITE_LINE_READ_LINE:
-            assert self.slot_states[request.slot].state == CacheState.OLD_MODIFIED
-            self.slot_states[request.slot].state = CacheState.WRITING_READING
-            logger.debug(
-                f'{self.clock.cycle}: {self.name}: report_sent_request '
-                f'req={request.ident} slot={request.slot} OLD_MODIFIED->WRITING_READING'
-            )
+            assert self.slot_states[request.slot].state == CacheState.WRITING_READING
         else:
             raise NotImplementedError()
 
     def resolve_read_line(self, request: CacheRequestState):
-        logger.debug(
-            f'{self.clock.cycle}: {self.name}: resolve_read_line '
-            f'req={request.ident} slot={request.slot}'
-        )
         assert self.cache_requests[request.ident] == request
         self.cache_requests[request.ident] = None
         state = self.slot_states[request.slot]
         assert state.state == CacheState.READING
         state.state = CacheState.SHARED
-        for item in self.waiting_items:
-            if item is not None and item.cache_slot == request.slot:
-                logger.debug(
-                    f'{self.clock.cycle}: {self.name}: Setting cache_is_avail=True '
-                    f'for item at slot={request.slot}'
-                )
-                assert not item.cache_is_avail
-                item.cache_is_avail = True
+        for witem in self.waiting_items:
+            if (witem is not None and isinstance(witem, WaitingItemRequiresCache) and
+                    witem.cache_slot == request.slot):
+                assert not witem.cache_is_avail
+                witem.cache_is_avail = True
 
     def resolve_write_line_read_line(self, request: CacheRequestState):
         assert self.cache_requests[request.ident] == request

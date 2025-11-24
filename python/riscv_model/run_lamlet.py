@@ -67,6 +67,10 @@ async def run(clock: Clock, filename):
             ordering = Ordering(WordOrder.STANDARD, ew)
         else:
             ordering = None
+        logger.warning(
+            f'[ALLOC] addr=0x{address:x} size={size} page_start=0x{page_start:x} '
+            f'alloc_size={alloc_size} is_vpu={is_vpu} ordering={ordering}'
+        )
         s.allocate_memory(GlobalAddress(bit_addr=page_start*8, params=params),
                           alloc_size, is_vpu=is_vpu, ordering=ordering)
 
@@ -82,8 +86,9 @@ async def run(clock: Clock, filename):
     for segment in p_info['segments']:
         address = segment['address']
         data = segment['contents']
-        logger.info(f'Segment {hex(address)} Size {len(data)}')
+        logger.warning(f'[MEM_INIT] Segment addr=0x{address:x} size={len(data)} bytes')
         await s.set_memory(address, data)
+        logger.warning(f'[MEM_INIT] Segment addr=0x{address:x} complete')
 
     trace = disasm_trace.parse_objdump(filename)
     logger.info(f"Loaded {len(trace)} instructions from objdump")
@@ -143,7 +148,7 @@ async def main(clock, filename):
 
 
 if __name__ == '__main__':
-    level = logging.WARNING
+    level = logging.DEBUG
     import sys
     import os
     root_logger = logging.getLogger()
@@ -166,16 +171,16 @@ if __name__ == '__main__':
            #'tests/sgemv/vec-sgemv-64x64.riscv',
            # #'tests/sgemv/vec-sgemv.riscv',  (too small) (it tries to step through rows in a matrix but one row is less than vline so it gets misaligned)
            #'tests/vecadd/vec-add-evict.riscv',
-           'tests/vecadd/vec-add.riscv',
+           #'tests/vecadd/vec-add.riscv',
            #'tests/daxpy/vec-daxpy.riscv',
            #'tests/daxpy/vec-daxpy-small.riscv',
-           #'tests/conditional/vec-conditional.riscv',
-           #'tests/conditional/vec-conditional-small.riscv',
+           'tests/conditional/vec-conditional.riscv',
+           #'tests/conditional/vec-conditional-tiny.riscv',
         ]
 
     for filename in filenames:
         root_logger.warning(f'========== Starting test: {filename} ==========')
-        clock = Clock(max_cycles=100000)
+        clock = Clock(max_cycles=20000)
         exit_code = None
         try:
             exit_code = asyncio.run(main(clock, filename))

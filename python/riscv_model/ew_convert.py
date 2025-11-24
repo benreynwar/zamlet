@@ -274,7 +274,9 @@ def join_by_factors(values, factors):
 
 def get_mapping_for_dst(
         params: LamletParams, src_ew: int, dst_ew: int,
-        dst_v: int, dst_vw: int, dst_tag: int, src_offset: int=0, dst_offset: int=0):
+        dst_v: int, dst_vw: int, dst_tag: int, src_offset: int=0, dst_offset: int=0,
+        allow_none: bool=True
+        ):
     if src_ew > dst_ew:
         small_ew = dst_ew
         large_ew = src_ew
@@ -286,8 +288,11 @@ def get_mapping_for_dst(
         mapping = get_mapping_from_small_tag(
                 params=params, small_ew=small_ew, large_ew=large_ew,
                 small_offset=small_offset, large_offset=large_offset,
-                small_v=small_v, small_vw=small_vw, small_tag=small_tag)
+                small_v=small_v, small_vw=small_vw, small_tag=small_tag,
+                allow_none=allow_none,
+                )
         if mapping is None:
+            assert allow_none
             return None
         mem_mapping = MemMapping(
                 src_v=mapping.large_v,
@@ -306,14 +311,16 @@ def get_mapping_for_dst(
         small_ew = src_ew
         large_ew = dst_ew
         small_offset = src_offset
-        large_offset = 0
+        large_offset = dst_offset
         large_v = dst_v
         large_vw = dst_vw
         large_tag = dst_tag
         mapping = get_mapping_from_large_tag(
                 params=params, small_ew=small_ew, large_ew=large_ew,
                 small_offset=small_offset, large_offset=large_offset,
-                large_v=large_v, large_vw=large_vw, large_tag=large_tag)
+                large_v=large_v, large_vw=large_vw, large_tag=large_tag,
+                allow_none=allow_none,
+                )
         if mapping is None:
             return None
         mem_mapping = MemMapping(
@@ -433,7 +440,8 @@ def get_large_small_mapping(vw: int, ww: int, small_ew: int, large_ew: int,
 def get_mapping_from_large_tag(
         params: LamletParams, small_ew: int, large_ew: int,
         small_offset: int, large_offset: int,
-        large_v: int, large_vw: int, large_tag: int, check_consistency: bool = True):
+        large_v: int, large_vw: int, large_tag: int, check_consistency: bool = True,
+        allow_none: bool=True):
     """
     small_ew: The element width in the small-ew mapped vector
     large_ew: The element width in the large-ew mapped vector
@@ -455,6 +463,7 @@ def get_mapping_from_large_tag(
         # If we're in the second segment we need to increment large_eb forward to the
         # start of the next src element.
         if (large_offset - small_offset) % small_ew == 0:
+            assert allow_none
             return None
         large_eb += small_ew - (large_eb + small_offset - large_offset) % small_ew
     else:
@@ -463,6 +472,7 @@ def get_mapping_from_large_tag(
         if (large_offset - small_offset) % small_ew != 0:
             small_element_in_large_element = large_eb//small_ew
             if small_element_in_large_element > 0:
+                assert allow_none
                 return None
 
     ww = params.word_bytes * 8  # word width in bits
@@ -494,7 +504,9 @@ def get_mapping_from_large_tag(
 def get_mapping_from_small_tag(
         params: LamletParams, small_ew: int, large_ew: int,
         small_offset: int, large_offset: int,
-        small_v: int, small_vw: int, small_tag: int, check_consistency: bool = True):
+        small_v: int, small_vw: int, small_tag: int, check_consistency: bool = True,
+        allow_none: bool=True,
+        ):
     """
     """
     vw = params.vline_bytes * 8
@@ -519,6 +531,7 @@ def get_mapping_from_small_tag(
         bits_to_end_of_large_element = large_ew - large_eb
         bits_to_end_of_small_element = small_ew - small_eb
         if bits_to_end_of_large_element >= bits_to_end_of_small_element:
+            assert allow_none
             return None
         small_eb += bits_to_end_of_large_element
     small_ve = join_by_factors([small_vw, small_we], [params.j_in_l, ww//small_ew])

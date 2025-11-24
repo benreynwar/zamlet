@@ -346,7 +346,9 @@ class VmsleViOp(KInstr):
         n_dst_vlines = (self.n_elements + elements_in_dst_vline - 1)//elements_in_dst_vline
         dst_regs = [self.dst+index for index in range(n_dst_vlines)]
 
-        await kamlet.wait_for_rf_available(src_regs+dst_regs)
+        logger.warning(f'kamlet {(kamlet.min_x, kamlet.min_y)}: waiting for regs {src_regs} + {dst_regs} to be avail')
+        await kamlet.wait_for_rf_available(read_regs=src_regs, write_regs=dst_regs)
+        logger.warning(f'kamlet {(kamlet.min_x, kamlet.min_y)}: regs are avail')
         logger.info(f'kamlet ({kamlet.min_x} {kamlet.min_y}): VmsleVi dst=v{self.dst} src=v{self.src} imm={self.simm5}')
         sign_extended_imm = self.simm5 if self.simm5 < 16 else self.simm5 - 32
 
@@ -355,6 +357,7 @@ class VmsleViOp(KInstr):
 
         base_src_bit_addr = self.src * kamlet.params.word_bytes * 8
         base_dst_bit_addr = self.dst * kamlet.params.word_bytes * 8
+
         for element_index in range(self.n_elements):
             vw_index = element_index % kamlet.params.j_in_l
             k_index, j_in_k_index = addresses.vw_index_to_k_indices(kamlet.params, self.ordering.word_order, vw_index)
@@ -365,16 +368,25 @@ class VmsleViOp(KInstr):
                 assert src_bit_addr % 8 == 0
                 src_bytes = jamlet.rf_slice[src_bit_addr//8:src_bit_addr//8 + self.element_width//8]
                 src_val = int.from_bytes(src_bytes, byteorder='little', signed=True)
+                logger.warning(f'{kamlet.clock.cycle}: VmsleViOp READ: elem={element_index}, src_addr={src_bit_addr}, bytes={src_bytes.hex()}, val={src_val}')
                 result_bit = 1 if src_val <= sign_extended_imm else 0
                 src_values.append(src_val)
                 results.append(result_bit)
                 dst_bit_addr = base_dst_bit_addr + element_in_jamlet
                 dst_byte_addr = dst_bit_addr//8
                 dst_bit_offset = dst_bit_addr % 8
+                logger.warning(f'{kamlet.clock.cycle}: VmsleViOp RESULT: elem={element_index}, val={src_val}, result={result_bit}, dst_byte={dst_byte_addr}, dst_bit={dst_bit_offset}')
+                old_byte = jamlet.rf_slice[dst_byte_addr]
                 if result_bit:
                     jamlet.rf_slice[dst_byte_addr] |= (1 << dst_bit_offset)
                 else:
                     jamlet.rf_slice[dst_byte_addr] &= ~(1 << dst_bit_offset)
+                new_byte = jamlet.rf_slice[dst_byte_addr]
+                dst_reg = dst_byte_addr // kamlet.params.word_bytes
+                logger.debug(
+                    f'{kamlet.clock.cycle}: RF_WRITE VmsleViOp: jamlet ({jamlet.x},{jamlet.y}) '
+                    f'rf[{dst_reg}] old={old_byte:02x} new={new_byte:02x}'
+                )
         logger.info(f'kamlet: VmsleViOp: srcs = {src_values}, results = {results}')
 
 
@@ -395,16 +407,17 @@ class VmnandMmOp(KInstr):
 
         wb = kamlet.params.word_bytes
         for j_idx, jamlet in enumerate(kamlet.jamlets):
-            old_bytes = []
-            new_bytes = []
+            old_word = jamlet.rf_slice[self.dst * wb:(self.dst + 1) * wb]
             for byte_offset in range(wb):
                 src1_byte = jamlet.rf_slice[self.src1 * wb + byte_offset]
                 src2_byte = jamlet.rf_slice[self.src2 * wb + byte_offset]
-                old_bytes.append(src1_byte)
                 result_byte = ~(src1_byte & src2_byte) & 0xff
-                new_bytes.append(result_byte)
                 jamlet.rf_slice[self.dst * wb + byte_offset] = result_byte
-            logger.info(f'kamlet ({kamlet.min_x} {kamlet.min_y}) jamlet {j_idx}: VmnandMm old_bytes={old_bytes} new_bytes={new_bytes}')
+            new_word = jamlet.rf_slice[self.dst * wb:(self.dst + 1) * wb]
+            logger.debug(
+                f'{kamlet.clock.cycle}: RF_WRITE VmnandMmOp: jamlet ({jamlet.x},{jamlet.y}) '
+                f'rf[{self.dst}] old={old_word.hex()} new={new_word.hex()}'
+            )
 
 
 @dataclass
@@ -435,13 +448,24 @@ class VBroadcastOp(KInstr):
 
         for j_in_k_index, jamlet in enumerate(kamlet.jamlets):
             for vline_index in range(n_vlines):
+                dst_reg = self.dst + vline_index
+                old_word = jamlet.rf_slice[dst_reg * wb:(dst_reg + 1) * wb]
                 for index_in_j in range(wb // eb):
                     byte_offset = vline_index * wb + index_in_j * eb
-                    valid_element, mask_bit = kamlet.get_is_active(self.n_elements, self.element_width, self.word_order, None, vline_index, j_in_k_index, index_in_j)
+                    valid_element, mask_bit = kamlet.get_is_active(
+                        self.n_elements, self.element_width, self.word_order, None,
+                        vline_index, j_in_k_index, index_in_j
+                    )
 
                     if valid_element:
                         result_bytes = self.scalar.to_bytes(eb, byteorder='little', signed=True)
                         jamlet.rf_slice[dst_offset + byte_offset:dst_offset + byte_offset + eb] = result_bytes
+                new_word = jamlet.rf_slice[dst_reg * wb:(dst_reg + 1) * wb]
+                if old_word != new_word:
+                    logger.debug(
+                        f'{kamlet.clock.cycle}: RF_WRITE VBroadcastOp: jamlet ({jamlet.x},{jamlet.y}) '
+                        f'rf[{dst_reg}] old={old_word.hex()} new={new_word.hex()}'
+                    )
 
 
 @dataclass
@@ -470,13 +494,24 @@ class VmvVvOp(KInstr):
 
         for j_in_k_index, jamlet in enumerate(kamlet.jamlets):
             for vline_index in range(n_vlines):
+                dst_reg = self.dst + vline_index
+                old_word = jamlet.rf_slice[dst_reg * wb:(dst_reg + 1) * wb]
                 for index_in_j in range(wb // eb):
                     byte_offset = vline_index * wb + index_in_j * eb
-                    valid_element, mask_bit = kamlet.get_is_active(self.n_elements, self.element_width, self.word_order, None, vline_index, j_in_k_index, index_in_j)
+                    valid_element, mask_bit = kamlet.get_is_active(
+                        self.n_elements, self.element_width, self.word_order, None,
+                        vline_index, j_in_k_index, index_in_j
+                    )
 
                     if valid_element:
                         src_bytes = jamlet.rf_slice[src_offset + byte_offset:src_offset + byte_offset + eb]
                         jamlet.rf_slice[dst_offset + byte_offset:dst_offset + byte_offset + eb] = src_bytes
+                new_word = jamlet.rf_slice[dst_reg * wb:(dst_reg + 1) * wb]
+                if old_word != new_word:
+                    logger.debug(
+                        f'{kamlet.clock.cycle}: RF_WRITE VmvVvOp: jamlet ({jamlet.x},{jamlet.y}) '
+                        f'rf[{dst_reg}] old={old_word.hex()} new={new_word.hex()}'
+                    )
 
 
 @dataclass
@@ -508,11 +543,9 @@ class VArithVvOp(KInstr):
         regs = [self.src1+index for index in range(n_vlines)]
         regs += [self.src2+index for index in range(n_vlines)]
         regs += [self.dst+index for index in range(n_vlines)]
-        logger.warning('@@@@@@@@@@ waiting for rf')
         await kamlet.wait_for_rf_available(regs)
-        logger.warning('@@@@@@@@@@ finished waiting for rf')
 
-        logger.warning(f'kamlet ({kamlet.min_x} {kamlet.min_y}): V{self.op.value}Vv dst=v{self.dst} src1=v{self.src1} src2=v{self.src2}')
+        logger.debug(f'kamlet ({kamlet.min_x} {kamlet.min_y}): V{self.op.value}Vv dst=v{self.dst} src1=v{self.src1} src2=v{self.src2}')
         params = kamlet.params
         vreg_bytes_per_jamlet = params.maxvl_bytes // params.j_in_l
         src1_offset = self.src1 * vreg_bytes_per_jamlet
@@ -523,9 +556,14 @@ class VArithVvOp(KInstr):
 
         for j_in_k_index, jamlet in enumerate(kamlet.jamlets):
             for vline_index in range(n_vlines):
+                dst_reg = self.dst + vline_index
+                old_word = jamlet.rf_slice[dst_reg * wb:(dst_reg + 1) * wb]
                 for index_in_j in range(wb // eb):
                     byte_offset = vline_index * wb + index_in_j * eb
-                    valid_element, mask_bit = kamlet.get_is_active(self.n_elements, self.element_width, self.word_order, self.mask_reg, vline_index, j_in_k_index, index_in_j)
+                    valid_element, mask_bit = kamlet.get_is_active(
+                        self.n_elements, self.element_width, self.word_order, self.mask_reg,
+                        vline_index, j_in_k_index, index_in_j
+                    )
 
                     if valid_element and mask_bit:
                         src1_bytes = jamlet.rf_slice[src1_offset + byte_offset:src1_offset + byte_offset + eb]
@@ -536,7 +574,6 @@ class VArithVvOp(KInstr):
 
                         if self.op == VArithOp.ADD:
                             result = src1_val + src2_val
-                            logger.warning(f'j_in_k_index={j_in_k_index}, vline_index={vline_index}, index_in_j={index_in_j}, src1_val={src1_val}, src2_val={src2_val}, result={result}')
                         elif self.op == VArithOp.MUL:
                             result = src1_val * src2_val
                         elif self.op == VArithOp.MACC:
@@ -546,6 +583,13 @@ class VArithVvOp(KInstr):
 
                         result_bytes = result.to_bytes(eb, byteorder='little', signed=True)
                         jamlet.rf_slice[dst_offset + byte_offset:dst_offset + byte_offset + eb] = result_bytes
+                new_word = jamlet.rf_slice[dst_reg * wb:(dst_reg + 1) * wb]
+                if old_word != new_word:
+                    logger.debug(
+                        f'{kamlet.clock.cycle}: RF_WRITE VArithVvOp({self.op.value}): '
+                        f'jamlet ({jamlet.x},{jamlet.y}) rf[{dst_reg}] '
+                        f'old={old_word.hex()} new={new_word.hex()}'
+                    )
 
 
 @dataclass
@@ -594,12 +638,10 @@ class VArithVxOp(KInstr):
 
                     if valid_element and mask_bit:
                         src2_bytes = jamlet.rf_slice[src2_offset + byte_offset:src2_offset + byte_offset + eb]
-                        logger.warning(f'src2_bytes = {[int(x) for x in src2_bytes]}')
                         src2_val = unpack(src2_bytes)
 
                         if self.op == VArithOp.ADD:
                             result = src2_val + scalar_val
-                            logger.warning(f'{src2_val} + {scalar_val} = {result}')
                         elif self.op == VArithOp.MUL:
                             result = src2_val * scalar_val
                         elif self.op == VArithOp.MACC:

@@ -1,0 +1,153 @@
+# Comparing Test Execution with Logs
+
+This document contains techniques and examples for verifying that the simulator is correctly executing tests by comparing expected behavior with log output.
+
+## Verifying Memory Initialization
+
+### Using objdump to get expected data
+
+First, examine the test binary to see what data should be in memory:
+
+```bash
+# Show section headers
+riscv64-unknown-elf-objdump -h tests/conditional/vec-conditional.riscv
+
+# Dump contents of a specific section
+riscv64-unknown-elf-objdump -s -j .data.vpu8 tests/conditional/vec-conditional.riscv | grep "20000000"
+```
+
+Example output:
+```
+20000000 00030103 01010802 09050600 01060307  ................
+```
+
+This shows that at global address 0x20000000, the bytes should be:
+`00 03 01 03 01 01 08 02 09 05 06 00 01 06 03 07`
+
+### Tracing initialization in logs
+
+Use the PAGE_ALLOC and CACHE_WRITE logs to verify initialization:
+
+```bash
+# Step 1: Find which page the address belongs to
+grep "PAGE_ALLOC.*global=0x20000000" <logfile>
+# Output: PAGE_ALLOC: global=0x20000000-0x200003ff -> physical=0x0 memory_loc=0x0-0x1f is_vpu=True
+
+# Step 2: Check what bytes were written during initialization
+grep "Writing  byte 0x2000000[0-9a-f] " <logfile> | head -16
+
+# Step 3: Look at cache writes during initialization
+grep "CACHE_WRITE WRITE_IMM_BYTES" <logfile> | head -30
+```
+
+### Understanding data distribution across jamlets
+
+**Key insight**: Data is distributed element-by-element across jamlets.
+
+With 2 jamlets (k_in_l=2, j_in_k=1), consecutive elements alternate between jamlets. In this example with 8-bit elements (ew=8), each element is 1 byte:
+- Element 0 (byte 0) → jamlet (0,0) sram[0]
+- Element 1 (byte 1) → jamlet (1,0) sram[0]
+- Element 2 (byte 2) → jamlet (0,0) sram[1]
+- Element 3 (byte 3) → jamlet (1,0) sram[1]
+- ...
+
+For wider elements (e.g., ew=16 or ew=32), the same pattern applies but each element is multiple bytes.
+
+Example verification for address 0x20000000:
+
+Expected bytes from objdump: `00 03 01 03 01 01 08 02 09 05 06 00 01 06 03 07`
+
+From logs:
+- Jamlet (0,0): sram[0]=0x00, sram[1]=0x01, sram[2]=0x01, sram[3]=0x08, sram[4]=0x09, sram[5]=0x06, sram[6]=0x01, sram[7]=0x03
+- Jamlet (1,0): sram[0]=0x03, sram[1]=0x03, sram[2]=0x01, sram[3]=0x02, sram[4]=0x05, sram[5]=0x00, sram[6]=0x06, sram[7]=0x07
+
+Interleaving: `00 03 01 03 01 01 08 02 09 05 06 00 01 06 03 07` ✓ Match!
+
+### Creating a summary table
+
+Use this script to create a comparison table:
+
+```bash
+#!/bin/bash
+echo "EXPECTED (from objdump):"
+riscv64-unknown-elf-objdump -s -j .data.vpu8 <binary> | grep "20000000" | head -1
+
+echo ""
+echo "ACTUAL (from logs):"
+echo "=========================================================================="
+printf "%-10s %-12s %-15s %-15s\n" "Cycle" "Jamlet" "SRAM" "Value"
+echo "--------------------------------------------------------------------------"
+grep "CACHE_WRITE WRITE_IMM_BYTES: jamlet" <logfile> | head -30 | while read line; do
+    cycle=$(echo "$line" | grep -oP '- \K\d+')
+    jamlet=$(echo "$line" | grep -oP 'jamlet \K\([0-9,]+\)')
+    sram=$(echo "$line" | grep -oP 'sram\K\[[0-9:]+\]')
+    newval=$(echo "$line" | grep -oP 'new=\K[0-9a-f]+')
+    printf "%-10s %-12s %-15s %-15s\n" "$cycle" "$jamlet" "$sram" "0x$newval"
+done
+```
+
+## Verifying Vector Loads
+
+### Check what instruction loaded the data
+
+```bash
+# Find the vector load instruction
+grep "VLE8.V: vd=v0, addr=0x20000050" <logfile>
+# Output: 15546: VLE8.V: vd=v0, addr=0x20000050, vl=16, masked=False, mask_reg=None
+```
+
+### Verify data was loaded correctly into register file
+
+```bash
+# Find register file writes after the load
+grep "15547: RF_WRITE LOAD_SIMPLE" <logfile>
+```
+
+Example output:
+```
+15547: RF_WRITE LOAD_SIMPLE: jamlet (0,0) rf[0] old=0000000000000000 new=0001010809060103
+15549: RF_WRITE LOAD_SIMPLE: jamlet (1,0) rf[0] old=0000000000000000 new=0303010205000607
+```
+
+The register values are in little-endian format (bytes reversed in each word).
+
+To verify, convert to byte arrays:
+- jamlet (0,0) rf[0] = 0x0001010809060103 → bytes: `03 01 06 09 08 01 01 00`
+- jamlet (1,0) rf[0] = 0x0303010205000607 → bytes: `07 06 00 05 02 01 03 03`
+
+Interleaved: `03 07 01 06 06 00 09 05 08 02 01 01 01 03 00 03` (alternating bytes from each jamlet)
+
+Compare with objdump at the load address to verify correctness.
+
+## Common Pitfalls
+
+### Timing delays
+The "Writing byte" log at cycle N does not mean the cache write happens at cycle N. There's a delay while the instruction propagates through the system. Look for CACHE_WRITE logs at later cycles.
+
+### Little-endian byte order
+Register file values in logs are shown as hex numbers in little-endian format. The least significant byte is the first byte in memory.
+
+Example: `0x0001010809060103` in register = bytes `03 01 06 09 08 01 01 00` in memory order
+
+### Cache eviction
+Cache slots can be evicted and reallocated. A CACHE_LINE_ALLOC for the same slot number may happen multiple times. The second allocation overwrites the first.
+
+### Multiple operations per cycle
+Multiple cache writes or other operations can happen in the same cycle. Don't assume one log line per cycle.
+
+## Quick Reference Commands
+
+```bash
+# Verify initialization of first 16 bytes at address 0x20000000
+riscv64-unknown-elf-objdump -s -j .data.vpu8 <binary> | grep "20000000"
+grep "CACHE_WRITE WRITE_IMM_BYTES" <logfile> | head -30
+
+# Trace a specific global address through the system
+addr=0x20000050
+grep "PAGE_ALLOC.*global=0x20000000" <logfile>
+grep "Writing  byte $addr" <logfile>
+grep "VLE.*addr=$addr" <logfile>
+
+# Check register file state after a load
+grep "RF_WRITE LOAD_SIMPLE.*jamlet (0,0).*rf\[0\]" <logfile>
+```

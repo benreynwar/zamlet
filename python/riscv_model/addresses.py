@@ -160,6 +160,16 @@ class TLB:
                 self.scalar_pages[physical_page_address] = info
             self.pages[logical_page_address] = info
 
+            global_end = logical_page_address + self.params.page_bytes - 1
+            l_cache_line_bytes = self.params.cache_line_bytes * self.params.k_in_l
+            memory_loc_start = physical_page_address // l_cache_line_bytes
+            memory_loc_end = (physical_page_address + self.params.page_bytes - 1) // l_cache_line_bytes
+            logger.warning(
+                f'PAGE_ALLOC: global=0x{logical_page_address:x}-0x{global_end:x} -> '
+                f'physical=0x{physical_page_address:x} memory_loc=0x{memory_loc_start:x}-0x{memory_loc_end:x} '
+                f'is_vpu={is_vpu}'
+            )
+
     def release_memory(self, address: 'GlobalAddress', size: SizeBytes):
         assert size % self.params.page_bytes == 0
         for index in range(size//self.params.page_bytes):

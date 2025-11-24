@@ -17,7 +17,7 @@ from cache_table import CacheRequestType, CacheTable, WaitingItem, LoadSrcState,
 logger = logging.getLogger(__name__)
 
 
-SEND_READ_LINE_J_INDEX = 1
+
 
 
 class Kamlet:
@@ -49,7 +49,8 @@ class Kamlet:
         # We pass methods to the cache table to flush and read lines.
         name = f'CacheTable ({self.min_x}, {self.min_y})'
         self.cache_table = CacheTable(clock, params, name)
-        self.rf_info = register_file_slot.KamletRegisterFile(self.params.n_vregs)
+        rf_name = f'kamlet({self.min_x},{self.min_y})'
+        self.rf_info = register_file_slot.KamletRegisterFile(self.params.n_vregs, name=rf_name)
 
         self.jamlets = []
         for index in range(self.n_jamlets):
@@ -124,6 +125,9 @@ class Kamlet:
             if self._instruction_queue:
                 self.available_instruction_tokens += 1
                 instruction = self._instruction_queue.popleft()
+                instr_name = type(instruction).__name__
+                instr_ident = getattr(instruction, 'instr_ident', '?')
+                logger.warning(f'{self.clock.cycle}: kamlet ({self.min_x},{self.min_y}) START INSTRUCTION {instr_name} ident={instr_ident}')
                 await instruction.update_kamlet(self)
 
     def take_instruction_token(self):
@@ -220,14 +224,20 @@ class Kamlet:
         """
         Update the cache line for the WriteImmBytes instruction.
         """
-        logger.debug('handle_write_imm_bytes_instr_final: start')
         assert instr.k_maddr.bit_addr % 8 == 0
         if instr.k_maddr.k_index == self.k_index:
             assert self.cache_table.can_write(instr.k_maddr)
             j_saddr = instr.k_maddr.to_j_saddr(self.cache_table)
             jamlet = self.jamlets[j_saddr.j_in_k_index]
             size = len(instr.imm)
+            old_bytes = jamlet.sram[j_saddr.addr: j_saddr.addr+size]
             jamlet.sram[j_saddr.addr: j_saddr.addr+size] = instr.imm
+            logger.debug(
+                f'{self.clock.cycle}: CACHE_WRITE WRITE_IMM_BYTES: jamlet ({jamlet.x},{jamlet.y}) '
+                f'sram[{j_saddr.addr}:{j_saddr.addr+size}] old={old_bytes.hex()} new={instr.imm.hex()}'
+            )
+            cache_state = self.cache_table.get_state(instr.k_maddr)
+            cache_state.state = cache_table.CacheState.MODIFIED
 
     async def handle_read_byte_instr(self, instr: kinstructions.ReadByte):
         logger.debug(f'{self.clock.cycle}: kamlet {(self.min_x, self.min_y)}: handle_read_bytes_instr')
@@ -265,18 +275,18 @@ class Kamlet:
         if is_src_kamlet:
             witem_src = cache_table.WaitingLoadWordSrc(params=self.params, instr=instr)
             await self.cache_table.add_witem(witem=witem_src, k_maddr=instr.src)
-            logger.warning(f'kamlet ({self.min_x}, {self.min_y}): added WaitingLoadWordSrc ident={witem_src.instr_ident}')
             for jamlet in self.jamlets:
                 jamlet.init_load_word_src_state(witem_src)
 
         if is_dst_kamlet:
-            logger.warning(f'kamlet ({self.min_x}, {self.min_y}): is waiting for rf {instr.dst.reg} to become avail')
-            await self.wait_for_rf_available(write_regs=[instr.dst.reg])
-            logger.warning(f'kamlet ({self.min_x}, {self.min_y}): rf {instr.dst.reg} is avail')
-            rf_write_ident = self.rf_info.start_writes([instr.dst.reg])
+            if instr.mask_reg is not None:
+                read_regs = [instr.mask_reg]
+            else:
+                read_regs = []
+            await self.wait_for_rf_available(write_regs=[instr.dst.reg], read_regs=read_regs)
+            rf_write_ident = self.rf_info.start(read_regs=read_regs, write_regs=[instr.dst.reg])
             witem_dst = cache_table.WaitingLoadWordDst(params=self.params, instr=instr, rf_ident=rf_write_ident)
             await self.cache_table.add_witem(witem=witem_dst)
-            logger.warning(f'kamlet ({self.min_x}, {self.min_y}): added WaitingLoadWordDst ident={witem_dst.instr_ident}')
             for jamlet in self.jamlets:
                 jamlet.init_load_word_dst_state(witem_dst)
 
@@ -289,45 +299,48 @@ class Kamlet:
         assert all(state == LoadDstState.COMPLETE for state in witem.protocol_states)
         assert witem.rf_ident is not None
         instr = witem.item
-        self.rf_info.finish_writes([instr.dst.reg], witem.rf_ident)
+        read_regs = [instr.mask_reg] if instr.mask_reg is not None else []
+        self.rf_info.finish(witem.rf_ident, write_regs=[instr.dst.reg], read_regs=read_regs)
 
     async def handle_store_word_instr(self, instr: kinstructions.StoreWord):
         """Handle StoreWord instruction - store partial word from register to cache."""
         is_src_kamlet = (instr.src.k_index == self.k_index)
         is_dst_kamlet = (instr.dst.k_index == self.k_index)
 
-        logger.debug(
+        logger.error(
             f'kamlet ({self.min_x}, {self.min_y}): handle_store_word_instr '
             f'ident={instr.instr_ident} src_k={instr.src.k_index} '
             f'dst_k={instr.dst.k_index} is_src={is_src_kamlet} is_dst={is_dst_kamlet}')
 
-        if not (is_src_kamlet or is_dst_kamlet):
-            return
-
         if is_src_kamlet:
-            logger.warning(f'kamlet ({self.min_x}, {self.min_y}): is waiting for rf {instr.src.reg} to become avail')
-            await self.wait_for_rf_available(read_regs=[instr.src.reg])
-            logger.warning(f'kamlet ({self.min_x}, {self.min_y}): rf {instr.src.reg} is avail')
-            rf_read_ident = self.rf_info.start_reads([instr.src.reg])
+            if instr.mask_reg is not None:
+                read_regs = [instr.src.reg, instr.mask_reg]
+            else:
+                read_regs = [instr.src.reg]
+            await self.wait_for_rf_available(read_regs=read_regs)
+            rf_read_ident = self.rf_info.start(read_regs=read_regs)
             witem_src = cache_table.WaitingStoreWordSrc(params=self.params, instr=instr, rf_ident=rf_read_ident)
             await self.cache_table.add_witem(witem=witem_src)
-            logger.warning(f'kamlet ({self.min_x}, {self.min_y}): added WaitingStoreWordSrc ident={witem_src.instr_ident}')
             for jamlet in self.jamlets:
                 jamlet.init_store_word_src_state(witem_src)
 
         if is_dst_kamlet:
             witem_dst = cache_table.WaitingStoreWordDst(params=self.params, instr=instr)
             await self.cache_table.add_witem(witem=witem_dst, k_maddr=instr.dst)
-            logger.warning(f'kamlet ({self.min_x}, {self.min_y}): added WaitingStoreWordDst ident={witem_dst.instr_ident}')
             for jamlet in self.jamlets:
                 jamlet.init_store_word_dst_state(witem_dst)
+
+        #if self.min_x == 0 and self.min_y == 0:
+        #    import pdb
+        #    pdb.set_trace()
 
     async def handle_store_word_src_witem(self, witem: cache_table.WaitingStoreWordSrc):
         """Called when StoreWord SRC operation completes."""
         assert all(state == StoreSrcState.COMPLETE for state in witem.protocol_states)
         assert witem.rf_ident is not None
         instr = witem.item
-        self.rf_info.finish_reads([instr.src.reg], witem.rf_ident)
+        read_regs = [instr.src.reg] + ([instr.mask_reg] if instr.mask_reg is not None else [])
+        self.rf_info.finish(witem.rf_ident, read_regs=read_regs)
 
     async def handle_store_word_dst_witem(self, witem: cache_table.WaitingStoreWordDst):
         """Called when StoreWord DST operation completes."""
@@ -361,38 +374,75 @@ class Kamlet:
         self.handle_load_instr_simple_final(witem.item, witem.rf_ident)
 
     async def handle_load_instr_simple(self, instr: kinstructions.Load) -> None:
-        logger.debug(f'kamlet ({self.min_x}, {self.min_y}): handle_load_instr_simple')
         dst_regs = self.get_regs(
                 start_index=instr.start_index, n_elements=instr.n_elements,
                 ew=instr.dst_ordering.ew, base_reg=instr.dst)
-        await self.wait_for_rf_available(write_regs=dst_regs)
-        rf_write_ident = self.rf_info.start_writes(dst_regs)
-        if self.cache_table.can_read(instr.k_maddr):
-            self.handle_load_instr_simple_final(instr, rf_write_ident)
+        if instr.mask_reg is not None:
+            read_regs = [instr.mask_reg]
+        else:
+            read_regs = []
+        logger.warning(f'{self.clock.cycle}: kamlet ({self.min_x},{self.min_y}): handle_load_instr_simple '
+                       f'instr_ident={instr.instr_ident} WAITING for dst_regs={dst_regs} read_regs={read_regs}')
+        await self.wait_for_rf_available(write_regs=dst_regs, read_regs=read_regs)
+        rf_ident = self.rf_info.start(read_regs=read_regs, write_regs=dst_regs)
+        logger.warning(f'{self.clock.cycle}: kamlet ({self.min_x},{self.min_y}): handle_load_instr_simple '
+                       f'instr_ident={instr.instr_ident} GOT rf_ident={rf_ident}')
+
+        slot = self.cache_table.addr_to_slot(instr.k_maddr)
+        memory_loc = instr.k_maddr.addr // self.cache_table.cache_line_bytes
+        can_read = self.cache_table.can_read(instr.k_maddr)
+
+        if slot is not None:
+            actual_mem_loc = self.cache_table.slot_states[slot].memory_loc
+            logger.warning(
+                f'{self.clock.cycle}: LOAD_CACHE_CHECK: kamlet ({self.min_x},{self.min_y}) '
+                f'k_maddr.addr=0x{instr.k_maddr.addr:x} memory_loc=0x{memory_loc:x} '
+                f'slot={slot} slot_mem_loc=0x{actual_mem_loc:x} can_read={can_read} '
+                f'{"HIT" if can_read else "MISS"}'
+            )
+        else:
+            logger.warning(
+                f'{self.clock.cycle}: LOAD_CACHE_CHECK: kamlet ({self.min_x},{self.min_y}) '
+                f'k_maddr.addr=0x{instr.k_maddr.addr:x} memory_loc=0x{memory_loc:x} '
+                f'slot=None can_read={can_read} MISS'
+            )
+
+        if can_read:
+            self.handle_load_instr_simple_final(instr, rf_ident)
         else:
             # It's not in cache.
             # We need to load it from memory first.
-            witem = cache_table.WaitingLoadSimple(instr=instr, rf_ident=rf_write_ident)
+            witem = cache_table.WaitingLoadSimple(instr=instr, rf_ident=rf_ident)
             await self.cache_table.add_witem(witem=witem, k_maddr=instr.k_maddr)
 
     def handle_load_instr_simple_final(self, instr: kinstructions.Load, rf_ident: int) -> None:
         assert isinstance(instr, kinstructions.Load)
         assert self.cache_table.can_read(instr.k_maddr)
+        logger.warning(f'{self.clock.cycle}: kamlet ({self.min_x},{self.min_y}): LOAD_SIMPLE '
+                       f'instr_ident={instr.instr_ident} dst=v{instr.dst} '
+                       f'mask_reg={instr.mask_reg} rf_ident={rf_ident}')
         # It's in cache. Update the jamlet register files immediately.
         for jamlet in self.jamlets:
             jamlet.handle_load_instr_simple(instr)
         dst_regs = self.get_regs(
                 start_index=instr.start_index, n_elements=instr.n_elements,
                 ew=instr.dst_ordering.ew, base_reg=instr.dst)
-        self.rf_info.finish_writes(dst_regs, rf_ident)
+        read_regs = [instr.mask_reg] if instr.mask_reg is not None else []
+        logger.warning(f'{self.clock.cycle}: kamlet ({self.min_x},{self.min_y}): LOAD_SIMPLE FINISH '
+                       f'instr_ident={instr.instr_ident} dst_regs={dst_regs} read_regs={read_regs}')
+        self.rf_info.finish(rf_ident, write_regs=dst_regs, read_regs=read_regs)
 
     async def handle_load_instr_notsimple(self, instr: kinstructions.Load) -> None:
         logger.debug(f'kamlet ({self.min_x}, {self.min_y}): handle_load_instr_notsimple addr={hex(instr.k_maddr.addr)} ident={instr.instr_ident}')
         dst_regs = self.get_regs(
                 start_index=instr.start_index, n_elements=instr.n_elements,
                 ew=instr.dst_ordering.ew, base_reg=instr.dst)
-        await self.wait_for_rf_available(write_regs=dst_regs)
-        rf_write_ident = self.rf_info.start_writes(dst_regs)
+        if instr.mask_reg is not None:
+            read_regs = [instr.mask_reg]
+        else:
+            read_regs = []
+        await self.wait_for_rf_available(write_regs=dst_regs, read_regs=read_regs)
+        rf_write_ident = self.rf_info.start(read_regs=read_regs, write_regs=dst_regs)
         witem = cache_table.WaitingLoadJ2JWords(
                 params=self.params, instr=instr, rf_ident=rf_write_ident)
         await self.cache_table.add_witem(witem=witem, k_maddr=instr.k_maddr)
@@ -408,8 +458,9 @@ class Kamlet:
         dst_regs = self.get_regs(
                 start_index=instr.start_index, n_elements=instr.n_elements,
                 ew=instr.dst_ordering.ew, base_reg=instr.dst)
+        read_regs = [instr.mask_reg] if instr.mask_reg is not None else []
         assert witem.rf_ident is not None
-        self.rf_info.finish_writes(dst_regs, witem.rf_ident)
+        self.rf_info.finish(witem.rf_ident, write_regs=dst_regs, read_regs=read_regs)
 
     #
     #  Dealing with Store instruction
@@ -434,8 +485,12 @@ class Kamlet:
         src_regs = self.get_regs(
                 start_index=instr.start_index, n_elements=instr.n_elements,
                 ew=instr.src_ordering.ew, base_reg=instr.src)
-        await self.wait_for_rf_available(read_regs=src_regs)
-        rf_read_ident = self.rf_info.start_reads(src_regs)
+        if instr.mask_reg is not None:
+            read_regs = src_regs + [instr.mask_reg]
+        else:
+            read_regs = src_regs
+        await self.wait_for_rf_available(read_regs=read_regs)
+        rf_read_ident = self.rf_info.start(read_regs=read_regs)
         if self.cache_table.can_read(instr.k_maddr):
             self.handle_store_instr_simple_final(instr, rf_read_ident)
         else:
@@ -459,15 +514,20 @@ class Kamlet:
         src_regs = self.get_regs(
                 start_index=instr.start_index, n_elements=instr.n_elements,
                 ew=instr.src_ordering.ew, base_reg=instr.src)
-        self.rf_info.finish_reads(src_regs, rf_ident)
+        read_regs = src_regs + ([instr.mask_reg] if instr.mask_reg is not None else [])
+        self.rf_info.finish(rf_ident, read_regs=read_regs)
 
     async def handle_store_instr_notsimple(self, instr: kinstructions.Store) -> None:
         logger.debug(f'kamlet ({self.min_x}, {self.min_y}): handle_store_instr_notsimple addr={hex(instr.k_maddr.addr)} ident={instr.instr_ident}')
         src_regs = self.get_regs(
                 start_index=instr.start_index, n_elements=instr.n_elements,
                 ew=instr.src_ordering.ew, base_reg=instr.src)
-        await self.wait_for_rf_available(read_regs=src_regs)
-        rf_read_ident = self.rf_info.start_reads(src_regs)
+        if instr.mask_reg is not None:
+            read_regs = src_regs + [instr.mask_reg]
+        else:
+            read_regs = src_regs
+        await self.wait_for_rf_available(read_regs=read_regs)
+        rf_read_ident = self.rf_info.start(read_regs=read_regs)
         witem = cache_table.WaitingStoreJ2JWords(
                 params=self.params, instr=instr, rf_ident=rf_read_ident)
         await self.cache_table.add_witem(witem=witem, k_maddr=instr.k_maddr)
@@ -483,7 +543,8 @@ class Kamlet:
         src_regs = self.get_regs(
                 start_index=instr.start_index, n_elements=instr.n_elements,
                 ew=instr.src_ordering.ew, base_reg=instr.src)
-        self.rf_info.finish_reads(src_regs, witem.rf_ident)
+        read_regs = src_regs + ([instr.mask_reg] if instr.mask_reg is not None else [])
+        self.rf_info.finish(witem.rf_ident, read_regs=read_regs)
 
 
     #async def handle_load_instr_cache_line(self, instr: kinstructions.Load):
@@ -696,25 +757,10 @@ class Kamlet:
         last_log_cycle = 0
         while True:
             await self.clock.next_cycle
-            # Log waiting items every 100 cycles if any exist
-            if self.clock.cycle - last_log_cycle >= 100:
-                waiting = []
-                for i, item in enumerate(self.cache_table.waiting_items):
-                    if item is not None:
-                        details = f"{type(item).__name__}"
-                        if isinstance(item, cache_table.WaitingLoadWordSrc):
-                            details += f" src={item.protocol_state} cache={item.cache_is_avail} slot={item.cache_slot}"
-                        elif isinstance(item, cache_table.WaitingLoadWordDst):
-                            details += f" dst={item.protocol_state} slot=None"
-                        waiting.append((i, details, item.ready()))
-                if waiting:
-                    logger.warning(f'{self.clock.cycle}: kamlet ({self.min_x}, {self.min_y}): waiting_items: {waiting}')
-                    last_log_cycle = self.clock.cycle
             for index, item in enumerate(self.cache_table.waiting_items):
                 if item is None:
                     continue
                 if item.ready():
-                    logger.debug(f'kamlet ({self.min_x}, {self.min_y}): _monitor_items: witem {index} ready, type={type(item).__name__}')
                     self.cache_table.waiting_items[index] = None
                     await self.handle_item(item)
 
@@ -723,7 +769,8 @@ class Kamlet:
             await self.clock.next_cycle
             if self._instr_send_queue:
                 packet = self._instr_send_queue.popleft()
-                buffer = self.jamlets[SEND_READ_LINE_J_INDEX].send_queues[packet[0].message_type]
+                send_index = self.params.send_read_line_j_index
+                buffer = self.jamlets[send_index].send_queues[packet[0].message_type]
                 while not buffer.can_append():
                     await self.clock.next_cycle
                 buffer.append(packet)

@@ -618,13 +618,15 @@ class Lamlet:
         element_offset = element_offset_bits//8
         eb = element_width//8
 
+        l_cache_line_bytes = self.params.cache_line_bytes * self.params.k_in_l
+
         while start_index < n_elements:
             current_element_addr = g_addr.addr + start_index * eb
             page_address = (start_addr//self.params.page_bytes) * self.params.page_bytes
             page_info = self.tlb.get_page_info(GlobalAddress(bit_addr=page_address*8, params=self.params))
             remaining_elements = n_elements - start_index
 
-            cache_line_boundary = ((start_addr // self.params.cache_line_bytes) + 1) * self.params.cache_line_bytes
+            cache_line_boundary = ((start_addr // l_cache_line_bytes) + 1) * l_cache_line_bytes
             page_boundary = page_address + self.params.page_bytes
             next_boundary = min(cache_line_boundary, page_boundary)
 
@@ -776,17 +778,17 @@ class Lamlet:
                                 ident=writeset_ident,
                                 )
                     else:
-                        byte_mask = [0] * wb
-                        start_word_byte = reg_addr.offset_in_word % wb
-                        for byte_index in range(start_word_byte, start_word_byte + size):
-                            byte_mask[byte_index] = 1
-                        byte_mask_as_int = utils.list_of_uints_to_uint(byte_mask, width=1)
-                        logger.info(f'LoadWord partial: idx={section.start_index}, '
-                                   f'src=0x{section.start_address:x}-0x{section.end_address:x}, '
-                                   f'dst_reg={dst}, dst_offset={reg_addr.offset_in_word}, byte_mask=0x{byte_mask_as_int:x}, '
-                                   f'k_maddr={k_maddr}')
                         instr_ident = self.get_instr_ident(2)
                         if is_store:
+                            byte_mask = [0] * wb
+                            start_word_byte = k_maddr.addr % wb
+                            for byte_index in range(start_word_byte, start_word_byte + size):
+                                byte_mask[byte_index] = 1
+                            byte_mask_as_int = utils.list_of_uints_to_uint(byte_mask, width=1)
+                            logger.info(f'StoreWord partial: idx={section.start_index}, '
+                                       f'src=0x{section.start_address:x}-0x{section.end_address:x}, '
+                                       f'src_reg={reg_addr}, dst_addr=0x{k_maddr.addr:x}, '
+                                       f'byte_mask=0x{byte_mask_as_int:x}, instr_ident={instr_ident}')
                             kinstr = kinstructions.StoreWord(
                                 src=reg_addr,
                                 dst=k_maddr,
@@ -797,6 +799,15 @@ class Lamlet:
                                 instr_ident=instr_ident,
                             )
                         else:
+                            byte_mask = [0] * wb
+                            start_word_byte = reg_addr.offset_in_word % wb
+                            for byte_index in range(start_word_byte, start_word_byte + size):
+                                byte_mask[byte_index] = 1
+                            byte_mask_as_int = utils.list_of_uints_to_uint(byte_mask, width=1)
+                            logger.info(f'LoadWord partial: idx={section.start_index}, '
+                                       f'src=0x{section.start_address:x}-0x{section.end_address:x}, '
+                                       f'dst_reg={dst}, dst_offset={reg_addr.offset_in_word}, byte_mask=0x{byte_mask_as_int:x}, '
+                                       f'k_maddr={k_maddr}')
                             kinstr = kinstructions.LoadWord(
                                 dst=reg_addr,
                                 src=k_maddr,
@@ -833,8 +844,16 @@ class Lamlet:
                     starting_g_addr = GlobalAddress(bit_addr=section.start_address*8, params=self.params)
                     self.check_element_width(starting_g_addr, section.end_address - section.start_address, ew)
                     k_maddr = self.to_k_maddr(starting_g_addr)
+
+                    l_cache_line_bytes = self.params.cache_line_bytes * self.params.k_in_l
+                    assert section.start_address//l_cache_line_bytes == (section.end_address-1)//l_cache_line_bytes
+
                     if is_store:
                         instr_ident = self.get_instr_ident()
+                        logger.info(f'Store: idx={section.start_index}, '
+                                   f'addr=0x{section.start_address:x}-0x{section.end_address:x}, '
+                                   f'k_addr=0x{k_maddr.addr:x}, n_elements={section_elements}, '
+                                   f'instr_ident={instr_ident}')
                         kinstr = kinstructions.Store(
                             src=vd,
                             k_maddr=k_maddr,
@@ -857,6 +876,7 @@ class Lamlet:
                             writeset_ident=writeset_ident,
                             instr_ident=instr_ident,
                             )
+                        logger.warning(f'{self.clock.cycle}: LAMLET CREATE Load instr_ident={instr_ident} dst=v{vd} mask_reg={mask_reg}')
                     await self.add_to_instruction_buffer(kinstr)
                 else:
                     if is_store:

@@ -81,9 +81,11 @@ class Jamlet:
             MessageType.LOAD_J2J_WORDS_REQ: Queue(2),
             MessageType.LOAD_J2J_WORDS_RESP: Queue(2),
             MessageType.LOAD_J2J_WORDS_DROP: Queue(2),
+            MessageType.LOAD_J2J_WORDS_RETRY: Queue(2),
             MessageType.STORE_J2J_WORDS_REQ: Queue(2),
             MessageType.STORE_J2J_WORDS_RESP: Queue(2),
             MessageType.STORE_J2J_WORDS_DROP: Queue(2),
+            MessageType.STORE_J2J_WORDS_RETRY: Queue(2),
             MessageType.LOAD_WORD_REQ: Queue(2),
             MessageType.LOAD_WORD_RESP: Queue(2),
             MessageType.LOAD_WORD_DROP: Queue(2),
@@ -161,31 +163,29 @@ class Jamlet:
         send_queue.append(packet)
         logger.debug(f'jamlet ({self.x}, {self.y}) sent response')
 
-    async def write_read_cache_line(self, cache_slot: int, address_in_memory: int, ident: int):
+    async def write_read_cache_line(self, cache_slot: int, write_address: int, read_address: int, ident: int):
         """
-        Writes this jamlets share of a cache line to memory.
+        Writes this jamlets share of a cache line to memory and reads a new cache line.
         """
         address_in_sram = cache_slot * self.params.cache_line_bytes // self.params.j_in_k
         n_words = self.params.cache_line_bytes // self.params.j_in_k // self.params.word_bytes
-        header = IdentHeader(
+        header = AddressHeader(
             message_type=MessageType.WRITE_LINE_READ_LINE,
             send_type=SendType.SINGLE,
             target_x=self.mem_x,
             target_y=self.mem_y,
             source_x=self.x,
             source_y=self.y,
-            length=n_words+2,
+            length=n_words+3,
             ident=ident,
+            address=address_in_sram,
             )
-        packet = [header, address_in_memory]
+        packet = [header, write_address, read_address]
         wb = self.params.word_bytes
         for index in range(n_words):
             word = self.sram[address_in_sram + index * wb: address_in_sram + (index+1) * wb]
             packet.append(word)
-        as_int = []
-        for word in packet[2:]:
-            #as_int += [int(x) for x in word]
-            as_int += [int.from_bytes(word[i*4:(i+1)*4], byteorder='little') for i in range(len(word)//4)]
+        logger.warning(f'jamlet: {(self.x, self.y)}: Sending cache line from sram {address_in_sram} words={packet[3:]}')
         send_queue = self.send_queues[header.message_type]
         while not send_queue.can_append():
             await self.clock.next_cycle
@@ -259,13 +259,26 @@ class Jamlet:
         remaining = header.length - 1
         wb = self.params.word_bytes
         s_address = header.address
+
+        # Some some debug checking
+        cache_line_bytes_per_jamlet = self.params.cache_line_bytes // self.params.j_in_k
+        slot = s_address//cache_line_bytes_per_jamlet
+        slot_state = self.cache_table.slot_states[slot]
+        assert slot_state.state in (CacheState.READING, CacheState.WRITING_READING)
+
         assert s_address % wb == 0
         assert remaining == self.params.vlines_in_cache_line
         index = 0
         while remaining:
             if queue:
                 word = queue.popleft()
-                self.sram[s_address + index * wb: s_address + (index+1) * wb] = word
+                sram_addr = s_address + index * wb
+                old_word = self.sram[sram_addr: sram_addr + wb]
+                self.sram[sram_addr: sram_addr + wb] = word
+                logger.debug(
+                    f'{self.clock.cycle}: CACHE_WRITE READ_LINE_RESP: jamlet ({self.x},{self.y}) '
+                    f'sram[{sram_addr}] old={old_word.hex()} new={word.hex()}'
+                )
                 remaining -= 1
                 index += 1
             await self.clock.next_cycle
@@ -288,6 +301,8 @@ class Jamlet:
             await self._receive_read_line_resp_packet(header, queue)
         elif header.message_type == MessageType.WRITE_LINE_RESP:
             await self._receive_write_line_resp_packet(header, queue)
+        elif header.message_type == MessageType.WRITE_LINE_READ_LINE_RESP:
+            await self._receive_read_line_resp_packet(header, queue)
         elif header.message_type == MessageType.LOAD_J2J_WORDS_REQ:
             packet = await self._receive_packet_body(queue, header)
             await self.handle_load_j2j_words_req(packet)
@@ -297,6 +312,9 @@ class Jamlet:
         elif header.message_type == MessageType.LOAD_J2J_WORDS_DROP:
             packet = await self._receive_packet_body(queue, header)
             await self.handle_load_j2j_words_drop(packet)
+        elif header.message_type == MessageType.LOAD_J2J_WORDS_RETRY:
+            packet = await self._receive_packet_body(queue, header)
+            await self.handle_load_j2j_words_retry(packet)
         elif header.message_type == MessageType.STORE_J2J_WORDS_REQ:
             packet = await self._receive_packet_body(queue, header)
             await self.handle_store_j2j_words_req(packet)
@@ -306,6 +324,9 @@ class Jamlet:
         elif header.message_type == MessageType.STORE_J2J_WORDS_DROP:
             packet = await self._receive_packet_body(queue, header)
             await self.handle_store_j2j_words_drop(packet)
+        elif header.message_type == MessageType.STORE_J2J_WORDS_RETRY:
+            packet = await self._receive_packet_body(queue, header)
+            await self.handle_store_j2j_words_retry(packet)
         elif header.message_type == MessageType.LOAD_WORD_REQ:
             packet = await self._receive_packet_body(queue, header)
             await self.handle_load_word_req(packet)
@@ -363,14 +384,132 @@ class Jamlet:
                     continue
                 if not all(request.sent):
                     if request.request_type == CacheRequestType.WRITE_LINE_READ_LINE:
-                        await self.write_read_cache_line(cache_slot=request.slot, address_in_memory=request.k_maddr, ident=request.ident)
-                        assert len(request.sent) == 1
-                        request.sent[0].set(True)
+                        slot_state = self.cache_table.slot_states[request.slot]
+                        write_address = request.addr
+                        read_address = slot_state.memory_loc * self.params.cache_line_bytes
+                        await self.write_read_cache_line(cache_slot=request.slot, write_address=write_address, read_address=read_address, ident=request.ident)
+                        self.cache_table.report_sent_request(request)
                     else:
                         # Don't do anything for READ_LINE
                         # since those messages are sent at the kamlet level
                         pass
 
+    def get_vline_offsets(
+            self, ew: int, ve: int, start_index: int, n_elements: int) -> List[int]:
+        '''
+        This jamlet has an element at position dst_ve in the vector.
+        The position of the element in the next vline will be elements_in_vline + dst_ve
+        We want to find all the vline_offsets that give elements in the range
+        start_index to start_index + n_elements.
+
+        This is useful since if we want to load or store multiple vector lines at a time
+        we can easily do a word from each vector line for this jamlet.
+        '''
+        index = 0
+        vline_offsets = []
+        elements_in_vline = self.params.vline_bytes * 8 // ew
+        while index * elements_in_vline + ve < start_index + n_elements:
+            if index * elements_in_vline + ve >= start_index:
+                vline_offsets.append(index)
+            index += 1
+        return vline_offsets
+
+    def get_offsets_and_masks(self, start_index: int, n_elements: int,
+                              ordering: addresses.Ordering, mask_reg: int|None):
+        word_bytes = self.params.word_bytes
+        if mask_reg is not None:
+            mask_word = int.from_bytes(
+                    self.rf_slice[mask_reg * word_bytes: (mask_reg+1) * word_bytes],
+                    byteorder='little')
+        else:
+            mask_word = (1 << (word_bytes * 8)) - 1
+        # We're mapping aligned matching-ew between cache and reg.
+        # We need to work out what offsets in the cache line and reg to use
+        # along with the masks for those words.
+        vw_index = addresses.j_coords_to_vw_index(
+                self.params, ordering.word_order, self.x, self.y)
+        ww = self.params.word_bytes * 8
+        elements_in_word = ww//ordering.ew
+        elements_in_vline = self.params.vline_bytes * 8 // ordering.ew
+        offsets_and_masks = []
+        for vline_index in range(start_index//elements_in_vline, (start_index+n_elements-1)//elements_in_vline+1):
+            bit_mask = []
+            for we in range(elements_in_word):
+                element_index = vline_index * elements_in_vline + we * self.params.j_in_l + vw_index
+                if start_index <= element_index < start_index + n_elements:
+                    # The bit position in mask_word for this element
+                    bit_index = element_index // self.params.j_in_l
+                    element_mask_bit = (mask_word >> bit_index) & 1
+                    if element_mask_bit:
+                        bit_mask += [1] * ordering.ew
+                    else:
+                        bit_mask += [0] * ordering.ew
+                else:
+                    bit_mask += [0] * ordering.ew
+            mask = utils.list_of_uints_to_uint(bit_mask, width=1)
+            offsets_and_masks.append((vline_index, mask))
+        return offsets_and_masks
+
+    def j2j_words_mapping_from_src(
+            self, instr: kinstructions.Store|kinstructions.Load,
+            src_x: int, src_y: int, src_tag: int, allow_none: bool=True) -> ew_convert.MemMapping:
+        if isinstance(instr, kinstructions.Store):
+            src_ordering = instr.src_ordering
+            dst_ordering = instr.k_maddr.ordering
+            reg_ordering = src_ordering
+        else:
+            src_ordering = instr.k_maddr.ordering
+            dst_ordering = instr.dst_ordering
+            reg_ordering = dst_ordering
+        src_vw_index = addresses.j_coords_to_vw_index(
+                self.params, src_ordering.word_order, src_x, src_y)
+        mem_logical_addr = instr.k_maddr.to_logical_vline_addr()
+        start_mem_logical_addr = mem_logical_addr.offset_bits(-instr.start_index * reg_ordering.ew)
+        mem_offset = start_mem_logical_addr.bit_addr
+        if isinstance(instr, kinstructions.Store):
+            dst_offset = mem_offset
+            src_offset = 0
+        else:
+            dst_offset = 0
+            src_offset = mem_offset
+        mapping = ew_convert.get_mapping_for_src(
+                params=self.params, src_ew=src_ordering.ew, dst_ew=dst_ordering.ew,
+                dst_offset=dst_offset, src_offset=src_offset, src_v=0, src_vw=src_vw_index,
+                src_tag=src_tag)
+        if not allow_none:
+            assert mapping is not None
+        return mapping
+
+    def j2j_words_mapping_from_dst(
+            self, instr: kinstructions.Store|kinstructions.Load,
+            dst_x: int, dst_y: int, dst_tag: int, allow_none: bool=True) -> ew_convert.MemMapping:
+        if isinstance(instr, kinstructions.Store):
+            src_ordering = instr.src_ordering
+            dst_ordering = instr.k_maddr.ordering
+            reg_ordering = src_ordering
+        else:
+            src_ordering = instr.k_maddr.ordering
+            dst_ordering = instr.dst_ordering
+            reg_ordering = dst_ordering
+        dst_vw_index = addresses.j_coords_to_vw_index(
+                self.params, src_ordering.word_order, dst_x, dst_y)
+        mem_logical_addr = instr.k_maddr.to_logical_vline_addr()
+        start_mem_logical_addr = mem_logical_addr.offset_bits(-instr.start_index * reg_ordering.ew)
+        mem_offset = start_mem_logical_addr.bit_addr
+        if isinstance(instr, kinstructions.Store):
+            dst_offset = mem_offset
+            src_offset = 0
+        else:
+            dst_offset = 0
+            src_offset = mem_offset
+        mapping = ew_convert.get_mapping_for_dst(
+                params=self.params, src_ew=src_ordering.ew, dst_ew=dst_ordering.ew,
+                src_offset=src_offset, dst_offset=dst_offset,
+                dst_v=0, dst_vw=dst_vw_index, dst_tag=dst_tag,
+                allow_none=allow_none)
+        if not allow_none:
+            assert mapping is not None
+        return mapping
 
     ###########################################################
     #
@@ -387,78 +526,32 @@ class Jamlet:
         """
         #TODO: Pretty much the same has handle_load_instr_simple
         # Should work out how to combine.
-        assert self.cache_table.can_read(instr.k_maddr)
+        assert self.cache_table.can_write(instr.k_maddr)
         slot = self.cache_table.addr_to_slot(instr.k_maddr)
-        # But we need to check which elements we want to write
-        # What are the elements in this word.
+
         dst_ordering = instr.k_maddr.ordering
         src_ordering = instr.src_ordering
-        ew = src_ordering.ew
-        assert ew == dst_ordering.ew
-        vw_index = addresses.j_coords_to_vw_index(
-                self.params, src_ordering.word_order, self.x, self.y)
-        # We contain vw_index, vw_index+self.j_in_l, vw_index+2*self.j_in_l
-        # The total number is ww/dst_ew per word
-        start_addr_bit = instr.k_maddr.bit_addr
-        assert start_addr_bit % 8 == 0
+        assert dst_ordering == src_ordering
 
-        j_in_l = self.params.j_in_l
-        ww = self.params.word_bytes * 8
-        vw = self.params.vline_bytes * 8
+        vline_offsets_and_masks = self.get_offsets_and_masks(
+                instr.start_index, instr.n_elements, instr.src_ordering, instr.mask_reg)
 
-        start_eb, start_vw, start_we, start_v = ew_convert.split_by_factors(
-                start_addr_bit, [ew, j_in_l, ww//ew])
-        final_addr_bit = start_addr_bit + instr.n_elements * ew - 1
-        final_eb, final_vw, final_we, final_v = ew_convert.split_by_factors(
-                final_addr_bit, [ew, j_in_l, ww//ew])
-
-        start_ve = ew_convert.join_by_factors([start_we, start_vw], [ww//ew, vw//ww])
-        assert instr.start_index == start_ve
-
-        # It should all be in a single cache line
-        start_c = start_v//self.params.vlines_in_cache_line
-        final_c = final_v//self.params.vlines_in_cache_line
-        assert start_c == final_c
-
-        base_v = (start_addr_bit - instr.start_index * ew)//vw
-
-        if instr.mask_reg is not None:
-            mask_addr = instr.mask_reg * (ww//8)
-            mask_word = self.rf_slice[mask_addr: mask_addr + ww//8]
-            mask_word_int = int.from_bytes(mask_word, byteorder='little')
-            mask_bits = utils.uint_to_list_of_uints(mask_word_int, width=1, size=ww)
-            el_mask = [0] * (ww//ew)
-            el_mask[0: final_v-start_v+1] = mask_bits[start_v-base_v: final_v-base_v+1]
-        else:
-            el_mask = [1] * (ww//ew)
-
-        masks = []
-        for v_index in range(start_v, final_v+1):
-            el_mask_bits = []
-            for word_element in range(0, ww//ew):
-                element_index = (start_v - base_v) * vw//ew + word_element * j_in_l + vw_index
-                in_range = instr.start_index <= element_index < instr.start_index + instr.n_elements
-                if instr.mask_reg is None:
-                    mask_bit = 1
-                else:
-                    mask_bit = el_mask[element_index//j_in_l]
-
-                el_mask_bits += [mask_bit and in_range] * ew
-            masks.append(utils.list_of_uints_to_uint(el_mask_bits, width=1))
-
-        cache_base_v = start_c * self.params.vlines_in_cache_line
+        word_bytes = self.params.word_bytes
+        vline_bytes_per_kamlet = self.params.word_bytes * self.params.j_in_k
+        base_vline = (instr.k_maddr.addr % self.params.cache_line_bytes) // vline_bytes_per_kamlet
         cache_line_bytes_per_jamlet = self.params.cache_line_bytes // self.params.j_in_k
-        for mask, v_index in zip(masks, range(start_v, final_v+1)):
-            rf_word_addr = instr.src + start_v - base_v
-            word = self.rf_slice[rf_word_addr * ww//8: (rf_word_addr+1) * ww//8]
-            word_as_int = int.from_bytes(word, byteorder='little')
-            sram_addr = slot * cache_line_bytes_per_jamlet + (v_index - cache_base_v) * ww//8
-            old_word = self.sram[sram_addr: sram_addr + ww//8]
-            old_word_as_int = int.from_bytes(old_word, byteorder='little')
-            new_word = (old_word_as_int & ~mask) | (word_as_int & mask)
-            new_word_bytes = new_word.to_bytes(ww//8, byteorder='little')
-            self.sram[sram_addr: sram_addr + ww//8] = new_word_bytes
-            logger.info(f'STORE_SIMPLE: jamlet ({self.x},{self.y}): wrote to sram[{sram_addr}] bytes={new_word_bytes.hex()} mask=0x{mask:016x} rf_word_addr={rf_word_addr} word_from_rf={word.hex()}')
+        for vline_offset, mask in vline_offsets_and_masks:
+            rf_word_addr = instr.src + vline_offset
+            sram_addr = slot * cache_line_bytes_per_jamlet + (base_vline + vline_offset) * word_bytes
+            new_word = self.rf_slice[rf_word_addr * word_bytes: (rf_word_addr+1) * word_bytes]
+            old_word = self.sram[sram_addr: sram_addr + word_bytes]
+            updated_word = utils.update_bytes_word(old_word=old_word, new_word=new_word, mask=mask)
+            self.sram[sram_addr: sram_addr + word_bytes] = updated_word
+            logger.debug(
+                f'{self.clock.cycle}: CACHE_WRITE STORE_SIMPLE: jamlet ({self.x},{self.y}) '
+                f'sram[{sram_addr}] old={old_word.hex()} new={updated_word.hex()} '
+                f'from rf[{rf_word_addr}] mask=0x{mask:016x}'
+            )
 
     def init_store_j2j_words_dst_state(
             self, witem: cache_table.WaitingStoreJ2JWords, tag: int) -> None:
@@ -467,27 +560,14 @@ class Jamlet:
         data for this tag. If not, mark it complete immediately.
         '''
         instr = witem.item
-        src_ordering = instr.src_ordering
-        dst_ordering = instr.k_maddr.ordering
-        src_ew = src_ordering.ew
-        dst_ew = dst_ordering.ew
-        logical_addr = instr.k_maddr.to_logical_vline_addr()
-        start_logical_addr = logical_addr.offset_bits(-instr.start_index * dst_ew)
-        dst_offset = start_logical_addr.bit_addr
-
-        dst_vw_index = addresses.j_coords_to_vw_index(
-                self.params, dst_ordering.word_order, self.x, self.y)
-
-        mapping = ew_convert.get_mapping_for_dst(
-                params=self.params, src_ew=src_ew, dst_ew=dst_ew,
-                dst_v=0, dst_vw=dst_vw_index, dst_tag=tag, dst_offset=dst_offset)
-
+        mapping = self.j2j_words_mapping_from_dst(
+                instr=instr, dst_x=self.x, dst_y=self.y, dst_tag=tag)
         response_tag = self.j_in_k_index * instr.n_tags() + tag
         if mapping is None:
             witem.protocol_states[response_tag].dst_state = cache_table.StoreDstState.COMPLETE
         else:
             vline_offsets = self.get_vline_offsets(
-                    dst_ew, mapping.dst_ve, instr.start_index, instr.n_elements)
+                    instr.k_maddr.ordering.ew, mapping.dst_ve, instr.start_index, instr.n_elements)
             if not vline_offsets:
                 witem.protocol_states[response_tag].dst_state = cache_table.StoreDstState.COMPLETE
 
@@ -503,40 +583,26 @@ class Jamlet:
                        we're resending a dropped packet just as a check.
         '''
         instr = witem.item
-        src_ordering = instr.src_ordering
-        dst_ordering = instr.k_maddr.ordering
-        src_ew = src_ordering.ew
-        dst_ew = dst_ordering.ew
-        response_tag = self.j_in_k_index * instr.n_tags() + tag
-        vw_index = addresses.j_coords_to_vw_index(
-                self.params, instr.src_ordering.word_order, self.x, self.y)
-        logical_addr = instr.k_maddr.to_logical_vline_addr()
-        start_logical_addr = logical_addr.offset_bits(-instr.start_index * src_ew)
-        offset = start_logical_addr.bit_addr
-        logger.warning(f'{self.clock.cycle}: jamlet ({self.x}, {self.y}): SEND get_mapping_for_src: src_ew={src_ew}, dst_ew={dst_ew}, dst_offset={offset}, src_vw={vw_index}, src_tag={tag}')
-        mapping = ew_convert.get_mapping_for_src(
-                params=self.params, src_ew=src_ew, dst_ew=dst_ew,
-                dst_offset=offset, src_v=0, src_vw=vw_index, src_tag=tag)
-        logger.warning(f'{self.clock.cycle}: jamlet ({self.x}, {self.y}): SEND mapping result: {mapping}')
+        mapping = self.j2j_words_mapping_from_src(
+                instr=instr, src_x=self.x, src_y=self.y, src_tag=tag)
+        src_ew = instr.k_maddr.ordering.ew
 
         if mapping is None:
             vline_offsets = []
         else:
             vline_offsets = self.get_vline_offsets(
-                    dst_ve=mapping.dst_ve, dst_ew=dst_ew,
+                    ve=mapping.src_ve, ew=instr.src_ordering.ew,
                     start_index=instr.start_index, n_elements=instr.n_elements)
+        response_tag = self.j_in_k_index * instr.n_tags() + tag
 
         if not vline_offsets:
             assert not assert_sends
-            logger.warning(f'{self.clock.cycle}: jamlet ({self.x}, {self.y}): No vline_offsets for tag={tag}, response_tag={response_tag}, setting COMPLETE without sending')
             witem.protocol_states[response_tag].src_state = cache_table.StoreSrcState.COMPLETE
             return
-        logger.warning(f'{self.clock.cycle}: jamlet ({self.x}, {self.y}): Sending req for tag={tag}, response_tag={response_tag}, setting WAITING_FOR_RESPONSE')
         witem.protocol_states[response_tag].src_state = cache_table.StoreSrcState.WAITING_FOR_RESPONSE
 
         target_x, target_y = addresses.vw_index_to_j_coords(
-                self.params, dst_ordering.word_order, mapping.dst_vw)
-        logger.debug(f'jamlet ({self.x}, {self.y}): send_store_j2j_words_req tag={tag} -> ({target_x}, {target_y})')
+                self.params, instr.k_maddr.ordering.word_order, mapping.dst_vw)
 
         word_bytes = self.params.word_bytes
         words = [self.rf_slice[(instr.src+index)*word_bytes: (instr.src+index+1)*word_bytes]
@@ -556,6 +622,7 @@ class Jamlet:
                 mask_bits.append((mask_word_int >> word_element) & 1)
         else:
             mask_bits = [1] * len(words)
+
         mask_bits_as_int = utils.list_of_uints_to_uint(mask_bits, width=1)
 
         header = TaggedHeader(
@@ -567,7 +634,7 @@ class Jamlet:
             message_type=MessageType.STORE_J2J_WORDS_REQ,
             send_type=SendType.SINGLE,
             ident=instr.instr_ident,
-            tag=mapping.dst_tag,
+            tag=mapping.src_tag,
             mask=mask_bits_as_int,
             )
 
@@ -594,34 +661,20 @@ class Jamlet:
         # Let's check to see if we have a waiting item for this.
         witem = self.cache_table.get_waiting_item_by_instr_ident(header.ident)
         if witem is None:
-            # We not expected this message.
-            # Presumably we haven't processed that instruction yet.
-            # Drop the packet.
-            logger.debug(f'jamlet ({self.x}, {self.y}): handle_store_j2j_words_req from ({header.source_x}, {header.source_y}) tag={header.tag} ident={header.ident} - no witem, dropping')
             await self.send_store_j2j_words_drop(header)
             return
-        logger.debug(f'jamlet ({self.x}, {self.y}): handle_store_j2j_words_req from ({header.source_x}, {header.source_y}) tag={header.tag} ident={header.ident}')
         assert isinstance(witem, cache_table.WaitingStoreJ2JWords)
         slot = witem.cache_slot
         assert slot is not None
         instr = witem.item
         assert isinstance(instr, kinstructions.Store)
 
+        mapping = self.j2j_words_mapping_from_src(
+                instr, header.source_x, header.source_y, header.tag)
         src_ew = instr.src_ordering.ew
-        dst_ew = instr.k_maddr.ordering.ew
-        src_vw_index = addresses.j_coords_to_vw_index(
-                self.params, instr.src_ordering.word_order, header.source_x, header.source_y)
-        logical_addr = instr.k_maddr.to_logical_vline_addr()
-        start_logical_addr = logical_addr.offset_bits(-instr.start_index * src_ew)
-        offset = start_logical_addr.bit_addr
-        logger.warning(f'{self.clock.cycle}: jamlet ({self.x}, {self.y}): RECV get_mapping_for_src: src_ew={src_ew}, dst_ew={dst_ew}, dst_offset={offset}, src_vw={src_vw_index}, src_tag={header.tag}, start_index={instr.start_index}')
-        mapping = ew_convert.get_mapping_for_src(
-                params=self.params, src_ew=src_ew, dst_ew=dst_ew,
-                dst_offset=offset, src_v=0, src_vw=src_vw_index, src_tag=header.tag)
-        logger.warning(f'{self.clock.cycle}: jamlet ({self.x}, {self.y}): RECV mapping result: {mapping}')
+
         assert mapping is not None
-        dst_tag = mapping.dst_tag
-        response_tag = self.j_in_k_index * instr.n_tags() + dst_tag
+        response_tag = self.j_in_k_index * instr.n_tags() + mapping.dst_tag
 
         if self.cache_table.can_write(instr.k_maddr, witem=witem):
             assert witem.cache_is_avail
@@ -631,12 +684,14 @@ class Jamlet:
             segment_mask = ((1 << mapping.n_bits)-1) << mapping.dst_wb
 
             vline_offsets = self.get_vline_offsets(
-                    dst_ew=dst_ew, dst_ve=mapping.dst_ve,
+                    ew=src_ew, ve=mapping.src_ve,
                     start_index=instr.start_index, n_elements=instr.n_elements)
 
-            v_in_c = self.params.vlines_in_cache_line
             word_bytes = self.params.word_bytes
-            cache_base_addr = slot * v_in_c * word_bytes
+            vline_bytes_per_kamlet = word_bytes * self.params.j_in_k
+            base_vline = (instr.k_maddr.addr % self.params.cache_line_bytes) // vline_bytes_per_kamlet
+            cache_line_bytes_per_jamlet = self.params.cache_line_bytes // self.params.j_in_k
+            cache_base_addr = slot * cache_line_bytes_per_jamlet
 
             for word_index, (vline_offset, word) in enumerate(zip(vline_offsets, words)):
                 mask_bit = (header.mask >> word_index) & 1
@@ -644,21 +699,23 @@ class Jamlet:
                 if shift > 0:
                     shifted = word_as_int >> shift
                 else:
-                    shifted = word_as_int << (-shift)
+                    shifted = (word_as_int << (-shift))
+                shifted_bytes = shifted.to_bytes(self.params.word_bytes, byteorder='little')
                 if mask_bit:
-                    cache_addr = cache_base_addr + vline_offset * word_bytes
+                    cache_addr = cache_base_addr + (base_vline + vline_offset) * word_bytes
                     old_word = self.sram[cache_addr: cache_addr + word_bytes]
-                    old_word_as_int = int.from_bytes(old_word, byteorder='little')
-                    old_word_masked = old_word_as_int & (~segment_mask)
-                    new_word = old_word_masked | shifted
-                    new_word_bytes = new_word.to_bytes(word_bytes, byteorder='little')
-                    self.sram[cache_addr: cache_addr + word_bytes] = new_word_bytes
-                    logger.info(f'STORE_J2J: jamlet ({self.x},{self.y}): wrote to sram[{cache_addr}] bytes={new_word_bytes.hex()} (shifted from {word.hex()})')
+                    updated_word = utils.update_bytes_word(
+                            old_word=old_word, new_word=shifted_bytes, mask=segment_mask)
+                    self.sram[cache_addr: cache_addr + word_bytes] = updated_word
+                    logger.debug(
+                        f'{self.clock.cycle}: CACHE_WRITE STORE_J2J: jamlet ({self.x},{self.y}) '
+                        f'sram[{cache_addr}] old={old_word.hex()} new={updated_word.hex()}'
+                    )
             witem.protocol_states[response_tag].dst_state = cache_table.StoreDstState.COMPLETE
             cache_state = self.cache_table.slot_states[slot]
             assert cache_state.state in (CacheState.SHARED, CacheState.MODIFIED)
             cache_state.state = CacheState.MODIFIED
-            logger.debug(f'jamlet ({self.x}, {self.y}): handle_store_j2j_words_req - wrote to cache, sending resp')
+            logger.info(f'jamlet ({self.x}, {self.y}): handle_store_j2j_words_req - wrote to cache, sending resp')
             await self.send_store_j2j_words_resp(header)
         else:
             # We can't write to the cache table.
@@ -692,8 +749,8 @@ class Jamlet:
         assert isinstance(witem, cache_table.WaitingStoreJ2JWords)
         instr = witem.item
         response_tag = self.j_in_k_index * instr.n_tags() + header.tag
-        logger.debug(f'jamlet ({self.x}, {self.y}): handle_store_j2j_words_resp from ({header.source_x}, {header.source_y}) tag={header.tag} ident={header.ident}')
-        logger.warning(f'{self.clock.cycle}: jamlet ({self.x}, {self.y}): response_tag={response_tag}, j_in_k={self.j_in_k_index}, header.tag={header.tag}, n_tags={instr.n_tags()}, actual_state={witem.protocol_states[response_tag].src_state}')
+        logger.info(f'jamlet ({self.x}, {self.y}): handle_store_j2j_words_resp from ({header.source_x}, {header.source_y}) tag={header.tag} ident={header.ident}')
+        logger.info(f'{self.clock.cycle}: jamlet ({self.x}, {self.y}): response_tag={response_tag}, j_in_k={self.j_in_k_index}, header.tag={header.tag}, n_tags={instr.n_tags()}, actual_state={witem.protocol_states[response_tag].src_state}')
         assert witem.protocol_states[response_tag].src_state == cache_table.StoreSrcState.WAITING_FOR_RESPONSE
         witem.protocol_states[response_tag].src_state = cache_table.StoreSrcState.COMPLETE
 
@@ -706,6 +763,7 @@ class Jamlet:
         assert isinstance(witem, cache_table.WaitingStoreJ2JWords)
         instr = witem.item
         response_tag = self.j_in_k_index * instr.n_tags() + header.tag
+        logger.warning(f'{self.clock.cycle} jamlet {(self.x, self.y)}: handle_store_j2j_words_retry src_state={witem.protocol_states[response_tag].src_state} instr_ident={witem.instr_ident} response_tag={response_tag}')
         assert witem.protocol_states[response_tag].src_state == cache_table.StoreSrcState.WAITING_FOR_RESPONSE
         witem.protocol_states[response_tag].src_state = cache_table.StoreSrcState.NEED_TO_SEND
 
@@ -750,21 +808,14 @@ class Jamlet:
         instr = item.item
         assert isinstance(instr, kinstructions.Store)
 
-        src_ew = instr.src_ordering.ew
-        dst_ew = instr.k_maddr.ordering.ew
-        vw_index = addresses.j_coords_to_vw_index(
-                self.params, instr.src_ordering.word_order, self.x, self.y)
-        logical_addr = instr.k_maddr.to_logical_vline_addr()
-        start_logical_addr = logical_addr.offset_bits(-instr.start_index * src_ew)
-        dst_offset = start_logical_addr.bit_addr
-
-        mapping = ew_convert.get_mapping_for_dst(
-                params=self.params, src_ew=src_ew, dst_ew=dst_ew,
-                dst_offset=dst_offset, dst_v=0, dst_vw=vw_index, dst_tag=tag)
+        mapping = self.j2j_words_mapping_from_dst(
+               instr=instr, dst_x=self.x, dst_y=self.y, dst_tag=tag, allow_none=False)
         assert mapping is not None
+
         target_x, target_y = addresses.vw_index_to_j_coords(
                 self.params, instr.k_maddr.ordering.word_order, mapping.src_vw)
 
+        logger.warning(f'{self.clock.cycle}: jamlet {(self.x, self.y)}: send_store_j2j_words_retry ident={item.instr_ident} dst_tag={tag} src_tag={mapping.src_tag} to {(target_x, target_y)}')
         header = TaggedHeader(
             target_x=target_x,
             target_y=target_y,
@@ -774,9 +825,12 @@ class Jamlet:
             message_type=MessageType.STORE_J2J_WORDS_RETRY,
             length=1,
             ident=item.instr_ident,
-            tag=tag,
+            tag=mapping.src_tag,
             )
         packet = [header]
+        ptag = self.j_in_k_index * instr.n_tags() + mapping.dst_tag
+        assert item.protocol_states[ptag].dst_state == cache_table.StoreDstState.NEED_TO_ASK_FOR_RESEND
+        item.protocol_states[ptag].dst_state = cache_table.StoreDstState.WAITING_FOR_REQUEST
         await self.send_packet(packet)
 
 
@@ -795,77 +849,30 @@ class Jamlet:
         """
         assert self.cache_table.can_read(instr.k_maddr)
         slot = self.cache_table.addr_to_slot(instr.k_maddr)
-        # But we need to check which elements we want to write
-        # What are the elements in this word.
-        src_ordering = instr.k_maddr.ordering
+
         dst_ordering = instr.dst_ordering
-        ew = src_ordering.ew
-        assert ew == dst_ordering.ew
-        vw_index = addresses.j_coords_to_vw_index(
-                self.params, instr.dst_ordering.word_order, self.x, self.y)
-        # We contain vw_index, vw_index+self.j_in_l, vw_index+2*self.j_in_l
-        # The total number is ww/dst_ew per word
-        physical_vline_addr = instr.k_maddr.to_physical_vline_addr()
-        start_addr_bit = physical_vline_addr.bit_addr
-        assert start_addr_bit % 8 == 0
+        src_ordering = instr.k_maddr.ordering
+        assert dst_ordering == src_ordering
 
-        j_in_l = self.params.j_in_l
-        ww = self.params.word_bytes * 8
-        vw = self.params.vline_bytes * 8
+        vline_offsets_and_masks = self.get_offsets_and_masks(
+                instr.start_index, instr.n_elements, instr.dst_ordering, instr.mask_reg)
 
-        start_eb, start_vw, start_we, start_v = ew_convert.split_by_factors(
-                start_addr_bit, [ew, j_in_l, ww//ew])
-        final_addr_bit = start_addr_bit + instr.n_elements * ew - 1
-        final_eb, final_vw, final_we, final_v = ew_convert.split_by_factors(
-                final_addr_bit, [ew, j_in_l, ww//ew])
-
-        start_ve = ew_convert.join_by_factors([start_we, start_vw], [ww//ew, vw//ww])
-        assert instr.start_index == start_ve
-
-        # It should all be in a single cache line
-        start_c = start_v//self.params.vlines_in_cache_line
-        final_c = final_v//self.params.vlines_in_cache_line
-        assert start_c == final_c
-
-        base_v = (start_addr_bit - instr.start_index * ew)//vw
-
-        if instr.mask_reg is not None:
-            mask_addr = instr.mask_reg * (ww//8)
-            mask_word = self.rf_slice[mask_addr: mask_addr + ww//8]
-            mask_word_int = int.from_bytes(mask_word, byteorder='little')
-            mask_bits = utils.uint_to_list_of_uints(mask_word_int, width=1, size=ww)
-            el_mask = [0] * (ww//ew)
-            el_mask[0: final_v-start_v+1] = mask_bits[start_v-base_v: final_v-base_v+1]
-        else:
-            el_mask = [1] * (ww//ew)
-
-        masks = []
-        for v_index in range(start_v, final_v+1):
-            el_mask_bits = []
-            for word_element in range(0, ww//ew):
-                element_index = (start_v - base_v) * vw//ew + word_element * j_in_l + vw_index
-                in_range = instr.start_index <= element_index < instr.start_index + instr.n_elements
-                if instr.mask_reg is None:
-                    mask_bit = 1
-                else:
-                    mask_bit = el_mask[element_index//j_in_l]
-
-                el_mask_bits += [mask_bit and in_range] * ew
-            masks.append(utils.list_of_uints_to_uint(el_mask_bits, width=1))
-
-        logger.debug(f'{self.clock.cycle}: jamlet {(self.x, self.y)}: Running the vector load')
-        cache_base_v = start_c * self.params.vlines_in_cache_line
+        vline_bytes_per_kamlet = self.params.word_bytes * self.params.j_in_k
+        base_vline = (instr.k_maddr.addr % self.params.cache_line_bytes) // vline_bytes_per_kamlet
         cache_line_bytes_per_jamlet = self.params.cache_line_bytes // self.params.j_in_k
-        for mask, v_index in zip(masks, range(start_v, final_v+1)):
-            sram_addr = slot * cache_line_bytes_per_jamlet + (v_index - cache_base_v) * ww//8
-            word = self.sram[sram_addr: sram_addr + ww//8]
-            word_as_int = int.from_bytes(word, byteorder='little')
-            masked = word_as_int & mask
-            masked_as_bytes = masked.to_bytes(ww//8, byteorder='little')
-            rf_word_addr = instr.dst + start_v - base_v
-            logger.debug(f'{self.clock.cycle}: jamlet {(self.x, self.y)}: Loading {[int(x) for x in masked_as_bytes]}')
-            logger.warning(f'{self.clock.cycle}: LOAD: jamlet ({self.x},{self.y}): vw_index={vw_index}, reg={instr.dst}, rf_word_addr={rf_word_addr}, bytes={masked_as_bytes.hex()}, start_v={start_v}, base_v={base_v}')
-            self.rf_slice[rf_word_addr * ww//8: (rf_word_addr+1) * ww//8] = masked_as_bytes
+        word_bytes = self.params.word_bytes
+        for vline_offset, mask in vline_offsets_and_masks:
+            rf_word_addr = instr.dst + vline_offset
+            sram_addr = slot * cache_line_bytes_per_jamlet + (base_vline + vline_offset) * word_bytes
+            new_word = self.sram[sram_addr: sram_addr + word_bytes]
+            old_word = self.rf_slice[rf_word_addr * word_bytes: (rf_word_addr+1) * word_bytes]
+            updated_word = utils.update_bytes_word(old_word=old_word, new_word=new_word, mask=mask)
+            self.rf_slice[rf_word_addr * word_bytes: (rf_word_addr+1) * word_bytes] = updated_word
+            logger.debug(
+                f'{self.clock.cycle}: RF_WRITE LOAD_SIMPLE: jamlet ({self.x},{self.y}) '
+                f'rf[{rf_word_addr}] old={old_word.hex()} new={updated_word.hex()} '
+                f'instr_ident={instr.instr_ident} mask=0x{mask:016x}'
+            )
 
     async def send_load_j2j_words_req(
             self, witem: cache_table.WaitingLoadJ2JWords, tag: int, assert_sends: bool) -> None:
@@ -874,53 +881,27 @@ class Jamlet:
         It reads the cache and sends the a LOAD_J2J_WORDS message with the data to the dst jamlet.
         '''
         instr = witem.item
-        src_ordering = instr.k_maddr.ordering
-        dst_ordering = instr.dst_ordering
-        src_ew = src_ordering.ew
-        dst_ew = dst_ordering.ew
-        vw_index = addresses.j_coords_to_vw_index(
-                self.params, instr.dst_ordering.word_order, self.x, self.y)
-        logical_addr = instr.k_maddr.to_logical_vline_addr()
-        start_logical_addr = logical_addr.offset_bits(-instr.start_index * src_ew)
-        offset = start_logical_addr.bit_addr
 
-        logger.info(f'jamlet ({self.x}, {self.y}): send_load_j2j_words_req tag={tag} '
-                    f'k_maddr.bit_addr={instr.k_maddr.bit_addr} ({instr.k_maddr.bit_addr//8} bytes) '
-                    f'vw_index={vw_index} offset={offset} bits ({offset//8} bytes) '
-                    f'logical_addr.index={logical_addr.index} logical_addr.bit_addr={logical_addr.bit_addr} '
-                    f'start_index={instr.start_index} start_logical_addr.index={start_logical_addr.index}')
-
-        mapping = ew_convert.get_mapping_for_src(
-            params=self.params, src_ew=src_ew, dst_ew=dst_ew,
-            src_offset=offset, src_v=0, src_vw=vw_index, src_tag=tag)
-
-        logger.info(f'jamlet ({self.x}, {self.y}): send_load_j2j_words_req tag={tag} '
-                    f'mapping={mapping}')
+        mapping = self.j2j_words_mapping_from_src(
+               instr=instr, src_x=self.x, src_y=self.y, src_tag=tag)
 
         if mapping is None:
             vline_offsets = []
         else:
             vline_offsets = self.get_vline_offsets(
-                    dst_ve=mapping.dst_ve, dst_ew=dst_ew,
+                    ve=mapping.dst_ve, ew=instr.dst_ordering.ew,
                     start_index=instr.start_index, n_elements=instr.n_elements)
-
-        logger.info(f'jamlet ({self.x}, {self.y}): send_load_j2j_words_req tag={tag} '
-                    f'vline_offsets={vline_offsets}')
 
         word_bytes = self.params.word_bytes
         assert witem.cache_slot is not None
-        words = []
 
         kamlet_vline_bytes = self.params.vline_bytes // self.params.k_in_l
         base_vline_in_cache = (instr.k_maddr.addr % self.params.cache_line_bytes) // kamlet_vline_bytes
-        logger.warning(f'jamlet ({self.x}, {self.y}): k_maddr.addr={instr.k_maddr.addr} (0x{instr.k_maddr.addr:x}), '
-                      f'cache_line_bytes={self.params.cache_line_bytes}, kamlet_vline_bytes={kamlet_vline_bytes}, '
-                      f'base_vline_in_cache={base_vline_in_cache}, cache_slot={witem.cache_slot}')
 
+        words = []
         for vline_offset in vline_offsets:
             cache_base_addr = witem.cache_slot * self.params.vlines_in_cache_line * word_bytes
             cache_addr = cache_base_addr + (base_vline_in_cache + vline_offset) * word_bytes
-            logger.warning(f'jamlet ({self.x}, {self.y}): vline_offset={vline_offset}, cache_addr={cache_addr} (0x{cache_addr:x})')
             words.append(self.sram[cache_addr: cache_addr + word_bytes])
 
         response_tag = self.j_in_k_index * instr.n_tags() + tag
@@ -930,8 +911,7 @@ class Jamlet:
             return
 
         target_x, target_y = addresses.vw_index_to_j_coords(
-                self.params, dst_ordering.word_order, mapping.dst_vw)
-        logger.debug(f'jamlet ({self.x}, {self.y}): send_load_j2j_words_req tag={tag} -> ({target_x}, {target_y})')
+                self.params, instr.dst_ordering.word_order, mapping.dst_vw)
         witem.protocol_states[response_tag].src_state = LoadSrcState.WAITING_FOR_RESPONSE
 
         header = TaggedHeader(
@@ -955,27 +935,14 @@ class Jamlet:
         data for this tag. If not, mark it complete immediately.
         '''
         instr = witem.item
-        src_ordering = instr.k_maddr.ordering
-        dst_ordering = instr.dst_ordering
-        src_ew = src_ordering.ew
-        dst_ew = dst_ordering.ew
-        logical_addr = instr.k_maddr.to_logical_vline_addr()
-        start_logical_addr = logical_addr.offset_bits(-instr.start_index * src_ew)
-        offset = start_logical_addr.bit_addr
-
-        dst_vw_index = addresses.j_coords_to_vw_index(
-                self.params, dst_ordering.word_order, self.x, self.y)
-
-        mapping = ew_convert.get_mapping_for_dst(
-                params=self.params, src_ew=src_ew, dst_ew=dst_ew,
-                dst_v=0, dst_vw=dst_vw_index, dst_tag=tag, src_offset=offset)
-
+        mapping = self.j2j_words_mapping_from_dst(
+               instr=instr, dst_x=self.x, dst_y=self.y, dst_tag=tag)
         response_tag = self.j_in_k_index * instr.n_tags() + tag
         if mapping is None:
             witem.protocol_states[response_tag].dst_state = LoadDstState.COMPLETE
         else:
             vline_offsets = self.get_vline_offsets(
-                    dst_ew, mapping.dst_ve, instr.start_index, instr.n_elements)
+                    instr.dst_ordering.ew, mapping.dst_ve, instr.start_index, instr.n_elements)
             if not vline_offsets:
                 witem.protocol_states[response_tag].dst_state = LoadDstState.COMPLETE
 
@@ -1014,26 +981,6 @@ class Jamlet:
         if is_dst:
             logger.warning(f'{self.clock.cycle}: jamlet {(self.x, self.y)}: setting j_in_k={self.j_in_k_index} to WAITING_FOR_REQUEST')
             witem.protocol_states[self.j_in_k_index] = StoreDstState.WAITING_FOR_REQUEST
-
-    def get_vline_offsets(
-            self, dst_ew: int, dst_ve: int, start_index: int, n_elements: int) -> List[int]:
-        '''
-        This jamlet has an element at position dst_ve in the vector.
-        The position of the element in the next vline will be elements_in_vline + dst_ve
-        We want to find all the vline_offsets that give elements in the range
-        start_index to start_index + n_elements.
-
-        This is useful since if we want to load or store multiple vector lines at a time
-        we can easily do a word from each vector line for this jamlet.
-        '''
-        index = 0
-        vline_offsets = []
-        elements_in_vline = self.params.vline_bytes * 8 // dst_ew
-        while index * elements_in_vline + dst_ve < start_index + n_elements:
-            if index * elements_in_vline + dst_ve >= start_index:
-                vline_offsets.append(index)
-            index += 1
-        return vline_offsets
 
     async def handle_load_j2j_words_req(self, packet: List[Any]) -> None:
         '''
@@ -1102,7 +1049,10 @@ class Jamlet:
             masked_shifted = shifted & mask
             updated_word = masked_old_word | masked_shifted
             updated_word_bytes = updated_word.to_bytes(word_bytes, byteorder='little')
-            logger.warning(f'{self.clock.cycle}: LOAD_J2J: jamlet ({self.x},{self.y}): dst_vw={mapping.dst_vw}, vline_offset={vline_offset}, dst_reg={dst_reg}, bytes={updated_word_bytes.hex()}')
+            logger.debug(
+                f'{self.clock.cycle}: RF_WRITE LOAD_J2J: jamlet ({self.x},{self.y}) '
+                f'rf[{dst_reg}] old={old_word.hex()} new={updated_word_bytes.hex()}'
+            )
             self.rf_slice[dst_reg * word_bytes: (dst_reg+1) * word_bytes] = updated_word_bytes
 
         assert item.protocol_states[response_index].dst_state == LoadDstState.WAITING_FOR_REQUEST
@@ -1407,7 +1357,7 @@ class Jamlet:
 
         src_word_offset = instr.src.offset_in_word
         dst_word_offset = instr.dst.addr % wb
-        shift_bytes = dst_word_offset - src_word_offset
+        shift_bytes = src_word_offset - dst_word_offset
         shift_bits = shift_bytes * 8
 
         logger.warning(f'{self.clock.cycle}: STORE_WORD: jamlet ({self.x}, {self.y}): '
@@ -1424,25 +1374,20 @@ class Jamlet:
         else:
             shifted_word = word_as_int >> shift_bits
 
-        if shift_bits < 0:
-            shifted_mask = dst_expanded_mask << (-shift_bits)
-        else:
-            shifted_mask = dst_expanded_mask >> shift_bits
-
-        masked_new = shifted_word & shifted_mask
-        masked_old = old_word_as_int & (~shifted_mask)
+        masked_new = shifted_word & dst_expanded_mask
+        masked_old = old_word_as_int & (~dst_expanded_mask)
         result = masked_old | masked_new
 
-        logger.warning(f'{self.clock.cycle}: STORE_WORD: jamlet ({self.x}, {self.y}): '
-                      f'word=0x{word_as_int:016x}, dst_mask=0x{dst_expanded_mask:016x}, '
-                      f'shift_bits={shift_bits}, shifted=0x{shifted_word:016x}, '
-                      f'shifted_mask=0x{shifted_mask:016x}, old=0x{old_word_as_int:016x}, '
-                      f'result=0x{result:016x}')
-
         result_bytes = result.to_bytes(wb, byteorder='little')
+        old_bytes = old_word_as_int.to_bytes(wb, byteorder='little')
         self.sram[sram_addr : sram_addr + wb] = result_bytes
+        logger.debug(
+            f'{self.clock.cycle}: CACHE_WRITE STORE_WORD: jamlet ({self.x},{self.y}) '
+            f'sram[{sram_addr}] old={old_bytes.hex()} new={result_bytes.hex()}'
+        )
 
         slot = witem.cache_slot
+        assert slot is not None
         self.cache_table.slot_states[slot].state = CacheState.MODIFIED
 
         witem.protocol_states[self.j_in_k_index] = StoreDstState.COMPLETE

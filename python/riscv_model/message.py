@@ -44,6 +44,7 @@ class MessageType(Enum):
     # If it is not ready it can drop this.
     LOAD_J2J_WORDS_RESP = 17
     LOAD_J2J_WORDS_DROP = 18
+    LOAD_J2J_WORDS_RETRY = 19
 
     # Sending data to another jamlet to tell it to store it.
     STORE_J2J_WORDS_REQ = 20
@@ -89,11 +90,14 @@ CHANNEL_MAPPING = {
     # Which messages types can always be consumed
     MessageType.READ_LINE_RESP: 0,
     MessageType.WRITE_LINE_RESP: 0,
+    MessageType.WRITE_LINE_READ_LINE_RESP: 0,
     MessageType.READ_BYTE_RESP: 0,
     MessageType.LOAD_J2J_WORDS_RESP: 0,
     MessageType.LOAD_J2J_WORDS_DROP: 0,
+    MessageType.LOAD_J2J_WORDS_RETRY: 0,
     MessageType.STORE_J2J_WORDS_RESP: 0,
     MessageType.STORE_J2J_WORDS_DROP: 0,
+    MessageType.STORE_J2J_WORDS_RETRY: 0,
     MessageType.LOAD_WORD_RESP: 0,
     MessageType.LOAD_WORD_DROP: 0,
     MessageType.LOAD_WORD_RETRY: 0,
@@ -105,6 +109,7 @@ CHANNEL_MAPPING = {
     # Which channel require to send a always consumable message for them to be consumed
     MessageType.READ_LINE: 1,
     MessageType.WRITE_LINE: 1,
+    MessageType.WRITE_LINE_READ_LINE: 1,
     MessageType.LOAD_J2J_WORDS_REQ: 1,
     MessageType.STORE_J2J_WORDS_REQ: 1,
     MessageType.LOAD_WORD_REQ: 1,
