@@ -160,7 +160,6 @@ class Router:
                             logger.debug(f'{self.clock.cycle}: ({self.x}, {self.y}) {input_direction} -> {output_direction} {updated_header}')
                         else:
                             assert not isinstance(word, Header)
-                            import kinstructions
                             logger.debug(f'{self.clock.cycle}: ({self.x}, {self.y}) {input_direction} -> {output_direction} {word}')
                             output_buffer.append(word)
                         conn.unconsumed.remove(output_direction)

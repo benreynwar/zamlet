@@ -33,6 +33,7 @@ from zamlet.runner import Future
 from zamlet.kamlet import kinstructions
 from zamlet.lamlet.scalar import ScalarState
 from zamlet import utils
+import zamlet.disasm_trace as dt
 
 
 logger = logging.getLogger(__name__)
@@ -468,7 +469,6 @@ class Lamlet:
             # If this cache line is fresh then we need to set it to all 0.
             # If the cache line is not loaded then we need to load it.
             if byt_address.is_vpu(self.tlb):
-                logger.debug(f'{self.clock.cycle}: Writing  byte {hex(byt_address.addr)} {b}')
                 await self.write_bytes(byt_address, bytes([b]))
                 # TODO: Be a bit more careful about whether we need to add this.
                 await self.clock.next_cycle
@@ -697,15 +697,15 @@ class Lamlet:
         return ident
 
     async def vload(self, vd: int, addr: int, ordering: addresses.Ordering,
-                    n_elements: int, mask_reg: int, start_index: int):
+                    n_elements: int, mask_reg: int|None, start_index: int):
         await self.vloadstore(vd, addr, ordering, n_elements, mask_reg, start_index, is_store=False)
 
-    async def vstore(self, vd: int, addr: int, ordering: addresses.Ordering,
-                    n_elements: int, mask_reg: int, start_index: int):
-        await self.vloadstore(vd, addr, ordering, n_elements, mask_reg, start_index, is_store=True)
+    async def vstore(self, vs: int, addr: int, ordering: addresses.Ordering,
+                    n_elements: int, mask_reg: int|None, start_index: int):
+        await self.vloadstore(vs, addr, ordering, n_elements, mask_reg, start_index, is_store=True)
 
-    async def vloadstore(self, vd: int, addr: int, ordering: addresses.Ordering,
-                         n_elements: int, mask_reg: int, start_index: int, is_store: bool):
+    async def vloadstore(self, reg_base: int, addr: int, ordering: addresses.Ordering,
+                         n_elements: int, mask_reg: int|None, start_index: int, is_store: bool):
         """
         We have 3 different kinds of vector loads/stores.
         - In VPU memory and aligned (this is the fastest by far)
@@ -728,11 +728,11 @@ class Lamlet:
 
         vline_bits = self.params.maxvl_bytes * 8
         n_vlines = (ew * n_elements + vline_bits - 1) // vline_bits
-        for reg in range(vd, vd+n_vlines):
-            self.vrf_ordering[reg] = Ordering(word_order=addresses.WordOrder.STANDARD, ew=ew)
+        for vline_reg in range(reg_base, reg_base+n_vlines):
+            self.vrf_ordering[vline_reg] = Ordering(word_order=addresses.WordOrder.STANDARD, ew=ew)
 
         base_reg_addr = addresses.RegAddr(
-            reg=vd, addr=0, params=self.params, ordering=ordering)
+            reg=reg_base, addr=0, params=self.params, ordering=ordering)
 
         for section in self.get_memory_split(g_addr, ew, n_elements, start_index):
             if section.is_a_partial_element:
@@ -752,7 +752,7 @@ class Lamlet:
                 mask_index = section.start_index // self.params.j_in_l
                 size = section.end_address - section.start_address
                 if section.is_vpu:
-                    dst = vd + (section.start_index * ew)//(self.params.vline_bytes * 8)
+                    dst = reg_base + (section.start_index * ew)//(self.params.vline_bytes * 8)
                     kinstr: kinstructions.KInstr
                     if size <= 1:
                         dst_offset = ((section.start_index * ew) % (self.params.vline_bytes * 8))//8
@@ -855,7 +855,7 @@ class Lamlet:
                                    f'k_addr=0x{k_maddr.addr:x}, n_elements={section_elements}, '
                                    f'instr_ident={instr_ident}')
                         kinstr = kinstructions.Store(
-                            src=vd,
+                            src=reg_base,
                             k_maddr=k_maddr,
                             start_index=section.start_index,
                             n_elements=section_elements,
@@ -867,7 +867,7 @@ class Lamlet:
                     else:
                         instr_ident = self.get_instr_ident()
                         kinstr = kinstructions.Load(
-                            dst=vd,
+                            dst=reg_base,
                             k_maddr=k_maddr,
                             start_index=section.start_index,
                             n_elements=section_elements,
@@ -876,14 +876,14 @@ class Lamlet:
                             writeset_ident=writeset_ident,
                             instr_ident=instr_ident,
                             )
-                        logger.warning(f'{self.clock.cycle}: LAMLET CREATE Load instr_ident={instr_ident} dst=v{vd} mask_reg={mask_reg}')
+                        logger.warning(f'{self.clock.cycle}: LAMLET CREATE Load instr_ident={instr_ident} dst=v{reg_base} mask_reg={mask_reg}')
                     await self.add_to_instruction_buffer(kinstr)
                 else:
                     if is_store:
-                        await self.vstore_scalar(vd, section.start_address, ordering, section_elements,
+                        await self.vstore_scalar(reg_base, section.start_address, ordering, section_elements,
                                            mask_reg, section.start_index, writeset_ident)
                     else:
-                        await self.vload_scalar(vd, section.start_address, ordering, section_elements,
+                        await self.vload_scalar(reg_base, section.start_address, ordering, section_elements,
                                           mask_reg, section.start_index, writeset_ident)
 
 
@@ -1185,7 +1185,6 @@ class Lamlet:
         logger.info(f'{self.clock.cycle}: pc={hex(self.pc)} bytes={hex(inst_hex)} instruction={inst_str} {type(instruction)}')
 
         if disasm_trace is not None:
-            import disasm_trace as dt
             error = dt.check_instruction(disasm_trace, self.pc, inst_hex, inst_str)
             if error:
                 logger.error(error)

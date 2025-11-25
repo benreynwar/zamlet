@@ -929,14 +929,14 @@ class CacheTable:
         else:
             return None
 
-    def report_sent_request(self, request: CacheRequestState):
+    def report_sent_request(self, request: CacheRequestState, j_in_k_index: int):
         assert self.cache_requests[request.ident] == request
-        assert len(request.sent) == 1
-        request.sent[0].set(True)
         # State transitions now happen in update_cache(), so just verify they're correct
         if request.request_type == CacheRequestType.READ_LINE:
+            request.sent[0].set(True)
             assert self.slot_states[request.slot].state == CacheState.READING
         elif request.request_type == CacheRequestType.WRITE_LINE_READ_LINE:
+            request.sent[j_in_k_index].set(True)
             assert self.slot_states[request.slot].state == CacheState.WRITING_READING
         else:
             raise NotImplementedError()

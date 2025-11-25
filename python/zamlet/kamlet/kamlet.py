@@ -1,7 +1,7 @@
 import logging
 from typing import List
 
-import zamlet.addresses
+from zamlet import addresses
 from zamlet.addresses import KMAddr
 from zamlet.params import LamletParams
 from zamlet.jamlet.jamlet import Jamlet
@@ -141,7 +141,7 @@ class Kamlet:
                 if not all(request.sent):
                     if request.request_type == CacheRequestType.READ_LINE:
                         await self.read_cache_line(cache_slot=request.slot, address_in_memory=request.addr, ident=request.ident)
-                        self.cache_table.report_sent_request(request)
+                        self.cache_table.report_sent_request(request, 0)
                     else:
                         # Don't do anything for WRITE_LINE or WRITE_LINE_READ_LINE
                         # since those messages are sent at the jamlet level.
@@ -509,6 +509,9 @@ class Kamlet:
         # It's in cache. Update the jamlet register files immediately.
         for jamlet in self.jamlets:
             jamlet.handle_store_instr_simple(instr)
+        # Mark cache line as modified so it gets written back to memory
+        cache_state = self.cache_table.get_state(instr.k_maddr)
+        cache_state.state = cache_table.CacheState.MODIFIED
         src_regs = self.get_regs(
                 start_index=instr.start_index, n_elements=instr.n_elements,
                 ew=instr.src_ordering.ew, base_reg=instr.src)
@@ -577,17 +580,25 @@ class Kamlet:
     #    logger.debug(f'kamlet: handle_load_instr {hex(instr.k_maddr.addr)} done')
     #    return combined_future
 
-    def get_is_active(self, n_elements, element_width, word_order, mask_reg, vline_index, j_in_k_index, index_in_j):
-        wb = self.params.word_bytes
-        eb = element_width // 8
-        elements_in_vline = self.params.vline_bytes*8//element_width
+    def get_is_active(self, start_index, n_elements, element_width, word_order, mask_reg, vline_index, j_in_k_index, index_in_j):
+        '''
+        Consider an element specified by:
+          what vline_index in the vector it is
+          what j_in_k_index it is in (what jamlet in the kamlet)
+          what element it is in that work (index_in_j)
+          what reg we're using for the masks
+          we know what k_index is because we know what kamlet we are
+        '''
+        ww = self.params.word_bytes * 8
+        ew = element_width
+        elements_in_vline = self.params.vline_bytes*8//ew
         jamlet = self.jamlets[j_in_k_index]
         vw_index = addresses.k_indices_to_vw_index(
                 self.params, word_order, self.k_index, j_in_k_index)
         element_index = vline_index*elements_in_vline + index_in_j * self.params.j_in_l + vw_index
-        valid_element = element_index < n_elements
+        valid_element = start_index <= element_index < n_elements
         if mask_reg is not None:
-            mask_bit_addr = mask_reg * wb * 8 + vline_index * (wb//eb) + index_in_j
+            mask_bit_addr = mask_reg * ww + element_index//self.params.j_in_l
             mask_byte = jamlet.rf_slice[mask_bit_addr//8]
             mask_bit = (mask_byte >> (mask_bit_addr % 8)) & 1
         else:

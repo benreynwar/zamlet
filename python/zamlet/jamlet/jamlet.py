@@ -388,7 +388,7 @@ class Jamlet:
                         write_address = request.addr
                         read_address = slot_state.memory_loc * self.params.cache_line_bytes
                         await self.write_read_cache_line(cache_slot=request.slot, write_address=write_address, read_address=read_address, ident=request.ident)
-                        self.cache_table.report_sent_request(request)
+                        self.cache_table.report_sent_request(request, self.j_in_k_index)
                     else:
                         # Don't do anything for READ_LINE
                         # since those messages are sent at the kamlet level
@@ -432,7 +432,8 @@ class Jamlet:
         elements_in_word = ww//ordering.ew
         elements_in_vline = self.params.vline_bytes * 8 // ordering.ew
         offsets_and_masks = []
-        for vline_index in range(start_index//elements_in_vline, (start_index+n_elements-1)//elements_in_vline+1):
+        first_vline = start_index // elements_in_vline
+        for vline_index in range(first_vline, (start_index+n_elements-1)//elements_in_vline+1):
             bit_mask = []
             for we in range(elements_in_word):
                 element_index = vline_index * elements_in_vline + we * self.params.j_in_l + vw_index
@@ -447,7 +448,7 @@ class Jamlet:
                 else:
                     bit_mask += [0] * ordering.ew
             mask = utils.list_of_uints_to_uint(bit_mask, width=1)
-            offsets_and_masks.append((vline_index, mask))
+            offsets_and_masks.append((vline_index - first_vline, mask))
         return offsets_and_masks
 
     def j2j_words_mapping_from_src(
@@ -540,8 +541,10 @@ class Jamlet:
         vline_bytes_per_kamlet = self.params.word_bytes * self.params.j_in_k
         base_vline = (instr.k_maddr.addr % self.params.cache_line_bytes) // vline_bytes_per_kamlet
         cache_line_bytes_per_jamlet = self.params.cache_line_bytes // self.params.j_in_k
+        elements_in_vline = self.params.vline_bytes * 8 // instr.src_ordering.ew
+        first_vline = instr.start_index // elements_in_vline
         for vline_offset, mask in vline_offsets_and_masks:
-            rf_word_addr = instr.src + vline_offset
+            rf_word_addr = instr.src + first_vline + vline_offset
             sram_addr = slot * cache_line_bytes_per_jamlet + (base_vline + vline_offset) * word_bytes
             new_word = self.rf_slice[rf_word_addr * word_bytes: (rf_word_addr+1) * word_bytes]
             old_word = self.sram[sram_addr: sram_addr + word_bytes]
@@ -861,8 +864,12 @@ class Jamlet:
         base_vline = (instr.k_maddr.addr % self.params.cache_line_bytes) // vline_bytes_per_kamlet
         cache_line_bytes_per_jamlet = self.params.cache_line_bytes // self.params.j_in_k
         word_bytes = self.params.word_bytes
+        elements_in_vline = self.params.vline_bytes * 8 // instr.dst_ordering.ew
+        first_vline = instr.start_index // elements_in_vline
         for vline_offset, mask in vline_offsets_and_masks:
-            rf_word_addr = instr.dst + vline_offset
+            rf_word_addr = instr.dst + first_vline + vline_offset
+            # A load should be entirely within a cache line
+            assert vline_offset * word_bytes < cache_line_bytes_per_jamlet - (word_bytes-1)
             sram_addr = slot * cache_line_bytes_per_jamlet + (base_vline + vline_offset) * word_bytes
             new_word = self.sram[sram_addr: sram_addr + word_bytes]
             old_word = self.rf_slice[rf_word_addr * word_bytes: (rf_word_addr+1) * word_bytes]

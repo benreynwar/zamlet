@@ -50,7 +50,7 @@ Key protocol functions:
 ### cache_table.py
 Cache management and waiting item coordination. Key concepts:
 
-**Cache States**: INVALID, SHARED, MODIFIED, READING, WRITING, WRITING_READING, UNALLOCATED
+**Cache States**: INVALID, SHARED, MODIFIED, READING, WRITING, WRITING_READING, UNALLOCATED, OLD_MODIFIED (dirty data for previous address being written back)
 
 **Waiting Items**: Operations blocked on cache or protocol completion
 - `WaitingLoadSimple` / `WaitingStoreSimple` - aligned operations
@@ -108,6 +108,11 @@ System configuration parameters:
 - Grid dimensions: `k_cols`, `k_rows`, `j_cols`, `j_rows`
 - Memory: `cache_line_bytes`, `vline_bytes`, `page_bytes`, `jamlet_sram_bytes`
 - `word_bytes`: 8
+
+**Important**: `cache_line_bytes` is the cache line size for a single kamlet. When working at the lamlet level (e.g., calculating how many elements fit in a cache line for a vector operation), you must multiply by `k_in_l` to get the lamlet-wide cache line size:
+```python
+lamlet_cache_line_bytes = params.cache_line_bytes * params.k_in_l
+```
 
 ## Data Flow
 

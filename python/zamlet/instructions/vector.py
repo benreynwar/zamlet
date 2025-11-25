@@ -7,9 +7,10 @@ import logging
 import struct
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
+
 from zamlet.kamlet import kinstructions
 from zamlet import addresses
-
+from zamlet.addresses import Ordering, WordOrder
 from zamlet.register_names import reg_name, freg_name
 
 logger = logging.getLogger(__name__)
@@ -244,7 +245,6 @@ class VmsleVi:
         n_dst_vlines = (s.vl + elements_in_dst_vline - 1) // elements_in_dst_vline
 
         # Set ordering for destination mask register(s) - masks are 1-bit elements
-        from addresses import Ordering, WordOrder
         mask_ordering = Ordering(WordOrder.STANDARD, 1)
         for i in range(n_dst_vlines):
             s.vrf_ordering[self.vd + i] = mask_ordering

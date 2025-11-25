@@ -180,7 +180,7 @@ if __name__ == '__main__':
 
     for filename in filenames:
         root_logger.warning(f'========== Starting test: {filename} ==========')
-        clock = Clock(max_cycles=20000)
+        clock = Clock(max_cycles=50000)
         exit_code = None
         try:
             exit_code = asyncio.run(main(clock, filename))

@@ -143,6 +143,18 @@ Note: If memory_loc != slot_mem_loc but can_read=True, this indicates the cache 
 **Format**: `RF_WRITE VArithVvOp({operation}): jamlet (x,y) rf[reg] old={hex} new={hex}`
 **Grep**: `grep "RF_WRITE VArithVvOp" <logfile>`
 
+### RF START / RF FINISH
+**Location**: register_file_slot.py - Register file locking for hazard tracking
+**Format**: `kamlet(x,y) RF START token={id} read_regs=[...] write_regs=[...]`
+**Format**: `kamlet(x,y) RF FINISH token={id} read_regs=[...] write_regs=[...]`
+**Grep**: `grep "RF START\|RF FINISH" <logfile>`
+**Purpose**: Shows when instructions acquire and release locks on register file slots. Critical for debugging WAR/RAW hazards. The token identifies the instruction, read_regs shows registers being read, write_regs shows registers being written.
+**Example**:
+```
+kamlet(0,0) RF START token=5 read_regs=[1, 2] write_regs=[]
+kamlet(0,0) RF FINISH token=5 read_regs=[1, 2] write_regs=[]
+```
+
 ## Common Grep Patterns
 
 ### Find all writes to a specific register at a specific jamlet
