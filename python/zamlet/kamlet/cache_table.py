@@ -872,7 +872,7 @@ class CacheTable:
         slot_state.old_memory_loc = slot_state.memory_loc
         slot_state.memory_loc = k_maddr.addr//self.cache_line_bytes
 
-        logger.warning(
+        logger.debug(
             f'{self.clock.cycle}: CACHE_LINE_ALLOC: {self.name} slot={slot} '
             f'memory_loc=0x{slot_state.memory_loc:x}'
         )

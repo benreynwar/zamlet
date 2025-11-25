@@ -113,7 +113,7 @@ class KamletRegisterFile:
         for reg in write_regs:
             assert self.write[reg] == token
             self.write[reg] = None
-        logger.warning(f'{self.name} RF FINISH token={token} read_regs={read_regs} write_regs={write_regs}')
+        logger.debug(f'{self.name} RF FINISH token={token} read_regs={read_regs} write_regs={write_regs}')
 
     def start(self, read_regs: List[int]|None=None, write_regs: List[int]|None=None) -> int:
         token = self.get_token()
@@ -129,7 +129,7 @@ class KamletRegisterFile:
                 logger.error(f'LOCK VIOLATION: Cannot write reg {reg}, write={self.write[reg]}, reads={self.reads[reg]}')
             assert self.can_write(reg), f"Cannot write reg {reg}, write={self.write[reg]}, reads={self.reads[reg]}"
             self.write[reg] = token
-        logger.warning(f'{self.name} RF START token={token} read_regs={read_regs} write_regs={write_regs}')
+        logger.debug(f'{self.name} RF START token={token} read_regs={read_regs} write_regs={write_regs}')
         return token
 
     def start_read(self, reg: int) -> int:

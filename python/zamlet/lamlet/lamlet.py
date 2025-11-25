@@ -876,7 +876,7 @@ class Lamlet:
                             writeset_ident=writeset_ident,
                             instr_ident=instr_ident,
                             )
-                        logger.warning(f'{self.clock.cycle}: LAMLET CREATE Load instr_ident={instr_ident} dst=v{reg_base} mask_reg={mask_reg}')
+                        logger.debug(f'{self.clock.cycle}: LAMLET CREATE Load instr_ident={instr_ident} dst=v{reg_base} mask_reg={mask_reg}')
                     await self.add_to_instruction_buffer(kinstr)
                 else:
                     if is_store:

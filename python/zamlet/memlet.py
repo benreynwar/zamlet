@@ -384,13 +384,13 @@ class Memlet:
                     for j_index in range(self.params.j_in_k):
                         line.append(packets[j_index][word_index+3])
                 data = b''.join(line)
-                logger.warning(f'[MEMLET_WRITE] kamlet={self.coords} write_index={write_index} write_addr=0x{write_address:x} data={data.hex()}')
+                logger.debug(f'[MEMLET_WRITE] kamlet={self.coords} write_index={write_index} write_addr=0x{write_address:x} data={data.hex()}')
                 self.write_cache_line(write_index, data)
 
                 wb = self.params.word_bytes
                 logger.debug(f'handle_write_line_read_line_packet: ident={ident} write_address={hex(write_address)} read_address={hex(read_address)}')
                 read_cache_line = self.read_cache_line(read_index)
-                logger.warning(f'[MEMLET_READ] kamlet={self.coords} read_index={read_index} read_addr=0x{read_address:x} data={read_cache_line.hex()}')
+                logger.debug(f'[MEMLET_READ] kamlet={self.coords} read_index={read_index} read_addr=0x{read_address:x} data={read_cache_line.hex()}')
                 packet_payloads = [[] for i in range(self.params.j_in_k)]
                 for word_index in range(len(read_cache_line)//wb):
                     word = read_cache_line[word_index*wb: (word_index+1)*wb]
@@ -413,7 +413,7 @@ class Memlet:
                         address=sram_address,
                         ident=ident,
                         )
-                    logger.warning(f'[MEMLET_RESP] send WRITE_LINE_READ_LINE_RESP ident={ident} payload={payload}')
+                    logger.debug(f'[MEMLET_RESP] send WRITE_LINE_READ_LINE_RESP ident={ident} payload={payload}')
                     resp_packet = [resp_header] + payload
                     resp_packets[router_index].append(resp_packet)
                 while True:
