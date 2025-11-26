@@ -161,6 +161,8 @@ class Lamlet:
     def to_scalar_addr(self, addr: GlobalAddress):
         return self.conv.to_scalar_addr(addr)
 
+    def to_global_addr(self, addr):
+        return self.conv.to_global_addr(addr)
     
     def to_k_maddr(self, addr):
         return self.conv.to_k_maddr(addr)
@@ -697,15 +699,18 @@ class Lamlet:
         return ident
 
     async def vload(self, vd: int, addr: int, ordering: addresses.Ordering,
-                    n_elements: int, mask_reg: int|None, start_index: int):
-        await self.vloadstore(vd, addr, ordering, n_elements, mask_reg, start_index, is_store=False)
+                    n_elements: int, mask_reg: int|None, start_index: int,
+                    reg_ordering: addresses.Ordering | None = None):
+        await self.vloadstore(vd, addr, ordering, n_elements, mask_reg, start_index,
+                              is_store=False, reg_ordering=reg_ordering)
 
     async def vstore(self, vs: int, addr: int, ordering: addresses.Ordering,
                     n_elements: int, mask_reg: int|None, start_index: int):
         await self.vloadstore(vs, addr, ordering, n_elements, mask_reg, start_index, is_store=True)
 
     async def vloadstore(self, reg_base: int, addr: int, ordering: addresses.Ordering,
-                         n_elements: int, mask_reg: int|None, start_index: int, is_store: bool):
+                         n_elements: int, mask_reg: int|None, start_index: int, is_store: bool,
+                         reg_ordering: addresses.Ordering | None = None):
         """
         We have 3 different kinds of vector loads/stores.
         - In VPU memory and aligned (this is the fastest by far)
@@ -717,9 +722,18 @@ class Lamlet:
         an element could be half in VPU memory and half in scalar memory.
         """
         g_addr = GlobalAddress(bit_addr=addr*8, params=self.params)
-        ew = ordering.ew
+        mem_ew = ordering.ew
+        # For loads, reg_ordering specifies the register element width (defaults to memory ew)
+        # For stores, register ordering comes from the register file state
+        if is_store:
+            assert reg_ordering is None, "reg_ordering should not be specified for stores"
+            reg_ordering = self.vrf_ordering[reg_base]
+            assert reg_ordering is not None, f"Register v{reg_base} has no ordering set"
+        elif reg_ordering is None:
+            reg_ordering = ordering
+        reg_ew = reg_ordering.ew
 
-        size = (n_elements*ew)//8
+        size = (n_elements * reg_ew) // 8
         wb = self.params.word_bytes
 
         # This is an identifier that groups a number of writes to a vector register together.
@@ -727,14 +741,15 @@ class Lamlet:
         writeset_ident = self.get_writeset_ident()
 
         vline_bits = self.params.maxvl_bytes * 8
-        n_vlines = (ew * n_elements + vline_bits - 1) // vline_bits
+        n_vlines = (reg_ew * n_elements + vline_bits - 1) // vline_bits
         for vline_reg in range(reg_base, reg_base+n_vlines):
-            self.vrf_ordering[vline_reg] = Ordering(word_order=addresses.WordOrder.STANDARD, ew=ew)
+            self.vrf_ordering[vline_reg] = Ordering(word_order=addresses.WordOrder.STANDARD, ew=reg_ew)
 
         base_reg_addr = addresses.RegAddr(
-            reg=reg_base, addr=0, params=self.params, ordering=ordering)
+            reg=reg_base, addr=0, params=self.params, ordering=reg_ordering)
 
-        for section in self.get_memory_split(g_addr, ew, n_elements, start_index):
+        # reg_ew determines the size of elements we're moving (not mem_ew which is just memory ordering)
+        for section in self.get_memory_split(g_addr, reg_ew, n_elements, start_index):
             if section.is_a_partial_element:
                 reg_addr = base_reg_addr.offset_bytes(section.start_address - g_addr.addr)
                 # The partial is either the start of an element or the end of an element.
@@ -748,14 +763,14 @@ class Lamlet:
                 assert not (start_is_cacheline_boundary and end_is_cacheline_boundary)
                 starting_g_addr = GlobalAddress(bit_addr=section.start_address*8, params=self.params)
                 k_maddr = self.to_k_maddr(starting_g_addr)
-                assert ew % 8 == 0
+                assert reg_ew % 8 == 0
                 mask_index = section.start_index // self.params.j_in_l
                 size = section.end_address - section.start_address
                 if section.is_vpu:
-                    dst = reg_base + (section.start_index * ew)//(self.params.vline_bytes * 8)
+                    dst = reg_base + (section.start_index * reg_ew)//(self.params.vline_bytes * 8)
                     kinstr: kinstructions.KInstr
                     if size <= 1:
-                        dst_offset = ((section.start_index * ew) % (self.params.vline_bytes * 8))//8
+                        dst_offset = ((section.start_index * reg_ew) % (self.params.vline_bytes * 8))//8
                         bit_mask = (1 << 8) - 1
                         if is_store:
                             kinstr = kinstructions.StoreByte(
@@ -821,10 +836,10 @@ class Lamlet:
                 else:
                     element_offset = starting_g_addr.bit_addr % (self.params.word_bytes * 8)
                     assert element_offset % 8 == 0
-                    assert ew % 8 == 0
+                    assert reg_ew % 8 == 0
                     if start_is_page_boundary:
                         # We're the second segment of the element
-                        start_byte_in_element = (ew - element_offset)//8
+                        start_byte_in_element = (reg_ew - element_offset)//8
                     else:
                         # We're the first segment of the element
                         start_byte_in_element = (element_offset)//8
@@ -840,9 +855,9 @@ class Lamlet:
                                 writeset_ident=writeset_ident, start_byte=start_byte_in_element)
             else:
                 if section.is_vpu:
-                    section_elements = ((section.end_address - section.start_address) * 8)//ew
+                    section_elements = ((section.end_address - section.start_address) * 8)//reg_ew
                     starting_g_addr = GlobalAddress(bit_addr=section.start_address*8, params=self.params)
-                    self.check_element_width(starting_g_addr, section.end_address - section.start_address, ew)
+                    self.check_element_width(starting_g_addr, section.end_address - section.start_address, mem_ew)
                     k_maddr = self.to_k_maddr(starting_g_addr)
 
                     l_cache_line_bytes = self.params.cache_line_bytes * self.params.k_in_l
@@ -859,7 +874,7 @@ class Lamlet:
                             k_maddr=k_maddr,
                             start_index=section.start_index,
                             n_elements=section_elements,
-                            src_ordering=ordering,
+                            src_ordering=reg_ordering,
                             mask_reg=mask_reg,
                             writeset_ident=writeset_ident,
                             instr_ident=instr_ident,
@@ -871,7 +886,7 @@ class Lamlet:
                             k_maddr=k_maddr,
                             start_index=section.start_index,
                             n_elements=section_elements,
-                            dst_ordering=ordering,
+                            dst_ordering=reg_ordering,
                             mask_reg=mask_reg,
                             writeset_ident=writeset_ident,
                             instr_ident=instr_ident,

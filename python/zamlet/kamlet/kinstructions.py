@@ -269,16 +269,19 @@ class Load(KInstr):
     async def update_kamlet(self, kamlet):
         await kamlet.handle_load_instr(self)
 
-    def n_tags(self):
+    def n_tags(self, params):
         """
         Returns the number of tags per jamlet.
         """
         src_ew = self.k_maddr.ordering.ew
         dst_ew = self.dst_ordering.ew
+        ww = params.word_bytes * 8
+        # If we did this better ratio could be reduced to dst_ew/src_ew or src_ew/dst_ew
+        # but to keep it simpler we're basing it on word width.
         if src_ew < dst_ew:
-            ratio = dst_ew//src_ew
+            ratio = ww//src_ew
         else:
-            ratio = src_ew//dst_ew
+            ratio = ww//dst_ew
         return ratio * 2
 
 
@@ -296,16 +299,19 @@ class Store(KInstr):
     async def update_kamlet(self, kamlet):
         await kamlet.handle_store_instr(self)
 
-    def n_tags(self):
+    def n_tags(self, params):
         """
         Returns the number of tags per jamlet.
         """
         dst_ew = self.k_maddr.ordering.ew
         src_ew = self.src_ordering.ew
+        ww = params.word_bytes * 8
+        # If we did this better ratio could be reduced to dst_ew/src_ew or src_ew/dst_ew
+        # but to keep it simpler we're basing it on word width.
         if src_ew < dst_ew:
-            ratio = dst_ew//src_ew
+            ratio = ww//src_ew
         else:
-            ratio = src_ew//dst_ew
+            ratio = ww//dst_ew
         return ratio * 2
 
 #@dataclass
@@ -346,9 +352,9 @@ class VmsleViOp(KInstr):
         n_dst_vlines = (self.n_elements + elements_in_dst_vline - 1)//elements_in_dst_vline
         dst_regs = [self.dst+index for index in range(n_dst_vlines)]
 
-        logger.warning(f'kamlet {(kamlet.min_x, kamlet.min_y)}: waiting for regs {src_regs} + {dst_regs} to be avail')
+        logger.debug(f'kamlet {(kamlet.min_x, kamlet.min_y)}: waiting for regs {src_regs} + {dst_regs} to be avail')
         await kamlet.wait_for_rf_available(read_regs=src_regs, write_regs=dst_regs)
-        logger.warning(f'kamlet {(kamlet.min_x, kamlet.min_y)}: regs are avail')
+        logger.debug(f'kamlet {(kamlet.min_x, kamlet.min_y)}: regs are avail')
         logger.info(f'kamlet ({kamlet.min_x} {kamlet.min_y}): VmsleVi dst=v{self.dst} src=v{self.src} imm={self.simm5}')
         sign_extended_imm = self.simm5 if self.simm5 < 16 else self.simm5 - 32
 
@@ -368,14 +374,14 @@ class VmsleViOp(KInstr):
                 assert src_bit_addr % 8 == 0
                 src_bytes = jamlet.rf_slice[src_bit_addr//8:src_bit_addr//8 + self.element_width//8]
                 src_val = int.from_bytes(src_bytes, byteorder='little', signed=True)
-                logger.warning(f'{kamlet.clock.cycle}: VmsleViOp READ: elem={element_index}, src_addr={src_bit_addr}, bytes={src_bytes.hex()}, val={src_val}')
+                logger.debug(f'{kamlet.clock.cycle}: VmsleViOp READ: elem={element_index}, src_addr={src_bit_addr}, bytes={src_bytes.hex()}, val={src_val}')
                 result_bit = 1 if src_val <= sign_extended_imm else 0
                 src_values.append(src_val)
                 results.append(result_bit)
                 dst_bit_addr = base_dst_bit_addr + element_in_jamlet
                 dst_byte_addr = dst_bit_addr//8
                 dst_bit_offset = dst_bit_addr % 8
-                logger.warning(f'{kamlet.clock.cycle}: VmsleViOp RESULT: elem={element_index}, val={src_val}, result={result_bit}, dst_byte={dst_byte_addr}, dst_bit={dst_bit_offset}')
+                logger.debug(f'{kamlet.clock.cycle}: VmsleViOp RESULT: elem={element_index}, val={src_val}, result={result_bit}, dst_byte={dst_byte_addr}, dst_bit={dst_bit_offset}')
                 old_byte = jamlet.rf_slice[dst_byte_addr]
                 if result_bit:
                     jamlet.rf_slice[dst_byte_addr] |= (1 << dst_bit_offset)

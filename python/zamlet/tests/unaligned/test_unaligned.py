@@ -104,7 +104,8 @@ async def test_unaligned(
 
     await clock.next_cycle
 
-    # Generate test data where each byte is its index (0, 1, 2, 3, ...)
+    # Generate test data - elements are reg_ew sized (the size we load/store)
+    # The values fit in src_ew bits but are stored as reg_ew elements in memory
     rnd = Random(seed)
     src_list = [rnd.getrandbits(src_ew) for i in range(vl)]
 
@@ -115,18 +116,12 @@ async def test_unaligned(
     logger.info(f"  seed={seed}")
     logger.info(f"src_list: {src_list[:16]}{'...' if len(src_list) > 16 else ''}")
 
-    # Convert to binary format for memory operations
-    src_data = pack_elements(src_list, src_ew)
+    # Memory stores reg_ew-sized elements (memory ordering is separate from element size)
+    src_data = pack_elements(src_list, reg_ew)
 
-    # Expected output: same values, but packed with dst_ew
-    # When widening (dst_ew > src_ew), zero-extend
-    # When narrowing (dst_ew < src_ew), truncate
-    if dst_ew >= src_ew:
-        expected_list = src_list  # zero-extension is implicit
-    else:
-        mask = (1 << dst_ew) - 1
-        expected_list = [v & mask for v in src_list]
-    expected_data = pack_elements(expected_list, dst_ew)
+    # Expected output: same values, packed with reg_ew (element size in registers)
+    expected_list = src_list
+    expected_data = pack_elements(expected_list, reg_ew)
 
     # Memory layout:
     # src_base + src_offset -> source data
@@ -181,6 +176,7 @@ async def test_unaligned(
             n_elements=iter_count,
             start_index=0,
             mask_reg=None,
+            reg_ordering=reg_ordering,
         )
 
         # Store from v0 to destination
@@ -197,7 +193,7 @@ async def test_unaligned(
 
     # Read back results and verify
     logger.info("Reading results from memory")
-    result_size = vl * dst_ew // 8
+    result_size = vl * reg_ew // 8
     future = await lamlet.get_memory(dst_addr, result_size)
     await future
     result = future.result()
@@ -210,7 +206,7 @@ async def test_unaligned(
         return 0
     else:
         logger.error("TEST FAILED: Results do not match expected values")
-        result_list = unpack_elements(result, dst_ew)
+        result_list = unpack_elements(result, reg_ew)
         # Show detailed comparison
         for i in range(min(vl, 32)):  # Show first 32 elements max
             actual_val = result_list[i] if i < len(result_list) else None

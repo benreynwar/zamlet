@@ -1,6 +1,65 @@
 """
-Keep track of all the various address is a bit confusing.
-Here we create some classes to try to keep track of and standardize the options.
+Address Space Management for RISC-V VPU Simulator
+
+This module manages the various address spaces and coordinate systems used in the VPU.
+
+Address Translation Chain:
+    GlobalAddress → VPUAddress → LogicalVLineAddress → PhysicalVLineAddress → KMAddr → JSAddr
+
+Key Types:
+    - GlobalAddress: CPU-visible memory address
+    - VPUAddress: Address within VPU memory space
+    - LogicalVLineAddress: Vector line address in logical (sequential) coordinates
+    - PhysicalVLineAddress: Vector line address in physical (distributed) coordinates
+    - KMAddr: Kamlet memory address
+    - JSAddr: Jamlet SRAM address
+
+Word Ordering (Ordering.word_order)
+-----------------------------------
+The `word_order` field in `Ordering` determines how jamlet coordinates (x, y) map
+to the vector word index (vw_index). This controls which jamlet holds which word
+of a vector line.
+
+WordOrder.STANDARD:
+    vw_index = j_y * (j_cols * k_cols) + j_x
+
+    For a 2x1 grid of kamlets (k_cols=2, k_rows=1) with 1x1 jamlets each:
+        jamlet (0, 0) → vw_index 0
+        jamlet (1, 0) → vw_index 1
+
+    Words are laid out row-major across the jamlet grid.
+
+Logical vs Physical Element Coordinates
+---------------------------------------
+Instructions use **logical** element indices (0, 1, 2, 3...) which are sequential.
+The hardware distributes elements across jamlets using **physical** coordinates.
+
+Physical layout places one element per jamlet word, cycling through all jamlets
+before moving to the next element position within a word. For a vline with
+`j_in_l` jamlets and `elements_in_word` elements per 64-bit word:
+
+    Logical element 0 → jamlet 0, element-in-word 0
+    Logical element 1 → jamlet 1, element-in-word 0
+    ...
+    Logical element (j_in_l - 1) → jamlet (j_in_l - 1), element-in-word 0
+    Logical element j_in_l → jamlet 0, element-in-word 1
+    Logical element (j_in_l + 1) → jamlet 1, element-in-word 1
+    ...
+
+Once all positions in a vline are filled, continue to the next vline.
+
+Conversion formulas:
+
+    # Physical to logical
+    elements_in_word = word_bytes * 8 // ew
+    logical_element = element_in_word * j_in_l + jamlet_word_index
+
+    # Logical to physical
+    jamlet_word_index = logical_element % j_in_l
+    element_in_word = logical_element // j_in_l
+
+This matters when comparing MemMapping fields (src_ve/dst_ve are physical)
+against instruction fields (start_index/n_elements are logical).
 """
 
 import logging
@@ -217,7 +276,10 @@ class TLB:
 @dataclass(frozen=True)
 class GlobalAddress:
     """
-    An address in the overal address space
+    An address in the overall CPU-visible address space.
+
+    This is the starting point for address translation. Use TLB methods to
+    convert to VPU or scalar addresses.
     """
     bit_addr: int
     params: LamletParams
@@ -289,7 +351,10 @@ class LocalAddress:
 @dataclass(frozen=True)
 class VPUAddress:
     """
-    An address in the VPU address space (post TLB)
+    An address in the VPU address space (post TLB translation).
+
+    The bit_addr is a linear address into VPU memory. Convert to LogicalVLineAddress
+    to work with vline-based operations.
     """
     bit_addr: int
     ordering: Ordering
@@ -314,12 +379,14 @@ class VPUAddress:
     #    logical_vline_addr = self.to_logical_vline_addr(params)
     #    return logical_vline_addr.to_j_saddr(params, cache_table)
 
-    def to_global_addr(self, tlb):
+    def to_global_addr(self, tlb: TLB) -> GlobalAddress:
         vpu_page_address = (self.bit_addr // self.params.page_bytes // 8) * self.params.page_bytes
         page_offset_bits = self.bit_addr - vpu_page_address * 8
-        info = tlb.get_page_info_from_vpu_addr(vpu_page_address)
+        base_vpu_address = VPUAddress(bit_addr=vpu_page_address*8, ordering=self.ordering,
+                                      params=self.params)
+        info = tlb.get_page_info_from_vpu_addr(base_vpu_address)
         return GlobalAddress(
-            bit_addr = info.global_address*8 + page_offset_bits, params=self.params
+            bit_addr = info.global_address.bit_addr + page_offset_bits, params=self.params
             )
 
     def offset_bits(self, n_bits):
@@ -333,13 +400,22 @@ class VPUAddress:
 @dataclass(frozen=True)
 class LogicalVLineAddress:
     """
-    A bit address in a vline in the VPU address space.
+    A bit address in a vline using logical (sequential) element ordering.
+
+    In logical coordinates, elements are numbered sequentially: 0, 1, 2, 3...
+    This matches how instructions specify start_index and n_elements.
+
+    The bit_addr is the offset within the vline in logical coordinates, where
+    consecutive elements are adjacent in the address space.
+
+    Convert to PhysicalVLineAddress to get the actual hardware layout where
+    elements are distributed across jamlets.
     """
     # Which vline in the VPU memory this is.
     index: int
     # It's useful to pass this with the address so we don't have to use the TLB again
     ordering: Ordering
-    # The bit address with the Vline.
+    # The bit address within the vline (logical coordinates).
     bit_addr: int
     params: LamletParams
 
@@ -407,14 +483,26 @@ class LogicalVLineAddress:
 @dataclass(frozen=True)
 class PhysicalVLineAddress:
     """
-    A bit address in a vline after rearranging elements order and jamlet order in a vline
+    A bit address in a vline using physical (distributed) element ordering.
+
+    In physical coordinates, elements are distributed across jamlets:
+        - Element 0 → jamlet 0, element-in-word 0
+        - Element 1 → jamlet 1, element-in-word 0
+        - ...
+        - Element j_in_l → jamlet 0, element-in-word 1
+
+    The bit_addr here reflects where data actually lives in hardware. Each jamlet
+    holds one word of the vline, and elements cycle through jamlets before moving
+    to the next position within a word.
+
+    Use to_k_maddr() to convert to a specific kamlet's memory address.
     """
     # Which vline in the VPU memory this is.
     index: int
     # It's useful to pass this with the address so we don't have to use the TLB again
     # (I think it's just used for assertions)
     ordering: Ordering
-    # The bit address with the Vline.
+    # The bit address within the vline (physical coordinates).
     bit_addr: int
     params: LamletParams
 
@@ -460,13 +548,12 @@ class PhysicalVLineAddress:
     #    return k_maddr.to_j_saddr(params, cache_table)
 
     def to_logical_vline_addr(self):
-
         vw_index = self.bit_addr // (self.params.word_bytes * 8)
         assert self.params.word_bytes * 8 >= self.ordering.ew
         assert (self.params.word_bytes * 8) % self.ordering.ew == 0
         elements_in_word = (self.params.word_bytes * 8)//self.ordering.ew
         element_in_word_index = (self.bit_addr // self.ordering.ew) % elements_in_word
-        element_index = vw_index*elements_in_word + element_in_word_index
+        element_index = vw_index + element_in_word_index * self.params.j_in_l
         logical_bit_addr = (
                 element_index * self.ordering.ew +
                 (self.bit_addr % self.ordering.ew)
@@ -486,9 +573,19 @@ class PhysicalVLineAddress:
 @dataclass(frozen=True)
 class KMAddr:
     """
-    An address in a kamlet memory.
+    An address in a kamlet's memory space.
+
+    Each kamlet has its own memory address space. The k_index identifies which
+    kamlet, and bit_addr is the address within that kamlet's memory.
+
+    The bit_addr encodes both which jamlet within the kamlet (j_in_k_index) and
+    the offset within that jamlet's word. Use j_in_k_index property to extract
+    the jamlet index.
+
+    Use to_j_saddr() to convert to a specific jamlet's SRAM address (requires
+    cache_table to determine cache slot).
     """
-    k_index: int 
+    k_index: int
     ordering: Ordering
     bit_addr: int
     params: LamletParams
@@ -566,7 +663,14 @@ class KMAddr:
 @dataclass(frozen=True)
 class JSAddr:
     """
-    An adress in a jamlet SRAM.
+    An address in a jamlet's SRAM (cache).
+
+    This is the lowest level address - it specifies exactly where data lives
+    in a specific jamlet's local SRAM. The (k_index, j_in_k_index) pair identifies
+    the jamlet, and bit_addr is the offset within that jamlet's SRAM.
+
+    The SRAM is organized by cache slots. Each slot holds a portion of a cache line
+    (cache_line_bytes / j_in_k bytes per jamlet).
     """
     k_index: int
     # The jamlet in kamlet order is always the same.
@@ -614,9 +718,13 @@ class JSAddr:
 @dataclass(frozen=True)
 class RegAddr:
     """
-    A byte in a vector register.
+    A byte address in a vector register.
+
+    Addresses a specific byte within a vector register. The addr field is a
+    logical byte offset (sequential), not physical. Use element_index property
+    to get which element this byte belongs to.
     """
-    # The register
+    # The register number
     reg: int
     # The logical byte offset in that register
     addr: int
@@ -689,6 +797,13 @@ class AddressConverter:
         self.params = params
         self.tlb = tlb
         #self.cache_table = cache_table
+
+    def to_global_addr(self, addr):
+        if isinstance(addr, KMAddr):
+            return addr.to_global_addr(self.tlb)
+        if isinstance(addr, LogicalVLineAddress):
+            return addr.to_global_addr(self.tlb)
+        raise NotImplementedError
 
     def to_scalar_addr(self, addr: GlobalAddress):
         assert isinstance(addr, GlobalAddress)

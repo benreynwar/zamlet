@@ -8,7 +8,7 @@ import logging
 from dataclasses import dataclass
 
 from zamlet.register_names import reg_name, freg_name
-import zamlet.utils
+from zamlet import utils
 
 
 logger = logging.getLogger(__name__)

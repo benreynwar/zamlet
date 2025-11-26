@@ -255,7 +255,7 @@ class WaitingStoreJ2JWords(WaitingItemRequiresCache):
 
     def __init__(self, params: LamletParams, instr: kinstructions.Store, rf_ident: int|None=None):
         super().__init__(item=instr, instr_ident=instr.instr_ident, writeset_ident=instr.writeset_ident, rf_ident=rf_ident)
-        n_tags = instr.n_tags() * params.j_in_k
+        n_tags = instr.n_tags(params) * params.j_in_k
         self.protocol_states: List[StoreProtocolState] = [
                 StoreProtocolState() for _ in range(n_tags)]
 
@@ -269,7 +269,7 @@ class WaitingLoadJ2JWords(WaitingItemRequiresCache):
 
     def __init__(self, params: LamletParams, instr: kinstructions.Load, rf_ident: int|None=None):
         super().__init__(item=instr, instr_ident=instr.instr_ident, writeset_ident=instr.writeset_ident, rf_ident=rf_ident)
-        n_tags = instr.n_tags() * params.j_in_k
+        n_tags = instr.n_tags(params) * params.j_in_k
         self.protocol_states: List[LoadProtocolState] = [
                 LoadProtocolState() for _ in range(n_tags)]
 

@@ -18,10 +18,10 @@ async def update(clock, lamlet):
         lamlet.update()
 
 
-async def run(clock: Clock, filename):
+async def run(clock: Clock, filename, j_rows=1):
     p_info = program_info.get_program_info(filename)
 
-    params = LamletParams()
+    params = LamletParams(j_rows=j_rows)
 
     s = lamlet.Lamlet(clock, params)
     clock.create_task(update(clock, s))
@@ -67,7 +67,7 @@ async def run(clock: Clock, filename):
             ordering = Ordering(WordOrder.STANDARD, ew)
         else:
             ordering = None
-        logger.warning(
+        logger.info(
             f'[ALLOC] addr=0x{address:x} size={size} page_start=0x{page_start:x} '
             f'alloc_size={alloc_size} is_vpu={is_vpu} ordering={ordering}'
         )
@@ -86,9 +86,9 @@ async def run(clock: Clock, filename):
     for segment in p_info['segments']:
         address = segment['address']
         data = segment['contents']
-        logger.warning(f'[MEM_INIT] Segment addr=0x{address:x} size={len(data)} bytes')
+        logger.info(f'[MEM_INIT] Segment addr=0x{address:x} size={len(data)} bytes')
         await s.set_memory(address, data)
-        logger.warning(f'[MEM_INIT] Segment addr=0x{address:x} complete')
+        logger.info(f'[MEM_INIT] Segment addr=0x{address:x} complete')
 
     trace = disasm_trace.parse_objdump(filename)
     logger.info(f"Loaded {len(trace)} instructions from objdump")
@@ -102,7 +102,7 @@ async def run(clock: Clock, filename):
     clock.create_task(s.run_instructions(disasm_trace=trace))
     while clock.running:
         if s.exit_code is not None:
-            logger.warning(f"Program exited with code {s.exit_code}")
+            logger.info(f"Program exited with code {s.exit_code}")
             logger.info(f"Final VL register: {s.vl}")
             logger.info(f"Final VTYPE register: {hex(s.vtype)}")
 
@@ -114,15 +114,15 @@ async def run(clock: Clock, filename):
 
             # Signal clock to stop gracefully
             clock.running = False
-            logger.warning(f"run() about to return exit_code={s.exit_code}")
+            logger.info(f"run() about to return exit_code={s.exit_code}")
             return s.exit_code
         await clock.next_cycle
-    logger.warning(f"run() exiting with clock.running=False, exit_code={s.exit_code}")
+    logger.info(f"run() exiting with clock.running=False, exit_code={s.exit_code}")
     return None
 
 
 
-async def main(clock, filename):
+async def main(clock, filename, j_rows: int) -> int:
     import signal
 
     def signal_handler(signum, frame):
@@ -132,17 +132,17 @@ async def main(clock, filename):
     signal.signal(signal.SIGINT, signal_handler)
 
     clock.register_main()
-    run_task = clock.create_task(run(clock, filename))
+    run_task = clock.create_task(run(clock, filename, j_rows))
     clock_driver_task = clock.create_task(clock.clock_driver())
 
     # Wait for run_task to complete - it will set clock.running = False
     await run_task
     exit_code = run_task.result()
-    logger.warning(f"run_task completed with exit_code: {exit_code}")
+    logger.info(f"run_task completed with exit_code: {exit_code}")
 
     # Now wait for clock_driver to finish naturally
     await clock_driver_task
-    logger.warning(f"clock_driver_task completed")
+    logger.info(f"clock_driver_task completed")
 
     return exit_code
 
@@ -164,43 +164,45 @@ if __name__ == '__main__':
         filenames = [sys.argv[1]]
     else:
         filenames = [
-           #'tests/readwritebyte/should_fail.riscv',
+           'tests/readwritebyte/should_fail.riscv',
            'tests/readwritebyte/simple_vpu_test.riscv',
            'tests/readwritebyte/write_then_read_many_bytes.riscv',
-           #'tests/sgemv/vec-sgemv-large.riscv', (too small)
-           #'tests/sgemv/vec-sgemv-64x64.riscv',
-           # #'tests/sgemv/vec-sgemv.riscv',  (too small) (it tries to step through rows in a matrix but one row is less than vline so it gets misaligned)
+           'tests/sgemv/vec-sgemv-large.riscv', #(too small)
+           'tests/sgemv/vec-sgemv-64x64.riscv',
+           'tests/sgemv/vec-sgemv.riscv',  #(too small) (it tries to step through rows in a matrix but one row is less than vline so it gets misaligned)
            'tests/vecadd/vec-add-evict.riscv',
            'tests/vecadd/vec-add.riscv',
            'tests/daxpy/vec-daxpy.riscv',
            'tests/daxpy/vec-daxpy-small.riscv',
            'tests/conditional/vec-conditional.riscv',
            'tests/conditional/vec-conditional-tiny.riscv',
+           'tests/unaligned/unaligned.riscv',
         ]
 
     for filename in filenames:
-        root_logger.warning(f'========== Starting test: {filename} ==========')
-        clock = Clock(max_cycles=50000)
-        exit_code = None
-        try:
-            exit_code = asyncio.run(main(clock, filename))
-        except KeyboardInterrupt:
-            root_logger.warning(f'========== Test interrupted by user ==========')
-            sys.exit(1)
-        except asyncio.CancelledError:
-            # This happens when clock.stop() cancels tasks - it's normal
-            pass
-        except Exception as e:
-            root_logger.error(f'========== Test FAILED: {filename} - {e} ==========')
-            import traceback
-            traceback.print_exc()
-            continue
+        for j_rows in (1, 2):
+            root_logger.info(f'========== Starting test: {filename} ==========')
+            clock = Clock(max_cycles=50000)
+            exit_code = None
+            try:
+                exit_code = asyncio.run(main(clock, filename, j_rows))
+            except KeyboardInterrupt:
+                root_logger.warning(f'========== Test interrupted by user ==========')
+                sys.exit(1)
+            except asyncio.CancelledError:
+                # This happens when clock.stop() cancels tasks - it's normal
+                pass
+            except Exception as e:
+                root_logger.error(f'========== Test FAILED: {filename} j_rows={j_rows} - {e} ==========')
+                import traceback
+                traceback.print_exc()
+                continue
 
-        # Log result based on exit code
-        if exit_code is not None:
-            if exit_code == 0:
-                root_logger.warning(f'========== Test PASSED: {filename} (exit code: {exit_code}) ==========')
+            # Log result based on exit code
+            if exit_code is not None:
+                if exit_code == 0:
+                    root_logger.warning(f'========== Test PASSED: {filename} j_rows={j_rows} (exit code: {exit_code}) ==========')
+                else:
+                    root_logger.warning(f'========== Test FAILED: {filename} j_rows={j_rows} (exit code: {exit_code}) ==========')
             else:
-                root_logger.warning(f'========== Test FAILED: {filename} (exit code: {exit_code}) ==========')
-        else:
-            root_logger.warning(f'========== Test completed: {filename} (no exit code) ==========')
+                root_logger.info(f'========== Test completed: {filename} j_rows={j_rows} (no exit code) ==========')

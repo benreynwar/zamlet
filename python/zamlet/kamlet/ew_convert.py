@@ -1,3 +1,39 @@
+"""
+Element Width Conversion and Data Mapping
+
+This module handles mapping data between vectors with different element widths (ew).
+When loading or storing data where the register ew differs from the memory ew,
+data must be remapped between jamlets.
+
+Key Concepts
+------------
+- "src" and "dst" refer to data flow direction, NOT register vs memory:
+    - For Store: src = register, dst = memory
+    - For Load: src = memory, dst = register
+
+- "small" and "large" refer to element width comparison (internal to mapping functions)
+
+- src_ve/dst_ve use PHYSICAL element coordinates (distributed across jamlets)
+- start_index/n_elements in instructions use LOGICAL coordinates (sequential)
+- See addresses.py module docstring for coordinate conversion formulas
+
+Tags
+----
+Each jamlet word may need multiple messages to transfer all its data when ew differs.
+Tags identify which piece of a word is being transferred.
+
+Both the src word and dst word are divided into min_ew-sized segments:
+- tag // 2 = which segment within the word (0, 1, 2, ...)
+- tag % 2 = which piece of that segment (0 = first piece, 1 = second piece)
+
+The second piece exists because a segment may be split across two destinations due to
+offset misalignment. For example, if dst has a 4-byte offset, a 32-bit segment might
+have its first 16 bits going to one place and its second 16 bits going to another.
+
+- n_tags = (word_width / min_ew) * 2  (could be reduced to max_ew/min_ew in the future)
+- Some tags may have no mapping (None) if that piece doesn't exist for this transfer
+"""
+
 from random import Random
 from dataclasses import dataclass
 from typing import List, Dict, Tuple
@@ -57,34 +93,40 @@ def bits_to_int(bits: List[int]):
 
 @dataclass(frozen=True)
 class MemMapping:
-    # The vector line index in the small-ew-mapped vector
+    """
+    Describes how a piece of data maps between src and dst vectors with different ew.
+
+    For Store: src = register, dst = memory
+    For Load: src = memory, dst = register
+
+    The _ve fields use PHYSICAL element coordinates (not logical). See addresses.py
+    for conversion between physical and logical coordinates.
+
+    The _wb fields indicate the bit offset within the word where this piece starts.
+    When src_wb != dst_wb, the data needs to be shifted during transfer.
+    """
+    # The vector line index in the src vector
     src_v: int
-    # The word index inside a vector in the small-ew-mapped vector
+    # The word index (which jamlet) in the src vector
     src_vw: int
-    # The element index inside a vector in the small-ew-mapped vector
+    # The element index in the src vector (PHYSICAL coordinates)
     src_ve: int
-    # The bit in the word
+    # The bit offset within the word where this piece starts
     src_wb: int
-    # The vector line index in the large-ew-mapped vector
+    # The vector line index in the dst vector
     dst_v: int
-    # The word index inside a vector in the large-ew-mapped vector
+    # The word index (which jamlet) in the dst vector
     dst_vw: int
-    # The element index inside a vector in the large-ew-mapped vector
+    # The element index in the dst vector (PHYSICAL coordinates)
     dst_ve: int
-    # The bit in the word
+    # The bit offset within the word where this piece starts
     dst_wb: int
-    # The number of bits that are mapped
+    # The number of bits in this piece
     n_bits: int
 
-    # # The amount of bits that we shift the bits to the left inside the word
-    # # when going from the large-ew-mapped vector to the small-ew-mapped vector
-    # shift: int
-    # # The bit mask to apply when updating the word in the small-ew-mapped vector
-    # mask: int
-
-    # The tag use to refer to this mapping for a small-ew-mapped word
+    # The tag identifying this piece for the src side
     src_tag: int
-    # The tag use to refer to this mapping for a large-ew-mapped word
+    # The tag identifying this piece for the dst side
     dst_tag: int
 
     def dst_mask(self) -> int:
@@ -93,6 +135,12 @@ class MemMapping:
 
 @dataclass(frozen=True)
 class SmallLargeMapping:
+    """
+    Internal mapping using small/large ew nomenclature (not src/dst).
+
+    This is converted to MemMapping by get_mapping_for_src/get_mapping_for_dst,
+    which swap small/large to src/dst based on the operation direction.
+    """
     # The vector line index in the small-ew-mapped vector
     small_v: int
     # The word index inside a vector in the small-ew-mapped vector
@@ -277,6 +325,14 @@ def get_mapping_for_dst(
         dst_v: int, dst_vw: int, dst_tag: int, src_offset: int=0, dst_offset: int=0,
         allow_none: bool=True
         ):
+    """
+    Get the mapping for a destination jamlet/tag.
+
+    Given the dst side coordinates (dst_vw = which jamlet, dst_tag = which piece),
+    returns the MemMapping describing where the data comes from on the src side.
+
+    Used when the receiving side needs to know what data it will get.
+    """
     if src_ew > dst_ew:
         small_ew = dst_ew
         large_ew = src_ew
@@ -342,6 +398,14 @@ def get_mapping_for_dst(
 def get_mapping_for_src(
         params: LamletParams, src_ew: int, dst_ew: int,
         src_v: int, src_vw: int, src_tag: int, src_offset:int=0, dst_offset:int=0):
+    """
+    Get the mapping for a source jamlet/tag.
+
+    Given the src side coordinates (src_vw = which jamlet, src_tag = which piece),
+    returns the MemMapping describing where the data goes on the dst side.
+
+    Used when the sending side needs to know where to send its data.
+    """
     if dst_ew > src_ew:
         small_ew = src_ew
         large_ew = dst_ew
@@ -508,6 +572,14 @@ def get_mapping_from_small_tag(
         allow_none: bool=True,
         ):
     """
+    Get the mapping given the small-ew side's jamlet and tag.
+
+    small_ew: The element width in the small-ew mapped vector
+    large_ew: The element width in the large-ew mapped vector
+    small_offset: The logical offset in bits of the small-ew mapped vector
+    large_offset: The logical offset in bits of the large-ew mapped vector
+    small_vw: Which word (jamlet) in the small-ew mapped vector
+    small_tag: Which segment/piece (tag // 2 = segment, tag % 2 = piece)
     """
     vw = params.vline_bytes * 8
     ww = params.word_bytes * 8

@@ -110,11 +110,17 @@ Key functions:
 
 The `MemMapping` dataclass describes how data maps between src and dst vectors with different element widths.
 
+**Important naming convention**: In `MemMapping`, "src" and "dst" refer to the data flow direction:
+- For **Store**: `src` = register, `dst` = memory (data flows register → memory)
+- For **Load**: `src` = memory, `dst` = register (data flows memory → register)
+
+The `src_ve`/`dst_ve` fields use **physical** element coordinates. See the "Logical vs Physical Element Coordinates" section in addresses.py below for conversion formulas.
+
 ### addresses.py
-Address space management and translation chain:
-```
-GlobalAddress → VPUAddress → LogicalVLineAddress → PhysicalVLineAddress → KMAddr → JSAddr
-```
+Address space management and translation chain. See the module docstring in `addresses.py` for detailed documentation on:
+- Address translation chain (GlobalAddress → VPUAddress → ... → JSAddr)
+- Word ordering (`Ordering.word_order`) and how jamlet (x, y) maps to vw_index
+- Logical vs physical element coordinates and conversion formulas
 
 Key types:
 - `KMAddr` - Kamlet memory address
