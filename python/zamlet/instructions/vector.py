@@ -156,6 +156,166 @@ class VseV:
 
 
 @dataclass
+class VlseV:
+    """VLSE.V - Vector Load Strided Elements.
+
+    Constant-stride load of elements from memory into a vector register.
+    Element i is loaded from address (rs1 + i * rs2).
+
+    Reference: riscv-isa-manual/src/v-st-ext.adoc lines 1602-1647
+    """
+    vd: int
+    rs1: int
+    rs2: int
+    vm: int
+    element_width: int
+
+    def __str__(self):
+        vm_str = '' if self.vm else ',v0.t'
+        return f'vlse{self.element_width}.v\tv{self.vd},({reg_name(self.rs1)}),{reg_name(self.rs2)}{vm_str}'
+
+    async def update_state(self, s: 'state.State'):
+        await s.scalar.wait_all_regs_ready(None, None, [self.rs1, self.rs2], [])
+        rs1_bytes = s.scalar.read_reg(self.rs1)
+        rs2_bytes = s.scalar.read_reg(self.rs2)
+        addr = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
+        stride = int.from_bytes(rs2_bytes, byteorder='little', signed=True)
+        if self.vm:
+            mask_reg = None
+        else:
+            mask_reg = 0
+        logger.debug(f'{s.clock.cycle}: VLSE{self.element_width}.V: vd=v{self.vd}, '
+                    f'addr=0x{addr:x}, stride={stride}, vl={s.vl}, '
+                    f'masked={not self.vm}, mask_reg={mask_reg}')
+        ordering = addresses.Ordering(s.word_order, self.element_width)
+        await s.vload(self.vd, addr, ordering, s.vl, mask_reg, s.vstart, stride_bytes=stride)
+        s.pc += 4
+        logger.debug(f'Strided load into vd={self.vd}')
+
+
+@dataclass
+class VsseV:
+    """VSSE.V - Vector Store Strided Elements.
+
+    Constant-stride store of elements from vector register to memory.
+    Element i is stored to address (rs1 + i * rs2).
+
+    Reference: riscv-isa-manual/src/v-st-ext.adoc lines 1602-1647
+    """
+    vs3: int
+    rs1: int
+    rs2: int
+    vm: int
+    element_width: int
+
+    def __str__(self):
+        vm_str = '' if self.vm else ',v0.t'
+        return f'vsse{self.element_width}.v\tv{self.vs3},({reg_name(self.rs1)}),{reg_name(self.rs2)}{vm_str}'
+
+    async def update_state(self, s: 'state.State'):
+        await s.scalar.wait_all_regs_ready(None, None, [self.rs1, self.rs2], [])
+        rs1_bytes = s.scalar.read_reg(self.rs1)
+        rs2_bytes = s.scalar.read_reg(self.rs2)
+        addr = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
+        stride = int.from_bytes(rs2_bytes, byteorder='little', signed=True)
+        if self.vm:
+            mask_reg = None
+        else:
+            mask_reg = 0
+        logger.debug(f'{s.clock.cycle}: VSSE{self.element_width}.V: vs3=v{self.vs3}, '
+                    f'addr=0x{addr:x}, stride={stride}, vl={s.vl}, '
+                    f'masked={not self.vm}, mask_reg={mask_reg}')
+        ordering = addresses.Ordering(s.word_order, self.element_width)
+        await s.vstore(self.vs3, addr, ordering, s.vl, mask_reg, s.vstart, stride_bytes=stride)
+        s.pc += 4
+        logger.debug(f'Strided store from vs3={self.vs3}')
+
+
+@dataclass
+class VlsegV:
+    """VLSEG - Vector Load Segment.
+
+    Unit-stride load of multiple fields (segments) from memory into consecutive
+    vector registers. Each segment contains nf fields stored contiguously in memory.
+
+    Example: vlseg3e8.v v0, (a0) loads RGB pixels:
+      Memory: R0 G0 B0 R1 G1 B1 R2 G2 B2 ...
+      v0: R0 R1 R2 ...
+      v1: G0 G1 G2 ...
+      v2: B0 B1 B2 ...
+
+    Reference: riscv-isa-manual/src/v-st-ext.adoc lines 1758-1888
+    """
+    vd: int
+    rs1: int
+    vm: int
+    element_width: int
+    nf: int  # Number of fields (2-8)
+
+    def __str__(self):
+        vm_str = '' if self.vm else ',v0.t'
+        return f'vlseg{self.nf}e{self.element_width}.v\tv{self.vd},({reg_name(self.rs1)}){vm_str}'
+
+    async def update_state(self, s: 'state.State'):
+        await s.scalar.wait_all_regs_ready(None, None, [self.rs1], [])
+        rs1_bytes = s.scalar.read_reg(self.rs1)
+        addr = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
+        if self.vm:
+            mask_reg = None
+        else:
+            mask_reg = 0
+        logger.debug(f'{s.clock.cycle}: VLSEG{self.nf}E{self.element_width}.V: '
+                    f'vd=v{self.vd}, addr=0x{addr:x}, vl={s.vl}, nf={self.nf}, '
+                    f'masked={not self.vm}, mask_reg={mask_reg}')
+        ordering = addresses.Ordering(s.word_order, self.element_width)
+        await s.vsegload(self.vd, addr, ordering, s.vl, mask_reg, s.vstart, self.nf)
+        s.pc += 4
+        logger.debug(f'Loaded segment into vd=v{self.vd} through v{self.vd + self.nf - 1}')
+
+
+@dataclass
+class VssegV:
+    """VSSEG - Vector Store Segment.
+
+    Unit-stride store of multiple fields (segments) from consecutive vector
+    registers to memory. Each segment contains nf fields stored contiguously.
+
+    Example: vsseg3e8.v v0, (a0) stores RGB pixels:
+      v0: R0 R1 R2 ...
+      v1: G0 G1 G2 ...
+      v2: B0 B1 B2 ...
+      Memory: R0 G0 B0 R1 G1 B1 R2 G2 B2 ...
+
+    Reference: riscv-isa-manual/src/v-st-ext.adoc lines 1758-1888
+    """
+    vs3: int
+    rs1: int
+    vm: int
+    element_width: int
+    nf: int  # Number of fields (2-8)
+
+    def __str__(self):
+        vm_str = '' if self.vm else ',v0.t'
+        return f'vsseg{self.nf}e{self.element_width}.v\tv{self.vs3},({reg_name(self.rs1)}){vm_str}'
+
+    async def update_state(self, s: 'state.State'):
+        await s.scalar.wait_all_regs_ready(None, None, [self.rs1], [])
+        rs1_bytes = s.scalar.read_reg(self.rs1)
+        addr = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
+        if self.vm:
+            mask_reg = None
+        else:
+            mask_reg = 0
+        logger.debug(f'{s.clock.cycle}: VSSEG{self.nf}E{self.element_width}.V: '
+                    f'vs3=v{self.vs3}, addr=0x{addr:x}, vl={s.vl}, nf={self.nf}, '
+                    f'masked={not self.vm}, mask_reg={mask_reg}')
+        ordering = addresses.Ordering(s.word_order, self.element_width)
+        await s.vsegstore(self.vs3, addr, ordering, s.vl, mask_reg, s.vstart, self.nf)
+        s.pc += 4
+        logger.debug(f'Stored segment from vs3=v{self.vs3} through v{self.vs3 + self.nf - 1}')
+
+
+@dataclass
 class VArithVxFloat:
     """Generic vector-scalar floating-point arithmetic instruction.
 

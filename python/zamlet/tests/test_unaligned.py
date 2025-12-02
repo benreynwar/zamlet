@@ -22,6 +22,8 @@ import logging
 import struct
 from random import Random
 
+import pytest
+
 from zamlet.runner import Clock
 from zamlet.params import LamletParams
 from zamlet.lamlet.lamlet import Lamlet
@@ -80,7 +82,7 @@ def get_vpu_base_addr(element_width: int) -> int:
         raise ValueError(f"Unsupported element width: {element_width}")
 
 
-async def test_unaligned(
+async def run_unaligned_test(
     clock: Clock,
     src_ew: int,
     dst_ew: int,
@@ -108,6 +110,7 @@ async def test_unaligned(
     # The values fit in src_ew bits but are stored as reg_ew elements in memory
     rnd = Random(seed)
     src_list = [rnd.getrandbits(src_ew) for i in range(vl)]
+    #src_list = [i for i in range(vl)]
 
     logger.info(f"Test parameters:")
     logger.info(f"  src_ew={src_ew}, dst_ew={dst_ew}, reg_ew={reg_ew}")
@@ -244,7 +247,7 @@ async def main(
     clock.register_main()
 
     clock_driver_task = clock.create_task(clock.clock_driver())
-    exit_code = await test_unaligned(
+    exit_code = await run_unaligned_test(
         clock, src_ew, dst_ew, vl, reg_ew, src_offset, dst_offset, lmul, j_rows, seed
     )
 
@@ -252,6 +255,40 @@ async def main(
     clock.running = False
 
     return exit_code
+
+
+def run_test(reg_ew, src_ew, dst_ew, src_offset, dst_offset, vl, lmul=8, j_rows=1, seed=0):
+    """Helper to run a single test configuration."""
+    clock = Clock(max_cycles=5000)
+    exit_code = asyncio.run(main(
+        clock, src_ew, dst_ew, vl, reg_ew, src_offset, dst_offset, lmul, j_rows, seed
+    ))
+    assert exit_code == 0, f"Test failed with exit_code={exit_code}"
+
+
+def generate_test_params():
+    """Generate test parameter combinations."""
+    params = []
+    for reg_ew in [8, 16, 32, 64]:
+        for src_mem_ew in [8, 16, 32, 64]:
+            for dst_mem_ew in [8, 16, 32, 64]:
+                for src_mem_offset in [0, 1*8, 3*8, 7*8]:
+                    for dst_mem_offset in [0, 15*8,]:
+                        for vl in [1, 3, 5, 8]:
+    #for reg_ew in [8, 64]:
+    #    for src_mem_ew in [8, 64]:
+    #        for dst_mem_ew in [8, 64]:
+    #            for src_mem_offset in [2*8]:
+    #                for dst_mem_offset in [0]:
+    #                    for vl in [5]:
+                            id_str = f"reg{reg_ew}_src{src_mem_ew}_dst{dst_mem_ew}_srcoff{src_mem_offset}_dstoff{dst_mem_offset}_vl{vl}"
+                            params.append(pytest.param(reg_ew, src_mem_ew, dst_mem_ew, src_mem_offset, dst_mem_offset, vl, id=id_str))
+    return params
+
+
+@pytest.mark.parametrize("reg_ew,src_ew,dst_ew,src_offset,dst_offset,vl", generate_test_params())
+def test_unaligned(reg_ew, src_ew, dst_ew, src_offset, dst_offset, vl):
+    run_test(reg_ew, src_ew, dst_ew, src_offset, dst_offset, vl)
 
 
 if __name__ == '__main__':

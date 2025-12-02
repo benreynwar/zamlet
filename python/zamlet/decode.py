@@ -355,17 +355,25 @@ def decode_standard(instruction_bytes: bytes) -> Instruction:
             return M.Lwu(rd=rd, rs1=rs1, imm=imm)
 
     elif opcode == 0x07:
+        nf = (inst >> 29) & 0x7  # Number of fields - 1 (0 = 1 field, 7 = 8 fields)
         mop = (inst >> 26) & 0x3
         vm = (inst >> 25) & 0x1
         width = funct3
-        if mop == 0x0 and width == 0x0:
-            return V.VleV(vd=rd, rs1=rs1, vm=vm, element_width=8)
-        elif mop == 0x0 and width == 0x5:
-            return V.VleV(vd=rd, rs1=rs1, vm=vm, element_width=16)
-        elif mop == 0x0 and width == 0x6:
-            return V.VleV(vd=rd, rs1=rs1, vm=vm, element_width=32)
-        elif mop == 0x0 and width == 0x7:
-            return V.VleV(vd=rd, rs1=rs1, vm=vm, element_width=64)
+        # Map width field to element width
+        width_map = {0x0: 8, 0x5: 16, 0x6: 32, 0x7: 64}
+        if mop == 0x0 and width in width_map:
+            # Unit-stride load
+            ew = width_map[width]
+            if nf == 0:
+                # Regular unit-stride load (vle*.v)
+                return V.VleV(vd=rd, rs1=rs1, vm=vm, element_width=ew)
+            else:
+                # Segment load (vlseg*.v) - nf+1 fields
+                return V.VlsegV(vd=rd, rs1=rs1, vm=vm, element_width=ew, nf=nf + 1)
+        elif mop == 0x2 and width in width_map:
+            # Constant-stride load (vlse*.v)
+            ew = width_map[width]
+            return V.VlseV(vd=rd, rs1=rs1, rs2=rs2, vm=vm, element_width=ew)
         elif width == 0x2:
             return F.Flw(fd=rd, rs1=rs1, imm=decode_i_imm(inst))
         elif width == 0x3:
@@ -422,18 +430,26 @@ def decode_standard(instruction_bytes: bytes) -> Instruction:
             return M.Sd(rs1=rs1, rs2=rs2, imm=imm)
 
     elif opcode == 0x27:
+        nf = (inst >> 29) & 0x7  # Number of fields - 1 (0 = 1 field, 7 = 8 fields)
         mop = (inst >> 26) & 0x3
         vm = (inst >> 25) & 0x1
         width = funct3
         vs3 = rd
-        if mop == 0x0 and width == 0x0:
-            return V.VseV(vs3=vs3, rs1=rs1, vm=vm, element_width=8)
-        elif mop == 0x0 and width == 0x5:
-            return V.VseV(vs3=vs3, rs1=rs1, vm=vm, element_width=16)
-        elif mop == 0x0 and width == 0x6:
-            return V.VseV(vs3=vs3, rs1=rs1, vm=vm, element_width=32)
-        elif mop == 0x0 and width == 0x7:
-            return V.VseV(vs3=vs3, rs1=rs1, vm=vm, element_width=64)
+        # Map width field to element width
+        width_map = {0x0: 8, 0x5: 16, 0x6: 32, 0x7: 64}
+        if mop == 0x0 and width in width_map:
+            # Unit-stride store
+            ew = width_map[width]
+            if nf == 0:
+                # Regular unit-stride store (vse*.v)
+                return V.VseV(vs3=vs3, rs1=rs1, vm=vm, element_width=ew)
+            else:
+                # Segment store (vsseg*.v) - nf+1 fields
+                return V.VssegV(vs3=vs3, rs1=rs1, vm=vm, element_width=ew, nf=nf + 1)
+        elif mop == 0x2 and width in width_map:
+            # Constant-stride store (vsse*.v)
+            ew = width_map[width]
+            return V.VsseV(vs3=vs3, rs1=rs1, rs2=rs2, vm=vm, element_width=ew)
         elif width == 0x2:
             return F.Fsw(rs2=rs2, rs1=rs1, imm=decode_s_imm(inst))
         elif width == 0x3:

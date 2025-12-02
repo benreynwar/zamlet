@@ -68,6 +68,28 @@ class MessageType(Enum):
     STORE_WORD_DROP = 30
     STORE_WORD_RETRY = 31
 
+    # Load and Store with arbitrary addresses
+    # We split them into READ_MEM_WORD and WRITE_MEM_WORD messages.
+    # Request data from jamlet with cache
+    READ_MEM_WORD_REQ = 32
+    READ_MEM_WORD_RESP = 33
+    # When we receive a LOAD_ARB_DATA_REQ we response immediately
+    # if we can.
+    # If we can't we create a witem, to track this request.
+    # If we can't create a witem we drop it.
+    READ_MEM_WORD_DROP = 34
+    # When we can respond we send the data
+    # When a load has got all responses we do a lamlet
+    # wide synchronization so that all jamlets know
+    # that this instruction is is finished. Otherwise
+    # there is no way to know that they won't get more
+    # requests.
+
+    # This is basically the same as the load (but for a store).
+    WRITE_MEM_WORD_REQ = 36
+    WRITE_MEM_WORD_RESP = 37
+    WRITE_MEM_WORD_DROP = 38
+
     #WRITE_REG_REQ = 8
     #WRITE_SP_REQ = 9
     #WRITE_MEM_REQ = 10
@@ -170,6 +192,10 @@ class ShortAddressHeader(IdentHeader):
     # of words.
     address: int          # 12 bits
     words_requested: int  # 4 bits
+
+@dataclass
+class WriteSetIdentHeader(IdentHeader):
+    writeset_ident: int # 5 bits (11 remaining)
 
 
 #@dataclass

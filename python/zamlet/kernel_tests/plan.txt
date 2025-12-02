@@ -1,0 +1,26 @@
+ Phase 1 (Foundation):
+  - vec-daxpy
+  - vec-conditional
+  - vec-dotprod
+
+  Phase 2 (Reductions & Basic Math):
+  - vec-fdotprod
+  - vec-div-approx
+  - vec-square-root-approx
+
+  Phase 3 (Matrix Operations):
+  - vec-sgemv (already working!)
+  - vec-transpose-load/store
+  - vec-sgemm
+
+  Phase 4 (Advanced Math):
+  - vec-exp
+  - vec-softmax
+  - vec-conv-3
+
+  Phase 5 (Complex Algorithms):
+  - vec-iconv2d
+  - vec-fconv2d
+  - vec-fft
+  - vec-spmv
+

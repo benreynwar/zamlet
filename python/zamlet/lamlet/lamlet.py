@@ -34,6 +34,7 @@ from zamlet.kamlet import kinstructions
 from zamlet.lamlet.scalar import ScalarState
 from zamlet import utils
 import zamlet.disasm_trace as dt
+from zamlet.synchronization import SyncDirection
 
 
 logger = logging.getLogger(__name__)
@@ -94,6 +95,7 @@ class Lamlet:
                 params=params,
                 min_x=kamlet_x,
                 min_y=kamlet_y,
+                tlb=self.tlb,
                 )
             self.kamlets.append(kamlet)
             # The memlet is connected to several routers.
@@ -274,8 +276,8 @@ class Lamlet:
                     router = routers[(x, y)]
                     for conn in router._input_connections.values():
                         if conn.age > 500:
-                            import pdb
-                            pdb.set_trace()
+                            raise RuntimeError(
+                                f"Router ({x}, {y}) connection stuck for {conn.age} cycles")
                     north = (x, y-1)
                     south = (x, y+1)
                     east = (x+1, y)
@@ -316,6 +318,64 @@ class Lamlet:
                                 word = west_buffer.popleft()
                                 west_router.receive(Direction.E, word)
                                 logger.debug(f'{self.clock.cycle}: Moving word west, ({x}, {y}) -> ({x-1}, {y}) {word}')
+
+    async def sync_network_connections(self):
+        """
+        Move bytes between synchronizers in adjacent jamlets.
+        This is a separate network from the main router network.
+        Synchronizers connect to all 8 neighbors (N, S, E, W, NE, NW, SE, SW).
+        """
+        # Build a map of (x, y) -> synchronizer
+        synchronizers = {}
+        for kamlet in self.kamlets:
+            for jamlet in kamlet.jamlets:
+                coords = (jamlet.x, jamlet.y)
+                synchronizers[coords] = jamlet.synchronizer
+
+        # Direction deltas for all 8 directions
+        direction_deltas = {
+            SyncDirection.N: (0, -1),
+            SyncDirection.S: (0, 1),
+            SyncDirection.E: (1, 0),
+            SyncDirection.W: (-1, 0),
+            SyncDirection.NE: (1, -1),
+            SyncDirection.NW: (-1, -1),
+            SyncDirection.SE: (1, 1),
+            SyncDirection.SW: (-1, 1),
+        }
+
+        # Opposite directions for receiving
+        opposite_direction = {
+            SyncDirection.N: SyncDirection.S,
+            SyncDirection.S: SyncDirection.N,
+            SyncDirection.E: SyncDirection.W,
+            SyncDirection.W: SyncDirection.E,
+            SyncDirection.NE: SyncDirection.SW,
+            SyncDirection.SW: SyncDirection.NE,
+            SyncDirection.NW: SyncDirection.SE,
+            SyncDirection.SE: SyncDirection.NW,
+        }
+
+        while True:
+            await self.clock.next_cycle
+
+            # Update all synchronizer buffers
+            for sync in synchronizers.values():
+                sync.update()
+
+            # Move bytes between synchronizers
+            for (x, y), sync in synchronizers.items():
+                for direction in SyncDirection:
+                    if sync.has_output(direction):
+                        dx, dy = direction_deltas[direction]
+                        neighbor_coords = (x + dx, y + dy)
+                        if neighbor_coords in synchronizers:
+                            neighbor = synchronizers[neighbor_coords]
+                            recv_dir = opposite_direction[direction]
+                            if neighbor.can_receive(recv_dir):
+                                byte_val = sync.get_output(direction)
+                                if byte_val is not None:
+                                    neighbor.receive(recv_dir, byte_val)
 
     async def monitor_replys(self):
         header = None
@@ -700,17 +760,22 @@ class Lamlet:
 
     async def vload(self, vd: int, addr: int, ordering: addresses.Ordering,
                     n_elements: int, mask_reg: int|None, start_index: int,
-                    reg_ordering: addresses.Ordering | None = None):
+                    reg_ordering: addresses.Ordering | None = None,
+                    stride_bytes: int | None = None):
         await self.vloadstore(vd, addr, ordering, n_elements, mask_reg, start_index,
-                              is_store=False, reg_ordering=reg_ordering)
+                              is_store=False, reg_ordering=reg_ordering,
+                              stride_bytes=stride_bytes)
 
     async def vstore(self, vs: int, addr: int, ordering: addresses.Ordering,
-                    n_elements: int, mask_reg: int|None, start_index: int):
-        await self.vloadstore(vs, addr, ordering, n_elements, mask_reg, start_index, is_store=True)
+                    n_elements: int, mask_reg: int|None, start_index: int,
+                    stride_bytes: int | None = None):
+        await self.vloadstore(vs, addr, ordering, n_elements, mask_reg, start_index,
+                              is_store=True, stride_bytes=stride_bytes)
 
     async def vloadstore(self, reg_base: int, addr: int, ordering: addresses.Ordering,
                          n_elements: int, mask_reg: int|None, start_index: int, is_store: bool,
-                         reg_ordering: addresses.Ordering | None = None):
+                         reg_ordering: addresses.Ordering | None = None,
+                         stride_bytes: int | None = None):
         """
         We have 3 different kinds of vector loads/stores.
         - In VPU memory and aligned (this is the fastest by far)
@@ -1173,6 +1238,7 @@ class Lamlet:
             self.clock.create_task(memlet.run())
         for channel in range(self.params.n_channels):
             self.clock.create_task(self.router_connections(channel))
+        self.clock.create_task(self.sync_network_connections())
         self.clock.create_task(self.monitor_replys())
         self.clock.create_task(self.monitor_instruction_buffer())
 

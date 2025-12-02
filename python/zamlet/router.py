@@ -21,10 +21,11 @@ class Connection:
 
 class Router:
 
-    def __init__(self, clock, params: LamletParams, x: int, y: int):
+    def __init__(self, clock, params: LamletParams, x: int, y: int, channel: int = 0):
         self.clock = clock
         self.x = x
         self.y = y
+        self.channel = channel
         self.params = params
 
         # Local State
@@ -114,7 +115,7 @@ class Router:
                         # All the required output directions are free.
                         # We create a new connection.
                         for new_header, output_direction in headers_and_output_directions:
-                            logger.debug(f'{self.clock.cycle}: ({self.x}, {self.y}): Make a new connection from {input_direction} to {output_direction} length {header.length} in router ({self.x}, {self.y}) target=({header.target_x}, {header.target_y})')
+                            logger.debug(f'{self.clock.cycle}: ({self.x}, {self.y}) ch{self.channel}: Make a new connection from {input_direction} to {output_direction} length {header.length} in router ({self.x}, {self.y}) target=({header.target_x}, {header.target_y})')
                             assert output_direction not in self._output_connections
                             self._output_connections[output_direction] = input_direction
                             # Put the new headers in self._output_headers
@@ -141,6 +142,25 @@ class Router:
             for output_direction in directions:
                 # If there is a connection see if we can send a word
                 output_buffer = self._output_buffers[output_direction]
+                if output_direction in self._output_connections:
+                    input_direction = self._output_connections[output_direction]
+                    input_buffer = self._input_buffers[input_direction]
+                    conn = self._input_connections[input_direction]
+                    if not output_buffer.can_append():
+                        logger.debug(
+                            f'{self.clock.cycle}: ({self.x}, {self.y}) ch{self.channel}: '
+                            f'BLOCKED {input_direction}->{output_direction} '
+                            f'output_buffer full (len={len(output_buffer)}, appended={output_buffer.appended})')
+                    elif not input_buffer:
+                        logger.debug(
+                            f'{self.clock.cycle}: ({self.x}, {self.y}) ch{self.channel}: '
+                            f'WAITING {input_direction}->{output_direction} '
+                            f'input_buffer empty, remaining={conn.remaining}')
+                    elif output_direction not in conn.unconsumed:
+                        logger.debug(
+                            f'{self.clock.cycle}: ({self.x}, {self.y}) ch{self.channel}: '
+                            f'SKIP {input_direction}->{output_direction} '
+                            f'already consumed this word')
                 if (output_direction in self._output_connections) and output_buffer.can_append():
                     input_direction = self._output_connections[output_direction]
                     input_buffer = self._input_buffers[input_direction]

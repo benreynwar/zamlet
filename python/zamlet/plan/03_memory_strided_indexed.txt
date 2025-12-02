@@ -317,6 +317,56 @@ Element Ordering (Indexed)
     - Use ordered when atomicity or memory ordering matters
     - Use unordered for better performance when ordering doesn't matter
 
+Ordered Scatter Implementation (VSOXEI)
+  When multiple elements target the same memory address, the highest-indexed
+  element's value must persist (since elements are written in order).
+
+  Implementation Algorithm (Two-Phase):
+
+  Phase 1 - Element Index Resolution:
+    - Each destination byte has a "written" flag (initially false)
+    - For each element i (in any order):
+      - Calculate destination address for element i
+      - For each byte of the element:
+        - If byte not yet written OR memory[byte] < i:
+          - Write element index i directly to memory[byte]
+          - Set written[byte] = true
+    - After this phase, each byte contains the index of the winning element
+
+  Phase 2 - Data Write:
+    - For each element i (in any order):
+      - Calculate destination address for element i
+      - For each byte of the element:
+        - If memory[byte] == i:
+          - Write the actual data byte from element i
+        - Else:
+          - Skip (a higher-indexed element owns this byte)
+
+  Limitations:
+    - Vector length limited to 256 elements (index must fit in a byte)
+
+  Benefits:
+    - Both phases can process elements in parallel (any order)
+    - Correctly handles overlapping writes with different element widths
+    - Final result matches sequential element-order execution
+
+  Alternative Algorithm (Iterative with Tracking):
+    - Each jamlet tracks addresses written by its lowest N element indices
+      (e.g., N=4)
+    - Within these N elements, writes are performed in correct element order
+    - After each iteration:
+      - Each jamlet reports the minimum element index it couldn't handle
+        correctly (e.g., the Nth smallest element index it received)
+      - Global minimum is computed across all jamlets
+      - Repeat scatter for elements starting at that minimum index
+    - Continue until all elements processed
+
+  Iterative Algorithm Benefits:
+    - Common case (no conflicts) completes in one iteration
+    - No 256-element limit
+    - Memory-efficient (only tracks N addresses per jamlet)
+    - Adapts to conflict density - fewer conflicts = fewer iterations
+
 Index Width vs Data Width (Indexed)
   Spec: v-st-ext.adoc lines 1682-1684
   Notes:
@@ -370,7 +420,9 @@ TODO Items
 6. Implement indexed ordered stores (vsoxei*.v)
    - Add decode patterns for mop=11 in opcode 0x27 block
    - Create VsoxeiV instruction class in vector.py
-   - Must preserve element order in memory accesses
+   - Use two-phase algorithm (see "Ordered Scatter Implementation" above)
+   - Phase 1: Write element indices to resolve conflicts
+   - Phase 2: Write actual data only where element index matches
 
 7. Add comprehensive tests
    - Test strided access for matrix column access

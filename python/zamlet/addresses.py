@@ -288,6 +288,9 @@ class GlobalAddress:
     def addr(self):
         return self.bit_addr//8
 
+    def bit_offset(self, n_bits):
+        return GlobalAddress(bit_addr=self.bit_addr+n_bits, params=self.params)
+
     def offset_bytes(self, offset):
         return GlobalAddress(self.bit_addr + offset*8, self.params)
 
@@ -593,6 +596,12 @@ class KMAddr:
     @property
     def addr(self):
         return self.bit_addr//8
+
+    def bit_offset(self, n_bits):
+        new_bit_addr=self.bit_addr+n_bits
+        assert new_bit_addr > 0
+        return KMAddr(k_index=self.k_index, ordering=self.ordering,
+                      bit_addr=new_bit_addr, params=self.params)
 
     def to_cache_slot(self, cache_table):
         cache_slot = cache_table.addr_to_slot(self)

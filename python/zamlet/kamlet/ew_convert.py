@@ -40,7 +40,7 @@ from typing import List, Dict, Tuple
 
 from zamlet.params import LamletParams
 from zamlet import utils
-from zamlet.utils import uint_to_list_of_uints
+from zamlet.utils import uint_to_list_of_uints, split_by_factors, join_by_factors
 
 
 def get_rand_bytes(rnd: Random, n: int):
@@ -294,31 +294,6 @@ def extract_words(params: LamletParams, src_words: List[bytes], src_ew: int, dst
     return words
 
 
-def split_by_factors(value, factors, allow_remainder=True):
-    reduced = value
-    pieces = []
-    for factor in factors:
-        pieces.append(reduced % factor)
-        reduced = reduced//factor
-    if allow_remainder:
-        pieces.append(reduced)
-    else:
-        assert reduced == 0
-    return pieces
-
-
-def join_by_factors(values, factors):
-    assert len(values) in (len(factors) + 1, len(factors))
-    f = 1
-    total = 0
-    for value, factor in zip(values[:-1], factors):
-        assert value < factor
-        total += value * f
-        f *= factor
-    if len(values) == len(factors):
-        assert values[-1] < factors[-1]
-    total += values[-1] * f
-    return total
 
 def get_mapping_for_dst(
         params: LamletParams, src_ew: int, dst_ew: int,

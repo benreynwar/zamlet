@@ -199,3 +199,50 @@ def update_bytes_word(old_word: bytes, new_word: bytes, mask: int) -> bytes:
     updated_int = update_int_word(old_int, new_int, mask)
     updated = updated_int.to_bytes(n_bytes, byteorder='little')
     return updated
+
+def shift_and_update_word(old_word: bytes, src_word: bytes, src_start: int, dst_start:int, n_bytes: int):
+    '''
+    We want to take `n_bytes` bytes from the `src_word` starting a byte `src_state` and write them to
+    the `old_word` starting a byte `dst_start` to produce the new word which we return.
+    '''
+    word_length = len(old_word)
+    assert word_length == len(src_word)
+    src_word_int = int.from_bytes(src_word, byteorder='little')
+    shift = src_start - dst_start
+    if shift > 0:
+        shifted = src_word_int >> shift
+    else:
+        shifted = src_word_int << shift
+    mask = ((1 << n_bytes) - 1) << dst_start
+    masked_shifted = shifted & mask
+    old_word_int = int.from_bytes(old_word, byteorder='little')
+    updated_int = update_int_word(old_word_int, masked_shifted, mask)
+    updated = updated_int.to_bytes(word_length, byteorder='little')
+    return updated
+
+
+def split_by_factors(value, factors, allow_remainder=True):
+    reduced = value
+    pieces = []
+    for factor in factors:
+        pieces.append(reduced % factor)
+        reduced = reduced//factor
+    if allow_remainder:
+        pieces.append(reduced)
+    else:
+        assert reduced == 0
+    return pieces
+
+
+def join_by_factors(values, factors):
+    assert len(values) in (len(factors) + 1, len(factors))
+    f = 1
+    total = 0
+    for value, factor in zip(values[:-1], factors):
+        assert value < factor
+        total += value * f
+        f *= factor
+    if len(values) == len(factors):
+        assert values[-1] < factors[-1]
+    total += values[-1] * f
+    return total

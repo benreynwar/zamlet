@@ -164,19 +164,19 @@ if __name__ == '__main__':
         filenames = [sys.argv[1]]
     else:
         filenames = [
-           'tests/readwritebyte/should_fail.riscv',
-           'tests/readwritebyte/simple_vpu_test.riscv',
-           'tests/readwritebyte/write_then_read_many_bytes.riscv',
-           'tests/sgemv/vec-sgemv-large.riscv', #(too small)
-           'tests/sgemv/vec-sgemv-64x64.riscv',
-           'tests/sgemv/vec-sgemv.riscv',  #(too small) (it tries to step through rows in a matrix but one row is less than vline so it gets misaligned)
-           'tests/vecadd/vec-add-evict.riscv',
-           'tests/vecadd/vec-add.riscv',
-           'tests/daxpy/vec-daxpy.riscv',
-           'tests/daxpy/vec-daxpy-small.riscv',
-           'tests/conditional/vec-conditional.riscv',
-           'tests/conditional/vec-conditional-tiny.riscv',
-           'tests/unaligned/unaligned.riscv',
+           'kernel_tests/readwritebyte/should_fail.riscv',
+           'kernel_tests/readwritebyte/simple_vpu_test.riscv',
+           'kernel_tests/readwritebyte/write_then_read_many_bytes.riscv',
+           'kernel_tests/sgemv/vec-sgemv-large.riscv', #(too small)
+           'kernel_tests/sgemv/vec-sgemv-64x64.riscv',
+           'kernel_tests/sgemv/vec-sgemv.riscv',  #(too small) (it tries to step through rows in a matrix but one row is less than vline so it gets misaligned)
+           'kernel_tests/vecadd/vec-add-evict.riscv',
+           'kernel_tests/vecadd/vec-add.riscv',
+           'kernel_tests/daxpy/vec-daxpy.riscv',
+           'kernel_tests/daxpy/vec-daxpy-small.riscv',
+           'kernel_tests/conditional/vec-conditional.riscv',
+           'kernel_tests/conditional/vec-conditional-tiny.riscv',
+           'kernel_tests/unaligned/unaligned.riscv',
         ]
 
     for filename in filenames:

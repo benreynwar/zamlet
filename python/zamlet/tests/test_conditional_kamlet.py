@@ -17,6 +17,8 @@ import logging
 import struct
 from random import Random
 
+import pytest
+
 from zamlet.runner import Clock
 from zamlet.params import LamletParams
 from zamlet.lamlet.lamlet import Lamlet
@@ -34,7 +36,7 @@ async def update(clock, lamlet):
         lamlet.update()
 
 
-async def test_conditional_simple(clock: Clock, vector_length: int, seed: int, lmul: int, j_rows: int):
+async def run_conditional_simple(clock: Clock, vector_length: int, seed: int, lmul: int, j_rows: int):
     """
     Simple conditional test with small arrays.
 
@@ -258,12 +260,35 @@ async def main(clock, vector_length: int, seed: int, lmul: int, j_rows: int):
     clock.register_main()
 
     clock_driver_task = clock.create_task(clock.clock_driver())
-    exit_code = await test_conditional_simple(clock, vector_length, seed, lmul, j_rows)
+    exit_code = await run_conditional_simple(clock, vector_length, seed, lmul, j_rows)
 
     logger.warning(f"Test completed with exit_code: {exit_code}")
     clock.running = False
 
     return exit_code
+
+
+def run_test(vector_length: int, seed: int = 0, lmul: int = 4, j_rows: int = 1):
+    """Helper to run a single test configuration."""
+    clock = Clock(max_cycles=5000)
+    exit_code = asyncio.run(main(clock, vector_length, seed, lmul, j_rows))
+    assert exit_code == 0, f"Test failed with exit_code={exit_code}"
+
+
+def generate_test_params():
+    """Generate test parameter combinations."""
+    params = []
+    for vl in [3, 7, 8, 15, 32]:
+        for seed in [0, 42]:
+            for lmul in [1, 4]:
+                id_str = f"vl{vl}_seed{seed}_lmul{lmul}"
+                params.append(pytest.param(vl, seed, lmul, id=id_str))
+    return params
+
+
+@pytest.mark.parametrize("vl,seed,lmul", generate_test_params())
+def test_conditional(vl, seed, lmul):
+    run_test(vl, seed, lmul)
 
 
 if __name__ == '__main__':

@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from enum import Enum
 
 from zamlet import addresses
-from zamlet.addresses import KMAddr
+from zamlet.addresses import KMAddr, GlobalAddress
 from zamlet.params import LamletParams
 
 
@@ -76,25 +76,6 @@ class LoadImmByte(KInstr):
 
     async def update_kamlet(self, kamlet):
         await kamlet.handle_load_imm_byte_instr(self)
-
-
-@dataclass
-class LoadByte(KInstr):
-    """
-    This instruction load a byte from memory to a location in a vector register.
-    """
-    dst: addresses.RegAddr
-    src: KMAddr
-    # Which bits of the byte we write.
-    bit_mask: int
-    # An identifier. Writes with the same writeset_ident are guaranteed not to clash.
-    writeset_ident: int
-    mask_reg: int
-    mask_index: int
-    ident: int
-
-    async def update_kamlet(self, kamlet):
-        await kamlet.handle_load_byte_instr(self)
 
 
 @dataclass
@@ -255,6 +236,8 @@ class Load(KInstr):
     """
     A load from the VPU memory into a vector register.
     The k_maddr points to the location of the start_index element.
+
+    stride_bytes: byte stride between elements. None = unit stride (ew/8 bytes).
     """
     dst: int
     # The address of the start_index element in the kamlet address space.
@@ -265,28 +248,19 @@ class Load(KInstr):
     mask_reg: int|None
     writeset_ident: int
     instr_ident: int
+    stride_bytes: int|None = None
 
     async def update_kamlet(self, kamlet):
         await kamlet.handle_load_instr(self)
 
-    def n_tags(self, params):
-        """
-        Returns the number of tags per jamlet.
-        """
-        src_ew = self.k_maddr.ordering.ew
-        dst_ew = self.dst_ordering.ew
-        ww = params.word_bytes * 8
-        # If we did this better ratio could be reduced to dst_ew/src_ew or src_ew/dst_ew
-        # but to keep it simpler we're basing it on word width.
-        if src_ew < dst_ew:
-            ratio = ww//src_ew
-        else:
-            ratio = ww//dst_ew
-        return ratio * 2
-
 
 @dataclass
 class Store(KInstr):
+    """
+    A store from a vector register to VPU memory.
+
+    stride_bytes: byte stride between elements. None = unit stride (ew/8 bytes).
+    """
     src: int
     k_maddr: KMAddr  # An address in the kamlet address space
     start_index: int
@@ -299,20 +273,6 @@ class Store(KInstr):
     async def update_kamlet(self, kamlet):
         await kamlet.handle_store_instr(self)
 
-    def n_tags(self, params):
-        """
-        Returns the number of tags per jamlet.
-        """
-        dst_ew = self.k_maddr.ordering.ew
-        src_ew = self.src_ordering.ew
-        ww = params.word_bytes * 8
-        # If we did this better ratio could be reduced to dst_ew/src_ew or src_ew/dst_ew
-        # but to keep it simpler we're basing it on word width.
-        if src_ew < dst_ew:
-            ratio = ww//src_ew
-        else:
-            ratio = ww//dst_ew
-        return ratio * 2
 
 #@dataclass
 #class Store(KInstr):
