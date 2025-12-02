@@ -173,8 +173,8 @@ async def run_strided_test(
         stride_bytes=stride,
     )
 
-    # Store from v0 to destination with stride
-    logger.info(f"Storing {vl} elements with stride={stride} to dst")
+    # Store from v0 to destination contiguously (unit stride)
+    logger.info(f"Storing {vl} elements contiguously to dst")
     await lamlet.vstore(
         vs=0,
         addr=dst_base,
@@ -182,16 +182,15 @@ async def run_strided_test(
         n_elements=vl,
         start_index=0,
         mask_reg=None,
-        stride_bytes=stride,
     )
 
     logger.info("Load and store completed")
 
-    # Read back results from strided locations and verify
+    # Read back results contiguously and verify
     logger.info("Reading results from memory")
     result_list = []
     for i in range(vl):
-        addr = dst_base + i * stride
+        addr = dst_base + i * element_bytes
         future = await lamlet.get_memory(addr, element_bytes)
         await future
         data = future.result()

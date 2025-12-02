@@ -1,5 +1,11 @@
 # Claude Code Guidelines for RISC-V Model
 
+## RISC-V ISA Manual Location
+The RISC-V ISA manual is located at `~/Code/riscv-isa-manual`. The vector extension spec is at:
+```
+~/Code/riscv-isa-manual/src/v-st-ext.adoc
+```
+
 ## Wrapping up context
 When I say "wrap up this context", do the following:
 1. Read this CLAUDE.md file and check if anything needs to be improved or corrected based on what you learned during this session. Make those changes.
@@ -27,9 +33,13 @@ DO include:
 Always redirect test output to a log file in the current directory, then examine the log. This allows
 you to search for specific log labels (see Logging Guide below) without re-running the test:
 ```bash
-python tests/conditional/test_conditional_kamlet.py --vector-length 32 > test.log 2>&1
+python kernel_tests/conditional/test_conditional.py --vector-length 32 > test.log 2>&1
 grep "RF_WRITE" test.log
 ```
+
+Tests are organized into:
+- `kernel_tests/` - Integration tests running RISC-V binaries through run_lamlet
+- `tests/` - Unit/component tests for specific functionality
 
 ## Keeping this up-to-date
 If you notice this file is not up-to-date, mention that, and suggest changes.
@@ -48,6 +58,7 @@ Lamlet (top-level VPU)
 ├── Kamlet[k_in_l] (tile clusters)
 │   ├── CacheTable (cache management)
 │   ├── KamletRegisterFile (RF tracking)
+│   ├── Synchronizer (cross-kamlet sync)
 │   └── Jamlet[j_in_k] (lanes)
 │       ├── rf_slice (register file portion)
 │       ├── sram (local cache memory)
@@ -76,45 +87,61 @@ Manages a collection of jamlets (lanes). Responsibilities:
 ### jamlet.py
 Single lane processor. Handles:
 - Local SRAM ↔ register file transfers
-- Jamlet-to-jamlet (J2J) message passing for cross-lane data movement
 - Router management for NoC communication
+- Message dispatch via `MESSAGE_HANDLERS` registry from `transactions/`
 
-Key protocol functions:
-- `send_load_j2j_words_req()` / `handle_load_j2j_words_req()` - J2J loads
-- `send_store_j2j_words_req()` / `handle_store_j2j_words_req()` - J2J stores
-- `send_load_word_req()` / `handle_load_word_req()` - LoadWord unaligned transfers
-- `init_load_word_state()` - determines SRC/DST roles for each jamlet
+Note: Protocol functions have been moved to the `transactions/` package.
 
 ### cache_table.py
 Cache management and waiting item coordination. Key concepts:
 
 **Cache States**: INVALID, SHARED, MODIFIED, READING, WRITING, WRITING_READING, UNALLOCATED, OLD_MODIFIED (dirty data for previous address being written back)
 
-**Waiting Items**: Operations blocked on cache or protocol completion
-- `WaitingLoadSimple` / `WaitingStoreSimple` - aligned operations
-- `WaitingLoadJ2JWords` / `WaitingStoreJ2JWords` - complex J2J transfers
-- `WaitingLoadWord` - partial word load crossing cache line boundaries (unaligned)
+**Protocol States**: Track multi-message protocols via `SendState` and `ReceiveState`:
+- `SendState`: NEED_TO_SEND → WAITING_FOR_RESPONSE → COMPLETE
+- `ReceiveState`: WAITING_FOR_REQUEST → NEED_TO_ASK_FOR_RESEND → COMPLETE
 
-**Protocol States**: Track multi-message protocols
-- `LoadSrcState` / `LoadDstState`
-- `StoreSrcState` / `StoreDstState`
+**Waiting Items**: Most waiting items are now in the `transactions/` package (see below).
+`cache_table.py` still contains:
+- `WaitingFuture` - for awaiting async responses
+- `WaitingStoreJ2JWords` - J2J store operations
+- `LoadProtocolState` / `StoreProtocolState` - protocol state tracking
 
-States: NEED_TO_SEND → WAITING_FOR_RESPONSE → COMPLETE
+### transactions/ (package)
+Transaction logic has been refactored into separate modules for better organization:
+
+- `load_simple.py` - `WaitingLoadSimple`, aligned loads from cache to RF
+- `store_simple.py` - `WaitingStoreSimple`, aligned stores from RF to cache
+- `load_j2j_words.py` - `WaitingLoadJ2JWords`, unaligned J2J loads
+- `store_j2j_words.py` - J2J store message handlers
+- `load_word.py` - `WaitingLoadWordSrc`, `WaitingLoadWordDst`, partial word loads
+- `store_word.py` - `WaitingStoreWordSrc`, `WaitingStoreWordDst`, partial word stores
+- `write_imm_bytes.py` - `WaitingWriteImmBytes`, immediate byte writes
+- `read_byte.py` - `WaitingReadByte`, single byte reads
+- `read_mem_word.py` - Memory word read operations
+- `j2j_mapping.py` - `RegMemMapping`, element width conversion helpers
+- `helpers.py` - Shared utility functions
+
+Each transaction module registers its message handlers via `@register_handler` decorator.
+
+### synchronization.py
+Lamlet-wide synchronization network for tracking when events have occurred across all kamlets.
+Uses a separate 8-bit bus network (not the main router) with direct neighbor connections.
+Supports optional minimum value aggregation.
 
 ### ew_convert.py
 Element width conversion and data mapping between different ew-mapped vectors.
+See the module docstring for detailed documentation on tags, coordinates, and mapping concepts.
 
-Key functions:
-- `get_mapping_for_src()` / `get_mapping_for_dst()` - map src/dst data positions
-- `get_mapping_from_large_tag()` / `get_mapping_from_small_tag()` - handle ew ratio differences
-
-The `MemMapping` dataclass describes how data maps between src and dst vectors with different element widths.
-
-**Important naming convention**: In `MemMapping`, "src" and "dst" refer to the data flow direction:
+**Important naming convention**: "src" and "dst" refer to the data flow direction:
 - For **Store**: `src` = register, `dst` = memory (data flows register → memory)
 - For **Load**: `src` = memory, `dst` = register (data flows memory → register)
 
-The `src_ve`/`dst_ve` fields use **physical** element coordinates. See the "Logical vs Physical Element Coordinates" section in addresses.py below for conversion formulas.
+Coordinates use **physical** element positions (distributed across jamlets).
+See addresses.py for logical vs physical coordinate conversion.
+
+Note: Some mapping functionality has moved to `transactions/j2j_mapping.py` which provides
+`RegMemMapping` dataclass and `get_mapping_from_reg()` / `get_mapping_from_mem()` functions.
 
 ### addresses.py
 Address space management and translation chain. See the module docstring in `addresses.py` for detailed documentation on:
@@ -129,9 +156,16 @@ Key types:
 
 ### kinstructions.py
 Kamlet-level instruction definitions:
-- `Load` / `Store` - vector load/store with ordering, mask, writeset_ident
-- `LoadByte`, `LoadWord`, `StoreByte`, `StoreWord` - single element operations
-- Arithmetic operations: `VArith`, `VArithImm`, `VDotProduct`
+- `Load` / `Store` - vector load/store with ordering, mask, writeset_ident, stride support
+- `LoadWord` / `StoreWord` - single word operations for unaligned accesses
+- `LoadImmByte` / `LoadImmWord` - immediate value loads
+- `WriteImmBytes` / `ReadByte` - memory initialization and byte reads
+- `ZeroLines` / `DiscardLines` - cache line management
+- Arithmetic: `VArithVvOp`, `VArithVxOp` (add, mul, macc)
+- Mask: `VmsleViOp`, `VmnandMmOp`
+- Move: `VBroadcastOp`, `VmvVvOp`
+- Reduction: `VreductionVsOp`
+- Scalar read: `ReadRegElement`
 
 ### memlet.py
 Memory interface to off-chip DRAM. Handles `READ_LINE` and `WRITE_LINE` requests from jamlets.
@@ -140,10 +174,12 @@ Memory interface to off-chip DRAM. Handles `READ_LINE` and `WRITE_LINE` requests
 Message protocol definitions for inter-component communication.
 
 Key message types:
-- `LOAD_J2J_WORDS_REQ/RESP/DROP` - jamlet-to-jamlet load protocol
+- `LOAD_J2J_WORDS_REQ/RESP/DROP/RETRY` - jamlet-to-jamlet load protocol
 - `STORE_J2J_WORDS_REQ/RESP/DROP/RETRY` - jamlet-to-jamlet store protocol
-- `LOAD_WORD_REQ/RESP/DROP/RETRY` - LoadWord protocol for unaligned word loads
-- `READ_LINE/WRITE_LINE` - memory to/from cache
+- `LOAD_WORD_REQ/RESP/DROP` - LoadWord protocol for unaligned word loads
+- `STORE_WORD_REQ/RESP/DROP/RETRY` - StoreWord protocol for unaligned word stores
+- `READ_MEM_WORD_REQ/RESP/DROP` - Memory word read protocol
+- `READ_LINE/WRITE_LINE/WRITE_LINE_READ_LINE` - memory to/from cache
 
 Two channels: Channel 0 for always-consumable responses, Channel 1 for requests.
 
@@ -167,23 +203,22 @@ lamlet_cache_line_bytes = params.cache_line_bytes * params.k_in_l
 4. When cache ready, each jamlet copies from SRAM to rf_slice
 
 ### Unaligned Load (J2J Path)
-1. Kamlet creates `WaitingLoadJ2JWords` with protocol states for each tag
-2. Each jamlet sends `LOAD_J2J_WORDS_REQ` with data from cache
-3. Destination jamlet receives, shifts/masks data, writes to rf_slice
+1. Kamlet creates `WaitingLoadJ2JWords` (from `transactions/load_j2j_words.py`) with protocol states
+2. `WaitingLoadJ2JWords.monitor_jamlet()` sends `LOAD_J2J_WORDS_REQ` when cache is ready
+3. Destination jamlet receives via registered handler, shifts/masks data, writes to rf_slice
 4. Destination sends `LOAD_J2J_WORDS_RESP` (or `DROP` if not ready)
-5. When all protocol states complete, operation finishes
+5. When all protocol states complete, `finalize()` releases RF locks
 
 ### Store follows similar patterns but data flows rf_slice → SRAM
 
 ### Unaligned Word Load (LoadWord Path)
 1. Lamlet detects partial element at cache line boundary, creates `LoadWord` instruction
-2. Each kamlet (SRC with cache, DST with register) receives instruction, creates `WaitingLoadWord`
-3. SRC kamlet waits for cache, sets `src_state=NEED_TO_SEND`
-4. DST kamlet sets `dst_state=WAITING_FOR_REQUEST`, waits for data
-5. SRC jamlet sends `LOAD_WORD_REQ` with word data to DST jamlet (using absolute coordinates via `k_indices_to_j_coords`)
-6. DST jamlet applies byte mask, merges with existing register data
-7. DST sends `LOAD_WORD_RESP`, both sides mark COMPLETE
-8. If DST not ready, sends `DROP`, SRC retries
+2. Each kamlet (SRC with cache, DST with register) receives instruction
+3. Creates `WaitingLoadWordSrc` or `WaitingLoadWordDst` (from `transactions/load_word.py`)
+4. SRC waits for cache, then sends `LOAD_WORD_REQ` to DST
+5. DST applies byte mask, merges with existing register data
+6. DST sends `LOAD_WORD_RESP`, both sides mark COMPLETE
+7. If DST not ready, sends `DROP`, SRC retries
 
 ## Key Calculations
 
@@ -275,7 +310,7 @@ Note: If memory_loc != slot_mem_loc but can_read=True, this indicates the cache 
 ```
 
 ### CACHE_WRITE STORE_SIMPLE
-**Location**: jamlet.py - Vector stores to local cache
+**Location**: transactions/store_simple.py - Vector stores to local cache
 **Format**: `CACHE_WRITE STORE_SIMPLE: jamlet (x,y) sram[addr] old={hex} new={hex} from rf[reg] mask=0x{mask:016x}`
 **Grep**: `grep "CACHE_WRITE STORE_SIMPLE" <logfile>`
 **Example**:
@@ -284,7 +319,7 @@ Note: If memory_loc != slot_mem_loc but can_read=True, this indicates the cache 
 ```
 
 ### CACHE_WRITE STORE_J2J
-**Location**: jamlet.py - Jamlet-to-jamlet stores
+**Location**: transactions/store_j2j_words.py - Jamlet-to-jamlet stores
 **Format**: `CACHE_WRITE STORE_J2J: jamlet (x,y) sram[addr] old={hex} new={hex}`
 **Grep**: `grep "CACHE_WRITE STORE_J2J" <logfile>`
 **Example**:
@@ -293,12 +328,12 @@ Note: If memory_loc != slot_mem_loc but can_read=True, this indicates the cache 
 ```
 
 ### CACHE_WRITE STORE_WORD
-**Location**: jamlet.py - Single word stores
+**Location**: transactions/store_word.py - Single word stores
 **Format**: `CACHE_WRITE STORE_WORD: jamlet (x,y) sram[addr] old={hex} new={hex}`
 **Grep**: `grep "CACHE_WRITE STORE_WORD" <logfile>`
 
 ### CACHE_WRITE WRITE_IMM_BYTES
-**Location**: kamlet.py - Immediate byte writes to cache (used during initialization)
+**Location**: transactions/write_imm_bytes.py - Immediate byte writes to cache (used during initialization)
 **Format**: `CACHE_WRITE WRITE_IMM_BYTES: jamlet (x,y) sram[start:end] old={hex} new={hex}`
 **Grep**: `grep "CACHE_WRITE WRITE_IMM_BYTES" <logfile>`
 **Example**:
@@ -309,7 +344,7 @@ Note: If memory_loc != slot_mem_loc but can_read=True, this indicates the cache 
 ## Register File Operations
 
 ### RF_WRITE LOAD_SIMPLE
-**Location**: jamlet.py - Simple loads to register file
+**Location**: transactions/load_simple.py - Simple loads to register file
 **Format**: `RF_WRITE LOAD_SIMPLE: jamlet (x,y) rf[reg] old={hex} new={hex} instr_ident={id} mask=0x{mask:016x}`
 **Grep**: `grep "RF_WRITE LOAD_SIMPLE" <logfile>`
 **Example**:
@@ -318,7 +353,7 @@ Note: If memory_loc != slot_mem_loc but can_read=True, this indicates the cache 
 ```
 
 ### RF_WRITE LOAD_J2J
-**Location**: jamlet.py - Jamlet-to-jamlet loads to register file
+**Location**: transactions/load_j2j_words.py - Jamlet-to-jamlet loads to register file
 **Format**: `RF_WRITE LOAD_J2J: jamlet (x,y) rf[reg] old={hex} new={hex}`
 **Grep**: `grep "RF_WRITE LOAD_J2J" <logfile>`
 

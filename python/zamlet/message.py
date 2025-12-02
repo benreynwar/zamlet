@@ -136,6 +136,10 @@ CHANNEL_MAPPING = {
     MessageType.STORE_J2J_WORDS_REQ: 1,
     MessageType.LOAD_WORD_REQ: 1,
     MessageType.STORE_WORD_REQ: 1,
+    MessageType.READ_MEM_WORD_REQ: 1,
+
+    MessageType.READ_MEM_WORD_RESP: 0,
+    MessageType.READ_MEM_WORD_DROP: 0,
 
     # This is always consumable because we will explicitly track how much buffer room there is.
     MessageType.INSTRUCTIONS: 0,

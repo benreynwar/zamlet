@@ -5,6 +5,8 @@ class WaitingItem:
 
     cache_is_write = False
     cache_is_read = False
+    reads_all_memory = False
+    writes_all_memory = False
 
     def __init__(self, item: Any, instr_ident: int|None=None, rf_ident: int|None=None):
         self.item = item

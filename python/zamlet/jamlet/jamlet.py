@@ -15,7 +15,6 @@ from zamlet.kamlet import ew_convert
 from zamlet.kamlet import cache_table
 from zamlet.kamlet.cache_table import CacheRequestType, WaitingItem, CacheState
 from zamlet.register_file_slot import KamletRegisterFile
-from zamlet.synchronization import Synchronizer
 from zamlet.transactions import MESSAGE_HANDLERS
 
 
@@ -96,14 +95,14 @@ class Jamlet:
             MessageType.STORE_WORD_RESP: Queue(2),
             MessageType.STORE_WORD_DROP: Queue(2),
             MessageType.STORE_WORD_RETRY: Queue(2),
+            MessageType.READ_MEM_WORD_REQ: Queue(2),
+            MessageType.READ_MEM_WORD_RESP: Queue(2),
+            MessageType.READ_MEM_WORD_DROP: Queue(2),
             }
 
         self.cache_table = cache_table
         self.rf_info = rf_info
         self.tlb = tlb
-
-        # Synchronizer for lamlet-wide synchronization
-        self.synchronizer = Synchronizer(clock, params, x, y)
 
     async def send_packet(self, packet):
         assert isinstance(packet[0], Header)
@@ -288,7 +287,8 @@ class Jamlet:
             if handler is None:
                 raise NotImplementedError(f"No handler for channel 0 message {header.message_type}")
             packet = await self._receive_packet_body(queue, header)
-            handler(self, packet)
+            result = handler(self, packet)
+            assert result is None, f"Channel 0 handler for {header.message_type} must be sync (not async)"
 
     async def _receive_packet(self, queue):
         """Handle channel 1+ packets (requests that may need to send responses)."""
@@ -390,7 +390,6 @@ class Jamlet:
         self.clock.create_task(self._receive_packets())
         self.clock.create_task(self._monitor_witems())
         self.clock.create_task(self._monitor_cache_requests())
-        self.clock.create_task(self.synchronizer.run())
 
     SEND = 0
     INSTRUCTIONS = 1

@@ -2,7 +2,7 @@
 Lamlet-wide Synchronization Network
 
 This module implements a dedicated synchronization network for tracking when events
-have occurred across all jamlets in a lamlet. It supports optional minimum value
+have occurred across all kamlets in a lamlet. It supports optional minimum value
 aggregation.
 
 Network Architecture:
@@ -16,12 +16,12 @@ Packet Format (8 bits per cycle):
 
 Send Conditions:
 - Cardinal N/S: Send when the opposite column is synchronized
-  - Send N when S column (all jamlets below us in this column) is synced
-  - Send S when N column (all jamlets above us in this column) is synced
+  - Send N when S column (all kamlets below us in this column) is synced
+  - Send S when N column (all kamlets above us in this column) is synced
 
 - Cardinal E/W: Send when the opposite row is synchronized
-  - Send E when W row (all jamlets left of us in this row) is synced
-  - Send W when E row (all jamlets right of us in this row) is synced
+  - Send E when W row (all kamlets left of us in this row) is synced
+  - Send W when E row (all kamlets right of us in this row) is synced
 
 - Diagonal: Send when opposite quadrant + adjacent column + adjacent row are all synced
   - Send NE when SW quadrant + S column + W row are synced
@@ -29,16 +29,19 @@ Send Conditions:
   - Send SE when NW quadrant + N column + W row are synced
   - Send SW when NE quadrant + N column + E row are synced
 
-A jamlet must have locally seen the event before sending any sync message.
+A kamlet must have locally seen the event before sending any sync message.
 """
 
 import logging
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Optional, Dict, Set, List
+from typing import Optional, Dict, Set, List, TYPE_CHECKING
 
 from zamlet.params import LamletParams
 from zamlet.utils import Queue
+
+if TYPE_CHECKING:
+    from zamlet.kamlet.cache_table import CacheTable
 
 
 logger = logging.getLogger(__name__)
@@ -116,17 +119,17 @@ class SyncState:
 @dataclass
 class SyncPacket:
     """A synchronization packet to be sent to a neighbor."""
-    sync_ident: int          # 5 bits
+    sync_ident: int          # 7 bits
     has_value: bool          # 1 bit
     value: Optional[int]     # 32 bits if has_value
 
     def to_bytes(self) -> bytes:
         """Serialize packet to bytes for transmission."""
-        # Byte 0: [7:6] reserved, [5:1] sync_ident, [0] has_value
-        byte0 = ((self.sync_ident & 0x1F) << 1) | (1 if self.has_value else 0)
+        # Byte 0: [7] has_value, [6:0] sync_ident (7 bits)
+        # Bytes 1-4: value (32-bit, if has_value=1)
+        byte0 = (0x80 if self.has_value else 0) | (self.sync_ident & 0x7F)
         result = bytes([byte0])
         if self.has_value and self.value is not None:
-            # Little-endian 32-bit value
             result += self.value.to_bytes(4, 'little')
         return result
 
@@ -134,8 +137,8 @@ class SyncPacket:
     def from_bytes(cls, data: bytes) -> 'SyncPacket':
         """Deserialize packet from bytes."""
         byte0 = data[0]
-        sync_ident = (byte0 >> 1) & 0x1F
-        has_value = (byte0 & 0x1) == 1
+        has_value = (byte0 & 0x80) != 0
+        sync_ident = byte0 & 0x7F
         value = None
         if has_value and len(data) >= 5:
             value = int.from_bytes(data[1:5], 'little')
@@ -148,22 +151,23 @@ class SyncPacket:
 
 class Synchronizer:
     """
-    Handles lamlet-wide synchronization for a single jamlet.
+    Handles lamlet-wide synchronization for a single kamlet.
 
     Each Synchronizer maintains state for multiple concurrent sync operations
     (identified by sync_ident) and communicates with all 8 neighbors via a
     dedicated 8-bit synchronization network.
     """
 
-    def __init__(self, clock, params: LamletParams, x: int, y: int):
+    def __init__(self, clock, params: LamletParams, x: int, y: int, cache_table: 'CacheTable|None'):
         self.clock = clock
         self.params = params
         self.x = x
         self.y = y
+        self.cache_table = cache_table
 
-        # Calculate grid boundaries
-        self.total_j_cols = params.k_cols * params.j_cols
-        self.total_j_rows = params.k_rows * params.j_rows
+        # Calculate grid boundaries (kamlet grid, not jamlet grid)
+        self.total_cols = params.k_cols
+        self.total_rows = params.k_rows
 
         # Input/output buffers for each of 8 directions
         self._input_buffers: Dict[SyncDirection, Queue] = {
@@ -184,11 +188,12 @@ class Synchronizer:
         # Packets being sent (byte-by-byte, one byte per cycle per direction)
         self._outgoing_packets: Dict[SyncDirection, List[int]] = {}
 
+
     def has_neighbor(self, direction: SyncDirection) -> bool:
         """Check if there's a neighbor in the given direction."""
         dx, dy = self._direction_delta(direction)
         nx, ny = self.x + dx, self.y + dy
-        return 0 <= nx < self.total_j_cols and 0 <= ny < self.total_j_rows
+        return 0 <= nx < self.total_cols and 0 <= ny < self.total_rows
 
     def _direction_delta(self, direction: SyncDirection) -> tuple:
         """Get (dx, dy) for a direction."""
@@ -205,29 +210,29 @@ class Synchronizer:
         return deltas[direction]
 
     def _has_quadrant(self, quadrant: str) -> bool:
-        """Check if any jamlets exist in the given quadrant."""
+        """Check if any kamlets exist in the given quadrant."""
         if quadrant == 'NE':
-            return self.x < self.total_j_cols - 1 and self.y > 0
+            return self.x < self.total_cols - 1 and self.y > 0
         elif quadrant == 'NW':
             return self.x > 0 and self.y > 0
         elif quadrant == 'SE':
-            return self.x < self.total_j_cols - 1 and self.y < self.total_j_rows - 1
+            return self.x < self.total_cols - 1 and self.y < self.total_rows - 1
         elif quadrant == 'SW':
-            return self.x > 0 and self.y < self.total_j_rows - 1
+            return self.x > 0 and self.y < self.total_rows - 1
         return False
 
     def _has_column_region(self, region: str) -> bool:
-        """Check if there are jamlets in column north/south of us."""
+        """Check if there are kamlets in column north/south of us."""
         if region == 'N':
             return self.y > 0
         elif region == 'S':
-            return self.y < self.total_j_rows - 1
+            return self.y < self.total_rows - 1
         return False
 
     def _has_row_region(self, region: str) -> bool:
-        """Check if there are jamlets in row east/west of us."""
+        """Check if there are kamlets in row east/west of us."""
         if region == 'E':
-            return self.x < self.total_j_cols - 1
+            return self.x < self.total_cols - 1
         elif region == 'W':
             return self.x > 0
         return False
@@ -257,7 +262,7 @@ class Synchronizer:
                      f'sync_ident={sync_ident} has_value={has_value}')
 
     def local_event(self, sync_ident: int, value: Optional[int] = None):
-        """Report that this jamlet has seen the event."""
+        """Report that this kamlet has seen the event."""
         if sync_ident not in self._sync_states:
             self.start_sync(sync_ident, has_value=(value is not None))
 
@@ -266,9 +271,17 @@ class Synchronizer:
         state.local_value = value
         logger.debug(f'{self.clock.cycle}: SYNC_LOCAL: synchronizer ({self.x},{self.y}) '
                      f'sync_ident={sync_ident} value={value}')
+        self._notify_if_complete(sync_ident)
+
+    def _all_sends_complete(self, state: SyncState) -> bool:
+        """Check if we've sent to all neighbors that exist."""
+        for direction in SyncDirection:
+            if self.has_neighbor(direction) and direction not in state.sent_directions:
+                return False
+        return True
 
     def is_complete(self, sync_ident: int) -> bool:
-        """Check if synchronization is complete (all jamlets have seen the event)."""
+        """Check if synchronization is complete (all kamlets have seen the event)."""
         if sync_ident not in self._sync_states:
             return False
 
@@ -276,12 +289,17 @@ class Synchronizer:
         if not state.local_seen:
             return False
 
-        return (all(state.quadrant_synced.values()) and
+        # Must have received from all regions
+        if not (all(state.quadrant_synced.values()) and
                 all(state.column_synced.values()) and
-                all(state.row_synced.values()))
+                all(state.row_synced.values())):
+            return False
+
+        # Must have sent to all neighbors
+        return self._all_sends_complete(state)
 
     def get_min_value(self, sync_ident: int) -> Optional[int]:
-        """Get the minimum value across all jamlets."""
+        """Get the minimum value across all kamlets."""
         if sync_ident not in self._sync_states:
             return None
 
@@ -308,6 +326,19 @@ class Synchronizer:
         """Clear a completed synchronization."""
         if sync_ident in self._sync_states:
             del self._sync_states[sync_ident]
+
+    def _notify_if_complete(self, sync_ident: int):
+        """If sync is complete, set the waiting item's sync_state to COMPLETE."""
+        from zamlet.transactions.load_stride import SyncState as WaitingSyncState
+        if self.is_complete(sync_ident):
+            if self.cache_table is not None:
+                witem = self.cache_table.get_waiting_item_by_instr_ident(sync_ident)
+                assert witem is not None
+                assert witem.sync_state == WaitingSyncState.IN_PROGRESS
+                witem.sync_state = WaitingSyncState.COMPLETE
+                del self._sync_states[sync_ident]
+            logger.debug(f'{self.clock.cycle}: SYNC_COMPLETE: synchronizer ({self.x},{self.y}) '
+                         f'sync_ident={sync_ident}')
 
     def _should_send(self, state: SyncState, direction: SyncDirection) -> bool:
         """Determine if we should send a sync message in the given direction."""
@@ -408,6 +439,7 @@ class Synchronizer:
         logger.debug(f'{self.clock.cycle}: SYNC_RECV: synchronizer ({self.x},{self.y}) '
                      f'from={from_direction.name} sync_ident={sync_ident} '
                      f'value={packet.value}')
+        self._notify_if_complete(sync_ident)
 
     def update(self):
         """Update buffers (call at end of cycle)."""
@@ -432,7 +464,7 @@ class Synchronizer:
 
                     # Check if we have a complete packet
                     if len(partial) >= 1:
-                        has_value = (partial[0] & 0x1) == 1
+                        has_value = (partial[0] & 0x80) != 0
                         expected_len = 5 if has_value else 1
 
                         if len(partial) >= expected_len:
@@ -466,6 +498,10 @@ class Synchronizer:
                         logger.debug(f'{self.clock.cycle}: SYNC_SEND: synchronizer ({self.x},{self.y}) '
                                      f'dir={direction.name} sync_ident={state.sync_ident} '
                                      f'value={value}')
+
+            # Check for completion after sends are processed
+            for state in list(self._sync_states.values()):
+                self._notify_if_complete(state.sync_ident)
 
     def can_receive(self, direction: SyncDirection) -> bool:
         """Check if we can receive a byte from the given direction."""

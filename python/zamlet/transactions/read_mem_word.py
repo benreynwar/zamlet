@@ -56,6 +56,10 @@ async def handle_req(jamlet: 'Jamlet', packet: List[Any]) -> None:
     '''
     Handle a READ_MEM_WORD_REQ packet. Check if we can read from cache,
     and either send response immediately or create a waiting item.
+
+    We must also check that the parent instruction has been processed on this
+    jamlet before responding, otherwise we might read stale data from the cache
+    before writes have completed.
     '''
     header = packet[0]
     assert isinstance(header, TaggedHeader)
@@ -63,41 +67,75 @@ async def handle_req(jamlet: 'Jamlet', packet: List[Any]) -> None:
     assert isinstance(addr, addresses.KMAddr)
     assert header.message_type == MessageType.READ_MEM_WORD_REQ
 
-    if jamlet.cache_table.can_read(addr):
+    # Check if the parent instruction exists on this jamlet - if not, the data
+    # may not have been written yet, so we need to drop and retry later
+    # The ident encodes: instr_ident + tag + 1, so subtract to get parent ident
+    parent_ident = header.ident - header.tag - 1
+    parent_witem = jamlet.cache_table.get_waiting_item_by_instr_ident(parent_ident)
+    if parent_witem is None:
+        logger.debug(f'{jamlet.clock.cycle}: READ_MEM_WORD_REQ: jamlet ({jamlet.x},{jamlet.y}) '
+                     f'parent_ident={parent_ident} not found, sending DROP')
+        await send_drop(jamlet, header)
+        return
+
+    can_read = jamlet.cache_table.can_read(addr)
+    slot = jamlet.cache_table.addr_to_slot(addr)
+    if slot is not None:
+        slot_state = jamlet.cache_table.slot_states[slot]
+        has_write = jamlet.cache_table.slot_has_write(slot)
+        logger.debug(f'{jamlet.clock.cycle}: READ_MEM_WORD_REQ: jamlet ({jamlet.x},{jamlet.y}) '
+                     f'parent_ident={parent_ident} found, can_read={can_read} addr=0x{addr.addr:x} '
+                     f'slot={slot} state={slot_state.state} has_write={has_write}')
+    else:
+        logger.debug(f'{jamlet.clock.cycle}: READ_MEM_WORD_REQ: jamlet ({jamlet.x},{jamlet.y}) '
+                     f'parent_ident={parent_ident} found, can_read={can_read} addr=0x{addr.addr:x} '
+                     f'slot=None (not in cache)')
+    if can_read:
         j_saddr = addr.to_j_saddr(jamlet.cache_table)
         await send_resp(jamlet, header, j_saddr)
     else:
-        if (jamlet.cache_table.can_get_free_witem_index() and
-                jamlet.cache_table.can_get_slot(addr)):
+        can_get_witem = jamlet.cache_table.can_get_free_witem_index()
+        can_get_slot = jamlet.cache_table.can_get_slot(addr)
+        logger.debug(f'{jamlet.clock.cycle}: READ_MEM_WORD_REQ: jamlet ({jamlet.x},{jamlet.y}) '
+                     f'can_get_witem={can_get_witem} can_get_slot={can_get_slot}')
+        if can_get_witem and can_get_slot:
             cache_slot = jamlet.cache_table.get_slot_if_exists(addr)
             assert cache_slot is not None
+            slot_state = jamlet.cache_table.slot_states[cache_slot]
             j_saddr = addr.to_j_saddr(jamlet.cache_table)
             witem = WaitingReadMemWord(header, cache_slot, j_saddr)
             jamlet.cache_table.add_witem_immediately(witem)
+            logger.debug(f'{jamlet.clock.cycle}: READ_MEM_WORD_REQ: jamlet ({jamlet.x},{jamlet.y}) '
+                         f'created WaitingReadMemWord for slot={cache_slot} '
+                         f'slot_state={slot_state.state} memory_loc=0x{slot_state.memory_loc:x}')
         else:
+            logger.debug(f'{jamlet.clock.cycle}: READ_MEM_WORD_REQ: jamlet ({jamlet.x},{jamlet.y}) '
+                         f'cannot allocate, sending DROP')
             await send_drop(jamlet, header)
 
 
 @register_handler(MessageType.READ_MEM_WORD_RESP)
-async def handle_resp(jamlet: 'Jamlet', packet: List[Any]) -> None:
+def handle_resp(jamlet: 'Jamlet', packet: List[Any]) -> None:
     '''
     Handle a READ_MEM_WORD_RESP packet. Find the waiting item by ident
     and process the response.
     '''
     header = packet[0]
-    witem = jamlet.cache_table.get_waiting_item_by_instr_ident(header.ident)
-    witem.process_response(packet)
+    parent_ident = header.ident - header.tag - 1
+    witem = jamlet.cache_table.get_waiting_item_by_instr_ident(parent_ident)
+    witem.process_response(jamlet, packet)
 
 
 @register_handler(MessageType.READ_MEM_WORD_DROP)
-async def handle_drop(jamlet: 'Jamlet', packet: List[Any]) -> None:
+def handle_drop(jamlet: 'Jamlet', packet: List[Any]) -> None:
     '''
     Handle a READ_MEM_WORD_DROP packet. Find the waiting item and mark
     for retry.
     '''
     header = packet[0]
-    witem = jamlet.cache_table.get_waiting_item_by_instr_ident(header.ident)
-    witem.process_drop(packet)
+    parent_ident = header.ident - header.tag - 1
+    witem = jamlet.cache_table.get_waiting_item_by_instr_ident(parent_ident)
+    witem.process_drop(jamlet, packet)
 
 
 async def send_resp(jamlet: 'Jamlet', rcvd_header: TaggedHeader, j_saddr: JSAddr) -> None:

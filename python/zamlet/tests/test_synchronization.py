@@ -54,7 +54,7 @@ class SyncNetwork:
         self.synchronizers = {}
         for y in range(rows):
             for x in range(cols):
-                self.synchronizers[(x, y)] = Synchronizer(clock, self.params, x, y)
+                self.synchronizers[(x, y)] = Synchronizer(clock, self.params, x, y, None)
 
     def get_neighbor_coords(self, x: int, y: int, direction: SyncDirection):
         """Get coordinates of neighbor in given direction, or None if at edge."""
@@ -197,13 +197,14 @@ async def run_sync_test(clock, cols: int, rows: int, n_events: int, seed: int):
     for sync_ident in range(n_events):
         last_trigger = last_trigger_cycle[sync_ident]
 
-        # INVARIANT 1: No one should think complete before or on the cycle when last trigger fired
+        # INVARIANT 1: No one should think complete before the cycle when last trigger fired
+        # (can be complete on the same cycle since we check after triggering)
         if sync_ident not in first_complete_cycle:
             raise AssertionError(
                 f'Event {sync_ident}: completed but never had a first_complete_cycle'
             )
         first_complete = first_complete_cycle[sync_ident]
-        if first_complete <= last_trigger:
+        if first_complete < last_trigger:
             raise AssertionError(
                 f'Event {sync_ident}: first sync thought complete at cycle {first_complete} '
                 f'but last trigger was at cycle {last_trigger}'
@@ -247,10 +248,9 @@ async def run_sync_test(clock, cols: int, rows: int, n_events: int, seed: int):
 
 async def main(clock, cols, rows, n_events, seed):
     clock.register_main()
-    run_task = clock.create_task(run_sync_test(clock, cols, rows, n_events, seed))
     clock_driver_task = clock.create_task(clock.clock_driver())
-    await run_task
-    clock.stop()
+    await run_sync_test(clock, cols, rows, n_events, seed)
+    clock.running = False
 
 
 def run_test(cols: int, rows: int, n_events: int, seed: int, max_cycles: int = 2000):

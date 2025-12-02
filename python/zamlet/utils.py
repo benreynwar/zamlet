@@ -202,18 +202,22 @@ def update_bytes_word(old_word: bytes, new_word: bytes, mask: int) -> bytes:
 
 def shift_and_update_word(old_word: bytes, src_word: bytes, src_start: int, dst_start:int, n_bytes: int):
     '''
-    We want to take `n_bytes` bytes from the `src_word` starting a byte `src_state` and write them to
-    the `old_word` starting a byte `dst_start` to produce the new word which we return.
+    We want to take `n_bytes` bytes from the `src_word` starting at byte `src_start` and write them to
+    the `old_word` starting at byte `dst_start` to produce the new word which we return.
+
+    All parameters are in bytes, not bits.
     '''
     word_length = len(old_word)
     assert word_length == len(src_word)
     src_word_int = int.from_bytes(src_word, byteorder='little')
-    shift = src_start - dst_start
-    if shift > 0:
-        shifted = src_word_int >> shift
+    # Convert byte offsets to bit offsets for shifting
+    shift_bits = (src_start - dst_start) * 8
+    if shift_bits > 0:
+        shifted = src_word_int >> shift_bits
     else:
-        shifted = src_word_int << shift
-    mask = ((1 << n_bytes) - 1) << dst_start
+        shifted = src_word_int << (-shift_bits)
+    # Create mask for n_bytes starting at dst_start (in bits)
+    mask = ((1 << (n_bytes * 8)) - 1) << (dst_start * 8)
     masked_shifted = shifted & mask
     old_word_int = int.from_bytes(old_word, byteorder='little')
     updated_int = update_int_word(old_word_int, masked_shifted, mask)

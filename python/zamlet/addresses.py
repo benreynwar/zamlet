@@ -599,7 +599,7 @@ class KMAddr:
 
     def bit_offset(self, n_bits):
         new_bit_addr=self.bit_addr+n_bits
-        assert new_bit_addr > 0
+        assert new_bit_addr >= 0
         return KMAddr(k_index=self.k_index, ordering=self.ordering,
                       bit_addr=new_bit_addr, params=self.params)
 

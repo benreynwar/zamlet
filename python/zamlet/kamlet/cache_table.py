@@ -241,10 +241,17 @@ class CacheTable:
         logger.debug('get_free_cache_request: end')
         return valid_indices[0]
 
+    def _any_reads_all_memory(self) -> bool:
+        """Check if any waiting item reads from all memory."""
+        for item in self.waiting_items:
+            if item is not None and item.reads_all_memory:
+                return True
+        return False
+
     async def wait_for_slot_to_be_writeable(self, slot: int, k_maddr: KMAddr) -> None:
         while True:
             assert slot == self.addr_to_slot(k_maddr)
-            if not self.slot_in_use(slot):
+            if not self.slot_in_use(slot) and not self._any_reads_all_memory():
                 break
             await self.clock.next_cycle
         state = self.get_state(k_maddr)
@@ -276,6 +283,8 @@ class CacheTable:
                     f'{self.clock.cycle}: {self.name}: cache miss for '
                     f'addr={hex(k_maddr.addr)}, getting new slot'
                 )
+                if witem.cache_is_write and self._any_reads_all_memory():
+                    await self._wait_for_reads_all_memory_complete()
                 slot = await self._get_new_slot(k_maddr)
                 witem.set_cache_slot(slot)
                 logger.debug(
@@ -289,7 +298,7 @@ class CacheTable:
                 )
                 witem.set_cache_slot(slot)
                 if witem.cache_is_write:
-                    if self.slot_in_use(slot):
+                    if self.slot_in_use(slot) or self._any_reads_all_memory():
                         # If there are other witems in the midst of a read or write we need
                         # to wait for them to complete
                         await self.wait_for_slot_to_be_writeable(slot, k_maddr)
@@ -302,9 +311,33 @@ class CacheTable:
                     f'{self.clock.cycle}: {self.name}: slot state={self.slot_states[slot].state}, '
                     f'cache_is_avail={witem.cache_is_avail}'
                 )
+        # If this witem reads all memory, wait for all pending writes and other
+        # reads_all_memory witems to complete first
+        if witem.reads_all_memory:
+            await self._wait_for_all_writes_complete()
+            await self._wait_for_reads_all_memory_complete()
         witem_index = await self.get_free_witem_index()
         self.waiting_items[witem_index] = witem
         return witem_index
+
+    async def _wait_for_all_writes_complete(self) -> None:
+        """Wait until all pending write witems have completed."""
+        while True:
+            has_writes = False
+            for item in self.waiting_items:
+                if item is not None and item.cache_is_write:
+                    has_writes = True
+                    break
+            if not has_writes:
+                break
+            await self.clock.next_cycle
+
+    async def _wait_for_reads_all_memory_complete(self) -> None:
+        """Wait until all pending reads_all_memory witems have completed."""
+        while True:
+            if not self._any_reads_all_memory():
+                break
+            await self.clock.next_cycle
 
     async def update_cache(self, slot):
         slot_state = self.slot_states[slot]
@@ -366,11 +399,14 @@ class CacheTable:
         slot = self.addr_to_slot(k_maddr)
         if slot is None:
             return False
-        else:
-            state = self.get_state(k_maddr)
-            good_state = state.state in (CacheState.SHARED, CacheState.MODIFIED)
-            in_use = self.slot_in_use(slot, witem=witem)
-            return good_state and not in_use
+        # Block writes if any witem reads from all memory
+        for item in self.waiting_items:
+            if item is not None and item != witem and item.reads_all_memory:
+                return False
+        state = self.get_state(k_maddr)
+        good_state = state.state in (CacheState.SHARED, CacheState.MODIFIED)
+        in_use = self.slot_in_use(slot, witem=witem)
+        return good_state and not in_use
 
     def slot_has_write(self, slot):
         # Check to see if there are any waiting items using this slot.
@@ -452,6 +488,23 @@ class CacheTable:
                     break
         if slot is not None:
             self.used_slots.append(slot)
+            slot_state = self.slot_states[slot]
+            slot_state.old_memory_loc = slot_state.memory_loc
+            slot_state.memory_loc = k_maddr.addr // self.cache_line_bytes
+            # Transition state to trigger cache update
+            assert slot_state.state in (
+                CacheState.SHARED, CacheState.MODIFIED, CacheState.UNALLOCATED, CacheState.INVALID
+            ), f'Unexpected cache state: {slot_state.state}'
+            if slot_state.state == CacheState.SHARED:
+                slot_state.state = CacheState.INVALID
+            elif slot_state.state == CacheState.MODIFIED:
+                slot_state.state = CacheState.OLD_MODIFIED
+            elif slot_state.state == CacheState.UNALLOCATED:
+                slot_state.state = CacheState.INVALID
+            logger.debug(
+                f'{self.clock.cycle}: CACHE_LINE_ALLOC: {self.name} slot={slot} '
+                f'memory_loc=0x{slot_state.memory_loc:x}'
+            )
         self._check_slots()
         return slot
 
@@ -475,27 +528,6 @@ class CacheTable:
             await self.clock.next_cycle
         self.acquiring_slot = False
 
-        slot_state = self.slot_states[slot]
-        slot_state.old_memory_loc = slot_state.memory_loc
-        slot_state.memory_loc = k_maddr.addr//self.cache_line_bytes
-
-        logger.debug(
-            f'{self.clock.cycle}: CACHE_LINE_ALLOC: {self.name} slot={slot} '
-            f'memory_loc=0x{slot_state.memory_loc:x}'
-        )
-
-        old_state = slot_state.state
-        if slot_state.state == CacheState.SHARED:
-            slot_state.state = CacheState.INVALID
-        elif slot_state.state == CacheState.MODIFIED:
-            slot_state.state = CacheState.OLD_MODIFIED
-        elif slot_state.state == CacheState.UNALLOCATED:
-            slot_state.state = CacheState.INVALID
-        elif slot_state.state == CacheState.INVALID:
-            pass
-        else:
-            raise ValueError('Bad cache state')
-        logger.debug('got a new slot')
         self._check_slots()
         return slot
 

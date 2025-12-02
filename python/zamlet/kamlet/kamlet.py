@@ -8,6 +8,7 @@ from zamlet.jamlet.jamlet import Jamlet
 from zamlet.message import Header, MessageType, SendType, AddressHeader
 from zamlet.utils import Queue
 from zamlet.kamlet import kinstructions, cache_table
+from zamlet.synchronization import Synchronizer
 from zamlet import memlet, register_file_slot
 from zamlet.kamlet.cache_table import CacheRequestType, CacheTable, WaitingItem, SendState, ReceiveState
 from zamlet.transactions import load_j2j_words, store_j2j_words
@@ -61,11 +62,15 @@ class Kamlet:
         self.rf_info = register_file_slot.KamletRegisterFile(self.params.n_vregs, name=rf_name)
         self.tlb = tlb
 
+        # One synchronizer per kamlet for tracking when operations complete across kamlets
+        self.synchronizer = Synchronizer(clock, params, k_x, k_y, self.cache_table)
+
         self.jamlets = []
         for index in range(self.n_jamlets):
             x = min_x+index % self.n_columns
             y = min_y+index//self.n_columns
-            self.jamlets.append(Jamlet(clock, params, x, y, self.cache_table, self.rf_info, self.tlb))
+            self.jamlets.append(Jamlet(clock, params, x, y, self.cache_table, self.rf_info,
+                                       self.tlb))
 
         # Local State
         self._instruction_queue = Queue(self.params.instruction_queue_length)
@@ -97,6 +102,7 @@ class Kamlet:
         self._instruction_queue.update()
         self._instr_send_queue.update()
         self.cache_table.update()
+        self.synchronizer.update()
         for jamlet in self.jamlets:
             jamlet.update()
 
@@ -184,6 +190,7 @@ class Kamlet:
         self.clock.create_task(self._monitor_cache_requests())
         self.clock.create_task(self._monitor_witems())
         self.clock.create_task(self.cache_table.run())
+        self.clock.create_task(self.synchronizer.run())
 
     async def read_cache_line(self, cache_slot: int, address_in_memory: int, ident: int):
         """
@@ -400,8 +407,7 @@ class Kamlet:
         read_regs = src_regs + ([instr.mask_reg] if instr.mask_reg is not None else [])
         await self.wait_for_rf_available(read_regs=read_regs)
         rf_read_ident = self.rf_info.start(read_regs=read_regs)
-        if self.cache_table.can_read(instr.k_maddr):
-            assert self.cache_table.can_write(instr.k_maddr)
+        if self.cache_table.can_write(instr.k_maddr):
             for jamlet in self.jamlets:
                 do_store_simple(jamlet, instr)
             cache_state = self.cache_table.get_state(instr.k_maddr)
@@ -503,12 +509,12 @@ class Kamlet:
 
     async def _monitor_witems(self) -> None:
         logger.debug(f'kamlet ({self.min_x}, {self.min_y}): _monitor_witems started')
-        last_log_cycle = 0
         while True:
             await self.clock.next_cycle
             for index, item in enumerate(self.cache_table.waiting_items):
                 if item is None:
                     continue
+                await item.monitor_kamlet(self)
                 if item.ready():
                     self.cache_table.waiting_items[index] = None
                     await self.handle_item(item)

@@ -31,6 +31,7 @@ from zamlet.kamlet.kamlet import Kamlet
 from zamlet.memlet import Memlet
 from zamlet.runner import Future
 from zamlet.kamlet import kinstructions
+from zamlet.transactions.load_stride import LoadStride
 from zamlet.lamlet.scalar import ScalarState
 from zamlet import utils
 import zamlet.disasm_trace as dt
@@ -321,16 +322,16 @@ class Lamlet:
 
     async def sync_network_connections(self):
         """
-        Move bytes between synchronizers in adjacent jamlets.
+        Move bytes between synchronizers in adjacent kamlets.
         This is a separate network from the main router network.
         Synchronizers connect to all 8 neighbors (N, S, E, W, NE, NW, SE, SW).
         """
-        # Build a map of (x, y) -> synchronizer
+        # Build a map of (k_x, k_y) -> synchronizer
         synchronizers = {}
         for kamlet in self.kamlets:
-            for jamlet in kamlet.jamlets:
-                coords = (jamlet.x, jamlet.y)
-                synchronizers[coords] = jamlet.synchronizer
+            k_x = kamlet.min_x // self.params.j_cols
+            k_y = kamlet.min_y // self.params.j_rows
+            synchronizers[(k_x, k_y)] = kamlet.synchronizer
 
         # Direction deltas for all 8 directions
         direction_deltas = {
@@ -753,24 +754,37 @@ class Lamlet:
         return ident
 
     def get_instr_ident(self, n_idents=1):
+        # FIXME: Need to work out how to confirm we won't get ident conflicts when we wrap.
         assert n_idents >= 1
         ident = self.next_instr_ident
-        self.next_instr_ident += n_idents
+        self.next_instr_ident = (self.next_instr_ident + n_idents) % 128
         return ident
 
     async def vload(self, vd: int, addr: int, ordering: addresses.Ordering,
                     n_elements: int, mask_reg: int|None, start_index: int,
                     reg_ordering: addresses.Ordering | None = None,
                     stride_bytes: int | None = None):
-        await self.vloadstore(vd, addr, ordering, n_elements, mask_reg, start_index,
-                              is_store=False, reg_ordering=reg_ordering,
-                              stride_bytes=stride_bytes)
+        element_bytes = ordering.ew // 8
+        if stride_bytes is not None and stride_bytes != element_bytes:
+            await self.vloadstorestride(vd, addr, ordering, n_elements, mask_reg,
+                                        start_index, is_store=False,
+                                        reg_ordering=reg_ordering,
+                                        stride_bytes=stride_bytes)
+        else:
+            await self.vloadstore(vd, addr, ordering, n_elements, mask_reg, start_index,
+                                  is_store=False, reg_ordering=reg_ordering)
 
     async def vstore(self, vs: int, addr: int, ordering: addresses.Ordering,
                     n_elements: int, mask_reg: int|None, start_index: int,
                     stride_bytes: int | None = None):
-        await self.vloadstore(vs, addr, ordering, n_elements, mask_reg, start_index,
-                              is_store=True, stride_bytes=stride_bytes)
+        element_bytes = ordering.ew // 8
+        if stride_bytes is not None and stride_bytes != element_bytes:
+            await self.vloadstorestride(vs, addr, ordering, n_elements, mask_reg,
+                                        start_index, is_store=True,
+                                        stride_bytes=stride_bytes)
+        else:
+            await self.vloadstore(vs, addr, ordering, n_elements, mask_reg, start_index,
+                                  is_store=True)
 
     async def vloadstore(self, reg_base: int, addr: int, ordering: addresses.Ordering,
                          n_elements: int, mask_reg: int|None, start_index: int, is_store: bool,
@@ -966,6 +980,59 @@ class Lamlet:
                         await self.vload_scalar(reg_base, section.start_address, ordering, section_elements,
                                           mask_reg, section.start_index, writeset_ident)
 
+    async def vloadstorestride(self, reg_base: int, addr: int, ordering: addresses.Ordering,
+                               n_elements: int, mask_reg: int | None, start_index: int,
+                               is_store: bool, stride_bytes: int,
+                               reg_ordering: addresses.Ordering | None = None):
+        """
+        Handle strided vector loads/stores using LoadStride instructions.
+
+        Strided access means elements are at addr, addr+stride, addr+2*stride, etc.
+        Elements are placed contiguously in the register file.
+
+        LoadStride is limited to j_in_l elements per instruction, so we process
+        in chunks.
+        """
+        if is_store:
+            raise NotImplementedError("Strided stores not yet implemented")
+
+        g_addr = GlobalAddress(bit_addr=addr * 8, params=self.params)
+        mem_ew = ordering.ew
+
+        if reg_ordering is None:
+            reg_ordering = ordering
+        reg_ew = reg_ordering.ew
+
+        writeset_ident = self.get_writeset_ident()
+
+        # Set up register file ordering for destination registers
+        vline_bits = self.params.maxvl_bytes * 8
+        n_vlines = (reg_ew * n_elements + vline_bits - 1) // vline_bits
+        for vline_reg in range(reg_base, reg_base + n_vlines):
+            self.vrf_ordering[vline_reg] = Ordering(word_order=addresses.WordOrder.STANDARD, ew=reg_ew)
+
+        # Process in chunks of j_in_l elements (LoadStride limitation)
+        j_in_l = self.params.j_in_l
+        for chunk_start in range(0, n_elements, j_in_l):
+            chunk_n = min(j_in_l, n_elements - chunk_start)
+            chunk_addr = addr + chunk_start * stride_bytes
+            chunk_g_addr = GlobalAddress(bit_addr=chunk_addr * 8, params=self.params)
+            instr_ident = self.get_instr_ident(n_idents=self.params.word_bytes + 1)
+            kinstr = LoadStride(
+                dst=reg_base,
+                g_addr=chunk_g_addr,
+                start_index=start_index + chunk_start,
+                n_elements=chunk_n,
+                dst_ordering=reg_ordering,
+                mask_reg=mask_reg,
+                writeset_ident=writeset_ident,
+                instr_ident=instr_ident,
+                stride_bytes=stride_bytes,
+            )
+            logger.debug(f'{self.clock.cycle}: LAMLET CREATE LoadStride instr_ident={instr_ident} '
+                        f'dst=v{reg_base} start_index={start_index + chunk_start} '
+                        f'n_elements={chunk_n} stride={stride_bytes}')
+            await self.add_to_instruction_buffer(kinstr)
 
     #async def vload(self, vd: int, addr: int, ordering: addresses.Ordering,
     #                n_elements: int, mask_reg: int, start_index: int):
