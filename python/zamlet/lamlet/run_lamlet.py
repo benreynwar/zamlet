@@ -18,10 +18,11 @@ async def update(clock, lamlet):
         lamlet.update()
 
 
-async def run(clock: Clock, filename, j_rows=1):
+async def run(clock: Clock, filename, params: LamletParams = None):
     p_info = program_info.get_program_info(filename)
 
-    params = LamletParams(j_rows=j_rows)
+    if params is None:
+        params = LamletParams()
 
     s = lamlet.Lamlet(clock, params)
     clock.create_task(update(clock, s))
@@ -122,7 +123,7 @@ async def run(clock: Clock, filename, j_rows=1):
 
 
 
-async def main(clock, filename, j_rows: int) -> int:
+async def main(clock, filename, params: LamletParams = None) -> int:
     import signal
 
     def signal_handler(signum, frame):
@@ -132,7 +133,7 @@ async def main(clock, filename, j_rows: int) -> int:
     signal.signal(signal.SIGINT, signal_handler)
 
     clock.register_main()
-    run_task = clock.create_task(run(clock, filename, j_rows))
+    run_task = clock.create_task(run(clock, filename, params))
     clock_driver_task = clock.create_task(clock.clock_driver())
 
     # Wait for run_task to complete - it will set clock.running = False
@@ -148,9 +149,29 @@ async def main(clock, filename, j_rows: int) -> int:
 
 
 if __name__ == '__main__':
-    level = logging.WARNING
+    import argparse
     import sys
-    import os
+
+    from zamlet.geometries import GEOMETRIES, get_geometry, list_geometries
+
+    parser = argparse.ArgumentParser(description='Run RISC-V binary through lamlet simulator')
+    parser.add_argument('filename', nargs='?', help='RISC-V binary to run')
+    parser.add_argument('--geometry', '-g', default='k2x1_j1x1',
+                        help=f'Geometry name (default: k2x1_j1x1)')
+    parser.add_argument('--list-geometries', action='store_true',
+                        help='List available geometries and exit')
+    parser.add_argument('--all-geometries', action='store_true',
+                        help='Run with all geometries')
+    parser.add_argument('--max-cycles', type=int, default=50000,
+                        help='Maximum simulation cycles (default: 50000)')
+    args = parser.parse_args()
+
+    if args.list_geometries:
+        print("Available geometries:")
+        print(list_geometries())
+        sys.exit(0)
+
+    level = logging.WARNING
     root_logger = logging.getLogger()
     root_logger.setLevel(level)
     handler = logging.StreamHandler(sys.stdout)
@@ -159,17 +180,16 @@ if __name__ == '__main__':
     handler.setFormatter(formatter)
     root_logger.addHandler(handler)
 
-    # Check if a file was provided as argument
-    if len(sys.argv) > 1:
-        filenames = [sys.argv[1]]
+    if args.filename:
+        filenames = [args.filename]
     else:
         filenames = [
            'kernel_tests/readwritebyte/should_fail.riscv',
            'kernel_tests/readwritebyte/simple_vpu_test.riscv',
            'kernel_tests/readwritebyte/write_then_read_many_bytes.riscv',
-           'kernel_tests/sgemv/vec-sgemv-large.riscv', #(too small)
+           'kernel_tests/sgemv/vec-sgemv-large.riscv',
            'kernel_tests/sgemv/vec-sgemv-64x64.riscv',
-           'kernel_tests/sgemv/vec-sgemv.riscv',  #(too small) (it tries to step through rows in a matrix but one row is less than vline so it gets misaligned)
+           'kernel_tests/sgemv/vec-sgemv.riscv',
            'kernel_tests/vecadd/vec-add-evict.riscv',
            'kernel_tests/vecadd/vec-add.riscv',
            'kernel_tests/daxpy/vec-daxpy.riscv',
@@ -179,30 +199,33 @@ if __name__ == '__main__':
            'kernel_tests/unaligned/unaligned.riscv',
         ]
 
+    if args.all_geometries:
+        geometries = list(GEOMETRIES.items())
+    else:
+        geometries = [(args.geometry, get_geometry(args.geometry))]
+
     for filename in filenames:
-        for j_rows in (1, 2):
-            root_logger.info(f'========== Starting test: {filename} ==========')
-            clock = Clock(max_cycles=50000)
+        for geom_name, params in geometries:
+            root_logger.info(f'========== Starting test: {filename} {geom_name} ==========')
+            clock = Clock(max_cycles=args.max_cycles)
             exit_code = None
             try:
-                exit_code = asyncio.run(main(clock, filename, j_rows))
+                exit_code = asyncio.run(main(clock, filename, params))
             except KeyboardInterrupt:
                 root_logger.warning(f'========== Test interrupted by user ==========')
                 sys.exit(1)
             except asyncio.CancelledError:
-                # This happens when clock.stop() cancels tasks - it's normal
                 pass
             except Exception as e:
-                root_logger.error(f'========== Test FAILED: {filename} j_rows={j_rows} - {e} ==========')
+                root_logger.error(f'========== Test FAILED: {filename} {geom_name} - {e} ==========')
                 import traceback
                 traceback.print_exc()
                 continue
 
-            # Log result based on exit code
             if exit_code is not None:
                 if exit_code == 0:
-                    root_logger.warning(f'========== Test PASSED: {filename} j_rows={j_rows} (exit code: {exit_code}) ==========')
+                    root_logger.warning(f'========== Test PASSED: {filename} {geom_name} ==========')
                 else:
-                    root_logger.warning(f'========== Test FAILED: {filename} j_rows={j_rows} (exit code: {exit_code}) ==========')
+                    root_logger.warning(f'========== Test FAILED: {filename} {geom_name} (exit code: {exit_code}) ==========')
             else:
-                root_logger.info(f'========== Test completed: {filename} j_rows={j_rows} (no exit code) ==========')
+                root_logger.info(f'========== Test completed: {filename} {geom_name} (no exit code) ==========')

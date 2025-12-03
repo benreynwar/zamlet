@@ -26,6 +26,7 @@ import pytest
 
 from zamlet.runner import Clock
 from zamlet.params import LamletParams
+from zamlet.geometries import GEOMETRIES
 from zamlet.lamlet.lamlet import Lamlet
 from zamlet.addresses import GlobalAddress, Ordering, WordOrder
 
@@ -91,7 +92,7 @@ async def run_unaligned_test(
     src_offset: int,
     dst_offset: int,
     lmul: int,
-    j_rows: int,
+    params: LamletParams,
     seed: int,
 ):
     """
@@ -99,7 +100,6 @@ async def run_unaligned_test(
 
     Loads vl elements from src+src_offset, stores to dst+dst_offset.
     """
-    params = LamletParams(j_rows=j_rows)
     lamlet = Lamlet(clock, params)
     clock.create_task(update(clock, lamlet))
     clock.create_task(lamlet.run())
@@ -135,8 +135,9 @@ async def run_unaligned_test(
     src_addr = src_base + src_offset
     dst_addr = dst_base + dst_offset
 
-    # Allocate memory regions with enough padding for offsets
+    # Allocate memory regions with enough padding for offsets (must be page-aligned)
     alloc_size = max(1024, vl * max(src_ew, dst_ew) // 8 + max(src_offset, dst_offset) + 64)
+    alloc_size = ((alloc_size + params.page_bytes - 1) // params.page_bytes) * params.page_bytes
 
     lamlet.allocate_memory(
         GlobalAddress(bit_addr=src_base * 8, params=params),
@@ -233,7 +234,7 @@ async def main(
     src_offset: int,
     dst_offset: int,
     lmul: int,
-    j_rows: int,
+    params: LamletParams,
     seed: int,
 ):
     import signal
@@ -248,7 +249,7 @@ async def main(
 
     clock_driver_task = clock.create_task(clock.clock_driver())
     exit_code = await run_unaligned_test(
-        clock, src_ew, dst_ew, vl, reg_ew, src_offset, dst_offset, lmul, j_rows, seed
+        clock, src_ew, dst_ew, vl, reg_ew, src_offset, dst_offset, lmul, params, seed
     )
 
     logger.warning(f"Test completed with exit_code: {exit_code}")
@@ -257,43 +258,56 @@ async def main(
     return exit_code
 
 
-def run_test(reg_ew, src_ew, dst_ew, src_offset, dst_offset, vl, lmul=8, j_rows=1, seed=0):
+def run_test(reg_ew, src_ew, dst_ew, src_offset, dst_offset, vl, lmul=8,
+             params: LamletParams = None, seed=0):
     """Helper to run a single test configuration."""
+    if params is None:
+        params = LamletParams()
     clock = Clock(max_cycles=5000)
     exit_code = asyncio.run(main(
-        clock, src_ew, dst_ew, vl, reg_ew, src_offset, dst_offset, lmul, j_rows, seed
+        clock, src_ew, dst_ew, vl, reg_ew, src_offset, dst_offset, lmul, params, seed
     ))
     assert exit_code == 0, f"Test failed with exit_code={exit_code}"
 
 
-def generate_test_params():
-    """Generate test parameter combinations."""
-    params = []
-    for reg_ew in [8, 16, 32, 64]:
-        for src_mem_ew in [8, 16, 32, 64]:
-            for dst_mem_ew in [8, 16, 32, 64]:
-                for src_mem_offset in [0, 1*8, 3*8, 7*8]:
-                    for dst_mem_offset in [0, 15*8,]:
-                        for vl in [1, 3, 5, 8]:
-    #for reg_ew in [8, 64]:
-    #    for src_mem_ew in [8, 64]:
-    #        for dst_mem_ew in [8, 64]:
-    #            for src_mem_offset in [2*8]:
-    #                for dst_mem_offset in [0]:
-    #                    for vl in [5]:
-                            id_str = f"reg{reg_ew}_src{src_mem_ew}_dst{dst_mem_ew}_srcoff{src_mem_offset}_dstoff{dst_mem_offset}_vl{vl}"
-                            params.append(pytest.param(reg_ew, src_mem_ew, dst_mem_ew, src_mem_offset, dst_mem_offset, vl, id=id_str))
-    return params
+def random_test_config(rnd: Random):
+    """Generate a random test configuration."""
+    geom_name = rnd.choice(list(GEOMETRIES.keys()))
+    geom_params = GEOMETRIES[geom_name]
+    reg_ew = rnd.choice([8, 16, 32, 64])
+    src_ew = rnd.choice([8, 16, 32, 64])
+    dst_ew = rnd.choice([8, 16, 32, 64])
+    src_offset = rnd.randint(0, 512) * 8
+    dst_offset = rnd.randint(0, 512) * 8
+    vl = rnd.randint(1, 128)
+    return geom_name, geom_params, reg_ew, src_ew, dst_ew, src_offset, dst_offset, vl
 
 
-@pytest.mark.parametrize("reg_ew,src_ew,dst_ew,src_offset,dst_offset,vl", generate_test_params())
-def test_unaligned(reg_ew, src_ew, dst_ew, src_offset, dst_offset, vl):
-    run_test(reg_ew, src_ew, dst_ew, src_offset, dst_offset, vl)
+def generate_test_params(n_tests: int = 8, seed: int = 42):
+    """Generate random test parameter combinations."""
+    rnd = Random(seed)
+    test_params = []
+    for i in range(n_tests):
+        geom_name, geom_params, reg_ew, src_ew, dst_ew, src_offset, dst_offset, vl = \
+            random_test_config(rnd)
+        id_str = (f"{i}_{geom_name}_reg{reg_ew}_src{src_ew}_dst{dst_ew}"
+                  f"_srcoff{src_offset}_dstoff{dst_offset}_vl{vl}")
+        test_params.append(pytest.param(
+            geom_params, reg_ew, src_ew, dst_ew,
+            src_offset, dst_offset, vl, id=id_str))
+    return test_params
+
+
+@pytest.mark.parametrize("params,reg_ew,src_ew,dst_ew,src_offset,dst_offset,vl", generate_test_params())
+def test_unaligned(params, reg_ew, src_ew, dst_ew, src_offset, dst_offset, vl):
+    run_test(reg_ew, src_ew, dst_ew, src_offset, dst_offset, vl, params=params)
 
 
 if __name__ == '__main__':
     import argparse
     import sys
+
+    from zamlet.geometries import get_geometry, list_geometries
 
     parser = argparse.ArgumentParser(description='Test unaligned vector load/store operations')
     parser.add_argument('--src-ew', type=int, default=64,
@@ -310,11 +324,18 @@ if __name__ == '__main__':
                         help='Destination byte offset (default: 0)')
     parser.add_argument('--lmul', type=int, default=8,
                         help='LMUL - number of registers grouped as one (default: 8)')
-    parser.add_argument('--j-rows', type=int, default=1,
-                        help='Number of jamlet rows per kamlet (default: 1)')
+    parser.add_argument('--geometry', '-g', default='k2x1_j1x1',
+                        help='Geometry name (default: k2x1_j1x1)')
+    parser.add_argument('--list-geometries', action='store_true',
+                        help='List available geometries and exit')
     parser.add_argument('--seed', '-s', type=int, default=0,
                         help='Random seed for test data generation (default: 0)')
     args = parser.parse_args()
+
+    if args.list_geometries:
+        print("Available geometries:")
+        print(list_geometries())
+        sys.exit(0)
 
     # Validate element widths
     valid_ews = [8, 16, 32, 64]
@@ -327,6 +348,8 @@ if __name__ == '__main__':
     if args.reg_ew not in valid_ews:
         print(f"Error: reg-ew must be one of {valid_ews}", file=sys.stderr)
         sys.exit(1)
+
+    params = get_geometry(args.geometry)
 
     level = logging.DEBUG
     root_logger = logging.getLogger()
@@ -343,11 +366,11 @@ if __name__ == '__main__':
         logger.info(
             f'Starting with src_ew={args.src_ew}, dst_ew={args.dst_ew}, vl={args.vl}, '
             f'reg_ew={args.reg_ew}, src_offset={args.src_offset}, dst_offset={args.dst_offset}, '
-            f'lmul={args.lmul}, j_rows={args.j_rows}, seed={args.seed}'
+            f'lmul={args.lmul}, geometry={args.geometry}, seed={args.seed}'
         )
         exit_code = asyncio.run(main(
             clock, args.src_ew, args.dst_ew, args.vl, args.reg_ew,
-            args.src_offset, args.dst_offset, args.lmul, args.j_rows, args.seed
+            args.src_offset, args.dst_offset, args.lmul, params, args.seed
         ))
     except KeyboardInterrupt:
         root_logger.warning('Test interrupted by user')

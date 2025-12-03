@@ -15,6 +15,7 @@ from typing import List, Set, Tuple
 import pytest
 
 from zamlet.params import LamletParams
+from zamlet.geometries import GEOMETRIES
 from zamlet.addresses import Ordering, WordOrder, KMAddr
 from zamlet.kamlet import kinstructions
 from zamlet.transactions.j2j_mapping import RegMemMapping, get_mapping_from_reg, get_mapping_from_mem
@@ -173,29 +174,36 @@ def run_tests(k_cols: int = 2, k_rows: int = 1,
     return failures
 
 
-def generate_test_params():
-    """Generate test parameter combinations for pytest."""
-    params_list = []
-    ew_values = [8, 16, 32, 64]
-    offset_values = [0, 8, 16]
+def random_test_config(rnd):
+    """Generate a random test configuration."""
+    geom_name = rnd.choice(list(GEOMETRIES.keys()))
+    geom_params = GEOMETRIES[geom_name]
+    mem_ew = rnd.choice([8, 16, 32, 64])
+    reg_ew = rnd.choice([8, 16, 32, 64])
+    start_index = rnd.randint(0, 8)
+    n_elements = rnd.randint(1, 32)
+    mem_offset = rnd.randint(0, 128)
+    return geom_name, geom_params, mem_ew, reg_ew, start_index, n_elements, mem_offset
 
-    for mem_ew in ew_values:
-        for reg_ew in ew_values:
-            for start_index in [0, 1, 4]:
-                for n_elements in [1, 3, 7, 16]:
-                    for mem_offset in offset_values:
-                        if mem_offset % (mem_ew // 8) != 0:
-                            continue
-                        id_str = f"mem{mem_ew}_reg{reg_ew}_start{start_index}_n{n_elements}_off{mem_offset}"
-                        params_list.append(pytest.param(
-                            mem_ew, reg_ew, start_index, n_elements, mem_offset, id=id_str))
+
+def generate_test_params(n_tests: int = 128, seed: int = 42):
+    """Generate random test parameter combinations for pytest."""
+    from random import Random
+    rnd = Random(seed)
+    params_list = []
+    for i in range(n_tests):
+        geom_name, geom_params, mem_ew, reg_ew, start_index, n_elements, mem_offset = \
+            random_test_config(rnd)
+        id_str = (f"{i}_{geom_name}_mem{mem_ew}_reg{reg_ew}_start{start_index}"
+                  f"_n{n_elements}_off{mem_offset}")
+        params_list.append(pytest.param(
+            geom_params, mem_ew, reg_ew, start_index, n_elements, mem_offset, id=id_str))
     return params_list
 
 
-@pytest.mark.parametrize("mem_ew,reg_ew,start_index,n_elements,mem_offset", generate_test_params())
-def test_mapping_consistency(mem_ew, reg_ew, start_index, n_elements, mem_offset):
+@pytest.mark.parametrize("params,mem_ew,reg_ew,start_index,n_elements,mem_offset", generate_test_params())
+def test_mapping_consistency(params, mem_ew, reg_ew, start_index, n_elements, mem_offset):
     """Pytest test for mapping consistency."""
-    params = create_test_params()
     assert check_mapping_consistency(params, mem_ew, reg_ew, start_index, n_elements, mem_offset)
 
 

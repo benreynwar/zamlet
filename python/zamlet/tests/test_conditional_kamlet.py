@@ -21,6 +21,7 @@ import pytest
 
 from zamlet.runner import Clock
 from zamlet.params import LamletParams
+from zamlet.geometries import GEOMETRIES
 from zamlet.lamlet.lamlet import Lamlet
 from zamlet.addresses import GlobalAddress, Ordering, WordOrder, KMAddr, RegAddr
 from zamlet.kamlet import kinstructions
@@ -36,7 +37,8 @@ async def update(clock, lamlet):
         lamlet.update()
 
 
-async def run_conditional_simple(clock: Clock, vector_length: int, seed: int, lmul: int, j_rows: int):
+async def run_conditional_simple(clock: Clock, vector_length: int, seed: int, lmul: int,
+                                 params: LamletParams):
     """
     Simple conditional test with small arrays.
 
@@ -47,7 +49,6 @@ async def run_conditional_simple(clock: Clock, vector_length: int, seed: int, lm
     - a and b are int16 arrays (data to select from)
     - z is int16 array (output)
     """
-    params = LamletParams(j_rows=j_rows)
     lamlet = Lamlet(clock, params)
     clock.create_task(update(clock, lamlet))
     clock.create_task(lamlet.run())
@@ -248,7 +249,7 @@ async def run_conditional_simple(clock: Clock, vector_length: int, seed: int, lm
         return 1
 
 
-async def main(clock, vector_length: int, seed: int, lmul: int, j_rows: int):
+async def main(clock, vector_length: int, seed: int, lmul: int, params: LamletParams):
     import signal
 
     def signal_handler(signum, frame):
@@ -260,7 +261,7 @@ async def main(clock, vector_length: int, seed: int, lmul: int, j_rows: int):
     clock.register_main()
 
     clock_driver_task = clock.create_task(clock.clock_driver())
-    exit_code = await run_conditional_simple(clock, vector_length, seed, lmul, j_rows)
+    exit_code = await run_conditional_simple(clock, vector_length, seed, lmul, params)
 
     logger.warning(f"Test completed with exit_code: {exit_code}")
     clock.running = False
@@ -268,32 +269,47 @@ async def main(clock, vector_length: int, seed: int, lmul: int, j_rows: int):
     return exit_code
 
 
-def run_test(vector_length: int, seed: int = 0, lmul: int = 4, j_rows: int = 1):
+def run_test(vector_length: int, seed: int = 0, lmul: int = 4,
+             params: LamletParams = None):
     """Helper to run a single test configuration."""
+    if params is None:
+        params = LamletParams()
     clock = Clock(max_cycles=5000)
-    exit_code = asyncio.run(main(clock, vector_length, seed, lmul, j_rows))
+    exit_code = asyncio.run(main(clock, vector_length, seed, lmul, params))
     assert exit_code == 0, f"Test failed with exit_code={exit_code}"
 
 
-def generate_test_params():
-    """Generate test parameter combinations."""
-    params = []
-    for vl in [3, 7, 8, 15, 32]:
-        for seed in [0, 42]:
-            for lmul in [1, 4]:
-                id_str = f"vl{vl}_seed{seed}_lmul{lmul}"
-                params.append(pytest.param(vl, seed, lmul, id=id_str))
-    return params
+def random_test_config(rnd: Random):
+    """Generate a random test configuration."""
+    geom_name = rnd.choice(list(GEOMETRIES.keys()))
+    geom_params = GEOMETRIES[geom_name]
+    vl = rnd.randint(1, 64)
+    seed = rnd.randint(0, 10000)
+    lmul = rnd.choice([1, 2, 4, 8])
+    return geom_name, geom_params, vl, seed, lmul
 
 
-@pytest.mark.parametrize("vl,seed,lmul", generate_test_params())
-def test_conditional(vl, seed, lmul):
-    run_test(vl, seed, lmul)
+def generate_test_params(n_tests: int = 128, seed: int = 42):
+    """Generate random test parameter combinations."""
+    rnd = Random(seed)
+    test_params = []
+    for i in range(n_tests):
+        geom_name, geom_params, vl, test_seed, lmul = random_test_config(rnd)
+        id_str = f"{i}_{geom_name}_vl{vl}_seed{test_seed}_lmul{lmul}"
+        test_params.append(pytest.param(geom_params, vl, test_seed, lmul, id=id_str))
+    return test_params
+
+
+@pytest.mark.parametrize("params,vl,seed,lmul", generate_test_params())
+def test_conditional(params, vl, seed, lmul):
+    run_test(vl, seed, lmul, params=params)
 
 
 if __name__ == '__main__':
     import argparse
     import sys
+
+    from zamlet.geometries import get_geometry, list_geometries
 
     parser = argparse.ArgumentParser(description='Test conditional kamlet operations')
     parser.add_argument('--vector-length', '-vl', type=int, default=8,
@@ -302,9 +318,18 @@ if __name__ == '__main__':
                         help='Random seed for test data generation (default: 0)')
     parser.add_argument('--lmul', type=int, default=4,
                         help='LMUL - number of registers grouped as one (default: 4)')
-    parser.add_argument('--j-rows', type=int, default=1,
-                        help='Number of jamlet rows per kamlet (default: 1)')
+    parser.add_argument('--geometry', '-g', default='k2x1_j1x1',
+                        help='Geometry name (default: k2x1_j1x1)')
+    parser.add_argument('--list-geometries', action='store_true',
+                        help='List available geometries and exit')
     args = parser.parse_args()
+
+    if args.list_geometries:
+        print("Available geometries:")
+        print(list_geometries())
+        sys.exit(0)
+
+    params = get_geometry(args.geometry)
 
     level = logging.DEBUG
     root_logger = logging.getLogger()
@@ -318,8 +343,9 @@ if __name__ == '__main__':
     clock = Clock(max_cycles=5000)
     exit_code = None
     try:
-        logger.info(f'Starting with vector_length={args.vector_length}, seed={args.seed}, lmul={args.lmul}, j_rows={args.j_rows}')
-        exit_code = asyncio.run(main(clock, args.vector_length, args.seed, args.lmul, args.j_rows))
+        logger.info(f'Starting with vector_length={args.vector_length}, seed={args.seed}, '
+                    f'lmul={args.lmul}, geometry={args.geometry}')
+        exit_code = asyncio.run(main(clock, args.vector_length, args.seed, args.lmul, params))
     except KeyboardInterrupt:
         root_logger.warning('Test interrupted by user')
         sys.exit(1)

@@ -25,6 +25,7 @@ import pytest
 
 from zamlet.runner import Clock
 from zamlet.params import LamletParams
+from zamlet.geometries import GEOMETRIES
 from zamlet.lamlet.lamlet import Lamlet
 from zamlet.addresses import GlobalAddress, Ordering, WordOrder
 
@@ -86,7 +87,7 @@ async def run_strided_load_test(
     ew: int,
     vl: int,
     stride: int,
-    j_rows: int,
+    params: LamletParams,
     seed: int,
 ):
     """
@@ -97,7 +98,6 @@ async def run_strided_load_test(
 
     Loads into register (contiguous), then stores back with stride.
     """
-    params = LamletParams(j_rows=j_rows)
     lamlet = Lamlet(clock, params)
     clock.create_task(update(clock, lamlet))
     clock.create_task(lamlet.run())
@@ -222,7 +222,7 @@ async def run_strided_store_test(
     ew: int,
     vl: int,
     stride: int,
-    j_rows: int,
+    params: LamletParams,
     seed: int,
 ):
     """
@@ -233,7 +233,6 @@ async def run_strided_store_test(
     3. Store from register with stride
     4. Read back at strided locations and verify
     """
-    params = LamletParams(j_rows=j_rows)
     lamlet = Lamlet(clock, params)
     clock.create_task(update(clock, lamlet))
     clock.create_task(lamlet.run())
@@ -349,7 +348,7 @@ async def main(
     ew: int,
     vl: int,
     stride: int,
-    j_rows: int,
+    params: LamletParams,
     seed: int,
     test_store: bool = False,
 ):
@@ -365,9 +364,9 @@ async def main(
 
     clock_driver_task = clock.create_task(clock.clock_driver())
     if test_store:
-        exit_code = await run_strided_store_test(clock, ew, vl, stride, j_rows, seed)
+        exit_code = await run_strided_store_test(clock, ew, vl, stride, params, seed)
     else:
-        exit_code = await run_strided_load_test(clock, ew, vl, stride, j_rows, seed)
+        exit_code = await run_strided_load_test(clock, ew, vl, stride, params, seed)
 
     logger.warning(f"Test completed with exit_code: {exit_code}")
     clock.running = False
@@ -375,38 +374,54 @@ async def main(
     return exit_code
 
 
-def run_test(ew: int, vl: int, stride: int, j_rows: int = 1, seed: int = 0,
+def run_test(ew: int, vl: int, stride: int, params: LamletParams = None, seed: int = 0,
              test_store: bool = False):
     """Helper to run a single test configuration."""
+    if params is None:
+        params = LamletParams()
     clock = Clock(max_cycles=5000)
-    exit_code = asyncio.run(main(clock, ew, vl, stride, j_rows, seed, test_store))
+    exit_code = asyncio.run(main(clock, ew, vl, stride, params, seed, test_store))
     assert exit_code == 0, f"Test failed with exit_code={exit_code}"
 
 
-def generate_test_params():
-    """Generate test parameter combinations."""
-    params = []
-    for ew in [8, 16, 32, 64]:
-        for vl in [1, 3, 7, 8]:
-            for stride in [16, 24, 32]:
-                id_str = f"ew{ew}_vl{vl}_stride{stride}"
-                params.append(pytest.param(ew, vl, stride, id=id_str))
-    return params
+def random_test_config(rnd: Random):
+    """Generate a random test configuration."""
+    geom_name = rnd.choice(list(GEOMETRIES.keys()))
+    geom_params = GEOMETRIES[geom_name]
+    ew = rnd.choice([8, 16, 32, 64])
+    vl = rnd.randint(1, 64)
+    # Stride must be at least element size, pick random multiple
+    element_bytes = ew // 8
+    stride = element_bytes * rnd.randint(1, 8)
+    return geom_name, geom_params, ew, vl, stride
 
 
-@pytest.mark.parametrize("ew,vl,stride", generate_test_params())
-def test_strided_load(ew, vl, stride):
-    run_test(ew, vl, stride, test_store=False)
+def generate_test_params(n_tests: int = 64, seed: int = 42):
+    """Generate random test parameter combinations."""
+    rnd = Random(seed)
+    test_params = []
+    for i in range(n_tests):
+        geom_name, geom_params, ew, vl, stride = random_test_config(rnd)
+        id_str = f"{i}_{geom_name}_ew{ew}_vl{vl}_stride{stride}"
+        test_params.append(pytest.param(geom_params, ew, vl, stride, id=id_str))
+    return test_params
 
 
-@pytest.mark.parametrize("ew,vl,stride", generate_test_params())
-def test_strided_store(ew, vl, stride):
-    run_test(ew, vl, stride, test_store=True)
+@pytest.mark.parametrize("params,ew,vl,stride", generate_test_params())
+def test_strided_load(params, ew, vl, stride):
+    run_test(ew, vl, stride, params=params, test_store=False)
+
+
+@pytest.mark.parametrize("params,ew,vl,stride", generate_test_params())
+def test_strided_store(params, ew, vl, stride):
+    run_test(ew, vl, stride, params=params, test_store=True)
 
 
 if __name__ == '__main__':
     import argparse
     import sys
+
+    from zamlet.geometries import get_geometry, list_geometries
 
     parser = argparse.ArgumentParser(description='Test strided vector load/store operations')
     parser.add_argument('--ew', type=int, default=64,
@@ -415,19 +430,28 @@ if __name__ == '__main__':
                         help='Vector length - number of elements (default: 8)')
     parser.add_argument('--stride', type=int, default=16,
                         help='Byte stride between elements (default: 16)')
-    parser.add_argument('--j-rows', type=int, default=1,
-                        help='Number of jamlet rows per kamlet (default: 1)')
+    parser.add_argument('--geometry', '-g', default='k2x1_j1x1',
+                        help='Geometry name (default: k2x1_j1x1)')
+    parser.add_argument('--list-geometries', action='store_true',
+                        help='List available geometries and exit')
     parser.add_argument('--seed', '-s', type=int, default=0,
                         help='Random seed for test data generation (default: 0)')
     parser.add_argument('--store', action='store_true',
                         help='Test strided store (default: test strided load)')
     args = parser.parse_args()
 
+    if args.list_geometries:
+        print("Available geometries:")
+        print(list_geometries())
+        sys.exit(0)
+
     # Validate element width
     valid_ews = [8, 16, 32, 64]
     if args.ew not in valid_ews:
         print(f"Error: ew must be one of {valid_ews}", file=sys.stderr)
         sys.exit(1)
+
+    params = get_geometry(args.geometry)
 
     level = logging.DEBUG
     root_logger = logging.getLogger()
@@ -443,9 +467,9 @@ if __name__ == '__main__':
     try:
         logger.info(
             f'Starting with ew={args.ew}, vl={args.vl}, stride={args.stride}, '
-            f'j_rows={args.j_rows}, seed={args.seed}, store={args.store}'
+            f'geometry={args.geometry}, seed={args.seed}, store={args.store}'
         )
-        exit_code = asyncio.run(main(clock, args.ew, args.vl, args.stride, args.j_rows,
+        exit_code = asyncio.run(main(clock, args.ew, args.vl, args.stride, params,
                                      args.seed, args.store))
     except KeyboardInterrupt:
         root_logger.warning('Test interrupted by user')

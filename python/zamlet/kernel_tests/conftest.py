@@ -72,18 +72,18 @@ def build_if_needed(kernel_dir: str, binary_name: str) -> str:
     return binary_path
 
 
-def run_kernel(binary_path: str, j_rows: int = 1, max_cycles: int = 50000) -> int:
+def run_kernel(binary_path: str, params=None, max_cycles: int = 50000) -> int:
     """
     Run a RISC-V binary through run_lamlet.
 
     Args:
         binary_path: Path to the .riscv binary
-        j_rows: Number of jamlet rows per kamlet
+        params: LamletParams configuration (uses default if None)
         max_cycles: Maximum simulation cycles
 
     Returns:
         Exit code from the program (0 = pass, non-zero = fail)
     """
     clock = Clock(max_cycles=max_cycles)
-    exit_code = asyncio.run(run_lamlet_main(clock, binary_path, j_rows))
+    exit_code = asyncio.run(run_lamlet_main(clock, binary_path, params))
     return exit_code
