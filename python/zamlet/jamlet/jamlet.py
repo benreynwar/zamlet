@@ -98,8 +98,13 @@ class Jamlet:
             MessageType.READ_MEM_WORD_REQ: Queue(2),
             MessageType.READ_MEM_WORD_RESP: Queue(2),
             MessageType.READ_MEM_WORD_DROP: Queue(2),
+            MessageType.WRITE_MEM_WORD_REQ: Queue(2),
+            MessageType.WRITE_MEM_WORD_RESP: Queue(2),
+            MessageType.WRITE_MEM_WORD_DROP: Queue(2),
+            MessageType.WRITE_MEM_WORD_RETRY: Queue(2),
             }
 
+        # Shared with the parent kamlet
         self.cache_table = cache_table
         self.rf_info = rf_info
         self.tlb = tlb

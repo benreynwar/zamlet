@@ -59,6 +59,13 @@ class SyncDirection(Enum):
     SW = 7
 
 
+class WaitingItemSyncState(Enum):
+    """Synchronization state for waiting items that require lamlet-wide sync."""
+    NOT_STARTED = 0
+    IN_PROGRESS = 1
+    COMPLETE = 2
+
+
 # Requirements for sending in each direction
 # For cardinal directions: just need the opposite column/row synced
 # For diagonal directions: need opposite quadrant + adjacent column + adjacent row
@@ -329,13 +336,12 @@ class Synchronizer:
 
     def _notify_if_complete(self, sync_ident: int):
         """If sync is complete, set the waiting item's sync_state to COMPLETE."""
-        from zamlet.transactions.load_stride import SyncState as WaitingSyncState
         if self.is_complete(sync_ident):
             if self.cache_table is not None:
                 witem = self.cache_table.get_waiting_item_by_instr_ident(sync_ident)
                 assert witem is not None
-                assert witem.sync_state == WaitingSyncState.IN_PROGRESS
-                witem.sync_state = WaitingSyncState.COMPLETE
+                assert witem.sync_state == WaitingItemSyncState.IN_PROGRESS
+                witem.sync_state = WaitingItemSyncState.COMPLETE
                 del self._sync_states[sync_ident]
             logger.debug(f'{self.clock.cycle}: SYNC_COMPLETE: synchronizer ({self.x},{self.y}) '
                          f'sync_ident={sync_ident}')

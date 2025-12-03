@@ -22,3 +22,5 @@ from zamlet.transactions import store_j2j_words
 from zamlet.transactions import load_word
 from zamlet.transactions import store_word
 from zamlet.transactions import read_mem_word
+from zamlet.transactions import write_mem_word
+from zamlet.transactions import store_stride

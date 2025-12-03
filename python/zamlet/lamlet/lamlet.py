@@ -32,6 +32,7 @@ from zamlet.memlet import Memlet
 from zamlet.runner import Future
 from zamlet.kamlet import kinstructions
 from zamlet.transactions.load_stride import LoadStride
+from zamlet.transactions.store_stride import StoreStride
 from zamlet.lamlet.scalar import ScalarState
 from zamlet import utils
 import zamlet.disasm_trace as dt
@@ -985,17 +986,14 @@ class Lamlet:
                                is_store: bool, stride_bytes: int,
                                reg_ordering: addresses.Ordering | None = None):
         """
-        Handle strided vector loads/stores using LoadStride instructions.
+        Handle strided vector loads/stores using LoadStride/StoreStride instructions.
 
         Strided access means elements are at addr, addr+stride, addr+2*stride, etc.
         Elements are placed contiguously in the register file.
 
-        LoadStride is limited to j_in_l elements per instruction, so we process
-        in chunks.
+        LoadStride/StoreStride is limited to j_in_l elements per instruction,
+        so we process in chunks.
         """
-        if is_store:
-            raise NotImplementedError("Strided stores not yet implemented")
-
         g_addr = GlobalAddress(bit_addr=addr * 8, params=self.params)
         mem_ew = ordering.ew
 
@@ -1005,33 +1003,50 @@ class Lamlet:
 
         writeset_ident = self.get_writeset_ident()
 
-        # Set up register file ordering for destination registers
+        # Set up register file ordering for registers
         vline_bits = self.params.maxvl_bytes * 8
         n_vlines = (reg_ew * n_elements + vline_bits - 1) // vline_bits
         for vline_reg in range(reg_base, reg_base + n_vlines):
             self.vrf_ordering[vline_reg] = Ordering(word_order=addresses.WordOrder.STANDARD, ew=reg_ew)
 
-        # Process in chunks of j_in_l elements (LoadStride limitation)
+        # Process in chunks of j_in_l elements
         j_in_l = self.params.j_in_l
         for chunk_start in range(0, n_elements, j_in_l):
             chunk_n = min(j_in_l, n_elements - chunk_start)
             chunk_addr = addr + chunk_start * stride_bytes
             chunk_g_addr = GlobalAddress(bit_addr=chunk_addr * 8, params=self.params)
             instr_ident = self.get_instr_ident(n_idents=self.params.word_bytes + 1)
-            kinstr = LoadStride(
-                dst=reg_base,
-                g_addr=chunk_g_addr,
-                start_index=start_index + chunk_start,
-                n_elements=chunk_n,
-                dst_ordering=reg_ordering,
-                mask_reg=mask_reg,
-                writeset_ident=writeset_ident,
-                instr_ident=instr_ident,
-                stride_bytes=stride_bytes,
-            )
-            logger.debug(f'{self.clock.cycle}: LAMLET CREATE LoadStride instr_ident={instr_ident} '
-                        f'dst=v{reg_base} start_index={start_index + chunk_start} '
-                        f'n_elements={chunk_n} stride={stride_bytes}')
+
+            if is_store:
+                kinstr = StoreStride(
+                    src=reg_base,
+                    g_addr=chunk_g_addr,
+                    start_index=start_index + chunk_start,
+                    n_elements=chunk_n,
+                    src_ordering=reg_ordering,
+                    mask_reg=mask_reg,
+                    writeset_ident=writeset_ident,
+                    instr_ident=instr_ident,
+                    stride_bytes=stride_bytes,
+                )
+                logger.debug(f'{self.clock.cycle}: LAMLET CREATE StoreStride instr_ident={instr_ident} '
+                            f'src=v{reg_base} start_index={start_index + chunk_start} '
+                            f'n_elements={chunk_n} stride={stride_bytes}')
+            else:
+                kinstr = LoadStride(
+                    dst=reg_base,
+                    g_addr=chunk_g_addr,
+                    start_index=start_index + chunk_start,
+                    n_elements=chunk_n,
+                    dst_ordering=reg_ordering,
+                    mask_reg=mask_reg,
+                    writeset_ident=writeset_ident,
+                    instr_ident=instr_ident,
+                    stride_bytes=stride_bytes,
+                )
+                logger.debug(f'{self.clock.cycle}: LAMLET CREATE LoadStride instr_ident={instr_ident} '
+                            f'dst=v{reg_base} start_index={start_index + chunk_start} '
+                            f'n_elements={chunk_n} stride={stride_bytes}')
             await self.add_to_instruction_buffer(kinstr)
 
     #async def vload(self, vd: int, addr: int, ordering: addresses.Ordering,

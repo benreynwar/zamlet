@@ -89,6 +89,7 @@ class MessageType(Enum):
     WRITE_MEM_WORD_REQ = 36
     WRITE_MEM_WORD_RESP = 37
     WRITE_MEM_WORD_DROP = 38
+    WRITE_MEM_WORD_RETRY = 39
 
     #WRITE_REG_REQ = 8
     #WRITE_SP_REQ = 9
@@ -140,6 +141,11 @@ CHANNEL_MAPPING = {
 
     MessageType.READ_MEM_WORD_RESP: 0,
     MessageType.READ_MEM_WORD_DROP: 0,
+
+    MessageType.WRITE_MEM_WORD_REQ: 1,
+    MessageType.WRITE_MEM_WORD_RESP: 0,
+    MessageType.WRITE_MEM_WORD_DROP: 0,
+    MessageType.WRITE_MEM_WORD_RETRY: 0,
 
     # This is always consumable because we will explicitly track how much buffer room there is.
     MessageType.INSTRUCTIONS: 0,
@@ -202,24 +208,11 @@ class WriteSetIdentHeader(IdentHeader):
     writeset_ident: int # 5 bits (11 remaining)
 
 
-#@dataclass
-#class Header:
-#    # Limited to 64 bit  total
-#    target_x: int    # 8 bits
-#    target_y: int    # 8 bits
-#    source_x: int    # 8 bits
-#    source_y: int    # 8 bits
-#    length: int      # 4 bits
-#    # Used to tie requests and responses together
-#    message_type: MessageType  # 5 bits
-#    send_type: SendType        # 2 bits
-#    ident: int|None = None     # 5 bits
-#    address: int|None = None   # 12 or 16 bits   (either address or value)
-#    value: bytes|None = None     # 16 bits
-#    words_requested: int|None = None  # 4 bits  (if used address is 12 bits)
-#
-#    def copy(self):
-#        return dataclasses.replace(self)
+@dataclass
+class WriteMemWordHeader(IdentHeader):
+    tag: int              # 3 bits - src byte in word (0-7)
+    dst_byte_in_word: int # 3 bits - dst byte in word (0-7)
+    n_bytes: int          # 3 bits - number of bytes (1-8)
 
 
 class Direction(Enum):

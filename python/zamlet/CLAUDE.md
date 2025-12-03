@@ -1,5 +1,8 @@
 # Claude Code Guidelines for RISC-V Model
 
+## Communication Style
+When I ask you to show me something (e.g., grep output, log excerpts), just show it and wait. Don't continue with analysis unless I ask for it.
+
 ## RISC-V ISA Manual Location
 The RISC-V ISA manual is located at `~/Code/riscv-isa-manual`. The vector extension spec is at:
 ```
@@ -7,9 +10,7 @@ The RISC-V ISA manual is located at `~/Code/riscv-isa-manual`. The vector extens
 ```
 
 ## Wrapping up context
-When I say "wrap up this context", do the following:
-1. Read this CLAUDE.md file and check if anything needs to be improved or corrected based on what you learned during this session. Make those changes.
-2. Write a short summary of where we are at to RESTART.md. This will be used to initialize the next session. Follow the guidelines in "Creating summary" below.
+When I say "wrap up this context", write a short summary of where we are at to RESTART.md. This will be used to initialize the next session. Follow the guidelines in "Creating summary" below.
 
 ## Creating summary
 When cache is running out, I'll ask you to create a summary to restart from.

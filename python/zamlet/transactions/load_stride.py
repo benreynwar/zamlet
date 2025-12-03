@@ -16,7 +16,6 @@ We assume that the src page is not ew=1.
 
 from typing import List, Any
 from dataclasses import dataclass
-from enum import Enum
 import logging
 
 from zamlet import addresses
@@ -27,12 +26,7 @@ from zamlet.params import LamletParams
 from zamlet.jamlet.jamlet import Jamlet
 from zamlet import utils
 from zamlet.kamlet.kinstructions import KInstr
-
-
-class SyncState(Enum):
-    NOT_STARTED = 0
-    IN_PROGRESS = 1
-    COMPLETE = 2
+from zamlet.synchronization import WaitingItemSyncState as SyncState
 
 
 logger = logging.getLogger(__name__)

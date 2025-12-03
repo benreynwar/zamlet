@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, Tuple
 
 
 class WaitingItem:
@@ -7,12 +7,16 @@ class WaitingItem:
     cache_is_read = False
     reads_all_memory = False
     writes_all_memory = False
+    use_source_to_match = False
 
-    def __init__(self, item: Any, instr_ident: int|None=None, rf_ident: int|None=None):
+    def __init__(self, item: Any, instr_ident: int|None=None, rf_ident: int|None=None,
+                 source: Tuple[int, int]|None=None):
         self.item = item
         self.instr_ident = instr_ident
         self.rf_ident = rf_ident
         self.cache_slot: int|None = None
+        self.writeset_ident: int|None = None
+        self.source = source
 
     def ready(self) -> bool:
         '''Return True when transaction is complete and witem can be finalized.'''
@@ -35,8 +39,9 @@ class WaitingItemRequiresCache(WaitingItem):
 
     def __init__(self, item: Any, instr_ident: int|None=None,
                  cache_slot: int|None=None, cache_is_avail: bool=False,
-                 writeset_ident: int|None=None, rf_ident: int|None=None):
-        super().__init__(item, instr_ident, rf_ident)
+                 writeset_ident: int|None=None, rf_ident: int|None=None,
+                 source: Tuple[int, int]|None=None):
+        super().__init__(item, instr_ident, rf_ident, source)
         self.cache_slot = cache_slot
         self.cache_is_avail = cache_is_avail
         self.writeset_ident = writeset_ident
