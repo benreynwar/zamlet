@@ -31,25 +31,34 @@ class IdentQuery(KInstr):
     Each kamlet computes the distance from baseline to its oldest active ident,
     synchronizes to find the minimum, and kamlet (0,0) sends the result to lamlet.
     """
-    ident: int      # Used for both sync and response
-    baseline: int   # next_instr_ident at time of query
+    instr_ident: int  # Used for both sync and response (set to max_response_tags)
+    baseline: int     # next_instr_ident at time of query
+    previous_instr_ident: int  # instr_ident of instruction ahead in queue
 
     async def update_kamlet(self, kamlet: 'Kamlet'):
         distance = kamlet.cache_table.get_oldest_active_instr_ident_distance(self.baseline)
 
+        # If no waiting items, use previous_instr_ident + 1 as the oldest
+        # (the instruction ahead of this query must have completed or is completing)
+        if distance is None:
+            max_tags = kamlet.params.max_response_tags
+            oldest_ident = (self.previous_instr_ident + 1) % max_tags
+            distance = (oldest_ident - self.baseline) % max_tags
+
         logger.debug(f'{kamlet.clock.cycle}: IdentQuery: kamlet ({kamlet.min_x},{kamlet.min_y}) '
-                     f'baseline={self.baseline} distance={distance}')
+                     f'baseline={self.baseline} previous={self.previous_instr_ident} '
+                     f'distance={distance}')
 
         # Create waiting item to track sync completion and send response
         is_origin = (kamlet.min_x == 0 and kamlet.min_y == 0)
         witem = WaitingIdentQuery(
-            ident=self.ident,
+            ident=self.instr_ident,
             is_origin=is_origin,
         )
         await kamlet.cache_table.add_witem(witem)
 
         # Report to synchronizer (uses min aggregation)
-        kamlet.synchronizer.local_event(self.ident, value=distance)
+        kamlet.synchronizer.local_event(self.instr_ident, value=distance)
 
 
 class WaitingIdentQuery(WaitingItem):

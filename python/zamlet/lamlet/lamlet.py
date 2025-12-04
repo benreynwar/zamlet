@@ -140,6 +140,17 @@ class Lamlet:
         self._ident_query_state = RefreshState.DORMANT
         self._ident_query_ident = params.max_response_tags  # Dedicated ident for queries
         self._ident_query_baseline = 0
+        # Track last instr_ident sent to kamlets (for IdentQuery.previous_instr_ident)
+        # Initialize to max_response_tags - 2 so first query reports max_response_tags - 1 as oldest
+        self._last_sent_instr_ident: int = params.max_response_tags - 2
+
+        # Per-kamlet instruction queue token tracking
+        # Available tokens = how many instructions we can send to this kamlet
+        self._available_tokens = [params.instruction_queue_length for _ in range(params.k_in_l)]
+        # Tokens used since we sent the last ident query (will be returned by NEXT query)
+        self._tokens_used_since_query = [0 for _ in range(params.k_in_l)]
+        # Tokens that will be returned when the current in-flight query responds
+        self._tokens_in_active_query = [0 for _ in range(params.k_in_l)]
 
     def _get_free_witem_index(self) -> int | None:
         """Get a free slot index in waiting_items, or None if full."""
@@ -252,7 +263,7 @@ class Lamlet:
         await self.add_witem(witem)
         kinstr = kinstructions.ReadByte(
             k_maddr=k_maddr,
-            ident=instr_ident,
+            instr_ident=instr_ident,
             )
         await self.add_to_instruction_buffer(kinstr, k_maddr.k_index)
         return future
@@ -491,49 +502,73 @@ class Lamlet:
             await self.clock.next_cycle
         self.instruction_buffer.append((instruction, k_index))
 
-    def update_tokens(self, tokens):
-        for index, kamlet in enumerate(self.kamlets):
-            while kamlet.available_instruction_tokens:
-                kamlet.take_instruction_token()
-                tokens[index] += 1
+    def _have_tokens(self, k_index: int | None, is_ident_query: bool = False) -> bool:
+        """Check if we have tokens available for the given k_index (or all if None).
 
-    def have_tokens(self, tokens, k_index):
+        Regular instructions need > 1 token (last token reserved for IdentQuery).
+        IdentQuery only needs > 0 tokens.
+        """
+        min_tokens = 0 if is_ident_query else 1
         if k_index is None:
-            return all(tokens)
+            return all(t > min_tokens for t in self._available_tokens)
         else:
-            return tokens[k_index]
+            return self._available_tokens[k_index] > min_tokens
 
-    def decrement_tokens(self, tokens, k_index):
+    def _use_token(self, k_index: int | None):
+        """Use a token for the given k_index (or all if None for broadcast)."""
         if k_index is None:
-            for index in range(len(tokens)):
-                tokens[index] -= 1
-                assert tokens[index] >= 0
+            for i in range(self.params.k_in_l):
+                assert self._available_tokens[i] > 0
+                self._available_tokens[i] -= 1
+                self._tokens_used_since_query[i] += 1
+            logger.debug(f'{self.clock.cycle}: lamlet: _use_token broadcast, '
+                        f'available={self._available_tokens}')
         else:
-            tokens[k_index] -= 1
-            assert tokens[k_index] >= 0
+            assert self._available_tokens[k_index] > 0
+            self._available_tokens[k_index] -= 1
+            self._tokens_used_since_query[k_index] += 1
+            logger.debug(f'{self.clock.cycle}: lamlet: _use_token k={k_index}, '
+                        f'available={self._available_tokens}')
+
+    def _should_send_ident_query_for_tokens(self) -> bool:
+        """Check if we should send an ident query to reclaim tokens."""
+        # Send query if any kamlet has less than half its tokens available
+        # and we're not already waiting for a response
+        if self._ident_query_state != RefreshState.DORMANT:
+            return False
+        threshold = self.params.instruction_queue_length // 2
+        return any(t < threshold for t in self._available_tokens)
 
     async def monitor_instruction_buffer(self):
         inactive_count = 0
         old_length = 0
-        available_tokens = [0 for _ in range(self.params.k_in_l)]
         while True:
-            self.update_tokens(available_tokens)
-            if self.instruction_buffer and available_tokens:
+            # Check if we need to send an ident query to reclaim tokens
+            if self._should_send_ident_query_for_tokens():
+                self._ident_query_state = RefreshState.READY_TO_SEND
+
+            instructions = []
+            send_k_index = None
+
+            if self.instruction_buffer:
                 k_indices = [x[1] for x in self.instruction_buffer]
                 k_indices_same = all(k_indices[0] == x for x in k_indices)
-                if len(self.instruction_buffer) >= self.params.instructions_in_packet or (not k_indices_same) or inactive_count > 2:
-                    instructions = []
-                    dest_k_index = self.instruction_buffer[0][1]
-                    while self.instruction_buffer and self.have_tokens(available_tokens, k_indices[0]):
-                        if self.instruction_buffer[0][1] == k_indices[0]:
-                            instructions.append(self.instruction_buffer.popleft()[0])
-                            self.decrement_tokens(available_tokens, k_indices[0])
-                        else:
+                should_send = (len(self.instruction_buffer) >= self.params.instructions_in_packet or
+                               (not k_indices_same) or inactive_count > 2)
+
+                if should_send and self._have_tokens(k_indices[0]):
+                    send_k_index = k_indices[0]
+                    while self.instruction_buffer:
+                        instr, instr_k_index = self.instruction_buffer[0]
+                        if instr_k_index != send_k_index:
                             break
-                    if instructions:
-                        await self.send_instructions(instructions, k_indices[0])
-                        old_length = 0
-                        inactive_count = 0
+                        if not self._have_tokens(instr_k_index):
+                            break
+                        self.instruction_buffer.popleft()
+                        instructions.append(instr)
+                        self._use_token(instr_k_index)
+                    old_length = 0
+                    inactive_count = 0
                 else:
                     new_length = len(self.instruction_buffer)
                     if new_length == old_length:
@@ -541,6 +576,32 @@ class Lamlet:
                     else:
                         inactive_count = 0
                     old_length = new_length
+
+            # Insert IdentQuery if pending - the reserved token must be available.
+            # This is guaranteed because: (1) regular instructions can't use the last token,
+            # (2) IdentQuery uses the reserved token and moves to WAITING_FOR_RESPONSE,
+            # (3) the response returns tokens (including the one used by IdentQuery),
+            # (4) only then does it return to READY_TO_SEND.
+            if self._ident_query_state == RefreshState.READY_TO_SEND:
+                assert self._have_tokens(None, is_ident_query=True)
+                ident_query = self._create_ident_query()
+                self._use_token(None)
+                # Move tokens to active query tracker (will be returned when response arrives)
+                for i in range(self.params.k_in_l):
+                    self._tokens_in_active_query[i] = self._tokens_used_since_query[i]
+                    self._tokens_used_since_query[i] = 0
+                # Add to broadcast packet, or send separately if packet is single-kamlet
+                if send_k_index is None:
+                    instructions.append(ident_query)
+                else:
+                    if instructions:
+                        await self.send_instructions(instructions, send_k_index)
+                    instructions = [ident_query]
+                    send_k_index = None
+
+            if instructions:
+                await self.send_instructions(instructions, send_k_index)
+
             await self.clock.next_cycle
 
     async def send_instructions(self, instructions, k_index=None):
@@ -550,6 +611,10 @@ class Lamlet:
         lamlet.
         '''
         logger.debug(f'{self.clock.cycle}: Sending instructions {instructions}')
+        # Track last instr_ident sent (for IdentQuery.previous_instr_ident)
+        for instr in instructions:
+            if instr.instr_ident is not None and instr.instr_ident < self.params.max_response_tags:
+                self._last_sent_instr_ident = instr.instr_ident
         if k_index is None:
             send_type = SendType.BROADCAST
             k_index = self.params.k_in_l-1
@@ -570,7 +635,7 @@ class Lamlet:
             )
         packet = [header] + instructions
         jamlet = self.kamlets[0].jamlets[0]
-        logger.debug(f'Sending instructions to {k_index}, -> ({x}, {y})')
+        logger.debug(f'Sending instructions to {k_index} ({send_type.name}), -> ({x}, {y})')
         await self.send_packet(packet, jamlet, Direction.N, port=0)
 
     async def send_packet(self, packet, jamlet, direction, port):
@@ -819,28 +884,38 @@ class Lamlet:
         return ident
 
     def _get_available_idents(self) -> int:
-        """Return the number of idents available before collision."""
+        """Return the number of idents available before collision.
+
+        We never allocate when only 1 ident remains, so if oldest_active == next_instr_ident,
+        it means all idents are free (not that all are used).
+        """
         max_tags = self.params.max_response_tags
         if self._oldest_active_ident is None:
             # No query response yet - next_instr_ident is how many we've used since start
             return max_tags - self.next_instr_ident
-        return (self._oldest_active_ident - self.next_instr_ident) % max_tags
+        available = (self._oldest_active_ident - self.next_instr_ident) % max_tags
+        if available == 0:
+            # All free - see docstring
+            return max_tags
+        return available
 
-    async def _send_ident_query(self):
-        """Send an ident query to kamlets. Called when state is READY_TO_SEND."""
+    def _create_ident_query(self) -> IdentQuery:
+        """Create an IdentQuery instruction and update state."""
         assert self._ident_query_state == RefreshState.READY_TO_SEND
 
         self._ident_query_baseline = self.next_instr_ident
 
         kinstr = IdentQuery(
-            ident=self._ident_query_ident,
+            instr_ident=self._ident_query_ident,
             baseline=self._ident_query_baseline,
+            previous_instr_ident=self._last_sent_instr_ident,
         )
-        await self.add_to_instruction_buffer(kinstr)
 
         self._ident_query_state = RefreshState.WAITING_FOR_RESPONSE
-        logger.debug(f'{self.clock.cycle}: lamlet: sent ident query '
-                     f'baseline={self._ident_query_baseline}')
+        logger.debug(f'{self.clock.cycle}: lamlet: created ident query '
+                     f'baseline={self._ident_query_baseline} '
+                     f'previous_instr_ident={self._last_sent_instr_ident}')
+        return kinstr
 
     def _receive_ident_query_response(self, kamlet_min_distance: int | None):
         """Process ident query response. Called from message handler."""
@@ -866,13 +941,23 @@ class Lamlet:
 
         self._ident_query_state = RefreshState.DORMANT
 
+        # Return instruction queue tokens tracked in _tokens_in_active_query.
+        # This includes the IdentQuery itself (counted via _use_token when sent).
+        for k_index in range(self.params.k_in_l):
+            self._available_tokens[k_index] += self._tokens_in_active_query[k_index]
+
         logger.debug(f'{self.clock.cycle}: lamlet: ident query response '
                      f'baseline={baseline} kamlet_dist={kamlet_min_distance} '
                      f'lamlet_dist={lamlet_min_distance} min_distance={min_distance} '
-                     f'oldest_active={self._oldest_active_ident}')
+                     f'oldest_active={self._oldest_active_ident} '
+                     f'available_tokens={self._available_tokens}')
 
     async def _monitor_ident_query(self):
-        """Coroutine to manage the ident query state machine."""
+        """Coroutine to manage the ident query state machine.
+
+        Sets state to READY_TO_SEND when ident space is running low.
+        The actual sending is done by monitor_instruction_buffer.
+        """
         max_tags = self.params.max_response_tags
 
         while True:
@@ -881,21 +966,19 @@ class Lamlet:
                 if self._get_available_idents() < max_tags // 2:
                     self._ident_query_state = RefreshState.READY_TO_SEND
 
-            if self._ident_query_state == RefreshState.READY_TO_SEND:
-                await self._send_ident_query()
-
             await self.clock.next_cycle
 
     async def get_instr_ident(self, n_idents=1):
         """Allocate n_idents consecutive instruction identifiers.
 
-        Waits if not enough idents are available.
+        Waits if not enough idents are available. Always leaves at least 1 ident
+        free so that oldest_active == next_instr_ident means "all free".
         """
         assert n_idents >= 1
         max_tags = self.params.max_response_tags
 
-        # Wait until we have enough space
-        while self._get_available_idents() < n_idents:
+        # Wait until we have enough space (plus 1 to never use the last ident)
+        while self._get_available_idents() < n_idents + 1:
             await self.clock.next_cycle
 
         ident = self.next_instr_ident

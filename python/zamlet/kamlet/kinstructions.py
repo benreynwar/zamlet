@@ -53,6 +53,10 @@ class WriteImmBytes(KInstr):
     k_maddr: KMAddr
     imm: bytes
 
+    @property
+    def instr_ident(self) -> int | None:
+        return None
+
     async def update_kamlet(self, kamlet):
         await kamlet.handle_write_imm_bytes_instr(self)
         #logger.error(f'Writing {int(self.imm[0])} to {hex(self.k_maddr.addr)}')
@@ -139,7 +143,7 @@ class ReadByte(KInstr):
     The scalar processor receives a response packet.
     """
     k_maddr: KMAddr
-    ident: int
+    instr_ident: int
 
     async def update_kamlet(self, kamlet: 'Kamlet'):
         await kamlet.handle_read_byte_instr(self)

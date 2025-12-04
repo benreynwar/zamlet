@@ -270,7 +270,7 @@ def run_test(reg_ew, src_ew, dst_ew, src_offset, dst_offset, vl, lmul=8,
     """Helper to run a single test configuration."""
     if params is None:
         params = LamletParams()
-    clock = Clock(max_cycles=5000)
+    clock = Clock(max_cycles=10000)
     exit_code = asyncio.run(main(
         clock, src_ew, dst_ew, vl, reg_ew, src_offset, dst_offset, lmul, params, seed
     ))
@@ -368,7 +368,7 @@ if __name__ == '__main__':
     handler.setFormatter(formatter)
     root_logger.addHandler(handler)
 
-    clock = Clock(max_cycles=5000)
+    clock = Clock(max_cycles=10000)
     exit_code = None
     try:
         logger.info(

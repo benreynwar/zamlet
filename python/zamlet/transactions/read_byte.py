@@ -64,7 +64,7 @@ async def send_read_byte_resp(
     """
     value = bytes([jamlet.sram[sram_address]])
     logger.debug(f'{jamlet.clock.cycle}: READ_BYTE: jamlet ({jamlet.x},{jamlet.y}) '
-                 f'ident={instr.ident} k_maddr=0x{instr.k_maddr.addr:x} '
+                 f'ident={instr.instr_ident} k_maddr=0x{instr.k_maddr.addr:x} '
                  f'sram[{sram_address}] value=0x{value[0]:02x}')
     header = ValueHeader(
         message_type=MessageType.READ_BYTE_RESP,
@@ -75,7 +75,7 @@ async def send_read_byte_resp(
         source_x=jamlet.x,
         source_y=jamlet.y,
         length=1,
-        ident=instr.ident,
+        ident=instr.instr_ident,
     )
     packet = [header]
     send_queue = jamlet.send_queues[header.message_type]

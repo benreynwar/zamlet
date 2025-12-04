@@ -53,8 +53,6 @@ class Kamlet:
         self.mem_x = mem_coords[0]
         self.mem_y = mem_coords[1]
 
-        self.available_instruction_tokens = self.params.instruction_queue_length
-
         # We pass methods to the cache table to flush and read lines.
         name = f'CacheTable ({self.min_x}, {self.min_y})'
         self.cache_table = CacheTable(clock, params, name)
@@ -141,17 +139,12 @@ class Kamlet:
             await self.clock.next_cycle
             # If we have an instruction then do it
             if self._instruction_queue:
-                self.available_instruction_tokens += 1
                 instruction = self._instruction_queue.popleft()
                 instr_name = type(instruction).__name__
                 instr_ident = getattr(instruction, 'instr_ident', '?')
                 logger.debug(f'{self.clock.cycle}: kamlet ({self.min_x},{self.min_y}) START INSTRUCTION {instr_name} ident={instr_ident}')
                 await instruction.update_kamlet(self)
                 logger.debug(f'{self.clock.cycle}: kamlet ({self.min_x},{self.min_y}) END INIT INSTRUCTION {instr_name} ident={instr_ident}')
-
-    def take_instruction_token(self):
-        assert self.available_instruction_tokens > 0
-        self.available_instruction_tokens -= 1
 
     async def _monitor_cache_requests(self):
         while True:
