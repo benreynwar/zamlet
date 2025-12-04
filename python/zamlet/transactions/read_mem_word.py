@@ -70,7 +70,7 @@ async def handle_req(jamlet: 'Jamlet', packet: List[Any]) -> None:
     # Check if the parent instruction exists on this jamlet - if not, the data
     # may not have been written yet, so we need to drop and retry later
     # The ident encodes: instr_ident + tag + 1, so subtract to get parent ident
-    parent_ident = header.ident - header.tag - 1
+    parent_ident = (header.ident - header.tag - 1) % jamlet.params.max_response_tags
     parent_witem = jamlet.cache_table.get_waiting_item_by_instr_ident(parent_ident)
     if parent_witem is None:
         logger.debug(f'{jamlet.clock.cycle}: READ_MEM_WORD_REQ: jamlet ({jamlet.x},{jamlet.y}) '
@@ -121,7 +121,7 @@ def handle_resp(jamlet: 'Jamlet', packet: List[Any]) -> None:
     and process the response.
     '''
     header = packet[0]
-    parent_ident = header.ident - header.tag - 1
+    parent_ident = (header.ident - header.tag - 1) % jamlet.params.max_response_tags
     witem = jamlet.cache_table.get_waiting_item_by_instr_ident(parent_ident)
     witem.process_response(jamlet, packet)
 
@@ -133,7 +133,7 @@ def handle_drop(jamlet: 'Jamlet', packet: List[Any]) -> None:
     for retry.
     '''
     header = packet[0]
-    parent_ident = header.ident - header.tag - 1
+    parent_ident = (header.ident - header.tag - 1) % jamlet.params.max_response_tags
     witem = jamlet.cache_table.get_waiting_item_by_instr_ident(parent_ident)
     witem.process_drop(jamlet, packet)
 
@@ -144,6 +144,9 @@ async def send_resp(jamlet: 'Jamlet', rcvd_header: TaggedHeader, j_saddr: JSAddr
     assert j_saddr.j_in_k_index == jamlet.j_in_k_index
     sram_addr = j_saddr.addr // jamlet.params.word_bytes * jamlet.params.word_bytes
     data = jamlet.sram[sram_addr: sram_addr + jamlet.params.word_bytes]
+    logger.debug(f'{jamlet.clock.cycle}: READ_MEM_WORD_RESP: jamlet ({jamlet.x},{jamlet.y}) '
+                 f'ident={rcvd_header.ident} tag={rcvd_header.tag} '
+                 f'sram[{sram_addr}] data={data.hex()}')
     header = TaggedHeader(
         target_x=rcvd_header.source_x, target_y=rcvd_header.source_y,
         source_x=jamlet.x, source_y=jamlet.y,

@@ -75,9 +75,14 @@ class WaitingStoreStride(WaitingItem):
     def __init__(self, instr: StoreStride, params: LamletParams, rf_ident: int | None = None):
         super().__init__(item=instr, instr_ident=instr.instr_ident, rf_ident=rf_ident)
         self.writeset_ident = instr.writeset_ident
-        n_tags = params.word_bytes
+        self.params = params
+        # Each jamlet in the kamlet needs its own set of word_bytes tags
+        n_tags = params.j_in_k * params.word_bytes
         self.transaction_states: List[SendState] = [SendState.NEED_TO_SEND for _ in range(n_tags)]
         self.sync_state = SyncState.NOT_STARTED
+
+    def _state_index(self, j_in_k_index: int, tag: int) -> int:
+        return j_in_k_index * self.params.word_bytes + tag
 
     def _ready_to_synchronize(self) -> bool:
         return all(state == SendState.COMPLETE for state in self.transaction_states)
@@ -86,13 +91,15 @@ class WaitingStoreStride(WaitingItem):
         return self.sync_state == SyncState.COMPLETE
 
     async def monitor_jamlet(self, jamlet: 'Jamlet') -> None:
-        for tag, state in enumerate(self.transaction_states):
-            if state == SendState.NEED_TO_SEND:
+        wb = jamlet.params.word_bytes
+        for tag in range(wb):
+            state_idx = self._state_index(jamlet.j_in_k_index, tag)
+            if self.transaction_states[state_idx] == SendState.NEED_TO_SEND:
                 sent = await send_req(jamlet, self, tag)
                 if sent:
-                    self.transaction_states[tag] = SendState.WAITING_FOR_RESPONSE
+                    self.transaction_states[state_idx] = SendState.WAITING_FOR_RESPONSE
                 else:
-                    self.transaction_states[tag] = SendState.COMPLETE
+                    self.transaction_states[state_idx] = SendState.COMPLETE
 
     async def monitor_kamlet(self, kamlet) -> None:
         if self._ready_to_synchronize() and self.sync_state == SyncState.NOT_STARTED:
@@ -103,19 +110,21 @@ class WaitingStoreStride(WaitingItem):
         header = packet[0]
         assert isinstance(header, TaggedHeader)
         tag = header.tag
-        assert self.transaction_states[tag] == SendState.WAITING_FOR_RESPONSE
-        self.transaction_states[tag] = SendState.COMPLETE
+        state_idx = self._state_index(jamlet.j_in_k_index, tag)
+        assert self.transaction_states[state_idx] == SendState.WAITING_FOR_RESPONSE
+        self.transaction_states[state_idx] = SendState.COMPLETE
         logger.debug(f'{jamlet.clock.cycle}: StoreStride RESP: jamlet ({jamlet.x},{jamlet.y}) '
-                     f'tag={tag} complete')
+                     f'ident={self.instr_ident} tag={tag} complete')
 
     def process_drop(self, jamlet: 'Jamlet', packet) -> None:
         header = packet[0]
         assert isinstance(header, TaggedHeader)
         tag = header.tag
-        assert self.transaction_states[tag] == SendState.WAITING_FOR_RESPONSE
-        self.transaction_states[tag] = SendState.NEED_TO_SEND
+        state_idx = self._state_index(jamlet.j_in_k_index, tag)
+        assert self.transaction_states[state_idx] == SendState.WAITING_FOR_RESPONSE
+        self.transaction_states[state_idx] = SendState.NEED_TO_SEND
         logger.debug(f'{jamlet.clock.cycle}: StoreStride DROP/RETRY: jamlet ({jamlet.x},{jamlet.y}) '
-                     f'tag={tag} will retry')
+                     f'ident={self.instr_ident} tag={tag} will retry')
 
     async def finalize(self, kamlet) -> None:
         if self.rf_ident is not None:
@@ -235,7 +244,7 @@ async def send_req(jamlet: 'Jamlet', witem: WaitingStoreStride, tag: int) -> boo
         message_type=MessageType.WRITE_MEM_WORD_REQ,
         send_type=SendType.SINGLE,
         length=3,
-        ident=instr.instr_ident + tag + 1,
+        ident=(instr.instr_ident + tag + 1) % jamlet.params.max_response_tags,
         tag=tag,
         dst_byte_in_word=dst_byte_in_word,
         n_bytes=request.n_bytes,
@@ -244,7 +253,8 @@ async def send_req(jamlet: 'Jamlet', witem: WaitingStoreStride, tag: int) -> boo
     packet = [header, word_addr, src_word]
 
     logger.debug(f'{jamlet.clock.cycle}: StoreStride send_req: jamlet ({jamlet.x},{jamlet.y}) '
-                 f'tag={tag} -> ({target_x},{target_y}) addr=0x{word_addr.addr:x} '
+                 f'ident={instr.instr_ident} tag={tag} -> ({target_x},{target_y}) '
+                 f'element={src_e} g_addr=0x{request.g_addr.addr:x} k_maddr=0x{word_addr.addr:x} '
                  f'src_byte={src_byte_in_word} dst_byte={dst_byte_in_word} n_bytes={request.n_bytes}')
 
     await jamlet.send_packet(packet)

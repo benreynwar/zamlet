@@ -4,20 +4,27 @@ Geometry configurations for the RISC-V VPU simulator.
 This module defines the set of LamletParams configurations that tests should run against.
 
 Usage:
-    from zamlet.geometries import GEOMETRIES, get_geometry
+    from zamlet.geometries import GEOMETRIES, get_geometry, scale_n_tests
 
-    # Get a specific geometry by name
-    params = get_geometry("small")
-
-    # For pytest parametrization
-    @pytest.mark.parametrize("name,params", GEOMETRIES.items())
-    def test_something(name, params):
+    # For pytest parametrization with configurable count
+    def generate_test_params(n_tests: int = 128):
+        n_tests = scale_n_tests(n_tests)
         ...
+
+Environment variables:
+    ZAMLET_TEST_SCALE: Factor to scale test counts (e.g., 0.1 for 10%, 2 for 200%)
 """
 
+import os
 from typing import Dict
 
 from zamlet.params import LamletParams
+
+
+def scale_n_tests(n: int) -> int:
+    """Scale test count by ZAMLET_TEST_SCALE env var. Returns at least 1."""
+    scale = float(os.environ.get('ZAMLET_TEST_SCALE', 1.0))
+    return max(1, int(n * scale))
 
 
 # Named geometry configurations.

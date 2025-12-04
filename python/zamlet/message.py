@@ -91,6 +91,9 @@ class MessageType(Enum):
     WRITE_MEM_WORD_DROP = 38
     WRITE_MEM_WORD_RETRY = 39
 
+    # Ident query response (kamlet -> lamlet)
+    IDENT_QUERY_RESP = 40
+
     #WRITE_REG_REQ = 8
     #WRITE_SP_REQ = 9
     #WRITE_MEM_REQ = 10
@@ -146,6 +149,8 @@ CHANNEL_MAPPING = {
     MessageType.WRITE_MEM_WORD_RESP: 0,
     MessageType.WRITE_MEM_WORD_DROP: 0,
     MessageType.WRITE_MEM_WORD_RETRY: 0,
+
+    MessageType.IDENT_QUERY_RESP: 0,
 
     # This is always consumable because we will explicitly track how much buffer room there is.
     MessageType.INSTRUCTIONS: 0,

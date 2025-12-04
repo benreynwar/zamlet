@@ -45,6 +45,13 @@ Tests are organized into:
 ## Keeping this up-to-date
 If you notice this file is not up-to-date, mention that, and suggest changes.
 
+## Bug Investigation
+When you find and fix a bug, always search for similar bugs elsewhere in the codebase:
+- If the bug is in a pattern (e.g., missing page alignment), grep for similar patterns in other files
+- If it's in one of a pair of functions (e.g., load_stride/store_stride), check the counterpart
+- If it's in test code, check other test files for the same issue
+- Document the search you did and what you found
+
 ---
 
 # RISC-V Model Architecture

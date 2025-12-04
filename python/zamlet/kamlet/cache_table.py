@@ -105,14 +105,15 @@ class LoadProtocolState(ProtocolState):
 
 
 class WaitingFuture(WaitingItem):
-    
-    def __init__(self, future: Future):
+
+    def __init__(self, future: Future, instr_ident: int):
         """
-        This is used in the lamlet
-        When a response is received with header.ident == item_index (in the list waiting_items list)
-        then the future is fired.
+        This is used in the lamlet.
+        When a response is received with header.ident matching instr_ident,
+        the future is fired.
         """
-        super().__init__(item=future)
+        super().__init__(item=future, instr_ident=instr_ident)
+        self.future = future
 
 
 class WaitingStoreJ2JWords(WaitingItemRequiresCache):
@@ -286,10 +287,9 @@ class CacheTable:
         return witem_index
 
     async def add_witem(self, witem: WaitingItem, k_maddr: KMAddr|None=None):
-        if isinstance(witem, WaitingItemRequiresCache):
+        if witem.cache_is_read or witem.cache_is_write:
             assert k_maddr is not None
             assert not (witem.cache_is_read and witem.cache_is_write)
-            assert witem.cache_is_read or witem.cache_is_write
             # Wait for writes_all_memory/reads_all_memory to complete first, then check slot
             if self._any_writes_all_memory(witem.writeset_ident):
                 await self._wait_for_writes_all_memory_complete(witem.writeset_ident)
@@ -332,6 +332,11 @@ class CacheTable:
         if witem.reads_all_memory:
             await self._wait_for_all_writes_complete()
             await self._wait_for_reads_all_memory_complete()
+        # If this witem writes all memory, wait for all pending reads and other
+        # writes_all_memory witems to complete first
+        if witem.writes_all_memory:
+            await self._wait_for_all_reads_complete(witem.writeset_ident)
+            await self._wait_for_writes_all_memory_complete(witem.writeset_ident)
         witem_index = await self.get_free_witem_index()
         self.waiting_items[witem_index] = witem
         return witem_index
@@ -359,6 +364,20 @@ class CacheTable:
         """Wait until all pending writes_all_memory witems have completed."""
         while True:
             if not self._any_writes_all_memory(writeset_ident):
+                break
+            await self.clock.next_cycle
+
+    async def _wait_for_all_reads_complete(self, writeset_ident: int | None = None) -> None:
+        """Wait until all pending read witems have completed."""
+        while True:
+            has_reads = False
+            for item in self.waiting_items:
+                if item is not None and item.cache_is_read:
+                    if writeset_ident is not None and item.writeset_ident == writeset_ident:
+                        continue
+                    has_reads = True
+                    break
+            if not has_reads:
                 break
             await self.clock.next_cycle
 
@@ -466,7 +485,7 @@ class CacheTable:
     def slot_in_use(self, slot, writeset_ident: int | None = None):
         # Check to see if there are any waiting items using this slot.
         slot_in_use = False
-        for other_witem_index, other_witem in enumerate(self.waiting_items):
+        for other_witem in self.waiting_items:
             if other_witem is None:
                 continue
             # Skip items with matching writeset_ident (they're part of the same operation)
@@ -475,9 +494,6 @@ class CacheTable:
             using_cache = other_witem.cache_is_read or other_witem.cache_is_write
             if using_cache and other_witem.cache_slot == slot:
                 slot_in_use = True
-                logger.debug(f'{self.clock.cycle}: slot_in_use: slot={slot} in use by witem[{other_witem_index}] '
-                             f'type={type(other_witem).__name__} writeset={other_witem.writeset_ident} '
-                             f'(checking writeset={writeset_ident})')
         if slot_in_use:
             assert slot in self.used_slots
         return slot_in_use
@@ -501,6 +517,22 @@ class CacheTable:
         index = valid_indices[0]
         item = self.waiting_items[index]
         return item
+
+    def get_oldest_active_instr_ident_distance(self, baseline: int) -> int | None:
+        """Return the distance to the oldest active instr_ident from baseline.
+
+        Distance is computed as (ident - baseline) % max_response_tags, so older idents
+        (further back in the circular space) have smaller distances.
+
+        Returns None if no waiting items have an instr_ident set (all free).
+        """
+        max_tags = self.params.max_response_tags
+        idents = [item.instr_ident for item in self.waiting_items
+                  if item is not None and item.instr_ident is not None]
+        if not idents:
+            return None  # All free
+        distances = [(ident - baseline) % max_tags for ident in idents]
+        return min(distances)
 
     def can_get_slot(self, k_maddr: KMAddr) -> bool:
         slot = self.addr_to_slot(k_maddr)

@@ -17,6 +17,7 @@ result is the same as applying the micro-ops to the state.
 
 import logging
 from collections import deque
+from enum import Enum
 from typing import List, Tuple, Deque, Any
 from dataclasses import dataclass
 
@@ -33,6 +34,7 @@ from zamlet.runner import Future
 from zamlet.kamlet import kinstructions
 from zamlet.transactions.load_stride import LoadStride
 from zamlet.transactions.store_stride import StoreStride
+from zamlet.transactions.ident_query import IdentQuery
 from zamlet.lamlet.scalar import ScalarState
 from zamlet import utils
 import zamlet.disasm_trace as dt
@@ -40,6 +42,13 @@ from zamlet.synchronization import SyncDirection
 
 
 logger = logging.getLogger(__name__)
+
+
+class RefreshState(Enum):
+    DORMANT = 0
+    READY_TO_SEND = 1
+    WAITING_FOR_RESPONSE = 2
+
 
 @dataclass
 class SectionInfo:
@@ -125,14 +134,61 @@ class Lamlet:
 
         self.next_writeset_ident = 0
         self.next_instr_ident = 0
+        # Track oldest active instr_ident for flow control (None = unknown/all free)
+        self._oldest_active_ident: int | None = None
+        # Ident query state machine
+        self._ident_query_state = RefreshState.DORMANT
+        self._ident_query_ident = params.max_response_tags  # Dedicated ident for queries
+        self._ident_query_baseline = 0
 
-    async def get_free_item_index(self):
+    def _get_free_witem_index(self) -> int | None:
+        """Get a free slot index in waiting_items, or None if full."""
+        for index, item in enumerate(self.waiting_items):
+            if item is None:
+                return index
+        return None
+
+    async def add_witem(self, witem: WaitingItem) -> int:
+        """Add a waiting item to the list, waiting if necessary. Returns the slot index."""
         while True:
-            valid_indices = [index for index, x in enumerate(self.waiting_items) if x is None]
-            if valid_indices:
+            index = self._get_free_witem_index()
+            if index is not None:
                 break
             await self.clock.next_cycle
-        return valid_indices[0]
+        self.waiting_items[index] = witem
+        return index
+
+    def get_witem_by_ident(self, instr_ident: int) -> WaitingItem | None:
+        """Find a waiting item by its instr_ident. Raises if duplicates found."""
+        matches = [item for item in self.waiting_items
+                   if item is not None and item.instr_ident == instr_ident]
+        if len(matches) > 1:
+            raise ValueError(f"Multiple waiting items with instr_ident {instr_ident}")
+        return matches[0] if matches else None
+
+    def remove_witem_by_ident(self, instr_ident: int):
+        """Remove a waiting item by its instr_ident."""
+        for index, item in enumerate(self.waiting_items):
+            if item is not None and item.instr_ident == instr_ident:
+                self.waiting_items[index] = None
+                return
+        raise ValueError(f"No waiting item with instr_ident {instr_ident}")
+
+    def get_oldest_active_instr_ident_distance(self, baseline: int) -> int | None:
+        """Return the distance to the oldest active instr_ident from baseline.
+
+        Distance is computed as (ident - baseline) % max_response_tags, so older idents
+        (further back in the circular space) have smaller distances.
+
+        Returns None if no waiting items have an instr_ident set (all free).
+        """
+        max_tags = self.params.max_response_tags
+        idents = [item.instr_ident for item in self.waiting_items
+                  if item is not None and item.instr_ident is not None]
+        if not idents:
+            return None  # All free
+        distances = [(ident - baseline) % max_tags for ident in idents]
+        return min(distances)
 
     #async def add_item(self, new_item, cache_is_write, cache_slot):
     #    item = WaitingItem(
@@ -190,13 +246,13 @@ class Lamlet:
         k_maddr = address.to_k_maddr(self.tlb)
         j_in_k_index = (k_maddr.addr//self.params.word_bytes) % self.params.j_in_k
         logger.debug(f'{self.clock.cycle}: lamlet: Lamlet.read_bytes {hex(address.addr)} k_maddr {k_maddr} j_in_k {j_in_k_index}')
-        item_index = await self.get_free_item_index()
-        # The waiting item indicates that we are waiting for a response.
+        instr_ident = await self.get_instr_ident()
         future = self.clock.create_future()
-        self.waiting_items[item_index] = WaitingFuture(future=future)
+        witem = WaitingFuture(future=future, instr_ident=instr_ident)
+        await self.add_witem(witem)
         kinstr = kinstructions.ReadByte(
             k_maddr=k_maddr,
-            ident=item_index,
+            ident=instr_ident,
             )
         await self.add_to_instruction_buffer(kinstr, k_maddr.k_index)
         return future
@@ -407,17 +463,25 @@ class Lamlet:
         assert header.length == len(packet)
         if header.message_type == MessageType.READ_BYTE_RESP:
             assert len(packet) == 1
-            item = self.waiting_items[header.ident]
-            assert isinstance(item.item, Future)
-            item.item.set_result(header.value)
-            self.waiting_items[header.ident] = None
+            item = self.get_witem_by_ident(header.ident)
+            assert item is not None, f"No waiting item for ident {header.ident}"
+            assert isinstance(item, WaitingFuture)
+            item.future.set_result(header.value)
+            self.remove_witem_by_ident(header.ident)
             logger.debug(f'{self.clock.cycle}: lamlet: Got a READ_BYTE_RESP from ({header.source_x, header.source_y}) is {header.value}')
         elif header.message_type == MessageType.READ_WORDS_RESP:
-            item = self.waiting_items[header.ident]
-            assert isinstance(item.item, Future)
-            item.item.set_result(packet[1:])
-            self.waiting_items[header.ident] = None
+            item = self.get_witem_by_ident(header.ident)
+            assert item is not None, f"No waiting item for ident {header.ident}"
+            assert isinstance(item, WaitingFuture)
+            item.future.set_result(packet[1:])
+            self.remove_witem_by_ident(header.ident)
             logger.debug(f'{self.clock.cycle}: lamlet: Got a READ_WORDS_RESP from ({header.source_x, header.source_y}) is {packet[1:]}')
+        elif header.message_type == MessageType.IDENT_QUERY_RESP:
+            # length=1 means None (all free), length=2 means has a value
+            assert len(packet) in (1, 2), f"packet len {len(packet)}"
+            assert header.ident == self._ident_query_ident
+            min_distance = None if len(packet) == 1 else int.from_bytes(packet[1], byteorder='little')
+            self._receive_ident_query_response(min_distance)
         else:
             raise NotImplementedError()
 
@@ -754,11 +818,90 @@ class Lamlet:
         self.next_writeset_ident += 1
         return ident
 
-    def get_instr_ident(self, n_idents=1):
-        # FIXME: Need to work out how to confirm we won't get ident conflicts when we wrap.
+    def _get_available_idents(self) -> int:
+        """Return the number of idents available before collision."""
+        max_tags = self.params.max_response_tags
+        if self._oldest_active_ident is None:
+            # No query response yet - next_instr_ident is how many we've used since start
+            return max_tags - self.next_instr_ident
+        return (self._oldest_active_ident - self.next_instr_ident) % max_tags
+
+    async def _send_ident_query(self):
+        """Send an ident query to kamlets. Called when state is READY_TO_SEND."""
+        assert self._ident_query_state == RefreshState.READY_TO_SEND
+
+        self._ident_query_baseline = self.next_instr_ident
+
+        kinstr = IdentQuery(
+            ident=self._ident_query_ident,
+            baseline=self._ident_query_baseline,
+        )
+        await self.add_to_instruction_buffer(kinstr)
+
+        self._ident_query_state = RefreshState.WAITING_FOR_RESPONSE
+        logger.debug(f'{self.clock.cycle}: lamlet: sent ident query '
+                     f'baseline={self._ident_query_baseline}')
+
+    def _receive_ident_query_response(self, kamlet_min_distance: int | None):
+        """Process ident query response. Called from message handler."""
+        assert self._ident_query_state == RefreshState.WAITING_FOR_RESPONSE
+
+        max_tags = self.params.max_response_tags
+        assert kamlet_min_distance is None or 0 <= kamlet_min_distance < max_tags
+
+        baseline = self._ident_query_baseline
+
+        # Also check lamlet's own waiting items
+        lamlet_min_distance = self.get_oldest_active_instr_ident_distance(baseline)
+        assert lamlet_min_distance is None or 0 <= lamlet_min_distance < max_tags
+
+        # Combine: take the minimum distance (oldest ident) from both
+        distances = [d for d in [kamlet_min_distance, lamlet_min_distance] if d is not None]
+        if not distances:
+            self._oldest_active_ident = None  # All free
+            min_distance = None
+        else:
+            min_distance = min(distances)
+            self._oldest_active_ident = (baseline + min_distance) % max_tags
+
+        self._ident_query_state = RefreshState.DORMANT
+
+        logger.debug(f'{self.clock.cycle}: lamlet: ident query response '
+                     f'baseline={baseline} kamlet_dist={kamlet_min_distance} '
+                     f'lamlet_dist={lamlet_min_distance} min_distance={min_distance} '
+                     f'oldest_active={self._oldest_active_ident}')
+
+    async def _monitor_ident_query(self):
+        """Coroutine to manage the ident query state machine."""
+        max_tags = self.params.max_response_tags
+
+        while True:
+            if self._ident_query_state == RefreshState.DORMANT:
+                # Transition to READY_TO_SEND when we have less than half idents free
+                if self._get_available_idents() < max_tags // 2:
+                    self._ident_query_state = RefreshState.READY_TO_SEND
+
+            if self._ident_query_state == RefreshState.READY_TO_SEND:
+                await self._send_ident_query()
+
+            await self.clock.next_cycle
+
+    async def get_instr_ident(self, n_idents=1):
+        """Allocate n_idents consecutive instruction identifiers.
+
+        Waits if not enough idents are available.
+        """
         assert n_idents >= 1
+        max_tags = self.params.max_response_tags
+
+        # Wait until we have enough space
+        while self._get_available_idents() < n_idents:
+            await self.clock.next_cycle
+
         ident = self.next_instr_ident
-        self.next_instr_ident = (self.next_instr_ident + n_idents) % 128
+        if self._oldest_active_ident is None:
+            self._oldest_active_ident = ident
+        self.next_instr_ident = (self.next_instr_ident + n_idents) % max_tags
         return ident
 
     async def vload(self, vd: int, addr: int, ordering: addresses.Ordering,
@@ -873,7 +1016,7 @@ class Lamlet:
                                 ident=writeset_ident,
                                 )
                     else:
-                        instr_ident = self.get_instr_ident(2)
+                        instr_ident = await self.get_instr_ident(2)
                         if is_store:
                             byte_mask = [0] * wb
                             start_word_byte = k_maddr.addr % wb
@@ -944,7 +1087,7 @@ class Lamlet:
                     assert section.start_address//l_cache_line_bytes == (section.end_address-1)//l_cache_line_bytes
 
                     if is_store:
-                        instr_ident = self.get_instr_ident()
+                        instr_ident = await self.get_instr_ident()
                         logger.info(f'Store: idx={section.start_index}, '
                                    f'addr=0x{section.start_address:x}-0x{section.end_address:x}, '
                                    f'k_addr=0x{k_maddr.addr:x}, n_elements={section_elements}, '
@@ -960,7 +1103,7 @@ class Lamlet:
                             instr_ident=instr_ident,
                             )
                     else:
-                        instr_ident = self.get_instr_ident()
+                        instr_ident = await self.get_instr_ident()
                         kinstr = kinstructions.Load(
                             dst=reg_base,
                             k_maddr=k_maddr,
@@ -1015,7 +1158,7 @@ class Lamlet:
             chunk_n = min(j_in_l, n_elements - chunk_start)
             chunk_addr = addr + chunk_start * stride_bytes
             chunk_g_addr = GlobalAddress(bit_addr=chunk_addr * 8, params=self.params)
-            instr_ident = self.get_instr_ident(n_idents=self.params.word_bytes + 1)
+            instr_ident = await self.get_instr_ident(n_idents=self.params.word_bytes + 1)
 
             if is_store:
                 kinstr = StoreStride(
@@ -1323,6 +1466,7 @@ class Lamlet:
         self.clock.create_task(self.sync_network_connections())
         self.clock.create_task(self.monitor_replys())
         self.clock.create_task(self.monitor_instruction_buffer())
+        self.clock.create_task(self._monitor_ident_query())
 
     async def run_instruction(self, disasm_trace=None):
         logger.debug(f'{self.clock.cycle}: run_instruction: fetching at pc={hex(self.pc)}')

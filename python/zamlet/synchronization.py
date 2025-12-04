@@ -6,13 +6,21 @@ have occurred across all kamlets in a lamlet. It supports optional minimum value
 aggregation.
 
 Network Architecture:
-- Separate 8-bit wide bus network (not using the main router network)
+- Separate 9-bit wide bus network (not using the main router network)
 - Direct connections to all 8 neighbors (N, S, E, W, NE, NW, SE, SW)
 - No routing - packets only go to immediate neighbors
 
-Packet Format (8 bits per cycle):
-- Byte 0: [7:6] reserved (2), [5:1] sync_ident (5), [0] has_value (1)
-- Bytes 1-4: value (32-bit, little-endian) - only if has_value=1
+Bus Format (9 bits per cycle):
+- [8] = last_byte (1 if this is the final byte of packet)
+- [7:0] = data byte
+
+Packet Format:
+- Byte 0: sync_ident (8 bits)
+- Bytes 1+: value (1-4 bytes, little-endian) if present
+
+Packet length determines whether value is present:
+- Length 1: sync only, no value
+- Length 2-5: sync + 1-4 byte value
 
 Send Conditions:
 - Cardinal N/S: Send when the opposite column is synchronized
@@ -87,10 +95,10 @@ SEND_REQUIREMENTS = {
 class SyncState:
     """Tracks synchronization state for a single sync_ident."""
     sync_ident: int
-    has_value: bool = False
 
     # Whether this jamlet has locally seen the event
     local_seen: bool = False
+    # None means no value provided, otherwise the local value for min aggregation
     local_value: Optional[int] = None
 
     # Quadrant sync status (NE, NW, SE, SW)
@@ -108,7 +116,7 @@ class SyncState:
         'E': False, 'W': False,
     })
 
-    # Minimum values from each region (if has_value)
+    # Minimum values from each region (None means no value from that region)
     quadrant_values: Dict[str, Optional[int]] = field(default_factory=lambda: {
         'NE': None, 'NW': None, 'SE': None, 'SW': None,
     })
@@ -125,35 +133,51 @@ class SyncState:
 
 @dataclass
 class SyncPacket:
-    """A synchronization packet to be sent to a neighbor."""
-    sync_ident: int          # 7 bits
-    has_value: bool          # 1 bit
-    value: Optional[int]     # 32 bits if has_value
+    """A synchronization packet to be sent to a neighbor.
+
+    9-bit bus per cycle: [8] = last_byte, [7:0] = data
+
+    Packet structure:
+    - Byte 0: sync_ident (8 bits)
+    - Bytes 1+: value (1-4 bytes, little-endian) if present
+
+    Packet length determines whether value is present:
+    - Length 1: sync only, no value
+    - Length 2-5: sync + 1-4 byte value
+    """
+    sync_ident: int          # 8 bits
+    value: Optional[int]     # 1-4 bytes if present, None if no value
 
     def to_bytes(self) -> bytes:
         """Serialize packet to bytes for transmission."""
-        # Byte 0: [7] has_value, [6:0] sync_ident (7 bits)
-        # Bytes 1-4: value (32-bit, if has_value=1)
-        byte0 = (0x80 if self.has_value else 0) | (self.sync_ident & 0x7F)
-        result = bytes([byte0])
-        if self.has_value and self.value is not None:
-            result += self.value.to_bytes(4, 'little')
+        result = bytes([self.sync_ident & 0xFF])
+        if self.value is not None:
+            # Determine minimum bytes needed for value
+            if self.value == 0:
+                n_bytes = 1
+            else:
+                n_bytes = (self.value.bit_length() + 7) // 8
+            assert n_bytes <= 4, f"Value {self.value} requires {n_bytes} bytes, max is 4"
+            result += self.value.to_bytes(n_bytes, 'little')
         return result
 
     @classmethod
     def from_bytes(cls, data: bytes) -> 'SyncPacket':
         """Deserialize packet from bytes."""
-        byte0 = data[0]
-        has_value = (byte0 & 0x80) != 0
-        sync_ident = byte0 & 0x7F
+        sync_ident = data[0]
         value = None
-        if has_value and len(data) >= 5:
-            value = int.from_bytes(data[1:5], 'little')
-        return cls(sync_ident=sync_ident, has_value=has_value, value=value)
+        if len(data) > 1:
+            value = int.from_bytes(data[1:], 'little')
+        return cls(sync_ident=sync_ident, value=value)
 
     def length(self) -> int:
         """Return packet length in bytes."""
-        return 5 if self.has_value else 1
+        if self.value is None:
+            return 1
+        if self.value == 0:
+            return 2
+        n_bytes = (self.value.bit_length() + 7) // 8
+        return 1 + n_bytes
 
 
 class Synchronizer:
@@ -244,12 +268,12 @@ class Synchronizer:
             return self.x > 0
         return False
 
-    def start_sync(self, sync_ident: int, has_value: bool = False):
+    def start_sync(self, sync_ident: int):
         """Start tracking a new synchronization operation."""
         if sync_ident in self._sync_states:
             return
 
-        state = SyncState(sync_ident=sync_ident, has_value=has_value)
+        state = SyncState(sync_ident=sync_ident)
 
         # Mark non-existent regions as already synced
         for q in ['NE', 'NW', 'SE', 'SW']:
@@ -266,12 +290,12 @@ class Synchronizer:
 
         self._sync_states[sync_ident] = state
         logger.debug(f'{self.clock.cycle}: SYNC_START: synchronizer ({self.x},{self.y}) '
-                     f'sync_ident={sync_ident} has_value={has_value}')
+                     f'sync_ident={sync_ident}')
 
     def local_event(self, sync_ident: int, value: Optional[int] = None):
         """Report that this kamlet has seen the event."""
         if sync_ident not in self._sync_states:
-            self.start_sync(sync_ident, has_value=(value is not None))
+            self.start_sync(sync_ident)
 
         state = self._sync_states[sync_ident]
         state.local_seen = True
@@ -306,13 +330,14 @@ class Synchronizer:
         return self._all_sends_complete(state)
 
     def get_min_value(self, sync_ident: int) -> Optional[int]:
-        """Get the minimum value across all kamlets."""
+        """Get the minimum value across all kamlets.
+
+        Returns None if no values were provided by any kamlet.
+        """
         if sync_ident not in self._sync_states:
             return None
 
         state = self._sync_states[sync_ident]
-        if not state.has_value:
-            return None
 
         values = []
         if state.local_value is not None:
@@ -342,6 +367,7 @@ class Synchronizer:
                 assert witem is not None
                 assert witem.sync_state == WaitingItemSyncState.IN_PROGRESS
                 witem.sync_state = WaitingItemSyncState.COMPLETE
+                witem.sync_min_value = self.get_min_value(sync_ident)
                 del self._sync_states[sync_ident]
             logger.debug(f'{self.clock.cycle}: SYNC_COMPLETE: synchronizer ({self.x},{self.y}) '
                          f'sync_ident={sync_ident}')
@@ -375,10 +401,10 @@ class Synchronizer:
         return True
 
     def _get_min_for_direction(self, state: SyncState, direction: SyncDirection) -> Optional[int]:
-        """Calculate min value to send in a direction (includes local + all required regions)."""
-        if not state.has_value:
-            return None
+        """Calculate min value to send in a direction (includes local + all required regions).
 
+        Returns None if no values are available.
+        """
         values = []
         if state.local_value is not None:
             values.append(state.local_value)
@@ -404,7 +430,7 @@ class Synchronizer:
         sync_ident = packet.sync_ident
 
         if sync_ident not in self._sync_states:
-            self.start_sync(sync_ident, has_value=packet.has_value)
+            self.start_sync(sync_ident)
 
         state = self._sync_states[sync_ident]
 
@@ -417,7 +443,7 @@ class Synchronizer:
                                SyncDirection.SE, SyncDirection.SW]:
             region = from_direction.name
             state.quadrant_synced[region] = True
-            if packet.has_value and packet.value is not None:
+            if packet.value is not None:
                 if state.quadrant_values[region] is None:
                     state.quadrant_values[region] = packet.value
                 else:
@@ -426,7 +452,7 @@ class Synchronizer:
         elif from_direction in [SyncDirection.N, SyncDirection.S]:
             region = from_direction.name
             state.column_synced[region] = True
-            if packet.has_value and packet.value is not None:
+            if packet.value is not None:
                 if state.column_values[region] is None:
                     state.column_values[region] = packet.value
                 else:
@@ -435,7 +461,7 @@ class Synchronizer:
         elif from_direction in [SyncDirection.E, SyncDirection.W]:
             region = from_direction.name
             state.row_synced[region] = True
-            if packet.has_value and packet.value is not None:
+            if packet.value is not None:
                 if state.row_values[region] is None:
                     state.row_values[region] = packet.value
                 else:
@@ -465,26 +491,28 @@ class Synchronizer:
                 partial = self._partial_packets[direction]
 
                 if in_buf:
-                    byte_val = in_buf.popleft()
-                    partial.append(byte_val)
+                    # 9-bit bus: [8] = last_byte, [7:0] = data
+                    bus_val = in_buf.popleft()
+                    last_byte = (bus_val >> 8) & 1
+                    data_byte = bus_val & 0xFF
+                    partial.append(data_byte)
 
                     # Check if we have a complete packet
-                    if len(partial) >= 1:
-                        has_value = (partial[0] & 0x80) != 0
-                        expected_len = 5 if has_value else 1
-
-                        if len(partial) >= expected_len:
-                            packet = SyncPacket.from_bytes(bytes(partial[:expected_len]))
-                            self._process_received_packet(packet, direction)
-                            del partial[:expected_len]
+                    if last_byte:
+                        packet = SyncPacket.from_bytes(bytes(partial))
+                        self._process_received_packet(packet, direction)
+                        partial.clear()
 
             # Continue sending any packets in progress (one byte per direction per cycle)
             for direction in SyncDirection:
                 if direction in self._outgoing_packets and self._outgoing_packets[direction]:
                     out_buf = self._output_buffers[direction]
                     if out_buf.can_append():
-                        byte_val = self._outgoing_packets[direction].pop(0)
-                        out_buf.append(byte_val)
+                        # 9-bit bus: [8] = last_byte, [7:0] = data
+                        data_byte = self._outgoing_packets[direction].pop(0)
+                        last_byte = 1 if not self._outgoing_packets[direction] else 0
+                        bus_val = (last_byte << 8) | data_byte
+                        out_buf.append(bus_val)
                         if not self._outgoing_packets[direction]:
                             del self._outgoing_packets[direction]
 
@@ -495,7 +523,6 @@ class Synchronizer:
                         value = self._get_min_for_direction(state, direction)
                         packet = SyncPacket(
                             sync_ident=state.sync_ident,
-                            has_value=state.has_value,
                             value=value,
                         )
                         packet_bytes = list(packet.to_bytes())

@@ -15,7 +15,7 @@ from typing import List, Set, Tuple
 import pytest
 
 from zamlet.params import LamletParams
-from zamlet.geometries import GEOMETRIES
+from zamlet.geometries import GEOMETRIES, scale_n_tests
 from zamlet.addresses import Ordering, WordOrder, KMAddr
 from zamlet.kamlet import kinstructions
 from zamlet.transactions.j2j_mapping import RegMemMapping, get_mapping_from_reg, get_mapping_from_mem
@@ -201,7 +201,8 @@ def generate_test_params(n_tests: int = 128, seed: int = 42):
     return params_list
 
 
-@pytest.mark.parametrize("params,mem_ew,reg_ew,start_index,n_elements,mem_offset", generate_test_params())
+@pytest.mark.parametrize("params,mem_ew,reg_ew,start_index,n_elements,mem_offset",
+                         generate_test_params(n_tests=scale_n_tests(128)))
 def test_mapping_consistency(params, mem_ew, reg_ew, start_index, n_elements, mem_offset):
     """Pytest test for mapping consistency."""
     assert check_mapping_consistency(params, mem_ew, reg_ew, start_index, n_elements, mem_offset)

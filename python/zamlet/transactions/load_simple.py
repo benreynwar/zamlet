@@ -40,7 +40,14 @@ class WaitingLoadSimple(WaitingItemRequiresCache):
     async def finalize(self, kamlet: 'Kamlet') -> None:
         instr = self.item
         assert isinstance(instr, kinstructions.Load)
-        assert kamlet.cache_table.can_read(instr.k_maddr)
+        if not kamlet.cache_table.can_read(instr.k_maddr):
+            logger.error(
+                f'{kamlet.clock.cycle}: kamlet ({kamlet.min_x},{kamlet.min_y}): LOAD_SIMPLE '
+                f'FINALIZE FAILED instr_ident={instr.instr_ident} '
+                f'k_maddr.addr=0x{instr.k_maddr.addr:x} cache_slot={self.cache_slot} '
+                f'writeset_ident={self.writeset_ident}'
+            )
+            assert False, f'can_read failed for instr_ident={instr.instr_ident}'
 
         logger.debug(
             f'{kamlet.clock.cycle}: kamlet ({kamlet.min_x},{kamlet.min_y}): LOAD_SIMPLE '

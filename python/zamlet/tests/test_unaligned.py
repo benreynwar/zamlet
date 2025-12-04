@@ -26,7 +26,7 @@ import pytest
 
 from zamlet.runner import Clock
 from zamlet.params import LamletParams
-from zamlet.geometries import GEOMETRIES
+from zamlet.geometries import GEOMETRIES, scale_n_tests
 from zamlet.lamlet.lamlet import Lamlet
 from zamlet.addresses import GlobalAddress, Ordering, WordOrder
 
@@ -136,7 +136,9 @@ async def run_unaligned_test(
     dst_addr = dst_base + dst_offset
 
     # Allocate memory regions with enough padding for offsets (must be page-aligned)
-    alloc_size = max(1024, vl * max(src_ew, dst_ew) // 8 + max(src_offset, dst_offset) + 64)
+    # Data is packed with reg_ew, so use that for size calculation
+    data_size = vl * reg_ew // 8
+    alloc_size = max(1024, data_size + max(src_offset, dst_offset) + 64)
     alloc_size = ((alloc_size + params.page_bytes - 1) // params.page_bytes) * params.page_bytes
 
     lamlet.allocate_memory(
@@ -166,9 +168,9 @@ async def run_unaligned_test(
         iter_count = min(elements_per_iteration, vl - iter_start)
         logger.info(f"Iteration: elements {iter_start} to {iter_start + iter_count - 1}")
 
-        # Calculate byte offsets for this iteration
-        src_byte_offset = iter_start * src_ew // 8
-        dst_byte_offset = iter_start * dst_ew // 8
+        # Calculate byte offsets for this iteration (data is packed with reg_ew)
+        src_byte_offset = iter_start * reg_ew // 8
+        dst_byte_offset = iter_start * reg_ew // 8
 
         # Load from source into v0
         lamlet.vl = iter_count
@@ -211,17 +213,22 @@ async def run_unaligned_test(
     else:
         logger.error("TEST FAILED: Results do not match expected values")
         result_list = unpack_elements(result, reg_ew)
-        # Show detailed comparison
-        for i in range(min(vl, 32)):  # Show first 32 elements max
+        # Find mismatches
+        mismatches = []
+        for i in range(vl):
             actual_val = result_list[i] if i < len(result_list) else None
             expected_val = expected_list[i]
+            if actual_val != expected_val:
+                mismatches.append((i, expected_list[i], actual_val))
+        logger.error(f"  {len(mismatches)} mismatches out of {vl} elements")
+        # Show first 16 mismatches with context
+        for idx, (i, expected_val, actual_val) in enumerate(mismatches[:16]):
             src_val = src_list[i]
-            match = "✓" if actual_val == expected_val else "✗"
             logger.error(
-                f"  [{i}] src={src_val} -> expected={expected_val} actual={actual_val} {match}"
+                f"  [{i}] src={src_val} -> expected={expected_val} actual={actual_val} ✗"
             )
-        if vl > 32:
-            logger.error(f"  ... and {vl - 32} more elements")
+        if len(mismatches) > 16:
+            logger.error(f"  ... and {len(mismatches) - 16} more mismatches")
         return 1
 
 
@@ -298,7 +305,8 @@ def generate_test_params(n_tests: int = 8, seed: int = 42):
     return test_params
 
 
-@pytest.mark.parametrize("params,reg_ew,src_ew,dst_ew,src_offset,dst_offset,vl", generate_test_params())
+@pytest.mark.parametrize("params,reg_ew,src_ew,dst_ew,src_offset,dst_offset,vl",
+                         generate_test_params(n_tests=scale_n_tests(128)))
 def test_unaligned(params, reg_ew, src_ew, dst_ew, src_offset, dst_offset, vl):
     run_test(reg_ew, src_ew, dst_ew, src_offset, dst_offset, vl, params=params)
 

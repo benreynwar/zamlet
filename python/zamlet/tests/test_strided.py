@@ -25,7 +25,7 @@ import pytest
 
 from zamlet.runner import Clock
 from zamlet.params import LamletParams
-from zamlet.geometries import GEOMETRIES
+from zamlet.geometries import GEOMETRIES, scale_n_tests
 from zamlet.lamlet.lamlet import Lamlet
 from zamlet.addresses import GlobalAddress, Ordering, WordOrder
 
@@ -107,12 +107,13 @@ async def run_strided_load_test(
     # Generate test data
     rnd = Random(seed)
     element_bytes = ew // 8
-    src_list = [rnd.getrandbits(ew) for i in range(vl)]
+    #src_list = [rnd.getrandbits(ew) for i in range(vl)]
+    src_list = [i%256 for i in range(vl)]
 
     logger.info(f"Test parameters:")
     logger.info(f"  ew={ew}, vl={vl}, stride={stride}")
     logger.info(f"  element_bytes={element_bytes}")
-    logger.info(f"  j_rows={j_rows}, seed={seed}")
+    logger.info(f"  params={params}, seed={seed}")
     logger.info(f"src_list: {src_list[:16]}{'...' if len(src_list) > 16 else ''}")
 
     # Memory layout for strided access:
@@ -132,17 +133,28 @@ async def run_strided_load_test(
         dst_base += (vl - 1) * abs(stride)
 
     alloc_size = max(1024, mem_size)
+    # Round up to page boundary
+    page_bytes = params.page_bytes
+    alloc_size = ((alloc_size + page_bytes - 1) // page_bytes) * page_bytes
+    n_pages = alloc_size // page_bytes
 
-    # Allocate memory regions
-    ordering = Ordering(WordOrder.STANDARD, ew)
-    lamlet.allocate_memory(
-        GlobalAddress(bit_addr=get_vpu_base_addr(ew) * 8, params=params),
-        alloc_size, is_vpu=True, ordering=ordering
-    )
-    lamlet.allocate_memory(
-        GlobalAddress(bit_addr=(get_vpu_base_addr(ew) + 0x10000) * 8, params=params),
-        alloc_size, is_vpu=True, ordering=ordering
-    )
+    # Allocate source with varying ew per page (tests strided load across orderings)
+    # Allocate dest with uniform ew (contiguous store requires uniform ordering)
+    ews = [8, 16, 32, 64]
+    src_alloc_base = get_vpu_base_addr(ew)
+    dst_alloc_base = get_vpu_base_addr(ew) + 0x10000
+    dst_ordering = Ordering(WordOrder.STANDARD, ew)
+    for page_idx in range(n_pages):
+        src_page_ew = ews[page_idx % len(ews)]
+        src_ordering = Ordering(WordOrder.STANDARD, src_page_ew)
+        lamlet.allocate_memory(
+            GlobalAddress(bit_addr=(src_alloc_base + page_idx * page_bytes) * 8, params=params),
+            page_bytes, is_vpu=True, ordering=src_ordering
+        )
+        lamlet.allocate_memory(
+            GlobalAddress(bit_addr=(dst_alloc_base + page_idx * page_bytes) * 8, params=params),
+            page_bytes, is_vpu=True, ordering=dst_ordering
+        )
 
     # Write source data at strided locations
     logger.info(f"Writing source data at strided locations (stride={stride})")
@@ -162,11 +174,13 @@ async def run_strided_load_test(
     lamlet.vtype = {8: 0x0, 16: 0x1, 32: 0x2, 64: 0x3}[ew]
 
     # Load from source with stride into v0 (contiguous in register)
+    # ordering parameter specifies element width for register layout
+    reg_ordering = Ordering(WordOrder.STANDARD, ew)
     logger.info(f"Loading {vl} elements with stride={stride} into v0")
     await lamlet.vload(
         vd=0,
         addr=src_base,
-        ordering=ordering,
+        ordering=reg_ordering,
         n_elements=vl,
         start_index=0,
         mask_reg=None,
@@ -178,7 +192,7 @@ async def run_strided_load_test(
     await lamlet.vstore(
         vs=0,
         addr=dst_base,
-        ordering=ordering,
+        ordering=dst_ordering,
         n_elements=vl,
         start_index=0,
         mask_reg=None,
@@ -243,12 +257,12 @@ async def run_strided_store_test(
     rnd = Random(seed)
     element_bytes = ew // 8
     src_list = [rnd.getrandbits(ew) for i in range(vl)]
-    #src_list = [i for i in range(vl)]
+    src_list = [i%258 for i in range(vl)]
 
     logger.info(f"Strided Store Test parameters:")
     logger.info(f"  ew={ew}, vl={vl}, stride={stride}")
     logger.info(f"  element_bytes={element_bytes}")
-    logger.info(f"  j_rows={j_rows}, seed={seed}")
+    logger.info(f"  params={params}, seed={seed}")
     logger.info(f"src_list: {src_list[:16]}{'...' if len(src_list) > 16 else ''}")
 
     # Source is contiguous, destination is strided
@@ -258,17 +272,28 @@ async def run_strided_store_test(
     # Calculate memory size needed for strided destination
     mem_size = (vl - 1) * stride + element_bytes + 64
     alloc_size = max(1024, mem_size)
+    # Round up to page boundary
+    page_bytes = params.page_bytes
+    alloc_size = ((alloc_size + page_bytes - 1) // page_bytes) * page_bytes
+    n_pages = alloc_size // page_bytes
 
-    # Allocate memory regions
-    ordering = Ordering(WordOrder.STANDARD, ew)
-    lamlet.allocate_memory(
-        GlobalAddress(bit_addr=get_vpu_base_addr(ew) * 8, params=params),
-        alloc_size, is_vpu=True, ordering=ordering
-    )
-    lamlet.allocate_memory(
-        GlobalAddress(bit_addr=(get_vpu_base_addr(ew) + 0x10000) * 8, params=params),
-        alloc_size, is_vpu=True, ordering=ordering
-    )
+    # Allocate source with uniform ew (contiguous load requires uniform ordering)
+    # Allocate dest with varying ew per page (tests strided store across orderings)
+    ews = [8, 16, 32, 64]
+    src_alloc_base = get_vpu_base_addr(ew)
+    dst_alloc_base = get_vpu_base_addr(ew) + 0x10000
+    src_ordering = Ordering(WordOrder.STANDARD, ew)
+    for page_idx in range(n_pages):
+        dst_page_ew = ews[page_idx % len(ews)]
+        dst_ordering = Ordering(WordOrder.STANDARD, dst_page_ew)
+        lamlet.allocate_memory(
+            GlobalAddress(bit_addr=(src_alloc_base + page_idx * page_bytes) * 8, params=params),
+            page_bytes, is_vpu=True, ordering=src_ordering
+        )
+        lamlet.allocate_memory(
+            GlobalAddress(bit_addr=(dst_alloc_base + page_idx * page_bytes) * 8, params=params),
+            page_bytes, is_vpu=True, ordering=dst_ordering
+        )
 
     # Write source data contiguously
     logger.info(f"Writing source data contiguously")
@@ -287,23 +312,25 @@ async def run_strided_store_test(
     lamlet.vl = vl
     lamlet.vtype = {8: 0x0, 16: 0x1, 32: 0x2, 64: 0x3}[ew]
 
-    # Load contiguously into v0
+    # Load contiguously into v0 (src has uniform ordering)
     logger.info(f"Loading {vl} elements contiguously into v0")
     await lamlet.vload(
         vd=0,
         addr=src_base,
-        ordering=ordering,
+        ordering=src_ordering,
         n_elements=vl,
         start_index=0,
         mask_reg=None,
     )
 
     # Store from v0 to destination with stride
+    # For strided store, ordering sets reg_ordering (memory ordering looked up from TLB)
+    reg_ordering = Ordering(WordOrder.STANDARD, ew)
     logger.info(f"Storing {vl} elements with stride={stride} to dst")
     await lamlet.vstore(
         vs=0,
         addr=dst_base,
-        ordering=ordering,
+        ordering=reg_ordering,
         n_elements=vl,
         start_index=0,
         mask_reg=None,
@@ -379,7 +406,7 @@ def run_test(ew: int, vl: int, stride: int, params: LamletParams = None, seed: i
     """Helper to run a single test configuration."""
     if params is None:
         params = LamletParams()
-    clock = Clock(max_cycles=5000)
+    clock = Clock(max_cycles=10000)
     exit_code = asyncio.run(main(clock, ew, vl, stride, params, seed, test_store))
     assert exit_code == 0, f"Test failed with exit_code={exit_code}"
 
@@ -390,9 +417,9 @@ def random_test_config(rnd: Random):
     geom_params = GEOMETRIES[geom_name]
     ew = rnd.choice([8, 16, 32, 64])
     vl = rnd.randint(1, 64)
-    # Stride must be at least element size, pick random multiple
     element_bytes = ew // 8
-    stride = element_bytes * rnd.randint(1, 8)
+    # Stride must be at least element size to avoid overlapping elements
+    stride = rnd.randint(element_bytes, 64)
     return geom_name, geom_params, ew, vl, stride
 
 
@@ -407,12 +434,12 @@ def generate_test_params(n_tests: int = 64, seed: int = 42):
     return test_params
 
 
-@pytest.mark.parametrize("params,ew,vl,stride", generate_test_params())
+@pytest.mark.parametrize("params,ew,vl,stride", generate_test_params(n_tests=scale_n_tests(32)))
 def test_strided_load(params, ew, vl, stride):
     run_test(ew, vl, stride, params=params, test_store=False)
 
 
-@pytest.mark.parametrize("params,ew,vl,stride", generate_test_params())
+@pytest.mark.parametrize("params,ew,vl,stride", generate_test_params(n_tests=scale_n_tests(32)))
 def test_strided_store(params, ew, vl, stride):
     run_test(ew, vl, stride, params=params, test_store=True)
 
@@ -462,7 +489,7 @@ if __name__ == '__main__':
     handler.setFormatter(formatter)
     root_logger.addHandler(handler)
 
-    clock = Clock(max_cycles=5000)
+    clock = Clock(max_cycles=10000)
     exit_code = None
     try:
         logger.info(

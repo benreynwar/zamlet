@@ -378,13 +378,24 @@ class Memlet:
                 read_address = packets[0][2]
                 assert read_address % self.params.cache_line_bytes == 0
                 read_index = read_address//self.params.cache_line_bytes
+                # Verify all jamlets sent packets for the same addresses
+                for j_index in range(self.params.j_in_k):
+                    j_write_addr = packets[j_index][1]
+                    j_read_addr = packets[j_index][2]
+                    assert j_write_addr == write_address, \
+                        f'j_index={j_index} write_addr=0x{j_write_addr:x} != expected 0x{write_address:x}'
+                    assert j_read_addr == read_address, \
+                        f'j_index={j_index} read_addr=0x{j_read_addr:x} != expected 0x{read_address:x}'
 
                 line = []
                 for word_index in range(n_words):
                     for j_index in range(self.params.j_in_k):
                         line.append(packets[j_index][word_index+3])
                 data = b''.join(line)
-                logger.debug(f'[MEMLET_WRITE] kamlet={self.coords} write_index={write_index} write_addr=0x{write_address:x} data={data.hex()}')
+                for j_index in range(self.params.j_in_k):
+                    j_words = [packets[j_index][word_index+3].hex() for word_index in range(n_words)]
+                    logger.debug(f'{self.clock.cycle}: [MEMLET_RECV] kamlet={self.kamlet_coords} j_index={j_index} write_addr=0x{write_address:x} words={j_words}')
+                logger.debug(f'{self.clock.cycle}: [MEMLET_WRITE] kamlet={self.kamlet_coords} write_index={write_index} write_addr=0x{write_address:x} data={data.hex()}')
                 self.write_cache_line(write_index, data)
 
                 wb = self.params.word_bytes

@@ -87,7 +87,7 @@ async def handle_req(jamlet: 'Jamlet', packet: List[Any]) -> None:
     assert header.message_type == MessageType.WRITE_MEM_WORD_REQ
 
     # Check if the parent instruction exists on this jamlet
-    parent_ident = header.ident - header.tag - 1
+    parent_ident = (header.ident - header.tag - 1) % jamlet.params.max_response_tags
     parent_witem = jamlet.cache_table.get_waiting_item_by_instr_ident(parent_ident)
     if parent_witem is None:
         logger.debug(f'{jamlet.clock.cycle}: WRITE_MEM_WORD_REQ: jamlet ({jamlet.x},{jamlet.y}) '
@@ -106,7 +106,9 @@ async def handle_req(jamlet: 'Jamlet', packet: List[Any]) -> None:
     if existing_witem is not None:
         # This is a resend after RETRY - complete the write
         assert isinstance(existing_witem, WaitingWriteMemWord), \
-            f'Expected WaitingWriteMemWord, got {type(existing_witem).__name__}'
+            f'Expected WaitingWriteMemWord, got {type(existing_witem).__name__} ' \
+            f'header.ident={header.ident} existing_witem.instr_ident={existing_witem.instr_ident} ' \
+            f'source=({header.source_x},{header.source_y})'
         assert existing_witem.state == ReceiveState.WAITING_FOR_REQUEST, \
             f'Expected WAITING_FOR_REQUEST, got {existing_witem.state}, ident={header.ident}'
         j_saddr = addr.to_j_saddr(jamlet.cache_table)
@@ -171,7 +173,7 @@ def handle_resp(jamlet: 'Jamlet', packet: List[Any]) -> None:
     and mark the tag as complete.
     '''
     header = packet[0]
-    parent_ident = header.ident - header.tag - 1
+    parent_ident = (header.ident - header.tag - 1) % jamlet.params.max_response_tags
     witem = jamlet.cache_table.get_waiting_item_by_instr_ident(parent_ident)
     witem.process_response(jamlet, packet)
 
@@ -183,7 +185,7 @@ def handle_drop(jamlet: 'Jamlet', packet: List[Any]) -> None:
     for retry.
     '''
     header = packet[0]
-    parent_ident = header.ident - header.tag - 1
+    parent_ident = (header.ident - header.tag - 1) % jamlet.params.max_response_tags
     witem = jamlet.cache_table.get_waiting_item_by_instr_ident(parent_ident)
     witem.process_drop(jamlet, packet)
 
@@ -195,7 +197,7 @@ def handle_retry(jamlet: 'Jamlet', packet: List[Any]) -> None:
     so mark for resend.
     '''
     header = packet[0]
-    parent_ident = header.ident - header.tag - 1
+    parent_ident = (header.ident - header.tag - 1) % jamlet.params.max_response_tags
     witem = jamlet.cache_table.get_waiting_item_by_instr_ident(parent_ident)
     witem.process_drop(jamlet, packet)  # Same handling as DROP - mark for resend
 
@@ -227,6 +229,7 @@ async def do_write_and_respond(jamlet: 'Jamlet', rcvd_header: WriteMemWordHeader
     )
     jamlet.sram[sram_addr: sram_addr + wb] = new_word
     logger.debug(f'{jamlet.clock.cycle}: CACHE_WRITE WRITE_MEM_WORD: jamlet ({jamlet.x},{jamlet.y}) '
+                 f'ident={rcvd_header.ident} tag={rcvd_header.tag} '
                  f'sram[{sram_addr}] old={old_word.hex()} new={new_word.hex()}')
 
     slot_state.state = CacheState.MODIFIED

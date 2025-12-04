@@ -62,8 +62,10 @@ async def send_read_byte_resp(
     """
     Read a byte from SRAM and send READ_BYTE_RESP to scalar processor.
     """
-    logger.debug(f'jamlet ({jamlet.x}, {jamlet.y}) reading byte from sram {hex(sram_address)}')
     value = bytes([jamlet.sram[sram_address]])
+    logger.debug(f'{jamlet.clock.cycle}: READ_BYTE: jamlet ({jamlet.x},{jamlet.y}) '
+                 f'ident={instr.ident} k_maddr=0x{instr.k_maddr.addr:x} '
+                 f'sram[{sram_address}] value=0x{value[0]:02x}')
     header = ValueHeader(
         message_type=MessageType.READ_BYTE_RESP,
         send_type=SendType.SINGLE,

@@ -102,6 +102,7 @@ class Jamlet:
             MessageType.WRITE_MEM_WORD_RESP: Queue(2),
             MessageType.WRITE_MEM_WORD_DROP: Queue(2),
             MessageType.WRITE_MEM_WORD_RETRY: Queue(2),
+            MessageType.IDENT_QUERY_RESP: Queue(2),
             }
 
         # Shared with the parent kamlet
@@ -211,7 +212,7 @@ class Jamlet:
         for index in range(n_words):
             word = self.sram[address_in_sram + index * wb: address_in_sram + (index+1) * wb]
             packet.append(word)
-        logger.debug(f'jamlet: {(self.x, self.y)}: Sending cache line from sram {address_in_sram} words={packet[3:]}')
+        logger.debug(f'{self.clock.cycle}: jamlet ({self.x},{self.y}): Sending cache line from sram {address_in_sram} words={packet[3:]}')
         send_queue = self.send_queues[header.message_type]
         while not send_queue.can_append():
             await self.clock.next_cycle
@@ -362,22 +363,12 @@ class Jamlet:
                         f'_receive_packets returned from _receive_packet on ch{router_idx}')
 
     async def _monitor_cache_requests(self):
+        # NOTE: WRITE_LINE_READ_LINE is now handled at the kamlet level to ensure
+        # all jamlets send packets for the same request before moving to the next.
+        # READ_LINE is also handled at the kamlet level.
+        # This method is kept for potential future use.
         while True:
             await self.clock.next_cycle
-            for request in self.cache_table.cache_requests:
-                if request is None:
-                    continue
-                if not all(request.sent):
-                    if request.request_type == CacheRequestType.WRITE_LINE_READ_LINE:
-                        slot_state = self.cache_table.slot_states[request.slot]
-                        write_address = request.addr
-                        read_address = slot_state.memory_loc * self.params.cache_line_bytes
-                        await self.write_read_cache_line(cache_slot=request.slot, write_address=write_address, read_address=read_address, ident=request.ident)
-                        self.cache_table.report_sent_request(request, self.j_in_k_index)
-                    else:
-                        # Don't do anything for READ_LINE
-                        # since those messages are sent at the kamlet level
-                        pass
 
     async def _monitor_witems(self) -> None:
         while True:

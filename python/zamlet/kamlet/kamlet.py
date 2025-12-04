@@ -163,10 +163,22 @@ class Kamlet:
                     if request.request_type == CacheRequestType.READ_LINE:
                         await self.read_cache_line(cache_slot=request.slot, address_in_memory=request.addr, ident=request.ident)
                         self.cache_table.report_sent_request(request, 0)
-                    else:
-                        # Don't do anything for WRITE_LINE or WRITE_LINE_READ_LINE
-                        # since those messages are sent at the jamlet level.
-                        pass
+                    elif request.request_type == CacheRequestType.WRITE_LINE_READ_LINE:
+                        slot_state = self.cache_table.slot_states[request.slot]
+                        write_address = request.addr
+                        read_address = slot_state.memory_loc * self.params.cache_line_bytes
+                        tasks = []
+                        for j_in_k_index, jamlet in enumerate(self.jamlets):
+                            task = jamlet.write_read_cache_line(
+                                cache_slot=request.slot,
+                                write_address=write_address,
+                                read_address=read_address,
+                                ident=request.ident)
+                            tasks.append(task)
+                        for task in tasks:
+                            await task
+                        for j_in_k_index in range(len(self.jamlets)):
+                            self.cache_table.report_sent_request(request, j_in_k_index)
 
     async def _get_instructions_from_jamlets(self):
         while True:

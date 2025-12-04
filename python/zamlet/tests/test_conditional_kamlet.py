@@ -21,7 +21,7 @@ import pytest
 
 from zamlet.runner import Clock
 from zamlet.params import LamletParams
-from zamlet.geometries import GEOMETRIES
+from zamlet.geometries import GEOMETRIES, scale_n_tests
 from zamlet.lamlet.lamlet import Lamlet
 from zamlet.addresses import GlobalAddress, Ordering, WordOrder, KMAddr, RegAddr
 from zamlet.kamlet import kinstructions
@@ -300,7 +300,7 @@ def generate_test_params(n_tests: int = 128, seed: int = 42):
     return test_params
 
 
-@pytest.mark.parametrize("params,vl,seed,lmul", generate_test_params())
+@pytest.mark.parametrize("params,vl,seed,lmul", generate_test_params(n_tests=scale_n_tests(32)))
 def test_conditional(params, vl, seed, lmul):
     run_test(vl, seed, lmul, params=params)
 

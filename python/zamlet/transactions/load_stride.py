@@ -81,9 +81,14 @@ class WaitingLoadStride(WaitingItem):
     def __init__(self, instr: LoadStride, params: LamletParams, rf_ident: int|None=None):
         super().__init__(item=instr, instr_ident=instr.instr_ident, rf_ident=rf_ident)
         self.writeset_ident = instr.writeset_ident
-        n_tags = params.word_bytes
+        self.params = params
+        # Each jamlet in the kamlet needs its own set of word_bytes tags
+        n_tags = params.j_in_k * params.word_bytes
         self.transaction_states: List[SendState] = [SendState.NEED_TO_SEND for _ in range(n_tags)]
         self.sync_state = SyncState.NOT_STARTED
+
+    def _state_index(self, j_in_k_index: int, tag: int) -> int:
+        return j_in_k_index * self.params.word_bytes + tag
 
     def _ready_to_synchronize(self) -> bool:
         return all(state == SendState.COMPLETE for state in self.transaction_states)
@@ -92,13 +97,15 @@ class WaitingLoadStride(WaitingItem):
         return self.sync_state == SyncState.COMPLETE
 
     async def monitor_jamlet(self, jamlet: Jamlet) -> None:
-        for tag, state in enumerate(self.transaction_states):
-            if state == SendState.NEED_TO_SEND:
+        wb = jamlet.params.word_bytes
+        for tag in range(wb):
+            state_idx = self._state_index(jamlet.j_in_k_index, tag)
+            if self.transaction_states[state_idx] == SendState.NEED_TO_SEND:
                 sent = await send_req(jamlet, self, tag)
                 if sent:
-                    self.transaction_states[tag] = SendState.WAITING_FOR_RESPONSE
+                    self.transaction_states[state_idx] = SendState.WAITING_FOR_RESPONSE
                 else:
-                    self.transaction_states[tag] = SendState.COMPLETE
+                    self.transaction_states[state_idx] = SendState.COMPLETE
 
     async def monitor_kamlet(self, kamlet) -> None:
         if self._ready_to_synchronize() and self.sync_state == SyncState.NOT_STARTED:
@@ -111,8 +118,9 @@ class WaitingLoadStride(WaitingItem):
         data = packet[1]
         assert isinstance(header, TaggedHeader)
         tag = header.tag
-        assert self.transaction_states[tag] == SendState.WAITING_FOR_RESPONSE
-        self.transaction_states[tag] = SendState.COMPLETE
+        state_idx = self._state_index(jamlet.j_in_k_index, tag)
+        assert self.transaction_states[state_idx] == SendState.WAITING_FOR_RESPONSE
+        self.transaction_states[state_idx] = SendState.COMPLETE
 
         instr = self.item
         request = get_request(jamlet, instr, tag)
@@ -135,14 +143,15 @@ class WaitingLoadStride(WaitingItem):
                 )
         jamlet.rf_slice[dst_reg * wb: (dst_reg+1) * wb] = new_word
         logger.debug(f'{jamlet.clock.cycle}: RF_WRITE LoadStride: jamlet ({jamlet.x},{jamlet.y}) '
-                     f'rf[{dst_reg}] old={old_word.hex()} new={new_word.hex()}')
+                     f'ident={self.instr_ident} rf[{dst_reg}] old={old_word.hex()} new={new_word.hex()}')
 
     def process_drop(self, jamlet: 'Jamlet', packet) -> None:
         header = packet[0]
         assert isinstance(header, TaggedHeader)
         tag = header.tag
-        assert self.transaction_states[tag] == SendState.WAITING_FOR_RESPONSE
-        self.transaction_states[tag] = SendState.NEED_TO_SEND
+        state_idx = self._state_index(jamlet.j_in_k_index, tag)
+        assert self.transaction_states[state_idx] == SendState.WAITING_FOR_RESPONSE
+        self.transaction_states[state_idx] = SendState.NEED_TO_SEND
 
     async def finalize(self, kamlet) -> None:
         if self.rf_ident is not None:
@@ -195,6 +204,9 @@ def get_request(jamlet: Jamlet, instr: LoadStride, tag: int) -> RequiredBytes|No
     assert instr.start_index <= dst_e < instr.start_index + elements_in_vline
     # This jamlet may not have any elements to load for this instruction
     if dst_e < instr.start_index or dst_e >= instr.start_index + instr.n_elements:
+        logger.debug(f'get_request: jamlet ({jamlet.x},{jamlet.y}) ident={instr.instr_ident} '
+                     f'tag={tag} dst_e={dst_e} '
+                     f'out of range [{instr.start_index}, {instr.start_index + instr.n_elements})')
         return None
     # Where is this byte in the src memory?
     src_g_addr = (instr.g_addr.bit_offset(
@@ -247,10 +259,13 @@ async def send_req(jamlet: Jamlet, witem: WaitingLoadStride, tag: int) -> bool:
         message_type=MessageType.READ_MEM_WORD_REQ,
         send_type=SendType.SINGLE,
         length=2,
-        ident=instr.instr_ident + tag + 1,
+        ident=(instr.instr_ident + tag + 1) % jamlet.params.max_response_tags,
         tag=tag,
         )
     packet = [header, word_addr]
+    logger.debug(f'{jamlet.clock.cycle}: LoadStride send_req: jamlet ({jamlet.x},{jamlet.y}) '
+                 f'ident={instr.instr_ident} tag={tag} -> ({target_x},{target_y}) '
+                 f'addr=0x{word_addr.addr:x}')
     await jamlet.send_packet(packet)
     return True
 
