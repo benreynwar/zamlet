@@ -238,11 +238,18 @@ class Kamlet:
             do_write_imm_bytes(self, instr)
 
     async def handle_read_byte_instr(self, instr: kinstructions.ReadByte):
-        logger.debug(f'{self.clock.cycle}: kamlet {(self.min_x, self.min_y)}: handle_read_bytes_instr')
-        if not self.cache_table.can_read(instr.k_maddr):
+        can_read = self.cache_table.can_read(instr.k_maddr)
+        logger.debug(f'{self.clock.cycle}: kamlet {(self.min_x, self.min_y)}: '
+                     f'handle_read_byte_instr ident={instr.instr_ident} '
+                     f'k_maddr={instr.k_maddr} can_read={can_read}')
+        if not can_read:
             witem = WaitingReadByte(instr)
+            logger.debug(f'{self.clock.cycle}: kamlet {(self.min_x, self.min_y)}: '
+                         f'ReadByte ident={instr.instr_ident} creating WaitingReadByte')
             await self.cache_table.add_witem(witem=witem, k_maddr=instr.k_maddr)
         else:
+            logger.debug(f'{self.clock.cycle}: kamlet {(self.min_x, self.min_y)}: '
+                         f'ReadByte ident={instr.instr_ident} calling do_read_byte')
             await do_read_byte(self, instr)
 
     async def handle_load_word_instr(self, instr: kinstructions.LoadWord):

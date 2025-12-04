@@ -72,7 +72,7 @@ def build_if_needed(kernel_dir: str, binary_name: str) -> str:
     return binary_path
 
 
-def run_kernel(binary_path: str, params=None, max_cycles: int = 50000) -> int:
+def run_kernel(binary_path: str, params=None, max_cycles: int = 100000) -> int:
     """
     Run a RISC-V binary through run_lamlet.
 

@@ -154,7 +154,7 @@ class Memlet:
         address = index * self.params.cache_line_bytes
         logger.debug(
             f'{self.clock.cycle}: MEM_WRITE: kamlet{self.kamlet_coords} '
-            f'addr=0x{address:08x} index={index} data={data.hex()}'
+            f'addr=0x{address:08x} memory_loc=0x{index:x} data={data.hex()}'
         )
         self.lines[index] = data
 

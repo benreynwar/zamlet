@@ -30,7 +30,7 @@ class WaitingReadByte(WaitingItemRequiresCache):
     cache_is_read = True
 
     def __init__(self, instr: kinstructions.ReadByte):
-        super().__init__(item=instr)
+        super().__init__(item=instr, instr_ident=instr.instr_ident)
 
     def ready(self) -> bool:
         return self.cache_is_avail

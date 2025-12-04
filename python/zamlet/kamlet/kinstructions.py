@@ -44,18 +44,20 @@ class KInstr:
     pass
 
 
+class LocalKInstr(KInstr):
+    @property
+    def instr_ident(self) -> int | None:
+        return None
+
+
 @dataclass
-class WriteImmBytes(KInstr):
+class WriteImmBytes(LocalKInstr):
     """
     This instruction writes an immediate to the VPU memory.
     The scalar processor does not receive a response.
     """
     k_maddr: KMAddr
     imm: bytes
-
-    @property
-    def instr_ident(self) -> int | None:
-        return None
 
     async def update_kamlet(self, kamlet):
         await kamlet.handle_write_imm_bytes_instr(self)
@@ -164,7 +166,7 @@ class ReadByte(KInstr):
 
 
 @dataclass
-class ZeroLines(KInstr):
+class ZeroLines(LocalKInstr):
     """
     Sets an entire cache line to 0.
     This is useful since we can create a cache line in the SRAM
@@ -178,7 +180,7 @@ class ZeroLines(KInstr):
 
 
 @dataclass
-class DiscardLines(KInstr):
+class DiscardLines(LocalKInstr):
     """
     Throws away cache lines.
     Says we will never use this data so you don't need to flush to
@@ -220,7 +222,7 @@ The load is not aligned
 
 
 @dataclass
-class ExpectRead(KInstr):
+class ExpectRead(LocalKInstr):
     """
     An instruction that let's the kamlet know to expect a read.
     This is used to update the cache state so that this kamlet
@@ -298,7 +300,7 @@ class Store(KInstr):
 
 
 @dataclass
-class VmsleViOp(KInstr):
+class VmsleViOp(LocalKInstr):
     dst: int
     src: int
     simm5: int
@@ -361,7 +363,7 @@ class VmsleViOp(KInstr):
 
 
 @dataclass
-class VmnandMmOp(KInstr):
+class VmnandMmOp(LocalKInstr):
     dst: int
     src1: int
     src2: int
@@ -391,7 +393,7 @@ class VmnandMmOp(KInstr):
 
 
 @dataclass
-class VBroadcastOp(KInstr):
+class VBroadcastOp(LocalKInstr):
     """Broadcast a scalar value to all elements of a vector register.
 
     Used for vmv.v.i, vmv.v.x instructions.
@@ -441,7 +443,7 @@ class VBroadcastOp(KInstr):
 
 
 @dataclass
-class VmvVvOp(KInstr):
+class VmvVvOp(LocalKInstr):
     dst: int
     src: int
     n_elements: int
@@ -489,7 +491,7 @@ class VmvVvOp(KInstr):
 
 
 @dataclass
-class ReadRegElement(KInstr):
+class ReadRegElement(LocalKInstr):
     rd: int
     src: int
     element_index: int
@@ -501,7 +503,7 @@ class ReadRegElement(KInstr):
 
 
 @dataclass
-class VArithVvOp(KInstr):
+class VArithVvOp(LocalKInstr):
     op: VArithOp
     dst: int
     src1: int
@@ -570,7 +572,7 @@ class VArithVvOp(KInstr):
 
 
 @dataclass
-class VArithVxOp(KInstr):
+class VArithVxOp(LocalKInstr):
     op: VArithOp
     dst: int
     scalar_bytes: bytes
@@ -632,7 +634,7 @@ class VArithVxOp(KInstr):
 
 
 @dataclass
-class VreductionVsOp(KInstr):
+class VreductionVsOp(LocalKInstr):
     op: VRedOp
     dst: int
     src_vector: int

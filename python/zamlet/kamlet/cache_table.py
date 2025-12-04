@@ -196,10 +196,11 @@ class CacheTable:
         assert state.ident == ident
         assert not state.received[tag]
         state.received[tag].set(True)
+        n_received = sum(1 for r in state.received if r.peek())
         logger.debug(
             f'{self.clock.cycle}: {self.name}: receive_cache_response '
             f'req={ident} tag={tag} slot={state.slot} '
-            f'received={sum(1 for r in state.received if r)}/{len(state.received)}'
+            f'received={n_received}/{len(state.received)}'
         )
 
     def can_get_free_witem_index(self) -> bool:
@@ -339,6 +340,9 @@ class CacheTable:
             await self._wait_for_writes_all_memory_complete(witem.writeset_ident)
         witem_index = await self.get_free_witem_index()
         self.waiting_items[witem_index] = witem
+        if witem.cache_is_read or witem.cache_is_write:
+            witem.cache_is_avail = (
+                    self.slot_states[witem.cache_slot].state in (CacheState.SHARED, CacheState.MODIFIED))
         return witem_index
 
     async def _wait_for_all_writes_complete(self) -> None:
@@ -549,6 +553,12 @@ class CacheTable:
             return slot
 
     def _can_get_new_slot(self, k_maddr: KMAddr) -> bool:
+        # Block allocation if another slot is writing back this memory_loc
+        memory_loc = k_maddr.addr // self.cache_line_bytes
+        for slot_state in self.slot_states:
+            if (slot_state.old_memory_loc == memory_loc and
+                    slot_state.state == CacheState.WRITING_READING):
+                return False
         if self.free_slots:
             return True
         else:
@@ -561,6 +571,12 @@ class CacheTable:
 
     def _get_new_slot_if_exists(self, k_maddr: KMAddr, check: bool=True) -> int|None:
         assert self.addr_to_slot(k_maddr) is None
+        # Block allocation if another slot is writing back this memory_loc
+        memory_loc = k_maddr.addr // self.cache_line_bytes
+        for slot_state in self.slot_states:
+            if (slot_state.old_memory_loc == memory_loc and
+                    slot_state.state == CacheState.WRITING_READING):
+                return None
         self._check_slots()
         if check:
             assert not self.acquiring_slot
@@ -664,6 +680,9 @@ class CacheTable:
         state.state = CacheState.SHARED
         for item in self.waiting_items:
             if item is not None and item.cache_slot == request.slot:
+                logger.debug(f'{self.clock.cycle}: {self.name}: resolve_write_line_read_line '
+                             f'slot={request.slot} setting cache_is_avail for {type(item).__name__} '
+                             f'instr_ident={item.instr_ident}')
                 item.cache_is_avail = True
 
     async def _monitor_items(self) -> None:

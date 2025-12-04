@@ -199,7 +199,12 @@ class Lamlet:
         if not idents:
             return None  # All free
         distances = [(ident - baseline) % max_tags for ident in idents]
-        return min(distances)
+        min_dist = min(distances)
+        min_idx = distances.index(min_dist)
+        logger.debug(f'{self.clock.cycle}: lamlet: get_oldest_active_instr_ident_distance '
+                     f'baseline={baseline} idents={idents} distances={distances} '
+                     f'min_dist={min_dist} from ident={idents[min_idx]}')
+        return min_dist
 
     #async def add_item(self, new_item, cache_is_write, cache_slot):
     #    item = WaitingItem(
@@ -488,10 +493,9 @@ class Lamlet:
             self.remove_witem_by_ident(header.ident)
             logger.debug(f'{self.clock.cycle}: lamlet: Got a READ_WORDS_RESP from ({header.source_x, header.source_y}) is {packet[1:]}')
         elif header.message_type == MessageType.IDENT_QUERY_RESP:
-            # length=1 means None (all free), length=2 means has a value
-            assert len(packet) in (1, 2), f"packet len {len(packet)}"
+            assert len(packet) == 2, f"packet len {len(packet)}"
             assert header.ident == self._ident_query_ident
-            min_distance = None if len(packet) == 1 else int.from_bytes(packet[1], byteorder='little')
+            min_distance = int.from_bytes(packet[1], byteorder='little')
             self._receive_ident_query_response(min_distance)
         else:
             raise NotImplementedError()
@@ -884,26 +888,21 @@ class Lamlet:
         return ident
 
     def _get_available_idents(self) -> int:
-        """Return the number of idents available before collision.
-
-        We never allocate when only 1 ident remains, so if oldest_active == next_instr_ident,
-        it means all idents are free (not that all are used).
-        """
+        """Return the number of idents available before collision."""
         max_tags = self.params.max_response_tags
         if self._oldest_active_ident is None:
             # No query response yet - next_instr_ident is how many we've used since start
             return max_tags - self.next_instr_ident
-        available = (self._oldest_active_ident - self.next_instr_ident) % max_tags
-        if available == 0:
-            # All free - see docstring
-            return max_tags
-        return available
+        return (self._oldest_active_ident - self.next_instr_ident) % max_tags
 
     def _create_ident_query(self) -> IdentQuery:
         """Create an IdentQuery instruction and update state."""
         assert self._ident_query_state == RefreshState.READY_TO_SEND
 
         self._ident_query_baseline = self.next_instr_ident
+        # Capture lamlet's waiting items distance now, not when response arrives
+        self._ident_query_lamlet_dist = self.get_oldest_active_instr_ident_distance(
+            self._ident_query_baseline)
 
         kinstr = IdentQuery(
             instr_ident=self._ident_query_ident,
@@ -914,29 +913,38 @@ class Lamlet:
         self._ident_query_state = RefreshState.WAITING_FOR_RESPONSE
         logger.debug(f'{self.clock.cycle}: lamlet: created ident query '
                      f'baseline={self._ident_query_baseline} '
-                     f'previous_instr_ident={self._last_sent_instr_ident}')
+                     f'previous_instr_ident={self._last_sent_instr_ident} '
+                     f'lamlet_dist={self._ident_query_lamlet_dist}')
         return kinstr
 
-    def _receive_ident_query_response(self, kamlet_min_distance: int | None):
+    def _receive_ident_query_response(self, kamlet_min_distance: int):
         """Process ident query response. Called from message handler."""
         assert self._ident_query_state == RefreshState.WAITING_FOR_RESPONSE
 
         max_tags = self.params.max_response_tags
-        assert kamlet_min_distance is None or 0 <= kamlet_min_distance < max_tags
+        assert 0 <= kamlet_min_distance <= max_tags
 
         baseline = self._ident_query_baseline
 
-        # Also check lamlet's own waiting items
-        lamlet_min_distance = self.get_oldest_active_instr_ident_distance(baseline)
+        # Use lamlet distance captured when query was created
+        lamlet_min_distance = self._ident_query_lamlet_dist
         assert lamlet_min_distance is None or 0 <= lamlet_min_distance < max_tags
 
         # Combine: take the minimum distance (oldest ident) from both
-        distances = [d for d in [kamlet_min_distance, lamlet_min_distance] if d is not None]
-        if not distances:
-            self._oldest_active_ident = None  # All free
-            min_distance = None
+        # kamlet_min_distance == max_tags means all kamlets are free
+        # lamlet_min_distance == None means lamlet has no waiting items
+        if kamlet_min_distance == max_tags and lamlet_min_distance is None:
+            min_distance = max_tags
+        elif kamlet_min_distance == max_tags:
+            min_distance = lamlet_min_distance
+        elif lamlet_min_distance is None:
+            min_distance = kamlet_min_distance
         else:
-            min_distance = min(distances)
+            min_distance = min(kamlet_min_distance, lamlet_min_distance)
+
+        if min_distance == max_tags:
+            self._oldest_active_ident = None
+        else:
             self._oldest_active_ident = (baseline + min_distance) % max_tags
 
         self._ident_query_state = RefreshState.DORMANT
@@ -971,14 +979,12 @@ class Lamlet:
     async def get_instr_ident(self, n_idents=1):
         """Allocate n_idents consecutive instruction identifiers.
 
-        Waits if not enough idents are available. Always leaves at least 1 ident
-        free so that oldest_active == next_instr_ident means "all free".
+        Waits if not enough idents are available.
         """
         assert n_idents >= 1
         max_tags = self.params.max_response_tags
 
-        # Wait until we have enough space (plus 1 to never use the last ident)
-        while self._get_available_idents() < n_idents + 1:
+        while self._get_available_idents() < n_idents:
             await self.clock.next_cycle
 
         ident = self.next_instr_ident

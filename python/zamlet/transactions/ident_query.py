@@ -38,13 +38,6 @@ class IdentQuery(KInstr):
     async def update_kamlet(self, kamlet: 'Kamlet'):
         distance = kamlet.cache_table.get_oldest_active_instr_ident_distance(self.baseline)
 
-        # If no waiting items, use previous_instr_ident + 1 as the oldest
-        # (the instruction ahead of this query must have completed or is completing)
-        if distance is None:
-            max_tags = kamlet.params.max_response_tags
-            oldest_ident = (self.previous_instr_ident + 1) % max_tags
-            distance = (oldest_ident - self.baseline) % max_tags
-
         logger.debug(f'{kamlet.clock.cycle}: IdentQuery: kamlet ({kamlet.min_x},{kamlet.min_y}) '
                      f'baseline={self.baseline} previous={self.previous_instr_ident} '
                      f'distance={distance}')
@@ -54,10 +47,12 @@ class IdentQuery(KInstr):
         witem = WaitingIdentQuery(
             ident=self.instr_ident,
             is_origin=is_origin,
+            baseline=self.baseline,
+            previous_instr_ident=self.previous_instr_ident,
         )
         await kamlet.cache_table.add_witem(witem)
 
-        # Report to synchronizer (uses min aggregation)
+        # Report to synchronizer (uses min aggregation, None if no waiting items)
         kamlet.synchronizer.local_event(self.instr_ident, value=distance)
 
 
@@ -67,9 +62,11 @@ class WaitingIdentQuery(WaitingItem):
     Monitors sync completion and has kamlet (0,0) send the result to lamlet.
     """
 
-    def __init__(self, ident: int, is_origin: bool):
+    def __init__(self, ident: int, is_origin: bool, baseline: int, previous_instr_ident: int):
         super().__init__(item=None, instr_ident=ident)
         self.is_origin = is_origin
+        self.baseline = baseline
+        self.previous_instr_ident = previous_instr_ident
         self.response_sent = False
         self.sync_state = WaitingItemSyncState.IN_PROGRESS
         self.sync_min_value: int | None = None
@@ -83,10 +80,20 @@ class WaitingIdentQuery(WaitingItem):
 
         if self.sync_state == WaitingItemSyncState.COMPLETE:
             if self.is_origin:
-                # Kamlet (0,0) sends the response to lamlet
+                # If no kamlet had waiting items, compute fallback distance
+                min_distance = self.sync_min_value
+                if min_distance is None:
+                    max_tags = kamlet.params.max_response_tags
+                    oldest_ident = (self.previous_instr_ident + 1) % max_tags
+                    min_distance = (oldest_ident - self.baseline) % max_tags
+                    if min_distance == 0:
+                        # All idents are free
+                        min_distance = max_tags
+
                 logger.debug(f'{kamlet.clock.cycle}: IdentQuery: kamlet (0,0) '
-                             f'sending response min_distance={self.sync_min_value} ident={self.instr_ident}')
-                await send_ident_query_response(kamlet, self.instr_ident, self.sync_min_value)
+                             f'sending response min_distance={min_distance} '
+                             f'(sync_min={self.sync_min_value}) ident={self.instr_ident}')
+                await send_ident_query_response(kamlet, self.instr_ident, min_distance)
             self.response_sent = True
 
     async def finalize(self, kamlet: 'Kamlet') -> None:
@@ -94,20 +101,12 @@ class WaitingIdentQuery(WaitingItem):
         kamlet.synchronizer.clear_sync(self.instr_ident)
 
 
-async def send_ident_query_response(kamlet: 'Kamlet', response_ident: int, min_distance: int | None):
-    """Send the ident query result back to the lamlet.
-
-    If min_distance is None (all free), sends header only (length=1).
-    If min_distance has a value, sends header + data byte (length=2).
-    """
+async def send_ident_query_response(kamlet: 'Kamlet', response_ident: int, min_distance: int):
+    """Send the ident query result back to the lamlet."""
     jamlet = kamlet.jamlets[0]
 
-    if min_distance is None:
-        length = 1
-        packet_data = []
-    else:
-        length = 2
-        packet_data = [bytearray([min_distance])]
+    length = 2
+    packet_data = [bytearray([min_distance])]
 
     header = IdentHeader(
         target_x=jamlet.x,

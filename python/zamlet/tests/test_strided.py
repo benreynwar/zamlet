@@ -107,8 +107,8 @@ async def run_strided_load_test(
     # Generate test data
     rnd = Random(seed)
     element_bytes = ew // 8
-    #src_list = [rnd.getrandbits(ew) for i in range(vl)]
-    src_list = [i%256 for i in range(vl)]
+    src_list = [rnd.getrandbits(ew) for i in range(vl)]
+    #src_list = [i%256 for i in range(vl)]
 
     logger.info(f"Test parameters:")
     logger.info(f"  ew={ew}, vl={vl}, stride={stride}")
@@ -257,7 +257,7 @@ async def run_strided_store_test(
     rnd = Random(seed)
     element_bytes = ew // 8
     src_list = [rnd.getrandbits(ew) for i in range(vl)]
-    src_list = [i%258 for i in range(vl)]
+    #src_list = [i%258 for i in range(vl)]
 
     logger.info(f"Strided Store Test parameters:")
     logger.info(f"  ew={ew}, vl={vl}, stride={stride}")
