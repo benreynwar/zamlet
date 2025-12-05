@@ -8,10 +8,14 @@ import struct
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+if TYPE_CHECKING:
+    from zamlet.lamlet.lamlet import Lamlet
+
 from zamlet.kamlet import kinstructions
 from zamlet import addresses
 from zamlet.addresses import Ordering, WordOrder
 from zamlet.register_names import reg_name, freg_name
+from zamlet.monitor import CompletionType, SpanType
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +49,7 @@ class Vsetvli:
 
         return f'vsetvli\t{reg_name(self.rd)},{reg_name(self.rs1)},{sew_str},{lmul_str},{ta_str},{ma_str}'
 
-    async def update_state(self, s: 'state.State'):
+    async def update_state(self, s: 'Lamlet'):
         await s.scalar.wait_all_regs_ready(self.rd, None, [self.rs1], [])
         rs1_bytes = s.scalar.read_reg(self.rs1)
         avl = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
@@ -103,24 +107,21 @@ class VleV:
         vm_str = '' if self.vm else ',v0.t'
         return f'vle{self.element_width}.v\tv{self.vd},({reg_name(self.rs1)}){vm_str}'
 
-    async def update_state(self, s: 'state.State'):
-        logger.debug(f'{s.clock.cycle}: waiting for ready regs')
+    async def update_state(self, s: 'Lamlet'):
         await s.scalar.wait_all_regs_ready(None, None, [self.rs1], [])
         rs1_bytes = s.scalar.read_reg(self.rs1)
         addr = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
-        if self.vm:
-            mask_reg=None
-        else:
-            mask_reg=0
-        logger.debug(f'{s.clock.cycle}: do load')
-        logger.debug(f'{s.clock.cycle}: VLE{self.element_width}.V: vd=v{self.vd}, addr=0x{addr:x}, vl={s.vl}, masked={not self.vm}, mask_reg={mask_reg}')
-    #async def vload(self, vd: int, addr: int, ordering: addresses.Ordering,
-    #                n_elements: int, mask_reg: int, start_index: int):
+        mask_reg = None if self.vm else 0
+        span_id = s.monitor.create_span(
+            span_type=SpanType.RISCV_INSTR,
+            component="lamlet",
+            completion_type=CompletionType.FIRE_AND_FORGET,
+            mnemonic=str(self),
+            pc=s.pc,
+        )
         ordering = addresses.Ordering(s.word_order, self.element_width)
-        await s.vload(self.vd, addr, ordering, s.vl, mask_reg, s.vstart)
-        logger.debug(f'{s.clock.cycle}: kicked off load')
+        await s.vload(self.vd, addr, ordering, s.vl, mask_reg, s.vstart, parent_span_id=span_id)
         s.pc += 4
-        logger.debug(f'Loaded vector into vd={self.vd}')
 
 
 @dataclass
@@ -140,19 +141,21 @@ class VseV:
         vm_str = '' if self.vm else ',v0.t'
         return f'vse{self.element_width}.v\tv{self.vs3},({reg_name(self.rs1)}){vm_str}'
 
-    async def update_state(self, s: 'state.State'):
+    async def update_state(self, s: 'Lamlet'):
         await s.scalar.wait_all_regs_ready(None, None, [self.rs1], [])
         rs1_bytes = s.scalar.read_reg(self.rs1)
         addr = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
-        if self.vm:
-            mask_reg = None
-        else:
-            mask_reg = 0
-        logger.debug(f'{s.clock.cycle}: VSE{self.element_width}.V: vs3=v{self.vs3}, addr=0x{addr:x}, vl={s.vl}, masked={not self.vm}, mask_reg={mask_reg}')
+        mask_reg = None if self.vm else 0
+        span_id = s.monitor.create_span(
+            span_type=SpanType.RISCV_INSTR,
+            component="lamlet",
+            completion_type=CompletionType.FIRE_AND_FORGET,
+            mnemonic=str(self),
+            pc=s.pc,
+        )
         ordering = addresses.Ordering(s.word_order, self.element_width)
-        await s.vstore(self.vs3, addr, ordering, s.vl, mask_reg, s.vstart)
+        await s.vstore(self.vs3, addr, ordering, s.vl, mask_reg, s.vstart, parent_span_id=span_id)
         s.pc += 4
-        logger.debug(f'Stored vector from vs3={self.vs3}')
 
 
 @dataclass
@@ -174,23 +177,24 @@ class VlseV:
         vm_str = '' if self.vm else ',v0.t'
         return f'vlse{self.element_width}.v\tv{self.vd},({reg_name(self.rs1)}),{reg_name(self.rs2)}{vm_str}'
 
-    async def update_state(self, s: 'state.State'):
+    async def update_state(self, s: 'Lamlet'):
         await s.scalar.wait_all_regs_ready(None, None, [self.rs1, self.rs2], [])
         rs1_bytes = s.scalar.read_reg(self.rs1)
         rs2_bytes = s.scalar.read_reg(self.rs2)
         addr = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
         stride = int.from_bytes(rs2_bytes, byteorder='little', signed=True)
-        if self.vm:
-            mask_reg = None
-        else:
-            mask_reg = 0
-        logger.debug(f'{s.clock.cycle}: VLSE{self.element_width}.V: vd=v{self.vd}, '
-                    f'addr=0x{addr:x}, stride={stride}, vl={s.vl}, '
-                    f'masked={not self.vm}, mask_reg={mask_reg}')
+        mask_reg = None if self.vm else 0
+        span_id = s.monitor.create_span(
+            span_type=SpanType.RISCV_INSTR,
+            component="lamlet",
+            completion_type=CompletionType.FIRE_AND_FORGET,
+            mnemonic=str(self),
+            pc=s.pc,
+        )
         ordering = addresses.Ordering(s.word_order, self.element_width)
-        await s.vload(self.vd, addr, ordering, s.vl, mask_reg, s.vstart, stride_bytes=stride)
+        await s.vload(self.vd, addr, ordering, s.vl, mask_reg, s.vstart, parent_span_id=span_id,
+                      stride_bytes=stride)
         s.pc += 4
-        logger.debug(f'Strided load into vd={self.vd}')
 
 
 @dataclass
@@ -212,23 +216,24 @@ class VsseV:
         vm_str = '' if self.vm else ',v0.t'
         return f'vsse{self.element_width}.v\tv{self.vs3},({reg_name(self.rs1)}),{reg_name(self.rs2)}{vm_str}'
 
-    async def update_state(self, s: 'state.State'):
+    async def update_state(self, s: 'Lamlet'):
         await s.scalar.wait_all_regs_ready(None, None, [self.rs1, self.rs2], [])
         rs1_bytes = s.scalar.read_reg(self.rs1)
         rs2_bytes = s.scalar.read_reg(self.rs2)
         addr = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
         stride = int.from_bytes(rs2_bytes, byteorder='little', signed=True)
-        if self.vm:
-            mask_reg = None
-        else:
-            mask_reg = 0
-        logger.debug(f'{s.clock.cycle}: VSSE{self.element_width}.V: vs3=v{self.vs3}, '
-                    f'addr=0x{addr:x}, stride={stride}, vl={s.vl}, '
-                    f'masked={not self.vm}, mask_reg={mask_reg}')
+        mask_reg = None if self.vm else 0
+        span_id = s.monitor.create_span(
+            span_type=SpanType.RISCV_INSTR,
+            component="lamlet",
+            completion_type=CompletionType.FIRE_AND_FORGET,
+            mnemonic=str(self),
+            pc=s.pc,
+        )
         ordering = addresses.Ordering(s.word_order, self.element_width)
-        await s.vstore(self.vs3, addr, ordering, s.vl, mask_reg, s.vstart, stride_bytes=stride)
+        await s.vstore(self.vs3, addr, ordering, s.vl, mask_reg, s.vstart, parent_span_id=span_id,
+                       stride_bytes=stride)
         s.pc += 4
-        logger.debug(f'Strided store from vs3={self.vs3}')
 
 
 @dataclass
@@ -256,7 +261,7 @@ class VlsegV:
         vm_str = '' if self.vm else ',v0.t'
         return f'vlseg{self.nf}e{self.element_width}.v\tv{self.vd},({reg_name(self.rs1)}){vm_str}'
 
-    async def update_state(self, s: 'state.State'):
+    async def update_state(self, s: 'Lamlet'):
         await s.scalar.wait_all_regs_ready(None, None, [self.rs1], [])
         rs1_bytes = s.scalar.read_reg(self.rs1)
         addr = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
@@ -298,7 +303,7 @@ class VssegV:
         vm_str = '' if self.vm else ',v0.t'
         return f'vsseg{self.nf}e{self.element_width}.v\tv{self.vs3},({reg_name(self.rs1)}){vm_str}'
 
-    async def update_state(self, s: 'state.State'):
+    async def update_state(self, s: 'Lamlet'):
         await s.scalar.wait_all_regs_ready(None, None, [self.rs1], [])
         rs1_bytes = s.scalar.read_reg(self.rs1)
         addr = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
@@ -331,10 +336,16 @@ class VArithVxFloat:
         vm_str = '' if self.vm else ',v0.t'
         return f'vf{self.op.value}.vf\tv{self.vd},{freg_name(self.rs1)},v{self.vs2}{vm_str}'
 
-    async def update_state(self, s: 'state.State'):
-        logger.debug(f'{s.clock.cycle}: VArithVxFloat waiting for regs')
+    async def update_state(self, s: 'Lamlet'):
+        span_id = s.monitor.create_span(
+            span_type=SpanType.RISCV_INSTR,
+            component="lamlet",
+            completion_type=CompletionType.FIRE_AND_FORGET,
+            mnemonic=str(self),
+            pc=s.pc,
+        )
+
         await s.scalar.wait_all_regs_ready(None, None, [], [self.rs1])
-        logger.debug(f'{s.clock.cycle}: VArithVxFloat got regs')
 
         vsew = (s.vtype >> 3) & 0x7
         element_width = 8 << vsew
@@ -349,8 +360,7 @@ class VArithVxFloat:
         else:
             mask_reg = 0
 
-        logger.debug(f'VF{self.op.value.upper()}.VF: vd=v{self.vd}, rs1={freg_name(self.rs1)}, vs2=v{self.vs2}, vl={s.vl}, ew={element_width}')
-
+        instr_ident = await s.get_instr_ident()
         kinstr = kinstructions.VArithVxOp(
             op=self.op,
             dst=self.vd,
@@ -361,8 +371,9 @@ class VArithVxFloat:
             element_width=element_width,
             word_order=word_order,
             is_float=True,
+            instr_ident=instr_ident,
         )
-        await s.add_to_instruction_buffer(kinstr)
+        await s.add_to_instruction_buffer(kinstr, span_id)
         s.pc += 4
 
 
@@ -385,8 +396,14 @@ class VmsleVi:
         vm_str = '' if self.vm else ',v0.t'
         return f'vmsle.vi\tv{self.vd},v{self.vs2},{self.simm5}{vm_str}'
 
-    async def update_state(self, s: 'state.State'):
-        logger.debug(f'{s.clock.cycle}: VMSLE.VI at PC={hex(s.pc)}: vd=v{self.vd}, vs2=v{self.vs2}, simm5={self.simm5}, vl={s.vl}')
+    async def update_state(self, s: 'Lamlet'):
+        span_id = s.monitor.create_span(
+            span_type=SpanType.RISCV_INSTR,
+            component="lamlet",
+            completion_type=CompletionType.FIRE_AND_FORGET,
+            mnemonic=str(self),
+            pc=s.pc,
+        )
 
         vsew = (s.vtype >> 3) & 0x7
         element_width = 8 << vsew
@@ -409,6 +426,7 @@ class VmsleVi:
         for i in range(n_dst_vlines):
             s.vrf_ordering[self.vd + i] = mask_ordering
 
+        instr_ident = await s.get_instr_ident()
         kinstr = kinstructions.VmsleViOp(
             dst=self.vd,
             src=self.vs2,
@@ -416,9 +434,9 @@ class VmsleVi:
             n_elements=s.vl,
             element_width=element_width,
             ordering=s.vrf_ordering[self.vs2],
+            instr_ident=instr_ident,
         )
-        await s.add_to_instruction_buffer(kinstr)
-        logger.debug(f'{s.clock.cycle}: VMSLE.VI QUEUED VmsleViOp to instruction buffer')
+        await s.add_to_instruction_buffer(kinstr, span_id)
         s.pc += 4
 
 
@@ -443,7 +461,15 @@ class VmnandMm:
             return f'vmnot.m\tv{self.vd},v{self.vs2}'
         return f'vmnand.mm\tv{self.vd},v{self.vs2},v{self.vs1}'
 
-    async def update_state(self, s: 'state.State'):
+    async def update_state(self, s: 'Lamlet'):
+        span_id = s.monitor.create_span(
+            span_type=SpanType.RISCV_INSTR,
+            component="lamlet",
+            completion_type=CompletionType.FIRE_AND_FORGET,
+            mnemonic=str(self),
+            pc=s.pc,
+        )
+
         # Get ordering from source mask registers
         vs2_ordering = s.vrf_ordering[self.vs2]
         vs1_ordering = s.vrf_ordering[self.vs1]
@@ -455,12 +481,14 @@ class VmnandMm:
         # Set ordering for destination mask register to match source
         s.vrf_ordering[self.vd] = vs2_ordering
 
+        instr_ident = await s.get_instr_ident()
         kinstr = kinstructions.VmnandMmOp(
             dst=self.vd,
             src1=self.vs2,
             src2=self.vs1,
+            instr_ident=instr_ident,
         )
-        await s.add_to_instruction_buffer(kinstr)
+        await s.add_to_instruction_buffer(kinstr, span_id)
         s.pc += 4
 
 
@@ -478,7 +506,15 @@ class VmvVi:
     def __str__(self):
         return f'vmv.v.i\tv{self.vd},{self.simm5}'
 
-    async def update_state(self, s: 'state.State'):
+    async def update_state(self, s: 'Lamlet'):
+        span_id = s.monitor.create_span(
+            span_type=SpanType.RISCV_INSTR,
+            component="lamlet",
+            completion_type=CompletionType.FIRE_AND_FORGET,
+            mnemonic=str(self),
+            pc=s.pc,
+        )
+
         vsew = (s.vtype >> 3) & 0x7
         element_width = 8 << vsew
         word_order = addresses.WordOrder.STANDARD
@@ -487,14 +523,16 @@ class VmvVi:
 
         sign_extended_imm = self.simm5 if self.simm5 < 16 else self.simm5 - 32
 
+        instr_ident = await s.get_instr_ident()
         kinstr = kinstructions.VBroadcastOp(
             dst=self.vd,
             scalar=sign_extended_imm,
             n_elements=s.vl,
             element_width=element_width,
             word_order=word_order,
+            instr_ident=instr_ident,
         )
-        await s.add_to_instruction_buffer(kinstr)
+        await s.add_to_instruction_buffer(kinstr, span_id)
         s.pc += 4
 
 
@@ -512,7 +550,15 @@ class VmvVx:
     def __str__(self):
         return f'vmv.v.x\tv{self.vd},{reg_name(self.rs1)}'
 
-    async def update_state(self, s: 'state.State'):
+    async def update_state(self, s: 'Lamlet'):
+        span_id = s.monitor.create_span(
+            span_type=SpanType.RISCV_INSTR,
+            component="lamlet",
+            completion_type=CompletionType.FIRE_AND_FORGET,
+            mnemonic=str(self),
+            pc=s.pc,
+        )
+
         await s.scalar.wait_all_regs_ready(None, None, [self.rs1], [])
 
         vsew = (s.vtype >> 3) & 0x7
@@ -524,14 +570,16 @@ class VmvVx:
 
         s.vrf_ordering[self.vd] = addresses.Ordering(word_order, element_width)
 
+        instr_ident = await s.get_instr_ident()
         kinstr = kinstructions.VBroadcastOp(
             dst=self.vd,
             scalar=scalar_val,
             n_elements=s.vl,
             element_width=element_width,
             word_order=word_order,
+            instr_ident=instr_ident,
         )
-        await s.add_to_instruction_buffer(kinstr)
+        await s.add_to_instruction_buffer(kinstr, span_id)
         s.pc += 4
 
 
@@ -549,7 +597,15 @@ class VmvVv:
     def __str__(self):
         return f'vmv.v.v\tv{self.vd},v{self.vs1}'
 
-    async def update_state(self, s: 'state.State'):
+    async def update_state(self, s: 'Lamlet'):
+        span_id = s.monitor.create_span(
+            span_type=SpanType.RISCV_INSTR,
+            component="lamlet",
+            completion_type=CompletionType.FIRE_AND_FORGET,
+            mnemonic=str(self),
+            pc=s.pc,
+        )
+
         vsew = (s.vtype >> 3) & 0x7
         element_width = 8 << vsew
         word_order = addresses.WordOrder.STANDARD
@@ -558,14 +614,16 @@ class VmvVv:
 
         s.vrf_ordering[self.vd] = addresses.Ordering(word_order, element_width)
 
+        instr_ident = await s.get_instr_ident()
         kinstr = kinstructions.VmvVvOp(
             dst=self.vd,
             src=self.vs1,
             n_elements=s.vl,
             element_width=element_width,
             word_order=word_order,
+            instr_ident=instr_ident,
         )
-        await s.add_to_instruction_buffer(kinstr)
+        await s.add_to_instruction_buffer(kinstr, span_id)
         s.pc += 4
 
 
@@ -583,7 +641,7 @@ class VmvXs:
     def __str__(self):
         return f'vmv.x.s\t{reg_name(self.rd)},v{self.vs2}'
 
-    async def update_state(self, s: 'state.State'):
+    async def update_state(self, s: 'Lamlet'):
         vsew = (s.vtype >> 3) & 0x7
         element_width = 8 << vsew
 
@@ -617,7 +675,7 @@ class VreductionVs:
         op_name = f'vred{self.op.value}'
         return f'{op_name}.vs\tv{self.vd},v{self.vs2},v{self.vs1}{vm_str}'
 
-    async def update_state(self, s: 'state.State'):
+    async def update_state(self, s: 'Lamlet'):
         if s.vstart != 0:
             raise ValueError(f'vred{self.op.value}.vs requires vstart == 0')
 
@@ -672,7 +730,15 @@ class VArithVv:
         else:
             return f'v{self.op.value}.vv\tv{self.vd},v{self.vs2},v{self.vs1}{vm_str}'
 
-    async def update_state(self, s: 'state.State'):
+    async def update_state(self, s: 'Lamlet'):
+        span_id = s.monitor.create_span(
+            span_type=SpanType.RISCV_INSTR,
+            component="lamlet",
+            completion_type=CompletionType.FIRE_AND_FORGET,
+            mnemonic=str(self),
+            pc=s.pc,
+        )
+
         if self.vm:
             mask_reg = None
         else:
@@ -691,6 +757,7 @@ class VArithVv:
         if self.op != kinstructions.VArithOp.MACC:
             s.vrf_ordering[self.vd] = addresses.Ordering(word_order, element_width)
 
+        instr_ident = await s.get_instr_ident()
         kinstr = kinstructions.VArithVvOp(
             op=self.op,
             dst=self.vd,
@@ -700,8 +767,9 @@ class VArithVv:
             n_elements=s.vl,
             element_width=element_width,
             word_order=word_order,
+            instr_ident=instr_ident,
         )
-        await s.add_to_instruction_buffer(kinstr)
+        await s.add_to_instruction_buffer(kinstr, span_id)
         s.pc += 4
 
 
@@ -724,7 +792,15 @@ class VArithVx:
         else:
             return f'v{self.op.value}.vx\tv{self.vd},{reg_name(self.rs1)},v{self.vs2}{vm_str}'
 
-    async def update_state(self, s: 'state.State'):
+    async def update_state(self, s: 'Lamlet'):
+        span_id = s.monitor.create_span(
+            span_type=SpanType.RISCV_INSTR,
+            component="lamlet",
+            completion_type=CompletionType.FIRE_AND_FORGET,
+            mnemonic=str(self),
+            pc=s.pc,
+        )
+
         await s.scalar.wait_all_regs_ready(None, None, [self.rs1], [])
 
         if self.vm:
@@ -748,6 +824,7 @@ class VArithVx:
         if self.op != kinstructions.VArithOp.MACC:
             s.vrf_ordering[self.vd] = addresses.Ordering(word_order, element_width)
 
+        instr_ident = await s.get_instr_ident()
         kinstr = kinstructions.VArithVxOp(
             op=self.op,
             dst=self.vd,
@@ -757,6 +834,7 @@ class VArithVx:
             n_elements=s.vl,
             element_width=element_width,
             word_order=word_order,
+            instr_ident=instr_ident,
         )
-        await s.add_to_instruction_buffer(kinstr)
+        await s.add_to_instruction_buffer(kinstr, span_id)
         s.pc += 4

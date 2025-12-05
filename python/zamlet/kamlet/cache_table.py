@@ -13,6 +13,7 @@ from zamlet.kamlet import kinstructions
 from zamlet import addresses
 from zamlet.addresses import KMAddr
 from zamlet.waiting_item import WaitingItem, WaitingItemRequiresCache
+from zamlet.monitor import Monitor, ResourceType
 
 
 logger = logging.getLogger(__name__)
@@ -160,9 +161,13 @@ class CacheState(Enum):
 
 class CacheTable:
 
-    def __init__(self, clock: Clock, params: LamletParams, name=''):
+    def __init__(self, clock: Clock, params: LamletParams, name: str, monitor: Monitor,
+                 kamlet_x: int = 0, kamlet_y: int = 0):
         self.clock = clock
         self.params = params
+        self.monitor = monitor
+        self.kamlet_x = kamlet_x
+        self.kamlet_y = kamlet_y
         self.n_slots = params.jamlet_sram_bytes * params.j_in_k // params.cache_line_bytes
         assert (params.jamlet_sram_bytes * params.j_in_k) % params.cache_line_bytes == 0
         assert self.n_slots >= 4
@@ -213,12 +218,24 @@ class CacheTable:
         else:
             return None
 
-    async def get_free_witem_index(self) -> int:
+    async def get_free_witem_index(self, witem: WaitingItem | None = None) -> int:
+        free_item = self.get_free_witem_index_if_exists()
+        if free_item is not None:
+            return free_item
+        # Table is full - record resource exhaustion
+        self.monitor.record_resource_exhausted(
+            ResourceType.WITEM_TABLE, self.kamlet_x, self.kamlet_y)
+        if witem is not None:
+            self.monitor.record_witem_blocked_by_resource(
+                witem.instr_ident, self.kamlet_x, self.kamlet_y, ResourceType.WITEM_TABLE)
         while True:
             free_item = self.get_free_witem_index_if_exists()
             if free_item is not None:
                 break
             await self.clock.next_cycle
+        # Slot freed - record resource available
+        self.monitor.record_resource_available(
+            ResourceType.WITEM_TABLE, self.kamlet_x, self.kamlet_y)
         return free_item
 
     def can_get_free_cache_request(self) -> bool:
@@ -233,14 +250,24 @@ class CacheTable:
         else:
             return None
 
-    async def get_free_cache_request(self):
-        logger.debug('get_free_cache_request: start')
+    async def get_free_cache_request(self, witem: WaitingItem | None = None):
+        valid_indices = [index for index, x in enumerate(self.cache_requests) if x is None]
+        if valid_indices:
+            return valid_indices[0]
+        # Table is full - record resource exhaustion
+        self.monitor.record_resource_exhausted(
+            ResourceType.CACHE_REQUEST_TABLE, self.kamlet_x, self.kamlet_y)
+        if witem is not None:
+            self.monitor.record_witem_blocked_by_resource(
+                witem.instr_ident, self.kamlet_x, self.kamlet_y, ResourceType.CACHE_REQUEST_TABLE)
         while True:
             valid_indices = [index for index, x in enumerate(self.cache_requests) if x is None]
             if valid_indices:
                 break
             await self.clock.next_cycle
-        logger.debug('get_free_cache_request: end')
+        # Slot freed - record resource available
+        self.monitor.record_resource_available(
+            ResourceType.CACHE_REQUEST_TABLE, self.kamlet_x, self.kamlet_y)
         return valid_indices[0]
 
     def _any_reads_all_memory(self) -> bool:
@@ -262,6 +289,25 @@ class CacheTable:
                         continue
                 return True
         return False
+
+    def _record_blocked_by_witems(self, blocked_witem: WaitingItem, predicate, reason: str):
+        """Record monitor dependencies from blocked_witem to all witems matching predicate.
+
+        This is for critical path analysis - records that blocked_witem is waiting on
+        other witems that match the predicate.
+
+        predicate: function(witem) -> bool
+        """
+        blocked_span_id = self.monitor.get_witem_span_id(
+            blocked_witem.instr_ident, self.kamlet_x, self.kamlet_y)
+        if blocked_span_id is None:
+            return
+        for item in self.waiting_items:
+            if item is not None and predicate(item):
+                blocking_span_id = self.monitor.get_witem_span_id(
+                    item.instr_ident, self.kamlet_x, self.kamlet_y)
+                if blocking_span_id is not None:
+                    self.monitor.add_dependency(blocked_span_id, blocking_span_id, reason)
 
     async def wait_for_slot_to_be_writeable(self, slot: int, k_maddr: KMAddr) -> None:
         while True:
@@ -293,8 +339,16 @@ class CacheTable:
             assert not (witem.cache_is_read and witem.cache_is_write)
             # Wait for writes_all_memory/reads_all_memory to complete first, then check slot
             if self._any_writes_all_memory(witem.writeset_ident):
+                self._record_blocked_by_witems(
+                    witem,
+                    lambda item: (item.writes_all_memory and
+                                  (witem.writeset_ident is None or
+                                   getattr(item, 'writeset_ident', None) != witem.writeset_ident)),
+                    "blocked_by_writes_all_memory")
                 await self._wait_for_writes_all_memory_complete(witem.writeset_ident)
             if witem.cache_is_write and self._any_reads_all_memory():
+                self._record_blocked_by_witems(
+                    witem, lambda item: item.reads_all_memory, "blocked_by_reads_all_memory")
                 await self._wait_for_reads_all_memory_complete()
             slot = self.addr_to_slot(k_maddr)
             if slot is None:
@@ -318,9 +372,17 @@ class CacheTable:
                     if self.slot_in_use(slot) or self._any_reads_all_memory():
                         # If there are other witems in the midst of a read or write we need
                         # to wait for them to complete
+                        self._record_blocked_by_witems(
+                            witem,
+                            lambda item: (item.cache_slot == slot or item.reads_all_memory),
+                            "blocked_by_slot_in_use")
                         await self.wait_for_slot_to_be_writeable(slot, k_maddr)
                 if witem.cache_is_read:
                     if self.slot_has_write(slot):
+                        self._record_blocked_by_witems(
+                            witem,
+                            lambda item: item.cache_is_write and item.cache_slot == slot,
+                            "blocked_by_slot_write")
                         await self.wait_for_slot_to_be_readable(slot, k_maddr)
                 witem.cache_is_avail = (
                         self.slot_states[slot].state in (CacheState.SHARED, CacheState.MODIFIED))
@@ -331,14 +393,30 @@ class CacheTable:
         # If this witem reads all memory, wait for all pending writes and other
         # reads_all_memory witems to complete first
         if witem.reads_all_memory:
+            self._record_blocked_by_witems(
+                witem, lambda item: item.cache_is_write, "reads_all_blocked_by_writes")
             await self._wait_for_all_writes_complete()
+            self._record_blocked_by_witems(
+                witem, lambda item: item.reads_all_memory, "reads_all_blocked_by_reads_all")
             await self._wait_for_reads_all_memory_complete()
         # If this witem writes all memory, wait for all pending reads and other
         # writes_all_memory witems to complete first
         if witem.writes_all_memory:
+            self._record_blocked_by_witems(
+                witem,
+                lambda item: (item.cache_is_read and
+                              (witem.writeset_ident is None or
+                               getattr(item, 'writeset_ident', None) != witem.writeset_ident)),
+                "writes_all_blocked_by_reads")
             await self._wait_for_all_reads_complete(witem.writeset_ident)
+            self._record_blocked_by_witems(
+                witem,
+                lambda item: (item.writes_all_memory and
+                              (witem.writeset_ident is None or
+                               getattr(item, 'writeset_ident', None) != witem.writeset_ident)),
+                "writes_all_blocked_by_writes_all")
             await self._wait_for_writes_all_memory_complete(witem.writeset_ident)
-        witem_index = await self.get_free_witem_index()
+        witem_index = await self.get_free_witem_index(witem)
         self.waiting_items[witem_index] = witem
         if witem.cache_is_read or witem.cache_is_write:
             witem.cache_is_avail = (
@@ -385,21 +463,21 @@ class CacheTable:
                 break
             await self.clock.next_cycle
 
-    async def update_cache(self, slot):
+    async def update_cache(self, slot, witem: WaitingItem | None = None):
         slot_state = self.slot_states[slot]
         # We want to read an address.
         # We might be given a slot that is ready to go.
         # We might be given slot and told we need to evict the current contents.
         # We might be given a slot and told we need to read in the contents.
 
-        cache_request_index = await self.get_free_cache_request()
+        cache_request_index = await self.get_free_cache_request(witem)
         # There is not slot for this memory address. We need to get a slot.
         if slot_state.state == CacheState.INVALID:
-            request_type=CacheRequestType.READ_LINE
+            request_type = CacheRequestType.READ_LINE
             n_sent = 1
             request_addr = slot_state.memory_loc * self.params.cache_line_bytes
         elif slot_state.state == CacheState.OLD_MODIFIED:
-            request_type=CacheRequestType.WRITE_LINE_READ_LINE
+            request_type = CacheRequestType.WRITE_LINE_READ_LINE
             n_sent = self.params.j_in_k
             # For WRITE_LINE_READ_LINE, addr is the OLD address to flush
             request_addr = slot_state.old_memory_loc * self.params.cache_line_bytes
@@ -415,6 +493,22 @@ class CacheTable:
                 request_type=request_type,
                 )
         self.cache_requests[cache_request_index] = cache_request
+
+        # Track cache request in monitor
+        parent_span_id = None
+        if witem is not None:
+            source = getattr(witem, 'source', None)
+            source_x = source[0] if source else None
+            source_y = source[1] if source else None
+            parent_span_id = self.monitor.get_witem_span_id(
+                witem.instr_ident, self.kamlet_x, self.kamlet_y,
+                source_x=source_x, source_y=source_y)
+        self.monitor.record_cache_request_created(
+            self.kamlet_x, self.kamlet_y, slot,
+            request_type=request_type.value,
+            memory_loc=slot_state.memory_loc,
+            parent_span_id=parent_span_id,
+        )
 
         # Update the slot state immediately to prevent duplicate cache requests
         if request_type == CacheRequestType.READ_LINE:
@@ -671,6 +765,8 @@ class CacheTable:
                     witem.cache_slot == request.slot):
                 assert not witem.cache_is_avail
                 witem.cache_is_avail = True
+        self.monitor.record_cache_request_completed(
+            self.kamlet_x, self.kamlet_y, request.slot)
 
     def resolve_write_line_read_line(self, request: CacheRequestState):
         assert self.cache_requests[request.ident] == request
@@ -684,6 +780,8 @@ class CacheTable:
                              f'slot={request.slot} setting cache_is_avail for {type(item).__name__} '
                              f'instr_ident={item.instr_ident}')
                 item.cache_is_avail = True
+        self.monitor.record_cache_request_completed(
+            self.kamlet_x, self.kamlet_y, request.slot)
 
     async def _monitor_items(self) -> None:
         """
@@ -704,8 +802,7 @@ class CacheTable:
                                 f'{self.clock.cycle}: {self.name}: _monitor_items found '
                                 f'slot={slot} in state={slot_state.state}, calling update_cache'
                             )
-                            # The cache needs updating.
-                            await self.update_cache(slot)
+                            await self.update_cache(slot, witem=witem)
 
     async def _monitor_cache_responses(self):
         """

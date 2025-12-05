@@ -28,6 +28,7 @@ from zamlet.params import LamletParams
 from zamlet.geometries import GEOMETRIES, scale_n_tests
 from zamlet.lamlet.lamlet import Lamlet
 from zamlet.addresses import GlobalAddress, Ordering, WordOrder
+from zamlet.monitor import CompletionType, SpanType
 
 logger = logging.getLogger(__name__)
 
@@ -173,6 +174,10 @@ async def run_strided_load_test(
     lamlet.vl = vl
     lamlet.vtype = {8: 0x0, 16: 0x1, 32: 0x2, 64: 0x3}[ew]
 
+    span_id = lamlet.monitor.create_span(
+        span_type=SpanType.RISCV_INSTR, component="test",
+        completion_type=CompletionType.FIRE_AND_FORGET, mnemonic="test_strided_load")
+
     # Load from source with stride into v0 (contiguous in register)
     # ordering parameter specifies element width for register layout
     reg_ordering = Ordering(WordOrder.STANDARD, ew)
@@ -184,6 +189,7 @@ async def run_strided_load_test(
         n_elements=vl,
         start_index=0,
         mask_reg=None,
+        parent_span_id=span_id,
         stride_bytes=stride,
     )
 
@@ -196,8 +202,10 @@ async def run_strided_load_test(
         n_elements=vl,
         start_index=0,
         mask_reg=None,
+        parent_span_id=span_id,
     )
 
+    lamlet.monitor.finalize_children(span_id)
     logger.info("Load and store completed")
 
     # Read back results contiguously and verify
@@ -312,6 +320,10 @@ async def run_strided_store_test(
     lamlet.vl = vl
     lamlet.vtype = {8: 0x0, 16: 0x1, 32: 0x2, 64: 0x3}[ew]
 
+    span_id = lamlet.monitor.create_span(
+        span_type=SpanType.RISCV_INSTR, component="test",
+        completion_type=CompletionType.FIRE_AND_FORGET, mnemonic="test_strided_store")
+
     # Load contiguously into v0 (src has uniform ordering)
     logger.info(f"Loading {vl} elements contiguously into v0")
     await lamlet.vload(
@@ -321,6 +333,7 @@ async def run_strided_store_test(
         n_elements=vl,
         start_index=0,
         mask_reg=None,
+        parent_span_id=span_id,
     )
 
     # Store from v0 to destination with stride
@@ -334,9 +347,11 @@ async def run_strided_store_test(
         n_elements=vl,
         start_index=0,
         mask_reg=None,
+        parent_span_id=span_id,
         stride_bytes=stride,
     )
 
+    lamlet.monitor.finalize_children(span_id)
     logger.info("Load and store completed")
 
     # Read back results at strided locations and verify
@@ -353,6 +368,9 @@ async def run_strided_store_test(
             logger.info(f"  dst[{i}] at 0x{addr:x} = {val}")
         elif i == 8:
             logger.info(f"  ...")
+
+    # Print monitor summary
+    lamlet.monitor.print_summary()
 
     # Compare
     if result_list == src_list:

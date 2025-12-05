@@ -29,7 +29,7 @@ class WaitingWriteImmBytes(WaitingItemRequiresCache):
     cache_is_write = True
 
     def __init__(self, instr: kinstructions.WriteImmBytes):
-        super().__init__(item=instr)
+        super().__init__(item=instr, instr_ident=instr.instr_ident)
 
     def ready(self) -> bool:
         return self.cache_is_avail
@@ -49,18 +49,12 @@ def do_write_imm_bytes(kamlet: 'Kamlet', instr: kinstructions.WriteImmBytes) -> 
     from zamlet.kamlet import cache_table
 
     assert instr.k_maddr.bit_addr % 8 == 0
-    if instr.k_maddr.k_index != kamlet.k_index:
-        return
-
-    assert kamlet.cache_table.can_write(instr.k_maddr)
-    j_saddr = instr.k_maddr.to_j_saddr(kamlet.cache_table)
-    jamlet = kamlet.jamlets[j_saddr.j_in_k_index]
-    size = len(instr.imm)
-    old_bytes = jamlet.sram[j_saddr.addr: j_saddr.addr + size]
-    jamlet.sram[j_saddr.addr: j_saddr.addr + size] = instr.imm
-    logger.debug(
-        f'{kamlet.clock.cycle}: CACHE_WRITE WRITE_IMM_BYTES: jamlet ({jamlet.x},{jamlet.y}) '
-        f'sram[{j_saddr.addr}:{j_saddr.addr + size}] old={old_bytes.hex()} new={instr.imm.hex()}'
-    )
-    cache_state = kamlet.cache_table.get_state(instr.k_maddr)
-    cache_state.state = cache_table.CacheState.MODIFIED
+    if instr.k_maddr.k_index == kamlet.k_index:
+        assert kamlet.cache_table.can_write(instr.k_maddr)
+        j_saddr = instr.k_maddr.to_j_saddr(kamlet.cache_table)
+        jamlet = kamlet.jamlets[j_saddr.j_in_k_index]
+        size = len(instr.imm)
+        jamlet.sram[j_saddr.addr: j_saddr.addr + size] = instr.imm
+        cache_state = kamlet.cache_table.get_state(instr.k_maddr)
+        cache_state.state = cache_table.CacheState.MODIFIED
+    kamlet.monitor.complete_kinstr_exec(instr.instr_ident, kamlet.min_x, kamlet.min_y)

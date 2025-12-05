@@ -231,3 +231,27 @@ class Direction(Enum):
 directions = (Direction.N, Direction.S, Direction.E, Direction.W, Direction.H)
 
 
+# Request messages sent via jamlet.send_packet that expect responses
+REQUEST_MESSAGE_TYPES = {
+    MessageType.LOAD_J2J_WORDS_REQ,
+    MessageType.STORE_J2J_WORDS_REQ,
+    MessageType.LOAD_WORD_REQ,
+    MessageType.STORE_WORD_REQ,
+    MessageType.READ_MEM_WORD_REQ,
+    MessageType.WRITE_MEM_WORD_REQ,
+}
+
+# Cache line messages are sent via kamlet/jamlet directly, not through send_packet.
+# TODO: Add tracking for these separately.
+CACHE_LINE_MESSAGE_TYPES = {
+    MessageType.READ_LINE,
+    MessageType.WRITE_LINE,
+    MessageType.WRITE_LINE_READ_LINE,
+}
+
+
+def is_request_message(msg_type: MessageType) -> bool:
+    """Return True if this message type expects a response."""
+    return msg_type in REQUEST_MESSAGE_TYPES
+
+

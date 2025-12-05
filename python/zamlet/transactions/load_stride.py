@@ -67,10 +67,13 @@ class LoadStride(KInstr):
             read_regs = [self.mask_reg]
         else:
             read_regs = []
-        await kamlet.wait_for_rf_available(write_regs=dst_regs, read_regs=read_regs)
+        await kamlet.wait_for_rf_available(write_regs=dst_regs, read_regs=read_regs,
+                                           instr_ident=self.instr_ident)
         rf_write_ident = kamlet.rf_info.start(read_regs=read_regs, write_regs=dst_regs)
         witem = WaitingLoadStride(
                 params=kamlet.params, instr=self, rf_ident=rf_write_ident)
+        kamlet.monitor.record_witem_created(
+            self.instr_ident, kamlet.min_x, kamlet.min_y, 'WaitingLoadStride')
         await kamlet.cache_table.add_witem(witem=witem)
 
 
@@ -266,7 +269,13 @@ async def send_req(jamlet: Jamlet, witem: WaitingLoadStride, tag: int) -> bool:
     logger.debug(f'{jamlet.clock.cycle}: LoadStride send_req: jamlet ({jamlet.x},{jamlet.y}) '
                  f'ident={instr.instr_ident} tag={tag} -> ({target_x},{target_y}) '
                  f'addr=0x{word_addr.addr:x}')
-    await jamlet.send_packet(packet)
+
+    # Look up the witem span_id for monitoring (using kamlet's min_x/min_y)
+    kamlet_min_x = (jamlet.x // jamlet.params.j_cols) * jamlet.params.j_cols
+    kamlet_min_y = (jamlet.y // jamlet.params.j_rows) * jamlet.params.j_rows
+    parent_span_id = jamlet.monitor.get_witem_span_id(instr.instr_ident, kamlet_min_x, kamlet_min_y)
+
+    await jamlet.send_packet(packet, parent_span_id=parent_span_id)
     return True
 
 

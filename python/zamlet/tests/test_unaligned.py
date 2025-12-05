@@ -29,6 +29,7 @@ from zamlet.params import LamletParams
 from zamlet.geometries import GEOMETRIES, scale_n_tests
 from zamlet.lamlet.lamlet import Lamlet
 from zamlet.addresses import GlobalAddress, Ordering, WordOrder
+from zamlet.monitor import CompletionType, SpanType
 
 logger = logging.getLogger(__name__)
 
@@ -172,6 +173,10 @@ async def run_unaligned_test(
         src_byte_offset = iter_start * reg_ew // 8
         dst_byte_offset = iter_start * reg_ew // 8
 
+        span_id = lamlet.monitor.create_span(
+            span_type=SpanType.RISCV_INSTR, component="test",
+            completion_type=CompletionType.FIRE_AND_FORGET, mnemonic="test_iteration")
+
         # Load from source into v0
         lamlet.vl = iter_count
         lamlet.vtype = {8: 0x0, 16: 0x1, 32: 0x2, 64: 0x3}[reg_ew]  # Set SEW
@@ -182,6 +187,7 @@ async def run_unaligned_test(
             n_elements=iter_count,
             start_index=0,
             mask_reg=None,
+            parent_span_id=span_id,
             reg_ordering=reg_ordering,
         )
 
@@ -193,6 +199,7 @@ async def run_unaligned_test(
             n_elements=iter_count,
             start_index=0,
             mask_reg=None,
+            parent_span_id=span_id,
         )
 
     logger.info("All iterations processed")

@@ -32,9 +32,8 @@ logger = logging.getLogger(__name__)
 class WaitingStoreWordSrc(WaitingItem):
 
     def __init__(self, params: LamletParams, instr: kinstructions.StoreWord, rf_ident: int):
-        super().__init__(item=instr, rf_ident=rf_ident)
+        super().__init__(item=instr, instr_ident=instr.instr_ident, rf_ident=rf_ident)
         self.protocol_states = [SendState.COMPLETE for _ in range(params.j_in_k)]
-        self.instr_ident = instr.instr_ident
         self.writeset_ident = instr.writeset_ident
 
     def ready(self) -> bool:

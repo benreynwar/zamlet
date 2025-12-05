@@ -133,6 +133,19 @@ async def handle_req(jamlet: 'Jamlet', packet: List[Any]) -> None:
             witem = WaitingWriteMemWord(header, slot, j_saddr,
                                         writeset_ident=parent_witem.writeset_ident)
             jamlet.cache_table.add_witem_immediately(witem)
+            # Track witem span - parent is the transaction
+            transaction_span_id = jamlet.monitor.get_transaction_span_id(
+                header.ident, header.tag, header.source_x, header.source_y, jamlet.x, jamlet.y)
+            jamlet.monitor.record_witem_created(
+                instr_ident=header.ident,
+                kamlet_x=jamlet.cache_table.kamlet_x,
+                kamlet_y=jamlet.cache_table.kamlet_y,
+                witem_type='WaitingWriteMemWord',
+                finalize=False,
+                parent_span_id=transaction_span_id,
+                source_x=header.source_x,
+                source_y=header.source_y,
+            )
             logger.debug(f'{jamlet.clock.cycle}: WRITE_MEM_WORD_REQ: jamlet ({jamlet.x},{jamlet.y}) '
                          f'created WaitingWriteMemWord for slot={slot} '
                          f'state={slot_state.state} addr=0x{addr.addr:x}')
@@ -152,6 +165,19 @@ async def handle_req(jamlet: 'Jamlet', packet: List[Any]) -> None:
             witem = WaitingWriteMemWord(header, cache_slot, j_saddr,
                                         writeset_ident=parent_witem.writeset_ident)
             jamlet.cache_table.add_witem_immediately(witem)
+            # Track witem span - parent is the transaction
+            transaction_span_id = jamlet.monitor.get_transaction_span_id(
+                header.ident, header.tag, header.source_x, header.source_y, jamlet.x, jamlet.y)
+            jamlet.monitor.record_witem_created(
+                instr_ident=header.ident,
+                kamlet_x=jamlet.cache_table.kamlet_x,
+                kamlet_y=jamlet.cache_table.kamlet_y,
+                witem_type='WaitingWriteMemWord',
+                finalize=False,
+                parent_span_id=transaction_span_id,
+                source_x=header.source_x,
+                source_y=header.source_y,
+            )
             logger.debug(f'{jamlet.clock.cycle}: WRITE_MEM_WORD_REQ: jamlet ({jamlet.x},{jamlet.y}) '
                          f'allocated slot={cache_slot} created WaitingWriteMemWord '
                          f'state={slot_state.state} addr=0x{addr.addr:x}')
@@ -194,12 +220,12 @@ def handle_drop(jamlet: 'Jamlet', packet: List[Any]) -> None:
 def handle_retry(jamlet: 'Jamlet', packet: List[Any]) -> None:
     '''
     Handle a WRITE_MEM_WORD_RETRY packet. The target's cache is now ready,
-    so mark for resend.
+    so mark for resend (same transaction continues).
     '''
     header = packet[0]
     parent_ident = (header.ident - header.tag - 1) % jamlet.params.max_response_tags
     witem = jamlet.cache_table.get_waiting_item_by_instr_ident(parent_ident)
-    witem.process_drop(jamlet, packet)  # Same handling as DROP - mark for resend
+    witem.process_drop(jamlet, packet)
 
 
 async def do_write_and_respond(jamlet: 'Jamlet', rcvd_header: WriteMemWordHeader,
@@ -242,7 +268,11 @@ async def do_write_and_respond(jamlet: 'Jamlet', rcvd_header: WriteMemWordHeader
         length=1,
         tag=rcvd_header.tag,
         ident=rcvd_header.ident)
-    await jamlet.send_packet([header])
+    # Look up transaction (requester is source, we are dest)
+    transaction_span_id = jamlet.monitor.get_transaction_span_id(
+        rcvd_header.ident, rcvd_header.tag,
+        rcvd_header.source_x, rcvd_header.source_y, jamlet.x, jamlet.y)
+    await jamlet.send_packet([header], transaction_span_id=transaction_span_id)
 
 
 async def send_drop(jamlet: 'Jamlet', rcvd_header: WriteMemWordHeader) -> None:
@@ -255,7 +285,11 @@ async def send_drop(jamlet: 'Jamlet', rcvd_header: WriteMemWordHeader) -> None:
         length=1,
         tag=rcvd_header.tag,
         ident=rcvd_header.ident)
-    await jamlet.send_packet([header])
+    # Look up transaction (requester is source, we are dest)
+    transaction_span_id = jamlet.monitor.get_transaction_span_id(
+        rcvd_header.ident, rcvd_header.tag,
+        rcvd_header.source_x, rcvd_header.source_y, jamlet.x, jamlet.y)
+    await jamlet.send_packet([header], transaction_span_id=transaction_span_id)
 
 
 async def send_retry(jamlet: 'Jamlet', rcvd_header: WriteMemWordHeader) -> None:
@@ -268,4 +302,8 @@ async def send_retry(jamlet: 'Jamlet', rcvd_header: WriteMemWordHeader) -> None:
         length=1,
         tag=rcvd_header.tag,
         ident=rcvd_header.ident)
-    await jamlet.send_packet([header])
+    # Look up transaction (requester is source, we are dest)
+    transaction_span_id = jamlet.monitor.get_transaction_span_id(
+        rcvd_header.ident, rcvd_header.tag,
+        rcvd_header.source_x, rcvd_header.source_y, jamlet.x, jamlet.y)
+    await jamlet.send_packet([header], transaction_span_id=transaction_span_id)

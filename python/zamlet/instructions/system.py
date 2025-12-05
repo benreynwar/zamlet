@@ -4,6 +4,10 @@ Reference: riscv-isa-manual/src/zicsr.adoc, riscv-isa-manual/src/a-st-ext.adoc
 """
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from zamlet.lamlet.lamlet import Lamlet
 
 from zamlet.register_names import reg_name
 
@@ -134,7 +138,7 @@ class Mret:
     def __str__(self):
         return 'mret'
 
-    async def update_state(self, s: 'state.State'):
+    async def update_state(self, s: 'Lamlet'):
         s.pc += 4
 
 
@@ -150,7 +154,7 @@ class Sret:
     def __str__(self):
         return 'sret'
 
-    async def update_state(self, s: 'state.State'):
+    async def update_state(self, s: 'Lamlet'):
         s.pc += 4
 
 
@@ -170,7 +174,7 @@ class Fence:
     def __str__(self):
         return 'fence'
 
-    async def update_state(self, s: 'state.State'):
+    async def update_state(self, s: 'Lamlet'):
         s.pc += 4
 
 
@@ -213,7 +217,7 @@ class Csrrw:
         else:
             return f'csrrw\t{reg_name(self.rd)},{csr_name},{reg_name(self.rs1)}'
 
-    async def update_state(self, s: 'state.State'):
+    async def update_state(self, s: 'Lamlet'):
         await s.scalar.wait_all_regs_ready(self.rd, None, [self.rs1], [])
         if self.rd != 0:
             csr_bytes = s.scalar.read_csr(self.csr)
@@ -249,7 +253,7 @@ class Csrrs:
         else:
             return f'csrrs\t{reg_name(self.rd)},{csr_name},{reg_name(self.rs1)}'
 
-    async def update_state(self, s: 'state.State'):
+    async def update_state(self, s: 'Lamlet'):
         await s.scalar.wait_all_regs_ready(self.rd, None, [self.rs1], [])
         csr_bytes = s.scalar.read_csr(self.csr)
         csr_val = int.from_bytes(csr_bytes, byteorder='little', signed=False)
@@ -285,7 +289,7 @@ class Csrrwi:
         else:
             return f'csrrwi\t{reg_name(self.rd)},{csr_name},{self.zimm}'
 
-    async def update_state(self, s: 'state.State'):
+    async def update_state(self, s: 'Lamlet'):
         await s.scalar.wait_all_regs_ready(self.rd, None, [], [])
         if self.rd != 0:
             csr_bytes = s.scalar.read_csr(self.csr)
@@ -317,7 +321,7 @@ class Csrrsi:
         else:
             return f'csrrsi\t{reg_name(self.rd)},{csr_name},{self.zimm}'
 
-    async def update_state(self, s: 'state.State'):
+    async def update_state(self, s: 'Lamlet'):
         await s.scalar.wait_all_regs_ready(self.rd, None, [], [])
         csr_bytes = s.scalar.read_csr(self.csr)
         csr_val = int.from_bytes(csr_bytes, byteorder='little', signed=False)
@@ -351,7 +355,7 @@ class Csrrci:
         else:
             return f'csrrci\t{reg_name(self.rd)},{csr_name},{self.zimm}'
 
-    async def update_state(self, s: 'state.State'):
+    async def update_state(self, s: 'Lamlet'):
         await s.scalar.wait_all_regs_ready(self.rd, None, [], [])
         csr_bytes = s.scalar.read_csr(self.csr)
         csr_val = int.from_bytes(csr_bytes, byteorder='little', signed=False)

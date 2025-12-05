@@ -26,6 +26,7 @@ from zamlet.lamlet.lamlet import Lamlet
 from zamlet.addresses import GlobalAddress, Ordering, WordOrder, KMAddr, RegAddr
 from zamlet.kamlet import kinstructions
 from zamlet.kamlet.kinstructions import Load, Store
+from zamlet.monitor import CompletionType, SpanType
 
 logger = logging.getLogger(__name__)
 
@@ -155,6 +156,10 @@ async def run_conditional_simple(clock: Clock, vector_length: int, seed: int, lm
         iter_count = min(elements_per_iteration, vl - iter_start)
         logger.info(f"Iteration: elements {iter_start} to {iter_start + iter_count - 1}")
 
+        span_id = lamlet.monitor.create_span(
+            span_type=SpanType.RISCV_INSTR, component="test",
+            completion_type=CompletionType.FIRE_AND_FORGET, mnemonic="test_iteration")
+
         # Step 1: Load x into v0 (e8)
         lamlet.vl = iter_count
         lamlet.vtype = 0x0  # e8, m1
@@ -165,9 +170,11 @@ async def run_conditional_simple(clock: Clock, vector_length: int, seed: int, lm
             n_elements=iter_count,
             start_index=0,
             mask_reg=None,
+            parent_span_id=span_id,
         )
 
         # Step 2: Create mask (x < 5)
+        instr_ident = await lamlet.get_instr_ident()
         vmsle_instr = kinstructions.VmsleViOp(
             dst=0,
             src=0,
@@ -175,8 +182,9 @@ async def run_conditional_simple(clock: Clock, vector_length: int, seed: int, lm
             n_elements=iter_count,
             element_width=8,
             ordering=x_ordering,
+            instr_ident=instr_ident,
         )
-        await lamlet.add_to_instruction_buffer(vmsle_instr)
+        await lamlet.add_to_instruction_buffer(vmsle_instr, span_id)
 
         # Step 3: Load a into v1 (e16, unmasked)
         lamlet.vtype = 0x1  # e16, m1
@@ -187,15 +195,18 @@ async def run_conditional_simple(clock: Clock, vector_length: int, seed: int, lm
             n_elements=iter_count,
             start_index=0,
             mask_reg=None,
+            parent_span_id=span_id,
         )
 
         # Step 4: Invert mask
+        instr_ident = await lamlet.get_instr_ident()
         vmnand_instr = kinstructions.VmnandMmOp(
             dst=0,
             src1=0,
             src2=0,
+            instr_ident=instr_ident,
         )
-        await lamlet.add_to_instruction_buffer(vmnand_instr)
+        await lamlet.add_to_instruction_buffer(vmnand_instr, span_id)
 
         # Step 5: Load b into v1 with inverted mask (only where x >= 5)
         await lamlet.vload(
@@ -205,6 +216,7 @@ async def run_conditional_simple(clock: Clock, vector_length: int, seed: int, lm
             n_elements=iter_count,
             start_index=0,
             mask_reg=0,
+            parent_span_id=span_id,
         )
 
         # Step 6: Store v1 to z
@@ -215,6 +227,7 @@ async def run_conditional_simple(clock: Clock, vector_length: int, seed: int, lm
             n_elements=iter_count,
             start_index=0,
             mask_reg=None,
+            parent_span_id=span_id,
         )
 
     logger.info("All iterations processed")

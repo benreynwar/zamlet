@@ -6,6 +6,10 @@ Reference: riscv-isa-manual/src/f-st-ext.adoc
 import struct
 import logging
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from zamlet.lamlet.lamlet import Lamlet
 
 from zamlet.register_names import reg_name, freg_name
 from zamlet import utils
@@ -29,7 +33,7 @@ class FmvWX:
     def __str__(self):
         return f'fmv.w.x\t{freg_name(self.fd)},{reg_name(self.rs1)}'
 
-    async def update_state(self, s: 'state.State'):
+    async def update_state(self, s: 'Lamlet'):
         await s.scalar.wait_all_regs_ready(None, self.fd, [self.rs1], [])
         rs1_bytes = s.scalar.read_reg(self.rs1)
         value = int.from_bytes(rs1_bytes, byteorder='little', signed=False) & 0xffffffff
@@ -53,7 +57,7 @@ class FmvD:
     def __str__(self):
         return f'fmv.d\t{freg_name(self.fd)},{freg_name(self.rs1)}'
 
-    async def update_state(self, s: 'state.State'):
+    async def update_state(self, s: 'Lamlet'):
         await s.scalar.wait_all_regs_ready(None, self.fd, [], [self.rs1])
         value_bytes = s.scalar.read_freg(self.rs1)
         value = struct.unpack('d', value_bytes[:8])[0]
@@ -77,7 +81,7 @@ class FmvXD:
     def __str__(self):
         return f'fmv.x.d\t{reg_name(self.rd)},{freg_name(self.rs1)}'
 
-    async def update_state(self, s: 'state.State'):
+    async def update_state(self, s: 'Lamlet'):
         await s.scalar.wait_all_regs_ready(self.rd, None, [], [self.rs1])
         freg_bytes = s.scalar.read_freg(self.rs1)
         value = int.from_bytes(freg_bytes[:8], byteorder='little', signed=False)
@@ -101,7 +105,7 @@ class FmvDX:
     def __str__(self):
         return f'fmv.d.x\t{freg_name(self.fd)},{reg_name(self.rs1)}'
 
-    async def update_state(self, s: 'state.State'):
+    async def update_state(self, s: 'Lamlet'):
         await s.scalar.wait_all_regs_ready(None, self.fd, [self.rs1], [])
         rs1_bytes = s.scalar.read_reg(self.rs1)
         value = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
@@ -136,7 +140,7 @@ class Flw:
         scalar_val = struct.unpack('f', f_data)[0]
         logger.debug(f'{s.clock.cycle} freg: {self.fd} padding the flw result, set result {scalar_val} ')
 
-    async def update_state(self, s: 'state.State'):
+    async def update_state(self, s: 'Lamlet'):
         await s.scalar.wait_all_regs_ready(None, self.fd, [self.rs1], [])
         rs1_bytes = s.scalar.read_reg(self.rs1)
         rs1_val = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
@@ -164,7 +168,7 @@ class Fld:
     def __str__(self):
         return f'fld\t{freg_name(self.fd)},{self.imm}({reg_name(self.rs1)})'
 
-    async def update_state(self, s: 'state.State'):
+    async def update_state(self, s: 'Lamlet'):
         await s.scalar.wait_all_regs_ready(None, self.fd, [self.rs1], [])
         rs1_bytes = s.scalar.read_reg(self.rs1)
         rs1_val = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
@@ -191,7 +195,7 @@ class Fsw:
     def __str__(self):
         return f'fsw\t{freg_name(self.rs2)},{self.imm}({reg_name(self.rs1)})'
 
-    async def update_state(self, s: 'state.State'):
+    async def update_state(self, s: 'Lamlet'):
         await s.scalar.wait_all_regs_ready(None, None, [self.rs1], [self.rs2])
         rs1_bytes = s.scalar.read_reg(self.rs1)
         rs1_val = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
@@ -218,7 +222,7 @@ class Fsd:
     def __str__(self):
         return f'fsd\t{freg_name(self.rs2)},{self.imm}({reg_name(self.rs1)})'
 
-    async def update_state(self, s: 'state.State'):
+    async def update_state(self, s: 'Lamlet'):
         await s.scalar.wait_all_regs_ready(None, None, [self.rs1], [self.rs2])
         rs1_bytes = s.scalar.read_reg(self.rs1)
         rs1_val = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
@@ -244,7 +248,7 @@ class FeqS:
     def __str__(self):
         return f'feq.s\t{reg_name(self.rd)},{freg_name(self.rs1)},{freg_name(self.rs2)}'
 
-    async def update_state(self, s: 'state.State'):
+    async def update_state(self, s: 'Lamlet'):
         import struct
         await s.scalar.wait_all_regs_ready(self.rd, None, [], [self.rs1, self.rs2])
         val1_bytes = s.scalar.read_freg(self.rs1)
@@ -273,7 +277,7 @@ class FleS:
     def __str__(self):
         return f'fle.s\t{reg_name(self.rd)},{freg_name(self.rs1)},{freg_name(self.rs2)}'
 
-    async def update_state(self, s: 'state.State'):
+    async def update_state(self, s: 'Lamlet'):
         import struct
         await s.scalar.wait_all_regs_ready(self.rd, None, [], [self.rs1, self.rs2])
         val1_bytes = s.scalar.read_freg(self.rs1)
@@ -302,7 +306,7 @@ class FleD:
     def __str__(self):
         return f'fle.d\t{reg_name(self.rd)},{freg_name(self.rs1)},{freg_name(self.rs2)}'
 
-    async def update_state(self, s: 'state.State'):
+    async def update_state(self, s: 'Lamlet'):
         import struct
         await s.scalar.wait_all_regs_ready(self.rd, None, [], [self.rs1, self.rs2])
         val1_bytes = s.scalar.read_freg(self.rs1)
@@ -331,7 +335,7 @@ class FltS:
     def __str__(self):
         return f'flt.s\t{reg_name(self.rd)},{freg_name(self.rs1)},{freg_name(self.rs2)}'
 
-    async def update_state(self, s: 'state.State'):
+    async def update_state(self, s: 'Lamlet'):
         import struct
         await s.scalar.wait_all_regs_ready(self.rd, None, [], [self.rs1, self.rs2])
         val1_bytes = s.scalar.read_freg(self.rs1)
@@ -360,7 +364,7 @@ class FltD:
     def __str__(self):
         return f'flt.d\t{reg_name(self.rd)},{freg_name(self.rs1)},{freg_name(self.rs2)}'
 
-    async def update_state(self, s: 'state.State'):
+    async def update_state(self, s: 'Lamlet'):
         import struct
         await s.scalar.wait_all_regs_ready(self.rd, None, [], [self.rs1, self.rs2])
         val1_bytes = s.scalar.read_freg(self.rs1)
@@ -389,7 +393,7 @@ class FeqD:
     def __str__(self):
         return f'feq.d\t{reg_name(self.rd)},{freg_name(self.rs1)},{freg_name(self.rs2)}'
 
-    async def update_state(self, s: 'state.State'):
+    async def update_state(self, s: 'Lamlet'):
         import struct
         await s.scalar.wait_all_regs_ready(self.rd, None, [], [self.rs1, self.rs2])
         val1_bytes = s.scalar.read_freg(self.rs1)
@@ -417,7 +421,7 @@ class FsubS:
     def __str__(self):
         return f'fsub.s\t{freg_name(self.fd)},{freg_name(self.rs1)},{freg_name(self.rs2)}'
 
-    async def update_state(self, s: 'state.State'):
+    async def update_state(self, s: 'Lamlet'):
         import struct
         await s.scalar.wait_all_regs_ready(None, self.fd, [], [self.rs1, self.rs2])
         val1_bytes = s.scalar.read_freg(self.rs1)
@@ -445,7 +449,7 @@ class FsubD:
     def __str__(self):
         return f'fsub.d\t{freg_name(self.fd)},{freg_name(self.rs1)},{freg_name(self.rs2)}'
 
-    async def update_state(self, s: 'state.State'):
+    async def update_state(self, s: 'Lamlet'):
         import struct
         await s.scalar.wait_all_regs_ready(None, self.fd, [], [self.rs1, self.rs2])
         val1_bytes = s.scalar.read_freg(self.rs1)
@@ -473,7 +477,7 @@ class FabsS:
     def __str__(self):
         return f'fabs.s\t{freg_name(self.fd)},{freg_name(self.rs1)}'
 
-    async def update_state(self, s: 'state.State'):
+    async def update_state(self, s: 'Lamlet'):
         import struct
         await s.scalar.wait_all_regs_ready(None, self.fd, [], [self.rs1])
         val_bytes = s.scalar.read_freg(self.rs1)
@@ -499,7 +503,7 @@ class FabsD:
     def __str__(self):
         return f'fabs.d\t{freg_name(self.fd)},{freg_name(self.rs1)}'
 
-    async def update_state(self, s: 'state.State'):
+    async def update_state(self, s: 'Lamlet'):
         import struct
         await s.scalar.wait_all_regs_ready(None, self.fd, [], [self.rs1])
         val_bytes = s.scalar.read_freg(self.rs1)
@@ -525,7 +529,7 @@ class FcvtDL:
     def __str__(self):
         return f'fcvt.d.l\t{freg_name(self.fd)},{reg_name(self.rs1)}'
 
-    async def update_state(self, s: 'state.State'):
+    async def update_state(self, s: 'Lamlet'):
         await s.scalar.wait_all_regs_ready(None, self.fd, [self.rs1], [])
         rs1_bytes = s.scalar.read_reg(self.rs1)
         int_val = int.from_bytes(rs1_bytes, byteorder='little', signed=True)
@@ -550,7 +554,7 @@ class FcvtLD:
     def __str__(self):
         return f'fcvt.l.d\t{reg_name(self.rd)},{freg_name(self.rs1)}'
 
-    async def update_state(self, s: 'state.State'):
+    async def update_state(self, s: 'Lamlet'):
         await s.scalar.wait_all_regs_ready(self.rd, None, [], [self.rs1])
         freg_bytes = s.scalar.read_freg(self.rs1)
         float_val = struct.unpack('d', freg_bytes[:8])[0]
@@ -577,7 +581,7 @@ class FmaddD:
     def __str__(self):
         return f'fmadd.d\t{freg_name(self.fd)},{freg_name(self.rs1)},{freg_name(self.rs2)},{freg_name(self.rs3)}'
 
-    async def update_state(self, s: 'state.State'):
+    async def update_state(self, s: 'Lamlet'):
         await s.scalar.wait_all_regs_ready(None, self.fd, [], [self.rs1, self.rs2, self.rs3])
         val1_bytes = s.scalar.read_freg(self.rs1)
         val2_bytes = s.scalar.read_freg(self.rs2)

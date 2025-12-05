@@ -26,6 +26,7 @@ from zamlet import addresses
 from zamlet.addresses import SizeBytes, SizeBits, TLB, WordOrder
 from zamlet.addresses import AddressConverter, Ordering, GlobalAddress, KMAddr, VPUAddress
 from zamlet.kamlet.cache_table import CacheTable, CacheState, WaitingItem, WaitingFuture, ProtocolState
+from zamlet.monitor import CompletionType, SpanType
 from zamlet.params import LamletParams
 from zamlet.message import Header, MessageType, Direction, SendType, TaggedHeader, CHANNEL_MAPPING
 from zamlet.kamlet.kamlet import Kamlet
@@ -39,6 +40,7 @@ from zamlet.lamlet.scalar import ScalarState
 from zamlet import utils
 import zamlet.disasm_trace as dt
 from zamlet.synchronization import SyncDirection
+from zamlet.monitor import Monitor, CompletionType, ResourceType
 
 
 logger = logging.getLogger(__name__)
@@ -73,6 +75,19 @@ class Lamlet:
     def __init__(self, clock, params: LamletParams):
         self.clock = clock
         self.params = params
+        self.monitor = Monitor(clock, params)
+        # Create a span for setup/initialization phase
+        self._setup_span_id = self.monitor.create_span(
+            span_type=SpanType.SETUP,
+            component="lamlet",
+            completion_type=CompletionType.FIRE_AND_FORGET,
+        )
+        # Create a span for ident query flow control
+        self._ident_query_span_id = self.monitor.create_span(
+            span_type=SpanType.FLOW_CONTROL,
+            component="lamlet",
+            completion_type=CompletionType.TRACKED,
+        )
         self.pc = None
         self.scalar = ScalarState(clock, params)
         self.tlb = TLB(params)
@@ -107,6 +122,7 @@ class Lamlet:
                 min_x=kamlet_x,
                 min_y=kamlet_y,
                 tlb=self.tlb,
+                monitor=self.monitor,
                 )
             self.kamlets.append(kamlet)
             # The memlet is connected to several routers.
@@ -122,6 +138,7 @@ class Lamlet:
                 params=params,
                 coords=mem_coords,
                 kamlet_coords=(kamlet_x, kamlet_y),
+                monitor=self.monitor,
                 ))
         # A dictionary that maps labels to futures
         # Used for handling responses back from the kamlet grid.
@@ -248,11 +265,13 @@ class Lamlet:
 
     async def write_bytes(self, address: GlobalAddress, value: bytes):
         k_maddr = self.to_k_maddr(address)
+        instr_ident = await self.get_instr_ident()
         kinstr = kinstructions.WriteImmBytes(
             k_maddr=k_maddr,
             imm=value,
+            instr_ident=instr_ident,
             )
-        await self.add_to_instruction_buffer(kinstr, k_maddr.k_index)
+        await self.add_to_instruction_buffer(kinstr, self._setup_span_id, k_maddr.k_index)
 
     async def read_byte(self, address: GlobalAddress):
         """
@@ -270,7 +289,7 @@ class Lamlet:
             k_maddr=k_maddr,
             instr_ident=instr_ident,
             )
-        await self.add_to_instruction_buffer(kinstr, k_maddr.k_index)
+        await self.add_to_instruction_buffer(kinstr, self._setup_span_id, k_maddr.k_index)
         return future
 
     async def _read_bytes_resolve(self, packet):
@@ -500,8 +519,9 @@ class Lamlet:
         else:
             raise NotImplementedError()
 
-    async def add_to_instruction_buffer(self, instruction, k_index=None):
+    async def add_to_instruction_buffer(self, instruction, parent_span_id: int, k_index=None):
         logger.debug(f'{self.clock.cycle}: lamlet: Adding {type(instruction)} to buffer')
+        self.monitor.record_kinstr_created(instruction, parent_span_id)
         while len(self.instruction_buffer) >= self.params.instruction_buffer_length:
             await self.clock.next_cycle
         self.instruction_buffer.append((instruction, k_index))
@@ -567,6 +587,8 @@ class Lamlet:
                         if instr_k_index != send_k_index:
                             break
                         if not self._have_tokens(instr_k_index):
+                            self.monitor.record_resource_exhausted(
+                                ResourceType.INSTR_BUFFER_TOKENS, None, None)
                             break
                         self.instruction_buffer.popleft()
                         instructions.append(instr)
@@ -619,9 +641,10 @@ class Lamlet:
         for instr in instructions:
             if instr.instr_ident is not None and instr.instr_ident < self.params.max_response_tags:
                 self._last_sent_instr_ident = instr.instr_ident
-        if k_index is None:
+        is_broadcast = k_index is None
+        if is_broadcast:
             send_type = SendType.BROADCAST
-            k_index = self.params.k_in_l-1
+            k_index = self.params.k_in_l - 1
         else:
             send_type = SendType.SINGLE
         k_x = k_index % self.params.k_cols
@@ -640,6 +663,23 @@ class Lamlet:
         packet = [header] + instructions
         jamlet = self.kamlets[0].jamlets[0]
         logger.debug(f'Sending instructions to {k_index} ({send_type.name}), -> ({x}, {y})')
+        # Create kinstr_exec items for each kamlet that receives the instruction
+        for instr in instructions:
+            if instr.instr_ident is not None:
+                if is_broadcast:
+                    for kamlet in self.kamlets:
+                        self.monitor.record_kinstr_exec_created(
+                            instr, kamlet.min_x, kamlet.min_y)
+                else:
+                    kamlet = self.kamlets[k_index]
+                    self.monitor.record_kinstr_exec_created(
+                        instr, kamlet.min_x, kamlet.min_y)
+                # All kinstr_exec children created - finalize (if FIRE_AND_FORGET)
+                kinstr_span_id = self.monitor.get_kinstr_span_id(instr.instr_ident)
+                if kinstr_span_id is not None:
+                    kinstr_item = self.monitor.get_span(kinstr_span_id)
+                    if kinstr_item.completion_type == CompletionType.FIRE_AND_FORGET:
+                        self.monitor.finalize_children(kinstr_span_id)
         await self.send_packet(packet, jamlet, Direction.N, port=0)
 
     async def send_packet(self, packet, jamlet, direction, port):
@@ -909,6 +949,7 @@ class Lamlet:
             baseline=self._ident_query_baseline,
             previous_instr_ident=self._last_sent_instr_ident,
         )
+        self.monitor.record_kinstr_created(kinstr, self._ident_query_span_id)
 
         self._ident_query_state = RefreshState.WAITING_FOR_RESPONSE
         logger.debug(f'{self.clock.cycle}: lamlet: created ident query '
@@ -949,10 +990,41 @@ class Lamlet:
 
         self._ident_query_state = RefreshState.DORMANT
 
+        # Get query span_id before completing (completing removes from lookup table)
+        query_span_id = self.monitor.get_kinstr_span_id(self._ident_query_ident)
+
+        # Complete the IdentQuery kinstr before validation check
+        self.monitor.complete_span(query_span_id)
+
+        if self.monitor.enabled:
+            # Only check kinstrs created before the query (span_id < query_span_id)
+            monitor_oldest = self.monitor.get_oldest_active_instr_ident()
+            if monitor_oldest is None:
+                monitor_distance = max_tags
+            else:
+                oldest_span_id = self.monitor.get_kinstr_span_id(monitor_oldest)
+                if oldest_span_id >= query_span_id:
+                    monitor_distance = max_tags
+                else:
+                    monitor_distance = (monitor_oldest - baseline) % max_tags
+            if monitor_distance < min_distance:
+                span_id = self.monitor.get_kinstr_span_id(monitor_oldest)
+                dump = self.monitor.dump_span(span_id) if span_id else f"no span_id for {monitor_oldest}"
+                assert False, \
+                    f"Monitor older than lamlet: monitor={monitor_oldest} (dist={monitor_distance}) " \
+                    f"lamlet={self._oldest_active_ident} (dist={min_distance})\n{dump}"
+
         # Return instruction queue tokens tracked in _tokens_in_active_query.
         # This includes the IdentQuery itself (counted via _use_token when sent).
+        # Check > 1 because the IdentQuery token is reserved and can't be used by regular instructions.
+        for k_index in range(self.params.k_in_l):
+            assert self._tokens_in_active_query[k_index] >= 1, \
+                f"Expected at least 1 token returned for k_index={k_index}, got {self._tokens_in_active_query[k_index]}"
+        tokens_returned = any(self._tokens_in_active_query[k] > 1 for k in range(self.params.k_in_l))
         for k_index in range(self.params.k_in_l):
             self._available_tokens[k_index] += self._tokens_in_active_query[k_index]
+        if tokens_returned:
+            self.monitor.record_resource_available(ResourceType.INSTR_BUFFER_TOKENS, None, None)
 
         logger.debug(f'{self.clock.cycle}: lamlet: ident query response '
                      f'baseline={baseline} kamlet_dist={kamlet_min_distance} '
@@ -984,8 +1056,11 @@ class Lamlet:
         assert n_idents >= 1
         max_tags = self.params.max_response_tags
 
-        while self._get_available_idents() < n_idents:
-            await self.clock.next_cycle
+        if self._get_available_idents() < n_idents:
+            self.monitor.record_resource_exhausted(ResourceType.INSTR_IDENT, None, None)
+            while self._get_available_idents() < n_idents:
+                await self.clock.next_cycle
+            self.monitor.record_resource_available(ResourceType.INSTR_IDENT, None, None)
 
         ident = self.next_instr_ident
         if self._oldest_active_ident is None:
@@ -995,32 +1070,38 @@ class Lamlet:
 
     async def vload(self, vd: int, addr: int, ordering: addresses.Ordering,
                     n_elements: int, mask_reg: int|None, start_index: int,
+                    parent_span_id: int,
                     reg_ordering: addresses.Ordering | None = None,
                     stride_bytes: int | None = None):
         element_bytes = ordering.ew // 8
         if stride_bytes is not None and stride_bytes != element_bytes:
             await self.vloadstorestride(vd, addr, ordering, n_elements, mask_reg,
                                         start_index, is_store=False,
+                                        parent_span_id=parent_span_id,
                                         reg_ordering=reg_ordering,
                                         stride_bytes=stride_bytes)
         else:
             await self.vloadstore(vd, addr, ordering, n_elements, mask_reg, start_index,
-                                  is_store=False, reg_ordering=reg_ordering)
+                                  is_store=False, parent_span_id=parent_span_id,
+                                  reg_ordering=reg_ordering)
 
     async def vstore(self, vs: int, addr: int, ordering: addresses.Ordering,
                     n_elements: int, mask_reg: int|None, start_index: int,
+                    parent_span_id: int,
                     stride_bytes: int | None = None):
         element_bytes = ordering.ew // 8
         if stride_bytes is not None and stride_bytes != element_bytes:
             await self.vloadstorestride(vs, addr, ordering, n_elements, mask_reg,
                                         start_index, is_store=True,
+                                        parent_span_id=parent_span_id,
                                         stride_bytes=stride_bytes)
         else:
             await self.vloadstore(vs, addr, ordering, n_elements, mask_reg, start_index,
-                                  is_store=True)
+                                  is_store=True, parent_span_id=parent_span_id)
 
     async def vloadstore(self, reg_base: int, addr: int, ordering: addresses.Ordering,
                          n_elements: int, mask_reg: int|None, start_index: int, is_store: bool,
+                         parent_span_id: int,
                          reg_ordering: addresses.Ordering | None = None,
                          stride_bytes: int | None = None):
         """
@@ -1112,10 +1193,6 @@ class Lamlet:
                             for byte_index in range(start_word_byte, start_word_byte + size):
                                 byte_mask[byte_index] = 1
                             byte_mask_as_int = utils.list_of_uints_to_uint(byte_mask, width=1)
-                            logger.info(f'StoreWord partial: idx={section.start_index}, '
-                                       f'src=0x{section.start_address:x}-0x{section.end_address:x}, '
-                                       f'src_reg={reg_addr}, dst_addr=0x{k_maddr.addr:x}, '
-                                       f'byte_mask=0x{byte_mask_as_int:x}, instr_ident={instr_ident}')
                             kinstr = kinstructions.StoreWord(
                                 src=reg_addr,
                                 dst=k_maddr,
@@ -1131,10 +1208,6 @@ class Lamlet:
                             for byte_index in range(start_word_byte, start_word_byte + size):
                                 byte_mask[byte_index] = 1
                             byte_mask_as_int = utils.list_of_uints_to_uint(byte_mask, width=1)
-                            logger.info(f'LoadWord partial: idx={section.start_index}, '
-                                       f'src=0x{section.start_address:x}-0x{section.end_address:x}, '
-                                       f'dst_reg={dst}, dst_offset={reg_addr.offset_in_word}, byte_mask=0x{byte_mask_as_int:x}, '
-                                       f'k_maddr={k_maddr}')
                             kinstr = kinstructions.LoadWord(
                                 dst=reg_addr,
                                 src=k_maddr,
@@ -1144,7 +1217,7 @@ class Lamlet:
                                 mask_index=mask_index,
                                 instr_ident=instr_ident,
                             )
-                    await self.add_to_instruction_buffer(kinstr)
+                    await self.add_to_instruction_buffer(kinstr, parent_span_id)
                 else:
                     element_offset = starting_g_addr.bit_addr % (self.params.word_bytes * 8)
                     assert element_offset % 8 == 0
@@ -1164,7 +1237,8 @@ class Lamlet:
                         await self.vload_scalar_partial(
                                 vd=vd, addr=section.start_address, size=size, dst_ordering=ordering,
                                 mask_reg=mask_reg, mask_index=mask_index, element_index=section.start_index,
-                                writeset_ident=writeset_ident, start_byte=start_byte_in_element)
+                                writeset_ident=writeset_ident, start_byte=start_byte_in_element,
+                                parent_span_id=parent_span_id)
             else:
                 if section.is_vpu:
                     section_elements = ((section.end_address - section.start_address) * 8)//reg_ew
@@ -1177,10 +1251,6 @@ class Lamlet:
 
                     if is_store:
                         instr_ident = await self.get_instr_ident()
-                        logger.info(f'Store: idx={section.start_index}, '
-                                   f'addr=0x{section.start_address:x}-0x{section.end_address:x}, '
-                                   f'k_addr=0x{k_maddr.addr:x}, n_elements={section_elements}, '
-                                   f'instr_ident={instr_ident}')
                         kinstr = kinstructions.Store(
                             src=reg_base,
                             k_maddr=k_maddr,
@@ -1203,19 +1273,15 @@ class Lamlet:
                             writeset_ident=writeset_ident,
                             instr_ident=instr_ident,
                             )
-                        logger.debug(f'{self.clock.cycle}: LAMLET CREATE Load instr_ident={instr_ident} dst=v{reg_base} mask_reg={mask_reg}')
-                    await self.add_to_instruction_buffer(kinstr)
+                    await self.add_to_instruction_buffer(kinstr, parent_span_id)
                 else:
-                    if is_store:
-                        await self.vstore_scalar(reg_base, section.start_address, ordering, section_elements,
-                                           mask_reg, section.start_index, writeset_ident)
-                    else:
-                        await self.vload_scalar(reg_base, section.start_address, ordering, section_elements,
-                                          mask_reg, section.start_index, writeset_ident)
+                    await self.vloadstore_scalar(reg_base, section.start_address, ordering, section_elements,
+                                                 mask_reg, section.start_index, writeset_ident, is_store,
+                                                 parent_span_id)
 
     async def vloadstorestride(self, reg_base: int, addr: int, ordering: addresses.Ordering,
                                n_elements: int, mask_reg: int | None, start_index: int,
-                               is_store: bool, stride_bytes: int,
+                               is_store: bool, parent_span_id: int, stride_bytes: int,
                                reg_ordering: addresses.Ordering | None = None):
         """
         Handle strided vector loads/stores using LoadStride/StoreStride instructions.
@@ -1261,9 +1327,6 @@ class Lamlet:
                     instr_ident=instr_ident,
                     stride_bytes=stride_bytes,
                 )
-                logger.debug(f'{self.clock.cycle}: LAMLET CREATE StoreStride instr_ident={instr_ident} '
-                            f'src=v{reg_base} start_index={start_index + chunk_start} '
-                            f'n_elements={chunk_n} stride={stride_bytes}')
             else:
                 kinstr = LoadStride(
                     dst=reg_base,
@@ -1276,10 +1339,7 @@ class Lamlet:
                     instr_ident=instr_ident,
                     stride_bytes=stride_bytes,
                 )
-                logger.debug(f'{self.clock.cycle}: LAMLET CREATE LoadStride instr_ident={instr_ident} '
-                            f'dst=v{reg_base} start_index={start_index + chunk_start} '
-                            f'n_elements={chunk_n} stride={stride_bytes}')
-            await self.add_to_instruction_buffer(kinstr)
+            await self.add_to_instruction_buffer(kinstr, parent_span_id)
 
     #async def vload(self, vd: int, addr: int, ordering: addresses.Ordering,
     #                n_elements: int, mask_reg: int, start_index: int):
@@ -1398,10 +1458,12 @@ class Lamlet:
 
     async def vloadstore_scalar(
             self, vd: int, addr: int, ordering: Ordering, n_elements: int, mask_reg: int,
-            start_index: int, writeset_ident: int, is_store: bool):
+            start_index: int, writeset_ident: int, is_store: bool, parent_span_id: int):
         """
-        Reads a elements from the scalar memory and send them to the appropriate kamlets where they will update the
+        Reads elements from the scalar memory and sends them to the appropriate kamlets where they will update the
         vector register.
+
+        FIXME: This function is untested. Add tests for vector loads/stores to scalar memory.
         """
         for element_index in range(start_index, start_index+n_elements):
             start_addr_bits = addr + (element_index - start_index) * ordering.ew
@@ -1428,6 +1490,7 @@ class Lamlet:
                         )
                 else:
                     byte_imm = self.scalar.memory[scalar_addr.addr]
+                    instr_ident = await self.get_instr_ident()
                     kinstr = kinstructions.LoadImmByte(
                         dst=vd,
                         imm=byte_imm,
@@ -1435,6 +1498,7 @@ class Lamlet:
                         mask_reg=mask_reg,
                         mask_index=mask_index,
                         writeset_ident=writeset_ident,
+                        instr_ident=instr_ident,
                         )
             else:
                 # We're sending a word
@@ -1452,6 +1516,7 @@ class Lamlet:
                     raise NotImplementedError("StoreWord for scalar memory not yet implemented")
                 else:
                     word_imm = self.scalar.memory[word_addr: word_addr + wb]
+                    instr_ident = await self.get_instr_ident()
                     kinstr = kinstructions.LoadImmWord(
                         dst=vd,
                         imm=word_imm,
@@ -1459,18 +1524,21 @@ class Lamlet:
                         mask_reg=mask_reg,
                         mask_index=mask_index,
                         writeset_ident=writeset_ident,
+                        instr_ident=instr_ident,
                         )
-            await self.add_to_instruction_buffer(kinstr, k_index=k_index)
+            await self.add_to_instruction_buffer(kinstr, parent_span_id, k_index=k_index)
 
     async def vload_scalar_partial(self, vd: int, addr: int, size: int, dst_ordering: Ordering,
                                    mask_reg: int, mask_index: int, element_index: int,
-                                   start_byte: int, writeset_ident: int):
+                                   start_byte: int, writeset_ident: int, parent_span_id: int):
         """
         Reads a partial element from the scalar memory and sends it to the appropriate jamlet where it will update a
         vector register.
 
-        start_byte: Which byte in element we starting loading from. 
+        start_byte: Which byte in element we starting loading from.
         size: How many bytes from the element we load.
+
+        FIXME: This function is untested. Add tests for vector loads/stores to scalar memory.
         """
         assert start_byte + size < self.params.word_bytes
         g_addr = GlobalAddress(bit_addr=addr*8, params=self.params)
@@ -1479,6 +1547,7 @@ class Lamlet:
         k_index, j_in_k_index = addresses.vw_index_to_k_indices(
                 self.params, dst_ordering.word_order, vw_index)
         kinstr: kinstructions.KInstr
+        instr_ident = await self.get_instr_ident()
         if size == 1:
             bit_mask = (1 << 8) - 1
             byte_imm = self.scalar.memory[scalar_addr.addr]
@@ -1489,6 +1558,7 @@ class Lamlet:
                 mask_reg=mask_reg,
                 mask_index=mask_index,
                 writeset_ident=writeset_ident,
+                instr_ident=instr_ident,
                 )
         else:
             word_addr = scalar_addr.addr - start_byte
@@ -1504,8 +1574,15 @@ class Lamlet:
                 mask_reg=mask_reg,
                 mask_index=mask_index,
                 writeset_ident=writeset_ident,
+                instr_ident=instr_ident,
                 )
-        await self.add_to_instruction_buffer(kinstr, k_index=k_index)
+        await self.add_to_instruction_buffer(kinstr, parent_span_id, k_index=k_index)
+
+    async def vstore_scalar_partial(self, vd: int, addr: int, size: int, src_ordering: Ordering,
+                                    mask_reg: int, mask_index: int, element_index: int,
+                                    writeset_ident: int, start_byte: int):
+        """FIXME: This function is untested. Add tests for vector loads/stores to scalar memory."""
+        raise NotImplementedError("vstore_scalar_partial not yet implemented")
 
     #async def vstore(self, vs3: int, addr: int, element_width: SizeBits,
     #                 n_elements: int, mask_reg: int):

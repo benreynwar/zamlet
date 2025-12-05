@@ -4,7 +4,7 @@ from typing import Set, List, Any, Tuple
 from zamlet import addresses
 from zamlet.params import LamletParams
 from zamlet.kamlet.cache_table import CacheTable
-from zamlet.message import Direction, SendType, MessageType, CHANNEL_MAPPING
+from zamlet.message import Direction, SendType, MessageType, CHANNEL_MAPPING, is_request_message
 from zamlet.message import Header, IdentHeader, AddressHeader, ValueHeader, TaggedHeader, WriteSetIdentHeader
 from zamlet.utils import Queue
 from zamlet.router import Router
@@ -16,6 +16,7 @@ from zamlet.kamlet import cache_table
 from zamlet.kamlet.cache_table import CacheRequestType, WaitingItem, CacheState
 from zamlet.register_file_slot import KamletRegisterFile
 from zamlet.transactions import MESSAGE_HANDLERS
+from zamlet.monitor import Monitor
 
 
 logger = logging.getLogger(__name__)
@@ -31,9 +32,10 @@ class Jamlet:
     """
 
     def __init__(self, clock, params: LamletParams, x: int, y: int, cache_table: CacheTable,
-                 rf_info: KamletRegisterFile, tlb: addresses.TLB):
+                 rf_info: KamletRegisterFile, tlb: addresses.TLB, monitor: Monitor):
         self.clock = clock
         self.params = params
+        self.monitor = monitor
         self.x = x
         self.y = y
 
@@ -110,7 +112,7 @@ class Jamlet:
         self.rf_info = rf_info
         self.tlb = tlb
 
-    async def send_packet(self, packet):
+    async def send_packet(self, packet, transaction_span_id: int | None = None):
         assert isinstance(packet[0], Header)
         assert len(packet) == packet[0].length, (
             f"Packet length mismatch: len(packet)={len(packet)}, header.length={packet[0].length}")
@@ -119,6 +121,18 @@ class Jamlet:
         logger.debug(
             f'{self.clock.cycle}: jamlet ({self.x}, {self.y}): send_packet queuing '
             f'{message_type.name} target=({header.target_x}, {header.target_y})')
+
+        # Record message as child of transaction
+        ident = getattr(header, 'ident', None)
+        tag = getattr(header, 'tag', None)
+        if transaction_span_id is not None and ident is not None:
+            self.monitor.record_message_sent(
+                transaction_span_id, message_type.name,
+                ident=ident, tag=tag,
+                src_x=self.x, src_y=self.y,
+                dst_x=header.target_x, dst_y=header.target_y,
+            )
+
         wait_count = 0
         while not self.send_queues[message_type].can_append():
             wait_count += 1
@@ -279,6 +293,26 @@ class Jamlet:
         logger.debug(
             f'{self.clock.cycle}: jamlet ({self.x}, {self.y}): _receive_packet_channel0 got header '
             f'{header.message_type.name} from ({header.source_x}, {header.source_y})')
+
+        # Record message received (completes the MESSAGE span)
+        # Skip cache line responses - they're sent via kamlet/jamlet directly, not send_packet
+        ident = getattr(header, 'ident', None)
+        tag = getattr(header, 'tag', None)
+        is_cache_line_resp = header.message_type in (
+            MessageType.READ_LINE_RESP,
+            MessageType.WRITE_LINE_RESP,
+            MessageType.WRITE_LINE_READ_LINE_RESP,
+        )
+        if ident is not None and not is_cache_line_resp:
+            self.monitor.record_message_received(
+                ident=ident,
+                tag=tag,
+                src_x=header.source_x,
+                src_y=header.source_y,
+                dst_x=self.x,
+                dst_y=self.y,
+            )
+
         await self.clock.next_cycle
         if header.message_type == MessageType.INSTRUCTIONS:
             await self._receive_instructions_packet(header, queue)
@@ -305,6 +339,20 @@ class Jamlet:
         logger.debug(
             f'{self.clock.cycle}: jamlet ({self.x}, {self.y}): _receive_packet got header '
             f'{header.message_type.name} from ({header.source_x}, {header.source_y})')
+
+        # Record message received (completes the MESSAGE span for the request)
+        ident = getattr(header, 'ident', None)
+        tag = getattr(header, 'tag', None)
+        if ident is not None:
+            self.monitor.record_message_received(
+                ident=ident,
+                tag=tag,
+                src_x=header.source_x,
+                src_y=header.source_y,
+                dst_x=self.x,
+                dst_y=self.y,
+            )
+
         await self.clock.next_cycle
         handler = MESSAGE_HANDLERS.get(header.message_type)
         if handler is None:

@@ -33,7 +33,8 @@ class WaitingStoreSimple(WaitingItemRequiresCache):
 
     def __init__(self, instr: kinstructions.Store, rf_ident: int | None = None):
         super().__init__(
-            item=instr, writeset_ident=instr.writeset_ident, rf_ident=rf_ident)
+            item=instr, instr_ident=instr.instr_ident,
+            writeset_ident=instr.writeset_ident, rf_ident=rf_ident)
 
     def ready(self) -> bool:
         return self.cache_is_avail

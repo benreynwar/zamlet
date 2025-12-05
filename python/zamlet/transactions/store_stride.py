@@ -23,6 +23,7 @@ from zamlet.kamlet.cache_table import SendState
 from zamlet.params import LamletParams
 from zamlet.kamlet.kinstructions import KInstr
 from zamlet.synchronization import WaitingItemSyncState as SyncState
+from zamlet.monitor import SpanType, CompletionType
 
 if TYPE_CHECKING:
     from zamlet.jamlet.jamlet import Jamlet
@@ -61,10 +62,13 @@ class StoreStride(KInstr):
             read_regs = src_regs + [self.mask_reg]
         else:
             read_regs = src_regs
-        await kamlet.wait_for_rf_available(write_regs=[], read_regs=read_regs)
+        await kamlet.wait_for_rf_available(write_regs=[], read_regs=read_regs,
+                                           instr_ident=self.instr_ident)
         rf_read_ident = kamlet.rf_info.start(read_regs=read_regs, write_regs=[])
         witem = WaitingStoreStride(
             params=kamlet.params, instr=self, rf_ident=rf_read_ident)
+        kamlet.monitor.record_witem_created(
+            self.instr_ident, kamlet.min_x, kamlet.min_y, 'WaitingStoreStride')
         await kamlet.cache_table.add_witem(witem=witem)
 
 
@@ -115,8 +119,18 @@ class WaitingStoreStride(WaitingItem):
         self.transaction_states[state_idx] = SendState.COMPLETE
         logger.debug(f'{jamlet.clock.cycle}: StoreStride RESP: jamlet ({jamlet.x},{jamlet.y}) '
                      f'ident={self.instr_ident} tag={tag} complete')
+        # Complete the transaction
+        jamlet.monitor.complete_transaction(
+            ident=header.ident,
+            tag=tag,
+            src_x=jamlet.x,
+            src_y=jamlet.y,
+            dst_x=header.source_x,
+            dst_y=header.source_y,
+        )
 
     def process_drop(self, jamlet: 'Jamlet', packet) -> None:
+        """Handle DROP/RETRY - receiver couldn't handle request or is now ready, will resend."""
         header = packet[0]
         assert isinstance(header, TaggedHeader)
         tag = header.tag
@@ -124,7 +138,7 @@ class WaitingStoreStride(WaitingItem):
         assert self.transaction_states[state_idx] == SendState.WAITING_FOR_RESPONSE
         self.transaction_states[state_idx] = SendState.NEED_TO_SEND
         logger.debug(f'{jamlet.clock.cycle}: StoreStride DROP/RETRY: jamlet ({jamlet.x},{jamlet.y}) '
-                     f'ident={self.instr_ident} tag={tag} will retry')
+                     f'ident={self.instr_ident} tag={tag} will resend')
 
     async def finalize(self, kamlet) -> None:
         if self.rf_ident is not None:
@@ -235,6 +249,7 @@ async def send_req(jamlet: 'Jamlet', witem: WaitingStoreStride, tag: int) -> boo
 
     src_byte_in_word = tag
     dst_byte_in_word = k_maddr.addr % wb
+    ident = (instr.instr_ident + tag + 1) % jamlet.params.max_response_tags
 
     header = WriteMemWordHeader(
         target_x=target_x,
@@ -244,7 +259,7 @@ async def send_req(jamlet: 'Jamlet', witem: WaitingStoreStride, tag: int) -> boo
         message_type=MessageType.WRITE_MEM_WORD_REQ,
         send_type=SendType.SINGLE,
         length=3,
-        ident=(instr.instr_ident + tag + 1) % jamlet.params.max_response_tags,
+        ident=ident,
         tag=tag,
         dst_byte_in_word=dst_byte_in_word,
         n_bytes=request.n_bytes,
@@ -257,7 +272,24 @@ async def send_req(jamlet: 'Jamlet', witem: WaitingStoreStride, tag: int) -> boo
                  f'element={src_e} g_addr=0x{request.g_addr.addr:x} k_maddr=0x{word_addr.addr:x} '
                  f'src_byte={src_byte_in_word} dst_byte={dst_byte_in_word} n_bytes={request.n_bytes}')
 
-    await jamlet.send_packet(packet)
+    # Look up the witem span_id for monitoring
+    kamlet_min_x = (jamlet.x // jamlet.params.j_cols) * jamlet.params.j_cols
+    kamlet_min_y = (jamlet.y // jamlet.params.j_rows) * jamlet.params.j_rows
+    witem_span_id = jamlet.monitor.get_witem_span_id(instr.instr_ident, kamlet_min_x, kamlet_min_y)
+
+    # Create transaction for monitoring
+    transaction_span_id = jamlet.monitor.create_transaction(
+        transaction_type='WriteMemWord',
+        ident=ident,
+        src_x=jamlet.x,
+        src_y=jamlet.y,
+        dst_x=target_x,
+        dst_y=target_y,
+        tag=tag,
+        parent_span_id=witem_span_id,
+    )
+
+    await jamlet.send_packet(packet, transaction_span_id=transaction_span_id)
     return True
 
 

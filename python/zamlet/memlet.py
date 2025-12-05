@@ -9,6 +9,7 @@ from zamlet.router import Router, Direction
 from zamlet.message import Header, IdentHeader, AddressHeader
 from zamlet.utils import Queue
 from zamlet.message import MessageType, SendType, CHANNEL_MAPPING
+from zamlet.monitor import Monitor
 
 
 logger = logging.getLogger(__name__)
@@ -120,13 +121,15 @@ def jamlet_coords_to_m_router_coords(params: LamletParams, j_x: int, j_y: int) -
 
 class Memlet:
 
-    def __init__(self, clock: Clock, params: LamletParams, coords: List[Tuple[int, int]], kamlet_coords):
+    def __init__(self, clock: Clock, params: LamletParams, coords: List[Tuple[int, int]],
+                 kamlet_coords, monitor: Monitor):
         """
         A point of connection to off-chip DRAM.
         Can cover multiple 'nodes' on the grid and thus have multiple routers.
         """
         self.clock = clock
         self.params = params
+        self.monitor = monitor
         self.coords = coords
         self.routers = [[Router(clock, params, x, y)
                          for channel in range(params.n_channels)]

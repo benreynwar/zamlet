@@ -9,7 +9,7 @@ class WaitingItem:
     writes_all_memory = False
     use_source_to_match = False
 
-    def __init__(self, item: Any, instr_ident: int|None=None, rf_ident: int|None=None,
+    def __init__(self, item: Any, instr_ident: int, rf_ident: int|None=None,
                  source: Tuple[int, int]|None=None):
         self.item = item
         self.instr_ident = instr_ident
@@ -37,7 +37,7 @@ class WaitingItem:
 
 class WaitingItemRequiresCache(WaitingItem):
 
-    def __init__(self, item: Any, instr_ident: int|None=None,
+    def __init__(self, item: Any, instr_ident: int,
                  cache_slot: int|None=None, cache_is_avail: bool=False,
                  writeset_ident: int|None=None, rf_ident: int|None=None,
                  source: Tuple[int, int]|None=None):

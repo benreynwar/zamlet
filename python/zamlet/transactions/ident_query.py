@@ -16,6 +16,7 @@ from zamlet.waiting_item import WaitingItem
 from zamlet.kamlet.kinstructions import KInstr
 from zamlet.message import IdentHeader, MessageType, SendType
 from zamlet.synchronization import WaitingItemSyncState
+from zamlet.monitor import CompletionType, SpanType
 
 if TYPE_CHECKING:
     from zamlet.kamlet.kamlet import Kamlet
@@ -35,6 +36,17 @@ class IdentQuery(KInstr):
     baseline: int     # next_instr_ident at time of query
     previous_instr_ident: int  # instr_ident of instruction ahead in queue
 
+    def create_span(self, monitor, parent_span_id: int) -> int:
+        """IdentQuery is TRACKED because it receives a response."""
+        return monitor.create_span(
+            span_type=SpanType.KINSTR,
+            component="lamlet",
+            completion_type=CompletionType.TRACKED,
+            parent_span_id=parent_span_id,
+            instr_type=type(self).__name__,
+            instr_ident=self.instr_ident,
+        )
+
     async def update_kamlet(self, kamlet: 'Kamlet'):
         distance = kamlet.cache_table.get_oldest_active_instr_ident_distance(self.baseline)
 
@@ -50,6 +62,8 @@ class IdentQuery(KInstr):
             baseline=self.baseline,
             previous_instr_ident=self.previous_instr_ident,
         )
+        kamlet.monitor.record_witem_created(
+            self.instr_ident, kamlet.min_x, kamlet.min_y, 'WaitingIdentQuery')
         await kamlet.cache_table.add_witem(witem)
 
         # Report to synchronizer (uses min aggregation, None if no waiting items)

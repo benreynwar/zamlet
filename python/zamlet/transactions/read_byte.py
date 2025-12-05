@@ -45,15 +45,13 @@ async def do_read_byte(kamlet: 'Kamlet', instr: kinstructions.ReadByte) -> None:
     """
     Read a byte from cache and send response to scalar processor.
     """
-    logger.debug(f'do_read_byte')
     assert instr.k_maddr.bit_addr % 8 == 0
-    if instr.k_maddr.k_index != kamlet.k_index:
-        return
-
-    assert kamlet.cache_table.can_read(instr.k_maddr)
-    j_saddr = instr.k_maddr.to_j_saddr(kamlet.cache_table)
-    jamlet = kamlet.jamlets[j_saddr.j_in_k_index]
-    await send_read_byte_resp(jamlet, instr, j_saddr.addr)
+    if instr.k_maddr.k_index == kamlet.k_index:
+        assert kamlet.cache_table.can_read(instr.k_maddr)
+        j_saddr = instr.k_maddr.to_j_saddr(kamlet.cache_table)
+        jamlet = kamlet.jamlets[j_saddr.j_in_k_index]
+        await send_read_byte_resp(jamlet, instr, j_saddr.addr)
+    kamlet.monitor.complete_kinstr_exec(instr.instr_ident, kamlet.min_x, kamlet.min_y)
 
 
 async def send_read_byte_resp(

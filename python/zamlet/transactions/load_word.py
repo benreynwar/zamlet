@@ -54,9 +54,8 @@ class WaitingLoadWordSrc(WaitingItemRequiresCache):
 class WaitingLoadWordDst(WaitingItem):
 
     def __init__(self, params: LamletParams, instr: kinstructions.LoadWord, rf_ident: int):
-        super().__init__(item=instr, rf_ident=rf_ident)
+        super().__init__(item=instr, instr_ident=instr.instr_ident + 1, rf_ident=rf_ident)
         self.protocol_states = [ReceiveState.COMPLETE for _ in range(params.j_in_k)]
-        self.instr_ident = instr.instr_ident + 1
         self.writeset_ident = instr.writeset_ident
 
     def ready(self) -> bool:

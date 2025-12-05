@@ -1,5 +1,31 @@
 # Claude Code Guidelines for RISC-V Model
 
+## CRITICAL: No Defensive None Checks
+
+**DO NOT add `if x is None` or `if x is not None` checks that silently handle unexpected states.** This is the most common mistake and it hides serious bugs. If a value should never be None at a point in the code, access it directly and let it fail with a clear error if the assumption is wrong.
+
+## CRITICAL: Never Remove Assert Statements
+
+**DO NOT remove assert statements when tidying or refactoring code.** Assert statements are valuable for catching bugs early. When cleaning up code (removing logging, simplifying, etc.), always preserve existing assert statements.
+
+Bad:
+```python
+miid = lookup.get(key)
+if miid is not None:
+    self.complete_item(miid)
+```
+
+Good:
+```python
+miid = lookup[key]  # Will raise KeyError if missing - that's a bug we want to see
+self.complete_item(miid)
+```
+
+The same applies to other defensive patterns. If something should exist, assert it exists or access it directly. Don't silently skip over unexpected states.
+
+## Project Overview
+This is a Python project for experimenting with hardware design. It simulates a RISC-V Vector Processing Unit (VPU). Make liberal use of assert statements - failing with good error messages is useful and should not be avoided. Prefer asserting expected conditions over defensive if-checks that silently handle unexpected states. If something is probably true, assert it and reassess if the assertion fails.
+
 ## Communication Style
 When I ask you to show me something (e.g., grep output, log excerpts), just show it and wait. Don't continue with analysis unless I ask for it.
 
@@ -25,18 +51,28 @@ DO NOT include:
 - Code snippets of changes
 
 DO include:
+- **The big picture goal** - What are we ultimately trying to achieve? Reference any PLAN_*.md files. This is the most important part - don't lose sight of why we're doing something.
 - Current test status (what passes, what fails)
-- The specific failure being investigated
+- The specific failure being investigated (if debugging)
 - How to reproduce the failure
 - Relevant file paths
+- What step of the plan we're on (if following a plan)
+
+The RESTART.md should allow a fresh context to understand both *what* we're doing and *why*. Start with the big picture, then narrow down to the current task.
+
+**Important**: The big picture often already exists in RESTART.md from when the session started. Preserve it - the scope should not narrow from one session to the next. If the session started with a goal like "implement monitoring system", don't reduce it to just "fix this one bug".
 
 ## Running Tests
-Always redirect test output to a log file in the current directory, then examine the log. This allows
-you to search for specific log labels (see Logging Guide below) without re-running the test:
+ALWAYS redirect test output to a log file in the current directory, then examine the log. NEVER run a
+test without redirecting to a log file - this avoids having to re-run tests to see different parts of
+the output. This allows you to search for specific log labels (see Logging Guide below):
 ```bash
-python kernel_tests/conditional/test_conditional.py --vector-length 32 > test.log 2>&1
+python -m pytest kernel_tests/conditional/test_conditional.py -v > test.log 2>&1
 grep "RF_WRITE" test.log
 ```
+
+## Reading Files
+NEVER use `cat` to read files. Always use the Read tool instead.
 
 Tests are organized into:
 - `kernel_tests/` - Integration tests running RISC-V binaries through run_lamlet
