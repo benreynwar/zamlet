@@ -25,6 +25,8 @@ class MessageType(Enum):
     # Kamlet tells a memory to write a cache line and read another one
     WRITE_LINE_READ_LINE = 8
     WRITE_LINE_READ_LINE_RESP = 9
+    # Memlet drops the request if no gathering slots are available
+    WRITE_LINE_READ_LINE_DROP = 42
 
     # A request to read a single byte from VPU memory
     # We use a separate command from READ_WORDS since we can fit the response byte in the header.
@@ -117,6 +119,7 @@ CHANNEL_MAPPING = {
     MessageType.READ_LINE_RESP: 0,
     MessageType.WRITE_LINE_RESP: 0,
     MessageType.WRITE_LINE_READ_LINE_RESP: 0,
+    MessageType.WRITE_LINE_READ_LINE_DROP: 0,
     MessageType.READ_BYTE_RESP: 0,
     MessageType.LOAD_J2J_WORDS_RESP: 0,
     MessageType.LOAD_J2J_WORDS_DROP: 0,

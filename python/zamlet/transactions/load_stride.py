@@ -147,6 +147,15 @@ class WaitingLoadStride(WaitingItem):
         jamlet.rf_slice[dst_reg * wb: (dst_reg+1) * wb] = new_word
         logger.debug(f'{jamlet.clock.cycle}: RF_WRITE LoadStride: jamlet ({jamlet.x},{jamlet.y}) '
                      f'ident={self.instr_ident} rf[{dst_reg}] old={old_word.hex()} new={new_word.hex()}')
+        # Complete the transaction
+        jamlet.monitor.complete_transaction(
+            ident=header.ident,
+            tag=tag,
+            src_x=jamlet.x,
+            src_y=jamlet.y,
+            dst_x=header.source_x,
+            dst_y=header.source_y,
+        )
 
     def process_drop(self, jamlet: 'Jamlet', packet) -> None:
         header = packet[0]
@@ -254,6 +263,7 @@ async def send_req(jamlet: Jamlet, witem: WaitingLoadStride, tag: int) -> bool:
     word_addr = k_maddr.bit_offset(-word_offset * 8)
     target_x, target_y = addresses.k_indices_to_j_coords(
             jamlet.params, k_maddr.k_index, k_maddr.j_in_k_index)
+    ident = (instr.instr_ident + tag + 1) % jamlet.params.max_response_tags
     header = TaggedHeader(
         target_x=target_x,
         target_y=target_y,
@@ -262,7 +272,7 @@ async def send_req(jamlet: Jamlet, witem: WaitingLoadStride, tag: int) -> bool:
         message_type=MessageType.READ_MEM_WORD_REQ,
         send_type=SendType.SINGLE,
         length=2,
-        ident=(instr.instr_ident + tag + 1) % jamlet.params.max_response_tags,
+        ident=ident,
         tag=tag,
         )
     packet = [header, word_addr]
@@ -273,9 +283,21 @@ async def send_req(jamlet: Jamlet, witem: WaitingLoadStride, tag: int) -> bool:
     # Look up the witem span_id for monitoring (using kamlet's min_x/min_y)
     kamlet_min_x = (jamlet.x // jamlet.params.j_cols) * jamlet.params.j_cols
     kamlet_min_y = (jamlet.y // jamlet.params.j_rows) * jamlet.params.j_rows
-    parent_span_id = jamlet.monitor.get_witem_span_id(instr.instr_ident, kamlet_min_x, kamlet_min_y)
+    witem_span_id = jamlet.monitor.get_witem_span_id(instr.instr_ident, kamlet_min_x, kamlet_min_y)
 
-    await jamlet.send_packet(packet, parent_span_id=parent_span_id)
+    # Create transaction for monitoring
+    transaction_span_id = jamlet.monitor.create_transaction(
+        transaction_type='ReadMemWord',
+        ident=ident,
+        src_x=jamlet.x,
+        src_y=jamlet.y,
+        dst_x=target_x,
+        dst_y=target_y,
+        tag=tag,
+        parent_span_id=witem_span_id,
+    )
+
+    await jamlet.send_packet(packet, transaction_span_id=transaction_span_id)
     return True
 
 

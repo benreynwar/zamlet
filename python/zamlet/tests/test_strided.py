@@ -90,6 +90,7 @@ async def run_strided_load_test(
     stride: int,
     params: LamletParams,
     seed: int,
+    mem_ew: int | None = None,
 ):
     """
     Test strided vector load/store operations.
@@ -139,14 +140,17 @@ async def run_strided_load_test(
     alloc_size = ((alloc_size + page_bytes - 1) // page_bytes) * page_bytes
     n_pages = alloc_size // page_bytes
 
-    # Allocate source with varying ew per page (tests strided load across orderings)
-    # Allocate dest with uniform ew (contiguous store requires uniform ordering)
+    # Allocate source and dest memory
+    # If mem_ew is set, all pages use that ew; otherwise cycle through [8, 16, 32, 64]
     ews = [8, 16, 32, 64]
     src_alloc_base = get_vpu_base_addr(ew)
     dst_alloc_base = get_vpu_base_addr(ew) + 0x10000
     dst_ordering = Ordering(WordOrder.STANDARD, ew)
     for page_idx in range(n_pages):
-        src_page_ew = ews[page_idx % len(ews)]
+        if mem_ew is not None:
+            src_page_ew = mem_ew
+        else:
+            src_page_ew = ews[page_idx % len(ews)]
         src_ordering = Ordering(WordOrder.STANDARD, src_page_ew)
         lamlet.allocate_memory(
             GlobalAddress(bit_addr=(src_alloc_base + page_idx * page_bytes) * 8, params=params),
@@ -223,6 +227,9 @@ async def run_strided_load_test(
         elif i == 8:
             logger.info(f"  ...")
 
+    # Print monitor summary
+    lamlet.monitor.print_summary()
+
     # Compare
     if result_list == src_list:
         logger.warning("TEST PASSED: Results match expected values!")
@@ -246,6 +253,7 @@ async def run_strided_store_test(
     stride: int,
     params: LamletParams,
     seed: int,
+    mem_ew: int | None = None,
 ):
     """
     Test strided vector store operations.
@@ -258,6 +266,16 @@ async def run_strided_store_test(
     lamlet = Lamlet(clock, params)
     clock.create_task(update(clock, lamlet))
     clock.create_task(lamlet.run())
+
+    async def dump_monitor_on_timeout():
+        timeout_cycle = clock.max_cycles - 2 if clock.max_cycles else None
+        while timeout_cycle and clock.cycle < timeout_cycle:
+            await clock.next_cycle
+        if timeout_cycle:
+            logger.error(f"Approaching timeout at cycle {clock.cycle}, dumping monitor:")
+            lamlet.monitor.print_summary()
+
+    clock.create_task(dump_monitor_on_timeout())
 
     await clock.next_cycle
 
@@ -285,14 +303,17 @@ async def run_strided_store_test(
     alloc_size = ((alloc_size + page_bytes - 1) // page_bytes) * page_bytes
     n_pages = alloc_size // page_bytes
 
-    # Allocate source with uniform ew (contiguous load requires uniform ordering)
-    # Allocate dest with varying ew per page (tests strided store across orderings)
+    # Allocate source and dest memory
+    # If mem_ew is set, all pages use that ew; otherwise cycle through [8, 16, 32, 64]
     ews = [8, 16, 32, 64]
     src_alloc_base = get_vpu_base_addr(ew)
     dst_alloc_base = get_vpu_base_addr(ew) + 0x10000
     src_ordering = Ordering(WordOrder.STANDARD, ew)
     for page_idx in range(n_pages):
-        dst_page_ew = ews[page_idx % len(ews)]
+        if mem_ew is not None:
+            dst_page_ew = mem_ew
+        else:
+            dst_page_ew = ews[page_idx % len(ews)]
         dst_ordering = Ordering(WordOrder.STANDARD, dst_page_ew)
         lamlet.allocate_memory(
             GlobalAddress(bit_addr=(src_alloc_base + page_idx * page_bytes) * 8, params=params),
@@ -396,6 +417,7 @@ async def main(
     params: LamletParams,
     seed: int,
     test_store: bool = False,
+    mem_ew: int | None = None,
 ):
     import signal
 
@@ -409,9 +431,9 @@ async def main(
 
     clock_driver_task = clock.create_task(clock.clock_driver())
     if test_store:
-        exit_code = await run_strided_store_test(clock, ew, vl, stride, params, seed)
+        exit_code = await run_strided_store_test(clock, ew, vl, stride, params, seed, mem_ew)
     else:
-        exit_code = await run_strided_load_test(clock, ew, vl, stride, params, seed)
+        exit_code = await run_strided_load_test(clock, ew, vl, stride, params, seed, mem_ew)
 
     logger.warning(f"Test completed with exit_code: {exit_code}")
     clock.running = False
@@ -483,6 +505,11 @@ if __name__ == '__main__':
                         help='Random seed for test data generation (default: 0)')
     parser.add_argument('--store', action='store_true',
                         help='Test strided store (default: test strided load)')
+    parser.add_argument('--mem-ew', type=int, default=None,
+                        help='Memory element width. If set, all pages use this ew. '
+                             'If not set, pages cycle through [8, 16, 32, 64].')
+    parser.add_argument('--max-cycles', type=int, default=10000,
+                        help='Maximum simulation cycles (default: 10000)')
     args = parser.parse_args()
 
     if args.list_geometries:
@@ -507,15 +534,16 @@ if __name__ == '__main__':
     handler.setFormatter(formatter)
     root_logger.addHandler(handler)
 
-    clock = Clock(max_cycles=10000)
+    clock = Clock(max_cycles=args.max_cycles)
     exit_code = None
     try:
         logger.info(
             f'Starting with ew={args.ew}, vl={args.vl}, stride={args.stride}, '
-            f'geometry={args.geometry}, seed={args.seed}, store={args.store}'
+            f'geometry={args.geometry}, seed={args.seed}, store={args.store}, '
+            f'mem_ew={args.mem_ew}, max_cycles={args.max_cycles}'
         )
         exit_code = asyncio.run(main(clock, args.ew, args.vl, args.stride, params,
-                                     args.seed, args.store))
+                                     args.seed, args.store, args.mem_ew))
     except KeyboardInterrupt:
         root_logger.warning('Test interrupted by user')
         sys.exit(1)

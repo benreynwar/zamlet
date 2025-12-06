@@ -126,13 +126,13 @@ async def handle_req(jamlet: 'Jamlet', packet: List[Any]) -> None:
                                    slot)
     elif slot is not None and not slot_in_use:
         # Slot exists but state not ready, no clashing witem - create witem to wait
-        can_get_witem = jamlet.cache_table.can_get_free_witem_index()
+        can_get_witem = jamlet.cache_table.can_get_free_witem_index(use_reserved=True)
         if can_get_witem:
             slot_state = jamlet.cache_table.slot_states[slot]
             j_saddr = addr.to_j_saddr(jamlet.cache_table)
             witem = WaitingWriteMemWord(header, slot, j_saddr,
                                         writeset_ident=parent_witem.writeset_ident)
-            jamlet.cache_table.add_witem_immediately(witem)
+            jamlet.cache_table.add_witem_immediately(witem, use_reserved=True)
             # Track witem span - parent is the transaction
             transaction_span_id = jamlet.monitor.get_transaction_span_id(
                 header.ident, header.tag, header.source_x, header.source_y, jamlet.x, jamlet.y)
@@ -155,7 +155,7 @@ async def handle_req(jamlet: 'Jamlet', packet: List[Any]) -> None:
             await send_drop(jamlet, header)
     elif slot is None:
         # No slot exists - try to allocate one and create witem
-        can_get_witem = jamlet.cache_table.can_get_free_witem_index()
+        can_get_witem = jamlet.cache_table.can_get_free_witem_index(use_reserved=True)
         can_get_slot = jamlet.cache_table.can_get_slot(addr)
         if can_get_witem and can_get_slot:
             cache_slot = jamlet.cache_table.get_slot_if_exists(addr)
@@ -164,7 +164,7 @@ async def handle_req(jamlet: 'Jamlet', packet: List[Any]) -> None:
             j_saddr = addr.to_j_saddr(jamlet.cache_table)
             witem = WaitingWriteMemWord(header, cache_slot, j_saddr,
                                         writeset_ident=parent_witem.writeset_ident)
-            jamlet.cache_table.add_witem_immediately(witem)
+            jamlet.cache_table.add_witem_immediately(witem, use_reserved=True)
             # Track witem span - parent is the transaction
             transaction_span_id = jamlet.monitor.get_transaction_span_id(
                 header.ident, header.tag, header.source_x, header.source_y, jamlet.x, jamlet.y)

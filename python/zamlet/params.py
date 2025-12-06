@@ -41,8 +41,12 @@ class LamletParams:
 
     # The number of outstanding instructions or responses waiting
     n_items: int = 16
+    # Number of witem slots reserved for message handlers (not used by kinstructions)
+    n_items_reserved: int = 8
     # The number of outstanding cache read_line and write_line allowed
     n_cache_requests: int = 16
+    # Number of gathering slots in memlet for WRITE_LINE_READ_LINE operations
+    n_memlet_gathering_slots: int = 4
 
     def __post_init__(self):
         # Page must be bigger than a vector

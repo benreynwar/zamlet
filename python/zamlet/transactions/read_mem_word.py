@@ -37,9 +37,11 @@ class WaitingReadMemWord(WaitingItemRequiresCache):
     '''
 
     cache_is_read = True
+    use_source_to_match = True
 
     def __init__(self, header: IdentHeader, cache_slot: int, j_saddr: addresses.JSAddr):
-        super().__init__(item=header, instr_ident=header.ident, cache_slot=cache_slot)
+        super().__init__(item=header, instr_ident=header.ident, cache_slot=cache_slot,
+                         source=(header.source_x, header.source_y))
         self.j_saddr = j_saddr
 
     def ready(self):
@@ -73,45 +75,41 @@ async def handle_req(jamlet: 'Jamlet', packet: List[Any]) -> None:
     parent_ident = (header.ident - header.tag - 1) % jamlet.params.max_response_tags
     parent_witem = jamlet.cache_table.get_waiting_item_by_instr_ident(parent_ident)
     if parent_witem is None:
-        logger.debug(f'{jamlet.clock.cycle}: READ_MEM_WORD_REQ: jamlet ({jamlet.x},{jamlet.y}) '
-                     f'parent_ident={parent_ident} not found, sending DROP')
-        await send_drop(jamlet, header)
+        await send_drop(jamlet, header, 'parent_not_ready')
         return
 
     can_read = jamlet.cache_table.can_read(addr)
-    slot = jamlet.cache_table.addr_to_slot(addr)
-    if slot is not None:
-        slot_state = jamlet.cache_table.slot_states[slot]
-        has_write = jamlet.cache_table.slot_has_write(slot)
-        logger.debug(f'{jamlet.clock.cycle}: READ_MEM_WORD_REQ: jamlet ({jamlet.x},{jamlet.y}) '
-                     f'parent_ident={parent_ident} found, can_read={can_read} addr=0x{addr.addr:x} '
-                     f'slot={slot} state={slot_state.state} has_write={has_write}')
-    else:
-        logger.debug(f'{jamlet.clock.cycle}: READ_MEM_WORD_REQ: jamlet ({jamlet.x},{jamlet.y}) '
-                     f'parent_ident={parent_ident} found, can_read={can_read} addr=0x{addr.addr:x} '
-                     f'slot=None (not in cache)')
     if can_read:
         j_saddr = addr.to_j_saddr(jamlet.cache_table)
         await send_resp(jamlet, header, j_saddr)
-    else:
-        can_get_witem = jamlet.cache_table.can_get_free_witem_index()
-        can_get_slot = jamlet.cache_table.can_get_slot(addr)
-        logger.debug(f'{jamlet.clock.cycle}: READ_MEM_WORD_REQ: jamlet ({jamlet.x},{jamlet.y}) '
-                     f'can_get_witem={can_get_witem} can_get_slot={can_get_slot}')
-        if can_get_witem and can_get_slot:
-            cache_slot = jamlet.cache_table.get_slot_if_exists(addr)
-            assert cache_slot is not None
-            slot_state = jamlet.cache_table.slot_states[cache_slot]
-            j_saddr = addr.to_j_saddr(jamlet.cache_table)
-            witem = WaitingReadMemWord(header, cache_slot, j_saddr)
-            jamlet.cache_table.add_witem_immediately(witem)
-            logger.debug(f'{jamlet.clock.cycle}: READ_MEM_WORD_REQ: jamlet ({jamlet.x},{jamlet.y}) '
-                         f'created WaitingReadMemWord for slot={cache_slot} '
-                         f'slot_state={slot_state.state} memory_loc=0x{slot_state.memory_loc:x}')
-        else:
-            logger.debug(f'{jamlet.clock.cycle}: READ_MEM_WORD_REQ: jamlet ({jamlet.x},{jamlet.y}) '
-                         f'cannot allocate, sending DROP')
-            await send_drop(jamlet, header)
+        return
+
+    if not jamlet.cache_table.can_get_free_witem_index(use_reserved=True):
+        await send_drop(jamlet, header, 'witem_table_full')
+        return
+
+    if not jamlet.cache_table.can_get_slot(addr):
+        await send_drop(jamlet, header, 'cache_slot_unavailable')
+        return
+
+    cache_slot = jamlet.cache_table.get_slot_if_exists(addr)
+    assert cache_slot is not None
+    j_saddr = addr.to_j_saddr(jamlet.cache_table)
+    witem = WaitingReadMemWord(header, cache_slot, j_saddr)
+    jamlet.cache_table.add_witem_immediately(witem, use_reserved=True)
+    # Track witem span - parent is the transaction
+    transaction_span_id = jamlet.monitor.get_transaction_span_id(
+        header.ident, header.tag, header.source_x, header.source_y, jamlet.x, jamlet.y)
+    jamlet.monitor.record_witem_created(
+        instr_ident=header.ident,
+        kamlet_x=jamlet.cache_table.kamlet_x,
+        kamlet_y=jamlet.cache_table.kamlet_y,
+        witem_type='WaitingReadMemWord',
+        finalize=False,
+        parent_span_id=transaction_span_id,
+        source_x=header.source_x,
+        source_y=header.source_y,
+    )
 
 
 @register_handler(MessageType.READ_MEM_WORD_RESP)
@@ -144,9 +142,6 @@ async def send_resp(jamlet: 'Jamlet', rcvd_header: TaggedHeader, j_saddr: JSAddr
     assert j_saddr.j_in_k_index == jamlet.j_in_k_index
     sram_addr = j_saddr.addr // jamlet.params.word_bytes * jamlet.params.word_bytes
     data = jamlet.sram[sram_addr: sram_addr + jamlet.params.word_bytes]
-    logger.debug(f'{jamlet.clock.cycle}: READ_MEM_WORD_RESP: jamlet ({jamlet.x},{jamlet.y}) '
-                 f'ident={rcvd_header.ident} tag={rcvd_header.tag} '
-                 f'sram[{sram_addr}] data={data.hex()}')
     header = TaggedHeader(
         target_x=rcvd_header.source_x, target_y=rcvd_header.source_y,
         source_x=jamlet.x, source_y=jamlet.y,
@@ -156,10 +151,15 @@ async def send_resp(jamlet: 'Jamlet', rcvd_header: TaggedHeader, j_saddr: JSAddr
         tag=rcvd_header.tag,
         ident=rcvd_header.ident)
     assert len(data) == jamlet.params.word_bytes
-    await jamlet.send_packet([header, data])
+    # Look up transaction (requester is source, we are dest)
+    transaction_span_id = jamlet.monitor.get_transaction_span_id(
+        rcvd_header.ident, rcvd_header.tag,
+        rcvd_header.source_x, rcvd_header.source_y, jamlet.x, jamlet.y)
+    await jamlet.send_packet([header, data], transaction_span_id=transaction_span_id)
 
 
-async def send_drop(jamlet: 'Jamlet', rcvd_header: TaggedHeader) -> None:
+async def send_drop(jamlet: 'Jamlet', rcvd_header: TaggedHeader,
+                    reason: str) -> None:
     '''Send READ_MEM_WORD_DROP indicating request couldn't be handled.'''
     header = TaggedHeader(
         target_x=rcvd_header.source_x, target_y=rcvd_header.source_y,
@@ -169,4 +169,9 @@ async def send_drop(jamlet: 'Jamlet', rcvd_header: TaggedHeader) -> None:
         length=1,
         tag=rcvd_header.tag,
         ident=rcvd_header.ident)
-    await jamlet.send_packet([header])
+    # Look up transaction (requester is source, we are dest)
+    transaction_span_id = jamlet.monitor.get_transaction_span_id(
+        rcvd_header.ident, rcvd_header.tag,
+        rcvd_header.source_x, rcvd_header.source_y, jamlet.x, jamlet.y)
+    await jamlet.send_packet([header], transaction_span_id=transaction_span_id,
+                             drop_reason=reason)

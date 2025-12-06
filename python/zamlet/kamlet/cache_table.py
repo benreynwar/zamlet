@@ -208,18 +208,47 @@ class CacheTable:
             f'received={n_received}/{len(state.received)}'
         )
 
-    def can_get_free_witem_index(self) -> bool:
-        return self.get_free_witem_index_if_exists() is not None
+    def _count_free_witem_slots(self) -> int:
+        return sum(1 for x in self.waiting_items if x is None)
 
-    def get_free_witem_index_if_exists(self) -> int|None:
-        valid_indices = [index for index, x in enumerate(self.waiting_items) if x is None]
-        if valid_indices:
-            return valid_indices[0]
+    def can_get_free_witem_index(self, use_reserved: bool = False) -> bool:
+        """Check if a witem slot is available.
+
+        Args:
+            use_reserved: If True, can use reserved slots (for message handlers).
+                         If False, must leave n_items_reserved slots free (for kinstructions).
+        """
+        free_count = self._count_free_witem_slots()
+        if use_reserved:
+            return free_count > 0
         else:
-            return None
+            return free_count > self.params.n_items_reserved
 
-    async def get_free_witem_index(self, witem: WaitingItem | None = None) -> int:
-        free_item = self.get_free_witem_index_if_exists()
+    def get_free_witem_index_if_exists(self, use_reserved: bool = False) -> int|None:
+        """Get a free witem slot index if available.
+
+        Args:
+            use_reserved: If True, can use reserved slots (for message handlers).
+                         If False, must leave n_items_reserved slots free (for kinstructions).
+        """
+        free_count = self._count_free_witem_slots()
+        min_required = 0 if use_reserved else self.params.n_items_reserved
+        if free_count > min_required:
+            for index, x in enumerate(self.waiting_items):
+                if x is None:
+                    return index
+        return None
+
+    async def get_free_witem_index(self, witem: WaitingItem | None = None,
+                                   use_reserved: bool = False) -> int:
+        """Wait for and get a free witem slot.
+
+        Args:
+            witem: The witem requesting the slot (for monitoring).
+            use_reserved: If True, can use reserved slots (for message handlers).
+                         If False, must leave n_items_reserved slots free (for kinstructions).
+        """
+        free_item = self.get_free_witem_index_if_exists(use_reserved)
         if free_item is not None:
             return free_item
         # Table is full - record resource exhaustion
@@ -229,7 +258,7 @@ class CacheTable:
             self.monitor.record_witem_blocked_by_resource(
                 witem.instr_ident, self.kamlet_x, self.kamlet_y, ResourceType.WITEM_TABLE)
         while True:
-            free_item = self.get_free_witem_index_if_exists()
+            free_item = self.get_free_witem_index_if_exists(use_reserved)
             if free_item is not None:
                 break
             await self.clock.next_cycle
@@ -327,13 +356,14 @@ class CacheTable:
         state = self.get_state(k_maddr)
         assert state.state in (CacheState.SHARED, CacheState.MODIFIED)
 
-    def add_witem_immediately(self, witem: WaitingItem):
-        witem_index = self.get_free_witem_index_if_exists()
+    def add_witem_immediately(self, witem: WaitingItem, use_reserved: bool = False):
+        witem_index = self.get_free_witem_index_if_exists(use_reserved=use_reserved)
         assert witem_index is not None
         self.waiting_items[witem_index] = witem
         return witem_index
 
-    async def add_witem(self, witem: WaitingItem, k_maddr: KMAddr|None=None):
+    async def add_witem(self, witem: WaitingItem, k_maddr: KMAddr|None=None,
+                        use_reserved: bool = False):
         if witem.cache_is_read or witem.cache_is_write:
             assert k_maddr is not None
             assert not (witem.cache_is_read and witem.cache_is_write)
@@ -390,15 +420,11 @@ class CacheTable:
                     f'{self.clock.cycle}: {self.name}: slot state={self.slot_states[slot].state}, '
                     f'cache_is_avail={witem.cache_is_avail}'
                 )
-        # If this witem reads all memory, wait for all pending writes and other
-        # reads_all_memory witems to complete first
+        # If this witem reads all memory, wait for all pending writes to complete first
         if witem.reads_all_memory:
             self._record_blocked_by_witems(
                 witem, lambda item: item.cache_is_write, "reads_all_blocked_by_writes")
             await self._wait_for_all_writes_complete()
-            self._record_blocked_by_witems(
-                witem, lambda item: item.reads_all_memory, "reads_all_blocked_by_reads_all")
-            await self._wait_for_reads_all_memory_complete()
         # If this witem writes all memory, wait for all pending reads and other
         # writes_all_memory witems to complete first
         if witem.writes_all_memory:
@@ -416,7 +442,7 @@ class CacheTable:
                                getattr(item, 'writeset_ident', None) != witem.writeset_ident)),
                 "writes_all_blocked_by_writes_all")
             await self._wait_for_writes_all_memory_complete(witem.writeset_ident)
-        witem_index = await self.get_free_witem_index(witem)
+        witem_index = await self.get_free_witem_index(witem, use_reserved=use_reserved)
         self.waiting_items[witem_index] = witem
         if witem.cache_is_read or witem.cache_is_write:
             witem.cache_is_avail = (
@@ -753,6 +779,20 @@ class CacheTable:
             assert self.slot_states[request.slot].state == CacheState.WRITING_READING
         else:
             raise NotImplementedError()
+
+    def clear_cache_request_sent(self, ident: int, j_in_k_index: int):
+        """Clear the sent flag for a cache request after receiving a DROP.
+
+        This allows the kamlet's _monitor_cache_requests to re-send the request.
+        """
+        request = self.cache_requests[ident]
+        assert request is not None, f'No cache request for ident={ident}'
+        assert request.request_type == CacheRequestType.WRITE_LINE_READ_LINE
+        request.sent[j_in_k_index].set(False)
+        logger.debug(
+            f'{self.clock.cycle}: [CACHE_TABLE] clear_cache_request_sent ident={ident} '
+            f'j_in_k_index={j_in_k_index}'
+        )
 
     def resolve_read_line(self, request: CacheRequestState):
         assert self.cache_requests[request.ident] == request

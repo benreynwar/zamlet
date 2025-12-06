@@ -147,10 +147,15 @@ class Router:
                     input_buffer = self._input_buffers[input_direction]
                     conn = self._input_connections[input_direction]
                     if not output_buffer.can_append():
+                        # Get message type from the header if available
+                        msg_type = "unknown"
+                        if input_buffer and isinstance(input_buffer.head(), Header):
+                            msg_type = input_buffer.head().message_type.name
                         logger.debug(
                             f'{self.clock.cycle}: ({self.x}, {self.y}) ch{self.channel}: '
                             f'BLOCKED {input_direction}->{output_direction} '
-                            f'output_buffer full (len={len(output_buffer)}, appended={output_buffer.appended})')
+                            f'output_buffer full (len={len(output_buffer)}, appended={output_buffer.appended}) '
+                            f'msg_type={msg_type} conn.header={conn.header}')
                     elif not input_buffer:
                         logger.debug(
                             f'{self.clock.cycle}: ({self.x}, {self.y}) ch{self.channel}: '

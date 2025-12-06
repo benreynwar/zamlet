@@ -101,6 +101,13 @@ class Monitor:
         # resource_exhausted key: (ResourceType, kamlet_x, kamlet_y) -> span_id
         self._resource_exhausted_by_key: Dict[tuple, int] = {}
 
+        # Input queue stats per jamlet: (x, y) -> {ch0_ready, ch0_consumed, ch1andup_ready, ch1andup_consumed}
+        self._input_queue_stats: Dict[tuple, Dict[str, int]] = {}
+
+        # Send queue stats per jamlet per message type:
+        # (x, y, message_type_name) -> {attempts, blocked_cycles}
+        self._send_queue_stats: Dict[tuple, Dict[str, int]] = {}
+
     # -------------------------------------------------------------------------
     # Core Span methods
     # -------------------------------------------------------------------------
@@ -337,8 +344,19 @@ class Monitor:
         if not self.enabled:
             return None
         key = self._witem_key(instr_ident, kamlet_x, kamlet_y, source_x, source_y)
-        assert key not in self._witem_by_key, \
-            f"witem key {key} already in lookup table"
+        if key in self._witem_by_key:
+            existing_span_id = self._witem_by_key[key]
+            existing_span = self.spans[existing_span_id]
+            assert existing_span.parent is not None
+            parent_id = existing_span.parent.span_id
+            raise AssertionError(
+                f"witem key {key} already in lookup table.\n\n"
+                f"Existing span:\n{self.dump_span(existing_span_id)}\n\n"
+                f"Existing span's parent:\n{self.dump_span(parent_id)}\n\n"
+                f"New witem: type={witem_type}, "
+                f"instr_ident={instr_ident}, kamlet=({kamlet_x},{kamlet_y}), "
+                f"source=({source_x},{source_y}), parent_span_id={parent_span_id}"
+            )
         if parent_span_id is None:
             parent_key = (instr_ident, kamlet_x, kamlet_y)
             parent_span_id = self._kinstr_exec_by_key.get(parent_key)
@@ -460,17 +478,22 @@ class Monitor:
 
     def record_message_sent(self, transaction_span_id: int, message_type: str,
                             ident: int, tag: int | None,
-                            src_x: int, src_y: int, dst_x: int, dst_y: int) -> int | None:
+                            src_x: int, src_y: int, dst_x: int, dst_y: int,
+                            drop_reason: str | None = None) -> int | None:
         """Record a message being sent. Span stays open until received."""
         if not self.enabled:
             return None
+
+        details = {'message_type': message_type}
+        if drop_reason is not None:
+            details['drop_reason'] = drop_reason
 
         span_id = self.create_span(
             span_type=SpanType.MESSAGE,
             component=f"jamlet({src_x},{src_y})",
             completion_type=CompletionType.TRACKED,
             parent_span_id=transaction_span_id,
-            message_type=message_type,
+            **details,
         )
 
         key = self._message_key(ident, tag, src_x, src_y, dst_x, dst_y)
@@ -625,12 +648,17 @@ class Monitor:
             return
 
         witem_span_id = self.get_witem_span_id(witem_instr_ident, kamlet_x, kamlet_y)
+        assert witem_span_id is not None, (
+            f"witem span not found for instr_ident={witem_instr_ident} "
+            f"kamlet=({kamlet_x},{kamlet_y})")
         resource_span_id = self.get_resource_exhausted_span_id(
             resource_type, kamlet_x, kamlet_y)
-        if witem_span_id is not None and resource_span_id is not None:
-            self.add_dependency(
-                witem_span_id, resource_span_id,
-                f"blocked_by_{resource_type.value.lower()}")
+        assert resource_span_id is not None, (
+            f"resource span not found for {resource_type.value} "
+            f"kamlet=({kamlet_x},{kamlet_y})")
+        self.add_dependency(
+            witem_span_id, resource_span_id,
+            f"blocked_by_{resource_type.value.lower()}")
 
     def record_rf_blocking(self, instr_ident: int, kamlet_x: int, kamlet_y: int,
                            read_regs, write_regs, rf_info, waiting_items) -> None:
@@ -664,6 +692,52 @@ class Monitor:
                     witem.instr_ident, kamlet_x, kamlet_y)
                 if blocking_span_id is not None:
                     self.add_dependency(blocked_span_id, blocking_span_id, "waiting_for_rf")
+
+    def _get_input_queue_stats(self, x: int, y: int) -> Dict[str, int]:
+        """Get or create input queue stats for a jamlet."""
+        key = (x, y)
+        if key not in self._input_queue_stats:
+            self._input_queue_stats[key] = {
+                'ch0_ready': 0, 'ch0_consumed': 0,
+                'ch1andup_ready': 0, 'ch1andup_consumed': 0
+            }
+        return self._input_queue_stats[key]
+
+    def record_input_queue_ready(self, x: int, y: int, is_ch0: bool) -> None:
+        """Record that input queue has data ready this cycle."""
+        if not self.enabled:
+            return
+        stats = self._get_input_queue_stats(x, y)
+        if is_ch0:
+            stats['ch0_ready'] += 1
+        else:
+            stats['ch1andup_ready'] += 1
+
+    def record_input_queue_consumed(self, x: int, y: int, is_ch0: bool) -> None:
+        """Record that data was consumed from input queue this cycle."""
+        if not self.enabled:
+            return
+        stats = self._get_input_queue_stats(x, y)
+        if is_ch0:
+            stats['ch0_consumed'] += 1
+        else:
+            stats['ch1andup_consumed'] += 1
+
+    def _get_send_queue_stats(self, x: int, y: int, message_type_name: str) -> Dict[str, int]:
+        """Get or create send queue stats for a jamlet/message type."""
+        key = (x, y, message_type_name)
+        if key not in self._send_queue_stats:
+            self._send_queue_stats[key] = {'total_cycles': 0, 'blocked_cycles': 0}
+        return self._send_queue_stats[key]
+
+    def record_send_queue_attempt(self, x: int, y: int, message_type_name: str,
+                                   blocked_cycles: int) -> None:
+        """Record a send queue attempt with how many cycles it was blocked."""
+        if not self.enabled:
+            return
+        stats = self._get_send_queue_stats(x, y, message_type_name)
+        stats['total_cycles'] += blocked_cycles + 1
+        stats['blocked_cycles'] += blocked_cycles
 
     # -------------------------------------------------------------------------
     # Query methods
@@ -849,6 +923,30 @@ class Monitor:
             if len(pending) > 10:
                 print(f'  ... and {len(pending) - 10} more')
 
+        # Show input queue utilization
+        if self._input_queue_stats:
+            print(f'\nInput queue utilization:')
+            print(f'  {"Jamlet":<12} {"Ch0 Ready":<12} {"Ch0 Cons":<12} {"Ch0 %":<10} '
+                  f'{"Ch1+ Ready":<12} {"Ch1+ Cons":<12} {"Ch1+ %":<10}')
+            print(f'  {"-"*12} {"-"*12} {"-"*12} {"-"*10} {"-"*12} {"-"*12} {"-"*10}')
+            for (x, y), s in sorted(self._input_queue_stats.items()):
+                ch0_pct = (s['ch0_consumed'] / s['ch0_ready'] * 100) if s['ch0_ready'] > 0 else 0
+                ch1_pct = (s['ch1andup_consumed'] / s['ch1andup_ready'] * 100) if s['ch1andup_ready'] > 0 else 0
+                print(f'  ({x},{y})        {s["ch0_ready"]:<12} {s["ch0_consumed"]:<12} {ch0_pct:<10.1f} '
+                      f'{s["ch1andup_ready"]:<12} {s["ch1andup_consumed"]:<12} {ch1_pct:<10.1f}')
+
+        # Show send queue blocking stats
+        if self._send_queue_stats:
+            print(f'\nSend queue blocking:')
+            print(f'  {"Jamlet":<10} {"Message Type":<30} {"Total":<10} {"Blocked":<10} '
+                  f'{"Blocked %":<10}')
+            print(f'  {"-"*10} {"-"*30} {"-"*10} {"-"*10} {"-"*10}')
+            for (x, y, msg_type), s in sorted(self._send_queue_stats.items()):
+                if s['total_cycles'] > 0:
+                    blocked_pct = s['blocked_cycles'] / s['total_cycles'] * 100
+                    print(f'  ({x},{y})      {msg_type:<30} {s["total_cycles"]:<10} '
+                          f'{s["blocked_cycles"]:<10} {blocked_pct:<10.1f}')
+
         # Show hierarchical view of slowest RISCV_INSTR spans
         riscv_instrs = [s for s in self.spans.values()
                         if s.span_type == SpanType.RISCV_INSTR and s.is_complete()]
@@ -936,7 +1034,8 @@ class Monitor:
         if span.details:
             detail_items = []
             for k, v in span.details.items():
-                if k in ('instr_ident', 'instr_type', 'witem_type', 'message_type', 'mnemonic'):
+                if k in ('instr_ident', 'instr_type', 'witem_type', 'message_type', 'mnemonic',
+                         'resource_type', 'drop_reason'):
                     detail_items.append(f"{k}={v}")
             if detail_items:
                 print(f"{prefix}  {', '.join(detail_items)}")

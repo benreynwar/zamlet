@@ -112,7 +112,8 @@ class Jamlet:
         self.rf_info = rf_info
         self.tlb = tlb
 
-    async def send_packet(self, packet, transaction_span_id: int | None = None):
+    async def send_packet(self, packet, transaction_span_id: int | None = None,
+                          drop_reason: str | None = None):
         assert isinstance(packet[0], Header)
         assert len(packet) == packet[0].length, (
             f"Packet length mismatch: len(packet)={len(packet)}, header.length={packet[0].length}")
@@ -131,19 +132,20 @@ class Jamlet:
                 ident=ident, tag=tag,
                 src_x=self.x, src_y=self.y,
                 dst_x=header.target_x, dst_y=header.target_y,
+                drop_reason=drop_reason,
             )
 
-        wait_count = 0
+        blocked_cycles = 0
         while not self.send_queues[message_type].can_append():
-            wait_count += 1
-            if wait_count > 100:
+            blocked_cycles += 1
+            if blocked_cycles > 100 and blocked_cycles % 100 == 0:
                 queue = self.send_queues[message_type]
                 logger.error(
                     f'{self.clock.cycle}: jamlet ({self.x}, {self.y}): send_packet BLOCKED '
                     f'{message_type.name} target=({header.target_x}, {header.target_y}) '
                     f'queue_len={len(queue)} queue_length={queue.length}')
-                wait_count = 0
             await self.clock.next_cycle
+        self.monitor.record_send_queue_attempt(self.x, self.y, message_type.name, blocked_cycles)
         self.send_queues[message_type].append(packet)
 
     async def _send_packet(self, packet):
@@ -242,11 +244,14 @@ class Jamlet:
     async def _receive_instructions_packet(self, header, queue):
         remaining = header.length - 1
         while remaining:
-            if queue and self._instruction_buffer.can_append():
+            await self.clock.next_cycle
+            if queue:
+                assert self._instruction_buffer.can_append(), \
+                    f"Instruction buffer full at jamlet ({self.x}, {self.y})"
                 word = queue.popleft()
+                self.monitor.record_input_queue_consumed(self.x, self.y, is_ch0=True)
                 self._instruction_buffer.append(word)
                 remaining -= 1
-            await self.clock.next_cycle
 
     async def _receive_read_line_resp_packet(self, header, queue):
         # The packet should say where to put the data.
@@ -265,8 +270,10 @@ class Jamlet:
         assert remaining == self.params.vlines_in_cache_line
         index = 0
         while remaining:
+            await self.clock.next_cycle
             if queue:
                 word = queue.popleft()
+                self.monitor.record_input_queue_consumed(self.x, self.y, is_ch0=True)
                 sram_addr = s_address + index * wb
                 old_word = self.sram[sram_addr: sram_addr + wb]
                 self.sram[sram_addr: sram_addr + wb] = word
@@ -276,7 +283,6 @@ class Jamlet:
                 )
                 remaining -= 1
                 index += 1
-            await self.clock.next_cycle
         # And we want to let the kamlet know we got this response
         self.cache_table.receive_cache_response(header)
 
@@ -285,10 +291,14 @@ class Jamlet:
         self.cache_table.receive_cache_response(header)
 
     async def _receive_packet_channel0(self, queue):
-        """Handle channel 0 packets (always-consumable responses). These never need to send."""
+        """
+        Handle channel 0 packets (always-consumable responses). These never need to send.
+        This function should return on the same cycle that the last word was consumed.
+        """
         while not queue:
             await self.clock.next_cycle
         header = queue.popleft()
+        self.monitor.record_input_queue_consumed(self.x, self.y, is_ch0=True)
         assert isinstance(header, Header)
         logger.debug(
             f'{self.clock.cycle}: jamlet ({self.x}, {self.y}): _receive_packet_channel0 got header '
@@ -312,21 +322,23 @@ class Jamlet:
                 dst_x=self.x,
                 dst_y=self.y,
             )
-
-        await self.clock.next_cycle
         if header.message_type == MessageType.INSTRUCTIONS:
             await self._receive_instructions_packet(header, queue)
         elif header.message_type == MessageType.READ_LINE_RESP:
             await self._receive_read_line_resp_packet(header, queue)
         elif header.message_type == MessageType.WRITE_LINE_RESP:
+            await self.clock.next_cycle
             await self._receive_write_line_resp_packet(header, queue)
         elif header.message_type == MessageType.WRITE_LINE_READ_LINE_RESP:
             await self._receive_read_line_resp_packet(header, queue)
+        elif header.message_type == MessageType.WRITE_LINE_READ_LINE_DROP:
+            # Memlet couldn't handle request - clear sent flag so kamlet will re-send
+            self.cache_table.clear_cache_request_sent(header.ident, self.j_in_k_index)
         else:
             handler = MESSAGE_HANDLERS.get(header.message_type)
             if handler is None:
                 raise NotImplementedError(f"No handler for channel 0 message {header.message_type}")
-            packet = await self._receive_packet_body(queue, header)
+            packet = await self._receive_packet_body(queue, header, is_ch0=True)
             result = handler(self, packet)
             assert result is None, f"Channel 0 handler for {header.message_type} must be sync (not async)"
 
@@ -335,6 +347,7 @@ class Jamlet:
         while not queue:
             await self.clock.next_cycle
         header = queue.popleft()
+        self.monitor.record_input_queue_consumed(self.x, self.y, is_ch0=False)
         assert isinstance(header, Header)
         logger.debug(
             f'{self.clock.cycle}: jamlet ({self.x}, {self.y}): _receive_packet got header '
@@ -357,16 +370,18 @@ class Jamlet:
         handler = MESSAGE_HANDLERS.get(header.message_type)
         if handler is None:
             raise NotImplementedError(f"No handler for {header.message_type}")
-        packet = await self._receive_packet_body(queue, header)
+        packet = await self._receive_packet_body(queue, header, is_ch0=False)
         await handler(self, packet)
 
-    async def _receive_packet_body(self, queue, header):
+    async def _receive_packet_body(self, queue, header, is_ch0: bool):
         packet = [header]
         remaining_words = header.length - 1
         wait_count = 0
         while remaining_words > 0:
+            await self.clock.next_cycle
             if queue:
                 word = queue.popleft()
+                self.monitor.record_input_queue_consumed(self.x, self.y, is_ch0=is_ch0)
                 packet.append(word)
                 remaining_words -= 1
                 wait_count = 0
@@ -378,7 +393,6 @@ class Jamlet:
                         f'_receive_packet_body STUCK waiting for {remaining_words} more words, '
                         f'header={header}')
                     wait_count = 0
-            await self.clock.next_cycle
         return packet
 
     async def _receive_packets_channel0(self):
@@ -425,6 +439,17 @@ class Jamlet:
                 if witem is not None:
                     await witem.monitor_jamlet(self)
 
+    async def _record_input_queues(self) -> None:
+        """Track when input queues have data ready."""
+        ch0_queue = self.routers[0]._output_buffers[Direction.H]
+        ch1andup_queues = [r._output_buffers[Direction.H] for r in self.routers[1:]]
+        while True:
+            await self.clock.next_cycle
+            if ch0_queue:
+                self.monitor.record_input_queue_ready(self.x, self.y, is_ch0=True)
+            if any(q for q in ch1andup_queues):
+                self.monitor.record_input_queue_ready(self.x, self.y, is_ch0=False)
+
     async def run(self):
         for router in self.routers:
             self.clock.create_task(router.run())
@@ -434,6 +459,7 @@ class Jamlet:
         self.clock.create_task(self._receive_packets())
         self.clock.create_task(self._monitor_witems())
         self.clock.create_task(self._monitor_cache_requests())
+        self.clock.create_task(self._record_input_queues())
 
     SEND = 0
     INSTRUCTIONS = 1

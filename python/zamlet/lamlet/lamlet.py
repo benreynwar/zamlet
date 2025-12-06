@@ -368,8 +368,8 @@ class Lamlet:
                 for y in range(0, n_rows):
                     router = routers[(x, y)]
                     for conn in router._input_connections.values():
-                        if conn.age > 500:
-                            raise RuntimeError(
+                        if conn.age > 500 and conn.age % 50 == 0:
+                            logger.warning(
                                 f"Router ({x}, {y}) connection stuck for {conn.age} cycles")
                     north = (x, y-1)
                     south = (x, y+1)

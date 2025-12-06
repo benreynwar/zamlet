@@ -1,5 +1,6 @@
 import logging
-from typing import List, Tuple, Dict
+from dataclasses import dataclass, field
+from typing import List, Tuple, Dict, Optional, Any
 from collections import deque
 import random
 
@@ -13,6 +14,26 @@ from zamlet.monitor import Monitor
 
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class GatheringSlot:
+    """
+    A slot for gathering WRITE_LINE_READ_LINE packets from all jamlets.
+    The memlet uses a fixed number of these slots to handle concurrent
+    cache line operations without requiring all jamlets to send simultaneously.
+    """
+    ident: int
+    packets: List[Optional[Any]] = field(default_factory=list)
+
+    def is_complete(self, j_in_k: int) -> bool:
+        assert len(self.packets) == j_in_k
+        return all(p is not None for p in self.packets)
+
+    def add_packet(self, j_index: int, packet: Any) -> None:
+        assert self.packets[j_index] is None, \
+            f'Duplicate packet for ident={self.ident} j_index={j_index}'
+        self.packets[j_index] = packet
 
 
 WRITE_LINE_RESPONSE_R_INDEX = 0
@@ -131,7 +152,7 @@ class Memlet:
         self.params = params
         self.monitor = monitor
         self.coords = coords
-        self.routers = [[Router(clock, params, x, y)
+        self.routers = [[Router(clock, params, x, y, channel=channel)
                          for channel in range(params.n_channels)]
                         for x, y in coords]
         self.lines: Dict[int, bytes] = {}
@@ -141,7 +162,15 @@ class Memlet:
 
         self.receive_write_line_queues = [Queue(2) for _ in range(self.params.j_in_k)]
         self.receive_read_line_queue = Queue(2)
-        self.receive_write_line_read_line_queues = [Queue(2) for _ in range(self.params.j_in_k)]
+        # Gathering slots for WRITE_LINE_READ_LINE - allows concurrent operations
+        # without requiring all jamlets to send at once
+        self.gathering_slots: List[Optional[GatheringSlot]] = [
+            None for _ in range(self.params.n_memlet_gathering_slots)
+        ]
+        # Queue for completed gathering slots ready to process
+        self.complete_gathering_queue: deque = deque()
+        # Queue for DROP responses to send
+        self.send_drop_queue: deque = deque()
         self.send_write_line_response_queue = Queue(2)
         self.send_read_line_response_queues = [Queue(2) for _ in coords]
         self.send_write_line_read_line_response_queues = [Queue(2) for _ in coords]
@@ -178,6 +207,29 @@ class Memlet:
             )
         return data
 
+    def find_gathering_slot(self, ident: int) -> Optional[int]:
+        """Find a gathering slot for this ident, or return None if not found."""
+        for i, slot in enumerate(self.gathering_slots):
+            if slot is not None and slot.ident == ident:
+                return i
+        return None
+
+    def allocate_gathering_slot(self, ident: int) -> Optional[int]:
+        """Allocate a new gathering slot for this ident, or return None if all slots full."""
+        for i, slot in enumerate(self.gathering_slots):
+            if slot is None:
+                self.gathering_slots[i] = GatheringSlot(
+                    ident=ident,
+                    packets=[None] * self.params.j_in_k,
+                )
+                return i
+        return None
+
+    def free_gathering_slot(self, slot_index: int) -> None:
+        """Free a gathering slot after processing."""
+        assert self.gathering_slots[slot_index] is not None
+        self.gathering_slots[slot_index] = None
+
     def update(self):
         for router_channels in self.routers:
             for router in router_channels:
@@ -185,8 +237,6 @@ class Memlet:
         for queue in self.receive_write_line_queues:
             queue.update()
         self.receive_read_line_queue.update()
-        for queue in self.receive_write_line_read_line_queues:
-            queue.update()
         for queue in self.send_read_line_response_queues:
             queue.update()
         self.send_write_line_response_queue.update()
@@ -232,9 +282,35 @@ class Memlet:
                             j_x = packet[0].source_x % self.params.j_cols
                             j_y = packet[0].source_y % self.params.j_rows
                             j_index = j_y * self.params.j_cols + j_x
-                            while not self.receive_write_line_read_line_queues[j_index].can_append():
-                                await self.clock.next_cycle
-                            self.receive_write_line_read_line_queues[j_index].append(packet)
+                            ident = packet[0].ident
+                            # Find or allocate a gathering slot for this ident
+                            slot_index = self.find_gathering_slot(ident)
+                            if slot_index is None:
+                                slot_index = self.allocate_gathering_slot(ident)
+                            if slot_index is None:
+                                # No slots available - send DROP
+                                logger.debug(
+                                    f'{self.clock.cycle}: [MEMLET] DROP WRITE_LINE_READ_LINE '
+                                    f'ident={ident} j_index={j_index} - no gathering slots'
+                                )
+                                source_x, source_y = packet[0].source_x, packet[0].source_y
+                                drop_header = IdentHeader(
+                                    target_x=source_x,
+                                    target_y=source_y,
+                                    source_x=self.coords[0][0],
+                                    source_y=self.coords[0][1],
+                                    message_type=MessageType.WRITE_LINE_READ_LINE_DROP,
+                                    length=1,
+                                    send_type=SendType.SINGLE,
+                                    ident=ident,
+                                )
+                                channel = CHANNEL_MAPPING[MessageType.WRITE_LINE_READ_LINE_DROP]
+                                await self.send_packet(index, channel, [drop_header])
+                            else:
+                                slot = self.gathering_slots[slot_index]
+                                slot.add_packet(j_index, packet)
+                                if slot.is_complete(self.params.j_in_k):
+                                    self.complete_gathering_queue.append(slot_index)
                         header = None
                         packet = []
 
@@ -363,14 +439,15 @@ class Memlet:
 
     async def handle_write_line_read_line_packets(self):
         """
-        We receive a write line read line packet from each jamlet in our kamlet.
-        Once they are all received this function is called.
-        The memory is updated and a response is sent to the kamlet.
+        Process complete gathering slots. A slot is complete when all jamlets
+        have sent their WRITE_LINE_READ_LINE packets for the same ident.
         """
         while True:
             await self.clock.next_cycle
-            if all(self.receive_write_line_read_line_queues):
-                packets = [queue.popleft() for queue in self.receive_write_line_read_line_queues]
+            if self.complete_gathering_queue:
+                slot_index = self.complete_gathering_queue.popleft()
+                slot = self.gathering_slots[slot_index]
+                packets = slot.packets
                 # We'll take a word from each packet and put them in the memory
                 n_words = packets[0][0].length-3
                 ident = packets[0][0].ident
@@ -439,9 +516,10 @@ class Memlet:
                             self.send_write_line_read_line_response_queues[router_index].append(resp_packets[router_index].pop(0))
                     if all(len(packets) == 0 for packets in resp_packets):
                         break
+                # Free the gathering slot now that we're done
+                self.free_gathering_slot(slot_index)
             else:
                 await self.clock.next_cycle
-
 
     async def run(self):
         for router_channels in self.routers:
