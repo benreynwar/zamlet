@@ -687,7 +687,7 @@ class Monitor:
                 for token in rf_info.reads[reg]:
                     blocking_tokens.add(token)
         for witem in waiting_items:
-            if witem is not None and witem.rf_ident in blocking_tokens:
+            if witem.rf_ident in blocking_tokens:
                 blocking_span_id = self.get_witem_span_id(
                     witem.instr_ident, kamlet_x, kamlet_y)
                 if blocking_span_id is not None:

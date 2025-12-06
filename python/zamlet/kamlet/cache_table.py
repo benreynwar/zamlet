@@ -181,7 +181,8 @@ class CacheTable:
         self.name = name
 
         # These are actions that are waiting on a cache state to update, or for messages to be received.
-        self.waiting_items: List[WaitingItem|None] = [None for _ in range(params.n_items)]
+        # FIFO ordering - oldest items first for priority processing.
+        self.waiting_items: deque[WaitingItem] = deque()
 
         # This is a list of outstanding cache read_line or write_line requests.
         self.cache_requests: List[CacheRequestState|None] = [None] * params.n_cache_requests
@@ -208,49 +209,30 @@ class CacheTable:
             f'received={n_received}/{len(state.received)}'
         )
 
-    def _count_free_witem_slots(self) -> int:
-        return sum(1 for x in self.waiting_items if x is None)
-
-    def can_get_free_witem_index(self, use_reserved: bool = False) -> bool:
+    def has_free_witem_slot(self, use_reserved: bool = False) -> bool:
         """Check if a witem slot is available.
 
         Args:
             use_reserved: If True, can use reserved slots (for message handlers).
                          If False, must leave n_items_reserved slots free (for kinstructions).
         """
-        free_count = self._count_free_witem_slots()
+        used = len(self.waiting_items)
         if use_reserved:
-            return free_count > 0
+            return used < self.params.n_items
         else:
-            return free_count > self.params.n_items_reserved
+            return used < self.params.n_items - self.params.n_items_reserved
 
-    def get_free_witem_index_if_exists(self, use_reserved: bool = False) -> int|None:
-        """Get a free witem slot index if available.
-
-        Args:
-            use_reserved: If True, can use reserved slots (for message handlers).
-                         If False, must leave n_items_reserved slots free (for kinstructions).
-        """
-        free_count = self._count_free_witem_slots()
-        min_required = 0 if use_reserved else self.params.n_items_reserved
-        if free_count > min_required:
-            for index, x in enumerate(self.waiting_items):
-                if x is None:
-                    return index
-        return None
-
-    async def get_free_witem_index(self, witem: WaitingItem | None = None,
-                                   use_reserved: bool = False) -> int:
-        """Wait for and get a free witem slot.
+    async def wait_for_free_witem_slot(self, witem: WaitingItem | None = None,
+                                        use_reserved: bool = False) -> None:
+        """Wait until a witem slot is available.
 
         Args:
             witem: The witem requesting the slot (for monitoring).
             use_reserved: If True, can use reserved slots (for message handlers).
                          If False, must leave n_items_reserved slots free (for kinstructions).
         """
-        free_item = self.get_free_witem_index_if_exists(use_reserved)
-        if free_item is not None:
-            return free_item
+        if self.has_free_witem_slot(use_reserved):
+            return
         # Table is full - record resource exhaustion
         self.monitor.record_resource_exhausted(
             ResourceType.WITEM_TABLE, self.kamlet_x, self.kamlet_y)
@@ -258,14 +240,12 @@ class CacheTable:
             self.monitor.record_witem_blocked_by_resource(
                 witem.instr_ident, self.kamlet_x, self.kamlet_y, ResourceType.WITEM_TABLE)
         while True:
-            free_item = self.get_free_witem_index_if_exists(use_reserved)
-            if free_item is not None:
+            if self.has_free_witem_slot(use_reserved):
                 break
             await self.clock.next_cycle
         # Slot freed - record resource available
         self.monitor.record_resource_available(
             ResourceType.WITEM_TABLE, self.kamlet_x, self.kamlet_y)
-        return free_item
 
     def can_get_free_cache_request(self) -> bool:
         valid_indices = [index for index, x in enumerate(self.cache_requests) if x is None]
@@ -302,7 +282,7 @@ class CacheTable:
     def _any_reads_all_memory(self) -> bool:
         """Check if any waiting item reads from all memory."""
         for item in self.waiting_items:
-            if item is not None and item.reads_all_memory:
+            if item.reads_all_memory:
                 return True
         return False
 
@@ -312,7 +292,7 @@ class CacheTable:
         If writeset_ident is provided, items with matching writeset_ident are excluded.
         """
         for item in self.waiting_items:
-            if item is not None and item.writes_all_memory:
+            if item.writes_all_memory:
                 if writeset_ident is not None and hasattr(item, 'writeset_ident'):
                     if item.writeset_ident == writeset_ident:
                         continue
@@ -332,7 +312,7 @@ class CacheTable:
         if blocked_span_id is None:
             return
         for item in self.waiting_items:
-            if item is not None and predicate(item):
+            if predicate(item):
                 blocking_span_id = self.monitor.get_witem_span_id(
                     item.instr_ident, self.kamlet_x, self.kamlet_y)
                 if blocking_span_id is not None:
@@ -357,10 +337,8 @@ class CacheTable:
         assert state.state in (CacheState.SHARED, CacheState.MODIFIED)
 
     def add_witem_immediately(self, witem: WaitingItem, use_reserved: bool = False):
-        witem_index = self.get_free_witem_index_if_exists(use_reserved=use_reserved)
-        assert witem_index is not None
-        self.waiting_items[witem_index] = witem
-        return witem_index
+        assert self.has_free_witem_slot(use_reserved=use_reserved)
+        self.waiting_items.append(witem)
 
     async def add_witem(self, witem: WaitingItem, k_maddr: KMAddr|None=None,
                         use_reserved: bool = False):
@@ -442,21 +420,16 @@ class CacheTable:
                                getattr(item, 'writeset_ident', None) != witem.writeset_ident)),
                 "writes_all_blocked_by_writes_all")
             await self._wait_for_writes_all_memory_complete(witem.writeset_ident)
-        witem_index = await self.get_free_witem_index(witem, use_reserved=use_reserved)
-        self.waiting_items[witem_index] = witem
+        await self.wait_for_free_witem_slot(witem, use_reserved=use_reserved)
+        self.waiting_items.append(witem)
         if witem.cache_is_read or witem.cache_is_write:
             witem.cache_is_avail = (
                     self.slot_states[witem.cache_slot].state in (CacheState.SHARED, CacheState.MODIFIED))
-        return witem_index
 
     async def _wait_for_all_writes_complete(self) -> None:
         """Wait until all pending write witems have completed."""
         while True:
-            has_writes = False
-            for item in self.waiting_items:
-                if item is not None and item.cache_is_write:
-                    has_writes = True
-                    break
+            has_writes = any(item.cache_is_write for item in self.waiting_items)
             if not has_writes:
                 break
             await self.clock.next_cycle
@@ -480,7 +453,7 @@ class CacheTable:
         while True:
             has_reads = False
             for item in self.waiting_items:
-                if item is not None and item.cache_is_read:
+                if item.cache_is_read:
                     if writeset_ident is not None and item.writeset_ident == writeset_ident:
                         continue
                     has_reads = True
@@ -573,7 +546,7 @@ class CacheTable:
             return False
         # Block writes if any witem reads from all memory
         for item in self.waiting_items:
-            if item is not None and item != witem and item.reads_all_memory:
+            if item != witem and item.reads_all_memory:
                 logger.debug(f'{loc} can_write: addr=0x{k_maddr.addr:x} writeset={writeset_ident} '
                              f'reads_all_memory by ident={item.instr_ident} -> False')
                 return False
@@ -597,8 +570,6 @@ class CacheTable:
         # Check to see if there are any waiting items using this slot.
         slot_in_use = False
         for item in self.waiting_items:
-            if item is None:
-                continue
             using_cache = item.cache_is_write
             if item.cache_slot == slot and using_cache:
                 slot_in_use = True
@@ -610,8 +581,6 @@ class CacheTable:
         # Check to see if there are any waiting items using this slot.
         slot_in_use = False
         for other_witem in self.waiting_items:
-            if other_witem is None:
-                continue
             # Skip items with matching writeset_ident (they're part of the same operation)
             if writeset_ident is not None and other_witem.writeset_ident == writeset_ident:
                 continue
@@ -624,23 +593,21 @@ class CacheTable:
 
     def get_waiting_item_by_instr_ident(self, instr_ident: int,
                                          source: tuple[int, int]|None=None) -> WaitingItem|None:
-        valid_indices = []
-        for index, item in enumerate(self.waiting_items):
-            if item is None or item.instr_ident != instr_ident:
+        matching_items = []
+        for item in self.waiting_items:
+            if item.instr_ident != instr_ident:
                 continue
             if item.use_source_to_match:
                 assert source is not None, \
                     f'source must be provided when matching {type(item).__name__}'
                 if item.source == source:
-                    valid_indices.append(index)
+                    matching_items.append(item)
             else:
-                valid_indices.append(index)
-        if not valid_indices:
+                matching_items.append(item)
+        if not matching_items:
             return None
-        assert len(valid_indices) == 1
-        index = valid_indices[0]
-        item = self.waiting_items[index]
-        return item
+        assert len(matching_items) == 1
+        return matching_items[0]
 
     def get_oldest_active_instr_ident_distance(self, baseline: int) -> int | None:
         """Return the distance to the oldest active instr_ident from baseline.
@@ -652,7 +619,7 @@ class CacheTable:
         """
         max_tags = self.params.max_response_tags
         idents = [item.instr_ident for item in self.waiting_items
-                  if item is not None and item.instr_ident is not None]
+                  if item.instr_ident is not None]
         if not idents:
             return None  # All free
         distances = [(ident - baseline) % max_tags for ident in idents]
@@ -801,8 +768,7 @@ class CacheTable:
         assert state.state == CacheState.READING
         state.state = CacheState.SHARED
         for witem in self.waiting_items:
-            if (witem is not None and isinstance(witem, WaitingItemRequiresCache) and
-                    witem.cache_slot == request.slot):
+            if isinstance(witem, WaitingItemRequiresCache) and witem.cache_slot == request.slot:
                 assert not witem.cache_is_avail
                 witem.cache_is_avail = True
         self.monitor.record_cache_request_completed(
@@ -815,7 +781,7 @@ class CacheTable:
         assert state.state == CacheState.WRITING_READING
         state.state = CacheState.SHARED
         for item in self.waiting_items:
-            if item is not None and item.cache_slot == request.slot:
+            if item.cache_slot == request.slot:
                 logger.debug(f'{self.clock.cycle}: {self.name}: resolve_write_line_read_line '
                              f'slot={request.slot} setting cache_is_avail for {type(item).__name__} '
                              f'instr_ident={item.instr_ident}')
@@ -829,8 +795,8 @@ class CacheTable:
         """
         while True:
             await self.clock.next_cycle
-            for witem in self.waiting_items:
-                if witem is None:
+            for witem in list(self.waiting_items):
+                if witem not in self.waiting_items:
                     continue
                 if isinstance(witem, WaitingItemRequiresCache):
                     slot = witem.cache_slot

@@ -435,8 +435,8 @@ class Jamlet:
     async def _monitor_witems(self) -> None:
         while True:
             await self.clock.next_cycle
-            for witem in self.cache_table.waiting_items:
-                if witem is not None:
+            for witem in list(self.cache_table.waiting_items):
+                if witem in self.cache_table.waiting_items:
                     await witem.monitor_jamlet(self)
 
     async def _record_input_queues(self) -> None:

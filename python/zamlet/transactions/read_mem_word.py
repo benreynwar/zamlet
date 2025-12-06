@@ -84,7 +84,7 @@ async def handle_req(jamlet: 'Jamlet', packet: List[Any]) -> None:
         await send_resp(jamlet, header, j_saddr)
         return
 
-    if not jamlet.cache_table.can_get_free_witem_index(use_reserved=True):
+    if not jamlet.cache_table.has_free_witem_slot(use_reserved=True):
         await send_drop(jamlet, header, 'witem_table_full')
         return
 

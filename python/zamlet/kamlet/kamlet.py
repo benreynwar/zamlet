@@ -548,13 +548,14 @@ class Kamlet:
         logger.debug(f'kamlet ({self.min_x}, {self.min_y}): _monitor_witems started')
         while True:
             await self.clock.next_cycle
-            for index, item in enumerate(self.cache_table.waiting_items):
-                if item is None:
+            for item in list(self.cache_table.waiting_items):
+                if item not in self.cache_table.waiting_items:
                     continue
                 await item.monitor_kamlet(self)
                 if item.ready():
-                    self.cache_table.waiting_items[index] = None
+                    self.cache_table.waiting_items.remove(item)
                     await self.handle_item(item)
+                    break
 
     async def _send_packets(self) -> None:
         while True:

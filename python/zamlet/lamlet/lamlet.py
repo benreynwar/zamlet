@@ -147,7 +147,8 @@ class Lamlet:
         self.finished = False
 
         # These are actions that are waiting on a cache state to update, or for messages to be received.
-        self.waiting_items: List[WaitingItem|None] = [None for _ in range(params.n_items)]
+        # FIFO ordering - oldest items first for priority processing.
+        self.waiting_items: deque[WaitingItem] = deque()
 
         self.next_writeset_ident = 0
         self.next_instr_ident = 0
@@ -169,36 +170,28 @@ class Lamlet:
         # Tokens that will be returned when the current in-flight query responds
         self._tokens_in_active_query = [0 for _ in range(params.k_in_l)]
 
-    def _get_free_witem_index(self) -> int | None:
-        """Get a free slot index in waiting_items, or None if full."""
-        for index, item in enumerate(self.waiting_items):
-            if item is None:
-                return index
-        return None
+    def has_free_witem_slot(self) -> bool:
+        """Check if there's room for another waiting item."""
+        return len(self.waiting_items) < self.params.n_items
 
-    async def add_witem(self, witem: WaitingItem) -> int:
-        """Add a waiting item to the list, waiting if necessary. Returns the slot index."""
-        while True:
-            index = self._get_free_witem_index()
-            if index is not None:
-                break
+    async def add_witem(self, witem: WaitingItem) -> None:
+        """Add a waiting item to the deque, waiting if necessary."""
+        while not self.has_free_witem_slot():
             await self.clock.next_cycle
-        self.waiting_items[index] = witem
-        return index
+        self.waiting_items.append(witem)
 
     def get_witem_by_ident(self, instr_ident: int) -> WaitingItem | None:
         """Find a waiting item by its instr_ident. Raises if duplicates found."""
-        matches = [item for item in self.waiting_items
-                   if item is not None and item.instr_ident == instr_ident]
+        matches = [item for item in self.waiting_items if item.instr_ident == instr_ident]
         if len(matches) > 1:
             raise ValueError(f"Multiple waiting items with instr_ident {instr_ident}")
         return matches[0] if matches else None
 
     def remove_witem_by_ident(self, instr_ident: int):
         """Remove a waiting item by its instr_ident."""
-        for index, item in enumerate(self.waiting_items):
-            if item is not None and item.instr_ident == instr_ident:
-                self.waiting_items[index] = None
+        for item in list(self.waiting_items):
+            if item.instr_ident == instr_ident:
+                self.waiting_items.remove(item)
                 return
         raise ValueError(f"No waiting item with instr_ident {instr_ident}")
 
@@ -212,7 +205,7 @@ class Lamlet:
         """
         max_tags = self.params.max_response_tags
         idents = [item.instr_ident for item in self.waiting_items
-                  if item is not None and item.instr_ident is not None]
+                  if item.instr_ident is not None]
         if not idents:
             return None  # All free
         distances = [(ident - baseline) % max_tags for ident in idents]

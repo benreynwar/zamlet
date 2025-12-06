@@ -144,8 +144,8 @@ async def handle_req(jamlet: 'Jamlet', packet: List[Any]) -> None:
     witem = jamlet.cache_table.get_waiting_item_by_instr_ident(dst_ident)
     if witem is None:
         witems_debug = [
-            (i, w.instr_ident, type(w).__name__)
-            for i, w in enumerate(jamlet.cache_table.waiting_items) if w is not None]
+            (w.instr_ident, type(w).__name__)
+            for w in jamlet.cache_table.waiting_items]
         logger.debug(
             f'{jamlet.clock.cycle}: LOAD_WORD: jamlet ({jamlet.x}, {jamlet.y}): '
             f'DROP - no witem. Waiting items: {witems_debug}')

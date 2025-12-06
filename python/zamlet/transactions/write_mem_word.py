@@ -126,7 +126,7 @@ async def handle_req(jamlet: 'Jamlet', packet: List[Any]) -> None:
                                    slot)
     elif slot is not None and not slot_in_use:
         # Slot exists but state not ready, no clashing witem - create witem to wait
-        can_get_witem = jamlet.cache_table.can_get_free_witem_index(use_reserved=True)
+        can_get_witem = jamlet.cache_table.has_free_witem_slot(use_reserved=True)
         if can_get_witem:
             slot_state = jamlet.cache_table.slot_states[slot]
             j_saddr = addr.to_j_saddr(jamlet.cache_table)
@@ -155,7 +155,7 @@ async def handle_req(jamlet: 'Jamlet', packet: List[Any]) -> None:
             await send_drop(jamlet, header)
     elif slot is None:
         # No slot exists - try to allocate one and create witem
-        can_get_witem = jamlet.cache_table.can_get_free_witem_index(use_reserved=True)
+        can_get_witem = jamlet.cache_table.has_free_witem_slot(use_reserved=True)
         can_get_slot = jamlet.cache_table.can_get_slot(addr)
         if can_get_witem and can_get_slot:
             cache_slot = jamlet.cache_table.get_slot_if_exists(addr)
