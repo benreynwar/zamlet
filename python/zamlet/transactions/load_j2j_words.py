@@ -160,7 +160,16 @@ async def send_req(jamlet, witem: WaitingLoadJ2JWords, tag: int) -> None:
         tag=mem_wb//8,
     )
     packet = [header] + words
-    await jamlet.send_packet(packet)
+
+    # Create transaction for this src/dst pair, parent is the SRC witem
+    kamlet_min_x = (jamlet.x // jamlet.params.j_cols) * jamlet.params.j_cols
+    kamlet_min_y = (jamlet.y // jamlet.params.j_rows) * jamlet.params.j_rows
+    witem_span_id = jamlet.monitor.get_witem_span_id(instr.instr_ident, kamlet_min_x, kamlet_min_y)
+    transaction_span_id = jamlet.monitor.create_transaction(
+        'LoadJ2JWords', instr.instr_ident, jamlet.x, jamlet.y, target_x, target_y,
+        parent_span_id=witem_span_id, tag=mem_wb//8)
+
+    await jamlet.send_packet(packet, parent_span_id=transaction_span_id)
 
 
 @register_handler(MessageType.LOAD_J2J_WORDS_REQ)
@@ -267,7 +276,13 @@ async def send_drop(jamlet, rcvd_header: TaggedHeader) -> None:
         tag=rcvd_header.tag,
     )
     packet = [header]
-    await jamlet.send_packet(packet)
+
+    # Look up transaction (SRC sent REQ, we are DST sending DROP back)
+    transaction_span_id = jamlet.monitor.get_transaction_span_id(
+        rcvd_header.ident, rcvd_header.tag,
+        rcvd_header.source_x, rcvd_header.source_y, jamlet.x, jamlet.y)
+
+    await jamlet.send_packet(packet, parent_span_id=transaction_span_id)
 
 
 async def send_resp(jamlet, rcvd_header: TaggedHeader) -> None:
@@ -285,4 +300,10 @@ async def send_resp(jamlet, rcvd_header: TaggedHeader) -> None:
         tag=rcvd_header.tag,
     )
     packet = [header]
-    await jamlet.send_packet(packet)
+
+    # Look up transaction (SRC sent REQ, we are DST sending RESP back)
+    transaction_span_id = jamlet.monitor.get_transaction_span_id(
+        rcvd_header.ident, rcvd_header.tag,
+        rcvd_header.source_x, rcvd_header.source_y, jamlet.x, jamlet.y)
+
+    await jamlet.send_packet(packet, parent_span_id=transaction_span_id)

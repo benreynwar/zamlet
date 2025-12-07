@@ -13,10 +13,9 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from zamlet.waiting_item import WaitingItem
-from zamlet.kamlet.kinstructions import KInstr
+from zamlet.kamlet.kinstructions import TrackedKInstr
 from zamlet.message import IdentHeader, MessageType, SendType
 from zamlet.synchronization import WaitingItemSyncState
-from zamlet.monitor import CompletionType, SpanType
 
 if TYPE_CHECKING:
     from zamlet.kamlet.kamlet import Kamlet
@@ -26,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
-class IdentQuery(KInstr):
+class IdentQuery(TrackedKInstr):
     """Query the oldest active instr_ident across all kamlets.
 
     Each kamlet computes the distance from baseline to its oldest active ident,
@@ -35,17 +34,6 @@ class IdentQuery(KInstr):
     instr_ident: int  # Used for both sync and response (set to max_response_tags)
     baseline: int     # next_instr_ident at time of query
     previous_instr_ident: int  # instr_ident of instruction ahead in queue
-
-    def create_span(self, monitor, parent_span_id: int) -> int:
-        """IdentQuery is TRACKED because it receives a response."""
-        return monitor.create_span(
-            span_type=SpanType.KINSTR,
-            component="lamlet",
-            completion_type=CompletionType.TRACKED,
-            parent_span_id=parent_span_id,
-            instr_type=type(self).__name__,
-            instr_ident=self.instr_ident,
-        )
 
     async def update_kamlet(self, kamlet: 'Kamlet'):
         distance = kamlet.cache_table.get_oldest_active_instr_ident_distance(self.baseline)
@@ -133,5 +121,8 @@ async def send_ident_query_response(kamlet: 'Kamlet', response_ident: int, min_d
         ident=response_ident,
     )
 
+    # Get kinstr span as parent (message completes when lamlet receives it)
+    kinstr_span_id = jamlet.monitor.get_kinstr_span_id(response_ident)
+
     packet = [header] + packet_data
-    await jamlet.send_packet(packet)
+    await jamlet.send_packet(packet, parent_span_id=kinstr_span_id)

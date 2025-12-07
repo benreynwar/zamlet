@@ -245,6 +245,11 @@ async def do_write_and_respond(jamlet: 'Jamlet', rcvd_header: WriteMemWordHeader
     wb = jamlet.params.word_bytes
     sram_addr = j_saddr.addr // wb * wb
 
+    # Look up transaction (requester is source, we are dest)
+    transaction_span_id = jamlet.monitor.get_transaction_span_id(
+        rcvd_header.ident, rcvd_header.tag,
+        rcvd_header.source_x, rcvd_header.source_y, jamlet.x, jamlet.y)
+
     old_word = jamlet.sram[sram_addr: sram_addr + wb]
     new_word = utils.shift_and_update_word(
         old_word=old_word,
@@ -258,6 +263,8 @@ async def do_write_and_respond(jamlet: 'Jamlet', rcvd_header: WriteMemWordHeader
                  f'ident={rcvd_header.ident} tag={rcvd_header.tag} '
                  f'sram[{sram_addr}] old={old_word.hex()} new={new_word.hex()}')
 
+    jamlet.monitor.record_cache_write(transaction_span_id, sram_addr, old_word.hex(), new_word.hex())
+
     slot_state.state = CacheState.MODIFIED
 
     header = TaggedHeader(
@@ -268,11 +275,7 @@ async def do_write_and_respond(jamlet: 'Jamlet', rcvd_header: WriteMemWordHeader
         length=1,
         tag=rcvd_header.tag,
         ident=rcvd_header.ident)
-    # Look up transaction (requester is source, we are dest)
-    transaction_span_id = jamlet.monitor.get_transaction_span_id(
-        rcvd_header.ident, rcvd_header.tag,
-        rcvd_header.source_x, rcvd_header.source_y, jamlet.x, jamlet.y)
-    await jamlet.send_packet([header], transaction_span_id=transaction_span_id)
+    await jamlet.send_packet([header], parent_span_id=transaction_span_id)
 
 
 async def send_drop(jamlet: 'Jamlet', rcvd_header: WriteMemWordHeader) -> None:
@@ -289,7 +292,7 @@ async def send_drop(jamlet: 'Jamlet', rcvd_header: WriteMemWordHeader) -> None:
     transaction_span_id = jamlet.monitor.get_transaction_span_id(
         rcvd_header.ident, rcvd_header.tag,
         rcvd_header.source_x, rcvd_header.source_y, jamlet.x, jamlet.y)
-    await jamlet.send_packet([header], transaction_span_id=transaction_span_id)
+    await jamlet.send_packet([header], parent_span_id=transaction_span_id)
 
 
 async def send_retry(jamlet: 'Jamlet', rcvd_header: WriteMemWordHeader) -> None:
@@ -306,4 +309,4 @@ async def send_retry(jamlet: 'Jamlet', rcvd_header: WriteMemWordHeader) -> None:
     transaction_span_id = jamlet.monitor.get_transaction_span_id(
         rcvd_header.ident, rcvd_header.tag,
         rcvd_header.source_x, rcvd_header.source_y, jamlet.x, jamlet.y)
-    await jamlet.send_packet([header], transaction_span_id=transaction_span_id)
+    await jamlet.send_packet([header], parent_span_id=transaction_span_id)

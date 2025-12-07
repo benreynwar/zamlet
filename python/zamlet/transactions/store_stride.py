@@ -195,6 +195,25 @@ def get_request(jamlet: 'Jamlet', instr: StoreStride, tag: int) -> RequiredBytes
     if src_e < instr.start_index or src_e >= instr.start_index + instr.n_elements:
         return None
 
+    # Check mask - if element is masked off, skip it
+    if instr.mask_reg is not None:
+        wb = jamlet.params.word_bytes
+        mask_word = int.from_bytes(
+            jamlet.rf_slice[instr.mask_reg * wb: (instr.mask_reg + 1) * wb],
+            byteorder='little')
+        bit_index = src_e // jamlet.params.j_in_l
+        mask_bit = (mask_word >> bit_index) & 1
+        if not mask_bit:
+            witem_span_id = jamlet.monitor.get_witem_span_id(
+                instr.instr_ident,
+                (jamlet.x // jamlet.params.j_cols) * jamlet.params.j_cols,
+                (jamlet.y // jamlet.params.j_rows) * jamlet.params.j_rows)
+            jamlet.monitor.add_event(
+                witem_span_id, 'mask_skip',
+                jamlet_x=jamlet.x, jamlet_y=jamlet.y, element=src_e,
+                bit_index=bit_index, mask_word=hex(mask_word))
+            return None
+
     # Where does this byte go in the destination memory?
     dst_g_addr = (instr.g_addr.bit_offset(
         (src_e - instr.start_index) * instr.stride_bytes * 8 + src_eb))
@@ -239,17 +258,20 @@ async def send_req(jamlet: 'Jamlet', witem: WaitingStoreStride, tag: int) -> boo
     src_reg = instr.src + src_v
     src_word = jamlet.rf_slice[src_reg * wb: (src_reg + 1) * wb]
 
-    # Calculate destination address
-    k_maddr = request.g_addr.to_k_maddr(jamlet.tlb)
-    word_offset = k_maddr.addr % wb
-    word_addr = k_maddr.bit_offset(-word_offset * 8)
-
-    target_x, target_y = addresses.k_indices_to_j_coords(
-        jamlet.params, k_maddr.k_index, k_maddr.j_in_k_index)
-
-    src_byte_in_word = tag
-    dst_byte_in_word = k_maddr.addr % wb
     ident = (instr.instr_ident + tag + 1) % jamlet.params.max_response_tags
+    src_byte_in_word = tag
+
+    if request.is_vpu:
+        k_maddr = request.g_addr.to_k_maddr(jamlet.tlb)
+        word_offset = k_maddr.addr % wb
+        addr = k_maddr.bit_offset(-word_offset * 8)
+        target_x, target_y = addresses.k_indices_to_j_coords(
+            jamlet.params, k_maddr.k_index, k_maddr.j_in_k_index)
+        dst_byte_in_word = k_maddr.addr % wb
+    else:
+        addr = request.g_addr.to_scalar_addr(jamlet.tlb)
+        target_x, target_y = 0, -1
+        dst_byte_in_word = addr % wb
 
     header = WriteMemWordHeader(
         target_x=target_x,
@@ -265,11 +287,11 @@ async def send_req(jamlet: 'Jamlet', witem: WaitingStoreStride, tag: int) -> boo
         n_bytes=request.n_bytes,
     )
 
-    packet = [header, word_addr, src_word]
+    packet = [header, addr, src_word]
 
     logger.debug(f'{jamlet.clock.cycle}: StoreStride send_req: jamlet ({jamlet.x},{jamlet.y}) '
                  f'ident={instr.instr_ident} tag={tag} -> ({target_x},{target_y}) '
-                 f'element={src_e} g_addr=0x{request.g_addr.addr:x} k_maddr=0x{word_addr.addr:x} '
+                 f'element={src_e} is_vpu={request.is_vpu} '
                  f'src_byte={src_byte_in_word} dst_byte={dst_byte_in_word} n_bytes={request.n_bytes}')
 
     # Look up the witem span_id for monitoring
@@ -289,7 +311,7 @@ async def send_req(jamlet: 'Jamlet', witem: WaitingStoreStride, tag: int) -> boo
         parent_span_id=witem_span_id,
     )
 
-    await jamlet.send_packet(packet, transaction_span_id=transaction_span_id)
+    await jamlet.send_packet(packet, parent_span_id=transaction_span_id)
     return True
 
 

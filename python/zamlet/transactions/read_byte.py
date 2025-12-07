@@ -51,7 +51,6 @@ async def do_read_byte(kamlet: 'Kamlet', instr: kinstructions.ReadByte) -> None:
         j_saddr = instr.k_maddr.to_j_saddr(kamlet.cache_table)
         jamlet = kamlet.jamlets[j_saddr.j_in_k_index]
         await send_read_byte_resp(jamlet, instr, j_saddr.addr)
-    kamlet.monitor.complete_kinstr_exec(instr.instr_ident, kamlet.min_x, kamlet.min_y)
 
 
 async def send_read_byte_resp(
@@ -76,9 +75,6 @@ async def send_read_byte_resp(
         ident=instr.instr_ident,
     )
     packet = [header]
-    send_queue = jamlet.send_queues[header.message_type]
-    while not send_queue.can_append():
-        await jamlet.clock.next_cycle
-    logger.debug(f'jamlet ({jamlet.x}, {jamlet.y}) appending a packet')
-    send_queue.append(packet)
-    logger.debug(f'jamlet ({jamlet.x}, {jamlet.y}) sent response')
+    # Get kinstr span as parent for message (not witem or kinstr_exec, since those complete before response arrives)
+    kinstr_span_id = jamlet.monitor.get_kinstr_span_id(instr.instr_ident)
+    await jamlet.send_packet(packet, parent_span_id=kinstr_span_id)

@@ -43,11 +43,24 @@ class VRedOp(Enum):
 
 class KInstr:
     def create_span(self, monitor, parent_span_id: int) -> int:
-        """Create a span for this kinstr. Override for custom completion type."""
+        """Create a span for this kinstr."""
         return monitor.create_span(
             span_type=SpanType.KINSTR,
             component="lamlet",
             completion_type=CompletionType.FIRE_AND_FORGET,
+            parent_span_id=parent_span_id,
+            instr_type=type(self).__name__,
+            instr_ident=self.instr_ident,
+        )
+
+
+class TrackedKInstr(KInstr):
+    """KInstr subclass for instructions where lamlet waits for a response."""
+    def create_span(self, monitor, parent_span_id: int) -> int:
+        return monitor.create_span(
+            span_type=SpanType.KINSTR,
+            component="lamlet",
+            completion_type=CompletionType.TRACKED,
             parent_span_id=parent_span_id,
             instr_type=type(self).__name__,
             instr_ident=self.instr_ident,
@@ -145,7 +158,7 @@ class StoreWord(KInstr):
         await kamlet.handle_store_word_instr(self)
 
 @dataclass
-class ReadByte(KInstr):
+class ReadByte(TrackedKInstr):
     """
     This instruction reads from the VPU memory.
     The scalar processor receives a response packet.
@@ -387,7 +400,7 @@ class VmvVvOp(KInstr):
 
 
 @dataclass
-class ReadRegElement(KInstr):
+class ReadRegElement(TrackedKInstr):
     rd: int
     src: int
     element_index: int

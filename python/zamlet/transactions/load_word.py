@@ -127,7 +127,12 @@ async def send_req(jamlet: 'Jamlet', witem: WaitingLoadWordSrc) -> None:
         length=2,
         ident=instr.instr_ident, tag=0)
 
-    await jamlet.send_packet([header, word])
+    # Get witem span as parent for the message
+    kamlet_min_x = (jamlet.x // jamlet.params.j_cols) * jamlet.params.j_cols
+    kamlet_min_y = (jamlet.y // jamlet.params.j_rows) * jamlet.params.j_rows
+    witem_span_id = jamlet.monitor.get_witem_span_id(instr.instr_ident, kamlet_min_x, kamlet_min_y)
+
+    await jamlet.send_packet([header, word], parent_span_id=witem_span_id)
 
 
 @register_handler(MessageType.LOAD_WORD_REQ)
@@ -216,7 +221,14 @@ async def send_resp(jamlet: 'Jamlet', rcvd_header: TaggedHeader) -> None:
         send_type=SendType.SINGLE,
         length=1,
         ident=rcvd_header.ident, tag=0)
-    await jamlet.send_packet([header])
+
+    # Get SRC witem span as parent (RESP is response to SRC's REQ)
+    src_kamlet_min_x = (rcvd_header.source_x // jamlet.params.j_cols) * jamlet.params.j_cols
+    src_kamlet_min_y = (rcvd_header.source_y // jamlet.params.j_rows) * jamlet.params.j_rows
+    witem_span_id = jamlet.monitor.get_witem_span_id(
+        rcvd_header.ident, src_kamlet_min_x, src_kamlet_min_y)
+
+    await jamlet.send_packet([header], parent_span_id=witem_span_id)
 
 
 async def send_drop(jamlet: 'Jamlet', rcvd_header: TaggedHeader) -> None:
@@ -228,7 +240,14 @@ async def send_drop(jamlet: 'Jamlet', rcvd_header: TaggedHeader) -> None:
         send_type=SendType.SINGLE,
         length=1,
         ident=rcvd_header.ident, tag=0)
-    await jamlet.send_packet([header])
+
+    # Get SRC witem span as parent (SRC sent the REQ, so DROP is a response to it)
+    src_kamlet_min_x = (rcvd_header.source_x // jamlet.params.j_cols) * jamlet.params.j_cols
+    src_kamlet_min_y = (rcvd_header.source_y // jamlet.params.j_rows) * jamlet.params.j_rows
+    witem_span_id = jamlet.monitor.get_witem_span_id(
+        rcvd_header.ident, src_kamlet_min_x, src_kamlet_min_y)
+
+    await jamlet.send_packet([header], parent_span_id=witem_span_id)
 
 
 @register_handler(MessageType.LOAD_WORD_RESP)
@@ -277,7 +296,13 @@ async def send_retry(jamlet: 'Jamlet', witem: WaitingLoadWordDst) -> None:
         length=1,
         ident=instr.instr_ident, tag=0)
 
-    await jamlet.send_packet([header])
+    # Get SRC witem span as parent (RETRY is part of the SRC's request-response flow)
+    src_kamlet_min_x = (target_x // jamlet.params.j_cols) * jamlet.params.j_cols
+    src_kamlet_min_y = (target_y // jamlet.params.j_rows) * jamlet.params.j_rows
+    witem_span_id = jamlet.monitor.get_witem_span_id(
+        instr.instr_ident, src_kamlet_min_x, src_kamlet_min_y)
+
+    await jamlet.send_packet([header], parent_span_id=witem_span_id)
 
 
 @register_handler(MessageType.LOAD_WORD_RETRY)

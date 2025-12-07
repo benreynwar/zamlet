@@ -40,6 +40,121 @@ async def update(clock, lamlet):
         lamlet.update()
 
 
+async def setup_lamlet(clock: Clock, params: LamletParams) -> Lamlet:
+    """Create and initialize a lamlet with update loop."""
+    lamlet = Lamlet(clock, params)
+    clock.create_task(update(clock, lamlet))
+    clock.create_task(lamlet.run())
+    await clock.next_cycle
+    return lamlet
+
+
+def allocate_strided_memory(
+    lamlet: Lamlet,
+    base_addr: int,
+    n_pages: int,
+    page_bytes: int,
+    ews: list[int],
+    mem_ew: int | None,
+    is_vpu: bool = True,
+    use_scalar: bool = False,
+):
+    """
+    Allocate memory pages for strided access.
+
+    Args:
+        use_scalar: If True, alternate between VPU and scalar pages
+    """
+    for page_idx in range(n_pages):
+        if mem_ew is not None:
+            page_ew = mem_ew
+        else:
+            page_ew = ews[page_idx % len(ews)]
+        ordering = Ordering(WordOrder.STANDARD, page_ew)
+
+        page_is_vpu = is_vpu and (not use_scalar or (page_idx % 2 == 0))
+        lamlet.allocate_memory(
+            GlobalAddress(bit_addr=(base_addr + page_idx * page_bytes) * 8, params=lamlet.params),
+            page_bytes,
+            is_vpu=page_is_vpu,
+            ordering=ordering if page_is_vpu else None
+        )
+
+
+async def setup_mask_register(
+    lamlet: Lamlet,
+    mask_reg: int,
+    mask_bits: list[bool],
+    page_bytes: int,
+) -> None:
+    """Write mask bits to memory and load into a vector register."""
+    from zamlet.tests.test_utils import mask_bits_to_ew64_bytes
+
+    mask_mem_addr = get_vpu_base_addr(64) + 0x30000
+    mask_ordering = Ordering(WordOrder.STANDARD, 64)
+    lamlet.allocate_memory(
+        GlobalAddress(bit_addr=mask_mem_addr * 8, params=lamlet.params),
+        page_bytes, is_vpu=True, ordering=mask_ordering
+    )
+
+    mask_bytes = mask_bits_to_ew64_bytes(lamlet.params, mask_bits)
+    await lamlet.set_memory(mask_mem_addr, bytes(mask_bytes))
+    logger.info(f"Mask bytes written to 0x{mask_mem_addr:x}: {mask_bytes.hex()}")
+
+    mask_span_id = lamlet.monitor.create_span(
+        span_type=SpanType.RISCV_INSTR, component="test",
+        completion_type=CompletionType.FIRE_AND_FORGET, mnemonic="load_mask")
+    await lamlet.vload(
+        vd=mask_reg,
+        addr=mask_mem_addr,
+        ordering=mask_ordering,
+        n_elements=lamlet.params.j_in_l,
+        start_index=0,
+        mask_reg=None,
+        parent_span_id=mask_span_id,
+    )
+    lamlet.monitor.finalize_children(mask_span_id)
+    logger.info(f"Mask loaded into v{mask_reg}")
+
+
+def verify_results(
+    result_list: list[int],
+    src_list: list[int],
+    mask_bits: list[bool] | None,
+    use_mask: bool,
+) -> int:
+    """
+    Verify test results against expected values.
+
+    Returns 0 on success, 1 on failure.
+    """
+    errors = []
+    for i in range(len(result_list)):
+        actual_val = result_list[i]
+        if use_mask and mask_bits is not None:
+            if mask_bits[i]:
+                expected_val = src_list[i]
+            else:
+                expected_val = 0
+        else:
+            expected_val = src_list[i]
+
+        if actual_val != expected_val:
+            mask_str = f" mask={mask_bits[i]}" if use_mask and mask_bits else ""
+            errors.append(f"  [{i}] expected={expected_val} actual={actual_val}{mask_str}")
+
+    if not errors:
+        logger.warning("TEST PASSED: Results match expected values!")
+        return 0
+    else:
+        logger.error("TEST FAILED: Results do not match expected values")
+        for err in errors[:32]:
+            logger.error(err)
+        if len(errors) > 32:
+            logger.error(f"  ... and {len(errors) - 32} more errors")
+        return 1
+
+
 def pack_elements(values: list[int], element_width: int) -> bytes:
     """Pack a list of integer values into bytes based on element width."""
     if element_width == 8:
@@ -91,114 +206,94 @@ async def run_strided_load_test(
     params: LamletParams,
     seed: int,
     mem_ew: int | None = None,
+    use_mask: bool = True,
+    use_scalar: bool = True,
 ):
     """
-    Test strided vector load/store operations.
+    Test strided vector load operations.
 
-    Creates source data with elements at strided locations:
-      src[0], src[stride], src[2*stride], ...
+    Creates source data with elements at strided locations, loads into register
+    with stride, then stores contiguously to verify.
 
-    Loads into register (contiguous), then stores back with stride.
+    Args:
+        use_mask: If True, use a random mask pattern
+        use_scalar: If True, mix scalar and VPU pages for source memory
     """
-    lamlet = Lamlet(clock, params)
-    clock.create_task(update(clock, lamlet))
-    clock.create_task(lamlet.run())
+    lamlet = await setup_lamlet(clock, params)
 
-    await clock.next_cycle
+    # When using masks, vl is limited by mask register size (j_in_l * word_bits)
+    if use_mask:
+        max_vl = params.j_in_l * params.word_bytes * 8
+        assert vl <= max_vl, f"vl={vl} exceeds max {max_vl} for masked operation"
 
     # Generate test data
     rnd = Random(seed)
     element_bytes = ew // 8
     src_list = [rnd.getrandbits(ew) for i in range(vl)]
-    #src_list = [i%256 for i in range(vl)]
+    mask_bits = [rnd.choice([True, False]) for i in range(vl)] if use_mask else None
 
-    logger.info(f"Test parameters:")
-    logger.info(f"  ew={ew}, vl={vl}, stride={stride}")
-    logger.info(f"  element_bytes={element_bytes}")
-    logger.info(f"  params={params}, seed={seed}")
-    logger.info(f"src_list: {src_list[:16]}{'...' if len(src_list) > 16 else ''}")
+    logger.info(f"Test parameters: ew={ew}, vl={vl}, stride={stride}")
+    logger.info(f"  use_mask={use_mask}, use_scalar={use_scalar}")
+    if mask_bits:
+        logger.info(f"  mask_bits: {mask_bits[:16]}{'...' if len(mask_bits) > 16 else ''}")
 
-    # Memory layout for strided access:
-    # Element i is at offset i * stride from base
-    # Total memory needed: (vl - 1) * stride + element_bytes
+    # Calculate memory layout
     src_base = get_vpu_base_addr(ew)
-    dst_base = get_vpu_base_addr(ew) + 0x10000  # Offset to avoid overlap
-
-    # Calculate memory size needed
-    if stride >= 0:
-        mem_size = (vl - 1) * stride + element_bytes + 64  # Extra padding
-    else:
-        # Negative stride: first element is at highest address
-        mem_size = (vl - 1) * abs(stride) + element_bytes + 64
-        # Adjust base to account for negative stride
-        src_base += (vl - 1) * abs(stride)
-        dst_base += (vl - 1) * abs(stride)
-
-    alloc_size = max(1024, mem_size)
-    # Round up to page boundary
+    dst_base = get_vpu_base_addr(ew) + 0x10000
+    mem_size = (vl - 1) * stride + element_bytes + 64
     page_bytes = params.page_bytes
-    alloc_size = ((alloc_size + page_bytes - 1) // page_bytes) * page_bytes
+    alloc_size = ((max(1024, mem_size) + page_bytes - 1) // page_bytes) * page_bytes
     n_pages = alloc_size // page_bytes
 
-    # Allocate source and dest memory
-    # If mem_ew is set, all pages use that ew; otherwise cycle through [8, 16, 32, 64]
+    # Allocate source memory (mixed VPU/scalar if use_scalar)
     ews = [8, 16, 32, 64]
-    src_alloc_base = get_vpu_base_addr(ew)
-    dst_alloc_base = get_vpu_base_addr(ew) + 0x10000
-    dst_ordering = Ordering(WordOrder.STANDARD, ew)
-    for page_idx in range(n_pages):
-        if mem_ew is not None:
-            src_page_ew = mem_ew
-        else:
-            src_page_ew = ews[page_idx % len(ews)]
-        src_ordering = Ordering(WordOrder.STANDARD, src_page_ew)
-        lamlet.allocate_memory(
-            GlobalAddress(bit_addr=(src_alloc_base + page_idx * page_bytes) * 8, params=params),
-            page_bytes, is_vpu=True, ordering=src_ordering
-        )
-        lamlet.allocate_memory(
-            GlobalAddress(bit_addr=(dst_alloc_base + page_idx * page_bytes) * 8, params=params),
-            page_bytes, is_vpu=True, ordering=dst_ordering
-        )
+    allocate_strided_memory(lamlet, get_vpu_base_addr(ew), n_pages, page_bytes,
+                            ews, mem_ew, use_scalar=use_scalar)
+    # Allocate destination memory (always VPU)
+    allocate_strided_memory(lamlet, get_vpu_base_addr(ew) + 0x10000, n_pages,
+                            page_bytes, [ew], ew)
 
     # Write source data at strided locations
-    logger.info(f"Writing source data at strided locations (stride={stride})")
     for i, val in enumerate(src_list):
         addr = src_base + i * stride
-        data = pack_elements([val], ew)
-        await lamlet.set_memory(addr, data)
-        if i < 8 or i == vl - 1:
-            logger.info(f"  src[{i}] at 0x{addr:x} = {val}")
-        elif i == 8:
-            logger.info(f"  ...")
-
-    logger.info(f"Memory initialized at src_base=0x{src_base:x}, dst_base=0x{dst_base:x}")
+        await lamlet.set_memory(addr, pack_elements([val], ew))
 
     # Set up vl and vtype
     lamlet.vl = vl
     lamlet.vtype = {8: 0x0, 16: 0x1, 32: 0x2, 64: 0x3}[ew]
 
+    # Set up mask register if using masks
+    # Calculate how many registers the data uses and put mask after that
+    elements_per_vline = lamlet.params.vline_bytes * 8 // ew
+    n_data_regs = (vl + elements_per_vline - 1) // elements_per_vline
+    assert n_data_regs <= lamlet.params.n_vregs, \
+        f'n_data_regs {n_data_regs} exceeds n_vregs {lamlet.params.n_vregs}'
+    mask_reg = None
+    if use_mask:
+        mask_reg = n_data_regs  # First register after data
+        assert mask_reg < lamlet.params.n_vregs, \
+            f'mask_reg {mask_reg} exceeds n_vregs {lamlet.params.n_vregs}'
+        await setup_mask_register(lamlet, mask_reg, mask_bits, page_bytes)
+
     span_id = lamlet.monitor.create_span(
         span_type=SpanType.RISCV_INSTR, component="test",
         completion_type=CompletionType.FIRE_AND_FORGET, mnemonic="test_strided_load")
 
-    # Load from source with stride into v0 (contiguous in register)
-    # ordering parameter specifies element width for register layout
+    # Load from source with stride into v0
     reg_ordering = Ordering(WordOrder.STANDARD, ew)
-    logger.info(f"Loading {vl} elements with stride={stride} into v0")
     await lamlet.vload(
         vd=0,
         addr=src_base,
         ordering=reg_ordering,
         n_elements=vl,
         start_index=0,
-        mask_reg=None,
+        mask_reg=mask_reg,
         parent_span_id=span_id,
         stride_bytes=stride,
     )
 
     # Store from v0 to destination contiguously (unit stride)
-    logger.info(f"Storing {vl} elements contiguously to dst")
+    dst_ordering = Ordering(WordOrder.STANDARD, ew)
     await lamlet.vstore(
         vs=0,
         addr=dst_base,
@@ -210,40 +305,17 @@ async def run_strided_load_test(
     )
 
     lamlet.monitor.finalize_children(span_id)
-    logger.info("Load and store completed")
 
-    # Read back results contiguously and verify
-    logger.info("Reading results from memory")
+    # Read back results
     result_list = []
     for i in range(vl):
         addr = dst_base + i * element_bytes
         future = await lamlet.get_memory(addr, element_bytes)
         await future
-        data = future.result()
-        val = unpack_elements(data, ew)[0]
-        result_list.append(val)
-        if i < 8 or i == vl - 1:
-            logger.info(f"  dst[{i}] at 0x{addr:x} = {val}")
-        elif i == 8:
-            logger.info(f"  ...")
+        result_list.append(unpack_elements(future.result(), ew)[0])
 
-    # Print monitor summary
     lamlet.monitor.print_summary()
-
-    # Compare
-    if result_list == src_list:
-        logger.warning("TEST PASSED: Results match expected values!")
-        return 0
-    else:
-        logger.error("TEST FAILED: Results do not match expected values")
-        for i in range(min(vl, 32)):
-            actual_val = result_list[i]
-            expected_val = src_list[i]
-            match = "✓" if actual_val == expected_val else "✗"
-            logger.error(f"  [{i}] expected={expected_val} actual={actual_val} {match}")
-        if vl > 32:
-            logger.error(f"  ... and {vl - 32} more elements")
-        return 1
+    return verify_results(result_list, src_list, mask_bits, use_mask)
 
 
 async def run_strided_store_test(
@@ -254,99 +326,89 @@ async def run_strided_store_test(
     params: LamletParams,
     seed: int,
     mem_ew: int | None = None,
+    use_mask: bool = True,
+    use_scalar: bool = True,
 ):
     """
     Test strided vector store operations.
 
     1. Write source data contiguously in memory
     2. Load contiguously into register
-    3. Store from register with stride
+    3. Store from register with stride (optionally masked)
     4. Read back at strided locations and verify
+
+    Args:
+        use_mask: If True, use a random mask pattern
+        use_scalar: If True, mix scalar and VPU pages for destination memory
     """
-    lamlet = Lamlet(clock, params)
-    clock.create_task(update(clock, lamlet))
-    clock.create_task(lamlet.run())
+    lamlet = await setup_lamlet(clock, params)
 
-    async def dump_monitor_on_timeout():
-        timeout_cycle = clock.max_cycles - 2 if clock.max_cycles else None
-        while timeout_cycle and clock.cycle < timeout_cycle:
-            await clock.next_cycle
-        if timeout_cycle:
-            logger.error(f"Approaching timeout at cycle {clock.cycle}, dumping monitor:")
-            lamlet.monitor.print_summary()
-
-    clock.create_task(dump_monitor_on_timeout())
-
-    await clock.next_cycle
+    # When using masks, vl is limited by mask register size (j_in_l * word_bits)
+    if use_mask:
+        max_vl = params.j_in_l * params.word_bytes * 8
+        assert vl <= max_vl, f"vl={vl} exceeds max {max_vl} for masked operation"
 
     # Generate test data
     rnd = Random(seed)
     element_bytes = ew // 8
     src_list = [rnd.getrandbits(ew) for i in range(vl)]
-    #src_list = [i%258 for i in range(vl)]
+    # mask_bits = [rnd.choice([True, False]) for i in range(vl)] if use_mask else None
+    # Simple alternating mask pattern for easier debugging
+    mask_bits = [(i % 2 == 0) for i in range(vl)] if use_mask else None
 
-    logger.info(f"Strided Store Test parameters:")
-    logger.info(f"  ew={ew}, vl={vl}, stride={stride}")
-    logger.info(f"  element_bytes={element_bytes}")
-    logger.info(f"  params={params}, seed={seed}")
-    logger.info(f"src_list: {src_list[:16]}{'...' if len(src_list) > 16 else ''}")
+    logger.info(f"Strided Store Test: ew={ew}, vl={vl}, stride={stride}")
+    logger.info(f"  use_mask={use_mask}, use_scalar={use_scalar}")
+    if mask_bits:
+        logger.info(f"  mask_bits: {mask_bits[:16]}{'...' if len(mask_bits) > 16 else ''}")
 
-    # Source is contiguous, destination is strided
+    # Calculate memory layout
     src_base = get_vpu_base_addr(ew)
     dst_base = get_vpu_base_addr(ew) + 0x10000
-
-    # Calculate memory size needed for strided destination
     mem_size = (vl - 1) * stride + element_bytes + 64
-    alloc_size = max(1024, mem_size)
-    # Round up to page boundary
     page_bytes = params.page_bytes
-    alloc_size = ((alloc_size + page_bytes - 1) // page_bytes) * page_bytes
+    alloc_size = ((max(1024, mem_size) + page_bytes - 1) // page_bytes) * page_bytes
     n_pages = alloc_size // page_bytes
 
-    # Allocate source and dest memory
-    # If mem_ew is set, all pages use that ew; otherwise cycle through [8, 16, 32, 64]
+    # Allocate source memory (always VPU, uniform ew)
+    allocate_strided_memory(lamlet, get_vpu_base_addr(ew), n_pages, page_bytes, [ew], ew)
+    # Allocate destination memory (mixed VPU/scalar if use_scalar)
     ews = [8, 16, 32, 64]
-    src_alloc_base = get_vpu_base_addr(ew)
-    dst_alloc_base = get_vpu_base_addr(ew) + 0x10000
-    src_ordering = Ordering(WordOrder.STANDARD, ew)
-    for page_idx in range(n_pages):
-        if mem_ew is not None:
-            dst_page_ew = mem_ew
-        else:
-            dst_page_ew = ews[page_idx % len(ews)]
-        dst_ordering = Ordering(WordOrder.STANDARD, dst_page_ew)
-        lamlet.allocate_memory(
-            GlobalAddress(bit_addr=(src_alloc_base + page_idx * page_bytes) * 8, params=params),
-            page_bytes, is_vpu=True, ordering=src_ordering
-        )
-        lamlet.allocate_memory(
-            GlobalAddress(bit_addr=(dst_alloc_base + page_idx * page_bytes) * 8, params=params),
-            page_bytes, is_vpu=True, ordering=dst_ordering
-        )
+    allocate_strided_memory(lamlet, get_vpu_base_addr(ew) + 0x10000, n_pages,
+                            page_bytes, ews, mem_ew, use_scalar=use_scalar)
+
+    # Initialize destination memory to zeros (so masked elements read back as 0)
+    for i in range(vl):
+        addr = dst_base + i * stride
+        await lamlet.set_memory(addr, bytes(element_bytes))
 
     # Write source data contiguously
-    logger.info(f"Writing source data contiguously")
     for i, val in enumerate(src_list):
         addr = src_base + i * element_bytes
-        data = pack_elements([val], ew)
-        await lamlet.set_memory(addr, data)
-        if i < 8 or i == vl - 1:
-            logger.info(f"  src[{i}] at 0x{addr:x} = {val}")
-        elif i == 8:
-            logger.info(f"  ...")
-
-    logger.info(f"Memory initialized at src_base=0x{src_base:x}, dst_base=0x{dst_base:x}")
+        await lamlet.set_memory(addr, pack_elements([val], ew))
 
     # Set up vl and vtype
     lamlet.vl = vl
     lamlet.vtype = {8: 0x0, 16: 0x1, 32: 0x2, 64: 0x3}[ew]
 
+    # Set up mask register if using masks
+    # Calculate how many registers the data uses and put mask after that
+    elements_per_vline = lamlet.params.vline_bytes * 8 // ew
+    n_data_regs = (vl + elements_per_vline - 1) // elements_per_vline
+    assert n_data_regs <= lamlet.params.n_vregs, \
+        f'n_data_regs {n_data_regs} exceeds n_vregs {lamlet.params.n_vregs}'
+    mask_reg = None
+    if use_mask:
+        mask_reg = n_data_regs  # First register after data
+        assert mask_reg < lamlet.params.n_vregs, \
+            f'mask_reg {mask_reg} exceeds n_vregs {lamlet.params.n_vregs}'
+        await setup_mask_register(lamlet, mask_reg, mask_bits, page_bytes)
+
     span_id = lamlet.monitor.create_span(
         span_type=SpanType.RISCV_INSTR, component="test",
         completion_type=CompletionType.FIRE_AND_FORGET, mnemonic="test_strided_store")
 
-    # Load contiguously into v0 (src has uniform ordering)
-    logger.info(f"Loading {vl} elements contiguously into v0")
+    # Load contiguously into v0
+    src_ordering = Ordering(WordOrder.STANDARD, ew)
     await lamlet.vload(
         vd=0,
         addr=src_base,
@@ -358,55 +420,32 @@ async def run_strided_store_test(
     )
 
     # Store from v0 to destination with stride
-    # For strided store, ordering sets reg_ordering (memory ordering looked up from TLB)
     reg_ordering = Ordering(WordOrder.STANDARD, ew)
-    logger.info(f"Storing {vl} elements with stride={stride} to dst")
     await lamlet.vstore(
         vs=0,
         addr=dst_base,
         ordering=reg_ordering,
         n_elements=vl,
         start_index=0,
-        mask_reg=None,
+        mask_reg=mask_reg,
         parent_span_id=span_id,
         stride_bytes=stride,
     )
 
     lamlet.monitor.finalize_children(span_id)
-    logger.info("Load and store completed")
 
-    # Read back results at strided locations and verify
-    logger.info("Reading results from strided memory locations")
+    # Read back results at strided locations
     result_list = []
     for i in range(vl):
         addr = dst_base + i * stride
         future = await lamlet.get_memory(addr, element_bytes)
         await future
-        data = future.result()
-        val = unpack_elements(data, ew)[0]
-        result_list.append(val)
-        if i < 8 or i == vl - 1:
-            logger.info(f"  dst[{i}] at 0x{addr:x} = {val}")
-        elif i == 8:
-            logger.info(f"  ...")
+        result_list.append(unpack_elements(future.result(), ew)[0])
 
-    # Print monitor summary
     lamlet.monitor.print_summary()
 
-    # Compare
-    if result_list == src_list:
-        logger.warning("TEST PASSED: Results match expected values!")
-        return 0
-    else:
-        logger.error("TEST FAILED: Results do not match expected values")
-        for i in range(min(vl, 32)):
-            actual_val = result_list[i]
-            expected_val = src_list[i]
-            match = "✓" if actual_val == expected_val else "✗"
-            logger.error(f"  [{i}] expected={expected_val} actual={actual_val} {match}")
-        if vl > 32:
-            logger.error(f"  ... and {vl - 32} more elements")
-        return 1
+    # For strided store with mask, unmasked elements should be 0 (not written)
+    return verify_results(result_list, src_list, mask_bits, use_mask)
 
 
 async def main(
@@ -418,6 +457,8 @@ async def main(
     seed: int,
     test_store: bool = False,
     mem_ew: int | None = None,
+    use_mask: bool = True,
+    use_scalar: bool = True,
 ):
     import signal
 
@@ -431,9 +472,11 @@ async def main(
 
     clock_driver_task = clock.create_task(clock.clock_driver())
     if test_store:
-        exit_code = await run_strided_store_test(clock, ew, vl, stride, params, seed, mem_ew)
+        exit_code = await run_strided_store_test(
+            clock, ew, vl, stride, params, seed, mem_ew, use_mask, use_scalar)
     else:
-        exit_code = await run_strided_load_test(clock, ew, vl, stride, params, seed, mem_ew)
+        exit_code = await run_strided_load_test(
+            clock, ew, vl, stride, params, seed, mem_ew, use_mask, use_scalar)
 
     logger.warning(f"Test completed with exit_code: {exit_code}")
     clock.running = False
@@ -442,12 +485,13 @@ async def main(
 
 
 def run_test(ew: int, vl: int, stride: int, params: LamletParams = None, seed: int = 0,
-             test_store: bool = False):
+             test_store: bool = False, use_mask: bool = True, use_scalar: bool = True):
     """Helper to run a single test configuration."""
     if params is None:
         params = LamletParams()
     clock = Clock(max_cycles=10000)
-    exit_code = asyncio.run(main(clock, ew, vl, stride, params, seed, test_store))
+    exit_code = asyncio.run(main(clock, ew, vl, stride, params, seed, test_store,
+                                  use_mask=use_mask, use_scalar=use_scalar))
     assert exit_code == 0, f"Test failed with exit_code={exit_code}"
 
 
@@ -510,6 +554,10 @@ if __name__ == '__main__':
                              'If not set, pages cycle through [8, 16, 32, 64].')
     parser.add_argument('--max-cycles', type=int, default=10000,
                         help='Maximum simulation cycles (default: 10000)')
+    parser.add_argument('--no-mask', action='store_true',
+                        help='Disable mask testing (default: use random mask)')
+    parser.add_argument('--no-scalar', action='store_true',
+                        help='Disable scalar memory pages (default: mix VPU/scalar)')
     args = parser.parse_args()
 
     if args.list_geometries:
@@ -524,6 +572,8 @@ if __name__ == '__main__':
         sys.exit(1)
 
     params = get_geometry(args.geometry)
+    use_mask = not args.no_mask
+    use_scalar = not args.no_scalar
 
     level = logging.DEBUG
     root_logger = logging.getLogger()
@@ -540,10 +590,11 @@ if __name__ == '__main__':
         logger.info(
             f'Starting with ew={args.ew}, vl={args.vl}, stride={args.stride}, '
             f'geometry={args.geometry}, seed={args.seed}, store={args.store}, '
-            f'mem_ew={args.mem_ew}, max_cycles={args.max_cycles}'
+            f'mem_ew={args.mem_ew}, use_mask={use_mask}, use_scalar={use_scalar}'
         )
         exit_code = asyncio.run(main(clock, args.ew, args.vl, args.stride, params,
-                                     args.seed, args.store, args.mem_ew))
+                                     args.seed, args.store, args.mem_ew,
+                                     use_mask, use_scalar))
     except KeyboardInterrupt:
         root_logger.warning('Test interrupted by user')
         sys.exit(1)

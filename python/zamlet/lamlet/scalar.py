@@ -1,4 +1,5 @@
 import logging
+import random
 
 from zamlet.runner import Clock
 from zamlet.params import LamletParams
@@ -61,13 +62,16 @@ class ScalarState:
         """
         Returns a future that will resolve with the memory value.
         (currently resolves immediately)
+        Uninitialized addresses return random values which are then stored.
         """
-        if address not in self.memory:
-            raise Exception(f'Address {hex(address)} is not initialized')
         future = self.clock.create_future()
         bs = []
         for index in range(size):
-            bs.append(self.memory[address+index])
+            addr = address + index
+            if addr not in self.memory:
+                # FIXME: Make this deterministic by using a seeded RNG
+                self.memory[addr] = random.randint(0, 255)
+            bs.append(self.memory[addr])
         future.set_result(bytes(bs))
         return future
 

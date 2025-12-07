@@ -211,7 +211,15 @@ async def send_req(jamlet, witem: WaitingStoreJ2JWords, tag: int) -> None:
         f'cycle {jamlet.clock.cycle}: jamlet {(jamlet.x, jamlet.y)}: '
         f'send_store_j2j_words_req to {(target_x, target_y)} ident={instr.instr_ident}')
 
-    await jamlet.send_packet(packet)
+    # Create transaction for this src/dst pair, parent is the SRC witem
+    kamlet_min_x = (jamlet.x // jamlet.params.j_cols) * jamlet.params.j_cols
+    kamlet_min_y = (jamlet.y // jamlet.params.j_rows) * jamlet.params.j_rows
+    witem_span_id = jamlet.monitor.get_witem_span_id(instr.instr_ident, kamlet_min_x, kamlet_min_y)
+    transaction_span_id = jamlet.monitor.create_transaction(
+        'StoreJ2JWords', instr.instr_ident, jamlet.x, jamlet.y, target_x, target_y,
+        parent_span_id=witem_span_id, tag=tag)
+
+    await jamlet.send_packet(packet, parent_span_id=transaction_span_id)
 
 
 @register_handler(MessageType.STORE_J2J_WORDS_REQ)
@@ -388,7 +396,13 @@ async def send_drop(jamlet, rcvd_header: TaggedHeader) -> None:
         tag=rcvd_header.tag,
     )
     packet = [header]
-    await jamlet.send_packet(packet)
+
+    # Look up transaction (SRC sent REQ, we are DST sending DROP back)
+    transaction_span_id = jamlet.monitor.get_transaction_span_id(
+        rcvd_header.ident, rcvd_header.tag,
+        rcvd_header.source_x, rcvd_header.source_y, jamlet.x, jamlet.y)
+
+    await jamlet.send_packet(packet, parent_span_id=transaction_span_id)
 
 
 async def send_resp(jamlet, rcvd_header: TaggedHeader) -> None:
@@ -404,7 +418,13 @@ async def send_resp(jamlet, rcvd_header: TaggedHeader) -> None:
         tag=rcvd_header.tag,
     )
     packet = [header]
-    await jamlet.send_packet(packet)
+
+    # Look up transaction (SRC sent REQ, we are DST sending RESP back)
+    transaction_span_id = jamlet.monitor.get_transaction_span_id(
+        rcvd_header.ident, rcvd_header.tag,
+        rcvd_header.source_x, rcvd_header.source_y, jamlet.x, jamlet.y)
+
+    await jamlet.send_packet(packet, parent_span_id=transaction_span_id)
 
 
 async def send_retry(jamlet, witem: WaitingStoreJ2JWords, tag: int) -> None:
@@ -457,4 +477,9 @@ async def send_retry(jamlet, witem: WaitingStoreJ2JWords, tag: int) -> None:
     ptag = jamlet.j_in_k_index * word_bytes + tag
     assert witem.protocol_states[ptag].dst_state == ReceiveState.NEED_TO_ASK_FOR_RESEND
     witem.protocol_states[ptag].dst_state = ReceiveState.WAITING_FOR_REQUEST
-    await jamlet.send_packet(packet)
+
+    # Look up transaction (target is SRC who sent REQ, we are DST sending RETRY)
+    transaction_span_id = jamlet.monitor.get_transaction_span_id(
+        witem.instr_ident, src_tag, target_x, target_y, jamlet.x, jamlet.y)
+
+    await jamlet.send_packet(packet, parent_span_id=transaction_span_id)

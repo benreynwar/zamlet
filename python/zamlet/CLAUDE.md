@@ -65,10 +65,9 @@ The RESTART.md should allow a fresh context to understand both *what* we're doin
 ## Running Tests
 ALWAYS redirect test output to a log file in the current directory, then examine the log. NEVER run a
 test without redirecting to a log file - this avoids having to re-run tests to see different parts of
-the output. This allows you to search for specific log labels (see Logging Guide below):
+the output:
 ```bash
 python -m pytest kernel_tests/conditional/test_conditional.py -v > test.log 2>&1
-grep "RF_WRITE" test.log
 ```
 
 ## Reading Files
@@ -99,8 +98,9 @@ This document describes the architecture of the RISC-V Vector Processing Unit (V
 ```
 Lamlet (top-level VPU)
 ├── TLB (address translation)
+├── Monitor (distributed tracing)
 ├── Kamlet[k_in_l] (tile clusters)
-│   ├── CacheTable (cache management)
+│   ├── CacheTable (cache management + waiting items)
 │   ├── KamletRegisterFile (RF tracking)
 │   ├── Synchronizer (cross-kamlet sync)
 │   └── Jamlet[j_in_k] (lanes)
@@ -160,9 +160,13 @@ Transaction logic has been refactored into separate modules for better organizat
 - `store_j2j_words.py` - J2J store message handlers
 - `load_word.py` - `WaitingLoadWordSrc`, `WaitingLoadWordDst`, partial word loads
 - `store_word.py` - `WaitingStoreWordSrc`, `WaitingStoreWordDst`, partial word stores
+- `load_stride.py` - `WaitingLoadStride`, strided loads with arbitrary stride
+- `store_stride.py` - `WaitingStoreStride`, strided stores with arbitrary stride
 - `write_imm_bytes.py` - `WaitingWriteImmBytes`, immediate byte writes
 - `read_byte.py` - `WaitingReadByte`, single byte reads
-- `read_mem_word.py` - Memory word read operations
+- `read_mem_word.py` - `WaitingReadMemWord`, memory word read operations
+- `write_mem_word.py` - `WaitingWriteMemWord`, memory word write operations
+- `ident_query.py` - `WaitingIdentQuery`, instruction identifier flow control
 - `j2j_mapping.py` - `RegMemMapping`, element width conversion helpers
 - `helpers.py` - Shared utility functions
 
@@ -170,8 +174,18 @@ Each transaction module registers its message handlers via `@register_handler` d
 
 ### synchronization.py
 Lamlet-wide synchronization network for tracking when events have occurred across all kamlets.
-Uses a separate 8-bit bus network (not the main router) with direct neighbor connections.
-Supports optional minimum value aggregation.
+Uses a separate 9-bit wide bus network (not the main router) with direct neighbor connections
+(N, S, E, W, NE, NW, SE, SW). Supports optional minimum value aggregation.
+
+**Bus Format**: `[8]=last_byte, [7:0]=data`
+**Packet Format**: `Byte 0: sync_ident, Bytes 1+: value (1-4 bytes, little-endian)`
+
+Used by:
+- `LoadStride` / `StoreStride`: Wait for all tags to complete
+- `IdentQuery`: Find minimum oldest active ident across kamlets
+
+### monitor.py
+Distributed tracing system based on spans. See "Monitoring System" section below for details.
 
 ### ew_convert.py
 Element width conversion and data mapping between different ew-mapped vectors.
@@ -200,16 +214,20 @@ Key types:
 
 ### kinstructions.py
 Kamlet-level instruction definitions:
-- `Load` / `Store` - vector load/store with ordering, mask, writeset_ident, stride support
+- `Load` / `Store` - vector load/store with ordering, mask, writeset_ident support
+- `LoadStride` / `StoreStride` - strided vector load/store (arbitrary stride)
 - `LoadWord` / `StoreWord` - single word operations for unaligned accesses
 - `LoadImmByte` / `LoadImmWord` - immediate value loads
 - `WriteImmBytes` / `ReadByte` - memory initialization and byte reads
 - `ZeroLines` / `DiscardLines` - cache line management
+- `IdentQuery` - instruction identifier flow control query
 - Arithmetic: `VArithVvOp`, `VArithVxOp` (add, mul, macc)
 - Mask: `VmsleViOp`, `VmnandMmOp`
 - Move: `VBroadcastOp`, `VmvVvOp`
 - Reduction: `VreductionVsOp`
 - Scalar read: `ReadRegElement`
+
+All KInstr classes implement `create_span(monitor, parent_span_id)` for monitoring integration.
 
 ### memlet.py
 Memory interface to off-chip DRAM. Handles `READ_LINE` and `WRITE_LINE` requests from jamlets.
@@ -223,7 +241,10 @@ Key message types:
 - `LOAD_WORD_REQ/RESP/DROP` - LoadWord protocol for unaligned word loads
 - `STORE_WORD_REQ/RESP/DROP/RETRY` - StoreWord protocol for unaligned word stores
 - `READ_MEM_WORD_REQ/RESP/DROP` - Memory word read protocol
+- `WRITE_MEM_WORD_REQ/RESP/DROP/RETRY` - Memory word write protocol
 - `READ_LINE/WRITE_LINE/WRITE_LINE_READ_LINE` - memory to/from cache
+- `WRITE_LINE_READ_LINE_DROP` - flow control for memory operations
+- `IDENT_QUERY_RESULT` - instruction identifier query response
 
 Two channels: Channel 0 for always-consumable responses, Channel 1 for requests.
 
@@ -285,359 +306,155 @@ The `k_indices_to_j_coords()` function converts kamlet and jamlet indices to abs
 
 ---
 
-# Logging Guide
+# Monitoring System
 
-This document lists all the logging labels used in the RISC-V VPU simulator and how to grep for them.
+The simulator uses a distributed tracing system based on spans (`monitor.py`). This replaces the
+previous logging approach and provides structured performance analysis.
 
-## Memory Allocation and Address Translation
+## Core Concepts
 
-### PAGE_ALLOC
-**Location**: addresses.py - Page table allocations mapping global to physical addresses
-**Format**: `PAGE_ALLOC: global=0x{start:x}-0x{end:x} -> physical=0x{phys:x} memory_loc=0x{start:x}-0x{end:x} is_vpu={bool}`
-**Grep**: `grep "PAGE_ALLOC" <logfile>`
-**Purpose**: Shows how global address ranges map to physical memory and memory_loc values in kamlets. The memory_loc range indicates which cache lines across all kamlets correspond to this page.
-**Example**:
-```
-PAGE_ALLOC: global=0x20000000-0x200003ff -> physical=0x0 memory_loc=0x0-0x1f is_vpu=True
-```
+### Spans
+Everything in the simulator is tracked as a span:
+- `span_id`: Unique identifier
+- `span_type`: Type of operation (RISCV_INSTR, KINSTR, KINSTR_EXEC, WITEM, MESSAGE, etc.)
+- `created_cycle` / `completed_cycle`: Timing information
+- `component`: Where it executes ("lamlet", "kamlet(x,y)", "jamlet(x,y)")
+- `parent/children`: Spawning relationships
+- `depends_on`: Blocking relationships (what this span waits on)
+- `details`: Type-specific metadata
 
-### CACHE_LINE_ALLOC
-**Location**: cache_table.py - Cache line allocations in kamlet cache tables
-**Format**: `{cycle}: CACHE_LINE_ALLOC: CacheTable ({x}, {y}) slot={slot} memory_loc=0x{loc:x}`
-**Grep**: `grep "CACHE_LINE_ALLOC" <logfile>`
-**Purpose**: Shows which cache slot in a specific kamlet is allocated for a given memory_loc. Combine with PAGE_ALLOC to trace from global addresses to cache slots.
-**Example**:
-```
-7: CACHE_LINE_ALLOC: CacheTable (0, 0) slot=0 memory_loc=0x0
-```
+### Span Types
+- `RISCV_INSTR` - A RISC-V instruction being executed
+- `KINSTR` - A kamlet-level instruction (Load, Store, etc.)
+- `KINSTR_EXEC` - A kinstr executing on a specific kamlet
+- `WITEM` - A waiting item tracking async work
+- `MESSAGE` - A message sent between components
+- `CACHE_REQUEST` - A cache line request to memory
+- `TRANSACTION` - Sub-transaction (e.g., WriteMemWord)
+- `RESOURCE_EXHAUSTED` - Resource table full (witem slots, cache requests, etc.)
 
-### LOAD_CACHE_CHECK
-**Location**: kamlet.py - Cache hit/miss check during load operations
-**Format**: `{cycle}: LOAD_CACHE_CHECK: kamlet ({x},{y}) k_maddr.addr=0x{addr:x} memory_loc=0x{loc:x} slot={slot} slot_mem_loc=0x{actual:x} can_read={bool} {HIT|MISS}`
-**Grep**: `grep "LOAD_CACHE_CHECK" <logfile>`
-**Purpose**: Shows whether a load found its data in cache. Displays the requested memory_loc vs what's actually in the cache slot. Critical for debugging address translation and cache correctness.
-**Example**:
-```
-15546: LOAD_CACHE_CHECK: kamlet (0,0) k_maddr.addr=0x28 memory_loc=0x2 slot=3 slot_mem_loc=0x0 can_read=True HIT
-```
-Note: If memory_loc != slot_mem_loc but can_read=True, this indicates the cache lookup found the wrong data.
+### Completion Types
+- `TRACKED`: Creator knows when done (has real completed_cycle)
+- `FIRE_AND_FORGET`: Creator dispatches but doesn't wait; completes when all children complete
 
-## Memory Operations
+### External Observability Principle
+Span IDs are NOT passed through the system. Instead, the monitor maintains lookup tables mapping
+observable properties to span IDs:
+- `_kinstr_by_ident`: instr_ident → span_id
+- `_kinstr_exec_by_key`: (instr_ident, kamlet_x, kamlet_y) → span_id
+- `_witem_by_key`: (instr_ident, kamlet_x, kamlet_y, [source_x, source_y]) → span_id
+- `_transaction_by_key`: (ident, tag, src_x, src_y, dst_x, dst_y) → span_id
 
-### MEM_WRITE
-**Location**: memlet.py - Memory writes to off-chip DRAM
-**Format**: `MEM_WRITE: kamlet(x,y) addr=0x{address:08x} index={index} data={hex}`
-**Grep**: `grep "MEM_WRITE" <logfile>`
-**Example**:
-```
-123: MEM_WRITE: kamlet(0,0) addr=0x00000000 index=0 data=0001010809060103
-```
+This design enables future RTL simulation compatibility.
 
-### MEM_READ
-**Location**: memlet.py - Memory reads from off-chip DRAM
-**Format**: `MEM_READ: kamlet(x,y) addr=0x{address:08x} index={index} data={hex} [(UNINITIALIZED - random)]`
-**Grep**: `grep "MEM_READ" <logfile>`
-**Example**:
-```
-456: MEM_READ: kamlet(0,0) addr=0x00000000 index=0 data=0001010809060103
-```
+## Resource Types Tracked
+- `WITEM_TABLE` - Waiting item slots in kamlet
+- `CACHE_REQUEST_TABLE` - Cache request slots in kamlet
+- `INSTR_IDENT` - Instruction identifier pool in lamlet
+- `INSTR_BUFFER_TOKENS` - Instruction buffer tokens per kamlet
 
-## Cache Operations
+## Using the Monitor
 
-### CACHE_WRITE READ_LINE_RESP
-**Location**: jamlet.py - Cache line fills from memory
-**Format**: `CACHE_WRITE READ_LINE_RESP: jamlet (x,y) sram[addr] old={hex} new={hex}`
-**Grep**: `grep "CACHE_WRITE READ_LINE_RESP" <logfile>`
-**Example**:
-```
-789: CACHE_WRITE READ_LINE_RESP: jamlet (0,0) sram[0] old=0000000000000000 new=0001010809060103
-```
+### Creating Spans
+```python
+# KInstructions create their own spans via create_span()
+span_id = kinstr.create_span(monitor, parent_span_id)
 
-### CACHE_WRITE STORE_SIMPLE
-**Location**: transactions/store_simple.py - Vector stores to local cache
-**Format**: `CACHE_WRITE STORE_SIMPLE: jamlet (x,y) sram[addr] old={hex} new={hex} from rf[reg] mask=0x{mask:016x}`
-**Grep**: `grep "CACHE_WRITE STORE_SIMPLE" <logfile>`
-**Example**:
-```
-1003: CACHE_WRITE STORE_SIMPLE: jamlet (0,0) sram[0] old=beab05f1c379b963 new=6400000000000000 from rf[2] mask=0xffffffffffffffff
+# For kinstr_exec (kinstr executing on specific kamlet)
+span_id = monitor.record_kinstr_exec_created(instr, kamlet_x, kamlet_y)
+
+# For waiting items
+span_id = monitor.record_witem_created(
+    instr_ident, kamlet_x, kamlet_y, 'WaitingLoadSimple',
+    finalize=True  # Set False if more witems will be added
+)
+
+# For transactions (e.g., WriteMemWord)
+span_id = monitor.create_transaction(
+    'WriteMemWord', ident, src_x, src_y, dst_x, dst_y, parent_span_id=witem_span_id, tag=tag
+)
+
+# For messages
+span_id = monitor.record_message_sent(
+    transaction_span_id, 'WRITE_MEM_WORD_REQ',
+    ident, tag, src_x, src_y, dst_x, dst_y
+)
 ```
 
-### CACHE_WRITE STORE_J2J
-**Location**: transactions/store_j2j_words.py - Jamlet-to-jamlet stores
-**Format**: `CACHE_WRITE STORE_J2J: jamlet (x,y) sram[addr] old={hex} new={hex}`
-**Grep**: `grep "CACHE_WRITE STORE_J2J" <logfile>`
-**Example**:
-```
-1013: CACHE_WRITE STORE_J2J: jamlet (0,0) sram[8] old=728ae4360abd2222 new=0200000000000000
-```
+### Completing Spans
+```python
+# Complete a span directly
+monitor.complete_span(span_id)
 
-### CACHE_WRITE STORE_WORD
-**Location**: transactions/store_word.py - Single word stores
-**Format**: `CACHE_WRITE STORE_WORD: jamlet (x,y) sram[addr] old={hex} new={hex}`
-**Grep**: `grep "CACHE_WRITE STORE_WORD" <logfile>`
+# Complete via lookup (for witems)
+monitor.complete_witem(instr_ident, kamlet_x, kamlet_y)
 
-### CACHE_WRITE WRITE_IMM_BYTES
-**Location**: transactions/write_imm_bytes.py - Immediate byte writes to cache (used during initialization)
-**Format**: `CACHE_WRITE WRITE_IMM_BYTES: jamlet (x,y) sram[start:end] old={hex} new={hex}`
-**Grep**: `grep "CACHE_WRITE WRITE_IMM_BYTES" <logfile>`
-**Example**:
-```
-30: CACHE_WRITE WRITE_IMM_BYTES: jamlet (0,0) sram[0:1] old=6e new=00
+# Complete kinstr_exec
+monitor.complete_kinstr_exec(instr_ident, kamlet_x, kamlet_y)
+
+# For FIRE_AND_FORGET spans, finalize children when done creating them
+monitor.finalize_children(span_id)
 ```
 
-## Register File Operations
-
-### RF_WRITE LOAD_SIMPLE
-**Location**: transactions/load_simple.py - Simple loads to register file
-**Format**: `RF_WRITE LOAD_SIMPLE: jamlet (x,y) rf[reg] old={hex} new={hex} instr_ident={id} mask=0x{mask:016x}`
-**Grep**: `grep "RF_WRITE LOAD_SIMPLE" <logfile>`
-**Example**:
-```
-15547: RF_WRITE LOAD_SIMPLE: jamlet (0,0) rf[0] old=0000000000000000 new=0001010809060103 instr_ident=0 mask=0xffffffffffffffff
+### Recording Dependencies (for critical path analysis)
+```python
+# When a span discovers it's blocked on another span
+monitor.add_dependency(blocked_span_id, blocking_span_id, "waiting_for_rf")
 ```
 
-### RF_WRITE LOAD_J2J
-**Location**: transactions/load_j2j_words.py - Jamlet-to-jamlet loads to register file
-**Format**: `RF_WRITE LOAD_J2J: jamlet (x,y) rf[reg] old={hex} new={hex}`
-**Grep**: `grep "RF_WRITE LOAD_J2J" <logfile>`
+### Resource Exhaustion Tracking
+```python
+# When a resource becomes exhausted
+monitor.record_resource_exhausted(ResourceType.WITEM_TABLE, kamlet_x, kamlet_y)
 
-### RF_WRITE VmsleViOp
-**Location**: kinstructions.py - Vector mask set-less-than-or-equal-immediate writes
-**Format**: `RF_WRITE VmsleViOp: jamlet (x,y) rf[reg] old={hex} new={hex}`
-**Grep**: `grep "RF_WRITE VmsleViOp" <logfile>`
-**Example**:
-```
-982: RF_WRITE VmsleViOp: jamlet (0,0) rf[0] old=08 new=08
-```
+# When it becomes available again
+monitor.record_resource_available(ResourceType.WITEM_TABLE, kamlet_x, kamlet_y)
 
-### RF_WRITE VmnandMmOp
-**Location**: kinstructions.py - Vector mask NAND writes
-**Format**: `RF_WRITE VmnandMmOp: jamlet (x,y) rf[reg] old={hex} new={hex}`
-**Grep**: `grep "RF_WRITE VmnandMmOp" <logfile>`
-
-### RF_WRITE VBroadcastOp
-**Location**: kinstructions.py - Vector broadcast writes
-**Format**: `RF_WRITE VBroadcastOp: jamlet (x,y) rf[reg] old={hex} new={hex}`
-**Grep**: `grep "RF_WRITE VBroadcastOp" <logfile>`
-
-### RF_WRITE VmvVvOp
-**Location**: kinstructions.py - Vector move writes
-**Format**: `RF_WRITE VmvVvOp: jamlet (x,y) rf[reg] old={hex} new={hex}`
-**Grep**: `grep "RF_WRITE VmvVvOp" <logfile>`
-
-### RF_WRITE VArithVvOp
-**Location**: kinstructions.py - Vector arithmetic writes
-**Format**: `RF_WRITE VArithVvOp({operation}): jamlet (x,y) rf[reg] old={hex} new={hex}`
-**Grep**: `grep "RF_WRITE VArithVvOp" <logfile>`
-
-### RF START / RF FINISH
-**Location**: register_file_slot.py - Register file locking for hazard tracking
-**Format**: `kamlet(x,y) RF START token={id} read_regs=[...] write_regs=[...]`
-**Format**: `kamlet(x,y) RF FINISH token={id} read_regs=[...] write_regs=[...]`
-**Grep**: `grep "RF START\|RF FINISH" <logfile>`
-**Purpose**: Shows when instructions acquire and release locks on register file slots. Critical for debugging WAR/RAW hazards. The token identifies the instruction, read_regs shows registers being read, write_regs shows registers being written.
-**Example**:
-```
-kamlet(0,0) RF START token=5 read_regs=[1, 2] write_regs=[]
-kamlet(0,0) RF FINISH token=5 read_regs=[1, 2] write_regs=[]
+# Link a witem to the resource blocking it
+monitor.record_witem_blocked_by_resource(
+    witem_instr_ident, kamlet_x, kamlet_y, ResourceType.WITEM_TABLE
+)
 ```
 
-## Common Grep Patterns
+### Analysis
+```python
+# Print comprehensive summary with latency stats
+monitor.print_summary()
 
-### Find all writes to a specific register at a specific jamlet
-```bash
-grep "RF_WRITE.*jamlet (0,0).*rf\[2\]" <logfile>
+# Get statistics programmatically
+stats = monitor.get_stats()
+
+# Print hierarchical view of a span and descendants
+monitor.print_span_tree(span_id)
+
+# Export to JSON for external analysis
+monitor.dump_to_file('trace.json')
 ```
 
-### Find all writes to a specific cache address at a specific jamlet
-```bash
-grep "CACHE_WRITE.*jamlet (0,0).*sram\[0\]" <logfile>
-```
+## Instruction Identifier Flow Control
 
-### Find all memory operations for a specific kamlet
-```bash
-grep "MEM_.*kamlet(0,0)" <logfile>
-```
+The `IdentQuery` mechanism prevents `instr_ident` wraparound collisions (idents wrap at 128):
 
-### Track data flow for a global address
-```bash
-# Example: Tracing global address 0x20000050
-
-# 1. Find which page and memory_loc range this address belongs to
-grep "PAGE_ALLOC.*global=0x20000000" <logfile>
-# Output: PAGE_ALLOC: global=0x20000000-0x200003ff -> physical=0x0 memory_loc=0x0-0x1f is_vpu=True
-
-# 2. Find which cache slots are allocated for those memory_locs
-grep "CACHE_LINE_ALLOC.*memory_loc=0x[01]" <logfile>
-# Output: CACHE_LINE_ALLOC: CacheTable (0, 0) slot=0 memory_loc=0x0
-
-# 3. Find cache writes during initialization
-grep "CACHE_WRITE WRITE_IMM_BYTES.*jamlet (0,0)" <logfile>
-
-# 4. Find cache line loads from memory
-grep "CACHE_WRITE READ_LINE_RESP.*jamlet (0,0)" <logfile>
-
-# 5. Find register file loads
-grep "RF_WRITE LOAD_SIMPLE.*jamlet (0,0)" <logfile>
-```
-
-### Find all operations in a cycle range
-```bash
-grep "^2025.*15[45][0-9][0-9]:" <logfile>
-```
+1. Lamlet sends `IdentQuery` instruction when running low on idents
+2. Each kamlet computes distance from baseline to its oldest active ident
+3. Uses synchronization network with MIN aggregation to find global oldest
+4. Kamlet (0,0) sends result back to lamlet
+5. Lamlet can safely allocate idents ahead of the oldest active one
 
 ---
 
-# Comparing Test Execution with Logs
+# Strided Memory Operations
 
-This document contains techniques and examples for verifying that the simulator is correctly executing tests by comparing expected behavior with log output.
+## LoadStride / StoreStride
 
-## Verifying Memory Initialization
+Handles strided loads/stores where elements are separated by a configurable stride in bytes
+(not just sequential). Each element can come from a different page with different element widths.
 
-### Using objdump to get expected data
+**Key features**:
+- `stride_bytes`: Byte stride between elements (None = unit stride = ew/8 bytes)
+- Limited to `j_in_l` elements per instruction
+- Uses synchronization network to coordinate completion across kamlets
+- `reads_all_memory` / `writes_all_memory` flags prevent conflicts with other operations
 
-First, examine the test binary to see what data should be in memory:
-
-```bash
-# Show section headers
-riscv64-unknown-elf-objdump -h tests/conditional/vec-conditional.riscv
-
-# Dump contents of a specific section
-riscv64-unknown-elf-objdump -s -j .data.vpu8 tests/conditional/vec-conditional.riscv | grep "20000000"
-```
-
-Example output:
-```
-20000000 00030103 01010802 09050600 01060307  ................
-```
-
-This shows that at global address 0x20000000, the bytes should be:
-`00 03 01 03 01 01 08 02 09 05 06 00 01 06 03 07`
-
-### Tracing initialization in logs
-
-Use the PAGE_ALLOC and CACHE_WRITE logs to verify initialization:
-
-```bash
-# Step 1: Find which page the address belongs to
-grep "PAGE_ALLOC.*global=0x20000000" <logfile>
-# Output: PAGE_ALLOC: global=0x20000000-0x200003ff -> physical=0x0 memory_loc=0x0-0x1f is_vpu=True
-
-# Step 2: Check what bytes were written during initialization
-grep "Writing  byte 0x2000000[0-9a-f] " <logfile> | head -16
-
-# Step 3: Look at cache writes during initialization
-grep "CACHE_WRITE WRITE_IMM_BYTES" <logfile> | head -30
-```
-
-### Understanding data distribution across jamlets
-
-**Key insight**: Data is distributed element-by-element across jamlets.
-
-With 2 jamlets (k_in_l=2, j_in_k=1), consecutive elements alternate between jamlets. In this example with 8-bit elements (ew=8), each element is 1 byte:
-- Element 0 (byte 0) → jamlet (0,0) sram[0]
-- Element 1 (byte 1) → jamlet (1,0) sram[0]
-- Element 2 (byte 2) → jamlet (0,0) sram[1]
-- Element 3 (byte 3) → jamlet (1,0) sram[1]
-- ...
-
-For wider elements (e.g., ew=16 or ew=32), the same pattern applies but each element is multiple bytes.
-
-Example verification for address 0x20000000:
-
-Expected bytes from objdump: `00 03 01 03 01 01 08 02 09 05 06 00 01 06 03 07`
-
-From logs:
-- Jamlet (0,0): sram[0]=0x00, sram[1]=0x01, sram[2]=0x01, sram[3]=0x08, sram[4]=0x09, sram[5]=0x06, sram[6]=0x01, sram[7]=0x03
-- Jamlet (1,0): sram[0]=0x03, sram[1]=0x03, sram[2]=0x01, sram[3]=0x02, sram[4]=0x05, sram[5]=0x00, sram[6]=0x06, sram[7]=0x07
-
-Interleaving: `00 03 01 03 01 01 08 02 09 05 06 00 01 06 03 07` ✓ Match!
-
-### Creating a summary table
-
-Use this script to create a comparison table:
-
-```bash
-#!/bin/bash
-echo "EXPECTED (from objdump):"
-riscv64-unknown-elf-objdump -s -j .data.vpu8 <binary> | grep "20000000" | head -1
-
-echo ""
-echo "ACTUAL (from logs):"
-echo "=========================================================================="
-printf "%-10s %-12s %-15s %-15s\n" "Cycle" "Jamlet" "SRAM" "Value"
-echo "--------------------------------------------------------------------------"
-grep "CACHE_WRITE WRITE_IMM_BYTES: jamlet" <logfile> | head -30 | while read line; do
-    cycle=$(echo "$line" | grep -oP '- \K\d+')
-    jamlet=$(echo "$line" | grep -oP 'jamlet \K\([0-9,]+\)')
-    sram=$(echo "$line" | grep -oP 'sram\K\[[0-9:]+\]')
-    newval=$(echo "$line" | grep -oP 'new=\K[0-9a-f]+')
-    printf "%-10s %-12s %-15s %-15s\n" "$cycle" "$jamlet" "$sram" "0x$newval"
-done
-```
-
-## Verifying Vector Loads
-
-### Check what instruction loaded the data
-
-```bash
-# Find the vector load instruction
-grep "VLE8.V: vd=v0, addr=0x20000050" <logfile>
-# Output: 15546: VLE8.V: vd=v0, addr=0x20000050, vl=16, masked=False, mask_reg=None
-```
-
-### Verify data was loaded correctly into register file
-
-```bash
-# Find register file writes after the load
-grep "15547: RF_WRITE LOAD_SIMPLE" <logfile>
-```
-
-Example output:
-```
-15547: RF_WRITE LOAD_SIMPLE: jamlet (0,0) rf[0] old=0000000000000000 new=0001010809060103
-15549: RF_WRITE LOAD_SIMPLE: jamlet (1,0) rf[0] old=0000000000000000 new=0303010205000607
-```
-
-The register values are in little-endian format (bytes reversed in each word).
-
-To verify, convert to byte arrays:
-- jamlet (0,0) rf[0] = 0x0001010809060103 → bytes: `03 01 06 09 08 01 01 00`
-- jamlet (1,0) rf[0] = 0x0303010205000607 → bytes: `07 06 00 05 02 01 03 03`
-
-Interleaved: `03 07 01 06 06 00 09 05 08 02 01 01 01 03 00 03` (alternating bytes from each jamlet)
-
-Compare with objdump at the load address to verify correctness.
-
-## Common Pitfalls
-
-### Timing delays
-The "Writing byte" log at cycle N does not mean the cache write happens at cycle N. There's a delay while the instruction propagates through the system. Look for CACHE_WRITE logs at later cycles.
-
-### Little-endian byte order
-Register file values in logs are shown as hex numbers in little-endian format. The least significant byte is the first byte in memory.
-
-Example: `0x0001010809060103` in register = bytes `03 01 06 09 08 01 01 00` in memory order
-
-### Cache eviction
-Cache slots can be evicted and reallocated. A CACHE_LINE_ALLOC for the same slot number may happen multiple times. The second allocation overwrites the first.
-
-### Multiple operations per cycle
-Multiple cache writes or other operations can happen in the same cycle. Don't assume one log line per cycle.
-
-## Quick Reference Commands
-
-```bash
-# Verify initialization of first 16 bytes at address 0x20000000
-riscv64-unknown-elf-objdump -s -j .data.vpu8 <binary> | grep "20000000"
-grep "CACHE_WRITE WRITE_IMM_BYTES" <logfile> | head -30
-
-# Trace a specific global address through the system
-addr=0x20000050
-grep "PAGE_ALLOC.*global=0x20000000" <logfile>
-grep "Writing  byte $addr" <logfile>
-grep "VLE.*addr=$addr" <logfile>
-
-# Check register file state after a load
-grep "RF_WRITE LOAD_SIMPLE.*jamlet (0,0).*rf\[0\]" <logfile>
-```
+**Note**: Unlike simple loads/stores which operate on contiguous cache lines, strided operations
+may access arbitrary memory locations, requiring different coordination mechanisms.

@@ -65,6 +65,8 @@ class LoadStride(KInstr):
                 ew=self.dst_ordering.ew, base_reg=self.dst)
         if self.mask_reg is not None:
             read_regs = [self.mask_reg]
+            assert self.mask_reg not in dst_regs, \
+                f"mask_reg {self.mask_reg} overlaps with dst_regs {dst_regs}"
         else:
             read_regs = []
         await kamlet.wait_for_rf_available(write_regs=dst_regs, read_regs=read_regs,
@@ -128,8 +130,12 @@ class WaitingLoadStride(WaitingItem):
         instr = self.item
         request = get_request(jamlet, instr, tag)
         assert request is not None
-        k_maddr = request.g_addr.to_k_maddr(jamlet.tlb)
-        src_byte_in_word = k_maddr.addr % wb
+        if request.is_vpu:
+            k_maddr = request.g_addr.to_k_maddr(jamlet.tlb)
+            src_byte_in_word = k_maddr.addr % wb
+        else:
+            scalar_addr = request.g_addr.to_scalar_addr(jamlet.tlb)
+            src_byte_in_word = scalar_addr % wb
         dst_byte_in_word = tag
 
         # Calculate the destination register using compute_dst_element
@@ -220,6 +226,25 @@ def get_request(jamlet: Jamlet, instr: LoadStride, tag: int) -> RequiredBytes|No
                      f'tag={tag} dst_e={dst_e} '
                      f'out of range [{instr.start_index}, {instr.start_index + instr.n_elements})')
         return None
+
+    # Check mask - if element is masked off, skip it
+    if instr.mask_reg is not None:
+        wb = jamlet.params.word_bytes
+        mask_word = int.from_bytes(
+            jamlet.rf_slice[instr.mask_reg * wb: (instr.mask_reg + 1) * wb],
+            byteorder='little')
+        bit_index = dst_e // jamlet.params.j_in_l
+        mask_bit = (mask_word >> bit_index) & 1
+        if not mask_bit:
+            witem_span_id = jamlet.monitor.get_witem_span_id(
+                instr.instr_ident,
+                (jamlet.x // jamlet.params.j_cols) * jamlet.params.j_cols,
+                (jamlet.y // jamlet.params.j_rows) * jamlet.params.j_rows)
+            jamlet.monitor.add_event(
+                witem_span_id, 'mask_skip',
+                jamlet_x=jamlet.x, jamlet_y=jamlet.y, element=dst_e,
+                bit_index=bit_index, mask_word=hex(mask_word))
+            return None
     # Where is this byte in the src memory?
     src_g_addr = (instr.g_addr.bit_offset(
         (dst_e - instr.start_index) * instr.stride_bytes * 8 + dst_eb))
@@ -258,12 +283,19 @@ async def send_req(jamlet: Jamlet, witem: WaitingLoadStride, tag: int) -> bool:
     request = get_request(jamlet, instr, tag)
     if request is None:
         return False
-    k_maddr = request.g_addr.to_k_maddr(jamlet.tlb)
-    word_offset = k_maddr.addr % jamlet.params.word_bytes
-    word_addr = k_maddr.bit_offset(-word_offset * 8)
-    target_x, target_y = addresses.k_indices_to_j_coords(
-            jamlet.params, k_maddr.k_index, k_maddr.j_in_k_index)
+
     ident = (instr.instr_ident + tag + 1) % jamlet.params.max_response_tags
+
+    if request.is_vpu:
+        k_maddr = request.g_addr.to_k_maddr(jamlet.tlb)
+        word_offset = k_maddr.addr % jamlet.params.word_bytes
+        addr = k_maddr.bit_offset(-word_offset * 8)
+        target_x, target_y = addresses.k_indices_to_j_coords(
+                jamlet.params, k_maddr.k_index, k_maddr.j_in_k_index)
+    else:
+        addr = request.g_addr.to_scalar_addr(jamlet.tlb)
+        target_x, target_y = 0, -1
+
     header = TaggedHeader(
         target_x=target_x,
         target_y=target_y,
@@ -274,11 +306,11 @@ async def send_req(jamlet: Jamlet, witem: WaitingLoadStride, tag: int) -> bool:
         length=2,
         ident=ident,
         tag=tag,
-        )
-    packet = [header, word_addr]
+    )
+    packet = [header, addr]
     logger.debug(f'{jamlet.clock.cycle}: LoadStride send_req: jamlet ({jamlet.x},{jamlet.y}) '
                  f'ident={instr.instr_ident} tag={tag} -> ({target_x},{target_y}) '
-                 f'addr=0x{word_addr.addr:x}')
+                 f'is_vpu={request.is_vpu}')
 
     # Look up the witem span_id for monitoring (using kamlet's min_x/min_y)
     kamlet_min_x = (jamlet.x // jamlet.params.j_cols) * jamlet.params.j_cols
@@ -297,7 +329,7 @@ async def send_req(jamlet: Jamlet, witem: WaitingLoadStride, tag: int) -> bool:
         parent_span_id=witem_span_id,
     )
 
-    await jamlet.send_packet(packet, transaction_span_id=transaction_span_id)
+    await jamlet.send_packet(packet, parent_span_id=transaction_span_id)
     return True
 
 

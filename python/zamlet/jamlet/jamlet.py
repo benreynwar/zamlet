@@ -39,9 +39,11 @@ class Jamlet:
         self.x = x
         self.y = y
 
-        k_x = x//self.params.j_cols
-        k_y = y//self.params.j_rows
+        k_x = x // self.params.j_cols
+        k_y = y // self.params.j_rows
         self.k_index = k_y * self.params.k_cols + k_x
+        self.k_min_x = k_x * self.params.j_cols
+        self.k_min_y = k_y * self.params.j_rows
         j_in_k_x = x % self.params.j_cols
         j_in_k_y = y % self.params.j_rows
         self.j_in_k_index = j_in_k_y * self.params.j_cols + j_in_k_x
@@ -112,28 +114,26 @@ class Jamlet:
         self.rf_info = rf_info
         self.tlb = tlb
 
-    async def send_packet(self, packet, transaction_span_id: int | None = None,
+    async def send_packet(self, packet, parent_span_id: int,
                           drop_reason: str | None = None):
-        assert isinstance(packet[0], Header)
-        assert len(packet) == packet[0].length, (
-            f"Packet length mismatch: len(packet)={len(packet)}, header.length={packet[0].length}")
-        message_type = packet[0].message_type
         header = packet[0]
+        assert isinstance(header, IdentHeader)
+        assert len(packet) == header.length, (
+            f"Packet length mismatch: len(packet)={len(packet)}, header.length={header.length}")
+        message_type = header.message_type
         logger.debug(
             f'{self.clock.cycle}: jamlet ({self.x}, {self.y}): send_packet queuing '
             f'{message_type.name} target=({header.target_x}, {header.target_y})')
 
-        # Record message as child of transaction
-        ident = getattr(header, 'ident', None)
+        # Record message as child of parent span
         tag = getattr(header, 'tag', None)
-        if transaction_span_id is not None and ident is not None:
-            self.monitor.record_message_sent(
-                transaction_span_id, message_type.name,
-                ident=ident, tag=tag,
-                src_x=self.x, src_y=self.y,
-                dst_x=header.target_x, dst_y=header.target_y,
-                drop_reason=drop_reason,
-            )
+        self.monitor.record_message_sent(
+            parent_span_id, message_type.name,
+            ident=header.ident, tag=tag,
+            src_x=self.x, src_y=self.y,
+            dst_x=header.target_x, dst_y=header.target_y,
+            drop_reason=drop_reason,
+        )
 
         blocked_cycles = 0
         while not self.send_queues[message_type].can_append():
@@ -229,6 +229,16 @@ class Jamlet:
             word = self.sram[address_in_sram + index * wb: address_in_sram + (index+1) * wb]
             packet.append(word)
         logger.debug(f'{self.clock.cycle}: jamlet ({self.x},{self.y}): Sending cache line from sram {address_in_sram} words={packet[3:]}')
+
+        # Record cache message - use slot as tag, include j_in_k_index in src coords
+        cache_request_span_id = self.monitor.get_cache_request_span_id(
+            self.k_min_x, self.k_min_y, cache_slot)
+        self.monitor.record_message_sent(
+            cache_request_span_id, header.message_type.name,
+            ident=ident, tag=cache_slot,
+            src_x=self.x, src_y=self.y,
+            dst_x=self.mem_x, dst_y=self.mem_y)
+
         send_queue = self.send_queues[header.message_type]
         while not send_queue.can_append():
             await self.clock.next_cycle
@@ -252,6 +262,14 @@ class Jamlet:
                 self.monitor.record_input_queue_consumed(self.x, self.y, is_ch0=True)
                 self._instruction_buffer.append(word)
                 remaining -= 1
+                # Record instruction message received (word is a KInstr)
+                instr_ident = getattr(word, 'instr_ident', None)
+                if instr_ident is not None:
+                    self.monitor.record_message_received(
+                        instr_ident,
+                        header.source_x, header.source_y,
+                        self.k_min_x, self.k_min_y,
+                        message_type='INSTRUCTION')
 
     async def _receive_read_line_resp_packet(self, header, queue):
         # The packet should say where to put the data.
@@ -304,24 +322,10 @@ class Jamlet:
             f'{self.clock.cycle}: jamlet ({self.x}, {self.y}): _receive_packet_channel0 got header '
             f'{header.message_type.name} from ({header.source_x}, {header.source_y})')
 
-        # Record message received (completes the MESSAGE span)
-        # Skip cache line responses - they're sent via kamlet/jamlet directly, not send_packet
-        ident = getattr(header, 'ident', None)
-        tag = getattr(header, 'tag', None)
-        is_cache_line_resp = header.message_type in (
-            MessageType.READ_LINE_RESP,
-            MessageType.WRITE_LINE_RESP,
-            MessageType.WRITE_LINE_READ_LINE_RESP,
-        )
-        if ident is not None and not is_cache_line_resp:
-            self.monitor.record_message_received(
-                ident=ident,
-                tag=tag,
-                src_x=header.source_x,
-                src_y=header.source_y,
-                dst_x=self.x,
-                dst_y=self.y,
-            )
+        # Record message received for all channel 0 messages except INSTRUCTIONS
+        if header.message_type != MessageType.INSTRUCTIONS:
+            self.monitor.record_message_received_by_header(header, self.x, self.y)
+
         if header.message_type == MessageType.INSTRUCTIONS:
             await self._receive_instructions_packet(header, queue)
         elif header.message_type == MessageType.READ_LINE_RESP:
@@ -333,8 +337,12 @@ class Jamlet:
             await self._receive_read_line_resp_packet(header, queue)
         elif header.message_type == MessageType.WRITE_LINE_READ_LINE_DROP:
             # Memlet couldn't handle request - clear sent flag so kamlet will re-send
+            assert isinstance(header, IdentHeader)
+            request = self.cache_table.cache_requests[header.ident]
             self.cache_table.clear_cache_request_sent(header.ident, self.j_in_k_index)
         else:
+            # All other channel 0 messages are responses tracked via MESSAGE_HANDLERS
+            assert isinstance(header, IdentHeader)
             handler = MESSAGE_HANDLERS.get(header.message_type)
             if handler is None:
                 raise NotImplementedError(f"No handler for channel 0 message {header.message_type}")
@@ -348,23 +356,13 @@ class Jamlet:
             await self.clock.next_cycle
         header = queue.popleft()
         self.monitor.record_input_queue_consumed(self.x, self.y, is_ch0=False)
-        assert isinstance(header, Header)
+        assert isinstance(header, IdentHeader)
         logger.debug(
             f'{self.clock.cycle}: jamlet ({self.x}, {self.y}): _receive_packet got header '
             f'{header.message_type.name} from ({header.source_x}, {header.source_y})')
 
         # Record message received (completes the MESSAGE span for the request)
-        ident = getattr(header, 'ident', None)
-        tag = getattr(header, 'tag', None)
-        if ident is not None:
-            self.monitor.record_message_received(
-                ident=ident,
-                tag=tag,
-                src_x=header.source_x,
-                src_y=header.source_y,
-                dst_x=self.x,
-                dst_y=self.y,
-            )
+        self.monitor.record_message_received_by_header(header, self.x, self.y)
 
         await self.clock.next_cycle
         handler = MESSAGE_HANDLERS.get(header.message_type)

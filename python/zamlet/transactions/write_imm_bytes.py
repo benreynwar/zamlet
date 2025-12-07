@@ -57,4 +57,3 @@ def do_write_imm_bytes(kamlet: 'Kamlet', instr: kinstructions.WriteImmBytes) -> 
         jamlet.sram[j_saddr.addr: j_saddr.addr + size] = instr.imm
         cache_state = kamlet.cache_table.get_state(instr.k_maddr)
         cache_state.state = cache_table.CacheState.MODIFIED
-    kamlet.monitor.complete_kinstr_exec(instr.instr_ident, kamlet.min_x, kamlet.min_y)

@@ -207,6 +207,21 @@ class Kamlet:
         self.clock.create_task(self.cache_table.run())
         self.clock.create_task(self.synchronizer.run())
 
+    async def _queue_cache_request(self, packet, slot: int):
+        """Queue a cache request packet and record the message sent."""
+        header = packet[0]
+        while not self._instr_send_queue.can_append():
+            await self.clock.next_cycle
+        self._instr_send_queue.append(packet)
+
+        cache_request_span_id = self.monitor.get_cache_request_span_id(
+            self.min_x, self.min_y, slot)
+        self.monitor.record_message_sent(
+            cache_request_span_id, header.message_type.name,
+            ident=header.ident, tag=slot,
+            src_x=header.source_x, src_y=header.source_y,
+            dst_x=header.target_x, dst_y=header.target_y)
+
     async def read_cache_line(self, cache_slot: int, address_in_memory: int, ident: int):
         """
         Reads from memory into the cache line.
@@ -215,14 +230,15 @@ class Kamlet:
         """
         logger.debug('{self.clock.cycle}: kamlet {(self.min_x, self.min_y)}: read_cache_line')
         address_in_sram = cache_slot * self.params.cache_line_bytes // self.params.j_in_k
+        send_jamlet = self.jamlets[self.params.send_read_line_j_index]
 
         header = AddressHeader(
             message_type=MessageType.READ_LINE, #4
             send_type=SendType.SINGLE,          #1
             target_x=self.mem_x,                #8
             target_y=self.mem_y,                #8
-            source_x=self.min_x,                #8
-            source_y=self.min_y,                #8
+            source_x=send_jamlet.x,             #8
+            source_y=send_jamlet.y,             #8
             address=address_in_sram,            #12
             length=2,                           #5
             ident=ident,               #5 bits
@@ -230,9 +246,7 @@ class Kamlet:
         assert address_in_memory % self.params.cache_line_bytes == 0
         packet = [header, address_in_memory]
 
-        while not self._instr_send_queue.can_append():
-            await self.clock.next_cycle
-        self._instr_send_queue.append(packet)
+        await self._queue_cache_request(packet, cache_slot)
 
     async def handle_write_imm_bytes_instr(self, instr: kinstructions.WriteImmBytes):
         """
@@ -247,6 +261,7 @@ class Kamlet:
             await self.cache_table.add_witem(witem, instr.k_maddr)
         else:
             do_write_imm_bytes(self, instr)
+            self.monitor.complete_kinstr_exec(instr.instr_ident, self.min_x, self.min_y)
 
     async def handle_read_byte_instr(self, instr: kinstructions.ReadByte):
         can_read = self.cache_table.can_read(instr.k_maddr)
@@ -257,6 +272,7 @@ class Kamlet:
             await self.cache_table.add_witem(witem=witem, k_maddr=instr.k_maddr)
         else:
             await do_read_byte(self, instr)
+            self.monitor.complete_kinstr_exec(instr.instr_ident, self.min_x, self.min_y)
 
     async def handle_load_word_instr(self, instr: kinstructions.LoadWord):
         """Handle LoadWord instruction - load partial word from cache to register."""

@@ -8,9 +8,12 @@ that have a start time, end time, and parent/child relationships.
 See PLAN_MONITOR.md for design details and use cases.
 """
 import json
+import logging
 from dataclasses import asdict, dataclass, field
 from enum import Enum
 from typing import Dict, List, Any, Tuple
+
+logger = logging.getLogger(__name__)
 
 
 class CompletionType(Enum):
@@ -49,6 +52,14 @@ class SpanRef:
 
 
 @dataclass
+class Event:
+    """A timestamped event within a span."""
+    cycle: int
+    event: str
+    details: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
 class Span:
     """A span in the distributed trace."""
     span_id: int
@@ -61,6 +72,7 @@ class Span:
     depends_on: List[SpanRef] = field(default_factory=list)
     component: str = ""  # "lamlet", "kamlet(0,0)", "jamlet(1,2)"
     details: Dict[str, Any] = field(default_factory=dict)
+    events: List[Event] = field(default_factory=list)
     # For FIRE_AND_FORGET spans: True once all children have been created
     children_finalized: bool = False
 
@@ -128,8 +140,11 @@ class Monitor:
             # Add this span as a child of the parent
             parent_span = self.spans.get(parent_span_id)
             assert parent_span is not None, f"Parent span {parent_span_id} not found"
-            assert not parent_span.children_finalized, \
-                f"Cannot add child to parent {parent_span_id} - children already finalized"
+            if parent_span.children_finalized:
+                hierarchy = self.format_span_tree(parent_span_id)
+                assert False, \
+                    f"Cannot add child to parent {parent_span_id} ({parent_span.span_type.name}) - " \
+                    f"children already finalized.\n\nParent hierarchy:\n{hierarchy}"
             parent_span.children.append(SpanRef(span_id=span_id, reason=parent_reason))
 
         span = Span(
@@ -156,6 +171,29 @@ class Monitor:
         span = self.spans.get(span_id)
         assert span is not None, f"Span {span_id} not found"
         assert span.completed_cycle is None, f"Span {span_id} already completed"
+
+        # Verify all children are complete before completing this span
+        for child_ref in span.children:
+            child_span = self.spans.get(child_ref.span_id)
+            assert child_span is not None, \
+                f"Child span {child_ref.span_id} not found when completing span {span_id}"
+            if not child_span.is_complete():
+                hierarchy = self.format_span_tree(span_id)
+                assert False, \
+                    f"Cannot complete span {span_id} ({span.span_type.value}): " \
+                    f"child {child_ref.span_id} ({child_span.span_type.value}) is not complete. " \
+                    f"Child details: {child_span.details}\n\nSpan hierarchy:\n{hierarchy}"
+
+        # Verify all dependencies are complete before completing this span
+        for dep_ref in span.depends_on:
+            dep_span = self.spans.get(dep_ref.span_id)
+            assert dep_span is not None, \
+                f"Dependency span {dep_ref.span_id} not found when completing span {span_id}"
+            assert dep_span.is_complete(), \
+                f"Cannot complete span {span_id} ({span.span_type.value}): " \
+                f"dependency {dep_ref.span_id} ({dep_span.span_type.value}) is not complete. " \
+                f"Dependency reason: {dep_ref.reason}, details: {dep_span.details}"
+
         span.completed_cycle = self.clock.cycle
 
         # Clean up lookup tables based on span type
@@ -206,6 +244,15 @@ class Monitor:
             if all_children_complete:
                 self.complete_span(span_id)
 
+    def add_event(self, span_id: int, event: str, **kwargs) -> None:
+        """Add a timestamped event to a span."""
+        if not self.enabled or span_id is None:
+            return
+        span = self.spans.get(span_id)
+        if span is None:
+            return
+        span.events.append(Event(cycle=self.clock.cycle, event=event, details=kwargs))
+
     def add_dependency(self, span_id: int, depends_on_span_id: int, reason: str) -> None:
         """Add a dependency from one span to another."""
         if not self.enabled:
@@ -235,6 +282,14 @@ class Monitor:
     def get_kinstr_span_id(self, instr_ident: int) -> int | None:
         """Look up the span_id for a kinstr by its instr_ident."""
         return self._kinstr_by_ident.get(instr_ident)
+
+    def complete_kinstr(self, instr_ident: int) -> None:
+        """Complete a kinstr span by its instr_ident."""
+        if not self.enabled:
+            return
+        span_id = self._kinstr_by_ident.get(instr_ident)
+        assert span_id is not None, f"No kinstr span for instr_ident {instr_ident}"
+        self.complete_span(span_id)
 
     def record_kinstr_exec_created(self, instr, kamlet_x: int, kamlet_y: int) -> int | None:
         """Record a kinstr_exec creation (kinstr executing on a specific kamlet)."""
@@ -427,15 +482,15 @@ class Monitor:
 
     def create_transaction(self, transaction_type: str, ident: int,
                            src_x: int, src_y: int, dst_x: int, dst_y: int,
-                           tag: int | None = None,
-                           parent_span_id: int | None = None) -> int | None:
+                           parent_span_id: int,
+                           tag: int | None = None) -> int | None:
         """Create a transaction span, or return existing one for resends.
 
         A transaction is a logical operation (e.g., WriteMemWord) that may involve
         request/response messages and work at the destination. For RETRY scenarios,
         the same transaction continues, so this returns the existing span_id.
 
-        parent_span_id: The parent span. If None, looks up witem by ident.
+        parent_span_id: The parent span (typically the witem that initiated this transaction).
 
         Returns the transaction span_id.
         """
@@ -446,12 +501,6 @@ class Monitor:
         key = self._transaction_key(ident, tag, src_x, src_y, dst_x, dst_y)
         if key in self._transaction_by_key:
             return self._transaction_by_key[key]
-
-        # If no explicit parent, look up witem by ident
-        if parent_span_id is None:
-            src_kamlet_x = src_x // self.params.j_cols
-            src_kamlet_y = src_y // self.params.j_rows
-            parent_span_id = self._witem_by_key.get((ident, src_kamlet_x, src_kamlet_y))
 
         span_id = self.create_span(
             span_type=SpanType.TRANSACTION,
@@ -472,11 +521,12 @@ class Monitor:
         return span_id
 
     def _message_key(self, ident: int, tag: int | None,
-                      src_x: int, src_y: int, dst_x: int, dst_y: int) -> tuple:
+                      src_x: int, src_y: int, dst_x: int, dst_y: int,
+                      message_type: str) -> tuple:
         """Create lookup key for a message."""
-        return (ident, tag, src_x, src_y, dst_x, dst_y)
+        return (ident, tag, src_x, src_y, dst_x, dst_y, message_type)
 
-    def record_message_sent(self, transaction_span_id: int, message_type: str,
+    def record_message_sent(self, parent_span_id: int, message_type: str,
                             ident: int, tag: int | None,
                             src_x: int, src_y: int, dst_x: int, dst_y: int,
                             drop_reason: str | None = None) -> int | None:
@@ -492,24 +542,48 @@ class Monitor:
             span_type=SpanType.MESSAGE,
             component=f"jamlet({src_x},{src_y})",
             completion_type=CompletionType.TRACKED,
-            parent_span_id=transaction_span_id,
+            parent_span_id=parent_span_id,
             **details,
         )
 
-        key = self._message_key(ident, tag, src_x, src_y, dst_x, dst_y)
+        key = self._message_key(ident, tag, src_x, src_y, dst_x, dst_y, message_type)
         self._message_by_key[key] = span_id
         return span_id
 
-    def record_message_received(self, ident: int, tag: int | None,
-                                 src_x: int, src_y: int, dst_x: int, dst_y: int) -> None:
-        """Record a message being received. Completes the MESSAGE span."""
+    def record_message_received(self, ident: int, src_x: int, src_y: int,
+                                 dst_x: int, dst_y: int,
+                                 message_type: str = None) -> None:
+        """Record a simple message (no tag) being received. Completes the MESSAGE span."""
+        if not self.enabled:
+            return
+        self._complete_message(ident, None, src_x, src_y, dst_x, dst_y, message_type)
+
+    def record_message_received_by_header(self, header, dst_x: int, dst_y: int) -> None:
+        """Record a cache/tagged message being received. Completes the MESSAGE span."""
         if not self.enabled:
             return
 
-        key = self._message_key(ident, tag, src_x, src_y, dst_x, dst_y)
+        if hasattr(header, 'address'):
+            tag = header.address * self.params.j_in_k // self.params.cache_line_bytes
+        else:
+            tag = header.tag
+        self._complete_message(
+            header.ident, tag, header.source_x, header.source_y, dst_x, dst_y,
+            header.message_type.name)
+
+    def _complete_message(self, ident: int, tag: int | None,
+                          src_x: int, src_y: int, dst_x: int, dst_y: int,
+                          message_type: str) -> None:
+        """Complete a message span by key."""
+        key = self._message_key(ident, tag, src_x, src_y, dst_x, dst_y, message_type)
+        logger.debug(
+            f'{self.clock.cycle}: _complete_message: message_type={message_type} '
+            f'ident={ident} tag={tag} src=({src_x},{src_y}) dst=({dst_x},{dst_y}) key={key}')
         span_id = self._message_by_key.pop(key, None)
-        if span_id is not None:
-            self.complete_span(span_id)
+        assert span_id is not None, \
+            f"Message received but no span found for message_type={message_type} " \
+            f"key={key}. Available keys: {list(self._message_by_key.keys())}"
+        self.complete_span(span_id)
 
     def complete_transaction(self, ident: int, tag: int | None,
                               src_x: int, src_y: int, dst_x: int, dst_y: int) -> None:
@@ -522,6 +596,15 @@ class Monitor:
         assert span_id is not None, f"Transaction not found: {key}"
         self.complete_span(span_id)
 
+    def record_cache_write(self, span_id: int | None, sram_addr: int,
+                           old_value: str, new_value: str) -> None:
+        """Record data written to cache on a transaction span."""
+        if not self.enabled or span_id is None:
+            return
+        span = self.spans[span_id]
+        span.details['sram_addr'] = sram_addr
+        span.details['old_value'] = old_value
+        span.details['new_value'] = new_value
 
     # -------------------------------------------------------------------------
     # Cache request tracking
@@ -997,27 +1080,32 @@ class Monitor:
     # Hierarchical display
     # -------------------------------------------------------------------------
 
-    def print_span_tree(self, span_id: int, max_depth: int = 10):
-        """Print a span and all its descendants as a tree."""
+    def format_span_tree(self, span_id: int, max_depth: int = 10) -> str:
+        """Format a span and all its descendants as a tree string."""
         span = self.spans.get(span_id)
         if span is None:
-            print(f"No span found with id {span_id}")
-            return
+            return f"No span found with id {span_id}"
 
+        lines = []
         if span.is_complete():
             latency = span.completed_cycle - span.created_cycle
-            print(f"\nSpan {span_id} (latency={latency} cycles):")
+            lines.append(f"\nSpan {span_id} (latency={latency} cycles):")
         else:
             age = self.clock.cycle - span.created_cycle
-            print(f"\nSpan {span_id} (pending, age={age} cycles):")
+            lines.append(f"\nSpan {span_id} (pending, age={age} cycles):")
 
-        print("-" * 70)
-        self._print_span_tree_recursive(span, indent=0, max_depth=max_depth)
+        lines.append("-" * 70)
+        self._format_span_tree_recursive(span, lines, indent=0, max_depth=max_depth)
+        return '\n'.join(lines)
 
-    def _print_span_tree_recursive(self, span: Span, indent: int, max_depth: int):
-        """Recursively print span tree."""
+    def print_span_tree(self, span_id: int, max_depth: int = 10):
+        """Print a span and all its descendants as a tree."""
+        print(self.format_span_tree(span_id, max_depth))
+
+    def _format_span_tree_recursive(self, span: Span, lines: list, indent: int, max_depth: int):
+        """Recursively format span tree into lines."""
         if indent > max_depth:
-            print("  " * indent + "...")
+            lines.append("  " * indent + "...")
             return
 
         prefix = "  " * indent
@@ -1028,19 +1116,20 @@ class Monitor:
             age = self.clock.cycle - span.created_cycle
             timing = f"{span.created_cycle}-? (pending {age})"
 
-        print(f"{prefix}{span.span_type.value} @ {span.component} [{timing}]")
+        lines.append(f"{prefix}{span.span_type.value} @ {span.component} [{timing}]")
 
         # Show key details on same line or next
         if span.details:
-            detail_items = []
-            for k, v in span.details.items():
-                if k in ('instr_ident', 'instr_type', 'witem_type', 'message_type', 'mnemonic',
-                         'resource_type', 'drop_reason'):
-                    detail_items.append(f"{k}={v}")
+            detail_items = [f"{k}={v}" for k, v in span.details.items()]
             if detail_items:
-                print(f"{prefix}  {', '.join(detail_items)}")
+                lines.append(f"{prefix}  {', '.join(detail_items)}")
 
-        # Print children sorted by start time
+        # Show events
+        for event in span.events:
+            event_details = ', '.join(f"{k}={v}" for k, v in event.details.items())
+            lines.append(f"{prefix}  @{event.cycle}: {event.event} {event_details}")
+
+        # Format children sorted by start time
         children_spans = []
         for child_ref in span.children:
             child_span = self.spans.get(child_ref.span_id)
@@ -1049,9 +1138,9 @@ class Monitor:
         children_spans.sort(key=lambda s: s.created_cycle)
 
         for child_span in children_spans:
-            self._print_span_tree_recursive(child_span, indent + 1, max_depth)
+            self._format_span_tree_recursive(child_span, lines, indent + 1, max_depth)
 
-        # Print depends_on (not recursively - just show what this span waits on)
+        # Format depends_on (not recursively - just show what this span waits on)
         if span.depends_on:
             for dep_ref in span.depends_on:
                 dep_span = self.spans.get(dep_ref.span_id)
@@ -1062,4 +1151,4 @@ class Monitor:
                     else:
                         age = self.clock.cycle - dep_span.created_cycle
                         timing = f"{dep_span.created_cycle}-? (pending {age})"
-                    print(f"{prefix}  waiting_for: {dep_span.span_type.value} @ {dep_span.component} [{timing}] ({dep_ref.reason})")
+                    lines.append(f"{prefix}  waiting_for: {dep_span.span_type.value} @ {dep_span.component} [{timing}] ({dep_ref.reason})")

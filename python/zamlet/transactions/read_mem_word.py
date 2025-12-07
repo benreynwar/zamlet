@@ -155,7 +155,7 @@ async def send_resp(jamlet: 'Jamlet', rcvd_header: TaggedHeader, j_saddr: JSAddr
     transaction_span_id = jamlet.monitor.get_transaction_span_id(
         rcvd_header.ident, rcvd_header.tag,
         rcvd_header.source_x, rcvd_header.source_y, jamlet.x, jamlet.y)
-    await jamlet.send_packet([header, data], transaction_span_id=transaction_span_id)
+    await jamlet.send_packet([header, data], parent_span_id=transaction_span_id)
 
 
 async def send_drop(jamlet: 'Jamlet', rcvd_header: TaggedHeader,
@@ -173,5 +173,5 @@ async def send_drop(jamlet: 'Jamlet', rcvd_header: TaggedHeader,
     transaction_span_id = jamlet.monitor.get_transaction_span_id(
         rcvd_header.ident, rcvd_header.tag,
         rcvd_header.source_x, rcvd_header.source_y, jamlet.x, jamlet.y)
-    await jamlet.send_packet([header], transaction_span_id=transaction_span_id,
+    await jamlet.send_packet([header], parent_span_id=transaction_span_id,
                              drop_reason=reason)

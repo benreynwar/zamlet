@@ -28,7 +28,7 @@ from zamlet.addresses import AddressConverter, Ordering, GlobalAddress, KMAddr, 
 from zamlet.kamlet.cache_table import CacheTable, CacheState, WaitingItem, WaitingFuture, ProtocolState
 from zamlet.monitor import CompletionType, SpanType
 from zamlet.params import LamletParams
-from zamlet.message import Header, MessageType, Direction, SendType, TaggedHeader, CHANNEL_MAPPING
+from zamlet.message import Header, MessageType, Direction, SendType, TaggedHeader, WriteMemWordHeader, CHANNEL_MAPPING, IdentHeader
 from zamlet.kamlet.kamlet import Kamlet
 from zamlet.memlet import Memlet
 from zamlet.runner import Future
@@ -169,6 +169,14 @@ class Lamlet:
         self._tokens_used_since_query = [0 for _ in range(params.k_in_l)]
         # Tokens that will be returned when the current in-flight query responds
         self._tokens_in_active_query = [0 for _ in range(params.k_in_l)]
+
+        # Send queues for packets going into the router network from the lamlet
+        # Separate queue per message type for deterministic ordering
+        self._send_queues = {
+            MessageType.INSTRUCTIONS: utils.Queue(length=2),
+            MessageType.READ_MEM_WORD_RESP: utils.Queue(length=2),
+            MessageType.WRITE_MEM_WORD_RESP: utils.Queue(length=2),
+        }
 
     def has_free_witem_slot(self) -> bool:
         """Check if there's room for another waiting item."""
@@ -463,32 +471,41 @@ class Lamlet:
                                 if byte_val is not None:
                                     neighbor.receive(recv_dir, byte_val)
 
-    async def monitor_replys(self):
+    async def monitor_channel0(self):
+        """Handle channel 0 packets (responses that must be consumed immediately)."""
+        buffer = self.kamlets[0].jamlets[0].routers[0]._output_buffers[Direction.N]
         header = None
         packet = []
         while True:
             await self.clock.next_cycle
-            for channel in range(self.params.n_channels):
-                buffer = self.kamlets[0].jamlets[0].routers[channel]._output_buffers[Direction.N]
-                if buffer:
-                    word = buffer.popleft()
-                    if header is None:
-                        assert isinstance(word, Header)
-                        header = word.copy()
-                        remaining_words = header.length
-                    else:
-                        assert not isinstance(word, Header)
-                    packet.append(word)
-                    remaining_words -= 1
-                    if remaining_words == 0:
-                        self.process_packet(packet)
-                        header = None
-                        packet = []
+            if buffer:
+                word = buffer.popleft()
+                if header is None:
+                    assert isinstance(word, Header)
+                    header = word.copy()
+                    remaining_words = header.length
+                else:
+                    assert not isinstance(word, Header)
+                packet.append(word)
+                remaining_words -= 1
+                if remaining_words == 0:
+                    self._process_channel0_packet(packet)
+                    header = None
+                    packet = []
 
-    def process_packet(self, packet):
+    def _process_channel0_packet(self, packet):
+        """Process a channel 0 packet (responses). These never need to send."""
         header = packet[0]
         assert isinstance(header, Header)
         assert header.length == len(packet)
+
+        # Record message received for all channel 0 responses
+        self.monitor.record_message_received(
+            header.ident,
+            header.source_x, header.source_y,
+            self.instr_x, self.instr_y,
+            message_type=header.message_type.name)
+
         if header.message_type == MessageType.READ_BYTE_RESP:
             assert len(packet) == 1
             item = self.get_witem_by_ident(header.ident)
@@ -496,6 +513,7 @@ class Lamlet:
             assert isinstance(item, WaitingFuture)
             item.future.set_result(header.value)
             self.remove_witem_by_ident(header.ident)
+            self.monitor.complete_kinstr(header.ident)
             logger.debug(f'{self.clock.cycle}: lamlet: Got a READ_BYTE_RESP from ({header.source_x, header.source_y}) is {header.value}')
         elif header.message_type == MessageType.READ_WORDS_RESP:
             item = self.get_witem_by_ident(header.ident)
@@ -503,6 +521,7 @@ class Lamlet:
             assert isinstance(item, WaitingFuture)
             item.future.set_result(packet[1:])
             self.remove_witem_by_ident(header.ident)
+            self.monitor.complete_kinstr(header.ident)
             logger.debug(f'{self.clock.cycle}: lamlet: Got a READ_WORDS_RESP from ({header.source_x, header.source_y}) is {packet[1:]}')
         elif header.message_type == MessageType.IDENT_QUERY_RESP:
             assert len(packet) == 2, f"packet len {len(packet)}"
@@ -510,7 +529,132 @@ class Lamlet:
             min_distance = int.from_bytes(packet[1], byteorder='little')
             self._receive_ident_query_response(min_distance)
         else:
-            raise NotImplementedError()
+            raise NotImplementedError(f"Unexpected channel 0 message: {header.message_type}")
+
+    async def monitor_channel1andup(self):
+        """Handle channel 1+ packets (requests that may need to send responses)."""
+        while True:
+            await self.clock.next_cycle
+            for channel in range(1, self.params.n_channels):
+                buffer = self.kamlets[0].jamlets[0].routers[channel]._output_buffers[Direction.N]
+                if buffer:
+                    packet = await self._receive_packet(buffer)
+                    await self._process_channel1andup_packet(packet)
+
+    async def _receive_packet(self, buffer):
+        """Receive a complete packet from a buffer."""
+        while not buffer:
+            await self.clock.next_cycle
+        header = buffer.popleft()
+        assert isinstance(header, Header)
+        packet = [header]
+        remaining_words = header.length - 1
+        while remaining_words > 0:
+            await self.clock.next_cycle
+            if buffer:
+                word = buffer.popleft()
+                packet.append(word)
+                remaining_words -= 1
+        return packet
+
+    async def _process_channel1andup_packet(self, packet):
+        """Process a channel 1+ packet (requests). These may need to send responses."""
+        header = packet[0]
+        assert isinstance(header, IdentHeader)
+        assert header.length == len(packet)
+
+        # All channel 1+ messages to lamlet have a tag
+        assert hasattr(header, 'tag'), f"Header {type(header).__name__} missing tag attribute"
+        self.monitor.record_message_received_by_header(header, 0, -1)
+
+        if header.message_type == MessageType.READ_MEM_WORD_REQ:
+            assert isinstance(header, TaggedHeader)
+            scalar_addr = packet[1]
+            assert isinstance(scalar_addr, int)
+            await self._handle_read_mem_word_req(header, scalar_addr)
+        elif header.message_type == MessageType.WRITE_MEM_WORD_REQ:
+            assert isinstance(header, WriteMemWordHeader)
+            scalar_addr = packet[1]
+            src_word = packet[2]
+            assert isinstance(scalar_addr, int), f"Expected int, got {type(scalar_addr)}: {scalar_addr}"
+            assert isinstance(src_word, (bytes, bytearray)), \
+                f"Expected bytes/bytearray, got {type(src_word)}: {src_word}"
+            await self._handle_write_mem_word_req(header, scalar_addr, src_word)
+        else:
+            raise NotImplementedError(f"Unexpected channel 1+ message: {header.message_type}")
+
+    async def _handle_read_mem_word_req(self, header: TaggedHeader, scalar_addr: int):
+        """Handle READ_MEM_WORD_REQ: read from scalar memory and send response."""
+        wb = self.params.word_bytes
+        word_addr = scalar_addr - (scalar_addr % wb)
+        data = bytes(self.scalar.memory.get(word_addr + i, 0) for i in range(wb))
+        resp_header = TaggedHeader(
+            target_x=header.source_x,
+            target_y=header.source_y,
+            source_x=0,
+            source_y=-1,
+            message_type=MessageType.READ_MEM_WORD_RESP,
+            send_type=SendType.SINGLE,
+            length=2,
+            tag=header.tag,
+            ident=header.ident,
+        )
+        packet = [resp_header, data]
+        jamlet = self.kamlets[0].jamlets[0]
+        # Look up transaction (requester is source, we are dest at (0, -1))
+        transaction_span_id = self.monitor.get_transaction_span_id(
+            header.ident, header.tag, header.source_x, header.source_y, 0, -1)
+        if transaction_span_id is not None:
+            self.monitor.record_message_sent(
+                transaction_span_id, MessageType.READ_MEM_WORD_RESP.name,
+                ident=header.ident, tag=header.tag,
+                src_x=0, src_y=-1,
+                dst_x=header.source_x, dst_y=header.source_y,
+            )
+        await self.send_packet(packet, jamlet, Direction.N, port=0)
+        logger.debug(
+            f'{self.clock.cycle}: lamlet: READ_MEM_WORD_REQ addr=0x{scalar_addr:x} '
+            f'-> ({header.source_x},{header.source_y}) data={data.hex()}')
+
+    async def _handle_write_mem_word_req(self, header: WriteMemWordHeader, scalar_addr: int,
+                                         src_word: bytes):
+        """Handle WRITE_MEM_WORD_REQ: write to scalar memory and send response."""
+        wb = self.params.word_bytes
+        word_addr = scalar_addr - (scalar_addr % wb)
+        src_start = header.tag
+        dst_start = header.dst_byte_in_word
+        n_bytes = header.n_bytes
+        for i in range(n_bytes):
+            src_byte = src_word[src_start + i]
+            self.scalar.memory[word_addr + dst_start + i] = src_byte
+        resp_header = TaggedHeader(
+            target_x=header.source_x,
+            target_y=header.source_y,
+            source_x=0,
+            source_y=-1,
+            message_type=MessageType.WRITE_MEM_WORD_RESP,
+            send_type=SendType.SINGLE,
+            length=1,
+            tag=header.tag,
+            ident=header.ident,
+        )
+        packet = [resp_header]
+        jamlet = self.kamlets[0].jamlets[0]
+        # Look up transaction (requester is source, we are dest at (0, -1))
+        transaction_span_id = self.monitor.get_transaction_span_id(
+            header.ident, header.tag, header.source_x, header.source_y, 0, -1)
+        if transaction_span_id is not None:
+            self.monitor.record_message_sent(
+                transaction_span_id, MessageType.WRITE_MEM_WORD_RESP.name,
+                ident=header.ident, tag=header.tag,
+                src_x=0, src_y=-1,
+                dst_x=header.source_x, dst_y=header.source_y,
+            )
+        await self.send_packet(packet, jamlet, Direction.N, port=0)
+        logger.debug(
+            f'{self.clock.cycle}: lamlet: WRITE_MEM_WORD_REQ addr=0x{scalar_addr:x} '
+            f'src_start={src_start} dst_start={dst_start} n_bytes={n_bytes} '
+            f'-> ({header.source_x},{header.source_y})')
 
     async def add_to_instruction_buffer(self, instruction, parent_span_id: int, k_index=None):
         logger.debug(f'{self.clock.cycle}: lamlet: Adding {type(instruction)} to buffer')
@@ -663,10 +807,26 @@ class Lamlet:
                     for kamlet in self.kamlets:
                         self.monitor.record_kinstr_exec_created(
                             instr, kamlet.min_x, kamlet.min_y)
+                        # Record the instruction message to this kamlet
+                        kinstr_exec_span_id = self.monitor.get_kinstr_exec_span_id(
+                            instr.instr_ident, kamlet.min_x, kamlet.min_y)
+                        self.monitor.record_message_sent(
+                            kinstr_exec_span_id, 'INSTRUCTION',
+                            instr.instr_ident, None,
+                            self.instr_x, self.instr_y,
+                            kamlet.min_x, kamlet.min_y)
                 else:
                     kamlet = self.kamlets[k_index]
                     self.monitor.record_kinstr_exec_created(
                         instr, kamlet.min_x, kamlet.min_y)
+                    # Record the instruction message to this kamlet
+                    kinstr_exec_span_id = self.monitor.get_kinstr_exec_span_id(
+                        instr.instr_ident, kamlet.min_x, kamlet.min_y)
+                    self.monitor.record_message_sent(
+                        kinstr_exec_span_id, 'INSTRUCTION',
+                        instr.instr_ident, None,
+                        self.instr_x, self.instr_y,
+                        kamlet.min_x, kamlet.min_y)
                 # All kinstr_exec children created - finalize (if FIRE_AND_FORGET)
                 kinstr_span_id = self.monitor.get_kinstr_span_id(instr.instr_ident)
                 if kinstr_span_id is not None:
@@ -676,13 +836,38 @@ class Lamlet:
         await self.send_packet(packet, jamlet, Direction.N, port=0)
 
     async def send_packet(self, packet, jamlet, direction, port):
-        channel = CHANNEL_MAPPING[packet[0].message_type]
-        queue = jamlet.routers[channel]._input_buffers[direction]
+        """Queue a packet for sending. Only channel 0 is currently supported."""
+        message_type = packet[0].message_type
+        channel = CHANNEL_MAPPING[message_type]
+        assert channel == 0, f"Only channel 0 supported, got {channel}"
         assert port == 0
+        assert direction == Direction.N
+        send_queue = self._send_queues[message_type]
+        while not send_queue.can_append():
+            await self.clock.next_cycle
+        send_queue.append(packet)
+
+    async def _send_packets_ch0(self):
+        """Drain the channel 0 send queues and inject packets into the router network."""
+        jamlet = self.kamlets[0].jamlets[0]
+        router_queue = jamlet.routers[0]._input_buffers[Direction.N]
+        while True:
+            sent_something = False
+            for msg_type, send_queue in self._send_queues.items():
+                if send_queue:
+                    packet = send_queue.popleft()
+                    await self._send_packet_words(packet, router_queue)
+                    sent_something = True
+            if not sent_something:
+                await self.clock.next_cycle
+
+    async def _send_packet_words(self, packet, router_queue):
+        """Send all words of a packet into the router queue, one per cycle."""
         while packet:
             await self.clock.next_cycle
-            if len(queue) < queue.length:
-                queue.append(packet.pop(0))
+            if router_queue.can_append():
+                word = packet.pop(0)
+                router_queue.append(word)
 
     async def set_memory(self, address: int, data: bytes):
         logger.debug(f'Writing to memory from {hex(address)} to {hex(address+len(data)-1)}')
@@ -1613,7 +1798,8 @@ class Lamlet:
         for memlet in self.memlets:
             memlet.update()
         self.scalar.update()
-        #self.ident_status(1)
+        for queue in self._send_queues.values():
+            queue.update()
 
     async def run(self):
         for kamlet in self.kamlets:
@@ -1623,9 +1809,11 @@ class Lamlet:
         for channel in range(self.params.n_channels):
             self.clock.create_task(self.router_connections(channel))
         self.clock.create_task(self.sync_network_connections())
-        self.clock.create_task(self.monitor_replys())
+        self.clock.create_task(self.monitor_channel0())
+        self.clock.create_task(self.monitor_channel1andup())
         self.clock.create_task(self.monitor_instruction_buffer())
         self.clock.create_task(self._monitor_ident_query())
+        self.clock.create_task(self._send_packets_ch0())
 
     async def run_instruction(self, disasm_trace=None):
         logger.debug(f'{self.clock.cycle}: run_instruction: fetching at pc={hex(self.pc)}')
