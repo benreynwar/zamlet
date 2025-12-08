@@ -134,8 +134,8 @@ class WaitingLoadStride(WaitingItem):
             k_maddr = request.g_addr.to_k_maddr(jamlet.tlb)
             src_byte_in_word = k_maddr.addr % wb
         else:
-            scalar_addr = request.g_addr.to_scalar_addr(jamlet.tlb)
-            src_byte_in_word = scalar_addr % wb
+            # Scalar memory returns data starting at byte 0, not at the original offset
+            src_byte_in_word = 0
         dst_byte_in_word = tag
 
         # Calculate the destination register using compute_dst_element
@@ -153,6 +153,15 @@ class WaitingLoadStride(WaitingItem):
         jamlet.rf_slice[dst_reg * wb: (dst_reg+1) * wb] = new_word
         logger.debug(f'{jamlet.clock.cycle}: RF_WRITE LoadStride: jamlet ({jamlet.x},{jamlet.y}) '
                      f'ident={self.instr_ident} rf[{dst_reg}] old={old_word.hex()} new={new_word.hex()}')
+        # Record RF write event for monitoring
+        kamlet_min_x = (jamlet.x // jamlet.params.j_cols) * jamlet.params.j_cols
+        kamlet_min_y = (jamlet.y // jamlet.params.j_rows) * jamlet.params.j_rows
+        witem_span_id = jamlet.monitor.get_witem_span_id(instr.instr_ident, kamlet_min_x, kamlet_min_y)
+        jamlet.monitor.add_event(
+            witem_span_id,
+            f'rf_write jamlet_x={jamlet.x}, jamlet_y={jamlet.y}, element={dst_e}, '
+            f'reg={dst_reg}, src_byte={src_byte_in_word}, dst_byte={dst_byte_in_word}, '
+            f'n_bytes={request.n_bytes}, payload={data.hex()}, old={old_word.hex()}, new={new_word.hex()}')
         # Complete the transaction
         jamlet.monitor.complete_transaction(
             ident=header.ident,

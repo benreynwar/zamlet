@@ -13,7 +13,9 @@ Flow:
 '''
 from typing import TYPE_CHECKING
 import logging
+from dataclasses import dataclass
 
+from zamlet.addresses import KMAddr
 from zamlet.waiting_item import WaitingItemRequiresCache
 from zamlet.kamlet import kinstructions
 from zamlet.message import MessageType, SendType, ValueHeader
@@ -25,11 +27,35 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+@dataclass
+class ReadByte(kinstructions.TrackedKInstr):
+    """
+    This instruction reads from the VPU memory.
+    The scalar processor receives a response packet.
+    """
+    k_maddr: KMAddr
+    instr_ident: int
+
+    async def update_kamlet(self, kamlet: 'Kamlet'):
+        """
+        Reads a byte from memory.
+        It first makes sure that we've got the cache line ready.
+        """
+        if not kamlet.cache_table.can_read(self.k_maddr):
+            witem = WaitingReadByte(self)
+            kamlet.monitor.record_witem_created(
+                self.instr_ident, kamlet.min_x, kamlet.min_y, 'WaitingReadByte')
+            await kamlet.cache_table.add_witem(witem=witem, k_maddr=self.k_maddr)
+        else:
+            await do_read_byte(kamlet, self)
+            kamlet.monitor.finalize_kinstr_exec(self.instr_ident, kamlet.min_x, kamlet.min_y)
+
+
 class WaitingReadByte(WaitingItemRequiresCache):
 
     cache_is_read = True
 
-    def __init__(self, instr: kinstructions.ReadByte):
+    def __init__(self, instr: ReadByte):
         super().__init__(item=instr, instr_ident=instr.instr_ident)
 
     def ready(self) -> bool:
@@ -37,11 +63,11 @@ class WaitingReadByte(WaitingItemRequiresCache):
 
     async def finalize(self, kamlet: 'Kamlet') -> None:
         instr = self.item
-        assert isinstance(instr, kinstructions.ReadByte)
+        assert isinstance(instr, ReadByte)
         await do_read_byte(kamlet, instr)
 
 
-async def do_read_byte(kamlet: 'Kamlet', instr: kinstructions.ReadByte) -> None:
+async def do_read_byte(kamlet: 'Kamlet', instr: ReadByte) -> None:
     """
     Read a byte from cache and send response to scalar processor.
     """
@@ -54,7 +80,7 @@ async def do_read_byte(kamlet: 'Kamlet', instr: kinstructions.ReadByte) -> None:
 
 
 async def send_read_byte_resp(
-    jamlet: 'Jamlet', instr: kinstructions.ReadByte, sram_address: int
+    jamlet: 'Jamlet', instr: ReadByte, sram_address: int
 ) -> None:
     """
     Read a byte from SRAM and send READ_BYTE_RESP to scalar processor.

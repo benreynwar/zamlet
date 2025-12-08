@@ -389,8 +389,8 @@ monitor.complete_span(span_id)
 # Complete via lookup (for witems)
 monitor.complete_witem(instr_ident, kamlet_x, kamlet_y)
 
-# Complete kinstr_exec
-monitor.complete_kinstr_exec(instr_ident, kamlet_x, kamlet_y)
+# Finalize kinstr_exec (auto-completes when all children complete, or immediately if no children)
+monitor.finalize_kinstr_exec(instr_ident, kamlet_x, kamlet_y)
 
 # For FIRE_AND_FORGET spans, finalize children when done creating them
 monitor.finalize_children(span_id)

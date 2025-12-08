@@ -352,9 +352,7 @@ async def run_strided_store_test(
     rnd = Random(seed)
     element_bytes = ew // 8
     src_list = [rnd.getrandbits(ew) for i in range(vl)]
-    # mask_bits = [rnd.choice([True, False]) for i in range(vl)] if use_mask else None
-    # Simple alternating mask pattern for easier debugging
-    mask_bits = [(i % 2 == 0) for i in range(vl)] if use_mask else None
+    mask_bits = [rnd.choice([True, False]) for i in range(vl)] if use_mask else None
 
     logger.info(f"Strided Store Test: ew={ew}, vl={vl}, stride={stride}")
     logger.info(f"  use_mask={use_mask}, use_scalar={use_scalar}")

@@ -159,11 +159,18 @@ class Monitor:
         self.spans[span_id] = span
         return span_id
 
-    def complete_span(self, span_id: int) -> None:
+    def complete_span(self, span_id: int, skip_children_check: bool = False) -> None:
         """Mark a span as complete.
 
         After completing, checks if parent is FIRE_AND_FORGET and all siblings
         are complete - if so, completes the parent too (recursively).
+
+        Args:
+            span_id: The span to complete.
+            skip_children_check: If True, don't require children to be complete first.
+                Used for instructions like IdentQuery where the lamlet completes the
+                kinstr when it receives the response, even though kinstr_exec spans
+                may still be running.
         """
         if not self.enabled:
             return
@@ -173,16 +180,17 @@ class Monitor:
         assert span.completed_cycle is None, f"Span {span_id} already completed"
 
         # Verify all children are complete before completing this span
-        for child_ref in span.children:
-            child_span = self.spans.get(child_ref.span_id)
-            assert child_span is not None, \
-                f"Child span {child_ref.span_id} not found when completing span {span_id}"
-            if not child_span.is_complete():
-                hierarchy = self.format_span_tree(span_id)
-                assert False, \
-                    f"Cannot complete span {span_id} ({span.span_type.value}): " \
-                    f"child {child_ref.span_id} ({child_span.span_type.value}) is not complete. " \
-                    f"Child details: {child_span.details}\n\nSpan hierarchy:\n{hierarchy}"
+        if not skip_children_check:
+            for child_ref in span.children:
+                child_span = self.spans.get(child_ref.span_id)
+                assert child_span is not None, \
+                    f"Child span {child_ref.span_id} not found when completing span {span_id}"
+                if not child_span.is_complete():
+                    hierarchy = self.format_span_tree(span_id)
+                    assert False, \
+                        f"Cannot complete span {span_id} ({span.span_type.value}): " \
+                        f"child {child_ref.span_id} ({child_span.span_type.value}) is not complete. " \
+                        f"Child details: {child_span.details}\n\nSpan hierarchy:\n{hierarchy}"
 
         # Verify all dependencies are complete before completing this span
         for dep_ref in span.depends_on:
@@ -325,14 +333,6 @@ class Monitor:
     def get_kinstr_exec_span_id(self, instr_ident: int, kamlet_x: int, kamlet_y: int) -> int | None:
         """Look up the span_id for a kinstr_exec by its key."""
         return self._kinstr_exec_by_key.get((instr_ident, kamlet_x, kamlet_y))
-
-    def complete_kinstr_exec(self, instr_ident: int, kamlet_x: int, kamlet_y: int) -> None:
-        """Complete a kinstr_exec directly (for instructions that complete without witems)."""
-        if not self.enabled:
-            return
-        key = (instr_ident, kamlet_x, kamlet_y)
-        span_id = self._kinstr_exec_by_key[key]
-        self.complete_span(span_id)
 
     def get_oldest_active_instr_ident(self) -> int | None:
         """Get the instr_ident of the oldest active kinstr.
@@ -550,39 +550,83 @@ class Monitor:
         self._message_by_key[key] = span_id
         return span_id
 
+    def _tag_from_header(self, header: 'IdentHeader') -> int | None:
+        """Extract tag from header."""
+        if hasattr(header, 'address'):
+            return header.address * self.params.j_in_k // self.params.cache_line_bytes
+        elif hasattr(header, 'tag'):
+            return header.tag
+        else:
+            return None
+
+    def _message_key_from_header(self, header: 'IdentHeader',
+                                  dst_x: int | None = None,
+                                  dst_y: int | None = None) -> tuple:
+        """Build message key from header.
+
+        For broadcast messages, dst_x and dst_y must be passed explicitly.
+        For non-broadcast messages, uses header.target_x/y (and asserts they match if passed).
+        """
+        from zamlet.message import SendType
+        if header.send_type == SendType.BROADCAST:
+            assert dst_x is not None and dst_y is not None, \
+                "dst_x and dst_y must be passed for broadcast messages"
+        else:
+            if dst_x is not None or dst_y is not None:
+                assert dst_x == header.target_x and dst_y == header.target_y, \
+                    f"dst ({dst_x}, {dst_y}) doesn't match header target " \
+                    f"({header.target_x}, {header.target_y})"
+            dst_x = header.target_x
+            dst_y = header.target_y
+        tag = self._tag_from_header(header)
+        return self._message_key(
+            header.ident, tag,
+            header.source_x, header.source_y,
+            dst_x, dst_y,
+            header.message_type.name)
+
+    def get_message_span_id_by_header(self, header: 'IdentHeader',
+                                       dst_x: int | None = None,
+                                       dst_y: int | None = None) -> int | None:
+        """Look up a message span_id by header.
+
+        For broadcast messages, dst_x and dst_y must be passed explicitly.
+        For non-broadcast messages, uses header.target_x/y (and asserts they match if passed).
+        """
+        if not self.enabled:
+            return None
+        key = self._message_key_from_header(header, dst_x, dst_y)
+        return self._message_by_key.get(key)
+
     def record_message_received(self, ident: int, src_x: int, src_y: int,
                                  dst_x: int, dst_y: int,
                                  message_type: str = None) -> None:
         """Record a simple message (no tag) being received. Completes the MESSAGE span."""
         if not self.enabled:
             return
-        self._complete_message(ident, None, src_x, src_y, dst_x, dst_y, message_type)
+        key = self._message_key(ident, None, src_x, src_y, dst_x, dst_y, message_type)
+        self._complete_message(key)
 
-    def record_message_received_by_header(self, header, dst_x: int, dst_y: int) -> None:
-        """Record a cache/tagged message being received. Completes the MESSAGE span."""
+    def record_message_received_by_header(self, header,
+                                          dst_x: int | None = None,
+                                          dst_y: int | None = None) -> None:
+        """Record a cache/tagged message being received. Completes the MESSAGE span.
+
+        For broadcast messages, dst_x and dst_y must be passed explicitly.
+        For non-broadcast messages, uses header.target_x/y (and asserts they match if passed).
+        """
         if not self.enabled:
             return
+        key = self._message_key_from_header(header, dst_x, dst_y)
+        self._complete_message(key)
 
-        if hasattr(header, 'address'):
-            tag = header.address * self.params.j_in_k // self.params.cache_line_bytes
-        else:
-            tag = header.tag
-        self._complete_message(
-            header.ident, tag, header.source_x, header.source_y, dst_x, dst_y,
-            header.message_type.name)
-
-    def _complete_message(self, ident: int, tag: int | None,
-                          src_x: int, src_y: int, dst_x: int, dst_y: int,
-                          message_type: str) -> None:
+    def _complete_message(self, key: tuple) -> None:
         """Complete a message span by key."""
-        key = self._message_key(ident, tag, src_x, src_y, dst_x, dst_y, message_type)
-        logger.debug(
-            f'{self.clock.cycle}: _complete_message: message_type={message_type} '
-            f'ident={ident} tag={tag} src=({src_x},{src_y}) dst=({dst_x},{dst_y}) key={key}')
+        logger.debug(f"{self.clock.cycle}: _complete_message: key={key}")
         span_id = self._message_by_key.pop(key, None)
         assert span_id is not None, \
-            f"Message received but no span found for message_type={message_type} " \
-            f"key={key}. Available keys: {list(self._message_by_key.keys())}"
+            f"Message received but no span found for key={key}. " \
+            f"Available keys: {list(self._message_by_key.keys())}"
         self.complete_span(span_id)
 
     def complete_transaction(self, ident: int, tag: int | None,

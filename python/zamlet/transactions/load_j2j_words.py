@@ -247,6 +247,15 @@ def handle_resp(jamlet, packet: List[Any]) -> None:
     response_tag = jamlet.j_in_k_index * jamlet.params.word_bytes + header.tag
     assert item.protocol_states[response_tag].src_state == SendState.WAITING_FOR_RESPONSE
     item.protocol_states[response_tag].src_state = SendState.COMPLETE
+    # Complete the transaction
+    jamlet.monitor.complete_transaction(
+        ident=header.ident,
+        tag=header.tag,
+        src_x=jamlet.x,
+        src_y=jamlet.y,
+        dst_x=header.source_x,
+        dst_y=header.source_y,
+    )
 
 
 @register_handler(MessageType.LOAD_J2J_WORDS_DROP)

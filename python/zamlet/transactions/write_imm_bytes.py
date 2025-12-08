@@ -13,7 +13,9 @@ Flow:
 '''
 from typing import TYPE_CHECKING
 import logging
+from dataclasses import dataclass
 
+from zamlet.addresses import KMAddr
 from zamlet.waiting_item import WaitingItemRequiresCache
 from zamlet.kamlet import kinstructions
 
@@ -24,11 +26,51 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+@dataclass
+class WriteImmBytes(kinstructions.KInstr):
+    """
+    This instruction writes an immediate to the VPU memory.
+    The scalar processor does not receive a response.
+    """
+    k_maddr: KMAddr
+    imm: bytes
+    instr_ident: int
+
+    async def update_kamlet(self, kamlet):
+        """
+        Writes bytes to memory.
+        They must all be within one word.
+        It first makes sure that we've got the cache line ready.
+        """
+        can_write = kamlet.cache_table.can_write(self.k_maddr)
+        logger.debug(
+            f'{kamlet.clock.cycle}: WriteImmBytes ident={self.instr_ident} '
+            f'kamlet=({kamlet.min_x},{kamlet.min_y}) can_write={can_write}')
+        if not can_write:
+            witem = WaitingWriteImmBytes(self)
+            logger.debug(
+                f'{kamlet.clock.cycle}: WriteImmBytes ident={self.instr_ident} '
+                f'creating witem, calling record_witem_created')
+            kamlet.monitor.record_witem_created(
+                self.instr_ident, kamlet.min_x, kamlet.min_y, 'WaitingWriteImmBytes')
+            logger.debug(
+                f'{kamlet.clock.cycle}: WriteImmBytes ident={self.instr_ident} '
+                f'witem recorded, calling add_witem')
+            await kamlet.cache_table.add_witem(witem, self.k_maddr)
+            logger.debug(
+                f'{kamlet.clock.cycle}: WriteImmBytes ident={self.instr_ident} '
+                f'add_witem returned')
+        else:
+            do_write_imm_bytes(kamlet, self)
+            kamlet.monitor.finalize_kinstr_exec(self.instr_ident, kamlet.min_x, kamlet.min_y)
+
+
+
 class WaitingWriteImmBytes(WaitingItemRequiresCache):
 
     cache_is_write = True
 
-    def __init__(self, instr: kinstructions.WriteImmBytes):
+    def __init__(self, instr: WriteImmBytes):
         super().__init__(item=instr, instr_ident=instr.instr_ident)
 
     def ready(self) -> bool:
@@ -36,11 +78,11 @@ class WaitingWriteImmBytes(WaitingItemRequiresCache):
 
     async def finalize(self, kamlet: 'Kamlet') -> None:
         instr = self.item
-        assert isinstance(instr, kinstructions.WriteImmBytes)
+        assert isinstance(instr, WriteImmBytes)
         do_write_imm_bytes(kamlet, instr)
 
 
-def do_write_imm_bytes(kamlet: 'Kamlet', instr: kinstructions.WriteImmBytes) -> None:
+def do_write_imm_bytes(kamlet: 'Kamlet', instr: WriteImmBytes) -> None:
     """
     Write immediate bytes to cache.
 

@@ -36,6 +36,8 @@ from zamlet.kamlet import kinstructions
 from zamlet.transactions.load_stride import LoadStride
 from zamlet.transactions.store_stride import StoreStride
 from zamlet.transactions.ident_query import IdentQuery
+from zamlet.transactions.write_imm_bytes import WriteImmBytes
+from zamlet.transactions.read_byte import ReadByte
 from zamlet.lamlet.scalar import ScalarState
 from zamlet import utils
 import zamlet.disasm_trace as dt
@@ -267,7 +269,7 @@ class Lamlet:
     async def write_bytes(self, address: GlobalAddress, value: bytes):
         k_maddr = self.to_k_maddr(address)
         instr_ident = await self.get_instr_ident()
-        kinstr = kinstructions.WriteImmBytes(
+        kinstr = WriteImmBytes(
             k_maddr=k_maddr,
             imm=value,
             instr_ident=instr_ident,
@@ -286,7 +288,7 @@ class Lamlet:
         future = self.clock.create_future()
         witem = WaitingFuture(future=future, instr_ident=instr_ident)
         await self.add_witem(witem)
-        kinstr = kinstructions.ReadByte(
+        kinstr = ReadByte(
             k_maddr=k_maddr,
             instr_ident=instr_ident,
             )
@@ -499,6 +501,9 @@ class Lamlet:
         assert isinstance(header, Header)
         assert header.length == len(packet)
 
+        # Get message span_id before completing it (completing may trigger parent auto-complete)
+        message_span_id = self.monitor.get_message_span_id_by_header(header)
+
         # Record message received for all channel 0 responses
         self.monitor.record_message_received(
             header.ident,
@@ -524,10 +529,14 @@ class Lamlet:
             self.monitor.complete_kinstr(header.ident)
             logger.debug(f'{self.clock.cycle}: lamlet: Got a READ_WORDS_RESP from ({header.source_x, header.source_y}) is {packet[1:]}')
         elif header.message_type == MessageType.IDENT_QUERY_RESP:
+            # Get kinstr span_id from message span (message already completed above,
+            # which may have auto-completed the kinstr and removed it from lookup)
+            message_span = self.monitor.get_span(message_span_id)
+            kinstr_span_id = message_span.parent.span_id if message_span.parent else None
             assert len(packet) == 2, f"packet len {len(packet)}"
             assert header.ident == self._ident_query_ident
             min_distance = int.from_bytes(packet[1], byteorder='little')
-            self._receive_ident_query_response(min_distance)
+            self._receive_ident_query_response(min_distance, kinstr_span_id)
         else:
             raise NotImplementedError(f"Unexpected channel 0 message: {header.message_type}")
 
@@ -587,7 +596,7 @@ class Lamlet:
         """Handle READ_MEM_WORD_REQ: read from scalar memory and send response."""
         wb = self.params.word_bytes
         word_addr = scalar_addr - (scalar_addr % wb)
-        data = bytes(self.scalar.memory.get(word_addr + i, 0) for i in range(wb))
+        data = bytes(self.scalar.memory.get(scalar_addr + i, 0) for i in range(wb))
         resp_header = TaggedHeader(
             target_x=header.source_x,
             target_y=header.source_y,
@@ -604,13 +613,16 @@ class Lamlet:
         # Look up transaction (requester is source, we are dest at (0, -1))
         transaction_span_id = self.monitor.get_transaction_span_id(
             header.ident, header.tag, header.source_x, header.source_y, 0, -1)
-        if transaction_span_id is not None:
-            self.monitor.record_message_sent(
-                transaction_span_id, MessageType.READ_MEM_WORD_RESP.name,
-                ident=header.ident, tag=header.tag,
-                src_x=0, src_y=-1,
-                dst_x=header.source_x, dst_y=header.source_y,
-            )
+        assert transaction_span_id is not None
+        self.monitor.add_event(
+            transaction_span_id,
+            f'scalar_read addr=0x{scalar_addr:x}, word_addr=0x{word_addr:x}, data={data.hex()}')
+        self.monitor.record_message_sent(
+            transaction_span_id, MessageType.READ_MEM_WORD_RESP.name,
+            ident=header.ident, tag=header.tag,
+            src_x=0, src_y=-1,
+            dst_x=header.source_x, dst_y=header.source_y,
+        )
         await self.send_packet(packet, jamlet, Direction.N, port=0)
         logger.debug(
             f'{self.clock.cycle}: lamlet: READ_MEM_WORD_REQ addr=0x{scalar_addr:x} '
@@ -781,13 +793,14 @@ class Lamlet:
         is_broadcast = k_index is None
         if is_broadcast:
             send_type = SendType.BROADCAST
-            k_index = self.params.k_in_l - 1
+            x = self.params.k_cols * self.params.j_cols - 1
+            y = self.params.k_rows * self.params.j_rows - 1
         else:
             send_type = SendType.SINGLE
-        k_x = k_index % self.params.k_cols
-        k_y = k_index // self.params.k_cols
-        x = self.min_x + k_x * self.params.j_cols
-        y = self.min_y + k_y * self.params.j_rows
+            k_x = k_index % self.params.k_cols
+            k_y = k_index // self.params.k_cols
+            x = self.min_x + k_x * self.params.j_cols
+            y = self.min_y + k_y * self.params.j_rows
         header = Header(
             target_x=x,
             target_y=y,
@@ -802,37 +815,37 @@ class Lamlet:
         logger.debug(f'Sending instructions to {k_index} ({send_type.name}), -> ({x}, {y})')
         # Create kinstr_exec items for each kamlet that receives the instruction
         for instr in instructions:
-            if instr.instr_ident is not None:
-                if is_broadcast:
-                    for kamlet in self.kamlets:
-                        self.monitor.record_kinstr_exec_created(
-                            instr, kamlet.min_x, kamlet.min_y)
-                        # Record the instruction message to this kamlet
-                        kinstr_exec_span_id = self.monitor.get_kinstr_exec_span_id(
-                            instr.instr_ident, kamlet.min_x, kamlet.min_y)
+            assert instr.instr_ident is not None
+            if is_broadcast:
+                for kamlet in self.kamlets:
+                    self.monitor.record_kinstr_exec_created(
+                        instr, kamlet.min_x, kamlet.min_y)
+                    kinstr_exec_span_id = self.monitor.get_kinstr_exec_span_id(
+                        instr.instr_ident, kamlet.min_x, kamlet.min_y)
+                    # Record message for each jamlet in the kamlet
+                    for jamlet in kamlet.jamlets:
                         self.monitor.record_message_sent(
                             kinstr_exec_span_id, 'INSTRUCTION',
                             instr.instr_ident, None,
                             self.instr_x, self.instr_y,
-                            kamlet.min_x, kamlet.min_y)
-                else:
-                    kamlet = self.kamlets[k_index]
-                    self.monitor.record_kinstr_exec_created(
-                        instr, kamlet.min_x, kamlet.min_y)
-                    # Record the instruction message to this kamlet
-                    kinstr_exec_span_id = self.monitor.get_kinstr_exec_span_id(
-                        instr.instr_ident, kamlet.min_x, kamlet.min_y)
-                    self.monitor.record_message_sent(
-                        kinstr_exec_span_id, 'INSTRUCTION',
-                        instr.instr_ident, None,
-                        self.instr_x, self.instr_y,
-                        kamlet.min_x, kamlet.min_y)
-                # All kinstr_exec children created - finalize (if FIRE_AND_FORGET)
+                            jamlet.x, jamlet.y)
+            else:
+                kamlet = self.kamlets[k_index]
+                self.monitor.record_kinstr_exec_created(
+                    instr, kamlet.min_x, kamlet.min_y)
+                kinstr_exec_span_id = self.monitor.get_kinstr_exec_span_id(
+                    instr.instr_ident, kamlet.min_x, kamlet.min_y)
+                self.monitor.record_message_sent(
+                    kinstr_exec_span_id, 'INSTRUCTION',
+                    instr.instr_ident, None,
+                    self.instr_x, self.instr_y,
+                    kamlet.min_x, kamlet.min_y)
+            # Finalize kinstr children if FIRE_AND_FORGET and finalize_after_send
+            if instr.finalize_after_send:
                 kinstr_span_id = self.monitor.get_kinstr_span_id(instr.instr_ident)
-                if kinstr_span_id is not None:
-                    kinstr_item = self.monitor.get_span(kinstr_span_id)
-                    if kinstr_item.completion_type == CompletionType.FIRE_AND_FORGET:
-                        self.monitor.finalize_children(kinstr_span_id)
+                kinstr_item = self.monitor.get_span(kinstr_span_id)
+                if kinstr_item.completion_type == CompletionType.FIRE_AND_FORGET:
+                    self.monitor.finalize_children(kinstr_span_id)
         await self.send_packet(packet, jamlet, Direction.N, port=0)
 
     async def send_packet(self, packet, jamlet, direction, port):
@@ -1136,8 +1149,12 @@ class Lamlet:
                      f'lamlet_dist={self._ident_query_lamlet_dist}')
         return kinstr
 
-    def _receive_ident_query_response(self, kamlet_min_distance: int):
-        """Process ident query response. Called from message handler."""
+    def _receive_ident_query_response(self, kamlet_min_distance: int, query_span_id: int):
+        """Process ident query response. Called from message handler.
+
+        query_span_id is passed in because the kinstr will be removed from the
+        lookup table when completed.
+        """
         assert self._ident_query_state == RefreshState.WAITING_FOR_RESPONSE
 
         max_tags = self.params.max_response_tags
@@ -1168,12 +1185,6 @@ class Lamlet:
 
         self._ident_query_state = RefreshState.DORMANT
 
-        # Get query span_id before completing (completing removes from lookup table)
-        query_span_id = self.monitor.get_kinstr_span_id(self._ident_query_ident)
-
-        # Complete the IdentQuery kinstr before validation check
-        self.monitor.complete_span(query_span_id)
-
         if self.monitor.enabled:
             # Only check kinstrs created before the query (span_id < query_span_id)
             monitor_oldest = self.monitor.get_oldest_active_instr_ident()
@@ -1187,7 +1198,7 @@ class Lamlet:
                     monitor_distance = (monitor_oldest - baseline) % max_tags
             if monitor_distance < min_distance:
                 span_id = self.monitor.get_kinstr_span_id(monitor_oldest)
-                dump = self.monitor.dump_span(span_id) if span_id else f"no span_id for {monitor_oldest}"
+                dump = self.monitor.format_span_tree(span_id) if span_id else f"no span_id for {monitor_oldest}"
                 assert False, \
                     f"Monitor older than lamlet: monitor={monitor_oldest} (dist={monitor_distance}) " \
                     f"lamlet={self._oldest_active_ident} (dist={min_distance})\n{dump}"
@@ -1209,6 +1220,16 @@ class Lamlet:
                      f'lamlet_dist={lamlet_min_distance} min_distance={min_distance} '
                      f'oldest_active={self._oldest_active_ident} '
                      f'available_tokens={self._available_tokens}')
+
+        # Complete the IdentQuery kinstr span and its kinstr_exec children.
+        # IdentQuery is special - when the response arrives, we force-complete all
+        # kinstr_exec spans since they may still have pending MESSAGE children.
+        kinstr_span = self.monitor.get_span(query_span_id)
+        for child_ref in kinstr_span.children:
+            child_span = self.monitor.get_span(child_ref.span_id)
+            if not child_span.is_complete():
+                self.monitor.complete_span(child_ref.span_id, skip_children_check=True)
+        self.monitor.complete_span(query_span_id)
 
     async def _monitor_ident_query(self):
         """Coroutine to manage the ident query state machine.

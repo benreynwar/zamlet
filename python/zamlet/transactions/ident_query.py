@@ -30,10 +30,20 @@ class IdentQuery(TrackedKInstr):
 
     Each kamlet computes the distance from baseline to its oldest active ident,
     synchronizes to find the minimum, and kamlet (0,0) sends the result to lamlet.
+
+    Uses TrackedKInstr because the lamlet explicitly completes the kinstr when
+    it receives the response. Overrides can_complete_before_children because the
+    response can arrive before all kamlets have finished processing (due to sync
+    timing differences).
     """
     instr_ident: int  # Used for both sync and response (set to max_response_tags)
     baseline: int     # next_instr_ident at time of query
     previous_instr_ident: int  # instr_ident of instruction ahead in queue
+
+    @property
+    def finalize_after_send(self) -> bool:
+        # Don't finalize after send - the response message will be added as a child
+        return False
 
     async def update_kamlet(self, kamlet: 'Kamlet'):
         distance = kamlet.cache_table.get_oldest_active_instr_ident_distance(self.baseline)

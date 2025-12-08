@@ -19,8 +19,8 @@ from zamlet.transactions.store_simple import WaitingStoreSimple, do_store_simple
 from zamlet.transactions import load_word, store_word
 from zamlet.transactions.load_word import WaitingLoadWordSrc, WaitingLoadWordDst
 from zamlet.transactions.store_word import WaitingStoreWordSrc, WaitingStoreWordDst
-from zamlet.transactions.write_imm_bytes import WaitingWriteImmBytes, do_write_imm_bytes
-from zamlet.transactions.read_byte import WaitingReadByte, do_read_byte
+from zamlet.transactions.write_imm_bytes import WaitingWriteImmBytes
+from zamlet.transactions.read_byte import WaitingReadByte
 from zamlet.monitor import Monitor
 
 
@@ -248,39 +248,13 @@ class Kamlet:
 
         await self._queue_cache_request(packet, cache_slot)
 
-    async def handle_write_imm_bytes_instr(self, instr: kinstructions.WriteImmBytes):
-        """
-        Writes bytes to memory.
-        They must all be within one word.
-        It first makes sure that we've got the cache line ready.
-        """
-        if not self.cache_table.can_write(instr.k_maddr):
-            witem = WaitingWriteImmBytes(instr)
-            self.monitor.record_witem_created(
-                instr.instr_ident, self.min_x, self.min_y, 'WaitingWriteImmBytes')
-            await self.cache_table.add_witem(witem, instr.k_maddr)
-        else:
-            do_write_imm_bytes(self, instr)
-            self.monitor.complete_kinstr_exec(instr.instr_ident, self.min_x, self.min_y)
-
-    async def handle_read_byte_instr(self, instr: kinstructions.ReadByte):
-        can_read = self.cache_table.can_read(instr.k_maddr)
-        if not can_read:
-            witem = WaitingReadByte(instr)
-            self.monitor.record_witem_created(
-                instr.instr_ident, self.min_x, self.min_y, 'WaitingReadByte')
-            await self.cache_table.add_witem(witem=witem, k_maddr=instr.k_maddr)
-        else:
-            await do_read_byte(self, instr)
-            self.monitor.complete_kinstr_exec(instr.instr_ident, self.min_x, self.min_y)
-
     async def handle_load_word_instr(self, instr: kinstructions.LoadWord):
         """Handle LoadWord instruction - load partial word from cache to register."""
         is_src_kamlet = (instr.src.k_index == self.k_index)
         is_dst_kamlet = (instr.dst.k_index == self.k_index)
 
         if not (is_src_kamlet or is_dst_kamlet):
-            self.monitor.complete_kinstr_exec(instr.instr_ident, self.min_x, self.min_y)
+            self.monitor.finalize_kinstr_exec(instr.instr_ident, self.min_x, self.min_y)
             return
 
         if is_src_kamlet:
@@ -313,7 +287,7 @@ class Kamlet:
         is_dst_kamlet = (instr.dst.k_index == self.k_index)
 
         if not (is_src_kamlet or is_dst_kamlet):
-            self.monitor.complete_kinstr_exec(instr.instr_ident, self.min_x, self.min_y)
+            self.monitor.finalize_kinstr_exec(instr.instr_ident, self.min_x, self.min_y)
             return
 
         if is_src_kamlet:
@@ -396,7 +370,7 @@ class Kamlet:
             for jamlet in self.jamlets:
                 do_load_simple(jamlet, instr)
             self.rf_info.finish(rf_ident, write_regs=dst_regs, read_regs=read_regs)
-            self.monitor.complete_kinstr_exec(instr.instr_ident, self.min_x, self.min_y)
+            self.monitor.finalize_kinstr_exec(instr.instr_ident, self.min_x, self.min_y)
         else:
             witem = WaitingLoadSimple(instr=instr, rf_ident=rf_ident)
             self.monitor.record_witem_created(
@@ -458,7 +432,7 @@ class Kamlet:
             cache_state = self.cache_table.get_state(instr.k_maddr)
             cache_state.state = cache_table.CacheState.MODIFIED
             self.rf_info.finish(rf_read_ident, read_regs=read_regs)
-            self.monitor.complete_kinstr_exec(instr.instr_ident, self.min_x, self.min_y)
+            self.monitor.finalize_kinstr_exec(instr.instr_ident, self.min_x, self.min_y)
         else:
             witem = WaitingStoreSimple(instr=instr, rf_ident=rf_read_ident)
             self.monitor.record_witem_created(

@@ -263,13 +263,11 @@ class Jamlet:
                 self._instruction_buffer.append(word)
                 remaining -= 1
                 # Record instruction message received (word is a KInstr)
-                instr_ident = getattr(word, 'instr_ident', None)
-                if instr_ident is not None:
-                    self.monitor.record_message_received(
-                        instr_ident,
-                        header.source_x, header.source_y,
-                        self.k_min_x, self.k_min_y,
-                        message_type='INSTRUCTION')
+                self.monitor.record_message_received(
+                    word.instr_ident,
+                    header.source_x, header.source_y,
+                    self.x, self.y,
+                    message_type='INSTRUCTION')
 
     async def _receive_read_line_resp_packet(self, header, queue):
         # The packet should say where to put the data.

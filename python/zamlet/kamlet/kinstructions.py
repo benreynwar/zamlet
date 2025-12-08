@@ -42,6 +42,15 @@ class VRedOp(Enum):
 
 
 class KInstr:
+    @property
+    def finalize_after_send(self) -> bool:
+        """Whether to finalize children after sending the instruction to kamlets.
+
+        Override to return False if additional children (like response messages)
+        will be added later.
+        """
+        return True
+
     def create_span(self, monitor, parent_span_id: int) -> int:
         """Create a span for this kinstr."""
         return monitor.create_span(
@@ -65,20 +74,6 @@ class TrackedKInstr(KInstr):
             instr_type=type(self).__name__,
             instr_ident=self.instr_ident,
         )
-
-
-@dataclass
-class WriteImmBytes(KInstr):
-    """
-    This instruction writes an immediate to the VPU memory.
-    The scalar processor does not receive a response.
-    """
-    k_maddr: KMAddr
-    imm: bytes
-    instr_ident: int
-
-    async def update_kamlet(self, kamlet):
-        await kamlet.handle_write_imm_bytes_instr(self)
 
 
 @dataclass
@@ -157,32 +152,6 @@ class StoreWord(KInstr):
     async def update_kamlet(self, kamlet):
         await kamlet.handle_store_word_instr(self)
 
-@dataclass
-class ReadByte(TrackedKInstr):
-    """
-    This instruction reads from the VPU memory.
-    The scalar processor receives a response packet.
-    """
-    k_maddr: KMAddr
-    instr_ident: int
-
-    async def update_kamlet(self, kamlet: 'Kamlet'):
-        await kamlet.handle_read_byte_instr(self)
-
-#@dataclass
-#class ReadLine(KInstr):
-#    k_maddr: KMAddr      # An address in the kamlet memory space (~40 bits)  
-#    j_saddr: JSAddr      # An address in the kamlet sram space   (12-16 bit)
-#    n_cache_lines: int   # The number of cache lines to read.    (4 bits)
-#    ident: int           # Used for tagging responses with       (5 bits)
-#    # This is tough to fit in 64 bits with the opcode.
-#    # 38 + 12 + 4 + 5 = 59 bits + 5 for opcode
-#    # So it is doable.  Good for now.
-#
-#    async def update_kamlet(self, kamlet):
-#        logger.debug(f'kamlet ({kamlet.min_x} {kamlet.min_y}): ReadLine')
-#        future = await kamlet.handle_read_line_instruction(self)
-
 
 @dataclass
 class Load(KInstr):
@@ -225,25 +194,6 @@ class Store(KInstr):
 
     async def update_kamlet(self, kamlet):
         await kamlet.handle_store_instr(self)
-
-
-#@dataclass
-#class Store(KInstr):
-#    src: int
-#    j_saddr: JSAddr  # An address in the jamlet sram space
-#    n_vlines: int
-#
-#    async def update_kamlet(self, kamlet):
-#        logger.debug(f'kamlet ({kamlet.min_x} {kamlet.min_y}): Store src=v{self.src}')
-#        params = kamlet.params
-#        bytes_per_jamlet = params.vline_bytes // params.j_in_l * self.n_vlines
-#        vreg_bytes_per_jamlet = params.maxvl_bytes // params.j_in_l
-#        vreg_base_offset = self.src * vreg_bytes_per_jamlet
-#        assert bytes_per_jamlet == vreg_bytes_per_jamlet * self.n_vlines
-#        sram_offset = self.j_saddr.addr
-#        for jamlet in kamlet.jamlets:
-#            #logger.debug(f'storing {[int(x) for x in jamlet.rf_slice[vreg_base_offset: vreg_base_offset + bytes_per_jamlet]]}')
-#            jamlet.sram[sram_offset: sram_offset + bytes_per_jamlet] = jamlet.rf_slice[vreg_base_offset: vreg_base_offset + bytes_per_jamlet]
 
 
 @dataclass
@@ -291,7 +241,7 @@ class VmsleViOp(KInstr):
                     jamlet.rf_slice[dst_byte_addr] |= (1 << dst_bit_offset)
                 else:
                     jamlet.rf_slice[dst_byte_addr] &= ~(1 << dst_bit_offset)
-        kamlet.monitor.complete_kinstr_exec(self.instr_ident, kamlet.min_x, kamlet.min_y)
+        kamlet.monitor.finalize_kinstr_exec(self.instr_ident, kamlet.min_x, kamlet.min_y)
 
 
 @dataclass
@@ -317,7 +267,7 @@ class VmnandMmOp(KInstr):
                 src2_byte = jamlet.rf_slice[self.src2 * wb + byte_offset]
                 result_byte = ~(src1_byte & src2_byte) & 0xff
                 jamlet.rf_slice[self.dst * wb + byte_offset] = result_byte
-        kamlet.monitor.complete_kinstr_exec(self.instr_ident, kamlet.min_x, kamlet.min_y)
+        kamlet.monitor.finalize_kinstr_exec(self.instr_ident, kamlet.min_x, kamlet.min_y)
 
 
 @dataclass
@@ -357,7 +307,7 @@ class VBroadcastOp(KInstr):
                     if valid_element:
                         result_bytes = self.scalar.to_bytes(eb, byteorder='little', signed=True)
                         jamlet.rf_slice[dst_offset + byte_offset:dst_offset + byte_offset + eb] = result_bytes
-        kamlet.monitor.complete_kinstr_exec(self.instr_ident, kamlet.min_x, kamlet.min_y)
+        kamlet.monitor.finalize_kinstr_exec(self.instr_ident, kamlet.min_x, kamlet.min_y)
 
 
 @dataclass
@@ -396,7 +346,7 @@ class VmvVvOp(KInstr):
                     if valid_element:
                         src_bytes = jamlet.rf_slice[src_offset + byte_offset:src_offset + byte_offset + eb]
                         jamlet.rf_slice[dst_offset + byte_offset:dst_offset + byte_offset + eb] = src_bytes
-        kamlet.monitor.complete_kinstr_exec(self.instr_ident, kamlet.min_x, kamlet.min_y)
+        kamlet.monitor.finalize_kinstr_exec(self.instr_ident, kamlet.min_x, kamlet.min_y)
 
 
 @dataclass
@@ -469,7 +419,7 @@ class VArithVvOp(KInstr):
 
                         result_bytes = result.to_bytes(eb, byteorder='little', signed=True)
                         jamlet.rf_slice[dst_offset + byte_offset:dst_offset + byte_offset + eb] = result_bytes
-        kamlet.monitor.complete_kinstr_exec(self.instr_ident, kamlet.min_x, kamlet.min_y)
+        kamlet.monitor.finalize_kinstr_exec(self.instr_ident, kamlet.min_x, kamlet.min_y)
 
 
 @dataclass
@@ -534,7 +484,7 @@ class VArithVxOp(KInstr):
 
                         result_bytes = pack(result)
                         jamlet.rf_slice[dst_offset + byte_offset:dst_offset + byte_offset + eb] = result_bytes
-        kamlet.monitor.complete_kinstr_exec(self.instr_ident, kamlet.min_x, kamlet.min_y)
+        kamlet.monitor.finalize_kinstr_exec(self.instr_ident, kamlet.min_x, kamlet.min_y)
 
 
 @dataclass

@@ -345,6 +345,15 @@ def handle_resp(jamlet, packet: List[Any]) -> None:
         f'actual_state={witem.protocol_states[response_tag].src_state}')
     assert witem.protocol_states[response_tag].src_state == SendState.WAITING_FOR_RESPONSE
     witem.protocol_states[response_tag].src_state = SendState.COMPLETE
+    # Complete the transaction
+    jamlet.monitor.complete_transaction(
+        ident=header.ident,
+        tag=header.tag,
+        src_x=jamlet.x,
+        src_y=jamlet.y,
+        dst_x=header.source_x,
+        dst_y=header.source_y,
+    )
 
 
 @register_handler(MessageType.STORE_J2J_WORDS_DROP)

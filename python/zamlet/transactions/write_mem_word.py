@@ -117,6 +117,14 @@ async def handle_req(jamlet: 'Jamlet', packet: List[Any]) -> None:
         await do_write_and_respond(jamlet, header, j_saddr, data, src_start, dst_start, n_bytes,
                                    existing_witem.cache_slot)
         existing_witem.state = ReceiveState.COMPLETE
+        # Complete the witem span
+        jamlet.monitor.complete_witem(
+            header.ident,
+            jamlet.cache_table.kamlet_x,
+            jamlet.cache_table.kamlet_y,
+            source_x=header.source_x,
+            source_y=header.source_y,
+        )
     elif can_write:
         # Slot exists, state is ready, no clashing witem - write immediately
         j_saddr = addr.to_j_saddr(jamlet.cache_table)
