@@ -35,6 +35,8 @@ from zamlet.runner import Future
 from zamlet.kamlet import kinstructions
 from zamlet.transactions.load_stride import LoadStride
 from zamlet.transactions.store_stride import StoreStride
+from zamlet.transactions.load_indexed import LoadIndexedUnordered
+from zamlet.transactions.store_indexed import StoreIndexedUnordered
 from zamlet.transactions.ident_query import IdentQuery
 from zamlet.transactions.write_imm_bytes import WriteImmBytes
 from zamlet.transactions.read_byte import ReadByte
@@ -1537,6 +1539,90 @@ class Lamlet:
                     writeset_ident=writeset_ident,
                     instr_ident=instr_ident,
                     stride_bytes=stride_bytes,
+                )
+            await self.add_to_instruction_buffer(kinstr, parent_span_id)
+
+    async def vload_indexed(self, vd: int, base_addr: int, index_reg: int, index_ew: int,
+                            data_ew: int, n_elements: int, mask_reg: int | None,
+                            start_index: int, ordered: bool, parent_span_id: int):
+        """Handle indexed vector loads using LoadIndexed instructions.
+
+        Indexed (gather) load: element i is loaded from address (base_addr + index_reg[i]).
+
+        The index register contains offsets (not addresses) with element width index_ew.
+        The data element width comes from SEW (data_ew).
+        """
+        g_addr = GlobalAddress(bit_addr=base_addr * 8, params=self.params)
+        data_ordering = Ordering(word_order=addresses.WordOrder.STANDARD, ew=data_ew)
+        index_ordering = Ordering(word_order=addresses.WordOrder.STANDARD, ew=index_ew)
+
+        writeset_ident = self.get_writeset_ident()
+
+        # Set up register file ordering for destination registers
+        vline_bits = self.params.maxvl_bytes * 8
+        n_vlines = (data_ew * n_elements + vline_bits - 1) // vline_bits
+        for vline_reg in range(vd, vd + n_vlines):
+            self.vrf_ordering[vline_reg] = data_ordering
+
+        # Process in chunks of j_in_l elements (same as strided)
+        j_in_l = self.params.j_in_l
+        for chunk_start in range(0, n_elements, j_in_l):
+            chunk_n = min(j_in_l, n_elements - chunk_start)
+            instr_ident = await self.get_instr_ident(n_idents=self.params.word_bytes + 1)
+
+            if ordered:
+                raise NotImplementedError("Ordered indexed loads not yet implemented")
+            else:
+                kinstr = LoadIndexedUnordered(
+                    dst=vd,
+                    g_addr=g_addr,
+                    index_reg=index_reg,
+                    index_ordering=index_ordering,
+                    start_index=start_index + chunk_start,
+                    n_elements=chunk_n,
+                    dst_ordering=data_ordering,
+                    mask_reg=mask_reg,
+                    writeset_ident=writeset_ident,
+                    instr_ident=instr_ident,
+                )
+            await self.add_to_instruction_buffer(kinstr, parent_span_id)
+
+    async def vstore_indexed(self, vs: int, base_addr: int, index_reg: int, index_ew: int,
+                             data_ew: int, n_elements: int, mask_reg: int | None,
+                             start_index: int, ordered: bool, parent_span_id: int):
+        """Handle indexed vector stores using StoreIndexed instructions.
+
+        Indexed (scatter) store: element i is stored to address (base_addr + index_reg[i]).
+
+        The index register contains offsets (not addresses) with element width index_ew.
+        The data element width comes from SEW (data_ew).
+        """
+        g_addr = GlobalAddress(bit_addr=base_addr * 8, params=self.params)
+        data_ordering = Ordering(word_order=addresses.WordOrder.STANDARD, ew=data_ew)
+        index_ordering = Ordering(word_order=addresses.WordOrder.STANDARD, ew=index_ew)
+
+        writeset_ident = self.get_writeset_ident()
+
+        # Process in chunks of j_in_l elements (same as strided)
+        j_in_l = self.params.j_in_l
+        for chunk_start in range(0, n_elements, j_in_l):
+            chunk_n = min(j_in_l, n_elements - chunk_start)
+            instr_ident = await self.get_instr_ident(n_idents=self.params.word_bytes + 1)
+
+            if ordered:
+                raise NotImplementedError("Ordered indexed stores not yet implemented")
+            else:
+                kinstr = StoreIndexedUnordered(
+                    src=vs,
+                    g_addr=g_addr,
+                    index_reg=index_reg,
+                    index_ordering=index_ordering,
+                    start_index=start_index + chunk_start,
+                    n_elements=chunk_n,
+                    src_ordering=data_ordering,
+                    mask_reg=mask_reg,
+                    writeset_ident=writeset_ident,
+                    instr_ident=instr_ident,
                 )
             await self.add_to_instruction_buffer(kinstr, parent_span_id)
 

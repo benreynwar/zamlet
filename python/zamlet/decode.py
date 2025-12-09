@@ -370,10 +370,18 @@ def decode_standard(instruction_bytes: bytes) -> Instruction:
             else:
                 # Segment load (vlseg*.v) - nf+1 fields
                 return V.VlsegV(vd=rd, rs1=rs1, vm=vm, element_width=ew, nf=nf + 1)
+        elif mop == 0x1 and width in width_map:
+            # Indexed-unordered load (vluxei*.v)
+            index_ew = width_map[width]
+            return V.VIndexedLoad(vd=rd, rs1=rs1, vs2=rs2, vm=vm, index_width=index_ew, ordered=False)
         elif mop == 0x2 and width in width_map:
             # Constant-stride load (vlse*.v)
             ew = width_map[width]
             return V.VlseV(vd=rd, rs1=rs1, rs2=rs2, vm=vm, element_width=ew)
+        elif mop == 0x3 and width in width_map:
+            # Indexed-ordered load (vloxei*.v)
+            index_ew = width_map[width]
+            return V.VIndexedLoad(vd=rd, rs1=rs1, vs2=rs2, vm=vm, index_width=index_ew, ordered=True)
         elif width == 0x2:
             return F.Flw(fd=rd, rs1=rs1, imm=decode_i_imm(inst))
         elif width == 0x3:
@@ -446,10 +454,18 @@ def decode_standard(instruction_bytes: bytes) -> Instruction:
             else:
                 # Segment store (vsseg*.v) - nf+1 fields
                 return V.VssegV(vs3=vs3, rs1=rs1, vm=vm, element_width=ew, nf=nf + 1)
+        elif mop == 0x1 and width in width_map:
+            # Indexed-unordered store (vsuxei*.v)
+            index_ew = width_map[width]
+            return V.VIndexedStore(vs3=vs3, rs1=rs1, vs2=rs2, vm=vm, index_width=index_ew, ordered=False)
         elif mop == 0x2 and width in width_map:
             # Constant-stride store (vsse*.v)
             ew = width_map[width]
             return V.VsseV(vs3=vs3, rs1=rs1, rs2=rs2, vm=vm, element_width=ew)
+        elif mop == 0x3 and width in width_map:
+            # Indexed-ordered store (vsoxei*.v)
+            index_ew = width_map[width]
+            return V.VIndexedStore(vs3=vs3, rs1=rs1, vs2=rs2, vm=vm, index_width=index_ew, ordered=True)
         elif width == 0x2:
             return F.Fsw(rs2=rs2, rs1=rs1, imm=decode_s_imm(inst))
         elif width == 0x3:

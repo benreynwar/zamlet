@@ -838,3 +838,93 @@ class VArithVx:
         )
         await s.add_to_instruction_buffer(kinstr, span_id)
         s.pc += 4
+
+
+@dataclass
+class VIndexedLoad:
+    """Vector Load Indexed (vluxei/vloxei).
+
+    Indexed (gather) load of elements from memory into a vector register.
+    Element i is loaded from address (rs1 + vs2[i]).
+
+    The index width (8/16/32/64) is encoded in the instruction.
+    The data width comes from SEW in vtype.
+
+    Reference: riscv-isa-manual/src/v-st-ext.adoc lines 1651-1679
+    """
+    vd: int
+    rs1: int
+    vs2: int
+    vm: int
+    index_width: int
+    ordered: bool
+
+    def __str__(self):
+        vm_str = '' if self.vm else ',v0.t'
+        op = 'vloxei' if self.ordered else 'vluxei'
+        return f'{op}{self.index_width}.v\tv{self.vd},({reg_name(self.rs1)}),v{self.vs2}{vm_str}'
+
+    async def update_state(self, s: 'Lamlet'):
+        await s.scalar.wait_all_regs_ready(None, None, [self.rs1], [])
+        rs1_bytes = s.scalar.read_reg(self.rs1)
+        base_addr = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
+        mask_reg = None if self.vm else 0
+        span_id = s.monitor.create_span(
+            span_type=SpanType.RISCV_INSTR,
+            component="lamlet",
+            completion_type=CompletionType.FIRE_AND_FORGET,
+            mnemonic=str(self),
+            pc=s.pc,
+        )
+        vsew = (s.vtype >> 3) & 0x7
+        data_ew = 8 << vsew
+        await s.vload_indexed(
+            self.vd, base_addr, self.vs2, self.index_width, data_ew,
+            s.vl, mask_reg, s.vstart, ordered=self.ordered, parent_span_id=span_id
+        )
+        s.pc += 4
+
+
+@dataclass
+class VIndexedStore:
+    """Vector Store Indexed (vsuxei/vsoxei).
+
+    Indexed (scatter) store of elements from vector register to memory.
+    Element i is stored to address (rs1 + vs2[i]).
+
+    The index width (8/16/32/64) is encoded in the instruction.
+    The data width comes from SEW in vtype.
+
+    Reference: riscv-isa-manual/src/v-st-ext.adoc lines 1651-1679
+    """
+    vs3: int
+    rs1: int
+    vs2: int
+    vm: int
+    index_width: int
+    ordered: bool
+
+    def __str__(self):
+        vm_str = '' if self.vm else ',v0.t'
+        op = 'vsoxei' if self.ordered else 'vsuxei'
+        return f'{op}{self.index_width}.v\tv{self.vs3},({reg_name(self.rs1)}),v{self.vs2}{vm_str}'
+
+    async def update_state(self, s: 'Lamlet'):
+        await s.scalar.wait_all_regs_ready(None, None, [self.rs1], [])
+        rs1_bytes = s.scalar.read_reg(self.rs1)
+        base_addr = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
+        mask_reg = None if self.vm else 0
+        span_id = s.monitor.create_span(
+            span_type=SpanType.RISCV_INSTR,
+            component="lamlet",
+            completion_type=CompletionType.FIRE_AND_FORGET,
+            mnemonic=str(self),
+            pc=s.pc,
+        )
+        vsew = (s.vtype >> 3) & 0x7
+        data_ew = 8 << vsew
+        await s.vstore_indexed(
+            self.vs3, base_addr, self.vs2, self.index_width, data_ew,
+            s.vl, mask_reg, s.vstart, ordered=self.ordered, parent_span_id=span_id
+        )
+        s.pc += 4

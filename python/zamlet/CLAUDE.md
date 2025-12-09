@@ -27,7 +27,7 @@ The same applies to other defensive patterns. If something should exist, assert 
 This is a Python project for experimenting with hardware design. It simulates a RISC-V Vector Processing Unit (VPU). Make liberal use of assert statements - failing with good error messages is useful and should not be avoided. Prefer asserting expected conditions over defensive if-checks that silently handle unexpected states. If something is probably true, assert it and reassess if the assertion fails.
 
 ## Communication Style
-When I ask you to show me something (e.g., grep output, log excerpts), just show it and wait. Don't continue with analysis unless I ask for it.
+When I ask you to show me something (e.g., grep output, log excerpts), just show it and wait. Don't continue with analysis unless I ask for it. Continuing will hide what I asked for behind walls of other output.
 
 ## RISC-V ISA Manual Location
 The RISC-V ISA manual is located at `~/Code/riscv-isa-manual`. The vector extension spec is at:
