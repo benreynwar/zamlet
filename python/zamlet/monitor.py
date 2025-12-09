@@ -33,7 +33,9 @@ class SpanType(Enum):
     SETUP = 'SETUP'                  # Initialization/setup phase span
     FLOW_CONTROL = 'FLOW_CONTROL'    # Flow control span (e.g., ident query)
     TRANSACTION = 'TRANSACTION'      # Sub-transaction (e.g., WriteMemWord)
-    RESOURCE_EXHAUSTED = 'RESOURCE_EXHAUSTED'  # Resource table full (witem slots, cache requests, etc.)
+    RESOURCE_EXHAUSTED = 'RESOURCE_EXHAUSTED'  # Resource table full
+    SYNC = 'SYNC'                    # Global synchronization operation across kamlets
+    SYNC_LOCAL = 'SYNC_LOCAL'        # Local sync participation at a synchronizer
 
 
 class ResourceType(Enum):
@@ -112,6 +114,10 @@ class Monitor:
         self._cache_request_by_key: Dict[tuple, int] = {}
         # resource_exhausted key: (ResourceType, kamlet_x, kamlet_y) -> span_id
         self._resource_exhausted_by_key: Dict[tuple, int] = {}
+        # sync key: sync_ident -> span_id
+        self._sync_by_ident: Dict[int, int] = {}
+        # sync_local key: (sync_ident, x, y) -> span_id
+        self._sync_local_by_key: Dict[tuple, int] = {}
 
         # Input queue stats per jamlet: (x, y) -> {ch0_ready, ch0_consumed, ch1andup_ready, ch1andup_consumed}
         self._input_queue_stats: Dict[tuple, Dict[str, int]] = {}
@@ -290,6 +296,19 @@ class Monitor:
     def get_kinstr_span_id(self, instr_ident: int) -> int | None:
         """Look up the span_id for a kinstr by its instr_ident."""
         return self._kinstr_by_ident.get(instr_ident)
+
+    def get_kinstr_dispatch_cycle(self, instr_ident: int) -> int | None:
+        """Get the cycle when a kinstr was dispatched (sent to kamlets).
+
+        Returns None if not yet dispatched.
+        """
+        span_id = self._kinstr_by_ident[instr_ident]
+        span = self.spans[span_id]
+        dispatch_events = [e for e in span.events if e.event == "dispatched"]
+        assert len(dispatch_events) <= 1
+        if dispatch_events:
+            return dispatch_events[0].cycle
+        return None
 
     def complete_kinstr(self, instr_ident: int) -> None:
         """Complete a kinstr span by its instr_ident."""
@@ -786,6 +805,80 @@ class Monitor:
         self.add_dependency(
             witem_span_id, resource_span_id,
             f"blocked_by_{resource_type.value.lower()}")
+
+    # -------------------------------------------------------------------------
+    # Sync tracking
+    # -------------------------------------------------------------------------
+
+    def record_sync_created(self, sync_ident: int, parent_span_id: int) -> int | None:
+        """Record that a global sync operation has started.
+
+        Creates a SYNC span as a child of the kinstr. Caller should create SYNC_LOCAL children.
+        Returns the global span_id.
+        """
+        if not self.enabled:
+            return None
+
+        global_span_id = self.create_span(
+            span_type=SpanType.SYNC,
+            component="lamlet",
+            completion_type=CompletionType.FIRE_AND_FORGET,
+            parent_span_id=parent_span_id,
+            parent_reason="sync",
+            sync_ident=sync_ident,
+        )
+        self._sync_by_ident[sync_ident] = global_span_id
+        return global_span_id
+
+    def record_sync_local_created(self, sync_ident: int, x: int, y: int,
+                                   parent_span_id: int) -> int | None:
+        """Record a local sync span for a synchronizer."""
+        if not self.enabled:
+            return None
+
+        key = (sync_ident, x, y)
+        local_span_id = self.create_span(
+            span_type=SpanType.SYNC_LOCAL,
+            component=f"synchronizer({x},{y})",
+            completion_type=CompletionType.TRACKED,
+            parent_span_id=parent_span_id,
+            parent_reason="sync_participant",
+            sync_ident=sync_ident,
+        )
+        self._sync_local_by_key[key] = local_span_id
+        return local_span_id
+
+    def finalize_sync_children(self, sync_ident: int) -> None:
+        """Finalize children of the global sync span."""
+        if not self.enabled:
+            return
+        global_span_id = self._sync_by_ident.get(sync_ident)
+        if global_span_id is not None:
+            self.finalize_children(global_span_id)
+
+    def record_sync_local_event(self, sync_ident: int, x: int, y: int,
+                                 value: int | None = None) -> None:
+        """Record that a synchronizer has seen its local event."""
+        if not self.enabled:
+            return
+
+        key = (sync_ident, x, y)
+        span_id = self._sync_local_by_key[key]
+        self.add_event(span_id, "local_event", value=value)
+
+    def record_sync_local_complete(self, sync_ident: int, x: int, y: int,
+                                     min_value: int | None) -> None:
+        """Record that sync completed at a synchronizer."""
+        if not self.enabled:
+            return
+
+        key = (sync_ident, x, y)
+        span_id = self._sync_local_by_key.pop(key)
+        self.spans[span_id].details['min_value'] = min_value
+        self.complete_span(span_id)
+
+        if x == 0 and y == -1:
+            self._sync_by_ident.pop(sync_ident)
 
     def record_rf_blocking(self, instr_ident: int, kamlet_x: int, kamlet_y: int,
                            read_regs, write_regs, rf_info, waiting_items) -> None:

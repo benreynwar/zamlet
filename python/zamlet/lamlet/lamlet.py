@@ -43,8 +43,9 @@ from zamlet.transactions.read_byte import ReadByte
 from zamlet.lamlet.scalar import ScalarState
 from zamlet import utils
 import zamlet.disasm_trace as dt
-from zamlet.synchronization import SyncDirection
+from zamlet.synchronization import SyncDirection, Synchronizer
 from zamlet.monitor import Monitor, CompletionType, ResourceType
+from zamlet.ordered_buffer import OrderedElementBuffer
 
 
 logger = logging.getLogger(__name__)
@@ -182,6 +183,40 @@ class Lamlet:
             MessageType.WRITE_MEM_WORD_RESP: utils.Queue(length=2),
         }
 
+        # Lamlet's synchronizer at position (0, -1), connected to kamlet (0,0)
+        self.synchronizer = Synchronizer(
+            clock=clock,
+            params=params,
+            x=0,
+            y=-1,
+            cache_table=None,  # Lamlet manages its own waiting items
+            monitor=self.monitor,
+        )
+
+        # Ordered element buffers for scalar memory operations
+        # Maps instr_ident -> OrderedElementBuffer
+        self._ordered_buffers: dict[int, OrderedElementBuffer] = {}
+
+    def _has_free_ordered_buffer(self) -> bool:
+        """Check if there's room for another ordered buffer."""
+        return len(self._ordered_buffers) < self.params.l_n_ordered_buffers
+
+    async def _get_ordered_buffer(self, instr_ident: int) -> OrderedElementBuffer:
+        """Get an ordered buffer for this instr_ident, waiting if necessary."""
+        while not self._has_free_ordered_buffer():
+            await self.clock.next_cycle
+        buf = OrderedElementBuffer(
+            instr_ident=instr_ident,
+            capacity=self.params.l_ordered_buffer_capacity,
+        )
+        self._ordered_buffers[instr_ident] = buf
+        return buf
+
+    def _release_ordered_buffer(self, instr_ident: int) -> None:
+        """Release an ordered buffer when the operation is complete."""
+        if instr_ident in self._ordered_buffers:
+            del self._ordered_buffers[instr_ident]
+
     def has_free_witem_slot(self) -> bool:
         """Check if there's room for another waiting item."""
         return len(self.waiting_items) < self.params.n_items
@@ -206,6 +241,15 @@ class Lamlet:
                 self.waiting_items.remove(item)
                 return
         raise ValueError(f"No waiting item with instr_ident {instr_ident}")
+
+    def create_sync_spans(self, sync_ident: int, kinstr_span_id: int) -> None:
+        """Create global SYNC span and SYNC_LOCAL children for all synchronizers."""
+        global_span_id = self.monitor.record_sync_created(sync_ident, kinstr_span_id)
+        for ky in range(self.params.k_rows):
+            for kx in range(self.params.k_cols):
+                self.monitor.record_sync_local_created(sync_ident, kx, ky, global_span_id)
+        self.monitor.record_sync_local_created(sync_ident, 0, -1, global_span_id)
+        self.monitor.finalize_sync_children(sync_ident)
 
     def get_oldest_active_instr_ident_distance(self, baseline: int) -> int | None:
         """Return the distance to the oldest active instr_ident from baseline.
@@ -419,9 +463,10 @@ class Lamlet:
 
     async def sync_network_connections(self):
         """
-        Move bytes between synchronizers in adjacent kamlets.
+        Move bytes between synchronizers in adjacent kamlets (and the lamlet).
         This is a separate network from the main router network.
         Synchronizers connect to all 8 neighbors (N, S, E, W, NE, NW, SE, SW).
+        The lamlet's synchronizer is at (0, -1) and connects to kamlet (0,0) and (1,0).
         """
         # Build a map of (k_x, k_y) -> synchronizer
         synchronizers = {}
@@ -429,6 +474,9 @@ class Lamlet:
             k_x = kamlet.min_x // self.params.j_cols
             k_y = kamlet.min_y // self.params.j_rows
             synchronizers[(k_x, k_y)] = kamlet.synchronizer
+
+        # Add lamlet's synchronizer at (0, -1)
+        synchronizers[(0, -1)] = self.synchronizer
 
         # Direction deltas for all 8 directions
         direction_deltas = {
@@ -594,8 +642,19 @@ class Lamlet:
         else:
             raise NotImplementedError(f"Unexpected channel 1+ message: {header.message_type}")
 
-    async def _handle_read_mem_word_req(self, header: TaggedHeader, scalar_addr: int):
-        """Handle READ_MEM_WORD_REQ: read from scalar memory and send response."""
+    async def _handle_read_mem_word_req(self, header, scalar_addr: int):
+        """Handle READ_MEM_WORD_REQ: read from scalar memory and send response.
+
+        For unordered operations: read immediately and send RESP.
+        For ordered operations: buffer request and send ACK; data sent after sync.
+        """
+        if header.ordered:
+            await self._handle_ordered_read_mem_word_req(header, scalar_addr)
+        else:
+            await self._handle_unordered_read_mem_word_req(header, scalar_addr)
+
+    async def _handle_unordered_read_mem_word_req(self, header, scalar_addr: int):
+        """Handle unordered READ_MEM_WORD_REQ: read immediately and send RESP."""
         wb = self.params.word_bytes
         word_addr = scalar_addr - (scalar_addr % wb)
         data = bytes(self.scalar.memory.get(scalar_addr + i, 0) for i in range(wb))
@@ -627,8 +686,55 @@ class Lamlet:
         )
         await self.send_packet(packet, jamlet, Direction.N, port=0)
         logger.debug(
-            f'{self.clock.cycle}: lamlet: READ_MEM_WORD_REQ addr=0x{scalar_addr:x} '
+            f'{self.clock.cycle}: lamlet: READ_MEM_WORD_REQ (unordered) addr=0x{scalar_addr:x} '
             f'-> ({header.source_x},{header.source_y}) data={data.hex()}')
+
+    async def _handle_ordered_read_mem_word_req(self, header, scalar_addr: int):
+        """Handle ordered READ_MEM_WORD_REQ: buffer request and send ACK."""
+        # Extract parent instr_ident from header ident
+        parent_ident = (header.ident - header.tag - 1) % self.params.max_response_tags
+        buf = self._ordered_buffers[parent_ident]
+        element_index = header.element_index
+
+        # Add to buffer (may be ignored if below min_element_index, or evicted if full)
+        buf.add_element(
+            element_index=element_index,
+            address=scalar_addr,
+            data=None,  # Data will be read after sync
+            header=header,
+        )
+
+        # Send ACK immediately
+        ack_header = TaggedHeader(
+            target_x=header.source_x,
+            target_y=header.source_y,
+            source_x=0,
+            source_y=-1,
+            message_type=MessageType.READ_MEM_WORD_ACK,
+            send_type=SendType.SINGLE,
+            length=1,
+            tag=header.tag,
+            ident=header.ident,
+        )
+        packet = [ack_header]
+        jamlet = self.kamlets[0].jamlets[0]
+
+        transaction_span_id = self.monitor.get_transaction_span_id(
+            header.ident, header.tag, header.source_x, header.source_y, 0, -1)
+        assert transaction_span_id is not None
+        self.monitor.add_event(
+            transaction_span_id,
+            f'ordered_scalar_read_buffered addr=0x{scalar_addr:x}, element_index={element_index}')
+        self.monitor.record_message_sent(
+            transaction_span_id, MessageType.READ_MEM_WORD_ACK.name,
+            ident=header.ident, tag=header.tag,
+            src_x=0, src_y=-1,
+            dst_x=header.source_x, dst_y=header.source_y,
+        )
+        await self.send_packet(packet, jamlet, Direction.N, port=0)
+        logger.debug(
+            f'{self.clock.cycle}: lamlet: READ_MEM_WORD_REQ (ordered) addr=0x{scalar_addr:x} '
+            f'element={element_index} -> ACK to ({header.source_x},{header.source_y})')
 
     async def _handle_write_mem_word_req(self, header: WriteMemWordHeader, scalar_addr: int,
                                          src_word: bytes):
@@ -742,6 +848,8 @@ class Lamlet:
                                 ResourceType.INSTR_BUFFER_TOKENS, None, None)
                             break
                         self.instruction_buffer.popleft()
+                        span_id = self.monitor.get_kinstr_span_id(instr.instr_ident)
+                        self.monitor.add_event(span_id, "dispatched")
                         instructions.append(instr)
                         self._use_token(instr_k_index)
                     old_length = 0
@@ -762,6 +870,8 @@ class Lamlet:
             if self._ident_query_state == RefreshState.READY_TO_SEND:
                 assert self._have_tokens(None, is_ident_query=True)
                 ident_query = self._create_ident_query()
+                iq_span_id = self.monitor.get_kinstr_span_id(ident_query.instr_ident)
+                self.monitor.add_event(iq_span_id, "dispatched")
                 self._use_token(None)
                 # Move tokens to active query tracker (will be returned when response arrives)
                 for i in range(self.params.k_in_l):
@@ -1142,7 +1252,13 @@ class Lamlet:
             baseline=self._ident_query_baseline,
             previous_instr_ident=self._last_sent_instr_ident,
         )
-        self.monitor.record_kinstr_created(kinstr, self._ident_query_span_id)
+        kinstr_span_id = self.monitor.record_kinstr_created(kinstr, self._ident_query_span_id)
+
+        # Create sync tracking spans
+        self.create_sync_spans(self._ident_query_ident, kinstr_span_id)
+
+        # Lamlet participates in sync network with its own distance value
+        self.synchronizer.local_event(self._ident_query_ident, value=self._ident_query_lamlet_dist)
 
         self._ident_query_state = RefreshState.WAITING_FOR_RESPONSE
         logger.debug(f'{self.clock.cycle}: lamlet: created ident query '
@@ -1151,34 +1267,19 @@ class Lamlet:
                      f'lamlet_dist={self._ident_query_lamlet_dist}')
         return kinstr
 
-    def _receive_ident_query_response(self, kamlet_min_distance: int, query_span_id: int):
+    def _receive_ident_query_response(self, min_distance: int, query_span_id: int):
         """Process ident query response. Called from message handler.
 
+        min_distance is the global minimum from the sync network (includes lamlet's value).
         query_span_id is passed in because the kinstr will be removed from the
         lookup table when completed.
         """
         assert self._ident_query_state == RefreshState.WAITING_FOR_RESPONSE
 
         max_tags = self.params.max_response_tags
-        assert 0 <= kamlet_min_distance <= max_tags
+        assert 0 <= min_distance <= max_tags
 
         baseline = self._ident_query_baseline
-
-        # Use lamlet distance captured when query was created
-        lamlet_min_distance = self._ident_query_lamlet_dist
-        assert lamlet_min_distance is None or 0 <= lamlet_min_distance < max_tags
-
-        # Combine: take the minimum distance (oldest ident) from both
-        # kamlet_min_distance == max_tags means all kamlets are free
-        # lamlet_min_distance == None means lamlet has no waiting items
-        if kamlet_min_distance == max_tags and lamlet_min_distance is None:
-            min_distance = max_tags
-        elif kamlet_min_distance == max_tags:
-            min_distance = lamlet_min_distance
-        elif lamlet_min_distance is None:
-            min_distance = kamlet_min_distance
-        else:
-            min_distance = min(kamlet_min_distance, lamlet_min_distance)
 
         if min_distance == max_tags:
             self._oldest_active_ident = None
@@ -1187,23 +1288,30 @@ class Lamlet:
 
         self._ident_query_state = RefreshState.DORMANT
 
+        # Clean up lamlet's sync state
+        self.synchronizer.clear_sync(self._ident_query_ident)
+
         if self.monitor.enabled:
-            # Only check kinstrs created before the query (span_id < query_span_id)
+            # Only check kinstrs dispatched before the query
+            query_dispatch_cycle = self.monitor.get_kinstr_dispatch_cycle(self._ident_query_ident)
             monitor_oldest = self.monitor.get_oldest_active_instr_ident()
             if monitor_oldest is None:
                 monitor_distance = max_tags
             else:
-                oldest_span_id = self.monitor.get_kinstr_span_id(monitor_oldest)
-                if oldest_span_id >= query_span_id:
+                oldest_dispatch_cycle = self.monitor.get_kinstr_dispatch_cycle(monitor_oldest)
+                if oldest_dispatch_cycle is None or oldest_dispatch_cycle >= query_dispatch_cycle:
                     monitor_distance = max_tags
                 else:
                     monitor_distance = (monitor_oldest - baseline) % max_tags
             if monitor_distance < min_distance:
                 span_id = self.monitor.get_kinstr_span_id(monitor_oldest)
-                dump = self.monitor.format_span_tree(span_id) if span_id else f"no span_id for {monitor_oldest}"
+                dump = self.monitor.format_span_tree(span_id)
+                iq_span_id = self.monitor.get_kinstr_span_id(self._ident_query_ident)
+                iq_dump = self.monitor.format_span_tree(iq_span_id)
                 assert False, \
                     f"Monitor older than lamlet: monitor={monitor_oldest} (dist={monitor_distance}) " \
-                    f"lamlet={self._oldest_active_ident} (dist={min_distance})\n{dump}"
+                    f"lamlet={self._oldest_active_ident} (dist={min_distance})\n\n" \
+                    f"Oldest kinstr:\n{dump}\n\nIdentQuery:\n{iq_dump}"
 
         # Return instruction queue tokens tracked in _tokens_in_active_query.
         # This includes the IdentQuery itself (counted via _use_token when sent).
@@ -1218,8 +1326,7 @@ class Lamlet:
             self.monitor.record_resource_available(ResourceType.INSTR_BUFFER_TOKENS, None, None)
 
         logger.debug(f'{self.clock.cycle}: lamlet: ident query response '
-                     f'baseline={baseline} kamlet_dist={kamlet_min_distance} '
-                     f'lamlet_dist={lamlet_min_distance} min_distance={min_distance} '
+                     f'baseline={baseline} min_distance={min_distance} '
                      f'oldest_active={self._oldest_active_ident} '
                      f'available_tokens={self._available_tokens}')
 
@@ -1541,6 +1648,11 @@ class Lamlet:
                     stride_bytes=stride_bytes,
                 )
             await self.add_to_instruction_buffer(kinstr, parent_span_id)
+            kinstr_span_id = self.monitor.get_kinstr_span_id(instr_ident)
+            self.create_sync_spans(instr_ident, kinstr_span_id)
+            # Lamlet doesn't participate in LoadStride/StoreStride syncs, but we need to
+            # signal local_event so the sync can complete
+            self.synchronizer.local_event(instr_ident)
 
     async def vload_indexed(self, vd: int, base_addr: int, index_reg: int, index_ew: int,
                             data_ew: int, n_elements: int, mask_reg: int | None,
@@ -1571,21 +1683,30 @@ class Lamlet:
             instr_ident = await self.get_instr_ident(n_idents=self.params.word_bytes + 1)
 
             if ordered:
-                raise NotImplementedError("Ordered indexed loads not yet implemented")
-            else:
-                kinstr = LoadIndexedUnordered(
-                    dst=vd,
-                    g_addr=g_addr,
-                    index_reg=index_reg,
-                    index_ordering=index_ordering,
-                    start_index=start_index + chunk_start,
-                    n_elements=chunk_n,
-                    dst_ordering=data_ordering,
-                    mask_reg=mask_reg,
-                    writeset_ident=writeset_ident,
-                    instr_ident=instr_ident,
-                )
+                # Acquire ordered buffer before dispatching instruction
+                await self._get_ordered_buffer(instr_ident)
+
+            kinstr = LoadIndexedUnordered(
+                dst=vd,
+                g_addr=g_addr,
+                index_reg=index_reg,
+                index_ordering=index_ordering,
+                start_index=start_index + chunk_start,
+                n_elements=chunk_n,
+                dst_ordering=data_ordering,
+                mask_reg=mask_reg,
+                writeset_ident=writeset_ident,
+                instr_ident=instr_ident,
+                ordered=ordered,
+            )
             await self.add_to_instruction_buffer(kinstr, parent_span_id)
+            kinstr_span_id = self.monitor.get_kinstr_span_id(instr_ident)
+            self.create_sync_spans(instr_ident, kinstr_span_id)
+
+            if not ordered:
+                # Unordered: lamlet doesn't participate, signal immediately
+                self.synchronizer.local_event(instr_ident)
+            # For ordered: lamlet will call local_event after receiving all scalar requests
 
     async def vstore_indexed(self, vs: int, base_addr: int, index_reg: int, index_ew: int,
                              data_ew: int, n_elements: int, mask_reg: int | None,
@@ -1625,6 +1746,11 @@ class Lamlet:
                     instr_ident=instr_ident,
                 )
             await self.add_to_instruction_buffer(kinstr, parent_span_id)
+            kinstr_span_id = self.monitor.get_kinstr_span_id(instr_ident)
+            self.create_sync_spans(instr_ident, kinstr_span_id)
+            # Lamlet doesn't participate in StoreIndexed syncs, but we need to
+            # signal local_event so the sync can complete
+            self.synchronizer.local_event(instr_ident)
 
     #async def vload(self, vd: int, addr: int, ordering: addresses.Ordering,
     #                n_elements: int, mask_reg: int, start_index: int):
@@ -1916,6 +2042,7 @@ class Lamlet:
         for channel in range(self.params.n_channels):
             self.clock.create_task(self.router_connections(channel))
         self.clock.create_task(self.sync_network_connections())
+        self.clock.create_task(self.synchronizer.run())
         self.clock.create_task(self.monitor_channel0())
         self.clock.create_task(self.monitor_channel1andup())
         self.clock.create_task(self.monitor_instruction_buffer())

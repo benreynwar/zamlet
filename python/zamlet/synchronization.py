@@ -90,6 +90,20 @@ SEND_REQUIREMENTS = {
     SyncDirection.SW: {'quadrant': ['NE'], 'column': ['N'], 'row': ['E']},
 }
 
+# Special requirements for kamlet (0, 0) which is connected to the lamlet at N.
+# When sending N (to lamlet), must include SE quadrant so lamlet sees whole grid.
+# When sending S, E, or SE, must include N column (from lamlet).
+SEND_REQUIREMENTS_ORIGIN = {
+    SyncDirection.N: {'column': ['S'], 'quadrant': ['SE'], 'row': ['E']},
+    SyncDirection.S: {'column': ['N']},
+    SyncDirection.E: {'row': ['W'], 'column': ['N']},
+    SyncDirection.W: {'row': ['E']},
+    SyncDirection.NE: {'quadrant': ['SW'], 'column': ['S'], 'row': ['W']},
+    SyncDirection.NW: {'quadrant': ['SE'], 'column': ['S'], 'row': ['E']},
+    SyncDirection.SE: {'quadrant': ['NW'], 'column': ['N'], 'row': ['W']},
+    SyncDirection.SW: {'quadrant': ['NE'], 'column': ['N'], 'row': ['E']},
+}
+
 
 @dataclass
 class SyncState:
@@ -129,6 +143,9 @@ class SyncState:
 
     # Track which directions we've already sent to
     sent_directions: Set[SyncDirection] = field(default_factory=set)
+
+    # Whether this sync has completed
+    completed: bool = False
 
 
 @dataclass
@@ -182,19 +199,42 @@ class SyncPacket:
 
 class Synchronizer:
     """
-    Handles lamlet-wide synchronization for a single kamlet.
+    Handles lamlet-wide synchronization for a single kamlet (or the lamlet).
 
     Each Synchronizer maintains state for multiple concurrent sync operations
     (identified by sync_ident) and communicates with all 8 neighbors via a
     dedicated 8-bit synchronization network.
+
+    The lamlet can also have a Synchronizer at position (0, -1). It only connects
+    to kamlet (0, 0) via the S direction. When y == -1, the synchronizer
+    uses simplified logic: it just waits to receive from S (and optionally SE if
+    k_cols > 1), then marks the sync complete.
     """
 
-    def __init__(self, clock, params: LamletParams, x: int, y: int, cache_table: 'CacheTable|None'):
+    def __init__(
+        self,
+        clock,
+        params: LamletParams,
+        x: int,
+        y: int,
+        cache_table: 'CacheTable|None',
+        monitor,
+    ):
         self.clock = clock
         self.params = params
         self.x = x
         self.y = y
         self.cache_table = cache_table
+        self.monitor = monitor
+
+        # Validate coordinates
+        if y == -1:
+            # Lamlet position
+            assert x == 0, f"Lamlet must be at x=0, got x={x}"
+        else:
+            # Kamlet position
+            assert 0 <= x < params.k_cols, f"Kamlet x={x} out of range [0, {params.k_cols})"
+            assert 0 <= y < params.k_rows, f"Kamlet y={y} out of range [0, {params.k_rows})"
 
         # Calculate grid boundaries (kamlet grid, not jamlet grid)
         self.total_cols = params.k_cols
@@ -222,8 +262,14 @@ class Synchronizer:
 
     def has_neighbor(self, direction: SyncDirection) -> bool:
         """Check if there's a neighbor in the given direction."""
+        if self.y == -1:
+            # Lamlet at (0, -1) only connects S to kamlet (0,0)
+            return direction == SyncDirection.S
         dx, dy = self._direction_delta(direction)
         nx, ny = self.x + dx, self.y + dy
+        # Kamlet (0, 0) has the lamlet as its N neighbor
+        if nx == 0 and ny == -1:
+            return True
         return 0 <= nx < self.total_cols and 0 <= ny < self.total_rows
 
     def _direction_delta(self, direction: SyncDirection) -> tuple:
@@ -242,6 +288,8 @@ class Synchronizer:
 
     def _has_quadrant(self, quadrant: str) -> bool:
         """Check if any kamlets exist in the given quadrant."""
+        if self.y == -1:
+            return False
         if quadrant == 'NE':
             return self.x < self.total_cols - 1 and self.y > 0
         elif quadrant == 'NW':
@@ -254,7 +302,13 @@ class Synchronizer:
 
     def _has_column_region(self, region: str) -> bool:
         """Check if there are kamlets in column north/south of us."""
+        if self.y == -1:
+            # Lamlet: only S column exists (kamlets 0,0 through 0,k_rows-1)
+            return region == 'S'
         if region == 'N':
+            # For kamlet (0,0), the lamlet is to the north
+            if self.x == 0 and self.y == 0:
+                return True
             return self.y > 0
         elif region == 'S':
             return self.y < self.total_rows - 1
@@ -262,6 +316,9 @@ class Synchronizer:
 
     def _has_row_region(self, region: str) -> bool:
         """Check if there are kamlets in row east/west of us."""
+        if self.y == -1:
+            # Lamlet: no row neighbors (lamlet is not in the kamlet grid row)
+            return False
         if region == 'E':
             return self.x < self.total_cols - 1
         elif region == 'W':
@@ -302,7 +359,8 @@ class Synchronizer:
         state.local_value = value
         logger.debug(f'{self.clock.cycle}: SYNC_LOCAL: synchronizer ({self.x},{self.y}) '
                      f'sync_ident={sync_ident} value={value}')
-        self._notify_if_complete(sync_ident)
+        self.monitor.record_sync_local_event(sync_ident, self.x, self.y, value)
+        self._update_completed(sync_ident)
 
     def _all_sends_complete(self, state: SyncState) -> bool:
         """Check if we've sent to all neighbors that exist."""
@@ -311,12 +369,19 @@ class Synchronizer:
                 return False
         return True
 
+    def has_sync(self, sync_ident: int) -> bool:
+        """Check if a sync operation exists for this sync_ident."""
+        return sync_ident in self._sync_states
+
     def is_complete(self, sync_ident: int) -> bool:
         """Check if synchronization is complete (all kamlets have seen the event)."""
-        if sync_ident not in self._sync_states:
+        state = self._sync_states.get(sync_ident)
+        if state is None:
             return False
+        return state.completed
 
-        state = self._sync_states[sync_ident]
+    def _is_complete(self, state: SyncState) -> bool:
+        """Internal check for completion conditions."""
         if not state.local_seen:
             return False
 
@@ -359,18 +424,23 @@ class Synchronizer:
         if sync_ident in self._sync_states:
             del self._sync_states[sync_ident]
 
-    def _notify_if_complete(self, sync_ident: int):
-        """If sync is complete, set the waiting item's sync_state to COMPLETE."""
-        if self.is_complete(sync_ident):
-            if self.cache_table is not None:
-                witem = self.cache_table.get_waiting_item_by_instr_ident(sync_ident)
-                assert witem is not None
-                assert witem.sync_state == WaitingItemSyncState.IN_PROGRESS
-                witem.sync_state = WaitingItemSyncState.COMPLETE
-                witem.sync_min_value = self.get_min_value(sync_ident)
-                del self._sync_states[sync_ident]
+    def _update_completed(self, sync_ident: int):
+        """Check if sync is now complete and log once if so."""
+        state = self._sync_states.get(sync_ident)
+        if state is None or state.completed:
+            return
+        if self._is_complete(state):
+            state.completed = True
+            min_value = self.get_min_value(sync_ident)
             logger.debug(f'{self.clock.cycle}: SYNC_COMPLETE: synchronizer ({self.x},{self.y}) '
-                         f'sync_ident={sync_ident}')
+                         f'sync_ident={sync_ident} min_value={min_value}')
+            self.monitor.record_sync_local_complete(sync_ident, self.x, self.y, min_value)
+
+    def _get_send_requirements(self, direction: SyncDirection) -> dict:
+        """Get send requirements for a direction. Kamlet (0,0) has special requirements."""
+        if self.x == 0 and self.y == 0:
+            return SEND_REQUIREMENTS_ORIGIN[direction]
+        return SEND_REQUIREMENTS[direction]
 
     def _should_send(self, state: SyncState, direction: SyncDirection) -> bool:
         """Determine if we should send a sync message in the given direction."""
@@ -384,7 +454,7 @@ class Synchronizer:
             return False
 
         # Check all requirements for this direction
-        reqs = SEND_REQUIREMENTS[direction]
+        reqs = self._get_send_requirements(direction)
 
         for q in reqs.get('quadrant', []):
             if not state.quadrant_synced[q]:
@@ -409,7 +479,7 @@ class Synchronizer:
         if state.local_value is not None:
             values.append(state.local_value)
 
-        reqs = SEND_REQUIREMENTS[direction]
+        reqs = self._get_send_requirements(direction)
 
         for q in reqs.get('quadrant', []):
             if state.quadrant_values[q] is not None:
@@ -471,7 +541,7 @@ class Synchronizer:
         logger.debug(f'{self.clock.cycle}: SYNC_RECV: synchronizer ({self.x},{self.y}) '
                      f'from={from_direction.name} sync_ident={sync_ident} '
                      f'value={packet.value}')
-        self._notify_if_complete(sync_ident)
+        self._update_completed(sync_ident)
 
     def update(self):
         """Update buffers (call at end of cycle)."""
@@ -534,7 +604,7 @@ class Synchronizer:
 
             # Check for completion after sends are processed
             for state in list(self._sync_states.values()):
-                self._notify_if_complete(state.sync_ident)
+                self._update_completed(state.sync_ident)
 
     def can_receive(self, direction: SyncDirection) -> bool:
         """Check if we can receive a byte from the given direction."""

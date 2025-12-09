@@ -19,6 +19,19 @@ from zamlet.runner import Clock
 logger = logging.getLogger(__name__)
 
 
+class MockMonitor:
+    """Mock monitor for sync tests."""
+    def __init__(self):
+        # Track which (sync_ident, x, y) have completed and their min values
+        self.completed = {}  # (sync_ident, x, y) -> min_value
+
+    def record_sync_local_event(self, sync_ident, x, y, value):
+        pass
+
+    def record_sync_local_complete(self, sync_ident, x, y, min_value):
+        self.completed[(sync_ident, x, y)] = min_value
+
+
 # Map from direction to opposite direction (for wiring neighbors)
 OPPOSITE_DIRECTION = {
     SyncDirection.N: SyncDirection.S,
@@ -33,7 +46,7 @@ OPPOSITE_DIRECTION = {
 
 
 class SyncNetwork:
-    """A grid of synchronizers wired together."""
+    """A grid of synchronizers wired together, including the lamlet at (0, -1)."""
 
     def __init__(self, clock, cols: int, rows: int):
         self.clock = clock
@@ -49,15 +62,21 @@ class SyncNetwork:
                 self.j_rows = 1
 
         self.params = SyncParams(cols, rows)
+        self.monitor = MockMonitor()
 
         # Create grid of synchronizers
         self.synchronizers = {}
         for y in range(rows):
             for x in range(cols):
-                self.synchronizers[(x, y)] = Synchronizer(clock, self.params, x, y, None)
+                self.synchronizers[(x, y)] = Synchronizer(
+                    clock, self.params, x, y, None, self.monitor)
+
+        # Add lamlet synchronizer at (0, -1)
+        self.synchronizers[(0, -1)] = Synchronizer(
+            clock, self.params, 0, -1, None, self.monitor)
 
     def get_neighbor_coords(self, x: int, y: int, direction: SyncDirection):
-        """Get coordinates of neighbor in given direction, or None if at edge."""
+        """Get coordinates of neighbor in given direction, or None if no neighbor."""
         deltas = {
             SyncDirection.N: (0, -1),
             SyncDirection.S: (0, 1),
@@ -70,7 +89,8 @@ class SyncNetwork:
         }
         dx, dy = deltas[direction]
         nx, ny = x + dx, y + dy
-        if 0 <= nx < self.cols and 0 <= ny < self.rows:
+        # Check if neighbor exists in our synchronizers map
+        if (nx, ny) in self.synchronizers:
             return (nx, ny)
         return None
 
@@ -130,19 +150,23 @@ async def run_sync_test(clock, cols: int, rows: int, n_events: int, seed: int):
     event_schedules = {}  # sync_ident -> [(cycle, coord, value), ...]
     last_trigger_cycle = {}  # sync_ident -> cycle of last event
     expected_min = {}  # sync_ident -> expected minimum value
+    all_values = {}
     for sync_ident in range(n_events):
         start_time = rnd.randint(0, 50)
         duration = rnd.randint(5, 20)
         schedule = []
         values = []
+        values_map = {}
         for coord in network.synchronizers.keys():
             trigger_cycle = start_time + rnd.randint(0, duration)
             value = rnd.randint(1, 1000)
             schedule.append((trigger_cycle, coord, value))
             values.append(value)
+            values_map[coord] = value
         event_schedules[sync_ident] = schedule
         last_trigger_cycle[sync_ident] = max(cycle for cycle, _, _ in schedule)
         expected_min[sync_ident] = min(values)
+        all_values[sync_ident] = values_map
 
     # Track when first/last synchronizer thinks each event is complete
     first_complete_cycle = {}  # sync_ident -> cycle when first sync thinks complete
@@ -177,8 +201,8 @@ async def run_sync_test(clock, cols: int, rows: int, n_events: int, seed: int):
             any_thinks_complete = False
             all_think_complete = True
 
-            for sync in network.synchronizers.values():
-                if sync.is_complete(sync_ident):
+            for (x, y) in network.synchronizers.keys():
+                if (sync_ident, x, y) in network.monitor.completed:
                     any_thinks_complete = True
                 else:
                     all_think_complete = False
@@ -235,8 +259,8 @@ async def run_sync_test(clock, cols: int, rows: int, n_events: int, seed: int):
 
         # INVARIANT 3: All synchronizers should agree on the minimum value
         expected = expected_min[sync_ident]
-        for (x, y), sync in network.synchronizers.items():
-            actual = sync.get_min_value(sync_ident)
+        for (x, y) in network.synchronizers.keys():
+            actual = network.monitor.completed[(sync_ident, x, y)]
             if actual != expected:
                 raise AssertionError(
                     f'Event {sync_ident}: sync ({x},{y}) has min={actual}, expected={expected}'

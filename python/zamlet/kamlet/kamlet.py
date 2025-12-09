@@ -65,7 +65,7 @@ class Kamlet:
         self.tlb = tlb
 
         # One synchronizer per kamlet for tracking when operations complete across kamlets
-        self.synchronizer = Synchronizer(clock, params, k_x, k_y, self.cache_table)
+        self.synchronizer = Synchronizer(clock, params, k_x, k_y, self.cache_table, monitor)
 
         self.jamlets = []
         for index in range(self.n_jamlets):

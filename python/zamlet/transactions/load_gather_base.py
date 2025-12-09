@@ -17,7 +17,7 @@ import logging
 
 from zamlet import addresses
 from zamlet.waiting_item import WaitingItem
-from zamlet.message import TaggedHeader, MessageType, SendType
+from zamlet.message import TaggedHeader, ReadMemWordHeader, MessageType, SendType
 from zamlet.kamlet.cache_table import SendState
 from zamlet.params import LamletParams
 from zamlet import utils
@@ -65,6 +65,10 @@ class WaitingLoadGatherBase(WaitingItem, ABC):
         """Return additional registers that need to be read (e.g., index register)."""
         pass
 
+    def is_ordered(self) -> bool:
+        """Return True if this is an ordered operation. Override in subclasses."""
+        return False
+
     def _state_index(self, j_in_k_index: int, tag: int) -> int:
         return j_in_k_index * self.params.word_bytes + tag
 
@@ -89,6 +93,9 @@ class WaitingLoadGatherBase(WaitingItem, ABC):
         if self._ready_to_synchronize() and self.sync_state == SyncState.NOT_STARTED:
             self.sync_state = SyncState.IN_PROGRESS
             self._synchronize(kamlet)
+        if self.sync_state == SyncState.IN_PROGRESS:
+            if kamlet.synchronizer.is_complete(self.instr_ident):
+                self.sync_state = SyncState.COMPLETE
 
     def process_response(self, jamlet: 'Jamlet', packet) -> None:
         wb = jamlet.params.word_bytes
@@ -255,6 +262,7 @@ class WaitingLoadGatherBase(WaitingItem, ABC):
             return False
 
         ident = (instr.instr_ident + tag + 1) % jamlet.params.max_response_tags
+        dst_ve, dst_e, dst_eb, dst_v = self._compute_dst_element(jamlet, tag)
 
         if request.is_vpu:
             k_maddr = request.g_addr.to_k_maddr(jamlet.tlb)
@@ -266,7 +274,7 @@ class WaitingLoadGatherBase(WaitingItem, ABC):
             addr = request.g_addr.to_scalar_addr(jamlet.tlb)
             target_x, target_y = 0, -1
 
-        header = TaggedHeader(
+        header = ReadMemWordHeader(
             target_x=target_x,
             target_y=target_y,
             source_x=jamlet.x,
@@ -276,6 +284,8 @@ class WaitingLoadGatherBase(WaitingItem, ABC):
             length=2,
             ident=ident,
             tag=tag,
+            element_index=dst_e,
+            ordered=self.is_ordered(),
         )
         packet = [header, addr]
         logger.debug(f'{jamlet.clock.cycle}: {self.__class__.__name__} send_req: '

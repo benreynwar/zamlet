@@ -88,6 +88,9 @@ class WaitingStoreScatterBase(WaitingItem, ABC):
         if self._ready_to_synchronize() and self.sync_state == SyncState.NOT_STARTED:
             self.sync_state = SyncState.IN_PROGRESS
             self._synchronize(kamlet)
+        if self.sync_state == SyncState.IN_PROGRESS:
+            if kamlet.synchronizer.is_complete(self.instr_ident):
+                self.sync_state = SyncState.COMPLETE
 
     def process_response(self, jamlet: 'Jamlet', packet) -> None:
         header = packet[0]

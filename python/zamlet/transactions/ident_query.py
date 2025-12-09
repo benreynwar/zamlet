@@ -90,6 +90,12 @@ class WaitingIdentQuery(WaitingItem):
         if self.response_sent:
             return
 
+        # Poll synchronizer for completion
+        if self.sync_state == WaitingItemSyncState.IN_PROGRESS:
+            if kamlet.synchronizer.is_complete(self.instr_ident):
+                self.sync_state = WaitingItemSyncState.COMPLETE
+                self.sync_min_value = kamlet.synchronizer.get_min_value(self.instr_ident)
+
         if self.sync_state == WaitingItemSyncState.COMPLETE:
             if self.is_origin:
                 # If no kamlet had waiting items, compute fallback distance

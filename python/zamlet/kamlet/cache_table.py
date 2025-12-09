@@ -45,6 +45,7 @@ class CacheRequestState:
 class SendState(Enum):
     NEED_TO_SEND = 'NEED_TO_SEND'
     WAITING_FOR_RESPONSE = 'WAITING_FOR_RESPONSE'
+    ACKED = 'ACKED'  # ACK received, waiting for sync + actual data (ordered loads only)
     COMPLETE = 'COMPLETE'
 
 

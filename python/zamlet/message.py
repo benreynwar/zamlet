@@ -80,6 +80,8 @@ class MessageType(Enum):
     # If we can't we create a witem, to track this request.
     # If we can't create a witem we drop it.
     READ_MEM_WORD_DROP = 34
+    # ACK for ordered scalar memory read - request buffered, data coming after sync
+    READ_MEM_WORD_ACK = 35
     # When we can respond we send the data
     # When a load has got all responses we do a lamlet
     # wide synchronization so that all jamlets know
@@ -221,6 +223,14 @@ class WriteMemWordHeader(IdentHeader):
     tag: int              # 3 bits - src byte in word (0-7)
     dst_byte_in_word: int # 3 bits - dst byte in word (0-7)
     n_bytes: int          # 3 bits - number of bytes (1-8)
+    element_index: int = 0  # Element index for ordered operations
+    ordered: bool = False   # Whether this is an ordered operation
+
+
+@dataclass
+class ReadMemWordHeader(TaggedHeader):
+    element_index: int = 0  # Element index for ordered operations
+    ordered: bool = False   # Whether this is an ordered operation
 
 
 class Direction(Enum):
