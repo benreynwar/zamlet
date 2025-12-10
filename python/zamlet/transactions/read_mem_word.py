@@ -119,8 +119,12 @@ def handle_resp(jamlet: 'Jamlet', packet: List[Any]) -> None:
     and process the response.
     '''
     header = packet[0]
-    parent_ident = (header.ident - header.tag - 1) % jamlet.params.max_response_tags
-    witem = jamlet.cache_table.get_waiting_item_by_instr_ident(parent_ident)
+    if header.ident_is_direct:
+        instr_ident = header.ident
+    else:
+        # Decode parent ident from encoded ident
+        instr_ident = (header.ident - header.tag - 1) % jamlet.params.max_response_tags
+    witem = jamlet.cache_table.get_waiting_item_by_instr_ident(instr_ident)
     witem.process_response(jamlet, packet)
 
 

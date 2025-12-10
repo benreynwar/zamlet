@@ -132,10 +132,8 @@ class WaitingLoadGatherBase(WaitingItem, ABC):
         logger.debug(f'{jamlet.clock.cycle}: RF_WRITE {self.__class__.__name__}: '
                      f'jamlet ({jamlet.x},{jamlet.y}) ident={instr.instr_ident} '
                      f'rf[{dst_reg}] old={old_word.hex()} new={new_word.hex()}')
-        kamlet_min_x = (jamlet.x // jamlet.params.j_cols) * jamlet.params.j_cols
-        kamlet_min_y = (jamlet.y // jamlet.params.j_rows) * jamlet.params.j_rows
-        witem_span_id = jamlet.monitor.get_witem_span_id(instr.instr_ident, kamlet_min_x,
-                                                         kamlet_min_y)
+        witem_span_id = jamlet.monitor.get_witem_span_id(
+            instr.instr_ident, jamlet.k_min_x, jamlet.k_min_y)
         jamlet.monitor.add_event(
             witem_span_id,
             f'rf_write jamlet_x={jamlet.x}, jamlet_y={jamlet.y}, element={dst_e}, '
@@ -160,15 +158,14 @@ class WaitingLoadGatherBase(WaitingItem, ABC):
         self.transaction_states[state_idx] = SendState.NEED_TO_SEND
 
     async def finalize(self, kamlet) -> None:
-        if self.rf_ident is not None:
-            instr = self.item
-            dst_regs = kamlet.get_regs(
-                start_index=instr.start_index, n_elements=instr.n_elements,
-                ew=instr.dst_ordering.ew, base_reg=instr.dst)
-            read_regs = self.get_additional_read_regs(kamlet)
-            if instr.mask_reg is not None:
-                read_regs.append(instr.mask_reg)
-            kamlet.rf_info.finish(self.rf_ident, write_regs=dst_regs, read_regs=read_regs)
+        instr = self.item
+        dst_regs = kamlet.get_regs(
+            start_index=instr.start_index, n_elements=instr.n_elements,
+            ew=instr.dst_ordering.ew, base_reg=instr.dst)
+        read_regs = self.get_additional_read_regs(kamlet)
+        if instr.mask_reg is not None:
+            read_regs.append(instr.mask_reg)
+        kamlet.rf_info.finish(self.rf_ident, write_regs=dst_regs, read_regs=read_regs)
 
     def _compute_dst_element(self, jamlet: 'Jamlet', tag: int) -> tuple[int, int, int, int]:
         """Compute destination element info for a given tag.
@@ -218,9 +215,7 @@ class WaitingLoadGatherBase(WaitingItem, ABC):
             mask_bit = (mask_word >> bit_index) & 1
             if not mask_bit:
                 witem_span_id = jamlet.monitor.get_witem_span_id(
-                    instr.instr_ident,
-                    (jamlet.x // jamlet.params.j_cols) * jamlet.params.j_cols,
-                    (jamlet.y // jamlet.params.j_rows) * jamlet.params.j_rows)
+                    instr.instr_ident, jamlet.k_min_x, jamlet.k_min_y)
                 jamlet.monitor.add_event(
                     witem_span_id, 'mask_skip',
                     jamlet_x=jamlet.x, jamlet_y=jamlet.y, element=dst_e,
@@ -292,10 +287,8 @@ class WaitingLoadGatherBase(WaitingItem, ABC):
                      f'jamlet ({jamlet.x},{jamlet.y}) ident={instr.instr_ident} tag={tag} '
                      f'-> ({target_x},{target_y}) is_vpu={request.is_vpu}')
 
-        kamlet_min_x = (jamlet.x // jamlet.params.j_cols) * jamlet.params.j_cols
-        kamlet_min_y = (jamlet.y // jamlet.params.j_rows) * jamlet.params.j_rows
-        witem_span_id = jamlet.monitor.get_witem_span_id(instr.instr_ident, kamlet_min_x,
-                                                         kamlet_min_y)
+        witem_span_id = jamlet.monitor.get_witem_span_id(
+            instr.instr_ident, jamlet.k_min_x, jamlet.k_min_y)
 
         transaction_span_id = jamlet.monitor.create_transaction(
             transaction_type='ReadMemWord',

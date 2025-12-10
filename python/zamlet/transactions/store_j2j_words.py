@@ -212,9 +212,8 @@ async def send_req(jamlet, witem: WaitingStoreJ2JWords, tag: int) -> None:
         f'send_store_j2j_words_req to {(target_x, target_y)} ident={instr.instr_ident}')
 
     # Create transaction for this src/dst pair, parent is the SRC witem
-    kamlet_min_x = (jamlet.x // jamlet.params.j_cols) * jamlet.params.j_cols
-    kamlet_min_y = (jamlet.y // jamlet.params.j_rows) * jamlet.params.j_rows
-    witem_span_id = jamlet.monitor.get_witem_span_id(instr.instr_ident, kamlet_min_x, kamlet_min_y)
+    witem_span_id = jamlet.monitor.get_witem_span_id(
+        instr.instr_ident, jamlet.k_min_x, jamlet.k_min_y)
     transaction_span_id = jamlet.monitor.create_transaction(
         'StoreJ2JWords', instr.instr_ident, jamlet.x, jamlet.y, target_x, target_y,
         parent_span_id=witem_span_id, tag=tag)

@@ -347,7 +347,7 @@ async def run_indexed_load_test(
         completion_type=CompletionType.FIRE_AND_FORGET, mnemonic="test_indexed_load")
 
     # Indexed load (gather) from source into v0
-    await lamlet.vload_indexed(
+    await lamlet.vload_indexed_unordered(
         vd=data_reg,
         base_addr=src_base,
         index_reg=index_reg,
@@ -356,7 +356,6 @@ async def run_indexed_load_test(
         n_elements=vl,
         mask_reg=mask_reg,
         start_index=0,
-        ordered=False,
         parent_span_id=span_id,
     )
 
@@ -494,7 +493,7 @@ async def run_indexed_store_test(
     )
 
     # Indexed store (scatter) from v0 to destination
-    await lamlet.vstore_indexed(
+    await lamlet.vstore_indexed_unordered(
         vs=data_reg,
         base_addr=dst_base,
         index_reg=index_reg,
@@ -503,7 +502,6 @@ async def run_indexed_store_test(
         n_elements=vl,
         mask_reg=mask_reg,
         start_index=0,
-        ordered=False,
         parent_span_id=span_id,
     )
 

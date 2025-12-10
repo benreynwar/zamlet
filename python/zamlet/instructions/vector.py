@@ -878,10 +878,16 @@ class VIndexedLoad:
         )
         vsew = (s.vtype >> 3) & 0x7
         data_ew = 8 << vsew
-        await s.vload_indexed(
-            self.vd, base_addr, self.vs2, self.index_width, data_ew,
-            s.vl, mask_reg, s.vstart, ordered=self.ordered, parent_span_id=span_id
-        )
+        if self.ordered:
+            await s.vload_indexed_ordered(
+                self.vd, base_addr, self.vs2, self.index_width, data_ew,
+                s.vl, mask_reg, s.vstart, parent_span_id=span_id
+            )
+        else:
+            await s.vload_indexed_unordered(
+                self.vd, base_addr, self.vs2, self.index_width, data_ew,
+                s.vl, mask_reg, s.vstart, parent_span_id=span_id
+            )
         s.pc += 4
 
 
@@ -923,8 +929,14 @@ class VIndexedStore:
         )
         vsew = (s.vtype >> 3) & 0x7
         data_ew = 8 << vsew
-        await s.vstore_indexed(
-            self.vs3, base_addr, self.vs2, self.index_width, data_ew,
-            s.vl, mask_reg, s.vstart, ordered=self.ordered, parent_span_id=span_id
-        )
+        if self.ordered:
+            await s.vstore_indexed_ordered(
+                self.vs3, base_addr, self.vs2, self.index_width, data_ew,
+                s.vl, mask_reg, s.vstart, parent_span_id=span_id
+            )
+        else:
+            await s.vstore_indexed_unordered(
+                self.vs3, base_addr, self.vs2, self.index_width, data_ew,
+                s.vl, mask_reg, s.vstart, parent_span_id=span_id
+            )
         s.pc += 4

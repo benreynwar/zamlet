@@ -128,9 +128,8 @@ async def send_req(jamlet: 'Jamlet', witem: WaitingLoadWordSrc) -> None:
         ident=instr.instr_ident, tag=0)
 
     # Get witem span as parent for the message
-    kamlet_min_x = (jamlet.x // jamlet.params.j_cols) * jamlet.params.j_cols
-    kamlet_min_y = (jamlet.y // jamlet.params.j_rows) * jamlet.params.j_rows
-    witem_span_id = jamlet.monitor.get_witem_span_id(instr.instr_ident, kamlet_min_x, kamlet_min_y)
+    witem_span_id = jamlet.monitor.get_witem_span_id(
+        instr.instr_ident, jamlet.k_min_x, jamlet.k_min_y)
 
     await jamlet.send_packet([header, word], parent_span_id=witem_span_id)
 

@@ -124,47 +124,47 @@ VSSE64.V (Status: ✓)
 INDEXED UNORDERED LOADS
 ------------------------
 
-VLUXEI8.V (Status: ✗)
+VLUXEI8.V (Status: ✓)
   Spec: v-st-ext.adoc line 1655, vmem-format.edn
   Format: vluxei8.v vd, (rs1), vs2, vm
   Tests: vluxei8.v.toml
   Encoding: nf|mew|01|vm|vs2|rs1|000|vd|0000111
            mop=01 (indexed-unordered), width=000 (8-bit index), opcode=0x07
-  Implementation: Not implemented
+  Implementation: VluxeiV class in instructions/vector.py
   Description: Unordered indexed load with 8-bit indices
   Notes:
     - Load SEW-width data from addr[i] = rs1 + vs2[i]
     - vs2 contains byte offsets (8-bit elements)
     - Data width determined by SEW, not index width
     - Element accesses are unordered (can be reordered for performance)
-    - TODO: Add decode pattern for mop=01 to decode.py
-    - TODO: Create instruction class in vector.py
+    - Uses lamlet.vload_indexed() -> LoadIndexedUnordered kinstr
+    - Transaction: transactions/load_indexed_unordered.py
 
-VLUXEI16.V (Status: ✗)
+VLUXEI16.V (Status: ✓)
   Spec: v-st-ext.adoc line 1656, vmem-format.edn
   Format: vluxei16.v vd, (rs1), vs2, vm
   Tests: vluxei16.v.toml
   Encoding: nf|mew|01|vm|vs2|rs1|101|vd|0000111
            mop=01 (indexed-unordered), width=101 (16-bit index), opcode=0x07
-  Implementation: Not implemented
+  Implementation: VluxeiV class in instructions/vector.py
   Description: Unordered indexed load with 16-bit indices
 
-VLUXEI32.V (Status: ✗)
+VLUXEI32.V (Status: ✓)
   Spec: v-st-ext.adoc line 1657, vmem-format.edn
   Format: vluxei32.v vd, (rs1), vs2, vm
   Tests: vluxei32.v.toml
   Encoding: nf|mew|01|vm|vs2|rs1|110|vd|0000111
            mop=01 (indexed-unordered), width=110 (32-bit index), opcode=0x07
-  Implementation: Not implemented
+  Implementation: VluxeiV class in instructions/vector.py
   Description: Unordered indexed load with 32-bit indices
 
-VLUXEI64.V (Status: ✗)
+VLUXEI64.V (Status: ✓)
   Spec: v-st-ext.adoc line 1658, vmem-format.edn
   Format: vluxei64.v vd, (rs1), vs2, vm
   Tests: vluxei64.v.toml
   Encoding: nf|mew|01|vm|vs2|rs1|111|vd|0000111
            mop=01 (indexed-unordered), width=111 (64-bit index), opcode=0x07
-  Implementation: Not implemented
+  Implementation: VluxeiV class in instructions/vector.py
   Description: Unordered indexed load with 64-bit indices
 
 INDEXED ORDERED LOADS
@@ -213,43 +213,43 @@ VLOXEI64.V (Status: ✗)
 INDEXED UNORDERED STORES
 -------------------------
 
-VSUXEI8.V (Status: ✗)
+VSUXEI8.V (Status: ✓)
   Spec: v-st-ext.adoc line 1669, vmem-format.edn
   Format: vsuxei8.v vs3, (rs1), vs2, vm
   Encoding: nf|mew|01|vm|vs2|rs1|000|vs3|0100111
            mop=01 (indexed-unordered), width=000 (8-bit index), opcode=0x27
-  Implementation: Not implemented
+  Implementation: VsuxeiV class in instructions/vector.py
   Description: Unordered indexed store with 8-bit indices
   Notes:
     - Store SEW-width data to addr[i] = rs1 + vs2[i]
     - vs2 contains byte offsets (8-bit elements)
     - Data width determined by SEW, not index width
     - Element accesses are unordered
-    - TODO: Add decode pattern for mop=01 to decode.py
-    - TODO: Create instruction class in vector.py
+    - Uses lamlet.vstore_indexed() -> StoreIndexedUnordered kinstr
+    - Transaction: transactions/store_indexed_unordered.py
 
-VSUXEI16.V (Status: ✗)
+VSUXEI16.V (Status: ✓)
   Spec: v-st-ext.adoc line 1670, vmem-format.edn
   Format: vsuxei16.v vs3, (rs1), vs2, vm
   Encoding: nf|mew|01|vm|vs2|rs1|101|vs3|0100111
            mop=01 (indexed-unordered), width=101 (16-bit index), opcode=0x27
-  Implementation: Not implemented
+  Implementation: VsuxeiV class in instructions/vector.py
   Description: Unordered indexed store with 16-bit indices
 
-VSUXEI32.V (Status: ✗)
+VSUXEI32.V (Status: ✓)
   Spec: v-st-ext.adoc line 1671, vmem-format.edn
   Format: vsuxei32.v vs3, (rs1), vs2, vm
   Encoding: nf|mew|01|vm|vs2|rs1|110|vs3|0100111
            mop=01 (indexed-unordered), width=110 (32-bit index), opcode=0x27
-  Implementation: Not implemented
+  Implementation: VsuxeiV class in instructions/vector.py
   Description: Unordered indexed store with 32-bit indices
 
-VSUXEI64.V (Status: ✗)
+VSUXEI64.V (Status: ✓)
   Spec: v-st-ext.adoc line 1672, vmem-format.edn
   Format: vsuxei64.v vs3, (rs1), vs2, vm
   Encoding: nf|mew|01|vm|vs2|rs1|111|vs3|0100111
            mop=01 (indexed-unordered), width=111 (64-bit index), opcode=0x27
-  Implementation: Not implemented
+  Implementation: VsuxeiV class in instructions/vector.py
   Description: Unordered indexed store with 64-bit indices
 
 INDEXED ORDERED STORES
@@ -385,44 +385,19 @@ Test Coverage
 
 TODO Items
 ----------
-1. Implement constant-stride loads (vlse*.v)
-   - Add mop field extraction to decode.py
-   - Add decode patterns for mop=10 (strided) in opcode 0x07 block
-   - Create VlseV instruction class in vector.py
-   - Implement stride calculation: addr[i] = base + i * stride
-   - Handle negative and zero strides correctly
-   - Support rs2=x0 optimization hint
+1. ✓ Implement constant-stride loads (vlse*.v) - DONE
+2. ✓ Implement constant-stride stores (vsse*.v) - DONE
+3. ✓ Implement indexed unordered loads (vluxei*.v) - DONE
+4. ✓ Implement indexed unordered stores (vsuxei*.v) - DONE
 
-2. Implement constant-stride stores (vsse*.v)
-   - Add decode patterns for mop=10 in opcode 0x27 block
-   - Create VsseV instruction class in vector.py
-   - Mirror stride behavior from loads
-
-3. Implement indexed unordered loads (vluxei*.v)
-   - Add decode patterns for mop=01 in opcode 0x07 block
-   - Create VluxeiV instruction class in vector.py
-   - Read offsets from vs2 vector register
-   - Implement address calculation: addr[i] = base + vs2[i]
-   - Data width from SEW, index width from instruction encoding
-   - Allow reordering for performance
-
-4. Implement indexed ordered loads (vloxei*.v)
-   - Add decode patterns for mop=11 in opcode 0x07 block
-   - Create VloxeiV instruction class in vector.py
-   - Must preserve element order in memory accesses
-   - Otherwise same as unordered loads
-
-5. Implement indexed unordered stores (vsuxei*.v)
-   - Add decode patterns for mop=01 in opcode 0x27 block
-   - Create VsuxeiV instruction class in vector.py
-   - Mirror indexed load behavior for stores
+5. Implement indexed ordered loads (vloxei*.v)
+   - Lamlet-orchestrated approach (see plan/ordered_indexed_lamlet_orchestrated.md)
+   - Lamlet dispatches LoadIndexedElement to jamlets in element order
+   - Backpressure via bounded buffer prevents overflow
 
 6. Implement indexed ordered stores (vsoxei*.v)
-   - Add decode patterns for mop=11 in opcode 0x27 block
-   - Create VsoxeiV instruction class in vector.py
-   - Use two-phase algorithm (see "Ordered Scatter Implementation" above)
-   - Phase 1: Write element indices to resolve conflicts
-   - Phase 2: Write actual data only where element index matches
+   - Lamlet-orchestrated approach (see plan/ordered_indexed_lamlet_orchestrated.md)
+   - Two parallel pipelines: gather data, then write in order
 
 7. Add comprehensive tests
    - Test strided access for matrix column access
@@ -435,12 +410,14 @@ TODO Items
 
 Summary
 -------
-None of the strided or indexed memory operations are currently implemented.
-These are critical for many real-world vector applications:
-- Strided: Matrix operations, structure-of-arrays access patterns
-- Indexed: Sparse matrix operations, gather/scatter, histogram operations
+Strided and indexed unordered operations are fully implemented.
+Indexed ordered operations (vloxei, vsoxei) are not yet implemented.
 
-Implementation priority should be:
-1. Constant-stride operations (most common after unit-stride)
-2. Indexed unordered operations (high performance gather/scatter)
-3. Indexed ordered operations (when ordering is required)
+Implementation files:
+- transactions/load_stride.py, store_stride.py - Strided operations
+- transactions/load_indexed_unordered.py - Unordered indexed loads
+- transactions/store_indexed_unordered.py - Unordered indexed stores
+- instructions/vector.py - VlseV, VsseV, VluxeiV, VsuxeiV classes
+
+Remaining work:
+- Indexed ordered operations using lamlet-orchestrated approach

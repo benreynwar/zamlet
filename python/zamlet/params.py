@@ -48,13 +48,9 @@ class LamletParams:
     # Number of gathering slots in memlet for WRITE_LINE_READ_LINE operations
     n_memlet_gathering_slots: int = 4
 
-    # Ordered element buffer parameters (for ordered indexed operations)
-    # Jamlet buffers (for VPU memory targets)
-    j_n_ordered_buffers: int = 4
-    j_ordered_buffer_capacity: int = 16
-    # Lamlet buffers (for scalar memory targets)
-    l_n_ordered_buffers: int = 4
-    l_ordered_buffer_capacity: int = 16
+    # Ordered indexed operation buffer parameters (for scalar memory targets)
+    n_ordered_buffers: int = 2
+    ordered_buffer_capacity: int = 16
 
     def __post_init__(self):
         # Page must be bigger than a vector

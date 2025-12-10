@@ -501,3 +501,5 @@ class VreductionVsOp(KInstr):
 
     async def update_kamlet(self, kamlet):
         await kamlet.handle_vreduction_vs_instr(self)
+
+

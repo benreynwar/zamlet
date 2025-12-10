@@ -28,7 +28,9 @@ from zamlet.addresses import AddressConverter, Ordering, GlobalAddress, KMAddr, 
 from zamlet.kamlet.cache_table import CacheTable, CacheState, WaitingItem, WaitingFuture, ProtocolState
 from zamlet.monitor import CompletionType, SpanType
 from zamlet.params import LamletParams
-from zamlet.message import Header, MessageType, Direction, SendType, TaggedHeader, WriteMemWordHeader, CHANNEL_MAPPING, IdentHeader
+from zamlet.message import (Header, MessageType, Direction, SendType, TaggedHeader,
+                            WriteMemWordHeader, CHANNEL_MAPPING, IdentHeader,
+                            ElementIndexHeader, ReadMemWordHeader)
 from zamlet.kamlet.kamlet import Kamlet
 from zamlet.memlet import Memlet
 from zamlet.runner import Future
@@ -38,9 +40,14 @@ from zamlet.transactions.store_stride import StoreStride
 from zamlet.transactions.load_indexed_unordered import LoadIndexedUnordered
 from zamlet.transactions.store_indexed_unordered import StoreIndexedUnordered
 from zamlet.transactions.ident_query import IdentQuery
+from zamlet.transactions.load_indexed_element import LoadIndexedElement
+from zamlet.transactions.store_indexed_element import StoreIndexedElement
 from zamlet.transactions.write_imm_bytes import WriteImmBytes
 from zamlet.transactions.read_byte import ReadByte
 from zamlet.lamlet.scalar import ScalarState
+from zamlet.lamlet.ordered_buffer import OrderedBuffer
+from zamlet.lamlet.waiting_ordered import (
+    LamletWaitingLoadIndexedElement, LamletWaitingStoreIndexedElement)
 from zamlet import utils
 import zamlet.disasm_trace as dt
 from zamlet.synchronization import SyncDirection, Synchronizer
@@ -192,9 +199,20 @@ class Lamlet:
             monitor=self.monitor,
         )
 
+        # Ordered indexed operation buffers, indexed by buffer_id (0 to n_ordered_buffers-1)
+        self._ordered_buffers: list[OrderedBuffer | None] = [
+            None for _ in range(self.params.n_ordered_buffers)]
+
     def has_free_witem_slot(self) -> bool:
         """Check if there's room for another waiting item."""
         return len(self.waiting_items) < self.params.n_items
+
+    def _get_free_buffer_id(self) -> int | None:
+        """Find a free ordered buffer slot, or None if all are in use."""
+        for i, buf in enumerate(self._ordered_buffers):
+            if buf is None:
+                return i
+        return None
 
     async def add_witem(self, witem: WaitingItem) -> None:
         """Add a waiting item to the deque, waiting if necessary."""
@@ -554,6 +572,19 @@ class Lamlet:
             assert header.ident == self._ident_query_ident
             min_distance = int.from_bytes(packet[1], byteorder='little')
             self._receive_ident_query_response(min_distance, kinstr_span_id)
+        elif header.message_type == MessageType.LOAD_INDEXED_ELEMENT_RESP:
+            assert len(packet) == 1
+            assert isinstance(header, ElementIndexHeader)
+            self._handle_load_indexed_element_resp(header)
+        elif header.message_type == MessageType.STORE_INDEXED_ELEMENT_RESP:
+            assert len(packet) == 3
+            assert isinstance(header, ElementIndexHeader)
+            addr = packet[1]
+            data = packet[2]
+            self._handle_store_indexed_element_resp(header, addr, data)
+        elif header.message_type == MessageType.WRITE_MEM_WORD_RESP:
+            assert len(packet) == 1
+            self._handle_ordered_write_mem_word_resp(header)
         else:
             raise NotImplementedError(f"Unexpected channel 0 message: {header.message_type}")
 
@@ -609,36 +640,51 @@ class Lamlet:
         else:
             raise NotImplementedError(f"Unexpected channel 1+ message: {header.message_type}")
 
-    async def _handle_read_mem_word_req(self, header, scalar_addr: int):
+    async def _handle_read_mem_word_req(self, header: ReadMemWordHeader, scalar_addr: int):
         """Handle READ_MEM_WORD_REQ: read from scalar memory and send response."""
-        wb = self.params.word_bytes
-        word_addr = scalar_addr - (scalar_addr % wb)
-        data = self.scalar.get_memory(scalar_addr, wb)
-        resp_header = TaggedHeader(
-            target_x=header.source_x,
-            target_y=header.source_y,
-            source_x=0,
-            source_y=-1,
-            message_type=MessageType.READ_MEM_WORD_RESP,
-            send_type=SendType.SINGLE,
-            length=2,
-            tag=header.tag,
-            ident=header.ident,
-        )
-        packet = [resp_header, data]
-        jamlet = self.kamlets[0].jamlets[0]
-        # Look up transaction (requester is source, we are dest at (0, -1))
-        transaction_span_id = self.monitor.get_transaction_span_id(
-            header.ident, header.tag, header.source_x, header.source_y, 0, -1)
-        assert transaction_span_id is not None
-        self.monitor.add_event(
-            transaction_span_id,
-            f'scalar_read addr=0x{scalar_addr:x}, word_addr=0x{word_addr:x}, data={data.hex()}')
-        await self.send_packet(packet, jamlet, Direction.N, port=0,
-                               parent_span_id=transaction_span_id)
-        logger.debug(
-            f'{self.clock.cycle}: lamlet: READ_MEM_WORD_REQ addr=0x{scalar_addr:x} '
-            f'-> ({header.source_x},{header.source_y}) data={data.hex()}')
+        if header.ordered:
+            witem = self.get_witem_by_ident(header.ident)
+            assert witem is not None, f"No witem for ident {header.ident}"
+            assert isinstance(witem, LamletWaitingLoadIndexedElement)
+            buf = self._ordered_buffers[witem.buffer_id]
+            assert buf is not None, f"No ordered buffer for buffer_id {witem.buffer_id}"
+            assert buf.is_load
+            buf.add_pending(witem.element_index, (scalar_addr, header))
+            transaction_span_id = self.monitor.get_transaction_span_id(
+                header.ident, header.tag, header.source_x, header.source_y, 0, -1)
+            if transaction_span_id is not None:
+                self.monitor.add_event(
+                    transaction_span_id,
+                    f'ordered_req_buffered element={witem.element_index} '
+                    f'addr=0x{scalar_addr:x} next_to_process={buf.next_to_process}')
+        else:
+            wb = self.params.word_bytes
+            word_addr = scalar_addr - (scalar_addr % wb)
+            data = self.scalar.get_memory(scalar_addr, wb)
+            resp_header = TaggedHeader(
+                target_x=header.source_x,
+                target_y=header.source_y,
+                source_x=0,
+                source_y=-1,
+                message_type=MessageType.READ_MEM_WORD_RESP,
+                send_type=SendType.SINGLE,
+                length=2,
+                tag=header.tag,
+                ident=header.ident,
+            )
+            packet = [resp_header, data]
+            jamlet = self.kamlets[0].jamlets[0]
+            transaction_span_id = self.monitor.get_transaction_span_id(
+                header.ident, header.tag, header.source_x, header.source_y, 0, -1)
+            assert transaction_span_id is not None
+            self.monitor.add_event(
+                transaction_span_id,
+                f'scalar_read addr=0x{scalar_addr:x}, word_addr=0x{word_addr:x}, data={data.hex()}')
+            await self.send_packet(packet, jamlet, Direction.N, port=0,
+                                   parent_span_id=transaction_span_id)
+            logger.debug(
+                f'{self.clock.cycle}: lamlet: READ_MEM_WORD_REQ addr=0x{scalar_addr:x} '
+                f'-> ({header.source_x},{header.source_y}) data={data.hex()}')
 
     async def _handle_write_mem_word_req(self, header: WriteMemWordHeader, scalar_addr: int,
                                          src_word: bytes):
@@ -674,6 +720,133 @@ class Lamlet:
             f'{self.clock.cycle}: lamlet: WRITE_MEM_WORD_REQ addr=0x{scalar_addr:x} '
             f'src_start={src_start} dst_start={dst_start} n_bytes={n_bytes} '
             f'-> ({header.source_x},{header.source_y})')
+
+    def _handle_load_indexed_element_resp(self, header: ElementIndexHeader):
+        """Handle LOAD_INDEXED_ELEMENT_RESP: VPU memory case, release slot."""
+        witem = self.get_witem_by_ident(header.ident)
+        assert witem is not None, f"No witem for ident {header.ident}"
+        assert isinstance(witem, LamletWaitingLoadIndexedElement)
+        buf = self._ordered_buffers[witem.buffer_id]
+        assert buf is not None, f"No ordered buffer for buffer_id {witem.buffer_id}"
+        assert buf.is_load
+        buf.mark_completed(witem.element_index)
+        self.remove_witem_by_ident(header.ident)
+
+    def _handle_store_indexed_element_resp(self, header: ElementIndexHeader, addr, data: bytes):
+        """Handle STORE_INDEXED_ELEMENT_RESP: buffer the write for in-order processing."""
+        witem = self.get_witem_by_ident(header.ident)
+        assert witem is not None, f"No witem for ident {header.ident}"
+        assert isinstance(witem, LamletWaitingStoreIndexedElement)
+        buf = self._ordered_buffers[witem.buffer_id]
+        assert buf is not None, f"No ordered buffer for buffer_id {witem.buffer_id}"
+        assert not buf.is_load
+        buf.add_pending(witem.element_index, (addr, data, witem.instr_ident))
+
+    def _handle_ordered_write_mem_word_resp(self, header: TaggedHeader):
+        """Handle WRITE_MEM_WORD_RESP for ordered store VPU writes."""
+        witem = self.get_witem_by_ident(header.ident)
+        assert witem is not None, f"No witem for ident {header.ident}"
+        assert isinstance(witem, LamletWaitingStoreIndexedElement)
+        buf = self._ordered_buffers[witem.buffer_id]
+        assert buf is not None, f"No ordered buffer for buffer_id {witem.buffer_id}"
+        assert not buf.is_load
+        assert buf.vpu_write_pending
+        buf.vpu_write_pending = False
+        buf.mark_completed(witem.element_index)
+        self.remove_witem_by_ident(header.ident)
+
+    async def _ordered_buffer_process(self):
+        """Process pending requests/writes for active ordered buffers in element order."""
+        while True:
+            await self.clock.next_cycle
+            for buffer_id, buf in enumerate(self._ordered_buffers):
+                if buf is None:
+                    continue
+                if buf.all_complete():
+                    self._ordered_buffers[buffer_id] = None
+                    continue
+                pending = buf.get_next_pending()
+                if pending is None:
+                    continue
+                if buf.is_load:
+                    scalar_addr, header = pending
+                    wb = self.params.word_bytes
+                    data = self.scalar.get_memory(scalar_addr, wb)
+                    resp_header = TaggedHeader(
+                        target_x=header.source_x,
+                        target_y=header.source_y,
+                        source_x=0,
+                        source_y=-1,
+                        message_type=MessageType.READ_MEM_WORD_RESP,
+                        send_type=SendType.SINGLE,
+                        length=2,
+                        tag=header.tag,
+                        ident=header.ident,
+                        ident_is_direct=True,
+                    )
+                    packet = [resp_header, data]
+                    jamlet = self.kamlets[0].jamlets[0]
+                    transaction_span_id = self.monitor.get_transaction_span_id(
+                        header.ident, header.tag, header.source_x, header.source_y, 0, -1)
+                    assert transaction_span_id is not None
+                    self.monitor.add_event(
+                        transaction_span_id,
+                        f'ordered_scalar_read element={buf.next_to_process} '
+                        f'addr=0x{scalar_addr:x} data={data.hex()}')
+                    await self.send_packet(packet, jamlet, Direction.N, port=0,
+                                           parent_span_id=transaction_span_id)
+                    buf.mark_completed(buf.next_to_process)
+                    self.remove_witem_by_ident(header.ident)
+                    buf.next_to_process += 1
+                else:
+                    if buf.vpu_write_pending:
+                        continue
+                    addr, data, instr_ident = pending
+                    g_write_addr = GlobalAddress(bit_addr=addr * 8, params=self.params)
+                    page_addr = g_write_addr.get_page()
+                    page_info = self.tlb.get_page_info(page_addr)
+                    if page_info.local_address.is_vpu:
+                        await self._send_ordered_store_vpu_write(
+                            buf, addr, data, g_write_addr, instr_ident)
+                        buf.vpu_write_pending = True
+                    else:
+                        for i, b in enumerate(data):
+                            self.scalar.set_memory(addr + i, b)
+                        buf.mark_completed(buf.next_to_process)
+                        self.remove_witem_by_ident(instr_ident)
+                        buf.next_to_process += 1
+
+    async def _send_ordered_store_vpu_write(self, buf: OrderedBuffer, addr: int, data: bytes,
+                                            g_addr: GlobalAddress, instr_ident: int):
+        """Send WRITE_MEM_WORD_REQ to VPU memory for ordered store."""
+        wb = self.params.word_bytes
+        k_maddr = g_addr.to_k_maddr(self.tlb)
+        target_x, target_y = addresses.k_indices_to_j_coords(
+            self.params, k_maddr.k_index, k_maddr.j_in_k_index)
+        dst_byte_in_word = k_maddr.addr % wb
+
+        header = WriteMemWordHeader(
+            target_x=target_x,
+            target_y=target_y,
+            source_x=0,
+            source_y=-1,
+            message_type=MessageType.WRITE_MEM_WORD_REQ,
+            send_type=SendType.SINGLE,
+            length=3,
+            ident=instr_ident,
+            tag=buf.next_to_process,
+            dst_byte_in_word=dst_byte_in_word,
+            n_bytes=len(data),
+        )
+
+        word_offset = k_maddr.addr % wb
+        k_maddr_aligned = k_maddr.bit_offset(-word_offset * 8)
+        packet = [header, k_maddr_aligned, data]
+
+        jamlet = self.kamlets[0].jamlets[0]
+        kinstr_span_id = self.monitor.get_kinstr_span_id(instr_ident)
+        await self.send_packet(packet, jamlet, Direction.N, port=0,
+                               parent_span_id=kinstr_span_id)
 
     async def add_to_instruction_buffer(self, instruction, parent_span_id: int, k_index=None):
         logger.debug(f'{self.clock.cycle}: lamlet: Adding {type(instruction)} to buffer')
@@ -1575,10 +1748,11 @@ class Lamlet:
             # signal local_event so the sync can complete
             self.synchronizer.local_event(instr_ident)
 
-    async def vload_indexed(self, vd: int, base_addr: int, index_reg: int, index_ew: int,
-                            data_ew: int, n_elements: int, mask_reg: int | None,
-                            start_index: int, ordered: bool, parent_span_id: int):
-        """Handle indexed vector loads using LoadIndexed instructions.
+    async def vload_indexed_unordered(self, vd: int, base_addr: int, index_reg: int,
+                                       index_ew: int, data_ew: int, n_elements: int,
+                                       mask_reg: int | None, start_index: int,
+                                       parent_span_id: int):
+        """Handle unordered indexed vector loads using LoadIndexedUnordered instructions.
 
         Indexed (gather) load: element i is loaded from address (base_addr + index_reg[i]).
 
@@ -1603,9 +1777,6 @@ class Lamlet:
             chunk_n = min(j_in_l, n_elements - chunk_start)
             instr_ident = await self.get_instr_ident(n_idents=self.params.word_bytes + 1)
 
-            if ordered:
-                raise NotImplementedError("Ordered indexed loads not yet implemented")
-
             kinstr = LoadIndexedUnordered(
                 dst=vd,
                 g_addr=g_addr,
@@ -1625,10 +1796,11 @@ class Lamlet:
             # Lamlet signals local_event for the first sync
             self.synchronizer.local_event(instr_ident)
 
-    async def vstore_indexed(self, vs: int, base_addr: int, index_reg: int, index_ew: int,
-                             data_ew: int, n_elements: int, mask_reg: int | None,
-                             start_index: int, ordered: bool, parent_span_id: int):
-        """Handle indexed vector stores using StoreIndexed instructions.
+    async def vstore_indexed_unordered(self, vs: int, base_addr: int, index_reg: int,
+                                        index_ew: int, data_ew: int, n_elements: int,
+                                        mask_reg: int | None, start_index: int,
+                                        parent_span_id: int):
+        """Handle unordered indexed vector stores using StoreIndexedUnordered instructions.
 
         Indexed (scatter) store: element i is stored to address (base_addr + index_reg[i]).
 
@@ -1647,27 +1819,145 @@ class Lamlet:
             chunk_n = min(j_in_l, n_elements - chunk_start)
             instr_ident = await self.get_instr_ident(n_idents=self.params.word_bytes + 1)
 
-            if ordered:
-                raise NotImplementedError("Ordered indexed stores not yet implemented")
-            else:
-                kinstr = StoreIndexedUnordered(
-                    src=vs,
-                    g_addr=g_addr,
-                    index_reg=index_reg,
-                    index_ordering=index_ordering,
-                    start_index=start_index + chunk_start,
-                    n_elements=chunk_n,
-                    src_ordering=data_ordering,
-                    mask_reg=mask_reg,
-                    writeset_ident=writeset_ident,
-                    instr_ident=instr_ident,
-                )
+            kinstr = StoreIndexedUnordered(
+                src=vs,
+                g_addr=g_addr,
+                index_reg=index_reg,
+                index_ordering=index_ordering,
+                start_index=start_index + chunk_start,
+                n_elements=chunk_n,
+                src_ordering=data_ordering,
+                mask_reg=mask_reg,
+                writeset_ident=writeset_ident,
+                instr_ident=instr_ident,
+            )
             await self.add_to_instruction_buffer(kinstr, parent_span_id)
             kinstr_span_id = self.monitor.get_kinstr_span_id(instr_ident)
             self.monitor.create_sync_spans(instr_ident, kinstr_span_id, self.params)
             # Lamlet doesn't participate in StoreIndexed syncs, but we need to
             # signal local_event so the sync can complete
             self.synchronizer.local_event(instr_ident)
+
+    async def vload_indexed_ordered(self, vd: int, base_addr: int, index_reg: int,
+                                    index_ew: int, data_ew: int, n_elements: int,
+                                    mask_reg: int | None, start_index: int,
+                                    parent_span_id: int):
+        """Handle ordered indexed vector loads.
+
+        Dispatches LoadIndexedElement instructions one at a time, blocking until complete.
+        """
+        g_addr = GlobalAddress(bit_addr=base_addr * 8, params=self.params)
+        data_ordering = Ordering(word_order=addresses.WordOrder.STANDARD, ew=data_ew)
+
+        # Set up register file ordering for destination registers
+        vline_bits = self.params.maxvl_bytes * 8
+        n_vlines = (data_ew * n_elements + vline_bits - 1) // vline_bits
+        for vline_reg in range(vd, vd + n_vlines):
+            self.vrf_ordering[vline_reg] = data_ordering
+
+        # Wait for an ordered buffer slot
+        buffer_id = self._get_free_buffer_id()
+        while buffer_id is None:
+            await self.clock.next_cycle
+            buffer_id = self._get_free_buffer_id()
+
+        buf = OrderedBuffer(
+            buffer_id=buffer_id,
+            n_elements=n_elements,
+            is_load=True,
+        )
+        self._ordered_buffers[buffer_id] = buf
+
+        # Dispatch all elements
+        for element_index in range(n_elements):
+            # Wait for buffer capacity
+            while not buf.can_dispatch(self.params.ordered_buffer_capacity):
+                await self.clock.next_cycle
+
+            assert buf.next_to_dispatch == element_index
+            element_ident = await self.get_instr_ident()
+
+            vw_index = element_index % self.params.j_in_l
+            k_index, _ = addresses.vw_index_to_k_indices(
+                self.params, addresses.WordOrder.STANDARD, vw_index)
+
+            kinstr = LoadIndexedElement(
+                dst_reg=vd,
+                base_addr=g_addr,
+                index_reg=index_reg,
+                index_ew=index_ew,
+                data_ew=data_ew,
+                element_index=element_index,
+                instr_ident=element_ident,
+            )
+
+            witem = LamletWaitingLoadIndexedElement(
+                instr_ident=element_ident,
+                buffer_id=buffer_id,
+                element_index=element_index,
+            )
+            await self.add_witem(witem)
+
+            await self.add_to_instruction_buffer(kinstr, parent_span_id=parent_span_id,
+                                                 k_index=k_index)
+            buf.next_to_dispatch += 1
+
+    async def vstore_indexed_ordered(self, vs: int, base_addr: int, index_reg: int,
+                                     index_ew: int, data_ew: int, n_elements: int,
+                                     mask_reg: int | None, start_index: int,
+                                     parent_span_id: int):
+        """Handle ordered indexed vector stores.
+
+        Dispatches StoreIndexedElement instructions one at a time.
+        """
+        g_addr = GlobalAddress(bit_addr=base_addr * 8, params=self.params)
+
+        # Wait for an ordered buffer slot
+        buffer_id = self._get_free_buffer_id()
+        while buffer_id is None:
+            await self.clock.next_cycle
+            buffer_id = self._get_free_buffer_id()
+
+        buf = OrderedBuffer(
+            buffer_id=buffer_id,
+            n_elements=n_elements,
+            is_load=False,
+        )
+        self._ordered_buffers[buffer_id] = buf
+
+        # Dispatch all elements
+        for element_index in range(n_elements):
+            # Wait for buffer capacity
+            while not buf.can_dispatch(self.params.ordered_buffer_capacity):
+                await self.clock.next_cycle
+
+            assert buf.next_to_dispatch == element_index
+            element_ident = await self.get_instr_ident()
+
+            vw_index = element_index % self.params.j_in_l
+            k_index, _ = addresses.vw_index_to_k_indices(
+                self.params, addresses.WordOrder.STANDARD, vw_index)
+
+            kinstr = StoreIndexedElement(
+                src_reg=vs,
+                base_addr=g_addr,
+                index_reg=index_reg,
+                index_ew=index_ew,
+                data_ew=data_ew,
+                element_index=element_index,
+                instr_ident=element_ident,
+            )
+
+            witem = LamletWaitingStoreIndexedElement(
+                instr_ident=element_ident,
+                buffer_id=buffer_id,
+                element_index=element_index,
+            )
+            await self.add_witem(witem)
+
+            await self.add_to_instruction_buffer(kinstr, parent_span_id=parent_span_id,
+                                                 k_index=k_index)
+            buf.next_to_dispatch += 1
 
     #async def vload(self, vd: int, addr: int, ordering: addresses.Ordering,
     #                n_elements: int, mask_reg: int, start_index: int):
@@ -1965,6 +2255,7 @@ class Lamlet:
         self.clock.create_task(self.monitor_instruction_buffer())
         self.clock.create_task(self._monitor_ident_query())
         self.clock.create_task(self._send_packets_ch0())
+        self.clock.create_task(self._ordered_buffer_process())
 
     async def run_instruction(self, disasm_trace=None):
         logger.debug(f'{self.clock.cycle}: run_instruction: fetching at pc={hex(self.pc)}')

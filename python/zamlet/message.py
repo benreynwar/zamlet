@@ -96,6 +96,12 @@ class MessageType(Enum):
     # Ident query response (kamlet -> lamlet)
     IDENT_QUERY_RESP = 40
 
+    # Ordered indexed load/store responses (jamlet -> lamlet)
+    # Jamlet tells lamlet it wrote data to RF (frees buffer slot)
+    LOAD_INDEXED_ELEMENT_RESP = 51
+    # Jamlet sends address and data back to lamlet
+    STORE_INDEXED_ELEMENT_RESP = 53
+
     #WRITE_REG_REQ = 8
     #WRITE_SP_REQ = 9
     #WRITE_MEM_REQ = 10
@@ -155,6 +161,10 @@ CHANNEL_MAPPING = {
 
     MessageType.IDENT_QUERY_RESP: 0,
 
+    # Ordered indexed load/store responses
+    MessageType.LOAD_INDEXED_ELEMENT_RESP: 0,
+    MessageType.STORE_INDEXED_ELEMENT_RESP: 0,
+
     # This is always consumable because we will explicitly track how much buffer room there is.
     MessageType.INSTRUCTIONS: 0,
 
@@ -192,6 +202,7 @@ class TaggedHeader(IdentHeader):
     tag: int     # 4 bits
     words_requested: int = 1 # 4 bits
     mask: int = 0 #12 bits (can't use with words_requested)
+    ident_is_direct: bool = False  # 1 bit: if True, use ident directly (no tag encoding)
 
 
 @dataclass
@@ -229,6 +240,11 @@ class WriteMemWordHeader(IdentHeader):
 class ReadMemWordHeader(TaggedHeader):
     element_index: int = 0  # Element index for ordered operations
     ordered: bool = False   # Whether this is an ordered operation
+
+
+@dataclass
+class ElementIndexHeader(IdentHeader):
+    element_index: int = 0
 
 
 class Direction(Enum):
