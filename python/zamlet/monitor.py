@@ -114,8 +114,8 @@ class Monitor:
         self._cache_request_by_key: Dict[tuple, int] = {}
         # resource_exhausted key: (ResourceType, kamlet_x, kamlet_y) -> span_id
         self._resource_exhausted_by_key: Dict[tuple, int] = {}
-        # sync key: sync_ident -> span_id
-        self._sync_by_ident: Dict[int, int] = {}
+        # sync key: (sync_ident, name) -> span_id (name distinguishes first/second sync)
+        self._sync_by_key: Dict[tuple, int] = {}
         # sync_local key: (sync_ident, x, y) -> span_id
         self._sync_local_by_key: Dict[tuple, int] = {}
 
@@ -810,7 +810,8 @@ class Monitor:
     # Sync tracking
     # -------------------------------------------------------------------------
 
-    def record_sync_created(self, sync_ident: int, parent_span_id: int) -> int | None:
+    def record_sync_created(self, sync_ident: int, parent_span_id: int,
+                             name: str | None = None) -> int | None:
         """Record that a global sync operation has started.
 
         Creates a SYNC span as a child of the kinstr. Caller should create SYNC_LOCAL children.
@@ -826,17 +827,19 @@ class Monitor:
             parent_span_id=parent_span_id,
             parent_reason="sync",
             sync_ident=sync_ident,
+            sync_name=name,
         )
-        self._sync_by_ident[sync_ident] = global_span_id
+        self._sync_by_key[(sync_ident, name)] = global_span_id
         return global_span_id
 
     def record_sync_local_created(self, sync_ident: int, x: int, y: int,
-                                   parent_span_id: int) -> int | None:
+                                   parent_span_id: int,
+                                   name: str | None = None) -> int | None:
         """Record a local sync span for a synchronizer."""
         if not self.enabled:
             return None
 
-        key = (sync_ident, x, y)
+        key = (sync_ident, x, y, name)
         local_span_id = self.create_span(
             span_type=SpanType.SYNC_LOCAL,
             component=f"synchronizer({x},{y})",
@@ -848,13 +851,52 @@ class Monitor:
         self._sync_local_by_key[key] = local_span_id
         return local_span_id
 
-    def finalize_sync_children(self, sync_ident: int) -> None:
+    def finalize_sync_children(self, sync_ident: int, name: str | None = None) -> None:
         """Finalize children of the global sync span."""
         if not self.enabled:
             return
-        global_span_id = self._sync_by_ident.get(sync_ident)
+        global_span_id = self._sync_by_key.get((sync_ident, name))
         if global_span_id is not None:
             self.finalize_children(global_span_id)
+
+    def create_sync_spans(self, sync_ident: int, parent_span_id: int, params,
+                          name: str | None = None) -> None:
+        """Create global SYNC span and SYNC_LOCAL children for all synchronizers.
+
+        If spans already exist (created by another participant), does nothing.
+        """
+        if not self.enabled:
+            return
+        # Check if already created
+        if (sync_ident, name) in self._sync_by_key:
+            return
+        global_span_id = self.record_sync_created(sync_ident, parent_span_id, name)
+        for ky in range(params.k_rows):
+            for kx in range(params.k_cols):
+                self.record_sync_local_created(sync_ident, kx, ky, global_span_id, name)
+        # Lamlet synchronizer at (0, -1)
+        self.record_sync_local_created(sync_ident, 0, -1, global_span_id, name)
+        self.finalize_sync_children(sync_ident, name)
+
+    def _find_oldest_sync_local(self, sync_ident: int, x: int, y: int,
+                                 completed: bool = False) -> tuple | None:
+        """Find the oldest local sync span for this location.
+
+        Args:
+            completed: If False, find oldest incomplete. If True, find oldest completed.
+        Returns:
+            The key (sync_ident, x, y, name) or None if not found.
+        """
+        oldest_key = None
+        oldest_cycle = float('inf')
+        for key, span_id in self._sync_local_by_key.items():
+            if key[0] == sync_ident and key[1] == x and key[2] == y:
+                span = self.spans[span_id]
+                is_complete = span.completed_cycle is not None
+                if is_complete == completed and span.created_cycle < oldest_cycle:
+                    oldest_cycle = span.created_cycle
+                    oldest_key = key
+        return oldest_key
 
     def record_sync_local_event(self, sync_ident: int, x: int, y: int,
                                  value: int | None = None) -> None:
@@ -862,7 +904,8 @@ class Monitor:
         if not self.enabled:
             return
 
-        key = (sync_ident, x, y)
+        key = self._find_oldest_sync_local(sync_ident, x, y, completed=False)
+        assert key is not None, f"No incomplete sync local span for ({sync_ident}, {x}, {y})"
         span_id = self._sync_local_by_key[key]
         self.add_event(span_id, "local_event", value=value)
 
@@ -872,13 +915,19 @@ class Monitor:
         if not self.enabled:
             return
 
-        key = (sync_ident, x, y)
-        span_id = self._sync_local_by_key.pop(key)
+        key = self._find_oldest_sync_local(sync_ident, x, y, completed=False)
+        assert key is not None, f"No incomplete sync local span for ({sync_ident}, {x}, {y})"
+        span_id = self._sync_local_by_key[key]
         self.spans[span_id].details['min_value'] = min_value
         self.complete_span(span_id)
 
-        if x == 0 and y == -1:
-            self._sync_by_ident.pop(sync_ident)
+        # If parent SYNC span is now complete, clean up its lookup entry
+        parent_span_id = self.spans[span_id].parent.span_id
+        if self.spans[parent_span_id].is_complete():
+            for k, v in list(self._sync_by_key.items()):
+                if v == parent_span_id:
+                    del self._sync_by_key[k]
+                    break
 
     def record_rf_blocking(self, instr_ident: int, kamlet_x: int, kamlet_y: int,
                            read_regs, write_regs, rf_info, waiting_items) -> None:

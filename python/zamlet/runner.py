@@ -136,7 +136,7 @@ class Task:
 
 
 class Clock:
-    def __init__(self, max_cycles=None):
+    def __init__(self, max_cycles=None, on_timeout=None):
         self.cycle = 0
         self.active_tasks = {}
 
@@ -144,6 +144,7 @@ class Clock:
 
         self.running = True
         self.max_cycles = max_cycles
+        self.on_timeout = on_timeout
 
         self.n_tasks = 0
         self.n_waiting = 0
@@ -203,6 +204,8 @@ class Clock:
             old_event.set()
             if self.max_cycles is not None and self.cycle >= self.max_cycles:
                 logger.error(f"Timeout: reached maximum cycles ({self.max_cycles})")
+                if self.on_timeout:
+                    self.on_timeout()
                 self.stop()
 
     def stop(self):

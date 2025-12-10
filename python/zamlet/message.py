@@ -80,8 +80,6 @@ class MessageType(Enum):
     # If we can't we create a witem, to track this request.
     # If we can't create a witem we drop it.
     READ_MEM_WORD_DROP = 34
-    # ACK for ordered scalar memory read - request buffered, data coming after sync
-    READ_MEM_WORD_ACK = 35
     # When we can respond we send the data
     # When a load has got all responses we do a lamlet
     # wide synchronization so that all jamlets know

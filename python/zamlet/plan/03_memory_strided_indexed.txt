@@ -33,13 +33,13 @@ Instructions in This Category
 CONSTANT-STRIDE LOADS
 ---------------------
 
-VLSE8.V (Status: ✗)
+VLSE8.V (Status: ✓)
   Spec: v-st-ext.adoc line 1608, vmem-format.edn
   Format: vlse8.v vd, (rs1), rs2, vm
   Tests: vlse8.v.toml
   Encoding: nf|mew|10|vm|rs2|rs1|000|vd|0000111
            mop=10 (strided), width=000 (8-bit), opcode=0x07
-  Implementation: Not implemented
+  Implementation: VlseV class in instructions/vector.py
   Description: Constant-stride load of 8-bit elements
   Notes:
     - Load from addr[i] = rs1 + i * rs2
@@ -47,78 +47,78 @@ VLSE8.V (Status: ✗)
     - Supports negative and zero strides
     - Element accesses are unordered
     - Special behavior when rs2=x0 (may optimize away accesses)
-    - TODO: Add decode pattern for mop=10 to decode.py
-    - TODO: Create instruction class in vector.py
+    - Uses lamlet.vload(stride_bytes=...) -> vloadstorestride()
+    - Masking: ⚠ Passed through but needs verification
 
-VLSE16.V (Status: ✗)
+VLSE16.V (Status: ✓)
   Spec: v-st-ext.adoc line 1609, vmem-format.edn
   Format: vlse16.v vd, (rs1), rs2, vm
   Tests: vlse16.v.toml
   Encoding: nf|mew|10|vm|rs2|rs1|101|vd|0000111
            mop=10 (strided), width=101 (16-bit), opcode=0x07
-  Implementation: Not implemented
+  Implementation: VlseV class in instructions/vector.py
   Description: Constant-stride load of 16-bit elements
 
-VLSE32.V (Status: ✗)
+VLSE32.V (Status: ✓)
   Spec: v-st-ext.adoc line 1610, vmem-format.edn
   Format: vlse32.v vd, (rs1), rs2, vm
   Tests: vlse32.v.toml
   Encoding: nf|mew|10|vm|rs2|rs1|110|vd|0000111
            mop=10 (strided), width=110 (32-bit), opcode=0x07
-  Implementation: Not implemented
+  Implementation: VlseV class in instructions/vector.py
   Description: Constant-stride load of 32-bit elements
 
-VLSE64.V (Status: ✗)
+VLSE64.V (Status: ✓)
   Spec: v-st-ext.adoc line 1611, vmem-format.edn
   Format: vlse64.v vd, (rs1), rs2, vm
   Tests: vlse64.v.toml
   Encoding: nf|mew|10|vm|rs2|rs1|111|vd|0000111
            mop=10 (strided), width=111 (64-bit), opcode=0x07
-  Implementation: Not implemented
+  Implementation: VlseV class in instructions/vector.py
   Description: Constant-stride load of 64-bit elements
 
 CONSTANT-STRIDE STORES
 -----------------------
 
-VSSE8.V (Status: ✗)
+VSSE8.V (Status: ✓)
   Spec: v-st-ext.adoc line 1614, vmem-format.edn
   Format: vsse8.v vs3, (rs1), rs2, vm
   Tests: vsse8.v.toml
   Encoding: nf|mew|10|vm|rs2|rs1|000|vs3|0100111
            mop=10 (strided), width=000 (8-bit), opcode=0x27
-  Implementation: Not implemented
+  Implementation: VsseV class in instructions/vector.py
   Description: Constant-stride store of 8-bit elements
   Notes:
     - Store to addr[i] = rs1 + i * rs2
     - rs2 contains byte stride (signed)
-    - TODO: Add decode pattern for mop=10 to decode.py
-    - TODO: Create instruction class in vector.py
+    - Uses lamlet.vstore(stride_bytes=...) -> vloadstorestride()
+    - Masking: ⚠ Passed through but needs verification
 
-VSSE16.V (Status: ✗)
+VSSE16.V (Status: ✓)
   Spec: v-st-ext.adoc line 1615, vmem-format.edn
   Format: vsse16.v vs3, (rs1), rs2, vm
   Tests: vsse16.v.toml
   Encoding: nf|mew|10|vm|rs2|rs1|101|vs3|0100111
            mop=10 (strided), width=101 (16-bit), opcode=0x27
-  Implementation: Not implemented
+  Implementation: VsseV class in instructions/vector.py
   Description: Constant-stride store of 16-bit elements
 
-VSSE32.V (Status: ✗)
+VSSE32.V (Status: ✓)
   Spec: v-st-ext.adoc line 1616, vmem-format.edn
   Format: vsse32.v vs3, (rs1), rs2, vm
   Tests: vsse32.v.toml
   Encoding: nf|mew|10|vm|rs2|rs1|110|vs3|0100111
            mop=10 (strided), width=110 (32-bit), opcode=0x27
-  Implementation: Not implemented
+  Implementation: VsseV class in instructions/vector.py
   Description: Constant-stride store of 32-bit elements
 
-VSSE64.V (Status: ✗)
+VSSE64.V (Status: ✓)
   Spec: v-st-ext.adoc line 1617, vmem-format.edn
   Format: vsse64.v vs3, (rs1), rs2, vm
   Tests: vsse64.v.toml
   Encoding: nf|mew|10|vm|rs2|rs1|111|vs3|0100111
            mop=10 (strided), width=111 (64-bit), opcode=0x27
-  Implementation: Not implemented
+  Implementation: VsseV class in instructions/vector.py
   Description: Constant-stride store of 64-bit elements
 
 INDEXED UNORDERED LOADS

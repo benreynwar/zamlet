@@ -421,8 +421,7 @@ class Synchronizer:
 
     def clear_sync(self, sync_ident: int):
         """Clear a completed synchronization."""
-        if sync_ident in self._sync_states:
-            del self._sync_states[sync_ident]
+        del self._sync_states[sync_ident]
 
     def _update_completed(self, sync_ident: int):
         """Check if sync is now complete and log once if so."""

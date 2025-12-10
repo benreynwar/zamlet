@@ -35,8 +35,8 @@ from zamlet.runner import Future
 from zamlet.kamlet import kinstructions
 from zamlet.transactions.load_stride import LoadStride
 from zamlet.transactions.store_stride import StoreStride
-from zamlet.transactions.load_indexed import LoadIndexedUnordered
-from zamlet.transactions.store_indexed import StoreIndexedUnordered
+from zamlet.transactions.load_indexed_unordered import LoadIndexedUnordered
+from zamlet.transactions.store_indexed_unordered import StoreIndexedUnordered
 from zamlet.transactions.ident_query import IdentQuery
 from zamlet.transactions.write_imm_bytes import WriteImmBytes
 from zamlet.transactions.read_byte import ReadByte
@@ -45,7 +45,6 @@ from zamlet import utils
 import zamlet.disasm_trace as dt
 from zamlet.synchronization import SyncDirection, Synchronizer
 from zamlet.monitor import Monitor, CompletionType, ResourceType
-from zamlet.ordered_buffer import OrderedElementBuffer
 
 
 logger = logging.getLogger(__name__)
@@ -193,30 +192,6 @@ class Lamlet:
             monitor=self.monitor,
         )
 
-        # Ordered element buffers for scalar memory operations
-        # Maps instr_ident -> OrderedElementBuffer
-        self._ordered_buffers: dict[int, OrderedElementBuffer] = {}
-
-    def _has_free_ordered_buffer(self) -> bool:
-        """Check if there's room for another ordered buffer."""
-        return len(self._ordered_buffers) < self.params.l_n_ordered_buffers
-
-    async def _get_ordered_buffer(self, instr_ident: int) -> OrderedElementBuffer:
-        """Get an ordered buffer for this instr_ident, waiting if necessary."""
-        while not self._has_free_ordered_buffer():
-            await self.clock.next_cycle
-        buf = OrderedElementBuffer(
-            instr_ident=instr_ident,
-            capacity=self.params.l_ordered_buffer_capacity,
-        )
-        self._ordered_buffers[instr_ident] = buf
-        return buf
-
-    def _release_ordered_buffer(self, instr_ident: int) -> None:
-        """Release an ordered buffer when the operation is complete."""
-        if instr_ident in self._ordered_buffers:
-            del self._ordered_buffers[instr_ident]
-
     def has_free_witem_slot(self) -> bool:
         """Check if there's room for another waiting item."""
         return len(self.waiting_items) < self.params.n_items
@@ -242,14 +217,6 @@ class Lamlet:
                 return
         raise ValueError(f"No waiting item with instr_ident {instr_ident}")
 
-    def create_sync_spans(self, sync_ident: int, kinstr_span_id: int) -> None:
-        """Create global SYNC span and SYNC_LOCAL children for all synchronizers."""
-        global_span_id = self.monitor.record_sync_created(sync_ident, kinstr_span_id)
-        for ky in range(self.params.k_rows):
-            for kx in range(self.params.k_cols):
-                self.monitor.record_sync_local_created(sync_ident, kx, ky, global_span_id)
-        self.monitor.record_sync_local_created(sync_ident, 0, -1, global_span_id)
-        self.monitor.finalize_sync_children(sync_ident)
 
     def get_oldest_active_instr_ident_distance(self, baseline: int) -> int | None:
         """Return the distance to the oldest active instr_ident from baseline.
@@ -643,21 +610,10 @@ class Lamlet:
             raise NotImplementedError(f"Unexpected channel 1+ message: {header.message_type}")
 
     async def _handle_read_mem_word_req(self, header, scalar_addr: int):
-        """Handle READ_MEM_WORD_REQ: read from scalar memory and send response.
-
-        For unordered operations: read immediately and send RESP.
-        For ordered operations: buffer request and send ACK; data sent after sync.
-        """
-        if header.ordered:
-            await self._handle_ordered_read_mem_word_req(header, scalar_addr)
-        else:
-            await self._handle_unordered_read_mem_word_req(header, scalar_addr)
-
-    async def _handle_unordered_read_mem_word_req(self, header, scalar_addr: int):
-        """Handle unordered READ_MEM_WORD_REQ: read immediately and send RESP."""
+        """Handle READ_MEM_WORD_REQ: read from scalar memory and send response."""
         wb = self.params.word_bytes
         word_addr = scalar_addr - (scalar_addr % wb)
-        data = bytes(self.scalar.memory.get(scalar_addr + i, 0) for i in range(wb))
+        data = self.scalar.get_memory(scalar_addr, wb)
         resp_header = TaggedHeader(
             target_x=header.source_x,
             target_y=header.source_y,
@@ -678,63 +634,11 @@ class Lamlet:
         self.monitor.add_event(
             transaction_span_id,
             f'scalar_read addr=0x{scalar_addr:x}, word_addr=0x{word_addr:x}, data={data.hex()}')
-        self.monitor.record_message_sent(
-            transaction_span_id, MessageType.READ_MEM_WORD_RESP.name,
-            ident=header.ident, tag=header.tag,
-            src_x=0, src_y=-1,
-            dst_x=header.source_x, dst_y=header.source_y,
-        )
-        await self.send_packet(packet, jamlet, Direction.N, port=0)
+        await self.send_packet(packet, jamlet, Direction.N, port=0,
+                               parent_span_id=transaction_span_id)
         logger.debug(
-            f'{self.clock.cycle}: lamlet: READ_MEM_WORD_REQ (unordered) addr=0x{scalar_addr:x} '
+            f'{self.clock.cycle}: lamlet: READ_MEM_WORD_REQ addr=0x{scalar_addr:x} '
             f'-> ({header.source_x},{header.source_y}) data={data.hex()}')
-
-    async def _handle_ordered_read_mem_word_req(self, header, scalar_addr: int):
-        """Handle ordered READ_MEM_WORD_REQ: buffer request and send ACK."""
-        # Extract parent instr_ident from header ident
-        parent_ident = (header.ident - header.tag - 1) % self.params.max_response_tags
-        buf = self._ordered_buffers[parent_ident]
-        element_index = header.element_index
-
-        # Add to buffer (may be ignored if below min_element_index, or evicted if full)
-        buf.add_element(
-            element_index=element_index,
-            address=scalar_addr,
-            data=None,  # Data will be read after sync
-            header=header,
-        )
-
-        # Send ACK immediately
-        ack_header = TaggedHeader(
-            target_x=header.source_x,
-            target_y=header.source_y,
-            source_x=0,
-            source_y=-1,
-            message_type=MessageType.READ_MEM_WORD_ACK,
-            send_type=SendType.SINGLE,
-            length=1,
-            tag=header.tag,
-            ident=header.ident,
-        )
-        packet = [ack_header]
-        jamlet = self.kamlets[0].jamlets[0]
-
-        transaction_span_id = self.monitor.get_transaction_span_id(
-            header.ident, header.tag, header.source_x, header.source_y, 0, -1)
-        assert transaction_span_id is not None
-        self.monitor.add_event(
-            transaction_span_id,
-            f'ordered_scalar_read_buffered addr=0x{scalar_addr:x}, element_index={element_index}')
-        self.monitor.record_message_sent(
-            transaction_span_id, MessageType.READ_MEM_WORD_ACK.name,
-            ident=header.ident, tag=header.tag,
-            src_x=0, src_y=-1,
-            dst_x=header.source_x, dst_y=header.source_y,
-        )
-        await self.send_packet(packet, jamlet, Direction.N, port=0)
-        logger.debug(
-            f'{self.clock.cycle}: lamlet: READ_MEM_WORD_REQ (ordered) addr=0x{scalar_addr:x} '
-            f'element={element_index} -> ACK to ({header.source_x},{header.source_y})')
 
     async def _handle_write_mem_word_req(self, header: WriteMemWordHeader, scalar_addr: int,
                                          src_word: bytes):
@@ -746,7 +650,7 @@ class Lamlet:
         n_bytes = header.n_bytes
         for i in range(n_bytes):
             src_byte = src_word[src_start + i]
-            self.scalar.memory[word_addr + dst_start + i] = src_byte
+            self.scalar.set_memory(word_addr + dst_start + i, src_byte)
         resp_header = TaggedHeader(
             target_x=header.source_x,
             target_y=header.source_y,
@@ -763,14 +667,9 @@ class Lamlet:
         # Look up transaction (requester is source, we are dest at (0, -1))
         transaction_span_id = self.monitor.get_transaction_span_id(
             header.ident, header.tag, header.source_x, header.source_y, 0, -1)
-        if transaction_span_id is not None:
-            self.monitor.record_message_sent(
-                transaction_span_id, MessageType.WRITE_MEM_WORD_RESP.name,
-                ident=header.ident, tag=header.tag,
-                src_x=0, src_y=-1,
-                dst_x=header.source_x, dst_y=header.source_y,
-            )
-        await self.send_packet(packet, jamlet, Direction.N, port=0)
+        assert transaction_span_id is not None
+        await self.send_packet(packet, jamlet, Direction.N, port=0,
+                               parent_span_id=transaction_span_id)
         logger.debug(
             f'{self.clock.cycle}: lamlet: WRITE_MEM_WORD_REQ addr=0x{scalar_addr:x} '
             f'src_start={src_start} dst_start={dst_start} n_bytes={n_bytes} '
@@ -960,13 +859,33 @@ class Lamlet:
                     self.monitor.finalize_children(kinstr_span_id)
         await self.send_packet(packet, jamlet, Direction.N, port=0)
 
-    async def send_packet(self, packet, jamlet, direction, port):
-        """Queue a packet for sending. Only channel 0 is currently supported."""
-        message_type = packet[0].message_type
+    async def send_packet(self, packet, jamlet, direction, port,
+                          parent_span_id: int | None = None):
+        """Queue a packet for sending. Only channel 0 is currently supported.
+
+        parent_span_id is required for non-INSTRUCTION messages. For INSTRUCTIONS,
+        message recording is handled separately due to broadcast complexity.
+        """
+        header = packet[0]
+        message_type = header.message_type
         channel = CHANNEL_MAPPING[message_type]
         assert channel == 0, f"Only channel 0 supported, got {channel}"
         assert port == 0
         assert direction == Direction.N
+
+        if message_type == MessageType.INSTRUCTIONS:
+            assert parent_span_id is None
+        else:
+            assert parent_span_id is not None
+            tag = getattr(header, 'tag', None)
+            ident = getattr(header, 'ident', None)
+            self.monitor.record_message_sent(
+                parent_span_id, message_type.name,
+                ident=ident, tag=tag,
+                src_x=0, src_y=-1,
+                dst_x=header.target_x, dst_y=header.target_y,
+            )
+
         send_queue = self._send_queues[message_type]
         while not send_queue.can_append():
             await self.clock.next_cycle
@@ -1051,7 +970,9 @@ class Lamlet:
             self.clock.create_task(self.combine_read_futures(read_future, read_futures))
         else:
             local_address = start_addr.to_scalar_addr(self.tlb)
-            read_future = await self.scalar.get_memory(local_address, size=size)
+            data = self.scalar.get_memory(local_address, size=size)
+            read_future = self.clock.create_future()
+            read_future.set_result(data)
         return read_future
 
     async def get_memory_blocking(self, address: int, size: int):
@@ -1255,7 +1176,7 @@ class Lamlet:
         kinstr_span_id = self.monitor.record_kinstr_created(kinstr, self._ident_query_span_id)
 
         # Create sync tracking spans
-        self.create_sync_spans(self._ident_query_ident, kinstr_span_id)
+        self.monitor.create_sync_spans(self._ident_query_ident, kinstr_span_id, self.params)
 
         # Lamlet participates in sync network with its own distance value
         self.synchronizer.local_event(self._ident_query_ident, value=self._ident_query_lamlet_dist)
@@ -1649,7 +1570,7 @@ class Lamlet:
                 )
             await self.add_to_instruction_buffer(kinstr, parent_span_id)
             kinstr_span_id = self.monitor.get_kinstr_span_id(instr_ident)
-            self.create_sync_spans(instr_ident, kinstr_span_id)
+            self.monitor.create_sync_spans(instr_ident, kinstr_span_id, self.params)
             # Lamlet doesn't participate in LoadStride/StoreStride syncs, but we need to
             # signal local_event so the sync can complete
             self.synchronizer.local_event(instr_ident)
@@ -1683,8 +1604,7 @@ class Lamlet:
             instr_ident = await self.get_instr_ident(n_idents=self.params.word_bytes + 1)
 
             if ordered:
-                # Acquire ordered buffer before dispatching instruction
-                await self._get_ordered_buffer(instr_ident)
+                raise NotImplementedError("Ordered indexed loads not yet implemented")
 
             kinstr = LoadIndexedUnordered(
                 dst=vd,
@@ -1697,16 +1617,13 @@ class Lamlet:
                 mask_reg=mask_reg,
                 writeset_ident=writeset_ident,
                 instr_ident=instr_ident,
-                ordered=ordered,
             )
             await self.add_to_instruction_buffer(kinstr, parent_span_id)
             kinstr_span_id = self.monitor.get_kinstr_span_id(instr_ident)
-            self.create_sync_spans(instr_ident, kinstr_span_id)
+            self.monitor.create_sync_spans(instr_ident, kinstr_span_id, self.params, name='first')
 
-            if not ordered:
-                # Unordered: lamlet doesn't participate, signal immediately
-                self.synchronizer.local_event(instr_ident)
-            # For ordered: lamlet will call local_event after receiving all scalar requests
+            # Lamlet signals local_event for the first sync
+            self.synchronizer.local_event(instr_ident)
 
     async def vstore_indexed(self, vs: int, base_addr: int, index_reg: int, index_ew: int,
                              data_ew: int, n_elements: int, mask_reg: int | None,
@@ -1747,7 +1664,7 @@ class Lamlet:
                 )
             await self.add_to_instruction_buffer(kinstr, parent_span_id)
             kinstr_span_id = self.monitor.get_kinstr_span_id(instr_ident)
-            self.create_sync_spans(instr_ident, kinstr_span_id)
+            self.monitor.create_sync_spans(instr_ident, kinstr_span_id, self.params)
             # Lamlet doesn't participate in StoreIndexed syncs, but we need to
             # signal local_event so the sync can complete
             self.synchronizer.local_event(instr_ident)
@@ -1900,7 +1817,7 @@ class Lamlet:
                         writeset_ident=writeset_ident,
                         )
                 else:
-                    byte_imm = self.scalar.memory[scalar_addr.addr]
+                    byte_imm = self.scalar.get_memory(scalar_addr.addr, 1)[0]
                     instr_ident = await self.get_instr_ident()
                     kinstr = kinstructions.LoadImmByte(
                         dst=vd,
@@ -1926,7 +1843,7 @@ class Lamlet:
                 if is_store:
                     raise NotImplementedError("StoreWord for scalar memory not yet implemented")
                 else:
-                    word_imm = self.scalar.memory[word_addr: word_addr + wb]
+                    word_imm = self.scalar.get_memory(word_addr, wb)
                     instr_ident = await self.get_instr_ident()
                     kinstr = kinstructions.LoadImmWord(
                         dst=vd,
@@ -1961,7 +1878,7 @@ class Lamlet:
         instr_ident = await self.get_instr_ident()
         if size == 1:
             bit_mask = (1 << 8) - 1
-            byte_imm = self.scalar.memory[scalar_addr.addr]
+            byte_imm = self.scalar.get_memory(scalar_addr.addr, 1)[0]
             kinstr = kinstructions.LoadImmByte(
                 dst=addresses.RegAddr(vd, start_byte, dst_ordering, self.params),
                 imm=byte_imm,
@@ -1973,7 +1890,7 @@ class Lamlet:
                 )
         else:
             word_addr = scalar_addr.addr - start_byte
-            word_imm = self.scalar.memory[word_addr: word_addr+self.params.word_bytes]
+            word_imm = self.scalar.get_memory(word_addr, self.params.word_bytes)
             byte_mask = [0]*self.params.word_bytes
             for byte_index in range(start_byte, start_byte+size):
                 byte_mask[byte_index] = 1

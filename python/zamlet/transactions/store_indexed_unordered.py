@@ -1,8 +1,10 @@
 '''
-Indexed (scatter) store: element i is stored to address (base + index_vector[i]).
+Unordered indexed (scatter) store (vsuxei): element i is stored to address (base + index_vector[i]).
 
 The index register contains byte offsets with element width index_ew.
 The data element width comes from SEW (src_ordering.ew).
+
+All elements are stored in parallel with no ordering guarantees.
 '''
 
 from typing import List, TYPE_CHECKING

@@ -17,8 +17,9 @@ class ScalarState:
         self._rf = [RegisterFileSlot(clock, params, f'x{i}') for i in range(32)]
         self._frf = [RegisterFileSlot(clock, params, f'f{i}') for i in range(32)]
 
-        self.memory = {}
+        self._memory = {}
         self.csr = {}
+        self.access_log: list[int] = []  # Addresses accessed via get_memory
 
     def regs_ready(self, dst_reg, dst_freg, src_regs, src_fregs):
         dst_reg_ready = dst_reg is None or dst_reg == 0 or self._rf[dst_reg].can_write()
@@ -56,24 +57,19 @@ class ScalarState:
         self._frf[freg_num].set_future(future)
 
     def set_memory(self, address: int, b):
-        self.memory[address] = b
+        self._memory[address] = b
 
-    async def get_memory(self, address: int, size: int=1):
-        """
-        Returns a future that will resolve with the memory value.
-        (currently resolves immediately)
-        Uninitialized addresses return random values which are then stored.
-        """
-        future = self.clock.create_future()
+    def get_memory(self, address: int, size: int = 1) -> bytes:
+        """Read from memory and log the access."""
+        self.access_log.append(address)
         bs = []
         for index in range(size):
             addr = address + index
-            if addr not in self.memory:
+            if addr not in self._memory:
                 # FIXME: Make this deterministic by using a seeded RNG
-                self.memory[addr] = random.randint(0, 255)
-            bs.append(self.memory[addr])
-        future.set_result(bytes(bs))
-        return future
+                self._memory[addr] = random.randint(0, 255)
+            bs.append(self._memory[addr])
+        return bytes(bs)
 
     def read_csr(self, csr_addr):
         """Read CSR, returns bytes of length word_bytes."""
