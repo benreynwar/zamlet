@@ -18,6 +18,16 @@ async def update(clock, lamlet):
         lamlet.update()
 
 
+def write_span_trees(lam):
+    """Write span trees to file for debugging."""
+    with open('span_trees.txt', 'w') as f:
+        for span in lam.monitor.spans.values():
+            if span.parent is None:
+                f.write(lam.monitor.format_span_tree(span.span_id, max_depth=20))
+                f.write('\n\n')
+    logger.info("Span trees written to span_trees.txt")
+
+
 async def run(clock: Clock, filename, params: LamletParams = None):
     p_info = program_info.get_program_info(filename)
 
@@ -101,25 +111,31 @@ async def run(clock: Clock, filename, params: LamletParams = None):
     results_addr = 0x900C0000
 
     clock.create_task(s.run_instructions(disasm_trace=trace))
-    while clock.running:
-        if s.exit_code is not None:
-            logger.info(f"Program exited with code {s.exit_code}")
-            logger.info(f"Final VL register: {s.vl}")
-            logger.info(f"Final VTYPE register: {hex(s.vtype)}")
+    exit_code = 1  # Default to failure
+    try:
+        while clock.running:
+            if s.exit_code is not None:
+                logger.info(f"Program exited with code {s.exit_code}")
+                logger.info(f"Final VL register: {s.vl}")
+                logger.info(f"Final VTYPE register: {hex(s.vtype)}")
 
-            logger.info("Verifying results from vector register file:")
-            #verify_results_from_vrf(s, verify_addr)
+                logger.info("Verifying results from vector register file:")
+                #verify_results_from_vrf(s, verify_addr)
 
-            logger.info("\nVerifying results from memory:")
-            #verify_results(s, results_addr, verify_addr)
+                logger.info("\nVerifying results from memory:")
+                #verify_results(s, results_addr, verify_addr)
 
-            # Signal clock to stop gracefully
-            clock.running = False
-            logger.info(f"run() about to return exit_code={s.exit_code}")
-            return s.exit_code
-        await clock.next_cycle
-    logger.info(f"run() exiting with clock.running=False, exit_code={s.exit_code}")
-    return None
+                # Signal clock to stop gracefully
+                clock.running = False
+                logger.info(f"run() about to return exit_code={s.exit_code}")
+                exit_code = s.exit_code
+                break
+            await clock.next_cycle
+        else:
+            logger.info(f"run() exiting with clock.running=False, exit_code={s.exit_code}")
+    finally:
+        write_span_trees(s)
+    return exit_code
 
 
 
@@ -164,6 +180,8 @@ if __name__ == '__main__':
                         help='Run with all geometries')
     parser.add_argument('--max-cycles', type=int, default=50000,
                         help='Maximum simulation cycles (default: 50000)')
+    parser.add_argument('--log-level', default='WARNING',
+                        help='Logging level (DEBUG, INFO, WARNING, ERROR)')
     args = parser.parse_args()
 
     if args.list_geometries:
@@ -171,7 +189,7 @@ if __name__ == '__main__':
         print(list_geometries())
         sys.exit(0)
 
-    level = logging.WARNING
+    level = getattr(logging, args.log_level.upper())
     root_logger = logging.getLogger()
     root_logger.setLevel(level)
     handler = logging.StreamHandler(sys.stdout)
@@ -215,7 +233,7 @@ if __name__ == '__main__':
                 root_logger.warning(f'========== Test interrupted by user ==========')
                 sys.exit(1)
             except asyncio.CancelledError:
-                pass
+                exit_code = 1  # Timeout
             except Exception as e:
                 root_logger.error(f'========== Test FAILED: {filename} {geom_name} - {e} ==========')
                 import traceback
@@ -227,5 +245,7 @@ if __name__ == '__main__':
                     root_logger.warning(f'========== Test PASSED: {filename} {geom_name} ==========')
                 else:
                     root_logger.warning(f'========== Test FAILED: {filename} {geom_name} (exit code: {exit_code}) ==========')
+                    sys.exit(exit_code)
             else:
                 root_logger.info(f'========== Test completed: {filename} {geom_name} (no exit code) ==========')
+                sys.exit(1)

@@ -16,7 +16,7 @@ import logging
 
 from zamlet import addresses, utils
 from zamlet.waiting_item import WaitingItemRequiresCache
-from zamlet.message import TaggedHeader, MessageType, SendType
+from zamlet.message import TaggedHeader, MaskedTaggedHeader, MessageType, SendType
 from zamlet.kamlet.cache_table import SendState, ReceiveState, StoreProtocolState, CacheState
 from zamlet.kamlet import kinstructions
 from zamlet.params import LamletParams
@@ -193,7 +193,7 @@ async def send_req(jamlet, witem: WaitingStoreJ2JWords, tag: int) -> None:
 
     mask_bits_as_int = utils.list_of_uints_to_uint(mask_bits, width=1)
 
-    header = TaggedHeader(
+    header = MaskedTaggedHeader(
         target_x=target_x,
         target_y=target_y,
         source_x=jamlet.x,

@@ -15,7 +15,7 @@ from dataclasses import dataclass
 
 from zamlet import addresses
 from zamlet.addresses import GlobalAddress
-from zamlet.kamlet.kinstructions import KInstr
+from zamlet.kamlet.kinstructions import TrackedKInstr
 from zamlet.message import MessageType, SendType, ElementIndexHeader
 
 if TYPE_CHECKING:
@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
-class StoreIndexedElement(KInstr):
+class StoreIndexedElement(TrackedKInstr):
     """
     Ordered indexed store - gather a single element.
 
@@ -82,8 +82,8 @@ async def handle_store_indexed_element(kamlet: 'Kamlet',
     kamlet.rf_info.finish(rf_ident, read_regs=read_regs, write_regs=[])
 
     header = ElementIndexHeader(
-        target_x=0,
-        target_y=-1,
+        target_x=jamlet.lamlet_x,
+        target_y=jamlet.lamlet_y,
         source_x=jamlet.x,
         source_y=jamlet.y,
         message_type=MessageType.STORE_INDEXED_ELEMENT_RESP,
@@ -94,9 +94,10 @@ async def handle_store_indexed_element(kamlet: 'Kamlet',
     )
     packet = [header, g_addr.addr, data]
 
-    kinstr_span_id = jamlet.monitor.get_kinstr_span_id(instr.instr_ident)
-    assert kinstr_span_id is not None
-    await jamlet.send_packet(packet, parent_span_id=kinstr_span_id)
+    kinstr_exec_span_id = kamlet.monitor.get_kinstr_exec_span_id(
+        instr.instr_ident, kamlet.min_x, kamlet.min_y)
+    assert kinstr_exec_span_id is not None
+    await jamlet.send_packet(packet, parent_span_id=kinstr_exec_span_id)
     kamlet.monitor.finalize_kinstr_exec(instr.instr_ident, kamlet.min_x, kamlet.min_y)
 
 

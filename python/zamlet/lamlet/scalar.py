@@ -20,6 +20,7 @@ class ScalarState:
         self._memory = {}
         self.csr = {}
         self.access_log: list[int] = []  # Addresses accessed via get_memory
+        self.write_log: list[int] = []  # Addresses written via set_memory
 
     def regs_ready(self, dst_reg, dst_freg, src_regs, src_fregs):
         dst_reg_ready = dst_reg is None or dst_reg == 0 or self._rf[dst_reg].can_write()
@@ -56,8 +57,12 @@ class ScalarState:
     def write_freg_future(self, freg_num, future):
         self._frf[freg_num].set_future(future)
 
-    def set_memory(self, address: int, b):
-        self._memory[address] = b
+    def set_memory(self, address: int, data: bytes, log: bool = False):
+        """Write to memory."""
+        if log:
+            self.write_log.append(address)
+        for i, b in enumerate(data):
+            self._memory[address + i] = b
 
     def get_memory(self, address: int, size: int = 1) -> bytes:
         """Read from memory and log the access."""

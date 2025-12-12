@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 from zamlet.waiting_item import WaitingItem
 from zamlet.kamlet.kinstructions import TrackedKInstr
 from zamlet.message import IdentHeader, MessageType, SendType
+from zamlet.monitor import SpanType, CompletionType
 from zamlet.synchronization import WaitingItemSyncState
 
 if TYPE_CHECKING:
@@ -44,6 +45,17 @@ class IdentQuery(TrackedKInstr):
     def finalize_after_send(self) -> bool:
         # Don't finalize after send - the response message will be added as a child
         return False
+
+    def create_span(self, monitor, parent_span_id: int) -> int:
+        return monitor.create_span(
+            span_type=SpanType.KINSTR,
+            component="lamlet",
+            completion_type=CompletionType.TRACKED,
+            parent_span_id=parent_span_id,
+            instr_type=type(self).__name__,
+            instr_ident=self.instr_ident,
+            baseline=self.baseline,
+        )
 
     async def update_kamlet(self, kamlet: 'Kamlet'):
         distance = kamlet.cache_table.get_oldest_active_instr_ident_distance(self.baseline)
@@ -102,11 +114,8 @@ class WaitingIdentQuery(WaitingItem):
                 min_distance = self.sync_min_value
                 if min_distance is None:
                     max_tags = kamlet.params.max_response_tags
-                    oldest_ident = (self.previous_instr_ident + 1) % max_tags
-                    min_distance = (oldest_ident - self.baseline) % max_tags
-                    if min_distance == 0:
-                        # All idents are free
-                        min_distance = max_tags
+                    # No active items anywhere - all idents are free
+                    min_distance = max_tags
 
                 logger.debug(f'{kamlet.clock.cycle}: IdentQuery: kamlet (0,0) '
                              f'sending response min_distance={min_distance} '
@@ -127,8 +136,8 @@ async def send_ident_query_response(kamlet: 'Kamlet', response_ident: int, min_d
     packet_data = [bytearray([min_distance])]
 
     header = IdentHeader(
-        target_x=jamlet.x,
-        target_y=-1,  # Lamlet is at y=-1
+        target_x=jamlet.lamlet_x,
+        target_y=jamlet.lamlet_y,
         source_x=jamlet.x,
         source_y=jamlet.y,
         message_type=MessageType.IDENT_QUERY_RESP,

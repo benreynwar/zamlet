@@ -209,6 +209,8 @@ def shift_and_update_word(old_word: bytes, src_word: bytes, src_start: int, dst_
     '''
     word_length = len(old_word)
     assert word_length == len(src_word)
+    assert dst_start + n_bytes <= word_length
+
     src_word_int = int.from_bytes(src_word, byteorder='little')
     # Convert byte offsets to bit offsets for shifting
     shift_bits = (src_start - dst_start) * 8

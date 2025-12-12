@@ -4,23 +4,25 @@ Ordered indexed load - single element handler.
 When lamlet dispatches LoadIndexedElement to a kamlet, the jamlet that owns
 the element:
 1. Reads the index from index_reg to compute the address
-2. Sends ReadMemWordReq to either another jamlet (VPU memory) or lamlet (scalar memory)
-3. Receives data via ReadMemWordResp
+2. Sends ReadMemWordReq(s) to either another jamlet (VPU memory) or lamlet (scalar memory)
+   - An element may span multiple source words, requiring multiple requests
+3. Receives data via ReadMemWordResp for each tag
 4. Writes data to dst_reg
 5. Sends LOAD_INDEXED_ELEMENT_RESP to lamlet to free the buffer slot
 '''
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, List
 import logging
 from dataclasses import dataclass
 
 from zamlet import addresses
 from zamlet.addresses import GlobalAddress
 from zamlet.waiting_item import WaitingItem
-from zamlet.kamlet.kinstructions import KInstr
+from zamlet.kamlet.kinstructions import TrackedKInstr
 from zamlet.message import (
     MessageType, SendType, ReadMemWordHeader, ElementIndexHeader, TaggedHeader
 )
 from zamlet.kamlet.cache_table import SendState
+from zamlet import utils
 
 if TYPE_CHECKING:
     from zamlet.kamlet.kamlet import Kamlet
@@ -30,7 +32,15 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
-class LoadIndexedElement(KInstr):
+class RequiredBytes:
+    is_vpu: bool
+    g_addr: addresses.GlobalAddress
+    n_bytes: int
+    tag: int
+
+
+@dataclass
+class LoadIndexedElement(TrackedKInstr):
     """
     Ordered indexed load - load a single element.
 
@@ -39,7 +49,9 @@ class LoadIndexedElement(KInstr):
     - Sends ReadMemWordReq to another jamlet (VPU memory)
     - Sends ReadMemWordReq to the lamlet (scalar memory)
 
-    After receiving the data, writes to dst_reg and sends
+    An element may span multiple source words requiring multiple requests.
+
+    After receiving all data, writes to dst_reg and sends
     LOAD_INDEXED_ELEMENT_RESP back to the lamlet.
     """
     dst_reg: int
@@ -91,25 +103,47 @@ async def handle_load_indexed_element(kamlet: 'Kamlet',
 
 @dataclass
 class WaitingLoadIndexedElement(WaitingItem):
-    """Waiting item for ordered indexed element load."""
+    """Waiting item for ordered indexed element load.
+
+    An element may span multiple source words (up to word_bytes tags).
+    transaction_states tracks each tag's state.
+    """
 
     def __init__(self, instr: LoadIndexedElement, params, rf_ident: int,
                  j_in_k_index: int):
         super().__init__(item=instr, instr_ident=instr.instr_ident, rf_ident=rf_ident)
         self.params = params
         self.j_in_k_index = j_in_k_index
-        self.send_state = SendState.NEED_TO_SEND
-        self.data_received = False
+        self.transaction_states: List[SendState] = [
+            SendState.NEED_TO_SEND for _ in range(params.word_bytes)]
+        self.resp_sent = False
 
     def ready(self) -> bool:
-        return self.data_received
+        return self.resp_sent
+
+    def _all_transactions_complete(self) -> bool:
+        return all(s == SendState.COMPLETE for s in self.transaction_states)
 
     async def monitor_jamlet(self, jamlet: 'Jamlet') -> None:
         if jamlet.j_in_k_index != self.j_in_k_index:
             return
-        if self.send_state == SendState.NEED_TO_SEND:
-            await self._send_request(jamlet)
-            self.send_state = SendState.WAITING_FOR_RESPONSE
+
+        wb = jamlet.params.word_bytes
+        for tag in range(wb):
+            if self.transaction_states[tag] == SendState.NEED_TO_SEND:
+                sent = await self._send_request(jamlet, tag)
+                if sent:
+                    self.transaction_states[tag] = SendState.WAITING_FOR_RESPONSE
+                else:
+                    self.transaction_states[tag] = SendState.COMPLETE
+
+    async def monitor_kamlet(self, kamlet: 'Kamlet') -> None:
+        if self.resp_sent:
+            return
+        if self._all_transactions_complete():
+            jamlet = kamlet.jamlets[self.j_in_k_index]
+            await self._send_resp_to_lamlet(jamlet)
+            self.resp_sent = True
 
     def process_response(self, jamlet: 'Jamlet', packet) -> None:
         """Handle ReadMemWordResp - write data to RF."""
@@ -119,24 +153,40 @@ class WaitingLoadIndexedElement(WaitingItem):
         header = packet[0]
         data = packet[1]
         assert isinstance(header, TaggedHeader)
+        tag = header.tag
+
+        assert self.transaction_states[tag] == SendState.WAITING_FOR_RESPONSE
+        self.transaction_states[tag] = SendState.COMPLETE
 
         wb = jamlet.params.word_bytes
         data_ew = instr.data_ew
-        element_index = instr.element_index
 
+        request = self._get_request(jamlet, tag)
+        assert request is not None
+
+        if request.is_vpu:
+            k_maddr = request.g_addr.to_k_maddr(jamlet.tlb)
+            src_byte_in_word = k_maddr.addr % wb
+        else:
+            src_byte_in_word = request.g_addr.addr % wb
+
+        dst_byte_in_word = tag
+
+        element_index = instr.element_index
         elements_in_vline = jamlet.params.vline_bytes * 8 // data_ew
         element_in_jamlet = element_index // jamlet.params.j_in_l
         vline_index = element_in_jamlet // (wb * 8 // data_ew)
-        element_in_word = element_in_jamlet % (wb * 8 // data_ew)
-
         dst_reg = instr.dst_reg + vline_index
-        byte_offset = element_in_word * (data_ew // 8)
-        n_bytes = data_ew // 8
 
         old_word = jamlet.rf_slice[dst_reg * wb: (dst_reg + 1) * wb]
-        new_word = bytearray(old_word)
-        new_word[byte_offset:byte_offset + n_bytes] = data[:n_bytes]
-        jamlet.rf_slice[dst_reg * wb: (dst_reg + 1) * wb] = bytes(new_word)
+        new_word = utils.shift_and_update_word(
+            old_word=old_word,
+            src_word=data,
+            src_start=src_byte_in_word,
+            dst_start=dst_byte_in_word,
+            n_bytes=request.n_bytes,
+        )
+        jamlet.rf_slice[dst_reg * wb: (dst_reg + 1) * wb] = new_word
 
         witem_span_id = jamlet.monitor.get_witem_span_id(
             instr.instr_ident, jamlet.k_min_x, jamlet.k_min_y)
@@ -144,25 +194,27 @@ class WaitingLoadIndexedElement(WaitingItem):
         jamlet.monitor.add_event(
             witem_span_id,
             f'rf_write jamlet=({jamlet.x},{jamlet.y}) element={element_index} '
-            f'reg={dst_reg} byte_offset={byte_offset} n_bytes={n_bytes} '
-            f'old={old_word.hex()} new={bytes(new_word).hex()}')
+            f'tag={tag} reg={dst_reg} src_byte={src_byte_in_word} '
+            f'dst_byte={dst_byte_in_word} n_bytes={request.n_bytes} '
+            f'old={old_word.hex()} new={new_word.hex()}')
         jamlet.monitor.complete_transaction(
             ident=header.ident,
-            tag=header.tag,
+            tag=tag,
             src_x=jamlet.x,
             src_y=jamlet.y,
             dst_x=header.source_x,
             dst_y=header.source_y,
         )
 
-        self.send_state = SendState.COMPLETE
-        self.data_received = True
-
     def process_drop(self, jamlet: 'Jamlet', packet) -> None:
         """Handle drop - need to resend."""
         if jamlet.j_in_k_index != self.j_in_k_index:
             return
-        self.send_state = SendState.NEED_TO_SEND
+        header = packet[0]
+        assert isinstance(header, TaggedHeader)
+        tag = header.tag
+        assert self.transaction_states[tag] == SendState.WAITING_FOR_RESPONSE
+        self.transaction_states[tag] = SendState.NEED_TO_SEND
 
     async def finalize(self, kamlet: 'Kamlet') -> None:
         """Release RF after data received."""
@@ -177,74 +229,6 @@ class WaitingLoadIndexedElement(WaitingItem):
         read_regs = [instr.index_reg + element_index // index_elements_in_vline]
         assert self.rf_ident is not None
         kamlet.rf_info.finish(self.rf_ident, write_regs=dst_regs, read_regs=read_regs)
-
-    async def _send_request(self, jamlet: 'Jamlet') -> None:
-        """Send ReadMemWordReq to get the data."""
-        instr = self.item
-
-        byte_offset = self._get_index_value(jamlet)
-        g_addr = instr.base_addr.bit_offset(byte_offset * 8)
-
-        page_addr = g_addr.get_page()
-        page_info = jamlet.tlb.get_page_info(page_addr)
-
-        if page_info.local_address.is_vpu:
-            k_maddr = g_addr.to_k_maddr(jamlet.tlb)
-            target_x, target_y = addresses.k_indices_to_j_coords(
-                jamlet.params, k_maddr.k_index, k_maddr.j_in_k_index)
-            addr = k_maddr
-            is_vpu_target = True
-        else:
-            target_x, target_y = 0, -1
-            addr = g_addr.to_scalar_addr(jamlet.tlb)
-            is_vpu_target = False
-
-        header = ReadMemWordHeader(
-            target_x=target_x,
-            target_y=target_y,
-            source_x=jamlet.x,
-            source_y=jamlet.y,
-            message_type=MessageType.READ_MEM_WORD_REQ,
-            send_type=SendType.SINGLE,
-            length=2,
-            ident=instr.instr_ident,
-            tag=0,
-            words_requested=1,
-            element_index=instr.element_index,
-            ordered=True,
-        )
-        packet = [header, addr]
-
-        witem_span_id = jamlet.monitor.get_witem_span_id(
-            instr.instr_ident, jamlet.k_min_x, jamlet.k_min_y)
-        assert witem_span_id is not None
-        transaction_span_id = jamlet.monitor.create_transaction(
-            transaction_type='ReadMemWord',
-            ident=instr.instr_ident,
-            src_x=jamlet.x,
-            src_y=jamlet.y,
-            dst_x=target_x,
-            dst_y=target_y,
-            tag=0,
-            parent_span_id=witem_span_id,
-        )
-        assert transaction_span_id is not None
-        await jamlet.send_packet(packet, parent_span_id=transaction_span_id)
-
-        if is_vpu_target:
-            # VPU memory: lamlet doesn't process the request, so release its buffer slot now
-            resp_header = ElementIndexHeader(
-                target_x=0,
-                target_y=-1,
-                source_x=jamlet.x,
-                source_y=jamlet.y,
-                message_type=MessageType.LOAD_INDEXED_ELEMENT_RESP,
-                send_type=SendType.SINGLE,
-                length=1,
-                ident=instr.instr_ident,
-                element_index=instr.element_index,
-            )
-            await jamlet.send_packet([resp_header], parent_span_id=witem_span_id)
 
     def _get_index_value(self, jamlet: 'Jamlet') -> int:
         """Read the byte offset from the index register."""
@@ -266,3 +250,128 @@ class WaitingLoadIndexedElement(WaitingItem):
         index_value = int.from_bytes(word_data[byte_in_word:byte_in_word + index_bytes],
                                      byteorder='little', signed=False)
         return index_value
+
+    def _get_dst_byte_offset(self, jamlet: 'Jamlet') -> int:
+        """Get the byte offset within the destination word for this element."""
+        instr = self.item
+        wb = jamlet.params.word_bytes
+        data_ew = instr.data_ew
+        element_index = instr.element_index
+
+        element_in_jamlet = element_index // jamlet.params.j_in_l
+        element_in_word = element_in_jamlet % (wb * 8 // data_ew)
+        return element_in_word * (data_ew // 8)
+
+    def _get_request(self, jamlet: 'Jamlet', tag: int) -> RequiredBytes | None:
+        """Compute what bytes need to be fetched for this tag."""
+        instr = self.item
+        wb = jamlet.params.word_bytes
+        data_ew = instr.data_ew
+        element_bytes = data_ew // 8
+
+        dst_byte_offset = self._get_dst_byte_offset(jamlet)
+
+        if tag < dst_byte_offset or tag >= dst_byte_offset + element_bytes:
+            return None
+
+        src_eb = tag - dst_byte_offset
+
+        byte_offset = self._get_index_value(jamlet)
+        g_addr = instr.base_addr.bit_offset((byte_offset + src_eb) * 8)
+
+        page_addr = g_addr.get_page()
+        page_info = jamlet.tlb.get_page_info(page_addr)
+        page_byte_offset = g_addr.addr % jamlet.params.page_bytes
+        remaining_page_bytes = jamlet.params.page_bytes - page_byte_offset
+
+        if not page_info.local_address.is_vpu:
+            if src_eb == 0 or page_byte_offset == 0:
+                n_bytes = min(remaining_page_bytes, element_bytes - src_eb)
+                return RequiredBytes(is_vpu=False, g_addr=g_addr, n_bytes=n_bytes, tag=tag)
+            else:
+                return None
+        else:
+            assert page_info.local_address.ordering is not None
+            src_ew = page_info.local_address.ordering.ew
+            src_bit_in_element = g_addr.bit_addr % src_ew
+            if src_bit_in_element == 0 or src_eb == 0 or page_byte_offset == 0:
+                n_bytes = min((src_ew - src_bit_in_element) // 8,
+                              element_bytes - src_eb, remaining_page_bytes)
+                return RequiredBytes(is_vpu=True, g_addr=g_addr, n_bytes=n_bytes, tag=tag)
+            else:
+                return None
+
+    async def _send_request(self, jamlet: 'Jamlet', tag: int) -> bool:
+        """Send ReadMemWordReq to get the data for this tag. Returns True if sent."""
+        instr = self.item
+        request = self._get_request(jamlet, tag)
+        if request is None:
+            return False
+
+        wb = jamlet.params.word_bytes
+        msg_ident = (instr.instr_ident + tag + 1) % jamlet.params.max_response_tags
+
+        if request.is_vpu:
+            k_maddr = request.g_addr.to_k_maddr(jamlet.tlb)
+            word_offset = k_maddr.addr % wb
+            addr = k_maddr.bit_offset(-word_offset * 8)
+            target_x, target_y = addresses.k_indices_to_j_coords(
+                jamlet.params, k_maddr.k_index, k_maddr.j_in_k_index)
+        else:
+            addr = request.g_addr.to_scalar_addr(jamlet.tlb)
+            target_x, target_y = 0, -1
+
+        header = ReadMemWordHeader(
+            target_x=target_x,
+            target_y=target_y,
+            source_x=jamlet.x,
+            source_y=jamlet.y,
+            message_type=MessageType.READ_MEM_WORD_REQ,
+            send_type=SendType.SINGLE,
+            length=2,
+            ident=msg_ident,
+            tag=tag,
+            element_index=instr.element_index,
+            ordered=True,
+        )
+        packet = [header, addr]
+
+        witem_span_id = jamlet.monitor.get_witem_span_id(
+            instr.instr_ident, jamlet.k_min_x, jamlet.k_min_y)
+        assert witem_span_id is not None
+
+        logger.debug(f'{jamlet.clock.cycle}: LoadIndexedElement send_req: '
+                     f'jamlet ({jamlet.x},{jamlet.y}) ident={instr.instr_ident} tag={tag} '
+                     f'-> ({target_x},{target_y}) is_vpu={request.is_vpu}')
+
+        transaction_span_id = jamlet.monitor.create_transaction(
+            transaction_type='ReadMemWord',
+            ident=msg_ident,
+            src_x=jamlet.x,
+            src_y=jamlet.y,
+            dst_x=target_x,
+            dst_y=target_y,
+            tag=tag,
+            parent_span_id=witem_span_id,
+        )
+        assert transaction_span_id is not None
+        await jamlet.send_packet(packet, parent_span_id=transaction_span_id)
+        return True
+
+    async def _send_resp_to_lamlet(self, jamlet: 'Jamlet') -> None:
+        """Send LOAD_INDEXED_ELEMENT_RESP to lamlet to free buffer slot."""
+        instr = self.item
+        kinstr_span_id = jamlet.monitor.get_kinstr_span_id(instr.instr_ident)
+
+        resp_header = ElementIndexHeader(
+            target_x=jamlet.lamlet_x,
+            target_y=jamlet.lamlet_y,
+            source_x=jamlet.x,
+            source_y=jamlet.y,
+            message_type=MessageType.LOAD_INDEXED_ELEMENT_RESP,
+            send_type=SendType.SINGLE,
+            length=1,
+            ident=instr.instr_ident,
+            element_index=instr.element_index,
+        )
+        await jamlet.send_packet([resp_header], parent_span_id=kinstr_span_id)

@@ -5,7 +5,7 @@ from collections import deque
 import random
 from typing import Coroutine, List, Any
 
-from zamlet.runner import Clock, Future
+from zamlet.runner import Clock
 from zamlet.params import LamletParams
 from zamlet.utils import SettableBool
 from zamlet.message import Header, IdentHeader, TaggedHeader, WriteSetIdentHeader
@@ -104,33 +104,6 @@ class LoadProtocolState(ProtocolState):
 
     def finished(self) -> bool:
         return self.src_state == SendState.COMPLETE and self.dst_state == ReceiveState.COMPLETE
-
-
-class WaitingFuture(WaitingItem):
-
-    def __init__(self, future: Future, instr_ident: int):
-        """
-        This is used in the lamlet.
-        When a response is received with header.ident matching instr_ident,
-        the future is fired.
-        """
-        super().__init__(item=future, instr_ident=instr_ident)
-        self.future = future
-
-
-class WaitingStoreJ2JWords(WaitingItemRequiresCache):
-
-    cache_is_write = True
-
-    def __init__(self, params: LamletParams, instr: kinstructions.Store, rf_ident: int|None=None):
-        super().__init__(item=instr, instr_ident=instr.instr_ident, writeset_ident=instr.writeset_ident, rf_ident=rf_ident)
-        n_tags = instr.n_tags(params) * params.j_in_k
-        self.protocol_states: List[StoreProtocolState] = [
-                StoreProtocolState() for _ in range(n_tags)]
-
-    def ready(self):
-        return all(state.finished() for state in self.protocol_states) and self.cache_is_avail
-
 
 
 

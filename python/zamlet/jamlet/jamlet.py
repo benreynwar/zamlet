@@ -32,12 +32,15 @@ class Jamlet:
     """
 
     def __init__(self, clock, params: LamletParams, x: int, y: int, cache_table: CacheTable,
-                 rf_info: KamletRegisterFile, tlb: addresses.TLB, monitor: Monitor):
+                 rf_info: KamletRegisterFile, tlb: addresses.TLB, monitor: Monitor,
+                 lamlet_x: int, lamlet_y: int):
         self.clock = clock
         self.params = params
         self.monitor = monitor
         self.x = x
         self.y = y
+        self.lamlet_x = lamlet_x
+        self.lamlet_y = lamlet_y
 
         k_x = x // self.params.j_cols
         k_y = y // self.params.j_rows
@@ -107,6 +110,8 @@ class Jamlet:
             MessageType.WRITE_MEM_WORD_DROP: Queue(2),
             MessageType.WRITE_MEM_WORD_RETRY: Queue(2),
             MessageType.IDENT_QUERY_RESP: Queue(2),
+            MessageType.LOAD_INDEXED_ELEMENT_RESP: Queue(2),
+            MessageType.STORE_INDEXED_ELEMENT_RESP: Queue(2),
             }
 
         # Shared with the parent kamlet

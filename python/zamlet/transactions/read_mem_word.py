@@ -21,7 +21,7 @@ import logging
 
 from zamlet import addresses
 from zamlet.addresses import JSAddr
-from zamlet.message import TaggedHeader, MessageType, SendType, IdentHeader
+from zamlet.message import TaggedHeader, ReadMemWordHeader, MessageType, SendType, IdentHeader
 from zamlet.waiting_item import WaitingItemRequiresCache
 from zamlet.transactions import register_handler
 
@@ -112,6 +112,11 @@ async def handle_req(jamlet: 'Jamlet', packet: List[Any]) -> None:
     )
 
 
+def _get_parent_ident(header, params) -> int:
+    """Extract the parent instruction ident from a response header."""
+    return (header.ident - header.tag - 1) % params.max_response_tags
+
+
 @register_handler(MessageType.READ_MEM_WORD_RESP)
 def handle_resp(jamlet: 'Jamlet', packet: List[Any]) -> None:
     '''
@@ -119,12 +124,8 @@ def handle_resp(jamlet: 'Jamlet', packet: List[Any]) -> None:
     and process the response.
     '''
     header = packet[0]
-    if header.ident_is_direct:
-        instr_ident = header.ident
-    else:
-        # Decode parent ident from encoded ident
-        instr_ident = (header.ident - header.tag - 1) % jamlet.params.max_response_tags
-    witem = jamlet.cache_table.get_waiting_item_by_instr_ident(instr_ident)
+    parent_ident = _get_parent_ident(header, jamlet.params)
+    witem = jamlet.cache_table.get_waiting_item_by_instr_ident(parent_ident)
     witem.process_response(jamlet, packet)
 
 
@@ -135,18 +136,18 @@ def handle_drop(jamlet: 'Jamlet', packet: List[Any]) -> None:
     for retry.
     '''
     header = packet[0]
-    parent_ident = (header.ident - header.tag - 1) % jamlet.params.max_response_tags
+    parent_ident = _get_parent_ident(header, jamlet.params)
     witem = jamlet.cache_table.get_waiting_item_by_instr_ident(parent_ident)
     witem.process_drop(jamlet, packet)
 
 
-async def send_resp(jamlet: 'Jamlet', rcvd_header: TaggedHeader, j_saddr: JSAddr) -> None:
+async def send_resp(jamlet: 'Jamlet', rcvd_header: ReadMemWordHeader, j_saddr: JSAddr) -> None:
     '''Send READ_MEM_WORD_RESP with word data from cache.'''
     assert j_saddr.k_index == jamlet.k_index
     assert j_saddr.j_in_k_index == jamlet.j_in_k_index
     sram_addr = j_saddr.addr // jamlet.params.word_bytes * jamlet.params.word_bytes
     data = jamlet.sram[sram_addr: sram_addr + jamlet.params.word_bytes]
-    header = TaggedHeader(
+    header = ReadMemWordHeader(
         target_x=rcvd_header.source_x, target_y=rcvd_header.source_y,
         source_x=jamlet.x, source_y=jamlet.y,
         message_type=MessageType.READ_MEM_WORD_RESP,
@@ -167,10 +168,10 @@ async def send_resp(jamlet: 'Jamlet', rcvd_header: TaggedHeader, j_saddr: JSAddr
     await jamlet.send_packet([header, data], parent_span_id=transaction_span_id)
 
 
-async def send_drop(jamlet: 'Jamlet', rcvd_header: TaggedHeader,
+async def send_drop(jamlet: 'Jamlet', rcvd_header: ReadMemWordHeader,
                     reason: str) -> None:
     '''Send READ_MEM_WORD_DROP indicating request couldn't be handled.'''
-    header = TaggedHeader(
+    header = ReadMemWordHeader(
         target_x=rcvd_header.source_x, target_y=rcvd_header.source_y,
         source_x=jamlet.x, source_y=jamlet.y,
         message_type=MessageType.READ_MEM_WORD_DROP,

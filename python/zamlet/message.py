@@ -200,9 +200,11 @@ class TaggedHeader(IdentHeader):
     # Used to distinguish replys when we expect lots
     # of replys.  Maybe simpler that using source_x, source_y?
     tag: int     # 4 bits
-    words_requested: int = 1 # 4 bits
-    mask: int = 0 #12 bits (can't use with words_requested)
-    ident_is_direct: bool = False  # 1 bit: if True, use ident directly (no tag encoding)
+
+
+@dataclass
+class MaskedTaggedHeader(TaggedHeader):
+    mask: int = 0  # 12 bits - per-word mask for J2J operations
 
 
 @dataclass
@@ -216,20 +218,12 @@ class ValueHeader(IdentHeader):
 
 
 @dataclass
-class ShortAddressHeader(IdentHeader):
-    # Address is only 12 bits so we can fit 4 bits for the number
-    # of words.
-    address: int          # 12 bits
-    words_requested: int  # 4 bits
-
-@dataclass
 class WriteSetIdentHeader(IdentHeader):
     writeset_ident: int # 5 bits (11 remaining)
 
 
 @dataclass
-class WriteMemWordHeader(IdentHeader):
-    tag: int              # 3 bits - src byte in word (0-7)
+class WriteMemWordHeader(TaggedHeader):
     dst_byte_in_word: int # 3 bits - dst byte in word (0-7)
     n_bytes: int          # 3 bits - number of bytes (1-8)
     element_index: int = 0  # Element index for ordered operations

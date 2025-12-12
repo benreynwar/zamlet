@@ -288,8 +288,10 @@ class Monitor:
         span_id = kinstr.create_span(self, parent_span_id)
         # Store in lookup table if kinstr has an instr_ident
         if kinstr.instr_ident is not None:
-            assert kinstr.instr_ident not in self._kinstr_by_ident, \
-                f"instr_ident {kinstr.instr_ident} already in lookup table"
+            if kinstr.instr_ident in self._kinstr_by_ident:
+                existing_span_id = self._kinstr_by_ident[kinstr.instr_ident]
+                tree = self.format_span_tree(existing_span_id)
+                assert False, f"instr_ident {kinstr.instr_ident} already in lookup table\n{tree}"
             self._kinstr_by_ident[kinstr.instr_ident] = span_id
         return span_id
 
@@ -1337,4 +1339,7 @@ class Monitor:
                     else:
                         age = self.clock.cycle - dep_span.created_cycle
                         timing = f"{dep_span.created_cycle}-? (pending {age})"
-                    lines.append(f"{prefix}  waiting_for: {dep_span.span_type.value} @ {dep_span.component} [{timing}] ({dep_ref.reason})")
+                    details_str = ""
+                    if dep_span.details:
+                        details_str = " " + ", ".join(f"{k}={v}" for k, v in dep_span.details.items())
+                    lines.append(f"{prefix}  waiting_for: {dep_span.span_type.value} @ {dep_span.component} [{timing}] ({dep_ref.reason}){details_str}")

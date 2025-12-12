@@ -37,10 +37,12 @@ class Kamlet:
     """
 
     def __init__(self, clock, params: LamletParams, min_x: int, min_y: int, tlb: addresses.TLB,
-                 monitor: Monitor):
+                 monitor: Monitor, lamlet_x: int, lamlet_y: int):
         self.clock = clock
         self.params = params
         self.monitor = monitor
+        self.lamlet_x = lamlet_x
+        self.lamlet_y = lamlet_y
 
         # A kamlet covers several (x,y) coordinate positions (one for each lane (jamlet))
         self.min_x = min_x
@@ -72,7 +74,7 @@ class Kamlet:
             x = min_x+index % self.n_columns
             y = min_y+index//self.n_columns
             self.jamlets.append(Jamlet(clock, params, x, y, self.cache_table, self.rf_info,
-                                       self.tlb, monitor))
+                                       self.tlb, monitor, lamlet_x, lamlet_y))
 
         # Local State
         self._instruction_queue = Queue(self.params.instruction_queue_length)

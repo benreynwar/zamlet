@@ -87,18 +87,25 @@ async def handle_req(jamlet: 'Jamlet', packet: List[Any]) -> None:
     assert header.message_type == MessageType.WRITE_MEM_WORD_REQ
 
     # Check if the parent instruction exists on this jamlet
-    parent_ident = (header.ident - header.tag - 1) % jamlet.params.max_response_tags
-    parent_witem = jamlet.cache_table.get_waiting_item_by_instr_ident(parent_ident)
-    if parent_witem is None:
-        logger.debug(f'{jamlet.clock.cycle}: WRITE_MEM_WORD_REQ: jamlet ({jamlet.x},{jamlet.y}) '
-                     f'parent_ident={parent_ident} not found, sending DROP')
-        await send_drop(jamlet, header)
-        return
+    # If source is the lamlet, there is no parent witem (lamlet drives directly)
+    from_lamlet = (header.source_x == jamlet.lamlet_x and header.source_y == jamlet.lamlet_y)
+    if from_lamlet:
+        parent_witem = None
+        writeset_ident = None
+    else:
+        parent_ident = (header.ident - header.tag - 1) % jamlet.params.max_response_tags
+        parent_witem = jamlet.cache_table.get_waiting_item_by_instr_ident(parent_ident)
+        if parent_witem is None:
+            logger.debug(f'{jamlet.clock.cycle}: WRITE_MEM_WORD_REQ: jamlet ({jamlet.x},{jamlet.y}) '
+                         f'parent_ident={parent_ident} not found, sending DROP')
+            await send_drop(jamlet, header)
+            return
+        writeset_ident = parent_witem.writeset_ident
 
     can_write = jamlet.cache_table.can_write(addr, witem=parent_witem)
     slot = jamlet.cache_table.addr_to_slot(addr)
     slot_in_use = slot is not None and jamlet.cache_table.slot_in_use(
-        slot, writeset_ident=parent_witem.writeset_ident)
+        slot, writeset_ident=writeset_ident)
 
     # Check if there's a WaitingWriteMemWord waiting for this resend
     existing_witem = jamlet.cache_table.get_waiting_item_by_instr_ident(
@@ -171,7 +178,7 @@ async def handle_req(jamlet: 'Jamlet', packet: List[Any]) -> None:
             slot_state = jamlet.cache_table.slot_states[cache_slot]
             j_saddr = addr.to_j_saddr(jamlet.cache_table)
             witem = WaitingWriteMemWord(header, cache_slot, j_saddr,
-                                        writeset_ident=parent_witem.writeset_ident)
+                                        writeset_ident=writeset_ident)
             jamlet.cache_table.add_witem_immediately(witem, use_reserved=True)
             # Track witem span - parent is the transaction
             transaction_span_id = jamlet.monitor.get_transaction_span_id(
@@ -200,6 +207,11 @@ async def handle_req(jamlet: 'Jamlet', packet: List[Any]) -> None:
         await send_drop(jamlet, header)
 
 
+def _get_parent_ident(header, params) -> int:
+    """Extract the parent instruction ident from a response header."""
+    return (header.ident - header.tag - 1) % params.max_response_tags
+
+
 @register_handler(MessageType.WRITE_MEM_WORD_RESP)
 def handle_resp(jamlet: 'Jamlet', packet: List[Any]) -> None:
     '''
@@ -207,7 +219,7 @@ def handle_resp(jamlet: 'Jamlet', packet: List[Any]) -> None:
     and mark the tag as complete.
     '''
     header = packet[0]
-    parent_ident = (header.ident - header.tag - 1) % jamlet.params.max_response_tags
+    parent_ident = _get_parent_ident(header, jamlet.params)
     witem = jamlet.cache_table.get_waiting_item_by_instr_ident(parent_ident)
     witem.process_response(jamlet, packet)
 
@@ -219,7 +231,7 @@ def handle_drop(jamlet: 'Jamlet', packet: List[Any]) -> None:
     for retry.
     '''
     header = packet[0]
-    parent_ident = (header.ident - header.tag - 1) % jamlet.params.max_response_tags
+    parent_ident = _get_parent_ident(header, jamlet.params)
     witem = jamlet.cache_table.get_waiting_item_by_instr_ident(parent_ident)
     witem.process_drop(jamlet, packet)
 
@@ -231,7 +243,7 @@ def handle_retry(jamlet: 'Jamlet', packet: List[Any]) -> None:
     so mark for resend (same transaction continues).
     '''
     header = packet[0]
-    parent_ident = (header.ident - header.tag - 1) % jamlet.params.max_response_tags
+    parent_ident = _get_parent_ident(header, jamlet.params)
     witem = jamlet.cache_table.get_waiting_item_by_instr_ident(parent_ident)
     witem.process_drop(jamlet, packet)
 
@@ -257,6 +269,9 @@ async def do_write_and_respond(jamlet: 'Jamlet', rcvd_header: WriteMemWordHeader
     transaction_span_id = jamlet.monitor.get_transaction_span_id(
         rcvd_header.ident, rcvd_header.tag,
         rcvd_header.source_x, rcvd_header.source_y, jamlet.x, jamlet.y)
+    assert transaction_span_id is not None, \
+        f"Transaction not found: ident={rcvd_header.ident} tag={rcvd_header.tag} " \
+        f"src=({rcvd_header.source_x},{rcvd_header.source_y}) dst=({jamlet.x},{jamlet.y})"
 
     old_word = jamlet.sram[sram_addr: sram_addr + wb]
     new_word = utils.shift_and_update_word(
@@ -275,46 +290,58 @@ async def do_write_and_respond(jamlet: 'Jamlet', rcvd_header: WriteMemWordHeader
 
     slot_state.state = CacheState.MODIFIED
 
-    header = TaggedHeader(
+    header = WriteMemWordHeader(
         target_x=rcvd_header.source_x, target_y=rcvd_header.source_y,
         source_x=jamlet.x, source_y=jamlet.y,
         message_type=MessageType.WRITE_MEM_WORD_RESP,
         send_type=SendType.SINGLE,
         length=1,
         tag=rcvd_header.tag,
-        ident=rcvd_header.ident)
+        ident=rcvd_header.ident,
+        dst_byte_in_word=0,
+        n_bytes=0)
     await jamlet.send_packet([header], parent_span_id=transaction_span_id)
 
 
 async def send_drop(jamlet: 'Jamlet', rcvd_header: WriteMemWordHeader) -> None:
     '''Send WRITE_MEM_WORD_DROP indicating request couldn't be handled.'''
-    header = TaggedHeader(
+    header = WriteMemWordHeader(
         target_x=rcvd_header.source_x, target_y=rcvd_header.source_y,
         source_x=jamlet.x, source_y=jamlet.y,
         message_type=MessageType.WRITE_MEM_WORD_DROP,
         send_type=SendType.SINGLE,
         length=1,
         tag=rcvd_header.tag,
-        ident=rcvd_header.ident)
+        ident=rcvd_header.ident,
+        dst_byte_in_word=0,
+        n_bytes=0)
     # Look up transaction (requester is source, we are dest)
     transaction_span_id = jamlet.monitor.get_transaction_span_id(
         rcvd_header.ident, rcvd_header.tag,
         rcvd_header.source_x, rcvd_header.source_y, jamlet.x, jamlet.y)
+    assert transaction_span_id is not None, \
+        f"Transaction not found: ident={rcvd_header.ident} tag={rcvd_header.tag} " \
+        f"src=({rcvd_header.source_x},{rcvd_header.source_y}) dst=({jamlet.x},{jamlet.y})"
     await jamlet.send_packet([header], parent_span_id=transaction_span_id)
 
 
 async def send_retry(jamlet: 'Jamlet', rcvd_header: WriteMemWordHeader) -> None:
     '''Send WRITE_MEM_WORD_RETRY indicating cache is now ready.'''
-    header = TaggedHeader(
+    header = WriteMemWordHeader(
         target_x=rcvd_header.source_x, target_y=rcvd_header.source_y,
         source_x=jamlet.x, source_y=jamlet.y,
         message_type=MessageType.WRITE_MEM_WORD_RETRY,
         send_type=SendType.SINGLE,
         length=1,
         tag=rcvd_header.tag,
-        ident=rcvd_header.ident)
+        ident=rcvd_header.ident,
+        dst_byte_in_word=0,
+        n_bytes=0)
     # Look up transaction (requester is source, we are dest)
     transaction_span_id = jamlet.monitor.get_transaction_span_id(
         rcvd_header.ident, rcvd_header.tag,
         rcvd_header.source_x, rcvd_header.source_y, jamlet.x, jamlet.y)
+    assert transaction_span_id is not None, \
+        f"Transaction not found: ident={rcvd_header.ident} tag={rcvd_header.tag} " \
+        f"src=({rcvd_header.source_x},{rcvd_header.source_y}) dst=({jamlet.x},{jamlet.y})"
     await jamlet.send_packet([header], parent_span_id=transaction_span_id)
