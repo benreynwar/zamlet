@@ -41,6 +41,7 @@ def handle_load_indexed_element_resp(lamlet: 'Lamlet', header: ElementIndexHeade
 
     For VPU loads: element is DISPATCHED (kamlet handled internally)
     For scalar loads: element is IN_FLIGHT (lamlet sent data, waiting for this RESP)
+    For masked elements: element was skipped, just complete it
     """
     witem = lamlet.get_witem_by_ident(header.ident)
     assert witem is not None, f"No witem for ident {header.ident}"
@@ -48,25 +49,40 @@ def handle_load_indexed_element_resp(lamlet: 'Lamlet', header: ElementIndexHeade
     buf = lamlet._ordered_buffers[witem.buffer_id]
     assert buf is not None, f"No ordered buffer for buffer_id {witem.buffer_id}"
     assert buf.is_load
+    if header.masked:
+        logger.debug(f'{lamlet.clock.cycle}: handle_load_indexed_element_resp: '
+                     f'masked element={header.element_index}')
     buf.complete_element(witem.element_index)
     lamlet.remove_witem_by_ident(header.ident)
     lamlet.monitor.complete_kinstr(header.ident)
 
 
 def handle_store_indexed_element_resp(lamlet: 'Lamlet', header: ElementIndexHeader,
-                                      addr: int, data: bytes):
-    """Handle STORE_INDEXED_ELEMENT_RESP: buffer the write for in-order processing."""
+                                      addr: int | None, data: bytes | None):
+    """Handle STORE_INDEXED_ELEMENT_RESP: buffer the write for in-order processing.
+
+    For masked elements, addr and data are None - just complete the element.
+    """
     witem = lamlet.get_witem_by_ident(header.ident)
     assert witem is not None, f"No witem for ident {header.ident}"
     assert isinstance(witem, LamletWaitingStoreIndexedElement)
     buf = lamlet._ordered_buffers[witem.buffer_id]
     assert buf is not None, f"No ordered buffer for buffer_id {witem.buffer_id}"
     assert not buf.is_load
-    g_addr = GlobalAddress(bit_addr=addr * 8, params=lamlet.params)
-    entry = buf.get_entry(witem.element_index)
-    entry.state = ElementState.READY
-    entry.addr = g_addr
-    entry.data = data
+
+    if header.masked:
+        logger.debug(f'{lamlet.clock.cycle}: handle_store_indexed_element_resp: '
+                     f'masked element={header.element_index}')
+        buf.complete_element(witem.element_index)
+        lamlet.remove_witem_by_ident(header.ident)
+        lamlet.monitor.complete_kinstr(header.ident)
+    else:
+        assert addr is not None and data is not None
+        g_addr = GlobalAddress(bit_addr=addr * 8, params=lamlet.params)
+        entry = buf.get_entry(witem.element_index)
+        entry.state = ElementState.READY
+        entry.addr = g_addr
+        entry.data = data
 
 
 def handle_ordered_write_mem_word_resp(lamlet: 'Lamlet', header: TaggedHeader):
@@ -404,6 +420,7 @@ async def vload_indexed_ordered(lamlet: 'Lamlet', vd: int, base_addr: int, index
             data_ew=data_ew,
             element_index=element_index,
             instr_ident=element_ident,
+            mask_reg=mask_reg,
         )
 
         witem = LamletWaitingLoadIndexedElement(
@@ -466,6 +483,7 @@ async def vstore_indexed_ordered(lamlet: 'Lamlet', vs: int, base_addr: int, inde
             data_ew=data_ew,
             element_index=element_index,
             instr_ident=element_ident,
+            mask_reg=mask_reg,
         )
 
         witem = LamletWaitingStoreIndexedElement(

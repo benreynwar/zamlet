@@ -53,6 +53,9 @@ class LoadIndexedElement(TrackedKInstr):
 
     After receiving all data, writes to dst_reg and sends
     LOAD_INDEXED_ELEMENT_RESP back to the lamlet.
+
+    If mask_reg is set and the element's mask bit is 0, immediately sends
+    LOAD_INDEXED_ELEMENT_RESP with masked=True without doing any work.
     """
     dst_reg: int
     index_reg: int
@@ -61,9 +64,23 @@ class LoadIndexedElement(TrackedKInstr):
     element_index: int
     base_addr: GlobalAddress
     instr_ident: int
+    mask_reg: int | None = None
 
     async def update_kamlet(self, kamlet):
         await handle_load_indexed_element(kamlet, self)
+
+
+def _get_mask_bit(jamlet: 'Jamlet', mask_reg: int, element_index: int) -> bool:
+    """Read the mask bit for an element from the mask register.
+
+    Returns True if the element is active (should be processed).
+    """
+    wb = jamlet.params.word_bytes
+    bit_index = element_index // jamlet.params.j_in_l
+    byte_index = bit_index // 8
+    bit_in_byte = bit_index % 8
+    mask_byte = jamlet.rf_slice[mask_reg * wb + byte_index]
+    return bool((mask_byte >> bit_in_byte) & 1)
 
 
 async def handle_load_indexed_element(kamlet: 'Kamlet',
@@ -71,6 +88,7 @@ async def handle_load_indexed_element(kamlet: 'Kamlet',
     """Handle LoadIndexedElement instruction at kamlet level.
 
     Find the jamlet that owns this element and create a waiting item for it.
+    If masked, immediately send response without doing any work.
     """
     params = kamlet.params
     data_ew = instr.data_ew
@@ -85,20 +103,45 @@ async def handle_load_indexed_element(kamlet: 'Kamlet',
     assert k_index == kamlet.k_index, \
         f"LoadIndexedElement sent to wrong kamlet: expected {k_index}, got {kamlet.k_index}"
 
-    dst_regs = [instr.dst_reg + element_index // elements_in_vline]
-    index_elements_in_vline = params.vline_bytes * 8 // index_ew
-    index_regs = [instr.index_reg + element_index // index_elements_in_vline]
-    read_regs = list(index_regs)
+    jamlet = kamlet.jamlets[j_in_k_index]
 
-    await kamlet.wait_for_rf_available(write_regs=dst_regs, read_regs=read_regs,
-                                       instr_ident=instr.instr_ident)
-    rf_write_ident = kamlet.rf_info.start(read_regs=read_regs, write_regs=dst_regs)
+    # Check mask - if element is masked, immediately send response
+    is_masked = (instr.mask_reg is not None and
+                 not _get_mask_bit(jamlet, instr.mask_reg, element_index))
 
-    witem = WaitingLoadIndexedElement(
-        instr=instr, params=params, rf_ident=rf_write_ident, j_in_k_index=j_in_k_index)
-    kamlet.monitor.record_witem_created(
-        instr.instr_ident, kamlet.min_x, kamlet.min_y, 'WaitingLoadIndexedElement')
-    await kamlet.cache_table.add_witem(witem=witem)
+    if is_masked:
+        logger.debug(f'{kamlet.clock.cycle}: LoadIndexedElement masked: '
+                     f'element={element_index} mask_reg={instr.mask_reg}')
+        resp_header = ElementIndexHeader(
+            target_x=jamlet.lamlet_x,
+            target_y=jamlet.lamlet_y,
+            source_x=jamlet.x,
+            source_y=jamlet.y,
+            message_type=MessageType.LOAD_INDEXED_ELEMENT_RESP,
+            send_type=SendType.SINGLE,
+            length=1,
+            ident=instr.instr_ident,
+            element_index=element_index,
+            masked=True,
+        )
+        kinstr_span_id = kamlet.monitor.get_kinstr_span_id(instr.instr_ident)
+        await jamlet.send_packet([resp_header], parent_span_id=kinstr_span_id)
+        kamlet.monitor.finalize_kinstr_exec(instr.instr_ident, kamlet.min_x, kamlet.min_y)
+    else:
+        dst_regs = [instr.dst_reg + element_index // elements_in_vline]
+        index_elements_in_vline = params.vline_bytes * 8 // index_ew
+        index_regs = [instr.index_reg + element_index // index_elements_in_vline]
+        read_regs = list(index_regs)
+
+        await kamlet.wait_for_rf_available(write_regs=dst_regs, read_regs=read_regs,
+                                           instr_ident=instr.instr_ident)
+        rf_write_ident = kamlet.rf_info.start(read_regs=read_regs, write_regs=dst_regs)
+
+        witem = WaitingLoadIndexedElement(
+            instr=instr, params=params, rf_ident=rf_write_ident, j_in_k_index=j_in_k_index)
+        kamlet.monitor.record_witem_created(
+            instr.instr_ident, kamlet.min_x, kamlet.min_y, 'WaitingLoadIndexedElement')
+        await kamlet.cache_table.add_witem(witem=witem)
 
 
 @dataclass

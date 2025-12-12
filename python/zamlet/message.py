@@ -239,6 +239,7 @@ class ReadMemWordHeader(TaggedHeader):
 @dataclass
 class ElementIndexHeader(IdentHeader):
     element_index: int = 0
+    masked: bool = False
 
 
 class Direction(Enum):

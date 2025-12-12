@@ -480,11 +480,15 @@ class Lamlet:
             assert isinstance(header, ElementIndexHeader)
             ordered.handle_load_indexed_element_resp(self, header)
         elif header.message_type == MessageType.STORE_INDEXED_ELEMENT_RESP:
-            assert len(packet) == 3
             assert isinstance(header, ElementIndexHeader)
-            addr = packet[1]
-            data = packet[2]
-            ordered.handle_store_indexed_element_resp(self, header, addr, data)
+            if header.masked:
+                assert len(packet) == 1
+                ordered.handle_store_indexed_element_resp(self, header, None, None)
+            else:
+                assert len(packet) == 3
+                addr = packet[1]
+                data = packet[2]
+                ordered.handle_store_indexed_element_resp(self, header, addr, data)
         elif header.message_type == MessageType.WRITE_MEM_WORD_RESP:
             assert len(packet) == 1
             ordered.handle_ordered_write_mem_word_resp(self, header)
@@ -828,6 +832,36 @@ class Lamlet:
             else:
                 scalar_address = self.to_scalar_addr(byt_address)
                 self.scalar.set_memory(scalar_address, bytes([b]))
+
+    def directly_set_memory(self, address: int, data: bytes):
+        """
+        Write bytes directly to memory, bypassing simulation.
+
+        WARNING: This is for test initialization only. It does not accurately model
+        how the hardware would work - it bypasses cache coherency, message passing,
+        and timing. Use only for setting up initial test state.
+
+        For VPU memory, writes directly to the memlet's backing memory.
+        For scalar memory, writes directly to scalar state.
+        """
+        for index, b in enumerate(data):
+            byte_addr = GlobalAddress(bit_addr=(address + index) * 8, params=self.params)
+            if byte_addr.is_vpu(self.tlb):
+                k_maddr = byte_addr.to_k_maddr(self.tlb)
+                memlet = self.memlets[k_maddr.k_index]
+                cache_line_index = k_maddr.addr // self.params.cache_line_bytes
+                offset_in_line = k_maddr.addr % self.params.cache_line_bytes
+
+                # Get or create cache line
+                if cache_line_index not in memlet.lines:
+                    memlet.lines[cache_line_index] = bytearray(self.params.cache_line_bytes)
+                elif isinstance(memlet.lines[cache_line_index], bytes):
+                    memlet.lines[cache_line_index] = bytearray(memlet.lines[cache_line_index])
+
+                memlet.lines[cache_line_index][offset_in_line] = b
+            else:
+                scalar_address = self.to_scalar_addr(byte_addr)
+                self.scalar._memory[scalar_address] = b
 
     async def combine_read_futures(self, combined_future: Future, read_futures: List[Future]):
         for future in read_futures:

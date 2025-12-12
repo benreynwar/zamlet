@@ -19,6 +19,7 @@ from zamlet.geometries import GEOMETRIES, scale_n_tests
 from zamlet.lamlet.lamlet import Lamlet
 from zamlet.addresses import GlobalAddress, Ordering, WordOrder
 from zamlet.monitor import CompletionType, SpanType
+from zamlet.tests.test_utils import setup_mask_register
 
 logger = logging.getLogger(__name__)
 
@@ -193,11 +194,13 @@ async def run_ordered_store_test(
     vl: int,
     params: LamletParams,
     seed: int,
+    use_mask: bool = True,
 ):
     """Test ordered indexed (scatter) store to mixed VPU/scalar memory."""
     lamlet = await setup_lamlet(clock, params)
     try:
-        return await _run_ordered_store_test_impl(lamlet, clock, data_ew, index_ew, vl, params, seed)
+        return await _run_ordered_store_test_impl(
+            lamlet, clock, data_ew, index_ew, vl, params, seed, use_mask)
     finally:
         write_span_trees(lamlet)
 
@@ -210,6 +213,7 @@ async def _run_ordered_store_test_impl(
     vl: int,
     params: LamletParams,
     seed: int,
+    use_mask: bool = True,
 ):
     """Test implementation."""
 
@@ -217,15 +221,24 @@ async def _run_ordered_store_test_impl(
     element_bytes = data_ew // 8
     page_bytes = params.page_bytes
 
+    # When using masks, vl is limited by mask register size (j_in_l * word_bits)
+    if use_mask:
+        max_vl = params.j_in_l * params.word_bytes * 8
+        assert vl <= max_vl, f"vl={vl} exceeds max {max_vl} for masked operation"
+
     dst_base = get_base_addr(data_ew)
     max_region_bytes = page_bytes * 4
 
     indices = generate_random_indices(rnd, vl, data_ew, index_ew, max_region_bytes)
     values = [rnd.getrandbits(data_ew) for _ in range(vl)]
+    mask_bits = [rnd.choice([True, False]) for _ in range(vl)] if use_mask else None
 
     logger.info(f"Ordered Store Test: data_ew={data_ew}, index_ew={index_ew}, vl={vl}")
+    logger.info(f"  use_mask={use_mask}")
     logger.info(f"  indices: {indices[:16]}{'...' if len(indices) > 16 else ''}")
     logger.info(f"  values: {[hex(v) for v in values[:8]]}{'...' if len(values) > 8 else ''}")
+    if mask_bits:
+        logger.info(f"  mask_bits: {mask_bits[:16]}{'...' if len(mask_bits) > 16 else ''}")
 
     # Allocate destination memory as mixed VPU/scalar with random ew per page
     n_dst_pages = (max_region_bytes + page_bytes - 1) // page_bytes
@@ -246,6 +259,19 @@ async def _run_ordered_store_test_impl(
     await setup_index_register(lamlet, index_reg, indices, index_ew, page_bytes, dst_base)
     await setup_data_register(lamlet, data_reg, values, data_ew, page_bytes, dst_base)
 
+    # Set up mask register if using masks
+    mask_reg = None
+    if use_mask:
+        mask_reg = index_reg + n_index_regs
+        assert mask_reg < lamlet.params.n_vregs, \
+            f'mask_reg {mask_reg} exceeds n_vregs {lamlet.params.n_vregs}'
+        mask_mem_addr = dst_base + 0x40000
+        await setup_mask_register(lamlet, mask_reg, mask_bits, page_bytes, mask_mem_addr)
+
+        # Initialize destination memory to zeros so we can verify masked elements unchanged
+        for offset in set(indices):
+            await lamlet.set_memory(dst_base + offset, bytes(element_bytes))
+
     # Clear the write log before the ordered store
     lamlet.scalar.write_log.clear()
 
@@ -261,7 +287,7 @@ async def _run_ordered_store_test_impl(
         index_ew=index_ew,
         data_ew=data_ew,
         n_elements=vl,
-        mask_reg=None,
+        mask_reg=mask_reg,
         start_index=0,
         parent_span_id=span_id,
     )
@@ -273,13 +299,20 @@ async def _run_ordered_store_test_impl(
     lamlet.monitor.finalize_children(span_id)
 
     # Verify final memory state byte-by-byte
-    # Elements can overlap, so track which element last wrote each byte
+    # Process in element order - unmasked elements write, masked elements are skipped
+    # Later unmasked writes naturally overwrite earlier ones
     errors = 0
     expected_bytes = {}  # byte_offset -> expected_value
     for i in range(vl):
+        is_masked = use_mask and not mask_bits[i]
         val_bytes = values[i].to_bytes(element_bytes, byteorder='little')
-        for b_idx, b in enumerate(val_bytes):
-            expected_bytes[indices[i] + b_idx] = b
+        for b_idx in range(element_bytes):
+            byte_offset = indices[i] + b_idx
+            if is_masked:
+                if byte_offset not in expected_bytes:
+                    expected_bytes[byte_offset] = 0
+            else:
+                expected_bytes[byte_offset] = val_bytes[b_idx]
 
     for byte_offset, expected_byte in expected_bytes.items():
         global_addr = dst_base + byte_offset
@@ -291,9 +324,11 @@ async def _run_ordered_store_test_impl(
             errors += 1
 
     # Verify write order for scalar writes only (VPU writes have different path)
-    # Build expected scalar write order
+    # Build expected scalar write order (only unmasked elements)
     expected_scalar_writes = []
     for i in range(vl):
+        if use_mask and not mask_bits[i]:
+            continue  # Masked elements should not be written
         global_addr = dst_base + indices[i]
         g_addr = GlobalAddress(bit_addr=global_addr * 8, params=params)
         if not g_addr.is_vpu(lamlet.tlb):
@@ -308,9 +343,10 @@ async def _run_ordered_store_test_impl(
         logger.error(f"  Actual:   {actual_write_order[:16]}...")
         errors += 1
     else:
-        n_vpu = vl - len(expected_scalar_writes)
+        n_masked = sum(1 for b in (mask_bits or []) if not b)
+        n_vpu = vl - len(expected_scalar_writes) - n_masked
         logger.info(f"Write order verified: {len(actual_write_order)} scalar writes, "
-                    f"{n_vpu} VPU writes")
+                    f"{n_vpu} VPU writes, {n_masked} masked-off")
 
     if errors > 0:
         logger.error(f"FAILED with {errors} errors")
@@ -321,7 +357,8 @@ async def _run_ordered_store_test_impl(
         return 0
 
 
-async def main(clock, data_ew: int, index_ew: int, vl: int, params: LamletParams, seed: int):
+async def main(clock, data_ew: int, index_ew: int, vl: int, params: LamletParams, seed: int,
+               use_mask: bool = True):
     """Main wrapper that sets up clock properly."""
     import signal
 
@@ -334,29 +371,31 @@ async def main(clock, data_ew: int, index_ew: int, vl: int, params: LamletParams
     clock.register_main()
     clock.create_task(clock.clock_driver())
 
-    exit_code = await run_ordered_store_test(clock, data_ew, index_ew, vl, params, seed)
+    exit_code = await run_ordered_store_test(
+        clock, data_ew, index_ew, vl, params, seed, use_mask)
 
     clock.running = False
     return exit_code
 
 
-def run_test(data_ew: int, index_ew: int, vl: int, params: LamletParams = None, seed: int = 0):
+def run_test(data_ew: int, index_ew: int, vl: int, params: LamletParams = None, seed: int = 0,
+             use_mask: bool = True):
     """Helper to run a single test configuration."""
     if params is None:
         params = LamletParams()
     clock = Clock(max_cycles=10000)
-    exit_code = asyncio.run(main(clock, data_ew, index_ew, vl, params, seed))
+    exit_code = asyncio.run(main(clock, data_ew, index_ew, vl, params, seed, use_mask))
     assert exit_code == 0, f"Test failed with exit_code={exit_code}"
 
 
-def random_test_config(rnd: Random):
+def random_test_config(rnd: Random, params: LamletParams):
     """Generate a random test configuration."""
-    geom_name = rnd.choice(list(GEOMETRIES.keys()))
-    geom_params = GEOMETRIES[geom_name]
     data_ew = rnd.choice([8, 16, 32, 64])
     index_ew = rnd.choice([8, 16, 32, 64])
-    vl = rnd.randint(1, 32)
-    return geom_name, geom_params, data_ew, index_ew, vl
+    # Limit vl to mask register capacity
+    max_vl = params.j_in_l * params.word_bytes * 8
+    vl = rnd.randint(1, min(32, max_vl))
+    return data_ew, index_ew, vl
 
 
 def generate_test_params(n_tests: int = 8, seed: int = 42):
@@ -364,7 +403,9 @@ def generate_test_params(n_tests: int = 8, seed: int = 42):
     rnd = Random(seed)
     test_params = []
     for i in range(n_tests):
-        geom_name, geom_params, data_ew, index_ew, vl = random_test_config(rnd)
+        geom_name = rnd.choice(list(GEOMETRIES.keys()))
+        geom_params = GEOMETRIES[geom_name]
+        data_ew, index_ew, vl = random_test_config(rnd, geom_params)
         id_str = f"{i}_{geom_name}_dew{data_ew}_iew{index_ew}_vl{vl}"
         test_params.append(pytest.param(geom_params, data_ew, index_ew, vl, id=id_str))
     return test_params
@@ -372,7 +413,7 @@ def generate_test_params(n_tests: int = 8, seed: int = 42):
 
 @pytest.mark.parametrize("params,data_ew,index_ew,vl", generate_test_params(n_tests=scale_n_tests(32)))
 def test_ordered_mixed_store(params, data_ew, index_ew, vl):
-    run_test(data_ew, index_ew, vl, params=params)
+    run_test(data_ew, index_ew, vl, params=params, use_mask=True)
 
 
 if __name__ == '__main__':
@@ -396,7 +437,10 @@ if __name__ == '__main__':
                         help='Random seed (default: 0)')
     parser.add_argument('--max-cycles', type=int, default=10000,
                         help='Maximum simulation cycles (default: 10000)')
+    parser.add_argument('--no-mask', action='store_true',
+                        help='Disable mask testing (default: use random mask)')
     args = parser.parse_args()
+    use_mask = not args.no_mask
 
     if args.list_geometries:
         print("Available geometries:")
@@ -417,9 +461,10 @@ if __name__ == '__main__':
     clock = Clock(max_cycles=args.max_cycles)
     try:
         logger.info(f'Starting with data_ew={args.data_ew}, index_ew={args.index_ew}, '
-                    f'vl={args.vl}, geometry={args.geometry}, seed={args.seed}')
+                    f'vl={args.vl}, geometry={args.geometry}, seed={args.seed}, '
+                    f'use_mask={use_mask}')
         exit_code = asyncio.run(main(
-            clock, args.data_ew, args.index_ew, args.vl, params, args.seed))
+            clock, args.data_ew, args.index_ew, args.vl, params, args.seed, use_mask))
     except KeyboardInterrupt:
         root_logger.warning('Test interrupted by user')
         sys.exit(1)

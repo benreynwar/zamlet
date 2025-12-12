@@ -93,8 +93,12 @@ class OrderedBuffer:
         entry.addr = None
         entry.data = None
 
-        # Advance next_to_process if this was the current element
-        if element_index == self.next_to_process:
+        # Advance next_to_process past any completed elements
+        while self.next_to_process < self.n_elements:
+            next_slot = self._slot(self.next_to_process)
+            next_entry = self.elements[next_slot]
+            if next_entry is None or next_entry.state != ElementState.COMPLETE:
+                break
             self.next_to_process += 1
 
         # Clean up completed elements from the base

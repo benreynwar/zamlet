@@ -29,6 +29,7 @@ from zamlet.geometries import GEOMETRIES, scale_n_tests
 from zamlet.lamlet.lamlet import Lamlet
 from zamlet.addresses import GlobalAddress, Ordering, WordOrder
 from zamlet.monitor import CompletionType, SpanType
+from zamlet.tests.test_utils import setup_mask_register
 
 logger = logging.getLogger(__name__)
 
@@ -79,42 +80,6 @@ def allocate_strided_memory(
             is_vpu=page_is_vpu,
             ordering=ordering if page_is_vpu else None
         )
-
-
-async def setup_mask_register(
-    lamlet: Lamlet,
-    mask_reg: int,
-    mask_bits: list[bool],
-    page_bytes: int,
-) -> None:
-    """Write mask bits to memory and load into a vector register."""
-    from zamlet.tests.test_utils import mask_bits_to_ew64_bytes
-
-    mask_mem_addr = get_vpu_base_addr(64) + 0x30000
-    mask_ordering = Ordering(WordOrder.STANDARD, 64)
-    lamlet.allocate_memory(
-        GlobalAddress(bit_addr=mask_mem_addr * 8, params=lamlet.params),
-        page_bytes, is_vpu=True, ordering=mask_ordering
-    )
-
-    mask_bytes = mask_bits_to_ew64_bytes(lamlet.params, mask_bits)
-    await lamlet.set_memory(mask_mem_addr, bytes(mask_bytes))
-    logger.info(f"Mask bytes written to 0x{mask_mem_addr:x}: {mask_bytes.hex()}")
-
-    mask_span_id = lamlet.monitor.create_span(
-        span_type=SpanType.RISCV_INSTR, component="test",
-        completion_type=CompletionType.FIRE_AND_FORGET, mnemonic="load_mask")
-    await lamlet.vload(
-        vd=mask_reg,
-        addr=mask_mem_addr,
-        ordering=mask_ordering,
-        n_elements=lamlet.params.j_in_l,
-        start_index=0,
-        mask_reg=None,
-        parent_span_id=mask_span_id,
-    )
-    lamlet.monitor.finalize_children(mask_span_id)
-    logger.info(f"Mask loaded into v{mask_reg}")
 
 
 def verify_results(
@@ -273,7 +238,8 @@ async def run_strided_load_test(
         mask_reg = n_data_regs  # First register after data
         assert mask_reg < lamlet.params.n_vregs, \
             f'mask_reg {mask_reg} exceeds n_vregs {lamlet.params.n_vregs}'
-        await setup_mask_register(lamlet, mask_reg, mask_bits, page_bytes)
+        mask_mem_addr = get_vpu_base_addr(64) + 0x30000
+        await setup_mask_register(lamlet, mask_reg, mask_bits, page_bytes, mask_mem_addr)
 
     span_id = lamlet.monitor.create_span(
         span_type=SpanType.RISCV_INSTR, component="test",
@@ -399,7 +365,8 @@ async def run_strided_store_test(
         mask_reg = n_data_regs  # First register after data
         assert mask_reg < lamlet.params.n_vregs, \
             f'mask_reg {mask_reg} exceeds n_vregs {lamlet.params.n_vregs}'
-        await setup_mask_register(lamlet, mask_reg, mask_bits, page_bytes)
+        mask_mem_addr = get_vpu_base_addr(64) + 0x30000
+        await setup_mask_register(lamlet, mask_reg, mask_bits, page_bytes, mask_mem_addr)
 
     span_id = lamlet.monitor.create_span(
         span_type=SpanType.RISCV_INSTR, component="test",
