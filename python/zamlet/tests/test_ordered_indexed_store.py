@@ -17,7 +17,7 @@ from zamlet.runner import Clock
 from zamlet.params import LamletParams
 from zamlet.geometries import GEOMETRIES, scale_n_tests
 from zamlet.lamlet.lamlet import Lamlet
-from zamlet.addresses import GlobalAddress, Ordering, WordOrder
+from zamlet.addresses import GlobalAddress, MemoryType, Ordering, WordOrder
 from zamlet.monitor import CompletionType, SpanType
 from zamlet.tests.test_utils import setup_mask_register
 
@@ -48,20 +48,22 @@ def allocate_vpu_pages(lamlet: Lamlet, base_addr: int, n_pages: int, page_bytes:
         lamlet.allocate_memory(
             GlobalAddress(bit_addr=(base_addr + page_idx * page_bytes) * 8, params=lamlet.params),
             page_bytes,
-            is_vpu=True,
+            memory_type=MemoryType.VPU,
             ordering=ordering
         )
 
 
 def allocate_scalar_pages(lamlet: Lamlet, base_addr: int, n_pages: int, page_bytes: int):
-    """Allocate scalar memory pages."""
+    """Allocate scalar memory pages as non-idempotent for write order verification."""
     for page_idx in range(n_pages):
+        page_addr = base_addr + page_idx * page_bytes
         lamlet.allocate_memory(
-            GlobalAddress(bit_addr=(base_addr + page_idx * page_bytes) * 8, params=lamlet.params),
+            GlobalAddress(bit_addr=page_addr * 8, params=lamlet.params),
             page_bytes,
-            is_vpu=False,
+            memory_type=MemoryType.SCALAR_NON_IDEMPOTENT,
             ordering=None
         )
+        lamlet.scalar.register_non_idempotent_page(page_addr)
 
 
 def allocate_mixed_pages(lamlet: Lamlet, base_addr: int, n_pages: int, page_bytes: int,
@@ -71,13 +73,21 @@ def allocate_mixed_pages(lamlet: Lamlet, base_addr: int, n_pages: int, page_byte
     for page_idx in range(n_pages):
         is_vpu = rnd.choice([True, False])
         page_ew = rnd.choice(ews)
-        ordering = Ordering(WordOrder.STANDARD, page_ew) if is_vpu else None
+        page_addr = base_addr + page_idx * page_bytes
+        if is_vpu:
+            memory_type = MemoryType.VPU
+            ordering = Ordering(WordOrder.STANDARD, page_ew)
+        else:
+            memory_type = MemoryType.SCALAR_NON_IDEMPOTENT
+            ordering = None
         lamlet.allocate_memory(
-            GlobalAddress(bit_addr=(base_addr + page_idx * page_bytes) * 8, params=lamlet.params),
+            GlobalAddress(bit_addr=page_addr * 8, params=lamlet.params),
             page_bytes,
-            is_vpu=is_vpu,
+            memory_type=memory_type,
             ordering=ordering
         )
+        if not is_vpu:
+            lamlet.scalar.register_non_idempotent_page(page_addr)
 
 
 def generate_random_indices(rnd: Random, vl: int, data_ew: int, index_ew: int,
@@ -273,7 +283,7 @@ async def _run_ordered_store_test_impl(
             await lamlet.set_memory(dst_base + offset, bytes(element_bytes))
 
     # Clear the write log before the ordered store
-    lamlet.scalar.write_log.clear()
+    lamlet.scalar.non_idempotent_write_log.clear()
 
     span_id = lamlet.monitor.create_span(
         span_type=SpanType.RISCV_INSTR, component="test",
@@ -335,7 +345,7 @@ async def _run_ordered_store_test_impl(
             local_addr = lamlet.to_scalar_addr(g_addr)
             expected_scalar_writes.append(local_addr)
 
-    actual_write_order = lamlet.scalar.write_log
+    actual_write_order = lamlet.scalar.non_idempotent_write_log
 
     if actual_write_order != expected_scalar_writes:
         logger.error(f"Scalar write order mismatch!")

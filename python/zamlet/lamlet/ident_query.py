@@ -39,8 +39,15 @@ def get_oldest_active_instr_ident_distance(lamlet: 'Lamlet', baseline: int) -> i
               if item.instr_ident is not None and item.dispatched]
     if not idents:
         return None  # All free
-    distances = [(ident - baseline) % max_tags for ident in idents]
+    distances = []
+    for ident in idents:
+        d = (ident - baseline) % max_tags
+        if d == 0:
+            d = max_tags  # ident at baseline is newest, not oldest
+        distances.append(d)
     min_dist = min(distances)
+    if min_dist == max_tags:
+        return None  # only active ident is at baseline (newest)
     min_idx = distances.index(min_dist)
     logger.debug(f'{lamlet.clock.cycle}: lamlet: get_oldest_active_instr_ident_distance '
                  f'baseline={baseline} idents={idents} distances={distances} '
@@ -55,14 +62,19 @@ def get_writeset_ident(lamlet: 'Lamlet') -> int:
 
 
 def get_available_idents(lamlet: 'Lamlet') -> int:
-    """Return the number of idents available before collision."""
+    """Return the number of idents available before collision.
+
+    We subtract 1 to always leave one ident unused, avoiding the wraparound
+    ambiguity where distance 0 could mean either 'at baseline' or 'wrapped around'.
+    """
     max_tags = lamlet.params.max_response_tags
     if lamlet._oldest_active_ident is None:
         # No query response yet - next_instr_ident is how many we've used since start
         # This path should not be taken if we're received any IdentQuery responses.
-        result = max_tags - lamlet.next_instr_ident
+        result = max_tags - lamlet.next_instr_ident - 1
     else:
-        result = (lamlet._oldest_active_ident - lamlet.next_instr_ident) % max_tags
+        result = (lamlet._oldest_active_ident - lamlet.next_instr_ident) % max_tags - 1
+    assert result >= 0, f"available idents went negative: {result}"
     logger.debug(f'{lamlet.clock.cycle}: get_available_idents: '
                  f'oldest_active={lamlet._oldest_active_ident} '
                  f'next_instr_ident={lamlet.next_instr_ident} available={result}')
@@ -149,6 +161,8 @@ def receive_ident_query_response(lamlet: 'Lamlet', min_distance: int, query_span
                 monitor_distance = max_tags
             else:
                 monitor_distance = (monitor_oldest - baseline) % max_tags
+                if monitor_distance == 0:
+                    monitor_distance = max_tags  # at baseline means newest, not oldest
         if monitor_distance < min_distance:
             span_id = lamlet.monitor.get_kinstr_span_id(monitor_oldest)
             dump = lamlet.monitor.format_span_tree(span_id)

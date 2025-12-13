@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, List, Tuple
 
 from zamlet import addresses
-from zamlet.addresses import GlobalAddress, Ordering
+from zamlet.addresses import GlobalAddress, Ordering, TLBFaultType, VectorOpResult
 from zamlet.kamlet import kinstructions
 from zamlet.transactions.load_stride import LoadStride
 from zamlet.transactions.store_stride import StoreStride
@@ -26,6 +26,31 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+async def wait_for_two_phase_sync(lamlet: 'Lamlet', fault_sync_ident: int,
+                                   completion_sync_ident: int) -> int | None:
+    """Wait for both fault and completion syncs to complete.
+
+    Returns the global minimum fault element, or None if no fault.
+    """
+    global_min_fault = None
+    fault_sync_done = False
+    completion_sync_done = False
+    while not (fault_sync_done and completion_sync_done):
+        if not fault_sync_done and lamlet.synchronizer.is_complete(fault_sync_ident):
+            fault_sync_done = True
+            global_min_fault = lamlet.synchronizer.get_min_value(fault_sync_ident)
+            logger.debug(f'{lamlet.clock.cycle}: wait_for_two_phase_sync: '
+                         f'fault_sync {fault_sync_ident} complete, min_fault={global_min_fault}')
+        if not completion_sync_done and lamlet.synchronizer.is_complete(completion_sync_ident):
+            completion_sync_done = True
+            logger.debug(f'{lamlet.clock.cycle}: wait_for_two_phase_sync: '
+                         f'completion_sync {completion_sync_ident} complete')
+        await lamlet.clock.next_cycle
+    logger.debug(f'{lamlet.clock.cycle}: wait_for_two_phase_sync: '
+                 f'returning global_min_fault={global_min_fault}')
+    return global_min_fault
+
+
 @dataclass
 class SectionInfo:
     """A section of memory that is guaranteed to all be on one page."""
@@ -34,6 +59,29 @@ class SectionInfo:
     start_index: int
     start_address: int
     end_address: int
+
+
+def check_pages_for_access(lamlet: 'Lamlet', start_addr: int, n_elements: int,
+                           element_bytes: int, is_write: bool) -> VectorOpResult:
+    """
+    Check TLB for all pages touched by an access.
+    Returns VectorOpResult with fault info if any page is inaccessible.
+    """
+    page_bytes = lamlet.params.page_bytes
+    end_addr = start_addr + n_elements * element_bytes
+
+    current_addr = start_addr
+    while current_addr < end_addr:
+        g_addr = GlobalAddress(bit_addr=current_addr * 8, params=lamlet.params)
+        fault_type = lamlet.tlb.check_access(g_addr, is_write)
+        if fault_type != TLBFaultType.NONE:
+            # Calculate which element this fault corresponds to
+            element_index = (current_addr - start_addr) // element_bytes
+            return VectorOpResult(fault_type=fault_type, element_index=element_index)
+        # Move to next page
+        current_addr = ((current_addr // page_bytes) + 1) * page_bytes
+
+    return VectorOpResult()
 
 
 def get_memory_split(lamlet: 'Lamlet', g_addr: GlobalAddress, element_width: int,
@@ -133,40 +181,40 @@ async def vload(lamlet: 'Lamlet', vd: int, addr: int, ordering: addresses.Orderi
                 n_elements: int, mask_reg: int | None, start_index: int,
                 parent_span_id: int,
                 reg_ordering: addresses.Ordering | None = None,
-                stride_bytes: int | None = None):
+                stride_bytes: int | None = None) -> VectorOpResult:
     element_bytes = ordering.ew // 8
     if stride_bytes is not None and stride_bytes != element_bytes:
-        await vloadstorestride(lamlet, vd, addr, ordering, n_elements, mask_reg,
-                               start_index, is_store=False,
-                               parent_span_id=parent_span_id,
-                               reg_ordering=reg_ordering,
-                               stride_bytes=stride_bytes)
+        return await vloadstorestride(lamlet, vd, addr, ordering, n_elements, mask_reg,
+                                      start_index, is_store=False,
+                                      parent_span_id=parent_span_id,
+                                      reg_ordering=reg_ordering,
+                                      stride_bytes=stride_bytes)
     else:
-        await vloadstore(lamlet, vd, addr, ordering, n_elements, mask_reg, start_index,
-                         is_store=False, parent_span_id=parent_span_id,
-                         reg_ordering=reg_ordering)
+        return await vloadstore(lamlet, vd, addr, ordering, n_elements, mask_reg, start_index,
+                                is_store=False, parent_span_id=parent_span_id,
+                                reg_ordering=reg_ordering)
 
 
 async def vstore(lamlet: 'Lamlet', vs: int, addr: int, ordering: addresses.Ordering,
                  n_elements: int, mask_reg: int | None, start_index: int,
                  parent_span_id: int,
-                 stride_bytes: int | None = None):
+                 stride_bytes: int | None = None) -> VectorOpResult:
     element_bytes = ordering.ew // 8
     if stride_bytes is not None and stride_bytes != element_bytes:
-        await vloadstorestride(lamlet, vs, addr, ordering, n_elements, mask_reg,
-                               start_index, is_store=True,
-                               parent_span_id=parent_span_id,
-                               stride_bytes=stride_bytes)
+        return await vloadstorestride(lamlet, vs, addr, ordering, n_elements, mask_reg,
+                                      start_index, is_store=True,
+                                      parent_span_id=parent_span_id,
+                                      stride_bytes=stride_bytes)
     else:
-        await vloadstore(lamlet, vs, addr, ordering, n_elements, mask_reg, start_index,
-                         is_store=True, parent_span_id=parent_span_id)
+        return await vloadstore(lamlet, vs, addr, ordering, n_elements, mask_reg, start_index,
+                                is_store=True, parent_span_id=parent_span_id)
 
 
 async def vloadstore(lamlet: 'Lamlet', reg_base: int, addr: int, ordering: addresses.Ordering,
                      n_elements: int, mask_reg: int | None, start_index: int, is_store: bool,
                      parent_span_id: int,
                      reg_ordering: addresses.Ordering | None = None,
-                     stride_bytes: int | None = None):
+                     stride_bytes: int | None = None) -> VectorOpResult:
     """
     We have 3 different kinds of vector loads/stores.
     - In VPU memory and aligned (this is the fastest by far)
@@ -176,18 +224,35 @@ async def vloadstore(lamlet: 'Lamlet', reg_base: int, addr: int, ordering: addre
 
     And we could have a load that spans scalar and VPU regions of memory. Potentially
     an element could be half in VPU memory and half in scalar memory.
+
+    Returns VectorOpResult with fault info if a TLB fault occurred.
     """
     g_addr = GlobalAddress(bit_addr=addr*8, params=lamlet.params)
     mem_ew = ordering.ew
+
     # For loads, reg_ordering specifies the register element width (defaults to memory ew)
     # For stores, register ordering comes from the register file state
+    # We need to determine this BEFORE page checking since n_elements is in reg_ew units
     if is_store:
+        # For stores, caller should not specify reg_ordering - we get it from register file
         assert reg_ordering is None, "reg_ordering should not be specified for stores"
         reg_ordering = lamlet.vrf_ordering[reg_base]
         assert reg_ordering is not None, f"Register v{reg_base} has no ordering set"
     elif reg_ordering is None:
+        # For loads without explicit reg_ordering, use memory ordering
         reg_ordering = ordering
     reg_ew = reg_ordering.ew
+
+    # Check all pages for access before dispatching
+    # n_elements is count of register elements, so use reg_ew for byte size
+    element_bytes = reg_ew // 8
+    result = check_pages_for_access(lamlet, addr, n_elements, element_bytes, is_store)
+    if not result.success:
+        # Reduce n_elements to only process up to the faulting element
+        n_elements = result.element_index
+
+    if n_elements == 0:
+        return result
 
     size = (n_elements * reg_ew) // 8
     wb = lamlet.params.word_bytes
@@ -346,13 +411,14 @@ async def vloadstore(lamlet: 'Lamlet', reg_base: int, addr: int, ordering: addre
                 await vloadstore_scalar(lamlet, reg_base, section.start_address, ordering,
                                         section_elements, mask_reg, section.start_index,
                                         writeset_ident, is_store, parent_span_id)
+    return result
 
 
 async def vloadstorestride(lamlet: 'Lamlet', reg_base: int, addr: int,
                            ordering: addresses.Ordering, n_elements: int,
                            mask_reg: int | None, start_index: int,
                            is_store: bool, parent_span_id: int, stride_bytes: int,
-                           reg_ordering: addresses.Ordering | None = None):
+                           reg_ordering: addresses.Ordering | None = None) -> VectorOpResult:
     """
     Handle strided vector loads/stores using LoadStride/StoreStride instructions.
 
@@ -412,16 +478,35 @@ async def vloadstorestride(lamlet: 'Lamlet', reg_base: int, addr: int,
             )
         await lamlet.add_to_instruction_buffer(kinstr, parent_span_id)
         kinstr_span_id = lamlet.monitor.get_kinstr_span_id(instr_ident)
-        lamlet.monitor.create_sync_spans(instr_ident, kinstr_span_id, lamlet.params)
-        # Lamlet doesn't participate in LoadStride/StoreStride syncs, but we need to
-        # signal local_event so the sync can complete
-        lamlet.synchronizer.local_event(instr_ident)
+
+        # Use instr_ident for fault sync, instr_ident + 1 for completion sync
+        fault_sync_ident = instr_ident
+        completion_sync_ident = (instr_ident + 1) % lamlet.params.max_response_tags
+
+        # Initiate both syncs - lamlet doesn't wait for fault sync before completion sync
+        # The kamlets handle the two-phase ordering internally
+        lamlet.monitor.create_sync_local_span(fault_sync_ident, 0, -1, kinstr_span_id)
+        lamlet.synchronizer.local_event(fault_sync_ident, value=None)
+        lamlet.monitor.create_sync_local_span(completion_sync_ident, 0, -1, kinstr_span_id)
+        lamlet.synchronizer.local_event(completion_sync_ident)
+
+        # Wait for completion sync (which implies fault sync is also complete)
+        while not lamlet.synchronizer.is_complete(completion_sync_ident):
+            await lamlet.clock.next_cycle
+
+        # Check if there was a fault
+        global_min_fault = lamlet.synchronizer.get_min_value(fault_sync_ident)
+        if global_min_fault is not None:
+            fault_type = TLBFaultType.WRITE_FAULT if is_store else TLBFaultType.READ_FAULT
+            return VectorOpResult(fault_type=fault_type, element_index=global_min_fault)
+
+    return VectorOpResult()
 
 
 async def vload_indexed_unordered(lamlet: 'Lamlet', vd: int, base_addr: int, index_reg: int,
                                   index_ew: int, data_ew: int, n_elements: int,
                                   mask_reg: int | None, start_index: int,
-                                  parent_span_id: int):
+                                  parent_span_id: int) -> VectorOpResult:
     """Handle unordered indexed vector loads using LoadIndexedUnordered instructions.
 
     Indexed (gather) load: element i is loaded from address (base_addr + index_reg[i]).
@@ -462,16 +547,30 @@ async def vload_indexed_unordered(lamlet: 'Lamlet', vd: int, base_addr: int, ind
         )
         await lamlet.add_to_instruction_buffer(kinstr, parent_span_id)
         kinstr_span_id = lamlet.monitor.get_kinstr_span_id(instr_ident)
-        lamlet.monitor.create_sync_spans(instr_ident, kinstr_span_id, lamlet.params, name='first')
 
-        # Lamlet signals local_event for the first sync
-        lamlet.synchronizer.local_event(instr_ident)
+        # Use instr_ident for fault sync, instr_ident + 1 for completion sync
+        fault_sync_ident = instr_ident
+        completion_sync_ident = (instr_ident + 1) % lamlet.params.max_response_tags
+
+        # Initiate both syncs - lamlet doesn't wait for fault sync before completion sync
+        # The kamlets handle the two-phase ordering internally
+        lamlet.monitor.create_sync_local_span(fault_sync_ident, 0, -1, kinstr_span_id)
+        lamlet.synchronizer.local_event(fault_sync_ident, value=None)
+        lamlet.monitor.create_sync_local_span(completion_sync_ident, 0, -1, kinstr_span_id)
+        lamlet.synchronizer.local_event(completion_sync_ident)
+
+        global_min_fault = await wait_for_two_phase_sync(
+            lamlet, fault_sync_ident, completion_sync_ident)
+        if global_min_fault is not None:
+            return VectorOpResult(fault_type=TLBFaultType.READ_FAULT, element_index=global_min_fault)
+
+    return VectorOpResult()
 
 
 async def vstore_indexed_unordered(lamlet: 'Lamlet', vs: int, base_addr: int, index_reg: int,
                                    index_ew: int, data_ew: int, n_elements: int,
                                    mask_reg: int | None, start_index: int,
-                                   parent_span_id: int):
+                                   parent_span_id: int) -> VectorOpResult:
     """Handle unordered indexed vector stores using StoreIndexedUnordered instructions.
 
     Indexed (scatter) store: element i is stored to address (base_addr + index_reg[i]).
@@ -487,8 +586,10 @@ async def vstore_indexed_unordered(lamlet: 'Lamlet', vs: int, base_addr: int, in
 
     # Process in chunks of j_in_l elements (same as strided)
     j_in_l = lamlet.params.j_in_l
+    logger.debug(f'vstore_indexed_unordered: n_elements={n_elements}, j_in_l={j_in_l}')
     for chunk_start in range(0, n_elements, j_in_l):
         chunk_n = min(j_in_l, n_elements - chunk_start)
+        logger.debug(f'vstore_indexed_unordered: chunk_start={chunk_start}, chunk_n={chunk_n}')
         instr_ident = await ident_query.get_instr_ident(
             lamlet, n_idents=lamlet.params.word_bytes + 1)
 
@@ -506,10 +607,24 @@ async def vstore_indexed_unordered(lamlet: 'Lamlet', vs: int, base_addr: int, in
         )
         await lamlet.add_to_instruction_buffer(kinstr, parent_span_id)
         kinstr_span_id = lamlet.monitor.get_kinstr_span_id(instr_ident)
-        lamlet.monitor.create_sync_spans(instr_ident, kinstr_span_id, lamlet.params)
-        # Lamlet doesn't participate in StoreIndexed syncs, but we need to
-        # signal local_event so the sync can complete
-        lamlet.synchronizer.local_event(instr_ident)
+
+        # Use instr_ident for fault sync, instr_ident + 1 for completion sync
+        fault_sync_ident = instr_ident
+        completion_sync_ident = (instr_ident + 1) % lamlet.params.max_response_tags
+
+        # Initiate both syncs - lamlet doesn't wait for fault sync before completion sync
+        # The kamlets handle the two-phase ordering internally
+        lamlet.monitor.create_sync_local_span(fault_sync_ident, 0, -1, kinstr_span_id)
+        lamlet.synchronizer.local_event(fault_sync_ident, value=None)
+        lamlet.monitor.create_sync_local_span(completion_sync_ident, 0, -1, kinstr_span_id)
+        lamlet.synchronizer.local_event(completion_sync_ident)
+
+        global_min_fault = await wait_for_two_phase_sync(
+            lamlet, fault_sync_ident, completion_sync_ident)
+        if global_min_fault is not None:
+            return VectorOpResult(fault_type=TLBFaultType.WRITE_FAULT, element_index=global_min_fault)
+
+    return VectorOpResult()
 
 
 async def vloadstore_scalar(
@@ -523,7 +638,7 @@ async def vloadstore_scalar(
     FIXME: This function is untested. Add tests for vector loads/stores to scalar memory.
     """
     for element_index in range(start_index, start_index+n_elements):
-        start_addr_bits = addr + (element_index - start_index) * ordering.ew
+        start_addr_bits = addr * 8 + (element_index - start_index) * ordering.ew
         g_addr = GlobalAddress(bit_addr=start_addr_bits, params=lamlet.params)
         scalar_addr = g_addr.to_scalar_addr(lamlet.tlb)
         vw_index = element_index % lamlet.params.j_in_l
@@ -546,7 +661,7 @@ async def vloadstore_scalar(
                     writeset_ident=writeset_ident,
                 )
             else:
-                byte_imm = lamlet.scalar.get_memory(scalar_addr.addr, 1)[0]
+                byte_imm = lamlet.scalar.get_memory(scalar_addr, 1)[0]
                 instr_ident = await ident_query.get_instr_ident(lamlet)
                 kinstr = kinstructions.LoadImmByte(
                     dst=vd,
@@ -559,7 +674,7 @@ async def vloadstore_scalar(
                 )
         else:
             # We're sending a word
-            word_addr = (scalar_addr.addr//wb) * wb
+            word_addr = (scalar_addr//wb) * wb
             byte_mask = [0] * wb
             start_byte = element_index//lamlet.params.j_in_l * ordering.ew//8
             if ordering.ew == 1:
@@ -620,7 +735,7 @@ async def vload_scalar_partial(lamlet: 'Lamlet', vd: int, addr: int, size: int,
             instr_ident=instr_ident,
         )
     else:
-        word_addr = scalar_addr.addr - start_byte
+        word_addr = scalar_addr - start_byte
         word_imm = lamlet.scalar.get_memory(word_addr, lamlet.params.word_bytes)
         byte_mask = [0]*lamlet.params.word_bytes
         for byte_index in range(start_byte, start_byte+size):

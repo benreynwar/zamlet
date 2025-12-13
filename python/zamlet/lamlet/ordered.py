@@ -269,7 +269,7 @@ async def _process_ordered_store(lamlet: 'Lamlet', buf: OrderedBuffer,
             remaining_page_bytes = page_bytes - page_byte_offset
             n_bytes = min(remaining_element_bytes, remaining_page_bytes)
             scalar_addr = dst_g_addr.to_scalar_addr(lamlet.tlb)
-            lamlet.scalar.set_memory(scalar_addr, data[src_eb:src_eb + n_bytes], log=True)
+            lamlet.scalar.set_memory(scalar_addr, data[src_eb:src_eb + n_bytes])
 
         src_eb += n_bytes
 

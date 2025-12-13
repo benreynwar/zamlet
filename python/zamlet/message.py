@@ -240,6 +240,7 @@ class ReadMemWordHeader(TaggedHeader):
 class ElementIndexHeader(IdentHeader):
     element_index: int = 0
     masked: bool = False
+    fault: bool = False  # TLB fault occurred for this element
 
 
 class Direction(Enum):

@@ -853,12 +853,23 @@ class Monitor:
         self._sync_local_by_key[key] = local_span_id
         return local_span_id
 
-    def finalize_sync_children(self, sync_ident: int, name: str | None = None) -> None:
-        """Finalize children of the global sync span."""
+    def create_sync_local_span(self, sync_ident: int, x: int, y: int,
+                                parent_span_id: int, name: str | None = None) -> None:
+        """Create a local sync span, creating the global span first if needed.
+
+        Auto-finalizes the parent when all expected children have been added.
+        """
         if not self.enabled:
             return
-        global_span_id = self._sync_by_key.get((sync_ident, name))
-        if global_span_id is not None:
+        if (sync_ident, name) not in self._sync_by_key:
+            self.record_sync_created(sync_ident, parent_span_id, name)
+        global_span_id = self._sync_by_key[(sync_ident, name)]
+        self.record_sync_local_created(sync_ident, x, y, global_span_id, name)
+
+        # Auto-finalize when all children have been added (kamlets + lamlet synchronizer)
+        global_span = self.spans[global_span_id]
+        expected_children = self.params.k_cols * self.params.k_rows + 1
+        if len(global_span.children) == expected_children:
             self.finalize_children(global_span_id)
 
     def create_sync_spans(self, sync_ident: int, parent_span_id: int, params,
@@ -878,7 +889,7 @@ class Monitor:
                 self.record_sync_local_created(sync_ident, kx, ky, global_span_id, name)
         # Lamlet synchronizer at (0, -1)
         self.record_sync_local_created(sync_ident, 0, -1, global_span_id, name)
-        self.finalize_sync_children(sync_ident, name)
+        self.finalize_children(global_span_id)
 
     def _find_oldest_sync_local(self, sync_ident: int, x: int, y: int,
                                  completed: bool = False) -> tuple | None:

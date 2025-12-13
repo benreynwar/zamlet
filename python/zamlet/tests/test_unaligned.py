@@ -28,7 +28,7 @@ from zamlet.runner import Clock
 from zamlet.params import LamletParams
 from zamlet.geometries import GEOMETRIES, scale_n_tests
 from zamlet.lamlet.lamlet import Lamlet
-from zamlet.addresses import GlobalAddress, Ordering, WordOrder
+from zamlet.addresses import GlobalAddress, MemoryType, Ordering, WordOrder
 from zamlet.monitor import CompletionType, SpanType
 
 logger = logging.getLogger(__name__)
@@ -144,11 +144,11 @@ async def run_unaligned_test(
 
     lamlet.allocate_memory(
         GlobalAddress(bit_addr=src_base * 8, params=params),
-        alloc_size, is_vpu=True, ordering=Ordering(WordOrder.STANDARD, src_ew)
+        alloc_size, memory_type=MemoryType.VPU, ordering=Ordering(WordOrder.STANDARD, src_ew)
     )
     lamlet.allocate_memory(
         GlobalAddress(bit_addr=dst_base * 8, params=params),
-        alloc_size, is_vpu=True, ordering=Ordering(WordOrder.STANDARD, dst_ew)
+        alloc_size, memory_type=MemoryType.VPU, ordering=Ordering(WordOrder.STANDARD, dst_ew)
     )
 
     # Write initial data to memory at the offset address
@@ -212,6 +212,14 @@ async def run_unaligned_test(
     result = future.result()
     logger.info(f"Result: {result.hex()}")
     logger.info(f"Expected: {expected_data.hex()}")
+
+    # Write span trees for debugging
+    with open('span_trees.txt', 'w') as f:
+        for span in lamlet.monitor.spans.values():
+            if span.parent is None:
+                f.write(lamlet.monitor.format_span_tree(span.span_id, max_depth=20))
+                f.write('\n')
+    logger.info("Span trees written to span_trees.txt")
 
     # Compare
     if result == expected_data:

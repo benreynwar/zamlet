@@ -21,7 +21,7 @@ from typing import List, Deque, Any
 
 from zamlet import decode
 from zamlet import addresses
-from zamlet.addresses import SizeBytes, SizeBits, TLB, WordOrder
+from zamlet.addresses import SizeBytes, SizeBits, TLB, WordOrder, MemoryType
 from zamlet.addresses import AddressConverter, Ordering, GlobalAddress, KMAddr, VPUAddress
 from zamlet.kamlet.cache_table import (
     CacheTable, CacheState, ProtocolState, SendState)
@@ -230,9 +230,16 @@ class Lamlet:
         jamlet = kamlet.get_jamlet(x, y)
         return jamlet
 
-    def allocate_memory(self, address: GlobalAddress, size: SizeBytes, is_vpu: bool, ordering: Ordering|None):
-        page_bytes_per_memory = self.params.page_bytes // self.params.k_in_l
-        self.tlb.allocate_memory(address, size, is_vpu, ordering)
+    def allocate_memory(self, address: GlobalAddress, size: SizeBytes, memory_type: MemoryType,
+                        ordering: Ordering | None, readable: bool = True, writable: bool = True):
+        assert size % self.params.page_bytes == 0
+        self.tlb.allocate_memory(address, size, memory_type, ordering, readable, writable)
+        # Register non-idempotent pages with ScalarState
+        if memory_type == MemoryType.SCALAR_NON_IDEMPOTENT:
+            for page_offset in range(0, size, self.params.page_bytes):
+                page_addr = address.addr + page_offset
+                page_info = self.tlb.get_page_info(GlobalAddress(bit_addr=page_addr*8, params=self.params))
+                self.scalar.register_non_idempotent_page(page_info.local_address.addr)
 
     def to_scalar_addr(self, addr: GlobalAddress):
         return self.conv.to_scalar_addr(addr)
@@ -861,7 +868,7 @@ class Lamlet:
                 memlet.lines[cache_line_index][offset_in_line] = b
             else:
                 scalar_address = self.to_scalar_addr(byte_addr)
-                self.scalar._memory[scalar_address] = b
+                self.scalar.set_memory(scalar_address, bytes([b]))
 
     async def combine_read_futures(self, combined_future: Future, read_futures: List[Future]):
         for future in read_futures:
@@ -955,32 +962,32 @@ class Lamlet:
                     n_elements: int, mask_reg: int | None, start_index: int,
                     parent_span_id: int,
                     reg_ordering: addresses.Ordering | None = None,
-                    stride_bytes: int | None = None):
-        await unordered.vload(self, vd, addr, ordering, n_elements, mask_reg, start_index,
-                              parent_span_id, reg_ordering, stride_bytes)
+                    stride_bytes: int | None = None) -> addresses.VectorOpResult:
+        return await unordered.vload(self, vd, addr, ordering, n_elements, mask_reg, start_index,
+                                     parent_span_id, reg_ordering, stride_bytes)
 
     async def vstore(self, vs: int, addr: int, ordering: addresses.Ordering,
                      n_elements: int, mask_reg: int | None, start_index: int,
                      parent_span_id: int,
-                     stride_bytes: int | None = None):
-        await unordered.vstore(self, vs, addr, ordering, n_elements, mask_reg, start_index,
-                               parent_span_id, stride_bytes)
+                     stride_bytes: int | None = None) -> addresses.VectorOpResult:
+        return await unordered.vstore(self, vs, addr, ordering, n_elements, mask_reg, start_index,
+                                      parent_span_id, stride_bytes)
 
     async def vload_indexed_unordered(self, vd: int, base_addr: int, index_reg: int,
                                        index_ew: int, data_ew: int, n_elements: int,
                                        mask_reg: int | None, start_index: int,
-                                       parent_span_id: int):
-        await unordered.vload_indexed_unordered(self, vd, base_addr, index_reg, index_ew,
-                                                data_ew, n_elements, mask_reg, start_index,
-                                                parent_span_id)
+                                       parent_span_id: int) -> addresses.VectorOpResult:
+        return await unordered.vload_indexed_unordered(self, vd, base_addr, index_reg, index_ew,
+                                                       data_ew, n_elements, mask_reg, start_index,
+                                                       parent_span_id)
 
     async def vstore_indexed_unordered(self, vs: int, base_addr: int, index_reg: int,
                                         index_ew: int, data_ew: int, n_elements: int,
                                         mask_reg: int | None, start_index: int,
-                                        parent_span_id: int):
-        await unordered.vstore_indexed_unordered(self, vs, base_addr, index_reg, index_ew,
-                                                 data_ew, n_elements, mask_reg, start_index,
-                                                 parent_span_id)
+                                        parent_span_id: int) -> addresses.VectorOpResult:
+        return await unordered.vstore_indexed_unordered(self, vs, base_addr, index_reg, index_ew,
+                                                        data_ew, n_elements, mask_reg, start_index,
+                                                        parent_span_id)
 
     async def vload_indexed_ordered(self, vd: int, base_addr: int, index_reg: int,
                                     index_ew: int, data_ew: int, n_elements: int,

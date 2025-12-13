@@ -82,6 +82,13 @@ class WordOrder(Enum):
     LOOP = 1
 
 
+class MemoryType(Enum):
+    """Type of memory region determining access behavior."""
+    VPU = 'vpu'                          # VPU DRAM, always idempotent
+    SCALAR_IDEMPOTENT = 'scalar_idem'    # Scalar memory, speculative access OK
+    SCALAR_NON_IDEMPOTENT = 'scalar_non_idem'  # Scalar I/O, no speculative access, tracks accesses
+
+
 def vw_index_to_j_coords(params: LamletParams, word_order: WordOrder, vw_index: int):
     if word_order == WordOrder.STANDARD:
         j_x = vw_index % (params.j_cols * params.k_cols)
@@ -135,10 +142,28 @@ class Ordering:
     ew: SizeBits
 
 
+class TLBFaultType(Enum):
+    NONE = 0
+    PAGE_FAULT = 1
+    READ_FAULT = 2
+    WRITE_FAULT = 3
+
+
+@dataclass
+class VectorOpResult:
+    """Result of a vector operation - either success or fault."""
+    fault_type: TLBFaultType | None = None
+    element_index: int | None = None  # First element that faulted
+
+    @property
+    def success(self) -> bool:
+        return self.fault_type is None
+
+
 class PageInfo:
 
     def __init__(self, global_address: 'GlobalAddress', local_address: 'LocalAddress',
-                 fresh: List[bool]):
+                 fresh: List[bool], readable: bool = True, writable: bool = True):
         # Logical address
         self.global_address = global_address
         # Local address in the scalar or VPU memory
@@ -147,7 +172,9 @@ class PageInfo:
         # A list with an entry for each cache line size chunk.
         # Whether is has ever been read or written to.
         self.fresh = fresh
-
+        # Permission flags
+        self.readable = readable
+        self.writable = writable
 
 class TLB:
 
@@ -157,29 +184,15 @@ class TLB:
         self.pages: Dict[int, PageInfo] = {}
         # Maps vpu addresses to page infos
         self.vpu_pages: Dict[int, PageInfo] = {}
-        # maps scalar addresses to page infos
+        self.vpu_freed_pages: List[int] = []
+        self.vpu_lowest_never_used_page = 0
+        # Scalar memory (single address space for both idempotent and non-idempotent)
         self.scalar_pages: Dict[int, PageInfo] = {}
-
         self.scalar_freed_pages: List[int] = []
         self.scalar_lowest_never_used_page = 0
 
-        self.vpu_freed_pages: List[int] = []
-        self.vpu_lowest_never_used_page = 0
-
-    def get_lowest_free_page(self, is_vpu: bool):
-        if not is_vpu:
-            if self.scalar_freed_pages:
-                page = self.scalar_freed_pages.pop(0)
-            else:
-                page = self.scalar_lowest_never_used_page
-                next_page = self.scalar_lowest_never_used_page + self.params.page_bytes
-                if next_page > self.params.scalar_memory_bytes:
-                    raise MemoryError(
-                        f'Out of scalar memory: requested page at {hex(page)}, '
-                        f'but only {hex(self.params.scalar_memory_bytes)} bytes available'
-                    )
-                self.scalar_lowest_never_used_page = next_page
-        else:
+    def get_lowest_free_page(self, memory_type: MemoryType):
+        if memory_type == MemoryType.VPU:
             if self.vpu_freed_pages:
                 page = self.vpu_freed_pages.pop(0)
             else:
@@ -192,17 +205,31 @@ class TLB:
                         f'but only {hex(vpu_memory_bytes)} bytes available'
                     )
                 self.vpu_lowest_never_used_page = next_page
+        else:
+            # Both SCALAR_IDEMPOTENT and SCALAR_NON_IDEMPOTENT use the same address space
+            if self.scalar_freed_pages:
+                page = self.scalar_freed_pages.pop(0)
+            else:
+                page = self.scalar_lowest_never_used_page
+                next_page = self.scalar_lowest_never_used_page + self.params.page_bytes
+                if next_page > self.params.scalar_memory_bytes:
+                    raise MemoryError(
+                        f'Out of scalar memory: requested page at {hex(page)}, '
+                        f'but only {hex(self.params.scalar_memory_bytes)} bytes available'
+                    )
+                self.scalar_lowest_never_used_page = next_page
         return page
 
-    def allocate_memory(self, address: 'GlobalAddress', size: SizeBytes, is_vpu: bool, ordering: Ordering|None):
-        logger.info(f'Allocating memory to address {hex(address.addr)}')
+    def allocate_memory(self, address: 'GlobalAddress', size: SizeBytes, memory_type: MemoryType,
+                        ordering: Ordering | None, readable: bool = True, writable: bool = True):
+        logger.info(f'Allocating memory to address {hex(address.addr)} type={memory_type.value}')
         assert size % self.params.page_bytes == 0
         for index in range(size//self.params.page_bytes):
             logical_page_address = address.addr + index * self.params.page_bytes
             global_address = GlobalAddress(bit_addr=logical_page_address*8, params=self.params)
-            physical_page_address = self.get_lowest_free_page(is_vpu)
+            physical_page_address = self.get_lowest_free_page(memory_type)
             local_address = LocalAddress(
-                is_vpu=is_vpu,
+                memory_type=memory_type,
                 ordering=ordering,
                 bit_addr=physical_page_address*8,
                 )
@@ -212,8 +239,10 @@ class TLB:
                 global_address=global_address,
                 local_address=local_address,
                 fresh=[True]*n_cache_lines,
+                readable=readable,
+                writable=writable,
                 )
-            if is_vpu:
+            if memory_type == MemoryType.VPU:
                 self.vpu_pages[physical_page_address] = info
             else:
                 self.scalar_pages[physical_page_address] = info
@@ -226,7 +255,7 @@ class TLB:
             logger.debug(
                 f'PAGE_ALLOC: global=0x{logical_page_address:x}-0x{global_end:x} -> '
                 f'physical=0x{physical_page_address:x} memory_loc=0x{memory_loc_start:x}-0x{memory_loc_end:x} '
-                f'is_vpu={is_vpu}'
+                f'type={memory_type.value}'
             )
 
     def release_memory(self, address: 'GlobalAddress', size: SizeBytes):
@@ -234,7 +263,8 @@ class TLB:
         for index in range(size//self.params.page_bytes):
             logical_page_address = address.addr + index * self.params.page_bytes
             info = self.pages.pop(logical_page_address)
-            if info.local_address.is_vpu:
+            memory_type = info.local_address.memory_type
+            if memory_type == MemoryType.VPU:
                 self.vpu_freed_pages.append(info.local_address.addr)
                 self.vpu_pages.pop(info.local_address.addr)
             else:
@@ -246,6 +276,18 @@ class TLB:
         if address.addr not in self.pages:
             raise ValueError(f'{hex(address.addr)} not in page table')
         return self.pages[address.addr]
+
+    def check_access(self, address: 'GlobalAddress', is_write: bool) -> TLBFaultType:
+        """Check if access to address is allowed. Returns fault type or NONE."""
+        page_addr = (address.addr // self.params.page_bytes) * self.params.page_bytes
+        if page_addr not in self.pages:
+            return TLBFaultType.PAGE_FAULT
+        page_info = self.pages[page_addr]
+        if is_write and not page_info.writable:
+            return TLBFaultType.WRITE_FAULT
+        if not is_write and not page_info.readable:
+            return TLBFaultType.READ_FAULT
+        return TLBFaultType.NONE
 
     def get_is_fresh(self, address: 'GlobalAddress') -> bool:
         page_addr = address.get_page()
@@ -342,13 +384,17 @@ class GlobalAddress:
 
 @dataclass(frozen=True)
 class LocalAddress:
-    is_vpu: bool
+    memory_type: MemoryType
     bit_addr: int
     ordering: Ordering|None
 
     @property
     def addr(self):
         return self.bit_addr//8
+
+    @property
+    def is_vpu(self):
+        return self.memory_type == MemoryType.VPU
 
 
 @dataclass(frozen=True)

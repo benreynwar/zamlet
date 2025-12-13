@@ -17,7 +17,7 @@ from zamlet.runner import Clock
 from zamlet.params import LamletParams
 from zamlet.geometries import GEOMETRIES, scale_n_tests
 from zamlet.lamlet.lamlet import Lamlet
-from zamlet.addresses import GlobalAddress, Ordering, WordOrder
+from zamlet.addresses import GlobalAddress, MemoryType, Ordering, WordOrder
 from zamlet.monitor import CompletionType, SpanType
 from zamlet.tests.test_utils import setup_mask_register, zero_register
 
@@ -48,20 +48,22 @@ def allocate_vpu_pages(lamlet: Lamlet, base_addr: int, n_pages: int, page_bytes:
         lamlet.allocate_memory(
             GlobalAddress(bit_addr=(base_addr + page_idx * page_bytes) * 8, params=lamlet.params),
             page_bytes,
-            is_vpu=True,
+            memory_type=MemoryType.VPU,
             ordering=ordering
         )
 
 
 def allocate_scalar_pages(lamlet: Lamlet, base_addr: int, n_pages: int, page_bytes: int):
-    """Allocate scalar memory pages."""
+    """Allocate scalar memory pages as non-idempotent for access order verification."""
     for page_idx in range(n_pages):
+        page_addr = base_addr + page_idx * page_bytes
         lamlet.allocate_memory(
-            GlobalAddress(bit_addr=(base_addr + page_idx * page_bytes) * 8, params=lamlet.params),
+            GlobalAddress(bit_addr=page_addr * 8, params=lamlet.params),
             page_bytes,
-            is_vpu=False,
+            memory_type=MemoryType.SCALAR_NON_IDEMPOTENT,
             ordering=None
         )
+        lamlet.scalar.register_non_idempotent_page(page_addr)
 
 
 def generate_random_indices(rnd: Random, vl: int, data_ew: int, index_ew: int,
@@ -276,7 +278,7 @@ async def run_ordered_scalar_load_test(
         word_addr = local_addr - (local_addr % wb)
         expected_access_order.append(word_addr)
 
-    actual_access_order = lamlet.scalar.access_log
+    actual_access_order = lamlet.scalar.non_idempotent_access_log
 
     if actual_access_order != expected_access_order:
         logger.error(f"Access order mismatch!")

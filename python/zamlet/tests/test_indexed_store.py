@@ -1,0 +1,377 @@
+"""
+Test indexed vector store operations with page fault handling.
+
+Tests StoreIndexedUnordered instruction with mixed page types:
+- VPU pages (various ew, always idempotent)
+- Idempotent scalar pages
+- Non-idempotent scalar pages
+- Unallocated pages (trigger faults)
+"""
+
+import asyncio
+import logging
+from enum import Enum
+from random import Random
+
+import pytest
+
+from zamlet.runner import Clock
+from zamlet.params import LamletParams
+from zamlet.addresses import GlobalAddress, MemoryType, Ordering, WordOrder
+from zamlet.geometries import GEOMETRIES, scale_n_tests
+from zamlet.monitor import CompletionType, SpanType
+from zamlet.tests.test_utils import (
+    setup_lamlet, pack_elements, unpack_elements, get_vpu_base_addr
+)
+
+logger = logging.getLogger(__name__)
+
+
+class PageType(Enum):
+    VPU_EW8 = 'vpu_ew8'
+    VPU_EW16 = 'vpu_ew16'
+    VPU_EW32 = 'vpu_ew32'
+    VPU_EW64 = 'vpu_ew64'
+    SCALAR_IDEMPOTENT = 'scalar_idempotent'
+    SCALAR_NON_IDEMPOTENT = 'scalar_non_idempotent'
+    UNALLOCATED = 'unallocated'
+
+
+PAGE_TYPE_EW = {
+    PageType.VPU_EW8: 8,
+    PageType.VPU_EW16: 16,
+    PageType.VPU_EW32: 32,
+    PageType.VPU_EW64: 64,
+}
+
+
+def allocate_page(lamlet, base_addr: int, page_idx: int, page_type: PageType):
+    """Allocate a single page with the specified type."""
+    page_bytes = lamlet.params.page_bytes
+    page_addr = base_addr + page_idx * page_bytes
+    g_addr = GlobalAddress(bit_addr=page_addr * 8, params=lamlet.params)
+
+    if page_type == PageType.UNALLOCATED:
+        return
+    elif page_type in PAGE_TYPE_EW:
+        ew = PAGE_TYPE_EW[page_type]
+        ordering = Ordering(WordOrder.STANDARD, ew)
+        lamlet.allocate_memory(g_addr, page_bytes, memory_type=MemoryType.VPU, ordering=ordering)
+    elif page_type == PageType.SCALAR_IDEMPOTENT:
+        lamlet.allocate_memory(g_addr, page_bytes, memory_type=MemoryType.SCALAR_IDEMPOTENT,
+                               ordering=None)
+    elif page_type == PageType.SCALAR_NON_IDEMPOTENT:
+        lamlet.allocate_memory(g_addr, page_bytes, memory_type=MemoryType.SCALAR_NON_IDEMPOTENT,
+                               ordering=None)
+
+
+def generate_page_types(n_pages: int, rnd: Random) -> list[PageType]:
+    """Generate a random mix of page types."""
+    all_types = list(PageType)
+    return [rnd.choice(all_types) for _ in range(n_pages)]
+
+
+def generate_indices(vl: int, data_ew: int, n_pages: int, page_bytes: int, rnd: Random
+                     ) -> list[int]:
+    """Generate random byte offsets for indexed access."""
+    element_bytes = data_ew // 8
+    max_offset = n_pages * page_bytes - element_bytes
+    indices = []
+    for _ in range(vl):
+        offset = rnd.randint(0, max_offset // element_bytes) * element_bytes
+        indices.append(offset)
+    return indices
+
+
+async def setup_index_register(lamlet, index_reg: int, indices: list[int], index_ew: int,
+                                base_addr: int, parent_span_id: int):
+    """Write indices to memory and load into a vector register."""
+    index_bytes = index_ew // 8
+    index_mem_addr = base_addr + 0x200000
+    page_bytes = lamlet.params.page_bytes
+
+    index_size = len(indices) * index_bytes + 64
+    n_pages = (max(1024, index_size) + page_bytes - 1) // page_bytes
+    index_ordering = Ordering(WordOrder.STANDARD, index_ew)
+
+    for page_idx in range(n_pages):
+        page_addr = index_mem_addr + page_idx * page_bytes
+        lamlet.allocate_memory(
+            GlobalAddress(bit_addr=page_addr * 8, params=lamlet.params),
+            page_bytes, memory_type=MemoryType.VPU, ordering=index_ordering)
+
+    for i, idx in enumerate(indices):
+        addr = index_mem_addr + i * index_bytes
+        await lamlet.set_memory(addr, idx.to_bytes(index_bytes, byteorder='little'))
+
+    span_id = lamlet.monitor.create_span(
+        span_type=SpanType.RISCV_INSTR, component="test",
+        completion_type=CompletionType.FIRE_AND_FORGET, mnemonic="setup_index")
+    await lamlet.vload(
+        vd=index_reg,
+        addr=index_mem_addr,
+        ordering=index_ordering,
+        n_elements=len(indices),
+        mask_reg=None,
+        start_index=0,
+        parent_span_id=span_id,
+    )
+    lamlet.monitor.finalize_children(span_id)
+
+
+async def run_indexed_store_test(
+    clock: Clock,
+    data_ew: int,
+    index_ew: int,
+    vl: int,
+    n_pages: int,
+    params: LamletParams,
+    seed: int,
+):
+    """Test indexed vector store operations with mixed page types."""
+    lamlet = await setup_lamlet(clock, params)
+
+    rnd = Random(seed)
+    element_bytes = data_ew // 8
+
+    logger.info(f"Test parameters: data_ew={data_ew}, index_ew={index_ew}, vl={vl}, "
+                f"n_pages={n_pages}, seed={seed}")
+
+    src_base = get_vpu_base_addr(data_ew)
+    dst_base = get_vpu_base_addr(data_ew) + 0x100000
+    page_bytes = params.page_bytes
+
+    page_types = generate_page_types(n_pages, rnd)
+    indices = generate_indices(vl, data_ew, n_pages, page_bytes, rnd)
+
+    # Generate source values - one per element
+    src_list = [rnd.getrandbits(data_ew) for _ in range(vl)]
+
+    logger.info(f"Destination page types ({n_pages} pages):")
+    for i, pt in enumerate(page_types):
+        logger.info(f"  Page {i}: {pt.value}")
+    logger.info(f"Indices: {indices[:16]}{'...' if len(indices) > 16 else ''}")
+
+    # Allocate source pages (contiguous VPU)
+    src_ordering = Ordering(WordOrder.STANDARD, data_ew)
+    src_size = vl * element_bytes + 64
+    n_src_pages = (max(1024, src_size) + page_bytes - 1) // page_bytes
+    for i in range(n_src_pages):
+        page_addr = src_base + i * page_bytes
+        lamlet.allocate_memory(
+            GlobalAddress(bit_addr=page_addr * 8, params=params),
+            page_bytes, memory_type=MemoryType.VPU, ordering=src_ordering)
+
+    # Allocate destination pages with mixed types
+    for i, pt in enumerate(page_types):
+        allocate_page(lamlet, dst_base, i, pt)
+
+    # Write source data contiguously
+    for i, val in enumerate(src_list):
+        addr = src_base + i * element_bytes
+        await lamlet.set_memory(addr, pack_elements([val], data_ew))
+
+    lamlet.vl = vl
+    lamlet.vtype = {8: 0x0, 16: 0x1, 32: 0x2, 64: 0x3}[data_ew]
+
+    elements_per_vline = params.vline_bytes * 8 // data_ew
+    n_data_regs = (vl + elements_per_vline - 1) // elements_per_vline
+    index_elements_per_vline = params.vline_bytes * 8 // index_ew
+    n_index_regs = (vl + index_elements_per_vline - 1) // index_elements_per_vline
+
+    data_reg = 0
+    index_reg = n_data_regs
+
+    span_id = lamlet.monitor.create_span(
+        span_type=SpanType.RISCV_INSTR, component="test",
+        completion_type=CompletionType.FIRE_AND_FORGET, mnemonic="test_indexed_store")
+
+    # Load source data into register (contiguous)
+    await lamlet.vload(
+        vd=data_reg,
+        addr=src_base,
+        ordering=src_ordering,
+        n_elements=vl,
+        mask_reg=None,
+        start_index=0,
+        parent_span_id=span_id,
+    )
+
+    # Setup index register
+    await setup_index_register(lamlet, index_reg, indices, index_ew, dst_base, span_id)
+
+    # Clear non-idempotent write log before the indexed store
+    lamlet.scalar.non_idempotent_write_log.clear()
+
+    # Store to indexed destinations
+    result = await lamlet.vstore_indexed_unordered(
+        vs=data_reg,
+        base_addr=dst_base,
+        index_reg=index_reg,
+        index_ew=index_ew,
+        data_ew=data_ew,
+        n_elements=vl,
+        mask_reg=None,
+        start_index=0,
+        parent_span_id=span_id,
+    )
+
+    # Calculate expected fault element (first element hitting unallocated page)
+    expected_fault_element = None
+    for i, offset in enumerate(indices):
+        page_idx = offset // page_bytes
+        assert page_idx < len(page_types)
+        if page_types[page_idx] == PageType.UNALLOCATED:
+            expected_fault_element = i
+            break
+
+    # Check fault matches expectation
+    if expected_fault_element is not None:
+        assert not result.success, \
+            f"Expected fault at element {expected_fault_element}, but no fault returned"
+        assert result.element_index == expected_fault_element, \
+            f"Expected fault at element {expected_fault_element}, " \
+            f"got {result.element_index}"
+        logger.info(f"Fault correctly detected at element {expected_fault_element}")
+        n_expected_correct = expected_fault_element
+    else:
+        assert result.success, f"Unexpected fault: {result}"
+        n_expected_correct = vl
+
+    # Verify non-idempotent writes: all elements before fault that target non-idempotent pages
+    # should have been written (order doesn't matter for unordered stores)
+    expected_non_idemp_addrs = set()
+    for i in range(n_expected_correct):
+        offset = indices[i]
+        page_idx = offset // page_bytes
+        if page_idx < len(page_types) and page_types[page_idx] == PageType.SCALAR_NON_IDEMPOTENT:
+            global_addr = dst_base + offset
+            g_addr = GlobalAddress(bit_addr=global_addr * 8, params=params)
+            local_addr = lamlet.to_scalar_addr(g_addr)
+            expected_non_idemp_addrs.add(local_addr)
+
+    actual_non_idemp_addrs = set(lamlet.scalar.non_idempotent_write_log)
+    if expected_non_idemp_addrs or actual_non_idemp_addrs:
+        logger.info(f"Non-idempotent writes: expected {len(expected_non_idemp_addrs)}, "
+                    f"actual {len(actual_non_idemp_addrs)}")
+        assert actual_non_idemp_addrs == expected_non_idemp_addrs, \
+            f"Non-idempotent write mismatch: expected {expected_non_idemp_addrs}, " \
+            f"got {actual_non_idemp_addrs}"
+
+    # Verify correct elements were stored
+    errors = []
+    for i in range(n_expected_correct):
+        offset = indices[i]
+        page_idx = offset // page_bytes
+        if page_types[page_idx] == PageType.UNALLOCATED:
+            continue
+        addr = dst_base + offset
+        future = await lamlet.get_memory(addr, element_bytes)
+        await future
+        result = unpack_elements(future.result(), data_ew)[0]
+        if result != src_list[i]:
+            errors.append(f"  [{i}] offset={offset} expected={src_list[i]:#x} actual={result:#x}")
+
+    if errors:
+        logger.error(f"FAIL: {len(errors)} elements do not match")
+        for err in errors[:16]:
+            logger.error(err)
+        return 1
+
+    logger.info(f"PASS: {n_expected_correct} elements correct")
+    lamlet.monitor.finalize_children(span_id)
+    lamlet.monitor.print_summary()
+    return 0
+
+
+async def main(clock, data_ew, index_ew, vl, n_pages, params, seed):
+    import signal
+
+    def signal_handler(signum, frame):
+        clock.stop()
+        raise KeyboardInterrupt()
+
+    signal.signal(signal.SIGINT, signal_handler)
+    clock.register_main()
+    clock.create_task(clock.clock_driver())
+
+    exit_code = await run_indexed_store_test(
+        clock, data_ew=data_ew, index_ew=index_ew, vl=vl,
+        n_pages=n_pages, params=params, seed=seed)
+    clock.running = False
+    return exit_code
+
+
+def run_test(data_ew: int, index_ew: int, vl: int, n_pages: int, params: LamletParams, seed: int):
+    """Helper to run a single test configuration."""
+    clock = Clock(max_cycles=10000)
+    exit_code = asyncio.run(main(clock, data_ew=data_ew, index_ew=index_ew, vl=vl,
+                                  n_pages=n_pages, params=params, seed=seed))
+    assert exit_code == 0, f"Test failed with exit_code={exit_code}"
+
+
+def random_test_config(rnd: Random):
+    """Generate a random test configuration."""
+    geom_name = rnd.choice(list(GEOMETRIES.keys()))
+    geom_params = GEOMETRIES[geom_name]
+    data_ew = rnd.choice([8, 16, 32, 64])
+    vl = rnd.randint(1, 32)
+    n_pages = rnd.randint(2, 6)
+    # index_ew must be large enough to hold max offset (n_pages * page_bytes)
+    max_offset = n_pages * geom_params.page_bytes
+    if max_offset <= 256:
+        index_ew = rnd.choice([8, 16, 32, 64])
+    elif max_offset <= 65536:
+        index_ew = rnd.choice([16, 32, 64])
+    else:
+        index_ew = rnd.choice([32, 64])
+    return geom_name, geom_params, data_ew, index_ew, vl, n_pages
+
+
+def generate_test_params(n_tests: int = 64, seed: int = 42):
+    """Generate random test parameter combinations."""
+    rnd = Random(seed)
+    test_params = []
+    for i in range(n_tests):
+        geom_name, geom_params, data_ew, index_ew, vl, n_pages = random_test_config(rnd)
+        id_str = f"{i}_{geom_name}_dew{data_ew}_iew{index_ew}_vl{vl}_p{n_pages}"
+        test_params.append(pytest.param(geom_params, data_ew, index_ew, vl, n_pages, i, id=id_str))
+    return test_params
+
+
+@pytest.mark.parametrize("params,data_ew,index_ew,vl,n_pages,seed",
+                         generate_test_params(n_tests=scale_n_tests(32)))
+def test_indexed_store(params, data_ew, index_ew, vl, n_pages, seed):
+    """Indexed store with random mix of page types."""
+    run_test(data_ew=data_ew, index_ew=index_ew, vl=vl, n_pages=n_pages, params=params, seed=seed)
+
+
+if __name__ == '__main__':
+    import sys
+    import argparse
+
+    from zamlet.geometries import get_geometry, list_geometries
+
+    parser = argparse.ArgumentParser(description='Test indexed vector store with page faults')
+    parser.add_argument('--data-ew', type=int, default=64, help='Data element width in bits')
+    parser.add_argument('--index-ew', type=int, default=32, help='Index element width in bits')
+    parser.add_argument('--vl', type=int, default=8, help='Vector length')
+    parser.add_argument('--n-pages', type=int, default=4, help='Number of pages to allocate')
+    parser.add_argument('--seed', type=int, default=0, help='Random seed')
+    parser.add_argument('--geometry', '-g', default='k2x1_j1x1',
+                        help='Geometry name (default: k2x1_j1x1)')
+    parser.add_argument('--list-geometries', action='store_true',
+                        help='List available geometries and exit')
+    args = parser.parse_args()
+
+    if args.list_geometries:
+        print("Available geometries:")
+        print(list_geometries())
+        sys.exit(0)
+
+    logging.basicConfig(level=logging.DEBUG, stream=sys.stdout,
+                        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+
+    params = get_geometry(args.geometry)
+    run_test(data_ew=args.data_ew, index_ew=args.index_ew, vl=args.vl,
+             n_pages=args.n_pages, params=params, seed=args.seed)

@@ -43,9 +43,10 @@ class CacheRequestState:
 
 
 class SendState(Enum):
-    NEED_TO_SEND = 'NEED_TO_SEND'
+    INITIAL = 'INITIAL'  # Check if this is first byte of a transaction, then TLB check
+    NEED_TO_SEND = 'NEED_TO_SEND'  # TLB passed (idempotent), ready to send
+    WAITING_IN_CASE_FAULT = 'WAITING_IN_CASE_FAULT'  # Non-idempotent, waiting for fault sync
     WAITING_FOR_RESPONSE = 'WAITING_FOR_RESPONSE'
-    ACKED = 'ACKED'  # ACK received, waiting for sync + actual data (ordered loads only)
     COMPLETE = 'COMPLETE'
 
 
@@ -592,12 +593,23 @@ class CacheTable:
         Returns None if no waiting items have an instr_ident set (all free).
         """
         max_tags = self.params.max_response_tags
+        all_items = [(type(item).__name__, item.instr_ident) for item in self.waiting_items]
         idents = [item.instr_ident for item in self.waiting_items
                   if item.instr_ident is not None]
+        logger.debug(f'{self.clock.cycle}: get_oldest_active_instr_ident_distance: '
+                     f'baseline={baseline} waiting_items={all_items} idents={idents}')
         if not idents:
             return None  # All free
-        distances = [(ident - baseline) % max_tags for ident in idents]
-        return min(distances)
+        distances = []
+        for ident in idents:
+            d = (ident - baseline) % max_tags
+            if d == 0:
+                d = max_tags  # ident at baseline is newest, not oldest
+            distances.append(d)
+        result = min(distances)
+        if result == max_tags:
+            return None  # only active ident is at baseline (newest)
+        return result
 
     def can_get_slot(self, k_maddr: KMAddr) -> bool:
         slot = self.addr_to_slot(k_maddr)

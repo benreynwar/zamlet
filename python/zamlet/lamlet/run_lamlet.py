@@ -7,7 +7,7 @@ from zamlet import program_info
 from zamlet.lamlet import lamlet
 from zamlet.runner import Clock
 from zamlet.params import LamletParams
-from zamlet.addresses import GlobalAddress, Ordering, WordOrder
+from zamlet.addresses import GlobalAddress, MemoryType, Ordering, WordOrder
 
 logger = logging.getLogger(__name__)
 
@@ -78,21 +78,22 @@ async def run(clock: Clock, filename, params: LamletParams = None):
             ordering = Ordering(WordOrder.STANDARD, ew)
         else:
             ordering = None
+        memory_type = MemoryType.VPU if is_vpu else MemoryType.SCALAR_IDEMPOTENT
         logger.info(
             f'[ALLOC] addr=0x{address:x} size={size} page_start=0x{page_start:x} '
-            f'alloc_size={alloc_size} is_vpu={is_vpu} ordering={ordering}'
+            f'alloc_size={alloc_size} memory_type={memory_type} ordering={ordering}'
         )
         s.allocate_memory(GlobalAddress(bit_addr=page_start*8, params=params),
-                          alloc_size, is_vpu=is_vpu, ordering=ordering)
+                          alloc_size, memory_type=memory_type, ordering=ordering)
 
     # Allocate VPU memory pools with fixed element widths
     # Each pool is 256KB as defined in vpu_alloc.c
     pool_size = 256 * 1024
-    s.allocate_memory(GlobalAddress(bit_addr=0x90000000*8, params=params), pool_size, is_vpu=True, ordering=Ordering(WordOrder.STANDARD, 1))   # 1-bit pool (masks)
-    s.allocate_memory(GlobalAddress(bit_addr=0x90040000*8, params=params), pool_size, is_vpu=True, ordering=Ordering(WordOrder.STANDARD, 8))   # 8-bit pool
-    s.allocate_memory(GlobalAddress(bit_addr=0x90080000*8, params=params), pool_size, is_vpu=True, ordering=Ordering(WordOrder.STANDARD, 16))  # 16-bit pool
-    s.allocate_memory(GlobalAddress(bit_addr=0x900C0000*8, params=params), pool_size, is_vpu=True, ordering=Ordering(WordOrder.STANDARD, 32))  # 32-bit pool
-    s.allocate_memory(GlobalAddress(bit_addr=0x90100000*8, params=params), pool_size, is_vpu=True, ordering=Ordering(WordOrder.STANDARD, 64))  # 64-bit pool
+    s.allocate_memory(GlobalAddress(bit_addr=0x90000000*8, params=params), pool_size, memory_type=MemoryType.VPU, ordering=Ordering(WordOrder.STANDARD, 1))   # 1-bit pool (masks)
+    s.allocate_memory(GlobalAddress(bit_addr=0x90040000*8, params=params), pool_size, memory_type=MemoryType.VPU, ordering=Ordering(WordOrder.STANDARD, 8))   # 8-bit pool
+    s.allocate_memory(GlobalAddress(bit_addr=0x90080000*8, params=params), pool_size, memory_type=MemoryType.VPU, ordering=Ordering(WordOrder.STANDARD, 16))  # 16-bit pool
+    s.allocate_memory(GlobalAddress(bit_addr=0x900C0000*8, params=params), pool_size, memory_type=MemoryType.VPU, ordering=Ordering(WordOrder.STANDARD, 32))  # 32-bit pool
+    s.allocate_memory(GlobalAddress(bit_addr=0x90100000*8, params=params), pool_size, memory_type=MemoryType.VPU, ordering=Ordering(WordOrder.STANDARD, 64))  # 64-bit pool
 
     for segment in p_info['segments']:
         address = segment['address']
@@ -233,7 +234,7 @@ if __name__ == '__main__':
                 root_logger.warning(f'========== Test interrupted by user ==========')
                 sys.exit(1)
             except asyncio.CancelledError:
-                exit_code = 1  # Timeout
+                exit_code = 1
             except Exception as e:
                 root_logger.error(f'========== Test FAILED: {filename} {geom_name} - {e} ==========')
                 import traceback

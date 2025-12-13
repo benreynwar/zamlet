@@ -17,10 +17,13 @@ class ScalarState:
         self._rf = [RegisterFileSlot(clock, params, f'x{i}') for i in range(32)]
         self._frf = [RegisterFileSlot(clock, params, f'f{i}') for i in range(32)]
 
-        self._memory = {}
+        self._memory: dict[int, int] = {}
+        # Set of page-aligned addresses for non-idempotent pages
+        self._non_idempotent_pages: set[int] = set()
+        # Access logs for non-idempotent memory only
+        self.non_idempotent_access_log: list[int] = []
+        self.non_idempotent_write_log: list[int] = []
         self.csr = {}
-        self.access_log: list[int] = []  # Addresses accessed via get_memory
-        self.write_log: list[int] = []  # Addresses written via set_memory
 
     def regs_ready(self, dst_reg, dst_freg, src_regs, src_fregs):
         dst_reg_ready = dst_reg is None or dst_reg == 0 or self._rf[dst_reg].can_write()
@@ -57,16 +60,27 @@ class ScalarState:
     def write_freg_future(self, freg_num, future):
         self._frf[freg_num].set_future(future)
 
-    def set_memory(self, address: int, data: bytes, log: bool = False):
-        """Write to memory."""
-        if log:
-            self.write_log.append(address)
+    def register_non_idempotent_page(self, page_addr: int):
+        """Register a page as non-idempotent. page_addr must be page-aligned."""
+        assert page_addr % self.params.page_bytes == 0
+        self._non_idempotent_pages.add(page_addr)
+
+    def _is_non_idempotent(self, address: int) -> bool:
+        """Check if address falls in a non-idempotent page."""
+        page_addr = (address // self.params.page_bytes) * self.params.page_bytes
+        return page_addr in self._non_idempotent_pages
+
+    def set_memory(self, address: int, data: bytes):
+        """Write to scalar memory."""
+        if self._is_non_idempotent(address):
+            self.non_idempotent_write_log.append(address)
         for i, b in enumerate(data):
             self._memory[address + i] = b
 
     def get_memory(self, address: int, size: int = 1) -> bytes:
-        """Read from memory and log the access."""
-        self.access_log.append(address)
+        """Read from scalar memory."""
+        if self._is_non_idempotent(address):
+            self.non_idempotent_access_log.append(address)
         bs = []
         for index in range(size):
             addr = address + index

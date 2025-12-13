@@ -23,7 +23,7 @@ from zamlet.runner import Clock
 from zamlet.params import LamletParams
 from zamlet.geometries import GEOMETRIES, scale_n_tests
 from zamlet.lamlet.lamlet import Lamlet
-from zamlet.addresses import GlobalAddress, Ordering, WordOrder, KMAddr, RegAddr
+from zamlet.addresses import GlobalAddress, MemoryType, Ordering, WordOrder, KMAddr, RegAddr
 from zamlet.kamlet import kinstructions
 from zamlet.kamlet.kinstructions import Load, Store
 from zamlet.monitor import CompletionType, SpanType
@@ -93,19 +93,19 @@ async def run_conditional_simple(clock: Clock, vector_length: int, seed: int, lm
 
     lamlet.allocate_memory(
         GlobalAddress(bit_addr=x_addr * 8, params=params),
-        1024, is_vpu=True, ordering=Ordering(WordOrder.STANDARD, 8)
+        1024, memory_type=MemoryType.VPU, ordering=Ordering(WordOrder.STANDARD, 8)
     )
     lamlet.allocate_memory(
         GlobalAddress(bit_addr=a_addr * 8, params=params),
-        1024, is_vpu=True, ordering=Ordering(WordOrder.STANDARD, 16)
+        1024, memory_type=MemoryType.VPU, ordering=Ordering(WordOrder.STANDARD, 16)
     )
     lamlet.allocate_memory(
         GlobalAddress(bit_addr=b_addr * 8, params=params),
-        1024, is_vpu=True, ordering=Ordering(WordOrder.STANDARD, 16)
+        1024, memory_type=MemoryType.VPU, ordering=Ordering(WordOrder.STANDARD, 16)
     )
     lamlet.allocate_memory(
         GlobalAddress(bit_addr=z_addr * 8, params=params),
-        1024, is_vpu=True, ordering=Ordering(WordOrder.STANDARD, 16)
+        1024, memory_type=MemoryType.VPU, ordering=Ordering(WordOrder.STANDARD, 16)
     )
 
     # Write initial data to memory
