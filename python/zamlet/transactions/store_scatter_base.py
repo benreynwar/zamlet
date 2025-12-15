@@ -343,6 +343,7 @@ class WaitingStoreScatterBase(WaitingItem, ABC):
             dst_y=target_y,
             tag=tag,
             parent_span_id=witem_span_id,
+            element=src_e,
         )
 
         await jamlet.send_packet(packet, parent_span_id=transaction_span_id)

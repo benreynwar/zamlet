@@ -70,6 +70,17 @@ the output:
 python -m pytest kernel_tests/conditional/test_conditional.py -v > test.log 2>&1
 ```
 
+### Running tests directly (without pytest)
+Tests in `tests/` can be run directly with Python. Use `--list-geometries` to see available
+configurations. Test names from pytest encode the parameters:
+
+```
+# pytest test name: test_strided_store[14_k2x2_j1x2_ew32_vl127_s3657]
+# Format: {index}_{geometry}_ew{ew}_vl{vl}_s{stride}
+# Decodes to: geometry=k2x2_j1x2, ew=32, vl=127, stride=3657, seed=14
+python tests/test_strided_store.py -g k2x2_j1x2 --ew=32 --vl=127 --stride=3657 --seed=14 --dump-spans > tests/log.txt 2>&1
+```
+
 ## Reading Files
 NEVER use `cat` to read files. Always use the Read tool instead.
 

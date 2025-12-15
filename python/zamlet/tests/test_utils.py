@@ -1,5 +1,7 @@
 import logging
 import struct
+from enum import Enum
+from random import Random
 from typing import List
 
 from zamlet import utils
@@ -134,11 +136,12 @@ async def setup_mask_register(
     mask_span_id = lamlet.monitor.create_span(
         span_type=SpanType.RISCV_INSTR, component="test",
         completion_type=CompletionType.FIRE_AND_FORGET, mnemonic="load_mask")
+    # Load j_in_l elements (one 64-bit word per jamlet) - the mask fits in one register
     await lamlet.vload(
         vd=mask_reg,
         addr=mask_mem_addr,
         ordering=mask_ordering,
-        n_elements=len(mask_bits),
+        n_elements=lamlet.params.j_in_l,
         mask_reg=None,
         start_index=0,
         parent_span_id=mask_span_id,
@@ -178,6 +181,226 @@ async def zero_register(
     )
     lamlet.monitor.finalize_children(zero_span_id)
     logger.info(f"Register v{reg} zeroed ({n_elements} elements)")
+
+
+class PageType(Enum):
+    """Page types for mixed memory testing."""
+    VPU_EW8 = 'vpu_ew8'
+    VPU_EW16 = 'vpu_ew16'
+    VPU_EW32 = 'vpu_ew32'
+    VPU_EW64 = 'vpu_ew64'
+    SCALAR_IDEMPOTENT = 'scalar_idempotent'
+    SCALAR_NON_IDEMPOTENT = 'scalar_non_idempotent'
+    UNALLOCATED = 'unallocated'
+
+
+PAGE_TYPE_EW = {
+    PageType.VPU_EW8: 8,
+    PageType.VPU_EW16: 16,
+    PageType.VPU_EW32: 32,
+    PageType.VPU_EW64: 64,
+}
+
+
+def allocate_page(lamlet: Lamlet, base_addr: int, page_idx: int, page_type: PageType):
+    """Allocate a single page with the specified type."""
+    page_bytes = lamlet.params.page_bytes
+    page_addr = base_addr + page_idx * page_bytes
+    g_addr = GlobalAddress(bit_addr=page_addr * 8, params=lamlet.params)
+
+    if page_type == PageType.UNALLOCATED:
+        return
+    elif page_type in PAGE_TYPE_EW:
+        ew = PAGE_TYPE_EW[page_type]
+        ordering = Ordering(WordOrder.STANDARD, ew)
+        lamlet.allocate_memory(g_addr, page_bytes, memory_type=MemoryType.VPU, ordering=ordering)
+    elif page_type == PageType.SCALAR_IDEMPOTENT:
+        lamlet.allocate_memory(g_addr, page_bytes, memory_type=MemoryType.SCALAR_IDEMPOTENT,
+                               ordering=None)
+    elif page_type == PageType.SCALAR_NON_IDEMPOTENT:
+        lamlet.allocate_memory(g_addr, page_bytes, memory_type=MemoryType.SCALAR_NON_IDEMPOTENT,
+                               ordering=None)
+
+
+def generate_page_types(n_pages: int, rnd: Random) -> list[PageType]:
+    """Generate a random mix of page types."""
+    all_types = list(PageType)
+    return [rnd.choice(all_types) for _ in range(n_pages)]
+
+
+def generate_indices(vl: int, data_ew: int, n_pages: int, page_bytes: int, rnd: Random
+                     ) -> list[int]:
+    """Generate random unique byte offsets for indexed access."""
+    element_bytes = data_ew // 8
+    max_offset = n_pages * page_bytes - element_bytes
+    n_slots = max_offset // element_bytes + 1
+    assert vl <= n_slots, f"Cannot generate {vl} unique indices with only {n_slots} slots"
+    used = set()
+    indices = []
+    for _ in range(vl):
+        for attempt in range(1000):
+            offset = rnd.randint(0, max_offset // element_bytes) * element_bytes
+            if offset not in used:
+                used.add(offset)
+                indices.append(offset)
+                break
+        else:
+            raise RuntimeError(f"Failed to generate unique index after 1000 attempts")
+    return indices
+
+
+async def setup_index_register(
+    lamlet: Lamlet,
+    index_reg: int,
+    indices: list[int],
+    index_ew: int,
+    base_addr: int,
+):
+    """Write indices to memory and load into a vector register."""
+    index_bytes = index_ew // 8
+    index_mem_addr = base_addr + 0x200000
+    page_bytes = lamlet.params.page_bytes
+
+    index_size = len(indices) * index_bytes + 64
+    n_pages = (max(1024, index_size) + page_bytes - 1) // page_bytes
+    index_ordering = Ordering(WordOrder.STANDARD, index_ew)
+
+    for page_idx in range(n_pages):
+        page_addr = index_mem_addr + page_idx * page_bytes
+        lamlet.allocate_memory(
+            GlobalAddress(bit_addr=page_addr * 8, params=lamlet.params),
+            page_bytes, memory_type=MemoryType.VPU, ordering=index_ordering)
+
+    for i, idx in enumerate(indices):
+        addr = index_mem_addr + i * index_bytes
+        await lamlet.set_memory(addr, idx.to_bytes(index_bytes, byteorder='little'))
+
+    span_id = lamlet.monitor.create_span(
+        span_type=SpanType.RISCV_INSTR, component="test",
+        completion_type=CompletionType.FIRE_AND_FORGET, mnemonic="setup_index")
+    await lamlet.vload(
+        vd=index_reg,
+        addr=index_mem_addr,
+        ordering=index_ordering,
+        n_elements=len(indices),
+        mask_reg=None,
+        start_index=0,
+        parent_span_id=span_id,
+    )
+    lamlet.monitor.finalize_children(span_id)
+
+
+def random_stride(rnd: Random, element_bytes: int, page_bytes: int) -> int:
+    """Generate a random stride with roughly logarithmic distribution.
+
+    Ranges from element_bytes+1 to several page_bytes, using multiple linear
+    ranges to approximate logarithmic distribution. We avoid stride == element_bytes
+    because that triggers the unit-stride path which has incomplete scalar memory support.
+    """
+    range_choice = rnd.randint(0, 3)
+    if range_choice == 0:
+        # Small: element_bytes+1 to 4x element_bytes
+        return rnd.randint(element_bytes + 1, element_bytes * 4)
+    elif range_choice == 1:
+        # Medium: 4x element_bytes to 64 bytes
+        return rnd.randint(element_bytes * 4, max(element_bytes * 4, 64))
+    elif range_choice == 2:
+        # Large: 64 bytes to page_bytes
+        return rnd.randint(64, page_bytes)
+    else:
+        # Very large: page_bytes to 4x page_bytes
+        return rnd.randint(page_bytes, page_bytes * 4)
+
+
+def max_vl_for_indexed(params: 'LamletParams', data_ew: int, index_ew: int) -> int:
+    """Calculate max vl that fits in available registers for indexed ops.
+
+    Indexed ops need: ceil(vl/d) + ceil(vl/i) + 1 <= n_vregs
+    where d = data elements per reg, i = index elements per reg,
+    and ceil(vl/d) = (vl + d - 1) // d.
+
+    Since (vl + d - 1) // d <= vl/d + 1:
+        vl/d + vl/i + 2 + 1 <= n_vregs
+        vl * (d + i) / (d * i) <= n_vregs - 3
+        vl <= (n_vregs - 3) * d * i / (d + i)
+    """
+    vline_bits = params.vline_bytes * 8
+    d = vline_bits // data_ew
+    i = vline_bits // index_ew
+    available = params.n_vregs - 3
+    return available * d * i // (d + i)
+
+
+def random_start_index(rnd: Random, vl: int) -> int:
+    """Generate a random start_index for vstart testing.
+
+    Returns 0 most of the time (80%), otherwise a random value in [1, vl-1].
+    """
+    if vl <= 1:
+        return 0
+    if rnd.randint(0, 4) == 0:  # 20% chance of non-zero
+        return rnd.randint(1, vl - 1)
+    return 0
+
+
+def random_vl(rnd: Random, max_vl: int) -> int:
+    """Generate a random vl with roughly logarithmic distribution.
+
+    Favors smaller vl values while still testing larger ones.
+    Uses fractional ranges of max_vl to adapt to any max_vl value.
+    """
+    # Define ranges as fractions: [1, max_vl/8], [max_vl/8, max_vl/4], etc.
+    # This gives roughly logarithmic distribution that adapts to max_vl
+    boundaries = [1, max(2, max_vl // 8), max(3, max_vl // 4),
+                  max(4, max_vl // 2), max_vl]
+
+    range_choice = rnd.randint(0, 3)
+    lo = boundaries[range_choice]
+    hi = boundaries[range_choice + 1]
+    return rnd.randint(lo, hi)
+
+
+def choose_mask_pattern(rnd: Random) -> str:
+    """Choose a mask pattern type with weighted random selection.
+
+    Returns one of: 'random', 'all_true', 'all_false', 'alternating', 'first_half'
+    """
+    choice = rnd.randint(0, 99)
+    if choice < 50:
+        return 'random'
+    elif choice < 75:
+        return 'all_true'
+    elif choice < 85:
+        return 'all_false'
+    elif choice < 95:
+        return 'alternating'
+    else:
+        return 'first_half'
+
+
+def generate_mask_pattern(vl: int, pattern_type: str, rnd: Random) -> list[bool]:
+    """Generate a mask bit pattern of the specified type.
+
+    Args:
+        vl: Vector length (number of mask bits to generate)
+        pattern_type: One of 'random', 'all_true', 'all_false', 'alternating', 'first_half'
+        rnd: Random instance for 'random' pattern
+
+    Returns:
+        List of bool mask bits
+    """
+    if pattern_type == 'random':
+        return [rnd.choice([True, False]) for _ in range(vl)]
+    elif pattern_type == 'all_true':
+        return [True] * vl
+    elif pattern_type == 'all_false':
+        return [False] * vl
+    elif pattern_type == 'alternating':
+        return [(i % 2 == 0) for i in range(vl)]
+    elif pattern_type == 'first_half':
+        return [(i < vl // 2) for i in range(vl)]
+    else:
+        raise ValueError(f"Unknown mask pattern type: {pattern_type}")
 
 
 

@@ -887,20 +887,34 @@ class Lamlet:
         It returns a future that resolves when the value has been
         returned.
         """
-        start_addr = GlobalAddress(bit_addr=address*8, params=self.params)
-        is_vpu = start_addr.is_vpu(self.tlb)
-        if is_vpu:
-            logger.info(f'get_memory: VPU read addr=0x{address:x}, start_addr.addr={start_addr.addr}')
-            read_futures = [await self.read_byte(GlobalAddress(bit_addr=(start_addr.addr+offset)*8, params=self.params))
-                            for offset in range(size)]
-            read_future = self.clock.create_future()
-            self.clock.create_task(self.combine_read_futures(read_future, read_futures))
+        page_bytes = self.params.page_bytes
+        page_offset = address % page_bytes
+        if page_offset + size > page_bytes:
+            # We need to do two reads. One in each page.
+            first_size = page_bytes - page_offset
+            second_size = size - first_size
+            first_future = await self.get_memory(address, first_size)
+            second_future = await self.get_memory(address + first_size, second_size)
+            await first_future
+            await second_future
+            combined = first_future.result() + second_future.result()
+            result_future = self.clock.create_future()
+            result_future.set_result(combined)
         else:
-            local_address = start_addr.to_scalar_addr(self.tlb)
-            data = self.scalar.get_memory(local_address, size=size)
-            read_future = self.clock.create_future()
-            read_future.set_result(data)
-        return read_future
+            start_addr = GlobalAddress(bit_addr=address*8, params=self.params)
+            is_vpu = start_addr.is_vpu(self.tlb)
+            if is_vpu:
+                read_futures = [await self.read_byte(GlobalAddress(bit_addr=(start_addr.addr+offset)*8, params=self.params))
+                                for offset in range(size)]
+                read_future = self.clock.create_future()
+                self.clock.create_task(self.combine_read_futures(read_future, read_futures))
+            else:
+                local_address = start_addr.to_scalar_addr(self.tlb)
+                data = self.scalar.get_memory(local_address, size=size)
+                read_future = self.clock.create_future()
+                read_future.set_result(data)
+            result_future = read_future
+        return result_future
 
     async def get_memory_blocking(self, address: int, size: int):
         future = await self.get_memory(address, size)

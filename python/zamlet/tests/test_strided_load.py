@@ -10,7 +10,6 @@ Tests LoadStride instruction with mixed page types:
 
 import asyncio
 import logging
-from enum import Enum
 from random import Random
 
 import pytest
@@ -23,53 +22,10 @@ from zamlet.monitor import CompletionType, SpanType
 from zamlet.tests.test_utils import (
     setup_lamlet, pack_elements, unpack_elements, get_vpu_base_addr,
     setup_mask_register, zero_register, dump_span_trees,
+    PageType, allocate_page, generate_page_types, random_stride, random_vl,
 )
 
 logger = logging.getLogger(__name__)
-
-
-class PageType(Enum):
-    VPU_EW8 = 'vpu_ew8'
-    VPU_EW16 = 'vpu_ew16'
-    VPU_EW32 = 'vpu_ew32'
-    VPU_EW64 = 'vpu_ew64'
-    SCALAR_IDEMPOTENT = 'scalar_idempotent'
-    SCALAR_NON_IDEMPOTENT = 'scalar_non_idempotent'
-    UNALLOCATED = 'unallocated'
-
-
-PAGE_TYPE_EW = {
-    PageType.VPU_EW8: 8,
-    PageType.VPU_EW16: 16,
-    PageType.VPU_EW32: 32,
-    PageType.VPU_EW64: 64,
-}
-
-
-def allocate_page(lamlet, base_addr: int, page_idx: int, page_type: PageType):
-    """Allocate a single page with the specified type."""
-    page_bytes = lamlet.params.page_bytes
-    page_addr = base_addr + page_idx * page_bytes
-    g_addr = GlobalAddress(bit_addr=page_addr * 8, params=lamlet.params)
-
-    if page_type == PageType.UNALLOCATED:
-        return
-    elif page_type in PAGE_TYPE_EW:
-        ew = PAGE_TYPE_EW[page_type]
-        ordering = Ordering(WordOrder.STANDARD, ew)
-        lamlet.allocate_memory(g_addr, page_bytes, memory_type=MemoryType.VPU, ordering=ordering)
-    elif page_type == PageType.SCALAR_IDEMPOTENT:
-        lamlet.allocate_memory(g_addr, page_bytes, memory_type=MemoryType.SCALAR_IDEMPOTENT,
-                               ordering=None)
-    elif page_type == PageType.SCALAR_NON_IDEMPOTENT:
-        lamlet.allocate_memory(g_addr, page_bytes, memory_type=MemoryType.SCALAR_NON_IDEMPOTENT,
-                               ordering=None)
-
-
-def generate_page_types(n_pages: int, rnd: Random) -> list[PageType]:
-    """Generate a random mix of page types."""
-    all_types = list(PageType)
-    return [rnd.choice(all_types) for _ in range(n_pages)]
 
 
 async def run_strided_load_test(
@@ -117,8 +73,10 @@ async def _run_strided_load_test_inner(
 
     # Calculate memory layout
     src_base = get_vpu_base_addr(ew)
-    dst_base = get_vpu_base_addr(ew) + 0x100000
     mem_size = (vl - 1) * stride + element_bytes + 64
+    # Ensure dst_base doesn't overlap with source
+    dst_offset = ((mem_size + 0xFFFFF) // 0x100000) * 0x100000  # Round up to 1MB boundary
+    dst_base = src_base + dst_offset
     page_bytes = params.page_bytes
     alloc_size = ((max(1024, mem_size) + page_bytes - 1) // page_bytes) * page_bytes
     n_pages = alloc_size // page_bytes
@@ -146,11 +104,14 @@ async def _run_strided_load_test_inner(
             page_bytes, memory_type=MemoryType.VPU, ordering=dst_ordering)
 
     # Write source data at strided locations (only to allocated pages)
+    # Write byte-by-byte to handle elements spanning page boundaries
     for i, val in enumerate(src_list):
-        addr = src_base + i * stride
-        page_idx = (addr - src_base) // page_bytes
-        if page_types[page_idx] != PageType.UNALLOCATED:
-            await lamlet.set_memory(addr, pack_elements([val], ew))
+        offset = i * stride
+        val_bytes = pack_elements([val], ew)
+        for byte_off, byte_val in enumerate(val_bytes):
+            page_idx = (offset + byte_off) // page_bytes
+            if page_idx < len(page_types) and page_types[page_idx] != PageType.UNALLOCATED:
+                await lamlet.set_memory(src_base + offset + byte_off, bytes([byte_val]))
 
     lamlet.vl = vl
     lamlet.vtype = {8: 0x0, 16: 0x1, 32: 0x2, 64: 0x3}[ew]
@@ -192,16 +153,21 @@ async def _run_strided_load_test_inner(
     )
 
     # Calculate expected fault element (first ACTIVE element hitting unallocated page)
+    # Check all pages the element spans, not just the starting page
     expected_fault_element = None
     for i in range(vl):
         is_masked = use_mask and not mask_bits[i]
         if is_masked:
             continue  # Masked elements don't cause faults
-        addr = src_base + i * stride
-        page_idx = (addr - src_base) // page_bytes
-        assert page_idx < len(page_types)
-        if page_types[page_idx] == PageType.UNALLOCATED:
-            expected_fault_element = i
+        offset = i * stride
+        start_page = offset // page_bytes
+        end_page = (offset + element_bytes - 1) // page_bytes
+        for page_idx in range(start_page, end_page + 1):
+            assert page_idx < len(page_types)
+            if page_types[page_idx] == PageType.UNALLOCATED:
+                expected_fault_element = i
+                break
+        if expected_fault_element is not None:
             break
 
     # Check fault matches expectation
@@ -297,32 +263,10 @@ async def main(clock, **kwargs):
 def run_test(ew: int, vl: int, stride: int, params: LamletParams, seed: int,
              use_mask: bool = True, dump_spans: bool = False):
     """Helper to run a single test configuration."""
-    clock = Clock(max_cycles=10000)
+    clock = Clock(max_cycles=50000)
     exit_code = asyncio.run(main(clock, ew=ew, vl=vl, stride=stride, params=params, seed=seed,
                                   use_mask=use_mask, dump_spans=dump_spans))
     assert exit_code == 0, f"Test failed with exit_code={exit_code}"
-
-
-def random_stride(rnd: Random, element_bytes: int, page_bytes: int) -> int:
-    """Generate a random stride with roughly logarithmic distribution.
-
-    Ranges from element_bytes+1 to several page_bytes, using multiple linear
-    ranges to approximate logarithmic distribution. We avoid stride == element_bytes
-    because that triggers the unit-stride path which has incomplete scalar memory support.
-    """
-    range_choice = rnd.randint(0, 3)
-    if range_choice == 0:
-        # Small: element_bytes+1 to 4x element_bytes
-        return rnd.randint(element_bytes + 1, element_bytes * 4)
-    elif range_choice == 1:
-        # Medium: 4x element_bytes to 64 bytes
-        return rnd.randint(element_bytes * 4, max(element_bytes * 4, 64))
-    elif range_choice == 2:
-        # Large: 64 bytes to page_bytes
-        return rnd.randint(64, page_bytes)
-    else:
-        # Very large: page_bytes to 4x page_bytes
-        return rnd.randint(page_bytes, page_bytes * 4)
 
 
 def random_test_config(rnd: Random):
@@ -332,7 +276,7 @@ def random_test_config(rnd: Random):
     ew = rnd.choice([8, 16, 32, 64])
     # Limit vl to mask register capacity
     max_vl = geom_params.j_in_l * geom_params.word_bytes * 8
-    vl = rnd.randint(1, min(32, max_vl))
+    vl = random_vl(rnd, max_vl)
     element_bytes = ew // 8
     stride = random_stride(rnd, element_bytes, geom_params.page_bytes)
     return geom_name, geom_params, ew, vl, stride

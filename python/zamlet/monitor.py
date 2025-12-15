@@ -514,7 +514,8 @@ class Monitor:
     def create_transaction(self, transaction_type: str, ident: int,
                            src_x: int, src_y: int, dst_x: int, dst_y: int,
                            parent_span_id: int,
-                           tag: int | None = None) -> int | None:
+                           tag: int | None = None,
+                           **kwargs) -> int | None:
         """Create a transaction span, or return existing one for resends.
 
         A transaction is a logical operation (e.g., WriteMemWord) that may involve
@@ -522,6 +523,7 @@ class Monitor:
         the same transaction continues, so this returns the existing span_id.
 
         parent_span_id: The parent span (typically the witem that initiated this transaction).
+        **kwargs: Additional labels to add to the span details.
 
         Returns the transaction span_id.
         """
@@ -545,6 +547,7 @@ class Monitor:
             src_y=src_y,
             dst_x=dst_x,
             dst_y=dst_y,
+            **kwargs,
         )
 
         self._transaction_by_key[key] = span_id

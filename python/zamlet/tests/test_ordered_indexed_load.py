@@ -14,7 +14,6 @@ and elements N+ were not accessed at all.
 
 import asyncio
 import logging
-from enum import Enum
 from random import Random
 
 import pytest
@@ -27,101 +26,11 @@ from zamlet.monitor import CompletionType, SpanType
 from zamlet.tests.test_utils import (
     setup_lamlet, pack_elements, unpack_elements, get_vpu_base_addr,
     setup_mask_register, zero_register,
+    PageType, allocate_page, generate_page_types, generate_indices, setup_index_register,
+    random_vl, max_vl_for_indexed,
 )
 
 logger = logging.getLogger(__name__)
-
-
-class PageType(Enum):
-    VPU_EW8 = 'vpu_ew8'
-    VPU_EW16 = 'vpu_ew16'
-    VPU_EW32 = 'vpu_ew32'
-    VPU_EW64 = 'vpu_ew64'
-    SCALAR_IDEMPOTENT = 'scalar_idempotent'
-    SCALAR_NON_IDEMPOTENT = 'scalar_non_idempotent'
-    UNALLOCATED = 'unallocated'
-
-
-PAGE_TYPE_EW = {
-    PageType.VPU_EW8: 8,
-    PageType.VPU_EW16: 16,
-    PageType.VPU_EW32: 32,
-    PageType.VPU_EW64: 64,
-}
-
-
-def allocate_page(lamlet, base_addr: int, page_idx: int, page_type: PageType):
-    """Allocate a single page with the specified type."""
-    page_bytes = lamlet.params.page_bytes
-    page_addr = base_addr + page_idx * page_bytes
-    g_addr = GlobalAddress(bit_addr=page_addr * 8, params=lamlet.params)
-
-    if page_type == PageType.UNALLOCATED:
-        return
-    elif page_type in PAGE_TYPE_EW:
-        ew = PAGE_TYPE_EW[page_type]
-        ordering = Ordering(WordOrder.STANDARD, ew)
-        lamlet.allocate_memory(g_addr, page_bytes, memory_type=MemoryType.VPU, ordering=ordering)
-    elif page_type == PageType.SCALAR_IDEMPOTENT:
-        lamlet.allocate_memory(g_addr, page_bytes, memory_type=MemoryType.SCALAR_IDEMPOTENT,
-                               ordering=None)
-    elif page_type == PageType.SCALAR_NON_IDEMPOTENT:
-        lamlet.allocate_memory(g_addr, page_bytes, memory_type=MemoryType.SCALAR_NON_IDEMPOTENT,
-                               ordering=None)
-
-
-def generate_page_types(n_pages: int, rnd: Random) -> list[PageType]:
-    """Generate a random mix of page types."""
-    all_types = list(PageType)
-    return [rnd.choice(all_types) for _ in range(n_pages)]
-
-
-def generate_indices(vl: int, data_ew: int, n_pages: int, page_bytes: int, rnd: Random
-                     ) -> list[int]:
-    """Generate random byte offsets for indexed access."""
-    element_bytes = data_ew // 8
-    max_offset = n_pages * page_bytes - element_bytes
-    indices = []
-    for _ in range(vl):
-        offset = rnd.randint(0, max_offset // element_bytes) * element_bytes
-        indices.append(offset)
-    return indices
-
-
-async def setup_index_register(lamlet, index_reg: int, indices: list[int], index_ew: int,
-                                base_addr: int):
-    """Write indices to memory and load into a vector register."""
-    index_bytes = index_ew // 8
-    index_mem_addr = base_addr + 0x200000
-    page_bytes = lamlet.params.page_bytes
-
-    index_size = len(indices) * index_bytes + 64
-    n_pages = (max(1024, index_size) + page_bytes - 1) // page_bytes
-    index_ordering = Ordering(WordOrder.STANDARD, index_ew)
-
-    for page_idx in range(n_pages):
-        page_addr = index_mem_addr + page_idx * page_bytes
-        lamlet.allocate_memory(
-            GlobalAddress(bit_addr=page_addr * 8, params=lamlet.params),
-            page_bytes, memory_type=MemoryType.VPU, ordering=index_ordering)
-
-    for i, idx in enumerate(indices):
-        addr = index_mem_addr + i * index_bytes
-        await lamlet.set_memory(addr, idx.to_bytes(index_bytes, byteorder='little'))
-
-    span_id = lamlet.monitor.create_span(
-        span_type=SpanType.RISCV_INSTR, component="test",
-        completion_type=CompletionType.FIRE_AND_FORGET, mnemonic="setup_index")
-    await lamlet.vload(
-        vd=index_reg,
-        addr=index_mem_addr,
-        ordering=index_ordering,
-        n_elements=len(indices),
-        mask_reg=None,
-        start_index=0,
-        parent_span_id=span_id,
-    )
-    lamlet.monitor.finalize_children(span_id)
 
 
 async def run_ordered_indexed_load_test(
@@ -378,7 +287,7 @@ async def main(clock, data_ew, index_ew, vl, n_pages, params, seed, use_mask):
 def run_test(data_ew: int, index_ew: int, vl: int, n_pages: int, params: LamletParams, seed: int,
              use_mask: bool = True):
     """Helper to run a single test configuration."""
-    clock = Clock(max_cycles=10000)
+    clock = Clock(max_cycles=50000)
     exit_code = asyncio.run(main(clock, data_ew=data_ew, index_ew=index_ew, vl=vl,
                                   n_pages=n_pages, params=params, seed=seed, use_mask=use_mask))
     assert exit_code == 0, f"Test failed with exit_code={exit_code}"
@@ -389,9 +298,6 @@ def random_test_config(rnd: Random):
     geom_name = rnd.choice(list(GEOMETRIES.keys()))
     geom_params = GEOMETRIES[geom_name]
     data_ew = rnd.choice([8, 16, 32, 64])
-    # Limit vl to mask register capacity
-    max_vl = geom_params.j_in_l * geom_params.word_bytes * 8
-    vl = rnd.randint(1, min(32, max_vl))
     n_pages = rnd.randint(2, 6)
     # index_ew must be large enough to hold max offset (n_pages * page_bytes)
     max_offset = n_pages * geom_params.page_bytes
@@ -401,6 +307,10 @@ def random_test_config(rnd: Random):
         index_ew = rnd.choice([16, 32, 64])
     else:
         index_ew = rnd.choice([32, 64])
+    # Limit vl by mask capacity and register availability
+    max_vl_mask = geom_params.j_in_l * geom_params.word_bytes * 8
+    max_vl_regs = max_vl_for_indexed(geom_params, data_ew, index_ew)
+    vl = random_vl(rnd, min(max_vl_mask, max_vl_regs))
     return geom_name, geom_params, data_ew, index_ew, vl, n_pages
 
 
