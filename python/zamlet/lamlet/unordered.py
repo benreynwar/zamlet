@@ -444,10 +444,13 @@ async def vloadstorestride(lamlet: 'Lamlet', reg_base: int, addr: int,
         lamlet.vrf_ordering[vline_reg] = Ordering(word_order=addresses.WordOrder.STANDARD, ew=reg_ew)
 
     # Process in chunks of j_in_l elements
+    # Active elements are [start_index, n_elements), so n_active = n_elements - start_index
     j_in_l = lamlet.params.j_in_l
-    for chunk_start in range(0, n_elements, j_in_l):
-        chunk_n = min(j_in_l, n_elements - chunk_start)
-        chunk_addr = addr + chunk_start * stride_bytes
+    n_active = n_elements - start_index
+    for chunk_offset in range(0, n_active, j_in_l):
+        chunk_n = min(j_in_l, n_active - chunk_offset)
+        # g_addr is the base address (element 0's location)
+        chunk_addr = addr
         chunk_g_addr = GlobalAddress(bit_addr=chunk_addr * 8, params=lamlet.params)
         instr_ident = await ident_query.get_instr_ident(
             lamlet, n_idents=lamlet.params.word_bytes + 1)
@@ -456,7 +459,7 @@ async def vloadstorestride(lamlet: 'Lamlet', reg_base: int, addr: int,
             kinstr = StoreStride(
                 src=reg_base,
                 g_addr=chunk_g_addr,
-                start_index=start_index + chunk_start,
+                start_index=start_index + chunk_offset,
                 n_elements=chunk_n,
                 src_ordering=reg_ordering,
                 mask_reg=mask_reg,
@@ -468,7 +471,7 @@ async def vloadstorestride(lamlet: 'Lamlet', reg_base: int, addr: int,
             kinstr = LoadStride(
                 dst=reg_base,
                 g_addr=chunk_g_addr,
-                start_index=start_index + chunk_start,
+                start_index=start_index + chunk_offset,
                 n_elements=chunk_n,
                 dst_ordering=reg_ordering,
                 mask_reg=mask_reg,
@@ -526,10 +529,12 @@ async def vload_indexed_unordered(lamlet: 'Lamlet', vd: int, base_addr: int, ind
     for vline_reg in range(vd, vd + n_vlines):
         lamlet.vrf_ordering[vline_reg] = data_ordering
 
-    # Process in chunks of j_in_l elements (same as strided)
+    # Process in chunks of j_in_l elements
+    # Active elements are [start_index, n_elements), so n_active = n_elements - start_index
     j_in_l = lamlet.params.j_in_l
-    for chunk_start in range(0, n_elements, j_in_l):
-        chunk_n = min(j_in_l, n_elements - chunk_start)
+    n_active = n_elements - start_index
+    for chunk_offset in range(0, n_active, j_in_l):
+        chunk_n = min(j_in_l, n_active - chunk_offset)
         instr_ident = await ident_query.get_instr_ident(
             lamlet, n_idents=lamlet.params.word_bytes + 1)
 
@@ -538,7 +543,7 @@ async def vload_indexed_unordered(lamlet: 'Lamlet', vd: int, base_addr: int, ind
             g_addr=g_addr,
             index_reg=index_reg,
             index_ordering=index_ordering,
-            start_index=start_index + chunk_start,
+            start_index=start_index + chunk_offset,
             n_elements=chunk_n,
             dst_ordering=data_ordering,
             mask_reg=mask_reg,
@@ -584,12 +589,14 @@ async def vstore_indexed_unordered(lamlet: 'Lamlet', vs: int, base_addr: int, in
 
     writeset_ident = ident_query.get_writeset_ident(lamlet)
 
-    # Process in chunks of j_in_l elements (same as strided)
+    # Process in chunks of j_in_l elements
+    # Active elements are [start_index, n_elements), so n_active = n_elements - start_index
     j_in_l = lamlet.params.j_in_l
-    logger.debug(f'vstore_indexed_unordered: n_elements={n_elements}, j_in_l={j_in_l}')
-    for chunk_start in range(0, n_elements, j_in_l):
-        chunk_n = min(j_in_l, n_elements - chunk_start)
-        logger.debug(f'vstore_indexed_unordered: chunk_start={chunk_start}, chunk_n={chunk_n}')
+    n_active = n_elements - start_index
+    logger.debug(f'vstore_indexed_unordered: n_elements={n_elements}, n_active={n_active}, j_in_l={j_in_l}')
+    for chunk_offset in range(0, n_active, j_in_l):
+        chunk_n = min(j_in_l, n_active - chunk_offset)
+        logger.debug(f'vstore_indexed_unordered: chunk_offset={chunk_offset}, chunk_n={chunk_n}')
         instr_ident = await ident_query.get_instr_ident(
             lamlet, n_idents=lamlet.params.word_bytes + 1)
 
@@ -598,7 +605,7 @@ async def vstore_indexed_unordered(lamlet: 'Lamlet', vs: int, base_addr: int, in
             g_addr=g_addr,
             index_reg=index_reg,
             index_ordering=index_ordering,
-            start_index=start_index + chunk_start,
+            start_index=start_index + chunk_offset,
             n_elements=chunk_n,
             src_ordering=data_ordering,
             mask_reg=mask_reg,

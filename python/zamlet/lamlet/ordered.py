@@ -482,6 +482,7 @@ async def vload_indexed_ordered(lamlet: 'Lamlet', vd: int, base_addr: int, index
         is_load=True,
         capacity=lamlet.params.ordered_buffer_capacity,
         data_ew=data_ew,
+        start_index=start_index,
     )
     lamlet._ordered_buffers[buffer_id] = buf
 
@@ -496,8 +497,8 @@ async def vload_indexed_ordered(lamlet: 'Lamlet', vd: int, base_addr: int, index
     barrier_kinstr_span_id = lamlet.monitor.get_kinstr_span_id(barrier_ident)
     lamlet.monitor.create_sync_local_span(barrier_ident, 0, -1, barrier_kinstr_span_id)
 
-    # Dispatch all elements
-    for element_index in range(n_elements):
+    # Dispatch all active elements
+    for element_index in range(start_index, n_elements):
         # Stop dispatching once we know about a fault
         if buf.faulted_element is not None:
             break
@@ -586,11 +587,12 @@ async def vstore_indexed_ordered(lamlet: 'Lamlet', vs: int, base_addr: int, inde
         is_load=False,
         capacity=lamlet.params.ordered_buffer_capacity,
         data_ew=data_ew,
+        start_index=start_index,
     )
     lamlet._ordered_buffers[buffer_id] = buf
 
-    # Dispatch all elements
-    for element_index in range(n_elements):
+    # Dispatch all active elements
+    for element_index in range(start_index, n_elements):
         # Stop dispatching once we know about a fault
         if buf.faulted_element is not None:
             break

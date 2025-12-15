@@ -42,7 +42,7 @@ class OrderedBuffer:
     """
 
     def __init__(self, buffer_id: int, n_elements: int, is_load: bool, capacity: int,
-                 data_ew: int):
+                 data_ew: int, start_index: int = 0):
         self.buffer_id = buffer_id
         self.n_elements = n_elements
         self.is_load = is_load
@@ -52,9 +52,10 @@ class OrderedBuffer:
         # next_to_dispatch: next element index to send to kamlet
         # next_to_process: next element index to process in order (for scalar reads/writes)
         # base_index: oldest non-complete element (for circular buffer cleanup)
-        self.next_to_dispatch = 0
-        self.next_to_process = 0
-        self.base_index = 0
+        # All start at start_index to skip prestart elements
+        self.next_to_dispatch = start_index
+        self.next_to_process = start_index
+        self.base_index = start_index
 
         # First element that faulted (None if no fault)
         self.faulted_element: int | None = None

@@ -228,25 +228,65 @@ def generate_page_types(n_pages: int, rnd: Random) -> list[PageType]:
     return [rnd.choice(all_types) for _ in range(n_pages)]
 
 
-def generate_indices(vl: int, data_ew: int, n_pages: int, page_bytes: int, rnd: Random
-                     ) -> list[int]:
-    """Generate random unique byte offsets for indexed access."""
+def generate_indices(vl: int, data_ew: int, n_pages: int, page_bytes: int, rnd: Random,
+                     allow_duplicates: bool = False) -> list[int]:
+    """Generate random byte offsets for indexed access.
+
+    Args:
+        vl: Vector length (number of indices to generate)
+        data_ew: Data element width in bits
+        n_pages: Number of pages in address space
+        page_bytes: Bytes per page
+        rnd: Random instance
+        allow_duplicates: If True, may generate duplicate indices (20% of duplicate elements)
+
+    Returns:
+        List of byte offsets. May contain duplicates if allow_duplicates=True.
+    """
     element_bytes = data_ew // 8
     max_offset = n_pages * page_bytes - element_bytes
     n_slots = max_offset // element_bytes + 1
-    assert vl <= n_slots, f"Cannot generate {vl} unique indices with only {n_slots} slots"
-    used = set()
-    indices = []
-    for _ in range(vl):
-        for attempt in range(1000):
-            offset = rnd.randint(0, max_offset // element_bytes) * element_bytes
-            if offset not in used:
-                used.add(offset)
-                indices.append(offset)
-                break
-        else:
-            raise RuntimeError(f"Failed to generate unique index after 1000 attempts")
-    return indices
+
+    if not allow_duplicates:
+        assert vl <= n_slots, f"Cannot generate {vl} unique indices with only {n_slots} slots"
+        used = set()
+        indices = []
+        for _ in range(vl):
+            for attempt in range(1000):
+                offset = rnd.randint(0, max_offset // element_bytes) * element_bytes
+                if offset not in used:
+                    used.add(offset)
+                    indices.append(offset)
+                    break
+            else:
+                raise RuntimeError(f"Failed to generate unique index after 1000 attempts")
+        return indices
+    else:
+        # Generate indices allowing duplicates
+        # First generate some unique "base" offsets (about 60% of vl)
+        n_unique = max(1, int(vl * 0.6))
+        n_unique = min(n_unique, n_slots)  # Can't have more unique than slots
+
+        used = set()
+        base_offsets = []
+        for _ in range(n_unique):
+            for attempt in range(1000):
+                offset = rnd.randint(0, max_offset // element_bytes) * element_bytes
+                if offset not in used:
+                    used.add(offset)
+                    base_offsets.append(offset)
+                    break
+            else:
+                break  # OK if we can't generate all unique
+
+        # Fill the rest by sampling from base_offsets (creating duplicates)
+        indices = list(base_offsets)
+        while len(indices) < vl:
+            indices.append(rnd.choice(base_offsets))
+
+        # Shuffle to mix duplicates throughout
+        rnd.shuffle(indices)
+        return indices
 
 
 async def setup_index_register(

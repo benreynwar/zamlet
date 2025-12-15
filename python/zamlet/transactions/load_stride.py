@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 class LoadStride(KInstr):
     """
     A load from the VPU memory into a vector register.
-    The g_addr points to the location of the start_index element.
+    The g_addr is the base address (element 0's location).
 
     stride_bytes: byte stride between elements. None = unit stride (ew/8 bytes).
 
@@ -71,9 +71,9 @@ class WaitingLoadStride(WaitingLoadGatherBase):
     """Waiting item for strided loads."""
 
     def get_element_byte_offset(self, jamlet: 'Jamlet', element_index: int) -> int:
-        """Compute byte offset as (element_index - start_index) * stride_bytes."""
+        """Compute byte offset as element_index * stride_bytes."""
         instr = self.item
-        return (element_index - instr.start_index) * instr.stride_bytes
+        return element_index * instr.stride_bytes
 
     def get_additional_read_regs(self, kamlet) -> List[int]:
         """No additional registers to read for strided loads."""

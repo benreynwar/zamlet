@@ -25,6 +25,7 @@ from zamlet.tests.test_utils import (
     setup_lamlet, pack_elements, unpack_elements, get_vpu_base_addr,
     setup_mask_register, dump_span_trees,
     PageType, allocate_page, generate_page_types, random_stride, random_vl,
+    random_start_index, choose_mask_pattern, generate_mask_pattern,
 )
 
 logger = logging.getLogger(__name__)
@@ -37,6 +38,7 @@ async def run_strided_store_test(
     stride: int,
     params: LamletParams,
     seed: int,
+    start_index: int = 0,
     use_mask: bool = True,
     dump_spans: bool = False,
 ):
@@ -45,7 +47,7 @@ async def run_strided_store_test(
 
     try:
         return await _run_strided_store_test_inner(
-            lamlet, clock, ew, vl, stride, params, seed, use_mask)
+            lamlet, clock, ew, vl, stride, params, seed, start_index, use_mask)
     finally:
         if dump_spans:
             dump_span_trees(lamlet.monitor)
@@ -59,6 +61,7 @@ async def _run_strided_store_test_inner(
     stride: int,
     params: LamletParams,
     seed: int,
+    start_index: int,
     use_mask: bool,
 ):
     """Test strided vector store operations with mixed page types.
@@ -79,7 +82,7 @@ async def _run_strided_store_test_inner(
         assert vl <= max_vl, f"vl={vl} exceeds max {max_vl} for masked operation"
 
     logger.info(f"Test parameters: ew={ew}, vl={vl}, stride={stride}, seed={seed}, "
-                f"use_mask={use_mask}")
+                f"start_index={start_index}, use_mask={use_mask}")
 
     # Calculate memory layout
     src_base = get_vpu_base_addr(ew)
@@ -93,7 +96,7 @@ async def _run_strided_store_test_inner(
 
     # Generate random page types for destination
     page_types = generate_page_types(n_pages, rnd)
-    mask_bits = [rnd.choice([True, False]) for _ in range(vl)] if use_mask else None
+    mask_bits = generate_mask_pattern(vl, choose_mask_pattern(rnd), rnd) if use_mask else None
 
     logger.info(f"Destination page types ({n_pages} pages):")
     for i, pt in enumerate(page_types):
@@ -170,7 +173,7 @@ async def _run_strided_store_test_inner(
         addr=dst_base,
         ordering=reg_ordering,
         n_elements=vl,
-        start_index=0,
+        start_index=start_index,
         mask_reg=mask_reg,
         parent_span_id=span_id,
         stride_bytes=stride,
@@ -178,8 +181,9 @@ async def _run_strided_store_test_inner(
 
     # Calculate expected fault element (first ACTIVE element hitting unallocated page)
     # Check all pages the element spans, not just the starting page
+    # Only elements >= start_index are processed
     expected_fault_element = None
-    for i in range(vl):
+    for i in range(start_index, vl):
         is_masked = use_mask and not mask_bits[i]
         if is_masked:
             continue  # Masked elements don't cause faults
@@ -206,10 +210,10 @@ async def _run_strided_store_test_inner(
         assert result.success, f"Unexpected fault: {result}"
         n_expected_correct = vl
 
-    # Verify non-idempotent writes: all ACTIVE elements before fault that target non-idempotent
-    # pages should have been written (order doesn't matter for unordered stores)
+    # Verify non-idempotent writes: all ACTIVE elements in [start_index, fault) that target
+    # non-idempotent pages should have been written (order doesn't matter for unordered stores)
     expected_non_idemp_addrs = set()
-    for i in range(n_expected_correct):
+    for i in range(start_index, n_expected_correct):
         is_masked = use_mask and not mask_bits[i]
         if is_masked:
             continue
@@ -233,7 +237,23 @@ async def _run_strided_store_test_inner(
         return page_idx < len(page_types) and page_types[page_idx] != PageType.UNALLOCATED
 
     errors = []
-    for i in range(n_expected_correct):
+
+    # Verify prestart elements (0 to start_index) were NOT written (should remain zero)
+    for i in range(start_index):
+        addr = dst_base + i * stride
+        start_page = (addr - dst_base) // page_bytes
+        end_page = (addr + element_bytes - 1 - dst_base) // page_bytes
+        if not is_allocated(start_page) or not is_allocated(end_page):
+            continue
+        pt = page_types[start_page]
+        future = await lamlet.get_memory(addr, element_bytes)
+        await future
+        actual = unpack_elements(future.result(), ew)[0]
+        if actual != 0:
+            errors.append(f"  [{i}] prestart: expected=0 actual={actual:#x} page_type={pt.value}")
+
+    # Verify active elements (start_index to n_expected_correct)
+    for i in range(start_index, n_expected_correct):
         addr = dst_base + i * stride
         start_page = (addr - dst_base) // page_bytes
         end_page = (addr + element_bytes - 1 - dst_base) // page_bytes
@@ -283,11 +303,11 @@ async def main(clock, **kwargs):
 
 
 def run_test(ew: int, vl: int, stride: int, params: LamletParams, seed: int,
-             use_mask: bool = True, dump_spans: bool = False):
+             start_index: int = 0, use_mask: bool = True, dump_spans: bool = False):
     """Helper to run a single test configuration."""
     clock = Clock(max_cycles=50000)
     exit_code = asyncio.run(main(clock, ew=ew, vl=vl, stride=stride, params=params, seed=seed,
-                                  use_mask=use_mask, dump_spans=dump_spans))
+                                  start_index=start_index, use_mask=use_mask, dump_spans=dump_spans))
     assert exit_code == 0, f"Test failed with exit_code={exit_code}"
 
 
@@ -301,7 +321,8 @@ def random_test_config(rnd: Random):
     vl = random_vl(rnd, max_vl)
     element_bytes = ew // 8
     stride = random_stride(rnd, element_bytes, geom_params.page_bytes)
-    return geom_name, geom_params, ew, vl, stride
+    start_index = random_start_index(rnd, vl)
+    return geom_name, geom_params, ew, vl, stride, start_index
 
 
 def generate_test_params(n_tests: int = 64, seed: int = 42):
@@ -309,17 +330,18 @@ def generate_test_params(n_tests: int = 64, seed: int = 42):
     rnd = Random(seed)
     test_params = []
     for i in range(n_tests):
-        geom_name, geom_params, ew, vl, stride = random_test_config(rnd)
+        geom_name, geom_params, ew, vl, stride, start_index = random_test_config(rnd)
         # Use i as the seed for each test so page types vary
-        id_str = f"{i}_{geom_name}_ew{ew}_vl{vl}_s{stride}"
-        test_params.append(pytest.param(geom_params, ew, vl, stride, i, id=id_str))
+        id_str = f"{i}_{geom_name}_ew{ew}_vl{vl}_s{stride}_si{start_index}"
+        test_params.append(pytest.param(geom_params, ew, vl, stride, start_index, i, id=id_str))
     return test_params
 
 
-@pytest.mark.parametrize("params,ew,vl,stride,seed", generate_test_params(n_tests=scale_n_tests(32)))
-def test_strided_store(params, ew, vl, stride, seed):
+@pytest.mark.parametrize("params,ew,vl,stride,start_index,seed",
+                         generate_test_params(n_tests=scale_n_tests(32)))
+def test_strided_store(params, ew, vl, stride, start_index, seed):
     """Strided store with random mix of page types."""
-    run_test(ew=ew, vl=vl, stride=stride, params=params, seed=seed)
+    run_test(ew=ew, vl=vl, stride=stride, params=params, seed=seed, start_index=start_index)
 
 
 if __name__ == '__main__':
@@ -332,6 +354,7 @@ if __name__ == '__main__':
     parser.add_argument('--ew', type=int, default=64, help='Element width in bits')
     parser.add_argument('--vl', type=int, default=16, help='Vector length')
     parser.add_argument('--stride', type=int, default=None, help='Stride in bytes (default: 2*ew/8)')
+    parser.add_argument('--start-index', type=int, default=0, help='Start index (vstart)')
     parser.add_argument('--seed', type=int, default=0, help='Random seed')
     parser.add_argument('--geometry', '-g', default='k2x1_j1x1',
                         help='Geometry name (default: k2x1_j1x1)')
@@ -355,4 +378,4 @@ if __name__ == '__main__':
     stride = args.stride if args.stride is not None else args.ew // 8 * 2
     use_mask = not args.no_mask
     run_test(ew=args.ew, vl=args.vl, stride=stride, params=params, seed=args.seed,
-             use_mask=use_mask, dump_spans=args.dump_spans)
+             start_index=args.start_index, use_mask=use_mask, dump_spans=args.dump_spans)

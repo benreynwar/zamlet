@@ -27,7 +27,7 @@ from zamlet.tests.test_utils import (
     setup_lamlet, pack_elements, unpack_elements, get_vpu_base_addr,
     setup_mask_register, zero_register,
     PageType, allocate_page, generate_page_types, generate_indices, setup_index_register,
-    random_vl, max_vl_for_indexed,
+    random_vl, max_vl_for_indexed, random_start_index, choose_mask_pattern, generate_mask_pattern,
 )
 
 logger = logging.getLogger(__name__)
@@ -41,6 +41,7 @@ async def run_ordered_indexed_load_test(
     n_pages: int,
     params: LamletParams,
     seed: int,
+    start_index: int = 0,
     use_mask: bool = True,
 ):
     """Test ordered indexed load with mixed page types and fault handling."""
@@ -56,7 +57,7 @@ async def run_ordered_indexed_load_test(
 
     try:
         return await _run_ordered_indexed_load_test_inner(
-            lamlet, clock, data_ew, index_ew, vl, n_pages, params, seed, use_mask)
+            lamlet, clock, data_ew, index_ew, vl, n_pages, params, seed, start_index, use_mask)
     finally:
         dump_span_trees()
 
@@ -70,6 +71,7 @@ async def _run_ordered_indexed_load_test_inner(
     n_pages: int,
     params: LamletParams,
     seed: int,
+    start_index: int,
     use_mask: bool,
 ):
     rnd = Random(seed)
@@ -82,14 +84,14 @@ async def _run_ordered_indexed_load_test_inner(
         assert vl <= max_vl, f"vl={vl} exceeds max {max_vl} for masked operation"
 
     logger.info(f"Test parameters: data_ew={data_ew}, index_ew={index_ew}, vl={vl}, "
-                f"n_pages={n_pages}, seed={seed}, use_mask={use_mask}")
+                f"n_pages={n_pages}, seed={seed}, start_index={start_index}, use_mask={use_mask}")
 
     src_base = get_vpu_base_addr(data_ew)
     dst_base = get_vpu_base_addr(data_ew) + 0x100000
 
     page_types = generate_page_types(n_pages, rnd)
-    indices = generate_indices(vl, data_ew, n_pages, page_bytes, rnd)
-    mask_bits = [rnd.choice([True, False]) for _ in range(vl)] if use_mask else None
+    indices = generate_indices(vl, data_ew, n_pages, page_bytes, rnd, allow_duplicates=True)
+    mask_bits = generate_mask_pattern(vl, choose_mask_pattern(rnd), rnd) if use_mask else None
 
     # Generate expected values - one per unique offset
     unique_offsets = sorted(set(indices))
@@ -165,13 +167,14 @@ async def _run_ordered_indexed_load_test_inner(
         data_ew=data_ew,
         n_elements=vl,
         mask_reg=mask_reg,
-        start_index=0,
+        start_index=start_index,
         parent_span_id=span_id,
     )
 
     # Calculate expected fault element (first ACTIVE element hitting unallocated page)
+    # Only elements >= start_index are processed
     expected_fault_element = None
-    for i in range(vl):
+    for i in range(start_index, vl):
         is_masked = use_mask and not mask_bits[i]
         if is_masked:
             continue  # Masked elements don't cause faults
@@ -195,11 +198,11 @@ async def _run_ordered_indexed_load_test_inner(
         assert result.success, f"Unexpected fault: {result}"
         n_expected_correct = vl
 
-    # Verify non-idempotent reads happen in ORDER for elements before fault
+    # Verify non-idempotent reads happen in ORDER for elements in [start_index, fault)
     # Only active (unmasked) elements should be accessed
     wb = params.word_bytes
     expected_access_order = []
-    for i in range(n_expected_correct):
+    for i in range(start_index, n_expected_correct):
         is_masked = use_mask and not mask_bits[i]
         if is_masked:
             continue
@@ -239,7 +242,18 @@ async def _run_ordered_indexed_load_test_inner(
         )
 
         errors = []
-        for i in range(n_expected_correct):
+
+        # Verify prestart elements (0 to start_index) remain zero in the register
+        for i in range(start_index):
+            addr = dst_base + i * element_bytes
+            future = await lamlet.get_memory(addr, element_bytes)
+            await future
+            actual = unpack_elements(future.result(), data_ew)[0]
+            if actual != 0:
+                errors.append(f"  [{i}] prestart: expected=0 actual={actual:#x}")
+
+        # Verify active elements (start_index to n_expected_correct)
+        for i in range(start_index, n_expected_correct):
             addr = dst_base + i * element_bytes
             future = await lamlet.get_memory(addr, element_bytes)
             await future
@@ -266,7 +280,7 @@ async def _run_ordered_indexed_load_test_inner(
     return 0
 
 
-async def main(clock, data_ew, index_ew, vl, n_pages, params, seed, use_mask):
+async def main(clock, data_ew, index_ew, vl, n_pages, params, seed, start_index=0, use_mask=True):
     import signal
 
     def signal_handler(signum, frame):
@@ -279,17 +293,18 @@ async def main(clock, data_ew, index_ew, vl, n_pages, params, seed, use_mask):
 
     exit_code = await run_ordered_indexed_load_test(
         clock, data_ew=data_ew, index_ew=index_ew, vl=vl,
-        n_pages=n_pages, params=params, seed=seed, use_mask=use_mask)
+        n_pages=n_pages, params=params, seed=seed, start_index=start_index, use_mask=use_mask)
     clock.running = False
     return exit_code
 
 
 def run_test(data_ew: int, index_ew: int, vl: int, n_pages: int, params: LamletParams, seed: int,
-             use_mask: bool = True):
+             start_index: int = 0, use_mask: bool = True):
     """Helper to run a single test configuration."""
     clock = Clock(max_cycles=50000)
     exit_code = asyncio.run(main(clock, data_ew=data_ew, index_ew=index_ew, vl=vl,
-                                  n_pages=n_pages, params=params, seed=seed, use_mask=use_mask))
+                                  n_pages=n_pages, params=params, seed=seed,
+                                  start_index=start_index, use_mask=use_mask))
     assert exit_code == 0, f"Test failed with exit_code={exit_code}"
 
 
@@ -311,7 +326,8 @@ def random_test_config(rnd: Random):
     max_vl_mask = geom_params.j_in_l * geom_params.word_bytes * 8
     max_vl_regs = max_vl_for_indexed(geom_params, data_ew, index_ew)
     vl = random_vl(rnd, min(max_vl_mask, max_vl_regs))
-    return geom_name, geom_params, data_ew, index_ew, vl, n_pages
+    start_index = random_start_index(rnd, vl)
+    return geom_name, geom_params, data_ew, index_ew, vl, n_pages, start_index
 
 
 def generate_test_params(n_tests: int = 64, seed: int = 42):
@@ -319,17 +335,19 @@ def generate_test_params(n_tests: int = 64, seed: int = 42):
     rnd = Random(seed)
     test_params = []
     for i in range(n_tests):
-        geom_name, geom_params, data_ew, index_ew, vl, n_pages = random_test_config(rnd)
-        id_str = f"{i}_{geom_name}_dew{data_ew}_iew{index_ew}_vl{vl}_p{n_pages}"
-        test_params.append(pytest.param(geom_params, data_ew, index_ew, vl, n_pages, i, id=id_str))
+        geom_name, geom_params, data_ew, index_ew, vl, n_pages, start_index = random_test_config(rnd)
+        id_str = f"{i}_{geom_name}_dew{data_ew}_iew{index_ew}_vl{vl}_p{n_pages}_si{start_index}"
+        test_params.append(pytest.param(
+            geom_params, data_ew, index_ew, vl, n_pages, start_index, i, id=id_str))
     return test_params
 
 
-@pytest.mark.parametrize("params,data_ew,index_ew,vl,n_pages,seed",
+@pytest.mark.parametrize("params,data_ew,index_ew,vl,n_pages,start_index,seed",
                          generate_test_params(n_tests=scale_n_tests(32)))
-def test_ordered_indexed_load(params, data_ew, index_ew, vl, n_pages, seed):
+def test_ordered_indexed_load(params, data_ew, index_ew, vl, n_pages, start_index, seed):
     """Ordered indexed load with random mix of page types."""
-    run_test(data_ew=data_ew, index_ew=index_ew, vl=vl, n_pages=n_pages, params=params, seed=seed)
+    run_test(data_ew=data_ew, index_ew=index_ew, vl=vl, n_pages=n_pages, params=params, seed=seed,
+             start_index=start_index)
 
 
 if __name__ == '__main__':
@@ -343,6 +361,7 @@ if __name__ == '__main__':
     parser.add_argument('--index-ew', type=int, default=32, help='Index element width in bits')
     parser.add_argument('--vl', type=int, default=8, help='Vector length')
     parser.add_argument('--n-pages', type=int, default=4, help='Number of pages to allocate')
+    parser.add_argument('--start-index', type=int, default=0, help='Start index (vstart)')
     parser.add_argument('--seed', type=int, default=0, help='Random seed')
     parser.add_argument('--geometry', '-g', default='k2x1_j1x1',
                         help='Geometry name (default: k2x1_j1x1)')
@@ -363,4 +382,5 @@ if __name__ == '__main__':
     params = get_geometry(args.geometry)
     use_mask = not args.no_mask
     run_test(data_ew=args.data_ew, index_ew=args.index_ew, vl=args.vl,
-             n_pages=args.n_pages, params=params, seed=args.seed, use_mask=use_mask)
+             n_pages=args.n_pages, params=params, seed=args.seed,
+             start_index=args.start_index, use_mask=use_mask)
