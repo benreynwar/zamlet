@@ -170,44 +170,42 @@ VLUXEI64.V (Status: ✓)
 INDEXED ORDERED LOADS
 ----------------------
 
-VLOXEI8.V (Status: ✗)
+VLOXEI8.V (Status: ✓)
   Spec: v-st-ext.adoc line 1662, vmem-format.edn
   Format: vloxei8.v vd, (rs1), vs2, vm
   Tests: vloxei8.v.toml
   Encoding: nf|mew|11|vm|vs2|rs1|000|vd|0000111
            mop=11 (indexed-ordered), width=000 (8-bit index), opcode=0x07
-  Implementation: Not implemented
+  Implementation: VloxeiV class in instructions/vector.py
   Description: Ordered indexed load with 8-bit indices
   Notes:
     - Like vluxei8.v but memory accesses must be in element order
-    - Required when atomicity or ordering matters
-    - Less efficient than unordered variant
-    - TODO: Add decode pattern for mop=11 to decode.py
-    - TODO: Create instruction class in vector.py
+    - Lamlet-orchestrated approach with bounded buffer
+    - Uses lamlet.vload_indexed(ordered=True)
 
-VLOXEI16.V (Status: ✗)
+VLOXEI16.V (Status: ✓)
   Spec: v-st-ext.adoc line 1663, vmem-format.edn
   Format: vloxei16.v vd, (rs1), vs2, vm
   Tests: vloxei16.v.toml
   Encoding: nf|mew|11|vm|vs2|rs1|101|vd|0000111
            mop=11 (indexed-ordered), width=101 (16-bit index), opcode=0x07
-  Implementation: Not implemented
+  Implementation: VloxeiV class in instructions/vector.py
   Description: Ordered indexed load with 16-bit indices
 
-VLOXEI32.V (Status: ✗)
+VLOXEI32.V (Status: ✓)
   Spec: v-st-ext.adoc line 1664, vmem-format.edn
   Format: vloxei32.v vd, (rs1), vs2, vm
   Encoding: nf|mew|11|vm|vs2|rs1|110|vd|0000111
            mop=11 (indexed-ordered), width=110 (32-bit index), opcode=0x07
-  Implementation: Not implemented
+  Implementation: VloxeiV class in instructions/vector.py
   Description: Ordered indexed load with 32-bit indices
 
-VLOXEI64.V (Status: ✗)
+VLOXEI64.V (Status: ✓)
   Spec: v-st-ext.adoc line 1665, vmem-format.edn
   Format: vloxei64.v vd, (rs1), vs2, vm
   Encoding: nf|mew|11|vm|vs2|rs1|111|vd|0000111
            mop=11 (indexed-ordered), width=111 (64-bit index), opcode=0x07
-  Implementation: Not implemented
+  Implementation: VloxeiV class in instructions/vector.py
   Description: Ordered indexed load with 64-bit indices
 
 INDEXED UNORDERED STORES
@@ -255,40 +253,40 @@ VSUXEI64.V (Status: ✓)
 INDEXED ORDERED STORES
 -----------------------
 
-VSOXEI8.V (Status: ✗)
+VSOXEI8.V (Status: ✓)
   Spec: v-st-ext.adoc line 1676, vmem-format.edn
   Format: vsoxei8.v vs3, (rs1), vs2, vm
   Encoding: nf|mew|11|vm|vs2|rs1|000|vs3|0100111
            mop=11 (indexed-ordered), width=000 (8-bit index), opcode=0x27
-  Implementation: Not implemented
+  Implementation: VsoxeiV class in instructions/vector.py
   Description: Ordered indexed store with 8-bit indices
   Notes:
     - Like vsuxei8.v but memory accesses must be in element order
-    - TODO: Add decode pattern for mop=11 to decode.py
-    - TODO: Create instruction class in vector.py
+    - Lamlet-orchestrated approach with bounded buffer
+    - Uses lamlet.vstore_indexed(ordered=True)
 
-VSOXEI16.V (Status: ✗)
+VSOXEI16.V (Status: ✓)
   Spec: v-st-ext.adoc line 1677, vmem-format.edn
   Format: vsoxei16.v vs3, (rs1), vs2, vm
   Encoding: nf|mew|11|vm|vs2|rs1|101|vs3|0100111
            mop=11 (indexed-ordered), width=101 (16-bit index), opcode=0x27
-  Implementation: Not implemented
+  Implementation: VsoxeiV class in instructions/vector.py
   Description: Ordered indexed store with 16-bit indices
 
-VSOXEI32.V (Status: ✗)
+VSOXEI32.V (Status: ✓)
   Spec: v-st-ext.adoc line 1678, vmem-format.edn
   Format: vsoxei32.v vs3, (rs1), vs2, vm
   Encoding: nf|mew|11|vm|vs2|rs1|110|vs3|0100111
            mop=11 (indexed-ordered), width=110 (32-bit index), opcode=0x27
-  Implementation: Not implemented
+  Implementation: VsoxeiV class in instructions/vector.py
   Description: Ordered indexed store with 32-bit indices
 
-VSOXEI64.V (Status: ✗)
+VSOXEI64.V (Status: ✓)
   Spec: v-st-ext.adoc line 1679, vmem-format.edn
   Format: vsoxei64.v vs3, (rs1), vs2, vm
   Encoding: nf|mew|11|vm|vs2|rs1|111|vs3|0100111
            mop=11 (indexed-ordered), width=111 (64-bit index), opcode=0x27
-  Implementation: Not implemented
+  Implementation: VsoxeiV class in instructions/vector.py
   Description: Ordered indexed store with 64-bit indices
 
 Special Behaviors
@@ -389,15 +387,8 @@ TODO Items
 2. ✓ Implement constant-stride stores (vsse*.v) - DONE
 3. ✓ Implement indexed unordered loads (vluxei*.v) - DONE
 4. ✓ Implement indexed unordered stores (vsuxei*.v) - DONE
-
-5. Implement indexed ordered loads (vloxei*.v)
-   - Lamlet-orchestrated approach (see plan/ordered_indexed_lamlet_orchestrated.md)
-   - Lamlet dispatches LoadIndexedElement to jamlets in element order
-   - Backpressure via bounded buffer prevents overflow
-
-6. Implement indexed ordered stores (vsoxei*.v)
-   - Lamlet-orchestrated approach (see plan/ordered_indexed_lamlet_orchestrated.md)
-   - Two parallel pipelines: gather data, then write in order
+5. ✓ Implement indexed ordered loads (vloxei*.v) - DONE
+6. ✓ Implement indexed ordered stores (vsoxei*.v) - DONE
 
 7. Add comprehensive tests
    - Test strided access for matrix column access
@@ -410,14 +401,15 @@ TODO Items
 
 Summary
 -------
-Strided and indexed unordered operations are fully implemented.
-Indexed ordered operations (vloxei, vsoxei) are not yet implemented.
+All strided and indexed operations are fully implemented:
+- Constant-stride loads/stores (vlse*.v, vsse*.v)
+- Indexed unordered loads/stores (vluxei*.v, vsuxei*.v)
+- Indexed ordered loads/stores (vloxei*.v, vsoxei*.v)
 
 Implementation files:
 - transactions/load_stride.py, store_stride.py - Strided operations
 - transactions/load_indexed_unordered.py - Unordered indexed loads
 - transactions/store_indexed_unordered.py - Unordered indexed stores
-- instructions/vector.py - VlseV, VsseV, VluxeiV, VsuxeiV classes
-
-Remaining work:
-- Indexed ordered operations using lamlet-orchestrated approach
+- transactions/load_indexed_element.py - Ordered indexed loads
+- transactions/store_indexed_element.py - Ordered indexed stores
+- instructions/vector.py - VlseV, VsseV, VluxeiV, VsuxeiV, VloxeiV, VsoxeiV classes

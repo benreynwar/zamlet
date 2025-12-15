@@ -147,8 +147,12 @@ VLM.V (Status: ✗)
     - vstart is in units of bytes for this instruction
     - Distinguished from vle8.v by lumop field
     - Assembly alias: vle1.v (legacy)
-    - TODO: Add decode pattern and instruction class
-    - TODO: Implement mask-specific load behavior
+  Implementation approach:
+    - Register destination uses ew=1 format
+    - If memory page is ew=1: use normal load with ew=64 (same physical distribution)
+    - If memory page is different ew: load to temp register at memory's ew,
+      then RegReformat to ew=1
+    - Requires RegReformat kinstr (see VCOMPRESS_PLAN.md)
 
 VSM.V (Status: ✗)
   Spec: v-st-ext.adoc lines 1567-1600, vmem-format.edn
@@ -165,8 +169,11 @@ VSM.V (Status: ✗)
     - vstart is in units of bytes for this instruction
     - Distinguished from vse8.v by sumop field
     - Assembly alias: vse1.v (legacy)
-    - TODO: Add decode pattern and instruction class
-    - TODO: Implement mask-specific store behavior
+  Implementation approach:
+    - Register source uses ew=1 format
+    - If memory page is ew=1: use normal store with ew=64 (same physical distribution)
+    - If memory page is different ew: RegReformat to memory's ew first, then store
+    - Requires RegReformat kinstr (see VCOMPRESS_PLAN.md)
 
 Memory Access Behavior
 -----------------------
