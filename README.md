@@ -37,9 +37,13 @@ and the data is arranged in memory to be optimized for accessing with that eleme
 When a page of memory is allocated the element width is specified, and it will be efficient to
 load and store vectors with that element width into that location in memory.
 
+The current state is that I'm modeling these ideas in python to get a feel of whether it's practical
+and I haven't started any RTL implementation yet.
+
 All the rest of the stuff in this README is way out of date, and relates to a previous iteration of
 those project which has very little in common with it's current incarnation.  But I'm not going to delete
 it yet, since it's still a useful (maybe) example of using the open-source HW tools.
+
 
 EVERYTHING BELOW HERE IS OUT OF DATE AND BASICALLY A TOTALLY DIFFERENT PROJECT.
 
