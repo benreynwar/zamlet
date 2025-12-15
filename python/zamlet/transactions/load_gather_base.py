@@ -340,6 +340,7 @@ class WaitingLoadGatherBase(WaitingItem, ABC):
             tag=tag,
             element_index=dst_e,
             ordered=self.is_ordered(),
+            parent_ident=instr.instr_ident,
         )
         packet = [header, addr]
         logger.debug(f'{jamlet.clock.cycle}: {self.__class__.__name__} send_req: '

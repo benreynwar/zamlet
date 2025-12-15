@@ -56,7 +56,8 @@ class StoreStride(KInstr):
         witem = WaitingStoreStride(
             params=kamlet.params, instr=self, rf_ident=rf_read_ident)
         kamlet.monitor.record_witem_created(
-            self.instr_ident, kamlet.min_x, kamlet.min_y, 'WaitingStoreStride')
+            self.instr_ident, kamlet.min_x, kamlet.min_y, 'WaitingStoreStride',
+            read_regs=read_regs)
         await kamlet.cache_table.add_witem(witem=witem)
 
 

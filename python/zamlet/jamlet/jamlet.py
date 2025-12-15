@@ -267,12 +267,13 @@ class Jamlet:
                 self.monitor.record_input_queue_consumed(self.x, self.y, is_ch0=True)
                 self._instruction_buffer.append(word)
                 remaining -= 1
-                # Record instruction message received (word is a KInstr)
-                self.monitor.record_message_received(
-                    word.instr_ident,
-                    header.source_x, header.source_y,
-                    self.x, self.y,
-                    message_type='INSTRUCTION')
+                # Record instruction message received only at kamlet origin
+                if self.x == self.k_min_x and self.y == self.k_min_y:
+                    self.monitor.record_message_received(
+                        word.instr_ident,
+                        header.source_x, header.source_y,
+                        self.x, self.y,
+                        message_type='INSTRUCTION')
 
     async def _receive_read_line_resp_packet(self, header, queue):
         # The packet should say where to put the data.

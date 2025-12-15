@@ -270,15 +270,16 @@ class Kamlet:
 
         if is_dst_kamlet:
             read_regs = [instr.mask_reg] if instr.mask_reg is not None else []
-            await self.wait_for_rf_available(write_regs=[instr.dst.reg], read_regs=read_regs,
+            write_regs = [instr.dst.reg]
+            await self.wait_for_rf_available(write_regs=write_regs, read_regs=read_regs,
                                              instr_ident=instr.instr_ident)
-            rf_write_ident = self.rf_info.start(read_regs=read_regs, write_regs=[instr.dst.reg])
+            rf_write_ident = self.rf_info.start(read_regs=read_regs, write_regs=write_regs)
             witem_dst = WaitingLoadWordDst(params=self.params, instr=instr, rf_ident=rf_write_ident)
             parent_span = self.monitor.get_kinstr_exec_span_id(
                 instr.instr_ident, self.min_x, self.min_y)
             self.monitor.record_witem_created(
                 instr.instr_ident + 1, self.min_x, self.min_y, 'WaitingLoadWordDst',
-                parent_span_id=parent_span)
+                parent_span_id=parent_span, read_regs=read_regs, write_regs=write_regs)
             await self.cache_table.add_witem(witem=witem_dst)
             for jamlet in self.jamlets:
                 load_word.init_dst_state(jamlet, witem_dst)
@@ -299,7 +300,7 @@ class Kamlet:
             witem_src = WaitingStoreWordSrc(params=self.params, instr=instr, rf_ident=rf_read_ident)
             self.monitor.record_witem_created(
                 instr.instr_ident, self.min_x, self.min_y, 'WaitingStoreWordSrc',
-                finalize=not is_dst_kamlet)
+                finalize=not is_dst_kamlet, read_regs=read_regs)
             await self.cache_table.add_witem(witem=witem_src)
             for jamlet in self.jamlets:
                 store_word.init_src_state(jamlet, witem_src)
@@ -376,7 +377,8 @@ class Kamlet:
         else:
             witem = WaitingLoadSimple(instr=instr, rf_ident=rf_ident)
             self.monitor.record_witem_created(
-                instr.instr_ident, self.min_x, self.min_y, 'WaitingLoadSimple')
+                instr.instr_ident, self.min_x, self.min_y, 'WaitingLoadSimple',
+                read_regs=read_regs, write_regs=dst_regs)
             await self.cache_table.add_witem(witem=witem, k_maddr=instr.k_maddr)
 
     async def handle_load_instr_notsimple(self, instr: kinstructions.Load) -> None:
@@ -393,7 +395,8 @@ class Kamlet:
         witem = WaitingLoadJ2JWords(
                 params=self.params, instr=instr, rf_ident=rf_write_ident)
         self.monitor.record_witem_created(
-            instr.instr_ident, self.min_x, self.min_y, 'WaitingLoadJ2JWords')
+            instr.instr_ident, self.min_x, self.min_y, 'WaitingLoadJ2JWords',
+            read_regs=read_regs, write_regs=dst_regs)
         await self.cache_table.add_witem(witem=witem, k_maddr=instr.k_maddr)
         instr = witem.item
         for jamlet in self.jamlets:
@@ -438,7 +441,8 @@ class Kamlet:
         else:
             witem = WaitingStoreSimple(instr=instr, rf_ident=rf_read_ident)
             self.monitor.record_witem_created(
-                instr.instr_ident, self.min_x, self.min_y, 'WaitingStoreSimple')
+                instr.instr_ident, self.min_x, self.min_y, 'WaitingStoreSimple',
+                read_regs=read_regs)
             await self.cache_table.add_witem(witem=witem, k_maddr=instr.k_maddr)
 
     async def handle_store_instr_notsimple(self, instr: kinstructions.Store) -> None:
@@ -454,7 +458,8 @@ class Kamlet:
         witem = WaitingStoreJ2JWords(
                 params=self.params, instr=instr, rf_ident=rf_read_ident)
         self.monitor.record_witem_created(
-            instr.instr_ident, self.min_x, self.min_y, 'WaitingStoreJ2JWords')
+            instr.instr_ident, self.min_x, self.min_y, 'WaitingStoreJ2JWords',
+            read_regs=read_regs)
         await self.cache_table.add_witem(witem=witem, k_maddr=instr.k_maddr)
         for jamlet in self.jamlets:
             for tag in range(self.params.word_bytes):
@@ -537,7 +542,6 @@ class Kamlet:
                                     source_x=source_x, source_y=source_y)
 
     async def _monitor_witems(self) -> None:
-        logger.debug(f'kamlet ({self.min_x}, {self.min_y}): _monitor_witems started')
         while True:
             await self.clock.next_cycle
             for item in list(self.cache_table.waiting_items):

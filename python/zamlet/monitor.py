@@ -359,12 +359,16 @@ class Monitor:
         """Get the instr_ident of the oldest active kinstr.
 
         Returns None if no active kinstr have instr_idents.
+        Only considers regular idents (< max_response_tags), not special idents.
         """
         assert self.enabled
-        if not self._kinstr_by_ident:
+        # Filter to regular idents only
+        max_tags = self.params.max_response_tags
+        regular_idents = {k: v for k, v in self._kinstr_by_ident.items() if k < max_tags}
+        if not regular_idents:
             return None
-        oldest_span_id = min(self._kinstr_by_ident.values())
-        for ident, span_id in self._kinstr_by_ident.items():
+        oldest_span_id = min(regular_idents.values())
+        for ident, span_id in regular_idents.items():
             if span_id == oldest_span_id:
                 return ident
         return None
@@ -404,7 +408,9 @@ class Monitor:
                              witem_type: str, finalize: bool = True,
                              parent_span_id: int | None = None,
                              source_x: int | None = None,
-                             source_y: int | None = None) -> int | None:
+                             source_y: int | None = None,
+                             read_regs: list[int] | None = None,
+                             write_regs: list[int] | None = None) -> int | None:
         """Record a witem creation.
 
         If finalize is True (default), also finalizes the parent's children.
@@ -414,6 +420,8 @@ class Monitor:
 
         source_x, source_y: For witems that use source to match (e.g., WaitingWriteMemWord),
         include in the key.
+
+        read_regs, write_regs: RF registers being read/written by this witem.
 
         Returns the span_id of the created witem span, or None if monitoring disabled.
         """
@@ -450,6 +458,8 @@ class Monitor:
             parent_span_id=parent_span_id,
             witem_type=witem_type,
             instr_ident=instr_ident,
+            read_regs=read_regs,
+            write_regs=write_regs,
         )
         self._witem_by_key[key] = span_id
         if finalize:

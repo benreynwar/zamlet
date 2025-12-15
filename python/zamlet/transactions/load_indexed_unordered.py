@@ -66,7 +66,8 @@ class LoadIndexedUnordered(KInstr):
         witem = WaitingLoadIndexedUnordered(
             params=kamlet.params, instr=self, rf_ident=rf_write_ident)
         kamlet.monitor.record_witem_created(
-            self.instr_ident, kamlet.min_x, kamlet.min_y, 'WaitingLoadIndexedUnordered')
+            self.instr_ident, kamlet.min_x, kamlet.min_y, 'WaitingLoadIndexedUnordered',
+            read_regs=read_regs, write_regs=dst_regs)
         await kamlet.cache_table.add_witem(witem=witem)
 
 

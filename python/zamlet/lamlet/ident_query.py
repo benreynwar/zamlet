@@ -35,8 +35,10 @@ def get_oldest_active_instr_ident_distance(lamlet: 'Lamlet', baseline: int) -> i
     Returns None if no dispatched waiting items have an instr_ident set (all free).
     """
     max_tags = lamlet.params.max_response_tags
+    # Only include regular idents (< max_response_tags), not special idents like IdentQuery or barriers
     idents = [item.instr_ident for item in lamlet.waiting_items
-              if item.instr_ident is not None and item.dispatched]
+              if item.instr_ident is not None and item.dispatched
+              and item.instr_ident < max_tags]
     if not idents:
         return None  # All free
     distances = []
@@ -85,20 +87,17 @@ def create_ident_query(lamlet: 'Lamlet') -> IdentQuery:
     """Create an IdentQuery instruction and update state."""
     assert lamlet._ident_query_state == RefreshState.READY_TO_SEND
 
-    # Baseline should be the oldest ident in the instruction buffer (waiting to be dispatched),
-    # or next_instr_ident if buffer is empty. This ensures we account for idents that have
-    # been allocated but not yet sent to kamlets.
-    if lamlet.instruction_buffer:
-        oldest_buffered = lamlet.instruction_buffer[0][0]
-        if oldest_buffered.instr_ident is not None:
-            lamlet._ident_query_baseline = (
-                oldest_buffered.instr_ident - 1) % lamlet.params.max_response_tags
-        else:
-            lamlet._ident_query_baseline = (
-                lamlet.next_instr_ident - 1) % lamlet.params.max_response_tags
+    # Find baseline from oldest regular ident in instruction buffer, skipping special idents.
+    max_tags = lamlet.params.max_response_tags
+    oldest_regular_ident = None
+    for instr, _ in lamlet.instruction_buffer:
+        if instr.instr_ident is not None and instr.instr_ident < max_tags:
+            oldest_regular_ident = instr.instr_ident
+            break
+    if oldest_regular_ident is not None:
+        lamlet._ident_query_baseline = (oldest_regular_ident - 1) % max_tags
     else:
-        lamlet._ident_query_baseline = (
-            lamlet.next_instr_ident - 1) % lamlet.params.max_response_tags
+        lamlet._ident_query_baseline = (lamlet.next_instr_ident - 1) % max_tags
     # Capture lamlet's waiting items distance now, not when response arrives
     lamlet._ident_query_lamlet_dist = get_oldest_active_instr_ident_distance(
         lamlet, lamlet._ident_query_baseline)

@@ -150,6 +150,9 @@ class Lamlet:
         # Ident query state machine
         self._ident_query_state = RefreshState.DORMANT
         self._ident_query_ident = params.max_response_tags  # Dedicated ident for queries
+        # Dedicated idents for ordered barrier instructions (one per ordered buffer slot)
+        self._ordered_barrier_idents = [
+            params.max_response_tags + 1 + i for i in range(params.n_ordered_buffers)]
         self._ident_query_baseline = 0
         # Track last instr_ident sent to kamlets (for IdentQuery.previous_instr_ident)
         # Initialize to max_response_tags - 2 so first query reports max_response_tags - 1 as oldest
@@ -488,7 +491,7 @@ class Lamlet:
             ordered.handle_load_indexed_element_resp(self, header)
         elif header.message_type == MessageType.STORE_INDEXED_ELEMENT_RESP:
             assert isinstance(header, ElementIndexHeader)
-            if header.masked:
+            if header.masked or header.fault:
                 assert len(packet) == 1
                 ordered.handle_store_indexed_element_resp(self, header, None, None)
             else:
@@ -726,13 +729,12 @@ class Lamlet:
                         instr, kamlet.min_x, kamlet.min_y)
                     kinstr_exec_span_id = self.monitor.get_kinstr_exec_span_id(
                         instr.instr_ident, kamlet.min_x, kamlet.min_y)
-                    # Record message for each jamlet in the kamlet
-                    for jamlet in kamlet.jamlets:
-                        self.monitor.record_message_sent(
-                            kinstr_exec_span_id, 'INSTRUCTION',
-                            instr.instr_ident, None,
-                            self.instr_x, self.instr_y,
-                            jamlet.x, jamlet.y)
+                    # Record message only for kamlet's origin jamlet
+                    self.monitor.record_message_sent(
+                        kinstr_exec_span_id, 'INSTRUCTION',
+                        instr.instr_ident, None,
+                        self.instr_x, self.instr_y,
+                        kamlet.min_x, kamlet.min_y)
             else:
                 kamlet = self.kamlets[k_index]
                 self.monitor.record_kinstr_exec_created(
@@ -992,18 +994,18 @@ class Lamlet:
     async def vload_indexed_ordered(self, vd: int, base_addr: int, index_reg: int,
                                     index_ew: int, data_ew: int, n_elements: int,
                                     mask_reg: int | None, start_index: int,
-                                    parent_span_id: int):
-        await ordered.vload_indexed_ordered(self, vd, base_addr, index_reg, index_ew,
-                                            data_ew, n_elements, mask_reg, start_index,
-                                            parent_span_id)
+                                    parent_span_id: int) -> addresses.VectorOpResult:
+        return await ordered.vload_indexed_ordered(self, vd, base_addr, index_reg, index_ew,
+                                                   data_ew, n_elements, mask_reg, start_index,
+                                                   parent_span_id)
 
     async def vstore_indexed_ordered(self, vs: int, base_addr: int, index_reg: int,
                                      index_ew: int, data_ew: int, n_elements: int,
                                      mask_reg: int | None, start_index: int,
-                                     parent_span_id: int):
-        await ordered.vstore_indexed_ordered(self, vs, base_addr, index_reg, index_ew,
-                                             data_ew, n_elements, mask_reg, start_index,
-                                             parent_span_id)
+                                     parent_span_id: int) -> addresses.VectorOpResult:
+        return await ordered.vstore_indexed_ordered(self, vs, base_addr, index_reg, index_ew,
+                                                    data_ew, n_elements, mask_reg, start_index,
+                                                    parent_span_id)
 
     def check_element_width(self, addr: GlobalAddress, size: int, element_width: int):
         """

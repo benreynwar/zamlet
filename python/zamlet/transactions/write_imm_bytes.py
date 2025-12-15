@@ -92,7 +92,7 @@ def do_write_imm_bytes(kamlet: 'Kamlet', instr: WriteImmBytes) -> None:
 
     assert instr.k_maddr.bit_addr % 8 == 0
     if instr.k_maddr.k_index == kamlet.k_index:
-        assert kamlet.cache_table.can_write(instr.k_maddr)
+        assert kamlet.cache_table.can_write(instr.k_maddr, log_if_false=True)
         j_saddr = instr.k_maddr.to_j_saddr(kamlet.cache_table)
         jamlet = kamlet.jamlets[j_saddr.j_in_k_index]
         size = len(instr.imm)

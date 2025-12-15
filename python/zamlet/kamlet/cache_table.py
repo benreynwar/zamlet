@@ -313,6 +313,20 @@ class CacheTable:
 
     def add_witem_immediately(self, witem: WaitingItem, use_reserved: bool = False):
         assert self.has_free_witem_slot(use_reserved=use_reserved)
+        existing = []
+        for w in self.waiting_items:
+            if w.instr_ident != witem.instr_ident:
+                continue
+            if witem.use_source_to_match:
+                if w.source == witem.source:
+                    existing.append(w)
+            else:
+                existing.append(w)
+        assert not existing, (
+            f"{self.name} add_witem_immediately: ident={witem.instr_ident} already exists: "
+            f"existing={[(id(w), type(w).__name__) for w in existing]} "
+            f"new={id(witem)} {type(witem).__name__}"
+        )
         self.waiting_items.append(witem)
 
     async def add_witem(self, witem: WaitingItem, k_maddr: KMAddr|None=None,
@@ -378,7 +392,7 @@ class CacheTable:
             self._record_blocked_by_witems(
                 witem, lambda item: item.cache_is_write, "reads_all_blocked_by_writes")
             await self._wait_for_all_writes_complete()
-        # If this witem writes all memory, wait for all pending reads and other
+        # If this witem writes all memory, wait for all pending reads, writes, and other
         # writes_all_memory witems to complete first
         if witem.writes_all_memory:
             self._record_blocked_by_witems(
@@ -390,13 +404,20 @@ class CacheTable:
             await self._wait_for_all_reads_complete(witem.writeset_ident)
             self._record_blocked_by_witems(
                 witem,
+                lambda item: (item.cache_is_write and
+                              (witem.writeset_ident is None or
+                               getattr(item, 'writeset_ident', None) != witem.writeset_ident)),
+                "writes_all_blocked_by_writes")
+            await self._wait_for_all_writes_complete()
+            self._record_blocked_by_witems(
+                witem,
                 lambda item: (item.writes_all_memory and
                               (witem.writeset_ident is None or
                                getattr(item, 'writeset_ident', None) != witem.writeset_ident)),
                 "writes_all_blocked_by_writes_all")
             await self._wait_for_writes_all_memory_complete(witem.writeset_ident)
         await self.wait_for_free_witem_slot(witem, use_reserved=use_reserved)
-        self.waiting_items.append(witem)
+        self.add_witem_immediately(witem, use_reserved=use_reserved)
         if witem.cache_is_read or witem.cache_is_write:
             witem.cache_is_avail = (
                     self.slot_states[witem.cache_slot].state in (CacheState.SHARED, CacheState.MODIFIED))
@@ -511,34 +532,35 @@ class CacheTable:
         has_write = self.slot_has_write(slot)
         return good_state and not has_write
 
-    def can_write(self, k_maddr, witem: WaitingItem | None = None):
+    def can_write(self, k_maddr, witem: WaitingItem | None = None, log_if_false: bool = False):
         writeset_ident = witem.writeset_ident if witem is not None else None
         slot = self.addr_to_slot(k_maddr)
         loc = f'{self.clock.cycle}: CacheTable {self.name}'
+        log = logger.error if log_if_false else logger.debug
         if slot is None:
-            logger.debug(f'{loc} can_write: addr=0x{k_maddr.addr:x} writeset={writeset_ident} '
-                         f'slot=None -> False')
+            log(f'{loc} can_write: addr=0x{k_maddr.addr:x} writeset={writeset_ident} '
+                f'slot=None -> False')
             return False
         # Block writes if any witem reads from all memory
         for item in self.waiting_items:
             if item != witem and item.reads_all_memory:
-                logger.debug(f'{loc} can_write: addr=0x{k_maddr.addr:x} writeset={writeset_ident} '
-                             f'reads_all_memory by ident={item.instr_ident} -> False')
+                log(f'{loc} can_write: addr=0x{k_maddr.addr:x} writeset={writeset_ident} '
+                    f'reads_all_memory by ident={item.instr_ident} -> False')
                 return False
         # Block writes if any witem writes to all memory (unless same writeset_ident)
         if self._any_writes_all_memory(writeset_ident):
-            logger.debug(f'{loc} can_write: addr=0x{k_maddr.addr:x} writeset={writeset_ident} '
-                         f'writes_all_memory -> False')
+            log(f'{loc} can_write: addr=0x{k_maddr.addr:x} writeset={writeset_ident} '
+                f'writes_all_memory -> False')
             return False
         state = self.get_state(k_maddr)
         good_state = state.state in (CacheState.SHARED, CacheState.MODIFIED)
         in_use = self.slot_in_use(slot, writeset_ident=writeset_ident)
         if not good_state:
-            logger.debug(f'{loc} can_write: addr=0x{k_maddr.addr:x} writeset={writeset_ident} '
-                         f'slot={slot} state={state.state} -> False')
+            log(f'{loc} can_write: addr=0x{k_maddr.addr:x} writeset={writeset_ident} '
+                f'slot={slot} state={state.state} -> False')
         elif in_use:
-            logger.debug(f'{loc} can_write: addr=0x{k_maddr.addr:x} writeset={writeset_ident} '
-                         f'slot={slot} in_use -> False')
+            log(f'{loc} can_write: addr=0x{k_maddr.addr:x} writeset={writeset_ident} '
+                f'slot={slot} in_use -> False')
         return good_state and not in_use
 
     def slot_has_write(self, slot):
@@ -594,8 +616,9 @@ class CacheTable:
         """
         max_tags = self.params.max_response_tags
         all_items = [(type(item).__name__, item.instr_ident) for item in self.waiting_items]
+        # Only include regular idents (< max_response_tags), not special idents like IdentQuery or barriers
         idents = [item.instr_ident for item in self.waiting_items
-                  if item.instr_ident is not None]
+                  if item.instr_ident is not None and item.instr_ident < max_tags]
         logger.debug(f'{self.clock.cycle}: get_oldest_active_instr_ident_distance: '
                      f'baseline={baseline} waiting_items={all_items} idents={idents}')
         if not idents:

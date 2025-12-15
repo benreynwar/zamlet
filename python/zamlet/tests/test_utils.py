@@ -57,6 +57,16 @@ def unpack_elements(data: bytes, element_width: int) -> list[int]:
         raise ValueError(f"Unsupported element width: {element_width}")
 
 
+def dump_span_trees(monitor, filename='span_trees.txt'):
+    """Dump all root span trees to a file for debugging."""
+    with open(filename, 'w') as f:
+        for span in monitor.spans.values():
+            if span.parent is None:
+                f.write(monitor.format_span_tree(span.span_id, max_depth=20))
+                f.write('\n')
+    logger.info(f"Span trees written to {filename}")
+
+
 def get_vpu_base_addr(element_width: int) -> int:
     """Get the VPU memory base address for a given element width."""
     if element_width == 8:

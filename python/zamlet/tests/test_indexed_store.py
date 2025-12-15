@@ -21,7 +21,8 @@ from zamlet.addresses import GlobalAddress, MemoryType, Ordering, WordOrder
 from zamlet.geometries import GEOMETRIES, scale_n_tests
 from zamlet.monitor import CompletionType, SpanType
 from zamlet.tests.test_utils import (
-    setup_lamlet, pack_elements, unpack_elements, get_vpu_base_addr
+    setup_lamlet, pack_elements, unpack_elements, get_vpu_base_addr,
+    setup_mask_register, dump_span_trees,
 )
 
 logger = logging.getLogger(__name__)
@@ -127,15 +128,41 @@ async def run_indexed_store_test(
     n_pages: int,
     params: LamletParams,
     seed: int,
+    use_mask: bool = True,
+    dump_spans: bool = False,
 ):
     """Test indexed vector store operations with mixed page types."""
     lamlet = await setup_lamlet(clock, params)
 
+    try:
+        return await _run_indexed_store_test_inner(
+            lamlet, clock, data_ew, index_ew, vl, n_pages, params, seed, use_mask)
+    finally:
+        if dump_spans:
+            dump_span_trees(lamlet.monitor)
+
+
+async def _run_indexed_store_test_inner(
+    lamlet,
+    clock: Clock,
+    data_ew: int,
+    index_ew: int,
+    vl: int,
+    n_pages: int,
+    params: LamletParams,
+    seed: int,
+    use_mask: bool,
+):
     rnd = Random(seed)
     element_bytes = data_ew // 8
 
+    # When using masks, vl is limited by mask register size
+    if use_mask:
+        max_vl = params.j_in_l * params.word_bytes * 8
+        assert vl <= max_vl, f"vl={vl} exceeds max {max_vl} for masked operation"
+
     logger.info(f"Test parameters: data_ew={data_ew}, index_ew={index_ew}, vl={vl}, "
-                f"n_pages={n_pages}, seed={seed}")
+                f"n_pages={n_pages}, seed={seed}, use_mask={use_mask}")
 
     src_base = get_vpu_base_addr(data_ew)
     dst_base = get_vpu_base_addr(data_ew) + 0x100000
@@ -143,6 +170,7 @@ async def run_indexed_store_test(
 
     page_types = generate_page_types(n_pages, rnd)
     indices = generate_indices(vl, data_ew, n_pages, page_bytes, rnd)
+    mask_bits = [rnd.choice([True, False]) for _ in range(vl)] if use_mask else None
 
     # Generate source values - one per element
     src_list = [rnd.getrandbits(data_ew) for _ in range(vl)]
@@ -151,6 +179,8 @@ async def run_indexed_store_test(
     for i, pt in enumerate(page_types):
         logger.info(f"  Page {i}: {pt.value}")
     logger.info(f"Indices: {indices[:16]}{'...' if len(indices) > 16 else ''}")
+    if mask_bits:
+        logger.info(f"Mask bits: {mask_bits[:16]}{'...' if len(mask_bits) > 16 else ''}")
 
     # Allocate source pages (contiguous VPU)
     src_ordering = Ordering(WordOrder.STANDARD, data_ew)
@@ -200,6 +230,21 @@ async def run_indexed_store_test(
     # Setup index register
     await setup_index_register(lamlet, index_reg, indices, index_ew, dst_base, span_id)
 
+    # Set up mask register if using masks
+    mask_reg = None
+    if use_mask:
+        mask_reg = index_reg + n_index_regs
+        assert mask_reg < lamlet.params.n_vregs, \
+            f'mask_reg {mask_reg} exceeds n_vregs {lamlet.params.n_vregs}'
+        mask_mem_addr = dst_base + 0x400000
+        await setup_mask_register(lamlet, mask_reg, mask_bits, page_bytes, mask_mem_addr)
+
+    # Initialize destination memory to zeros (for masked element verification)
+    for offset in set(indices):
+        page_idx = offset // page_bytes
+        if page_types[page_idx] != PageType.UNALLOCATED:
+            await lamlet.set_memory(dst_base + offset, bytes(element_bytes))
+
     # Clear non-idempotent write log before the indexed store
     lamlet.scalar.non_idempotent_write_log.clear()
 
@@ -211,14 +256,17 @@ async def run_indexed_store_test(
         index_ew=index_ew,
         data_ew=data_ew,
         n_elements=vl,
-        mask_reg=None,
+        mask_reg=mask_reg,
         start_index=0,
         parent_span_id=span_id,
     )
 
-    # Calculate expected fault element (first element hitting unallocated page)
+    # Calculate expected fault element (first ACTIVE element hitting unallocated page)
     expected_fault_element = None
     for i, offset in enumerate(indices):
+        is_masked = use_mask and not mask_bits[i]
+        if is_masked:
+            continue  # Masked elements don't cause faults
         page_idx = offset // page_bytes
         assert page_idx < len(page_types)
         if page_types[page_idx] == PageType.UNALLOCATED:
@@ -238,10 +286,13 @@ async def run_indexed_store_test(
         assert result.success, f"Unexpected fault: {result}"
         n_expected_correct = vl
 
-    # Verify non-idempotent writes: all elements before fault that target non-idempotent pages
-    # should have been written (order doesn't matter for unordered stores)
+    # Verify non-idempotent writes: all ACTIVE elements before fault that target non-idempotent
+    # pages should have been written (order doesn't matter for unordered stores)
     expected_non_idemp_addrs = set()
     for i in range(n_expected_correct):
+        is_masked = use_mask and not mask_bits[i]
+        if is_masked:
+            continue
         offset = indices[i]
         page_idx = offset // page_bytes
         if page_idx < len(page_types) and page_types[page_idx] == PageType.SCALAR_NON_IDEMPOTENT:
@@ -268,9 +319,15 @@ async def run_indexed_store_test(
         addr = dst_base + offset
         future = await lamlet.get_memory(addr, element_bytes)
         await future
-        result = unpack_elements(future.result(), data_ew)[0]
-        if result != src_list[i]:
-            errors.append(f"  [{i}] offset={offset} expected={src_list[i]:#x} actual={result:#x}")
+        actual = unpack_elements(future.result(), data_ew)[0]
+        is_masked = use_mask and not mask_bits[i]
+        if is_masked:
+            # Masked elements should remain zero
+            if actual != 0:
+                errors.append(f"  [{i}] masked: offset={offset} expected=0 actual={actual:#x}")
+        else:
+            if actual != src_list[i]:
+                errors.append(f"  [{i}] offset={offset} expected={src_list[i]:#x} actual={actual:#x}")
 
     if errors:
         logger.error(f"FAIL: {len(errors)} elements do not match")
@@ -284,7 +341,7 @@ async def run_indexed_store_test(
     return 0
 
 
-async def main(clock, data_ew, index_ew, vl, n_pages, params, seed):
+async def main(clock, data_ew, index_ew, vl, n_pages, params, seed, use_mask, dump_spans=False):
     import signal
 
     def signal_handler(signum, frame):
@@ -297,16 +354,18 @@ async def main(clock, data_ew, index_ew, vl, n_pages, params, seed):
 
     exit_code = await run_indexed_store_test(
         clock, data_ew=data_ew, index_ew=index_ew, vl=vl,
-        n_pages=n_pages, params=params, seed=seed)
+        n_pages=n_pages, params=params, seed=seed, use_mask=use_mask, dump_spans=dump_spans)
     clock.running = False
     return exit_code
 
 
-def run_test(data_ew: int, index_ew: int, vl: int, n_pages: int, params: LamletParams, seed: int):
+def run_test(data_ew: int, index_ew: int, vl: int, n_pages: int, params: LamletParams, seed: int,
+             use_mask: bool = True, dump_spans: bool = False):
     """Helper to run a single test configuration."""
     clock = Clock(max_cycles=10000)
     exit_code = asyncio.run(main(clock, data_ew=data_ew, index_ew=index_ew, vl=vl,
-                                  n_pages=n_pages, params=params, seed=seed))
+                                  n_pages=n_pages, params=params, seed=seed, use_mask=use_mask,
+                                  dump_spans=dump_spans))
     assert exit_code == 0, f"Test failed with exit_code={exit_code}"
 
 
@@ -315,7 +374,9 @@ def random_test_config(rnd: Random):
     geom_name = rnd.choice(list(GEOMETRIES.keys()))
     geom_params = GEOMETRIES[geom_name]
     data_ew = rnd.choice([8, 16, 32, 64])
-    vl = rnd.randint(1, 32)
+    # Limit vl to mask register capacity
+    max_vl = geom_params.j_in_l * geom_params.word_bytes * 8
+    vl = rnd.randint(1, min(32, max_vl))
     n_pages = rnd.randint(2, 6)
     # index_ew must be large enough to hold max offset (n_pages * page_bytes)
     max_offset = n_pages * geom_params.page_bytes
@@ -362,6 +423,10 @@ if __name__ == '__main__':
                         help='Geometry name (default: k2x1_j1x1)')
     parser.add_argument('--list-geometries', action='store_true',
                         help='List available geometries and exit')
+    parser.add_argument('--no-mask', action='store_true',
+                        help='Disable mask testing (default: use random mask)')
+    parser.add_argument('--dump-spans', action='store_true',
+                        help='Dump span trees to span_trees.txt')
     args = parser.parse_args()
 
     if args.list_geometries:
@@ -373,5 +438,7 @@ if __name__ == '__main__':
                         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
     params = get_geometry(args.geometry)
+    use_mask = not args.no_mask
     run_test(data_ew=args.data_ew, index_ew=args.index_ew, vl=args.vl,
-             n_pages=args.n_pages, params=params, seed=args.seed)
+             n_pages=args.n_pages, params=params, seed=args.seed, use_mask=use_mask,
+             dump_spans=args.dump_spans)

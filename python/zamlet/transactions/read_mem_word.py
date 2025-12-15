@@ -71,9 +71,7 @@ async def handle_req(jamlet: 'Jamlet', packet: List[Any]) -> None:
 
     # Check if the parent instruction exists on this jamlet - if not, the data
     # may not have been written yet, so we need to drop and retry later
-    # The ident encodes: instr_ident + tag + 1, so subtract to get parent ident
-    parent_ident = (header.ident - header.tag - 1) % jamlet.params.max_response_tags
-    parent_witem = jamlet.cache_table.get_waiting_item_by_instr_ident(parent_ident)
+    parent_witem = jamlet.cache_table.get_waiting_item_by_instr_ident(header.parent_ident)
     if parent_witem is None:
         await send_drop(jamlet, header, 'parent_not_ready')
         return

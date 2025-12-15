@@ -108,10 +108,16 @@ class KamletRegisterFile:
         if write_regs is None:
             write_regs = []
         for reg in read_regs:
-            assert token in self.reads[reg]
+            assert token in self.reads[reg], (
+                f"{self.name} RF FINISH failed: token={token} not in reads[{reg}]={self.reads[reg]}. "
+                f"Trying to finish read_regs={read_regs} write_regs={write_regs}"
+            )
             self.reads[reg].remove(token)
         for reg in write_regs:
-            assert self.write[reg] == token
+            assert self.write[reg] == token, (
+                f"{self.name} RF FINISH failed: write[{reg}]={self.write[reg]} != token={token}. "
+                f"Trying to finish read_regs={read_regs} write_regs={write_regs}"
+            )
             self.write[reg] = None
         logger.debug(f'{self.name} RF FINISH token={token} read_regs={read_regs} write_regs={write_regs}')
 

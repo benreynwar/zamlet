@@ -15,7 +15,7 @@ import logging
 from dataclasses import dataclass
 
 from zamlet import addresses
-from zamlet.addresses import GlobalAddress
+from zamlet.addresses import GlobalAddress, TLBFaultType
 from zamlet.waiting_item import WaitingItem
 from zamlet.kamlet.kinstructions import TrackedKInstr
 from zamlet.message import (
@@ -23,6 +23,7 @@ from zamlet.message import (
 )
 from zamlet.kamlet.cache_table import SendState
 from zamlet import utils
+from zamlet.transactions.helpers import read_element
 
 if TYPE_CHECKING:
     from zamlet.kamlet.kamlet import Kamlet
@@ -64,6 +65,7 @@ class LoadIndexedElement(TrackedKInstr):
     element_index: int
     base_addr: GlobalAddress
     instr_ident: int
+    parent_ident: int  # Barrier instruction ident for ordering
     mask_reg: int | None = None
 
     async def update_kamlet(self, kamlet):
@@ -81,6 +83,28 @@ def _get_mask_bit(jamlet: 'Jamlet', mask_reg: int, element_index: int) -> bool:
     bit_in_byte = bit_index % 8
     mask_byte = jamlet.rf_slice[mask_reg * wb + byte_index]
     return bool((mask_byte >> bit_in_byte) & 1)
+
+
+def _check_element_access(jamlet: 'Jamlet', instr: 'LoadIndexedElement') -> TLBFaultType:
+    """Check TLB access for all bytes of the element. Returns fault type or NONE."""
+    index_data = read_element(jamlet, instr.index_reg, instr.element_index, instr.index_ew)
+    byte_offset = int.from_bytes(index_data, byteorder='little', signed=False)
+
+    element_bytes = instr.data_ew // 8
+    page_bytes = jamlet.params.page_bytes
+
+    current_byte = 0
+    while current_byte < element_bytes:
+        g_addr = instr.base_addr.bit_offset((byte_offset + current_byte) * 8)
+        fault_type = jamlet.tlb.check_access(g_addr, is_write=False)
+        if fault_type != TLBFaultType.NONE:
+            return fault_type
+        # Skip to next page
+        page_offset = g_addr.addr % page_bytes
+        remaining_in_page = page_bytes - page_offset
+        current_byte += remaining_in_page
+
+    return TLBFaultType.NONE
 
 
 async def handle_load_indexed_element(kamlet: 'Kamlet',
@@ -137,14 +161,37 @@ async def handle_load_indexed_element(kamlet: 'Kamlet',
                                            instr_ident=instr.instr_ident)
         rf_write_ident = kamlet.rf_info.start(read_regs=read_regs, write_regs=dst_regs)
 
+        # Check TLB access - if fault, send fault response and release RF
+        fault_type = _check_element_access(jamlet, instr)
+        if fault_type != TLBFaultType.NONE:
+            logger.debug(f'{kamlet.clock.cycle}: LoadIndexedElement fault: '
+                         f'element={element_index} fault_type={fault_type}')
+            kamlet.rf_info.finish(rf_write_ident, write_regs=dst_regs, read_regs=read_regs)
+            resp_header = ElementIndexHeader(
+                target_x=jamlet.lamlet_x,
+                target_y=jamlet.lamlet_y,
+                source_x=jamlet.x,
+                source_y=jamlet.y,
+                message_type=MessageType.LOAD_INDEXED_ELEMENT_RESP,
+                send_type=SendType.SINGLE,
+                length=1,
+                ident=instr.instr_ident,
+                element_index=element_index,
+                fault=True,
+            )
+            kinstr_span_id = kamlet.monitor.get_kinstr_span_id(instr.instr_ident)
+            await jamlet.send_packet([resp_header], parent_span_id=kinstr_span_id)
+            kamlet.monitor.finalize_kinstr_exec(instr.instr_ident, kamlet.min_x, kamlet.min_y)
+            return
+
         witem = WaitingLoadIndexedElement(
             instr=instr, params=params, rf_ident=rf_write_ident, j_in_k_index=j_in_k_index)
         kamlet.monitor.record_witem_created(
-            instr.instr_ident, kamlet.min_x, kamlet.min_y, 'WaitingLoadIndexedElement')
+            instr.instr_ident, kamlet.min_x, kamlet.min_y, 'WaitingLoadIndexedElement',
+            read_regs=read_regs, write_regs=dst_regs)
         await kamlet.cache_table.add_witem(witem=witem)
 
 
-@dataclass
 class WaitingLoadIndexedElement(WaitingItem):
     """Waiting item for ordered indexed element load.
 
@@ -194,13 +241,21 @@ class WaitingLoadIndexedElement(WaitingItem):
             return
         instr = self.item
         header = packet[0]
-        data = packet[1]
-        assert isinstance(header, TaggedHeader)
+        assert isinstance(header, ReadMemWordHeader)
         tag = header.tag
 
         assert self.transaction_states[tag] == SendState.WAITING_FOR_RESPONSE
         self.transaction_states[tag] = SendState.COMPLETE
 
+        # If faulted, skip the RF write - an earlier element faulted
+        if header.fault:
+            jamlet.monitor.complete_transaction(
+                ident=header.ident, tag=tag,
+                src_x=jamlet.x, src_y=jamlet.y,
+                dst_x=header.source_x, dst_y=header.source_y)
+            return
+
+        data = packet[1]
         wb = jamlet.params.word_bytes
         data_ew = instr.data_ew
 
@@ -276,23 +331,8 @@ class WaitingLoadIndexedElement(WaitingItem):
     def _get_index_value(self, jamlet: 'Jamlet') -> int:
         """Read the byte offset from the index register."""
         instr = self.item
-        wb = jamlet.params.word_bytes
-        index_ew = instr.index_ew
-        index_bytes = index_ew // 8
-        element_index = instr.element_index
-
-        elements_in_vline = jamlet.params.vline_bytes * 8 // index_ew
-        index_v = element_index // elements_in_vline
-        index_ve = element_index % elements_in_vline
-        index_we = index_ve // jamlet.params.j_in_l
-
-        index_reg = instr.index_reg + index_v
-        byte_in_word = (index_we * index_bytes) % wb
-
-        word_data = jamlet.rf_slice[index_reg * wb: (index_reg + 1) * wb]
-        index_value = int.from_bytes(word_data[byte_in_word:byte_in_word + index_bytes],
-                                     byteorder='little', signed=False)
-        return index_value
+        index_data = read_element(jamlet, instr.index_reg, instr.element_index, instr.index_ew)
+        return int.from_bytes(index_data, byteorder='little', signed=False)
 
     def _get_dst_byte_offset(self, jamlet: 'Jamlet') -> int:
         """Get the byte offset within the destination word for this element."""
@@ -376,6 +416,7 @@ class WaitingLoadIndexedElement(WaitingItem):
             tag=tag,
             element_index=instr.element_index,
             ordered=True,
+            parent_ident=instr.parent_ident,
         )
         packet = [header, addr]
 

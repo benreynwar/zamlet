@@ -56,6 +56,9 @@ class OrderedBuffer:
         self.next_to_process = 0
         self.base_index = 0
 
+        # First element that faulted (None if no fault)
+        self.faulted_element: int | None = None
+
         self.elements: list[ElementEntry | None] = [None] * capacity
 
     def _slot(self, element_index: int) -> int:

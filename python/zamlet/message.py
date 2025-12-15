@@ -199,6 +199,7 @@ class IdentHeader(Header):
 class TaggedHeader(IdentHeader):
     # Used to distinguish replys when we expect lots
     # of replys.  Maybe simpler that using source_x, source_y?
+    # 12 bits remaining
     tag: int     # 4 bits
 
 
@@ -232,8 +233,11 @@ class WriteMemWordHeader(TaggedHeader):
 
 @dataclass
 class ReadMemWordHeader(TaggedHeader):
+    # TODO: element_index can be derived from source coordinates - remove in future
     element_index: int = 0  # Element index for ordered operations
     ordered: bool = False   # Whether this is an ordered operation
+    parent_ident: int = 0   # Parent instruction ident for ordering checks
+    fault: bool = False     # Earlier element faulted, skip this read
 
 
 @dataclass

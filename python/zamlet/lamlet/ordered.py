@@ -6,26 +6,78 @@ The lamlet orchestrates element-by-element processing using ordered buffers.
 """
 
 import logging
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from zamlet import addresses
-from zamlet.addresses import GlobalAddress, Ordering
+from zamlet.addresses import GlobalAddress, Ordering, TLBFaultType, VectorOpResult
 from zamlet.kamlet.cache_table import SendState
+from zamlet.kamlet import kinstructions
 from zamlet.lamlet.ordered_buffer import OrderedBuffer, ElementState
 from zamlet.lamlet.lamlet_waiting_item import (
     LamletWaitingLoadIndexedElement, LamletWaitingStoreIndexedElement)
 from zamlet.message import (
     MessageType, SendType, Direction, ReadMemWordHeader, WriteMemWordHeader,
     ElementIndexHeader, TaggedHeader)
+from zamlet.synchronization import WaitingItemSyncState as SyncState
 from zamlet.transactions.load_indexed_element import LoadIndexedElement
 from zamlet.transactions.store_indexed_element import StoreIndexedElement
+from zamlet.waiting_item import WaitingItem
 from zamlet.lamlet import ident_query
 
 if TYPE_CHECKING:
+    from zamlet.kamlet.kamlet import Kamlet
     from zamlet.lamlet.lamlet import Lamlet
     from zamlet.lamlet.ordered_buffer import ElementEntry
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class OrderedIndexedLoad(kinstructions.KInstr):
+    """
+    A barrier instruction sent to all kamlets before ordered indexed loads.
+    Creates a waiting item that serves as the "parent" for READ_MEM_WORD ordering checks.
+    """
+    instr_ident: int
+
+    async def update_kamlet(self, kamlet: 'Kamlet'):
+        witem = WaitingOrderedIndexedLoad(self.instr_ident)
+        kamlet.monitor.record_witem_created(
+            self.instr_ident, kamlet.min_x, kamlet.min_y, 'WaitingOrderedIndexedLoad')
+        await kamlet.cache_table.add_witem(witem)
+
+
+class WaitingOrderedIndexedLoad(WaitingItem):
+    """
+    A waiting item that waits for all previous writes to complete.
+    Serves as a synchronization point for ordered indexed load ordering checks.
+    Uses sync network to stay alive until lamlet signals completion.
+    """
+    reads_all_memory = True
+
+    def __init__(self, instr_ident: int):
+        super().__init__(item=None, instr_ident=instr_ident)
+        self.sync_state = SyncState.NOT_STARTED
+
+    def ready(self) -> bool:
+        return self.sync_state == SyncState.COMPLETE
+
+    async def monitor_kamlet(self, kamlet: 'Kamlet') -> None:
+        sync_ident = self.instr_ident
+        kinstr_span_id = kamlet.monitor.get_kinstr_span_id(self.instr_ident)
+
+        if self.sync_state == SyncState.NOT_STARTED:
+            self.sync_state = SyncState.IN_PROGRESS
+            kamlet.monitor.create_sync_local_span(
+                sync_ident, kamlet.synchronizer.x, kamlet.synchronizer.y, kinstr_span_id)
+            kamlet.synchronizer.local_event(sync_ident)
+        elif self.sync_state == SyncState.IN_PROGRESS:
+            if kamlet.synchronizer.is_complete(sync_ident):
+                self.sync_state = SyncState.COMPLETE
+
+    async def finalize(self, kamlet: 'Kamlet') -> None:
+        kamlet.monitor.complete_witem(self.instr_ident, kamlet.min_x, kamlet.min_y)
 
 
 def get_free_buffer_id(lamlet: 'Lamlet') -> int | None:
@@ -42,6 +94,7 @@ def handle_load_indexed_element_resp(lamlet: 'Lamlet', header: ElementIndexHeade
     For VPU loads: element is DISPATCHED (kamlet handled internally)
     For scalar loads: element is IN_FLIGHT (lamlet sent data, waiting for this RESP)
     For masked elements: element was skipped, just complete it
+    For faulted elements: record fault, complete element
     """
     witem = lamlet.get_witem_by_ident(header.ident)
     assert witem is not None, f"No witem for ident {header.ident}"
@@ -49,7 +102,12 @@ def handle_load_indexed_element_resp(lamlet: 'Lamlet', header: ElementIndexHeade
     buf = lamlet._ordered_buffers[witem.buffer_id]
     assert buf is not None, f"No ordered buffer for buffer_id {witem.buffer_id}"
     assert buf.is_load
-    if header.masked:
+    if header.fault:
+        logger.debug(f'{lamlet.clock.cycle}: handle_load_indexed_element_resp: '
+                     f'fault element={header.element_index}')
+        if buf.faulted_element is None or header.element_index < buf.faulted_element:
+            buf.faulted_element = header.element_index
+    elif header.masked:
         logger.debug(f'{lamlet.clock.cycle}: handle_load_indexed_element_resp: '
                      f'masked element={header.element_index}')
     buf.complete_element(witem.element_index)
@@ -62,6 +120,7 @@ def handle_store_indexed_element_resp(lamlet: 'Lamlet', header: ElementIndexHead
     """Handle STORE_INDEXED_ELEMENT_RESP: buffer the write for in-order processing.
 
     For masked elements, addr and data are None - just complete the element.
+    For faulted elements: record fault, complete element (no write occurs).
     """
     witem = lamlet.get_witem_by_ident(header.ident)
     assert witem is not None, f"No witem for ident {header.ident}"
@@ -70,7 +129,15 @@ def handle_store_indexed_element_resp(lamlet: 'Lamlet', header: ElementIndexHead
     assert buf is not None, f"No ordered buffer for buffer_id {witem.buffer_id}"
     assert not buf.is_load
 
-    if header.masked:
+    if header.fault:
+        logger.debug(f'{lamlet.clock.cycle}: handle_store_indexed_element_resp: '
+                     f'fault element={header.element_index}')
+        if buf.faulted_element is None or header.element_index < buf.faulted_element:
+            buf.faulted_element = header.element_index
+        buf.complete_element(witem.element_index)
+        lamlet.remove_witem_by_ident(header.ident)
+        lamlet.monitor.complete_kinstr(header.ident)
+    elif header.masked:
         logger.debug(f'{lamlet.clock.cycle}: handle_store_indexed_element_resp: '
                      f'masked element={header.element_index}')
         buf.complete_element(witem.element_index)
@@ -184,6 +251,13 @@ async def ordered_buffer_process(lamlet: 'Lamlet'):
 
             if entry is None or entry.state != ElementState.READY:
                 continue
+            # For stores: don't write elements at or after a fault - just complete them
+            # For loads: still process (sends fault response with no data)
+            if not buf.is_load and buf.faulted_element is not None and buf.next_to_process >= buf.faulted_element:
+                buf.complete_element(buf.next_to_process)
+                lamlet.remove_witem_by_ident(entry.instr_ident)
+                lamlet.monitor.complete_kinstr(entry.instr_ident)
+                continue
             if buf.is_load:
                 await _process_ordered_load(lamlet, buf, entry)
             else:
@@ -194,15 +268,21 @@ async def _process_ordered_load(lamlet: 'Lamlet', buf: OrderedBuffer, entry: 'El
     """Process a ready ordered load element."""
 
     wb = lamlet.params.word_bytes
-    word_addr = entry.addr - (entry.addr % wb)
-    data = lamlet.scalar.get_memory(word_addr, wb)
-
     element_index = buf.next_to_process
     target_x, target_y = _element_index_to_jamlet(lamlet, element_index)
 
     tag = entry.tag
     assert tag is not None
     msg_ident = (entry.instr_ident + tag + 1) % lamlet.params.max_response_tags
+
+    # Skip actual read if we're at/after a fault
+    skip_read = buf.faulted_element is not None and element_index >= buf.faulted_element
+
+    if skip_read:
+        data = None
+    else:
+        word_addr = entry.addr - (entry.addr % wb)
+        data = lamlet.scalar.get_memory(word_addr, wb)
 
     resp_header = ReadMemWordHeader(
         target_x=target_x,
@@ -211,19 +291,25 @@ async def _process_ordered_load(lamlet: 'Lamlet', buf: OrderedBuffer, entry: 'El
         source_y=lamlet.instr_y,
         message_type=MessageType.READ_MEM_WORD_RESP,
         send_type=SendType.SINGLE,
-        length=2,
+        length=1 if skip_read else 2,
         tag=tag,
         ident=msg_ident,
+        fault=skip_read,
     )
-    packet = [resp_header, data]
+    packet = [resp_header] if skip_read else [resp_header, data]
     jamlet = lamlet.kamlets[0].jamlets[0]
     transaction_span_id = lamlet.monitor.get_transaction_span_id(
         msg_ident, tag, target_x, target_y, lamlet.instr_x, lamlet.instr_y)
     if transaction_span_id is not None:
-        lamlet.monitor.add_event(
-            transaction_span_id,
-            f'ordered_scalar_read element={element_index} '
-            f'addr=0x{entry.addr:x} data={data.hex()}')
+        if skip_read:
+            lamlet.monitor.add_event(
+                transaction_span_id,
+                f'ordered_scalar_read element={element_index} SKIPPED (fault)')
+        else:
+            lamlet.monitor.add_event(
+                transaction_span_id,
+                f'ordered_scalar_read element={element_index} '
+                f'addr=0x{entry.addr:x} data={data.hex()}')
     await lamlet.send_packet(packet, jamlet, Direction.N, port=0,
                              parent_span_id=transaction_span_id)
     # Mark in-flight and advance to next element
@@ -369,10 +455,11 @@ async def _send_pending_vpu_writes(lamlet: 'Lamlet', buf: OrderedBuffer):
 async def vload_indexed_ordered(lamlet: 'Lamlet', vd: int, base_addr: int, index_reg: int,
                                 index_ew: int, data_ew: int, n_elements: int,
                                 mask_reg: int | None, start_index: int,
-                                parent_span_id: int):
+                                parent_span_id: int) -> VectorOpResult:
     """Handle ordered indexed vector loads.
 
     Dispatches LoadIndexedElement instructions one at a time, blocking until complete.
+    Returns VectorOpResult with fault info if any element faulted.
     """
     g_addr = GlobalAddress(bit_addr=base_addr * 8, params=lamlet.params)
     data_ordering = Ordering(word_order=addresses.WordOrder.STANDARD, ew=data_ew)
@@ -398,8 +485,23 @@ async def vload_indexed_ordered(lamlet: 'Lamlet', vd: int, base_addr: int, index
     )
     lamlet._ordered_buffers[buffer_id] = buf
 
+    # Send barrier instruction to all kamlets - serves as "parent" for READ_MEM_WORD ordering
+    # Use dedicated barrier ident (outside normal pool) to avoid deadlock
+    barrier_ident = lamlet._ordered_barrier_idents[buffer_id]
+    barrier_instr = OrderedIndexedLoad(instr_ident=barrier_ident)
+    await lamlet.add_to_instruction_buffer(barrier_instr, parent_span_id=parent_span_id,
+                                           k_index=None)  # None = broadcast to all
+
+    # Create sync span now (before children finalized), local_event called later
+    barrier_kinstr_span_id = lamlet.monitor.get_kinstr_span_id(barrier_ident)
+    lamlet.monitor.create_sync_local_span(barrier_ident, 0, -1, barrier_kinstr_span_id)
+
     # Dispatch all elements
     for element_index in range(n_elements):
+        # Stop dispatching once we know about a fault
+        if buf.faulted_element is not None:
+            break
+
         # Wait for buffer capacity
         while not buf.can_dispatch():
             await lamlet.clock.next_cycle
@@ -420,6 +522,7 @@ async def vload_indexed_ordered(lamlet: 'Lamlet', vd: int, base_addr: int, index
             data_ew=data_ew,
             element_index=element_index,
             instr_ident=element_ident,
+            parent_ident=barrier_ident,
             mask_reg=mask_reg,
         )
 
@@ -435,14 +538,39 @@ async def vload_indexed_ordered(lamlet: 'Lamlet', vd: int, base_addr: int, index
         dispatched_index = buf.add_dispatched(element_ident)
         assert dispatched_index == element_index
 
+    # If we broke early due to fault, only wait for dispatched elements
+    if buf.faulted_element is not None:
+        buf.n_elements = buf.next_to_dispatch
+
+    # Wait for all elements to complete
+    while not buf.all_complete():
+        await lamlet.clock.next_cycle
+
+    # Signal barrier completion via sync network
+    lamlet.synchronizer.local_event(barrier_ident)
+
+    # Wait for barrier sync to complete (all kamlets done with barrier)
+    while not lamlet.synchronizer.is_complete(barrier_ident):
+        await lamlet.clock.next_cycle
+
+    # Clean up ordered buffer
+    lamlet._ordered_buffers[buffer_id] = None
+
+    # Return result with fault info if any element faulted
+    if buf.faulted_element is not None:
+        return VectorOpResult(fault_type=TLBFaultType.READ_FAULT,
+                              element_index=buf.faulted_element)
+    return VectorOpResult()
+
 
 async def vstore_indexed_ordered(lamlet: 'Lamlet', vs: int, base_addr: int, index_reg: int,
                                  index_ew: int, data_ew: int, n_elements: int,
                                  mask_reg: int | None, start_index: int,
-                                 parent_span_id: int):
+                                 parent_span_id: int) -> VectorOpResult:
     """Handle ordered indexed vector stores.
 
     Dispatches StoreIndexedElement instructions one at a time.
+    Returns VectorOpResult with fault info if any element faulted.
     """
     g_addr = GlobalAddress(bit_addr=base_addr * 8, params=lamlet.params)
 
@@ -463,6 +591,10 @@ async def vstore_indexed_ordered(lamlet: 'Lamlet', vs: int, base_addr: int, inde
 
     # Dispatch all elements
     for element_index in range(n_elements):
+        # Stop dispatching once we know about a fault
+        if buf.faulted_element is not None:
+            break
+
         # Wait for buffer capacity
         while not buf.can_dispatch():
             await lamlet.clock.next_cycle
@@ -498,3 +630,17 @@ async def vstore_indexed_ordered(lamlet: 'Lamlet', vs: int, base_addr: int, inde
                                                k_index=k_index)
         dispatched_index = buf.add_dispatched(element_ident)
         assert dispatched_index == element_index
+
+    # If we broke early due to fault, only wait for dispatched elements
+    if buf.faulted_element is not None:
+        buf.n_elements = buf.next_to_dispatch
+
+    # Wait for all elements to complete
+    while not buf.all_complete():
+        await lamlet.clock.next_cycle
+
+    # Return result with fault info if any element faulted
+    if buf.faulted_element is not None:
+        return VectorOpResult(fault_type=TLBFaultType.WRITE_FAULT,
+                              element_index=buf.faulted_element)
+    return VectorOpResult()

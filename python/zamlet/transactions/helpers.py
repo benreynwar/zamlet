@@ -9,6 +9,33 @@ if TYPE_CHECKING:
     from zamlet.jamlet.jamlet import Jamlet
 
 
+def read_element(jamlet: 'Jamlet', reg: int, element_index: int, ew: int) -> bytes:
+    """Read a single element from a jamlet's register file.
+
+    Args:
+        jamlet: The jamlet with the register file
+        reg: Base register number
+        element_index: Global element index (across all jamlets)
+        ew: Element width in bits
+
+    Returns:
+        The element data as bytes
+    """
+    wb = jamlet.params.word_bytes
+    element_bytes = ew // 8
+    elements_in_vline = jamlet.params.vline_bytes * 8 // ew
+
+    element_in_jamlet = element_index // jamlet.params.j_in_l
+    vline_index = element_in_jamlet // (wb * 8 // ew)
+    element_in_word = element_in_jamlet % (wb * 8 // ew)
+
+    src_reg = reg + vline_index
+    byte_offset = element_in_word * element_bytes
+
+    word_data = jamlet.rf_slice[src_reg * wb: (src_reg + 1) * wb]
+    return word_data[byte_offset:byte_offset + element_bytes]
+
+
 def get_offsets_and_masks(
     jamlet: 'Jamlet',
     start_index: int,

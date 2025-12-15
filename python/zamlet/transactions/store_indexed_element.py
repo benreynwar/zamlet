@@ -14,9 +14,10 @@ import logging
 from dataclasses import dataclass
 
 from zamlet import addresses
-from zamlet.addresses import GlobalAddress
+from zamlet.addresses import GlobalAddress, TLBFaultType
 from zamlet.kamlet.kinstructions import TrackedKInstr
 from zamlet.message import MessageType, SendType, ElementIndexHeader
+from zamlet.transactions.helpers import read_element
 
 if TYPE_CHECKING:
     from zamlet.kamlet.kamlet import Kamlet
@@ -62,6 +63,28 @@ def _get_mask_bit(jamlet: 'Jamlet', mask_reg: int, element_index: int) -> bool:
     bit_in_byte = bit_index % 8
     mask_byte = jamlet.rf_slice[mask_reg * wb + byte_index]
     return bool((mask_byte >> bit_in_byte) & 1)
+
+
+def _check_element_access(jamlet: 'Jamlet', instr: 'StoreIndexedElement') -> TLBFaultType:
+    """Check TLB write access for all bytes of the element. Returns fault type or NONE."""
+    index_data = read_element(jamlet, instr.index_reg, instr.element_index, instr.index_ew)
+    byte_offset = int.from_bytes(index_data, byteorder='little', signed=False)
+
+    element_bytes = instr.data_ew // 8
+    page_bytes = jamlet.params.page_bytes
+
+    current_byte = 0
+    while current_byte < element_bytes:
+        g_addr = instr.base_addr.bit_offset((byte_offset + current_byte) * 8)
+        fault_type = jamlet.tlb.check_access(g_addr, is_write=True)
+        if fault_type != TLBFaultType.NONE:
+            return fault_type
+        # Skip to next page
+        page_offset = g_addr.addr % page_bytes
+        remaining_in_page = page_bytes - page_offset
+        current_byte += remaining_in_page
+
+    return TLBFaultType.NONE
 
 
 async def handle_store_indexed_element(kamlet: 'Kamlet',
@@ -119,6 +142,31 @@ async def handle_store_indexed_element(kamlet: 'Kamlet',
         await kamlet.wait_for_rf_available(read_regs=read_regs, instr_ident=instr.instr_ident)
         rf_ident = kamlet.rf_info.start(read_regs=read_regs, write_regs=[])
 
+        # Check TLB access - if fault, send fault response and release RF
+        fault_type = _check_element_access(jamlet, instr)
+        if fault_type != TLBFaultType.NONE:
+            logger.debug(f'{kamlet.clock.cycle}: StoreIndexedElement fault: '
+                         f'element={element_index} fault_type={fault_type}')
+            kamlet.rf_info.finish(rf_ident, read_regs=read_regs, write_regs=[])
+            header = ElementIndexHeader(
+                target_x=jamlet.lamlet_x,
+                target_y=jamlet.lamlet_y,
+                source_x=jamlet.x,
+                source_y=jamlet.y,
+                message_type=MessageType.STORE_INDEXED_ELEMENT_RESP,
+                send_type=SendType.SINGLE,
+                length=1,
+                ident=instr.instr_ident,
+                element_index=element_index,
+                fault=True,
+            )
+            kinstr_exec_span_id = kamlet.monitor.get_kinstr_exec_span_id(
+                instr.instr_ident, kamlet.min_x, kamlet.min_y)
+            assert kinstr_exec_span_id is not None
+            await jamlet.send_packet([header], parent_span_id=kinstr_exec_span_id)
+            kamlet.monitor.finalize_kinstr_exec(instr.instr_ident, kamlet.min_x, kamlet.min_y)
+            return
+
         byte_offset = _get_index_value(jamlet, instr)
         data = _get_data_value(jamlet, instr)
         g_addr = instr.base_addr.bit_offset(byte_offset * 8)
@@ -147,39 +195,10 @@ async def handle_store_indexed_element(kamlet: 'Kamlet',
 
 def _get_index_value(jamlet: 'Jamlet', instr: StoreIndexedElement) -> int:
     """Read the byte offset from the index register."""
-    wb = jamlet.params.word_bytes
-    index_ew = instr.index_ew
-    index_bytes = index_ew // 8
-    element_index = instr.element_index
-
-    elements_in_vline = jamlet.params.vline_bytes * 8 // index_ew
-    index_v = element_index // elements_in_vline
-    index_ve = element_index % elements_in_vline
-    index_we = index_ve // jamlet.params.j_in_l
-
-    index_reg = instr.index_reg + index_v
-    byte_in_word = (index_we * index_bytes) % wb
-
-    word_data = jamlet.rf_slice[index_reg * wb: (index_reg + 1) * wb]
-    index_value = int.from_bytes(word_data[byte_in_word:byte_in_word + index_bytes],
-                                 byteorder='little', signed=False)
-    return index_value
+    index_data = read_element(jamlet, instr.index_reg, instr.element_index, instr.index_ew)
+    return int.from_bytes(index_data, byteorder='little', signed=False)
 
 
 def _get_data_value(jamlet: 'Jamlet', instr: StoreIndexedElement) -> bytes:
     """Read the data from the source register."""
-    wb = jamlet.params.word_bytes
-    data_ew = instr.data_ew
-    data_bytes = data_ew // 8
-    element_index = instr.element_index
-
-    elements_in_vline = jamlet.params.vline_bytes * 8 // data_ew
-    element_in_jamlet = element_index // jamlet.params.j_in_l
-    vline_index = element_in_jamlet // (wb * 8 // data_ew)
-    element_in_word = element_in_jamlet % (wb * 8 // data_ew)
-
-    src_reg = instr.src_reg + vline_index
-    byte_offset = element_in_word * data_bytes
-
-    word_data = jamlet.rf_slice[src_reg * wb: (src_reg + 1) * wb]
-    return word_data[byte_offset:byte_offset + data_bytes]
+    return read_element(jamlet, instr.src_reg, instr.element_index, instr.data_ew)
