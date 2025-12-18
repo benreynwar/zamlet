@@ -46,7 +46,6 @@ class MessageType(Enum):
     # If it is not ready it can drop this.
     LOAD_J2J_WORDS_RESP = 17
     LOAD_J2J_WORDS_DROP = 18
-    LOAD_J2J_WORDS_RETRY = 19
 
     # Sending data to another jamlet to tell it to store it.
     STORE_J2J_WORDS_REQ = 20
@@ -62,7 +61,6 @@ class MessageType(Enum):
     LOAD_WORD_REQ = 24
     LOAD_WORD_RESP = 25
     LOAD_WORD_DROP = 26
-    LOAD_WORD_RETRY = 27
 
     # Store a partial word from register to cache (for unaligned stores)
     STORE_WORD_REQ = 28
@@ -129,13 +127,11 @@ CHANNEL_MAPPING = {
     MessageType.READ_BYTE_RESP: 0,
     MessageType.LOAD_J2J_WORDS_RESP: 0,
     MessageType.LOAD_J2J_WORDS_DROP: 0,
-    MessageType.LOAD_J2J_WORDS_RETRY: 0,
     MessageType.STORE_J2J_WORDS_RESP: 0,
     MessageType.STORE_J2J_WORDS_DROP: 0,
     MessageType.STORE_J2J_WORDS_RETRY: 0,
     MessageType.LOAD_WORD_RESP: 0,
     MessageType.LOAD_WORD_DROP: 0,
-    MessageType.LOAD_WORD_RETRY: 0,
     MessageType.STORE_WORD_RESP: 0,
     MessageType.STORE_WORD_DROP: 0,
     MessageType.STORE_WORD_RETRY: 0,

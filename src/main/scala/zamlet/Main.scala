@@ -7,6 +7,7 @@ import zamlet.utils._
 import zamlet.amlet._
 import zamlet.bamlet._
 import zamlet.gamlet._
+import zamlet.jamlet._
 
 /** Main entry point for generating Verilog from FMVPU modules.
   *
@@ -58,15 +59,20 @@ object Main extends App {
     case "ReceivePacketRS" => ReceivePacketRSGenerator
     case "SendPacketInterface" => SendPacketInterfaceGenerator
     case "ReceivePacketInterface" => ReceivePacketInterfaceGenerator
-    case "NetworkNode" => NetworkNodeGenerator
-    case "PacketInHandler" => PacketInHandlerGenerator
-    case "PacketOutHandler" => PacketOutHandlerGenerator
-    case "PacketSwitch" => PacketSwitchGenerator
+    case "NetworkNode" => amlet.NetworkNodeGenerator
+    case "PacketInHandler" => amlet.PacketInHandlerGenerator
+    case "PacketOutHandler" => amlet.PacketOutHandlerGenerator
+    case "PacketSwitch" => amlet.PacketSwitchGenerator
+    case "JamletNetworkNode" => jamlet.NetworkNodeGenerator
+    case "JamletPacketInHandler" => jamlet.PacketInHandlerGenerator
+    case "JamletPacketOutHandler" => jamlet.PacketOutHandlerGenerator
+    case "JamletPacketSwitch" => jamlet.PacketSwitchGenerator
     case "InstructionMemory" => InstructionMemoryGenerator
     //case "Lane" => LaneGenerator
     //case "LaneArray" => LaneArrayGenerator
     case "Control" => ControlGenerator
     case "Bamlet" => BamletGenerator
+    case "Jamlet" => JamletGenerator
     case "DependencyTracker" => DependencyTrackerGenerator
     case "Rename" => RenameGenerator
     case "Fifo" => FifoGenerator

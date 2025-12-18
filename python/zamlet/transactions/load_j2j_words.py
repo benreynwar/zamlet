@@ -9,7 +9,6 @@ Messages:
     LOAD_J2J_WORDS_REQ  - SRC jamlet sends data to DST jamlet
     LOAD_J2J_WORDS_RESP - DST jamlet acknowledges receipt
     LOAD_J2J_WORDS_DROP - DST jamlet wasn't ready, SRC should retry
-    LOAD_J2J_WORDS_RETRY - DST asks SRC to resend (after becoming ready)
 '''
 from typing import List, Any, TYPE_CHECKING
 import logging
@@ -174,6 +173,8 @@ async def send_req(jamlet, witem: WaitingLoadJ2JWords, tag: int) -> None:
 @register_handler(MessageType.LOAD_J2J_WORDS_REQ)
 async def handle_req(jamlet, packet: List[Any]) -> None:
     '''DST jamlet receives data and writes to register file.'''
+    # FIXME: Check if mask handling is missing here. load_simple uses get_offsets_and_masks()
+    # to skip masked elements, but this function writes all received data unconditionally.
     header = packet[0]
     assert isinstance(header, TaggedHeader)
     assert header.message_type == MessageType.LOAD_J2J_WORDS_REQ

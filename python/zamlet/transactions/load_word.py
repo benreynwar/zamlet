@@ -9,7 +9,6 @@ Messages:
     LOAD_WORD_REQ   - SRC jamlet sends word data to DST jamlet
     LOAD_WORD_RESP  - DST jamlet acknowledges receipt
     LOAD_WORD_DROP  - DST jamlet wasn't ready, SRC should retry
-    LOAD_WORD_RETRY - DST asks SRC to resend (after becoming ready)
 '''
 from typing import List, Any, TYPE_CHECKING
 import logging
@@ -62,8 +61,7 @@ class WaitingLoadWordDst(WaitingItem):
         return all(state == ReceiveState.COMPLETE for state in self.protocol_states)
 
     async def monitor_jamlet(self, jamlet: 'Jamlet') -> None:
-        if self.protocol_states[jamlet.j_in_k_index] == ReceiveState.NEED_TO_ASK_FOR_RESEND:
-            await send_retry(jamlet, self)
+        pass
 
     async def finalize(self, kamlet: 'Kamlet') -> None:
         assert all(state == ReceiveState.COMPLETE for state in self.protocol_states)
@@ -274,41 +272,5 @@ def handle_drop(jamlet: 'Jamlet', packet: List[Any]) -> None:
     logger.debug(
         f'{jamlet.clock.cycle}: LOAD_WORD: jamlet ({jamlet.x}, {jamlet.y}): '
         f'handle_load_word_drop from ({header.source_x}, {header.source_y}) - will RETRY')
-
-    witem.protocol_states[jamlet.j_in_k_index] = SendState.NEED_TO_SEND
-
-
-async def send_retry(jamlet: 'Jamlet', witem: WaitingLoadWordDst) -> None:
-    """DST jamlet sends retry to SRC when it becomes ready."""
-    instr = witem.item
-
-    target_x, target_y = addresses.k_indices_to_j_coords(
-        jamlet.params, instr.src.k_index, instr.src.j_in_k_index)
-
-    witem.protocol_states[jamlet.j_in_k_index] = ReceiveState.WAITING_FOR_REQUEST
-
-    header = TaggedHeader(
-        target_x=target_x, target_y=target_y,
-        source_x=jamlet.x, source_y=jamlet.y,
-        message_type=MessageType.LOAD_WORD_RETRY,
-        send_type=SendType.SINGLE,
-        length=1,
-        ident=instr.instr_ident, tag=0)
-
-    # Get SRC witem span as parent (RETRY is part of the SRC's request-response flow)
-    src_kamlet_min_x = (target_x // jamlet.params.j_cols) * jamlet.params.j_cols
-    src_kamlet_min_y = (target_y // jamlet.params.j_rows) * jamlet.params.j_rows
-    witem_span_id = jamlet.monitor.get_witem_span_id(
-        instr.instr_ident, src_kamlet_min_x, src_kamlet_min_y)
-
-    await jamlet.send_packet([header], parent_span_id=witem_span_id)
-
-
-@register_handler(MessageType.LOAD_WORD_RETRY)
-def handle_retry(jamlet: 'Jamlet', packet: List[Any]) -> None:
-    """SRC jamlet receives retry, resend request."""
-    header = packet[0]
-    witem = jamlet.cache_table.get_waiting_item_by_instr_ident(header.ident)
-    assert isinstance(witem, WaitingLoadWordSrc)
 
     witem.protocol_states[jamlet.j_in_k_index] = SendState.NEED_TO_SEND

@@ -69,24 +69,24 @@ class StoreProtocolState(ProtocolState):
     """
     Each store instruction requires that for each jamlet and each tag:
       - src: The src sends a request to store (with the data)
-                message = LOAD_J2J_WORDS
+                message = STORE_J2J_WORDS_REQ
               when it sends this it sets the src state is WAITING_FOR_RESPONSE
-      - dst: If the dst can't process it, it response with
-             message = LOAD_J2J_WORDS_DROP
-             it doesn't have a state for this yet, that's way it dropped it so it
+      - dst: If the dst can't process it, it responds with
+             message = STORE_J2J_WORDS_DROP
+             it doesn't have a state for this yet, that's why it dropped it so it
              can't update the state.
       - dst: If it has a state, but doesn't have the cache line ready then it goes
-             to the NEED_TO_ASK_FOR_RESENT state, but it doesn't send a message yet.
-             When the cache line is ready it sends a LOAD_J2J_WORDS_RETRY message
-             and sets it's state to WAITING_FOR_REQUEST
-      - dst: If the the cache line is ready when it gets a LOAD_J2J_WORDS message then
+             to the NEED_TO_ASK_FOR_RESEND state, but it doesn't send a message yet.
+             When the cache line is ready it sends a STORE_J2J_WORDS_RETRY message
+             and sets its state to WAITING_FOR_REQUEST
+      - dst: If the cache line is ready when it gets a STORE_J2J_WORDS_REQ then
              it sets the state to COMPLETE and writes to the cache line.
-             It sends a LOAD_J2J_WORD_RESP message
-      - src: If the src receives a LOAD_J2J_WORDS_DROP message then it sets it's state 
+             It sends a STORE_J2J_WORDS_RESP message
+      - src: If the src receives a STORE_J2J_WORDS_DROP message then it sets its state
              back to NEED_TO_SEND
-      - src: If the src receives a LOAD_J2J_WORDS_RETRY message then it also sets the 
+      - src: If the src receives a STORE_J2J_WORDS_RETRY message then it also sets the
              state back to NEED_TO_SEND
-      - src: If it receives a LOAD_J2J_WORDS_RESP message then it sets it's state to
+      - src: If it receives a STORE_J2J_WORDS_RESP message then it sets its state to
              complete.
 
     Once the state is COMPLETE for src and dst for all tags then the store is complete.

@@ -14,6 +14,9 @@ All code and documentation should be formatted to a maximum line width of 100 co
 ## Writing Style
 Avoid unnecessary marketing/promotional words like "comprehensive", "robust", "powerful", "cutting-edge", etc. unless they are truly necessary for technical accuracy. Prefer clear, direct language.
 
+## Quoting Sources
+NEVER paraphrase when using quote marks. If you use quotation marks, the text must be verbatim from the source. If you need to summarize or paraphrase, do not use quote marks.
+
 ## Module Generation
 **IMPORTANT**: When creating new modules with ModuleGenerator objects, you MUST add them to the case statement in `src/main/scala/zamlet/Main.scala`.
 
