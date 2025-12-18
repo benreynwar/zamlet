@@ -70,7 +70,7 @@ we control the response write locally.
 
 ## S1-S3: Entry Selection and Kamlet Lookup
 
-**S1**: Entry selected (has INITIAL tags AND ready_to_process=true)
+**S1**: Entry selected (oldest entry where `valid && ready_for_s1`)
 **S2**: Send kamletEntryReq with instr_ident=42
 **S3**: Receive kamletEntryResp with instruction parameters above
 
@@ -274,14 +274,16 @@ a second TLB request on the next cycle (stalls S7 and below).
 tlbResp.paddr = ...
 tlbResp.fault = NONE
 tlbResp.is_vpu = true
-tlbResp.k_index = 1
-tlbResp.j_in_k_index = 3
 tlbResp.mem_ew = 32          // source memory's element width
+tlbResp.mem_word_order = STANDARD
+
+// Compute target from paddr and word_order
+k_index, j_in_k_index = paddr_to_k_indices(tlbResp.paddr, tlbResp.mem_word_order)
+page1_target_x, page1_target_y = k_indices_to_j_coords(k_index, j_in_k_index)
 
 // Store first page info
 page1_is_vpu = tlbResp.is_vpu
 page1_mem_ew = tlbResp.mem_ew
-page1_target_x, page1_target_y = k_indices_to_j_coords(k_index=1, j_in_k_index=3)
 page1_fault = (tlbResp.fault != NONE)
 ```
 

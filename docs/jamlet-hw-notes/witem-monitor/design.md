@@ -245,6 +245,226 @@ For multi-vline transfers, each vline may have different mask bits - check per v
 - ReadMemWord, WriteMemWord -> RxCh1's RxPendingTable
 - DST-side protocol (LoadWordDst, StoreWordDst) -> RxCh1
 
+## Synchronization
+
+Some witem types (strided and indexed operations) require lamlet-wide synchronization for two
+purposes:
+
+1. **Fault sync**: Coordinate minimum faulting element across all kamlets for precise exceptions
+2. **Completion sync**: Ensure all kamlets complete before signaling done to scalar core
+
+### Which Witem Types Need Sync?
+
+| Witem Type | Fault Sync | Completion Sync | Reason |
+|------------|------------|-----------------|--------|
+| LoadStride | Yes | Yes | May access non-idempotent memory |
+| StoreStride | Yes | Yes | May access non-idempotent memory |
+| LoadIdxUnord | Yes | Yes | May access non-idempotent memory |
+| StoreIdxUnord | Yes | Yes | May access non-idempotent memory |
+| LoadIdxElement | Yes | Yes | Must report element-ordered results |
+| LoadJ2JWords | No | No | Only accesses VPU cache (idempotent) |
+| StoreJ2JWords | No | No | Only accesses VPU cache (idempotent) |
+| LoadWordSrc | No | No | Only accesses VPU cache |
+| StoreWordSrc | No | No | Only accesses VPU cache |
+
+### Architecture: Kamlet WitemTable + Per-Jamlet WitemMonitor
+
+The architecture splits witem state between kamlet and jamlet levels:
+
+```
+Kamlet
+├── Synchronizer (8 directions to neighbor kamlets)
+├── KamletWitemTable
+│   ├── Instruction parameters (from kinstr)
+│   ├── Sync state (fault_sync, completion_sync)
+│   ├── Aggregated jamlet status (j_in_k bits for fault_ready, complete_ready)
+│   └── global_min_fault (after fault sync)
+└── Jamlet[j_in_k]
+    └── WitemMonitor
+        ├── Per-jamlet protocol states (word_bytes tags per entry)
+        ├── local_min_fault (this jamlet's minimum)
+        └── 15-stage pipeline
+```
+
+**KamletWitemTable** holds:
+- Instruction parameters (base addr, stride, element width, mask reg, etc.)
+- Sync coordination state
+- Responds to `kamletEntryReq` from jamlet WitemMonitors
+
+**WitemMonitor** (per-jamlet) holds:
+- Protocol states for this jamlet's tags (`word_bytes` entries)
+- Local min fault element (for this jamlet)
+- Runs the 15-stage pipeline
+
+### KamletWitemTable Sync State
+
+Each entry in the kamlet table has sync-related fields:
+
+```
+KamletWitemEntry (sync fields):
+    needs_sync              : Bool      // true for strided/indexed types
+    fault_sync_state        : SyncPhase // NOT_STARTED, WAITING, COMPLETE
+    completion_sync_state   : SyncPhase
+    jamlet_fault_ready      : Vec(j_in_k, Bool)   // which jamlets finished first pass
+    jamlet_complete_ready   : Vec(j_in_k, Bool)   // which jamlets have all COMPLETE
+    local_min_fault         : UInt      // min across all jamlets in this kamlet
+    global_min_fault        : UInt      // from Synchronizer after fault sync
+```
+
+### Sync Interface
+
+**WitemMonitor → KamletWitemTable:**
+
+```
+// Existing interface (from design.md)
+-> kamletEntryReq    : Valid + instr_ident
+<- kamletEntryResp   : Valid + witem_type + cache_slot + reg_addr + ...
+
+// New sync signals
+-> faultReady        : Valid + instr_ident + min_fault_element
+-> completeReady     : Valid + instr_ident
+```
+
+**KamletWitemTable → WitemMonitor (broadcast):**
+
+```
+-> faultSyncComplete      : Valid + instr_ident + global_min_fault
+-> completionSyncComplete : Valid + instr_ident
+```
+
+**KamletWitemTable → Synchronizer:**
+
+```
+-> syncLocalEvent    : Valid + sync_ident + value
+<- syncComplete      : Valid + sync_ident + min_value
+```
+
+### Sync State Machine
+
+**SyncPhase enum:**
+```
+NOT_STARTED = 0   // Haven't started this sync phase
+WAITING     = 1   // Sent to Synchronizer, waiting for global result
+COMPLETE    = 2   // Sync complete, result available
+```
+
+**Fault Sync (in KamletWitemTable):**
+
+1. Each jamlet's WitemMonitor signals `faultReady(instr_ident, min_fault)` when all its tags
+   leave INITIAL state
+2. KamletWitemTable sets `jamlet_fault_ready[j_in_k_index] = true`, updates `local_min_fault`
+3. When all `jamlet_fault_ready` bits set:
+   - Send `syncLocalEvent(sync_ident=instr_ident, value=local_min_fault)` to Synchronizer
+   - Set `fault_sync_state = WAITING`
+4. When Synchronizer signals `syncComplete(sync_ident, min_value)`:
+   - Store `global_min_fault = min_value`
+   - Set `fault_sync_state = COMPLETE`
+   - Broadcast `faultSyncComplete(instr_ident, global_min_fault)` to all WitemMonitors
+
+**Completion Sync (in KamletWitemTable):**
+
+1. Each jamlet's WitemMonitor signals `completeReady(instr_ident)` when all its tags are COMPLETE
+2. KamletWitemTable sets `jamlet_complete_ready[j_in_k_index] = true`
+3. When all `jamlet_complete_ready` bits set:
+   - Send `syncLocalEvent(sync_ident=(instr_ident+1)%max_tags)` to Synchronizer (no value)
+   - Set `completion_sync_state = WAITING`
+4. When Synchronizer signals `syncComplete`:
+   - Set `completion_sync_state = COMPLETE`
+   - Broadcast `completionSyncComplete(instr_ident)` to all WitemMonitors
+
+### WitemMonitor Sync Handling
+
+Each WitemMonitor entry has local sync state:
+
+```
+WitemMonitorEntry (sync fields):
+    ready_for_s1        : Bool      // eligible for S1 selection
+    priority            : UInt      // for oldest-first selection (lower = older)
+    local_min_fault     : UInt      // min fault element for this jamlet
+    fault_signaled      : Bool      // already sent faultReady to kamlet
+    complete_signaled   : Bool      // already sent completeReady to kamlet
+```
+
+**On receiving `faultSyncComplete`:**
+1. Look up entry by `instr_ident`
+2. For each tag in WAITING_IN_CASE_FAULT:
+   - Compute element_index for this tag
+   - If element_index >= global_min_fault → set COMPLETE
+   - Else → set NEED_TO_SEND
+3. If any tags now in NEED_TO_SEND: set `ready_for_s1 = true` (re-enable for second pass)
+
+**On receiving `completionSyncComplete`:**
+1. Look up entry by `instr_ident`
+2. Signal `witemComplete` to kamlet (entry can be removed)
+
+### Two-Phase Sync and Tag Processing
+
+**Phase 1: First Pipeline Pass (S1-S12)**
+
+For strided/indexed entries, the first pass through the pipeline:
+1. S4-S10: Compute element, check mask, TLB lookup
+2. S10: If TLB returns fault AND memory is non-idempotent → record min_fault, set tag WAITING_IN_CASE_FAULT
+3. S10: If no fault OR idempotent memory → set tag NEED_TO_SEND
+4. S11-S12: Tags in NEED_TO_SEND emit to S13; tags in WAITING_IN_CASE_FAULT skip
+5. After S12 completes all tags: Check if all tags left INITIAL → trigger fault_sync_state = READY
+
+**Phase 2: Fault Sync Complete**
+
+When WitemCoordinator broadcasts `faultSyncComplete`:
+1. Store `global_min_fault` in entry
+2. For each tag in WAITING_IN_CASE_FAULT:
+   - If element_index >= global_min_fault → set COMPLETE (don't write past fault)
+   - Else → set NEED_TO_SEND (safe to proceed)
+3. Entry becomes eligible for S1 selection again (for second pass)
+
+**Phase 3: Second Pipeline Pass (S11-S12 only)**
+
+For tags that transitioned WAITING_IN_CASE_FAULT → NEED_TO_SEND:
+1. S1 selects entry again (has tags in NEED_TO_SEND)
+2. S11-S12 emit those tags to S13
+3. Tags complete normally via response handling
+
+**Phase 4: Completion Sync**
+
+When all tags reach COMPLETE:
+1. Signal `completeReady` to coordinator
+2. Wait for `completionSyncComplete`
+3. Entry can now signal `witemComplete` to kamlet
+
+### Sync Identifier Allocation
+
+Each sync needs a unique identifier across the synchronizer network:
+- Fault sync uses `instr_ident`
+- Completion sync uses `(instr_ident + 1) % max_response_tags`
+
+This works because:
+- `instr_ident` is unique per active instruction
+- Two consecutive idents are always available (sync completes before ident reuse)
+
+### Implementation Notes
+
+1. **KamletWitemTable sizing**: Same number of entries as per-jamlet WitemMonitor tables.
+   Each entry tracks one instr_ident's sync state across all jamlets.
+
+2. **Broadcast filtering**: The `faultSyncComplete` and `completionSyncComplete` signals are
+   broadcast to all jamlets. Each WitemMonitor checks if `instr_ident` matches any of its entries.
+
+3. **Entry selection**: S1 selects the entry with lowest `priority` among those where
+   `valid && ready_for_s1`. The `ready_for_s1` bit is managed as follows:
+   - Set on entry creation (if `cache_is_avail`)
+   - Set on `witemCacheAvail`
+   - Cleared after S12 completes iteration (waiting for responses or sync)
+   - Set when `faultSyncComplete` received (re-enables for second pass)
+   - Cleared after second pass S12 completes
+   - Remains cleared while waiting for `completionSyncComplete`
+
+   The `priority` field is set on entry creation and compacted on removal
+   (see pipeline-comparison.md for details).
+
+4. **Sync ident allocation**: Fault sync uses `instr_ident`, completion sync uses
+   `(instr_ident + 1) % max_response_tags`. This ensures unique idents since instructions
+   don't reuse idents until fully complete.
+
 ## Implementation Plan
 
 ### File Organization

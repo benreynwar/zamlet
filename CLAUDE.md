@@ -67,6 +67,28 @@ NEVER claim success with phrases like "The key achievement is" or similar when a
 
 NEVER declare a task "successfully complete" or use similar language until the actual end goal is achieved. Making incremental progress (like builds completing or components initializing) is not the same as task completion. The task is only complete when the final success criteria are met (e.g., tests pass, features work end-to-end). Premature success declarations are frustrating and misleading.
 
+## Wrapping up context
+When I say "wrap up this context", write a short summary of where we are at to RESTART.md. This will be used to initialize the next session. Follow the guidelines below.
+
+The purpose of this summary is so that you can continue to work on resolving the problem. What you have already done is irrelevant. What is important is what is left to do. Don't be confident about the reasons for things when debugging. You're often wrong and we don't want to bias the fresh context.
+
+DO NOT include:
+- Recent fixes or changes made during this session
+- Explanations of bugs that were found and fixed
+- Code snippets of changes
+
+DO include:
+- **The big picture goal** - What are we ultimately trying to achieve? Reference any PLAN_*.md files. This is the most important part - don't lose sight of why we're doing something.
+- Current test status (what passes, what fails)
+- The specific failure being investigated (if debugging)
+- How to reproduce the failure
+- Relevant file paths
+- What step of the plan we're on (if following a plan)
+
+The RESTART.md should allow a fresh context to understand both *what* we're doing and *why*. Start with the big picture, then narrow down to the current task.
+
+**Important**: The big picture often already exists in RESTART.md from when the session started. Preserve it - the scope should not narrow from one session to the next. If the session started with a goal like "implement monitoring system", don't reduce it to just "fix this one bug".
+
 ## Debugging bazel out
 
 When debugging Bazel builds, you need to search within the `bazel-out` directory from inside that directory:

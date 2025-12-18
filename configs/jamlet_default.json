@@ -1,0 +1,24 @@
+{
+  "xPosWidth": 8,
+  "yPosWidth": 8,
+  "wordBytes": 8,
+  "sramDepth": 256,
+  "cacheSlotWords": 16,
+  "rfSliceWords": 48,
+  "witemTableDepth": 16,
+  "identWidth": 7,
+  "nAChannels": 1,
+  "nBChannels": 1,
+  "networkNodeParams": {
+    "iaForwardBuffer": true,
+    "iaBackwardBuffer": true,
+    "abForwardBuffer": false,
+    "abBackwardBuffer": true,
+    "boForwardBuffer": true,
+    "boBackwardBuffer": false,
+    "hiForwardBuffer": true,
+    "hiBackwardBuffer": true,
+    "hoForwardBuffer": true,
+    "hoBackwardBuffer": true
+  }
+}

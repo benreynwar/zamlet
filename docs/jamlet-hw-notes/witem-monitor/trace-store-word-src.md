@@ -65,7 +65,7 @@ jamlet handles writes via WaitingStoreWordDst (separate witem).
 
 ## S1-S3: Entry Selection and Kamlet Lookup
 
-**S1**: Entry selected (has NEED_TO_SEND state)
+**S1**: Entry selected (oldest entry where `valid && ready_for_s1`)
 
 **S2**: Send kamletEntryReq with instr_ident=42
 

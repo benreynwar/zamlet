@@ -88,17 +88,58 @@ Notes:
 
 # Pipeline Stage Details
 
+## Entry Creation
+
+**Module I/O:**
+- Receives: `witemCreate.valid`, `witemCreate.instr_ident`, `witemCreate.witem_type`,
+  `witemCreate.cache_slot`, `witemCreate.cache_is_avail`
+
+**Entry table access:**
+- Allocate: find free entry slot
+- Writes: `valid = true`, `instr_ident`, `witem_type`, `cache_slot`, `cache_is_avail`,
+  `ready_for_s1 = cache_is_avail`, `priority = next_priority++`
+- Writes: all tag states = INITIAL
+- Writes: `fault_signaled = false`, `complete_signaled = false`, `local_min_fault = MAX`
+
+**Notes:**
+- Entry created before cache ready (`cache_is_avail=false`) so DST can receive REQs immediately
+- `witemCacheAvail` later sets `cache_is_avail = true` and `ready_for_s1 = true`
+- `priority` is a monotonically increasing counter used for oldest-first selection
+
+## Entry Removal
+
+**Module I/O:**
+- Receives: `witemRemove.valid`, `witemRemove.instr_ident`
+
+**Entry table access:**
+- Writes: `valid = false` for matching entry
+- Writes: decrement `priority` for all entries with `priority > removed_entry.priority`
+- Writes: decrement `next_priority`
+
+**Notes:**
+- Sent by Kamlet after receiving `witemComplete`
+- Frees the entry slot for reuse
+- Priority compaction keeps values bounded and avoids overflow
+
 ## S1: Entry Selection
 
 Selects a witem entry from the entry table that needs processing.
 
-**Selection:** Pick any entry where `needs_processing == true`.
+**Selection:** Pick the entry with lowest `priority` among those where `valid && ready_for_s1`.
 
-The `needs_processing` flag is maintained by the entry table:
-- Set when: entry created, tag transitions to NEED_TO_SEND, sync completes
-- Cleared when: all tags are COMPLETE or WAITING_FOR_RESPONSE
+**Module I/O:** None
 
-**Selection priority:** Round-robin or oldest-first among eligible entries.
+**Entry table access:**
+- Reads: `valid`, `ready_for_s1`, `priority`, `instr_ident`, `witem_type` for all entries
+
+**`ready_for_s1` management** (updated by other stages/events):
+- Set: on entry creation (if `cache_is_avail`)
+- Set: on `witemCacheAvail`
+- Cleared: when S12 finishes iteration for this entry
+- Set: when `faultSyncComplete` received and entry has tags needing second pass
+- Cleared: when second pass S12 finishes
+
+**Selection:** Oldest-first among eligible entries (lowest `priority` value wins).
 
 ### S1 → S2 Pipeline Register
 
@@ -113,6 +154,11 @@ s1_s2_reg:
 ## S2: Kamlet Request
 
 Sends a request to the kamlet to fetch instruction parameters for this entry.
+
+**Module I/O:**
+- Sends: `kamletEntryReq.valid`, `kamletEntryReq.instr_ident`
+
+**Entry table access:** None
 
 **All witem types:** Send `kamletEntryReq` with `instr_ident`.
 
@@ -134,6 +180,11 @@ s2_s3_reg:
 ## S3: Kamlet Response
 
 Receives KamletWaitingItem from kamlet. Later stages decode fields as needed.
+
+**Module I/O:**
+- Receives: `kamletEntryResp.valid`, `kamletEntryResp.kwitem`
+
+**Entry table access:** None
 
 **All witem types:** Receive `kamletEntryResp` containing the KamletWaitingItem.
 
@@ -168,6 +219,11 @@ s3_s4_reg:
 | StoreIdxUnord | Compute element index, issue index RF read + mask RF read |
 | LoadIdxUnord | Compute element index, issue index RF read + mask RF read |
 | LoadIdxElement | Compute element index, issue index RF read + mask RF read |
+
+**Module I/O:**
+- Sends (strided/indexed): `rfReq[0]` for mask read, `rfReq[1]` for index read (indexed only)
+
+**Entry table access:** None
 
 **J2J pass-through:** J2J ops don't need element computation here because they iterate over all
 `word_bytes` tags in S11-S12. All jamlets participate and determine their own mappings during
@@ -228,6 +284,10 @@ s4_s5_reg:
 
 Wait cycle for RF read latency. Pass-through stage when `s4_s5_forward_buf` is disabled.
 
+**Module I/O:** None
+
+**Entry table access:** None
+
 ### S5 → S6 Pipeline Register
 
 ```
@@ -248,6 +308,11 @@ s5_s6_reg:
 | StoreIdxUnord | Receive mask + index RF response |
 | LoadIdxUnord | Receive mask + index RF response |
 | LoadIdxElement | Receive mask + index RF response |
+
+**Module I/O:**
+- Receives (strided/indexed): `rfResp[0]` (mask word), `rfResp[1]` (index word, indexed only)
+
+**Entry table access:** None
 
 Register the RF read data for use in S7.
 
@@ -282,6 +347,10 @@ s6_s7_reg:
 | StoreIdxUnord | Check mask, compute g_addr |
 | LoadIdxUnord | Check mask, compute g_addr |
 | LoadIdxElement | Check mask, compute g_addr |
+
+**Module I/O:** None
+
+**Entry table access:** None
 
 **Mask check (strided/indexed):**
 ```
@@ -340,6 +409,11 @@ s7_s8_reg:
 | LoadIdxUnord | Issue TLB request |
 | LoadIdxElement | Issue TLB request |
 
+**Module I/O:**
+- Sends (strided/indexed): `tlbReq.valid`, `tlbReq.vaddr`, `tlbReq.isWrite`
+
+**Entry table access:** None
+
 **TLB issue (strided/indexed):**
 ```
 tlbReq.valid = element_active
@@ -371,6 +445,10 @@ s8_s9_reg:
 
 Wait cycle for TLB lookup latency. Pass-through stage when `s8_s9_forward_buf` is disabled.
 
+**Module I/O:** None
+
+**Entry table access:** None
+
 ### S9 → S10 Pipeline Register
 
 ```
@@ -391,6 +469,15 @@ s9_s10_reg:
 | StoreIdxUnord | Register TLB response |
 | LoadIdxUnord | Register TLB response |
 | LoadIdxElement | Register TLB response |
+
+**Module I/O:**
+- Receives (strided/indexed): `tlbResp.valid`, `tlbResp.paddr`, `tlbResp.is_vpu`,
+  `tlbResp.mem_ew`, `tlbResp.mem_word_order`, `tlbResp.fault`
+
+For VPU memory, target jamlet is computed from `paddr` and `mem_word_order`.
+
+**Entry table access:**
+- Writes (strided/indexed, if fault): `local_min_fault` (update if element_index < current)
 
 ### S10 → S11 Pipeline Register
 
@@ -428,6 +515,11 @@ s10_s11_reg:
 | StoreIdxUnord | Compute tag bounds (computeTagInfo) |
 | LoadIdxUnord | Compute tag bounds (computeTagInfo) |
 | LoadIdxElement | Compute tag bounds (computeTagInfo) |
+
+**Module I/O:** None
+
+**Entry table access:**
+- Writes: tag states for inactive/skipped tags (INITIAL → COMPLETE for batch-complete)
 
 This stage computes tag bounds and determines which tags are active. For multi-tag iterations,
 it maintains iteration state and stalls upstream while processing.
@@ -470,10 +562,21 @@ s11_s12_reg:
 | LoadIdxUnord | Emit tag info to S13 |
 | LoadIdxElement | Emit tag info to S13 |
 
+**Module I/O:**
+- Sends (strided/indexed, when iteration completes): `faultReady.valid`, `faultReady.instr_ident`,
+  `faultReady.min_fault_element` to KamletWitemTable
+
+**Entry table access:**
+- Writes: tag states for emitted tags (INITIAL → NEED_TO_SEND or WAITING_IN_CASE_FAULT)
+- Writes (when iteration completes): `ready_for_s1 = false`, `fault_signaled = true`
+
 For J2J ops, this stage iterates over vlines within the tag range (startVline..endVline),
 calling computeMemTagTarget/computeRegTagTarget for each. Emits one item per cycle to S13.
 
 For strided/indexed, emits tag info directly to S13.
+
+**Sync trigger:** When S12 finishes iterating all tags for an entry, it sends `faultReady` to
+the KamletWitemTable (for sync witem types) and clears `ready_for_s1`.
 
 ### S12 → S13 Pipeline Register
 
@@ -509,6 +612,12 @@ s12_s13_reg:
 | StoreIdxUnord | Issue RF read, build header |
 | LoadIdxUnord | Build header (no data to send) |
 | LoadIdxElement | Build header (no data to send) |
+
+**Module I/O:**
+- Sends (loads from cache): `sramReq.valid`, `sramReq.addr`
+- Sends (stores, data RF read): `rfReq.valid`, `rfReq.addr`
+
+**Entry table access:** None
 
 **SRAM read (LoadJ2JWords, LoadWordSrc):**
 ```
@@ -550,6 +659,10 @@ s13_s14_reg:
 
 Wait cycle for SRAM/RF read latency. Pass-through stage when `s13_s14_forward_buf` is disabled.
 
+**Module I/O:** None
+
+**Entry table access:** None
+
 ### S14 → S15 Pipeline Register
 
 ```
@@ -570,6 +683,14 @@ s14_s15_reg:
 | StoreIdxUnord | RF response, send packet |
 | LoadIdxUnord | Send packet (no data) |
 | LoadIdxElement | Send packet (no data) |
+
+**Module I/O:**
+- Receives (loads from cache): `sramResp.valid`, `sramResp.data`
+- Receives (stores): `rfResp.valid`, `rfResp.data`
+- Sends: `packetOut.valid`, `packetOut.header`, `packetOut.data`
+
+**Entry table access:**
+- Writes (after packet sent): tag state (NEED_TO_SEND → WAITING_FOR_RESPONSE)
 
 **Send packet:**
 
@@ -595,6 +716,61 @@ cycle 2: send addr
 ```
 
 **Update tag state:** After last word is accepted, set tag to WAITING_FOR_RESPONSE.
+
+---
+
+## Non-Pipeline I/O Events
+
+These events happen outside the pipeline stages but still involve module I/O and entry table updates.
+
+### Cache Available (from Kamlet)
+
+**Module I/O:**
+- Receives: `witemCacheAvail.valid`, `witemCacheAvail.instr_ident`
+
+**Entry table access:**
+- Writes: `cache_is_avail = true`, `ready_for_s1 = true` for matching entry
+
+**Notes:**
+- Signals that cache slot is now ready for this witem
+- Enables entry for S1 selection
+
+### Response Handling (from RxCh0)
+
+**Module I/O:**
+- Receives: `updateSrcState.valid`, `updateSrcState.instr_ident`, `updateSrcState.tag`,
+  `updateSrcState.new_state`
+
+**Entry table access:**
+- Writes: tag state (WAITING_FOR_RESPONSE → COMPLETE or NEED_TO_SEND on DROP)
+- Reads: check if all tags now COMPLETE
+
+**Sync trigger:** After updating tag state, if all tags are COMPLETE and `!complete_signaled`:
+- Sends: `completeReady.valid`, `completeReady.instr_ident` to KamletWitemTable
+- Writes: `complete_signaled = true`
+
+### Fault Sync Complete (from KamletWitemTable)
+
+**Module I/O:**
+- Receives: `faultSyncComplete.valid`, `faultSyncComplete.instr_ident`,
+  `faultSyncComplete.global_min_fault`
+
+**Entry table access:**
+- Writes: for each tag in WAITING_IN_CASE_FAULT:
+  - If element_index >= global_min_fault → COMPLETE
+  - Else → NEED_TO_SEND
+- Writes: `ready_for_s1 = true` (if any tags now NEED_TO_SEND)
+
+### Completion Sync Complete (from KamletWitemTable)
+
+**Module I/O:**
+- Receives: `completionSyncComplete.valid`, `completionSyncComplete.instr_ident`
+- Sends: `witemComplete.valid`, `witemComplete.instr_ident` to Kamlet
+
+**Entry table access:**
+- Entry can now be removed (after witemComplete accepted)
+
+---
 
 ### J2J Tag Iteration
 

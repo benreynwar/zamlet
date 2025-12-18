@@ -35,6 +35,11 @@ case class JamletParams(
   // Register file slice
   rfSliceWords: Int = 48,    // Number of words in RF slice
 
+  // Address and index widths
+  memAddrWidth: Int = 48,       // Global memory address width
+  // Must hold j_in_l * word_bytes * max_lmul
+  elementIndexWidth: Int = 22,
+
   // WitemTable configuration
   witemTableDepth: Int = 16,
 
@@ -59,6 +64,9 @@ case class JamletParams(
   def ident(): UInt = UInt(identWidth.W)
   def cacheSlot(): UInt = UInt(cacheSlotWidth.W)
   def word(): UInt = UInt(wordWidth.W)
+  def memAddr(): UInt = UInt(memAddrWidth.W)
+  def elementIndex(): UInt = UInt(elementIndexWidth.W)
+  def rfAddr(): UInt = UInt(rfAddrWidth.W)
 }
 
 object JamletParams {

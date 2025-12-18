@@ -69,7 +69,7 @@ kamlet level with `j_in_k * word_bytes` entries indexed by `j_in_k_index * word_
 
 ## S1-S3: Entry Selection and Kamlet Lookup
 
-**S1**: Entry selected (has INITIAL tags)
+**S1**: Entry selected (oldest entry where `valid && ready_for_s1`)
 **S2**: Send kamletEntryReq with instr_ident=42
 **S3**: Receive kamletEntryResp with instruction parameters above
 
@@ -279,14 +279,16 @@ a second TLB request on the next cycle (stalls S7 and below).
 tlbResp.paddr = ...
 tlbResp.fault = NONE
 tlbResp.is_vpu = true
-tlbResp.k_index = 1
-tlbResp.j_in_k_index = 2
 tlbResp.mem_ew = 32          // destination memory's element width (for VPU)
+tlbResp.mem_word_order = STANDARD
+
+// Compute target from paddr and word_order
+k_index, j_in_k_index = paddr_to_k_indices(tlbResp.paddr, tlbResp.mem_word_order)
+page1_target_x, page1_target_y = k_indices_to_j_coords(k_index, j_in_k_index)
 
 // Store first page info
 page1_is_vpu = tlbResp.is_vpu
 page1_mem_ew = tlbResp.mem_ew
-page1_target_x, page1_target_y = k_indices_to_j_coords(k_index=1, j_in_k_index=2)
 page1_fault = (tlbResp.fault != NONE)
 ```
 
@@ -601,91 +603,65 @@ handled by a **separate state machine outside the 15-stage pipeline**.
 
 ### Entry Table Extension
 
-Each witem entry has an additional state bit:
+Each witem entry has additional sync state (see design.md for full list):
 
 ```
-WitemEntry (for StoreStride):
+WitemEntry (sync fields):
     ...
-    ready_to_process    : Bool     // eligible for S1 selection
-    had_page_fault      : Bool     // recorded during first pass
-    global_min_fault    : UInt     // set when fault sync completes
+    ready_for_s1        : Bool     // eligible for S1 selection
+    priority            : UInt     // for oldest-first selection
+    local_min_fault     : UInt     // min fault element for this jamlet
+    fault_signaled      : Bool     // already sent faultReady to kamlet
+    complete_signaled   : Bool     // already sent completeReady to kamlet
 ```
 
 ### Sync Interface
 
-WitemMonitor has an interface to send/receive sync events:
+See design.md and pipeline-comparison.md for full sync interface documentation.
 
+**WitemMonitor → KamletWitemTable:**
 ```
-// Send local event to synchronizer (triggered after S6 completes all tags)
--> syncLocalEvent.valid     : Bool
--> syncLocalEvent.ident     : UInt     // fault_sync uses instr_ident, completion_sync uses instr_ident+1
--> syncLocalEvent.value     : UInt     // min_fault_element (or max value if no faults)
+-> faultReady        : Valid + instr_ident + min_fault_element
+-> completeReady     : Valid + instr_ident
 ```
 
-### Sync Receiver Hardware
-
-WitemMonitor has hardware that receives sync completions from the synchronizer:
-
+**KamletWitemTable → WitemMonitor (broadcast):**
 ```
-// On sync completion signal from synchronizer
-syncComplete.valid     : Bool
-syncComplete.ident     : UInt
-syncComplete.min_value : UInt     // global min fault element (or max if no faults)
-
-// When sync completes, find matching entry and update
-when syncComplete.valid:
-    entry = lookup_entry_by_sync_ident(syncComplete.ident)
-    if entry is fault_sync:
-        entry.global_min_fault = syncComplete.min_value
-        entry.ready_to_process = true   // re-enable for second pass
-    else if entry is completion_sync:
-        // witem is done, signal witemComplete
+<- faultSyncComplete      : Valid + instr_ident + global_min_fault
+<- completionSyncComplete : Valid + instr_ident
 ```
 
 ### Phase 1: Fault Sync
 
 **First pass through pipeline (S4-S12):**
-- Process element, recording had_page_fault if TLB fault occurs
-- Tags go to WAITING_IN_CASE_FAULT (non-idempotent), WAITING_FOR_RESPONSE, or COMPLETE
-- After S12 finishes: set ready_to_process=0, trigger fault sync
+- Process element, recording local_min_fault if TLB fault occurs
+- Tags go to WAITING_IN_CASE_FAULT (non-idempotent), NEED_TO_SEND, or COMPLETE
+- After S12 finishes: set `ready_for_s1 = false`, send `faultReady` to KamletWitemTable
 
-```
-// Trigger fault sync after first pass
-fault_sync_ident = instr_ident
-synchronizer.local_event(fault_sync_ident, value=min_fault_element)
-entry.ready_to_process = false
-```
+**After fault sync completes:**
+- `faultSyncComplete` received with `global_min_fault`
+- For each tag in WAITING_IN_CASE_FAULT:
+  - If element_index >= global_min_fault: set COMPLETE
+  - Else: set NEED_TO_SEND
+- If any tags now NEED_TO_SEND: set `ready_for_s1 = true`
 
-**After fault sync completes (sync receiver):**
-- Sync receiver sets global_min_fault and ready_to_process=true
-- Entry becomes eligible for S1 selection again
-
-**Second pass through pipeline (S11-S12):**
-- S11-S12 checks tags in WAITING_IN_CASE_FAULT state
-- If src_e >= global_min_fault: set COMPLETE (don't write past fault)
-- Else: set NEED_TO_SEND (will proceed through S13-S15)
-- After S12 finishes: set ready_to_process=0, trigger completion sync
+**Second pass through pipeline (S11-S12 only):**
+- S1 selects entry again (has tags in NEED_TO_SEND)
+- S11-S12 emit those tags to S13
+- After S12 finishes: set `ready_for_s1 = false`
 
 ### Phase 2: Completion Sync
 
 After all transaction_states are COMPLETE:
+- Send `completeReady` to KamletWitemTable
+- Wait for `completionSyncComplete`
+- Signal `witemComplete` to kamlet
 
-```
-completion_sync_ident = (instr_ident + 1) % max_response_tags
-synchronizer.local_event(completion_sync_ident)
-entry.ready_to_process = false
-```
+### S1 Selection
 
-When completion sync completes, witem is ready for finalization.
+S1 selects the entry with lowest `priority` among those where `valid && ready_for_s1`.
 
-### S1 Selection Criteria
-
-S1 selects entries where:
-```
-entry.valid &&
-entry.ready_to_process &&
-(any tag in INITIAL || any tag in NEED_TO_SEND || any tag in WAITING_IN_CASE_FAULT)
-```
+See pipeline-comparison.md for full `ready_for_s1` management rules.
 
 ## Completion
 

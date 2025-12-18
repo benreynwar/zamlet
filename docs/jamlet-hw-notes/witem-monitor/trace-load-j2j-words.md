@@ -66,7 +66,7 @@ at the kamlet level with `j_in_k * word_bytes` entries indexed by `j_in_k_index 
 
 ## S1-S3: Entry Selection and Kamlet Lookup
 
-**S1**: Entry selected (has INITIAL tags and cache_is_avail=true)
+**S1**: Entry selected (oldest entry where `valid && ready_for_s1`)
 **S2**: Send kamletEntryReq with instr_ident=42
 **S3**: Receive kamletEntryResp with instruction parameters above
 
