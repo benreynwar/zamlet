@@ -54,6 +54,9 @@ To get area analysis for components, add them to the appropriate DSE BUILD file:
 Run DSE flows using: `bazel build //dse/{component}:{study_name}__{pdk}_results`
 Example: `bazel build //dse/bamlet:Bamlet_default__asap7_results`
 
+## Bazel
+NEVER run `bazel clean` or `bazel clean --expunge` unless explicitly told to by the user.
+
 ## Grep Tool Usage
 When using the Grep tool for searching code:
 - **DO NOT** put extra quotes inside the pattern parameter value
@@ -66,6 +69,8 @@ When using the Grep tool for searching code:
 NEVER claim success with phrases like "The key achievement is" or similar when a task has failed. Be honest about failures and focus on what still needs to be done rather than trying to spin partial progress as success. This is irritating and unhelpful.
 
 NEVER declare a task "successfully complete" or use similar language until the actual end goal is achieved. Making incremental progress (like builds completing or components initializing) is not the same as task completion. The task is only complete when the final success criteria are met (e.g., tests pass, features work end-to-end). Premature success declarations are frustrating and misleading.
+
+We are working on this together - this is collaborative work. When you encounter something difficult, do NOT skip it or use placeholder values. Instead, explain what is difficult so we can discuss and solve it together. Many parts will be too hard to do alone and that's expected.
 
 ## Wrapping up context
 When I say "wrap up this context", write a short summary of where we are at to RESTART.md. This will be used to initialize the next session. Follow the guidelines below.

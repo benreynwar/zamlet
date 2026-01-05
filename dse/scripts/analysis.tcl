@@ -40,24 +40,23 @@ if {[llength [all_clocks]] > 0} {
 report_worst_slack > ${output_base}/${target_name}_slack_summary.rpt
 
 # Timing summary by path groups
+set all_registers_list [all_registers]
+set has_registers [expr {[llength $all_registers_list] > 0}]
+
 foreach group {in2reg reg2out reg2reg in2out} {
-    if {$group == "in2reg"} {
+    set paths {}
+    if {$group == "in2reg" && $has_registers} {
         set all_inputs_list [all_inputs]
-        set all_registers_list [all_registers]
         set paths [find_timing_paths -from $all_inputs_list -to $all_registers_list -sort_by_slack -group_path_count 5]
-    } elseif {$group == "reg2out"} {
-        set all_registers_list [all_registers]
+    } elseif {$group == "reg2out" && $has_registers} {
         set all_outputs_list [all_outputs]
         set paths [find_timing_paths -from $all_registers_list -to $all_outputs_list -sort_by_slack -group_path_count 5]
-    } elseif {$group == "reg2reg"} {
-        set all_registers_list [all_registers]
+    } elseif {$group == "reg2reg" && $has_registers} {
         set paths [find_timing_paths -from $all_registers_list -to $all_registers_list -sort_by_slack -group_path_count 5]
     } elseif {$group == "in2out"} {
         set all_inputs_list [all_inputs]
         set all_outputs_list [all_outputs]
         set paths [find_timing_paths -from $all_inputs_list -to $all_outputs_list -sort_by_slack -group_path_count 5]
-    } else {
-        set paths {}
     }
     if {[llength $paths] > 0} {
         set f [open ${output_base}/${target_name}_${group}_paths.rpt w]

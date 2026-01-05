@@ -15,13 +15,6 @@ class ChannelsIO(params: JamletParams, nChannels: Int) extends Bundle {
   val wo = Vec(nChannels, Decoupled(new NetworkWord(params)))
 }
 
-/** Instruction/witem dispatch from kamlet */
-class WitemDispatch(params: JamletParams) extends Bundle {
-  val instrIdent = params.ident()
-  val cacheSlot = params.cacheSlot()
-  val cacheIsAvail = Bool()
-  // TODO: add witem-specific fields
-}
 
 /** Cache slot request from jamlet (for RX-initiated witems) */
 class CacheSlotReq(params: JamletParams) extends Bundle {
@@ -66,7 +59,7 @@ class Jamlet(params: JamletParams) extends Module {
     val bChannels = new ChannelsIO(params, params.nBChannels)
 
     // Instruction interface (from kamlet)
-    val dispatch = Flipped(Valid(new WitemDispatch(params)))
+    val witemCreate = Flipped(Valid(new WitemCreate(params)))
     val witemCacheAvail = Flipped(Valid(params.ident()))
     val witemRemove = Flipped(Valid(params.ident()))
     val witemComplete = Valid(params.ident())
@@ -98,7 +91,7 @@ class Jamlet(params: JamletParams) extends Module {
   // val witemTable = Module(new WitemTable(params))
   // val rxA = Module(new RxA(params))
   // val rxB = Module(new RxB(params))
-  // val witemMonitor = Module(new WitemMonitor(params))
+  val witemMonitor = Module(new WitemMonitor(params))
   // val aArbiter = Module(new ChArbiter(params))
   // val bArbiter = Module(new ChArbiter(params))
   // val alu = Module(new ALU(params))
@@ -201,11 +194,48 @@ class Jamlet(params: JamletParams) extends Module {
   // io.kamletReceivePacket <> rxB.io.kamletForward  // instructions forwarded to kamlet
 
   // ============================================================
-  // Temporary: tie off non-network outputs
+  // WitemMonitor connections
   // ============================================================
 
-  io.witemComplete.valid := false.B
-  io.witemComplete.bits := DontCare
+  witemMonitor.io.thisX := io.thisX
+  witemMonitor.io.thisY := io.thisY
+  witemMonitor.io.witemCreate := io.witemCreate
+  witemMonitor.io.witemCacheAvail := io.witemCacheAvail
+  witemMonitor.io.witemRemove := io.witemRemove
+  io.witemComplete := witemMonitor.io.witemComplete
+
+  // Tie off unconnected WitemMonitor ports
+  witemMonitor.io.witemInfoReq.ready := true.B
+  witemMonitor.io.witemInfoResp.valid := false.B
+  witemMonitor.io.witemInfoResp.bits := DontCare
+  witemMonitor.io.witemSrcUpdate.valid := false.B
+  witemMonitor.io.witemSrcUpdate.bits := DontCare
+  witemMonitor.io.witemDstUpdate.valid := false.B
+  witemMonitor.io.witemDstUpdate.bits := DontCare
+  witemMonitor.io.witemFaultSync.valid := false.B
+  witemMonitor.io.witemFaultSync.bits := DontCare
+  witemMonitor.io.witemCompletionSync.valid := false.B
+  witemMonitor.io.witemCompletionSync.bits := DontCare
+  witemMonitor.io.tlbReq.ready := true.B
+  witemMonitor.io.tlbResp.valid := false.B
+  witemMonitor.io.tlbResp.bits := DontCare
+  witemMonitor.io.sramResp.valid := false.B
+  witemMonitor.io.sramResp.bits := DontCare
+  witemMonitor.io.sramReq.ready := false.B
+  witemMonitor.io.maskRfReq.ready := true.B
+  witemMonitor.io.maskRfResp.valid := false.B
+  witemMonitor.io.maskRfResp.bits := DontCare
+  witemMonitor.io.indexRfReq.ready := true.B
+  witemMonitor.io.indexRfResp.valid := false.B
+  witemMonitor.io.indexRfResp.bits := DontCare
+  witemMonitor.io.dataRfReq.ready := true.B
+  witemMonitor.io.dataRfResp.valid := false.B
+  witemMonitor.io.dataRfResp.bits := DontCare
+  witemMonitor.io.packetOut.ready := false.B
+
+  // ============================================================
+  // Temporary: tie off non-network outputs
+  // ============================================================
 
   io.cacheSlotReq.valid := false.B
   io.cacheSlotReq.bits := DontCare

@@ -73,7 +73,7 @@ class WitemEntry(params: JamletParams) extends Bundle {
 
   // Selection and scheduling
   val readyForS1 = Bool()
-  val priority = UInt(log2Ceil(params.witemTableDepth + 1).W)
+  val priority = UInt(log2Ceil(params.witemTableDepth).W)
 }
 
 /** Witem creation from kamlet */
@@ -90,21 +90,13 @@ class WitemInfoReq(params: JamletParams) extends Bundle {
 
 /** Response with witem instruction parameters */
 class WitemInfoResp(params: JamletParams) extends Bundle {
-  val cacheSlot = params.cacheSlot()
-  val memWordOrder = WordOrder()
-  val rfWordOrder = WordOrder()
-  val memEwCode = EwCode()
-  val rfEwCode = EwCode()
+  // Raw instruction (cast to WordInstr/J2JInstr/StridedInstr/IndexedInstr based on witem type)
+  val kinstr = UInt(KInstr.width.W)
+
+  // Resolved values from param memory lookup (for instructions that use indices)
   val baseAddr = params.memAddr()
-  val startIndex = params.elementIndex()
+  val strideBytes = SInt(params.memAddrWidth.W)
   val nElements = params.elementIndex()
-  val stride = SInt(params.memAddrWidth.W)
-  val srcReg = params.rfAddr()
-  val dstReg = params.rfAddr()
-  val maskReg = params.rfAddr()
-  val indexReg = params.rfAddr()
-  val maskEnabled = Bool()
-  val needsSync = Bool()
 }
 
 /** Witem src state update from RxCh0 */
@@ -177,4 +169,11 @@ class TlbResp(params: JamletParams) extends Bundle {
   val memEwCode = EwCode()
   val memWordOrder = WordOrder()
   val fault = Bool()
+}
+
+/** WitemMonitor error signals */
+class WitemMonitorErrors extends Bundle {
+  val noFreeSlot = Bool()
+  val priorityOverflow = Bool()
+  val invalidEw = Bool()
 }

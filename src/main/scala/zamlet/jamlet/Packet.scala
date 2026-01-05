@@ -72,7 +72,8 @@ object MessageType extends ChiselEnum {
 }
 
 /**
- * Packet header structure
+ * Packet header structure (base class) - not instantiated directly
+ * Python: 43 bits (target_x:8, target_y:8, source_x:8, source_y:8, length:4, message_type:5, send_type:2)
  */
 class PacketHeader(params: JamletParams) extends Bundle {
   val targetX = UInt(params.xPosWidth.W)
@@ -82,6 +83,57 @@ class PacketHeader(params: JamletParams) extends Bundle {
   val length = UInt(4.W)
   val messageType = MessageType()
   val sendType = SendType()
+}
+
+/**
+ * Header with instruction identifier - not instantiated directly
+ * Python: 48 bits (+5 for ident)
+ * Note: Python uses 5-bit ident, params.identWidth is 7
+ */
+class IdentHeader(params: JamletParams) extends PacketHeader(params) {
+  val ident = UInt(params.identWidth.W)
+}
+
+/**
+ * Header with ident and tag for multi-response protocols
+ * Python: 52 bits (+4 for tag)
+ */
+class TaggedHeader(params: JamletParams) extends IdentHeader(params) {
+  val tag = UInt(4.W)
+}
+
+/**
+ * Tagged header with per-word mask for J2J operations
+ * 10-bit mask (reduced from Python's 12 to fit with 7-bit ident)
+ */
+class MaskedTaggedHeader(params: JamletParams) extends TaggedHeader(params) {
+  val mask = UInt(10.W)
+
+  require(this.getWidth <= params.wordWidth,
+    s"MaskedTaggedHeader exceeds word width: ${this.getWidth} > ${params.wordWidth}")
+}
+
+/**
+ * Header for WriteMemWord requests
+ * Python: TaggedHeader + dst_byte_in_word(3) + n_bytes(3)
+ */
+class WriteMemWordHeader(params: JamletParams) extends TaggedHeader(params) {
+  val dstByteInWord = UInt(3.W)
+  val nBytes = UInt(3.W)
+
+  require(this.getWidth <= params.wordWidth,
+    s"WriteMemWordHeader exceeds word width: ${this.getWidth} > ${params.wordWidth}")
+}
+
+/**
+ * Header for ReadMemWord requests
+ * Python: TaggedHeader + fault flag
+ */
+class ReadMemWordHeader(params: JamletParams) extends TaggedHeader(params) {
+  val fault = Bool()
+
+  require(this.getWidth <= params.wordWidth,
+    s"ReadMemWordHeader exceeds word width: ${this.getWidth} > ${params.wordWidth}")
 }
 
 /**

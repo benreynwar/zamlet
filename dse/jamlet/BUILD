@@ -10,6 +10,11 @@ JAMLET_STUDIES = [
         "top_level": "Jamlet",
         "config_file": "//configs:jamlet_default.json",
     },
+    {
+        "name": "WitemMonitor_default",
+        "top_level": "WitemMonitor",
+        "config_file": "//configs:jamlet_default.json",
+    },
 ]
 
 # Generate all DSE flows and filegroups

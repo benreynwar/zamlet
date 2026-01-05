@@ -73,6 +73,7 @@ object Main extends App {
     case "Control" => ControlGenerator
     case "Bamlet" => BamletGenerator
     case "Jamlet" => JamletGenerator
+    case "WitemMonitor" => jamlet.WitemMonitorGenerator
     case "DependencyTracker" => DependencyTrackerGenerator
     case "Rename" => RenameGenerator
     case "Fifo" => FifoGenerator
