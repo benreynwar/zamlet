@@ -85,6 +85,11 @@ class S11StridedIndexedState(params: JamletParams) extends Bundle {
   val portionEndInWord = UInt((params.log2WordBytes + 1).W)
   val rfElementBytes = UInt(4.W)  // ebPlusOneWidth
   val memElementBytes = UInt(4.W)  // ebPlusOneWidth
+
+  // Fault tracking: set when TLB fault detected, persists across elements of same entry
+  val faulted = Bool()
+  val faultElementIndex = params.elementIndex()  // Element where fault occurred
+  val lastInstrIdent = params.ident()
 }
 
 class S11J2JState(params: JamletParams) extends Bundle {
@@ -510,7 +515,8 @@ object S11J2J {
 class S11StridedIndexedResult(params: JamletParams) extends Bundle {
   val output = new S12S13Reg(params)
   val nextState = new S11StridedIndexedState(params)
-  val outValid = Bool()
+  val outValid = Bool()       // Emit to S12+ (send packet)
+  val skipAndComplete = Bool() // Don't send, but set tag srcState=Complete directly
   val finished = Bool()
 }
 
@@ -539,6 +545,10 @@ object S11StridedIndexed {
     val ebWidth = 3  // Element boundary: 0-7 for max 8-byte elements
     val ebPlusOneWidth = 4  // For byte counts: 1-8
 
+    // Fault tracking: reset on new entry, set on TLB fault, persists across elements
+    val isNewEntry = in_input.instrIdent =/= in_state.lastInstrIdent
+    val effectiveFaulted = Mux(isNewEntry, false.B, in_state.faulted) || in_input.tlbFault
+
     // Pass-through fields (always set regardless of phase)
     result.output.entryIndex := in_input.entryIndex
     result.output.instrIdent := in_input.instrIdent
@@ -546,6 +556,13 @@ object S11StridedIndexed {
     result.output.witemInfo := in_input.witemInfo
     result.output.rfV := in_input.rfV
     result.output.isVpu := in_input.isVpu
+
+    // Propagate fault state, element index, and instrIdent to next state
+    result.nextState.faulted := effectiveFaulted
+    // Record element index on first fault (when transitioning from not-faulted to faulted)
+    val newFault = in_input.tlbFault && !Mux(isNewEntry, false.B, in_state.faulted)
+    result.nextState.faultElementIndex := Mux(newFault, in_input.elementIndex, in_state.faultElementIndex)
+    result.nextState.lastInstrIdent := in_input.instrIdent
 
     when(!in_state.phase) {
       // =========================================================================
@@ -605,6 +622,7 @@ object S11StridedIndexed {
       result.output.targetY := 0.U
       result.output.paddr := 0.U
       result.outValid := false.B
+      result.skipAndComplete := false.B
       result.finished := false.B
 
     }.otherwise {
@@ -677,8 +695,10 @@ object S11StridedIndexed {
       result.nextState.rfElementBytes := 0.U
       result.nextState.memElementBytes := 0.U
 
-      // Emit output when tag is active
-      result.outValid := tagActive
+      // Emit output when tag is active and not faulted
+      // When faulted, skip sending but signal to set tag Complete directly
+      result.outValid := tagActive && !effectiveFaulted
+      result.skipAndComplete := tagActive && effectiveFaulted
 
       // Finished when past the last tag
       result.finished := iterDone
@@ -1618,8 +1638,12 @@ class WitemMonitor(params: JamletParams) extends Module {
     init.portionEndInWord := 0.U
     init.rfElementBytes := 0.U
     init.memElementBytes := 0.U
+    init.faulted := false.B
+    init.faultElementIndex := 0.U
+    init.lastInstrIdent := 0.U
     init
   })
+
   val s11SI = S11StridedIndexed.compute(params, s11In.bits, s11SIState)
 
   // WordSrc pass-through computation
@@ -1679,13 +1703,17 @@ class WitemMonitor(params: JamletParams) extends Module {
   // Error for invalid element width in J2J
   err.invalidEw := s11IsJ2J && s11J2J.invalidEw
 
+  // For strided/indexed: skipAndComplete means set tag srcState=Complete directly
+  val s11IsStridedIndexed = !s11IsJ2J && !s11IsWordSrc
+  val s11SkipAndComplete = s11IsStridedIndexed && s11SI.skipAndComplete
+
   // S11 output
   val s11Out = Wire(Decoupled(new S12S13Reg(params)))
   s11Out.bits := s11Output
   s11Out.valid := s11In.valid && s11OutValid
 
-  // Can progress when downstream accepts or not emitting
-  val s11CanProgress = s11Out.ready || !s11OutValid
+  // Can progress when downstream accepts or not emitting or skipping
+  val s11CanProgress = s11Out.ready || !s11OutValid || s11SkipAndComplete
 
   // Update appropriate state when input valid and can progress
   when(s11In.valid && s11CanProgress) {
@@ -1696,8 +1724,32 @@ class WitemMonitor(params: JamletParams) extends Module {
     }
   }
 
+  // When skipping due to fault, set tag srcState to Complete directly
+  when(s11In.valid && s11SkipAndComplete && s11CanProgress) {
+    entries(s11SI.output.entryIndex).tagStates(s11SI.output.srcTag).srcState :=
+      WitemSendState.Complete
+  }
+
   // Can consume input only when current computation is finished and can progress
   s11In.ready := s11Finished && s11CanProgress
+
+  // Signal faultReady when S11 finishes for strided/indexed entry
+  // This transitions entry from Active to WaitingForFaultSync
+  val s11EntryConsumed = s11In.fire && s11Finished && s11IsStridedIndexed
+  val s11EntryIndex = s11In.bits.entryIndex
+  val s11EntryIsActive = entries(s11EntryIndex).state === WitemEntryState.Active
+
+  when(s11EntryConsumed && s11EntryIsActive) {
+    entries(s11EntryIndex).state := WitemEntryState.WaitingForFaultSync
+  }
+
+  // faultReady output: signal when entry transitions to WaitingForFaultSync
+  val s11SignalFaultReady = s11EntryConsumed && s11EntryIsActive
+  val s11FaultReadyIdent = s11In.bits.instrIdent
+  val s11HasFault = s11SIState.faulted || s11In.bits.tlbFault  // Current or previous fault
+  val s11FaultElement = Mux(s11In.bits.tlbFault && !s11SIState.faulted,
+                            s11In.bits.elementIndex,
+                            s11SIState.faultElementIndex)
 
   val s12In = DoubleBuffer(s11Out, wmp.s11s12ForwardBuffer, wmp.s11s12BackwardBuffer)
 
@@ -2011,28 +2063,56 @@ class WitemMonitor(params: JamletParams) extends Module {
     }
   }
 
+  // Update srcState to WaitingForResponse when packet is successfully sent
+  // This happens when s16In fires (ready and valid both true)
+  when(s16In.fire) {
+    entries(s16In.bits.entryIndex).tagStates(s16In.bits.srcTag).srcState :=
+      WitemSendState.WaitingForResponse
+  }
+
   // -------------------------------------------------------------------------
   // Completion Detector
   // -------------------------------------------------------------------------
-  val entryComplete = VecInit(entries.map { e =>
+  // Sync types (strided/indexed) complete via completionSync path
+  // Non-sync types (J2J, WordSrc) complete directly when all tags are done
+  def isSyncType(wt: WitemType.Type): Bool = {
+    (wt === WitemType.LoadStride) || (wt === WitemType.StoreStride) ||
+    (wt === WitemType.LoadIdxUnord) || (wt === WitemType.StoreIdxUnord) ||
+    (wt === WitemType.LoadIdxElement)
+  }
+
+  // Non-sync entries: complete when all tags Complete and state is Active
+  val nonSyncEntryComplete = VecInit(entries.map { e =>
     val allTagsComplete = VecInit(e.tagStates.map { ts =>
       ts.srcState === WitemSendState.Complete && ts.dstState === WitemRecvState.Complete
     }).reduceTree(_ && _)
-    e.valid && e.state =/= WitemEntryState.Complete && allTagsComplete
+    e.valid && e.state === WitemEntryState.Active && !isSyncType(e.witemType) && allTagsComplete
   })
 
-  val anyComplete = entryComplete.reduceTree(_ || _)
-  val completeIndex = PriorityEncoder(entryComplete)
+  val anyNonSyncComplete = nonSyncEntryComplete.reduceTree(_ || _)
+  val nonSyncCompleteIndex = PriorityEncoder(nonSyncEntryComplete)
 
-  // Mark entry as Complete when signaling
-  when(anyComplete) {
-    entries(completeIndex).state := WitemEntryState.Complete
+  when(anyNonSyncComplete) {
+    entries(nonSyncCompleteIndex).state := WitemEntryState.Complete
   }
 
-  // Optional output register
+  // Sync entries: complete when completionSync received
+  val completionSyncMatch = entries.map(e =>
+    e.valid && e.instrIdent === witemCompletionSync.bits.instrIdent &&
+    e.state === WitemEntryState.WaitingForCompletionSync)
+  val completionSyncIndex = OHToUInt(completionSyncMatch)
+  val completionSyncValid = witemCompletionSync.valid && completionSyncMatch.reduce(_ || _)
+
+  when(completionSyncValid) {
+    entries(completionSyncIndex).state := WitemEntryState.Complete
+  }
+
+  // witemComplete: non-sync completing directly OR sync completing via completionSync
   val witemCompleteOut = Wire(Valid(params.ident()))
-  witemCompleteOut.valid := anyComplete
-  witemCompleteOut.bits := entries(completeIndex).instrIdent
+  witemCompleteOut.valid := anyNonSyncComplete || completionSyncValid
+  witemCompleteOut.bits := Mux(anyNonSyncComplete,
+                               entries(nonSyncCompleteIndex).instrIdent,
+                               entries(completionSyncIndex).instrIdent)
 
   if (wmp.witemCompleteOutputReg) {
     io.witemComplete := RegNext(witemCompleteOut)
@@ -2074,11 +2154,39 @@ class WitemMonitor(params: JamletParams) extends Module {
       witemDstUpdateIn.bits.newState
   }
 
-  // TODO: remaining pipeline features
-  witemFaultReady.valid := false.B
-  witemFaultReady.bits := DontCare
-  witemCompleteReady.valid := false.B
-  witemCompleteReady.bits := DontCare
+  // faultReady: signal when strided/indexed entry finishes first pass
+  witemFaultReady.valid := s11SignalFaultReady
+  witemFaultReady.bits.instrIdent := s11FaultReadyIdent
+  witemFaultReady.bits.hasFault := s11HasFault
+  witemFaultReady.bits.minFaultElement := s11FaultElement
+
+  // -------------------------------------------------------------------------
+  // faultSync handling: transition entry from WaitingForFaultSync to WaitingForCompletionSync
+  // -------------------------------------------------------------------------
+  val faultSyncMatch = entries.map(e =>
+    e.valid && e.instrIdent === witemFaultSync.bits.instrIdent &&
+    e.state === WitemEntryState.WaitingForFaultSync)
+  val faultSyncIndex = OHToUInt(faultSyncMatch)
+
+  when(witemFaultSync.valid) {
+    entries(faultSyncIndex).state := WitemEntryState.WaitingForCompletionSync
+  }
+
+  // -------------------------------------------------------------------------
+  // completeReady: signal when all tags are Complete for sync entry in WaitingForCompletionSync
+  // -------------------------------------------------------------------------
+  val syncEntryCompleteReady = VecInit(entries.map { e =>
+    val allTagsComplete = VecInit(e.tagStates.map { ts =>
+      ts.srcState === WitemSendState.Complete && ts.dstState === WitemRecvState.Complete
+    }).reduceTree(_ && _)
+    e.valid && e.state === WitemEntryState.WaitingForCompletionSync && allTagsComplete
+  })
+
+  val anySyncCompleteReady = syncEntryCompleteReady.reduceTree(_ || _)
+  val syncCompleteReadyIndex = PriorityEncoder(syncEntryCompleteReady)
+
+  witemCompleteReady.valid := anySyncCompleteReady
+  witemCompleteReady.bits := entries(syncCompleteReadyIndex).instrIdent
 }
 
 object WitemMonitorGenerator extends zamlet.ModuleGenerator {

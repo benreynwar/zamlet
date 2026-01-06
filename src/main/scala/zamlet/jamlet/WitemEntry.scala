@@ -74,6 +74,10 @@ class WitemEntry(params: JamletParams) extends Bundle {
   // Selection and scheduling
   val readyForS1 = Bool()
   val priority = UInt(log2Ceil(params.witemTableDepth).W)
+
+  // Fault tracking for strided/indexed operations
+  val hasFault = Bool()
+  val minFaultElement = params.elementIndex()
 }
 
 /** Witem creation from kamlet */
