@@ -19,7 +19,14 @@ RESET_VECTOR = DRAM_BASE
 
 # Test markers
 TEST_DATA_ADDR = 0x80001000
-DONE_MARKER_ADDR = 0x60000000  # MMIO space (uncached)
+# MMIO layout at 0x60000000:
+#   +0x00: expected value (what we wrote)
+#   +0x08: actual value (what we read back)
+#   +0x10: status (1 = success, -1 = failure)
+MMIO_BASE = 0x60000000
+MMIO_EXPECTED = MMIO_BASE + 0x00
+MMIO_ACTUAL = MMIO_BASE + 0x08
+MMIO_STATUS = MMIO_BASE + 0x10
 
 
 def chisel_axi_bus(dut, prefix):
@@ -158,28 +165,35 @@ async def test_simple_program(dut):
 
     cocotb.log.info("Reset released, starting execution")
 
+    def read_mmio_u64(addr):
+        """Read a 64-bit value from MMIO RAM."""
+        return int.from_bytes(bytes(mmio_ram.mem[addr:addr+8]), byteorder='little')
+
     # Wait for done marker (with timeout)
     timeout_cycles = 10000
     for cycle in range(timeout_cycles):
         await RisingEdge(dut.clock)
 
-        # Check done marker every 100 cycles
+        # Check status every 100 cycles
         if cycle % 100 == 0:
-            # Read from MMIO sparse memory (done marker is written to MMIO space)
-            done_value = int.from_bytes(
-                bytes(mmio_ram.mem[DONE_MARKER_ADDR:DONE_MARKER_ADDR+4]),
-                byteorder='little'
-            )
-            if done_value == 1:
+            status = read_mmio_u64(MMIO_STATUS)
+
+            if status == 1:
+                expected = read_mmio_u64(MMIO_EXPECTED)
+                actual = read_mmio_u64(MMIO_ACTUAL)
                 cocotb.log.info(f"Test PASSED at cycle {cycle}")
-                # Verify the test data was written
-                test_data = int.from_bytes(
-                    bytes(mem_ram.mem[TEST_DATA_ADDR:TEST_DATA_ADDR+4]),
-                    byteorder='little'
-                )
-                assert test_data == 0xDEADBEEF, f"Expected 0xDEADBEEF, got 0x{test_data:08x}"
+                cocotb.log.info(f"  Expected: 0x{expected:016x}")
+                cocotb.log.info(f"  Actual:   0x{actual:016x}")
                 return
-            elif done_value == 0xFFFFFFFF:
-                raise AssertionError(f"Test FAILED at cycle {cycle}")
+
+            elif status == 0xFFFFFFFFFFFFFFFF:
+                expected = read_mmio_u64(MMIO_EXPECTED)
+                actual = read_mmio_u64(MMIO_ACTUAL)
+                cocotb.log.error(f"Test FAILED at cycle {cycle}")
+                cocotb.log.error(f"  Expected: 0x{expected:016x}")
+                cocotb.log.error(f"  Actual:   0x{actual:016x}")
+                raise AssertionError(
+                    f"Comparison failed: expected 0x{expected:016x}, got 0x{actual:016x}"
+                )
 
     raise AssertionError(f"Test timed out after {timeout_cycles} cycles")
