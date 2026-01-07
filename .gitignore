@@ -41,3 +41,7 @@ docs/diagrams/*.bkp
 
 *.riscv
 
+*log.txt
+*span_trees.txt
+*.o
+

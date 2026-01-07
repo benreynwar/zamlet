@@ -1,8 +1,7 @@
 # Shuttle core cocotb tests
 
 load("@rules_hdl//verilog:defs.bzl", "verilog_library")
-load("@rules_hdl//verilator:defs.bzl", "verilator_cc_library")
-load("//bazel:defs.bzl", "cocotb_exe", "cocotb_script")
+load("//bazel:defs.bzl", "cocotb_exe", "cocotb_script", "riscv_asm_binary")
 
 # Generate Shuttle Verilog using the shuttle_tile_generator
 genrule(
@@ -17,54 +16,59 @@ genrule(
     tools = ["//src:shuttle_tile_generator"],
 )
 
-# Create verilog library for verilator
 verilog_library(
     name = "shuttle_verilog_lib",
     srcs = [":shuttle_verilog"],
 )
 
-# Compile RISC-V test program
-genrule(
-    name = "test_simple_bin",
-    srcs = ["test_simple.S", "link.ld"],
-    outs = ["test_simple.bin"],
-    cmd = """
-        riscv64-unknown-elf-gcc -nostdlib -nostartfiles \
-            -T $(location link.ld) \
-            -march=rv64imafdc -mabi=lp64d \
-            -o test_simple.elf $(location test_simple.S)
-        riscv64-unknown-elf-objcopy -O binary test_simple.elf $@
-        rm test_simple.elf
-    """,
-)
-
-# Create cocotb executable
 cocotb_exe(
     name = "shuttle_exe",
     verilog_library = ":shuttle_verilog_lib",
     module_top = "ShuttleTop",
 )
 
-# Python test library
+# Shared test runner library
 py_library(
-    name = "test_basic_py",
-    srcs = ["test_basic.py"],
-    imports = ["."],  # Make test_basic directly importable
-    data = [":test_simple_bin"],
+    name = "shuttle_test_runner",
+    srcs = ["shuttle_test_runner.py"],
+    imports = ["."],
     deps = [
-        "//python/zamlet:zamlet",
         "@zamlet_pip_deps//cocotb",
         "@cocotb_bus//:cocotb_bus",
         "@cocotbext_axi//:cocotbext_axi",
     ],
 )
 
-# Cocotb test
+# Test binaries
+riscv_asm_binary(
+    name = "test_simple_bin",
+    src = "test_simple.S",
+    linker_script = "link.ld",
+)
+
+riscv_asm_binary(
+    name = "test_loop_bin",
+    src = "test_loop.S",
+    linker_script = "link.ld",
+)
+
+# Tests
 cocotb_script(
-    name = "test_basic",
+    name = "test_simple",
     binary = ":shuttle_exe",
-    script = ":test_basic_py",
-    module = "test_basic",
+    script = ":shuttle_test_runner",
+    module = "shuttle_test_runner",
     toplevel = "ShuttleTop",
     data = [":test_simple_bin"],
+    env = {"ZAMLET_TEST_BINARY": "$(location :test_simple_bin)"},
+)
+
+cocotb_script(
+    name = "test_loop",
+    binary = ":shuttle_exe",
+    script = ":shuttle_test_runner",
+    module = "shuttle_test_runner",
+    toplevel = "ShuttleTop",
+    data = [":test_loop_bin"],
+    env = {"ZAMLET_TEST_BINARY": "$(location :test_loop_bin)"},
 )
