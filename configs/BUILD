@@ -20,6 +20,11 @@ JAMLET_CONFIG_FILES = [
     "jamlet_default.json",
 ]
 
+# List of Kamlet config JSON files
+KAMLET_CONFIG_FILES = [
+    "synchronizer_default.json",
+]
+
 # List of Utils config JSON files
 UTILS_CONFIG_FILES = [
     "register_file_default.json",
@@ -27,6 +32,6 @@ UTILS_CONFIG_FILES = [
 ]
 
 exports_files(
-    AMLET_CONFIG_FILES + BAMLET_CONFIG_FILES + GAMLET_CONFIG_FILES + JAMLET_CONFIG_FILES + UTILS_CONFIG_FILES,
+    AMLET_CONFIG_FILES + BAMLET_CONFIG_FILES + GAMLET_CONFIG_FILES + JAMLET_CONFIG_FILES + KAMLET_CONFIG_FILES + UTILS_CONFIG_FILES,
     visibility = ["//visibility:public"]
 )

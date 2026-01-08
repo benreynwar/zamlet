@@ -1,0 +1,18 @@
+{
+  "neighbors": {
+    "hasN": true,
+    "hasS": true,
+    "hasE": true,
+    "hasW": true,
+    "hasNE": true,
+    "hasNW": true,
+    "hasSE": true,
+    "hasSW": true
+  },
+  "sync": {
+    "maxConcurrentSyncs": 4,
+    "resultOutputReg": true,
+    "portOutOutputReg": true,
+    "minPipelineReg": true
+  }
+}
