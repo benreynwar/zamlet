@@ -1,4 +1,4 @@
-package zamlet.jamlet
+package zamlet
 
 import chisel3._
 import chisel3.util.log2Ceil
@@ -107,7 +107,7 @@ case class NetworkNodeParams(
   hoBackwardBuffer: Boolean = true
 )
 
-case class JamletParams(
+case class LamletParams(
   // Position widths
   xPosWidth: Int = 8,
   yPosWidth: Int = 8,
@@ -139,6 +139,15 @@ case class JamletParams(
 
   // Instruction identifier
   identWidth: Int = 7,
+
+  // Lamlet-level parameters
+  maxResponseTags: Int = 128,   // Number of instruction identifiers
+  instructionQueueLength: Int = 8,  // Instruction queue depth per kamlet
+  lamletDispatchQueueDepth: Int = 8,  // Lamlet dispatch queue depth
+
+  // IdentTracker buffering
+  identTrackerOutForwardBuffer: Boolean = true,
+  identTrackerOutBackwardBuffer: Boolean = true,
 
   // Network configuration
   nAChannels: Int = 1,
@@ -182,6 +191,7 @@ case class JamletParams(
   def rfAddrWidth: Int = log2Ceil(rfSliceWords)
   def nCacheSlots: Int = sramDepth / cacheSlotWords
   def cacheSlotWidth: Int = log2Ceil(nCacheSlots)
+  def kIndexWidth: Int = log2Ceil(kInL)
 
   // Types
   def xPos(): UInt = UInt(xPosWidth.W)
@@ -194,14 +204,14 @@ case class JamletParams(
   def rfAddr(): UInt = UInt(rfAddrWidth.W)
 }
 
-object JamletParams {
+object LamletParams {
   implicit val witemMonitorParamsDecoder: Decoder[WitemMonitorParams] = deriveDecoder[WitemMonitorParams]
   implicit val networkNodeParamsDecoder: Decoder[NetworkNodeParams] = deriveDecoder[NetworkNodeParams]
-  implicit val jamletParamsDecoder: Decoder[JamletParams] = deriveDecoder[JamletParams]
+  implicit val lamletParamsDecoder: Decoder[LamletParams] = deriveDecoder[LamletParams]
 
-  def fromFile(fileName: String): JamletParams = {
+  def fromFile(fileName: String): LamletParams = {
     val jsonContent = Source.fromFile(fileName).mkString
-    val paramsResult = decode[JamletParams](jsonContent)
+    val paramsResult = decode[LamletParams](jsonContent)
     paramsResult match {
       case Right(params) => params
       case Left(error) =>

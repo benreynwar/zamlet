@@ -1,18 +1,15 @@
 load("//bazel:chisel.bzl", "chisel_binary")
 
-exports_files(
-    ["Synchronizer.scala"],
-    visibility = ["//visibility:public"],
-)
-
 chisel_binary(
-    name = "synchronizer",
+    name = "ident_tracker",
     srcs = [
-        "Synchronizer.scala",
+        "IdentTracker.scala",
         "//src/main/scala/zamlet:ModuleGenerator.scala",
+        "//src/main/scala/zamlet:LamletParams.scala",
+        "//src/main/scala/zamlet/kamlet:Synchronizer.scala",
         "//src/main/scala/zamlet/utils:utils_sources",
     ],
-    main_class = "zamlet.kamlet.SynchronizerMain",
+    main_class = "zamlet.lamlet.IdentTrackerMain",
     deps = [
         "@maven//:org_typelevel_cats_core_2_13",
         "@maven//:org_typelevel_cats_kernel_2_13",

@@ -2,6 +2,7 @@ package zamlet.jamlet
 
 import chisel3._
 import chisel3.util._
+import zamlet.LamletParams
 
 /**
  * Kamlet instruction format definitions.
@@ -35,7 +36,7 @@ class KInstrBase extends Bundle {
  * A location in a jamlet (k_index + j_in_k_index).
  * Python reference: derived from KMAddr/RegAddr k_index and j_in_k_index
  */
-class JamletLoc(params: JamletParams) extends Bundle {
+class JamletLoc(params: LamletParams) extends Bundle {
   val kIndex = UInt(log2Ceil(params.kInL).W)
   val jInKIndex = UInt(log2Ceil(params.jInK).W)
 }
@@ -48,7 +49,7 @@ class JamletLoc(params: JamletParams) extends Bundle {
  * - memLoc: jamlet with the memory/cache side
  * Data flows mem→reg for load, reg→mem for store.
  */
-class WordInstr(params: JamletParams) extends Bundle {
+class WordInstr(params: LamletParams) extends Bundle {
   val opcode = UInt(KInstrOpcode.width.W)
   val regLoc = new JamletLoc(params)
   val reg = params.rfAddr()
@@ -64,7 +65,7 @@ class WordInstr(params: JamletParams) extends Bundle {
  * Python reference: Load/Store with k_maddr in kinstructions.py
  * - reg: the RF register (dst for load, src for store)
  */
-class J2JInstr(params: JamletParams) extends Bundle {
+class J2JInstr(params: LamletParams) extends Bundle {
   val opcode = UInt(KInstrOpcode.width.W)
   val cacheSlot = params.cacheSlot()
   val memWordOrder = WordOrder()
@@ -86,7 +87,7 @@ class J2JInstr(params: JamletParams) extends Bundle {
  * Common fields (same position as IndexedInstr): opcode, startIndex, rfEw,
  * rfWordOrder, reg, maskReg, maskEnabled, baseAddrIdx, nElementsIdx
  */
-class StridedInstr(params: JamletParams) extends Bundle {
+class StridedInstr(params: LamletParams) extends Bundle {
   // Common fields (must match IndexedInstr layout)
   val opcode = UInt(KInstrOpcode.width.W)
   val startIndex = params.elementIndex()
@@ -108,7 +109,7 @@ class StridedInstr(params: JamletParams) extends Bundle {
  * Common fields (same position as StridedInstr): opcode, startIndex, rfEw,
  * rfWordOrder, reg, maskReg, maskEnabled, baseAddrIdx, nElementsIdx
  */
-class IndexedInstr(params: JamletParams) extends Bundle {
+class IndexedInstr(params: LamletParams) extends Bundle {
   // Common fields (must match StridedInstr layout)
   val opcode = UInt(KInstrOpcode.width.W)
   val startIndex = params.elementIndex()
@@ -128,22 +129,22 @@ object KInstr {
   val width = 64
 
   /** Cast kinstr to J2JInstr */
-  def asJ2J(params: JamletParams, kinstr: UInt): J2JInstr = {
+  def asJ2J(params: LamletParams, kinstr: UInt): J2JInstr = {
     kinstr.asTypeOf(new J2JInstr(params))
   }
 
   /** Cast kinstr to StridedInstr */
-  def asStrided(params: JamletParams, kinstr: UInt): StridedInstr = {
+  def asStrided(params: LamletParams, kinstr: UInt): StridedInstr = {
     kinstr.asTypeOf(new StridedInstr(params))
   }
 
   /** Cast kinstr to IndexedInstr */
-  def asIndexed(params: JamletParams, kinstr: UInt): IndexedInstr = {
+  def asIndexed(params: LamletParams, kinstr: UInt): IndexedInstr = {
     kinstr.asTypeOf(new IndexedInstr(params))
   }
 
   /** Cast kinstr to WordInstr */
-  def asWord(params: JamletParams, kinstr: UInt): WordInstr = {
+  def asWord(params: LamletParams, kinstr: UInt): WordInstr = {
     kinstr.asTypeOf(new WordInstr(params))
   }
 }

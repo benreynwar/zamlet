@@ -1,4 +1,4 @@
 exports_files(
-    ["ModuleGenerator.scala"],
+    ["ModuleGenerator.scala", "LamletParams.scala"],
     visibility = ["//visibility:public"],
 )
