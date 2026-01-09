@@ -101,5 +101,22 @@
     "s14s15BackwardBuffer": false,
     "s15s16ForwardBuffer": true,
     "s15s16BackwardBuffer": false
+  },
+  "issueUnitParams": {
+    "exForwardBuffer": false,
+    "exBackwardBuffer": false,
+    "tlbReqForwardBuffer": false,
+    "tlbReqBackwardBuffer": false,
+    "tlbRespInputReg": true,
+    "toIdentTrackerForwardBuffer": false,
+    "toIdentTrackerBackwardBuffer": false,
+    "comOutputReg": true,
+    "killInputReg": false
+  },
+  "synchronizerParams": {
+    "maxConcurrentSyncs": 4,
+    "resultOutputReg": true,
+    "portOutOutputReg": true,
+    "minPipelineReg": true
   }
 }

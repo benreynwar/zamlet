@@ -125,10 +125,26 @@ class Jamlet(params: LamletParams) extends Module {
   bNetworkNode.io.thisX := io.thisX
   bNetworkNode.io.thisY := io.thisY
 
-  // Tie off local ports until RX handlers and arbiters exist
+  // ============================================================
+  // Local port handling (simplified for Test 0)
+  // Forward instruction packets to kamlet
+  // ============================================================
+
+  // A channel local output: forward instruction packets to kamlet
+  val aHoHeader = aNetworkNode.io.ho.bits.data.asTypeOf(new PacketHeader(params))
+  val aHoIsInstruction = aNetworkNode.io.ho.bits.isHeader &&
+                         aHoHeader.messageType === MessageType.Instructions
+
+  // When we see an instruction packet, forward to kamlet
+  io.kamletReceivePacket.valid := aNetworkNode.io.ho.valid
+  io.kamletReceivePacket.bits := aNetworkNode.io.ho.bits
+  aNetworkNode.io.ho.ready := io.kamletReceivePacket.ready
+
+  // Tie off local input until TX arbiters exist
   aNetworkNode.io.hi.valid := false.B
   aNetworkNode.io.hi.bits := DontCare
-  aNetworkNode.io.ho.ready := false.B
+
+  // B channel local ports: tie off for now
   bNetworkNode.io.hi.valid := false.B
   bNetworkNode.io.hi.bits := DontCare
   bNetworkNode.io.ho.ready := false.B
@@ -248,9 +264,6 @@ class Jamlet(params: LamletParams) extends Module {
   io.cacheResponse.bits := DontCare
 
   io.kamletInjectPacket.ready := false.B
-
-  io.kamletReceivePacket.valid := false.B
-  io.kamletReceivePacket.bits := DontCare
 }
 
 /** Generator for Jamlet module */

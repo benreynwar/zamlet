@@ -6,45 +6,52 @@ load("//dse:orfs_config.bzl", "get_orfs_arguments")
 
 PDKS = ["asap7", "sky130hd"]
 
-# Generate IdentTracker verilog
-genrule(
-    name = "IdentTracker_default_verilog",
+# (ModuleName, bazel_target_name)
+LAMLET_MODULES = [
+    ("IdentTracker", "ident_tracker"),
+    ("IssueUnit", "issue_unit"),
+    ("Lamlet", "lamlet"),
+]
+
+# Generate verilog for each module
+[genrule(
+    name = "{}_default_verilog".format(module),
     srcs = ["//configs:lamlet_default.json"],
-    outs = ["IdentTracker_default.sv"],
+    outs = ["{}_default.sv".format(module)],
     cmd = """
     TMPDIR=$$(mktemp -d)
-    $(location //src/main/scala/zamlet/lamlet:ident_tracker) $$TMPDIR $(location //configs:lamlet_default.json)
+    $(location //src/main/scala/zamlet/lamlet:{target}) $$TMPDIR $(location //configs:lamlet_default.json)
     cat $$TMPDIR/*.sv > $@
     rm -rf $$TMPDIR
-    """,
-    tools = ["//src/main/scala/zamlet/lamlet:ident_tracker"],
-)
+    """.format(target = target),
+    tools = ["//src/main/scala/zamlet/lamlet:{}".format(target)],
+) for module, target in LAMLET_MODULES]
 
-# OpenROAD flows for IdentTracker
+# OpenROAD flows for each module
 [orfs_flow(
-    name = "IdentTracker_default__{}".format(pdk),
-    top = "IdentTracker",
+    name = "{}_default__{}".format(module, pdk),
+    top = module,
     pdk = "@docker_orfs//:{}".format(pdk),
-    arguments = get_orfs_arguments("IdentTracker_default", pdk),
+    arguments = get_orfs_arguments("{}_default".format(module), pdk),
     sources = {
         "SDC_FILE": ["//dse:config/constraints_{}.sdc".format(pdk)],
     },
-    verilog_files = [":IdentTracker_default.sv"],
-) for pdk in PDKS]
+    verilog_files = [":{}_default.sv".format(module)],
+) for module, _ in LAMLET_MODULES for pdk in PDKS]
 
-# Analysis results
+# Analysis results for each module
 [orfs_run(
-    name = "IdentTracker_default__{}_results".format(pdk),
-    src = "IdentTracker_default__{}_floorplan".format(pdk),
+    name = "{}_default__{}_results".format(module, pdk),
+    src = "{}_default__{}_floorplan".format(module, pdk),
     outs = [
-        "IdentTracker_default__{}_stats".format(pdk),
-        "IdentTracker_default__{}_setup_timing.rpt".format(pdk),
-        "IdentTracker_default__{}_hold_timing.rpt".format(pdk),
-        "IdentTracker_default__{}_critical_paths.rpt".format(pdk),
+        "{}_default__{}_stats".format(module, pdk),
+        "{}_default__{}_setup_timing.rpt".format(module, pdk),
+        "{}_default__{}_hold_timing.rpt".format(module, pdk),
+        "{}_default__{}_critical_paths.rpt".format(module, pdk),
     ],
     arguments = {
-        "OUTPUT": "$(location :IdentTracker_default__{}_stats)".format(pdk),
-        "TARGET_NAME": "IdentTracker_default__{}".format(pdk),
+        "OUTPUT": "$(location :{}_default__{}_stats)".format(module, pdk),
+        "TARGET_NAME": "{}_default__{}".format(module, pdk),
     },
     script = "//dse:scripts/analysis.tcl",
-) for pdk in PDKS]
+) for module, _ in LAMLET_MODULES for pdk in PDKS]

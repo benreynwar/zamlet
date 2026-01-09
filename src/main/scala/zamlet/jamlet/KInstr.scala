@@ -15,9 +15,42 @@ import zamlet.LamletParams
  * Address types: python/zamlet/addresses.py (KMAddr, RegAddr)
  */
 
-/** Width of opcode field */
-object KInstrOpcode {
-  val width = 6
+/** KInstr constants and utilities */
+object KInstr {
+  val width = 64           // Total kinstr width in bits
+  val opcodeWidth = 6      // Opcode field width
+  val syncIdentWidth = 8   // Sync ident field width
+  val syncValueWidth = 8   // Sync value field width
+
+  /** Cast kinstr to J2JInstr */
+  def asJ2J(params: LamletParams, kinstr: UInt): J2JInstr = {
+    kinstr.asTypeOf(new J2JInstr(params))
+  }
+
+  /** Cast kinstr to StridedInstr */
+  def asStrided(params: LamletParams, kinstr: UInt): StridedInstr = {
+    kinstr.asTypeOf(new StridedInstr(params))
+  }
+
+  /** Cast kinstr to IndexedInstr */
+  def asIndexed(params: LamletParams, kinstr: UInt): IndexedInstr = {
+    kinstr.asTypeOf(new IndexedInstr(params))
+  }
+
+  /** Cast kinstr to WordInstr */
+  def asWord(params: LamletParams, kinstr: UInt): WordInstr = {
+    kinstr.asTypeOf(new WordInstr(params))
+  }
+}
+
+/** KInstr opcode enumeration (6 bits) */
+object KInstrOpcode extends ChiselEnum {
+  val SyncTrigger = Value(0.U)
+  val IdentQuery = Value(1.U)
+  // Future: LoadSimple, StoreSimple, LoadJ2J, StoreJ2J, etc.
+
+  // Force 6-bit width by defining max value
+  val Reserved63 = Value(63.U)
 }
 
 /** Width of parameter memory index */
@@ -29,7 +62,25 @@ object KInstrParamIdx {
  * Base instruction with opcode. Cast to specific type based on opcode.
  */
 class KInstrBase extends Bundle {
-  val opcode = UInt(KInstrOpcode.width.W)
+  val opcode = KInstrOpcode()
+}
+
+/**
+ * SyncTrigger instruction format.
+ * Used for testing the instruction receive path and sync network.
+ *
+ * Layout (LSB first):
+ *   [5:0]   opcode (= SyncTrigger)
+ *   [13:6]  syncIdent
+ *   [21:14] value
+ *   [63:22] reserved
+ */
+class SyncTriggerInstr extends Bundle {
+  val opcode = KInstrOpcode()
+  val syncIdent = UInt(KInstr.syncIdentWidth.W)
+  val value = UInt(KInstr.syncValueWidth.W)
+  val reserved = UInt((KInstr.width - KInstr.opcodeWidth -
+                       KInstr.syncIdentWidth - KInstr.syncValueWidth).W)
 }
 
 /**
@@ -50,7 +101,7 @@ class JamletLoc(params: LamletParams) extends Bundle {
  * Data flows mem→reg for load, reg→mem for store.
  */
 class WordInstr(params: LamletParams) extends Bundle {
-  val opcode = UInt(KInstrOpcode.width.W)
+  val opcode = KInstrOpcode()
   val regLoc = new JamletLoc(params)
   val reg = params.rfAddr()
   val regOffsetInWord = UInt(log2Ceil(params.wordBytes).W)
@@ -66,7 +117,7 @@ class WordInstr(params: LamletParams) extends Bundle {
  * - reg: the RF register (dst for load, src for store)
  */
 class J2JInstr(params: LamletParams) extends Bundle {
-  val opcode = UInt(KInstrOpcode.width.W)
+  val opcode = KInstrOpcode()
   val cacheSlot = params.cacheSlot()
   val memWordOrder = WordOrder()
   val rfWordOrder = WordOrder()
@@ -89,7 +140,7 @@ class J2JInstr(params: LamletParams) extends Bundle {
  */
 class StridedInstr(params: LamletParams) extends Bundle {
   // Common fields (must match IndexedInstr layout)
-  val opcode = UInt(KInstrOpcode.width.W)
+  val opcode = KInstrOpcode()
   val startIndex = params.elementIndex()
   val rfEw = EwCode()
   val rfWordOrder = WordOrder()
@@ -111,7 +162,7 @@ class StridedInstr(params: LamletParams) extends Bundle {
  */
 class IndexedInstr(params: LamletParams) extends Bundle {
   // Common fields (must match StridedInstr layout)
-  val opcode = UInt(KInstrOpcode.width.W)
+  val opcode = KInstrOpcode()
   val startIndex = params.elementIndex()
   val rfEw = EwCode()
   val rfWordOrder = WordOrder()
@@ -125,26 +176,3 @@ class IndexedInstr(params: LamletParams) extends Bundle {
   val indexReg = params.rfAddr()
 }
 
-object KInstr {
-  val width = 64
-
-  /** Cast kinstr to J2JInstr */
-  def asJ2J(params: LamletParams, kinstr: UInt): J2JInstr = {
-    kinstr.asTypeOf(new J2JInstr(params))
-  }
-
-  /** Cast kinstr to StridedInstr */
-  def asStrided(params: LamletParams, kinstr: UInt): StridedInstr = {
-    kinstr.asTypeOf(new StridedInstr(params))
-  }
-
-  /** Cast kinstr to IndexedInstr */
-  def asIndexed(params: LamletParams, kinstr: UInt): IndexedInstr = {
-    kinstr.asTypeOf(new IndexedInstr(params))
-  }
-
-  /** Cast kinstr to WordInstr */
-  def asWord(params: LamletParams, kinstr: UInt): WordInstr = {
-    kinstr.asTypeOf(new WordInstr(params))
-  }
-}

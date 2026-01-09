@@ -4,21 +4,11 @@ import chisel3._
 import chisel3.util._
 import _root_.circt.stage.ChiselStage
 import zamlet.utils.ValidBuffer
+import zamlet.SynchronizerParams
 import io.circe._
 import io.circe.generic.semiauto._
 import io.circe.parser._
 import scala.io.Source
-
-case class SynchronizerParams(
-  maxConcurrentSyncs: Int = 4,
-  resultOutputReg: Boolean = false,
-  portOutOutputReg: Boolean = false,
-  minPipelineReg: Boolean = false
-)
-
-object SynchronizerParams {
-  implicit val decoder: Decoder[SynchronizerParams] = deriveDecoder[SynchronizerParams]
-}
 
 case class SynchronizerTestParams(
   neighbors: SyncNeighbors = SyncNeighbors(),
@@ -26,6 +16,7 @@ case class SynchronizerTestParams(
 )
 
 object SynchronizerTestParams {
+  implicit val synchronizerParamsDecoder: Decoder[SynchronizerParams] = deriveDecoder[SynchronizerParams]
   implicit val neighborsDecoder: Decoder[SyncNeighbors] = deriveDecoder[SyncNeighbors]
   implicit val decoder: Decoder[SynchronizerTestParams] = deriveDecoder[SynchronizerTestParams]
 
@@ -79,7 +70,7 @@ class SyncEvent extends Bundle {
 
 class SyncEntry extends Bundle {
   val valid = Bool()
-  val syncIdent = UInt(8.W)
+  // Note: syncIdent is NOT stored - it equals the entry index
   val localSeen = Bool()
   val localValue = UInt(8.W)
 
@@ -128,6 +119,7 @@ class Synchronizer(
     neighbors.hasNE.B, neighbors.hasNW.B, neighbors.hasSE.B, neighbors.hasSW.B
   ))
 
+  // Entry state - syncIdent IS the index, so no need for syncIdent field
   val entries = RegInit(VecInit(Seq.fill(maxConcurrentSyncs)(0.U.asTypeOf(new SyncEntry))))
 
   val rxHasByte0 = RegInit(VecInit(Seq.fill(SyncDirection.count)(false.B)))
@@ -137,93 +129,120 @@ class Synchronizer(
   val txSyncIdx = Reg(Vec(SyncDirection.count, UInt(log2Ceil(maxConcurrentSyncs).W)))
   val txByteIdx = Reg(Vec(SyncDirection.count, UInt(1.W)))
 
-  def findEntry(ident: UInt): (Bool, UInt) = {
-    val found = VecInit(entries.map(e => e.valid && e.syncIdent === ident))
-    val idx = OHToUInt(found.asUInt)
-    (found.asUInt.orR, idx)
-  }
+  val idxWidth = log2Ceil(maxConcurrentSyncs).W
 
-  def allocEntry(ident: UInt): (Bool, UInt) = {
-    val free = VecInit(entries.map(!_.valid))
-    val idx = PriorityEncoder(free.asUInt)
-    (free.asUInt.orR, idx)
-  }
-
-  def initTopology(e: SyncEntry): Unit = {
-    e.quadrantSynced(0) := (!neighbors.hasNE).B
-    e.quadrantSynced(1) := (!neighbors.hasNW).B
-    e.quadrantSynced(2) := (!neighbors.hasSE).B
-    e.quadrantSynced(3) := (!neighbors.hasSW).B
-    e.columnSynced(0) := (!neighbors.hasN).B
-    e.columnSynced(1) := (!neighbors.hasS).B
-    e.rowSynced(0) := (!neighbors.hasE).B
-    e.rowSynced(1) := (!neighbors.hasW).B
-    for (i <- 0 until SyncDirection.count) {
-      e.sent(i) := !hasNeighbor(i)
-    }
+  // Create a fresh initialized entry
+  def freshEntry(): SyncEntry = {
+    val e = Wire(new SyncEntry)
+    e.valid := true.B
+    e.localSeen := false.B
+    e.localValue := 0.U
+    e.quadrantSynced := VecInit(Seq(
+      (!neighbors.hasNE).B, (!neighbors.hasNW).B, (!neighbors.hasSE).B, (!neighbors.hasSW).B
+    ))
+    e.columnSynced := VecInit(Seq((!neighbors.hasN).B, (!neighbors.hasS).B))
+    e.rowSynced := VecInit(Seq((!neighbors.hasE).B, (!neighbors.hasW).B))
     e.quadrantValues := VecInit(Seq.fill(4)(255.U(8.W)))
     e.columnValues := VecInit(Seq.fill(2)(255.U(8.W)))
     e.rowValues := VecInit(Seq.fill(2)(255.U(8.W)))
+    e.sent := VecInit(hasNeighbor.map(!_))
+    e
   }
 
-  when (io.localEvent.valid) {
-    val (found, foundIdx) = findEntry(io.localEvent.bits.syncIdent)
-    val (canAlloc, allocIdx) = allocEntry(io.localEvent.bits.syncIdent)
-    val idx = Mux(found, foundIdx, allocIdx)
-
-    when (!found && canAlloc) {
-      entries(idx).valid := true.B
-      entries(idx).syncIdent := io.localEvent.bits.syncIdent
-      entries(idx).localSeen := false.B
-      initTopology(entries(idx))
-    }
-
-    when (found || canAlloc) {
-      entries(idx).localSeen := true.B
-      entries(idx).localValue := io.localEvent.bits.value
-    }
-  }
-
+  // Handle RX state machine (byte0 buffering) - separate from entry updates
   for (dir <- 0 until SyncDirection.count) {
     when (io.portIn(dir).valid && hasNeighbor(dir)) {
-      val data = io.portIn(dir).bits(7, 0)
-      val lastByte = io.portIn(dir).bits(8)
-
       when (!rxHasByte0(dir)) {
-        rxByte0(dir) := data
+        rxByte0(dir) := io.portIn(dir).bits(7, 0)
         rxHasByte0(dir) := true.B
       }.otherwise {
         rxHasByte0(dir) := false.B
-
-        val ident = rxByte0(dir)
-        val value = data
-
-        val (found, foundIdx) = findEntry(ident)
-        val (canAlloc, allocIdx) = allocEntry(ident)
-        val idx = Mux(found, foundIdx, allocIdx)
-
-        when (!found && canAlloc) {
-          entries(idx).valid := true.B
-          entries(idx).syncIdent := ident
-          entries(idx).localSeen := false.B
-          initTopology(entries(idx))
-        }
-
-        when (found || canAlloc) {
-          val e = entries(idx)
-          switch (dir.U) {
-            is (N.U)  { e.columnSynced(0) := true.B; e.columnValues(0) := value }
-            is (S.U)  { e.columnSynced(1) := true.B; e.columnValues(1) := value }
-            is (E.U)  { e.rowSynced(0) := true.B; e.rowValues(0) := value }
-            is (W.U)  { e.rowSynced(1) := true.B; e.rowValues(1) := value }
-            is (NE.U) { e.quadrantSynced(0) := true.B; e.quadrantValues(0) := value }
-            is (NW.U) { e.quadrantSynced(1) := true.B; e.quadrantValues(1) := value }
-            is (SE.U) { e.quadrantSynced(2) := true.B; e.quadrantValues(2) := value }
-            is (SW.U) { e.quadrantSynced(3) := true.B; e.quadrantValues(3) := value }
-          }
-        }
       }
     }
+  }
+
+  // Compute RX active signals and indices
+  val rxIdx = Wire(Vec(SyncDirection.count, UInt(idxWidth)))
+  val rxValue = Wire(Vec(SyncDirection.count, UInt(8.W)))
+  val rxActive = Wire(Vec(SyncDirection.count, Bool()))
+
+  for (dir <- 0 until SyncDirection.count) {
+    rxIdx(dir) := rxByte0(dir)(idxWidth.get - 1, 0)
+    rxValue(dir) := io.portIn(dir).bits(7, 0)
+    rxActive(dir) := io.portIn(dir).valid && hasNeighbor(dir) && rxHasByte0(dir)
+  }
+
+  // Local event signals
+  val localIdx = Wire(UInt(idxWidth))
+  localIdx := io.localEvent.bits.syncIdent(idxWidth.get - 1, 0)
+  val localActive = Wire(Bool())
+  localActive := io.localEvent.valid
+
+  // Process each entry through a chain of stages:
+  // reg -> after_dir[0] -> after_dir[1] -> ... -> after_dir[7] -> after_local -> next
+  for (entryIdx <- 0 until maxConcurrentSyncs) {
+    val entryIdxU = entryIdx.U(idxWidth)
+
+    // Start with current register value
+    val stages = Wire(Vec(SyncDirection.count + 2, new SyncEntry))  // +2 for initial and after-local
+    stages(0) := entries(entryIdx)
+
+    // Process each direction
+    for (dir <- 0 until SyncDirection.count) {
+      val prev = stages(dir)
+      val next = Wire(new SyncEntry)
+
+      val thisRxActive = Wire(Bool())
+      thisRxActive := rxActive(dir) && rxIdx(dir) === entryIdxU
+
+      // If this RX targets this entry
+      when (thisRxActive) {
+        // Initialize if not valid
+        when (!prev.valid) {
+          next := freshEntry()
+        }.otherwise {
+          next := prev
+        }
+        // Update direction-specific synced flag and value
+        dir match {
+          case N  => next.columnSynced(0) := true.B; next.columnValues(0) := rxValue(dir)
+          case S  => next.columnSynced(1) := true.B; next.columnValues(1) := rxValue(dir)
+          case E  => next.rowSynced(0) := true.B; next.rowValues(0) := rxValue(dir)
+          case W  => next.rowSynced(1) := true.B; next.rowValues(1) := rxValue(dir)
+          case NE => next.quadrantSynced(0) := true.B; next.quadrantValues(0) := rxValue(dir)
+          case NW => next.quadrantSynced(1) := true.B; next.quadrantValues(1) := rxValue(dir)
+          case SE => next.quadrantSynced(2) := true.B; next.quadrantValues(2) := rxValue(dir)
+          case SW => next.quadrantSynced(3) := true.B; next.quadrantValues(3) := rxValue(dir)
+        }
+      }.otherwise {
+        next := prev
+      }
+      stages(dir + 1) := next
+    }
+
+    // Process local event (last stage, so it has priority)
+    val afterDirs = stages(SyncDirection.count)
+    val afterLocal = Wire(new SyncEntry)
+
+    val thisLocalActive = Wire(Bool())
+    thisLocalActive := localActive && localIdx === entryIdxU
+
+    when (thisLocalActive) {
+      when (!afterDirs.valid) {
+        afterLocal := freshEntry()
+      }.otherwise {
+        afterLocal := afterDirs
+      }
+      afterLocal.localSeen := true.B
+      afterLocal.localValue := io.localEvent.bits.value
+    }.otherwise {
+      afterLocal := afterDirs
+    }
+
+    stages(SyncDirection.count + 1) := afterLocal
+
+    // Write final state to register
+    entries(entryIdx) := stages(SyncDirection.count + 1)
   }
 
   def canSend(e: SyncEntry, dir: Int): Bool = {
@@ -289,17 +308,19 @@ class Synchronizer(
     portOutInternal(dir).bits := 0.U
 
     when (txActive(dir)) {
-      val e = entries(txSyncIdx(dir))
+      val idx = txSyncIdx(dir)
+      val e = entries(idx)
       portOutInternal(dir).valid := true.B
 
       when (txByteIdx(dir) === 0.U) {
-        portOutInternal(dir).bits := Cat(0.U(1.W), e.syncIdent)
+        // Byte 0: syncIdent (which equals the index)
+        portOutInternal(dir).bits := Cat(0.U(1.W), idx)
         txByteIdx(dir) := 1.U
       }.otherwise {
         val minVal = valueForDirection(e, dir)
         portOutInternal(dir).bits := Cat(1.U(1.W), minVal)
         txActive(dir) := false.B
-        e.sent(dir) := true.B
+        entries(idx).sent(dir) := true.B
       }
     }.otherwise {
       for (i <- 0 until maxConcurrentSyncs) {
@@ -341,7 +362,7 @@ class Synchronizer(
 
   val preMin = Wire(Valid(new PreMinBundle))
   preMin.valid := anyComplete
-  preMin.bits.syncIdent := entries(completeIdx).syncIdent
+  preMin.bits.syncIdent := completeIdx  // syncIdent equals the index
   val e = entries(completeIdx)
   preMin.bits.values := VecInit(Seq(
     e.localValue,

@@ -7,6 +7,13 @@ import io.circe.parser._
 import io.circe.generic.semiauto._
 import scala.io.Source
 
+case class SynchronizerParams(
+  maxConcurrentSyncs: Int = 4,
+  resultOutputReg: Boolean = false,
+  portOutOutputReg: Boolean = false,
+  minPipelineReg: Boolean = false
+)
+
 case class WitemMonitorParams(
   // Kamlet lifecycle interfaces (Valid)
   witemCreateInputReg: Boolean = false,
@@ -107,6 +114,18 @@ case class NetworkNodeParams(
   hoBackwardBuffer: Boolean = true
 )
 
+case class IssueUnitParams(
+  exForwardBuffer: Boolean = false,
+  exBackwardBuffer: Boolean = false,
+  tlbReqForwardBuffer: Boolean = false,
+  tlbReqBackwardBuffer: Boolean = false,
+  tlbRespInputReg: Boolean = false,
+  toIdentTrackerForwardBuffer: Boolean = false,
+  toIdentTrackerBackwardBuffer: Boolean = false,
+  comOutputReg: Boolean = false,
+  killInputReg: Boolean = false
+)
+
 case class LamletParams(
   // Position widths
   xPosWidth: Int = 8,
@@ -155,7 +174,13 @@ case class LamletParams(
   networkNodeParams: NetworkNodeParams = NetworkNodeParams(),
 
   // WitemMonitor configuration
-  witemMonitorParams: WitemMonitorParams = WitemMonitorParams()
+  witemMonitorParams: WitemMonitorParams = WitemMonitorParams(),
+
+  // IssueUnit configuration
+  issueUnitParams: IssueUnitParams = IssueUnitParams(),
+
+  // Synchronizer configuration
+  synchronizerParams: SynchronizerParams = SynchronizerParams()
 ) {
   // Grid derived
   def jInK: Int = jCols * jRows
@@ -205,8 +230,10 @@ case class LamletParams(
 }
 
 object LamletParams {
+  implicit val synchronizerParamsDecoder: Decoder[SynchronizerParams] = deriveDecoder[SynchronizerParams]
   implicit val witemMonitorParamsDecoder: Decoder[WitemMonitorParams] = deriveDecoder[WitemMonitorParams]
   implicit val networkNodeParamsDecoder: Decoder[NetworkNodeParams] = deriveDecoder[NetworkNodeParams]
+  implicit val issueUnitParamsDecoder: Decoder[IssueUnitParams] = deriveDecoder[IssueUnitParams]
   implicit val lamletParamsDecoder: Decoder[LamletParams] = deriveDecoder[LamletParams]
 
   def fromFile(fileName: String): LamletParams = {

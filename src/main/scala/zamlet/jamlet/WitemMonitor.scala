@@ -1017,6 +1017,8 @@ class WitemMonitor(params: LamletParams) extends Module {
   initEntry.tagStates := DontCare
   initEntry.readyForS1 := DontCare
   initEntry.priority := DontCare
+  initEntry.hasFault := DontCare
+  initEntry.minFaultElement := DontCare
   val entries = RegInit(VecInit.fill(params.witemTableDepth)(initEntry))
   val nextPriority = RegInit(0.U(log2Ceil(params.witemTableDepth).W))
 

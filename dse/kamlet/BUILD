@@ -48,3 +48,50 @@ genrule(
     },
     script = "//dse:scripts/analysis.tcl",
 ) for pdk in PDKS]
+
+# ============================================================
+# Kamlet DSE
+# ============================================================
+
+# Generate Kamlet verilog
+genrule(
+    name = "Kamlet_default_verilog",
+    srcs = ["//configs:lamlet_default.json"],
+    outs = ["Kamlet_default.sv"],
+    cmd = """
+    TMPDIR=$$(mktemp -d)
+    $(location //src/main/scala/zamlet/kamlet:kamlet) $$TMPDIR $(location //configs:lamlet_default.json)
+    cat $$TMPDIR/*.sv > $@
+    rm -rf $$TMPDIR
+    """,
+    tools = ["//src/main/scala/zamlet/kamlet:kamlet"],
+)
+
+# OpenROAD flows for Kamlet
+[orfs_flow(
+    name = "Kamlet_default__{}".format(pdk),
+    top = "Kamlet",
+    pdk = "@docker_orfs//:{}".format(pdk),
+    arguments = get_orfs_arguments("Kamlet_default", pdk),
+    sources = {
+        "SDC_FILE": ["//dse:config/constraints_{}.sdc".format(pdk)],
+    },
+    verilog_files = [":Kamlet_default.sv"],
+) for pdk in PDKS]
+
+# Analysis results
+[orfs_run(
+    name = "Kamlet_default__{}_results".format(pdk),
+    src = "Kamlet_default__{}_floorplan".format(pdk),
+    outs = [
+        "Kamlet_default__{}_stats".format(pdk),
+        "Kamlet_default__{}_setup_timing.rpt".format(pdk),
+        "Kamlet_default__{}_hold_timing.rpt".format(pdk),
+        "Kamlet_default__{}_critical_paths.rpt".format(pdk),
+    ],
+    arguments = {
+        "OUTPUT": "$(location :Kamlet_default__{}_stats)".format(pdk),
+        "TARGET_NAME": "Kamlet_default__{}".format(pdk),
+    },
+    script = "//dse:scripts/analysis.tcl",
+) for pdk in PDKS]
