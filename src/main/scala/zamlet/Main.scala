@@ -83,7 +83,7 @@ object Main extends App {
     case "ShortQueue" => ShortQueueGenerator
     case "DroppingFifo" => DroppingFifoGenerator
     case "RegisterFile" => RegisterFileGenerator
-    case _ => 
+    case _ =>
       println(s"Module name '${moduleName}' is unknown.")
       System.exit(1)
       null // This line is never reached due to System.exit above

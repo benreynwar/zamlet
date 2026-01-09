@@ -3,7 +3,7 @@ package zamlet.lamlet
 import chisel3._
 import chisel3.util._
 import zamlet.LamletParams
-import zamlet.jamlet.{J2JInstr, EwCode, WordOrder, KInstr}
+import zamlet.jamlet.{J2JInstr, EwCode, WordOrder, KInstr, KInstrOpcode}
 import zamlet.utils.{DoubleBuffer, ValidBuffer}
 
 /**
@@ -190,7 +190,7 @@ class IssueUnit(params: LamletParams) extends Module {
   // Layout: opcode(6), cacheSlot, memWordOrder, rfWordOrder, memEw, rfEw, baseBitAddr,
   //         startIndex, nElementsIdx, reg
   val kinstr = Wire(new J2JInstr(params))
-  kinstr.opcode := Mux(isVectorLoad, 0.U, 1.U)
+  kinstr.opcode := Mux(isVectorLoad, KInstrOpcode.LoadJ2J, KInstrOpcode.StoreJ2J)
   kinstr.cacheSlot := (tlbPaddr >> log2Ceil(params.cacheSlotWords * params.wordBytes).U)(
     params.cacheSlotWidth - 1, 0)
   kinstr.memWordOrder := WordOrder.Standard

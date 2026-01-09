@@ -20,6 +20,11 @@ NEVER paraphrase when using quote marks. If you use quotation marks, the text mu
 ## Module Generation
 **IMPORTANT**: When creating new modules with ModuleGenerator objects, you MUST add them to the case statement in `src/main/scala/zamlet/Main.scala`.
 
+## Running Commands
+Never pipe command output through `head` or `tail` if you might need to see more of it later - this forces re-running the command. Either:
+1. Run the command and wait for full output
+2. Redirect to a file first, then read the file
+
 ## Testing
 When running Python tests, always redirect output to a file so you can examine the complete output without needing to rerun the test. For example:
 ```bash

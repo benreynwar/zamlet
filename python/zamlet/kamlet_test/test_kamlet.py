@@ -35,6 +35,7 @@ class SendType(IntEnum):
 
 class KInstrOpcode(IntEnum):
     SYNC_TRIGGER = 0
+    IDENT_QUERY = 1
 
 
 class Params:
@@ -99,6 +100,36 @@ class SyncTriggerKInstr:
             ('opcode', 6),
             ('sync_ident', 8),
             ('value', 8),
+            ('reserved', 42),
+        ]
+
+    def encode(self) -> int:
+        """Encode to integer matching Chisel's asUInt bit layout."""
+        return pack_fields_to_int(self, self.get_field_specs())
+
+
+@dataclass
+class IdentQueryKInstr:
+    """IdentQuery instruction matching Chisel IdentQueryInstr Bundle.
+
+    64-bit kinstr format:
+      reserved: bits [41:0]  (42 bits, at LSB)
+      sync_ident: bits [49:42] (8 bits)
+      baseline: bits [57:50] (8 bits)
+      opcode: bits [63:58]   (6 bits, at MSB)
+    """
+    opcode: KInstrOpcode
+    baseline: int
+    sync_ident: int
+    reserved: int = 0
+
+    @classmethod
+    def get_field_specs(cls) -> List[Tuple[str, int]]:
+        """Field specs in Chisel Bundle declaration order (first field = MSB)."""
+        return [
+            ('opcode', 6),
+            ('baseline', 8),
+            ('sync_ident', 8),
             ('reserved', 42),
         ]
 
@@ -302,6 +333,65 @@ async def test_sync_aggregation(dut: HierarchyObject) -> None:
     logger.info(f"test_sync_aggregation passed: both kamlets returned value={expected_min}")
 
 
+async def send_ident_query_to_kamlet(dut: HierarchyObject, k_x: int, sync_ident: int,
+                                      baseline: int) -> None:
+    """Send an IdentQuery instruction packet to a kamlet."""
+    j_x = k_x * Params.J_COLS
+    header = PacketHeader(
+        target_x=j_x,
+        target_y=0,
+        source_x=j_x,
+        source_y=255,
+        length=1,
+        message_type=MessageType.INSTRUCTIONS,
+        send_type=SendType.SINGLE
+    )
+    kinstr = IdentQueryKInstr(
+        opcode=KInstrOpcode.IDENT_QUERY,
+        baseline=baseline,
+        sync_ident=sync_ident
+    )
+
+    logger.info(f"Sending IdentQuery to kamlet {k_x}: sync_ident={sync_ident}, baseline={baseline}")
+    logger.info(f"  header={hex(header.encode())}, kinstr={hex(kinstr.encode())}")
+    await send_packet_to_kamlet(dut, k_x, header.encode(), is_header=True)
+    await send_packet_to_kamlet(dut, k_x, kinstr.encode(), is_header=False)
+
+
+async def test_ident_query(dut: HierarchyObject) -> None:
+    """Test IdentQuery instruction decoding and sync network.
+
+    Sends IdentQuery to both kamlets. Since no instructions are active,
+    both should report max distance (128 = all idents free).
+    """
+    sync_ident = 1  # Use different sync_ident than test_sync_aggregation
+    baseline = 50   # Arbitrary baseline value
+
+    await send_ident_query_to_kamlet(dut, k_x=0, sync_ident=sync_ident, baseline=baseline)
+    await send_ident_query_to_kamlet(dut, k_x=1, sync_ident=sync_ident, baseline=baseline)
+
+    logger.info("Sent IdentQuery to both kamlets, waiting for sync results...")
+
+    results = await wait_for_sync_results(dut, timeout_cycles=500)
+
+    assert results is not None, "No sync results received within timeout"
+    assert 0 in results, "Kamlet 0 did not produce sync result"
+    assert 1 in results, "Kamlet 1 did not produce sync result"
+
+    ident0, value0 = results[0]
+    ident1, value1 = results[1]
+
+    assert ident0 == sync_ident, f"Kamlet 0: expected ident {sync_ident}, got {ident0}"
+    assert ident1 == sync_ident, f"Kamlet 1: expected ident {sync_ident}, got {ident1}"
+
+    # Both kamlets report max distance (128) since no instructions are active
+    expected_value = 128  # params.maxResponseTags
+    assert value0 == expected_value, f"Kamlet 0: expected value {expected_value}, got {value0}"
+    assert value1 == expected_value, f"Kamlet 1: expected value {expected_value}, got {value1}"
+
+    logger.info(f"test_ident_query passed: both kamlets returned value={expected_value}")
+
+
 @cocotb.test()
 async def kamlet_mesh_test(dut: HierarchyObject) -> None:
     """Main test entry point for KamletMesh Test 0."""
@@ -314,3 +404,5 @@ async def kamlet_mesh_test(dut: HierarchyObject) -> None:
     await reset(dut)
 
     await test_sync_aggregation(dut)
+    await RisingEdge(dut.clock)  # Exit ReadOnly phase before next test
+    await test_ident_query(dut)

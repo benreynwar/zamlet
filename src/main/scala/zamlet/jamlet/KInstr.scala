@@ -47,7 +47,10 @@ object KInstr {
 object KInstrOpcode extends ChiselEnum {
   val SyncTrigger = Value(0.U)
   val IdentQuery = Value(1.U)
-  // Future: LoadSimple, StoreSimple, LoadJ2J, StoreJ2J, etc.
+  val LoadJ2J = Value(2.U)
+  val StoreJ2J = Value(3.U)
+  val LoadSimple = Value(4.U)
+  val StoreSimple = Value(5.U)
 
   // Force 6-bit width by defining max value
   val Reserved63 = Value(63.U)
@@ -60,9 +63,11 @@ object KInstrParamIdx {
 
 /**
  * Base instruction with opcode. Cast to specific type based on opcode.
+ * Includes padding so opcode extracts from correct MSB position [63:58].
  */
 class KInstrBase extends Bundle {
   val opcode = KInstrOpcode()
+  val reserved = UInt((KInstr.width - KInstr.opcodeWidth).W)
 }
 
 /**
@@ -81,6 +86,24 @@ class SyncTriggerInstr extends Bundle {
   val value = UInt(KInstr.syncValueWidth.W)
   val reserved = UInt((KInstr.width - KInstr.opcodeWidth -
                        KInstr.syncIdentWidth - KInstr.syncValueWidth).W)
+}
+
+/**
+ * IdentQuery instruction format.
+ * Used by Lamlet to query kamlets for their oldest active ident.
+ *
+ * Layout (Bundle order = MSB first):
+ *   opcode:     bits [63:58]  (6 bits)
+ *   baseline:   bits [57:50]  (8 bits) - ident to measure distance from
+ *   syncIdent:  bits [49:42]  (8 bits) - sync network identifier
+ *   reserved:   bits [41:0]   (42 bits)
+ */
+class IdentQueryInstr extends Bundle {
+  val opcode = KInstrOpcode()
+  val baseline = UInt(KInstr.syncIdentWidth.W)
+  val syncIdent = UInt(KInstr.syncIdentWidth.W)
+  val reserved = UInt((KInstr.width - KInstr.opcodeWidth -
+                       KInstr.syncIdentWidth - KInstr.syncIdentWidth).W)
 }
 
 /**

@@ -316,6 +316,35 @@ Disambiguator
 **Rules:**
 - Scalar mem op conflicts with entry in CAM → set `conflict`, scalar replays
 
+### ScalarLoadQueue
+
+Handles vector loads from scalar memory. When IssueUnit determines a load section targets
+scalar memory (based on physical address range), it sends a request here instead of
+generating a Load kinstr. See `scalar-load-queue.md` for details.
+
+```
+ScalarLoadQueue
+├── IN:  req (from IssueUnit)          # Scalar memory load request
+│        ├── paddr, size, vd, start_index, n_elements, ew, instr_ident
+│
+├── OUT: tl_a.*                        # TileLink read request
+├── IN:  tl_d.*                        # TileLink read response
+│
+├── OUT: kinstr                        # LoadImm kinstr(s) to DispatchQueue
+├── OUT: load_complete                 # To RegisterScoreboard
+│        ├── valid
+│        └── vd                        # Register now safe to read
+└── OUT: busy                          # Has outstanding requests
+```
+
+**Flow:**
+1. IssueUnit sends request for scalar memory section
+2. ScalarLoadQueue issues TileLink read, records context in table
+3. TileLink response arrives with data
+4. Generate LoadImmByte/LoadImmWord kinstr(s) with embedded data
+5. Dispatch to mesh via DispatchQueue
+6. Signal load_complete to RegisterScoreboard (vd now safe to read)
+
 ### VpuToScalarMem
 
 Bridges mesh messages to scalar memory via TileLink. When kamlets need to access scalar
@@ -330,6 +359,9 @@ VpuToScalarMem
 │
 ├── OUT: tl_a.*                        # TileLink request to scalar memory
 ├── OUT: resp_packet                   # Response packet back to mesh (resp or DROP)
+├── OUT: write_complete                # To RegisterScoreboard (word write completed)
+│        ├── valid
+│        └── instr_ident
 ```
 
 **State:**
@@ -337,6 +369,83 @@ VpuToScalarMem
 
 **Flow control:**
 - If request table full, send DROP response immediately (kamlet will retry)
+
+**Scalar memory store path:**
+
+For unit-stride stores to scalar memory, the path is word-by-word through this module:
+1. IssueUnit generates Store kinstr (address in scalar memory range)
+2. Kamlet dispatches to jamlets, jamlets read RF
+3. Kamlet sends WriteMemWord requests to lamlet (one per word, 8 bytes each)
+4. VpuToScalarMem converts each to TileLink Put
+5. On each TileLink ack, signals write_complete to RegisterScoreboard
+
+**Future optimization:** For better TileLink efficiency, may add a gather stage in lamlet
+that collects all words before issuing a single cache-line-sized TileLink Put. For now,
+word-by-word is simpler and reuses existing mechanisms.
+
+### ScalarMemArbiter
+
+Arbitrates access to ScalarMemPort between ScalarLoadQueue and VpuToScalarMem.
+
+```
+ScalarMemArbiter
+├── IN:  slq_tl_a.*                    # From ScalarLoadQueue
+├── IN:  vts_tl_a.*                    # From VpuToScalarMem
+│
+├── OUT: tl_a.*                        # To ScalarMemPort
+├── IN:  tl_d.*                        # From ScalarMemPort
+│
+├── OUT: slq_tl_d.*                    # To ScalarLoadQueue
+├── OUT: vts_tl_d.*                    # To VpuToScalarMem
+```
+
+**Priority:** ScalarLoadQueue > VpuToScalarMem (kamlets can retry via DROP)
+
+### RegisterScoreboard
+
+Tracks vector registers involved in scalar memory operations to prevent hazards. The lamlet
+needs this because different paths (VPU memory vs scalar memory) can cause reordering.
+Kamlets handle hazards internally for VPU memory operations.
+
+```
+RegisterScoreboard
+├── IN:  load_start (from IssueUnit)   # Scalar memory load starting
+│        ├── valid
+│        ├── vd                        # Destination register
+│        └── n_words                   # Words expected (for tracking)
+│
+├── IN:  store_start (from IssueUnit)  # Scalar memory store starting
+│        ├── valid
+│        ├── vs                        # Source register
+│        └── n_words                   # Words expected
+│
+├── IN:  load_complete (from ScalarLoadQueue)   # LoadImm dispatched
+│        ├── valid
+│        └── vd
+│
+├── IN:  store_word_complete (from VpuToScalarMem)  # One word written
+│        ├── valid
+│        └── vs
+│
+├── OUT: read_blocked[32]              # Registers that cannot be read
+├── OUT: write_blocked[32]             # Registers that cannot be written
+```
+
+**Hazards tracked:**
+
+| Operation | Hazard | Block | Release when |
+|-----------|--------|-------|--------------|
+| Scalar load | RAW+WAW | Reads and writes to vd | LoadImm kinstrs dispatched |
+| Scalar store | WAR | Writes to vs | All WriteMemWord responses received |
+
+**Why lamlet needs this:**
+- Scalar memory ops have long latency (TileLink round-trip)
+- Subsequent VPU memory ops could complete faster and cause hazards
+- Kamlets don't know about scalar memory latency
+
+**State per register:**
+- `pending_load`: Bool (blocked for reads and writes)
+- `pending_store_words`: Count (blocked for writes until count reaches 0)
 
 ### ScalarToKinstr
 

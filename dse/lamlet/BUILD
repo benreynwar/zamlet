@@ -11,6 +11,7 @@ LAMLET_MODULES = [
     ("IdentTracker", "ident_tracker"),
     ("IssueUnit", "issue_unit"),
     ("Lamlet", "lamlet"),
+    ("LamletTop", "lamlet_top"),
 ]
 
 # Generate verilog for each module

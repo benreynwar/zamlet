@@ -3,7 +3,7 @@ package zamlet.kamlet
 import chisel3._
 import chisel3.util._
 import zamlet.LamletParams
-import zamlet.jamlet.{KInstrOpcode, KInstrBase, SyncTriggerInstr}
+import zamlet.jamlet.{KInstrOpcode, KInstrBase, SyncTriggerInstr, IdentQueryInstr}
 
 /**
  * InstrExecutor decodes kinstrs and executes them.
@@ -35,6 +35,15 @@ class InstrExecutor(params: LamletParams) extends Module {
         io.syncLocalEvent.valid := true.B
         io.syncLocalEvent.bits.syncIdent := instr.syncIdent
         io.syncLocalEvent.bits.value := instr.value
+      }
+      is (KInstrOpcode.IdentQuery) {
+        val instr = io.kinstrIn.bits.asTypeOf(new IdentQueryInstr)
+        // Kamlet reports distance from baseline to oldest active ident.
+        // For now (no waiting item tracking), report all idents free.
+        // TODO: Compute real distance when waiting item table is implemented.
+        io.syncLocalEvent.valid := true.B
+        io.syncLocalEvent.bits.syncIdent := instr.syncIdent
+        io.syncLocalEvent.bits.value := params.maxResponseTags.U
       }
     }
   }

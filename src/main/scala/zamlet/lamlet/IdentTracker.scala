@@ -4,6 +4,7 @@ import chisel3._
 import chisel3.util._
 import zamlet.LamletParams
 import zamlet.kamlet.SyncEvent
+import zamlet.jamlet.{KInstrOpcode, IdentQueryInstr}
 import zamlet.utils.DoubleBuffer
 
 /**
@@ -117,16 +118,13 @@ class IdentTracker(params: LamletParams) extends Module {
 
   // Construct output kinstr
   when (sendingIdentQuery) {
-    // Inject IdentQuery - encode as kinstr with special opcode
-    // Format: [63:56]=opcode(0x3F), [55:48]=baseline, [47:40]=previous_instr_ident, [7:0]=ident
-    val identQueryKinstr = Cat(
-      0x3F.U(8.W),                    // opcode for IdentQuery
-      iqBaseline,                     // baseline
-      lastSentInstrIdent,             // previous_instr_ident
-      0.U(32.W),                      // padding
-      identQueryIdent(7, 0)           // ident (use dedicated ident)
-    )
-    outInternal.bits.kinstr := identQueryKinstr
+    // Inject IdentQuery using proper Bundle format
+    val identQueryInstr = Wire(new IdentQueryInstr)
+    identQueryInstr.opcode := KInstrOpcode.IdentQuery
+    identQueryInstr.baseline := iqBaseline
+    identQueryInstr.syncIdent := identQueryIdent
+    identQueryInstr.reserved := 0.U
+    outInternal.bits.kinstr := identQueryInstr.asUInt
     outInternal.bits.kIndex := 0.U
     outInternal.bits.isBroadcast := true.B
   } .otherwise {
