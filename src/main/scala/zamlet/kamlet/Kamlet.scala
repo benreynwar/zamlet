@@ -186,6 +186,13 @@ class Kamlet(
   // InstrExecutor → Synchronizer
   synchronizer.io.localEvent := instrExecutor.io.syncLocalEvent
 
+  // InstrExecutor → Jamlets (immediate kinstrs)
+  // Flatten jamlets to 1D index: jInKIndex = jY * jCols + jX
+  for (jY <- 0 until params.jRows; jX <- 0 until params.jCols) {
+    val jInKIndex = jY * params.jCols + jX
+    jamlets(jY)(jX).io.immediateKinstr := instrExecutor.io.immediateKinstr(jInKIndex)
+  }
+
   // ============================================================
   // Sync network
   // ============================================================

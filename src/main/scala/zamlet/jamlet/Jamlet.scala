@@ -65,6 +65,9 @@ class Jamlet(params: LamletParams) extends Module {
     val witemRemove = Flipped(Valid(params.ident()))
     val witemComplete = Valid(params.ident())
 
+    // Immediate kinstr execution (from kamlet) - for LoadImm, ALU ops, etc.
+    val immediateKinstr = Flipped(Valid(new KinstrWithParams(params)))
+
     // Cache slot interface (to/from kamlet)
     val cacheSlotReq = Valid(new CacheSlotReq(params))
     val cacheSlotResp = Flipped(Valid(new CacheSlotResp(params)))
@@ -88,13 +91,14 @@ class Jamlet(params: LamletParams) extends Module {
 
   // TODO: instantiate when ready
   // val sram = Module(new Sram(params))
-  // val rfSlice = Module(new RfSlice(params))
+  val rfSlice = Module(new RfSlice(params))
   // val witemTable = Module(new WitemTable(params))
   // val rxA = Module(new RxA(params))
   // val rxB = Module(new RxB(params))
   val witemMonitor = Module(new WitemMonitor(params))
+  val localExec = Module(new LocalExec(params))
   // val aArbiter = Module(new ChArbiter(params))
-  // val bArbiter = Module(new ChArbiter(params))
+  val bArbiter = Module(new PacketArbiter(params, 2))  // LocalExec + WitemMonitor
   // val alu = Module(new ALU(params))
 
   // ============================================================
@@ -144,9 +148,10 @@ class Jamlet(params: LamletParams) extends Module {
   aNetworkNode.io.hi.valid := false.B
   aNetworkNode.io.hi.bits := DontCare
 
-  // B channel local ports: tie off for now
-  bNetworkNode.io.hi.valid := false.B
-  bNetworkNode.io.hi.bits := DontCare
+  // B channel local ports
+  // hi: arbiter output -> network (for outgoing packets like WriteMemWord)
+  bNetworkNode.io.hi <> bArbiter.io.out
+  // ho: network -> local receivers (tie off until RxB exists)
   bNetworkNode.io.ho.ready := false.B
 
   // --- Network node local ports to RX handlers ---
@@ -185,13 +190,24 @@ class Jamlet(params: LamletParams) extends Module {
   // sram.io.sendCacheLine := io.sendCacheLine
 
   // --- RfSlice connections ---
-  // rfSlice.io.aluRead <> alu.io.rfRead
-  // rfSlice.io.aluWrite <> alu.io.rfWrite
-  // rfSlice.io.rxARead <> rxA.io.rfRead
-  // rfSlice.io.rxAWrite <> rxA.io.rfWrite
-  // rfSlice.io.rxBRead <> rxB.io.rfRead
-  // rfSlice.io.rxBWrite <> rxB.io.rfWrite
-  // rfSlice.io.witemMonitorRead <> witemMonitor.io.rfRead
+  // WitemMonitor RF ports
+  rfSlice.io.maskReq <> witemMonitor.io.maskRfReq
+  rfSlice.io.maskResp <> witemMonitor.io.maskRfResp
+  rfSlice.io.indexReq <> witemMonitor.io.indexRfReq
+  rfSlice.io.indexResp <> witemMonitor.io.indexRfResp
+  rfSlice.io.dataReq <> witemMonitor.io.dataRfReq
+  rfSlice.io.dataResp <> witemMonitor.io.dataRfResp
+
+  // LocalExec connections
+  localExec.io.thisX := io.thisX
+  localExec.io.thisY := io.thisY
+  localExec.io.kinstrIn := io.immediateKinstr
+  rfSlice.io.localExecReq <> localExec.io.rfReq
+  rfSlice.io.localExecResp <> localExec.io.rfResp
+
+  // B channel arbiter inputs: LocalExec (0) + WitemMonitor (1)
+  bArbiter.io.in(0) <> localExec.io.packetOut
+  bArbiter.io.in(1) <> witemMonitor.io.packetOut
 
   // --- ALU connections ---
   // alu.io.dispatch := io.dispatch  // for immediate ALU ops
@@ -239,16 +255,8 @@ class Jamlet(params: LamletParams) extends Module {
   witemMonitor.io.sramResp.valid := false.B
   witemMonitor.io.sramResp.bits := DontCare
   witemMonitor.io.sramReq.ready := false.B
-  witemMonitor.io.maskRfReq.ready := true.B
-  witemMonitor.io.maskRfResp.valid := false.B
-  witemMonitor.io.maskRfResp.bits := DontCare
-  witemMonitor.io.indexRfReq.ready := true.B
-  witemMonitor.io.indexRfResp.valid := false.B
-  witemMonitor.io.indexRfResp.bits := DontCare
-  witemMonitor.io.dataRfReq.ready := true.B
-  witemMonitor.io.dataRfResp.valid := false.B
-  witemMonitor.io.dataRfResp.bits := DontCare
-  witemMonitor.io.packetOut.ready := false.B
+  // RF ports connected to RfSlice above
+  // packetOut connected to bArbiter above
 
   // ============================================================
   // Temporary: tie off non-network outputs
@@ -277,4 +285,14 @@ object JamletGenerator extends zamlet.ModuleGenerator {
       new Jamlet(params)
     }
   }
+}
+
+object JamletMain extends App {
+  if (args.length < 2) {
+    println("Usage: <outputDir> <configFile>")
+    System.exit(1)
+  }
+  val outputDir = args(0)
+  val configFile = args(1)
+  JamletGenerator.generate(outputDir, Seq(configFile))
 }

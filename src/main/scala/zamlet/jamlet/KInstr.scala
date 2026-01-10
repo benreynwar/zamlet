@@ -41,6 +41,11 @@ object KInstr {
   def asWord(params: LamletParams, kinstr: UInt): WordInstr = {
     kinstr.asTypeOf(new WordInstr(params))
   }
+
+  /** Cast kinstr to LoadImmInstr */
+  def asLoadImm(params: LamletParams, kinstr: UInt): LoadImmInstr = {
+    kinstr.asTypeOf(new LoadImmInstr(params))
+  }
 }
 
 /** KInstr opcode enumeration (6 bits) */
@@ -51,6 +56,9 @@ object KInstrOpcode extends ChiselEnum {
   val StoreJ2J = Value(3.U)
   val LoadSimple = Value(4.U)
   val StoreSimple = Value(5.U)
+  val LoadImm = Value(6.U)
+  val WriteParam = Value(7.U)
+  val StoreScalar = Value(8.U)
 
   // Force 6-bit width by defining max value
   val Reserved63 = Value(63.U)
@@ -59,6 +67,18 @@ object KInstrOpcode extends ChiselEnum {
 /** Width of parameter memory index */
 object KInstrParamIdx {
   val width = 4
+  val numEntries = 1 << width
+}
+
+/**
+ * Kinstr bundled with resolved param memory values.
+ * Used for kamlet-to-jamlet dispatch where params have been looked up.
+ */
+class KinstrWithParams(params: LamletParams) extends Bundle {
+  val kinstr = UInt(KInstr.width.W)
+  val param0 = UInt(params.memAddrWidth.W)
+  val param1 = UInt(params.memAddrWidth.W)
+  val param2 = UInt(params.memAddrWidth.W)
 }
 
 /**
@@ -197,5 +217,82 @@ class IndexedInstr(params: LamletParams) extends Bundle {
   // Indexed-specific fields
   val indexEw = EwCode()
   val indexReg = params.rfAddr()
+}
+
+/**
+ * LoadImm instruction format - write 32 bits of immediate data to RF.
+ * Used for scalar memory loads where data is embedded in the instruction.
+ *
+ * To write a full word, send (wordBytes/4) LoadImm instructions, one per section.
+ * For 64-bit words: 2 sections (lower=0, upper=1)
+ *
+ * Layout (64 bits total):
+ *   opcode:    6 bits  - KInstrOpcode.LoadImm
+ *   jInKIndex: log2(jInK) bits - which jamlet in this kamlet
+ *   rfAddr:    6 bits  - destination word in RfSlice
+ *   section:   log2(wordBytes/4) bits - which 32-bit section of the word
+ *   byteMask:  4 bits  - which bytes of the 32-bit section to write
+ *   data:      32 bits - data to write
+ *   reserved:  remaining bits
+ */
+class LoadImmInstr(params: LamletParams) extends Bundle {
+  private val usedBits = KInstr.opcodeWidth + log2Ceil(params.jInK) +
+                         params.rfAddrWidth + log2Ceil(params.wordBytes / 4) + 4 + 32
+  require(usedBits <= KInstr.width, s"LoadImmInstr uses $usedBits bits but KInstr.width is ${KInstr.width}")
+
+  val opcode = KInstrOpcode()
+  val jInKIndex = UInt(log2Ceil(params.jInK).W)
+  val rfAddr = params.rfAddr()
+  val section = UInt(log2Ceil(params.wordBytes / 4).W)
+  val byteMask = UInt(4.W)
+  val data = UInt(32.W)
+  val reserved = UInt((KInstr.width - usedBits).W)
+}
+
+/**
+ * WriteParam instruction format - write 48 bits to parameter memory.
+ * Used to set up addresses/strides/nElements before load/store instructions.
+ *
+ * Layout (64 bits total):
+ *   opcode:    6 bits  - KInstrOpcode.WriteParam
+ *   paramIdx:  4 bits  - which param memory entry to write
+ *   data:      48 bits - data to write (fits memAddrWidth)
+ *   reserved:  6 bits
+ */
+class WriteParamInstr extends Bundle {
+  private val usedBits = KInstr.opcodeWidth + KInstrParamIdx.width + 48
+  require(usedBits <= KInstr.width, s"WriteParamInstr uses $usedBits bits but KInstr.width is ${KInstr.width}")
+
+  val opcode = KInstrOpcode()
+  val paramIdx = UInt(KInstrParamIdx.width.W)
+  val data = UInt(48.W)
+  val reserved = UInt((KInstr.width - usedBits).W)
+}
+
+/**
+ * StoreScalar instruction format - store from VRF to scalar memory.
+ * Used for vector stores to non-VPU memory addresses.
+ *
+ * The base physical address is read from param memory (baseAddrIdx).
+ * For unit-stride ew=64: element i goes to addr = base + (startIndex + i) * 8
+ *
+ * Layout (64 bits total):
+ *   opcode:      6 bits  - KInstrOpcode.StoreScalar
+ *   dataReg:     6 bits  - source RF register (vs)
+ *   baseAddrIdx: 4 bits  - param memory index for base paddr
+ *   startIndex:  16 bits - starting element index
+ *   nElements:   16 bits - number of elements to store
+ *   reserved:    16 bits
+ */
+class StoreScalarInstr(params: LamletParams) extends Bundle {
+  private val usedBits = KInstr.opcodeWidth + params.rfAddrWidth + KInstrParamIdx.width + 16 + 16
+  require(usedBits <= KInstr.width, s"StoreScalarInstr uses $usedBits bits but KInstr.width is ${KInstr.width}")
+
+  val opcode = KInstrOpcode()
+  val dataReg = params.rfAddr()
+  val baseAddrIdx = UInt(KInstrParamIdx.width.W)
+  val startIndex = UInt(16.W)
+  val nElements = UInt(16.W)
+  val reserved = UInt((KInstr.width - usedBits).W)
 }
 

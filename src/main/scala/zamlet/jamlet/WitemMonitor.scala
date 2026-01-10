@@ -2203,3 +2203,11 @@ object WitemMonitorGenerator extends zamlet.ModuleGenerator {
     }
   }
 }
+
+object WitemMonitorMain extends App {
+  if (args.length < 2) {
+    println("Usage: <outputDir> <configFile>")
+    System.exit(1)
+  }
+  WitemMonitorGenerator.generate(args(0), Seq(args(1)))
+}

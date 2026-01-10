@@ -1,5 +1,21 @@
 load("//bazel:chisel.bzl", "chisel_binary")
 
+# Lamlet sources (for use by other packages)
+filegroup(
+    name = "lamlet_sources",
+    srcs = [
+        "Lamlet.scala",
+        "LamletTop.scala",
+        "IssueUnit.scala",
+        "IdentTracker.scala",
+        "DispatchQueue.scala",
+        "ScalarLoadQueue.scala",
+        "VpuToScalarMem.scala",
+        "ZamletVectorDecode.scala",
+    ],
+    visibility = ["//visibility:public"],
+)
+
 LAMLET_DEPS = [
     "@maven//:org_typelevel_cats_core_2_13",
     "@maven//:org_typelevel_cats_kernel_2_13",
@@ -35,6 +51,7 @@ chisel_binary(
     srcs = [
         "IssueUnit.scala",
         "IdentTracker.scala",
+        "ScalarLoadQueue.scala",
     ] + LAMLET_COMMON_SRCS,
     main_class = "zamlet.lamlet.IssueUnitMain",
     deps = LAMLET_DEPS,
@@ -48,8 +65,39 @@ chisel_binary(
         "IssueUnit.scala",
         "IdentTracker.scala",
         "DispatchQueue.scala",
+        "ScalarLoadQueue.scala",
+        "VpuToScalarMem.scala",
     ] + LAMLET_COMMON_SRCS,
     main_class = "zamlet.lamlet.LamletMain",
+    deps = LAMLET_DEPS,
+    visibility = ["//visibility:public"],
+)
+
+chisel_binary(
+    name = "lamlet_top",
+    srcs = [
+        "LamletTop.scala",
+        "Lamlet.scala",
+        "IssueUnit.scala",
+        "IdentTracker.scala",
+        "DispatchQueue.scala",
+        "ScalarLoadQueue.scala",
+        "VpuToScalarMem.scala",
+        "//src/main/scala/zamlet/kamlet:kamlet_sources",
+        "//src/main/scala/zamlet/jamlet:jamlet_sources",
+    ] + LAMLET_COMMON_SRCS,
+    main_class = "zamlet.lamlet.LamletTopMain",
+    deps = LAMLET_DEPS,
+    visibility = ["//visibility:public"],
+)
+
+chisel_binary(
+    name = "scalar_load_queue",
+    srcs = [
+        "ScalarLoadQueue.scala",
+        "IdentTracker.scala",
+    ] + LAMLET_COMMON_SRCS,
+    main_class = "zamlet.lamlet.ScalarLoadQueueMain",
     deps = LAMLET_DEPS,
     visibility = ["//visibility:public"],
 )

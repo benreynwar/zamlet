@@ -118,5 +118,23 @@
     "resultOutputReg": true,
     "portOutOutputReg": true,
     "minPipelineReg": true
+  },
+  "rfSliceParams": {
+    "maskReqForwardBuffer": false,
+    "maskReqBackwardBuffer": false,
+    "maskRespForwardBuffer": false,
+    "maskRespBackwardBuffer": false,
+    "indexReqForwardBuffer": false,
+    "indexReqBackwardBuffer": false,
+    "indexRespForwardBuffer": false,
+    "indexRespBackwardBuffer": false,
+    "dataReqForwardBuffer": false,
+    "dataReqBackwardBuffer": false,
+    "dataRespForwardBuffer": false,
+    "dataRespBackwardBuffer": false,
+    "localExecReqForwardBuffer": false,
+    "localExecReqBackwardBuffer": false,
+    "localExecRespForwardBuffer": false,
+    "localExecRespBackwardBuffer": false
   }
 }

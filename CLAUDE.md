@@ -17,9 +17,6 @@ Avoid unnecessary marketing/promotional words like "comprehensive", "robust", "p
 ## Quoting Sources
 NEVER paraphrase when using quote marks. If you use quotation marks, the text must be verbatim from the source. If you need to summarize or paraphrase, do not use quote marks.
 
-## Module Generation
-**IMPORTANT**: When creating new modules with ModuleGenerator objects, you MUST add them to the case statement in `src/main/scala/zamlet/Main.scala`.
-
 ## Running Commands
 Never pipe command output through `head` or `tail` if you might need to see more of it later - this forces re-running the command. Either:
 1. Run the command and wait for full output
@@ -61,6 +58,9 @@ Example: `bazel build //dse/bamlet:Bamlet_default__asap7_results`
 
 ## Bazel
 NEVER run `bazel clean` or `bazel clean --expunge` unless explicitly told to by the user.
+
+## Chisel
+NEVER use the `%` (modulo) operator in Chisel code. It synthesizes to expensive divider hardware. Use bit masking instead when the divisor is a power of 2 (e.g., `x & (n-1).U` instead of `x % n.U`).
 
 ## Grep Tool Usage
 When using the Grep tool for searching code:

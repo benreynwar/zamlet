@@ -7,6 +7,32 @@ import io.circe.parser._
 import io.circe.generic.semiauto._
 import scala.io.Source
 
+case class RfSliceParams(
+  // Mask port
+  maskReqForwardBuffer: Boolean = false,
+  maskReqBackwardBuffer: Boolean = false,
+  maskRespForwardBuffer: Boolean = false,
+  maskRespBackwardBuffer: Boolean = false,
+
+  // Index port
+  indexReqForwardBuffer: Boolean = false,
+  indexReqBackwardBuffer: Boolean = false,
+  indexRespForwardBuffer: Boolean = false,
+  indexRespBackwardBuffer: Boolean = false,
+
+  // Data port
+  dataReqForwardBuffer: Boolean = false,
+  dataReqBackwardBuffer: Boolean = false,
+  dataRespForwardBuffer: Boolean = false,
+  dataRespBackwardBuffer: Boolean = false,
+
+  // LocalExec port
+  localExecReqForwardBuffer: Boolean = false,
+  localExecReqBackwardBuffer: Boolean = false,
+  localExecRespForwardBuffer: Boolean = false,
+  localExecRespBackwardBuffer: Boolean = false
+)
+
 case class SynchronizerParams(
   maxConcurrentSyncs: Int = 4,
   resultOutputReg: Boolean = false,
@@ -180,7 +206,10 @@ case class LamletParams(
   issueUnitParams: IssueUnitParams = IssueUnitParams(),
 
   // Synchronizer configuration
-  synchronizerParams: SynchronizerParams = SynchronizerParams()
+  synchronizerParams: SynchronizerParams = SynchronizerParams(),
+
+  // RfSlice configuration
+  rfSliceParams: RfSliceParams = RfSliceParams()
 ) {
   // Grid derived
   def jInK: Int = jCols * jRows
@@ -230,6 +259,7 @@ case class LamletParams(
 }
 
 object LamletParams {
+  implicit val rfSliceParamsDecoder: Decoder[RfSliceParams] = deriveDecoder[RfSliceParams]
   implicit val synchronizerParamsDecoder: Decoder[SynchronizerParams] = deriveDecoder[SynchronizerParams]
   implicit val witemMonitorParamsDecoder: Decoder[WitemMonitorParams] = deriveDecoder[WitemMonitorParams]
   implicit val networkNodeParamsDecoder: Decoder[NetworkNodeParams] = deriveDecoder[NetworkNodeParams]

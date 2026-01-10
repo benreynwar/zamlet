@@ -3,7 +3,8 @@ package zamlet.lamlet
 import chisel3._
 import chisel3.util._
 import zamlet.LamletParams
-import zamlet.jamlet.{J2JInstr, EwCode, WordOrder, KInstr, KInstrOpcode}
+import zamlet.jamlet.{J2JInstr, EwCode, WordOrder, KInstr, KInstrOpcode, WriteParamInstr,
+                       StoreScalarInstr}
 import zamlet.utils.{DoubleBuffer, ValidBuffer}
 
 /**
@@ -70,6 +71,21 @@ class IssueUnit(params: LamletParams) extends Module {
     /** Kinstr output to IdentTracker (ident field empty, filled by IdentTracker) */
     val toIdentTracker = Decoupled(new KinstrWithTarget(params))
 
+    /** Scalar memory load request to ScalarLoadQueue */
+    val scalarLoadReq = Decoupled(new ScalarLoadReq(params))
+
+    /** Scalar load completion from ScalarLoadQueue */
+    val scalarLoadComplete = Flipped(Valid(UInt(params.identWidth.W)))
+
+    /** Scalar store completion from VpuToScalarMem */
+    val scalarStoreComplete = Flipped(Valid(UInt(params.identWidth.W)))
+
+    /** Store word count to VpuToScalarMem (how many words to expect) */
+    val storeWordCount = Valid(new Bundle {
+      val ident = UInt(params.identWidth.W)
+      val nWords = UInt(16.W)
+    })
+
     /** Completion signals to scalar core */
     val com = Output(new IssueUnitCom)
 
@@ -130,7 +146,8 @@ class IssueUnit(params: LamletParams) extends Module {
 
   // State machine
   object State extends ChiselEnum {
-    val Idle, TlbReq, TlbWait, Dispatch = Value
+    val Idle, TlbReq, TlbWait, DispatchLoad, WaitLoadComplete = Value
+    val DispatchStoreWriteParam, DispatchStoreScalar, WaitStoreComplete = Value
   }
   import State._
 
@@ -209,9 +226,18 @@ class IssueUnit(params: LamletParams) extends Module {
   tlbReqInternal.bits.vaddr := rs1Data
   tlbReqInternal.bits.cmd := Mux(isVectorStore, 1.U, 0.U)
   toIdentTrackerInternal.valid := false.B
-  toIdentTrackerInternal.bits.kinstr := kinstr.asUInt
+  toIdentTrackerInternal.bits.kinstr := 0.U
   toIdentTrackerInternal.bits.kIndex := 0.U
   toIdentTrackerInternal.bits.isBroadcast := true.B
+  io.scalarLoadReq.valid := false.B
+  io.scalarLoadReq.bits.paddr := tlbPaddr
+  io.scalarLoadReq.bits.vd := vd.pad(params.rfAddrWidth)
+  io.scalarLoadReq.bits.startIndex := vstart.pad(params.elementIndexWidth)
+  io.scalarLoadReq.bits.nElements := vl
+  io.scalarLoadReq.bits.instrIdent := 0.U
+  io.storeWordCount.valid := false.B
+  io.storeWordCount.bits.ident := 0.U
+  io.storeWordCount.bits.nWords := vl
   comInternal.retireLate := false.B
   comInternal.inst := inst
   comInternal.xcpt := false.B
@@ -267,13 +293,73 @@ class IssueUnit(params: LamletParams) extends Module {
         state := Idle
       }.otherwise {
         tlbPaddr := tlbRespBuffered.paddr
-        state := Dispatch
+        when(isVectorLoad) {
+          state := DispatchLoad
+        }.elsewhen(isVectorStore) {
+          state := DispatchStoreWriteParam
+        }.otherwise {
+          // Unknown instruction - just retire
+          comInternal.retireLate := true.B
+          state := Idle
+        }
       }
     }
 
-    is(Dispatch) {
+    is(DispatchLoad) {
+      io.scalarLoadReq.valid := true.B
+      when(io.scalarLoadReq.ready) {
+        state := WaitLoadComplete
+      }
+    }
+
+    is(WaitLoadComplete) {
+      when(io.scalarLoadComplete.valid) {
+        comInternal.retireLate := true.B
+        state := Idle
+      }
+    }
+
+    is(DispatchStoreWriteParam) {
+      // Send WriteParam kinstr with paddr to param entry 0
+      val writeParamKinstr = Wire(new WriteParamInstr)
+      writeParamKinstr.opcode := KInstrOpcode.WriteParam
+      writeParamKinstr.paramIdx := 0.U
+      writeParamKinstr.data := tlbPaddr(params.memAddrWidth - 1, 0)
+      writeParamKinstr.reserved := 0.U
+
       toIdentTrackerInternal.valid := true.B
+      toIdentTrackerInternal.bits.kinstr := writeParamKinstr.asUInt
+      toIdentTrackerInternal.bits.kIndex := 0.U
+      toIdentTrackerInternal.bits.isBroadcast := true.B
       when(toIdentTrackerInternal.ready) {
+        state := DispatchStoreScalar
+      }
+    }
+
+    is(DispatchStoreScalar) {
+      // Send StoreScalar kinstr referencing param entry 0
+      val storeScalarKinstr = Wire(new StoreScalarInstr(params))
+      storeScalarKinstr.opcode := KInstrOpcode.StoreScalar
+      storeScalarKinstr.dataReg := vd.pad(params.rfAddrWidth)
+      storeScalarKinstr.baseAddrIdx := 0.U
+      storeScalarKinstr.startIndex := vstart
+      storeScalarKinstr.nElements := vl
+      storeScalarKinstr.reserved := 0.U
+
+      toIdentTrackerInternal.valid := true.B
+      toIdentTrackerInternal.bits.kinstr := storeScalarKinstr.asUInt
+      toIdentTrackerInternal.bits.kIndex := 0.U
+      toIdentTrackerInternal.bits.isBroadcast := true.B
+      // Signal expected word count to VpuToScalarMem
+      io.storeWordCount.valid := true.B
+      io.storeWordCount.bits.nWords := vl
+      when(toIdentTrackerInternal.ready) {
+        state := WaitStoreComplete
+      }
+    }
+
+    is(WaitStoreComplete) {
+      when(io.scalarStoreComplete.valid) {
         comInternal.retireLate := true.B
         state := Idle
       }

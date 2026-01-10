@@ -208,3 +208,11 @@ object NetworkNodeGenerator extends zamlet.ModuleGenerator {
     }
   }
 }
+
+object NetworkNodeMain extends App {
+  if (args.length < 2) {
+    println("Usage: <outputDir> <configFile>")
+    System.exit(1)
+  }
+  NetworkNodeGenerator.generate(args(0), Seq(args(1)))
+}

@@ -36,10 +36,23 @@ class Lamlet(params: LamletParams) extends Module {
     // Sync network (only S port used - lamlet at 0,-1 connects S to kamlet 0,0)
     val syncPortSOut = Output(new SyncPort)
     val syncPortSIn = Input(new SyncPort)
+
+    // TileLink interface for scalar memory loads (simplified, no diplomacy)
+    val tlGetReq = Decoupled(new TileLinkGetReq(params.memAddrWidth))
+    val tlGetResp = Flipped(Decoupled(new TileLinkGetResp(params.wordWidth)))
+
+    // TileLink interface for scalar memory stores
+    val tlPutReq = Decoupled(new TileLinkPutReq(params.memAddrWidth, params.wordWidth))
+    val tlPutResp = Flipped(Decoupled(new TileLinkPutResp))
+
+    // Mesh input for receiving WriteMemWord packets (store data from kamlets)
+    val meshIn = Flipped(Decoupled(new NetworkWord(params)))
   })
 
   // Submodules
   val issueUnit = Module(new IssueUnit(params))
+  val scalarLoadQueue = Module(new ScalarLoadQueue(params))
+  val vpuToScalarMem = Module(new VpuToScalarMem(params))
   val identTracker = Module(new IdentTracker(params))
   val dispatchQueue = Module(new DispatchQueue(params))
 
@@ -57,8 +70,31 @@ class Lamlet(params: LamletParams) extends Module {
   io.com := issueUnit.io.com
   issueUnit.io.kill := io.kill
 
-  // IssueUnit → IdentTracker
-  identTracker.io.in <> issueUnit.io.toIdentTracker
+  // IssueUnit → ScalarLoadQueue (for loads)
+  scalarLoadQueue.io.req <> issueUnit.io.scalarLoadReq
+  issueUnit.io.scalarLoadComplete := scalarLoadQueue.io.loadComplete
+
+  // ScalarLoadQueue → TileLink Get (external)
+  io.tlGetReq <> scalarLoadQueue.io.tlA
+  scalarLoadQueue.io.tlD <> io.tlGetResp
+
+  // IssueUnit → VpuToScalarMem (for stores)
+  vpuToScalarMem.io.storeWordCount := issueUnit.io.storeWordCount
+  issueUnit.io.scalarStoreComplete := vpuToScalarMem.io.storeComplete
+
+  // VpuToScalarMem → TileLink Put (external)
+  io.tlPutReq <> vpuToScalarMem.io.tlPutReq
+  vpuToScalarMem.io.tlPutResp <> io.tlPutResp
+
+  // Mesh input → VpuToScalarMem (WriteMemWord packets from kamlets)
+  vpuToScalarMem.io.meshIn <> io.meshIn
+
+  // Arbiter: merge IssueUnit (stores) and ScalarLoadQueue (load kinstrs) → IdentTracker
+  // Priority: ScalarLoadQueue first (in-flight load data), then IssueUnit (new stores)
+  val kinstrArbiter = Module(new Arbiter(new KinstrWithTarget(params), 2))
+  kinstrArbiter.io.in(0) <> scalarLoadQueue.io.kinstrOut  // Higher priority
+  kinstrArbiter.io.in(1) <> issueUnit.io.toIdentTracker   // Lower priority
+  identTracker.io.in <> kinstrArbiter.io.out
 
   // IdentTracker → DispatchQueue
   dispatchQueue.io.in <> identTracker.io.out

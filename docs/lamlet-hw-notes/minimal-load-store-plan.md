@@ -107,15 +107,18 @@ Flow:
 ### 2.3 LoadImm Kinstr Handling (in Jamlet)
 Jamlets decode LoadImm and write embedded data directly to RF.
 
+For Phase 2 (ew=64 only), each LoadImm writes one complete 8-byte word:
+
 ```
-LoadImm kinstr:
-├── vd           # Destination register
-├── elem_index   # Which element
-├── data         # Embedded data (up to 8 bytes)
-└── ew           # Element width
+LoadImm kinstr (2 words):
+  Word 0: instruction
+    ├── opcode      # KInstrOpcode.LoadImm
+    ├── jInKIndex   # Which jamlet in this kamlet
+    └── rfAddr      # Destination word in RfSlice
+  Word 1: data      # 64-bit data to write
 ```
 
-No SRAM access - data is in the kinstr itself.
+No SRAM access - data is embedded in the instruction packet.
 
 ### 2.4 VpuToScalarMem (in Lamlet)
 Handles WriteMemWord messages from kamlets, converts to TileLink writes.
@@ -304,6 +307,7 @@ python/zamlet/
 | Full RegisterScoreboard | Simple blocking |
 | Gather for stores | Word-by-word via VpuToScalarMem |
 | Both memory types | Scalar memory only |
+| All element widths (8-64) | ew=64 only (1 element = 1 word) |
 
 ## Open Questions
 
