@@ -2,6 +2,7 @@ package zamlet.jamlet
 
 import chisel3._
 import chisel3.util._
+import zamlet.LamletParams
 import zamlet.utils._
 
 /**
@@ -14,7 +15,7 @@ class PacketInHandlerErrors extends Bundle {
 /**
  * Packet In Handler IO
  */
-class PacketInHandlerIO(params: JamletParams) extends Bundle {
+class PacketInHandlerIO(params: LamletParams) extends Bundle {
   // Current position
   val thisX = Input(UInt(params.xPosWidth.W))
   val thisY = Input(UInt(params.yPosWidth.W))
@@ -39,7 +40,7 @@ class PacketInHandlerIO(params: JamletParams) extends Bundle {
  * - Single send: dimension-order routing to target
  * - Broadcast: flood to all directions within bounds
  */
-class PacketInHandler(params: JamletParams) extends Module {
+class PacketInHandler(params: LamletParams) extends Module {
   val io = IO(new PacketInHandlerIO(params))
   
   // Register declarations
@@ -202,7 +203,7 @@ object PacketInHandlerGenerator extends zamlet.ModuleGenerator {
       println("Usage: <command> <outputDir> PacketInHandler <jamletParamsFileName>")
       null
     } else {
-      val params = JamletParams.fromFile(args(0))
+      val params = LamletParams.fromFile(args(0))
       new PacketInHandler(params)
     }
   }

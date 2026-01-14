@@ -1,4 +1,4 @@
-package zamlet.jamlet
+package zamlet
 
 import chisel3._
 import chisel3.util.log2Ceil
@@ -6,6 +6,39 @@ import io.circe._
 import io.circe.parser._
 import io.circe.generic.semiauto._
 import scala.io.Source
+
+case class RfSliceParams(
+  // Mask port
+  maskReqForwardBuffer: Boolean = false,
+  maskReqBackwardBuffer: Boolean = false,
+  maskRespForwardBuffer: Boolean = false,
+  maskRespBackwardBuffer: Boolean = false,
+
+  // Index port
+  indexReqForwardBuffer: Boolean = false,
+  indexReqBackwardBuffer: Boolean = false,
+  indexRespForwardBuffer: Boolean = false,
+  indexRespBackwardBuffer: Boolean = false,
+
+  // Data port
+  dataReqForwardBuffer: Boolean = false,
+  dataReqBackwardBuffer: Boolean = false,
+  dataRespForwardBuffer: Boolean = false,
+  dataRespBackwardBuffer: Boolean = false,
+
+  // LocalExec port
+  localExecReqForwardBuffer: Boolean = false,
+  localExecReqBackwardBuffer: Boolean = false,
+  localExecRespForwardBuffer: Boolean = false,
+  localExecRespBackwardBuffer: Boolean = false
+)
+
+case class SynchronizerParams(
+  maxConcurrentSyncs: Int = 4,
+  resultOutputReg: Boolean = false,
+  portOutOutputReg: Boolean = false,
+  minPipelineReg: Boolean = false
+)
 
 case class WitemMonitorParams(
   // Kamlet lifecycle interfaces (Valid)
@@ -107,7 +140,19 @@ case class NetworkNodeParams(
   hoBackwardBuffer: Boolean = true
 )
 
-case class JamletParams(
+case class IssueUnitParams(
+  exForwardBuffer: Boolean = false,
+  exBackwardBuffer: Boolean = false,
+  tlbReqForwardBuffer: Boolean = false,
+  tlbReqBackwardBuffer: Boolean = false,
+  tlbRespInputReg: Boolean = false,
+  toIdentTrackerForwardBuffer: Boolean = false,
+  toIdentTrackerBackwardBuffer: Boolean = false,
+  comOutputReg: Boolean = false,
+  killInputReg: Boolean = false
+)
+
+case class LamletParams(
   // Position widths
   xPosWidth: Int = 8,
   yPosWidth: Int = 8,
@@ -140,13 +185,31 @@ case class JamletParams(
   // Instruction identifier
   identWidth: Int = 7,
 
+  // Lamlet-level parameters
+  maxResponseTags: Int = 128,   // Number of instruction identifiers
+  instructionQueueLength: Int = 8,  // Instruction queue depth per kamlet
+  lamletDispatchQueueDepth: Int = 8,  // Lamlet dispatch queue depth
+
+  // IdentTracker buffering
+  identTrackerOutForwardBuffer: Boolean = true,
+  identTrackerOutBackwardBuffer: Boolean = true,
+
   // Network configuration
   nAChannels: Int = 1,
   nBChannels: Int = 1,
   networkNodeParams: NetworkNodeParams = NetworkNodeParams(),
 
   // WitemMonitor configuration
-  witemMonitorParams: WitemMonitorParams = WitemMonitorParams()
+  witemMonitorParams: WitemMonitorParams = WitemMonitorParams(),
+
+  // IssueUnit configuration
+  issueUnitParams: IssueUnitParams = IssueUnitParams(),
+
+  // Synchronizer configuration
+  synchronizerParams: SynchronizerParams = SynchronizerParams(),
+
+  // RfSlice configuration
+  rfSliceParams: RfSliceParams = RfSliceParams()
 ) {
   // Grid derived
   def jInK: Int = jCols * jRows
@@ -182,6 +245,7 @@ case class JamletParams(
   def rfAddrWidth: Int = log2Ceil(rfSliceWords)
   def nCacheSlots: Int = sramDepth / cacheSlotWords
   def cacheSlotWidth: Int = log2Ceil(nCacheSlots)
+  def kIndexWidth: Int = log2Ceil(kInL)
 
   // Types
   def xPos(): UInt = UInt(xPosWidth.W)
@@ -194,14 +258,17 @@ case class JamletParams(
   def rfAddr(): UInt = UInt(rfAddrWidth.W)
 }
 
-object JamletParams {
+object LamletParams {
+  implicit val rfSliceParamsDecoder: Decoder[RfSliceParams] = deriveDecoder[RfSliceParams]
+  implicit val synchronizerParamsDecoder: Decoder[SynchronizerParams] = deriveDecoder[SynchronizerParams]
   implicit val witemMonitorParamsDecoder: Decoder[WitemMonitorParams] = deriveDecoder[WitemMonitorParams]
   implicit val networkNodeParamsDecoder: Decoder[NetworkNodeParams] = deriveDecoder[NetworkNodeParams]
-  implicit val jamletParamsDecoder: Decoder[JamletParams] = deriveDecoder[JamletParams]
+  implicit val issueUnitParamsDecoder: Decoder[IssueUnitParams] = deriveDecoder[IssueUnitParams]
+  implicit val lamletParamsDecoder: Decoder[LamletParams] = deriveDecoder[LamletParams]
 
-  def fromFile(fileName: String): JamletParams = {
+  def fromFile(fileName: String): LamletParams = {
     val jsonContent = Source.fromFile(fileName).mkString
-    val paramsResult = decode[JamletParams](jsonContent)
+    val paramsResult = decode[LamletParams](jsonContent)
     paramsResult match {
       case Right(params) => params
       case Left(error) =>

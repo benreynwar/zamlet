@@ -14,6 +14,11 @@
   "elementIndexWidth": 22,
   "witemTableDepth": 16,
   "identWidth": 7,
+  "maxResponseTags": 128,
+  "instructionQueueLength": 8,
+  "lamletDispatchQueueDepth": 8,
+  "identTrackerOutForwardBuffer": true,
+  "identTrackerOutBackwardBuffer": true,
   "nAChannels": 1,
   "nBChannels": 1,
   "networkNodeParams": {
@@ -35,27 +40,22 @@
     "witemCompleteOutputReg": true,
     "witemSrcUpdateInputReg": true,
     "witemDstUpdateInputReg": true,
-
     "witemFaultReadyOutputReg": false,
     "witemCompleteReadyOutputReg": false,
     "witemFaultSyncInputReg": false,
     "witemCompletionSyncInputReg": false,
-
     "witemInfoReqForwardBuffer": true,
     "witemInfoReqBackwardBuffer": false,
     "witemInfoRespForwardBuffer": true,
     "witemInfoRespBackwardBuffer": false,
-
     "tlbReqForwardBuffer": true,
     "tlbReqBackwardBuffer": true,
     "tlbRespForwardBuffer": false,
     "tlbRespBackwardBuffer": true,
-
     "sramReqForwardBuffer": true,
     "sramReqBackwardBuffer": false,
     "sramRespForwardBuffer": true,
     "sramRespBackwardBuffer": true,
-
     "maskRfReqForwardBuffer": true,
     "maskRfReqBackwardBuffer": true,
     "maskRfRespForwardBuffer": false,
@@ -68,12 +68,9 @@
     "dataRfReqBackwardBuffer": false,
     "dataRfRespForwardBuffer": true,
     "dataRfRespBackwardBuffer": true,
-
     "packetOutForwardBuffer": true,
     "packetOutBackwardBuffer": true,
-
     "errOutputReg": false,
-
     "s1s2ForwardBuffer": true,
     "s1s2BackwardBuffer": false,
     "s2s3ForwardBuffer": true,
@@ -104,5 +101,40 @@
     "s14s15BackwardBuffer": false,
     "s15s16ForwardBuffer": true,
     "s15s16BackwardBuffer": false
+  },
+  "issueUnitParams": {
+    "exForwardBuffer": false,
+    "exBackwardBuffer": false,
+    "tlbReqForwardBuffer": false,
+    "tlbReqBackwardBuffer": false,
+    "tlbRespInputReg": true,
+    "toIdentTrackerForwardBuffer": false,
+    "toIdentTrackerBackwardBuffer": false,
+    "comOutputReg": true,
+    "killInputReg": false
+  },
+  "synchronizerParams": {
+    "maxConcurrentSyncs": 4,
+    "resultOutputReg": true,
+    "portOutOutputReg": true,
+    "minPipelineReg": true
+  },
+  "rfSliceParams": {
+    "maskReqForwardBuffer": false,
+    "maskReqBackwardBuffer": false,
+    "maskRespForwardBuffer": false,
+    "maskRespBackwardBuffer": false,
+    "indexReqForwardBuffer": false,
+    "indexReqBackwardBuffer": false,
+    "indexRespForwardBuffer": false,
+    "indexRespBackwardBuffer": false,
+    "dataReqForwardBuffer": false,
+    "dataReqBackwardBuffer": false,
+    "dataRespForwardBuffer": false,
+    "dataRespBackwardBuffer": false,
+    "localExecReqForwardBuffer": false,
+    "localExecReqBackwardBuffer": false,
+    "localExecRespForwardBuffer": false,
+    "localExecRespBackwardBuffer": false
   }
 }

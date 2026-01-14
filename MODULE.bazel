@@ -59,6 +59,17 @@ maven.install(
         "io.circe:circe-parser_2.13:0.14.13",
         "io.circe:circe-yaml_2.13:1.15.0",
         "com.chuusai:shapeless_2.13:2.3.13",
+        # Dependencies for RocketChip ecosystem
+        "com.lihaoyi:mainargs_2.13:0.5.0",
+        "com.lihaoyi:sourcecode_2.13:0.3.1",
+        "org.json4s:json4s-jackson_2.13:4.0.5",
+        "org.json4s:json4s-jackson-core_2.13:4.0.5",
+        "org.json4s:json4s-core_2.13:4.0.5",
+        "org.json4s:json4s-ast_2.13:4.0.5",
+        "org.scala-lang:scala-reflect:2.13.16",
+        "com.lihaoyi:os-lib_2.13:0.8.1",
+        "com.lihaoyi:geny_2.13:1.0.0",
+        "org.scala-lang.modules:scala-collection-compat_2.13:2.11.0",
     ],
     repositories = [
         "https://s01.oss.sonatype.org/content/repositories/snapshots",
@@ -109,6 +120,63 @@ register_toolchains("@llvm_toolchain//:all")
 # CIRCT for FIRRTL compilation
 http_archive = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
 git_repository = use_repo_rule("@bazel_tools//tools/build_defs/repo:git.bzl", "git_repository")
+new_local_repository = use_repo_rule(
+    "@bazel_tools//tools/build_defs/repo:local.bzl",
+    "new_local_repository"
+)
+
+# RocketChip ecosystem dependencies
+# Using commits from Chipyard for compatibility
+
+# Latest commits (Jan 2026) with Chisel 7 compatibility
+git_repository(
+    name = "cde",
+    remote = "https://github.com/chipsalliance/cde.git",
+    commit = "2bcaeae2b9914bd25497ce3c6fa62dc5ca80e09f",
+    build_file = "//bazel/external:cde.BUILD",
+)
+
+git_repository(
+    name = "diplomacy",
+    remote = "https://github.com/chipsalliance/diplomacy.git",
+    commit = "fe5e131d4fc8adec14a3ce4a4935bb5c0a269871",
+    build_file = "//bazel/external:diplomacy.BUILD",
+)
+
+git_repository(
+    name = "hardfloat",
+    remote = "https://github.com/ucb-bar/berkeley-hardfloat.git",
+    commit = "072fe42b1cfc2ead6ca56e725adf964ec06f9a4c",
+    build_file = "//bazel/external:hardfloat.BUILD",
+)
+
+git_repository(
+    name = "rocket_chip",
+    remote = "https://github.com/chipsalliance/rocket-chip.git",
+    commit = "f665b8b53c88d7cc0399c746aa4cb777729a3e11",
+    build_file = "//bazel/external:rocket_chip.BUILD",
+)
+
+git_repository(
+    name = "shuttle",
+    remote = "https://github.com/ucb-bar/shuttle.git",
+    commit = "d827d2ac916e0876025d20cc60cfba6a67fdc193",
+    build_file = "//bazel/external:shuttle.BUILD",
+)
+
+git_repository(
+    name = "cocotb_bus",
+    remote = "https://github.com/cocotb/cocotb-bus.git",
+    commit = "b9b248ecc8793de6c4534e8014b99b92e1a1519a",
+    build_file = "//bazel/external:cocotb_bus.BUILD",
+)
+
+git_repository(
+    name = "cocotbext_axi",
+    remote = "https://github.com/alexforencich/cocotbext-axi.git",
+    commit = "3e1e7fc1ec488811d742adde6f7283852f134458",
+    build_file = "//bazel/external:cocotbext_axi.BUILD",
+)
 
 # Cocotb rules 
 bazel_dep(name = "rules_cocotb_verilator")

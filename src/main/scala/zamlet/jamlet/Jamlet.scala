@@ -2,9 +2,10 @@ package zamlet.jamlet
 
 import chisel3._
 import chisel3.util._
+import zamlet.LamletParams
 
 /** Network channels IO - Vec of channels for each direction */
-class ChannelsIO(params: JamletParams, nChannels: Int) extends Bundle {
+class ChannelsIO(params: LamletParams, nChannels: Int) extends Bundle {
   val ni = Vec(nChannels, Flipped(Decoupled(new NetworkWord(params))))
   val no = Vec(nChannels, Decoupled(new NetworkWord(params)))
   val si = Vec(nChannels, Flipped(Decoupled(new NetworkWord(params))))
@@ -17,7 +18,7 @@ class ChannelsIO(params: JamletParams, nChannels: Int) extends Bundle {
 
 
 /** Cache slot request from jamlet (for RX-initiated witems) */
-class CacheSlotReq(params: JamletParams) extends Bundle {
+class CacheSlotReq(params: LamletParams) extends Bundle {
   val kMAddr = UInt(32.W)  // TODO: proper width
   val isWrite = Bool()
   val instrIdent = params.ident()
@@ -26,7 +27,7 @@ class CacheSlotReq(params: JamletParams) extends Bundle {
 }
 
 /** Cache slot response from kamlet */
-class CacheSlotResp(params: JamletParams) extends Bundle {
+class CacheSlotResp(params: LamletParams) extends Bundle {
   val instrIdent = params.ident()
   val sourceX = params.xPos()
   val sourceY = params.yPos()
@@ -35,7 +36,7 @@ class CacheSlotResp(params: JamletParams) extends Bundle {
 }
 
 /** Command to send cache line data */
-class SendCacheLineCmd(params: JamletParams) extends Bundle {
+class SendCacheLineCmd(params: LamletParams) extends Bundle {
   val slot = params.cacheSlot()
   val ident = params.ident()
   val isWriteRead = Bool()
@@ -46,7 +47,7 @@ class SendCacheLineCmd(params: JamletParams) extends Bundle {
  *
  * Contains routers, SRAM, register file slice, and witem processing logic.
  */
-class Jamlet(params: JamletParams) extends Module {
+class Jamlet(params: LamletParams) extends Module {
   val io = IO(new Bundle {
     // Position
     val thisX = Input(params.xPos())
@@ -63,6 +64,9 @@ class Jamlet(params: JamletParams) extends Module {
     val witemCacheAvail = Flipped(Valid(params.ident()))
     val witemRemove = Flipped(Valid(params.ident()))
     val witemComplete = Valid(params.ident())
+
+    // Immediate kinstr execution (from kamlet) - for LoadImm, ALU ops, etc.
+    val immediateKinstr = Flipped(Valid(new KinstrWithParams(params)))
 
     // Cache slot interface (to/from kamlet)
     val cacheSlotReq = Valid(new CacheSlotReq(params))
@@ -87,13 +91,14 @@ class Jamlet(params: JamletParams) extends Module {
 
   // TODO: instantiate when ready
   // val sram = Module(new Sram(params))
-  // val rfSlice = Module(new RfSlice(params))
+  val rfSlice = Module(new RfSlice(params))
   // val witemTable = Module(new WitemTable(params))
   // val rxA = Module(new RxA(params))
   // val rxB = Module(new RxB(params))
   val witemMonitor = Module(new WitemMonitor(params))
+  val localExec = Module(new LocalExec(params))
   // val aArbiter = Module(new ChArbiter(params))
-  // val bArbiter = Module(new ChArbiter(params))
+  val bArbiter = Module(new PacketArbiter(params, 2))  // LocalExec + WitemMonitor
   // val alu = Module(new ALU(params))
 
   // ============================================================
@@ -124,12 +129,29 @@ class Jamlet(params: JamletParams) extends Module {
   bNetworkNode.io.thisX := io.thisX
   bNetworkNode.io.thisY := io.thisY
 
-  // Tie off local ports until RX handlers and arbiters exist
+  // ============================================================
+  // Local port handling (simplified for Test 0)
+  // Forward instruction packets to kamlet
+  // ============================================================
+
+  // A channel local output: forward instruction packets to kamlet
+  val aHoHeader = aNetworkNode.io.ho.bits.data.asTypeOf(new PacketHeader(params))
+  val aHoIsInstruction = aNetworkNode.io.ho.bits.isHeader &&
+                         aHoHeader.messageType === MessageType.Instructions
+
+  // When we see an instruction packet, forward to kamlet
+  io.kamletReceivePacket.valid := aNetworkNode.io.ho.valid
+  io.kamletReceivePacket.bits := aNetworkNode.io.ho.bits
+  aNetworkNode.io.ho.ready := io.kamletReceivePacket.ready
+
+  // Tie off local input until TX arbiters exist
   aNetworkNode.io.hi.valid := false.B
   aNetworkNode.io.hi.bits := DontCare
-  aNetworkNode.io.ho.ready := false.B
-  bNetworkNode.io.hi.valid := false.B
-  bNetworkNode.io.hi.bits := DontCare
+
+  // B channel local ports
+  // hi: arbiter output -> network (for outgoing packets like WriteMemWord)
+  bNetworkNode.io.hi <> bArbiter.io.out
+  // ho: network -> local receivers (tie off until RxB exists)
   bNetworkNode.io.ho.ready := false.B
 
   // --- Network node local ports to RX handlers ---
@@ -168,13 +190,24 @@ class Jamlet(params: JamletParams) extends Module {
   // sram.io.sendCacheLine := io.sendCacheLine
 
   // --- RfSlice connections ---
-  // rfSlice.io.aluRead <> alu.io.rfRead
-  // rfSlice.io.aluWrite <> alu.io.rfWrite
-  // rfSlice.io.rxARead <> rxA.io.rfRead
-  // rfSlice.io.rxAWrite <> rxA.io.rfWrite
-  // rfSlice.io.rxBRead <> rxB.io.rfRead
-  // rfSlice.io.rxBWrite <> rxB.io.rfWrite
-  // rfSlice.io.witemMonitorRead <> witemMonitor.io.rfRead
+  // WitemMonitor RF ports
+  rfSlice.io.maskReq <> witemMonitor.io.maskRfReq
+  rfSlice.io.maskResp <> witemMonitor.io.maskRfResp
+  rfSlice.io.indexReq <> witemMonitor.io.indexRfReq
+  rfSlice.io.indexResp <> witemMonitor.io.indexRfResp
+  rfSlice.io.dataReq <> witemMonitor.io.dataRfReq
+  rfSlice.io.dataResp <> witemMonitor.io.dataRfResp
+
+  // LocalExec connections
+  localExec.io.thisX := io.thisX
+  localExec.io.thisY := io.thisY
+  localExec.io.kinstrIn := io.immediateKinstr
+  rfSlice.io.localExecReq <> localExec.io.rfReq
+  rfSlice.io.localExecResp <> localExec.io.rfResp
+
+  // B channel arbiter inputs: LocalExec (0) + WitemMonitor (1)
+  bArbiter.io.in(0) <> localExec.io.packetOut
+  bArbiter.io.in(1) <> witemMonitor.io.packetOut
 
   // --- ALU connections ---
   // alu.io.dispatch := io.dispatch  // for immediate ALU ops
@@ -222,16 +255,8 @@ class Jamlet(params: JamletParams) extends Module {
   witemMonitor.io.sramResp.valid := false.B
   witemMonitor.io.sramResp.bits := DontCare
   witemMonitor.io.sramReq.ready := false.B
-  witemMonitor.io.maskRfReq.ready := true.B
-  witemMonitor.io.maskRfResp.valid := false.B
-  witemMonitor.io.maskRfResp.bits := DontCare
-  witemMonitor.io.indexRfReq.ready := true.B
-  witemMonitor.io.indexRfResp.valid := false.B
-  witemMonitor.io.indexRfResp.bits := DontCare
-  witemMonitor.io.dataRfReq.ready := true.B
-  witemMonitor.io.dataRfResp.valid := false.B
-  witemMonitor.io.dataRfResp.bits := DontCare
-  witemMonitor.io.packetOut.ready := false.B
+  // RF ports connected to RfSlice above
+  // packetOut connected to bArbiter above
 
   // ============================================================
   // Temporary: tie off non-network outputs
@@ -247,9 +272,6 @@ class Jamlet(params: JamletParams) extends Module {
   io.cacheResponse.bits := DontCare
 
   io.kamletInjectPacket.ready := false.B
-
-  io.kamletReceivePacket.valid := false.B
-  io.kamletReceivePacket.bits := DontCare
 }
 
 /** Generator for Jamlet module */
@@ -259,8 +281,18 @@ object JamletGenerator extends zamlet.ModuleGenerator {
       println("Usage: <command> <outputDir> Jamlet <jamletParamsFileName>")
       null
     } else {
-      val params = JamletParams.fromFile(args(0))
+      val params = LamletParams.fromFile(args(0))
       new Jamlet(params)
     }
   }
+}
+
+object JamletMain extends App {
+  if (args.length < 2) {
+    println("Usage: <outputDir> <configFile>")
+    System.exit(1)
+  }
+  val outputDir = args(0)
+  val configFile = args(1)
+  JamletGenerator.generate(outputDir, Seq(configFile))
 }

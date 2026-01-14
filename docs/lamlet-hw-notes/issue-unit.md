@@ -68,11 +68,37 @@ Generate kinstr(s):
 - Each kinstr is 64 bits
 - Allocate instruction ident for each kinstr
 
+For each section (from ADDR+TLB+FAULT stage):
+- Determine if address is in VPU memory or scalar memory (based on physical address range)
+- **VPU memory sections**: Generate Load/Store kinstr → DispatchQueue → mesh
+- **Scalar memory sections**:
+  - Loads: Send to ScalarLoadQueue
+  - Stores: Generate Store kinstr (kamlet sends WriteMemWord to VpuToScalarMem)
+
 Stalls if:
 - `store_pending` from scalar core
 - Idents exhausted
 - DispatchQueue full
 - Flow control tokens exhausted
+- ScalarLoadQueue full (for scalar memory load sections)
+- Register hazard (see below)
+
+### Register Hazard Stalling
+
+IssueUnit checks RegisterScoreboard before dispatching:
+
+| Instruction | Checks | Stalls if |
+|-------------|--------|-----------|
+| Load (any) | write_blocked[vd] | vd has pending scalar store |
+| Store (any) | read_blocked[vs] | vs has pending scalar load |
+| Compute | read_blocked[vs1,vs2], write_blocked[vd] | Any source/dest blocked |
+
+When dispatching scalar memory operations, IssueUnit also signals RegisterScoreboard:
+- Scalar load: Signal load_start(vd) → blocks reads AND writes to vd
+- Scalar store: Signal store_start(vs, n_words) → blocks writes to vs
+
+Kamlets handle register hazards internally for VPU memory operations, so this tracking
+is only needed for scalar memory ops where the lamlet controls the timing.
 
 ### BLOCKING
 
@@ -138,6 +164,11 @@ Pure combinational logic that parses instruction bits. Could be factored out for
 
 Sends TLB requests, receives responses (memory type, permissions, physical address).
 May need multiple lookups for operations spanning pages.
+
+### ScalarLoadQueue Interface
+
+For load sections targeting scalar memory, IssueUnit sends requests to ScalarLoadQueue
+instead of generating Load kinstrs directly. See `scalar-load-queue.md` for details.
 
 ## Kinstr Format
 
