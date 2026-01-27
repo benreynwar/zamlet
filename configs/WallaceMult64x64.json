@@ -1,0 +1,12 @@
+{
+  "xBits": 64,
+  "yBits": 64,
+  "registerInput": true,
+  "registerOutput": true,
+  "regEveryNStages": 4,
+  "regBeforeFinalAdd": true,
+  "finalAdderSectionWidth": 16,
+  "finalAdderRegAfterSectionCalc": true,
+  "finalAdderRegAfterCarryCalc": true,
+  "inputRegFanoutLimit": 8
+}

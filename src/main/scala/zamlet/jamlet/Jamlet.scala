@@ -86,8 +86,7 @@ class Jamlet(params: LamletParams) extends Module {
   // Submodules
   // ============================================================
 
-  val aNetworkNode = Module(new NetworkNode(params, params.nAChannels))
-  val bNetworkNode = Module(new NetworkNode(params, params.nBChannels))
+  val combinedNetworkNode = Module(new CombinedNetworkNode(params))
 
   // TODO: instantiate when ready
   // val sram = Module(new Sram(params))
@@ -105,29 +104,29 @@ class Jamlet(params: LamletParams) extends Module {
   // Connections
   // ============================================================
 
-  // --- A network node connections ---
-  aNetworkNode.io.ni <> io.aChannels.ni
-  aNetworkNode.io.no <> io.aChannels.no
-  aNetworkNode.io.si <> io.aChannels.si
-  aNetworkNode.io.so <> io.aChannels.so
-  aNetworkNode.io.ei <> io.aChannels.ei
-  aNetworkNode.io.eo <> io.aChannels.eo
-  aNetworkNode.io.wi <> io.aChannels.wi
-  aNetworkNode.io.wo <> io.aChannels.wo
-  aNetworkNode.io.thisX := io.thisX
-  aNetworkNode.io.thisY := io.thisY
+  // --- Combined network node connections ---
+  combinedNetworkNode.io.thisX := io.thisX
+  combinedNetworkNode.io.thisY := io.thisY
 
-  // --- B network node connections ---
-  bNetworkNode.io.ni <> io.bChannels.ni
-  bNetworkNode.io.no <> io.bChannels.no
-  bNetworkNode.io.si <> io.bChannels.si
-  bNetworkNode.io.so <> io.bChannels.so
-  bNetworkNode.io.ei <> io.bChannels.ei
-  bNetworkNode.io.eo <> io.bChannels.eo
-  bNetworkNode.io.wi <> io.bChannels.wi
-  bNetworkNode.io.wo <> io.bChannels.wo
-  bNetworkNode.io.thisX := io.thisX
-  bNetworkNode.io.thisY := io.thisY
+  // A channel connections
+  combinedNetworkNode.io.aNi <> io.aChannels.ni
+  combinedNetworkNode.io.aNo <> io.aChannels.no
+  combinedNetworkNode.io.aSi <> io.aChannels.si
+  combinedNetworkNode.io.aSo <> io.aChannels.so
+  combinedNetworkNode.io.aEi <> io.aChannels.ei
+  combinedNetworkNode.io.aEo <> io.aChannels.eo
+  combinedNetworkNode.io.aWi <> io.aChannels.wi
+  combinedNetworkNode.io.aWo <> io.aChannels.wo
+
+  // B channel connections
+  combinedNetworkNode.io.bNi <> io.bChannels.ni
+  combinedNetworkNode.io.bNo <> io.bChannels.no
+  combinedNetworkNode.io.bSi <> io.bChannels.si
+  combinedNetworkNode.io.bSo <> io.bChannels.so
+  combinedNetworkNode.io.bEi <> io.bChannels.ei
+  combinedNetworkNode.io.bEo <> io.bChannels.eo
+  combinedNetworkNode.io.bWi <> io.bChannels.wi
+  combinedNetworkNode.io.bWo <> io.bChannels.wo
 
   // ============================================================
   // Local port handling (simplified for Test 0)
@@ -135,32 +134,32 @@ class Jamlet(params: LamletParams) extends Module {
   // ============================================================
 
   // A channel local output: forward instruction packets to kamlet
-  val aHoHeader = aNetworkNode.io.ho.bits.data.asTypeOf(new PacketHeader(params))
-  val aHoIsInstruction = aNetworkNode.io.ho.bits.isHeader &&
+  val aHoHeader = combinedNetworkNode.io.aHo.bits.data.asTypeOf(new PacketHeader(params))
+  val aHoIsInstruction = combinedNetworkNode.io.aHo.bits.isHeader &&
                          aHoHeader.messageType === MessageType.Instructions
 
   // When we see an instruction packet, forward to kamlet
-  io.kamletReceivePacket.valid := aNetworkNode.io.ho.valid
-  io.kamletReceivePacket.bits := aNetworkNode.io.ho.bits
-  aNetworkNode.io.ho.ready := io.kamletReceivePacket.ready
+  io.kamletReceivePacket.valid := combinedNetworkNode.io.aHo.valid
+  io.kamletReceivePacket.bits := combinedNetworkNode.io.aHo.bits
+  combinedNetworkNode.io.aHo.ready := io.kamletReceivePacket.ready
 
   // Tie off local input until TX arbiters exist
-  aNetworkNode.io.hi.valid := false.B
-  aNetworkNode.io.hi.bits := DontCare
+  combinedNetworkNode.io.aHi.valid := false.B
+  combinedNetworkNode.io.aHi.bits := DontCare
 
   // B channel local ports
   // hi: arbiter output -> network (for outgoing packets like WriteMemWord)
-  bNetworkNode.io.hi <> bArbiter.io.out
+  combinedNetworkNode.io.bHi <> bArbiter.io.out
   // ho: network -> local receivers (tie off until RxB exists)
-  bNetworkNode.io.ho.ready := false.B
+  combinedNetworkNode.io.bHo.ready := false.B
 
   // --- Network node local ports to RX handlers ---
-  // rxA.io.packetIn <> aNetworkNode.io.ho
-  // rxB.io.packetIn <> bNetworkNode.io.ho
+  // rxA.io.packetIn <> combinedNetworkNode.io.aHo
+  // rxB.io.packetIn <> combinedNetworkNode.io.bHo
 
   // --- Arbiters to network node local inputs ---
-  // aNetworkNode.io.hi <> aArbiter.io.packetOut
-  // bNetworkNode.io.hi <> bArbiter.io.packetOut
+  // combinedNetworkNode.io.aHi <> aArbiter.io.packetOut
+  // combinedNetworkNode.io.bHi <> bArbiter.io.packetOut
 
   // --- A arbiter inputs (responses: RxA, RxB, WitemMonitor) ---
   // aArbiter.io.rxA <> rxA.io.respOut

@@ -33,7 +33,7 @@ ZAMLET_COMMON_SRCS = [
 chisel_binary(
     name = "shuttle_tile_generator",
     srcs = [
-        "//src/main/scala/zamlet/tile:tile_sources",
+        "//src/main/scala/zamlet/tile:shuttle_sources",
     ],
     main_class = "zamlet.tile.Main",
     deps = SHUTTLE_DEPS,

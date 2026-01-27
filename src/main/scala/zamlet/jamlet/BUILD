@@ -69,3 +69,19 @@ chisel_binary(
     deps = JAMLET_DEPS,
     visibility = ["//visibility:public"],
 )
+
+chisel_binary(
+    name = "combinednetworknode",
+    srcs = [":jamlet_sources"] + JAMLET_COMMON_SRCS,
+    main_class = "zamlet.jamlet.CombinedNetworkNodeMain",
+    deps = JAMLET_DEPS,
+    visibility = ["//visibility:public"],
+)
+
+chisel_binary(
+    name = "packetarbiter",
+    srcs = [":jamlet_sources"] + JAMLET_COMMON_SRCS,
+    main_class = "zamlet.jamlet.PacketArbiterGenerator",
+    deps = JAMLET_DEPS,
+    visibility = ["//visibility:public"],
+)

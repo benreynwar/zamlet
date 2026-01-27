@@ -1,10 +1,11 @@
 # Kamlet Component DSE
 # Design space exploration for kamlet components
 
-load("@bazel-orfs//:openroad.bzl", "orfs_flow", "orfs_run")
-load("//dse:orfs_config.bzl", "get_orfs_arguments")
+load("//bazel/flow:defs.bzl", "librelane_classic_flow")
+load("@sky130_fd_sc_hd_config//:defs.bzl", "pdk")
 
-PDKS = ["asap7", "sky130hd"]
+# PDK target
+pdk(name = "sky130hd")
 
 # Generate Synchronizer verilog
 genrule(
@@ -20,38 +21,15 @@ genrule(
     tools = ["//src/main/scala/zamlet/kamlet:synchronizer"],
 )
 
-# OpenROAD flows for Synchronizer
-[orfs_flow(
-    name = "Synchronizer_default__{}".format(pdk),
-    top = "Synchronizer",
-    pdk = "@docker_orfs//:{}".format(pdk),
-    arguments = get_orfs_arguments("Synchronizer_default", pdk),
-    sources = {
-        "SDC_FILE": ["//dse:config/constraints_{}.sdc".format(pdk)],
-    },
+# Librelane flow for Synchronizer
+librelane_classic_flow(
+    name = "Synchronizer_default_sky130hd",
     verilog_files = [":Synchronizer_default.sv"],
-) for pdk in PDKS]
-
-# Analysis results
-[orfs_run(
-    name = "Synchronizer_default__{}_results".format(pdk),
-    src = "Synchronizer_default__{}_floorplan".format(pdk),
-    outs = [
-        "Synchronizer_default__{}_stats".format(pdk),
-        "Synchronizer_default__{}_setup_timing.rpt".format(pdk),
-        "Synchronizer_default__{}_hold_timing.rpt".format(pdk),
-        "Synchronizer_default__{}_critical_paths.rpt".format(pdk),
-    ],
-    arguments = {
-        "OUTPUT": "$(location :Synchronizer_default__{}_stats)".format(pdk),
-        "TARGET_NAME": "Synchronizer_default__{}".format(pdk),
-    },
-    script = "//dse:scripts/analysis.tcl",
-) for pdk in PDKS]
-
-# ============================================================
-# Kamlet DSE
-# ============================================================
+    top = "Synchronizer",
+    pdk = ":sky130hd",
+    clock_period = "10.0",
+    core_utilization = "40",
+)
 
 # Generate Kamlet verilog
 genrule(
@@ -67,31 +45,12 @@ genrule(
     tools = ["//src/main/scala/zamlet/kamlet:kamlet"],
 )
 
-# OpenROAD flows for Kamlet
-[orfs_flow(
-    name = "Kamlet_default__{}".format(pdk),
-    top = "Kamlet",
-    pdk = "@docker_orfs//:{}".format(pdk),
-    arguments = get_orfs_arguments("Kamlet_default", pdk),
-    sources = {
-        "SDC_FILE": ["//dse:config/constraints_{}.sdc".format(pdk)],
-    },
+# Librelane flow for Kamlet
+librelane_classic_flow(
+    name = "Kamlet_default_sky130hd",
     verilog_files = [":Kamlet_default.sv"],
-) for pdk in PDKS]
-
-# Analysis results
-[orfs_run(
-    name = "Kamlet_default__{}_results".format(pdk),
-    src = "Kamlet_default__{}_floorplan".format(pdk),
-    outs = [
-        "Kamlet_default__{}_stats".format(pdk),
-        "Kamlet_default__{}_setup_timing.rpt".format(pdk),
-        "Kamlet_default__{}_hold_timing.rpt".format(pdk),
-        "Kamlet_default__{}_critical_paths.rpt".format(pdk),
-    ],
-    arguments = {
-        "OUTPUT": "$(location :Kamlet_default__{}_stats)".format(pdk),
-        "TARGET_NAME": "Kamlet_default__{}".format(pdk),
-    },
-    script = "//dse:scripts/analysis.tcl",
-) for pdk in PDKS]
+    top = "Kamlet",
+    pdk = ":sky130hd",
+    clock_period = "10.0",
+    core_utilization = "40",
+)

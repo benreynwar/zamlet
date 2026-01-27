@@ -1,5 +1,23 @@
 # Claude Code Guidelines for FMVPU Project
 
+## Development Environment (Nix)
+This project uses Nix for dependency management. Enter the development shell with:
+```bash
+nix-shell
+```
+
+The nix shell provides:
+- EDA tools: OpenROAD, Yosys, Magic, Verilator, KLayout
+- Python with librelane package installed
+- Bazel, JDK, Scala tooling
+- PDK_ROOT and PDK environment variables set for sky130A
+
+The `shell.nix` pulls librelane from GitHub and applies local patches. For local librelane
+development, uncomment the local path override in `shell.nix`.
+
+The librelane source code is available at `~/Code/librelane` for reference (not the version used
+by the project, but useful for understanding the code).
+
 ## Comments
 NEVER add comments that explain what was changed or reference previous states of the code. Comments should explain what the code does or why it does it, not what it used to do or how it changed. Avoid diff-specific comments that only make sense in the context of changes being made.
 

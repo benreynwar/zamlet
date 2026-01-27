@@ -78,46 +78,16 @@ maven.install(
 )
 use_repo(maven, "maven")
 
-# ORFS (OpenROAD Flow Scripts) integration
-bazel_dep(name = "bazel-orfs")
-
-git_override(
-    module_name = "bazel-orfs",
-    remote = "https://github.com/benreynwar/bazel-orfs",
-    commit = "54cf85874bf1e5c00c5fa91f643d463899c6e6f7",
+# PDK configuration extraction (librelane)
+pdk_config = use_extension("//bazel/flow:extensions.bzl", "pdk_config")
+pdk_config.config(
+    name = "sky130_fd_sc_hd_config",
+    pdk = "sky130A",
+    scl = "sky130_fd_sc_hd",
 )
+use_repo(pdk_config, "sky130_fd_sc_hd_config")
 
-orfs = use_extension("@bazel-orfs//:extension.bzl", "orfs_repositories")
-
-orfs.default(
-    image = "docker.io/openroad/orfs:v3.0-3290-gbabc69e0",
-    sha256 = "a0ca3cd48fcc71d8bcb6e2f420842130004ff0d21f20ebf178301dccc2d54623",
-)
-use_repo(orfs, "com_github_nixos_patchelf_download")
-use_repo(orfs, "docker_orfs")
-
-# Docker platform support
-bazel_dep(name = "rules_oci", version = "1.8.0")
-bazel_dep(name = "rules_pkg", version = "1.0.1")
-
-# OpenROAD container
-oci = use_extension("@rules_oci//oci:extensions.bzl", "oci")
-oci.pull(
-    name = "openroad_base",
-    image = "openroad/flow-scripts",
-    tag = "v3.0",
-    platforms = ["linux/amd64"],
-)
-use_repo(oci, "openroad_base")
-
-# LLVM toolchain for synthesis
-bazel_dep(name = "toolchains_llvm", version = "1.4.0")
-llvm = use_extension("@toolchains_llvm//toolchain/extensions:llvm.bzl", "llvm")
-llvm.toolchain(llvm_version = "20.1.0")
-use_repo(llvm, "llvm_toolchain")
-register_toolchains("@llvm_toolchain//:all")
-
-# CIRCT for FIRRTL compilation
+# Repository rules
 http_archive = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
 git_repository = use_repo_rule("@bazel_tools//tools/build_defs/repo:git.bzl", "git_repository")
 new_local_repository = use_repo_rule(
@@ -203,15 +173,3 @@ git_override(
 )
 
 hdl_deps = use_extension("@rules_hdl//:extensions.bzl", "hdl_deps_extension")
-
-
-
-http_archive(
-    name = "circt",
-    build_file_content = """
-exports_files(glob(["bin/*"]), visibility = ["//visibility:public"])
-""",
-    sha256 = "b1b57d1b76ceba2bb37229dab53839d5db6d61394149708c71f6265565991ce6",
-    strip_prefix = "firtool-1.108.0",
-    url = "https://github.com/llvm/circt/releases/download/firtool-1.108.0/firrtl-bin-linux-x64.tar.gz",
-)

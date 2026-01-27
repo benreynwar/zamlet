@@ -83,7 +83,7 @@ class PacketArbiter(params: LamletParams, nInputs: Int) extends Module {
   }
 }
 
-object PacketArbiterGenerator extends zamlet.ModuleGenerator {
+object PacketArbiterGenerator extends zamlet.ModuleGenerator with App {
   override def makeModule(args: Seq[String]): Module = {
     if (args.length < 2) {
       println("Usage: <configFile> <nInputs>")
@@ -93,4 +93,6 @@ object PacketArbiterGenerator extends zamlet.ModuleGenerator {
     val nInputs = args(1).toInt
     new PacketArbiter(params, nInputs)
   }
+
+  generate(args(0), args.drop(1))
 }

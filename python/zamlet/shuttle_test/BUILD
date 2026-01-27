@@ -72,3 +72,36 @@ cocotb_script(
     data = [":test_loop_bin"],
     env = {"ZAMLET_TEST_BINARY": "$(location :test_loop_bin)"},
 )
+
+# Oamlet (Shuttle + Zamlet vector unit) tests
+
+verilog_library(
+    name = "oamlet_verilog_lib",
+    srcs = ["//src:oamlet_verilog"],
+)
+
+cocotb_exe(
+    name = "oamlet_exe",
+    verilog_library = ":oamlet_verilog_lib",
+    module_top = "OamletTop",
+)
+
+cocotb_script(
+    name = "test_simple_oamlet",
+    binary = ":oamlet_exe",
+    script = ":shuttle_test_runner",
+    module = "shuttle_test_runner",
+    toplevel = "OamletTop",
+    data = [":test_simple_bin"],
+    env = {"ZAMLET_TEST_BINARY": "$(location :test_simple_bin)"},
+)
+
+cocotb_script(
+    name = "test_loop_oamlet",
+    binary = ":oamlet_exe",
+    script = ":shuttle_test_runner",
+    module = "shuttle_test_runner",
+    toplevel = "OamletTop",
+    data = [":test_loop_bin"],
+    env = {"ZAMLET_TEST_BINARY": "$(location :test_loop_bin)"},
+)

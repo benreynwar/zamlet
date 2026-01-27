@@ -1,0 +1,27 @@
+diff --git a/librelane/steps/klayout.py b/librelane/steps/klayout.py
+index 643232e..ffb3af7 100644
+--- a/librelane/steps/klayout.py
++++ b/librelane/steps/klayout.py
+@@ -80,7 +80,8 @@ class KLayoutStep(Step):
+         if layer_info:
+             lyp = abspath(self.config["KLAYOUT_PROPERTIES"])
+             lyt = abspath(self.config["KLAYOUT_TECH"])
+-            lym = abspath(self.config["KLAYOUT_DEF_LAYER_MAP"])
++            # realpath() needed because KLayout's map_file handling has a bug with '+' in paths
++            lym = os.path.realpath(self.config["KLAYOUT_DEF_LAYER_MAP"])
+             if None in [lyp, lyt, lym]:
+                 raise StepError(
+                     "Cannot open design in KLayout as the PDK does not appear to support KLayout."
+diff --git a/librelane/steps/openroad.py b/librelane/steps/openroad.py
+index b3ea6ab..a62a4f5 100644
+--- a/librelane/steps/openroad.py
++++ b/librelane/steps/openroad.py
+@@ -1358,7 +1358,7 @@ class BasicMacroPlacement(OpenROADStep):
+     ]
+ 
+     def get_script_path(self):
+-        raise NotImplementedError()
++        return os.path.join(get_script_dir(), "openroad", "basic_mp.tcl")
+ 
+ 
+ @Step.factory.register()

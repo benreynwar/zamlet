@@ -1,21 +1,111 @@
 # Jamlet Component DSE
 # Design space exploration for jamlet components
 
-load("@bazel-orfs//:openroad.bzl", "orfs_flow", "orfs_run")
-load("//dse:orfs_config.bzl", "get_orfs_arguments")
+load("//bazel/flow:defs.bzl", "librelane_classic_flow")
+load("//bazel/flow:def_template.bzl", "combined_network_node_def")
+load("@sky130_fd_sc_hd_config//:defs.bzl", "pdk")
 
-PDKS = ["asap7", "sky130hd"]
+exports_files(["gen_combined_network_node_def.py"])
+
+# PDK target
+pdk(name = "sky130hd")
 
 # (ModuleName, bazel_target_name)
-JAMLET_MODULES = [
-    ("Jamlet", "jamlet"),
+# Jamlet and NetworkNode handled separately due to custom pin placement
+JAMLET_SUB_MODULES = [
     ("RfSlice", "rfslice"),
-    ("NetworkNode", "networknode"),
     ("WitemMonitor", "witemmonitor"),
     ("LocalExec", "localexec"),
 ]
 
-# Generate verilog for each module
+# Generate verilog for Jamlet top module
+genrule(
+    name = "Jamlet_default_verilog",
+    srcs = ["//configs:lamlet_default.json"],
+    outs = ["Jamlet_default.sv"],
+    cmd = """
+    TMPDIR=$$(mktemp -d)
+    $(location //src/main/scala/zamlet/jamlet:jamlet) $$TMPDIR $(location //configs:lamlet_default.json)
+    cat $$TMPDIR/*.sv > $@
+    rm -rf $$TMPDIR
+    """,
+    tools = ["//src/main/scala/zamlet/jamlet:jamlet"],
+)
+
+# Jamlet hard macro with custom pin placement
+librelane_classic_flow(
+    name = "Jamlet_default_sky130hd",
+    verilog_files = [":Jamlet_default.sv"],
+    top = "Jamlet",
+    pdk = ":sky130hd",
+    clock_period = "10.0",
+    core_utilization = "35",
+    pin_order_cfg = ":jamlet_pin_order.cfg",
+)
+
+# NetworkNode verilog
+genrule(
+    name = "NetworkNode_default_verilog",
+    srcs = ["//configs:lamlet_default.json"],
+    outs = ["NetworkNode_default.sv"],
+    cmd = """
+    TMPDIR=$$(mktemp -d)
+    $(location //src/main/scala/zamlet/jamlet:networknode) $$TMPDIR $(location //configs:lamlet_default.json)
+    cat $$TMPDIR/*.sv > $@
+    rm -rf $$TMPDIR
+    """,
+    tools = ["//src/main/scala/zamlet/jamlet:networknode"],
+)
+
+# NetworkNode hard macro with custom pin placement
+librelane_classic_flow(
+    name = "NetworkNode_default_sky130hd",
+    verilog_files = [":NetworkNode_default.sv"],
+    top = "NetworkNode",
+    pdk = ":sky130hd",
+    clock_period = "10.0",
+    die_area = "0 0 280 650",
+    target_density = "0.70",
+    pin_order_cfg = ":networknode_pin_order.cfg",
+)
+
+# CombinedNetworkNode verilog
+genrule(
+    name = "CombinedNetworkNode_default_verilog",
+    srcs = ["//configs:lamlet_default.json"],
+    outs = ["CombinedNetworkNode_default.sv"],
+    cmd = """
+    TMPDIR=$$(mktemp -d)
+    $(location //src/main/scala/zamlet/jamlet:combinednetworknode) $$TMPDIR $(location //configs:lamlet_default.json)
+    cat $$TMPDIR/*.sv > $@
+    rm -rf $$TMPDIR
+    """,
+    tools = ["//src/main/scala/zamlet/jamlet:combinednetworknode"],
+)
+
+COMBINED_NETWORK_NODE_DIE_AREA = "0 0 500 830"
+
+# CombinedNetworkNode DEF template with precise pin placement
+combined_network_node_def(
+    name = "CombinedNetworkNode_default_sky130hd_def_template",
+    pdk = ":sky130hd",
+    config = "//configs:lamlet_default.json",
+    die_area = COMBINED_NETWORK_NODE_DIE_AREA,
+)
+
+# CombinedNetworkNode hard macro with DEF template for precise pin placement
+librelane_classic_flow(
+    name = "CombinedNetworkNode_default_sky130hd",
+    verilog_files = [":CombinedNetworkNode_default.sv"],
+    top = "CombinedNetworkNode",
+    pdk = ":sky130hd",
+    clock_period = "10.0",
+    die_area = COMBINED_NETWORK_NODE_DIE_AREA,
+    target_density = "0.60",
+    def_template = ":CombinedNetworkNode_default_sky130hd_def_template",
+)
+
+# Generate verilog for sub-modules
 [genrule(
     name = "{}_default_verilog".format(module),
     srcs = ["//configs:lamlet_default.json"],
@@ -27,33 +117,38 @@ JAMLET_MODULES = [
     rm -rf $$TMPDIR
     """.format(target = target),
     tools = ["//src/main/scala/zamlet/jamlet:{}".format(target)],
-) for module, target in JAMLET_MODULES]
+) for module, target in JAMLET_SUB_MODULES]
 
-# OpenROAD flows for each module
-[orfs_flow(
-    name = "{}_default__{}".format(module, pdk),
-    top = module,
-    pdk = "@docker_orfs//:{}".format(pdk),
-    arguments = get_orfs_arguments("{}_default".format(module), pdk),
-    sources = {
-        "SDC_FILE": ["//dse:config/constraints_{}.sdc".format(pdk)],
-    },
+# Librelane hard macro flows for sub-modules
+[librelane_classic_flow(
+    name = "{}_default_sky130hd".format(module),
     verilog_files = [":{}_default.sv".format(module)],
-) for module, _ in JAMLET_MODULES for pdk in PDKS]
+    top = module,
+    pdk = ":sky130hd",
+    clock_period = "10.0",
+    core_utilization = "40",
+) for module, _ in JAMLET_SUB_MODULES]
 
-# Analysis results for each module
-[orfs_run(
-    name = "{}_default__{}_results".format(module, pdk),
-    src = "{}_default__{}_floorplan".format(module, pdk),
-    outs = [
-        "{}_default__{}_stats".format(module, pdk),
-        "{}_default__{}_setup_timing.rpt".format(module, pdk),
-        "{}_default__{}_hold_timing.rpt".format(module, pdk),
-        "{}_default__{}_critical_paths.rpt".format(module, pdk),
-    ],
-    arguments = {
-        "OUTPUT": "$(location :{}_default__{}_stats)".format(module, pdk),
-        "TARGET_NAME": "{}_default__{}".format(module, pdk),
-    },
-    script = "//dse:scripts/analysis.tcl",
-) for module, _ in JAMLET_MODULES for pdk in PDKS]
+
+# PacketArbiter with 2 inputs (as used in Jamlet)
+genrule(
+    name = "PacketArbiter_default_verilog",
+    srcs = ["//configs:lamlet_default.json"],
+    outs = ["PacketArbiter_default.sv"],
+    cmd = """
+    TMPDIR=$$(mktemp -d)
+    $(location //src/main/scala/zamlet/jamlet:packetarbiter) $$TMPDIR $(location //configs:lamlet_default.json) 2
+    cat $$TMPDIR/*.sv > $@
+    rm -rf $$TMPDIR
+    """,
+    tools = ["//src/main/scala/zamlet/jamlet:packetarbiter"],
+)
+
+librelane_classic_flow(
+    name = "PacketArbiter_default_sky130hd",
+    verilog_files = [":PacketArbiter_default.sv"],
+    top = "PacketArbiter",
+    pdk = ":sky130hd",
+    clock_period = "10.0",
+    core_utilization = "60",
+)

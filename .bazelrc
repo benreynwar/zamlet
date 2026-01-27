@@ -1,2 +1,4 @@
-# Use Python 3.13 to match bazel-orfs requirements
-build --@@rules_python+//python/config_settings:python_version=3.13
+# Pass through environment variables for librelane flows
+build --action_env=PATH
+build --action_env=PDK_ROOT
+build --action_env=PDK
