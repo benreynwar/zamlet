@@ -249,6 +249,8 @@ LibrelaneInput = provider(
         "magic_drc_use_gds": "bool - Run Magic DRC on GDS instead of DEF",
         # KLayout.DRC config (klayout.py:363-368)
         "klayout_drc_threads": "int - Number of threads for KLayout DRC (0=auto)",
+        # KLayout.DRC gating (classic.py:247-250)
+        "run_klayout_drc": "bool - Enable KLayout DRC step",
     },
 )
 

@@ -223,6 +223,8 @@ def _init_impl(ctx):
             magic_drc_use_gds = ctx.attr.magic_drc_use_gds,
             # KLayout.DRC config
             klayout_drc_threads = ctx.attr.klayout_drc_threads,
+            # KLayout.DRC gating
+            run_klayout_drc = ctx.attr.run_klayout_drc,
         ),
         # LibrelaneInfo - initial state (all empty)
         LibrelaneInfo(

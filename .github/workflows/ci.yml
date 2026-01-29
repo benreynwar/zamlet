@@ -45,3 +45,12 @@ jobs:
       - name: Run cocotb tests
         run: |
           nix-shell --run "bazel test //python/zamlet:cocotb_tests --test_output=errors"
+
+      # Run synthesis through LEF generation for Wallace multipliers
+      - name: Synthesis check (WallaceMult8x8)
+        run: |
+          nix-shell --run "bazel build //dse/maths:WallaceMult8x8_sky130hd_lef"
+
+      - name: Synthesis check (WallaceMult16x16)
+        run: |
+          nix-shell --run "bazel build //dse/maths:WallaceMult16x16_sky130hd_lef"

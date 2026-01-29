@@ -360,6 +360,8 @@ def create_librelane_config(input_info, state_info, required_keys):
     # KLayout.DRC config (klayout.py:363-368)
     if input_info.klayout_drc_threads:
         config["KLAYOUT_DRC_THREADS"] = input_info.klayout_drc_threads
+    # KLayout.DRC gating (classic.py:247-250)
+    config["RUN_KLAYOUT_DRC"] = input_info.run_klayout_drc
 
     # OpenROAD.RCX config (openroad.py:1679-1702)
     config["RCX_MERGE_VIA_WIRE_RES"] = input_info.rcx_merge_via_wire_res
@@ -1861,6 +1863,11 @@ ENTRY_ATTRS = {
     "klayout_drc_threads": attr.int(
         doc = "Number of threads for KLayout DRC (0 = auto)",
         default = 0,
+    ),
+    # KLayout.DRC gating (classic.py:247-250)
+    "run_klayout_drc": attr.bool(
+        doc = "Enable KLayout DRC step",
+        default = True,
     ),
 }
 

@@ -207,7 +207,7 @@ Legend:
 | 63 | KLayout.XOR | Y | Y | Y | PASS |
 | 64 | Checker.XOR | Y | Y | Y | PASS |
 | 65 | Magic.DRC | Y | Y | Y | PASS |
-| 66 | KLayout.DRC | Y | Y | N | FAIL |
+| 66 | KLayout.DRC | Y | Y | Y | PASS |
 | 67 | Checker.MagicDRC | ? | ? | ? | TODO |
 | 68 | Checker.KLayoutDRC | ? | ? | ? | TODO |
 | 69 | Magic.SpiceExtraction | ? | ? | ? | TODO |
