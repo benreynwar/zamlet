@@ -1,0 +1,26 @@
+name: 'Nix Setup'
+description: 'Set up Nix with FOSSi and Cachix caches'
+
+runs:
+  using: 'composite'
+  steps:
+    - uses: cachix/install-nix-action@v27
+      with:
+        nix_path: nixpkgs=channel:nixos-24.05
+        extra_nix_config: |
+          extra-substituters = https://nix-cache.fossi-foundation.org
+          extra-trusted-public-keys = nix-cache.fossi-foundation.org:3+K59iFwXqKsL7BNu6Guy0v+uTlwsxYQxjspXzqLYQs=
+          trusted-substituters = https://nix-cache.fossi-foundation.org
+
+    - uses: cachix/cachix-action@v15
+      with:
+        name: benreynwar
+        authToken: '${{ env.CACHIX_AUTH_TOKEN }}'
+
+    - name: Cache Bazel
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/bazel
+        key: bazel-${{ runner.os }}-${{ hashFiles('MODULE.bazel', 'MODULE.bazel.lock', 'shell.nix', 'nix/*.nix', 'nix/*.patch') }}
+        restore-keys: |
+          bazel-${{ runner.os }}-
