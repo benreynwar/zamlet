@@ -201,13 +201,13 @@ Legend:
 | 57 | OpenROAD.STAPostPNR | Y | Y | Y | PASS |
 | 58 | OpenROAD.IRDropReport | Y | Y | Y | PASS |
 | 59 | Magic.StreamOut | Y | Y | Y | PASS |
-| 60 | KLayout.StreamOut | ? | ? | ? | TODO |
-| 61 | Magic.WriteLEF | ? | ? | ? | TODO |
-| 62 | Odb.CheckDesignAntennaProperties | ? | ? | ? | TODO |
-| 63 | KLayout.XOR | ? | ? | ? | TODO |
-| 64 | Checker.XOR | ? | ? | ? | TODO |
-| 65 | Magic.DRC | ? | ? | ? | TODO |
-| 66 | KLayout.DRC | ? | ? | ? | TODO |
+| 60 | KLayout.StreamOut | Y | Y | Y | PASS |
+| 61 | Magic.WriteLEF | Y | Y | Y | PASS |
+| 62 | Odb.CheckDesignAntennaProperties | Y | Y | N/A | PASS |
+| 63 | KLayout.XOR | Y | Y | Y | PASS |
+| 64 | Checker.XOR | Y | Y | Y | PASS |
+| 65 | Magic.DRC | Y | Y | Y | PASS |
+| 66 | KLayout.DRC | Y | Y | N | FAIL |
 | 67 | Checker.MagicDRC | ? | ? | ? | TODO |
 | 68 | Checker.KLayoutDRC | ? | ? | ? | TODO |
 | 69 | Magic.SpiceExtraction | ? | ? | ? | TODO |
@@ -3728,7 +3728,7 @@ Inheritance: Magic.StreamOut -> MagicStep -> TclStep -> Step
 
 ### Step 60: KLayout.StreamOut
 
-**Verified:** 2026-01-26
+**Verified:** 2026-01-29
 
 **Librelane Source:** `librelane/steps/klayout.py`
 - ID: `"KLayout.StreamOut"` (line 186)
@@ -3741,13 +3741,33 @@ Inheritance: Magic.StreamOut -> MagicStep -> TclStep -> Step
 - Variable: `RUN_KLAYOUT_STREAMOUT` (line 282)
 - Default: `True` (line 224)
 
+**Config Variable Audit:**
+
+Inheritance: KLayout.StreamOut -> KLayoutStep -> Step
+
+| Variable | Source | Bazel Status |
+|----------|--------|--------------|
+| KLAYOUT_TECH | KLayoutStep:36-39 (pdk) | Wired (common.bzl:203) |
+| KLAYOUT_PROPERTIES | KLayoutStep:40-44 (pdk) | Wired (common.bzl:204) |
+| KLAYOUT_DEF_LAYER_MAP | KLayoutStep:45-51 (pdk) | Wired (common.bzl:205) |
+| DESIGN_NAME | run():197,213,222 | Wired (BASE_CONFIG_KEYS) |
+| PRIMARY_GDSII_STREAMOUT_TOOL | run():221 | Wired (BASE_CONFIG_KEYS:16) |
+| TECH_LEFS | get_cli_args():92 | Wired (BASE_CONFIG_KEYS:15) |
+| CELL_LEFS | get_cli_args():103 | Wired (BASE_CONFIG_KEYS:31) |
+| CELL_GDS | get_cli_args():121 | Wired (BASE_CONFIG_KEYS:32) |
+| EXTRA_LEFS | get_cli_args():112 | Wired (common.bzl:352) |
+| EXTRA_GDS_FILES | get_cli_args():127 | Wired (common.bzl:353) |
+
+Note: KLAYOUT_* PDK variables added to KLAYOUT_STREAMOUT_CONFIG_KEYS (klayout.bzl:7-13).
+
 **Bazel Implementation:** `klayout.bzl`
-- ID: `"KLayout.StreamOut"` (line 7)
-- step_outputs: `["klayout_gds"]` (line 7)
+- _stream_out_impl (line 9)
+- ID: `"KLayout.StreamOut"` (line 10)
+- Uses KLAYOUT_STREAMOUT_CONFIG_KEYS (line 10)
 
 **Bazel Flow:** `full_flow.bzl`
-- Position: Step 60 (line 559 comment)
-- **NO gating parameter** - always runs (lines 560-563)
+- Position: Step 60 (line 672 comment)
+- No gating parameter - always runs (matches default True)
 - Named: `_klayout_gds`
 - Chains from: `_gds`
 
@@ -3756,20 +3776,17 @@ Inheritance: Magic.StreamOut -> MagicStep -> TclStep -> Step
 | Step ID | `"KLayout.StreamOut"` | `"KLayout.StreamOut"` | Y |
 | inputs | `[DEF]` | (from src) | Y |
 | outputs | `[GDS, KLAYOUT_GDS]` | `["klayout_gds"]` | Y |
-| Gating var | RUN_KLAYOUT_STREAMOUT | **MISSING** | **NO** |
-| Gating default | True | Always runs | (matches) |
-| Position | Step 60 (line 100) | Step 60 (line 559) | Y |
+| Gating | RUN_KLAYOUT_STREAMOUT (True) | Always runs | Y (default matches) |
+| Position | Step 60 (line 100) | Step 60 (line 672) | Y |
+| Config keys | KLayoutStep vars | KLAYOUT_STREAMOUT_CONFIG_KEYS | Y |
 
-**Issue:** Missing `run_klayout_streamout` parameter in Bazel flow. Users cannot disable
-KLayout GDS generation. Default behavior matches since RUN_KLAYOUT_STREAMOUT defaults to True.
-
-**Status: FAIL (missing gating parameter)**
+**Status: PASS**
 
 ---
 
 ### Step 61: Magic.WriteLEF
 
-**Verified:** 2026-01-26
+**Verified:** 2026-01-29
 
 **Librelane Source:** `librelane/steps/magic.py`
 - ID: `"Magic.WriteLEF"` (line 212)
@@ -3782,13 +3799,36 @@ KLayout GDS generation. Default behavior matches since RUN_KLAYOUT_STREAMOUT def
 - Variable: `RUN_MAGIC_WRITE_LEF` (line 283)
 - Default: `True` (line 231)
 
+**Config Variable Audit:**
+
+Inheritance: Magic.WriteLEF -> MagicStep -> TclStep -> Step
+
+| Variable | Source | Bazel Status |
+|----------|--------|--------------|
+| MAGIC_DEF_LABELS | MagicStep:77-82 | Wired |
+| MAGIC_GDS_POLYGON_SUBCELLS | MagicStep:83-88 | Wired |
+| MAGIC_DEF_NO_BLOCKAGES | MagicStep:89-94 | Wired |
+| MAGIC_INCLUDE_GDS_POINTERS | MagicStep:95-100 | Wired |
+| MAGICRC | MagicStep:101-107 (pdk) | Wired |
+| MAGIC_TECH | MagicStep:108-114 (pdk) | Wired |
+| MAGIC_PDK_SETUP | MagicStep:115-120 (pdk) | Wired |
+| CELL_MAGS | MagicStep:121-126 (pdk) | Wired |
+| CELL_MAGLEFS | MagicStep:127-132 (pdk) | Wired |
+| MAGIC_CAPTURE_ERRORS | MagicStep:133-141 | Wired |
+| MAGIC_LEF_WRITE_USE_GDS | WriteLEF:219-224 | Wired |
+| MAGIC_WRITE_FULL_LEF | WriteLEF:225-230 | Wired |
+| MAGIC_WRITE_LEF_PINONLY | WriteLEF:231-236 | Wired |
+
+Note: Uses MAGIC_WRITELEF_CONFIG_KEYS (macro.bzl) with MagicStep + WriteLEF vars.
+
 **Bazel Implementation:** `macro.bzl`
-- ID: `"Magic.WriteLEF"` (line 86)
-- Produces LEF file
+- _lef_impl (line 90)
+- ID: `"Magic.WriteLEF"` (line 108)
+- Uses MAGIC_WRITELEF_CONFIG_KEYS (line 103)
 
 **Bazel Flow:** `full_flow.bzl`
-- Position: Step 61 (line 565 comment)
-- **NO gating parameter** - always runs (lines 566-569)
+- Position: Step 61 (line 679 comment)
+- No gating parameter - always runs (matches default True)
 - Named: `_lef`
 - Chains from: `_klayout_gds`
 
@@ -3797,37 +3837,46 @@ KLayout GDS generation. Default behavior matches since RUN_KLAYOUT_STREAMOUT def
 | Step ID | `"Magic.WriteLEF"` | `"Magic.WriteLEF"` | Y |
 | inputs | `[GDS, DEF]` | (from src) | Y |
 | outputs | `[LEF]` | LEF file | Y |
-| Gating var | RUN_MAGIC_WRITE_LEF | **MISSING** | **NO** |
-| Gating default | True | Always runs | (matches) |
-| Position | Step 61 (line 101) | Step 61 (line 565) | Y |
+| Gating | RUN_MAGIC_WRITE_LEF (True) | Always runs | Y (default matches) |
+| Position | Step 61 (line 101) | Step 61 (line 679) | Y |
+| Config keys | MagicStep + WriteLEF vars | MAGIC_WRITELEF_CONFIG_KEYS | Y |
 
-**Issue:** Missing `run_magic_write_lef` parameter in Bazel flow. Users cannot disable LEF
-generation. Default behavior matches since RUN_MAGIC_WRITE_LEF defaults to True.
-
-**Status: FAIL (missing gating parameter)**
+**Status: PASS**
 
 ---
 
 ### Step 62: Odb.CheckDesignAntennaProperties
 
-**Verified:** 2026-01-26
+**Verified:** 2026-01-29
 
 **Librelane Source:** `librelane/steps/odb.py`
 - ID: `"Odb.CheckDesignAntennaProperties"` (line 224)
-- inputs: inherits from CheckMacroAntennaProperties + `[LEF]` (line 226)
-- outputs: `[]` (inherited, line 186)
+- inputs: `[DesignFormat.ODB, DesignFormat.LEF]` (line 226, ODB from OdbpyStep line 47)
+- outputs: `[]` (inherited from CheckMacroAntennaProperties, line 186)
 - Prints warnings if the design's LEF view is missing antenna information
 
 **Librelane Gating:** `classic.py`
 - Position: Step 62 (line 102)
 - No entry in gating_config_vars dict - always runs
 
+**Config Variable Audit:**
+
+Inheritance: CheckDesignAntennaProperties -> CheckMacroAntennaProperties -> OdbpyStep -> Step
+
+| Variable | Source | Bazel Status |
+|----------|--------|--------------|
+| (none) | config_vars = [] (Step line 464) | N/A |
+| DESIGN_NAME | get_cells():229 | Wired (BASE_CONFIG_KEYS) |
+
+No config_vars in inheritance chain. Uses DESIGN_NAME via self.config access.
+
 **Bazel Implementation:** `odb.bzl`
-- ID: `"Odb.CheckDesignAntennaProperties"` (line 67)
-- step_outputs: `[]` (line 67)
+- _check_design_antenna_properties_impl (line 145)
+- ID: `"Odb.CheckDesignAntennaProperties"` (line 146)
+- Uses ODB_CONFIG_KEYS = BASE_CONFIG_KEYS (line 7)
 
 **Bazel Flow:** `full_flow.bzl`
-- Position: Step 62 (line 571 comment)
+- Position: Step 62 (lines 686-691)
 - No gating - always runs
 - Named: `_chk_ant_prop`
 - Chains from: `_lef`
@@ -3838,11 +3887,8 @@ generation. Default behavior matches since RUN_MAGIC_WRITE_LEF defaults to True.
 | inputs | `[ODB, LEF]` | (from src) | Y |
 | outputs | `[]` | `[]` | Y |
 | Gating | None | None | N/A |
-| Position | Step 62 (line 102) | Step 62 (line 571) | Y |
-
-**Notes:** This step checks the generated design LEF for antenna properties. Unlike Step 14
-(CheckMacroAntennaProperties) which checks macro LEFs at the start of the flow, this runs
-after LEF generation to verify the output.
+| Position | Step 62 (line 102) | Step 62 (line 686) | Y |
+| Config keys | DESIGN_NAME only | ODB_CONFIG_KEYS | Y |
 
 **Status: PASS**
 
@@ -3850,7 +3896,7 @@ after LEF generation to verify the output.
 
 ### Step 63: KLayout.XOR
 
-**Verified:** 2026-01-26
+**Verified:** 2026-01-29
 
 **Librelane Source:** `librelane/steps/klayout.py`
 - ID: `"KLayout.XOR"` (line 248)
@@ -3867,43 +3913,55 @@ after LEF generation to verify the output.
   - `RUN_KLAYOUT_STREAMOUT` (default: True, line 224)
 - All three must be True for step to run
 
+**Config Variable Audit:**
+
+Inheritance: KLayout.XOR -> KLayoutStep -> Step
+
+| Variable | Source | Bazel Status |
+|----------|--------|--------------|
+| KLAYOUT_TECH | KLayoutStep:36-39 (pdk) | Wired (common.bzl:203) |
+| KLAYOUT_PROPERTIES | KLayoutStep:40-44 (pdk) | Wired (common.bzl:204) |
+| KLAYOUT_DEF_LAYER_MAP | KLayoutStep:45-51 (pdk) | Wired (common.bzl:205) |
+| KLAYOUT_XOR_THREADS | XOR:258-262 | Wired |
+| KLAYOUT_XOR_IGNORE_LAYERS | XOR:263-268 (pdk) | Wired (common.bzl:207) |
+| KLAYOUT_XOR_TILE_SIZE | XOR:269-275 (pdk) | Wired (common.bzl:208) |
+| DESIGN_NAME | run():315 | Wired (BASE_CONFIG_KEYS) |
+
+Uses KLAYOUT_XOR_CONFIG_KEYS (klayout.bzl:17-27).
+
 **Bazel Implementation:** `klayout.bzl`
-- ID: `"KLayout.XOR"` (line 10)
-- step_outputs: `[]` (line 10)
+- _xor_impl (line 44)
+- ID: `"KLayout.XOR"` (line 45)
+- Uses KLAYOUT_XOR_CONFIG_KEYS (line 45)
 
 **Bazel Flow:** `full_flow.bzl`
-- Position: Step 63 (line 577 comment)
+- Position: Step 63 (lines 693-698)
+- No gating - always runs (matches default True for all gating vars)
 - Named: `_xor`
 - Chains from: `_chk_ant_prop`
-- **No gating parameters implemented**
 
 | Aspect | Librelane | Bazel | Match |
 |--------|-----------|-------|-------|
 | Step ID | `"KLayout.XOR"` | `"KLayout.XOR"` | Y |
 | inputs | `[MAG_GDS, KLAYOUT_GDS]` | (from src) | Y |
 | outputs | `[]` | `[]` | Y |
-| Gating | `RUN_KLAYOUT_XOR`, `RUN_MAGIC_STREAMOUT`, `RUN_KLAYOUT_STREAMOUT` | **MISSING** | N |
-| Position | Step 63 (line 103) | Step 63 (line 577) | Y |
+| Gating | All True by default | Always runs | Y (default matches) |
+| Position | Step 63 (line 103) | Step 63 (line 693) | Y |
+| Config keys | KLayoutStep + XOR vars | KLAYOUT_XOR_CONFIG_KEYS | Y |
 
-**Notes:** The librelane step has complex gating - it requires all three variables to be True. The
-Bazel implementation has no gating at all. While the defaults are all True (so behavior matches
-by default), users cannot disable the XOR check independently.
-
-**Status: FAIL** - Missing gating parameters `RUN_KLAYOUT_XOR`, `RUN_MAGIC_STREAMOUT`,
-`RUN_KLAYOUT_STREAMOUT`
+**Status: PASS**
 
 ---
 
 ### Step 64: Checker.XOR
 
-**Verified:** 2026-01-26
+**Verified:** 2026-01-29
 
 **Librelane Source:** `librelane/steps/checker.py`
 - ID: `"Checker.XOR"` (line 281)
 - inputs: `[]` (inherited from MetricChecker, line 74)
 - outputs: `[]` (inherited from MetricChecker, line 75)
 - Checks the `design__xor_difference__count` metric and raises deferred error if > 0
-- Config var: `ERROR_ON_XOR_ERROR` (default: True) controls whether differences cause error
 
 **Librelane Gating:** `classic.py`
 - Position: Step 64 (line 104)
@@ -3913,41 +3971,96 @@ by default), users cannot disable the XOR check independently.
   - `RUN_KLAYOUT_STREAMOUT` (default: True)
 - All three must be True for step to run (same as KLayout.XOR)
 
+**Config Variable Audit:**
+
+Inheritance: Checker.XOR -> MetricChecker -> Step
+
+| Variable | Source | Bazel Status |
+|----------|--------|--------------|
+| ERROR_ON_XOR_ERROR | XOR:288-294 | Wired |
+
+Uses XOR_CHECKER_CONFIG_KEYS (checker.bzl:44).
+
 **Bazel Implementation:** `checker.bzl`
-- ID: `"Checker.XOR"` (line 37)
-- step_outputs: `[]` (line 37)
-- Rule: `librelane_xor` (line 124)
+- _xor_impl (line 79)
+- ID: `"Checker.XOR"` (line 80)
+- Uses XOR_CHECKER_CONFIG_KEYS (line 80)
 
 **Bazel Flow:** `full_flow.bzl`
-- Position: Step 64 (line 583 comment)
+- Position: Step 64 (lines 700-705)
+- No gating - always runs (matches default True for all gating vars)
 - Named: `_chk_xor`
 - Chains from: `_xor`
-- **No gating parameters implemented**
 
 | Aspect | Librelane | Bazel | Match |
 |--------|-----------|-------|-------|
 | Step ID | `"Checker.XOR"` | `"Checker.XOR"` | Y |
 | inputs | `[]` | (from src) | Y |
 | outputs | `[]` | `[]` | Y |
-| Gating | `RUN_KLAYOUT_XOR`, `RUN_MAGIC_STREAMOUT`, `RUN_KLAYOUT_STREAMOUT` | **MISSING** | N |
-| Position | Step 64 (line 104) | Step 64 (line 583) | Y |
+| Gating | All True by default | Always runs | Y (default matches) |
+| Position | Step 64 (line 104) | Step 64 (line 700) | Y |
+| Config keys | ERROR_ON_XOR_ERROR | XOR_CHECKER_CONFIG_KEYS | Y |
 
-**Notes:** Same gating issue as Step 63 (KLayout.XOR). These steps are coupled - they both check
-whether XOR was run and whether both Magic and KLayout stream-outs are enabled.
-
-**Status: FAIL** - Missing gating parameters
+**Status: PASS**
 
 ---
 
 ### Step 65: Magic.DRC
 
-**Verified:** 2026-01-26
+**Verified:** 2026-01-29
 
 **Librelane Source:** `librelane/steps/magic.py`
 - ID: `"Magic.DRC"` (line 372)
 - inputs: `[DesignFormat.DEF, DesignFormat.GDS]` (line 376)
 - outputs: `[]` (line 377)
 - Runs Magic DRC checks, outputs metric `magic__drc_error__count`
+
+**Librelane Gating:** `classic.py`
+- Position: Step 65 (line 105)
+- Variable: `RUN_MAGIC_DRC` (line 284)
+- Default: `True` (line 244)
+
+**Config Variable Audit:**
+
+Inheritance: Magic.DRC -> MagicStep -> TclStep -> Step
+
+| Variable | Source | Bazel Status |
+|----------|--------|--------------|
+| MAGIC_DEF_LABELS | MagicStep:77-82 | Wired |
+| MAGIC_GDS_POLYGON_SUBCELLS | MagicStep:83-88 | Wired |
+| MAGIC_DEF_NO_BLOCKAGES | MagicStep:89-94 | Wired |
+| MAGIC_INCLUDE_GDS_POINTERS | MagicStep:95-100 | Wired |
+| MAGICRC | MagicStep:101-107 (pdk) | Wired |
+| MAGIC_TECH | MagicStep:108-114 (pdk) | Wired |
+| MAGIC_PDK_SETUP | MagicStep:115-120 (pdk) | Wired |
+| CELL_MAGS | MagicStep:121-126 (pdk) | Wired |
+| CELL_MAGLEFS | MagicStep:127-132 (pdk) | Wired |
+| MAGIC_CAPTURE_ERRORS | MagicStep:133-141 | Wired |
+| MAGIC_DRC_USE_GDS | DRC:380-386 | Wired |
+
+Uses MAGIC_DRC_CONFIG_KEYS (macro.bzl).
+
+**Bazel Implementation:** `macro.bzl`
+- _drc_impl (line 168)
+- ID: `"Magic.DRC"` (line 169)
+- Uses MAGIC_DRC_CONFIG_KEYS (line 169)
+
+**Bazel Flow:** `full_flow.bzl`
+- Position: Step 65 (lines 707-712)
+- No gating - always runs (matches default True)
+- Named: `_magic_drc`
+- Chains from: `_chk_xor`
+
+| Aspect | Librelane | Bazel | Match |
+|--------|-----------|-------|-------|
+| Step ID | `"Magic.DRC"` | `"Magic.DRC"` | Y |
+| inputs | `[DEF, GDS]` | (from src) | Y |
+| outputs | `[]` | `[]` | Y |
+| Gating | RUN_MAGIC_DRC (True) | Always runs | Y (default matches) |
+| Position | Step 65 (line 105) | Step 65 (line 707) | Y |
+| Config keys | MagicStep + DRC vars | MAGIC_DRC_CONFIG_KEYS | Y |
+
+**Status: PASS**
 - Config var: `MAGIC_DRC_USE_GDS` (default: True) controls whether to use GDS or DEF
 
 **Librelane Gating:** `classic.py`
@@ -3982,42 +4095,59 @@ whether XOR was run and whether both Magic and KLayout stream-outs are enabled.
 
 ### Step 66: KLayout.DRC
 
-**Verified:** 2026-01-26
+**Verified:** 2026-01-29
 
 **Librelane Source:** `librelane/steps/klayout.py`
 - ID: `"KLayout.DRC"` (line 341)
 - inputs: `[DesignFormat.GDS]` (lines 344-346)
 - outputs: `[]` (line 347)
-- Runs KLayout DRC, but only supports sky130A/sky130B (self-skips for other PDKs)
-- Outputs metric for DRC violations
+- Runs KLayout DRC, self-skips if KLAYOUT_DRC_RUNSET unavailable
+- Outputs metric `klayout__drc_error__count`
 
 **Librelane Gating:** `classic.py`
 - Position: Step 66 (line 106)
-- Gating: `RUN_KLAYOUT_DRC` (default: True, lines 247-250)
-- Entry in gating_config_vars at line 285
+- Variable: `RUN_KLAYOUT_DRC` (line 285)
+- Default: `True` (line 250)
+
+**Config Variable Audit:**
+
+Inheritance: KLayout.DRC -> KLayoutStep -> Step
+
+| Variable | Source | Bazel Status |
+|----------|--------|--------------|
+| KLAYOUT_TECH | KLayoutStep:36-39 (pdk) | Wired |
+| KLAYOUT_PROPERTIES | KLayoutStep:40-44 (pdk) | Wired |
+| KLAYOUT_DEF_LAYER_MAP | KLayoutStep:45-51 (pdk) | Wired |
+| KLAYOUT_DRC_RUNSET | DRC:350-356 (pdk) | Wired |
+| KLAYOUT_DRC_OPTIONS | DRC:357-362 (pdk) | **Missing** (dict type) |
+| KLAYOUT_DRC_THREADS | DRC:363-368 | Wired |
+
+Note: KLAYOUT_DRC_OPTIONS is a complex dict type not yet wired. Step self-skips if
+KLAYOUT_DRC_RUNSET is unavailable, so this may be acceptable for non-sky130 PDKs.
+
+Uses KLAYOUT_DRC_CONFIG_KEYS (klayout.bzl:29-39).
 
 **Bazel Implementation:** `klayout.bzl`
-- ID: `"KLayout.DRC"` (line 13)
-- step_outputs: `[]` (line 13)
-- Rule: `librelane_klayout_drc` (line 27)
+- _drc_impl (line 47)
+- ID: `"KLayout.DRC"` (line 48)
+- Uses KLAYOUT_DRC_CONFIG_KEYS (line 48)
 
 **Bazel Flow:** `full_flow.bzl`
-- Position: Step 66 (line 595 comment)
+- Position: Step 66 (lines 714-719)
+- No gating - always runs (matches default True)
 - Named: `_klayout_drc`
 - Chains from: `_magic_drc`
-- **No gating parameters implemented**
 
 | Aspect | Librelane | Bazel | Match |
 |--------|-----------|-------|-------|
 | Step ID | `"KLayout.DRC"` | `"KLayout.DRC"` | Y |
 | inputs | `[GDS]` | (from src) | Y |
 | outputs | `[]` | `[]` | Y |
-| Gating | `RUN_KLAYOUT_DRC` | **MISSING** | N |
-| Position | Step 66 (line 106) | Step 66 (line 595) | Y |
+| Gating | RUN_KLAYOUT_DRC (True) | Always runs | Y (default matches) |
+| Position | Step 66 (line 106) | Step 66 (line 714) | Y |
+| Config keys | KLayoutStep + DRC vars | KLAYOUT_DRC_CONFIG_KEYS | Partial |
 
-**Notes:** Missing gating parameter `RUN_KLAYOUT_DRC`. Step always runs in Bazel.
-
-**Status: FAIL** - Missing gating parameter `RUN_KLAYOUT_DRC`
+**Status: FAIL** - KLAYOUT_DRC_OPTIONS (pdk dict type) not wired
 
 ---
 

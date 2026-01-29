@@ -40,6 +40,9 @@ DISCONNECTED_PINS_CONFIG_KEYS = BASE_CONFIG_KEYS + ["ERROR_ON_DISCONNECTED_PINS"
 # Step 53: Checker.WireLength - checker.py lines 254-276
 WIRE_LENGTH_CONFIG_KEYS = BASE_CONFIG_KEYS + ["ERROR_ON_LONG_WIRE", "WIRE_LENGTH_THRESHOLD"]
 
+# Step 64: Checker.XOR - checker.py lines 280-295
+XOR_CHECKER_CONFIG_KEYS = BASE_CONFIG_KEYS + ["ERROR_ON_XOR_ERROR"]
+
 # TODO: Add proper config keys for remaining checker steps
 CHECKER_CONFIG_KEYS = BASE_CONFIG_KEYS
 
@@ -74,7 +77,7 @@ def _wire_length_impl(ctx):
     return single_step_impl(ctx, "Checker.WireLength", WIRE_LENGTH_CONFIG_KEYS, step_outputs = [])
 
 def _xor_impl(ctx):
-    return single_step_impl(ctx, "Checker.XOR", CHECKER_CONFIG_KEYS, step_outputs = [])
+    return single_step_impl(ctx, "Checker.XOR", XOR_CHECKER_CONFIG_KEYS, step_outputs = [])
 
 def _magic_drc_impl(ctx):
     return single_step_impl(ctx, "Checker.MagicDRC", CHECKER_CONFIG_KEYS, step_outputs = [])

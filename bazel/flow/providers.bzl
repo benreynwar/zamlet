@@ -234,6 +234,21 @@ LibrelaneInput = provider(
         "drt_min_layer": "string - Override min layer for DRT",
         "drt_max_layer": "string - Override max layer for DRT",
         "drt_opt_iters": "int - Max optimization iterations",
+        # KLayout/Magic/OpenROAD extra files (flow.py:456-480)
+        "extra_lefs": "List[File] - Extra LEF files for macros",
+        "extra_gds_files": "List[File] - Extra GDS files for macros",
+        # Magic.WriteLEF config (magic.py:218-237)
+        "magic_lef_write_use_gds": "bool - Use GDS for LEF writing",
+        "magic_write_full_lef": "bool - Include all shapes in macro LEF",
+        "magic_write_lef_pinonly": "bool - Mark only port labels as pins",
+        # KLayout.XOR config (klayout.py:258-262)
+        "klayout_xor_threads": "int - Number of threads for KLayout XOR (0=auto)",
+        # Checker.XOR config (checker.py:288-294)
+        "error_on_xor_error": "bool - Error on XOR differences",
+        # Magic.DRC config (magic.py:380-386)
+        "magic_drc_use_gds": "bool - Run Magic DRC on GDS instead of DEF",
+        # KLayout.DRC config (klayout.py:363-368)
+        "klayout_drc_threads": "int - Number of threads for KLayout DRC (0=auto)",
     },
 )
 
@@ -358,6 +373,7 @@ PdkInfo = provider(
         "klayout_properties": "KLayout properties file",
         "klayout_def_layer_map": "KLayout DEF layer map file",
         "klayout_drc_runset": "KLayout DRC runset file",
+        "klayout_drc_options": "Dict of KLayout DRC options (feol, beol, floating_metal, offgrid, seal)",
         "klayout_xor_ignore_layers": "List of layers to ignore in KLayout XOR",
         "klayout_xor_tile_size": "KLayout XOR tile size",
 

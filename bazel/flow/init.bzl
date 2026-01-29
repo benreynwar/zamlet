@@ -208,6 +208,21 @@ def _init_impl(ctx):
             drt_min_layer = ctx.attr.drt_min_layer,
             drt_max_layer = ctx.attr.drt_max_layer,
             drt_opt_iters = ctx.attr.drt_opt_iters,
+            # KLayout/Magic/OpenROAD extra files
+            extra_lefs = ctx.files.extra_lefs,
+            extra_gds_files = ctx.files.extra_gds_files,
+            # Magic.WriteLEF config
+            magic_lef_write_use_gds = ctx.attr.magic_lef_write_use_gds,
+            magic_write_full_lef = ctx.attr.magic_write_full_lef,
+            magic_write_lef_pinonly = ctx.attr.magic_write_lef_pinonly,
+            # KLayout.XOR config
+            klayout_xor_threads = ctx.attr.klayout_xor_threads,
+            # Checker.XOR config
+            error_on_xor_error = ctx.attr.error_on_xor_error,
+            # Magic.DRC config
+            magic_drc_use_gds = ctx.attr.magic_drc_use_gds,
+            # KLayout.DRC config
+            klayout_drc_threads = ctx.attr.klayout_drc_threads,
         ),
         # LibrelaneInfo - initial state (all empty)
         LibrelaneInfo(

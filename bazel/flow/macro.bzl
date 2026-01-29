@@ -13,9 +13,8 @@ load(":common.bzl",
 # Macro steps need BASE_CONFIG_KEYS for PDK info and design config
 MACRO_CONFIG_KEYS = BASE_CONFIG_KEYS
 
-# Step 59: Magic.StreamOut - magic.py lines 249-342
-# MagicStep config_vars (lines 76-142) + StreamOut config_vars (lines 264-293)
-MAGIC_STREAMOUT_CONFIG_KEYS = BASE_CONFIG_KEYS + [
+# MagicStep config_vars (magic.py lines 76-142)
+MAGIC_STEP_CONFIG_KEYS = [
     # MagicStep config_vars (user-configurable)
     "MAGIC_DEF_LABELS",
     "MAGIC_GDS_POLYGON_SUBCELLS",
@@ -28,10 +27,31 @@ MAGIC_STREAMOUT_CONFIG_KEYS = BASE_CONFIG_KEYS + [
     "MAGIC_PDK_SETUP",
     "CELL_MAGS",
     "CELL_MAGLEFS",
+]
+
+# Step 59: Magic.StreamOut - magic.py lines 249-342
+# MagicStep config_vars + StreamOut config_vars (lines 264-293)
+MAGIC_STREAMOUT_CONFIG_KEYS = BASE_CONFIG_KEYS + MAGIC_STEP_CONFIG_KEYS + [
     # StreamOut config_vars
     "MAGIC_ZEROIZE_ORIGIN",
     "MAGIC_DISABLE_CIF_INFO",
     "MAGIC_MACRO_STD_CELL_SOURCE",
+]
+
+# Step 61: Magic.WriteLEF - magic.py lines 207-245
+# MagicStep config_vars + WriteLEF config_vars (lines 218-237)
+MAGIC_WRITELEF_CONFIG_KEYS = BASE_CONFIG_KEYS + MAGIC_STEP_CONFIG_KEYS + [
+    # WriteLEF config_vars
+    "MAGIC_LEF_WRITE_USE_GDS",
+    "MAGIC_WRITE_FULL_LEF",
+    "MAGIC_WRITE_LEF_PINONLY",
+]
+
+# Step 65: Magic.DRC - magic.py lines 360-414
+# MagicStep config_vars + DRC config_vars (lines 379-386)
+MAGIC_DRC_CONFIG_KEYS = BASE_CONFIG_KEYS + MAGIC_STEP_CONFIG_KEYS + [
+    # DRC config_vars
+    "MAGIC_DRC_USE_GDS",
 ]
 
 def _fill_impl(ctx):
@@ -100,7 +120,7 @@ def _lef_impl(ctx):
     inputs = get_input_files(input_info, state_info)
 
     # Create config
-    config = create_librelane_config(input_info, state_info, MACRO_CONFIG_KEYS)
+    config = create_librelane_config(input_info, state_info, MAGIC_WRITELEF_CONFIG_KEYS)
 
     # Run LEF generation
     state_out = run_librelane_step(
@@ -146,7 +166,7 @@ def _lef_impl(ctx):
     ]
 
 def _drc_impl(ctx):
-    return single_step_impl(ctx, "Magic.DRC", MACRO_CONFIG_KEYS, step_outputs = [])
+    return single_step_impl(ctx, "Magic.DRC", MAGIC_DRC_CONFIG_KEYS, step_outputs = [])
 
 def _spice_extraction_impl(ctx):
     return single_step_impl(ctx, "Magic.SpiceExtraction", MACRO_CONFIG_KEYS, step_outputs = ["spice"])

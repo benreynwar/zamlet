@@ -204,6 +204,7 @@ def create_librelane_config(input_info, state_info, required_keys):
     _add_optional_file(config, "KLAYOUT_PROPERTIES", pdk.klayout_properties)
     _add_optional_file(config, "KLAYOUT_DEF_LAYER_MAP", pdk.klayout_def_layer_map)
     _add_optional_file(config, "KLAYOUT_DRC_RUNSET", pdk.klayout_drc_runset)
+    _add_optional(config, "KLAYOUT_DRC_OPTIONS", pdk.klayout_drc_options)
     _add_optional(config, "KLAYOUT_XOR_IGNORE_LAYERS", pdk.klayout_xor_ignore_layers)
     _add_optional(config, "KLAYOUT_XOR_TILE_SIZE", pdk.klayout_xor_tile_size)
     _add_optional_file(config, "NETGEN_SETUP", pdk.netgen_setup)
@@ -341,6 +342,25 @@ def create_librelane_config(input_info, state_info, required_keys):
     config["MAGIC_DISABLE_CIF_INFO"] = input_info.magic_disable_cif_info
     config["MAGIC_MACRO_STD_CELL_SOURCE"] = input_info.magic_macro_std_cell_source
 
+    # Magic.WriteLEF config (magic.py:218-237)
+    config["MAGIC_LEF_WRITE_USE_GDS"] = input_info.magic_lef_write_use_gds
+    config["MAGIC_WRITE_FULL_LEF"] = input_info.magic_write_full_lef
+    config["MAGIC_WRITE_LEF_PINONLY"] = input_info.magic_write_lef_pinonly
+
+    # KLayout.XOR config (klayout.py:258-262)
+    if input_info.klayout_xor_threads:
+        config["KLAYOUT_XOR_THREADS"] = input_info.klayout_xor_threads
+
+    # Checker.XOR config (checker.py:288-294)
+    config["ERROR_ON_XOR_ERROR"] = input_info.error_on_xor_error
+
+    # Magic.DRC config (magic.py:380-386)
+    config["MAGIC_DRC_USE_GDS"] = input_info.magic_drc_use_gds
+
+    # KLayout.DRC config (klayout.py:363-368)
+    if input_info.klayout_drc_threads:
+        config["KLAYOUT_DRC_THREADS"] = input_info.klayout_drc_threads
+
     # OpenROAD.RCX config (openroad.py:1679-1702)
     config["RCX_MERGE_VIA_WIRE_RES"] = input_info.rcx_merge_via_wire_res
     _add_optional_file(config, "RCX_SDC_FILE", input_info.rcx_sdc_file)
@@ -356,6 +376,10 @@ def create_librelane_config(input_info, state_info, required_keys):
     # Odb.AddRoutingObstructions / Odb.RemoveRoutingObstructions
     if input_info.routing_obstructions:
         config["ROUTING_OBSTRUCTIONS"] = input_info.routing_obstructions
+
+    # KLayout/Magic/OpenROAD extra files (flow.py:456-480)
+    _add_optional_file_list(config, "EXTRA_LEFS", input_info.extra_lefs)
+    _add_optional_file_list(config, "EXTRA_GDS_FILES", input_info.extra_gds_files)
 
     # io_layer_variables (common_variables.py lines 19-46) - IOPlacement, CustomIOPlacement
     config["FP_IO_VEXTEND"] = float(input_info.fp_io_vextend)
@@ -1793,6 +1817,50 @@ ENTRY_ATTRS = {
         doc = "Source for macro std cells: PDK or macro",
         default = "macro",
         values = ["PDK", "macro"],
+    ),
+    # KLayout steps config (flow.py:456-480)
+    "extra_lefs": attr.label_list(
+        doc = "Extra LEF files for macros (loaded by KLayout, Magic, OpenROAD)",
+        allow_files = [".lef"],
+        default = [],
+    ),
+    "extra_gds_files": attr.label_list(
+        doc = "Extra GDS files for macros (loaded by KLayout, Magic)",
+        allow_files = [".gds"],
+        default = [],
+    ),
+    # Magic.WriteLEF config (magic.py:218-237)
+    "magic_lef_write_use_gds": attr.bool(
+        doc = "Use GDS for LEF writing instead of abstract LEF views",
+        default = False,
+    ),
+    "magic_write_full_lef": attr.bool(
+        doc = "Include all shapes in macro LEF instead of abstracted view",
+        default = False,
+    ),
+    "magic_write_lef_pinonly": attr.bool(
+        doc = "Mark only port labels as pins, rest as obstructions",
+        default = False,
+    ),
+    # KLayout.XOR config (klayout.py:258-262)
+    "klayout_xor_threads": attr.int(
+        doc = "Number of threads for KLayout XOR check (0 = auto)",
+        default = 0,
+    ),
+    # Checker.XOR config (checker.py:288-294)
+    "error_on_xor_error": attr.bool(
+        doc = "Error on XOR differences between Magic and KLayout GDS",
+        default = True,
+    ),
+    # Magic.DRC config (magic.py:380-386)
+    "magic_drc_use_gds": attr.bool(
+        doc = "Run Magic DRC on GDS instead of DEF (more accurate but slower)",
+        default = True,
+    ),
+    # KLayout.DRC config (klayout.py:363-368)
+    "klayout_drc_threads": attr.int(
+        doc = "Number of threads for KLayout DRC (0 = auto)",
+        default = 0,
     ),
 }
 

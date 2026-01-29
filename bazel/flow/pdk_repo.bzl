@@ -136,6 +136,7 @@ PDK_FIELD_MAP = {
     "KLAYOUT_PROPERTIES": ("klayout_properties", "file"),
     "KLAYOUT_DEF_LAYER_MAP": ("klayout_def_layer_map", "file"),
     "KLAYOUT_DRC_RUNSET": ("klayout_drc_runset", "file"),
+    "KLAYOUT_DRC_OPTIONS": ("klayout_drc_options", "bool_int_dict"),
     "KLAYOUT_XOR_IGNORE_LAYERS": ("klayout_xor_ignore_layers", "string_list"),
     "KLAYOUT_XOR_TILE_SIZE": ("klayout_xor_tile_size", "int"),
 
@@ -292,6 +293,29 @@ def _pdk_config_repo_impl(repository_ctx):
                     number_dict[k] = _as_number(v)
                 if number_dict:
                     field_values[field_name] = ("number_dict", number_dict)
+            else:
+                fail("Expected dict for field '{}', got {}".format(field_name, type(value)))
+
+        elif field_type == "bool_int_dict":
+            # Dict with bool or int values (e.g., KLAYOUT_DRC_OPTIONS)
+            if type(value) == "dict":
+                bool_int_dict = {}
+                for k, v in value.items():
+                    if type(v) == "bool":
+                        bool_int_dict[k] = v
+                    elif type(v) == "int":
+                        bool_int_dict[k] = v
+                    else:
+                        # Try to parse as bool or int
+                        v_str = str(v).lower()
+                        if v_str == "true":
+                            bool_int_dict[k] = True
+                        elif v_str == "false":
+                            bool_int_dict[k] = False
+                        else:
+                            bool_int_dict[k] = int(v)
+                if bool_int_dict:
+                    field_values[field_name] = ("bool_int_dict", bool_int_dict)
             else:
                 fail("Expected dict for field '{}', got {}".format(field_name, type(value)))
 
