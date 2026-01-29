@@ -1,64 +1,104 @@
 # Checker rules for validation steps
 
-load(":common.bzl", "single_step_impl", "FLOW_ATTRS")
+load(":common.bzl", "single_step_impl", "FLOW_ATTRS", "BASE_CONFIG_KEYS")
 load(":providers.bzl", "LibrelaneInfo")
 
+# Config keys for each checker step
+# All steps require BASE_CONFIG_KEYS for librelane's Config.load infrastructure.
+
+# Step 2: Checker.LintTimingConstructs - checker.py lines 376-409
+# Overrides run(), only reads state_in.metrics, ignores config_vars (librelane_issue)
+# We still wire ERROR_ON_LINTER_TIMING_CONSTRUCTS because it's declared in config_vars
+LINT_TIMING_CONSTRUCTS_CONFIG_KEYS = BASE_CONFIG_KEYS + ["ERROR_ON_LINTER_TIMING_CONSTRUCTS"]
+
+# Step 3: Checker.LintErrors - checker.py lines 336-352
+# Uses MetricChecker.run() which reads self.config.get("ERROR_ON_LINTER_ERRORS") at line 119
+LINT_ERRORS_CONFIG_KEYS = BASE_CONFIG_KEYS + ["ERROR_ON_LINTER_ERRORS"]
+
+# Step 4: Checker.LintWarnings - checker.py lines 356-372
+# Uses MetricChecker.run() which reads self.config.get("ERROR_ON_LINTER_WARNINGS") at line 119
+LINT_WARNINGS_CONFIG_KEYS = BASE_CONFIG_KEYS + ["ERROR_ON_LINTER_WARNINGS"]
+
+# Step 7: Checker.YosysUnmappedCells - checker.py lines 141-156
+YOSYS_UNMAPPED_CELLS_CONFIG_KEYS = BASE_CONFIG_KEYS + ["ERROR_ON_UNMAPPED_CELLS"]
+
+# Step 8: Checker.YosysSynthChecks - checker.py lines 159-174
+YOSYS_SYNTH_CHECKS_CONFIG_KEYS = BASE_CONFIG_KEYS + ["ERROR_ON_SYNTH_CHECKS"]
+
+# Step 9: Checker.NetlistAssignStatements - checker.py lines 30-66
+NETLIST_ASSIGN_STATEMENTS_CONFIG_KEYS = BASE_CONFIG_KEYS + ["ERROR_ON_NL_ASSIGN_STATEMENTS"]
+
+# Step 29: Checker.PowerGridViolations - checker.py lines 318-332
+POWER_GRID_VIOLATIONS_CONFIG_KEYS = BASE_CONFIG_KEYS + ["ERROR_ON_PDN_VIOLATIONS"]
+
+# Step 49: Checker.TrDRC - checker.py lines 178-193
+TR_DRC_CONFIG_KEYS = BASE_CONFIG_KEYS + ["ERROR_ON_TR_DRC"]
+
+# Step 51: Checker.DisconnectedPins - checker.py lines 235-250
+DISCONNECTED_PINS_CONFIG_KEYS = BASE_CONFIG_KEYS + ["ERROR_ON_DISCONNECTED_PINS"]
+
+# Step 53: Checker.WireLength - checker.py lines 254-276
+WIRE_LENGTH_CONFIG_KEYS = BASE_CONFIG_KEYS + ["ERROR_ON_LONG_WIRE", "WIRE_LENGTH_THRESHOLD"]
+
+# TODO: Add proper config keys for remaining checker steps
+CHECKER_CONFIG_KEYS = BASE_CONFIG_KEYS
+
 def _lint_timing_constructs_impl(ctx):
-    return single_step_impl(ctx, "Checker.LintTimingConstructs", step_outputs = [])
+    return single_step_impl(ctx, "Checker.LintTimingConstructs", LINT_TIMING_CONSTRUCTS_CONFIG_KEYS, step_outputs = [])
 
 def _lint_errors_impl(ctx):
-    return single_step_impl(ctx, "Checker.LintErrors", step_outputs = [])
+    return single_step_impl(ctx, "Checker.LintErrors", LINT_ERRORS_CONFIG_KEYS, step_outputs = [])
 
 def _lint_warnings_impl(ctx):
-    return single_step_impl(ctx, "Checker.LintWarnings", step_outputs = [])
+    return single_step_impl(ctx, "Checker.LintWarnings", LINT_WARNINGS_CONFIG_KEYS, step_outputs = [])
 
 def _yosys_unmapped_cells_impl(ctx):
-    return single_step_impl(ctx, "Checker.YosysUnmappedCells", step_outputs = [])
+    return single_step_impl(ctx, "Checker.YosysUnmappedCells", YOSYS_UNMAPPED_CELLS_CONFIG_KEYS, step_outputs = [])
 
 def _yosys_synth_checks_impl(ctx):
-    return single_step_impl(ctx, "Checker.YosysSynthChecks", step_outputs = [])
+    return single_step_impl(ctx, "Checker.YosysSynthChecks", YOSYS_SYNTH_CHECKS_CONFIG_KEYS, step_outputs = [])
 
 def _netlist_assign_statements_impl(ctx):
-    return single_step_impl(ctx, "Checker.NetlistAssignStatements", step_outputs = [])
+    return single_step_impl(ctx, "Checker.NetlistAssignStatements", NETLIST_ASSIGN_STATEMENTS_CONFIG_KEYS, step_outputs = [])
 
 def _power_grid_violations_impl(ctx):
-    return single_step_impl(ctx, "Checker.PowerGridViolations", step_outputs = [])
+    return single_step_impl(ctx, "Checker.PowerGridViolations", POWER_GRID_VIOLATIONS_CONFIG_KEYS, step_outputs = [])
 
 def _tr_drc_impl(ctx):
-    return single_step_impl(ctx, "Checker.TrDRC", step_outputs = [])
+    return single_step_impl(ctx, "Checker.TrDRC", TR_DRC_CONFIG_KEYS, step_outputs = [])
 
 def _disconnected_pins_impl(ctx):
-    return single_step_impl(ctx, "Checker.DisconnectedPins", step_outputs = [])
+    return single_step_impl(ctx, "Checker.DisconnectedPins", DISCONNECTED_PINS_CONFIG_KEYS, step_outputs = [])
 
 def _wire_length_impl(ctx):
-    return single_step_impl(ctx, "Checker.WireLength", step_outputs = [])
+    return single_step_impl(ctx, "Checker.WireLength", WIRE_LENGTH_CONFIG_KEYS, step_outputs = [])
 
 def _xor_impl(ctx):
-    return single_step_impl(ctx, "Checker.XOR", step_outputs = [])
+    return single_step_impl(ctx, "Checker.XOR", CHECKER_CONFIG_KEYS, step_outputs = [])
 
 def _magic_drc_impl(ctx):
-    return single_step_impl(ctx, "Checker.MagicDRC", step_outputs = [])
+    return single_step_impl(ctx, "Checker.MagicDRC", CHECKER_CONFIG_KEYS, step_outputs = [])
 
 def _klayout_drc_impl(ctx):
-    return single_step_impl(ctx, "Checker.KLayoutDRC", step_outputs = [])
+    return single_step_impl(ctx, "Checker.KLayoutDRC", CHECKER_CONFIG_KEYS, step_outputs = [])
 
 def _illegal_overlap_impl(ctx):
-    return single_step_impl(ctx, "Checker.IllegalOverlap", step_outputs = [])
+    return single_step_impl(ctx, "Checker.IllegalOverlap", CHECKER_CONFIG_KEYS, step_outputs = [])
 
 def _lvs_impl(ctx):
-    return single_step_impl(ctx, "Checker.LVS", step_outputs = [])
+    return single_step_impl(ctx, "Checker.LVS", CHECKER_CONFIG_KEYS, step_outputs = [])
 
 def _setup_violations_impl(ctx):
-    return single_step_impl(ctx, "Checker.SetupViolations", step_outputs = [])
+    return single_step_impl(ctx, "Checker.SetupViolations", CHECKER_CONFIG_KEYS, step_outputs = [])
 
 def _hold_violations_impl(ctx):
-    return single_step_impl(ctx, "Checker.HoldViolations", step_outputs = [])
+    return single_step_impl(ctx, "Checker.HoldViolations", CHECKER_CONFIG_KEYS, step_outputs = [])
 
 def _max_slew_violations_impl(ctx):
-    return single_step_impl(ctx, "Checker.MaxSlewViolations", step_outputs = [])
+    return single_step_impl(ctx, "Checker.MaxSlewViolations", CHECKER_CONFIG_KEYS, step_outputs = [])
 
 def _max_cap_violations_impl(ctx):
-    return single_step_impl(ctx, "Checker.MaxCapViolations", step_outputs = [])
+    return single_step_impl(ctx, "Checker.MaxCapViolations", CHECKER_CONFIG_KEYS, step_outputs = [])
 
 # Rule declarations
 librelane_lint_timing_constructs = rule(

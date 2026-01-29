@@ -1,9 +1,8 @@
 # Lamlet module tests
 
-load("//bazel:defs.bzl", "cocotb_exe", "cocotb_script")
-load("@rules_hdl//verilog:defs.bzl", "verilog_library")
+load("//bazel:cocotb_rules.bzl", "cocotb_binary", "cocotb_test")
 
-# Generate Lamlet verilog
+# Lamlet tests
 genrule(
     name = "lamlet_default_verilog",
     srcs = ["//configs:lamlet_default.json"],
@@ -17,35 +16,31 @@ genrule(
     tools = ["//src/main/scala/zamlet/lamlet:lamlet"],
 )
 
-# Verilog library for bazel_rules_hdl
-verilog_library(
-    name = "lamlet_default_verilog_lib",
-    srcs = [":lamlet_default_verilog"],
-)
-
-# Cocotb executable
-cocotb_exe(
+cocotb_binary(
     name = "lamlet_default_exe",
-    verilog_library = ":lamlet_default_verilog_lib",
+    verilog_files = [":lamlet_default_verilog"],
     module_top = "Lamlet",
 )
 
-# Test Python library
 py_library(
     name = "test_lamlet_py",
     srcs = ["test_lamlet.py"],
-    imports = ["."],
-    deps = [
-        "//python/zamlet:zamlet",
-        "@zamlet_pip_deps//cocotb",
-    ],
+    deps = ["//python/zamlet:zamlet"],
 )
 
-# Cocotb test script
-cocotb_script(
+cocotb_test(
     name = "test_lamlet_default",
     binary = ":lamlet_default_exe",
-    script = ":test_lamlet_py",
-    module = "test_lamlet",
+    test_module = "zamlet.lamlet_test.test_lamlet",
     toplevel = "Lamlet",
+    env = {
+        "ZAMLET_TEST_CONFIG_FILENAME": "configs/lamlet_default.json",
+    },
+    data = ["//configs:lamlet_default.json"],
+    py_deps = [":test_lamlet_py"],
+)
+
+test_suite(
+    name = "all_tests",
+    tests = [":test_lamlet_default"],
 )

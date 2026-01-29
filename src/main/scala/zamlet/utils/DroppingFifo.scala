@@ -161,3 +161,11 @@ object DroppingFifoGenerator extends ModuleGenerator {
     }
   }
 }
+
+object DroppingFifoMain extends App {
+  if (args.length < 2) {
+    println("Usage: <outputDir> <configFile>")
+    System.exit(1)
+  }
+  DroppingFifoGenerator.generate(args(0), Seq(args(1)))
+}

@@ -7,10 +7,35 @@ load(":common.bzl",
     "single_step_impl",
     "get_input_files",
     "FLOW_ATTRS",
+    "BASE_CONFIG_KEYS",
 )
 
+# Macro steps need BASE_CONFIG_KEYS for PDK info and design config
+MACRO_CONFIG_KEYS = BASE_CONFIG_KEYS
+
+# Step 59: Magic.StreamOut - magic.py lines 249-342
+# MagicStep config_vars (lines 76-142) + StreamOut config_vars (lines 264-293)
+MAGIC_STREAMOUT_CONFIG_KEYS = BASE_CONFIG_KEYS + [
+    # MagicStep config_vars (user-configurable)
+    "MAGIC_DEF_LABELS",
+    "MAGIC_GDS_POLYGON_SUBCELLS",
+    "MAGIC_DEF_NO_BLOCKAGES",
+    "MAGIC_INCLUDE_GDS_POINTERS",
+    "MAGIC_CAPTURE_ERRORS",
+    # MagicStep config_vars (PDK)
+    "MAGICRC",
+    "MAGIC_TECH",
+    "MAGIC_PDK_SETUP",
+    "CELL_MAGS",
+    "CELL_MAGLEFS",
+    # StreamOut config_vars
+    "MAGIC_ZEROIZE_ORIGIN",
+    "MAGIC_DISABLE_CIF_INFO",
+    "MAGIC_MACRO_STD_CELL_SOURCE",
+]
+
 def _fill_impl(ctx):
-    return single_step_impl(ctx, "OpenROAD.FillInsertion",
+    return single_step_impl(ctx, "OpenROAD.FillInsertion", MACRO_CONFIG_KEYS,
         step_outputs = ["def", "odb", "nl", "pnl", "sdc"])
 
 def _gds_impl(ctx):
@@ -26,7 +51,7 @@ def _gds_impl(ctx):
     inputs = get_input_files(input_info, state_info)
 
     # Create config
-    config = create_librelane_config(input_info, state_info)
+    config = create_librelane_config(input_info, state_info, MAGIC_STREAMOUT_CONFIG_KEYS)
 
     # Run GDS generation
     state_out = run_librelane_step(
@@ -75,7 +100,7 @@ def _lef_impl(ctx):
     inputs = get_input_files(input_info, state_info)
 
     # Create config
-    config = create_librelane_config(input_info, state_info)
+    config = create_librelane_config(input_info, state_info, MACRO_CONFIG_KEYS)
 
     # Run LEF generation
     state_out = run_librelane_step(
@@ -121,10 +146,10 @@ def _lef_impl(ctx):
     ]
 
 def _drc_impl(ctx):
-    return single_step_impl(ctx, "Magic.DRC", step_outputs = [])
+    return single_step_impl(ctx, "Magic.DRC", MACRO_CONFIG_KEYS, step_outputs = [])
 
 def _spice_extraction_impl(ctx):
-    return single_step_impl(ctx, "Magic.SpiceExtraction", step_outputs = ["spice"])
+    return single_step_impl(ctx, "Magic.SpiceExtraction", MACRO_CONFIG_KEYS, step_outputs = ["spice"])
 
 librelane_fill = rule(
     implementation = _fill_impl,

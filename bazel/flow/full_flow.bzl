@@ -97,21 +97,27 @@ def librelane_classic_flow(
     pdk,
     clock_period = "10.0",
     clock_port = "clock",
-    core_utilization = "40",
-    target_density = "0.5",
+    core_utilization = "50",
+    pl_target_density_pct = "",
     die_area = None,
     macros = [],
     pin_order_cfg = None,
     def_template = None,
     macro_placement_cfg = None,
     cts_clk_max_wire_length = None,
+    run_cts = True,
+    run_post_cts_resizer_timing = True,
     run_linter = True,
     run_tap_endcap_insertion = True,
     run_post_gpl_design_repair = True,
+    run_post_grt_design_repair = False,
     pdn_obstructions = None,
     routing_obstructions = None,
     diode_on_ports = "none",
     run_heuristic_diode_insertion = False,
+    run_antenna_repair = True,
+    run_post_grt_resizer_timing = False,
+    run_drt = True,
     manual_global_placements = None,
     pnr_sdc_file = None,
     signoff_sdc_file = None,
@@ -134,16 +140,19 @@ def librelane_classic_flow(
         clock_period: Clock period in ns
         clock_port: Clock port name
         core_utilization: Target core utilization (0-100), ignored if die_area specified
-        target_density: Target placement density (0.0-1.0)
+        pl_target_density_pct: Target placement density percentage (0-100), empty for dynamic
         die_area: Explicit die area as "x0 y0 x1 y1" in microns
         macros: List of hard macro targets (for hierarchical designs)
         pin_order_cfg: Pin order configuration file for custom IO placement
         def_template: DEF template file with die area and pin placements (alternative to pin_order_cfg)
         macro_placement_cfg: Macro placement configuration file (instance X Y orientation)
         cts_clk_max_wire_length: Max clock wire length in µm before buffer insertion (0=disabled)
+        run_cts: Enable clock tree synthesis (default True)
+        run_post_cts_resizer_timing: Enable timing optimization after CTS (default True, ignored if run_cts=False)
         run_linter: Enable Verilator linting (default True)
         run_tap_endcap_insertion: Enable tap/endcap insertion (default True)
         run_post_gpl_design_repair: Enable design repair after global placement (default True)
+        run_post_grt_design_repair: Enable design repair after global routing (default False, experimental)
     """
 
     # Generate templated SDC if delay constraints provided
@@ -172,6 +181,10 @@ def librelane_classic_flow(
         macros = macros,
         pnr_sdc_file = effective_pnr_sdc if effective_pnr_sdc else "//bazel/flow/sdc:base.sdc",
         signoff_sdc_file = effective_signoff_sdc if effective_signoff_sdc else "//bazel/flow/sdc:base.sdc",
+        pl_target_density_pct = pl_target_density_pct,
+        fp_pin_order_cfg = pin_order_cfg,
+        fp_def_template = def_template,
+        cts_clk_max_wire_length = cts_clk_max_wire_length if cts_clk_max_wire_length else "0",
     )
 
     # Common input reference for all steps
@@ -315,7 +328,6 @@ def librelane_classic_flow(
             name = name + "_add_pdn_obs",
             input = input_target,
             src = pre_pdn_src,
-            pdn_obstructions = pdn_obstructions,
         )
         pre_pdn_gen_src = ":" + name + "_add_pdn_obs"
     else:
@@ -334,7 +346,6 @@ def librelane_classic_flow(
             name = name + "_rm_pdn_obs",
             input = input_target,
             src = ":" + name + "_pdn",
-            pdn_obstructions = pdn_obstructions,
         )
         post_pdn_src = ":" + name + "_rm_pdn_obs"
     else:
@@ -346,7 +357,6 @@ def librelane_classic_flow(
             name = name + "_add_route_obs",
             input = input_target,
             src = post_pdn_src,
-            routing_obstructions = routing_obstructions,
         )
         pre_gpl_skip_io_src = ":" + name + "_add_route_obs"
     else:
@@ -357,7 +367,6 @@ def librelane_classic_flow(
         name = name + "_gpl_skip_io",
         input = input_target,
         src = pre_gpl_skip_io_src,
-        target_density = target_density,
     )
 
     # IO placement
@@ -369,14 +378,12 @@ def librelane_classic_flow(
             name = name + "_io",
             input = input_target,
             src = ":" + name + "_gpl_skip_io",
-            def_template = def_template,
         )
     elif pin_order_cfg:
         librelane_custom_io_placement(
             name = name + "_io",
             input = input_target,
             src = ":" + name + "_gpl_skip_io",
-            pin_order_cfg = pin_order_cfg,
         )
     else:
         librelane_io_placement(
@@ -390,7 +397,6 @@ def librelane_classic_flow(
         name = name + "_gpl",
         input = input_target,
         src = ":" + name + "_io",
-        target_density = target_density,
     )
 
     # Step 28: Write Verilog header with power ports
@@ -426,12 +432,12 @@ def librelane_classic_flow(
         pre_mgpl_src = ":" + name + "_sta_mid_gpl"
 
     # Step 32: Manual global placement (only if configured)
+    # Config flows through LibrelaneInput (manual_global_placements attr)
     if manual_global_placements:
         librelane_manual_global_placement(
             name = name + "_mgpl",
             input = input_target,
             src = pre_mgpl_src,
-            manual_global_placements = manual_global_placements,
         )
         pre_dpl_src = ":" + name + "_mgpl"
     else:
@@ -444,40 +450,47 @@ def librelane_classic_flow(
         src = pre_dpl_src,
     )
 
-    # Step 34: Clock tree synthesis
-    librelane_cts(
-        name = name + "_cts",
-        input = input_target,
-        src = ":" + name + "_dpl",
-        cts_clk_max_wire_length = cts_clk_max_wire_length,
-    )
+    # Steps 34-37: CTS and post-CTS timing optimization (gated)
+    if run_cts:
+        # Step 34: Clock tree synthesis
+        librelane_cts(
+            name = name + "_cts",
+            input = input_target,
+            src = ":" + name + "_dpl",
+        )
 
-    # Step 35: STA mid-PnR (after CTS)
-    librelane_sta_mid_pnr(
-        name = name + "_sta_mid_cts",
-        input = input_target,
-        src = ":" + name + "_cts",
-    )
+        # Step 35: STA mid-PnR (after CTS)
+        librelane_sta_mid_pnr(
+            name = name + "_sta_mid_cts",
+            input = input_target,
+            src = ":" + name + "_cts",
+        )
 
-    # Step 36: Timing optimization after CTS
-    librelane_resizer_timing_post_cts(
-        name = name + "_rsz_cts",
-        input = input_target,
-        src = ":" + name + "_sta_mid_cts",
-    )
+        # Step 36: Timing optimization after CTS (gated)
+        if run_post_cts_resizer_timing:
+            librelane_resizer_timing_post_cts(
+                name = name + "_rsz_cts",
+                input = input_target,
+                src = ":" + name + "_sta_mid_cts",
+            )
 
-    # Step 37: STA mid-PnR (after resizer timing post-CTS)
-    librelane_sta_mid_pnr(
-        name = name + "_sta_mid_rsz_cts",
-        input = input_target,
-        src = ":" + name + "_rsz_cts",
-    )
+            # Step 37: STA mid-PnR (after resizer timing post-CTS)
+            librelane_sta_mid_pnr(
+                name = name + "_sta_mid_rsz_cts",
+                input = input_target,
+                src = ":" + name + "_rsz_cts",
+            )
+            pre_grt_src = ":" + name + "_sta_mid_rsz_cts"
+        else:
+            pre_grt_src = ":" + name + "_sta_mid_cts"
+    else:
+        pre_grt_src = ":" + name + "_dpl"
 
     # Step 38: Global routing
     librelane_global_routing(
         name = name + "_grt",
         input = input_target,
-        src = ":" + name + "_sta_mid_rsz_cts",
+        src = pre_grt_src,
     )
 
     # Step 39: Check antennas (first occurrence, after GRT)
@@ -487,24 +500,28 @@ def librelane_classic_flow(
         src = ":" + name + "_grt",
     )
 
-    # Step 40: Repair design after global routing
-    librelane_repair_design_post_grt(
-        name = name + "_rsz_grt",
-        input = input_target,
-        src = ":" + name + "_chk_ant_grt",
-    )
+    # Step 40: Repair design after global routing (gated, default OFF - experimental)
+    if run_post_grt_design_repair:
+        librelane_repair_design_post_grt(
+            name = name + "_rsz_grt",
+            input = input_target,
+            src = ":" + name + "_chk_ant_grt",
+        )
+        pre_diode_src = ":" + name + "_rsz_grt"
+    else:
+        pre_diode_src = ":" + name + "_chk_ant_grt"
 
     # Step 41: Diodes on ports (only if configured, default "none" skips)
+    # DIODE_ON_PORTS comes from input via 5-location pattern
     if diode_on_ports != "none":
         librelane_diodes_on_ports(
             name = name + "_dio_ports",
             input = input_target,
-            src = ":" + name + "_rsz_grt",
-            diode_on_ports = diode_on_ports,
+            src = pre_diode_src,
         )
         pre_dio_heur_src = ":" + name + "_dio_ports"
     else:
-        pre_dio_heur_src = ":" + name + "_rsz_grt"
+        pre_dio_heur_src = pre_diode_src
 
     # Step 42: Heuristic diode insertion (only if enabled)
     if run_heuristic_diode_insertion:
@@ -517,45 +534,56 @@ def librelane_classic_flow(
     else:
         pre_ant_src = pre_dio_heur_src
 
-    # Step 43: Antenna repair
-    librelane_repair_antennas(
-        name = name + "_ant",
-        input = input_target,
-        src = pre_ant_src,
-    )
+    # Step 43: Antenna repair (gated by run_antenna_repair, default True)
+    if run_antenna_repair:
+        librelane_repair_antennas(
+            name = name + "_ant",
+            input = input_target,
+            src = pre_ant_src,
+        )
+        post_ant_src = ":" + name + "_ant"
+    else:
+        post_ant_src = pre_ant_src
 
-    # Step 44: Final timing optimization after global routing
-    librelane_resizer_timing_post_grt(
-        name = name + "_rsz_grt2",
-        input = input_target,
-        src = ":" + name + "_ant",
-    )
+    # Step 44: Final timing optimization after global routing (gated, default OFF)
+    if run_post_grt_resizer_timing:
+        librelane_resizer_timing_post_grt(
+            name = name + "_rsz_grt2",
+            input = input_target,
+            src = post_ant_src,
+        )
+        post_rsz_grt_src = ":" + name + "_rsz_grt2"
+    else:
+        post_rsz_grt_src = post_ant_src
 
     # Step 45: STA mid-PnR (after resizer timing post-GRT)
     librelane_sta_mid_pnr(
         name = name + "_sta_mid_rsz_grt",
         input = input_target,
-        src = ":" + name + "_rsz_grt2",
+        src = post_rsz_grt_src,
     )
 
-    # Step 46: Detailed routing
-    librelane_detailed_routing(
-        name = name + "_drt",
-        input = input_target,
-        src = ":" + name + "_sta_mid_rsz_grt",
-    )
+    # Step 46: Detailed routing (gated by run_drt, default True)
+    if run_drt:
+        librelane_detailed_routing(
+            name = name + "_drt",
+            input = input_target,
+            src = ":" + name + "_sta_mid_rsz_grt",
+        )
+        pre_rm_obs_src = ":" + name + "_drt"
+    else:
+        pre_rm_obs_src = ":" + name + "_sta_mid_rsz_grt"
 
     # Step 47: Remove routing obstructions (only if we added them)
     if routing_obstructions:
         librelane_remove_routing_obstructions(
             name = name + "_rm_route_obs",
             input = input_target,
-            src = ":" + name + "_drt",
-            routing_obstructions = routing_obstructions,
+            src = pre_rm_obs_src,
         )
         post_drt_src = ":" + name + "_rm_route_obs"
     else:
-        post_drt_src = ":" + name + "_drt"
+        post_drt_src = pre_rm_obs_src
 
     # Step 48: Check antennas (second occurrence, after DRT)
     librelane_check_antennas(

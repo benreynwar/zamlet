@@ -1,6 +1,7 @@
+# Build image first: nix-build docker.nix && docker load < result
 services:
   zamlet:
-    build: .
+    image: zamlet:latest
     container_name: zamlet
     working_dir: /workspace
     volumes:
@@ -10,8 +11,6 @@ services:
       - bazelisk-cache:/root/.cache/bazelisk
     environment:
       - USER=root
-      - JAVA_HOME=/usr/lib/jvm/java-11-openjdk-amd64
-    # Keep container running for interactive use
     tty: true
     stdin_open: true
 

@@ -17,18 +17,14 @@ git_override(
     remote = "https://github.com/bazelbuild/rules_scala",
 )
 
-# Python toolchain - use existing virtual environment
-python = use_extension("@rules_python//python/extensions:python.bzl", "python")
-python.toolchain(
-    ignore_root_user_error = True,
-    python_version = "3.13"
-)
+# Python toolchain - use Nix-provided Python
+# (registered below with find_nix_python)
 
 # Python dependencies managed in virtual environment
 pip = use_extension("@rules_python//python/extensions:pip.bzl", "pip")
 pip.parse(
     hub_name = "zamlet_pip_deps",
-    python_version = "3.13",
+    python_version = "3.11",
     requirements_lock = "//:requirements.lock",
 )
 use_repo(pip, "zamlet_pip_deps")
@@ -134,42 +130,20 @@ git_repository(
     build_file = "//bazel/external:shuttle.BUILD",
 )
 
-git_repository(
-    name = "cocotb_bus",
-    remote = "https://github.com/cocotb/cocotb-bus.git",
-    commit = "b9b248ecc8793de6c4534e8014b99b92e1a1519a",
-    build_file = "//bazel/external:cocotb_bus.BUILD",
+# Nix toolchains - find tools from Nix environment
+find_nix_python = use_repo_rule("//bazel/toolchains:nix_python.bzl", "find_nix_python")
+find_nix_python(name = "nix_python")
+
+find_nix_verilator = use_repo_rule("//bazel/toolchains:nix_verilator.bzl", "find_nix_verilator")
+find_nix_verilator(name = "nix_verilator")
+
+find_nix_cocotb = use_repo_rule("//bazel/toolchains:nix_cocotb.bzl", "find_nix_cocotb")
+find_nix_cocotb(name = "nix_cocotb")
+
+# Register Nix toolchains
+register_toolchains(
+    "@nix_python//:toolchain",
+    "@nix_verilator//:toolchain",
+    "@nix_cocotb//:toolchain",
 )
 
-git_repository(
-    name = "cocotbext_axi",
-    remote = "https://github.com/alexforencich/cocotbext-axi.git",
-    commit = "3e1e7fc1ec488811d742adde6f7283852f134458",
-    build_file = "//bazel/external:cocotbext_axi.BUILD",
-)
-
-# Cocotb rules 
-bazel_dep(name = "rules_cocotb_verilator")
-#local_path_override(
-#    module_name = "rules_cocotb_verilator",
-#    path = "../bazel_rules_cocotb_verilator",
-#)
-git_override(
-    module_name = "rules_cocotb_verilator",
-    remote = "https://github.com/benreynwar/bazel_rules_cocotb_verilator",
-    commit = "c1ee20d7cdc16381bbf030cb56c03cd974c51d50",
-)
-
-# Cocotb extension to provide @cocotb repository
-cocotb_ext = use_extension("@rules_cocotb_verilator//:extensions.bzl", "cocotb_extension")
-use_repo(cocotb_ext, "cocotb")
-
-# HDL tools including Verilator 
-bazel_dep(name = "rules_hdl")
-git_override(
-    module_name = "rules_hdl",
-    remote = "https://github.com/benreynwar/bazel_rules_hdl",
-    commit = "67b246fc91353954757932ce28f6b1d39c7e6dd1",
-)
-
-hdl_deps = use_extension("@rules_hdl//:extensions.bzl", "hdl_deps_extension")

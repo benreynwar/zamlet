@@ -6,7 +6,16 @@ load(":common.bzl",
     "run_librelane_step",
     "get_input_files",
     "FLOW_ATTRS",
+    "BASE_CONFIG_KEYS",
 )
+
+# Config keys needed by floorplan step (from floorplan.tcl and common/io.tcl)
+FLOORPLAN_CONFIG_KEYS = BASE_CONFIG_KEYS + [
+    # Floorplan-specific keys (set in impl, not from create_librelane_config)
+    "FP_SIZING", "DIE_AREA", "CORE_AREA", "FP_CORE_UTIL", "FP_ASPECT_RATIO",
+    "BOTTOM_MARGIN_MULT", "TOP_MARGIN_MULT", "LEFT_MARGIN_MULT", "RIGHT_MARGIN_MULT",
+    "FP_OBSTRUCTIONS", "PL_SOFT_OBSTRUCTIONS",
+]
 
 def _floorplan_impl(ctx):
     """Create floorplan with die area and pin placement.
@@ -28,14 +37,35 @@ def _floorplan_impl(ctx):
     inputs = get_input_files(input_info, state_info)
 
     # Create config with floorplan settings
-    config = create_librelane_config(input_info, state_info)
+    config = create_librelane_config(input_info, state_info, FLOORPLAN_CONFIG_KEYS)
+
+    # Margin multipliers (always set, have defaults matching librelane)
+    config["BOTTOM_MARGIN_MULT"] = int(ctx.attr.bottom_margin_mult)
+    config["TOP_MARGIN_MULT"] = int(ctx.attr.top_margin_mult)
+    config["LEFT_MARGIN_MULT"] = int(ctx.attr.left_margin_mult)
+    config["RIGHT_MARGIN_MULT"] = int(ctx.attr.right_margin_mult)
+
     if ctx.attr.die_area:
+        # Absolute sizing mode
         config["FP_SIZING"] = "absolute"
         config["DIE_AREA"] = [float(x) for x in ctx.attr.die_area.split(" ")]
-    if ctx.attr.core_area:
-        config["CORE_AREA"] = [float(x) for x in ctx.attr.core_area.split(" ")]
-    if ctx.attr.core_utilization and not ctx.attr.die_area:
+        if ctx.attr.core_area:
+            config["CORE_AREA"] = [float(x) for x in ctx.attr.core_area.split(" ")]
+    else:
+        # Relative sizing mode (default)
+        config["FP_SIZING"] = "relative"
         config["FP_CORE_UTIL"] = int(ctx.attr.core_utilization)
+        config["FP_ASPECT_RATIO"] = float(ctx.attr.fp_aspect_ratio)
+
+    # Optional obstructions
+    if ctx.attr.fp_obstructions:
+        config["FP_OBSTRUCTIONS"] = [
+            [float(x) for x in obs.split(" ")] for obs in ctx.attr.fp_obstructions
+        ]
+    if ctx.attr.pl_soft_obstructions:
+        config["PL_SOFT_OBSTRUCTIONS"] = [
+            [float(x) for x in obs.split(" ")] for obs in ctx.attr.pl_soft_obstructions
+        ]
 
     # Run floorplan with all outputs
     state_out = run_librelane_step(
@@ -78,7 +108,35 @@ librelane_floorplan = rule(
         "core_area": attr.string(doc = "Core area as 'x0 y0 x1 y1' in microns"),
         "core_utilization": attr.string(
             doc = "Target core utilization percentage (0-100)",
-            default = "40",
+            default = "50",
+        ),
+        "fp_aspect_ratio": attr.string(
+            doc = "Core aspect ratio (height / width)",
+            default = "1",
+        ),
+        "bottom_margin_mult": attr.string(
+            doc = "Core margin from bottom in multiples of site height",
+            default = "4",
+        ),
+        "top_margin_mult": attr.string(
+            doc = "Core margin from top in multiples of site height",
+            default = "4",
+        ),
+        "left_margin_mult": attr.string(
+            doc = "Core margin from left in multiples of site width",
+            default = "12",
+        ),
+        "right_margin_mult": attr.string(
+            doc = "Core margin from right in multiples of site width",
+            default = "12",
+        ),
+        "fp_obstructions": attr.string_list(
+            doc = "Floorplan obstructions as 'x0 y0 x1 y1' strings in microns",
+            default = [],
+        ),
+        "pl_soft_obstructions": attr.string_list(
+            doc = "Soft placement obstructions as 'x0 y0 x1 y1' strings in microns",
+            default = [],
         ),
     }),
     provides = [DefaultInfo, LibrelaneInfo],

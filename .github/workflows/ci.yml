@@ -1,0 +1,47 @@
+name: CI
+
+# When to run this workflow
+on:
+  push:
+    branches: [main, librelane]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      # Check out the repository code
+      - uses: actions/checkout@v4
+
+      # Install Nix package manager (provides reproducible builds)
+      # Configure FOSSi Foundation cache for pre-built EDA tools
+      - uses: cachix/install-nix-action@v27
+        with:
+          nix_path: nixpkgs=channel:nixos-24.05
+          extra_nix_config: |
+            extra-substituters = https://nix-cache.fossi-foundation.org
+            extra-trusted-public-keys = nix-cache.fossi-foundation.org:3+K59iFwXqKsL7BNu6Guy0v+uTlwsxYQxjspXzqLYQs=
+
+      # Cache custom Nix builds (cocotb, verilator overrides, etc.)
+      # Requires CACHIX_AUTH_TOKEN secret to push to cache
+      - uses: cachix/cachix-action@v15
+        with:
+          name: benreynwar
+          authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
+
+      # Cache Bazel build artifacts between runs
+      # Key includes bazel deps and nix config so cache invalidates when either changes
+      - name: Cache Bazel
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/bazel
+          key: bazel-${{ runner.os }}-${{ hashFiles('MODULE.bazel', 'MODULE.bazel.lock', 'shell.nix', 'nix/*.nix', 'nix/*.patch') }}
+          restore-keys: |
+            bazel-${{ runner.os }}-
+
+      # Run all cocotb tests inside nix-shell (which provides all dependencies)
+      # --test_output=errors only shows output for failing tests
+      - name: Run cocotb tests
+        run: |
+          nix-shell --run "bazel test //python/zamlet:cocotb_tests --test_output=errors"

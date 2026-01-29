@@ -1,0 +1,11 @@
+# Toolchain type declarations for Nix-provided tools
+
+toolchain_type(
+    name = "verilator_toolchain_type",
+    visibility = ["//visibility:public"],
+)
+
+toolchain_type(
+    name = "cocotb_toolchain_type",
+    visibility = ["//visibility:public"],
+)

@@ -1,21 +1,46 @@
 # Jamlet module tests
 
-load("//bazel:test_common.bzl", "create_module_tests")
+load("//bazel:cocotb_rules.bzl", "cocotb_binary", "cocotb_test")
 
-# Config file mapping: short_name -> actual_filename
-CONFIGS = {
-    "default": "jamlet_default",
-}
+# WitemMonitor tests
+genrule(
+    name = "witem_monitor_default_verilog",
+    srcs = ["//configs:lamlet_default.json"],
+    outs = ["WitemMonitor_default.sv"],
+    cmd = """
+    TMPDIR=$$(mktemp -d)
+    $(location //src/main/scala/zamlet/jamlet:witemmonitor) $$TMPDIR $(location //configs:lamlet_default.json)
+    cat $$TMPDIR/*.sv > $@
+    rm -rf $$TMPDIR
+    """,
+    tools = ["//src/main/scala/zamlet/jamlet:witemmonitor"],
+)
 
-# Module definitions: name, top_level, extra_args
-MODULES = [
-    ("witem_monitor", "WitemMonitor", []),
-]
+cocotb_binary(
+    name = "witem_monitor_default_exe",
+    verilog_files = [":witem_monitor_default_verilog"],
+    module_top = "WitemMonitor",
+)
 
-# Test definitions: name, test_file, verilog_target, special_args
-TESTS = [
-    ("test_witem_monitor", "test_witem_monitor.py", "witem_monitor", []),
-]
+py_library(
+    name = "test_witem_monitor_py",
+    srcs = ["test_witem_monitor.py"],
+    deps = ["//python/zamlet:zamlet"],
+)
 
-# Generate all Verilog, filegroups, and tests
-create_module_tests(MODULES, TESTS, CONFIGS)
+cocotb_test(
+    name = "test_witem_monitor_default",
+    binary = ":witem_monitor_default_exe",
+    test_module = "zamlet.jamlet_test.test_witem_monitor",
+    toplevel = "WitemMonitor",
+    env = {
+        "ZAMLET_TEST_CONFIG_FILENAME": "configs/lamlet_default.json",
+    },
+    data = ["//configs:lamlet_default.json"],
+    py_deps = [":test_witem_monitor_py"],
+)
+
+test_suite(
+    name = "all_tests",
+    tests = [":test_witem_monitor_default"],
+)

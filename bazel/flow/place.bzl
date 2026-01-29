@@ -7,14 +7,222 @@ load(":common.bzl",
     "create_librelane_config",
     "run_librelane_step",
     "get_input_files",
+    "BASE_CONFIG_KEYS",
 )
+
+# Placement steps need BASE_CONFIG_KEYS for PDK info and design config
+PLACE_CONFIG_KEYS = BASE_CONFIG_KEYS
+
+# ResizerStep config keys (used by RepairDesignPostGPL, ResizerTimingPostCTS, etc.)
+# Includes: OpenROADStep.config_vars + grt_variables + rsz_variables
+RESIZER_CONFIG_KEYS = BASE_CONFIG_KEYS + [
+    # OpenROADStep.config_vars (openroad.py:192-223)
+    "PDN_CONNECT_MACROS_TO_GRID",
+    "PDN_MACRO_CONNECTIONS",
+    "PDN_ENABLE_GLOBAL_CONNECTIONS",
+    "PNR_SDC_FILE",
+    "FP_DEF_TEMPLATE",
+    # OpenROADStep.prepare_env() (openroad.py:242-258)
+    "FALLBACK_SDC_FILE",
+    "EXTRA_EXCLUDED_CELLS",
+    # routing_layer_variables (common_variables.py:223-252)
+    "RT_CLOCK_MIN_LAYER",
+    "RT_CLOCK_MAX_LAYER",
+    "GRT_ADJUSTMENT",
+    "GRT_MACRO_EXTENSION",
+    "GRT_LAYER_ADJUSTMENTS",
+    # grt_variables specific (common_variables.py:285-319)
+    "DIODE_PADDING",
+    "GRT_ALLOW_CONGESTION",
+    "GRT_ANTENNA_ITERS",
+    "GRT_OVERFLOW_ITERS",
+    "GRT_ANTENNA_MARGIN",
+    # dpl_variables (common_variables.py:255-283)
+    "PL_OPTIMIZE_MIRRORING",
+    "PL_MAX_DISPLACEMENT_X",
+    "PL_MAX_DISPLACEMENT_Y",
+    "DPL_CELL_PADDING",
+    # rsz_variables specific (common_variables.py:321-340)
+    "RSZ_DONT_TOUCH_RX",
+    "RSZ_DONT_TOUCH_LIST",
+    "RSZ_CORNERS",
+]
+
+# ResizerTimingPostCTS/PostGRT config keys (ResizerStep + own config_vars)
+RESIZER_TIMING_CONFIG_KEYS = RESIZER_CONFIG_KEYS + [
+    "PL_RESIZER_HOLD_SLACK_MARGIN",
+    "PL_RESIZER_SETUP_SLACK_MARGIN",
+    "PL_RESIZER_HOLD_MAX_BUFFER_PCT",
+    "PL_RESIZER_SETUP_MAX_BUFFER_PCT",
+    "PL_RESIZER_ALLOW_SETUP_VIOS",
+    "PL_RESIZER_GATE_CLONING",
+    "PL_RESIZER_FIX_HOLD_FIRST",
+]
+
+# RepairDesignPostGPL config keys (ResizerStep + own config_vars)
+REPAIR_DESIGN_CONFIG_KEYS = RESIZER_CONFIG_KEYS + [
+    "DESIGN_REPAIR_BUFFER_INPUT_PORTS",
+    "DESIGN_REPAIR_BUFFER_OUTPUT_PORTS",
+    "DESIGN_REPAIR_TIE_FANOUT",
+    "DESIGN_REPAIR_TIE_SEPARATION",
+    "DESIGN_REPAIR_MAX_WIRE_LENGTH",
+    "DESIGN_REPAIR_MAX_SLEW_PCT",
+    "DESIGN_REPAIR_MAX_CAP_PCT",
+    "DESIGN_REPAIR_REMOVE_BUFFERS",
+]
+
+# DetailedPlacement config keys (OpenROADStep.config_vars + dpl_variables)
+DPL_CONFIG_KEYS = BASE_CONFIG_KEYS + [
+    # OpenROADStep.config_vars (openroad.py:192-223)
+    "PDN_CONNECT_MACROS_TO_GRID",
+    "PDN_MACRO_CONNECTIONS",
+    "PDN_ENABLE_GLOBAL_CONNECTIONS",
+    "PNR_SDC_FILE",
+    "FP_DEF_TEMPLATE",
+    # OpenROADStep.prepare_env() (openroad.py:242-258)
+    "FALLBACK_SDC_FILE",
+    "EXTRA_EXCLUDED_CELLS",
+    # dpl_variables (common_variables.py:255-283)
+    "PL_OPTIMIZE_MIRRORING",
+    "PL_MAX_DISPLACEMENT_X",
+    "PL_MAX_DISPLACEMENT_Y",
+    "DPL_CELL_PADDING",
+]
+
+# OpenROAD.CTS config keys (OpenROADStep.config_vars + dpl_variables + CTS-specific)
+CTS_CONFIG_KEYS = BASE_CONFIG_KEYS + [
+    # OpenROADStep.config_vars (openroad.py:192-223)
+    "PDN_CONNECT_MACROS_TO_GRID",
+    "PDN_MACRO_CONNECTIONS",
+    "PDN_ENABLE_GLOBAL_CONNECTIONS",
+    "PNR_SDC_FILE",
+    "FP_DEF_TEMPLATE",
+    # OpenROADStep.prepare_env() (openroad.py:242-258)
+    "FALLBACK_SDC_FILE",
+    "EXTRA_EXCLUDED_CELLS",
+    # dpl_variables (common_variables.py:255-283) - CTS calls dpl.tcl
+    "PL_OPTIMIZE_MIRRORING",
+    "PL_MAX_DISPLACEMENT_X",
+    "PL_MAX_DISPLACEMENT_Y",
+    "DPL_CELL_PADDING",
+    # CTS-specific config_vars (openroad.py:2016-2084)
+    "CTS_SINK_CLUSTERING_SIZE",
+    "CTS_SINK_CLUSTERING_MAX_DIAMETER",
+    "CTS_CLK_MAX_WIRE_LENGTH",
+    "CTS_DISABLE_POST_PROCESSING",
+    "CTS_DISTANCE_BETWEEN_BUFFERS",
+    "CTS_CORNERS",
+    "CTS_ROOT_BUFFER",
+    "CTS_CLK_BUFFERS",
+    "CTS_MAX_CAP",
+    "CTS_MAX_SLEW",
+]
+
+# IOPlacement config keys (io_layer_variables + IOPlacement-specific)
+IO_PLACEMENT_CONFIG_KEYS = BASE_CONFIG_KEYS + [
+    "FP_IO_VEXTEND",
+    "FP_IO_HEXTEND",
+    "FP_IO_VTHICKNESS_MULT",
+    "FP_IO_HTHICKNESS_MULT",
+    "FP_PPL_MODE",
+    "FP_IO_MIN_DISTANCE",
+    "FP_PIN_ORDER_CFG",
+    "FP_IO_VLENGTH",
+    "FP_IO_HLENGTH",
+    "FP_DEF_TEMPLATE",
+]
+
+# CustomIOPlacement config keys (io_layer_variables + CustomIOPlacement-specific)
+CUSTOM_IO_PLACEMENT_CONFIG_KEYS = BASE_CONFIG_KEYS + [
+    "FP_IO_VEXTEND",
+    "FP_IO_HEXTEND",
+    "FP_IO_VTHICKNESS_MULT",
+    "FP_IO_HTHICKNESS_MULT",
+    "FP_IO_VLENGTH",
+    "FP_IO_HLENGTH",
+    "FP_PIN_ORDER_CFG",
+    "ERRORS_ON_UNMATCHED_IO",
+]
+
+# ApplyDEFTemplate config keys (odb.py lines 243-259)
+APPLY_DEF_TEMPLATE_CONFIG_KEYS = BASE_CONFIG_KEYS + [
+    "FP_DEF_TEMPLATE",
+    "FP_TEMPLATE_MATCH_MODE",
+    "FP_TEMPLATE_COPY_POWER_PINS",
+]
+
+# OpenROAD.CutRows and OpenROAD.TapEndcapInsertion config keys
+CUTROWS_CONFIG_KEYS = BASE_CONFIG_KEYS + [
+    "FP_MACRO_HORIZONTAL_HALO",
+    "FP_MACRO_VERTICAL_HALO",
+]
+
+# _GlobalPlacement base config keys (routing_layer_variables + placement vars)
+_GPL_BASE_CONFIG_KEYS = BASE_CONFIG_KEYS + [
+    "PL_TARGET_DENSITY_PCT",
+    "PL_SKIP_INITIAL_PLACEMENT",
+    "PL_WIRE_LENGTH_COEF",
+    "PL_MIN_PHI_COEFFICIENT",
+    "PL_MAX_PHI_COEFFICIENT",
+    "FP_CORE_UTIL",
+    "GPL_CELL_PADDING",
+    "RT_CLOCK_MIN_LAYER",
+    "RT_CLOCK_MAX_LAYER",
+    "GRT_ADJUSTMENT",
+    "GRT_MACRO_EXTENSION",
+    "GRT_LAYER_ADJUSTMENTS",
+]
+
+# GlobalPlacementSkipIO config keys (_GlobalPlacement + FP_PPL_MODE)
+GPL_SKIP_IO_CONFIG_KEYS = _GPL_BASE_CONFIG_KEYS + [
+    "FP_PPL_MODE",
+]
+
+# GlobalPlacement config keys (_GlobalPlacement + time/routability vars)
+GPL_CONFIG_KEYS = _GPL_BASE_CONFIG_KEYS + [
+    "PL_TIME_DRIVEN",
+    "PL_ROUTABILITY_DRIVEN",
+    "PL_ROUTABILITY_OVERFLOW_THRESHOLD",
+]
+
+# OpenROAD.GeneratePDN config keys (pdn_variables from common_variables.py)
+PDN_CONFIG_KEYS = BASE_CONFIG_KEYS + [
+    # User-configurable
+    "FP_PDN_SKIPTRIM",
+    "FP_PDN_CORE_RING",
+    "FP_PDN_ENABLE_RAILS",
+    "FP_PDN_HORIZONTAL_HALO",
+    "FP_PDN_VERTICAL_HALO",
+    "FP_PDN_MULTILAYER",
+    "FP_PDN_CFG",
+    # PDK-level (from pdk provider)
+    "FP_PDN_RAIL_LAYER",
+    "FP_PDN_RAIL_WIDTH",
+    "FP_PDN_RAIL_OFFSET",
+    "FP_PDN_HORIZONTAL_LAYER",
+    "FP_PDN_VERTICAL_LAYER",
+    "FP_PDN_HOFFSET",
+    "FP_PDN_VOFFSET",
+    "FP_PDN_HPITCH",
+    "FP_PDN_VPITCH",
+    "FP_PDN_HSPACING",
+    "FP_PDN_VSPACING",
+    "FP_PDN_HWIDTH",
+    "FP_PDN_VWIDTH",
+    "FP_PDN_CORE_RING_HOFFSET",
+    "FP_PDN_CORE_RING_VOFFSET",
+    "FP_PDN_CORE_RING_HSPACING",
+    "FP_PDN_CORE_RING_VSPACING",
+    "FP_PDN_CORE_RING_HWIDTH",
+    "FP_PDN_CORE_RING_VWIDTH",
+]
 
 def _macro_placement_impl(ctx):
     extra = {
         "PL_MACRO_HALO": ctx.attr.macro_halo,
         "PL_MACRO_CHANNEL": ctx.attr.macro_channel,
     }
-    return single_step_impl(ctx, "OpenROAD.BasicMacroPlacement",
+    return single_step_impl(ctx, "OpenROAD.BasicMacroPlacement", PLACE_CONFIG_KEYS,
         step_outputs = ["def", "odb"], extra_config = extra)
 
 def _manual_macro_placement_impl(ctx):
@@ -22,60 +230,46 @@ def _manual_macro_placement_impl(ctx):
         "MACRO_PLACEMENT_CFG": ctx.file.macro_placement_cfg.path,
     }
     extra_inputs = [ctx.file.macro_placement_cfg]
-    return single_step_impl(ctx, "Odb.ManualMacroPlacement",
+    return single_step_impl(ctx, "Odb.ManualMacroPlacement", PLACE_CONFIG_KEYS,
         step_outputs = ["def", "odb"], extra_config = extra, extra_inputs = extra_inputs)
 
 def _cut_rows_impl(ctx):
-    return single_step_impl(ctx, "OpenROAD.CutRows", step_outputs = ["def", "odb"])
+    return single_step_impl(ctx, "OpenROAD.CutRows", CUTROWS_CONFIG_KEYS, step_outputs = ["def", "odb"])
 
 def _tap_endcap_insertion_impl(ctx):
-    return single_step_impl(ctx, "OpenROAD.TapEndcapInsertion",
+    return single_step_impl(ctx, "OpenROAD.TapEndcapInsertion", CUTROWS_CONFIG_KEYS,
         step_outputs = ["def", "odb", "nl", "pnl", "sdc"])
 
 def _generate_pdn_impl(ctx):
-    return single_step_impl(ctx, "OpenROAD.GeneratePDN",
+    return single_step_impl(ctx, "OpenROAD.GeneratePDN", PDN_CONFIG_KEYS,
         step_outputs = ["def", "odb", "nl", "pnl", "sdc"])
 
 def _global_placement_skip_io_impl(ctx):
-    extra = {}
-    if ctx.attr.target_density:
-        extra["PL_TARGET_DENSITY_PCT"] = int(float(ctx.attr.target_density) * 100)
-    return single_step_impl(ctx, "OpenROAD.GlobalPlacementSkipIO",
-        step_outputs = ["def", "odb", "nl", "pnl", "sdc"], extra_config = extra)
+    return single_step_impl(ctx, "OpenROAD.GlobalPlacementSkipIO", GPL_SKIP_IO_CONFIG_KEYS,
+        step_outputs = ["def", "odb", "nl", "pnl", "sdc"])
 
 def _io_placement_impl(ctx):
-    return single_step_impl(ctx, "OpenROAD.IOPlacement", step_outputs = ["def", "odb"])
+    return single_step_impl(ctx, "OpenROAD.IOPlacement", IO_PLACEMENT_CONFIG_KEYS,
+        step_outputs = ["def", "odb"])
 
 def _custom_io_placement_impl(ctx):
-    extra = {
-        "FP_PIN_ORDER_CFG": ctx.file.pin_order_cfg.path,
-    }
-    extra_inputs = [ctx.file.pin_order_cfg]
-    return single_step_impl(ctx, "Odb.CustomIOPlacement",
-        step_outputs = ["def", "odb"], extra_config = extra, extra_inputs = extra_inputs)
+    return single_step_impl(ctx, "Odb.CustomIOPlacement", CUSTOM_IO_PLACEMENT_CONFIG_KEYS,
+        step_outputs = ["def", "odb"])
 
 def _apply_def_template_impl(ctx):
-    extra = {
-        "FP_DEF_TEMPLATE": ctx.file.def_template.path,
-        "FP_TEMPLATE_MATCH_MODE": ctx.attr.match_mode,
-    }
-    extra_inputs = [ctx.file.def_template]
-    return single_step_impl(ctx, "Odb.ApplyDEFTemplate",
-        step_outputs = ["def", "odb"], extra_config = extra, extra_inputs = extra_inputs)
+    return single_step_impl(ctx, "Odb.ApplyDEFTemplate", APPLY_DEF_TEMPLATE_CONFIG_KEYS,
+        step_outputs = ["def", "odb"])
 
 def _global_placement_impl(ctx):
-    extra = {}
-    if ctx.attr.target_density:
-        extra["PL_TARGET_DENSITY_PCT"] = int(float(ctx.attr.target_density) * 100)
-    return single_step_impl(ctx, "OpenROAD.GlobalPlacement",
-        step_outputs = ["def", "odb", "nl", "pnl", "sdc"], extra_config = extra)
+    return single_step_impl(ctx, "OpenROAD.GlobalPlacement", GPL_CONFIG_KEYS,
+        step_outputs = ["def", "odb", "nl", "pnl", "sdc"])
 
 def _repair_design_post_gpl_impl(ctx):
-    return single_step_impl(ctx, "OpenROAD.RepairDesignPostGPL",
+    return single_step_impl(ctx, "OpenROAD.RepairDesignPostGPL", REPAIR_DESIGN_CONFIG_KEYS,
         step_outputs = ["def", "odb", "nl", "pnl", "sdc"])
 
 def _detailed_placement_impl(ctx):
-    return single_step_impl(ctx, "OpenROAD.DetailedPlacement", step_outputs = ["def", "odb"])
+    return single_step_impl(ctx, "OpenROAD.DetailedPlacement", DPL_CONFIG_KEYS, step_outputs = ["def", "odb"])
 
 def _cts_impl(ctx):
     """Clock tree synthesis with CTS report.
@@ -98,10 +292,8 @@ def _cts_impl(ctx):
     # Get input files
     inputs = get_input_files(input_info, state_info)
 
-    # Create config with CTS options
-    config = create_librelane_config(input_info, state_info)
-    if ctx.attr.cts_clk_max_wire_length:
-        config["CTS_CLK_MAX_WIRE_LENGTH"] = float(ctx.attr.cts_clk_max_wire_length)
+    # Create config with CTS options (all via LibrelaneInput, no step-local attrs)
+    config = create_librelane_config(input_info, state_info, CTS_CONFIG_KEYS)
 
     # Run CTS with all outputs
     state_out = run_librelane_step(
@@ -138,12 +330,9 @@ def _cts_impl(ctx):
     ]
 
 def _resizer_timing_post_cts_impl(ctx):
-    return single_step_impl(ctx, "OpenROAD.ResizerTimingPostCTS",
+    return single_step_impl(ctx, "OpenROAD.ResizerTimingPostCTS", RESIZER_TIMING_CONFIG_KEYS,
         step_outputs = ["def", "odb", "nl", "pnl", "sdc"])
 
-_gpl_attrs = dict(FLOW_ATTRS, **{
-    "target_density": attr.string(doc = "Target placement density (0.0-1.0)"),
-})
 
 _macro_placement_attrs = dict(FLOW_ATTRS, **{
     "macro_halo": attr.string(
@@ -196,7 +385,7 @@ librelane_generate_pdn = rule(
 
 librelane_global_placement_skip_io = rule(
     implementation = _global_placement_skip_io_impl,
-    attrs = _gpl_attrs,
+    attrs = FLOW_ATTRS,
     provides = [DefaultInfo, LibrelaneInfo],
 )
 
@@ -206,42 +395,21 @@ librelane_io_placement = rule(
     provides = [DefaultInfo, LibrelaneInfo],
 )
 
-_custom_io_attrs = dict(FLOW_ATTRS, **{
-    "pin_order_cfg": attr.label(
-        doc = "Pin order configuration file for custom IO placement",
-        allow_single_file = True,
-        mandatory = True,
-    ),
-})
-
 librelane_custom_io_placement = rule(
     implementation = _custom_io_placement_impl,
-    attrs = _custom_io_attrs,
+    attrs = FLOW_ATTRS,
     provides = [DefaultInfo, LibrelaneInfo],
 )
 
-_apply_def_template_attrs = dict(FLOW_ATTRS, **{
-    "def_template": attr.label(
-        doc = "DEF template file with die area and pin placements",
-        allow_single_file = [".def"],
-        mandatory = True,
-    ),
-    "match_mode": attr.string(
-        doc = "Pin matching mode: 'strict' requires identical pins, 'permissive' allows mismatches",
-        default = "strict",
-        values = ["strict", "permissive"],
-    ),
-})
-
 librelane_apply_def_template = rule(
     implementation = _apply_def_template_impl,
-    attrs = _apply_def_template_attrs,
+    attrs = FLOW_ATTRS,
     provides = [DefaultInfo, LibrelaneInfo],
 )
 
 librelane_global_placement = rule(
     implementation = _global_placement_impl,
-    attrs = _gpl_attrs,
+    attrs = FLOW_ATTRS,
     provides = [DefaultInfo, LibrelaneInfo],
 )
 
@@ -257,16 +425,9 @@ librelane_detailed_placement = rule(
     provides = [DefaultInfo, LibrelaneInfo],
 )
 
-_cts_attrs = dict(FLOW_ATTRS, **{
-    "cts_clk_max_wire_length": attr.string(
-        doc = "Maximum wire length on clock net in µm. Buffers inserted for longer wires. " +
-              "Default 0 disables. Recommended: 100-800 for large designs.",
-    ),
-})
-
 librelane_cts = rule(
     implementation = _cts_impl,
-    attrs = _cts_attrs,
+    attrs = FLOW_ATTRS,
     provides = [DefaultInfo, LibrelaneInfo],
 )
 

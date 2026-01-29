@@ -2,3 +2,5 @@
 build --action_env=PATH
 build --action_env=PDK_ROOT
 build --action_env=PDK
+# For linking against Nix Python (needed by cocotb)
+build --action_env=LIBRARY_PATH

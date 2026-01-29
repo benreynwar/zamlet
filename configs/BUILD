@@ -23,7 +23,13 @@ MATHS_CONFIG_FILES = [
     "WallaceMult64x64.json",
 ]
 
+# List of Utils config JSON files
+UTILS_CONFIG_FILES = [
+    "dropping_fifo_default.json",
+]
+
 exports_files(
-    JAMLET_CONFIG_FILES + KAMLET_CONFIG_FILES + LAMLET_CONFIG_FILES + MATHS_CONFIG_FILES,
+    JAMLET_CONFIG_FILES + KAMLET_CONFIG_FILES + LAMLET_CONFIG_FILES + MATHS_CONFIG_FILES +
+    UTILS_CONFIG_FILES,
     visibility = ["//visibility:public"]
 )

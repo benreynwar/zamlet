@@ -1,9 +1,9 @@
 # Shuttle core cocotb tests
 
-load("@rules_hdl//verilog:defs.bzl", "verilog_library")
-load("//bazel:defs.bzl", "cocotb_exe", "cocotb_script", "riscv_asm_binary")
+load("//bazel:cocotb_rules.bzl", "cocotb_binary", "cocotb_test")
+load("//bazel:defs.bzl", "riscv_asm_binary")
 
-# Generate Shuttle Verilog using the shuttle_tile_generator
+# Generate Shuttle Verilog
 genrule(
     name = "shuttle_verilog",
     outs = ["ShuttleTop.sv"],
@@ -16,27 +16,17 @@ genrule(
     tools = ["//src:shuttle_tile_generator"],
 )
 
-verilog_library(
-    name = "shuttle_verilog_lib",
-    srcs = [":shuttle_verilog"],
-)
-
-cocotb_exe(
+cocotb_binary(
     name = "shuttle_exe",
-    verilog_library = ":shuttle_verilog_lib",
+    verilog_files = [":shuttle_verilog"],
     module_top = "ShuttleTop",
 )
 
 # Shared test runner library
 py_library(
-    name = "shuttle_test_runner",
+    name = "shuttle_test_runner_py",
     srcs = ["shuttle_test_runner.py"],
-    imports = ["."],
-    deps = [
-        "@zamlet_pip_deps//cocotb",
-        "@cocotb_bus//:cocotb_bus",
-        "@cocotbext_axi//:cocotbext_axi",
-    ],
+    deps = ["//python/zamlet:zamlet"],
 )
 
 # Test binaries
@@ -53,55 +43,59 @@ riscv_asm_binary(
 )
 
 # Tests
-cocotb_script(
+cocotb_test(
     name = "test_simple",
     binary = ":shuttle_exe",
-    script = ":shuttle_test_runner",
-    module = "shuttle_test_runner",
+    test_module = "zamlet.shuttle_test.shuttle_test_runner",
     toplevel = "ShuttleTop",
     data = [":test_simple_bin"],
     env = {"ZAMLET_TEST_BINARY": "$(location :test_simple_bin)"},
+    py_deps = [":shuttle_test_runner_py"],
 )
 
-cocotb_script(
+cocotb_test(
     name = "test_loop",
     binary = ":shuttle_exe",
-    script = ":shuttle_test_runner",
-    module = "shuttle_test_runner",
+    test_module = "zamlet.shuttle_test.shuttle_test_runner",
     toplevel = "ShuttleTop",
     data = [":test_loop_bin"],
     env = {"ZAMLET_TEST_BINARY": "$(location :test_loop_bin)"},
+    py_deps = [":shuttle_test_runner_py"],
 )
 
 # Oamlet (Shuttle + Zamlet vector unit) tests
-
-verilog_library(
-    name = "oamlet_verilog_lib",
-    srcs = ["//src:oamlet_verilog"],
-)
-
-cocotb_exe(
+cocotb_binary(
     name = "oamlet_exe",
-    verilog_library = ":oamlet_verilog_lib",
+    verilog_files = ["//src:oamlet_verilog"],
     module_top = "OamletTop",
 )
 
-cocotb_script(
+cocotb_test(
     name = "test_simple_oamlet",
     binary = ":oamlet_exe",
-    script = ":shuttle_test_runner",
-    module = "shuttle_test_runner",
+    test_module = "zamlet.shuttle_test.shuttle_test_runner",
     toplevel = "OamletTop",
     data = [":test_simple_bin"],
     env = {"ZAMLET_TEST_BINARY": "$(location :test_simple_bin)"},
+    py_deps = [":shuttle_test_runner_py"],
 )
 
-cocotb_script(
+cocotb_test(
     name = "test_loop_oamlet",
     binary = ":oamlet_exe",
-    script = ":shuttle_test_runner",
-    module = "shuttle_test_runner",
+    test_module = "zamlet.shuttle_test.shuttle_test_runner",
     toplevel = "OamletTop",
     data = [":test_loop_bin"],
     env = {"ZAMLET_TEST_BINARY": "$(location :test_loop_bin)"},
+    py_deps = [":shuttle_test_runner_py"],
+)
+
+test_suite(
+    name = "all_tests",
+    tests = [
+        ":test_simple",
+        ":test_loop",
+        ":test_simple_oamlet",
+        ":test_loop_oamlet",
+    ],
 )

@@ -1,16 +1,19 @@
 # KLayout rules
 
-load(":common.bzl", "single_step_impl", "FLOW_ATTRS")
+load(":common.bzl", "single_step_impl", "FLOW_ATTRS", "BASE_CONFIG_KEYS")
 load(":providers.bzl", "LibrelaneInfo")
 
+# KLayout steps need BASE_CONFIG_KEYS for PDK info and design config
+KLAYOUT_CONFIG_KEYS = BASE_CONFIG_KEYS
+
 def _stream_out_impl(ctx):
-    return single_step_impl(ctx, "KLayout.StreamOut", step_outputs = ["klayout_gds"])
+    return single_step_impl(ctx, "KLayout.StreamOut", KLAYOUT_CONFIG_KEYS, step_outputs = ["klayout_gds"])
 
 def _xor_impl(ctx):
-    return single_step_impl(ctx, "KLayout.XOR", step_outputs = [])
+    return single_step_impl(ctx, "KLayout.XOR", KLAYOUT_CONFIG_KEYS, step_outputs = [])
 
 def _drc_impl(ctx):
-    return single_step_impl(ctx, "KLayout.DRC", step_outputs = [])
+    return single_step_impl(ctx, "KLayout.DRC", KLAYOUT_CONFIG_KEYS, step_outputs = [])
 
 librelane_klayout_stream_out = rule(
     implementation = _stream_out_impl,

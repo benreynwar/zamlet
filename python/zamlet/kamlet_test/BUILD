@@ -1,13 +1,8 @@
 # Kamlet module tests
 
-load("//bazel:defs.bzl", "cocotb_exe", "cocotb_script")
-load("@rules_hdl//verilog:defs.bzl", "verilog_library")
+load("//bazel:cocotb_rules.bzl", "cocotb_binary", "cocotb_test")
 
-# ============================================================
 # Synchronizer tests
-# ============================================================
-
-# Generate Synchronizer verilog using the dedicated generator
 genrule(
     name = "synchronizer_default_verilog",
     srcs = ["//configs:synchronizer_default.json"],
@@ -21,44 +16,27 @@ genrule(
     tools = ["//src/main/scala/zamlet/kamlet:synchronizer"],
 )
 
-# Verilog library for bazel_rules_hdl
-verilog_library(
-    name = "synchronizer_default_verilog_lib",
-    srcs = [":synchronizer_default_verilog"],
-)
-
-# Cocotb executable
-cocotb_exe(
+cocotb_binary(
     name = "synchronizer_default_exe",
-    verilog_library = ":synchronizer_default_verilog_lib",
+    verilog_files = [":synchronizer_default_verilog"],
     module_top = "Synchronizer",
 )
 
-# Test Python library
 py_library(
     name = "test_synchronizer_py",
     srcs = ["test_synchronizer.py"],
-    imports = ["."],
-    deps = [
-        "//python/zamlet:zamlet",
-        "@zamlet_pip_deps//cocotb",
-    ],
+    deps = ["//python/zamlet:zamlet"],
 )
 
-# Cocotb test script
-cocotb_script(
+cocotb_test(
     name = "test_synchronizer_default",
     binary = ":synchronizer_default_exe",
-    script = ":test_synchronizer_py",
-    module = "test_synchronizer",
+    test_module = "zamlet.kamlet_test.test_synchronizer",
     toplevel = "Synchronizer",
+    py_deps = [":test_synchronizer_py"],
 )
 
-# ============================================================
-# KamletMesh tests (Test 0: instruction receive + sync network)
-# ============================================================
-
-# Generate KamletMesh verilog
+# KamletMesh tests
 genrule(
     name = "kamletmesh_default_verilog",
     srcs = ["//configs:lamlet_default.json"],
@@ -72,35 +50,34 @@ genrule(
     tools = ["//src/main/scala/zamlet/kamlet:kamletmesh"],
 )
 
-# Verilog library for bazel_rules_hdl
-verilog_library(
-    name = "kamletmesh_default_verilog_lib",
-    srcs = [":kamletmesh_default_verilog"],
-)
-
-# Cocotb executable
-cocotb_exe(
+cocotb_binary(
     name = "kamletmesh_default_exe",
-    verilog_library = ":kamletmesh_default_verilog_lib",
+    verilog_files = [":kamletmesh_default_verilog"],
     module_top = "KamletMesh",
 )
 
-# Test Python library
 py_library(
     name = "test_kamlet_py",
     srcs = ["test_kamlet.py"],
-    imports = ["."],
-    deps = [
-        "//python/zamlet:zamlet",
-        "@zamlet_pip_deps//cocotb",
-    ],
+    deps = ["//python/zamlet:zamlet"],
 )
 
-# Cocotb test script
-cocotb_script(
+cocotb_test(
     name = "test_kamlet_default",
     binary = ":kamletmesh_default_exe",
-    script = ":test_kamlet_py",
-    module = "test_kamlet",
+    test_module = "zamlet.kamlet_test.test_kamlet",
     toplevel = "KamletMesh",
+    env = {
+        "ZAMLET_TEST_CONFIG_FILENAME": "configs/lamlet_default.json",
+    },
+    data = ["//configs:lamlet_default.json"],
+    py_deps = [":test_kamlet_py"],
+)
+
+test_suite(
+    name = "all_tests",
+    tests = [
+        ":test_synchronizer_default",
+        ":test_kamlet_default",
+    ],
 )

@@ -1,8 +1,6 @@
 # Common Verilog generation utilities
 # Shared functionality for generating Verilog across DSE and test BUILD files
 
-load("@rules_hdl//verilog:defs.bzl", "verilog_library")
-
 def generate_verilog_rule(name, top_level, config_file, extra_args = [], generator_tool = "//src:verilog_generator", output_suffix = "", rename_module = None):
     """
     Generate a single Verilog file from a config.
@@ -75,14 +73,3 @@ def generate_verilog_filegroup(name):
         srcs = [":{}_verilog".format(name)],
     )
 
-def generate_verilog_library(name):
-    """
-    Create a verilog_library from generated verilog for use with bazel_rules_hdl.
-    
-    Args:
-        name: Base name (will create {name}_verilog_lib from {name}_verilog target)
-    """
-    verilog_library(
-        name = "{}_verilog_lib".format(name),
-        srcs = [":{}_verilog".format(name)],
-    )

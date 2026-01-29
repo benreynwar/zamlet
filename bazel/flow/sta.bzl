@@ -4,22 +4,111 @@ load(":providers.bzl", "LibrelaneInput", "LibrelaneInfo")
 load(":common.bzl",
     "single_step_impl",
     "FLOW_ATTRS",
+    "BASE_CONFIG_KEYS",
     "create_librelane_config",
     "run_librelane_step",
     "get_input_files",
 )
 
+# Config keys for OpenROAD.CheckSDCFiles (Step 10)
+# Inherits from Step (no config_vars from parent)
+# config_vars: PNR_SDC_FILE, SIGNOFF_SDC_FILE
+CHECK_SDC_CONFIG_KEYS = BASE_CONFIG_KEYS + [
+    "PNR_SDC_FILE",
+    "SIGNOFF_SDC_FILE",
+]
+
+# Config keys for OpenROADStep-based steps
+# From librelane/steps/openroad.py OpenROADStep.config_vars (lines 192-223)
+# and OpenROADStep.prepare_env() (lines 242-258)
+OPENROAD_STEP_CONFIG_KEYS = BASE_CONFIG_KEYS + [
+    # config_vars
+    "PDN_CONNECT_MACROS_TO_GRID",
+    "PDN_MACRO_CONNECTIONS",
+    "PDN_ENABLE_GLOBAL_CONNECTIONS",
+    "PNR_SDC_FILE",
+    "FP_DEF_TEMPLATE",
+    # prepare_env()
+    "LIB",
+    "FALLBACK_SDC_FILE",
+    "EXTRA_EXCLUDED_CELLS",
+    "PNR_EXCLUDED_CELL_FILE",
+]
+
+# Config keys for OpenROAD.CheckMacroInstances (Step 11)
+# Inherits from OpenSTAStep -> OpenROADStep
+# Uses MACROS in run() - librelane/steps/openroad.py line 511
+CHECK_MACRO_INSTANCES_CONFIG_KEYS = OPENROAD_STEP_CONFIG_KEYS + [
+    "MACROS",
+]
+
+# Config keys for MultiCornerSTA-based steps (STAPrePNR)
+# From librelane/steps/openroad.py MultiCornerSTA.config_vars (lines 534-556)
+MULTI_CORNER_STA_CONFIG_KEYS = OPENROAD_STEP_CONFIG_KEYS + [
+    "STA_MACRO_PRIORITIZE_NL",
+    "STA_MAX_VIOLATOR_COUNT",
+    "STA_THREADS",
+    # STA_CORNERS and DESIGN_NAME are in BASE_CONFIG_KEYS
+]
+
+# Step 57: OpenROAD.STAPostPNR - openroad.py lines 760-859
+# Inherits from STAPrePNR -> MultiCornerSTA, adds SIGNOFF_SDC_FILE (line 776-780)
+STA_POST_PNR_CONFIG_KEYS = MULTI_CORNER_STA_CONFIG_KEYS + [
+    "SIGNOFF_SDC_FILE",
+]
+
+# STA steps need BASE_CONFIG_KEYS plus OpenROADStep config_vars and prepare_env variables
+STA_CONFIG_KEYS = BASE_CONFIG_KEYS + [
+    # OpenROADStep.config_vars (openroad.py lines 192-223)
+    "PDN_CONNECT_MACROS_TO_GRID",
+    "PDN_MACRO_CONNECTIONS",
+    "PDN_ENABLE_GLOBAL_CONNECTIONS",
+    "PNR_SDC_FILE",
+    "FP_DEF_TEMPLATE",
+    # OpenROADStep.prepare_env() variables (openroad.py lines 242-258)
+    "FALLBACK_SDC_FILE",
+    "EXTRA_EXCLUDED_CELLS",
+]
+
+# Step 58: OpenROAD.IRDropReport - openroad.py lines 1799-1878
+# Inherits from OpenROADStep, adds VSRC_LOC_FILES (line 1814-1818)
+IRDROP_CONFIG_KEYS = STA_CONFIG_KEYS + [
+    "VSRC_LOC_FILES",
+]
+
+# Step 56: OpenROAD.RCX - openroad.py lines 1668-1708
+RCX_CONFIG_KEYS = STA_CONFIG_KEYS + [
+    "RCX_MERGE_VIA_WIRE_RES",
+    "RCX_SDC_FILE",
+    "RCX_RULESETS",
+    "STA_THREADS",
+]
+
 def _check_sdc_files_impl(ctx):
-    return single_step_impl(ctx, "OpenROAD.CheckSDCFiles", step_outputs = [])
+    return single_step_impl(ctx, "OpenROAD.CheckSDCFiles", CHECK_SDC_CONFIG_KEYS, step_outputs = [])
 
 def _check_macro_instances_impl(ctx):
-    return single_step_impl(ctx, "OpenROAD.CheckMacroInstances", step_outputs = [])
+    return single_step_impl(ctx, "OpenROAD.CheckMacroInstances", CHECK_MACRO_INSTANCES_CONFIG_KEYS, step_outputs = [])
 
 def _sta_pre_pnr_impl(ctx):
-    return single_step_impl(ctx, "OpenROAD.STAPrePNR", step_outputs = [])
+    """Pre-PnR timing analysis with timing reports."""
+    input_info = ctx.attr.input[LibrelaneInput]
+
+    # Build report paths - only nom_* corners run pre-PNR (no parasitics yet)
+    reports = ["summary.rpt"]
+    for corner in input_info.pdk_info.sta_corners:
+        if corner.startswith("nom_"):
+            reports.append(corner + "/max.rpt")
+            reports.append(corner + "/min.rpt")
+
+    return single_step_impl(
+        ctx, "OpenROAD.STAPrePNR", MULTI_CORNER_STA_CONFIG_KEYS,
+        step_outputs = [],
+        extra_outputs = reports,
+    )
 
 def _sta_mid_pnr_impl(ctx):
-    return single_step_impl(ctx, "OpenROAD.STAMidPNR", step_outputs = [])
+    return single_step_impl(ctx, "OpenROAD.STAMidPNR", STA_CONFIG_KEYS, step_outputs = [])
 
 def _rcx_impl(ctx):
     """Parasitic extraction - produces SPEF for all corners (passes through def/odb)."""
@@ -36,7 +125,7 @@ def _rcx_impl(ctx):
     inputs = get_input_files(input_info, state_info)
 
     # Create config
-    config = create_librelane_config(input_info, state_info)
+    config = create_librelane_config(input_info, state_info, RCX_CONFIG_KEYS)
 
     # Run RCX
     state_out = run_librelane_step(
@@ -96,7 +185,7 @@ def _sta_post_pnr_impl(ctx):
     inputs = get_input_files(input_info, state_info)
 
     # Create config
-    config = create_librelane_config(input_info, state_info)
+    config = create_librelane_config(input_info, state_info, STA_POST_PNR_CONFIG_KEYS)
 
     # Run STA with report outputs
     state_out = run_librelane_step(
@@ -133,7 +222,7 @@ def _sta_post_pnr_impl(ctx):
     ]
 
 def _ir_drop_report_impl(ctx):
-    return single_step_impl(ctx, "OpenROAD.IRDropReport", step_outputs = [])
+    return single_step_impl(ctx, "OpenROAD.IRDropReport", IRDROP_CONFIG_KEYS, step_outputs = [])
 
 librelane_check_sdc_files = rule(
     implementation = _check_sdc_files_impl,
