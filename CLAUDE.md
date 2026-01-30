@@ -35,6 +35,9 @@ Avoid unnecessary marketing/promotional words like "comprehensive", "robust", "p
 ## Quoting Sources
 NEVER paraphrase when using quote marks. If you use quotation marks, the text must be verbatim from the source. If you need to summarize or paraphrase, do not use quote marks.
 
+## References
+NEVER add a reference (e.g., "Reference: riscv-isa-manual/src/f-st-ext.adoc") without first reading the referenced document to verify it is correct. Don't guess which document something is in based on naming patterns.
+
 ## Running Commands
 Never pipe command output through `head` or `tail` if you might need to see more of it later - this forces re-running the command. Either:
 1. Run the command and wait for full output

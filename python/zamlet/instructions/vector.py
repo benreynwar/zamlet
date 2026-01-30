@@ -91,6 +91,66 @@ class Vsetvli:
 
 
 @dataclass
+class Vsetivli:
+    """VSETIVLI - Vector Set Vector Length Immediate with Immediate AVL.
+
+    Sets vector length and vector type based on immediate-encoded AVL (uimm)
+    and immediate-encoded VTYPE.
+
+    Reference: riscv-isa-manual/src/v-st-ext.adoc
+    """
+    rd: int
+    uimm: int
+    vtypei: int
+
+    def __str__(self):
+        vlmul = (self.vtypei >> 0) & 0x7
+        vsew = (self.vtypei >> 3) & 0x7
+        vta = (self.vtypei >> 6) & 0x1
+        vma = (self.vtypei >> 7) & 0x1
+
+        lmul_strs = ['m1', 'm2', 'm4', 'm8', 'mf8', 'mf4', 'mf2', 'reserved']
+        sew_strs = ['e8', 'e16', 'e32', 'e64', 'e128', 'e256', 'e512', 'e1024']
+
+        lmul_str = lmul_strs[vlmul]
+        sew_str = sew_strs[vsew]
+        ta_str = 'ta' if vta else 'tu'
+        ma_str = 'ma' if vma else 'mu'
+
+        return f'vsetivli\t{reg_name(self.rd)},{self.uimm},{sew_str},{lmul_str},{ta_str},{ma_str}'
+
+    async def update_state(self, s: 'Lamlet'):
+        await s.scalar.wait_all_regs_ready(self.rd, None, [], [])
+        avl = self.uimm
+
+        s.vtype = self.vtypei
+
+        vlmul = (self.vtypei >> 0) & 0x7
+        vsew = (self.vtypei >> 3) & 0x7
+
+        if vlmul <= 3:
+            lmul = 1 << vlmul
+        else:
+            lmul = 1 / (1 << (8 - vlmul))
+
+        sew = 8 << vsew
+
+        vlen_bits = s.params.maxvl_bytes * 8
+        vlmax = int((vlen_bits / sew) * lmul)
+        logger.info(f'vsetivli: sew={sew} lmul={lmul} vlmax={vlmax} avl={avl}')
+
+        if avl <= vlmax:
+            s.vl = avl
+        else:
+            s.vl = vlmax
+
+        vl_bytes = s.vl.to_bytes(s.params.word_bytes, byteorder='little', signed=False)
+        s.scalar.write_reg(self.rd, vl_bytes)
+        logger.info(f'Set vl to {s.vl}')
+        s.pc += 4
+
+
+@dataclass
 class VleV:
     """VLE.V - Vector Load Elements (generic for all element widths).
 

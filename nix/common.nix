@@ -82,7 +82,15 @@ let
     doCheck = false;
   };
 
-  python-env = pkgs.python3.withPackages (ps: [ ps.librelane cocotb2 cocotb-bus cocotbext-axi ]);
+  python-env = pkgs.python3.withPackages (ps: [
+    ps.librelane
+    ps.numpy
+    ps.pytest
+    ps.pyelftools
+    cocotb2
+    cocotb-bus
+    cocotbext-axi
+  ]);
 
   # RISC-V embedded toolchain (from regular nixpkgs, not librelane flake)
   riscv-toolchain = bootstrap-pkgs.pkgsCross.riscv64-embedded.buildPackages.gcc;

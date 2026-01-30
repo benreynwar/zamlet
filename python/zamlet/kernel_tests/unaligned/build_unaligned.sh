@@ -1,24 +1,11 @@
 #!/bin/bash
 # Build script for unaligned vector load/store test
 
-XLEN=64
+RISCV_GCC=riscv64-none-elf-gcc
 
-# Use chipyard toolchain if available, otherwise use system toolchain
-CHIPYARD_TOOLCHAIN="${HOME}/Code/chipyard/.conda-env/riscv-tools/bin"
-if [ -d "$CHIPYARD_TOOLCHAIN" ]; then
-    RISCV_PREFIX="${CHIPYARD_TOOLCHAIN}/riscv${XLEN}-unknown-elf-"
-    echo "Using chipyard toolchain: $CHIPYARD_TOOLCHAIN"
-else
-    RISCV_PREFIX="riscv${XLEN}-unknown-elf-"
-    echo "Using system toolchain"
-fi
-
-RISCV_GCC=${RISCV_PREFIX}gcc
-
-# Compiler options
 RISCV_GCC_OPTS="-mcmodel=medany -static -O2 -g \
 -fno-common -fno-builtin-printf -fno-tree-loop-distribute-patterns \
--march=rv${XLEN}gcv -mabi=lp64d -std=gnu99"
+-march=rv64gcv -mabi=lp64d -std=gnu99"
 
 # Include directories
 INCLUDES="-I. -I../common"

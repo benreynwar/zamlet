@@ -557,6 +557,8 @@ def decode_standard(instruction_bytes: bytes) -> Instruction:
             return F.FabsD(fd=rd, rs1=rs1)
         elif funct7_full == 0x11 and rs2 == rs1 and funct3 == 0x0:
             return F.FmvD(fd=rd, rs1=rs1)
+        elif funct7_full == 0x69 and rs2 == 0x0:
+            return F.FcvtDW(fd=rd, rs1=rs1)
         elif funct7_full == 0x69 and rs2 == 0x2:
             return F.FcvtDL(fd=rd, rs1=rs1)
         elif funct7_full == 0x61 and rs2 == 0x2:
@@ -571,6 +573,11 @@ def decode_standard(instruction_bytes: bytes) -> Instruction:
         if bit31 == 0 and funct3 == 0x7:
             vtypei = (inst >> 20) & 0x7ff
             return V.Vsetvli(rd=rd, rs1=rs1, vtypei=vtypei)
+        elif bit31 == 1 and ((inst >> 30) & 0x1) == 1 and funct3 == 0x7:
+            # vsetivli: bit31=1, bit30=1, funct3=7
+            uimm = (inst >> 15) & 0x1f
+            vtypei = (inst >> 20) & 0x3ff
+            return V.Vsetivli(rd=rd, uimm=uimm, vtypei=vtypei)
         elif funct6 == 0x2c and funct3 == 0x5:
             return V.VArithVxFloat(vd=rd, rs1=rs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.MACC)
         elif funct6 == 0x00 and funct3 == 0x2:
