@@ -18,6 +18,12 @@ jobs:
       - name: Run cocotb tests
         run: |
           nix-shell --run "bazel test //python/zamlet:cocotb_tests --test_output=errors"
+      - name: Save Bazel cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.cache/bazel
+          key: bazel-${{ runner.os }}-${{ hashFiles('MODULE.bazel', 'MODULE.bazel.lock', 'shell.nix', 'nix/*.nix', 'nix/*.patch') }}
 
   synthesis:
     runs-on: ubuntu-latest
@@ -42,3 +48,9 @@ jobs:
           name: failed-${{ matrix.target }}
           path: bazel-out/k8-fastbuild/bin/dse/maths/
           retention-days: 7
+      - name: Save Bazel cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.cache/bazel
+          key: bazel-${{ runner.os }}-${{ hashFiles('MODULE.bazel', 'MODULE.bazel.lock', 'shell.nix', 'nix/*.nix', 'nix/*.patch') }}
