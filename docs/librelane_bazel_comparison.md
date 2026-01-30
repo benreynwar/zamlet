@@ -208,18 +208,18 @@ Legend:
 | 64 | Checker.XOR | Y | Y | Y | PASS |
 | 65 | Magic.DRC | Y | Y | Y | PASS |
 | 66 | KLayout.DRC | Y | Y | Y | PASS |
-| 67 | Checker.MagicDRC | ? | ? | ? | TODO |
-| 68 | Checker.KLayoutDRC | ? | ? | ? | TODO |
+| 67 | Checker.MagicDRC | Y | Y | Y | PASS |
+| 68 | Checker.KLayoutDRC | Y | Y | Y | PASS |
 | 69 | Magic.SpiceExtraction | ? | ? | ? | TODO |
-| 70 | Checker.IllegalOverlap | ? | ? | ? | TODO |
-| 71 | Netgen.LVS | ? | ? | ? | TODO |
-| 72 | Checker.LVS | ? | ? | ? | TODO |
-| 73 | Yosys.EQY | ? | ? | ? | TODO |
-| 74 | Checker.SetupViolations | ? | ? | ? | TODO |
-| 75 | Checker.HoldViolations | ? | ? | ? | TODO |
-| 76 | Checker.MaxSlewViolations | ? | ? | ? | TODO |
-| 77 | Checker.MaxCapViolations | ? | ? | ? | TODO |
-| 78 | Misc.ReportManufacturability | ? | ? | ? | TODO |
+| 70 | Checker.IllegalOverlap | Y | Y | N/A | PASS |
+| 71 | Netgen.LVS | Y | Y | Y | PASS |
+| 72 | Checker.LVS | Y | Y | Y | PASS |
+| 73 | Yosys.EQY | Y | Y | Y | PASS |
+| 74 | Checker.SetupViolations | Y | Y | N/A | PASS |
+| 75 | Checker.HoldViolations | Y | Y | N/A | PASS |
+| 76 | Checker.MaxSlewViolations | Y | Y | N/A | PASS |
+| 77 | Checker.MaxCapViolations | Y | Y | N/A | PASS |
+| 78 | Misc.ReportManufacturability | Y | Y | N/A | PASS |
 
 ---
 
@@ -258,7 +258,7 @@ These steps should be gatable but have no corresponding parameter in `librelane_
 | 65 | RUN_MAGIC_DRC | True |
 | 66 | RUN_KLAYOUT_DRC | True |
 | 71 | RUN_LVS | True |
-| 73 | RUN_EQY | True |
+| 73 | RUN_EQY | **False** |
 
 ### Issue 3: Default value mismatches
 
@@ -4235,27 +4235,28 @@ Uses KLAYOUT_DRC_CONFIG_KEYS (klayout.bzl:29-39).
 
 ### Step 69: Magic.SpiceExtraction
 
-**Verified:** 2026-01-26
+**Verified:** 2026-01-29
 
 **Librelane Source:** `librelane/steps/magic.py`
 - ID: `"Magic.SpiceExtraction"` (line 428)
 - inputs: `[DesignFormat.GDS, DesignFormat.DEF]` (line 432)
 - outputs: `[DesignFormat.SPICE]` (line 433)
+- Inheritance: SpiceExtraction -> MagicStep -> TclStep -> Step
 - Extracts SPICE netlist from GDSII for LVS checks
 - Also outputs metric `magic__illegal_overlap__count`
-- Config vars: `MAGIC_EXT_USE_GDS` (default: False), `MAGIC_EXT_ABSTRACT_CELLS`
 
 **Librelane Gating:** `classic.py`
 - Position: Step 69 (line 109)
 - No entry in gating_config_vars dict - always runs
 
 **Bazel Implementation:** `macro.bzl`
-- ID: `"Magic.SpiceExtraction"` (line 135)
-- step_outputs: `["spice"]` (line 135)
-- Rule: `librelane_spice_extraction` (line 161)
+- ID: `"Magic.SpiceExtraction"` (line 174)
+- step_outputs: `["spice"]` (line 174)
+- Rule: `librelane_spice_extraction` (line 200)
+- Currently uses: `MACRO_CONFIG_KEYS = BASE_CONFIG_KEYS`
 
 **Bazel Flow:** `full_flow.bzl`
-- Position: Step 69 (line 613 comment)
+- Position: Step 69 (line 735 comment)
 - Named: `_spice`
 - Chains from: `_chk_klayout_drc`
 - No gating - always runs
@@ -4266,9 +4267,36 @@ Uses KLAYOUT_DRC_CONFIG_KEYS (klayout.bzl:29-39).
 | inputs | `[GDS, DEF]` | (from src) | Y |
 | outputs | `[SPICE]` | `["spice"]` | Y |
 | Gating | None | None | N/A |
-| Position | Step 69 (line 109) | Step 69 (line 613) | Y |
+| Position | Step 69 (line 109) | Step 69 (line 735) | Y |
 
-**Notes:** No gating needed - step always runs. I/O matches.
+**Config Variable Audit:**
+
+From SpiceExtraction class (magic.py lines 435-472):
+| Variable | Type | Default | PDK | Bazel Status |
+|----------|------|---------|-----|--------------|
+| MAGIC_EXT_USE_GDS | bool | False | No | Wired |
+| MAGIC_EXT_ABSTRACT_CELLS | Optional[List[str]] | None | No | Wired |
+| MAGIC_NO_EXT_UNIQUE | bool | False | No | Wired |
+| MAGIC_EXT_SHORT_RESISTOR | bool | False | No | Wired |
+| MAGIC_EXT_ABSTRACT | bool | False | No | Wired |
+| MAGIC_FEEDBACK_CONVERSION_THRESHOLD | int | 10000 | No | Wired |
+
+From MagicStep class (magic.py lines 76-142):
+| Variable | Type | Default | PDK | Bazel Status |
+|----------|------|---------|-----|--------------|
+| MAGIC_DEF_LABELS | bool | True | No | Wired |
+| MAGIC_GDS_POLYGON_SUBCELLS | bool | False | No | Wired |
+| MAGIC_DEF_NO_BLOCKAGES | bool | True | No | Wired |
+| MAGIC_INCLUDE_GDS_POINTERS | bool | False | No | Wired |
+| MAGICRC | Path | - | Yes | Wired (PDK) |
+| MAGIC_TECH | Path | - | Yes | Wired (PDK) |
+| MAGIC_PDK_SETUP | Path | - | Yes | Wired (PDK) |
+| CELL_MAGS | Optional[List[Path]] | None | Yes | Wired (PDK) |
+| CELL_MAGLEFS | Optional[List[Path]] | None | Yes | Wired (PDK) |
+| MAGIC_CAPTURE_ERRORS | bool | True | No | Wired |
+
+**Notes:** All config variables wired. Step uses SPICE_EXTRACTION_CONFIG_KEYS which includes all
+MagicStep and SpiceExtraction-specific config keys.
 
 **Status: PASS**
 
@@ -4276,23 +4304,23 @@ Uses KLAYOUT_DRC_CONFIG_KEYS (klayout.bzl:29-39).
 
 ### Step 70: Checker.IllegalOverlap
 
-**Verified:** 2026-01-26
+**Verified:** 2026-01-29
 
 **Librelane Source:** `librelane/steps/checker.py`
 - ID: `"Checker.IllegalOverlap"` (line 217)
 - inputs: `[]` (inherited from MetricChecker, line 74)
 - outputs: `[]` (inherited from MetricChecker, line 75)
 - Checks metric `magic__illegal_overlap__count` (set by Magic.SpiceExtraction)
-- Config var: `ERROR_ON_ILLEGAL_OVERLAPS` (default: True) controls whether overlaps cause error
+- Uses MetricChecker.run() which reads error_on_var via self.config.get() at line 119
 
 **Librelane Gating:** `classic.py`
 - Position: Step 70 (line 110)
 - No entry in gating_config_vars dict - always runs
 
 **Bazel Implementation:** `checker.bzl`
-- ID: `"Checker.IllegalOverlap"` (line 46)
-- step_outputs: `[]` (line 46)
-- Rule: `librelane_illegal_overlap` (line 142)
+- impl: `_illegal_overlap_impl` (line 103)
+- Uses `ILLEGAL_OVERLAP_CONFIG_KEYS` (line 60)
+- Rule: `librelane_illegal_overlap` (line 200)
 
 **Bazel Flow:** `full_flow.bzl`
 - Position: Step 70 (line 619 comment)
@@ -4308,7 +4336,21 @@ Uses KLAYOUT_DRC_CONFIG_KEYS (klayout.bzl:29-39).
 | Gating | None | None | N/A |
 | Position | Step 70 (line 110) | Step 70 (line 619) | Y |
 
-**Notes:** No gating needed - step always runs. I/O matches.
+**Config Variable Audit:**
+
+From IllegalOverlap class (checker.py lines 224-230):
+| Variable | Type | Default | PDK | Bazel Status |
+|----------|------|---------|-----|--------------|
+| ERROR_ON_ILLEGAL_OVERLAPS | bool | True | No | Wired |
+
+MetricChecker parent (checker.py lines 69-137) has no config_vars.
+
+**Wiring verified (2026-01-29):**
+1. `common.bzl` ENTRY_ATTRS (line 1393)
+2. `providers.bzl` LibrelaneInput (line 86)
+3. `init.bzl` _init_impl (line 82)
+4. `common.bzl` create_librelane_config (line 380)
+5. `checker.bzl` ILLEGAL_OVERLAP_CONFIG_KEYS (line 60)
 
 **Status: PASS**
 
@@ -4316,7 +4358,7 @@ Uses KLAYOUT_DRC_CONFIG_KEYS (klayout.bzl:29-39).
 
 ### Step 71: Netgen.LVS
 
-**Verified:** 2026-01-26
+**Verified:** 2026-01-29
 
 **Librelane Source:** `librelane/steps/netgen.py`
 - ID: `"Netgen.LVS"` (line 138)
@@ -4330,74 +4372,123 @@ Uses KLAYOUT_DRC_CONFIG_KEYS (klayout.bzl:29-39).
 - Entry in gating_config_vars at line 291
 
 **Bazel Implementation:** `netgen.bzl`
-- ID: `"Netgen.LVS"` (line 7)
-- step_outputs: `[]` (line 7)
-- Rule: `librelane_netgen_lvs` (line 9)
+- impl: `_lvs_impl` (line 18)
+- Uses `NETGEN_LVS_CONFIG_KEYS` (lines 9-17)
+- Rule: `librelane_netgen_lvs` (line 20)
 
 **Bazel Flow:** `full_flow.bzl`
-- Position: Step 71 (line 625 comment)
+- Position: Step 71 (line 749 comment)
 - Named: `_lvs`
 - Chains from: `_chk_overlap`
-- **No gating parameters implemented**
+- Gating variable `RUN_LVS` wired through to librelane config
 
 | Aspect | Librelane | Bazel | Match |
 |--------|-----------|-------|-------|
 | Step ID | `"Netgen.LVS"` | `"Netgen.LVS"` | Y |
 | inputs | `[SPICE, POWERED_NETLIST]` | (from src) | Y |
 | outputs | `[]` | `[]` | Y |
-| Gating | `RUN_LVS` | **MISSING** | N |
-| Position | Step 71 (line 111) | Step 71 (line 625) | Y |
+| Gating | `RUN_LVS` | `RUN_LVS` | Y |
+| Position | Step 71 (line 111) | Step 71 (line 749) | Y |
 
-**Notes:** Missing gating parameter `RUN_LVS`. Step always runs in Bazel.
+**Config Variable Audit:**
 
-**Status: FAIL** - Missing gating parameter `RUN_LVS`
+From LVS class (netgen.py lines 141-153):
+| Variable | Type | Default | PDK | Bazel Status |
+|----------|------|---------|-----|--------------|
+| LVS_INCLUDE_MARCO_NETLISTS | bool | False | No | Wired |
+| LVS_FLATTEN_CELLS | Optional[List[str]] | None | No | Wired |
+
+From NetgenStep parent (netgen.py lines 102-116):
+| Variable | Type | Default | PDK | Bazel Status |
+|----------|------|---------|-----|--------------|
+| MAGIC_EXT_USE_GDS | bool | False | No | Wired |
+| NETGEN_SETUP | Path | - | Yes | Wired (PDK) |
+
+From run() method accesses (netgen.py lines 163-174):
+| Variable | Type | Default | PDK | Bazel Status |
+|----------|------|---------|-----|--------------|
+| CELL_SPICE_MODELS | Optional[List[Path]] | - | Yes | Wired (PDK) |
+| EXTRA_SPICE_MODELS | Optional[List[Path]] | None | No | Wired |
+
+Gating (classic.py lines 208-211):
+| Variable | Type | Default | PDK | Bazel Status |
+|----------|------|---------|-----|--------------|
+| RUN_LVS | bool | True | No | Wired |
+
+**Wiring verified (2026-01-29):**
+1. `common.bzl` ENTRY_ATTRS (lines 1943-1961)
+2. `providers.bzl` LibrelaneInput (lines 269-272)
+3. `init.bzl` _init_impl (lines 243-246)
+4. `common.bzl` create_librelane_config (lines 383-390)
+5. `netgen.bzl` NETGEN_LVS_CONFIG_KEYS (lines 9-17)
+
+**Status: PASS**
 
 ---
 
 ### Step 72: Checker.LVS
 
-**Verified:** 2026-01-26
+**Verified:** 2026-01-29
 
 **Librelane Source:** `librelane/steps/checker.py`
 - ID: `"Checker.LVS"` (line 300)
 - inputs: `[]` (inherited from MetricChecker, line 74)
 - outputs: `[]` (inherited from MetricChecker, line 75)
 - Checks metric `design__lvs_error__count` and raises deferred error if > 0
-- Config var: `ERROR_ON_LVS_ERROR` (default: True) controls whether LVS errors cause error
+- Uses MetricChecker.run() which reads error_on_var via self.config.get() at line 119
 
 **Librelane Gating:** `classic.py`
 - Position: Step 72 (line 112)
-- Gating: `RUN_LVS` (same as Netgen.LVS step)
+- Gating: `RUN_LVS` (same as Netgen.LVS step, wired in Step 71)
 - Entry in gating_config_vars at line 299
 
 **Bazel Implementation:** `checker.bzl`
-- ID: `"Checker.LVS"` (line 49)
-- step_outputs: `[]` (line 49)
-- Rule: `librelane_lvs_checker` (line 148)
+- impl: `_lvs_impl` (line 111)
+- Uses `LVS_CHECKER_CONFIG_KEYS` (lines 62-65)
+- Rule: `librelane_lvs_checker` (line 215)
 
 **Bazel Flow:** `full_flow.bzl`
-- Position: Step 72 (line 631 comment)
+- Position: Step 72 (line 756 comment)
 - Named: `_chk_lvs`
 - Chains from: `_lvs`
-- **No gating parameters implemented**
+- Gating variable `RUN_LVS` wired (shared with Netgen.LVS)
 
 | Aspect | Librelane | Bazel | Match |
 |--------|-----------|-------|-------|
 | Step ID | `"Checker.LVS"` | `"Checker.LVS"` | Y |
 | inputs | `[]` | (from src) | Y |
 | outputs | `[]` | `[]` | Y |
-| Gating | `RUN_LVS` | **MISSING** | N |
-| Position | Step 72 (line 112) | Step 72 (line 631) | Y |
+| Gating | `RUN_LVS` | `RUN_LVS` | Y |
+| Position | Step 72 (line 112) | Step 72 (line 756) | Y |
 
-**Notes:** Coupled with Netgen.LVS (step 71) - both gated by same variable. Missing gating in Bazel.
+**Config Variable Audit:**
 
-**Status: FAIL** - Missing gating parameter `RUN_LVS`
+From LVS class (checker.py lines 307-314):
+| Variable | Type | Default | PDK | Bazel Status |
+|----------|------|---------|-----|--------------|
+| ERROR_ON_LVS_ERROR | bool | True | No | Wired |
+
+MetricChecker parent (checker.py lines 69-137) has no config_vars.
+
+Gating (classic.py line 299):
+| Variable | Type | Default | PDK | Bazel Status |
+|----------|------|---------|-----|--------------|
+| RUN_LVS | bool | True | No | Wired (Step 71) |
+
+**Wiring verified (2026-01-29):**
+1. `common.bzl` ENTRY_ATTRS (line 1409)
+2. `providers.bzl` LibrelaneInput (line 87)
+3. `init.bzl` _init_impl (line 83)
+4. `common.bzl` create_librelane_config (line 382)
+5. `checker.bzl` LVS_CHECKER_CONFIG_KEYS (line 65)
+
+**Status: PASS**
 
 ---
 
 ### Step 73: Yosys.EQY
 
-**Verified:** 2026-01-26
+**Verified:** 2026-01-29
 
 **Librelane Source:** `librelane/steps/yosys.py`
 - ID: `"Yosys.EQY"` (line 259)
@@ -4412,35 +4503,55 @@ Uses KLAYOUT_DRC_CONFIG_KEYS (klayout.bzl:29-39).
 - Note: Disabled by default (unlike most steps)
 
 **Bazel Implementation:** `synthesis.bzl`
-- ID: `"Yosys.EQY"` (line 147)
-- outputs: `[]` (line 148)
-- Rule: `librelane_eqy` (line 183)
+- impl: `_eqy_impl` (line 186)
+- Uses `EQY_CONFIG_KEYS` (lines 67-74)
+- Rule: `librelane_eqy` (line 231)
 
 **Bazel Flow:** `full_flow.bzl`
-- Position: Step 73 (line 637 comment)
+- Position: Step 73 (line 763 comment)
 - Named: `_eqy`
 - Chains from: `_chk_lvs`
-- **No gating parameters implemented**
+- Gating variable `RUN_EQY` wired (default: **False** - step disabled by default)
 
 | Aspect | Librelane | Bazel | Match |
 |--------|-----------|-------|-------|
 | Step ID | `"Yosys.EQY"` | `"Yosys.EQY"` | Y |
 | inputs | `[NETLIST]` | (from src) | Y |
 | outputs | `[]` | `[]` | Y |
-| Gating | `RUN_EQY` (default: False) | **MISSING** | N |
-| Position | Step 73 (line 113) | Step 73 (line 637) | Y |
+| Gating | `RUN_EQY` (default: False) | `RUN_EQY` (default: False) | Y |
+| Position | Step 73 (line 113) | Step 73 (line 763) | Y |
 
-**Notes:** Critical issue: `RUN_EQY` defaults to **False** in librelane, meaning EQY is disabled by
-default. But Bazel has no gating, so it always runs. This is a behavioral difference - Bazel runs
-EQY when librelane would skip it by default.
+**Config Variable Audit:**
 
-**Status: FAIL** - Missing gating parameter `RUN_EQY` (and default differs)
+From EQY class (yosys.py lines 266-287):
+| Variable | Type | Default | PDK | Bazel Status |
+|----------|------|---------|-----|--------------|
+| EQY_SCRIPT | Optional[Path] | None | No | Wired |
+| MACRO_PLACEMENT_CFG | Optional[Path] | None | No | Wired |
+| EQY_FORCE_ACCEPT_PDK | bool | False | No | Wired |
+
+From YosysStep parent (yosys.py lines 147-190) - all PDK variables, wired.
+From verilog_rtl_cfg_vars (pyosys.py lines 95-136) - wired for synthesis.
+
+Gating (classic.py lines 253-256):
+| Variable | Type | Default | PDK | Bazel Status |
+|----------|------|---------|-----|--------------|
+| RUN_EQY | bool | **False** | No | Wired |
+
+**Wiring verified (2026-01-29):**
+1. `common.bzl` ENTRY_ATTRS (lines 1976-1991)
+2. `providers.bzl` LibrelaneInput (lines 275-278)
+3. `init.bzl` _init_impl (lines 249-252)
+4. `common.bzl` create_librelane_config (lines 395-399)
+5. `synthesis.bzl` EQY_CONFIG_KEYS (lines 67-74)
+
+**Status: PASS**
 
 ---
 
 ### Step 74: Checker.SetupViolations
 
-**Verified:** 2026-01-26
+**Verified:** 2026-01-29
 
 **Librelane Source:** `librelane/steps/checker.py`
 - ID: `"Checker.SetupViolations"` (line 599)
@@ -4453,12 +4564,12 @@ EQY when librelane would skip it by default.
 - No entry in gating_config_vars dict - always runs
 
 **Bazel Implementation:** `checker.bzl`
-- ID: `"Checker.SetupViolations"` (line 52)
-- step_outputs: `[]` (line 52)
-- Rule: `librelane_setup_violations` (line 154)
+- impl: `_setup_violations_impl` (line 135)
+- Uses `SETUP_VIOLATIONS_CONFIG_KEYS` (lines 69-72)
+- Rule: `librelane_setup_violations` (line 238)
 
 **Bazel Flow:** `full_flow.bzl`
-- Position: Step 74 (line 643 comment)
+- Position: Step 74 (line 770 comment)
 - Named: `_chk_setup`
 - Chains from: `_eqy`
 - No gating - always runs
@@ -4469,9 +4580,15 @@ EQY when librelane would skip it by default.
 | inputs | `[]` | (from src) | Y |
 | outputs | `[]` | `[]` | Y |
 | Gating | None | None | N/A |
-| Position | Step 74 (line 114) | Step 74 (line 643) | Y |
+| Position | Step 74 (line 114) | Step 74 (line 770) | Y |
 
-**Notes:** No gating needed - step always runs. I/O matches.
+**Config Variable Audit:**
+
+From TimingViolations parent (checker.py lines 457-482, dynamically created):
+| Variable | Type | Default | PDK | Bazel Status |
+|----------|------|---------|-----|--------------|
+| TIMING_VIOLATION_CORNERS | List[str] | - | Yes | Wired (PDK) |
+| SETUP_VIOLATION_CORNERS | Optional[List[str]] | None | No | Wired |
 
 **Status: PASS**
 
@@ -4479,7 +4596,7 @@ EQY when librelane would skip it by default.
 
 ### Step 75: Checker.HoldViolations
 
-**Verified:** 2026-01-26
+**Verified:** 2026-01-29
 
 **Librelane Source:** `librelane/steps/checker.py`
 - ID: `"Checker.HoldViolations"` (line 631)
@@ -4492,12 +4609,12 @@ EQY when librelane would skip it by default.
 - No entry in gating_config_vars dict - always runs
 
 **Bazel Implementation:** `checker.bzl`
-- ID: `"Checker.HoldViolations"` (line 55)
-- step_outputs: `[]` (line 55)
-- Rule: `librelane_hold_violations` (line 160)
+- impl: `_hold_violations_impl` (line 138)
+- Uses `HOLD_VIOLATIONS_CONFIG_KEYS` (lines 73-76)
+- Rule: `librelane_hold_violations` (line 244)
 
 **Bazel Flow:** `full_flow.bzl`
-- Position: Step 75 (line 649 comment)
+- Position: Step 75 (line 777 comment)
 - Named: `_chk_hold`
 - Chains from: `_chk_setup`
 - No gating - always runs
@@ -4508,9 +4625,15 @@ EQY when librelane would skip it by default.
 | inputs | `[]` | (from src) | Y |
 | outputs | `[]` | `[]` | Y |
 | Gating | None | None | N/A |
-| Position | Step 75 (line 115) | Step 75 (line 649) | Y |
+| Position | Step 75 (line 115) | Step 75 (line 777) | Y |
 
-**Notes:** No gating needed - step always runs. I/O matches.
+**Config Variable Audit:**
+
+From TimingViolations parent (checker.py lines 457-482, dynamically created):
+| Variable | Type | Default | PDK | Bazel Status |
+|----------|------|---------|-----|--------------|
+| TIMING_VIOLATION_CORNERS | List[str] | - | Yes | Wired (PDK) |
+| HOLD_VIOLATION_CORNERS | Optional[List[str]] | None | No | Wired |
 
 **Status: PASS**
 
@@ -4518,7 +4641,7 @@ EQY when librelane would skip it by default.
 
 ### Step 76: Checker.MaxSlewViolations
 
-**Verified:** 2026-01-26
+**Verified:** 2026-01-29
 
 **Librelane Source:** `librelane/steps/checker.py`
 - ID: `"Checker.MaxSlewViolations"` (line 620)
@@ -4531,12 +4654,12 @@ EQY when librelane would skip it by default.
 - No entry in gating_config_vars dict - always runs
 
 **Bazel Implementation:** `checker.bzl`
-- ID: `"Checker.MaxSlewViolations"` (line 58)
-- step_outputs: `[]` (line 58)
-- Rule: `librelane_max_slew_violations` (line 166)
+- impl: `_max_slew_violations_impl` (line 141)
+- Uses `MAX_SLEW_VIOLATIONS_CONFIG_KEYS` (lines 77-81)
+- Rule: `librelane_max_slew_violations` (line 250)
 
 **Bazel Flow:** `full_flow.bzl`
-- Position: Step 76 (line 655 comment)
+- Position: Step 76 (line 785 comment)
 - Named: `_chk_slew`
 - Chains from: `_chk_hold`
 - No gating - always runs
@@ -4547,9 +4670,17 @@ EQY when librelane would skip it by default.
 | inputs | `[]` | (from src) | Y |
 | outputs | `[]` | `[]` | Y |
 | Gating | None | None | N/A |
-| Position | Step 76 (line 116) | Step 76 (line 655) | Y |
+| Position | Step 76 (line 116) | Step 76 (line 785) | Y |
 
-**Notes:** No gating needed - step always runs. I/O matches.
+**Config Variable Audit:**
+
+From TimingViolations parent (checker.py lines 457-482, dynamically created):
+| Variable | Type | Default | PDK | Bazel Status |
+|----------|------|---------|-----|--------------|
+| TIMING_VIOLATION_CORNERS | List[str] | - | Yes | Wired (PDK) |
+| MAX_SLEW_VIOLATION_CORNERS | Optional[List[str]] | [""] | No | Wired |
+
+Note: `corner_override = [""]` means no corners checked by default.
 
 **Status: PASS**
 
@@ -4557,7 +4688,7 @@ EQY when librelane would skip it by default.
 
 ### Step 77: Checker.MaxCapViolations
 
-**Verified:** 2026-01-26
+**Verified:** 2026-01-29
 
 **Librelane Source:** `librelane/steps/checker.py`
 - ID: `"Checker.MaxCapViolations"` (line 609)
@@ -4570,12 +4701,12 @@ EQY when librelane would skip it by default.
 - No entry in gating_config_vars dict - always runs
 
 **Bazel Implementation:** `checker.bzl`
-- ID: `"Checker.MaxCapViolations"` (line 61)
-- step_outputs: `[]` (line 61)
-- Rule: `librelane_max_cap_violations` (line 172)
+- impl: `_max_cap_violations_impl` (line 144)
+- Uses `MAX_CAP_VIOLATIONS_CONFIG_KEYS` (lines 82-85)
+- Rule: `librelane_max_cap_violations` (line 256)
 
 **Bazel Flow:** `full_flow.bzl`
-- Position: Step 77 (line 661 comment)
+- Position: Step 77 (line 792 comment)
 - Named: `_chk_cap`
 - Chains from: `_chk_slew`
 - No gating - always runs
@@ -4586,9 +4717,17 @@ EQY when librelane would skip it by default.
 | inputs | `[]` | (from src) | Y |
 | outputs | `[]` | `[]` | Y |
 | Gating | None | None | N/A |
-| Position | Step 77 (line 117) | Step 77 (line 661) | Y |
+| Position | Step 77 (line 117) | Step 77 (line 792) | Y |
 
-**Notes:** No gating needed - step always runs. I/O matches.
+**Config Variable Audit:**
+
+From TimingViolations parent (checker.py lines 457-482, dynamically created):
+| Variable | Type | Default | PDK | Bazel Status |
+|----------|------|---------|-----|--------------|
+| TIMING_VIOLATION_CORNERS | List[str] | - | Yes | Wired (PDK) |
+| MAX_CAP_VIOLATION_CORNERS | Optional[List[str]] | [""] | No | Wired |
+
+Note: `corner_override = [""]` means no corners checked by default.
 
 **Status: PASS**
 
@@ -4596,25 +4735,26 @@ EQY when librelane would skip it by default.
 
 ### Step 78: Misc.ReportManufacturability
 
-**Verified:** 2026-01-26
+**Verified:** 2026-01-29
 
 **Librelane Source:** `librelane/steps/misc.py`
 - ID: `"Misc.ReportManufacturability"` (line 61)
 - inputs: `[]` (line 64)
 - outputs: `[]` (line 65)
 - Logs a manufacturability report with DRC, LVS, and antenna violation status
+- Only reads metrics from state_in, no config variables
 
 **Librelane Gating:** `classic.py`
 - Position: Step 78 (line 118) - final step
 - No entry in gating_config_vars dict - always runs
 
 **Bazel Implementation:** `misc.bzl`
-- ID: `"Misc.ReportManufacturability"` (line 7)
-- step_outputs: `[]` (line 7)
-- Rule: `librelane_report_manufacturability` (line 9)
+- impl: `_report_manufacturability_impl` (line 9)
+- Uses `MISC_CONFIG_KEYS` which is `BASE_CONFIG_KEYS` (line 7)
+- Rule: `librelane_report_manufacturability` (line 12)
 
 **Bazel Flow:** `full_flow.bzl`
-- Position: Step 78 (line 667 comment) - final step
+- Position: Step 78 (line 799 comment) - final step
 - Named: `_report`
 - Chains from: `_chk_cap`
 - No gating - always runs
@@ -4625,9 +4765,12 @@ EQY when librelane would skip it by default.
 | inputs | `[]` | (from src) | Y |
 | outputs | `[]` | `[]` | Y |
 | Gating | None | None | N/A |
-| Position | Step 78 (line 118) | Step 78 (line 667) | Y |
+| Position | Step 78 (line 118) | Step 78 (line 799) | Y |
 
-**Notes:** No gating needed - step always runs. I/O matches. Final step of the flow.
+**Config Variable Audit:**
+
+No config_vars defined in ReportManufacturability class (misc.py lines 55-160).
+Step only reads metrics from state_in to generate the report.
 
 **Status: PASS**
 

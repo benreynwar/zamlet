@@ -43,6 +43,47 @@ WIRE_LENGTH_CONFIG_KEYS = BASE_CONFIG_KEYS + ["ERROR_ON_LONG_WIRE", "WIRE_LENGTH
 # Step 64: Checker.XOR - checker.py lines 280-295
 XOR_CHECKER_CONFIG_KEYS = BASE_CONFIG_KEYS + ["ERROR_ON_XOR_ERROR"]
 
+# Step 67: Checker.MagicDRC - checker.py lines 197-212
+MAGIC_DRC_CHECKER_CONFIG_KEYS = BASE_CONFIG_KEYS + [
+    "ERROR_ON_MAGIC_DRC",
+    "RUN_MAGIC_DRC",  # Gating (classic.py:293)
+]
+
+# Step 68: Checker.KLayoutDRC - checker.py lines 412-428
+KLAYOUT_DRC_CHECKER_CONFIG_KEYS = BASE_CONFIG_KEYS + [
+    "ERROR_ON_KLAYOUT_DRC",
+    "RUN_KLAYOUT_DRC",  # Gating (classic.py:300)
+]
+
+# Step 70: Checker.IllegalOverlap - checker.py lines 216-231
+# Uses MetricChecker.run() which reads self.config.get("ERROR_ON_ILLEGAL_OVERLAPS") at line 119
+ILLEGAL_OVERLAP_CONFIG_KEYS = BASE_CONFIG_KEYS + ["ERROR_ON_ILLEGAL_OVERLAPS"]
+
+# Step 72: Checker.LVS - checker.py lines 299-314
+# Uses MetricChecker.run() which reads self.config.get("ERROR_ON_LVS_ERROR") at line 119
+# Also gated by RUN_LVS (same as Netgen.LVS)
+LVS_CHECKER_CONFIG_KEYS = BASE_CONFIG_KEYS + ["ERROR_ON_LVS_ERROR", "RUN_LVS"]
+
+# Steps 74-77: TimingViolations checkers - checker.py lines 431-637
+# All inherit from TimingViolations which adds TIMING_VIOLATION_CORNERS (PDK) and
+# a subclass-specific *_VIOLATION_CORNERS variable
+SETUP_VIOLATIONS_CONFIG_KEYS = BASE_CONFIG_KEYS + [
+    "TIMING_VIOLATION_CORNERS",
+    "SETUP_VIOLATION_CORNERS",
+]
+HOLD_VIOLATIONS_CONFIG_KEYS = BASE_CONFIG_KEYS + [
+    "TIMING_VIOLATION_CORNERS",
+    "HOLD_VIOLATION_CORNERS",
+]
+MAX_SLEW_VIOLATIONS_CONFIG_KEYS = BASE_CONFIG_KEYS + [
+    "TIMING_VIOLATION_CORNERS",
+    "MAX_SLEW_VIOLATION_CORNERS",
+]
+MAX_CAP_VIOLATIONS_CONFIG_KEYS = BASE_CONFIG_KEYS + [
+    "TIMING_VIOLATION_CORNERS",
+    "MAX_CAP_VIOLATION_CORNERS",
+]
+
 # TODO: Add proper config keys for remaining checker steps
 CHECKER_CONFIG_KEYS = BASE_CONFIG_KEYS
 
@@ -80,28 +121,28 @@ def _xor_impl(ctx):
     return single_step_impl(ctx, "Checker.XOR", XOR_CHECKER_CONFIG_KEYS, step_outputs = [])
 
 def _magic_drc_impl(ctx):
-    return single_step_impl(ctx, "Checker.MagicDRC", CHECKER_CONFIG_KEYS, step_outputs = [])
+    return single_step_impl(ctx, "Checker.MagicDRC", MAGIC_DRC_CHECKER_CONFIG_KEYS, step_outputs = [])
 
 def _klayout_drc_impl(ctx):
-    return single_step_impl(ctx, "Checker.KLayoutDRC", CHECKER_CONFIG_KEYS, step_outputs = [])
+    return single_step_impl(ctx, "Checker.KLayoutDRC", KLAYOUT_DRC_CHECKER_CONFIG_KEYS, step_outputs = [])
 
 def _illegal_overlap_impl(ctx):
-    return single_step_impl(ctx, "Checker.IllegalOverlap", CHECKER_CONFIG_KEYS, step_outputs = [])
+    return single_step_impl(ctx, "Checker.IllegalOverlap", ILLEGAL_OVERLAP_CONFIG_KEYS, step_outputs = [])
 
 def _lvs_impl(ctx):
-    return single_step_impl(ctx, "Checker.LVS", CHECKER_CONFIG_KEYS, step_outputs = [])
+    return single_step_impl(ctx, "Checker.LVS", LVS_CHECKER_CONFIG_KEYS, step_outputs = [])
 
 def _setup_violations_impl(ctx):
-    return single_step_impl(ctx, "Checker.SetupViolations", CHECKER_CONFIG_KEYS, step_outputs = [])
+    return single_step_impl(ctx, "Checker.SetupViolations", SETUP_VIOLATIONS_CONFIG_KEYS, step_outputs = [])
 
 def _hold_violations_impl(ctx):
-    return single_step_impl(ctx, "Checker.HoldViolations", CHECKER_CONFIG_KEYS, step_outputs = [])
+    return single_step_impl(ctx, "Checker.HoldViolations", HOLD_VIOLATIONS_CONFIG_KEYS, step_outputs = [])
 
 def _max_slew_violations_impl(ctx):
-    return single_step_impl(ctx, "Checker.MaxSlewViolations", CHECKER_CONFIG_KEYS, step_outputs = [])
+    return single_step_impl(ctx, "Checker.MaxSlewViolations", MAX_SLEW_VIOLATIONS_CONFIG_KEYS, step_outputs = [])
 
 def _max_cap_violations_impl(ctx):
-    return single_step_impl(ctx, "Checker.MaxCapViolations", CHECKER_CONFIG_KEYS, step_outputs = [])
+    return single_step_impl(ctx, "Checker.MaxCapViolations", MAX_CAP_VIOLATIONS_CONFIG_KEYS, step_outputs = [])
 
 # Rule declarations
 librelane_lint_timing_constructs = rule(

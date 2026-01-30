@@ -83,6 +83,8 @@ LibrelaneInput = provider(
         "error_on_tr_drc": "bool - Error on routing DRC violations (Step 49)",
         "error_on_disconnected_pins": "bool - Error on critical disconnected pins (Step 51)",
         "error_on_long_wire": "bool - Error on wires exceeding threshold (Step 53)",
+        "error_on_illegal_overlaps": "bool - Error on illegal overlaps (Step 70)",
+        "error_on_lvs_error": "bool - Error on LVS errors (Step 72)",
 
         # OpenROADStep config (from librelane/steps/openroad.py lines 192-223)
         "pdn_connect_macros_to_grid": "bool - Connect macros to top level power grid",
@@ -112,6 +114,13 @@ LibrelaneInput = provider(
         "magic_def_no_blockages": "bool - Ignore DEF blockages",
         "magic_include_gds_pointers": "bool - Include GDS pointers in mag files",
         "magic_capture_errors": "bool - Capture and quit on Magic errors",
+        # Magic.SpiceExtraction config (magic.py:435-472)
+        "magic_ext_use_gds": "bool - Use GDS for SPICE extraction",
+        "magic_ext_abstract_cells": "List[str] - Cells to abstract in extraction",
+        "magic_no_ext_unique": "bool - Skip extract unique for label connections",
+        "magic_ext_short_resistor": "bool - Add resistors to shorts",
+        "magic_ext_abstract": "bool - Extract based on black-boxed cells",
+        "magic_feedback_conversion_threshold": "int - Max feedback items for KLayout conversion",
         # Magic.StreamOut config (magic.py:264-293)
         "magic_zeroize_origin": "bool - Move layout origin to 0,0",
         "magic_disable_cif_info": "bool - Disable CIF info in GDSII",
@@ -247,10 +256,31 @@ LibrelaneInput = provider(
         "error_on_xor_error": "bool - Error on XOR differences",
         # Magic.DRC config (magic.py:380-386)
         "magic_drc_use_gds": "bool - Run Magic DRC on GDS instead of DEF",
+        # Magic.DRC gating (classic.py:239-242)
+        "run_magic_drc": "bool - Enable Magic DRC step",
+        # Checker.MagicDRC config (checker.py:205-211)
+        "error_on_magic_drc": "bool - Error on Magic DRC violations",
         # KLayout.DRC config (klayout.py:363-368)
         "klayout_drc_threads": "int - Number of threads for KLayout DRC (0=auto)",
         # KLayout.DRC gating (classic.py:247-250)
         "run_klayout_drc": "bool - Enable KLayout DRC step",
+        # Checker.KLayoutDRC config (checker.py:421-427)
+        "error_on_klayout_drc": "bool - Error on KLayout DRC violations",
+        # Netgen.LVS config (Step 71)
+        "run_lvs": "bool - Enable Netgen LVS step",
+        "lvs_include_marco_netlists": "bool - Include macro netlists in LVS",
+        "lvs_flatten_cells": "List[str] - Cells to flatten during LVS",
+        "extra_spice_models": "List[File] - Extra SPICE models for LVS",
+        # Yosys.EQY config (Step 73)
+        "run_eqy": "bool - Enable EQY formal equivalence check (default: False)",
+        "eqy_script": "File - Custom EQY script",
+        "eqy_force_accept_pdk": "bool - Force EQY on unsupported PDK",
+        "macro_placement_cfg": "File - Deprecated macro placement config",
+        # TimingViolations checker config (Steps 74-77)
+        "setup_violation_corners": "List[str] - Corners for setup violation checking",
+        "hold_violation_corners": "List[str] - Corners for hold violation checking",
+        "max_slew_violation_corners": "List[str] - Corners for max slew checking",
+        "max_cap_violation_corners": "List[str] - Corners for max cap checking",
     },
 )
 

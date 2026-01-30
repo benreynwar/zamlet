@@ -63,6 +63,16 @@ SYNTHESIS_CONFIG_KEYS = JSON_HEADER_CONFIG_KEYS + [
     "SYNTH_WRITE_NOATTR",
 ]
 
+# Step 73: Yosys.EQY - yosys.py lines 250-350
+# Inherits YosysStep.config_vars + verilog_rtl_cfg_vars (most in SYNTHESIS_CONFIG_KEYS)
+# EQY-specific config from lines 266-287
+EQY_CONFIG_KEYS = SYNTHESIS_CONFIG_KEYS + [
+    "RUN_EQY",
+    "EQY_SCRIPT",
+    "EQY_FORCE_ACCEPT_PDK",
+    "MACRO_PLACEMENT_CFG",
+]
+
 def _synthesis_impl(ctx):
     """Synthesize verilog to gate-level netlist."""
     input_info = ctx.attr.input[LibrelaneInput]
@@ -184,7 +194,7 @@ def _eqy_impl(ctx):
     inputs = get_input_files(input_info, state_info)
 
     # Create config
-    config = create_librelane_config(input_info, state_info, SYNTHESIS_CONFIG_KEYS)
+    config = create_librelane_config(input_info, state_info, EQY_CONFIG_KEYS)
 
     # Run step
     state_out = run_librelane_step(

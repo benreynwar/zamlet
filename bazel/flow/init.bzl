@@ -79,6 +79,8 @@ def _init_impl(ctx):
             error_on_tr_drc = ctx.attr.error_on_tr_drc,
             error_on_disconnected_pins = ctx.attr.error_on_disconnected_pins,
             error_on_long_wire = ctx.attr.error_on_long_wire,
+            error_on_illegal_overlaps = ctx.attr.error_on_illegal_overlaps,
+            error_on_lvs_error = ctx.attr.error_on_lvs_error,
             # OpenROADStep config
             pdn_connect_macros_to_grid = ctx.attr.pdn_connect_macros_to_grid,
             pdn_macro_connections = ctx.attr.pdn_macro_connections,
@@ -101,6 +103,13 @@ def _init_impl(ctx):
             magic_def_no_blockages = ctx.attr.magic_def_no_blockages,
             magic_include_gds_pointers = ctx.attr.magic_include_gds_pointers,
             magic_capture_errors = ctx.attr.magic_capture_errors,
+            # Magic.SpiceExtraction config
+            magic_ext_use_gds = ctx.attr.magic_ext_use_gds,
+            magic_ext_abstract_cells = ctx.attr.magic_ext_abstract_cells,
+            magic_no_ext_unique = ctx.attr.magic_no_ext_unique,
+            magic_ext_short_resistor = ctx.attr.magic_ext_short_resistor,
+            magic_ext_abstract = ctx.attr.magic_ext_abstract,
+            magic_feedback_conversion_threshold = ctx.attr.magic_feedback_conversion_threshold,
             # Magic.StreamOut config
             magic_zeroize_origin = ctx.attr.magic_zeroize_origin,
             magic_disable_cif_info = ctx.attr.magic_disable_cif_info,
@@ -221,10 +230,31 @@ def _init_impl(ctx):
             error_on_xor_error = ctx.attr.error_on_xor_error,
             # Magic.DRC config
             magic_drc_use_gds = ctx.attr.magic_drc_use_gds,
+            # Magic.DRC gating
+            run_magic_drc = ctx.attr.run_magic_drc,
+            # Checker.MagicDRC config
+            error_on_magic_drc = ctx.attr.error_on_magic_drc,
             # KLayout.DRC config
             klayout_drc_threads = ctx.attr.klayout_drc_threads,
             # KLayout.DRC gating
             run_klayout_drc = ctx.attr.run_klayout_drc,
+            # Checker.KLayoutDRC config
+            error_on_klayout_drc = ctx.attr.error_on_klayout_drc,
+            # Netgen.LVS config
+            run_lvs = ctx.attr.run_lvs,
+            lvs_include_marco_netlists = ctx.attr.lvs_include_marco_netlists,
+            lvs_flatten_cells = ctx.attr.lvs_flatten_cells,
+            extra_spice_models = ctx.files.extra_spice_models,
+            # Yosys.EQY config
+            run_eqy = ctx.attr.run_eqy,
+            eqy_script = ctx.file.eqy_script if ctx.attr.eqy_script else None,
+            eqy_force_accept_pdk = ctx.attr.eqy_force_accept_pdk,
+            macro_placement_cfg = ctx.file.macro_placement_cfg if ctx.attr.macro_placement_cfg else None,
+            # TimingViolations checker config
+            setup_violation_corners = ctx.attr.setup_violation_corners,
+            hold_violation_corners = ctx.attr.hold_violation_corners,
+            max_slew_violation_corners = ctx.attr.max_slew_violation_corners,
+            max_cap_violation_corners = ctx.attr.max_cap_violation_corners,
         ),
         # LibrelaneInfo - initial state (all empty)
         LibrelaneInfo(

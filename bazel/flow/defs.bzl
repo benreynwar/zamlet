@@ -31,6 +31,10 @@ load(":macro.bzl",
 load(":full_flow.bzl",
     _librelane_classic_flow = "librelane_classic_flow",
 )
+load(":validate.bzl",
+    _librelane_classic_bundled_flow = "librelane_classic_bundled_flow",
+    _librelane_compare_flows_test = "librelane_compare_flows_test",
+)
 
 # Providers
 LibrelaneInfo = _LibrelaneInfo
@@ -74,3 +78,7 @@ librelane_lef = _librelane_lef
 
 # Convenience macros
 librelane_classic_flow = _librelane_classic_flow
+
+# Validation
+librelane_classic_bundled_flow = _librelane_classic_bundled_flow
+librelane_compare_flows_test = _librelane_compare_flows_test

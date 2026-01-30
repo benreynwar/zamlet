@@ -337,6 +337,14 @@ def create_librelane_config(input_info, state_info, required_keys):
     config["MAGIC_DEF_NO_BLOCKAGES"] = input_info.magic_def_no_blockages
     config["MAGIC_INCLUDE_GDS_POINTERS"] = input_info.magic_include_gds_pointers
     config["MAGIC_CAPTURE_ERRORS"] = input_info.magic_capture_errors
+    # Magic.SpiceExtraction config (magic.py:435-472)
+    config["MAGIC_EXT_USE_GDS"] = input_info.magic_ext_use_gds
+    if input_info.magic_ext_abstract_cells:
+        config["MAGIC_EXT_ABSTRACT_CELLS"] = input_info.magic_ext_abstract_cells
+    config["MAGIC_NO_EXT_UNIQUE"] = input_info.magic_no_ext_unique
+    config["MAGIC_EXT_SHORT_RESISTOR"] = input_info.magic_ext_short_resistor
+    config["MAGIC_EXT_ABSTRACT"] = input_info.magic_ext_abstract
+    config["MAGIC_FEEDBACK_CONVERSION_THRESHOLD"] = input_info.magic_feedback_conversion_threshold
     # Magic.StreamOut config (magic.py:264-293)
     config["MAGIC_ZEROIZE_ORIGIN"] = input_info.magic_zeroize_origin
     config["MAGIC_DISABLE_CIF_INFO"] = input_info.magic_disable_cif_info
@@ -356,12 +364,48 @@ def create_librelane_config(input_info, state_info, required_keys):
 
     # Magic.DRC config (magic.py:380-386)
     config["MAGIC_DRC_USE_GDS"] = input_info.magic_drc_use_gds
+    # Magic.DRC gating (classic.py:239-242)
+    config["RUN_MAGIC_DRC"] = input_info.run_magic_drc
+    # Checker.MagicDRC config (checker.py:205-211)
+    config["ERROR_ON_MAGIC_DRC"] = input_info.error_on_magic_drc
 
     # KLayout.DRC config (klayout.py:363-368)
     if input_info.klayout_drc_threads:
         config["KLAYOUT_DRC_THREADS"] = input_info.klayout_drc_threads
     # KLayout.DRC gating (classic.py:247-250)
     config["RUN_KLAYOUT_DRC"] = input_info.run_klayout_drc
+    # Checker.KLayoutDRC config (checker.py:421-427)
+    config["ERROR_ON_KLAYOUT_DRC"] = input_info.error_on_klayout_drc
+    # Checker.IllegalOverlap config (checker.py:224-230)
+    config["ERROR_ON_ILLEGAL_OVERLAPS"] = input_info.error_on_illegal_overlaps
+    # Checker.LVS config (checker.py:307-314)
+    config["ERROR_ON_LVS_ERROR"] = input_info.error_on_lvs_error
+
+    # Netgen.LVS gating (classic.py:208-211, 291)
+    config["RUN_LVS"] = input_info.run_lvs
+    # Netgen.LVS config (netgen.py:141-153)
+    config["LVS_INCLUDE_MARCO_NETLISTS"] = input_info.lvs_include_marco_netlists
+    if input_info.lvs_flatten_cells:
+        config["LVS_FLATTEN_CELLS"] = input_info.lvs_flatten_cells
+    # Extra SPICE models (flow.py:466-470)
+    if input_info.extra_spice_models:
+        config["EXTRA_SPICE_MODELS"] = [f.path for f in input_info.extra_spice_models]
+
+    # Yosys.EQY gating (classic.py:253-256, 302)
+    config["RUN_EQY"] = input_info.run_eqy
+    # Yosys.EQY config (yosys.py:266-287)
+    _add_optional_file(config, "EQY_SCRIPT", input_info.eqy_script)
+    config["EQY_FORCE_ACCEPT_PDK"] = input_info.eqy_force_accept_pdk
+    _add_optional_file(config, "MACRO_PLACEMENT_CFG", input_info.macro_placement_cfg)
+
+    # TimingViolations checker config (checker.py:457-482)
+    if input_info.setup_violation_corners:
+        config["SETUP_VIOLATION_CORNERS"] = input_info.setup_violation_corners
+    if input_info.hold_violation_corners:
+        config["HOLD_VIOLATION_CORNERS"] = input_info.hold_violation_corners
+    # MAX_SLEW and MAX_CAP default to [""] (no corners checked)
+    config["MAX_SLEW_VIOLATION_CORNERS"] = input_info.max_slew_violation_corners
+    config["MAX_CAP_VIOLATION_CORNERS"] = input_info.max_cap_violation_corners
 
     # OpenROAD.RCX config (openroad.py:1679-1702)
     config["RCX_MERGE_VIA_WIRE_RES"] = input_info.rcx_merge_via_wire_res
@@ -1374,6 +1418,14 @@ ENTRY_ATTRS = {
         doc = "Error on wires exceeding threshold (Step 53)",
         default = True,
     ),
+    "error_on_illegal_overlaps": attr.bool(
+        doc = "Error on illegal overlaps during Magic extraction (Step 70)",
+        default = True,
+    ),
+    "error_on_lvs_error": attr.bool(
+        doc = "Error on LVS errors (Step 72)",
+        default = True,
+    ),
     # OpenROADStep config (from librelane/steps/openroad.py lines 192-223)
     "pdn_connect_macros_to_grid": attr.bool(
         doc = "Enable connection of macros to top level power grid",
@@ -1806,6 +1858,31 @@ ENTRY_ATTRS = {
         doc = "Capture and quit on Magic fatal errors",
         default = True,
     ),
+    # Magic.SpiceExtraction config (magic.py:435-472)
+    "magic_ext_use_gds": attr.bool(
+        doc = "Use GDS for SPICE extraction instead of DEF/LEF",
+        default = False,
+    ),
+    "magic_ext_abstract_cells": attr.string_list(
+        doc = "Regex patterns for cells to abstract (black-box) during SPICE extraction",
+        default = [],
+    ),
+    "magic_no_ext_unique": attr.bool(
+        doc = "Skip 'extract unique' in Magic (enables LVS connections by label)",
+        default = False,
+    ),
+    "magic_ext_short_resistor": attr.bool(
+        doc = "Add resistors to shorts in extraction (may fix LVS issues)",
+        default = False,
+    ),
+    "magic_ext_abstract": attr.bool(
+        doc = "Extract SPICE based on black-boxed cells rather than transistors",
+        default = False,
+    ),
+    "magic_feedback_conversion_threshold": attr.int(
+        doc = "Max feedback items before skipping KLayout database conversion",
+        default = 10000,
+    ),
     # Magic.StreamOut config (magic.py:264-293)
     "magic_zeroize_origin": attr.bool(
         doc = "Move layout origin to 0,0 in LEF",
@@ -1859,6 +1936,16 @@ ENTRY_ATTRS = {
         doc = "Run Magic DRC on GDS instead of DEF (more accurate but slower)",
         default = True,
     ),
+    # Magic.DRC gating (classic.py:239-242)
+    "run_magic_drc": attr.bool(
+        doc = "Enable Magic DRC step",
+        default = True,
+    ),
+    # Checker.MagicDRC config (checker.py:205-211)
+    "error_on_magic_drc": attr.bool(
+        doc = "Error on Magic DRC violations",
+        default = True,
+    ),
     # KLayout.DRC config (klayout.py:363-368)
     "klayout_drc_threads": attr.int(
         doc = "Number of threads for KLayout DRC (0 = auto)",
@@ -1868,6 +1955,67 @@ ENTRY_ATTRS = {
     "run_klayout_drc": attr.bool(
         doc = "Enable KLayout DRC step",
         default = True,
+    ),
+    # Checker.KLayoutDRC config (checker.py:421-427)
+    "error_on_klayout_drc": attr.bool(
+        doc = "Error on KLayout DRC violations",
+        default = True,
+    ),
+    # Netgen.LVS gating (classic.py:208-211)
+    "run_lvs": attr.bool(
+        doc = "Enable Netgen LVS step",
+        default = True,
+    ),
+    # Netgen.LVS config (netgen.py:141-153)
+    "lvs_include_marco_netlists": attr.bool(
+        doc = "Include gate-level netlists of macros in LVS",
+        default = False,
+    ),
+    "lvs_flatten_cells": attr.string_list(
+        doc = "Cell names to flatten during LVS",
+        default = [],
+    ),
+    # Flow-level config for LVS (flow.py:466-470)
+    "extra_spice_models": attr.label_list(
+        doc = "Extra SPICE model files for LVS",
+        allow_files = True,
+        default = [],
+    ),
+    # Yosys.EQY gating (classic.py:253-256) - NOTE: defaults to False
+    "run_eqy": attr.bool(
+        doc = "Enable Yosys EQY formal equivalence check (disabled by default)",
+        default = False,
+    ),
+    # Yosys.EQY config (yosys.py:266-287)
+    "eqy_script": attr.label(
+        doc = "Custom EQY script file",
+        allow_single_file = True,
+    ),
+    "eqy_force_accept_pdk": attr.bool(
+        doc = "Force EQY to run even if PDK not officially supported",
+        default = False,
+    ),
+    "macro_placement_cfg": attr.label(
+        doc = "Deprecated: Macro placement config file",
+        allow_single_file = True,
+    ),
+    # TimingViolations checker config (checker.py:457-482)
+    # Each subclass generates a *_VIOLATION_CORNERS variable
+    "setup_violation_corners": attr.string_list(
+        doc = "IPVT corners for setup violation checking (empty = use TIMING_VIOLATION_CORNERS)",
+        default = [],
+    ),
+    "hold_violation_corners": attr.string_list(
+        doc = "IPVT corners for hold violation checking (empty = use TIMING_VIOLATION_CORNERS)",
+        default = [],
+    ),
+    "max_slew_violation_corners": attr.string_list(
+        doc = "IPVT corners for max slew violation checking (default: no corners checked)",
+        default = [""],
+    ),
+    "max_cap_violation_corners": attr.string_list(
+        doc = "IPVT corners for max cap violation checking (default: no corners checked)",
+        default = [""],
     ),
 }
 

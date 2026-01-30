@@ -52,6 +52,20 @@ MAGIC_WRITELEF_CONFIG_KEYS = BASE_CONFIG_KEYS + MAGIC_STEP_CONFIG_KEYS + [
 MAGIC_DRC_CONFIG_KEYS = BASE_CONFIG_KEYS + MAGIC_STEP_CONFIG_KEYS + [
     # DRC config_vars
     "MAGIC_DRC_USE_GDS",
+    # Gating (classic.py:239-242)
+    "RUN_MAGIC_DRC",
+]
+
+# Step 69: Magic.SpiceExtraction - magic.py lines 418-517
+# MagicStep config_vars + SpiceExtraction config_vars (lines 435-472)
+SPICE_EXTRACTION_CONFIG_KEYS = BASE_CONFIG_KEYS + MAGIC_STEP_CONFIG_KEYS + [
+    # SpiceExtraction config_vars
+    "MAGIC_EXT_USE_GDS",
+    "MAGIC_EXT_ABSTRACT_CELLS",
+    "MAGIC_NO_EXT_UNIQUE",
+    "MAGIC_EXT_SHORT_RESISTOR",
+    "MAGIC_EXT_ABSTRACT",
+    "MAGIC_FEEDBACK_CONVERSION_THRESHOLD",
 ]
 
 def _fill_impl(ctx):
@@ -169,7 +183,7 @@ def _drc_impl(ctx):
     return single_step_impl(ctx, "Magic.DRC", MAGIC_DRC_CONFIG_KEYS, step_outputs = [])
 
 def _spice_extraction_impl(ctx):
-    return single_step_impl(ctx, "Magic.SpiceExtraction", MACRO_CONFIG_KEYS, step_outputs = ["spice"])
+    return single_step_impl(ctx, "Magic.SpiceExtraction", SPICE_EXTRACTION_CONFIG_KEYS, step_outputs = ["spice"])
 
 librelane_fill = rule(
     implementation = _fill_impl,
