@@ -186,7 +186,11 @@ librelane_json_header = rule(
 )
 
 def _eqy_impl(ctx):
-    """Formal equivalence check: RTL vs gate-level netlist."""
+    """Formal equivalence check: RTL vs gate-level netlist.
+
+    TODO: EQY is broken. Fails with "Unmatched module exists in gold that does not
+    exist in gate."
+    """
     input_info = ctx.attr.input[LibrelaneInput]
     state_info = ctx.attr.src[LibrelaneInfo]
 

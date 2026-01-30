@@ -35,3 +35,10 @@ jobs:
       - name: Synthesis (${{ matrix.target }})
         run: |
           nix-shell --run "bazel build //dse/maths:${{ matrix.target }}"
+      - name: Upload failed step artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: failed-${{ matrix.target }}
+          path: bazel-out/k8-fastbuild/bin/dse/maths/
+          retention-days: 7
