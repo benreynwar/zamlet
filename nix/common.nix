@@ -86,6 +86,7 @@ let
     ps.librelane
     ps.numpy
     ps.pytest
+    ps.pytest-xdist
     ps.pyelftools
     cocotb2
     cocotb-bus

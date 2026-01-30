@@ -110,6 +110,9 @@ class Jamlet:
             MessageType.IDENT_QUERY_RESP: Queue(2),
             MessageType.LOAD_INDEXED_ELEMENT_RESP: Queue(2),
             MessageType.STORE_INDEXED_ELEMENT_RESP: Queue(2),
+            MessageType.READ_REG_ELEMENT_REQ: Queue(2),
+            MessageType.READ_REG_ELEMENT_RESP: Queue(2),
+            MessageType.READ_REG_ELEMENT_DROP: Queue(2),
             }
 
         # Shared with the parent kamlet

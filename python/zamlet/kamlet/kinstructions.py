@@ -12,6 +12,7 @@ Send             src (6 bit)    target (6 bit) mask (5 bit)  length (3)  =  26 b
 '''
 
 import logging
+import struct
 from dataclasses import dataclass
 from enum import Enum
 
@@ -25,9 +26,29 @@ logger = logging.getLogger(__name__)
 
 
 class VArithOp(Enum):
+    # Integer
     ADD = "add"
+    SUB = "sub"
     MUL = "mul"
     MACC = "macc"
+    AND = "and"
+    OR = "or"
+    XOR = "xor"
+    SLL = "sll"
+    SRL = "srl"
+    SRA = "sra"
+    MIN = "min"
+    MAX = "max"
+    MINU = "minu"
+    MAXU = "maxu"
+    # Float
+    FADD = "fadd"
+    FSUB = "fsub"
+    FMUL = "fmul"
+    FDIV = "fdiv"
+    FMACC = "fmacc"
+    FMIN = "fmin"
+    FMAX = "fmax"
 
 
 class VRedOp(Enum):
@@ -402,23 +423,74 @@ class VArithVvOp(KInstr):
                     )
                     if valid_element and mask_bit:
                         src1_bytes = jamlet.rf_slice[src1_offset + byte_offset:src1_offset + byte_offset + eb]
-                        src1_val = int.from_bytes(src1_bytes, byteorder='little', signed=True)
                         src2_bytes = jamlet.rf_slice[src2_offset + byte_offset:src2_offset + byte_offset + eb]
-                        src2_val = int.from_bytes(src2_bytes, byteorder='little', signed=True)
+                        float_ops = (VArithOp.FADD, VArithOp.FSUB, VArithOp.FMUL, VArithOp.FDIV,
+                                     VArithOp.FMACC, VArithOp.FMIN, VArithOp.FMAX)
+                        signed_int_ops = (VArithOp.ADD, VArithOp.SUB, VArithOp.MUL, VArithOp.MACC,
+                                          VArithOp.AND, VArithOp.OR, VArithOp.XOR,
+                                          VArithOp.SLL, VArithOp.SRA, VArithOp.MIN, VArithOp.MAX)
+                        unsigned_int_ops = (VArithOp.MINU, VArithOp.MAXU, VArithOp.SRL)
+                        if self.op in float_ops:
+                            fmt = {8: 'd', 4: 'f', 2: 'e'}[eb]
+                        elif self.op in signed_int_ops:
+                            fmt = {8: '<q', 4: '<i', 2: '<h', 1: '<b'}[eb]
+                        elif self.op in unsigned_int_ops:
+                            fmt = {8: '<Q', 4: '<I', 2: '<H', 1: '<B'}[eb]
+                        else:
+                            raise NotImplementedError(f"Unknown op: {self.op}")
+                        src1_val = struct.unpack(fmt, src1_bytes)[0]
+                        src2_val = struct.unpack(fmt, src2_bytes)[0]
 
                         if self.op == VArithOp.ADD:
                             result = src1_val + src2_val
+                        elif self.op == VArithOp.SUB:
+                            result = src2_val - src1_val
                         elif self.op == VArithOp.MUL:
                             result = src1_val * src2_val
                         elif self.op == VArithOp.MACC:
                             acc_bytes = jamlet.rf_slice[dst_offset + byte_offset:dst_offset + byte_offset + eb]
-                            acc_val = int.from_bytes(acc_bytes, byteorder='little', signed=True)
+                            acc_val = struct.unpack(fmt, acc_bytes)[0]
                             result = (src1_val * src2_val) + acc_val
+                        elif self.op == VArithOp.AND:
+                            result = src1_val & src2_val
+                        elif self.op == VArithOp.OR:
+                            result = src1_val | src2_val
+                        elif self.op == VArithOp.XOR:
+                            result = src1_val ^ src2_val
+                        elif self.op == VArithOp.SLL:
+                            result = src2_val << (src1_val & (eb * 8 - 1))
+                        elif self.op == VArithOp.SRL:
+                            result = src2_val >> (src1_val & (eb * 8 - 1))
+                        elif self.op == VArithOp.SRA:
+                            result = src2_val >> (src1_val & (eb * 8 - 1))
+                        elif self.op == VArithOp.MIN:
+                            result = min(src1_val, src2_val)
+                        elif self.op == VArithOp.MAX:
+                            result = max(src1_val, src2_val)
+                        elif self.op == VArithOp.MINU:
+                            result = min(src1_val, src2_val)
+                        elif self.op == VArithOp.MAXU:
+                            result = max(src1_val, src2_val)
+                        elif self.op == VArithOp.FADD:
+                            result = src2_val + src1_val
+                        elif self.op == VArithOp.FSUB:
+                            result = src2_val - src1_val
+                        elif self.op == VArithOp.FMUL:
+                            result = src2_val * src1_val
+                        elif self.op == VArithOp.FDIV:
+                            result = src2_val / src1_val
+                        elif self.op == VArithOp.FMACC:
+                            acc_bytes = jamlet.rf_slice[dst_offset + byte_offset:dst_offset + byte_offset + eb]
+                            acc_val = struct.unpack(fmt, acc_bytes)[0]
+                            result = (src1_val * src2_val) + acc_val
+                        elif self.op == VArithOp.FMIN:
+                            result = min(src1_val, src2_val)
+                        elif self.op == VArithOp.FMAX:
+                            result = max(src1_val, src2_val)
                         else:
-                            assert NotImplementedError()
+                            raise NotImplementedError(f"Unknown op: {self.op}")
 
-                        result_bytes = result.to_bytes(eb, byteorder='little', signed=True)
-                        jamlet.rf_slice[dst_offset + byte_offset:dst_offset + byte_offset + eb] = result_bytes
+                        jamlet.rf_slice[dst_offset + byte_offset:dst_offset + byte_offset + eb] = struct.pack(fmt, result)
         kamlet.monitor.finalize_kinstr_exec(self.instr_ident, kamlet.min_x, kamlet.min_y)
 
 

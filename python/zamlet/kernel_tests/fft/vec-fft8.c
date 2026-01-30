@@ -12,6 +12,7 @@
 
 #define N 8
 #define N_FFTS 1
+#define TOL 1e-9
 
 // Bit-reverse permutation indices for 8-point (in VPU memory)
 size_t bitrev8[8] __attribute__((section(".data.vpu64"))) = {0, 4, 2, 6, 1, 5, 3, 7};
@@ -53,6 +54,12 @@ double data_re[N * N_FFTS] __attribute__((section(".data.vpu64")));
 double data_im[N * N_FFTS] __attribute__((section(".data.vpu64")));
 double tmp_re[N] __attribute__((section(".data.vpu64")));
 double tmp_im[N] __attribute__((section(".data.vpu64")));
+
+// Expected FFT output for input [0, 1, 2, 3, 4, 5, 6, 7] + 0j
+// Computed with numpy.fft.fft
+double expected_re[N] = {28.0, -4.0, -4.0, -4.0, -4.0, -4.0, -4.0, -4.0};
+double expected_im[N] = {0.0, 9.6568542494923806, 4.0, 1.6568542494923806,
+                         0.0, -1.6568542494923806, -4.0, -9.6568542494923806};
 
 void fft8_stage(double* dst_re, double* dst_im,
                 const double* src_re, const double* src_im,
@@ -150,7 +157,21 @@ int main(int argc, char* argv[]) {
     asm volatile("fence");
     cycles2 = read_csr(mcycle);
 
-    printf("PASSED\n");
     printf("Cycles: %lu\n", cycles2 - cycles1);
+
+    // Verify results
+    for (int i = 0; i < N; i++) {
+        double err_re = data_re[i] - expected_re[i];
+        double err_im = data_im[i] - expected_im[i];
+        if (err_re < 0) err_re = -err_re;
+        if (err_im < 0) err_im = -err_im;
+        if (err_re > TOL || err_im > TOL) {
+            printf("FAIL [%d]: got (%f, %f), expected (%f, %f)\n",
+                   i, data_re[i], data_im[i], expected_re[i], expected_im[i]);
+            return 1;
+        }
+    }
+
+    printf("PASSED\n");
     return 0;
 }

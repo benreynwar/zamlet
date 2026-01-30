@@ -834,6 +834,61 @@ class VArithVv:
 
 
 @dataclass
+class VArithVvFloat:
+    """Floating-point vector-vector arithmetic instruction.
+
+    Used for vfadd.vv, vfsub.vv, vfmul.vv, etc.
+    """
+    vd: int
+    vs1: int
+    vs2: int
+    vm: int
+    op: kinstructions.VArithOp
+
+    def __str__(self):
+        vm_str = '' if self.vm else ',v0.t'
+        return f'vf{self.op.value[1:]}.vv\tv{self.vd},v{self.vs2},v{self.vs1}{vm_str}'
+
+    async def update_state(self, s: 'Lamlet'):
+        span_id = s.monitor.create_span(
+            span_type=SpanType.RISCV_INSTR,
+            component="lamlet",
+            completion_type=CompletionType.FIRE_AND_FORGET,
+            mnemonic=str(self),
+            pc=s.pc,
+        )
+
+        if self.vm:
+            mask_reg = None
+        else:
+            mask_reg = 0
+
+        vsew = (s.vtype >> 3) & 0x7
+        element_width = 8 << vsew
+        word_order = addresses.WordOrder.STANDARD
+
+        assert s.vrf_ordering[self.vs1].ew == element_width
+        assert s.vrf_ordering[self.vs2].ew == element_width
+
+        s.vrf_ordering[self.vd] = addresses.Ordering(word_order, element_width)
+
+        instr_ident = await s.get_instr_ident()
+        kinstr = kinstructions.VArithVvOp(
+            op=self.op,
+            dst=self.vd,
+            src1=self.vs1,
+            src2=self.vs2,
+            mask_reg=mask_reg,
+            n_elements=s.vl,
+            element_width=element_width,
+            word_order=word_order,
+            instr_ident=instr_ident,
+        )
+        await s.add_to_instruction_buffer(kinstr, span_id)
+        s.pc += 4
+
+
+@dataclass
 class VArithVx:
     """Generic vector-scalar arithmetic instruction.
 
@@ -999,4 +1054,70 @@ class VIndexedStore:
                 self.vs3, base_addr, self.vs2, self.index_width, data_ew,
                 s.vl, mask_reg, s.vstart, parent_span_id=span_id
             )
+        s.pc += 4
+
+
+@dataclass
+class Vrgather:
+    """VRGATHER.VV - Vector Register Gather.
+
+    vd[i] = (vs1[i] >= VLMAX) ? 0 : vs2[vs1[i]]
+
+    Gathers elements from vs2 using indices in vs1.
+
+    Reference: riscv-isa-manual/src/v-st-ext.adoc
+    """
+    vd: int
+    vs2: int
+    vs1: int
+    vm: int
+
+    def __str__(self):
+        vm_str = '' if self.vm else ',v0.t'
+        return f'vrgather.vv\tv{self.vd},v{self.vs2},v{self.vs1}{vm_str}'
+
+    async def update_state(self, s: 'Lamlet'):
+        span_id = s.monitor.create_span(
+            span_type=SpanType.RISCV_INSTR,
+            component="lamlet",
+            completion_type=CompletionType.FIRE_AND_FORGET,
+            mnemonic=str(self),
+            pc=s.pc,
+        )
+
+        vsew = (s.vtype >> 3) & 0x7
+        element_width = 8 << vsew
+        word_order = addresses.WordOrder.STANDARD
+
+        assert s.vrf_ordering[self.vs1].ew == element_width
+        assert s.vrf_ordering[self.vs2].ew == element_width
+
+        s.vrf_ordering[self.vd] = addresses.Ordering(word_order, element_width)
+
+        mask_reg = None if self.vm else 0
+
+        # Compute VLMAX
+        vlmul = (s.vtype >> 0) & 0x7
+        if vlmul < 4:
+            lmul = 1 << vlmul
+        else:
+            lmul = 1  # fractional LMUL treated as 1 for VLMAX
+        elements_in_vline = s.params.vline_bytes * 8 // element_width
+        vlmax = elements_in_vline * lmul
+
+        # For vrgather.vv, both index and data use the same SEW
+        # For vrgatherei16, index_ew would be 16
+        await s.vrgather(
+            vd=self.vd,
+            vs2=self.vs2,
+            vs1=self.vs1,
+            start_index=s.vstart,
+            n_elements=s.vl,
+            index_ew=element_width,
+            data_ew=element_width,
+            word_order=word_order,
+            vlmax=vlmax,
+            mask_reg=mask_reg,
+            parent_span_id=span_id,
+        )
         s.pc += 4

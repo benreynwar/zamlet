@@ -626,6 +626,19 @@ def decode_standard(instruction_bytes: bytes) -> Instruction:
             return V.VnmsubVv(vd=rd, vs1=vs1, vs2=vs2, vm=vm)
         elif funct6 == 0x2b and funct3 == 0x6:
             return V.VnmsubVx(vd=rd, rs1=rs1, vs2=vs2, vm=vm)
+        elif funct6 == 0x0c and funct3 == 0x0:
+            vs1 = rs1
+            return V.Vrgather(vd=rd, vs2=vs2, vs1=vs1, vm=vm)
+        # OPFVV (funct3 = 0x1) - floating-point vector-vector
+        elif funct6 == 0x00 and funct3 == 0x1:
+            vs1 = rs1
+            return V.VArithVvFloat(vd=rd, vs1=vs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.FADD)
+        elif funct6 == 0x02 and funct3 == 0x1:
+            vs1 = rs1
+            return V.VArithVvFloat(vd=rd, vs1=vs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.FSUB)
+        elif funct6 == 0x24 and funct3 == 0x1:
+            vs1 = rs1
+            return V.VArithVvFloat(vd=rd, vs1=vs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.FMUL)
 
     elif opcode == 0x63:
         imm = decode_b_imm(inst)
