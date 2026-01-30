@@ -1,6 +1,9 @@
 # Public API for librelane Bazel flow rules
 
 load(":providers.bzl", _LibrelaneInfo = "LibrelaneInfo", _PdkInfo = "PdkInfo", _MacroInfo = "MacroInfo")
+load("//bazel/flow/config:synth.bzl", _SynthConfig = "SynthConfig", _librelane_synth_config = "librelane_synth_config")
+load("//bazel/flow/config:pnr.bzl", _PnRConfig = "PnRConfig", _librelane_pnr_config = "librelane_pnr_config")
+load("//bazel/flow/config:signoff.bzl", _SignoffConfig = "SignoffConfig", _librelane_signoff_config = "librelane_signoff_config")
 load(":pdk.bzl", _librelane_pdk = "librelane_pdk")
 load(":init.bzl", _librelane_init = "librelane_init")
 load(":synthesis.bzl", _librelane_synthesis = "librelane_synthesis")
@@ -40,9 +43,17 @@ load(":validate.bzl",
 LibrelaneInfo = _LibrelaneInfo
 PdkInfo = _PdkInfo
 MacroInfo = _MacroInfo
+SynthConfig = _SynthConfig
+PnRConfig = _PnRConfig
+SignoffConfig = _SignoffConfig
 
 # PDK
 librelane_pdk = _librelane_pdk
+
+# Config rules
+librelane_synth_config = _librelane_synth_config
+librelane_pnr_config = _librelane_pnr_config
+librelane_signoff_config = _librelane_signoff_config
 
 # Init (entry point)
 librelane_init = _librelane_init

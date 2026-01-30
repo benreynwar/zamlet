@@ -36,8 +36,6 @@ KLAYOUT_DRC_CONFIG_KEYS = BASE_CONFIG_KEYS + [
     "KLAYOUT_DRC_RUNSET",
     "KLAYOUT_DRC_OPTIONS",
     "KLAYOUT_DRC_THREADS",
-    # Gating (classic.py:247-250)
-    "RUN_KLAYOUT_DRC",
 ]
 
 def _stream_out_impl(ctx):

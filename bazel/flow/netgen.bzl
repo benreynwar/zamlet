@@ -5,9 +5,7 @@ load(":providers.bzl", "LibrelaneInfo")
 
 # Step 71: Netgen.LVS - netgen.py lines 127-253
 # Config from LVS class (lines 141-153) and NetgenStep parent (lines 102-116)
-# Also needs gating var RUN_LVS and flow-level EXTRA_SPICE_MODELS
 NETGEN_LVS_CONFIG_KEYS = BASE_CONFIG_KEYS + [
-    "RUN_LVS",
     "LVS_INCLUDE_MARCO_NETLISTS",
     "LVS_FLATTEN_CELLS",
     "EXTRA_SPICE_MODELS",

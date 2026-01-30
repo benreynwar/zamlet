@@ -52,8 +52,6 @@ MAGIC_WRITELEF_CONFIG_KEYS = BASE_CONFIG_KEYS + MAGIC_STEP_CONFIG_KEYS + [
 MAGIC_DRC_CONFIG_KEYS = BASE_CONFIG_KEYS + MAGIC_STEP_CONFIG_KEYS + [
     # DRC config_vars
     "MAGIC_DRC_USE_GDS",
-    # Gating (classic.py:239-242)
-    "RUN_MAGIC_DRC",
 ]
 
 # Step 69: Magic.SpiceExtraction - magic.py lines 418-517

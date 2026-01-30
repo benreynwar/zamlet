@@ -1,6 +1,7 @@
 # Full P&R flow macros - matches librelane Classic flow
 
 load(":init.bzl", "librelane_init")
+load("//bazel/flow/config:pnr.bzl", "librelane_pnr_config")
 load("//bazel/flow/sdc:sdc_template.bzl", "sdc_template")
 load(":verilator.bzl", "librelane_verilator_lint")
 load(":checker.bzl",
@@ -170,6 +171,37 @@ def librelane_classic_flow(
         if not signoff_sdc_file:
             effective_signoff_sdc = ":" + name + "_sdc"
 
+    # PnR config - create if any PnR params are non-default
+    pnr_config_kwargs = {}
+    if pl_target_density_pct:
+        pnr_config_kwargs["pl_target_density_pct"] = pl_target_density_pct
+    if pin_order_cfg:
+        pnr_config_kwargs["fp_pin_order_cfg"] = pin_order_cfg
+    if def_template:
+        pnr_config_kwargs["fp_def_template"] = def_template
+    if cts_clk_max_wire_length:
+        pnr_config_kwargs["cts_clk_max_wire_length"] = cts_clk_max_wire_length
+    if core_utilization != "50":
+        pnr_config_kwargs["fp_core_util"] = core_utilization
+    if pdn_obstructions:
+        pnr_config_kwargs["pdn_obstructions"] = pdn_obstructions
+    if routing_obstructions:
+        pnr_config_kwargs["routing_obstructions"] = routing_obstructions
+    if manual_global_placements:
+        pnr_config_kwargs["manual_global_placements"] = manual_global_placements
+    if diode_on_ports != "none":
+        pnr_config_kwargs["diode_on_ports"] = diode_on_ports
+    if macro_placement_cfg:
+        pnr_config_kwargs["macro_placement_cfg"] = macro_placement_cfg
+
+    pnr_config_target = None
+    if pnr_config_kwargs:
+        librelane_pnr_config(
+            name = name + "_pnr_config",
+            **pnr_config_kwargs
+        )
+        pnr_config_target = ":" + name + "_pnr_config"
+
     # Init - package inputs (creates both LibrelaneInput and LibrelaneInfo)
     librelane_init(
         name = name + "_init",
@@ -181,10 +213,7 @@ def librelane_classic_flow(
         macros = macros,
         pnr_sdc_file = effective_pnr_sdc if effective_pnr_sdc else "//bazel/flow/sdc:base.sdc",
         signoff_sdc_file = effective_signoff_sdc if effective_signoff_sdc else "//bazel/flow/sdc:base.sdc",
-        pl_target_density_pct = pl_target_density_pct,
-        fp_pin_order_cfg = pin_order_cfg,
-        fp_def_template = def_template,
-        cts_clk_max_wire_length = cts_clk_max_wire_length if cts_clk_max_wire_length else "0",
+        pnr_config = pnr_config_target,
     )
 
     # Common input reference for all steps

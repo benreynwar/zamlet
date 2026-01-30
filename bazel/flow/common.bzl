@@ -868,10 +868,13 @@ def get_input_files(input_info, state_info):
 
 
 def get_verilog_paths(input_info, state_info):
-    """Get verilog file paths - either synthesized netlist or input RTL."""
-    if state_info and state_info.nl:
-        return [state_info.nl.path]
-    elif input_info.verilog_files:
+    """Get verilog file paths - always returns original RTL sources.
+
+    In librelane, Config is immutable and VERILOG_FILES is set once at flow start.
+    Steps that need the netlist get it from state[DesignFormat.NETLIST].
+    """
+    _ = state_info  # unused, kept for API compatibility
+    if input_info.verilog_files:
         return [f.path for f in input_info.verilog_files.to_list()]
     else:
         return []

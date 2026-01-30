@@ -64,13 +64,13 @@ SYNTHESIS_CONFIG_KEYS = JSON_HEADER_CONFIG_KEYS + [
 ]
 
 # Step 73: Yosys.EQY - yosys.py lines 250-350
-# Inherits YosysStep.config_vars + verilog_rtl_cfg_vars (most in SYNTHESIS_CONFIG_KEYS)
-# EQY-specific config from lines 266-287
-EQY_CONFIG_KEYS = SYNTHESIS_CONFIG_KEYS + [
-    "RUN_EQY",
+# EQY only needs base Yosys config + EQY-specific config (lines 266-287)
+# Does NOT need SynthesisCommon keys (SYNTH_STRATEGY, SYNTH_ABC_*, etc.)
+EQY_CONFIG_KEYS = JSON_HEADER_CONFIG_KEYS + [
     "EQY_SCRIPT",
     "EQY_FORCE_ACCEPT_PDK",
     "MACRO_PLACEMENT_CFG",
+    "CELL_VERILOG_MODELS",
 ]
 
 def _synthesis_impl(ctx):
