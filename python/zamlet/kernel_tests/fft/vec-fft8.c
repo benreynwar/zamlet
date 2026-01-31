@@ -66,59 +66,59 @@ void fft8_stage(double* dst_re, double* dst_im,
                 const size_t* idx_a, const size_t* idx_b,
                 const double* signs,
                 const double* tw_re, const double* tw_im) {
-    size_t vl = __riscv_vsetvl_e64m1(N);
+    size_t vl = __riscv_vsetvl_e64m2(N);
 
     // Load source data
-    vfloat64m1_t v_src_re = __riscv_vle64_v_f64m1(src_re, vl);
-    vfloat64m1_t v_src_im = __riscv_vle64_v_f64m1(src_im, vl);
+    vfloat64m2_t v_src_re = __riscv_vle64_v_f64m2(src_re, vl);
+    vfloat64m2_t v_src_im = __riscv_vle64_v_f64m2(src_im, vl);
 
     // Load gather indices
-    vuint64m1_t v_idx_a = __riscv_vle64_v_u64m1(idx_a, vl);
-    vuint64m1_t v_idx_b = __riscv_vle64_v_u64m1(idx_b, vl);
+    vuint64m2_t v_idx_a = __riscv_vle64_v_u64m2(idx_a, vl);
+    vuint64m2_t v_idx_b = __riscv_vle64_v_u64m2(idx_b, vl);
 
     // Gather a and b values
-    vfloat64m1_t v_a_re = __riscv_vrgather_vv_f64m1(v_src_re, v_idx_a, vl);
-    vfloat64m1_t v_a_im = __riscv_vrgather_vv_f64m1(v_src_im, v_idx_a, vl);
-    vfloat64m1_t v_b_re = __riscv_vrgather_vv_f64m1(v_src_re, v_idx_b, vl);
-    vfloat64m1_t v_b_im = __riscv_vrgather_vv_f64m1(v_src_im, v_idx_b, vl);
+    vfloat64m2_t v_a_re = __riscv_vrgather_vv_f64m2(v_src_re, v_idx_a, vl);
+    vfloat64m2_t v_a_im = __riscv_vrgather_vv_f64m2(v_src_im, v_idx_a, vl);
+    vfloat64m2_t v_b_re = __riscv_vrgather_vv_f64m2(v_src_re, v_idx_b, vl);
+    vfloat64m2_t v_b_im = __riscv_vrgather_vv_f64m2(v_src_im, v_idx_b, vl);
 
     // Load twiddle factors
-    vfloat64m1_t v_tw_re = __riscv_vle64_v_f64m1(tw_re, vl);
-    vfloat64m1_t v_tw_im = __riscv_vle64_v_f64m1(tw_im, vl);
+    vfloat64m2_t v_tw_re = __riscv_vle64_v_f64m2(tw_re, vl);
+    vfloat64m2_t v_tw_im = __riscv_vle64_v_f64m2(tw_im, vl);
 
     // Complex multiply: W * b
-    vfloat64m1_t v_wb_re = __riscv_vfsub_vv_f64m1(
-        __riscv_vfmul_vv_f64m1(v_tw_re, v_b_re, vl),
-        __riscv_vfmul_vv_f64m1(v_tw_im, v_b_im, vl), vl);
-    vfloat64m1_t v_wb_im = __riscv_vfadd_vv_f64m1(
-        __riscv_vfmul_vv_f64m1(v_tw_re, v_b_im, vl),
-        __riscv_vfmul_vv_f64m1(v_tw_im, v_b_re, vl), vl);
+    vfloat64m2_t v_wb_re = __riscv_vfsub_vv_f64m2(
+        __riscv_vfmul_vv_f64m2(v_tw_re, v_b_re, vl),
+        __riscv_vfmul_vv_f64m2(v_tw_im, v_b_im, vl), vl);
+    vfloat64m2_t v_wb_im = __riscv_vfadd_vv_f64m2(
+        __riscv_vfmul_vv_f64m2(v_tw_re, v_b_im, vl),
+        __riscv_vfmul_vv_f64m2(v_tw_im, v_b_re, vl), vl);
 
     // Apply signs and add
-    vfloat64m1_t v_signs = __riscv_vle64_v_f64m1(signs, vl);
-    vfloat64m1_t v_wb_re_signed = __riscv_vfmul_vv_f64m1(v_wb_re, v_signs, vl);
-    vfloat64m1_t v_wb_im_signed = __riscv_vfmul_vv_f64m1(v_wb_im, v_signs, vl);
+    vfloat64m2_t v_signs = __riscv_vle64_v_f64m2(signs, vl);
+    vfloat64m2_t v_wb_re_signed = __riscv_vfmul_vv_f64m2(v_wb_re, v_signs, vl);
+    vfloat64m2_t v_wb_im_signed = __riscv_vfmul_vv_f64m2(v_wb_im, v_signs, vl);
 
-    vfloat64m1_t v_out_re = __riscv_vfadd_vv_f64m1(v_a_re, v_wb_re_signed, vl);
-    vfloat64m1_t v_out_im = __riscv_vfadd_vv_f64m1(v_a_im, v_wb_im_signed, vl);
+    vfloat64m2_t v_out_re = __riscv_vfadd_vv_f64m2(v_a_re, v_wb_re_signed, vl);
+    vfloat64m2_t v_out_im = __riscv_vfadd_vv_f64m2(v_a_im, v_wb_im_signed, vl);
 
-    __riscv_vse64_v_f64m1(dst_re, v_out_re, vl);
-    __riscv_vse64_v_f64m1(dst_im, v_out_im, vl);
+    __riscv_vse64_v_f64m2(dst_re, v_out_re, vl);
+    __riscv_vse64_v_f64m2(dst_im, v_out_im, vl);
 }
 
 void fft8(double* re, double* im) {
-    size_t vl = __riscv_vsetvl_e64m1(N);
+    size_t vl = __riscv_vsetvl_e64m2(N);
 
     // Bit-reverse permutation
-    vfloat64m1_t v_in_re = __riscv_vle64_v_f64m1(re, vl);
-    vfloat64m1_t v_in_im = __riscv_vle64_v_f64m1(im, vl);
-    vuint64m1_t v_bitrev = __riscv_vle64_v_u64m1(bitrev8, vl);
+    vfloat64m2_t v_in_re = __riscv_vle64_v_f64m2(re, vl);
+    vfloat64m2_t v_in_im = __riscv_vle64_v_f64m2(im, vl);
+    vuint64m2_t v_bitrev = __riscv_vle64_v_u64m2(bitrev8, vl);
 
-    vfloat64m1_t v_br_re = __riscv_vrgather_vv_f64m1(v_in_re, v_bitrev, vl);
-    vfloat64m1_t v_br_im = __riscv_vrgather_vv_f64m1(v_in_im, v_bitrev, vl);
+    vfloat64m2_t v_br_re = __riscv_vrgather_vv_f64m2(v_in_re, v_bitrev, vl);
+    vfloat64m2_t v_br_im = __riscv_vrgather_vv_f64m2(v_in_im, v_bitrev, vl);
 
-    __riscv_vse64_v_f64m1(tmp_re, v_br_re, vl);
-    __riscv_vse64_v_f64m1(tmp_im, v_br_im, vl);
+    __riscv_vse64_v_f64m2(tmp_re, v_br_re, vl);
+    __riscv_vse64_v_f64m2(tmp_im, v_br_im, vl);
 
     // Stage 0
     fft8_stage(re, im, tmp_re, tmp_im,

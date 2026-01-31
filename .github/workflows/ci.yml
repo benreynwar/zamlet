@@ -18,7 +18,10 @@ jobs:
       - uses: ./.github/actions/nix-setup
       - name: Run Python model tests
         run: |
-          nix-shell --run "cd python && python -m pytest zamlet/tests/ -v --tb=short"
+          nix-shell --run "cd python && python -m pytest zamlet/tests/ -v --tb=short -n auto"
+      - name: Run kernel tests
+        run: |
+          nix-shell --run "cd python && python -m pytest zamlet/kernel_tests/ -v --tb=short -n auto"
 
   cocotb-tests:
     runs-on: ubuntu-latest

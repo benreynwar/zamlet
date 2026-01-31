@@ -194,7 +194,7 @@ class WaitingRegGather(WaitingItem):
                 dst_ve, dst_e, dst_eb, dst_v = self._compute_dst_element(jamlet, tag)
 
                 # Skip if not the start of an element or out of range
-                if dst_eb != 0 or dst_e >= instr.n_elements:
+                if dst_eb != 0 or dst_e < instr.start_index or dst_e >= instr.start_index + instr.n_elements:
                     self.transaction_states[state_idx] = SendState.COMPLETE
                     continue
 
@@ -311,7 +311,7 @@ class WaitingRegGather(WaitingItem):
         state_idx = self._state_index(jamlet.j_in_k_index, tag)
         assert self.transaction_states[state_idx] == SendState.WAITING_FOR_RESPONSE
 
-        dst_ve, dst_e, dst_eb, dst_v = self._compute_dst_element(jamlet, tag)
+        _, _, _, dst_v = self._compute_dst_element(jamlet, tag)
         dst_reg = instr.vd + dst_v
         dst_offset = dst_reg * wb + tag
 

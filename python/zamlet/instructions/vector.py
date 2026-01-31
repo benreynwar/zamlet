@@ -185,6 +185,45 @@ class VleV:
 
 
 @dataclass
+class VlrV:
+    """VL*R.V - Vector Load Whole Registers.
+
+    Loads nreg consecutive vector registers from memory as a single unit.
+    Used for register restoring. Always loads full registers regardless of vl/vtype.
+
+    Variants: vl1re8.v, vl2re8.v, vl4re8.v, vl8re8.v
+
+    Reference: riscv-isa-manual/src/v-st-ext.adoc
+    """
+    vd: int
+    rs1: int
+    nreg: int
+
+    def __str__(self):
+        return f'vl{self.nreg}re8.v\tv{self.vd},({reg_name(self.rs1)})'
+
+    async def update_state(self, s: 'Lamlet'):
+        await s.scalar.wait_all_regs_ready(None, None, [self.rs1], [])
+        rs1_bytes = s.scalar.read_reg(self.rs1)
+        addr = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
+        span_id = s.monitor.create_span(
+            span_type=SpanType.RISCV_INSTR,
+            component="lamlet",
+            completion_type=CompletionType.FIRE_AND_FORGET,
+            mnemonic=str(self),
+            pc=s.pc,
+        )
+        # Use the register's element width to determine which address space to use.
+        # The register's ordering should still be set from before it was spilled.
+        reg_ordering = s.vrf_ordering[self.vd]
+        ew = reg_ordering.ew
+        n_elements = (s.params.vline_bytes * self.nreg * 8) // ew
+        ordering = addresses.Ordering(reg_ordering.word_order, ew)
+        await s.vload(self.vd, addr, ordering, n_elements, None, 0, parent_span_id=span_id)
+        s.pc += 4
+
+
+@dataclass
 class VseV:
     """VSE.V - Vector Store Elements (generic for all element widths).
 
@@ -215,6 +254,44 @@ class VseV:
         )
         ordering = addresses.Ordering(s.word_order, self.element_width)
         await s.vstore(self.vs3, addr, ordering, s.vl, mask_reg, s.vstart, parent_span_id=span_id)
+        s.pc += 4
+
+
+@dataclass
+class VsrV:
+    """VS*R.V - Vector Store Whole Registers.
+
+    Stores nreg consecutive vector registers to memory as a single unit.
+    Used for register spilling. Always stores full registers regardless of vl/vtype.
+
+    Variants: vs1r.v, vs2r.v, vs4r.v, vs8r.v
+
+    Reference: riscv-isa-manual/src/v-st-ext.adoc
+    """
+    vs3: int
+    rs1: int
+    nreg: int
+
+    def __str__(self):
+        return f'vs{self.nreg}r.v\tv{self.vs3},({reg_name(self.rs1)})'
+
+    async def update_state(self, s: 'Lamlet'):
+        await s.scalar.wait_all_regs_ready(None, None, [self.rs1], [])
+        rs1_bytes = s.scalar.read_reg(self.rs1)
+        addr = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
+        span_id = s.monitor.create_span(
+            span_type=SpanType.RISCV_INSTR,
+            component="lamlet",
+            completion_type=CompletionType.FIRE_AND_FORGET,
+            mnemonic=str(self),
+            pc=s.pc,
+        )
+        # Use the register's element width to determine which address space to use
+        reg_ordering = s.vrf_ordering[self.vs3]
+        ew = reg_ordering.ew
+        n_elements = (s.params.vline_bytes * self.nreg * 8) // ew
+        ordering = addresses.Ordering(reg_ordering.word_order, ew)
+        await s.vstore(self.vs3, addr, ordering, n_elements, None, 0, parent_span_id=span_id)
         s.pc += 4
 
 

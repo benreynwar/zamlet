@@ -358,10 +358,17 @@ def decode_standard(instruction_bytes: bytes) -> Instruction:
         nf = (inst >> 29) & 0x7  # Number of fields - 1 (0 = 1 field, 7 = 8 fields)
         mop = (inst >> 26) & 0x3
         vm = (inst >> 25) & 0x1
+        lumop = rs2  # For unit-stride loads, rs2 field holds lumop
         width = funct3
         # Map width field to element width
         width_map = {0x0: 8, 0x5: 16, 0x6: 32, 0x7: 64}
-        if mop == 0x0 and width in width_map:
+        if mop == 0x0 and lumop == 8:
+            # Whole register load (vl1r, vl2r, vl4r, vl8r)
+            # nf encodes number of registers: 0->1, 1->2, 3->4, 7->8
+            nreg_map = {0: 1, 1: 2, 3: 4, 7: 8}
+            assert nf in nreg_map, f"Invalid nf={nf} for whole register load"
+            return V.VlrV(vd=rd, rs1=rs1, nreg=nreg_map[nf])
+        elif mop == 0x0 and width in width_map:
             # Unit-stride load
             ew = width_map[width]
             if nf == 0:
@@ -441,11 +448,18 @@ def decode_standard(instruction_bytes: bytes) -> Instruction:
         nf = (inst >> 29) & 0x7  # Number of fields - 1 (0 = 1 field, 7 = 8 fields)
         mop = (inst >> 26) & 0x3
         vm = (inst >> 25) & 0x1
+        sumop = rs2  # For unit-stride stores, rs2 field holds sumop
         width = funct3
         vs3 = rd
         # Map width field to element width
         width_map = {0x0: 8, 0x5: 16, 0x6: 32, 0x7: 64}
-        if mop == 0x0 and width in width_map:
+        if mop == 0x0 and sumop == 8:
+            # Whole register store (vs1r, vs2r, vs4r, vs8r)
+            # nf encodes number of registers: 0->1, 1->2, 3->4, 7->8
+            nreg_map = {0: 1, 1: 2, 3: 4, 7: 8}
+            assert nf in nreg_map, f"Invalid nf={nf} for whole register store"
+            return V.VsrV(vs3=vs3, rs1=rs1, nreg=nreg_map[nf])
+        elif mop == 0x0 and width in width_map:
             # Unit-stride store
             ew = width_map[width]
             if nf == 0:
