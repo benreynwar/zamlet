@@ -91,6 +91,66 @@ class Vsetvli:
 
 
 @dataclass
+class Vsetivli:
+    """VSETIVLI - Vector Set Vector Length Immediate with Immediate AVL.
+
+    Sets vector length and vector type based on immediate-encoded AVL (uimm)
+    and immediate-encoded VTYPE.
+
+    Reference: riscv-isa-manual/src/v-st-ext.adoc
+    """
+    rd: int
+    uimm: int
+    vtypei: int
+
+    def __str__(self):
+        vlmul = (self.vtypei >> 0) & 0x7
+        vsew = (self.vtypei >> 3) & 0x7
+        vta = (self.vtypei >> 6) & 0x1
+        vma = (self.vtypei >> 7) & 0x1
+
+        lmul_strs = ['m1', 'm2', 'm4', 'm8', 'mf8', 'mf4', 'mf2', 'reserved']
+        sew_strs = ['e8', 'e16', 'e32', 'e64', 'e128', 'e256', 'e512', 'e1024']
+
+        lmul_str = lmul_strs[vlmul]
+        sew_str = sew_strs[vsew]
+        ta_str = 'ta' if vta else 'tu'
+        ma_str = 'ma' if vma else 'mu'
+
+        return f'vsetivli\t{reg_name(self.rd)},{self.uimm},{sew_str},{lmul_str},{ta_str},{ma_str}'
+
+    async def update_state(self, s: 'Lamlet'):
+        await s.scalar.wait_all_regs_ready(self.rd, None, [], [])
+        avl = self.uimm
+
+        s.vtype = self.vtypei
+
+        vlmul = (self.vtypei >> 0) & 0x7
+        vsew = (self.vtypei >> 3) & 0x7
+
+        if vlmul <= 3:
+            lmul = 1 << vlmul
+        else:
+            lmul = 1 / (1 << (8 - vlmul))
+
+        sew = 8 << vsew
+
+        vlen_bits = s.params.maxvl_bytes * 8
+        vlmax = int((vlen_bits / sew) * lmul)
+        logger.info(f'vsetivli: sew={sew} lmul={lmul} vlmax={vlmax} avl={avl}')
+
+        if avl <= vlmax:
+            s.vl = avl
+        else:
+            s.vl = vlmax
+
+        vl_bytes = s.vl.to_bytes(s.params.word_bytes, byteorder='little', signed=False)
+        s.scalar.write_reg(self.rd, vl_bytes)
+        logger.info(f'Set vl to {s.vl}')
+        s.pc += 4
+
+
+@dataclass
 class VleV:
     """VLE.V - Vector Load Elements (generic for all element widths).
 
@@ -125,6 +185,45 @@ class VleV:
 
 
 @dataclass
+class VlrV:
+    """VL*R.V - Vector Load Whole Registers.
+
+    Loads nreg consecutive vector registers from memory as a single unit.
+    Used for register restoring. Always loads full registers regardless of vl/vtype.
+
+    Variants: vl1re8.v, vl2re8.v, vl4re8.v, vl8re8.v
+
+    Reference: riscv-isa-manual/src/v-st-ext.adoc
+    """
+    vd: int
+    rs1: int
+    nreg: int
+
+    def __str__(self):
+        return f'vl{self.nreg}re8.v\tv{self.vd},({reg_name(self.rs1)})'
+
+    async def update_state(self, s: 'Lamlet'):
+        await s.scalar.wait_all_regs_ready(None, None, [self.rs1], [])
+        rs1_bytes = s.scalar.read_reg(self.rs1)
+        addr = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
+        span_id = s.monitor.create_span(
+            span_type=SpanType.RISCV_INSTR,
+            component="lamlet",
+            completion_type=CompletionType.FIRE_AND_FORGET,
+            mnemonic=str(self),
+            pc=s.pc,
+        )
+        # Use the register's element width to determine which address space to use.
+        # The register's ordering should still be set from before it was spilled.
+        reg_ordering = s.vrf_ordering[self.vd]
+        ew = reg_ordering.ew
+        n_elements = (s.params.vline_bytes * self.nreg * 8) // ew
+        ordering = addresses.Ordering(reg_ordering.word_order, ew)
+        await s.vload(self.vd, addr, ordering, n_elements, None, 0, parent_span_id=span_id)
+        s.pc += 4
+
+
+@dataclass
 class VseV:
     """VSE.V - Vector Store Elements (generic for all element widths).
 
@@ -155,6 +254,44 @@ class VseV:
         )
         ordering = addresses.Ordering(s.word_order, self.element_width)
         await s.vstore(self.vs3, addr, ordering, s.vl, mask_reg, s.vstart, parent_span_id=span_id)
+        s.pc += 4
+
+
+@dataclass
+class VsrV:
+    """VS*R.V - Vector Store Whole Registers.
+
+    Stores nreg consecutive vector registers to memory as a single unit.
+    Used for register spilling. Always stores full registers regardless of vl/vtype.
+
+    Variants: vs1r.v, vs2r.v, vs4r.v, vs8r.v
+
+    Reference: riscv-isa-manual/src/v-st-ext.adoc
+    """
+    vs3: int
+    rs1: int
+    nreg: int
+
+    def __str__(self):
+        return f'vs{self.nreg}r.v\tv{self.vs3},({reg_name(self.rs1)})'
+
+    async def update_state(self, s: 'Lamlet'):
+        await s.scalar.wait_all_regs_ready(None, None, [self.rs1], [])
+        rs1_bytes = s.scalar.read_reg(self.rs1)
+        addr = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
+        span_id = s.monitor.create_span(
+            span_type=SpanType.RISCV_INSTR,
+            component="lamlet",
+            completion_type=CompletionType.FIRE_AND_FORGET,
+            mnemonic=str(self),
+            pc=s.pc,
+        )
+        # Use the register's element width to determine which address space to use
+        reg_ordering = s.vrf_ordering[self.vs3]
+        ew = reg_ordering.ew
+        n_elements = (s.params.vline_bytes * self.nreg * 8) // ew
+        ordering = addresses.Ordering(reg_ordering.word_order, ew)
+        await s.vstore(self.vs3, addr, ordering, n_elements, None, 0, parent_span_id=span_id)
         s.pc += 4
 
 
@@ -774,6 +911,61 @@ class VArithVv:
 
 
 @dataclass
+class VArithVvFloat:
+    """Floating-point vector-vector arithmetic instruction.
+
+    Used for vfadd.vv, vfsub.vv, vfmul.vv, etc.
+    """
+    vd: int
+    vs1: int
+    vs2: int
+    vm: int
+    op: kinstructions.VArithOp
+
+    def __str__(self):
+        vm_str = '' if self.vm else ',v0.t'
+        return f'vf{self.op.value[1:]}.vv\tv{self.vd},v{self.vs2},v{self.vs1}{vm_str}'
+
+    async def update_state(self, s: 'Lamlet'):
+        span_id = s.monitor.create_span(
+            span_type=SpanType.RISCV_INSTR,
+            component="lamlet",
+            completion_type=CompletionType.FIRE_AND_FORGET,
+            mnemonic=str(self),
+            pc=s.pc,
+        )
+
+        if self.vm:
+            mask_reg = None
+        else:
+            mask_reg = 0
+
+        vsew = (s.vtype >> 3) & 0x7
+        element_width = 8 << vsew
+        word_order = addresses.WordOrder.STANDARD
+
+        assert s.vrf_ordering[self.vs1].ew == element_width
+        assert s.vrf_ordering[self.vs2].ew == element_width
+
+        s.vrf_ordering[self.vd] = addresses.Ordering(word_order, element_width)
+
+        instr_ident = await s.get_instr_ident()
+        kinstr = kinstructions.VArithVvOp(
+            op=self.op,
+            dst=self.vd,
+            src1=self.vs1,
+            src2=self.vs2,
+            mask_reg=mask_reg,
+            n_elements=s.vl,
+            element_width=element_width,
+            word_order=word_order,
+            instr_ident=instr_ident,
+        )
+        await s.add_to_instruction_buffer(kinstr, span_id)
+        s.pc += 4
+
+
+@dataclass
 class VArithVx:
     """Generic vector-scalar arithmetic instruction.
 
@@ -939,4 +1131,70 @@ class VIndexedStore:
                 self.vs3, base_addr, self.vs2, self.index_width, data_ew,
                 s.vl, mask_reg, s.vstart, parent_span_id=span_id
             )
+        s.pc += 4
+
+
+@dataclass
+class Vrgather:
+    """VRGATHER.VV - Vector Register Gather.
+
+    vd[i] = (vs1[i] >= VLMAX) ? 0 : vs2[vs1[i]]
+
+    Gathers elements from vs2 using indices in vs1.
+
+    Reference: riscv-isa-manual/src/v-st-ext.adoc
+    """
+    vd: int
+    vs2: int
+    vs1: int
+    vm: int
+
+    def __str__(self):
+        vm_str = '' if self.vm else ',v0.t'
+        return f'vrgather.vv\tv{self.vd},v{self.vs2},v{self.vs1}{vm_str}'
+
+    async def update_state(self, s: 'Lamlet'):
+        span_id = s.monitor.create_span(
+            span_type=SpanType.RISCV_INSTR,
+            component="lamlet",
+            completion_type=CompletionType.FIRE_AND_FORGET,
+            mnemonic=str(self),
+            pc=s.pc,
+        )
+
+        vsew = (s.vtype >> 3) & 0x7
+        element_width = 8 << vsew
+        word_order = addresses.WordOrder.STANDARD
+
+        assert s.vrf_ordering[self.vs1].ew == element_width
+        assert s.vrf_ordering[self.vs2].ew == element_width
+
+        s.vrf_ordering[self.vd] = addresses.Ordering(word_order, element_width)
+
+        mask_reg = None if self.vm else 0
+
+        # Compute VLMAX
+        vlmul = (s.vtype >> 0) & 0x7
+        if vlmul < 4:
+            lmul = 1 << vlmul
+        else:
+            lmul = 1  # fractional LMUL treated as 1 for VLMAX
+        elements_in_vline = s.params.vline_bytes * 8 // element_width
+        vlmax = elements_in_vline * lmul
+
+        # For vrgather.vv, both index and data use the same SEW
+        # For vrgatherei16, index_ew would be 16
+        await s.vrgather(
+            vd=self.vd,
+            vs2=self.vs2,
+            vs1=self.vs1,
+            start_index=s.vstart,
+            n_elements=s.vl,
+            index_ew=element_width,
+            data_ew=element_width,
+            word_order=word_order,
+            vlmax=vlmax,
+            mask_reg=mask_reg,
+            parent_span_id=span_id,
+        )
         s.pc += 4

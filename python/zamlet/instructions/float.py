@@ -515,13 +515,38 @@ class FabsD:
 
 
 @dataclass
+class FcvtDW:
+    """FCVT.D.W - Convert signed word to double-precision float.
+
+    Converts a 32-bit signed integer in integer register rs1 to a
+    double-precision floating-point value in floating-point register fd.
+
+    Reference: riscv-isa-manual/src/d-st-ext.adoc
+    """
+    fd: int
+    rs1: int
+
+    def __str__(self):
+        return f'fcvt.d.w\t{freg_name(self.fd)},{reg_name(self.rs1)}'
+
+    async def update_state(self, s: 'Lamlet'):
+        await s.scalar.wait_all_regs_ready(None, self.fd, [self.rs1], [])
+        rs1_bytes = s.scalar.read_reg(self.rs1)
+        int_val = int.from_bytes(rs1_bytes[:4], byteorder='little', signed=True)
+        float_val = float(int_val)
+        result_bytes = struct.pack('d', float_val)
+        s.scalar.write_freg(self.fd, result_bytes)
+        s.pc += 4
+
+
+@dataclass
 class FcvtDL:
     """FCVT.D.L - Convert signed long to double-precision float.
 
     Converts a 64-bit signed integer in integer register rs1 to a
     double-precision floating-point value in floating-point register fd.
 
-    Reference: riscv-isa-manual/src/f-st-ext.adoc
+    Reference: riscv-isa-manual/src/d-st-ext.adoc
     """
     fd: int
     rs1: int

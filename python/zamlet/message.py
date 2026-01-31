@@ -94,6 +94,11 @@ class MessageType(Enum):
     # Ident query response (kamlet -> lamlet)
     IDENT_QUERY_RESP = 40
 
+    # Read from register file (for vrgather)
+    READ_REG_ELEMENT_REQ = 44
+    READ_REG_ELEMENT_RESP = 45
+    READ_REG_ELEMENT_DROP = 46
+
     # Ordered indexed load/store responses (jamlet -> lamlet)
     # Jamlet tells lamlet it wrote data to RF (frees buffer slot)
     LOAD_INDEXED_ELEMENT_RESP = 51
@@ -157,6 +162,10 @@ CHANNEL_MAPPING = {
 
     MessageType.IDENT_QUERY_RESP: 0,
 
+    MessageType.READ_REG_ELEMENT_REQ: 1,
+    MessageType.READ_REG_ELEMENT_RESP: 0,
+    MessageType.READ_REG_ELEMENT_DROP: 0,
+
     # Ordered indexed load/store responses
     MessageType.LOAD_INDEXED_ELEMENT_RESP: 0,
     MessageType.STORE_INDEXED_ELEMENT_RESP: 0,
@@ -202,6 +211,14 @@ class TaggedHeader(IdentHeader):
 @dataclass
 class MaskedTaggedHeader(TaggedHeader):
     mask: int = 0  # 12 bits - per-word mask for J2J operations
+
+
+@dataclass
+class RegElementHeader(TaggedHeader):
+    # For READ_REG_ELEMENT_REQ/RESP - fits in the 12 remaining bits
+    src_reg: int = 0        # 6 bits - source register number
+    src_byte_offset: int = 0  # 3 bits - byte offset within register word
+    n_bytes: int = 0        # 3 bits - number of bytes to read
 
 
 @dataclass

@@ -17,13 +17,10 @@ CSR_NAMES = {
     0x001: 'fflags',
     0x002: 'frm',
     0x003: 'fcsr',
-    # Vector CSRs
+    # Vector CSRs (read-write)
     0x008: 'vstart',
     0x009: 'vxsat',
     0x00a: 'vxrm',
-    0x00b: 'vtype',
-    0x00c: 'vl',
-    0x00e: 'vlenb',
     0x00f: 'vcsr',
     # User CSRs
     0x011: 'ssp',
@@ -113,6 +110,10 @@ CSR_NAMES = {
     0xc00: 'cycle',
     0xc01: 'time',
     0xc02: 'instret',
+    # Vector CSRs (read-only)
+    0xc20: 'vl',
+    0xc21: 'vtype',
+    0xc22: 'vlenb',
     0xc80: 'cycleh',
     0xc81: 'timeh',
     0xc82: 'instreth',

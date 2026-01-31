@@ -358,10 +358,17 @@ def decode_standard(instruction_bytes: bytes) -> Instruction:
         nf = (inst >> 29) & 0x7  # Number of fields - 1 (0 = 1 field, 7 = 8 fields)
         mop = (inst >> 26) & 0x3
         vm = (inst >> 25) & 0x1
+        lumop = rs2  # For unit-stride loads, rs2 field holds lumop
         width = funct3
         # Map width field to element width
         width_map = {0x0: 8, 0x5: 16, 0x6: 32, 0x7: 64}
-        if mop == 0x0 and width in width_map:
+        if mop == 0x0 and lumop == 8:
+            # Whole register load (vl1r, vl2r, vl4r, vl8r)
+            # nf encodes number of registers: 0->1, 1->2, 3->4, 7->8
+            nreg_map = {0: 1, 1: 2, 3: 4, 7: 8}
+            assert nf in nreg_map, f"Invalid nf={nf} for whole register load"
+            return V.VlrV(vd=rd, rs1=rs1, nreg=nreg_map[nf])
+        elif mop == 0x0 and width in width_map:
             # Unit-stride load
             ew = width_map[width]
             if nf == 0:
@@ -441,11 +448,18 @@ def decode_standard(instruction_bytes: bytes) -> Instruction:
         nf = (inst >> 29) & 0x7  # Number of fields - 1 (0 = 1 field, 7 = 8 fields)
         mop = (inst >> 26) & 0x3
         vm = (inst >> 25) & 0x1
+        sumop = rs2  # For unit-stride stores, rs2 field holds sumop
         width = funct3
         vs3 = rd
         # Map width field to element width
         width_map = {0x0: 8, 0x5: 16, 0x6: 32, 0x7: 64}
-        if mop == 0x0 and width in width_map:
+        if mop == 0x0 and sumop == 8:
+            # Whole register store (vs1r, vs2r, vs4r, vs8r)
+            # nf encodes number of registers: 0->1, 1->2, 3->4, 7->8
+            nreg_map = {0: 1, 1: 2, 3: 4, 7: 8}
+            assert nf in nreg_map, f"Invalid nf={nf} for whole register store"
+            return V.VsrV(vs3=vs3, rs1=rs1, nreg=nreg_map[nf])
+        elif mop == 0x0 and width in width_map:
             # Unit-stride store
             ew = width_map[width]
             if nf == 0:
@@ -557,6 +571,8 @@ def decode_standard(instruction_bytes: bytes) -> Instruction:
             return F.FabsD(fd=rd, rs1=rs1)
         elif funct7_full == 0x11 and rs2 == rs1 and funct3 == 0x0:
             return F.FmvD(fd=rd, rs1=rs1)
+        elif funct7_full == 0x69 and rs2 == 0x0:
+            return F.FcvtDW(fd=rd, rs1=rs1)
         elif funct7_full == 0x69 and rs2 == 0x2:
             return F.FcvtDL(fd=rd, rs1=rs1)
         elif funct7_full == 0x61 and rs2 == 0x2:
@@ -571,6 +587,11 @@ def decode_standard(instruction_bytes: bytes) -> Instruction:
         if bit31 == 0 and funct3 == 0x7:
             vtypei = (inst >> 20) & 0x7ff
             return V.Vsetvli(rd=rd, rs1=rs1, vtypei=vtypei)
+        elif bit31 == 1 and ((inst >> 30) & 0x1) == 1 and funct3 == 0x7:
+            # vsetivli: bit31=1, bit30=1, funct3=7
+            uimm = (inst >> 15) & 0x1f
+            vtypei = (inst >> 20) & 0x3ff
+            return V.Vsetivli(rd=rd, uimm=uimm, vtypei=vtypei)
         elif funct6 == 0x2c and funct3 == 0x5:
             return V.VArithVxFloat(vd=rd, rs1=rs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.MACC)
         elif funct6 == 0x00 and funct3 == 0x2:
@@ -619,6 +640,19 @@ def decode_standard(instruction_bytes: bytes) -> Instruction:
             return V.VnmsubVv(vd=rd, vs1=vs1, vs2=vs2, vm=vm)
         elif funct6 == 0x2b and funct3 == 0x6:
             return V.VnmsubVx(vd=rd, rs1=rs1, vs2=vs2, vm=vm)
+        elif funct6 == 0x0c and funct3 == 0x0:
+            vs1 = rs1
+            return V.Vrgather(vd=rd, vs2=vs2, vs1=vs1, vm=vm)
+        # OPFVV (funct3 = 0x1) - floating-point vector-vector
+        elif funct6 == 0x00 and funct3 == 0x1:
+            vs1 = rs1
+            return V.VArithVvFloat(vd=rd, vs1=vs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.FADD)
+        elif funct6 == 0x02 and funct3 == 0x1:
+            vs1 = rs1
+            return V.VArithVvFloat(vd=rd, vs1=vs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.FSUB)
+        elif funct6 == 0x24 and funct3 == 0x1:
+            vs1 = rs1
+            return V.VArithVvFloat(vd=rd, vs1=vs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.FMUL)
 
     elif opcode == 0x63:
         imm = decode_b_imm(inst)

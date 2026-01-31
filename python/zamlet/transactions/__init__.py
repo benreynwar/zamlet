@@ -24,3 +24,4 @@ from zamlet.transactions import store_word
 from zamlet.transactions import read_mem_word
 from zamlet.transactions import write_mem_word
 from zamlet.transactions import store_stride
+from zamlet.transactions import read_reg_element

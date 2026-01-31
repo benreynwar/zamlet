@@ -56,6 +56,7 @@ from zamlet.lamlet import ident_query
 from zamlet.lamlet.ident_query import RefreshState
 from zamlet.lamlet import ordered
 from zamlet.lamlet import unordered
+from zamlet.lamlet import vregister
 
 
 logger = logging.getLogger(__name__)
@@ -1020,6 +1021,16 @@ class Lamlet:
         return await ordered.vstore_indexed_ordered(self, vs, base_addr, index_reg, index_ew,
                                                     data_ew, n_elements, mask_reg, start_index,
                                                     parent_span_id)
+
+    async def vrgather(self, vd: int, vs2: int, vs1: int,
+                       start_index: int, n_elements: int,
+                       index_ew: int, data_ew: int,
+                       word_order: addresses.WordOrder, vlmax: int,
+                       mask_reg: int | None, parent_span_id: int) -> int:
+        """Execute vrgather. Returns sync_ident that can be awaited if needed."""
+        return await vregister.vrgather(self, vd, vs2, vs1, start_index, n_elements,
+                                        index_ew, data_ew, word_order, vlmax,
+                                        mask_reg, parent_span_id)
 
     def check_element_width(self, addr: GlobalAddress, size: int, element_width: int):
         """

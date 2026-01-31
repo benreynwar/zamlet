@@ -24,6 +24,9 @@ class ScalarState:
         self.non_idempotent_access_log: list[int] = []
         self.non_idempotent_write_log: list[int] = []
         self.csr = {}
+        # Initialize read-only vector CSRs
+        # vlenb (0xc22) = VLEN/8 = vline_bytes
+        self.csr[0xc22] = params.vline_bytes.to_bytes(params.word_bytes, 'little')
 
     def regs_ready(self, dst_reg, dst_freg, src_regs, src_fregs):
         dst_reg_ready = dst_reg is None or dst_reg == 0 or self._rf[dst_reg].can_write()
