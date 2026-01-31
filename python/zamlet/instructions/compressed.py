@@ -49,7 +49,8 @@ class CAddi4spn:
     imm: int
 
     def __str__(self):
-        return f'addi\t{reg_name(self.rd)},sp,{self.imm}'
+        # Match objdump pseudo-instruction convention
+        return f'add\t{reg_name(self.rd)},sp,{self.imm}'
 
     async def update_state(self, s: 'Lamlet'):
         await s.scalar.wait_all_regs_ready(self.rd, None, [2], [])
@@ -73,7 +74,8 @@ class CAddi:
     imm: int
 
     def __str__(self):
-        return f'addi\t{reg_name(self.rd)},{reg_name(self.rd)},{self.imm}'
+        # Match objdump pseudo-instruction (add when rd == rs1, always true for C.ADDI)
+        return f'add\t{reg_name(self.rd)},{reg_name(self.rd)},{self.imm}'
 
     async def update_state(self, s: 'Lamlet'):
         await s.scalar.wait_all_regs_ready(self.rd, None, [self.rd], [])
@@ -123,7 +125,8 @@ class CAddiw:
         if self.imm == 0:
             return f'sext.w\t{reg_name(self.rd)},{reg_name(self.rd)}'
         else:
-            return f'addiw\t{reg_name(self.rd)},{reg_name(self.rd)},{self.imm}'
+            # Match objdump pseudo-instruction (addw when rd == rs1, always true for C.ADDIW)
+            return f'addw\t{reg_name(self.rd)},{reg_name(self.rd)},{self.imm}'
 
     async def update_state(self, s: 'Lamlet'):
         await s.scalar.wait_all_regs_ready(self.rd, None, [self.rd], [])
@@ -171,7 +174,8 @@ class CAddi16sp:
     imm: int
 
     def __str__(self):
-        return f'addi\tsp,sp,{self.imm}'
+        # Match objdump pseudo-instruction (add when rd == rs1)
+        return f'add\tsp,sp,{self.imm}'
 
     async def update_state(self, s: 'Lamlet'):
         await s.scalar.wait_all_regs_ready(None, None, [2], [])
@@ -242,7 +246,8 @@ class CSlli:
     shamt: int
 
     def __str__(self):
-        return f'slli\t{reg_name(self.rd)},{reg_name(self.rd)},0x{self.shamt:x}'
+        # Match objdump pseudo-instruction convention (sll when rd == rs1, always true for C.SLLI)
+        return f'sll\t{reg_name(self.rd)},{reg_name(self.rd)},0x{self.shamt:x}'
 
     async def update_state(self, s: 'Lamlet'):
         await s.scalar.wait_all_regs_ready(self.rd, None, [self.rd], [])
@@ -366,7 +371,8 @@ class CAndi:
     imm: int
 
     def __str__(self):
-        return f'andi\t{reg_name(self.rd_rs1)},{reg_name(self.rd_rs1)},{self.imm}'
+        # Match objdump pseudo-instruction (and when rd == rs1, always true for C.ANDI)
+        return f'and\t{reg_name(self.rd_rs1)},{reg_name(self.rd_rs1)},{self.imm}'
 
     async def update_state(self, s: 'Lamlet'):
         await s.scalar.wait_all_regs_ready(self.rd_rs1, None, [self.rd_rs1], [])
@@ -390,7 +396,8 @@ class CSrli:
     shamt: int
 
     def __str__(self):
-        return f'srli\t{reg_name(self.rd_rs1)},{reg_name(self.rd_rs1)},{self.shamt}'
+        # Match objdump pseudo-instruction (srl when rd == rs1, always true for C.SRLI)
+        return f'srl\t{reg_name(self.rd_rs1)},{reg_name(self.rd_rs1)},{self.shamt}'
 
     async def update_state(self, s: 'Lamlet'):
         await s.scalar.wait_all_regs_ready(self.rd_rs1, None, [self.rd_rs1], [])
@@ -414,7 +421,8 @@ class CSrai:
     shamt: int
 
     def __str__(self):
-        return f'srai\t{reg_name(self.rd_rs1)},{reg_name(self.rd_rs1)},{self.shamt}'
+        # Match objdump pseudo-instruction (sra when rd == rs1, always true for C.SRAI)
+        return f'sra\t{reg_name(self.rd_rs1)},{reg_name(self.rd_rs1)},{self.shamt}'
 
     async def update_state(self, s: 'Lamlet'):
         await s.scalar.wait_all_regs_ready(self.rd_rs1, None, [self.rd_rs1], [])

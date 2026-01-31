@@ -31,7 +31,8 @@ class Addi:
         elif self.imm == 0:
             return f'mv\t{reg_name(self.rd)},{reg_name(self.rs1)}'
         else:
-            return f'addi\t{reg_name(self.rd)},{reg_name(self.rs1)},{self.imm}'
+            # Match objdump pseudo-instruction convention
+            return f'add\t{reg_name(self.rd)},{reg_name(self.rs1)},{self.imm}'
 
     async def update_state(self, s: 'Lamlet'):
         await s.scalar.wait_all_regs_ready(self.rd, None, [self.rs1], [])
@@ -59,7 +60,8 @@ class Andi:
         if self.imm == 255:
             return f'zext.b\t{reg_name(self.rd)},{reg_name(self.rs1)}'
         else:
-            return f'andi\t{reg_name(self.rd)},{reg_name(self.rs1)},{self.imm}'
+            # Match objdump pseudo-instruction convention
+            return f'and\t{reg_name(self.rd)},{reg_name(self.rs1)},{self.imm}'
 
     async def update_state(self, s: 'Lamlet'):
         await s.scalar.wait_all_regs_ready(self.rd, None, [self.rs1], [])
@@ -84,7 +86,8 @@ class Ori:
     imm: int
 
     def __str__(self):
-        return f'ori\t{reg_name(self.rd)},{reg_name(self.rs1)},{self.imm}'
+        # Match objdump pseudo-instruction convention
+        return f'or\t{reg_name(self.rd)},{reg_name(self.rs1)},{self.imm}'
 
     async def update_state(self, s: 'Lamlet'):
         await s.scalar.wait_all_regs_ready(self.rd, None, [self.rs1], [])
@@ -113,7 +116,8 @@ class Xori:
         if self.imm == -1:
             return f'not\t{reg_name(self.rd)},{reg_name(self.rs1)}'
         else:
-            return f'xori\t{reg_name(self.rd)},{reg_name(self.rs1)},{self.imm}'
+            # Match objdump pseudo-instruction convention
+            return f'xor\t{reg_name(self.rd)},{reg_name(self.rs1)},{self.imm}'
 
     async def update_state(self, s: 'Lamlet'):
         await s.scalar.wait_all_regs_ready(self.rd, None, [self.rs1], [])
@@ -138,7 +142,8 @@ class Slli:
     shamt: int
 
     def __str__(self):
-        return f'slli\t{reg_name(self.rd)},{reg_name(self.rs1)},0x{self.shamt:x}'
+        # Match objdump pseudo-instruction convention
+        return f'sll\t{reg_name(self.rd)},{reg_name(self.rs1)},0x{self.shamt:x}'
 
     async def update_state(self, s: 'Lamlet'):
         await s.scalar.wait_all_regs_ready(self.rd, None, [self.rs1], [])
@@ -319,7 +324,8 @@ class Addiw:
         if self.imm == 0:
             return f'sext.w\t{reg_name(self.rd)},{reg_name(self.rs1)}'
         else:
-            return f'addiw\t{reg_name(self.rd)},{reg_name(self.rs1)},{self.imm}'
+            # Match objdump pseudo-instruction convention
+            return f'addw\t{reg_name(self.rd)},{reg_name(self.rs1)},{self.imm}'
 
     async def update_state(self, s: 'Lamlet'):
         await s.scalar.wait_all_regs_ready(self.rd, None, [self.rs1], [])
@@ -403,7 +409,8 @@ class Slliw:
     shamt: int
 
     def __str__(self):
-        return f'slliw\t{reg_name(self.rd)},{reg_name(self.rs1)},0x{self.shamt:x}'
+        # Match objdump pseudo-instruction convention
+        return f'sllw\t{reg_name(self.rd)},{reg_name(self.rs1)},0x{self.shamt:x}'
 
     async def update_state(self, s: 'Lamlet'):
         await s.scalar.wait_all_regs_ready(self.rd, None, [self.rs1], [])
@@ -431,7 +438,8 @@ class Srliw:
     shamt: int
 
     def __str__(self):
-        return f'srliw\t{reg_name(self.rd)},{reg_name(self.rs1)},0x{self.shamt:x}'
+        # Match objdump pseudo-instruction convention
+        return f'srlw\t{reg_name(self.rd)},{reg_name(self.rs1)},0x{self.shamt:x}'
 
     async def update_state(self, s: 'Lamlet'):
         await s.scalar.wait_all_regs_ready(self.rd, None, [self.rs1], [])
@@ -459,7 +467,8 @@ class Sraiw:
     shamt: int
 
     def __str__(self):
-        return f'sraiw\t{reg_name(self.rd)},{reg_name(self.rs1)},0x{self.shamt:x}'
+        # Match objdump pseudo-instruction convention
+        return f'sraw\t{reg_name(self.rd)},{reg_name(self.rs1)},0x{self.shamt:x}'
 
     async def update_state(self, s: 'Lamlet'):
         await s.scalar.wait_all_regs_ready(self.rd, None, [self.rs1], [])
