@@ -38,7 +38,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: ~/.cache/bazel
-          key: bazel-${{ runner.os }}-${{ hashFiles('MODULE.bazel', 'MODULE.bazel.lock', 'shell.nix', 'nix/*.nix', 'nix/*.patch') }}
+          key: bazel-cocotb-${{ runner.os }}-${{ hashFiles('MODULE.bazel', 'MODULE.bazel.lock', 'shell.nix', 'nix/*.nix', 'nix/*.patch') }}
 
   synthesis:
     runs-on: ubuntu-latest
@@ -69,4 +69,4 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: ~/.cache/bazel
-          key: bazel-${{ runner.os }}-${{ hashFiles('MODULE.bazel', 'MODULE.bazel.lock', 'shell.nix', 'nix/*.nix', 'nix/*.patch') }}
+          key: bazel-synth-${{ matrix.target }}-${{ runner.os }}-${{ hashFiles('MODULE.bazel', 'MODULE.bazel.lock', 'shell.nix', 'nix/*.nix', 'nix/*.patch') }}

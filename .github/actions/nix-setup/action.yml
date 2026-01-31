@@ -23,4 +23,6 @@ runs:
         path: ~/.cache/bazel
         key: bazel-${{ runner.os }}-${{ hashFiles('MODULE.bazel', 'MODULE.bazel.lock', 'shell.nix', 'nix/*.nix', 'nix/*.patch') }}
         restore-keys: |
-          bazel-${{ runner.os }}-
+          bazel-cocotb-${{ runner.os }}-
+          bazel-synth-
+          bazel-
