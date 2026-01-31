@@ -51,11 +51,11 @@ def riscv_asm_binary(name, src, linker_script, march = "rv64imafdc", mabi = "lp6
         srcs = [src, linker_script],
         outs = [name + ".bin"],
         cmd = """
-            riscv64-unknown-elf-gcc -nostdlib -nostartfiles \
+            riscv64-none-elf-gcc -nostdlib -nostartfiles \
                 -T $(location {ld}) \
                 -march={march} -mabi={mabi} \
                 -o {name}.elf $(location {src})
-            riscv64-unknown-elf-objcopy -O binary {name}.elf $@
+            riscv64-none-elf-objcopy -O binary {name}.elf $@
             rm {name}.elf
         """.format(
             name = name,

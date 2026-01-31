@@ -5,7 +5,7 @@ import re
 def parse_objdump(binary_path):
     """Parse objdump output into a dict mapping PC -> (bytes, instruction_text)"""
     result = subprocess.run(
-        ['riscv64-unknown-elf-objdump', '-d', binary_path],
+        ['riscv64-none-elf-objdump', '-d', binary_path],
         capture_output=True,
         text=True,
         check=True

@@ -32,7 +32,7 @@ jobs:
       - uses: ./.github/actions/nix-setup
       - name: Run cocotb tests
         run: |
-          nix-shell --run "bazel test //python/zamlet:cocotb_tests --test_output=errors"
+          nix-shell --run "bazel test //python/zamlet:cocotb_tests --test_output=errors --keep_going"
       - name: Save Bazel cache
         if: always()
         uses: actions/cache/save@v4
