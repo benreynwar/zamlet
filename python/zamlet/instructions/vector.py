@@ -181,6 +181,7 @@ class VleV:
         )
         ordering = addresses.Ordering(s.word_order, self.element_width)
         await s.vload(self.vd, addr, ordering, s.vl, mask_reg, s.vstart, parent_span_id=span_id)
+        s.monitor.finalize_children(span_id)
         s.pc += 4
 
 
@@ -254,6 +255,7 @@ class VseV:
         )
         ordering = addresses.Ordering(s.word_order, self.element_width)
         await s.vstore(self.vs3, addr, ordering, s.vl, mask_reg, s.vstart, parent_span_id=span_id)
+        s.monitor.finalize_children(span_id)
         s.pc += 4
 
 
@@ -511,6 +513,7 @@ class VArithVxFloat:
             instr_ident=instr_ident,
         )
         await s.add_to_instruction_buffer(kinstr, span_id)
+        s.monitor.finalize_children(span_id)
         s.pc += 4
 
 
@@ -574,6 +577,7 @@ class VmsleVi:
             instr_ident=instr_ident,
         )
         await s.add_to_instruction_buffer(kinstr, span_id)
+        s.monitor.finalize_children(span_id)
         s.pc += 4
 
 
@@ -626,6 +630,7 @@ class VmnandMm:
             instr_ident=instr_ident,
         )
         await s.add_to_instruction_buffer(kinstr, span_id)
+        s.monitor.finalize_children(span_id)
         s.pc += 4
 
 
@@ -670,6 +675,7 @@ class VmvVi:
             instr_ident=instr_ident,
         )
         await s.add_to_instruction_buffer(kinstr, span_id)
+        s.monitor.finalize_children(span_id)
         s.pc += 4
 
 
@@ -717,6 +723,7 @@ class VmvVx:
             instr_ident=instr_ident,
         )
         await s.add_to_instruction_buffer(kinstr, span_id)
+        s.monitor.finalize_children(span_id)
         s.pc += 4
 
 
@@ -761,6 +768,7 @@ class VmvVv:
             instr_ident=instr_ident,
         )
         await s.add_to_instruction_buffer(kinstr, span_id)
+        s.monitor.finalize_children(span_id)
         s.pc += 4
 
 
@@ -907,6 +915,7 @@ class VArithVv:
             instr_ident=instr_ident,
         )
         await s.add_to_instruction_buffer(kinstr, span_id)
+        s.monitor.finalize_children(span_id)
         s.pc += 4
 
 
@@ -962,6 +971,7 @@ class VArithVvFloat:
             instr_ident=instr_ident,
         )
         await s.add_to_instruction_buffer(kinstr, span_id)
+        s.monitor.finalize_children(span_id)
         s.pc += 4
 
 
@@ -1031,6 +1041,7 @@ class VArithVx:
             instr_ident=instr_ident,
         )
         await s.add_to_instruction_buffer(kinstr, span_id)
+        s.monitor.finalize_children(span_id)
         s.pc += 4
 
 
@@ -1090,6 +1101,7 @@ class VArithVi:
             instr_ident=instr_ident,
         )
         await s.add_to_instruction_buffer(kinstr, span_id)
+        s.monitor.finalize_children(span_id)
         s.pc += 4
 
 
@@ -1131,6 +1143,7 @@ class VIndexedLoad:
         )
         vsew = (s.vtype >> 3) & 0x7
         data_ew = 8 << vsew
+        logger.warning('Starting submit vluxei')
         if self.ordered:
             await s.vload_indexed_ordered(
                 self.vd, base_addr, self.vs2, self.index_width, data_ew,
@@ -1141,6 +1154,8 @@ class VIndexedLoad:
                 self.vd, base_addr, self.vs2, self.index_width, data_ew,
                 s.vl, mask_reg, s.vstart, parent_span_id=span_id
             )
+        logger.warning('Finished submit vluxei')
+        s.monitor.finalize_children(span_id)
         s.pc += 4
 
 
@@ -1192,6 +1207,7 @@ class VIndexedStore:
                 self.vs3, base_addr, self.vs2, self.index_width, data_ew,
                 s.vl, mask_reg, s.vstart, parent_span_id=span_id
             )
+        s.monitor.finalize_children(span_id)
         s.pc += 4
 
 
@@ -1236,6 +1252,7 @@ class Vid:
             instr_ident=instr_ident,
         )
         await s.add_to_instruction_buffer(kinstr, span_id)
+        s.monitor.finalize_children(span_id)
         s.pc += 4
 
 

@@ -325,7 +325,7 @@ class Monitor:
         if span.parent:
             parent = self.spans.get(span.parent.span_id)
             if parent and parent.completion_type == CompletionType.FIRE_AND_FORGET:
-                if not parent.is_complete() and parent.children_finalized:
+                if (not parent.is_complete()) and parent.children_finalized:
                     all_children_complete = all(
                         self.spans.get(child.span_id) and self.spans[child.span_id].is_complete()
                         for child in parent.children
@@ -1466,3 +1466,10 @@ class Monitor:
                     if dep_span.details:
                         details_str = " " + ", ".join(f"{k}={v}" for k, v in dep_span.details.items())
                     lines.append(f"{prefix}  waiting_for: {dep_span.span_type.value} @ {dep_span.component} [{timing}] ({dep_ref.reason}){details_str}")
+
+    def is_complete(self):
+        allowed_incomplete = (SpanType.FLOW_CONTROL, SpanType.SETUP)
+        for span in self.spans.values():
+            if not (span.is_complete() or span.span_type in allowed_incomplete):
+                print(span)
+        return all(span.is_complete() or span.span_type in allowed_incomplete for span in self.spans.values())

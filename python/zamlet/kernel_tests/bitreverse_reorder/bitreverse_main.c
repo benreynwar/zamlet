@@ -42,6 +42,9 @@ int main() {
     uint32_t* write_idx = (uint32_t*)&vpu_mem[N * 3];
 
     size_t vl = get_vl_e32();
+    if (vl > N) {
+        vl = N;
+    }
 
     for (int i = 0; i < N; i++) {
         src[i] = i * 7 + 3;

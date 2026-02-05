@@ -178,7 +178,7 @@ class Lamlet:
             MessageType.WRITE_MEM_WORD_REQ: utils.Queue(length=2),
         }
 
-        # Lamlet's synchronizer at position (0, -1), connected to kamlet (0,0)
+        # Lamlet's synchronizer at position (0, -1)
         self.synchronizer = Synchronizer(
             clock=clock,
             params=params,

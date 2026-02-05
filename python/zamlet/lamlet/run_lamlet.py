@@ -130,6 +130,10 @@ async def run(clock: Clock, filename, params: LamletParams = None):
                 clock.running = False
                 logger.info(f"run() about to return exit_code={s.exit_code}")
                 exit_code = s.exit_code
+
+                # Check that all the spans are finished.
+                assert s.monitor.is_complete()
+
                 break
             await clock.next_cycle
         else:

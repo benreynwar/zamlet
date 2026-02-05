@@ -205,10 +205,9 @@ class Synchronizer:
     (identified by sync_ident) and communicates with all 8 neighbors via a
     dedicated 8-bit synchronization network.
 
-    The lamlet can also have a Synchronizer at position (0, -1). It only connects
-    to kamlet (0, 0) via the S direction. When y == -1, the synchronizer
-    uses simplified logic: it just waits to receive from S (and optionally SE if
-    k_cols > 1), then marks the sync complete.
+    The lamlet has a Synchronizer at position (0, -1). It connects to kamlet (0, 0)
+    via S, and also to kamlet (1, 0) via SE when k_cols >= 2. It participates in
+    the standard sync protocol like any other node.
     """
 
     def __init__(
@@ -262,11 +261,12 @@ class Synchronizer:
 
     def has_neighbor(self, direction: SyncDirection) -> bool:
         """Check if there's a neighbor in the given direction."""
-        if self.y == -1:
-            # Lamlet at (0, -1) only connects S to kamlet (0,0)
-            return direction == SyncDirection.S
         dx, dy = self._direction_delta(direction)
         nx, ny = self.x + dx, self.y + dy
+        if self.y == -1:
+            # Lamlet at (0, -1) connects to any kamlet in its neighbor ring
+            # e.g. S to kamlet (0,0), SE to kamlet (1,0) if k_cols >= 2
+            return 0 <= nx < self.total_cols and 0 <= ny < self.total_rows
         # Kamlet (0, 0) has the lamlet as its N neighbor
         if nx == 0 and ny == -1:
             return True
@@ -288,8 +288,6 @@ class Synchronizer:
 
     def _has_quadrant(self, quadrant: str) -> bool:
         """Check if any kamlets exist in the given quadrant."""
-        if self.y == -1:
-            return False
         if quadrant == 'NE':
             return self.x < self.total_cols - 1 and self.y > 0
         elif quadrant == 'NW':
@@ -302,9 +300,6 @@ class Synchronizer:
 
     def _has_column_region(self, region: str) -> bool:
         """Check if there are kamlets in column north/south of us."""
-        if self.y == -1:
-            # Lamlet: only S column exists (kamlets 0,0 through 0,k_rows-1)
-            return region == 'S'
         if region == 'N':
             # For kamlet (0,0), the lamlet is to the north
             if self.x == 0 and self.y == 0:
