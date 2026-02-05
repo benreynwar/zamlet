@@ -17,10 +17,14 @@ RISCV_LINK_OPTS="-static -nostdlib -nostartfiles -lm -lgcc -T../common/test.ld"
 # Common source files
 COMMON_SRCS="../common/crt.S ../common/syscalls.c ../common/ara/util.c ../common/vpu_alloc.c"
 
+# Bitreverse sources (from bitreverse_reorder kernel)
+BR_DIR="../bitreverse_reorder"
+BR_SRCS="${BR_DIR}/compute_indices.c ${BR_DIR}/bitreverse.S ${BR_DIR}/bitreverse_reorder64.S"
+
 # Build vec-fft8
 echo "Building vec-fft8..."
 ${RISCV_GCC} ${INCLUDES} ${RISCV_GCC_OPTS} -o vec-fft8.riscv \
-    vec-fft8.c ${COMMON_SRCS} ${RISCV_LINK_OPTS}
+    vec-fft8.c ${BR_SRCS} ${COMMON_SRCS} ${RISCV_LINK_OPTS}
 
 if [ $? -eq 0 ]; then
     echo "Build successful: vec-fft8.riscv"

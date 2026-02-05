@@ -134,9 +134,9 @@ def get_memory_split(lamlet: 'Lamlet', g_addr: GlobalAddress, element_width: int
     else:
         sections = []
         next_index = first_index
-        logger.info(f'get_memory_split: Processing lumps with element_offset={element_offset}')
+        logger.debug(f'get_memory_split: Processing lumps with element_offset={element_offset}')
         for lump_is_vpu, lump_start_index, lump_start_addr, lump_end_addr in lumps:
-            logger.info(f'  Lump: is_vpu={lump_is_vpu}, start_idx={lump_start_index}, '
+            logger.debug(f'  Lump: is_vpu={lump_is_vpu}, start_idx={lump_start_index}, '
                        f'start_addr=0x{lump_start_addr:x}, end_addr=0x{lump_end_addr:x}')
             assert next_index == lump_start_index
 
@@ -144,7 +144,7 @@ def get_memory_split(lamlet: 'Lamlet', g_addr: GlobalAddress, element_width: int
             if start_offset != 0:
                 start_whole_addr = lump_start_addr + (eb - start_offset)
                 assert start_whole_addr-1 <= lump_end_addr
-                logger.info(f'    Adding partial start: idx={next_index}, '
+                logger.debug(f'    Adding partial start: idx={next_index}, '
                            f'start=0x{lump_start_addr:x}, end=0x{start_whole_addr:x}')
                 sections.append(SectionInfo(lump_is_vpu, True, next_index,
                                             lump_start_addr, start_whole_addr))

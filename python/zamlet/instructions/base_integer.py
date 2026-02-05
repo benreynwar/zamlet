@@ -155,6 +155,52 @@ class Slli:
 
 
 @dataclass
+class Srli:
+    """SRLI - Shift Right Logical Immediate.
+
+    Performs logical right shift of rs1 by shamt and writes result to rd.
+    For RV64I, shamt is 6 bits (bits 25:20).
+    """
+    rd: int
+    rs1: int
+    shamt: int
+
+    def __str__(self):
+        return f'srl\t{reg_name(self.rd)},{reg_name(self.rs1)},0x{self.shamt:x}'
+
+    async def update_state(self, s: 'Lamlet'):
+        await s.scalar.wait_all_regs_ready(self.rd, None, [self.rs1], [])
+        rs1_val = int.from_bytes(s.scalar.read_reg(self.rs1), byteorder='little', signed=False)
+        result = rs1_val >> self.shamt
+        result_bytes = result.to_bytes(s.params.word_bytes, byteorder='little', signed=False)
+        s.scalar.write_reg(self.rd, result_bytes)
+        s.pc += 4
+
+
+@dataclass
+class Srai:
+    """SRAI - Shift Right Arithmetic Immediate.
+
+    Performs arithmetic right shift of rs1 by shamt and writes result to rd.
+    For RV64I, shamt is 6 bits (bits 25:20).
+    """
+    rd: int
+    rs1: int
+    shamt: int
+
+    def __str__(self):
+        return f'sra\t{reg_name(self.rd)},{reg_name(self.rs1)},0x{self.shamt:x}'
+
+    async def update_state(self, s: 'Lamlet'):
+        await s.scalar.wait_all_regs_ready(self.rd, None, [self.rs1], [])
+        rs1_val = int.from_bytes(s.scalar.read_reg(self.rs1), byteorder='little', signed=True)
+        result = rs1_val >> self.shamt
+        result_bytes = result.to_bytes(s.params.word_bytes, byteorder='little', signed=True)
+        s.scalar.write_reg(self.rd, result_bytes)
+        s.pc += 4
+
+
+@dataclass
 class Add:
     """ADD - Add.
 
@@ -482,6 +528,84 @@ class Sraiw:
             result = result - 0x100000000
         result_bytes = result.to_bytes(s.params.word_bytes, byteorder='little', signed=True)
         s.scalar.write_reg(self.rd, result_bytes)
+
+
+@dataclass
+class Sll:
+    """SLL - Shift Left Logical.
+
+    Logical left shift of rs1 by rs2[5:0] (RV64I uses lower 6 bits).
+
+    Reference: riscv-isa-manual/src/rv64.adoc
+    """
+    rd: int
+    rs1: int
+    rs2: int
+
+    def __str__(self):
+        return f'sll\t{reg_name(self.rd)},{reg_name(self.rs1)},{reg_name(self.rs2)}'
+
+    async def update_state(self, s: 'Lamlet'):
+        await s.scalar.wait_all_regs_ready(self.rd, None, [self.rs1, self.rs2], [])
+        rs1_val = int.from_bytes(s.scalar.read_reg(self.rs1), byteorder='little', signed=False)
+        rs2_val = int.from_bytes(s.scalar.read_reg(self.rs2), byteorder='little', signed=False)
+        shamt = rs2_val & 0x3f  # RV64I: lower 6 bits
+        result = (rs1_val << shamt) & ((1 << 64) - 1)
+        result_bytes = result.to_bytes(s.params.word_bytes, byteorder='little', signed=False)
+        s.scalar.write_reg(self.rd, result_bytes)
+        s.pc += 4
+
+
+@dataclass
+class Srl:
+    """SRL - Shift Right Logical.
+
+    Logical right shift of rs1 by rs2[5:0] (RV64I uses lower 6 bits).
+
+    Reference: riscv-isa-manual/src/rv64.adoc
+    """
+    rd: int
+    rs1: int
+    rs2: int
+
+    def __str__(self):
+        return f'srl\t{reg_name(self.rd)},{reg_name(self.rs1)},{reg_name(self.rs2)}'
+
+    async def update_state(self, s: 'Lamlet'):
+        await s.scalar.wait_all_regs_ready(self.rd, None, [self.rs1, self.rs2], [])
+        rs1_val = int.from_bytes(s.scalar.read_reg(self.rs1), byteorder='little', signed=False)
+        rs2_val = int.from_bytes(s.scalar.read_reg(self.rs2), byteorder='little', signed=False)
+        shamt = rs2_val & 0x3f  # RV64I: lower 6 bits
+        result = rs1_val >> shamt
+        result_bytes = result.to_bytes(s.params.word_bytes, byteorder='little', signed=False)
+        s.scalar.write_reg(self.rd, result_bytes)
+        s.pc += 4
+
+
+@dataclass
+class Sra:
+    """SRA - Shift Right Arithmetic.
+
+    Arithmetic right shift of rs1 by rs2[5:0] (RV64I uses lower 6 bits).
+
+    Reference: riscv-isa-manual/src/rv64.adoc
+    """
+    rd: int
+    rs1: int
+    rs2: int
+
+    def __str__(self):
+        return f'sra\t{reg_name(self.rd)},{reg_name(self.rs1)},{reg_name(self.rs2)}'
+
+    async def update_state(self, s: 'Lamlet'):
+        await s.scalar.wait_all_regs_ready(self.rd, None, [self.rs1, self.rs2], [])
+        rs1_val = int.from_bytes(s.scalar.read_reg(self.rs1), byteorder='little', signed=True)
+        rs2_val = int.from_bytes(s.scalar.read_reg(self.rs2), byteorder='little', signed=False)
+        shamt = rs2_val & 0x3f  # RV64I: lower 6 bits
+        result = rs1_val >> shamt
+        result_bytes = result.to_bytes(s.params.word_bytes, byteorder='little', signed=True)
+        s.scalar.write_reg(self.rd, result_bytes)
+        s.pc += 4
 
 
 @dataclass

@@ -163,12 +163,16 @@ class Jamlet:
             f'{self.clock.cycle}: jamlet ({self.x}, {self.y}): _send_packet starting '
             f'{header.message_type.name} target=({header.target_x}, {header.target_y})')
         channel = CHANNEL_MAPPING[packet[0].message_type]
+        is_drop = 'DROP' in header.message_type.name
         queue = self.routers[channel]._input_buffers[Direction.H]
         stuck_count = 0
         while True:
             if queue.can_append():
                 word = packet.pop(0)
                 queue.append(word)
+                self.monitor.report_jamlet_sending(self.x, self.y, channel)
+                if is_drop:
+                    self.monitor.report_jamlet_dropping(self.x, self.y, channel)
                 stuck_count = 0
                 if not packet:
                     await self.clock.next_cycle
@@ -321,6 +325,7 @@ class Jamlet:
         while not queue:
             await self.clock.next_cycle
         header = queue.popleft()
+        self.monitor.report_jamlet_receiving(self.x, self.y, channel=0)
         self.monitor.record_input_queue_consumed(self.x, self.y, is_ch0=True)
         assert isinstance(header, Header)
         logger.debug(
@@ -351,15 +356,16 @@ class Jamlet:
             handler = MESSAGE_HANDLERS.get(header.message_type)
             if handler is None:
                 raise NotImplementedError(f"No handler for channel 0 message {header.message_type}")
-            packet = await self._receive_packet_body(queue, header, is_ch0=True)
+            packet = await self._receive_packet_body(queue, header, channel=0)
             result = handler(self, packet)
             assert result is None, f"Channel 0 handler for {header.message_type} must be sync (not async)"
 
-    async def _receive_packet(self, queue):
+    async def _receive_packet(self, queue, channel: int):
         """Handle channel 1+ packets (requests that may need to send responses)."""
         while not queue:
             await self.clock.next_cycle
         header = queue.popleft()
+        self.monitor.report_jamlet_receiving(self.x, self.y, channel)
         self.monitor.record_input_queue_consumed(self.x, self.y, is_ch0=False)
         assert isinstance(header, IdentHeader)
         logger.debug(
@@ -373,10 +379,10 @@ class Jamlet:
         handler = MESSAGE_HANDLERS.get(header.message_type)
         if handler is None:
             raise NotImplementedError(f"No handler for {header.message_type}")
-        packet = await self._receive_packet_body(queue, header, is_ch0=False)
+        packet = await self._receive_packet_body(queue, header, channel=channel)
         await handler(self, packet)
 
-    async def _receive_packet_body(self, queue, header, is_ch0: bool):
+    async def _receive_packet_body(self, queue, header, channel: int):
         packet = [header]
         remaining_words = header.length - 1
         wait_count = 0
@@ -384,7 +390,8 @@ class Jamlet:
             await self.clock.next_cycle
             if queue:
                 word = queue.popleft()
-                self.monitor.record_input_queue_consumed(self.x, self.y, is_ch0=is_ch0)
+                self.monitor.report_jamlet_receiving(self.x, self.y, channel)
+                self.monitor.record_input_queue_consumed(self.x, self.y, is_ch0=(channel == 0))
                 packet.append(word)
                 remaining_words -= 1
                 wait_count = 0
@@ -422,7 +429,7 @@ class Jamlet:
                     logger.debug(
                         f'{self.clock.cycle}: jamlet ({self.x}, {self.y}): '
                         f'_receive_packets calling _receive_packet on ch{router_idx}, queue_len={len(queue)}')
-                    await self._receive_packet(queue)
+                    await self._receive_packet(queue, channel=router_idx)
                     logger.debug(
                         f'{self.clock.cycle}: jamlet ({self.x}, {self.y}): '
                         f'_receive_packets returned from _receive_packet on ch{router_idx}')

@@ -714,7 +714,7 @@ class CacheTable:
         """
         This returns a free slot if it can, otherwise it returns a slot to be evicted.
         """
-        logger.info(f'[CACHE_ALLOC] Trying to get new slot for k_maddr=0x{k_maddr.addr:x}')
+        logger.debug(f'[CACHE_ALLOC] Trying to get new slot for k_maddr=0x{k_maddr.addr:x}')
         assert self.addr_to_slot(k_maddr) is None
         self._check_slots()
         # Adding some assert statements to make sure we don't call one request_read
