@@ -404,7 +404,7 @@ def decode_standard(instruction_bytes: bytes) -> Instruction:
         if funct3 == 0x0:
             return I.Addi(rd=rd, rs1=rs1, imm=decode_i_imm(inst))
         elif funct3 == 0x1:
-            shamt = (inst >> 20) & 0x3f
+            shamt = imm_i & 0x3f
             return I.Slli(rd=rd, rs1=rs1, shamt=shamt)
         elif funct3 == 0x2:
             return I.Slti(rd=rd, rs1=rs1, imm=decode_i_imm(inst))
@@ -412,6 +412,12 @@ def decode_standard(instruction_bytes: bytes) -> Instruction:
             return I.Sltiu(rd=rd, rs1=rs1, imm=decode_i_imm(inst))
         elif funct3 == 0x4:
             return I.Xori(rd=rd, rs1=rs1, imm=decode_i_imm(inst))
+        elif funct3 == 0x5:
+            shamt = imm_i & 0x3f
+            if funct7 & 0x20:  # bit 30 encodes shift type
+                return I.Srai(rd=rd, rs1=rs1, shamt=shamt)
+            else:
+                return I.Srli(rd=rd, rs1=rs1, shamt=shamt)
         elif funct3 == 0x6:
             return I.Ori(rd=rd, rs1=rs1, imm=decode_i_imm(inst))
         elif funct3 == 0x7:
@@ -492,6 +498,8 @@ def decode_standard(instruction_bytes: bytes) -> Instruction:
             return MUL.Mul(rd=rd, rs1=rs1, rs2=rs2)
         elif funct3 == 0x0 and funct7 == 0x20:
             return I.Sub(rd=rd, rs1=rs1, rs2=rs2)
+        elif funct3 == 0x1 and funct7 == 0x00:
+            return I.Sll(rd=rd, rs1=rs1, rs2=rs2)
         elif funct3 == 0x1 and funct7 == 0x01:
             return MUL.Mulh(rd=rd, rs1=rs1, rs2=rs2)
         elif funct3 == 0x2 and funct7 == 0x00:
@@ -506,8 +514,12 @@ def decode_standard(instruction_bytes: bytes) -> Instruction:
             return I.Xor(rd=rd, rs1=rs1, rs2=rs2)
         elif funct3 == 0x4 and funct7 == 0x01:
             return MUL.Div(rd=rd, rs1=rs1, rs2=rs2)
+        elif funct3 == 0x5 and funct7 == 0x00:
+            return I.Srl(rd=rd, rs1=rs1, rs2=rs2)
         elif funct3 == 0x5 and funct7 == 0x01:
             return MUL.Divu(rd=rd, rs1=rs1, rs2=rs2)
+        elif funct3 == 0x5 and funct7 == 0x20:
+            return I.Sra(rd=rd, rs1=rs1, rs2=rs2)
         elif funct3 == 0x6 and funct7 == 0x00:
             return I.Or(rd=rd, rs1=rs1, rs2=rs2)
         elif funct3 == 0x6 and funct7 == 0x01:
@@ -597,8 +609,70 @@ def decode_standard(instruction_bytes: bytes) -> Instruction:
         elif funct6 == 0x00 and funct3 == 0x2:
             vs1 = rs1
             return V.VreductionVs(vd=rd, vs2=vs2, vs1=vs1, vm=vm, op=kinstructions.VRedOp.SUM)
+        # OPIVV (funct3 = 0x0) - integer vector-vector
+        elif funct6 == 0x00 and funct3 == 0x0:
+            vs1 = rs1
+            return V.VArithVv(vd=rd, vs1=vs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.ADD)
+        elif funct6 == 0x02 and funct3 == 0x0:
+            vs1 = rs1
+            return V.VArithVv(vd=rd, vs1=vs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.SUB)
+        elif funct6 == 0x09 and funct3 == 0x0:
+            vs1 = rs1
+            return V.VArithVv(vd=rd, vs1=vs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.AND)
+        elif funct6 == 0x0a and funct3 == 0x0:
+            vs1 = rs1
+            return V.VArithVv(vd=rd, vs1=vs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.OR)
+        elif funct6 == 0x0b and funct3 == 0x0:
+            vs1 = rs1
+            return V.VArithVv(vd=rd, vs1=vs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.XOR)
+        elif funct6 == 0x25 and funct3 == 0x0:
+            vs1 = rs1
+            return V.VArithVv(vd=rd, vs1=vs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.SLL)
+        elif funct6 == 0x28 and funct3 == 0x0:
+            vs1 = rs1
+            return V.VArithVv(vd=rd, vs1=vs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.SRL)
+        elif funct6 == 0x29 and funct3 == 0x0:
+            vs1 = rs1
+            return V.VArithVv(vd=rd, vs1=vs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.SRA)
+        # OPIVX (funct3 = 0x4) - integer vector-scalar
         elif funct6 == 0x00 and funct3 == 0x4:
             return V.VArithVx(vd=rd, rs1=rs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.ADD)
+        elif funct6 == 0x02 and funct3 == 0x4:
+            return V.VArithVx(vd=rd, rs1=rs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.SUB)
+        elif funct6 == 0x09 and funct3 == 0x4:
+            return V.VArithVx(vd=rd, rs1=rs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.AND)
+        elif funct6 == 0x0a and funct3 == 0x4:
+            return V.VArithVx(vd=rd, rs1=rs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.OR)
+        elif funct6 == 0x0b and funct3 == 0x4:
+            return V.VArithVx(vd=rd, rs1=rs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.XOR)
+        elif funct6 == 0x25 and funct3 == 0x4:
+            return V.VArithVx(vd=rd, rs1=rs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.SLL)
+        elif funct6 == 0x28 and funct3 == 0x4:
+            return V.VArithVx(vd=rd, rs1=rs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.SRL)
+        elif funct6 == 0x29 and funct3 == 0x4:
+            return V.VArithVx(vd=rd, rs1=rs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.SRA)
+        # OPIVI (funct3 = 0x3) - integer vector-immediate
+        elif funct6 == 0x00 and funct3 == 0x3:
+            simm5 = rs1
+            return V.VArithVi(vd=rd, vs2=vs2, simm5=simm5, vm=vm, op=kinstructions.VArithOp.ADD)
+        elif funct6 == 0x09 and funct3 == 0x3:
+            simm5 = rs1
+            return V.VArithVi(vd=rd, vs2=vs2, simm5=simm5, vm=vm, op=kinstructions.VArithOp.AND)
+        elif funct6 == 0x0a and funct3 == 0x3:
+            simm5 = rs1
+            return V.VArithVi(vd=rd, vs2=vs2, simm5=simm5, vm=vm, op=kinstructions.VArithOp.OR)
+        elif funct6 == 0x0b and funct3 == 0x3:
+            simm5 = rs1
+            return V.VArithVi(vd=rd, vs2=vs2, simm5=simm5, vm=vm, op=kinstructions.VArithOp.XOR)
+        elif funct6 == 0x25 and funct3 == 0x3:
+            simm5 = rs1
+            return V.VArithVi(vd=rd, vs2=vs2, simm5=simm5, vm=vm, op=kinstructions.VArithOp.SLL)
+        elif funct6 == 0x28 and funct3 == 0x3:
+            simm5 = rs1
+            return V.VArithVi(vd=rd, vs2=vs2, simm5=simm5, vm=vm, op=kinstructions.VArithOp.SRL)
+        elif funct6 == 0x29 and funct3 == 0x3:
+            simm5 = rs1
+            return V.VArithVi(vd=rd, vs2=vs2, simm5=simm5, vm=vm, op=kinstructions.VArithOp.SRA)
         elif funct6 == 0x1d and funct3 == 0x3:
             simm5 = rs1
             return V.VmsleVi(vd=rd, vs2=vs2, simm5=simm5, vm=vm)
@@ -643,6 +717,9 @@ def decode_standard(instruction_bytes: bytes) -> Instruction:
         elif funct6 == 0x0c and funct3 == 0x0:
             vs1 = rs1
             return V.Vrgather(vd=rd, vs2=vs2, vs1=vs1, vm=vm)
+        elif funct6 == 0x14 and funct3 == 0x2 and rs1 == 0x11:
+            # vid.v - vmunary0 with vs1=10001
+            return V.Vid(vd=rd, vm=vm)
         # OPFVV (funct3 = 0x1) - floating-point vector-vector
         elif funct6 == 0x00 and funct3 == 0x1:
             vs1 = rs1

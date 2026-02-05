@@ -332,6 +332,53 @@ class VBroadcastOp(KInstr):
 
 
 @dataclass
+class VidOp(KInstr):
+    """Write element indices to a vector register.
+
+    Used for vid.v instruction: vd[i] = i
+    """
+    dst: int
+    n_elements: int
+    element_width: int
+    word_order: addresses.WordOrder
+    mask_reg: int | None
+    instr_ident: int
+
+    async def update_kamlet(self, kamlet):
+        bits_in_vline = kamlet.params.vline_bytes * 8
+        n_vlines = (self.n_elements * self.element_width + bits_in_vline - 1) // bits_in_vline
+        dst_regs = [self.dst + index for index in range(n_vlines)]
+        await kamlet.wait_for_rf_available(write_regs=dst_regs, instr_ident=self.instr_ident)
+
+        params = kamlet.params
+        vreg_bytes_per_jamlet = params.maxvl_bytes // params.j_in_l
+        dst_offset = self.dst * vreg_bytes_per_jamlet
+        eb = self.element_width // 8
+        wb = kamlet.params.word_bytes
+        start_index = 0
+        elements_in_vline = params.vline_bytes * 8 // self.element_width
+
+        for j_in_k_index, jamlet in enumerate(kamlet.jamlets):
+            vw_index = addresses.k_indices_to_vw_index(
+                params, self.word_order, kamlet.k_index, j_in_k_index)
+            for vline_index in range(n_vlines):
+                for index_in_j in range(wb // eb):
+                    byte_offset = vline_index * wb + index_in_j * eb
+                    element_index = (vline_index * elements_in_vline +
+                                     index_in_j * params.j_in_l + vw_index)
+                    valid_element, mask_bit = kamlet.get_is_active(
+                        start_index, self.n_elements, self.element_width, self.word_order,
+                        self.mask_reg, vline_index, j_in_k_index, index_in_j
+                    )
+                    if valid_element and mask_bit:
+                        result_bytes = element_index.to_bytes(eb, byteorder='little', signed=False)
+                        jamlet.rf_slice[dst_offset + byte_offset:dst_offset + byte_offset + eb] = (
+                            result_bytes
+                        )
+        kamlet.monitor.finalize_kinstr_exec(self.instr_ident, kamlet.min_x, kamlet.min_y)
+
+
+@dataclass
 class VmvVvOp(KInstr):
     dst: int
     src: int
@@ -490,6 +537,14 @@ class VArithVvOp(KInstr):
                         else:
                             raise NotImplementedError(f"Unknown op: {self.op}")
 
+                        # Truncate integer results to element width (handles overflow from SLL, ADD, etc.)
+                        if self.op in signed_int_ops or self.op in unsigned_int_ops:
+                            mask = (1 << (eb * 8)) - 1
+                            result = result & mask
+                            # For signed formats, convert back to signed range
+                            if self.op in signed_int_ops and result >= (1 << (eb * 8 - 1)):
+                                result -= (1 << (eb * 8))
+
                         jamlet.rf_slice[dst_offset + byte_offset:dst_offset + byte_offset + eb] = struct.pack(fmt, result)
         kamlet.monitor.finalize_kinstr_exec(self.instr_ident, kamlet.min_x, kamlet.min_y)
 
@@ -547,12 +602,40 @@ class VArithVxOp(KInstr):
 
                         if self.op == VArithOp.ADD:
                             result = src2_val + scalar_val
+                        elif self.op == VArithOp.SUB:
+                            result = src2_val - scalar_val
                         elif self.op == VArithOp.MUL:
                             result = src2_val * scalar_val
                         elif self.op == VArithOp.MACC:
                             acc_bytes = jamlet.rf_slice[dst_offset + byte_offset:dst_offset + byte_offset + eb]
                             acc_val = unpack(acc_bytes)
                             result = acc_val + (scalar_val * src2_val)
+                        elif self.op == VArithOp.AND:
+                            result = src2_val & scalar_val
+                        elif self.op == VArithOp.OR:
+                            result = src2_val | scalar_val
+                        elif self.op == VArithOp.XOR:
+                            result = src2_val ^ scalar_val
+                        elif self.op == VArithOp.SLL:
+                            shift_amt = scalar_val & (self.element_width - 1)
+                            result = src2_val << shift_amt
+                        elif self.op == VArithOp.SRL:
+                            shift_amt = scalar_val & (self.element_width - 1)
+                            src2_unsigned = int.from_bytes(src2_bytes, byteorder='little', signed=False)
+                            result = src2_unsigned >> shift_amt
+                        elif self.op == VArithOp.SRA:
+                            shift_amt = scalar_val & (self.element_width - 1)
+                            result = src2_val >> shift_amt
+                        else:
+                            raise NotImplementedError(f"VArithVxOp: unknown op {self.op}")
+
+                        # Truncate result to element width (handles overflow from SLL, ADD, MUL, etc.)
+                        if not self.is_float:
+                            mask = (1 << (eb * 8)) - 1
+                            result = result & mask
+                            # Convert back to signed for pack
+                            if result >= (1 << (eb * 8 - 1)):
+                                result -= (1 << (eb * 8))
 
                         result_bytes = pack(result)
                         jamlet.rf_slice[dst_offset + byte_offset:dst_offset + byte_offset + eb] = result_bytes

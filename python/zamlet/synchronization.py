@@ -327,8 +327,8 @@ class Synchronizer:
 
     def start_sync(self, sync_ident: int):
         """Start tracking a new synchronization operation."""
-        if sync_ident in self._sync_states:
-            return
+        assert sync_ident not in self._sync_states, \
+            f"sync_ident={sync_ident} already exists at ({self.x},{self.y})"
 
         state = SyncState(sync_ident=sync_ident)
 
@@ -346,11 +346,17 @@ class Synchronizer:
                 state.row_synced[r] = True
 
         self._sync_states[sync_ident] = state
+        auto_q = [q for q in ['NE', 'NW', 'SE', 'SW'] if state.quadrant_synced[q]]
+        auto_c = [c for c in ['N', 'S'] if state.column_synced[c]]
+        auto_r = [r for r in ['E', 'W'] if state.row_synced[r]]
         logger.debug(f'{self.clock.cycle}: SYNC_START: synchronizer ({self.x},{self.y}) '
-                     f'sync_ident={sync_ident}')
+                     f'sync_ident={sync_ident} auto_synced: quad={auto_q} col={auto_c} row={auto_r}')
 
     def local_event(self, sync_ident: int, value: Optional[int] = None):
         """Report that this kamlet has seen the event."""
+        # sync_ident may be reused after a previous sync completed - clear old state
+        if sync_ident in self._sync_states and self._sync_states[sync_ident].completed:
+            del self._sync_states[sync_ident]
         if sync_ident not in self._sync_states:
             self.start_sync(sync_ident)
 
@@ -386,13 +392,22 @@ class Synchronizer:
             return False
 
         # Must have received from all regions
-        if not (all(state.quadrant_synced.values()) and
-                all(state.column_synced.values()) and
-                all(state.row_synced.values())):
+        missing_q = [q for q, v in state.quadrant_synced.items() if not v]
+        missing_c = [c for c, v in state.column_synced.items() if not v]
+        missing_r = [r for r, v in state.row_synced.items() if not v]
+        if missing_q or missing_c or missing_r:
+            logger.debug(f'{self.clock.cycle}: SYNC_INCOMPLETE: synchronizer ({self.x},{self.y}) '
+                         f'sync_ident={state.sync_ident} missing: quad={missing_q} col={missing_c} row={missing_r}')
             return False
 
         # Must have sent to all neighbors
-        return self._all_sends_complete(state)
+        sends_complete = self._all_sends_complete(state)
+        if not sends_complete:
+            missing_sends = [d.name for d in SyncDirection
+                            if self.has_neighbor(d) and d not in state.sent_directions]
+            logger.debug(f'{self.clock.cycle}: SYNC_INCOMPLETE: synchronizer ({self.x},{self.y}) '
+                         f'sync_ident={state.sync_ident} missing_sends={missing_sends}')
+        return sends_complete
 
     def get_min_value(self, sync_ident: int) -> Optional[int]:
         """Get the minimum value across all kamlets.
@@ -455,17 +470,23 @@ class Synchronizer:
         # Check all requirements for this direction
         reqs = self._get_send_requirements(direction)
 
+        missing = []
         for q in reqs.get('quadrant', []):
             if not state.quadrant_synced[q]:
-                return False
+                missing.append(f'quad_{q}')
 
         for c in reqs.get('column', []):
             if not state.column_synced[c]:
-                return False
+                missing.append(f'col_{c}')
 
         for r in reqs.get('row', []):
             if not state.row_synced[r]:
-                return False
+                missing.append(f'row_{r}')
+
+        if missing:
+            logger.debug(f'{self.clock.cycle}: SYNC_SEND_BLOCKED: ({self.x},{self.y}) '
+                         f'sync_ident={state.sync_ident} dir={direction.name} missing={missing}')
+            return False
 
         return True
 
@@ -498,6 +519,9 @@ class Synchronizer:
         """Process a received sync packet from a neighbor."""
         sync_ident = packet.sync_ident
 
+        # sync_ident may be reused after a previous sync completed - clear old state
+        if sync_ident in self._sync_states and self._sync_states[sync_ident].completed:
+            del self._sync_states[sync_ident]
         if sync_ident not in self._sync_states:
             self.start_sync(sync_ident)
 

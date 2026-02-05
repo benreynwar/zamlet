@@ -13,6 +13,8 @@ from dataclasses import asdict, dataclass, field
 from enum import Enum
 from typing import Dict, List, Any, Tuple
 
+from zamlet.message import Direction
+
 logger = logging.getLogger(__name__)
 
 
@@ -44,6 +46,28 @@ class ResourceType(Enum):
     CACHE_REQUEST_TABLE = 'CACHE_REQUEST_TABLE'  # Cache request slots in a kamlet
     INSTR_IDENT = 'INSTR_IDENT'              # Instruction identifiers in lamlet
     INSTR_BUFFER_TOKENS = 'INSTR_BUFFER_TOKENS'  # Instruction buffer tokens per kamlet
+
+
+class JamletActivity(Enum):
+    """Types of jamlet channel activity."""
+    SENDING = 'SENDING'
+    RECEIVING = 'RECEIVING'
+    DROPPING = 'DROPPING'
+
+
+@dataclass
+class CycleMetrics:
+    """Per-cycle performance metrics."""
+    # ALU activity per jamlet: (jx, jy) -> True if ALU active this cycle
+    alu_active: Dict[Tuple[int, int], bool] = field(default_factory=dict)
+
+    # Jamlet activity: (jx, jy, channel) -> set of JamletActivity
+    jamlet_activity: Dict[Tuple[int, int, int], set] = field(default_factory=dict)
+
+    # Router output state: (jx, jy, channel, Direction) -> (present, moving)
+    router_outputs: Dict[Tuple[int, int, int, Direction], Tuple[bool, bool]] = field(
+        default_factory=dict
+    )
 
 
 @dataclass
@@ -125,6 +149,81 @@ class Monitor:
         # Send queue stats per jamlet per message type:
         # (x, y, message_type_name) -> {attempts, blocked_cycles}
         self._send_queue_stats: Dict[tuple, Dict[str, int]] = {}
+
+        # Per-cycle metrics: cycle -> CycleMetrics
+        self.cycle_metrics: Dict[int, CycleMetrics] = {}
+
+    # -------------------------------------------------------------------------
+    # Per-cycle performance metrics
+    # -------------------------------------------------------------------------
+
+    def _get_cycle_metrics(self, cycle: int = None) -> CycleMetrics:
+        """Get or create CycleMetrics for the given cycle (defaults to current)."""
+        if cycle is None:
+            cycle = self.clock.cycle
+        if cycle not in self.cycle_metrics:
+            self.cycle_metrics[cycle] = CycleMetrics()
+        return self.cycle_metrics[cycle]
+
+    def report_alu_active(self, jx: int, jy: int) -> None:
+        """Report that the ALU is active for this jamlet this cycle."""
+        if not self.enabled:
+            return
+        metrics = self._get_cycle_metrics()
+        key = (jx, jy)
+        assert key not in metrics.alu_active, \
+            f"ALU at jamlet ({jx}, {jy}) already marked active this cycle {self.clock.cycle}"
+        metrics.alu_active[key] = True
+
+    def _report_jamlet_activity(self, jx: int, jy: int, channel: int,
+                                activity: JamletActivity) -> None:
+        """Internal: report jamlet channel activity this cycle."""
+        metrics = self._get_cycle_metrics()
+        key = (jx, jy, channel)
+        if key not in metrics.jamlet_activity:
+            metrics.jamlet_activity[key] = set()
+        assert activity not in metrics.jamlet_activity[key], \
+            f"Jamlet ({jx}, {jy}) channel {channel} already marked {activity.value} " \
+            f"this cycle {self.clock.cycle}"
+        metrics.jamlet_activity[key].add(activity)
+
+    def report_jamlet_sending(self, jx: int, jy: int, channel: int) -> None:
+        """Report that this jamlet is sending on this channel this cycle."""
+        if not self.enabled:
+            return
+        self._report_jamlet_activity(jx, jy, channel, JamletActivity.SENDING)
+
+    def report_jamlet_receiving(self, jx: int, jy: int, channel: int) -> None:
+        """Report that this jamlet is receiving on this channel this cycle."""
+        if not self.enabled:
+            return
+        self._report_jamlet_activity(jx, jy, channel, JamletActivity.RECEIVING)
+
+    def report_jamlet_dropping(self, jx: int, jy: int, channel: int) -> None:
+        """Report that this jamlet is dropping a message on this channel this cycle."""
+        if not self.enabled:
+            return
+        self._report_jamlet_activity(jx, jy, channel, JamletActivity.DROPPING)
+
+    def report_router_output(self, jx: int, jy: int, channel: int,
+                             direction: Direction, present: bool, moving: bool) -> None:
+        """Report router output state for this direction this cycle.
+
+        Args:
+            jx, jy: Jamlet coordinates
+            channel: Router channel
+            direction: Direction (N, S, E, W, H)
+            present: True if there's data waiting for this output
+            moving: True if data moved through this output this cycle
+        """
+        if not self.enabled:
+            return
+        metrics = self._get_cycle_metrics()
+        key = (jx, jy, channel, direction)
+        assert key not in metrics.router_outputs, \
+            f"Router output ({jx}, {jy}) ch{channel} {direction.name} already reported " \
+            f"this cycle {self.clock.cycle}"
+        metrics.router_outputs[key] = (present, moving)
 
     # -------------------------------------------------------------------------
     # Core Span methods

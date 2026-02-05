@@ -326,6 +326,18 @@ class Lamlet:
                     south = (x, y+1)
                     east = (x+1, y)
                     west = (x-1, y)
+                    # Track present/moving for each direction
+                    north_present = bool(router._output_buffers[Direction.N])
+                    south_present = bool(router._output_buffers[Direction.S])
+                    east_present = bool(router._output_buffers[Direction.E])
+                    west_present = bool(router._output_buffers[Direction.W])
+                    h_present = bool(router._output_buffers[Direction.H])
+                    north_moving = False
+                    south_moving = False
+                    east_moving = False
+                    west_moving = False
+                    h_moving = False
+
                     if north in routers:
                         # Send to the north
                         north_buffer = router._output_buffers[Direction.N]
@@ -334,6 +346,7 @@ class Lamlet:
                             if north_router.has_input_room(Direction.S):
                                 word = north_buffer.popleft()
                                 north_router.receive(Direction.S, word)
+                                north_moving = True
                                 logger.debug(f'{self.clock.cycle}: Moving word north ({x}, {y}) -> ({x}, {y-1}) {word}')
                     if south in routers:
                         # Send to the south
@@ -343,6 +356,7 @@ class Lamlet:
                             if south_router.has_input_room(Direction.N):
                                 word = south_buffer.popleft()
                                 south_router.receive(Direction.N, word)
+                                south_moving = True
                                 logger.debug(f'{self.clock.cycle}: Moving word south, ({x}, {y}) -> ({x}, {y+1}) {word}')
                     if east in routers:
                         # Send to the east
@@ -352,6 +366,7 @@ class Lamlet:
                             if east_router.has_input_room(Direction.W):
                                 word = east_buffer.popleft()
                                 east_router.receive(Direction.W, word)
+                                east_moving = True
                                 logger.debug(f'{self.clock.cycle}: Moving word east, ({x}, {y}) -> ({x+1}, {y}) {word}')
                     if west in routers:
                         # Send to the west
@@ -361,7 +376,20 @@ class Lamlet:
                             if west_router.has_input_room(Direction.E):
                                 word = west_buffer.popleft()
                                 west_router.receive(Direction.E, word)
+                                west_moving = True
                                 logger.debug(f'{self.clock.cycle}: Moving word west, ({x}, {y}) -> ({x-1}, {y}) {word}')
+
+                    # Report router output state for all directions
+                    self.monitor.report_router_output(x, y, channel, Direction.N,
+                                                      north_present, north_moving)
+                    self.monitor.report_router_output(x, y, channel, Direction.S,
+                                                      south_present, south_moving)
+                    self.monitor.report_router_output(x, y, channel, Direction.E,
+                                                      east_present, east_moving)
+                    self.monitor.report_router_output(x, y, channel, Direction.W,
+                                                      west_present, west_moving)
+                    self.monitor.report_router_output(x, y, channel, Direction.H,
+                                                      h_present, h_moving)
 
     async def sync_network_connections(self):
         """
@@ -1091,7 +1119,7 @@ class Lamlet:
         else:
             inst_str = str(instruction)
 
-        logger.info(f'{self.clock.cycle}: pc={hex(self.pc)} bytes={hex(inst_hex)} instruction={inst_str} {type(instruction)}')
+        logger.debug(f'{self.clock.cycle}: pc={hex(self.pc)} bytes={hex(inst_hex)} instruction={inst_str} {type(instruction)}')
 
         if disasm_trace is not None:
             error = dt.check_instruction(disasm_trace, self.pc, inst_hex, inst_str)

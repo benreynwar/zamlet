@@ -397,7 +397,7 @@ class CSrli:
 
     def __str__(self):
         # Match objdump pseudo-instruction (srl when rd == rs1, always true for C.SRLI)
-        return f'srl\t{reg_name(self.rd_rs1)},{reg_name(self.rd_rs1)},{self.shamt}'
+        return f'srl\t{reg_name(self.rd_rs1)},{reg_name(self.rd_rs1)},0x{self.shamt:x}'
 
     async def update_state(self, s: 'Lamlet'):
         await s.scalar.wait_all_regs_ready(self.rd_rs1, None, [self.rd_rs1], [])
@@ -422,7 +422,7 @@ class CSrai:
 
     def __str__(self):
         # Match objdump pseudo-instruction (sra when rd == rs1, always true for C.SRAI)
-        return f'sra\t{reg_name(self.rd_rs1)},{reg_name(self.rd_rs1)},{self.shamt}'
+        return f'sra\t{reg_name(self.rd_rs1)},{reg_name(self.rd_rs1)},0x{self.shamt:x}'
 
     async def update_state(self, s: 'Lamlet'):
         await s.scalar.wait_all_regs_ready(self.rd_rs1, None, [self.rd_rs1], [])
