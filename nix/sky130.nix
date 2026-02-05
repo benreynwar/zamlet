@@ -1,15 +1,8 @@
 # Sky130 PDK derivation using ciel
-# Self-contained - imports its own pkgs
-let
-  # Import the same nixpkgs as default.nix
-  librelane-flake = (import (fetchTarball
-    "https://github.com/edolstra/flake-compat/archive/35bb57c0c8d8b62bbfd284272c928ceb64ddbde9.tar.gz"
-  ) { src = builtins.fetchGit {
-    url = "https://github.com/librelane/librelane";
-    ref = "main";
-  }; }).defaultNix;
+# Takes pkgs from common.nix to avoid duplicating librelane fetch
+{ pkgs }:
 
-  pkgs = librelane-flake.legacyPackages.${builtins.currentSystem};
+let
   inherit (pkgs) lib stdenvNoCC cacert ciel;
 
   # PDK version - matches librelane's open_pdks_rev

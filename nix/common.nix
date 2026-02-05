@@ -1,14 +1,17 @@
 # Common Nix configuration shared between shell.nix and docker.nix
 let
-  nixpkgs = fetchTarball "https://github.com/NixOS/nixpkgs/archive/nixos-24.05.tar.gz";
+  # nixos-24.05 branch, pinned 2025-02-05
+  nixpkgs = fetchTarball "https://github.com/NixOS/nixpkgs/archive/b134951a4c9f3c995fd7be05f3243f8ecd65d798.tar.gz";
   bootstrap-pkgs = import nixpkgs {};
 
   flake-compat = fetchTarball
     "https://github.com/edolstra/flake-compat/archive/35bb57c0c8d8b62bbfd284272c928ceb64ddbde9.tar.gz";
 
+  # main branch, pinned 2025-02-05
   librelane-src-unpatched = builtins.fetchGit {
     url = "https://github.com/librelane/librelane";
     ref = "main";
+    rev = "f315752cf2e1465aca24a002247aa6169becb541";
   };
 
   librelane-src = bootstrap-pkgs.applyPatches {
@@ -22,7 +25,7 @@ let
 
   librelane-flake = (import flake-compat { src = librelane-src; }).defaultNix;
   pkgs = librelane-flake.legacyPackages.${builtins.currentSystem};
-  sky130-pdk = import ./sky130.nix;
+  sky130-pdk = import ./sky130.nix { inherit pkgs; };
 
   # cocotb 2.0 override
   cocotb2 = pkgs.python3.pkgs.cocotb.overridePythonAttrs (old: rec {
