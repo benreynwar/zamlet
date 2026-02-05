@@ -5,6 +5,7 @@
 
 #include <stdlib.h>
 #include <stdio.h>
+#include <stdint.h>
 #include <math.h>
 #include <riscv_vector.h>
 #include "util.h"
@@ -14,8 +15,13 @@
 #define N_FFTS 1
 #define TOL 1e-9
 
-// Bit-reverse permutation indices for 8-point (in VPU memory)
-size_t bitrev8[8] __attribute__((section(".data.vpu64"))) = {0, 4, 2, 6, 1, 5, 3, 7};
+// Bitreverse index arrays (32-bit, in VPU 32-bit memory)
+uint32_t br_read_idx[N] __attribute__((section(".data.vpu32")));
+uint32_t br_write_idx[N] __attribute__((section(".data.vpu32")));
+
+void compute_indices(size_t n, size_t vl, uint32_t* read_idx, uint32_t* write_idx);
+void bitreverse_reorder64(size_t n, const int64_t* src, int64_t* dst,
+                          const uint32_t* read_idx, const uint32_t* write_idx);
 
 // Gather indices for each stage (in VPU memory)
 size_t stage0_idx_a[8] __attribute__((section(".data.vpu64"))) = {0, 0, 2, 2, 4, 4, 6, 6};
@@ -107,18 +113,11 @@ void fft8_stage(double* dst_re, double* dst_im,
 }
 
 void fft8(double* re, double* im) {
-    size_t vl = __riscv_vsetvl_e64m2(N);
-
-    // Bit-reverse permutation
-    vfloat64m2_t v_in_re = __riscv_vle64_v_f64m2(re, vl);
-    vfloat64m2_t v_in_im = __riscv_vle64_v_f64m2(im, vl);
-    vuint64m2_t v_bitrev = __riscv_vle64_v_u64m2(bitrev8, vl);
-
-    vfloat64m2_t v_br_re = __riscv_vrgather_vv_f64m2(v_in_re, v_bitrev, vl);
-    vfloat64m2_t v_br_im = __riscv_vrgather_vv_f64m2(v_in_im, v_bitrev, vl);
-
-    __riscv_vse64_v_f64m2(tmp_re, v_br_re, vl);
-    __riscv_vse64_v_f64m2(tmp_im, v_br_im, vl);
+    // Bit-reverse permutation using precomputed indices
+    bitreverse_reorder64(N, (const int64_t*)re, (int64_t*)tmp_re,
+                         br_read_idx, br_write_idx);
+    bitreverse_reorder64(N, (const int64_t*)im, (int64_t*)tmp_im,
+                         br_read_idx, br_write_idx);
 
     // Stage 0
     fft8_stage(re, im, tmp_re, tmp_im,
@@ -144,6 +143,11 @@ int main(int argc, char* argv[]) {
             data_im[f * N + i] = 0.0;
         }
     }
+
+    // Compute bitreverse indices (once, before FFT loop)
+    size_t vl_e32;
+    asm volatile ("vsetvli %0, %1, e32, m1, ta, ma" : "=r"(vl_e32) : "r"(N));
+    compute_indices(N, vl_e32, br_read_idx, br_write_idx);
 
     printf("Running %d x FFT-8\n", N_FFTS);
 

@@ -30,6 +30,14 @@ def test_bitreverse(params):
     assert exit_code == 0, f"Kernel failed with exit code {exit_code}"
 
 
+@pytest.mark.parametrize("params", generate_test_params())
+def test_bitreverse64(params):
+    """Run 64-bit bitreverse kernel and verify it passes."""
+    binary_path = build_if_needed(KERNEL_DIR, 'bitreverse-reorder64.riscv')
+    exit_code = run_kernel(binary_path, params=params)
+    assert exit_code == 0, f"Kernel failed with exit code {exit_code}"
+
+
 if __name__ == '__main__':
     import argparse
     import logging
@@ -37,6 +45,8 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Run bitreverse reorder test')
     parser.add_argument('-g', '--geometry', default='k2x1_j1x2',
                         help='Geometry name (default: k2x1_j1x2)')
+    parser.add_argument('--e64', action='store_true',
+                        help='Run 64-bit element width version')
     parser.add_argument('--list-geometries', action='store_true',
                         help='List available geometries')
     parser.add_argument('--log-level', default='WARNING',
@@ -59,7 +69,8 @@ if __name__ == '__main__':
             exit(1)
 
         params = GEOMETRIES[args.geometry]
-        binary_path = build_if_needed(KERNEL_DIR, 'bitreverse-reorder.riscv')
+        binary_name = 'bitreverse-reorder64.riscv' if args.e64 else 'bitreverse-reorder.riscv'
+        binary_path = build_if_needed(KERNEL_DIR, binary_name)
         exit_code = run_kernel(binary_path, params=params, max_cycles=args.max_cycles)
         print(f"Exit code: {exit_code}")
         exit(exit_code)

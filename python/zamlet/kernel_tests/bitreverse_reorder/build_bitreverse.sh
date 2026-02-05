@@ -22,3 +22,13 @@ ${RISCV_GCC} ${INCLUDES} ${RISCV_GCC_OPTS} -o ${OUTPUT} \
 
 echo "Build successful: ${OUTPUT}"
 ls -lh ${OUTPUT}
+
+echo "Building bitreverse-reorder64..."
+SRCS64="bitreverse_main64.c compute_indices.c bitreverse.S bitreverse_reorder64.S"
+OUTPUT64="bitreverse-reorder64.riscv"
+
+${RISCV_GCC} ${INCLUDES} ${RISCV_GCC_OPTS} -o ${OUTPUT64} \
+    ${SRCS64} ${COMMON_SRCS} ${RISCV_LINK_OPTS}
+
+echo "Build successful: ${OUTPUT64}"
+ls -lh ${OUTPUT64}

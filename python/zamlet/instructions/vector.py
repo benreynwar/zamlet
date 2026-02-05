@@ -1319,4 +1319,5 @@ class Vrgather:
             mask_reg=mask_reg,
             parent_span_id=span_id,
         )
+        s.monitor.finalize_children(span_id)
         s.pc += 4
