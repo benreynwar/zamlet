@@ -32,14 +32,20 @@ BUNDLED_ATTRS = {
         mandatory = True,
         providers = [PdkInfo],
     ),
+    "clock_period": attr.string(
+        doc = "Clock period in nanoseconds",
+        mandatory = True,
+    ),
+    "clock_port": attr.string(
+        doc = "Clock port name",
+        mandatory = True,
+    ),
     # SDC template for delay constraints
     "_sdc_template": attr.label(
         default = "//bazel/flow/sdc:base.sdc",
         allow_single_file = [".sdc"],
     ),
     # Optional attrs with None default (to detect user overrides)
-    "clock_period": attr.string(doc = "Clock period in nanoseconds"),
-    "clock_port": attr.string(doc = "Clock port name"),
     "core_utilization": attr.string(doc = "Target core utilization percentage"),
     "die_area": attr.string(doc = "Die area as 'x0 y0 x1 y1'"),
     # IO delay constraints (percentage of clock period)
@@ -59,22 +65,25 @@ def _add_if_set(config, key, value):
     if value != None and value != "":
         config[key] = value
 
-def _bundled_flow_impl(ctx):
-    """Run librelane Classic flow as a single bundled invocation."""
+def _prepare_flow(ctx, verilog_paths):
+    """Build config, SDC script, and input file list from rule attrs.
 
+    Args:
+        ctx: Rule context with BUNDLED_ATTRS.
+        verilog_paths: List of paths to use for VERILOG_FILES in config.
+
+    Returns:
+        struct with config, sdc_generation_script, inputs, pdk_name, scl, top.
+    """
     pdk = ctx.attr.pdk[PdkInfo]
 
-    # Build config with only user-specified values
-    # Librelane will use its own defaults for anything not specified
     config = {
-        # Always required
         "DESIGN_NAME": ctx.attr.top,
-        "VERILOG_FILES": [f.path for f in ctx.files.verilog_files],
+        "VERILOG_FILES": verilog_paths,
     }
 
-    # Add optional values only if user specified them
-    _add_if_set(config, "CLOCK_PORT", ctx.attr.clock_port)
-    _add_if_set(config, "CLOCK_PERIOD", float(ctx.attr.clock_period) if ctx.attr.clock_period else None)
+    config["CLOCK_PORT"] = ctx.attr.clock_port
+    config["CLOCK_PERIOD"] = float(ctx.attr.clock_period)
     _add_if_set(config, "FP_CORE_UTIL", ctx.attr.core_utilization)
     _add_if_set(config, "DIE_AREA", ctx.attr.die_area)
     _add_if_set(config, "SYNTH_STRATEGY", ctx.attr.synth_strategy)
@@ -82,7 +91,6 @@ def _bundled_flow_impl(ctx):
     _add_if_set(config, "USE_SYNLIG", ctx.attr.use_synlig)
     _add_if_set(config, "RUN_LINTER", ctx.attr.run_linter)
 
-    # Handle SDC generation for delay constraints
     input_delay = ctx.attr.input_delay_constraint
     output_delay = ctx.attr.output_delay_constraint
     generate_sdc = input_delay or output_delay
@@ -90,9 +98,7 @@ def _bundled_flow_impl(ctx):
     if generate_sdc:
         effective_input_delay = input_delay if input_delay else "50"
         effective_output_delay = output_delay if output_delay else "50"
-        # Generate SDC by reading template and substituting placeholders
         sdc_generation_script = """
-# Generate SDC from template
 sed -e 's/{{{{INPUT_DELAY_CONSTRAINT}}}}/{input_delay}/' \\
     -e 's/{{{{OUTPUT_DELAY_CONSTRAINT}}}}/{output_delay}/' \\
     "{sdc_template}" > "$DESIGN_DIR/constraints.sdc"
@@ -101,14 +107,9 @@ sed -e 's/{{{{INPUT_DELAY_CONSTRAINT}}}}/{input_delay}/' \\
             output_delay = effective_output_delay,
             sdc_template = ctx.file._sdc_template.path,
         )
-        # Tell librelane to use the generated SDC (dir:: makes path relative to config file)
         config["PNR_SDC_FILE"] = "dir::constraints.sdc"
         config["SIGNOFF_SDC_FILE"] = "dir::constraints.sdc"
 
-    # Declare outputs - just the directory, files inside are implicit
-    out_dir = ctx.actions.declare_directory(ctx.label.name)
-
-    # Collect input files
     inputs = list(ctx.files.verilog_files)
     inputs.extend(pdk.cell_lefs)
     inputs.extend(pdk.cell_gds)
@@ -124,9 +125,21 @@ sed -e 's/{{{{INPUT_DELAY_CONSTRAINT}}}}/{input_delay}/' \\
     if generate_sdc:
         inputs.append(ctx.file._sdc_template)
 
-    top = ctx.attr.top
-    pdk_name = pdk.name
-    scl = pdk.scl
+    return struct(
+        config = config,
+        sdc_generation_script = sdc_generation_script,
+        inputs = inputs,
+        pdk_name = pdk.name,
+        scl = pdk.scl,
+        top = ctx.attr.top,
+    )
+
+def _bundled_flow_impl(ctx):
+    """Run librelane Classic flow as a single bundled invocation."""
+
+    flow = _prepare_flow(ctx, [f.path for f in ctx.files.verilog_files])
+    out_dir = ctx.actions.declare_directory(ctx.label.name)
+    top = flow.top
 
     script = """#!/bin/bash
 set -e
@@ -139,14 +152,16 @@ cat > "$DESIGN_DIR/config.json" << 'CONFIGEOF'
 {config_json}
 CONFIGEOF
 
-# Run librelane Classic flow through global placement (checkpoint 3)
+# Bazel strips HOME from the environment; set it to the output dir
+export HOME="$DESIGN_DIR"
+
+# Run librelane Classic flow (full flow)
 if ! librelane "$DESIGN_DIR/config.json" \\
     --manual-pdk \\
     --pdk-root "$PDK_ROOT" \\
     --pdk {pdk} \\
     --scl {scl} \\
     --run-tag bundled \\
-    --to OpenROAD.GlobalPlacement \\
     --overwrite; then
     echo "=== LIBRELANE FAILED ==="
     echo "Flow log:"
@@ -187,20 +202,20 @@ fi
 echo "Checkpoint 3 (OpenROAD.GlobalPlacement) complete"
 """.format(
         design_dir = out_dir.path,
-        sdc_generation = sdc_generation_script,
-        config_json = json.encode_indent(config, indent = "  "),
-        pdk = pdk_name,
-        scl = scl,
+        sdc_generation = flow.sdc_generation_script,
+        config_json = json.encode_indent(flow.config, indent = "  "),
+        pdk = flow.pdk_name,
+        scl = flow.scl,
         top = top,
     )
 
     ctx.actions.run_shell(
         outputs = [out_dir],
-        inputs = inputs,
+        inputs = flow.inputs,
         command = script,
         use_default_shell_env = True,
         mnemonic = "LibrelaneBundled",
-        progress_message = "Running librelane bundled flow (checkpoints 1-3: synthesis, floorplan, gpl)",
+        progress_message = "Running librelane bundled flow (full flow)",
     )
 
     return [
@@ -211,6 +226,69 @@ librelane_classic_bundled_flow = rule(
     implementation = _bundled_flow_impl,
     attrs = BUNDLED_ATTRS,
     doc = "Run librelane Classic flow as a single bundled invocation for validation",
+)
+
+def _flow_inputs_impl(ctx):
+    """Create a directory with all inputs needed to run librelane manually."""
+
+    flow = _prepare_flow(ctx,
+        ["dir::" + f.basename for f in ctx.files.verilog_files])
+    out_dir = ctx.actions.declare_directory(ctx.label.name)
+
+    copy_verilog = "\n".join([
+        'cp "{src}" "$DESIGN_DIR/{basename}"'.format(
+            src = f.path, basename = f.basename)
+        for f in ctx.files.verilog_files
+    ])
+
+    run_sh = """\
+#!/usr/bin/env bash
+set -e
+cd "$(dirname "$0")"
+exec librelane ./config.json \\
+    --manual-pdk \\
+    --pdk-root "$PDK_ROOT" \\
+    --pdk {pdk} \\
+    --scl {scl} \\
+    "$@"
+""".format(pdk = flow.pdk_name, scl = flow.scl)
+
+    script = """#!/bin/bash
+set -e
+DESIGN_DIR="{design_dir}"
+mkdir -p "$DESIGN_DIR"
+{copy_verilog}
+{sdc_generation}
+cat > "$DESIGN_DIR/config.json" << 'CONFIGEOF'
+{config_json}
+CONFIGEOF
+cat > "$DESIGN_DIR/run.sh" << 'RUNEOF'
+{run_sh}
+RUNEOF
+chmod +x "$DESIGN_DIR/run.sh"
+""".format(
+        design_dir = out_dir.path,
+        copy_verilog = copy_verilog,
+        sdc_generation = flow.sdc_generation_script,
+        config_json = json.encode_indent(flow.config, indent = "  "),
+        run_sh = run_sh,
+    )
+
+    ctx.actions.run_shell(
+        outputs = [out_dir],
+        inputs = flow.inputs,
+        command = script,
+        use_default_shell_env = True,
+        mnemonic = "LibrelaneFlowInputs",
+        progress_message = "Preparing librelane flow inputs for %s" % flow.top,
+    )
+
+    return [DefaultInfo(files = depset([out_dir]))]
+
+librelane_flow_inputs = rule(
+    implementation = _flow_inputs_impl,
+    attrs = BUNDLED_ATTRS,
+    doc = "Prepare inputs for running librelane manually (config.json, verilog, SDC, run.sh)",
 )
 
 # Comparison test - compare bundled flow output with Bazel flow output

@@ -2,6 +2,7 @@ load("//bazel/flow:defs.bzl",
     "librelane_classic_flow",
     "librelane_classic_bundled_flow",
     "librelane_compare_flows_test",
+    "librelane_flow_inputs",
 )
 load("@sky130_fd_sc_hd_config//:defs.bzl", "pdk")
 
@@ -46,6 +47,20 @@ librelane_classic_bundled_flow(
     top = "WallaceMult8x8",
     pdk = ":sky130hd",
     clock_period = "10.0",
+    clock_port = "clock",
+    core_utilization = "40",
+    input_delay_constraint = "40",
+    output_delay_constraint = "40",
+)
+
+# Flow inputs for manual debugging
+librelane_flow_inputs(
+    name = "WallaceMult8x8_flow_inputs",
+    verilog_files = [":WallaceMult8x8.sv"],
+    top = "WallaceMult8x8",
+    pdk = ":sky130hd",
+    clock_period = "10.0",
+    clock_port = "clock",
     core_utilization = "40",
     input_delay_constraint = "40",
     output_delay_constraint = "40",

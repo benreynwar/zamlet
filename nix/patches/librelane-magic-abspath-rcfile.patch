@@ -1,0 +1,21 @@
+diff --git a/librelane/steps/magic.py b/librelane/steps/magic.py
+index 9127959..ef2f73c 100644
+--- a/librelane/steps/magic.py
++++ b/librelane/steps/magic.py
+@@ -151,7 +151,7 @@ class MagicStep(TclStep):
+             "-dnull",
+             "-noconsole",
+             "-rcfile",
+-            self.config["MAGICRC"],
++            os.path.abspath(self.config["MAGICRC"]),
+             os.path.join(get_script_dir(), "magic", "wrapper.tcl"),
+         ]
+
+@@ -557,7 +557,7 @@ class OpenGUI(MagicStep):
+         cmd = [
+             "magic",
+             "-rcfile",
+-            self.config["MAGICRC"],
++            os.path.abspath(self.config["MAGICRC"]),
+             self.get_script_path(),
+         ]
