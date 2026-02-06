@@ -98,6 +98,22 @@ class TrackedKInstr(KInstr):
 
 
 @dataclass
+class SetIndexBound(KInstr):
+    """Set kamlet-level index bound for indexed load/store masking.
+
+    0 = no bound (full 64-bit indices), N = mask indices to lower N bits.
+    """
+    # 0 = no bound, N = mask to lower N bits
+    index_bound_bits: int
+    instr_ident: int
+
+    async def update_kamlet(self, kamlet):
+        kamlet.index_bound_bits = self.index_bound_bits
+        kamlet.monitor.finalize_kinstr_exec(
+            self.instr_ident, kamlet.min_x, kamlet.min_y)
+
+
+@dataclass
 class LoadImmByte(KInstr):
     """
     This instruction writes an immediate to a byte of a vector register.

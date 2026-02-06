@@ -221,6 +221,7 @@ class VlrV:
         n_elements = (s.params.vline_bytes * self.nreg * 8) // ew
         ordering = addresses.Ordering(reg_ordering.word_order, ew)
         await s.vload(self.vd, addr, ordering, n_elements, None, 0, parent_span_id=span_id)
+        s.monitor.finalize_children(span_id)
         s.pc += 4
 
 
@@ -294,6 +295,7 @@ class VsrV:
         n_elements = (s.params.vline_bytes * self.nreg * 8) // ew
         ordering = addresses.Ordering(reg_ordering.word_order, ew)
         await s.vstore(self.vs3, addr, ordering, n_elements, None, 0, parent_span_id=span_id)
+        s.monitor.finalize_children(span_id)
         s.pc += 4
 
 
@@ -333,6 +335,7 @@ class VlseV:
         ordering = addresses.Ordering(s.word_order, self.element_width)
         await s.vload(self.vd, addr, ordering, s.vl, mask_reg, s.vstart, parent_span_id=span_id,
                       stride_bytes=stride)
+        s.monitor.finalize_children(span_id)
         s.pc += 4
 
 
@@ -372,6 +375,7 @@ class VsseV:
         ordering = addresses.Ordering(s.word_order, self.element_width)
         await s.vstore(self.vs3, addr, ordering, s.vl, mask_reg, s.vstart, parent_span_id=span_id,
                        stride_bytes=stride)
+        s.monitor.finalize_children(span_id)
         s.pc += 4
 
 
@@ -1143,7 +1147,6 @@ class VIndexedLoad:
         )
         vsew = (s.vtype >> 3) & 0x7
         data_ew = 8 << vsew
-        logger.warning('Starting submit vluxei')
         if self.ordered:
             await s.vload_indexed_ordered(
                 self.vd, base_addr, self.vs2, self.index_width, data_ew,
@@ -1154,7 +1157,6 @@ class VIndexedLoad:
                 self.vd, base_addr, self.vs2, self.index_width, data_ew,
                 s.vl, mask_reg, s.vstart, parent_span_id=span_id
             )
-        logger.warning('Finished submit vluxei')
         s.monitor.finalize_children(span_id)
         s.pc += 4
 

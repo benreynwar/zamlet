@@ -17,6 +17,8 @@
 
 bitreverse_reorder64:
     beqz a0, .Ldone64
+    .insn i 0x0b, 0, x0, x0, 10    # set_index_bound 10 (indices bounded to 2^10 bytes)
+    .insn i 0x0b, 1, x0, x0, 0     # begin_writeset
 
 .Lloop64:
     # Set vl for 64-bit data width (determines elements per iteration)
@@ -50,6 +52,8 @@ bitreverse_reorder64:
     # Decrement count
     sub a0, a0, t0
     bnez a0, .Lloop64
+    .insn i 0x0b, 2, x0, x0, 0     # end_writeset
+    .insn i 0x0b, 0, x0, x0, 0     # set_index_bound 0 (disable)
 
 .Ldone64:
     ret

@@ -62,7 +62,9 @@ def check_instruction(trace, pc, actual_bytes, actual_text):
     expected_normalized = ' '.join(expected_text_clean.split())
     actual_normalized = ' '.join(actual_text_clean.split())
 
-    if expected_normalized != actual_normalized:
+    # Skip text comparison when objdump doesn't recognize the instruction
+    # (outputs ".insn" for custom opcodes that our decoder knows about)
+    if expected_normalized != actual_normalized and not expected_normalized.startswith('.insn'):
         return (f"DISASM MISMATCH at {hex(pc)}: "
                 f"expected '{expected_text_clean}', "
                 f"got '{actual_text_clean}' "

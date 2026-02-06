@@ -35,13 +35,14 @@ class ReadByte(kinstructions.TrackedKInstr):
     """
     k_maddr: KMAddr
     instr_ident: int
+    writeset_ident: int
 
     async def update_kamlet(self, kamlet: 'Kamlet'):
         """
         Reads a byte from memory.
         It first makes sure that we've got the cache line ready.
         """
-        if not kamlet.cache_table.can_read(self.k_maddr):
+        if not kamlet.cache_table.can_read(self.k_maddr, writeset_ident=self.writeset_ident):
             witem = WaitingReadByte(self)
             kamlet.monitor.record_witem_created(
                 self.instr_ident, kamlet.min_x, kamlet.min_y, 'WaitingReadByte')
@@ -73,7 +74,7 @@ async def do_read_byte(kamlet: 'Kamlet', instr: ReadByte) -> None:
     """
     assert instr.k_maddr.bit_addr % 8 == 0
     if instr.k_maddr.k_index == kamlet.k_index:
-        assert kamlet.cache_table.can_read(instr.k_maddr)
+        assert kamlet.cache_table.can_read(instr.k_maddr, writeset_ident=instr.writeset_ident)
         j_saddr = instr.k_maddr.to_j_saddr(kamlet.cache_table)
         jamlet = kamlet.jamlets[j_saddr.j_in_k_index]
         await send_read_byte_resp(jamlet, instr, j_saddr.addr)

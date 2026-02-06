@@ -110,3 +110,34 @@ def encode_vsse(vs3: int, rs1: int, rs2: int, width: int = 32, vm: int = 1) -> i
            ((rs2 & 0x1f) << 20) | ((rs1 & 0x1f) << 15) | (width_field << 12) | \
            ((vs3 & 0x1f) << 7) | opcode
     return inst
+
+
+def _encode_custom0_i_type(funct3: int, rs1: int = 0, imm: int = 0) -> int:
+    """Encode a custom-0 I-type instruction (opcode 0x0B).
+
+    I-type: imm[11:0] | rs1[4:0] | funct3[2:0] | rd[4:0] | opcode[6:0]
+    rd is always 0 for these instructions.
+    """
+    opcode = 0x0B
+    rd = 0
+    inst = ((imm & 0xFFF) << 20) | ((rs1 & 0x1f) << 15) | \
+           ((funct3 & 0x7) << 12) | ((rd & 0x1f) << 7) | opcode
+    return inst
+
+
+def encode_set_index_bound(rs1: int = 0, imm: int = 0) -> int:
+    """Encode set_index_bound (custom-0, funct3=0).
+
+    If rs1 != 0, N = x[rs1]. If rs1 == 0, N = imm.
+    """
+    return _encode_custom0_i_type(funct3=0, rs1=rs1, imm=imm)
+
+
+def encode_begin_writeset() -> int:
+    """Encode begin_writeset (custom-0, funct3=1)."""
+    return _encode_custom0_i_type(funct3=1)
+
+
+def encode_end_writeset() -> int:
+    """Encode end_writeset (custom-0, funct3=2)."""
+    return _encode_custom0_i_type(funct3=2)

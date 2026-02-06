@@ -42,7 +42,7 @@ class WaitingStoreSimple(WaitingItemRequiresCache):
     async def finalize(self, kamlet: 'Kamlet') -> None:
         instr = self.item
         assert isinstance(instr, kinstructions.Store)
-        assert kamlet.cache_table.can_write(instr.k_maddr)
+        assert kamlet.cache_table.can_write(instr.k_maddr, writeset_ident=self.writeset_ident)
 
         for jamlet in kamlet.jamlets:
             do_store_simple(jamlet, instr)
@@ -66,7 +66,7 @@ def do_store_simple(jamlet: 'Jamlet', instr: kinstructions.Store) -> None:
     This is called when the store is aligned to local kamlet memory
     and the cache line is available for writing.
     """
-    assert jamlet.cache_table.can_write(instr.k_maddr)
+    assert jamlet.cache_table.can_write(instr.k_maddr, writeset_ident=instr.writeset_ident)
     slot = jamlet.cache_table.addr_to_slot(instr.k_maddr)
 
     dst_ordering = instr.k_maddr.ordering

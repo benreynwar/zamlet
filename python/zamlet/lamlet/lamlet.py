@@ -145,6 +145,9 @@ class Lamlet:
         self.waiting_items: deque[LamletWaitingItem] = deque()
 
         self.next_writeset_ident = 0
+        # 0 = no bound (full 64-bit indices), N = mask indices to lower N bits
+        self.index_bound_bits: int = 0
+        self.active_writeset_ident: int | None = None
         self.next_instr_ident = 0
         # Track oldest active instr_ident for flow control (None = unknown/all free)
         self._oldest_active_ident: int | None = None
@@ -264,6 +267,7 @@ class Lamlet:
             k_maddr=k_maddr,
             imm=value,
             instr_ident=instr_ident,
+            writeset_ident=ident_query.get_writeset_ident(self),
             )
         await self.add_to_instruction_buffer(kinstr, self._setup_span_id, k_maddr.k_index)
 
@@ -282,6 +286,7 @@ class Lamlet:
         kinstr = ReadByte(
             k_maddr=k_maddr,
             instr_ident=instr_ident,
+            writeset_ident=ident_query.get_writeset_ident(self),
             )
         await self.add_to_instruction_buffer(kinstr, self._setup_span_id, k_maddr.k_index)
         return future

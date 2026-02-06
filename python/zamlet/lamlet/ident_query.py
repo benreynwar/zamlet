@@ -58,6 +58,8 @@ def get_oldest_active_instr_ident_distance(lamlet: 'Lamlet', baseline: int) -> i
 
 
 def get_writeset_ident(lamlet: 'Lamlet') -> int:
+    if lamlet.active_writeset_ident is not None:
+        return lamlet.active_writeset_ident
     ident = lamlet.next_writeset_ident
     lamlet.next_writeset_ident += 1
     return ident
