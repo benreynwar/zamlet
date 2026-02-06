@@ -17,7 +17,10 @@ let
   librelane-src = bootstrap-pkgs.applyPatches {
     name = "librelane-patched";
     src = librelane-src-unpatched;
-    patches = [ ./librelane-macro-placement.patch ];
+    patches = [
+      ./librelane-macro-placement.patch
+      ./patches/librelane-magic-abspath-rcfile.patch
+    ];
   };
 
   # Local version (for development)

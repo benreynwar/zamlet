@@ -37,6 +37,7 @@ load(":full_flow.bzl",
 load(":validate.bzl",
     _librelane_classic_bundled_flow = "librelane_classic_bundled_flow",
     _librelane_compare_flows_test = "librelane_compare_flows_test",
+    _librelane_flow_inputs = "librelane_flow_inputs",
 )
 
 # Providers
@@ -93,3 +94,4 @@ librelane_classic_flow = _librelane_classic_flow
 # Validation
 librelane_classic_bundled_flow = _librelane_classic_bundled_flow
 librelane_compare_flows_test = _librelane_compare_flows_test
+librelane_flow_inputs = _librelane_flow_inputs

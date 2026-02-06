@@ -46,8 +46,8 @@ maven = use_extension("@rules_jvm_external//:extensions.bzl", "maven")
 maven.install(
     name = "maven",
     artifacts = [
-        "org.chipsalliance:chisel_2.13:7.0.0-RC1+22-2cb90ea2-SNAPSHOT",
-        "org.chipsalliance:chisel-plugin_2.13.16:7.0.0-RC1+22-2cb90ea2-SNAPSHOT",
+        "org.chipsalliance:chisel_2.13:7.0.0",
+        "org.chipsalliance:chisel-plugin_2.13.16:7.0.0",
         "org.typelevel:cats-core_2.13:2.13.0",
         "org.typelevel:cats-kernel_2.13:2.13.0",
         "io.circe:circe-core_2.13:0.14.13",
