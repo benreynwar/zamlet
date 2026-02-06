@@ -1,10 +1,5 @@
 # Config files for FMVPU
 
-# List of Jamlet config JSON files
-JAMLET_CONFIG_FILES = [
-    "jamlet_default.json",
-]
-
 # List of Kamlet config JSON files
 KAMLET_CONFIG_FILES = [
     "synchronizer_default.json",
@@ -29,7 +24,7 @@ UTILS_CONFIG_FILES = [
 ]
 
 exports_files(
-    JAMLET_CONFIG_FILES + KAMLET_CONFIG_FILES + LAMLET_CONFIG_FILES + MATHS_CONFIG_FILES +
+    KAMLET_CONFIG_FILES + LAMLET_CONFIG_FILES + MATHS_CONFIG_FILES +
     UTILS_CONFIG_FILES,
     visibility = ["//visibility:public"]
 )

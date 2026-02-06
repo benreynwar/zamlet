@@ -20,15 +20,6 @@ git_override(
 # Python toolchain - use Nix-provided Python
 # (registered below with find_nix_python)
 
-# Python dependencies managed in virtual environment
-pip = use_extension("@rules_python//python/extensions:pip.bzl", "pip")
-pip.parse(
-    hub_name = "zamlet_pip_deps",
-    python_version = "3.11",
-    requirements_lock = "//:requirements.lock",
-)
-use_repo(pip, "zamlet_pip_deps")
-
 # Scala toolchain
 SCALA_VERSION = "2.13.16"
 

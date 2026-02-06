@@ -8,8 +8,6 @@ load(":openram.bzl", "openram_sram")
 # Export files for use by sub-packages
 exports_files([
     "config/constraints_sky130hd.sdc",
-    "scripts/analysis.tcl",
-    "scripts/netlist_hierarchy_report.tcl",
 ])
 
 chisel_binary(
