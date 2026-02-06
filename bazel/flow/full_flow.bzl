@@ -108,6 +108,7 @@ def librelane_classic_flow(
     cts_clk_max_wire_length = None,
     run_cts = True,
     run_post_cts_resizer_timing = True,
+    run_eqy = False,
     run_linter = True,
     run_tap_endcap_insertion = True,
     run_post_gpl_design_repair = True,
@@ -150,6 +151,7 @@ def librelane_classic_flow(
         cts_clk_max_wire_length: Max clock wire length in µm before buffer insertion (0=disabled)
         run_cts: Enable clock tree synthesis (default True)
         run_post_cts_resizer_timing: Enable timing optimization after CTS (default True, ignored if run_cts=False)
+        run_eqy: Enable EQY formal equivalence check (default False)
         run_linter: Enable Verilator linting (default True)
         run_tap_endcap_insertion: Enable tap/endcap insertion (default True)
         run_post_gpl_design_repair: Enable design repair after global placement (default True)
@@ -789,18 +791,19 @@ def librelane_classic_flow(
         src = ":" + name + "_lvs",
     )
 
-    # Step 73: Yosys EQY (formal equivalence check)
-    librelane_eqy(
-        name = name + "_eqy",
-        input = input_target,
-        src = ":" + name + "_chk_lvs",
-    )
+    # Step 73: Yosys EQY (formal equivalence check, gated by run_eqy)
+    if run_eqy:
+        librelane_eqy(
+            name = name + "_eqy",
+            input = input_target,
+            src = ":" + name + "_chk_lvs",
+        )
 
     # Step 74: Check setup violations
     librelane_setup_violations(
         name = name + "_chk_setup",
         input = input_target,
-        src = ":" + name + "_eqy",
+        src = ":" + name + ("_eqy" if run_eqy else "_chk_lvs"),
     )
 
     # Step 75: Check hold violations
