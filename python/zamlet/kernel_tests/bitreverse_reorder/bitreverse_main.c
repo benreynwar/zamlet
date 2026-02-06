@@ -2,8 +2,8 @@
 #include <stddef.h>
 #include <stdio.h>
 
-#define N 16
-#define N_BITS 4
+#define N 64
+#define N_BITS 6
 
 volatile int32_t *vpu_mem = (volatile int32_t *)0x900C0000;
 
@@ -62,7 +62,9 @@ int main() {
         }
     }
 
-    bitreverse_reorder(N, src, dst, read_idx, write_idx);
+    for (int rep = 0; rep < 4; rep++) {
+        bitreverse_reorder(N, src, dst, read_idx, write_idx);
+    }
 
     // Exit with first failing index and value
     // Format: (actual_value << 16) | (index << 8) | 0x80

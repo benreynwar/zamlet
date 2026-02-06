@@ -140,7 +140,7 @@ async def run(clock: Clock, filename, params: LamletParams = None):
             logger.info(f"run() exiting with clock.running=False, exit_code={s.exit_code}")
     finally:
         write_span_trees(s)
-    return exit_code
+    return exit_code, s.monitor
 
 
 
@@ -159,14 +159,14 @@ async def main(clock, filename, params: LamletParams = None) -> int:
 
     # Wait for run_task to complete - it will set clock.running = False
     await run_task
-    exit_code = run_task.result()
+    exit_code, monitor = run_task.result()
     logger.info(f"run_task completed with exit_code: {exit_code}")
 
     # Now wait for clock_driver to finish naturally
     await clock_driver_task
     logger.info(f"clock_driver_task completed")
 
-    return exit_code
+    return exit_code, monitor
 
 
 if __name__ == '__main__':
@@ -233,7 +233,7 @@ if __name__ == '__main__':
             clock = Clock(max_cycles=args.max_cycles)
             exit_code = None
             try:
-                exit_code = asyncio.run(main(clock, filename, params))
+                exit_code, _monitor = asyncio.run(main(clock, filename, params))
             except KeyboardInterrupt:
                 root_logger.warning(f'========== Test interrupted by user ==========')
                 sys.exit(1)

@@ -32,7 +32,7 @@ FFT_GEOMETRIES = {name: params for name, params in GEOMETRIES.items() if params.
 def test_fft8(params):
     """Run 8-point FFT kernel and verify it passes."""
     binary_path = build_if_needed(KERNEL_DIR, 'vec-fft8.riscv')
-    exit_code = run_kernel(binary_path, params=params, max_cycles=500000)
+    exit_code, _monitor = run_kernel(binary_path, params=params, max_cycles=500000)
     assert exit_code == 0, f"FFT kernel failed with exit code {exit_code}"
 
 

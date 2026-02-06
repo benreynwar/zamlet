@@ -1372,6 +1372,27 @@ class Monitor:
             'pending_spans': pending_info,
         }
 
+    def get_router_utilization_timeseries(self):
+        """Get average router utilization over time.
+
+        Returns:
+            List of (cycle, avg_pct_occupied, avg_pct_moving) tuples,
+            sorted by cycle. Averages are over all (jamlet, channel, direction)
+            connections.
+        """
+        result = []
+        for cycle in sorted(self.cycle_metrics.keys()):
+            metrics = self.cycle_metrics[cycle]
+            if not metrics.router_outputs:
+                continue
+            n = len(metrics.router_outputs)
+            n_present = sum(1 for (present, _moving) in metrics.router_outputs.values()
+                           if present)
+            n_moving = sum(1 for (_present, moving) in metrics.router_outputs.values()
+                          if moving)
+            result.append((cycle, n_present / n * 100, n_moving / n * 100))
+        return result
+
     def dump_to_file(self, path: str):
         """Export all data to a JSON file."""
         def enum_encoder(obj):

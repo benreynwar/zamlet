@@ -28,7 +28,7 @@ def generate_test_params():
 def test_vid(params):
     """Run vid kernel and verify it passes."""
     binary_path = build_if_needed(KERNEL_DIR, 'vid.riscv')
-    exit_code = run_kernel(binary_path, params=params)
+    exit_code, _monitor = run_kernel(binary_path, params=params)
     if exit_code != 0:
         if exit_code & 0x10000:
             index = (exit_code >> 8) & 0xFF
@@ -65,7 +65,7 @@ if __name__ == '__main__':
 
         params = GEOMETRIES[args.geometry]
         binary_path = build_if_needed(KERNEL_DIR, 'vid.riscv')
-        exit_code = run_kernel(binary_path, params=params)
+        exit_code, _monitor = run_kernel(binary_path, params=params)
         print(f"Exit code: {exit_code}")
         if exit_code != 0 and exit_code & 0x10000:
             index = (exit_code >> 8) & 0xFF

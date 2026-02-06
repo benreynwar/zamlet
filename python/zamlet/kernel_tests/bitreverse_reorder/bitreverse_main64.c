@@ -1,8 +1,8 @@
 #include <stdint.h>
 #include <stddef.h>
 
-#define N 16
-#define N_BITS 4
+#define N 64
+#define N_BITS 6
 
 // 64-bit data in VPU 64-bit pool, 32-bit indices in VPU 32-bit pool
 volatile int64_t *vpu_mem64 = (volatile int64_t *)0x90100000;

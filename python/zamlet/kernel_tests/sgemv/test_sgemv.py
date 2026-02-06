@@ -39,5 +39,5 @@ def generate_test_params():
 def test_sgemv(binary, params):
     """Run sgemv kernel and verify it passes."""
     binary_path = build_if_needed(KERNEL_DIR, binary)
-    exit_code = run_kernel(binary_path, params=params)
+    exit_code, _monitor = run_kernel(binary_path, params=params)
     assert exit_code == 0, f"Kernel {binary} failed with exit code {exit_code}"

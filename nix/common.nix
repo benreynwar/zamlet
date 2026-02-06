@@ -88,6 +88,7 @@ let
   python-env = pkgs.python3.withPackages (ps: [
     ps.librelane
     ps.numpy
+    ps.matplotlib
     ps.pytest
     ps.pytest-xdist
     ps.pyelftools

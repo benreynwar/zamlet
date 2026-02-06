@@ -40,7 +40,7 @@ def generate_test_params():
 def test_readwritebyte(binary, params):
     """Run readwritebyte kernel and verify it passes."""
     binary_path = build_if_needed(KERNEL_DIR, binary)
-    exit_code = run_kernel(binary_path, params=params)
+    exit_code, _monitor = run_kernel(binary_path, params=params)
 
     # should_fail.riscv is expected to return non-zero
     if 'should_fail' in binary:

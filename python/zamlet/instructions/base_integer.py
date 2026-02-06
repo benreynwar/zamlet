@@ -37,7 +37,8 @@ class Addi:
     async def update_state(self, s: 'Lamlet'):
         await s.scalar.wait_all_regs_ready(self.rd, None, [self.rs1], [])
         rs1_val = int.from_bytes(s.scalar.read_reg(self.rs1), byteorder='little', signed=False)
-        result = rs1_val + self.imm
+        mask = (1 << (s.params.word_bytes * 8)) - 1
+        result = (rs1_val + self.imm) & mask
         result_bytes = result.to_bytes(s.params.word_bytes, byteorder='little', signed=False)
         s.scalar.write_reg(self.rd, result_bytes)
         s.pc += 4
@@ -92,7 +93,8 @@ class Ori:
     async def update_state(self, s: 'Lamlet'):
         await s.scalar.wait_all_regs_ready(self.rd, None, [self.rs1], [])
         rs1_val = int.from_bytes(s.scalar.read_reg(self.rs1), byteorder='little', signed=False)
-        result = rs1_val | self.imm
+        mask = (1 << (s.params.word_bytes * 8)) - 1
+        result = (rs1_val | self.imm) & mask
         result_bytes = result.to_bytes(s.params.word_bytes, byteorder='little', signed=False)
         s.scalar.write_reg(self.rd, result_bytes)
         s.pc += 4
@@ -122,7 +124,8 @@ class Xori:
     async def update_state(self, s: 'Lamlet'):
         await s.scalar.wait_all_regs_ready(self.rd, None, [self.rs1], [])
         rs1_val = int.from_bytes(s.scalar.read_reg(self.rs1), byteorder='little', signed=False)
-        result = rs1_val ^ self.imm
+        mask = (1 << (s.params.word_bytes * 8)) - 1
+        result = (rs1_val ^ self.imm) & mask
         result_bytes = result.to_bytes(s.params.word_bytes, byteorder='little', signed=False)
         s.scalar.write_reg(self.rd, result_bytes)
         s.pc += 4
@@ -148,7 +151,8 @@ class Slli:
     async def update_state(self, s: 'Lamlet'):
         await s.scalar.wait_all_regs_ready(self.rd, None, [self.rs1], [])
         rs1_val = int.from_bytes(s.scalar.read_reg(self.rs1), byteorder='little', signed=False)
-        result = rs1_val << self.shamt
+        mask = (1 << (s.params.word_bytes * 8)) - 1
+        result = (rs1_val << self.shamt) & mask
         result_bytes = result.to_bytes(s.params.word_bytes, byteorder='little', signed=False)
         s.scalar.write_reg(self.rd, result_bytes)
         s.pc += 4
@@ -219,7 +223,8 @@ class Add:
         await s.scalar.wait_all_regs_ready(self.rd, None, [self.rs1, self.rs2], [])
         rs1_val = int.from_bytes(s.scalar.read_reg(self.rs1), byteorder='little', signed=False)
         rs2_val = int.from_bytes(s.scalar.read_reg(self.rs2), byteorder='little', signed=False)
-        result = rs1_val + rs2_val
+        mask = (1 << (s.params.word_bytes * 8)) - 1
+        result = (rs1_val + rs2_val) & mask
         result_bytes = result.to_bytes(s.params.word_bytes, byteorder='little', signed=False)
         s.scalar.write_reg(self.rd, result_bytes)
         s.pc += 4
@@ -247,7 +252,8 @@ class Sub:
         await s.scalar.wait_all_regs_ready(self.rd, None, [self.rs1, self.rs2], [])
         rs1_val = int.from_bytes(s.scalar.read_reg(self.rs1), byteorder='little', signed=False)
         rs2_val = int.from_bytes(s.scalar.read_reg(self.rs2), byteorder='little', signed=False)
-        result = rs1_val - rs2_val
+        mask = (1 << (s.params.word_bytes * 8)) - 1
+        result = (rs1_val - rs2_val) & mask
         result_bytes = result.to_bytes(s.params.word_bytes, byteorder='little', signed=False)
         s.scalar.write_reg(self.rd, result_bytes)
         s.pc += 4

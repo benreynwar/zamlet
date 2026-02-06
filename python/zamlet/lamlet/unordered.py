@@ -529,12 +529,16 @@ async def vload_indexed_unordered(lamlet: 'Lamlet', vd: int, base_addr: int, ind
     for vline_reg in range(vd, vd + n_vlines):
         lamlet.vrf_ordering[vline_reg] = data_ordering
 
-    # Process in chunks of j_in_l elements
+    # Process in chunks of elements_in_vline elements (max one vline per kinstr)
     # Active elements are [start_index, n_elements), so n_active = n_elements - start_index
-    j_in_l = lamlet.params.j_in_l
+    elements_in_vline = lamlet.params.vline_bytes * 8 // data_ew
     n_active = n_elements - start_index
-    for chunk_offset in range(0, n_active, j_in_l):
-        chunk_n = min(j_in_l, n_active - chunk_offset)
+
+    sync_tasks = []
+    global_min_fault = None
+
+    for chunk_offset in range(0, n_active, elements_in_vline):
+        chunk_n = min(elements_in_vline, n_active - chunk_offset)
         instr_ident = await ident_query.get_instr_ident(
             lamlet, n_idents=lamlet.params.word_bytes + 1)
 
@@ -564,10 +568,16 @@ async def vload_indexed_unordered(lamlet: 'Lamlet', vd: int, base_addr: int, ind
         lamlet.monitor.create_sync_local_span(completion_sync_ident, 0, -1, kinstr_span_id)
         lamlet.synchronizer.local_event(completion_sync_ident)
 
-        global_min_fault = await wait_for_two_phase_sync(
-            lamlet, fault_sync_ident, completion_sync_ident)
-        if global_min_fault is not None:
-            return VectorOpResult(fault_type=TLBFaultType.READ_FAULT, element_index=global_min_fault)
+        sync_task = wait_for_two_phase_sync(lamlet, fault_sync_ident, completion_sync_ident)
+        sync_tasks.append(sync_task)
+
+    for sync_task in sync_tasks:
+        chunk_global_min_fault = await sync_task
+        if global_min_fault is None:
+            global_min_fault = chunk_global_min_fault
+            
+    if global_min_fault is not None:
+        return VectorOpResult(fault_type=TLBFaultType.READ_FAULT, element_index=global_min_fault)
 
     return VectorOpResult()
 
@@ -589,13 +599,18 @@ async def vstore_indexed_unordered(lamlet: 'Lamlet', vs: int, base_addr: int, in
 
     writeset_ident = ident_query.get_writeset_ident(lamlet)
 
-    # Process in chunks of j_in_l elements
+    # Process in chunks of elements_in_vline elements (max one vline per kinstr)
     # Active elements are [start_index, n_elements), so n_active = n_elements - start_index
-    j_in_l = lamlet.params.j_in_l
+    elements_in_vline = lamlet.params.vline_bytes * 8 // data_ew
     n_active = n_elements - start_index
-    logger.debug(f'vstore_indexed_unordered: n_elements={n_elements}, n_active={n_active}, j_in_l={j_in_l}')
-    for chunk_offset in range(0, n_active, j_in_l):
-        chunk_n = min(j_in_l, n_active - chunk_offset)
+    logger.debug(f'vstore_indexed_unordered: n_elements={n_elements}, n_active={n_active}, '
+                 f'elements_in_vline={elements_in_vline}')
+
+    sync_tasks = []
+    global_min_fault = None
+
+    for chunk_offset in range(0, n_active, elements_in_vline):
+        chunk_n = min(elements_in_vline, n_active - chunk_offset)
         logger.debug(f'vstore_indexed_unordered: chunk_offset={chunk_offset}, chunk_n={chunk_n}')
         instr_ident = await ident_query.get_instr_ident(
             lamlet, n_idents=lamlet.params.word_bytes + 1)
@@ -626,10 +641,16 @@ async def vstore_indexed_unordered(lamlet: 'Lamlet', vs: int, base_addr: int, in
         lamlet.monitor.create_sync_local_span(completion_sync_ident, 0, -1, kinstr_span_id)
         lamlet.synchronizer.local_event(completion_sync_ident)
 
-        global_min_fault = await wait_for_two_phase_sync(
-            lamlet, fault_sync_ident, completion_sync_ident)
-        if global_min_fault is not None:
-            return VectorOpResult(fault_type=TLBFaultType.WRITE_FAULT, element_index=global_min_fault)
+        sync_task = wait_for_two_phase_sync(lamlet, fault_sync_ident, completion_sync_ident)
+        sync_tasks.append(sync_task)
+
+    for sync_task in sync_tasks:
+        chunk_global_min_fault = await sync_task
+        if global_min_fault is None:
+            global_min_fault = chunk_global_min_fault
+
+    if global_min_fault is not None:
+        return VectorOpResult(fault_type=TLBFaultType.WRITE_FAULT, element_index=global_min_fault)
 
     return VectorOpResult()
 
