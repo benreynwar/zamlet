@@ -48,9 +48,8 @@ jobs:
       fail-fast: false
       matrix:
         target:
-          # Changed from _lef to _sta
-          - WallaceMult8x8_sky130hd_lvs
-          - WallaceMult16x16_sky130hd_lvs
+          - WallaceMult8x8_sky130hd_mfg_report
+          - WallaceMult16x16_sky130hd_mfg_report
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/nix-setup
