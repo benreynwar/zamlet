@@ -10,6 +10,7 @@ import pytest
 
 from zamlet.geometries import GEOMETRIES
 from zamlet.kernel_tests.conftest import build_if_needed, run_kernel
+from zamlet.analysis.plot_network import plot_network
 from zamlet.analysis.plot_queues import dump_queue_table, plot_queues
 from zamlet.tests.test_utils import dump_span_trees
 
@@ -122,13 +123,28 @@ if __name__ == '__main__':
         plot_path = os.path.join(
             KERNEL_DIR, f"queues_{base}.png")
         plot_queues(monitor, plot_path, title=title,
-                    cycle_min=7000, cycle_max=9000)
+                    cycle_min=41500, cycle_max=43000)
         print(f"Queue plot saved to {plot_path}")
 
         table_path = os.path.join(
             KERNEL_DIR, f"queues_{base}.tsv")
         dump_queue_table(monitor, table_path,
-                         cycle_min=7000, cycle_max=9000)
+                         cycle_min=41500, cycle_max=43000)
         print(f"Queue table saved to {table_path}")
+
+        network_dir = os.path.join(KERNEL_DIR, f"network_{base}")
+        os.makedirs(network_dir, exist_ok=True)
+        window = 50
+        net_start = 41700
+        net_end = 42900
+        for c_min in range(net_start, net_end, window):
+            c_max = c_min + window
+            net_title = (f"Bitreverse e{suffix} - {args.geometry}"
+                         f"  cycles {c_min}-{c_max}")
+            net_path = os.path.join(
+                network_dir, f"{c_min}_{c_max}.png")
+            plot_network(monitor, net_path, title=net_title,
+                         cycle_min=c_min, cycle_max=c_max)
+        print(f"Network plots saved to {network_dir}/")
 
         exit(exit_code)

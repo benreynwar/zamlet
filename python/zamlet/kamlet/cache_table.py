@@ -408,9 +408,14 @@ class CacheTable:
                 )
         # If this witem reads all memory, wait for all pending writes to complete first
         if witem.reads_all_memory:
+            ws_r = witem.writeset_ident
             self._record_blocked_by_witems(
-                witem, lambda item: item.cache_is_write, "reads_all_blocked_by_writes")
-            await self._wait_for_all_writes_complete()
+                witem,
+                lambda item: (item.cache_is_write
+                              and (ws_r is None
+                                   or item.writeset_ident != ws_r)),
+                "reads_all_blocked_by_writes")
+            await self._wait_for_all_writes_complete(ws_r)
         # If this witem writes all memory, wait for all pending reads, writes, and other
         # writes_all_memory witems to complete first
         if witem.writes_all_memory:
@@ -426,7 +431,7 @@ class CacheTable:
                 lambda item: (item.cache_is_write
                               and (ws is None or item.writeset_ident != ws)),
                 "writes_all_blocked_by_writes")
-            await self._wait_for_all_writes_complete()
+            await self._wait_for_all_writes_complete(ws)
             self._record_blocked_by_witems(
                 witem,
                 lambda item: (item.writes_all_memory
@@ -439,10 +444,22 @@ class CacheTable:
             witem.cache_is_avail = (
                     self.slot_states[witem.cache_slot].state in (CacheState.SHARED, CacheState.MODIFIED))
 
-    async def _wait_for_all_writes_complete(self) -> None:
-        """Wait until all pending write witems have completed."""
+    async def _wait_for_all_writes_complete(
+            self, writeset_ident: int | None = None) -> None:
+        """Wait until all pending write witems have completed.
+
+        If writeset_ident is provided, items with matching writeset_ident
+        are excluded.
+        """
         while True:
-            has_writes = any(item.cache_is_write for item in self.waiting_items)
+            has_writes = False
+            for item in self.waiting_items:
+                if item.cache_is_write:
+                    if (writeset_ident is not None
+                            and item.writeset_ident == writeset_ident):
+                        continue
+                    has_writes = True
+                    break
             if not has_writes:
                 break
             await self.clock.next_cycle

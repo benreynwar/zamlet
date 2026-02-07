@@ -192,6 +192,17 @@ class Lamlet:
             MessageType.WRITE_MEM_WORD_REQ: utils.Queue(length=2),
         }
 
+        # Lamlet network buffers. router_connections moves words between these
+        # and jamlet(0,0)'s N direction, just like any other router link.
+        self._receive_buffers = [
+            utils.Queue(length=params.router_output_buffer_length)
+            for _ in range(params.n_channels)
+        ]
+        self._send_word_buffers = [
+            utils.Queue(length=params.router_output_buffer_length)
+            for _ in range(params.n_channels)
+        ]
+
         # Lamlet's synchronizer at position (0, -1)
         self.synchronizer = Synchronizer(
             clock=clock,
@@ -364,6 +375,15 @@ class Lamlet:
                                 north_router.receive(Direction.S, word)
                                 north_moving = True
                                 logger.debug(f'{self.clock.cycle}: Moving word north ({x}, {y}) -> ({x}, {y-1}) {word}')
+                    elif x == 0 and y == 0:
+                        # Send to the lamlet at (0, -1)
+                        north_buffer = router._output_buffers[Direction.N]
+                        if north_buffer:
+                            recv_buf = self._receive_buffers[channel]
+                            if recv_buf.can_append():
+                                word = north_buffer.popleft()
+                                recv_buf.append(word)
+                                north_moving = True
                     if south in routers:
                         # Send to the south
                         south_buffer = router._output_buffers[Direction.S]
@@ -406,6 +426,20 @@ class Lamlet:
                                                       west_present, west_moving)
                     self.monitor.report_router_output(x, y, channel, Direction.H,
                                                       h_present, h_moving)
+
+            # Lamlet at (0, -1): move words south into jamlet(0,0)
+            send_buf = self._send_word_buffers[channel]
+            lamlet_s_present = bool(send_buf)
+            lamlet_s_moving = False
+            if send_buf:
+                j00_input = routers[(0, 0)]._input_buffers[Direction.N]
+                if j00_input.can_append():
+                    word = send_buf.popleft()
+                    j00_input.append(word)
+                    lamlet_s_moving = True
+            self.monitor.report_router_output(
+                0, -1, channel, Direction.S,
+                lamlet_s_present, lamlet_s_moving)
 
     async def sync_network_connections(self):
         """
@@ -471,7 +505,7 @@ class Lamlet:
 
     async def monitor_channel0(self):
         """Handle channel 0 packets (responses that must be consumed immediately)."""
-        buffer = self.kamlets[0].jamlets[0].routers[0]._output_buffers[Direction.N]
+        buffer = self._receive_buffers[0]
         header = None
         packet = []
         while True:
@@ -561,7 +595,7 @@ class Lamlet:
         while True:
             await self.clock.next_cycle
             for channel in range(1, self.params.n_channels):
-                buffer = self.kamlets[0].jamlets[0].routers[channel]._output_buffers[Direction.N]
+                buffer = self._receive_buffers[channel]
                 if buffer:
                     packet = await self._receive_packet(buffer)
                     await self._process_channel1andup_packet(packet)
@@ -852,44 +886,41 @@ class Lamlet:
         send_queue.append(packet)
 
     async def _send_packets_ch0(self):
-        """Drain the channel 0 send queues and inject packets into the router network."""
-        jamlet = self.kamlets[0].jamlets[0]
-        router_queue = jamlet.routers[0]._input_buffers[Direction.N]
+        """Drain channel 0 send queues into the lamlet's send word buffer."""
+        word_buf = self._send_word_buffers[0]
         while True:
             sent_something = False
             for msg_type, send_queue in self._send_queues.items():
                 if CHANNEL_MAPPING.get(msg_type, 0) == 0 and send_queue:
                     packet = send_queue.popleft()
-                    await self._send_packet_words(packet, router_queue)
+                    await self._send_packet_words(packet, word_buf)
                     sent_something = True
             if not sent_something:
                 await self.clock.next_cycle
 
     async def _send_packets_ch1andup(self):
-        """Drain channel 1+ send queues and inject packets into the router network."""
-        jamlet = self.kamlets[0].jamlets[0]
+        """Drain channel 1+ send queues into the lamlet's send word buffers."""
         while True:
             sent_something = False
             for msg_type, send_queue in self._send_queues.items():
                 channel = CHANNEL_MAPPING.get(msg_type, 0)
                 if channel >= 1 and send_queue:
-                    router_queue = jamlet.routers[channel]._input_buffers[Direction.N]
+                    word_buf = self._send_word_buffers[channel]
                     packet = send_queue.popleft()
-                    await self._send_packet_words(packet, router_queue)
+                    await self._send_packet_words(packet, word_buf)
                     sent_something = True
             if not sent_something:
                 await self.clock.next_cycle
 
-    async def _send_packet_words(self, packet, router_queue):
-        """Send all words of a packet into the router queue, one per cycle."""
+    async def _send_packet_words(self, packet, word_buf):
+        """Send all words of a packet into a word buffer, one per cycle."""
         while packet:
             await self.clock.next_cycle
-            if router_queue.can_append():
+            if word_buf.can_append():
                 word = packet.pop(0)
-                router_queue.append(word)
-                self.monitor.record_instr_net_sent()
+                word_buf.append(word)
             else:
-                self.monitor.record_instr_net_blocked()
+                pass  # Wait for router_connections to drain the buffer
 
     async def set_memory(self, address: int, data: bytes):
         logger.debug(f'Writing to memory from {hex(address)} to {hex(address+len(data)-1)}')
@@ -1122,6 +1153,10 @@ class Lamlet:
         self.scalar.update()
         for queue in self._send_queues.values():
             queue.update()
+        for buf in self._receive_buffers:
+            buf.update()
+        for buf in self._send_word_buffers:
+            buf.update()
 
     async def run(self):
         for kamlet in self.kamlets:

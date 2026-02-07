@@ -21,7 +21,7 @@ from zamlet.transactions.load_word import WaitingLoadWordSrc, WaitingLoadWordDst
 from zamlet.transactions.store_word import WaitingStoreWordSrc, WaitingStoreWordDst
 from zamlet.transactions.write_imm_bytes import WaitingWriteImmBytes
 from zamlet.transactions.read_byte import WaitingReadByte
-from zamlet.monitor import Monitor
+from zamlet.monitor import Monitor, WitemSnapshot, KamletSnapshot
 
 
 logger = logging.getLogger(__name__)
@@ -150,12 +150,49 @@ class Kamlet:
         self._instruction_queue.append(instr)
         self.monitor.record_kamlet_instr_added(self.min_x, self.min_y)
 
+    def _snapshot_witems(self) -> list[WitemSnapshot]:
+        """Snapshot current WITEM state for visualization."""
+        snapshots = []
+        for witem in self.cache_table.waiting_items:
+            name = type(witem).__name__
+            ident = witem.instr_ident
+            states = getattr(witem, 'transaction_states', None)
+            if states is not None:
+                tag_states = []
+                for s in states:
+                    if s in (SendState.INITIAL, SendState.NEED_TO_SEND,
+                             SendState.WAITING_IN_CASE_FAULT):
+                        tag_states.append(1)  # unsent (red)
+                    elif s == SendState.WAITING_FOR_RESPONSE:
+                        tag_states.append(2)  # pending (blue)
+                    elif s == SendState.COMPLETE:
+                        tag_states.append(3)  # complete (green)
+                    else:
+                        tag_states.append(0)
+            else:
+                tag_states = [3 if witem.ready() else 1]
+            snapshots.append(WitemSnapshot(
+                name=name, instr_ident=ident, tag_states=tag_states))
+        return snapshots
+
     async def _monitor_instruction_queue(self):
         while True:
             await self.clock.next_cycle
             self.monitor.record_kamlet_cycle_state(
                 self.min_x, self.min_y, len(self._instruction_queue),
             )
+            # Snapshot instruction queue + WITEM state
+            next_instrs = []
+            for instr in list(self._instruction_queue.queue)[:2]:
+                iname = type(instr).__name__
+                iident = getattr(instr, 'instr_ident', -1)
+                next_instrs.append((iname, iident))
+            snapshot = KamletSnapshot(
+                next_instructions=next_instrs,
+                witems=self._snapshot_witems(),
+            )
+            self.monitor.record_kamlet_snapshot(
+                self.min_x, self.min_y, snapshot)
 
     async def _run_instructions(self):
         while True:
@@ -563,25 +600,25 @@ class Kamlet:
         while True:
             await self.clock.next_cycle
             witems = list(self.cache_table.waiting_items)
-            if witems:
-                summaries = []
-                for item in witems:
-                    name = type(item).__name__
-                    ident = item.instr_ident
-                    states = getattr(item, 'transaction_states', None)
-                    if states is not None:
-                        from zamlet.kamlet.cache_table import SendState
-                        counts = {}
-                        for s in states:
-                            counts[s.name[0]] = counts.get(s.name[0], 0) + 1
-                        state_str = '/'.join(f'{v}{k}' for k, v in counts.items())
-                    else:
-                        state_str = 'ready' if item.ready() else 'pending'
-                    summaries.append(f'{name}[{ident}]:{state_str}')
-                logger.info(
-                    f'{self.clock.cycle}: kamlet ({self.min_x},{self.min_y}) '
-                    f'monitor_witems: {len(witems)} items: '
-                    + ', '.join(summaries))
+            #if witems:
+            #    summaries = []
+            #    for item in witems:
+            #        name = type(item).__name__
+            #        ident = item.instr_ident
+            #        states = getattr(item, 'transaction_states', None)
+            #        if states is not None:
+            #            from zamlet.kamlet.cache_table import SendState
+            #            counts = {}
+            #            for s in states:
+            #                counts[s.name[0]] = counts.get(s.name[0], 0) + 1
+            #            state_str = '/'.join(f'{v}{k}' for k, v in counts.items())
+            #        else:
+            #            state_str = 'ready' if item.ready() else 'pending'
+            #        summaries.append(f'{name}[{ident}]:{state_str}')
+            #    logger.info(
+            #        f'{self.clock.cycle}: kamlet ({self.min_x},{self.min_y}) '
+            #        f'monitor_witems: {len(witems)} items: '
+            #        + ', '.join(summaries))
             for item in witems:
                 if item not in self.cache_table.waiting_items:
                     continue

@@ -56,6 +56,23 @@ class JamletActivity(Enum):
 
 
 @dataclass
+class WitemSnapshot:
+    """Snapshot of a single waiting item's state."""
+    name: str
+    instr_ident: int
+    # Tag states: 0=empty, 1=unsent, 2=pending, 3=complete
+    tag_states: List[int] = field(default_factory=list)
+
+
+@dataclass
+class KamletSnapshot:
+    """Snapshot of a kamlet's state at a single cycle."""
+    # Next instructions in queue: [(type_name, ident), ...]
+    next_instructions: List[Tuple[str, int]] = field(default_factory=list)
+    witems: List[WitemSnapshot] = field(default_factory=list)
+
+
+@dataclass
 class CycleMetrics:
     """Per-cycle performance metrics."""
     # ALU activity per jamlet: (jx, jy) -> True if ALU active this cycle
@@ -89,6 +106,14 @@ class CycleMetrics:
     kamlet_instr_queue_len: Dict[Tuple[int, int], int] = field(default_factory=dict)
     kamlet_instr_added: Dict[Tuple[int, int], int] = field(default_factory=dict)
     kamlet_instr_removed: Dict[Tuple[int, int], int] = field(default_factory=dict)
+
+    # Cache misses: keyed by (kx, ky)
+    cache_misses: Dict[Tuple[int, int], int] = field(default_factory=dict)
+
+    # Kamlet snapshots: keyed by (kx, ky)
+    kamlet_snapshots: Dict[Tuple[int, int], KamletSnapshot] = field(
+        default_factory=dict
+    )
 
 
 @dataclass
@@ -311,6 +336,13 @@ class Monitor:
         metrics.kamlet_instr_removed[key] = (
             metrics.kamlet_instr_removed.get(key, 0) + count
         )
+
+    def record_kamlet_snapshot(self, kx: int, ky: int,
+                               snapshot: 'KamletSnapshot') -> None:
+        if not self.enabled:
+            return
+        metrics = self._get_cycle_metrics()
+        metrics.kamlet_snapshots[(kx, ky)] = snapshot
 
     # -------------------------------------------------------------------------
     # Core Span methods
@@ -911,6 +943,11 @@ class Monitor:
         )
 
         self._cache_request_by_key[key] = span_id
+
+        metrics = self._get_cycle_metrics()
+        k_key = (kamlet_x, kamlet_y)
+        metrics.cache_misses[k_key] = metrics.cache_misses.get(k_key, 0) + 1
+
         return span_id
 
     def record_cache_request_completed(self, kamlet_x: int, kamlet_y: int, slot: int) -> None:
