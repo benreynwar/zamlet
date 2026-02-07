@@ -69,6 +69,27 @@ class CycleMetrics:
         default_factory=dict
     )
 
+    # Lamlet instruction buffer
+    lamlet_instr_buf_len: int | None = None
+    lamlet_free_idents: int | None = None
+    lamlet_free_tokens: Dict[int, int] = field(default_factory=dict)
+    lamlet_instr_added: int = 0
+    lamlet_instr_removed: int = 0
+
+    # Ident query events
+    ident_query_sent: bool = False
+    ident_query_response: bool = False
+
+    # Instruction network send: True if a word was pushed this cycle
+    instr_net_sent: bool = False
+    # True if a word was waiting but couldn't be pushed (congestion)
+    instr_net_blocked: bool = False
+
+    # Kamlet instruction queues: keyed by (kx, ky)
+    kamlet_instr_queue_len: Dict[Tuple[int, int], int] = field(default_factory=dict)
+    kamlet_instr_added: Dict[Tuple[int, int], int] = field(default_factory=dict)
+    kamlet_instr_removed: Dict[Tuple[int, int], int] = field(default_factory=dict)
+
 
 @dataclass
 class SpanRef:
@@ -224,6 +245,72 @@ class Monitor:
             f"Router output ({jx}, {jy}) ch{channel} {direction.name} already reported " \
             f"this cycle {self.clock.cycle}"
         metrics.router_outputs[key] = (present, moving)
+
+    def record_lamlet_cycle_state(self, buf_len: int, free_idents: int,
+                                   free_tokens: Dict[int, int]) -> None:
+        if not self.enabled:
+            return
+        metrics = self._get_cycle_metrics()
+        metrics.lamlet_instr_buf_len = buf_len
+        metrics.lamlet_free_idents = free_idents
+        metrics.lamlet_free_tokens = free_tokens
+
+    def record_lamlet_instr_added(self, count: int = 1) -> None:
+        if not self.enabled:
+            return
+        metrics = self._get_cycle_metrics()
+        metrics.lamlet_instr_added += count
+
+    def record_lamlet_instr_removed(self, count: int = 1) -> None:
+        if not self.enabled:
+            return
+        metrics = self._get_cycle_metrics()
+        metrics.lamlet_instr_removed += count
+
+    def record_instr_net_sent(self) -> None:
+        if not self.enabled:
+            return
+        self._get_cycle_metrics().instr_net_sent = True
+
+    def record_instr_net_blocked(self) -> None:
+        if not self.enabled:
+            return
+        self._get_cycle_metrics().instr_net_blocked = True
+
+    def record_ident_query_sent(self) -> None:
+        if not self.enabled:
+            return
+        self._get_cycle_metrics().ident_query_sent = True
+
+    def record_ident_query_response(self) -> None:
+        if not self.enabled:
+            return
+        self._get_cycle_metrics().ident_query_response = True
+
+    def record_kamlet_cycle_state(self, kx: int, ky: int,
+                                   queue_len: int) -> None:
+        if not self.enabled:
+            return
+        metrics = self._get_cycle_metrics()
+        metrics.kamlet_instr_queue_len[(kx, ky)] = queue_len
+
+    def record_kamlet_instr_added(self, kx: int, ky: int,
+                                   count: int = 1) -> None:
+        if not self.enabled:
+            return
+        metrics = self._get_cycle_metrics()
+        key = (kx, ky)
+        metrics.kamlet_instr_added[key] = metrics.kamlet_instr_added.get(key, 0) + count
+
+    def record_kamlet_instr_removed(self, kx: int, ky: int,
+                                     count: int = 1) -> None:
+        if not self.enabled:
+            return
+        metrics = self._get_cycle_metrics()
+        key = (kx, ky)
+        metrics.kamlet_instr_removed[key] = (
+            metrics.kamlet_instr_removed.get(key, 0) + count
+        )
 
     # -------------------------------------------------------------------------
     # Core Span methods

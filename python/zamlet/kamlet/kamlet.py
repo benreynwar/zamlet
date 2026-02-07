@@ -148,6 +148,14 @@ class Kamlet:
         instr_ident = getattr(instr, 'instr_ident', '?')
         logger.debug(f'{self.clock.cycle}: kamlet ({self.min_x},{self.min_y}) RECEIVE INSTRUCTION {instr_name} ident={instr_ident}')
         self._instruction_queue.append(instr)
+        self.monitor.record_kamlet_instr_added(self.min_x, self.min_y)
+
+    async def _monitor_instruction_queue(self):
+        while True:
+            await self.clock.next_cycle
+            self.monitor.record_kamlet_cycle_state(
+                self.min_x, self.min_y, len(self._instruction_queue),
+            )
 
     async def _run_instructions(self):
         while True:
@@ -155,8 +163,13 @@ class Kamlet:
             # If we have an instruction then do it
             if self._instruction_queue:
                 instruction = self._instruction_queue.popleft()
+                self.monitor.record_kamlet_instr_removed(self.min_x, self.min_y)
                 instr_name = type(instruction).__name__
                 instr_ident = getattr(instruction, 'instr_ident', '?')
+                logger.info(
+                    f'{self.clock.cycle}: kamlet ({self.min_x},{self.min_y})'
+                    f' instr_queue: {len(self._instruction_queue)}'
+                    f' START {instr_name} ident={instr_ident}')
                 logger.debug(f'{self.clock.cycle}: kamlet ({self.min_x},{self.min_y}) START INSTRUCTION {instr_name} ident={instr_ident}')
                 await instruction.update_kamlet(self)
                 logger.debug(f'{self.clock.cycle}: kamlet ({self.min_x},{self.min_y}) END INIT INSTRUCTION {instr_name} ident={instr_ident}')
@@ -205,6 +218,7 @@ class Kamlet:
         for jamlet in self.jamlets:
             self.clock.create_task(jamlet.run())
         self.clock.create_task(self._run_instructions())
+        self.clock.create_task(self._monitor_instruction_queue())
         self.clock.create_task(self._send_packets())
         self.clock.create_task(self._get_instructions_from_jamlets())
         self.clock.create_task(self._monitor_cache_requests())
@@ -548,7 +562,27 @@ class Kamlet:
     async def _monitor_witems(self) -> None:
         while True:
             await self.clock.next_cycle
-            for item in list(self.cache_table.waiting_items):
+            witems = list(self.cache_table.waiting_items)
+            if witems:
+                summaries = []
+                for item in witems:
+                    name = type(item).__name__
+                    ident = item.instr_ident
+                    states = getattr(item, 'transaction_states', None)
+                    if states is not None:
+                        from zamlet.kamlet.cache_table import SendState
+                        counts = {}
+                        for s in states:
+                            counts[s.name[0]] = counts.get(s.name[0], 0) + 1
+                        state_str = '/'.join(f'{v}{k}' for k, v in counts.items())
+                    else:
+                        state_str = 'ready' if item.ready() else 'pending'
+                    summaries.append(f'{name}[{ident}]:{state_str}')
+                logger.info(
+                    f'{self.clock.cycle}: kamlet ({self.min_x},{self.min_y}) '
+                    f'monitor_witems: {len(witems)} items: '
+                    + ', '.join(summaries))
+            for item in witems:
                 if item not in self.cache_table.waiting_items:
                     continue
                 await item.monitor_kamlet(self)

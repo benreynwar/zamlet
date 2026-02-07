@@ -445,9 +445,23 @@ class Jamlet:
     async def _monitor_witems(self) -> None:
         while True:
             await self.clock.next_cycle
+            cycle_start = self.clock.cycle
             for witem in list(self.cache_table.waiting_items):
                 if witem in self.cache_table.waiting_items:
+                    before = self.clock.cycle
                     await witem.monitor_jamlet(self)
+                    after = self.clock.cycle
+                    if after > before:
+                        logger.info(
+                            f'{after}: jamlet ({self.x},{self.y}) '
+                            f'monitor_jamlet blocked {after - before} cycles '
+                            f'on {type(witem).__name__}[{witem.instr_ident}]')
+            elapsed = self.clock.cycle - cycle_start
+            if elapsed > 0:
+                logger.info(
+                    f'{self.clock.cycle}: jamlet ({self.x},{self.y}) '
+                    f'_monitor_witems loop took {elapsed} extra cycles '
+                    f'({len(list(self.cache_table.waiting_items))} witems)')
 
     async def _record_input_queues(self) -> None:
         """Track when input queues have data ready."""

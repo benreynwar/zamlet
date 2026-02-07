@@ -10,6 +10,7 @@ import pytest
 
 from zamlet.geometries import GEOMETRIES
 from zamlet.kernel_tests.conftest import build_if_needed, run_kernel
+from zamlet.analysis.plot_queues import dump_queue_table, plot_queues
 from zamlet.tests.test_utils import dump_span_trees
 
 
@@ -112,5 +113,22 @@ if __name__ == '__main__':
                 KERNEL_DIR, f"utilization_e{suffix}_{args.geometry}.png")
             fig.savefig(output_path, dpi=150)
             print(f"Plot saved to {output_path}")
+
+        suffix = '64' if args.e64 else '32'
+        base = f"e{suffix}_{args.geometry}"
+        title = (f"Bitreverse e{suffix} - {args.geometry}"
+                 f" ({monitor.clock.cycle} cycles)")
+
+        plot_path = os.path.join(
+            KERNEL_DIR, f"queues_{base}.png")
+        plot_queues(monitor, plot_path, title=title,
+                    cycle_min=7000, cycle_max=9000)
+        print(f"Queue plot saved to {plot_path}")
+
+        table_path = os.path.join(
+            KERNEL_DIR, f"queues_{base}.tsv")
+        dump_queue_table(monitor, table_path,
+                         cycle_min=7000, cycle_max=9000)
+        print(f"Queue table saved to {table_path}")
 
         exit(exit_code)
