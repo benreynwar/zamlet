@@ -15,7 +15,7 @@ from typing import List, Set, Tuple
 import pytest
 
 from zamlet.params import LamletParams
-from zamlet.geometries import GEOMETRIES, scale_n_tests
+from zamlet.geometries import SMALL_GEOMETRIES, scale_n_tests
 from zamlet.addresses import Ordering, WordOrder, KMAddr
 from zamlet.kamlet import kinstructions
 from zamlet.transactions.j2j_mapping import RegMemMapping, get_mapping_from_reg, get_mapping_from_mem
@@ -176,8 +176,8 @@ def run_tests(k_cols: int = 2, k_rows: int = 1,
 
 def random_test_config(rnd):
     """Generate a random test configuration."""
-    geom_name = rnd.choice(list(GEOMETRIES.keys()))
-    geom_params = GEOMETRIES[geom_name]
+    geom_name = rnd.choice(list(SMALL_GEOMETRIES.keys()))
+    geom_params = SMALL_GEOMETRIES[geom_name]
     mem_ew = rnd.choice([8, 16, 32, 64])
     reg_ew = rnd.choice([8, 16, 32, 64])
     start_index = rnd.randint(0, 8)

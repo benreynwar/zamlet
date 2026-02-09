@@ -60,6 +60,8 @@ class SyncNetwork:
                 self.k_rows = rows
                 self.j_cols = 1
                 self.j_rows = 1
+                self.sync_bus_width = 11
+                self.sync_ident_width = 10
 
         self.params = SyncParams(cols, rows)
         self.monitor = MockMonitor()

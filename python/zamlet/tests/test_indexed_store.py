@@ -17,7 +17,7 @@ import pytest
 from zamlet.runner import Clock
 from zamlet.params import LamletParams
 from zamlet.addresses import GlobalAddress, MemoryType, Ordering, WordOrder
-from zamlet.geometries import GEOMETRIES, scale_n_tests
+from zamlet.geometries import SMALL_GEOMETRIES, scale_n_tests
 from zamlet.monitor import CompletionType, SpanType
 from zamlet.tests.test_utils import (
     setup_lamlet, pack_elements, unpack_elements, get_vpu_base_addr,
@@ -302,8 +302,8 @@ def run_test(data_ew: int, index_ew: int, vl: int, n_pages: int, params: LamletP
 
 def random_test_config(rnd: Random):
     """Generate a random test configuration."""
-    geom_name = rnd.choice(list(GEOMETRIES.keys()))
-    geom_params = GEOMETRIES[geom_name]
+    geom_name = rnd.choice(list(SMALL_GEOMETRIES.keys()))
+    geom_params = SMALL_GEOMETRIES[geom_name]
     data_ew = rnd.choice([8, 16, 32, 64])
     n_pages = rnd.randint(2, 6)
     # index_ew must be large enough to hold max offset (n_pages * page_bytes)

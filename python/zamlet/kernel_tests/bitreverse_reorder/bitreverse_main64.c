@@ -2,7 +2,8 @@
 #include <stddef.h>
 #include <stdlib.h>
 
-volatile int32_t *vpu_mem = (volatile int32_t *)0x900C0000;
+volatile int64_t *vpu_mem64 = (volatile int64_t *)0x90100000;  // e64 region
+volatile int32_t *vpu_mem32 = (volatile int32_t *)0x900C0000;  // e32 region
 volatile int32_t skip_verify = 0;
 volatile int32_t n = 0;
 volatile int32_t reverse_bits = 0;
@@ -48,24 +49,83 @@ int main() {
         exit(1);
     int n_bits = reverse_bits ? (int)reverse_bits : count_bits(n);
 
-    // 64-bit data arrays, 32-bit index arrays
-    // Layout in vpu_mem (32-bit words):
-    //   src:       [0, 2*n)        (n 64-bit elements = 2*n 32-bit words)
-    //   dst:       [2*n, 4*n)
-    //   read_idx:  [4*n, 5*n)      (n 32-bit indices)
-    //   write_idx: [5*n, 6*n)
-    int64_t* src = (int64_t*)&vpu_mem[0];
-    int64_t* dst = (int64_t*)&vpu_mem[2 * n];
-    uint32_t* read_idx = (uint32_t*)&vpu_mem[4 * n];
-    uint32_t* write_idx = (uint32_t*)&vpu_mem[5 * n];
+    // e64 data in vpu_mem64, e32 indices in vpu_mem32
+    int64_t* src = (int64_t*)&vpu_mem64[0];
+    int64_t* dst = (int64_t*)&vpu_mem64[n];
+    uint32_t* read_idx = (uint32_t*)&vpu_mem32[0];
+    uint32_t* write_idx = (uint32_t*)&vpu_mem32[n];
 
-    // Initialize src[i] = i * 7 + 3
-    for (size_t i = 0; i < (size_t)n; i++) {
-        src[i] = (int64_t)i * 7 + 3;
-        dst[i] = 0;
+    // Initialize src[i] = i * 7 + 3 using e64 vector ops
+    {
+        size_t rem = n;
+        int64_t* p = src;
+        uint64_t base = 0, seven = 7, three = 3;
+        while (rem > 0) {
+            size_t chunk;
+            asm volatile(
+                "vsetvli %0, %1, e64, m1, ta, ma\n"
+                "vid.v v1\n"
+                "vadd.vx v1, v1, %2\n"
+                "vmul.vx v1, v1, %3\n"
+                "vadd.vx v1, v1, %4\n"
+                "vse64.v v1, (%5)\n"
+                : "=r"(chunk)
+                : "r"(rem), "r"(base), "r"(seven),
+                  "r"(three), "r"(p)
+                : "memory"
+            );
+            p += chunk;
+            base += chunk;
+            rem -= chunk;
+        }
+    }
+
+    // Zero dst array using e64 vector ops
+    {
+        size_t rem = n;
+        int64_t* p = dst;
+        uint64_t zero = 0;
+        while (rem > 0) {
+            size_t chunk;
+            asm volatile(
+                "vsetvli %0, %1, e64, m1, ta, ma\n"
+                "vmv.v.x v1, %3\n"
+                "vse64.v v1, (%2)\n"
+                : "=r"(chunk)
+                : "r"(rem), "r"(p), "r"(zero)
+                : "memory"
+            );
+            p += chunk;
+            rem -= chunk;
+        }
     }
 
     compute_indices(n, vl_e32, read_idx, write_idx, n_bits);
+
+    // Convert element indices to byte offsets (*8 for e64)
+    {
+        size_t rem = n;
+        uint32_t* rp = read_idx;
+        uint32_t* wp = write_idx;
+        while (rem > 0) {
+            size_t chunk;
+            asm volatile(
+                "vsetvli %0, %1, e32, m1, ta, ma\n"
+                "vle32.v v1, (%2)\n"
+                "vsll.vi v1, v1, 3\n"
+                "vse32.v v1, (%2)\n"
+                "vle32.v v2, (%3)\n"
+                "vsll.vi v2, v2, 3\n"
+                "vse32.v v2, (%3)\n"
+                : "=r"(chunk)
+                : "r"(rem), "r"(rp), "r"(wp)
+                : "memory"
+            );
+            rp += chunk;
+            wp += chunk;
+            rem -= chunk;
+        }
+    }
 
     bitreverse_reorder64(n, src, dst, read_idx, write_idx);
 

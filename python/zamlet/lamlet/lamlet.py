@@ -651,14 +651,18 @@ class Lamlet:
     def _have_tokens(self, k_index: int | None, is_ident_query: bool = False) -> bool:
         """Check if we have tokens available for the given k_index (or all if None).
 
-        Regular instructions need > 1 token (last token reserved for IdentQuery).
-        IdentQuery only needs > 0 tokens.
+        Regular instructions need > 1 token on the target kamlet and
+        > 0 on all kamlets (so a broadcast ident query is always possible).
+        IdentQuery only needs > 0 tokens on all kamlets.
         """
-        min_tokens = 0 if is_ident_query else 1
+        if not all(t > 0 for t in self._available_tokens):
+            return False
+        if is_ident_query:
+            return True
         if k_index is None:
-            return all(t > min_tokens for t in self._available_tokens)
+            return all(t > 1 for t in self._available_tokens)
         else:
-            return self._available_tokens[k_index] > min_tokens
+            return self._available_tokens[k_index] > 1
 
     def _use_token(self, k_index: int | None):
         """Use a token for the given k_index (or all if None for broadcast)."""

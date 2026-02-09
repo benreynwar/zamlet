@@ -6,7 +6,7 @@ import os
 
 import pytest
 
-from zamlet.geometries import SMALL_SMALL_GEOMETRIES
+from zamlet.geometries import SMALL_GEOMETRIES
 from zamlet.kernel_tests.conftest import build_if_needed, run_kernel
 
 
