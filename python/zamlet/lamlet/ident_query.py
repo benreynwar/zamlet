@@ -261,14 +261,8 @@ def should_send_ident_query(lamlet: 'Lamlet') -> bool:
     # Token threshold: send after accumulating this many tokens
     token_threshold = (
         2 * lamlet.params.instruction_queue_length // n_iq)
-    if any(t >= token_threshold for t in lamlet._tokens_used_since_query):
-        return True
-    # Ident threshold: same proportional spacing
-    max_tags = lamlet.params.max_response_tags
-    ident_threshold = 2 * max_tags // n_iq
-    if get_available_idents(lamlet) < ident_threshold:
-        return True
-    return False
+    return any(t >= token_threshold
+               for t in lamlet._tokens_used_since_query)
 
 
 async def get_instr_ident(lamlet: 'Lamlet', n_idents: int = 1) -> int:

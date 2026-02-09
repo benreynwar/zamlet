@@ -51,6 +51,11 @@ class LamletParams:
     # Number of gathering slots in memlet for WRITE_LINE_READ_LINE operations
     n_memlet_gathering_slots: int = 4
 
+    # Max in-flight channel 1+ packets per jamlet (0 = unlimited).
+    # Limits how many request packets a jamlet can have outstanding in the
+    # network. May be useful for limiting congestion.
+    max_in_flight_ch1: int = 0
+
     # Ordered indexed operation buffer parameters (for scalar memory targets)
     n_ordered_buffers: int = 2
     ordered_buffer_capacity: int = 16

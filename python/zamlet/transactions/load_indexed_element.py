@@ -64,6 +64,7 @@ class LoadIndexedElement(TrackedKInstr):
     data_ew: int
     element_index: int
     base_addr: GlobalAddress
+    word_order: addresses.WordOrder
     instr_ident: int
     parent_ident: int  # Barrier instruction ident for ordering
     mask_reg: int | None = None
@@ -122,7 +123,7 @@ async def handle_load_indexed_element(kamlet: 'Kamlet',
     elements_in_vline = params.vline_bytes * 8 // data_ew
     vw_index = element_index % params.j_in_l
     k_index, j_in_k_index = addresses.vw_index_to_k_indices(
-        params, addresses.WordOrder.STANDARD, vw_index)
+        params, instr.word_order, vw_index)
 
     assert k_index == kamlet.k_index, \
         f"LoadIndexedElement sent to wrong kamlet: expected {k_index}, got {kamlet.k_index}"
@@ -424,7 +425,7 @@ class WaitingLoadIndexedElement(WaitingItem):
             instr.instr_ident, jamlet.k_min_x, jamlet.k_min_y)
         assert witem_span_id is not None
 
-        logger.debug(f'{jamlet.clock.cycle}: LoadIndexedElement send_req: '
+        logger.debug(f'{jamlet.clock.cycle}: LoadIndexedElement _send_request: '
                      f'jamlet ({jamlet.x},{jamlet.y}) ident={instr.instr_ident} tag={tag} '
                      f'-> ({target_x},{target_y}) is_vpu={request.is_vpu}')
 

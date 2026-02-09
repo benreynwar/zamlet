@@ -28,13 +28,14 @@ def write_span_trees(lam):
     logger.info("Span trees written to span_trees.txt")
 
 
-async def run(clock: Clock, filename, params: LamletParams = None):
+async def run(clock: Clock, filename, params: LamletParams = None,
+              word_order: WordOrder = WordOrder.STANDARD):
     p_info = program_info.get_program_info(filename)
 
     if params is None:
         params = LamletParams()
 
-    s = lamlet.Lamlet(clock, params)
+    s = lamlet.Lamlet(clock, params, word_order=word_order)
     clock.create_task(update(clock, s))
     clock.create_task(s.run())
     await clock.next_cycle
@@ -75,7 +76,7 @@ async def run(clock: Clock, filename, params: LamletParams = None):
                 ew = 64  # .data.vpu64
             else:
                 ew = 8   # Dynamic pools (will be overridden below)
-            ordering = Ordering(WordOrder.STANDARD, ew)
+            ordering = Ordering(word_order, ew)
         else:
             ordering = None
         memory_type = MemoryType.VPU if is_vpu else MemoryType.SCALAR_IDEMPOTENT
@@ -89,11 +90,11 @@ async def run(clock: Clock, filename, params: LamletParams = None):
     # Allocate VPU memory pools with fixed element widths
     # Each pool is 256KB as defined in vpu_alloc.c
     pool_size = 256 * 1024
-    s.allocate_memory(GlobalAddress(bit_addr=0x90000000*8, params=params), pool_size, memory_type=MemoryType.VPU, ordering=Ordering(WordOrder.STANDARD, 1))   # 1-bit pool (masks)
-    s.allocate_memory(GlobalAddress(bit_addr=0x90040000*8, params=params), pool_size, memory_type=MemoryType.VPU, ordering=Ordering(WordOrder.STANDARD, 8))   # 8-bit pool
-    s.allocate_memory(GlobalAddress(bit_addr=0x90080000*8, params=params), pool_size, memory_type=MemoryType.VPU, ordering=Ordering(WordOrder.STANDARD, 16))  # 16-bit pool
-    s.allocate_memory(GlobalAddress(bit_addr=0x900C0000*8, params=params), pool_size, memory_type=MemoryType.VPU, ordering=Ordering(WordOrder.STANDARD, 32))  # 32-bit pool
-    s.allocate_memory(GlobalAddress(bit_addr=0x90100000*8, params=params), pool_size, memory_type=MemoryType.VPU, ordering=Ordering(WordOrder.STANDARD, 64))  # 64-bit pool
+    s.allocate_memory(GlobalAddress(bit_addr=0x90000000*8, params=params), pool_size, memory_type=MemoryType.VPU, ordering=Ordering(word_order, 1))   # 1-bit pool (masks)
+    s.allocate_memory(GlobalAddress(bit_addr=0x90040000*8, params=params), pool_size, memory_type=MemoryType.VPU, ordering=Ordering(word_order, 8))   # 8-bit pool
+    s.allocate_memory(GlobalAddress(bit_addr=0x90080000*8, params=params), pool_size, memory_type=MemoryType.VPU, ordering=Ordering(word_order, 16))  # 16-bit pool
+    s.allocate_memory(GlobalAddress(bit_addr=0x900C0000*8, params=params), pool_size, memory_type=MemoryType.VPU, ordering=Ordering(word_order, 32))  # 32-bit pool
+    s.allocate_memory(GlobalAddress(bit_addr=0x90100000*8, params=params), pool_size, memory_type=MemoryType.VPU, ordering=Ordering(word_order, 64))  # 64-bit pool
 
     for segment in p_info['segments']:
         address = segment['address']
@@ -126,14 +127,25 @@ async def run(clock: Clock, filename, params: LamletParams = None):
                 logger.info("\nVerifying results from memory:")
                 #verify_results(s, results_addr, verify_addr)
 
-                # Signal clock to stop gracefully
-                clock.running = False
-                logger.info(f"run() about to return exit_code={s.exit_code}")
                 exit_code = s.exit_code
 
-                # Check that all the spans are finished.
-                assert s.monitor.is_complete()
+                # Let in-flight operations drain before stopping.
+                drain_cycles = 0
+                drain_limit = 100000
+                while not s.monitor.is_complete():
+                    drain_cycles += 1
+                    assert drain_cycles <= drain_limit, (
+                        f"Monitor still has open spans after"
+                        f" {drain_limit} drain cycles"
+                    )
+                    for _ in range(100):
+                        await clock.next_cycle
+                    drain_cycles += 99
 
+                clock.running = False
+                logger.info(
+                    f"run() about to return exit_code={exit_code}"
+                )
                 break
             await clock.next_cycle
         else:
@@ -144,7 +156,8 @@ async def run(clock: Clock, filename, params: LamletParams = None):
 
 
 
-async def main(clock, filename, params: LamletParams = None) -> int:
+async def main(clock, filename, params: LamletParams = None,
+               word_order: WordOrder = WordOrder.STANDARD) -> int:
     import signal
 
     def signal_handler(signum, frame):
@@ -154,7 +167,7 @@ async def main(clock, filename, params: LamletParams = None) -> int:
     signal.signal(signal.SIGINT, signal_handler)
 
     clock.register_main()
-    run_task = clock.create_task(run(clock, filename, params))
+    run_task = clock.create_task(run(clock, filename, params, word_order))
     clock_driver_task = clock.create_task(clock.clock_driver())
 
     # Wait for run_task to complete - it will set clock.running = False

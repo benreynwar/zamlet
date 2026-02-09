@@ -256,6 +256,8 @@ class WaitingStoreScatterBase(WaitingItem, ABC):
 
         # Get byte offset for this element (subclass-specific)
         element_byte_offset = self.get_element_byte_offset(jamlet, src_e)
+        logger.debug(f'{jamlet.clock.cycle}: STORE _get_request: '
+                     f'element={src_e} index_value={element_byte_offset}')
 
         # Compute destination address: base + element_byte_offset + byte_within_element
         dst_g_addr = instr.g_addr.bit_offset(element_byte_offset * 8 + src_eb)

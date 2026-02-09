@@ -11,9 +11,9 @@
 #   a0 = n (number of elements)
 #   a1 = src (pointer to input array)
 #   a2 = dst (pointer to output array)
-#   a3 = clog2_n (number of bits to reverse, max 8)
+#   a3 = clog2_n (number of bits to reverse, max 32)
 #
-# Method: reverse 8 bits, then shift right by (8 - clog2_n)
+# Method: reverse all 32 bits, then shift right by (32 - clog2_n)
 
 #define count       a0
 #define src         a1
@@ -27,18 +27,24 @@
 #define mask_33     t3
 #define mask_f0     t4
 #define vl_actual   t5
+#define mask_0f     a3
+#define mask_ff00   a5
+#define mask_00ff   a6
 
 bitreverse_vec:
-    # Compute shift amount = 8 - clog2_n
-    li shift_amt, 8
+    # Compute shift amount = 32 - clog2_n
+    li shift_amt, 32
     sub shift_amt, shift_amt, clog2_n
 
-    # Load bit-reverse masks
-    li mask_aa, 0xAA
-    li mask_55, 0x55
-    li mask_cc, 0xCC
-    li mask_33, 0x33
-    li mask_f0, 0xF0
+    # Load bit-reverse masks (32-bit patterns)
+    li mask_aa, 0xAAAAAAAA
+    li mask_55, 0x55555555
+    li mask_cc, 0xCCCCCCCC
+    li mask_33, 0x33333333
+    li mask_f0, 0xF0F0F0F0
+    li mask_0f, 0x0F0F0F0F
+    li mask_ff00, 0xFF00FF00
+    li mask_00ff, 0x00FF00FF
 
 loop:
     beqz count, done
@@ -50,7 +56,7 @@ loop:
     vle32.v v0, (src)
 
     # Stage 1: swap adjacent bits
-    # x = ((x & 0xAA) >> 1) | ((x & 0x55) << 1)
+    # x = ((x & 0xAAAAAAAA) >> 1) | ((x & 0x55555555) << 1)
     vand.vx v1, v0, mask_aa
     vsrl.vi v1, v1, 1
     vand.vx v2, v0, mask_55
@@ -58,7 +64,7 @@ loop:
     vor.vv v0, v1, v2
 
     # Stage 2: swap bit pairs
-    # x = ((x & 0xCC) >> 2) | ((x & 0x33) << 2)
+    # x = ((x & 0xCCCCCCCC) >> 2) | ((x & 0x33333333) << 2)
     vand.vx v1, v0, mask_cc
     vsrl.vi v1, v1, 2
     vand.vx v2, v0, mask_33
@@ -66,14 +72,28 @@ loop:
     vor.vv v0, v1, v2
 
     # Stage 3: swap nibbles
-    # x = ((x & 0xF0) >> 4) | ((x & 0x0F) << 4)
+    # x = ((x & 0xF0F0F0F0) >> 4) | ((x & 0x0F0F0F0F) << 4)
     vand.vx v1, v0, mask_f0
     vsrl.vi v1, v1, 4
-    vand.vi v2, v0, 0x0F
+    vand.vx v2, v0, mask_0f
     vsll.vi v2, v2, 4
     vor.vv v0, v1, v2
 
-    # Shift right by (8 - clog2_n) to get correct bit width
+    # Stage 4: swap bytes within halfwords
+    # x = ((x & 0xFF00FF00) >> 8) | ((x & 0x00FF00FF) << 8)
+    vand.vx v1, v0, mask_ff00
+    vsrl.vi v1, v1, 8
+    vand.vx v2, v0, mask_00ff
+    vsll.vi v2, v2, 8
+    vor.vv v0, v1, v2
+
+    # Stage 5: swap halfwords
+    # x = (x >> 16) | (x << 16)
+    vsrl.vi v1, v0, 16
+    vsll.vi v2, v0, 16
+    vor.vv v0, v1, v2
+
+    # Shift right by (32 - clog2_n) to get correct bit width
     vsrl.vx v0, v0, shift_amt
 
     # Store results

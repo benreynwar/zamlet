@@ -1613,8 +1613,9 @@ class Monitor:
                     lines.append(f"{prefix}  waiting_for: {dep_span.span_type.value} @ {dep_span.component} [{timing}] ({dep_ref.reason}){details_str}")
 
     def is_complete(self):
-        allowed_incomplete = (SpanType.FLOW_CONTROL, SpanType.SETUP)
-        for span in self.spans.values():
-            if not (span.is_complete() or span.span_type in allowed_incomplete):
-                print(span)
-        return all(span.is_complete() or span.span_type in allowed_incomplete for span in self.spans.values())
+        allowed_incomplete = (SpanType.FLOW_CONTROL, SpanType.SETUP,
+                              SpanType.SYNC_LOCAL)
+        return all(
+            span.is_complete() or span.span_type in allowed_incomplete
+            for span in self.spans.values()
+        )

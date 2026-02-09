@@ -45,6 +45,7 @@ class StoreIndexedElement(TrackedKInstr):
     data_ew: int
     element_index: int
     base_addr: GlobalAddress
+    word_order: addresses.WordOrder
     instr_ident: int
     mask_reg: int | None = None
 
@@ -102,7 +103,7 @@ async def handle_store_indexed_element(kamlet: 'Kamlet',
     elements_in_vline = params.vline_bytes * 8 // data_ew
     vw_index = element_index % params.j_in_l
     k_index, j_in_k_index = addresses.vw_index_to_k_indices(
-        params, addresses.WordOrder.STANDARD, vw_index)
+        params, instr.word_order, vw_index)
 
     assert k_index == kamlet.k_index, \
         f"StoreIndexedElement sent to wrong kamlet: expected {k_index}, got {kamlet.k_index}"

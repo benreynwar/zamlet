@@ -270,7 +270,7 @@ async def vloadstore(lamlet: 'Lamlet', reg_base: int, addr: int, ordering: addre
     vline_bits = lamlet.params.maxvl_bytes * 8
     n_vlines = (reg_ew * n_elements + vline_bits - 1) // vline_bits
     for vline_reg in range(reg_base, reg_base+n_vlines):
-        lamlet.vrf_ordering[vline_reg] = Ordering(word_order=addresses.WordOrder.STANDARD, ew=reg_ew)
+        lamlet.vrf_ordering[vline_reg] = Ordering(word_order=ordering.word_order, ew=reg_ew)
 
     base_reg_addr = addresses.RegAddr(
         reg=reg_base, addr=0, params=lamlet.params, ordering=reg_ordering)
@@ -447,7 +447,7 @@ async def vloadstorestride(lamlet: 'Lamlet', reg_base: int, addr: int,
     vline_bits = lamlet.params.maxvl_bytes * 8
     n_vlines = (reg_ew * n_elements + vline_bits - 1) // vline_bits
     for vline_reg in range(reg_base, reg_base + n_vlines):
-        lamlet.vrf_ordering[vline_reg] = Ordering(word_order=addresses.WordOrder.STANDARD, ew=reg_ew)
+        lamlet.vrf_ordering[vline_reg] = Ordering(word_order=ordering.word_order, ew=reg_ew)
 
     # Process in chunks of j_in_l elements
     # Active elements are [start_index, n_elements), so n_active = n_elements - start_index
@@ -548,8 +548,8 @@ async def _vloadstore_indexed_unordered(
     The data element width comes from SEW (data_ew).
     """
     g_addr = GlobalAddress(bit_addr=base_addr * 8, params=lamlet.params)
-    data_ordering = Ordering(word_order=addresses.WordOrder.STANDARD, ew=data_ew)
-    index_ordering = Ordering(word_order=addresses.WordOrder.STANDARD, ew=index_ew)
+    data_ordering = Ordering(word_order=lamlet.word_order, ew=data_ew)
+    index_ordering = Ordering(word_order=lamlet.word_order, ew=index_ew)
 
     writeset_ident = ident_query.get_writeset_ident(lamlet)
 

@@ -8,14 +8,43 @@ import os
 import matplotlib.pyplot as plt
 import pytest
 
+from zamlet.addresses import WordOrder
 from zamlet.geometries import GEOMETRIES
 from zamlet.kernel_tests.conftest import build_if_needed, run_kernel
+from zamlet.monitor import SpanType
 from zamlet.analysis.plot_network import plot_network
 from zamlet.analysis.plot_queues import dump_queue_table, plot_queues
 from zamlet.tests.test_utils import dump_span_trees
 
 
 KERNEL_DIR = os.path.dirname(__file__)
+
+
+def measure_indexed_load_batches(monitor, batch_size=8):
+    """Measure cycles between batches of indexed loads on kamlet(0,0).
+
+    Finds all LoadIndexedUnordered KINSTR_EXEC spans on kamlet(0,0),
+    groups them into batches of batch_size, and reports the completed_cycle
+    of the first span in each batch.
+    """
+    spans = [
+        s for s in monitor.spans.values()
+        if s.span_type == SpanType.KINSTR_EXEC
+        and s.details.get('instr_type') == 'LoadIndexedUnordered'
+        and s.details.get('kamlet_x') == 0
+        and s.details.get('kamlet_y') == 0
+    ]
+    spans.sort(key=lambda s: s.created_cycle)
+    n_batches = len(spans) // batch_size
+    print(f"Found {len(spans)} indexed loads on kamlet(0,0), "
+          f"{n_batches} batches of {batch_size}")
+    for i in range(n_batches):
+        first = spans[i * batch_size]
+        print(f"  Batch {i}: cycle {first.completed_cycle}")
+    if n_batches >= 4:
+        b1 = spans[1 * batch_size].completed_cycle
+        b3 = spans[3 * batch_size].completed_cycle
+        print(f"Batch 2 end to batch 4 end: {b3 - b1} cycles")
 
 
 def generate_test_params():
@@ -59,6 +88,8 @@ if __name__ == '__main__':
                         help='Log level (default: WARNING)')
     parser.add_argument('--max-cycles', type=int, default=100000,
                         help='Maximum simulation cycles (default: 100000)')
+    parser.add_argument('--moore', action='store_true',
+                        help='Use Moore curve word order')
     args = parser.parse_args()
 
     if args.list_geometries:
@@ -74,10 +105,14 @@ if __name__ == '__main__':
             exit(1)
 
         params = dataclasses.replace(GEOMETRIES[args.geometry], jamlet_sram_bytes=1 << 10)
+        word_order = WordOrder.MOORE if args.moore else WordOrder.STANDARD
         binary_name = 'bitreverse-reorder64.riscv' if args.e64 else 'bitreverse-reorder.riscv'
         binary_path = build_if_needed(KERNEL_DIR, binary_name)
-        exit_code, monitor = run_kernel(binary_path, params=params, max_cycles=args.max_cycles)
+        exit_code, monitor = run_kernel(
+            binary_path, params=params, max_cycles=args.max_cycles,
+            word_order=word_order)
         print(f"Exit code: {exit_code}, cycles: {monitor.clock.cycle}")
+        measure_indexed_load_batches(monitor)
 
         span_trees_path = os.path.join(KERNEL_DIR, 'span_trees.txt')
         dump_span_trees(monitor, span_trees_path)
@@ -123,20 +158,20 @@ if __name__ == '__main__':
         plot_path = os.path.join(
             KERNEL_DIR, f"queues_{base}.png")
         plot_queues(monitor, plot_path, title=title,
-                    cycle_min=41500, cycle_max=43000)
+                    cycle_min=7500, cycle_max=10000)
         print(f"Queue plot saved to {plot_path}")
 
         table_path = os.path.join(
             KERNEL_DIR, f"queues_{base}.tsv")
         dump_queue_table(monitor, table_path,
-                         cycle_min=41500, cycle_max=43000)
+                         cycle_min=7500, cycle_max=10000)
         print(f"Queue table saved to {table_path}")
 
         network_dir = os.path.join(KERNEL_DIR, f"network_{base}")
         os.makedirs(network_dir, exist_ok=True)
         window = 50
-        net_start = 41700
-        net_end = 42900
+        net_start = 7500
+        net_end = 10000
         for c_min in range(net_start, net_end, window):
             c_max = c_min + window
             net_title = (f"Bitreverse e{suffix} - {args.geometry}"

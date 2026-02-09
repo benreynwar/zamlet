@@ -64,7 +64,8 @@ logger = logging.getLogger(__name__)
 
 class Lamlet:
 
-    def __init__(self, clock, params: LamletParams):
+    def __init__(self, clock, params: LamletParams,
+                 word_order: WordOrder = WordOrder.STANDARD):
         self.clock = clock
         self.params = params
         self.monitor = Monitor(clock, params)
@@ -89,7 +90,7 @@ class Lamlet:
         self.vstart = 0
         self.exit_code = None
 
-        self.word_order = WordOrder.STANDARD
+        self.word_order = word_order
 
         self.min_x = 0
         self.min_y = 0

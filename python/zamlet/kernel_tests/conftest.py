@@ -11,6 +11,7 @@ import logging
 
 import pytest
 
+from zamlet.addresses import WordOrder
 from zamlet.runner import Clock
 from zamlet.lamlet.run_lamlet import main as run_lamlet_main
 
@@ -72,7 +73,8 @@ def build_if_needed(kernel_dir: str, binary_name: str) -> str:
     return binary_path
 
 
-def run_kernel(binary_path: str, params=None, max_cycles: int = 100000):
+def run_kernel(binary_path: str, params=None, max_cycles: int = 100000,
+               word_order: WordOrder = WordOrder.STANDARD):
     """
     Run a RISC-V binary through run_lamlet.
 
@@ -80,10 +82,12 @@ def run_kernel(binary_path: str, params=None, max_cycles: int = 100000):
         binary_path: Path to the .riscv binary
         params: LamletParams configuration (uses default if None)
         max_cycles: Maximum simulation cycles
+        word_order: Word order for VPU memory layout
 
     Returns:
         (exit_code, monitor) tuple
     """
     clock = Clock(max_cycles=max_cycles)
-    exit_code, monitor = asyncio.run(run_lamlet_main(clock, binary_path, params))
+    exit_code, monitor = asyncio.run(
+        run_lamlet_main(clock, binary_path, params, word_order))
     return exit_code, monitor
