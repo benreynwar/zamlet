@@ -20,12 +20,34 @@ from zamlet.tests.test_utils import dump_span_trees
 KERNEL_DIR = os.path.dirname(__file__)
 
 
+def compute_n(params):
+    """Compute n (number of elements) from geometry params for e32."""
+    j_in_l = params.k_cols * params.k_rows * params.j_cols * params.j_rows
+    vl = j_in_l * params.word_bytes // 4  # e32
+    return 8 * vl
+
+
+def bitreverse_symbol_values(params, reverse_bits=None,
+                             skip_verify=False):
+    """Compute symbol_values for the bitreverse kernel."""
+    n = compute_n(params)
+    if reverse_bits is None:
+        reverse_bits = n.bit_length() - 1
+    values = {'n': n, 'reverse_bits': reverse_bits}
+    if skip_verify:
+        values['skip_verify'] = 1
+    return values
+
+
 def measure_indexed_load_batches(monitor, batch_size=8):
     """Measure cycles between batches of indexed loads on kamlet(0,0).
 
     Finds all LoadIndexedUnordered KINSTR_EXEC spans on kamlet(0,0),
     groups them into batches of batch_size, and reports the completed_cycle
     of the first span in each batch.
+
+    Returns list of batch start cycles (completed_cycle of first span
+    in each batch).
     """
     spans = [
         s for s in monitor.spans.values()
@@ -38,13 +60,16 @@ def measure_indexed_load_batches(monitor, batch_size=8):
     n_batches = len(spans) // batch_size
     print(f"Found {len(spans)} indexed loads on kamlet(0,0), "
           f"{n_batches} batches of {batch_size}")
+    batch_cycles = []
     for i in range(n_batches):
         first = spans[i * batch_size]
+        batch_cycles.append(first.completed_cycle)
         print(f"  Batch {i}: cycle {first.completed_cycle}")
     if n_batches >= 4:
         b1 = spans[1 * batch_size].completed_cycle
         b3 = spans[3 * batch_size].completed_cycle
         print(f"Batch 2 end to batch 4 end: {b3 - b1} cycles")
+    return batch_cycles
 
 
 def generate_test_params():
@@ -60,7 +85,9 @@ def generate_test_params():
 def test_bitreverse(params):
     """Run bitreverse kernel and verify it passes."""
     binary_path = build_if_needed(KERNEL_DIR, 'bitreverse-reorder.riscv')
-    exit_code, _monitor = run_kernel(binary_path, params=params)
+    sv = bitreverse_symbol_values(params)
+    exit_code, _monitor = run_kernel(binary_path, params=params,
+                                     symbol_values=sv)
     assert exit_code == 0, f"Kernel failed with exit code {exit_code}"
 
 
@@ -68,7 +95,9 @@ def test_bitreverse(params):
 def test_bitreverse64(params):
     """Run 64-bit bitreverse kernel and verify it passes."""
     binary_path = build_if_needed(KERNEL_DIR, 'bitreverse-reorder64.riscv')
-    exit_code, _monitor = run_kernel(binary_path, params=params)
+    sv = bitreverse_symbol_values(params)
+    exit_code, _monitor = run_kernel(binary_path, params=params,
+                                     symbol_values=sv)
     assert exit_code == 0, f"Kernel failed with exit code {exit_code}"
 
 
@@ -90,6 +119,10 @@ if __name__ == '__main__':
                         help='Maximum simulation cycles (default: 100000)')
     parser.add_argument('--moore', action='store_true',
                         help='Use Moore curve word order')
+    parser.add_argument('--skip-verify', action='store_true',
+                        help='Skip result verification in the kernel')
+    parser.add_argument('--reverse-bits', type=int, default=None,
+                        help='Number of bits to reverse (default: clog2(n))')
     args = parser.parse_args()
 
     if args.list_geometries:
@@ -108,11 +141,14 @@ if __name__ == '__main__':
         word_order = WordOrder.MOORE if args.moore else WordOrder.STANDARD
         binary_name = 'bitreverse-reorder64.riscv' if args.e64 else 'bitreverse-reorder.riscv'
         binary_path = build_if_needed(KERNEL_DIR, binary_name)
+        sv = bitreverse_symbol_values(
+            params, reverse_bits=args.reverse_bits,
+            skip_verify=args.skip_verify)
         exit_code, monitor = run_kernel(
             binary_path, params=params, max_cycles=args.max_cycles,
-            word_order=word_order)
+            word_order=word_order, symbol_values=sv)
         print(f"Exit code: {exit_code}, cycles: {monitor.clock.cycle}")
-        measure_indexed_load_batches(monitor)
+        batch_cycles = measure_indexed_load_batches(monitor)
 
         span_trees_path = os.path.join(KERNEL_DIR, 'span_trees.txt')
         dump_span_trees(monitor, span_trees_path)
@@ -167,11 +203,13 @@ if __name__ == '__main__':
                          cycle_min=7500, cycle_max=10000)
         print(f"Queue table saved to {table_path}")
 
+        assert len(batch_cycles) >= 4, \
+            f"Need at least 4 batches for network images, got {len(batch_cycles)}"
+        window = 50
+        net_start = batch_cycles[0] // window * window
+        net_end = (batch_cycles[3] + window - 1) // window * window
         network_dir = os.path.join(KERNEL_DIR, f"network_{base}")
         os.makedirs(network_dir, exist_ok=True)
-        window = 50
-        net_start = 7500
-        net_end = 10000
         for c_min in range(net_start, net_end, window):
             c_max = c_min + window
             net_title = (f"Bitreverse e{suffix} - {args.geometry}"

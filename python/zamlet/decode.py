@@ -557,6 +557,17 @@ def decode_standard(instruction_bytes: bytes) -> Instruction:
             return I.Srlw(rd=rd, rs1=rs1, rs2=rs2)
         elif funct3 == 0x5 and funct7 == 0x20:
             return I.Sraw(rd=rd, rs1=rs1, rs2=rs2)
+        elif funct7 == 0x01:
+            if funct3 == 0x0:
+                return MUL.Mulw(rd=rd, rs1=rs1, rs2=rs2)
+            elif funct3 == 0x4:
+                return MUL.Divw(rd=rd, rs1=rs1, rs2=rs2)
+            elif funct3 == 0x5:
+                return MUL.Divuw(rd=rd, rs1=rs1, rs2=rs2)
+            elif funct3 == 0x6:
+                return MUL.Remw(rd=rd, rs1=rs1, rs2=rs2)
+            elif funct3 == 0x7:
+                return MUL.Remuw(rd=rd, rs1=rs1, rs2=rs2)
 
     elif opcode == 0x43:
         fmt = (inst >> 25) & 0x3

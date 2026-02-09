@@ -29,7 +29,8 @@ def write_span_trees(lam):
 
 
 async def run(clock: Clock, filename, params: LamletParams = None,
-              word_order: WordOrder = WordOrder.STANDARD):
+              word_order: WordOrder = WordOrder.STANDARD,
+              symbol_values: dict = None):
     p_info = program_info.get_program_info(filename)
 
     if params is None:
@@ -103,6 +104,15 @@ async def run(clock: Clock, filename, params: LamletParams = None,
         await s.set_memory(address, data)
         logger.info(f'[MEM_INIT] Segment addr=0x{address:x} complete')
 
+    if symbol_values:
+        for name, value in symbol_values.items():
+            addr = p_info['symbols'][name]
+            data = struct.pack('<i', value)
+            logger.info(
+                f'[SYMBOL] {name} @ 0x{addr:x} = {value}'
+            )
+            await s.set_memory(addr, data)
+
     trace = disasm_trace.parse_objdump(filename)
     logger.info(f"Loaded {len(trace)} instructions from objdump")
 
@@ -157,7 +167,8 @@ async def run(clock: Clock, filename, params: LamletParams = None,
 
 
 async def main(clock, filename, params: LamletParams = None,
-               word_order: WordOrder = WordOrder.STANDARD) -> int:
+               word_order: WordOrder = WordOrder.STANDARD,
+               symbol_values: dict = None) -> int:
     import signal
 
     def signal_handler(signum, frame):
@@ -167,7 +178,8 @@ async def main(clock, filename, params: LamletParams = None,
     signal.signal(signal.SIGINT, signal_handler)
 
     clock.register_main()
-    run_task = clock.create_task(run(clock, filename, params, word_order))
+    run_task = clock.create_task(
+        run(clock, filename, params, word_order, symbol_values))
     clock_driver_task = clock.create_task(clock.clock_driver())
 
     # Wait for run_task to complete - it will set clock.running = False

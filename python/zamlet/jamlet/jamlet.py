@@ -9,7 +9,6 @@ from zamlet.message import Header, IdentHeader, AddressHeader, ValueHeader, Tagg
 from zamlet.utils import Queue
 from zamlet.router import Router
 from zamlet.kamlet import kinstructions
-from zamlet import memlet
 from zamlet import utils
 from zamlet.kamlet import ew_convert
 from zamlet.kamlet import cache_table
@@ -33,7 +32,8 @@ class Jamlet:
 
     def __init__(self, clock, params: LamletParams, x: int, y: int, cache_table: CacheTable,
                  rf_info: KamletRegisterFile, tlb: addresses.TLB, monitor: Monitor,
-                 lamlet_x: int, lamlet_y: int):
+                 lamlet_x: int, lamlet_y: int,
+                 mem_xy: Tuple[int, int]):
         self.clock = clock
         self.params = params
         self.monitor = monitor
@@ -52,7 +52,7 @@ class Jamlet:
         self.j_in_k_index = j_in_k_y * self.params.j_cols + j_in_k_x
 
         # The coords of the memlet router that this jamlet talks to.
-        self.mem_x, self.mem_y = memlet.jamlet_coords_to_m_router_coords(params, x, y)
+        self.mem_x, self.mem_y = mem_xy
 
         # The coords of the frontend that this jamlet talks to.
         self.front_x, self.front_y = jamlet_coords_to_frontend_coords(params, x, y)

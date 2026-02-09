@@ -37,6 +37,8 @@ GEOMETRIES: Dict[str, LamletParams] = {
     "k2x2_j1x2": LamletParams(k_cols=2, k_rows=2, j_cols=1, j_rows=2),
     "k2x2_j2x2": LamletParams(k_cols=2, k_rows=2, j_cols=2, j_rows=2),
     "k2x2_j4x4": LamletParams(k_cols=2, k_rows=2, j_cols=4, j_rows=4),
+    "k4x4_j4x4": LamletParams(k_cols=4, k_rows=4, j_cols=4, j_rows=4,
+                               page_bytes=1 << 12),
 }
 
 

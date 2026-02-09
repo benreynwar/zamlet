@@ -62,6 +62,9 @@ class LoadIndexedUnordered(KInstr):
                 f"mask_reg {self.mask_reg} overlaps with dst_regs {dst_regs}"
         await kamlet.wait_for_rf_available(write_regs=dst_regs, read_regs=read_regs,
                                            instr_ident=self.instr_ident)
+        span_id = kamlet.monitor.get_kinstr_exec_span_id(
+            self.instr_ident, kamlet.min_x, kamlet.min_y)
+        kamlet.monitor.add_event(span_id, "rf_ready")
         rf_write_ident = kamlet.rf_info.start(read_regs=read_regs, write_regs=dst_regs)
         witem = WaitingLoadIndexedUnordered(
             params=kamlet.params, instr=self, rf_ident=rf_write_ident,

@@ -1,8 +1,11 @@
 #include <stdint.h>
 #include <stddef.h>
-#include <stdio.h>
+#include <stdlib.h>
 
 volatile int32_t *vpu_mem = (volatile int32_t *)0x900C0000;
+volatile int32_t skip_verify = 0;
+volatile int32_t n = 0;
+volatile int32_t reverse_bits = 0;
 
 // Query hardware vector length for e32, m1
 static inline size_t get_vl_e32(void) {
@@ -10,12 +13,6 @@ static inline size_t get_vl_e32(void) {
     // Use a large avl to get VLMAX
     asm volatile ("vsetvli %0, %1, e32, m1, ta, ma" : "=r"(vl) : "r"(1024));
     return vl;
-}
-
-void exit_test(int code) {
-    volatile uint64_t *tohost = (volatile uint64_t *)0x80001000;
-    *tohost = (code << 1) | 1;
-    while (1);
 }
 
 static inline uint32_t bitreverse(uint32_t value, int n_bits) {
@@ -34,15 +31,17 @@ static inline int count_bits(size_t n) {
     return bits;
 }
 
-void compute_indices(size_t n, size_t vl, uint32_t* read_idx, uint32_t* write_idx);
+void compute_indices(size_t n, size_t vl, uint32_t* read_idx, uint32_t* write_idx,
+                     int reverse_bits);
 void bitreverse_reorder(size_t n, const int32_t* src, int32_t* dst,
                         const uint32_t* read_idx, const uint32_t* write_idx,
                         size_t reps);
 
 int main() {
     size_t vl = get_vl_e32();
-    size_t n = 8 * vl;
-    int n_bits = count_bits(n);
+    if ((size_t)n != 8 * vl)
+        exit(1);
+    int n_bits = reverse_bits ? (int)reverse_bits : count_bits(n);
 
     int32_t* src = (int32_t*)&vpu_mem[0];
     int32_t* dst = (int32_t*)&vpu_mem[n];
@@ -94,7 +93,7 @@ int main() {
         }
     }
 
-    compute_indices(n, vl, read_idx, write_idx);
+    compute_indices(n, vl, read_idx, write_idx, n_bits);
 
     // Convert element indices to byte offsets
     {
@@ -123,16 +122,17 @@ int main() {
 
     bitreverse_reorder(n, src, dst, read_idx, write_idx, 4);
 
-    // // Verify results
-    // for (size_t i = 0; i < n; i++) {
-    //     uint32_t src_idx = bitreverse(i, n_bits);
-    //     int32_t expected = src_idx * 7 + 3;
-    //     int32_t actual = dst[i];
-    //     if (actual != expected) {
-    //         exit_test(((actual & 0xFF) << 16) | (i << 8) | 0x80);
-    //     }
-    // }
+    if (!skip_verify) {
+        for (size_t i = 0; i < n; i++) {
+            uint32_t src_idx = bitreverse(i, n_bits);
+            int32_t expected = src_idx * 7 + 3;
+            int32_t actual = dst[i];
+            if (actual != expected) {
+                exit(((actual & 0xFF) << 16) | (i << 8) | 0x80);
+            }
+        }
+    }
 
-    exit_test(0);  // success
+    exit(0);  // success
     return 0;
 }

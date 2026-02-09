@@ -74,7 +74,8 @@ def build_if_needed(kernel_dir: str, binary_name: str) -> str:
 
 
 def run_kernel(binary_path: str, params=None, max_cycles: int = 100000,
-               word_order: WordOrder = WordOrder.STANDARD):
+               word_order: WordOrder = WordOrder.STANDARD,
+               symbol_values: dict = None):
     """
     Run a RISC-V binary through run_lamlet.
 
@@ -83,11 +84,14 @@ def run_kernel(binary_path: str, params=None, max_cycles: int = 100000,
         params: LamletParams configuration (uses default if None)
         max_cycles: Maximum simulation cycles
         word_order: Word order for VPU memory layout
+        symbol_values: Dict of {symbol_name: int32_value} to set before
+            execution. Overwrites volatile globals in the ELF.
 
     Returns:
         (exit_code, monitor) tuple
     """
     clock = Clock(max_cycles=max_cycles)
     exit_code, monitor = asyncio.run(
-        run_lamlet_main(clock, binary_path, params, word_order))
+        run_lamlet_main(clock, binary_path, params, word_order,
+                        symbol_values))
     return exit_code, monitor

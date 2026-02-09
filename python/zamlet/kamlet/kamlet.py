@@ -1,5 +1,5 @@
 import logging
-from typing import List
+from typing import List, Tuple
 
 from zamlet import addresses
 from zamlet.addresses import KMAddr
@@ -9,7 +9,7 @@ from zamlet.message import Header, MessageType, SendType, AddressHeader
 from zamlet.utils import Queue
 from zamlet.kamlet import kinstructions, cache_table
 from zamlet.synchronization import Synchronizer
-from zamlet import memlet, register_file_slot
+from zamlet import register_file_slot
 from zamlet.kamlet.cache_table import CacheRequestType, CacheTable, WaitingItem, SendState, ReceiveState
 from zamlet.transactions import load_j2j_words, store_j2j_words
 from zamlet.transactions.load_j2j_words import WaitingLoadJ2JWords
@@ -37,7 +37,8 @@ class Kamlet:
     """
 
     def __init__(self, clock, params: LamletParams, min_x: int, min_y: int, tlb: addresses.TLB,
-                 monitor: Monitor, lamlet_x: int, lamlet_y: int):
+                 monitor: Monitor, lamlet_x: int, lamlet_y: int,
+                 mem_coords: List[Tuple[int, int]]):
         self.clock = clock
         self.params = params
         self.monitor = monitor
@@ -51,12 +52,9 @@ class Kamlet:
         self.n_rows = params.j_rows
         self.n_jamlets = self.n_columns * self.n_rows
 
-        k_x = self.min_x//params.j_cols
-        k_y = self.min_y//params.j_rows
-        k_index = k_y * params.k_cols + k_x
-        mem_coords = memlet.m_router_coords(params, k_index, 0)
-        self.mem_x = mem_coords[0]
-        self.mem_y = mem_coords[1]
+        self.mem_coords = mem_coords
+        self.mem_x = mem_coords[0][0]
+        self.mem_y = mem_coords[0][1]
 
         # We pass methods to the cache table to flush and read lines.
         name = f'CacheTable ({self.min_x}, {self.min_y})'
@@ -67,14 +65,20 @@ class Kamlet:
         self.tlb = tlb
 
         # One synchronizer per kamlet for tracking when operations complete across kamlets
+        k_x = self.min_x // params.j_cols
+        k_y = self.min_y // params.j_rows
         self.synchronizer = Synchronizer(clock, params, k_x, k_y, self.cache_table, monitor)
 
+        n_mem_routers = len(mem_coords)
+        jamlets_per_router = self.n_jamlets // n_mem_routers
         self.jamlets = []
         for index in range(self.n_jamlets):
             x = min_x+index % self.n_columns
             y = min_y+index//self.n_columns
+            j_mem_coords = mem_coords[index // jamlets_per_router]
             self.jamlets.append(Jamlet(clock, params, x, y, self.cache_table, self.rf_info,
-                                       self.tlb, monitor, lamlet_x, lamlet_y))
+                                       self.tlb, monitor, lamlet_x, lamlet_y,
+                                       mem_xy=j_mem_coords))
 
         # Local State
         # 0 = no bound (full 64-bit indices), N = mask indices to lower N bits
@@ -203,6 +207,9 @@ class Kamlet:
                 self.monitor.record_kamlet_instr_removed(self.min_x, self.min_y)
                 instr_name = type(instruction).__name__
                 instr_ident = getattr(instruction, 'instr_ident', '?')
+                span_id = self.monitor.get_kinstr_exec_span_id(
+                    instr_ident, self.min_x, self.min_y)
+                self.monitor.add_event(span_id, "popped")
                 logger.info(
                     f'{self.clock.cycle}: kamlet ({self.min_x},{self.min_y})'
                     f' instr_queue: {len(self._instruction_queue)}'

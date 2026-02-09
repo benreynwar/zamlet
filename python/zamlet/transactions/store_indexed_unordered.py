@@ -57,6 +57,9 @@ class StoreIndexedUnordered(KInstr):
             read_regs.append(self.mask_reg)
         await kamlet.wait_for_rf_available(write_regs=[], read_regs=read_regs,
                                            instr_ident=self.instr_ident)
+        span_id = kamlet.monitor.get_kinstr_exec_span_id(
+            self.instr_ident, kamlet.min_x, kamlet.min_y)
+        kamlet.monitor.add_event(span_id, "rf_ready")
         rf_read_ident = kamlet.rf_info.start(read_regs=read_regs, write_regs=[])
         witem = WaitingStoreIndexedUnordered(
             params=kamlet.params, instr=self, rf_ident=rf_read_ident,

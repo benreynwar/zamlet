@@ -27,16 +27,16 @@ def get_program_info(filename='vec-sgemv.riscv'):
 
         entry_point = elf['e_entry']
 
-        tohost_addr = None
+        symbols = {}
         symbol_table = elf.get_section_by_name('.symtab')
         if symbol_table:
             for symbol in symbol_table.iter_symbols():
-                if symbol.name == 'tohost':
-                    tohost_addr = symbol['st_value']
-                    break
+                if symbol.name:
+                    symbols[symbol.name] = symbol['st_value']
 
         return {
             'segments': segments,
             'pc': entry_point,
-            'tohost': tohost_addr,
+            'tohost': symbols['tohost'],
+            'symbols': symbols,
         }

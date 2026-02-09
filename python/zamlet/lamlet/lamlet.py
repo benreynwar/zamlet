@@ -34,7 +34,7 @@ from zamlet.message import (Header, MessageType, Direction, SendType, TaggedHead
                             WriteMemWordHeader, CHANNEL_MAPPING, IdentHeader,
                             ElementIndexHeader, ReadMemWordHeader)
 from zamlet.kamlet.kamlet import Kamlet
-from zamlet.memlet import Memlet
+from zamlet.memlet import Memlet, memlet_coords
 from zamlet.runner import Future
 from zamlet.kamlet import kinstructions
 from zamlet.transactions.load_stride import LoadStride
@@ -109,6 +109,7 @@ class Lamlet:
         for kamlet_index in range(params.k_in_l):
             kamlet_x = params.j_cols*(kamlet_index%params.k_cols)
             kamlet_y = params.j_rows*(kamlet_index//params.k_cols)
+            mem_coords = memlet_coords(params, kamlet_index)
             kamlet = Kamlet(
                 clock=clock,
                 params=params,
@@ -118,16 +119,9 @@ class Lamlet:
                 monitor=self.monitor,
                 lamlet_x=self.instr_x,
                 lamlet_y=self.instr_y,
+                mem_coords=mem_coords,
                 )
             self.kamlets.append(kamlet)
-            # The memlet is connected to several routers.
-            mem_coords = []
-            if kamlet_x < self.params.k_cols//2:
-                mem_x = -1
-            else:
-                mem_x = self.params.k_cols * self.params.j_cols
-            for j_in_k_row in range(self.params.j_rows):
-                mem_coords.append((mem_x, kamlet_y + j_in_k_row))
             self.memlets.append(Memlet(
                 clock=clock,
                 params=params,
