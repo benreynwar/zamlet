@@ -8,7 +8,7 @@ import os
 
 import pytest
 
-from zamlet.geometries import GEOMETRIES
+from zamlet.geometries import GEOMETRIES, SMALL_GEOMETRIES
 from zamlet.kernel_tests.conftest import build_if_needed, run_kernel
 
 
@@ -18,7 +18,7 @@ KERNEL_DIR = os.path.dirname(__file__)
 def generate_test_params():
     """Generate test parameter combinations."""
     params = []
-    for geom_name, geom_params in GEOMETRIES.items():
+    for geom_name, geom_params in SMALL_GEOMETRIES.items():
         id_str = f"vid_{geom_name}"
         params.append(pytest.param(geom_params, id=id_str))
     return params

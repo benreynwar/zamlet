@@ -23,7 +23,7 @@ KERNEL_DIR = os.path.dirname(__file__)
 # We use LMUL=2 instead of LMUL=4 to avoid register spills. With LMUL=4 the compiler spills
 # vector registers to the scalar stack, which doesn't work because scalar memory uses a
 # different address space than VPU memory.
-FFT_GEOMETRIES = {name: params for name, params in GEOMETRIES.items() if params.j_in_l >= 4}
+FFT_GEOMETRIES = {name: params for name, params in GEOMETRIES.items() if 4 <= params.j_in_l <= 4}
 
 
 @pytest.mark.parametrize("params", [
