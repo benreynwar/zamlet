@@ -453,6 +453,7 @@ async def vloadstorestride(lamlet: 'Lamlet', reg_base: int, addr: int,
     # Active elements are [start_index, n_elements), so n_active = n_elements - start_index
     j_in_l = lamlet.params.j_in_l
     n_active = n_elements - start_index
+    completion_sync_idents = []
     for chunk_offset in range(0, n_active, j_in_l):
         chunk_n = min(j_in_l, n_active - chunk_offset)
         # g_addr is the base address (element 0's location)
@@ -497,14 +498,18 @@ async def vloadstorestride(lamlet: 'Lamlet', reg_base: int, addr: int,
         lamlet.synchronizer.local_event(fault_sync_ident, value=None)
         lamlet.monitor.create_sync_local_span(completion_sync_ident, 0, -1, kinstr_span_id)
         lamlet.synchronizer.local_event(completion_sync_ident)
+        completion_sync_idents.append(completion_sync_ident)
 
         # Wait for fault sync to check for TLB faults
         global_min_fault = await wait_for_fault_sync(lamlet, fault_sync_ident)
         if global_min_fault is not None:
             fault_type = TLBFaultType.WRITE_FAULT if is_store else TLBFaultType.READ_FAULT
-            return VectorOpResult(fault_type=fault_type, element_index=global_min_fault)
+            return VectorOpResult(
+                fault_type=fault_type, element_index=global_min_fault,
+                completion_sync_idents=completion_sync_idents)
 
-    return VectorOpResult()
+    return VectorOpResult(
+        completion_sync_idents=completion_sync_idents)
 
 
 async def vload_indexed_unordered(lamlet: 'Lamlet', vd: int, base_addr: int, index_reg: int,
@@ -574,10 +579,10 @@ async def _vloadstore_indexed_unordered(
     elements_in_vline = lamlet.params.vline_bytes * 8 // data_ew
     n_active = n_elements - start_index
 
-    fault_sync_tasks = []
-    global_min_fault = None
+    fault_sync_idents = []
+    completion_sync_idents = []
 
-    for chunk_offset in range(0, n_active, elements_in_vline):
+    for chunk_idx, chunk_offset in enumerate(range(0, n_active, elements_in_vline)):
         chunk_n = min(elements_in_vline, n_active - chunk_offset)
         instr_ident = await ident_query.get_instr_ident(
             lamlet, n_idents=lamlet.params.word_bytes + 1)
@@ -616,31 +621,48 @@ async def _vloadstore_indexed_unordered(
         completion_sync_ident = (
             (instr_ident + 1) % lamlet.params.max_response_tags)
 
-        # Participate in both syncs so kamlets can coordinate internally
-        lamlet.monitor.create_sync_local_span(
-            fault_sync_ident, 0, -1, kinstr_span_id)
-        lamlet.synchronizer.local_event(fault_sync_ident, value=None)
+        # Completion sync: participate immediately for all chunks
         lamlet.monitor.create_sync_local_span(
             completion_sync_ident, 0, -1, kinstr_span_id)
         lamlet.synchronizer.local_event(completion_sync_ident)
+        completion_sync_idents.append(completion_sync_ident)
 
-        # Only wait for fault sync if pages weren't pre-checked
-        if not skip_fault_wait:
-            fault_sync_tasks.append(
-                wait_for_fault_sync(lamlet, fault_sync_ident))
+        # Fault sync: create span for all chunks, but only chunk 0
+        # fires immediately. Later chunks are chained so the
+        # synchronizer fires them when the previous chunk resolves.
+        lamlet.monitor.create_sync_local_span(
+            fault_sync_ident, 0, -1, kinstr_span_id)
+        if skip_fault_wait:
+            lamlet.synchronizer.local_event(fault_sync_ident, value=None)
+        elif chunk_idx == 0:
+            lamlet.synchronizer.local_event(fault_sync_ident, value=None)
+            fault_sync_idents.append(fault_sync_ident)
+        else:
+            lamlet.synchronizer.chain_fault_sync(
+                fault_sync_idents[-1], fault_sync_ident)
+            fault_sync_idents.append(fault_sync_ident)
 
-    for sync_task in fault_sync_tasks:
-        chunk_global_min_fault = await sync_task
-        if global_min_fault is None:
-            global_min_fault = chunk_global_min_fault
+    # Wait for the fault sync cascade to complete. Awaiting the last
+    # one is sufficient since the chain is sequential.
+    if fault_sync_idents:
+        last_fsid = fault_sync_idents[-1]
+        global_min_fault = await wait_for_fault_sync(lamlet, last_fsid)
+        if global_min_fault is not None:
+            # The first non-None min_value in the chain is the actual
+            # faulting element. Later chunks got 0 injected by the chain.
+            for fsid in fault_sync_idents:
+                min_val = lamlet.synchronizer.get_min_value(fsid)
+                if min_val is not None:
+                    global_min_fault = min_val
+                    break
+            fault_type = (TLBFaultType.WRITE_FAULT if is_store
+                          else TLBFaultType.READ_FAULT)
+            return VectorOpResult(
+                fault_type=fault_type, element_index=global_min_fault,
+                completion_sync_idents=completion_sync_idents)
 
-    if global_min_fault is not None:
-        fault_type = (TLBFaultType.WRITE_FAULT if is_store
-                      else TLBFaultType.READ_FAULT)
-        return VectorOpResult(
-            fault_type=fault_type, element_index=global_min_fault)
-
-    return VectorOpResult()
+    return VectorOpResult(
+        completion_sync_idents=completion_sync_idents)
 
 
 async def vloadstore_scalar(

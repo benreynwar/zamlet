@@ -159,6 +159,12 @@ async def _run_indexed_load_test_inner(
         parent_span_id=span_id,
     )
 
+    # Wait for completion syncs so deferred non-idempotent reads finish.
+    if result.completion_sync_idents:
+        for sync_ident in result.completion_sync_idents:
+            while not lamlet.synchronizer.is_complete(sync_ident):
+                await clock.next_cycle
+
     # Calculate expected fault element (first ACTIVE element hitting unallocated page)
     # Only elements >= start_index are processed
     expected_fault_element = None
@@ -282,7 +288,7 @@ async def main(clock, data_ew, index_ew, vl, n_pages, params, seed, start_index=
 def run_test(data_ew: int, index_ew: int, vl: int, n_pages: int, params: LamletParams, seed: int,
              start_index: int = 0, use_mask: bool = True, dump_spans: bool = False):
     """Helper to run a single test configuration."""
-    clock = Clock(max_cycles=50000)
+    clock = Clock(max_cycles=100000)
     exit_code = asyncio.run(main(clock, data_ew=data_ew, index_ew=index_ew, vl=vl,
                                   n_pages=n_pages, params=params, seed=seed,
                                   start_index=start_index, use_mask=use_mask,

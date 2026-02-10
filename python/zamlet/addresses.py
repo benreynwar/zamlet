@@ -185,6 +185,7 @@ class VectorOpResult:
     """Result of a vector operation - either success or fault."""
     fault_type: TLBFaultType | None = None
     element_index: int | None = None  # First element that faulted
+    completion_sync_idents: List[int] | None = None
 
     @property
     def success(self) -> bool:

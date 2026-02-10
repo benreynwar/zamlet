@@ -276,7 +276,7 @@ class WaitingStoreScatterBase(WaitingItem, ABC):
 
         if not dst_page_info.local_address.is_vpu:
             if src_eb == 0 or page_byte_offset == 0:
-                n_bytes = min(remaining_page_bytes, src_ew // 8)
+                n_bytes = min(remaining_page_bytes, (src_ew - src_eb) // 8)
                 return RequiredBytes(is_vpu=False, g_addr=dst_g_addr, n_bytes=n_bytes, tag=tag)
             else:
                 return None

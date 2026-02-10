@@ -258,6 +258,11 @@ class Synchronizer:
         # Active sync operations indexed by sync_ident
         self._sync_states: Dict[int, SyncState] = {}
 
+        # Fault sync chaining: trigger_ident -> target_ident.
+        # When trigger completes, fire local_event for target with
+        # value=0 if trigger's min is not None, else value=None.
+        self._fault_chains: Dict[int, int] = {}
+
         # Packets being assembled from input (may span multiple cycles)
         self._partial_packets: Dict[SyncDirection, List[int]] = {
             d: [] for d in SyncDirection
@@ -441,6 +446,15 @@ class Synchronizer:
         """Clear a completed synchronization."""
         del self._sync_states[sync_ident]
 
+    def chain_fault_sync(self, trigger_ident: int, target_ident: int):
+        """Chain fault syncs: when trigger completes, fire local_event for target.
+
+        If trigger's min_value is not None (fault detected), injects value=0
+        to suppress all non-idempotent accesses in the target chunk.
+        Otherwise injects value=None.
+        """
+        self._fault_chains[trigger_ident] = target_ident
+
     def _update_completed(self, sync_ident: int):
         """Check if sync is now complete and log once if so."""
         state = self._sync_states.get(sync_ident)
@@ -452,6 +466,11 @@ class Synchronizer:
             logger.debug(f'{self.clock.cycle}: SYNC_COMPLETE: synchronizer ({self.x},{self.y}) '
                          f'sync_ident={sync_ident} min_value={min_value}')
             self.monitor.record_sync_local_complete(sync_ident, self.x, self.y, min_value)
+            # Fire chained fault sync if any
+            if sync_ident in self._fault_chains:
+                target = self._fault_chains.pop(sync_ident)
+                value = 0 if min_value is not None else None
+                self.local_event(target, value=value)
 
     def _get_send_requirements(self, direction: SyncDirection) -> dict:
         """Get send requirements for a direction. Kamlet (0,0) has special requirements."""

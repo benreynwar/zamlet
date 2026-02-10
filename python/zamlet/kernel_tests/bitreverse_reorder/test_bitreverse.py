@@ -5,6 +5,8 @@ Pytest tests for the bitreverse reorder kernel.
 import dataclasses
 import os
 
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import pytest
 

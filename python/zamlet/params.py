@@ -28,7 +28,7 @@ class LamletParams:
     receive_buffer_depth: int = 16
     router_output_buffer_length: int = 2
     router_input_buffer_length: int = 2
-    instruction_queue_length: int = 32
+    instruction_queue_length: int = 16
     n_ident_query_slots: int = 8
     n_channels: int = 2
 
@@ -43,9 +43,9 @@ class LamletParams:
     sync_bus_width: int = 11
 
     # The number of outstanding instructions or responses waiting
-    n_items: int = 32
+    n_items: int = 16
     # Number of witem slots reserved for message handlers (not used by kinstructions)
-    n_items_reserved: int = 16
+    n_items_reserved: int = 8
     # The number of outstanding cache read_line and write_line allowed
     n_cache_requests: int = 16
     # Number of gathering slots in memlet for WRITE_LINE_READ_LINE operations

@@ -1465,14 +1465,7 @@ class Monitor:
                     print(f'  ({x},{y})      {msg_type:<30} {s["total_cycles"]:<10} '
                           f'{s["blocked_cycles"]:<10} {blocked_pct:<10.1f}')
 
-        # Show hierarchical view of slowest RISCV_INSTR spans
-        riscv_instrs = [s for s in self.spans.values()
-                        if s.span_type == SpanType.RISCV_INSTR and s.is_complete()]
-        if riscv_instrs:
-            riscv_instrs.sort(key=lambda s: s.completed_cycle - s.created_cycle, reverse=True)
-            print(f'\nSlowest instructions:')
-            for span in riscv_instrs[:3]:
-                self.print_span_tree(span.span_id)
+
 
     def get_pending_state(self) -> Dict[str, Any]:
         """Get current state of pending spans for deadlock analysis."""

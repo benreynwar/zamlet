@@ -155,6 +155,12 @@ async def _run_strided_load_test_inner(
         stride_bytes=stride,
     )
 
+    # Wait for completion syncs so deferred non-idempotent reads finish.
+    if result.completion_sync_idents:
+        for sync_ident in result.completion_sync_idents:
+            while not lamlet.synchronizer.is_complete(sync_ident):
+                await clock.next_cycle
+
     # Calculate expected fault element (first ACTIVE element hitting unallocated page)
     # Check all pages the element spans, not just the starting page
     # Only elements >= start_index are processed
