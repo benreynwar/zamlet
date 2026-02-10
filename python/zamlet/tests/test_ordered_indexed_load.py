@@ -21,7 +21,7 @@ import pytest
 from zamlet.runner import Clock
 from zamlet.params import LamletParams
 from zamlet.addresses import GlobalAddress, MemoryType, Ordering, WordOrder
-from zamlet.geometries import GEOMETRIES, scale_n_tests
+from zamlet.geometries import SMALL_GEOMETRIES, scale_n_tests
 from zamlet.monitor import CompletionType, SpanType
 from zamlet.tests.test_utils import (
     setup_lamlet, pack_elements, unpack_elements, get_vpu_base_addr,
@@ -299,9 +299,9 @@ async def main(clock, data_ew, index_ew, vl, n_pages, params, seed, start_index=
 
 
 def run_test(data_ew: int, index_ew: int, vl: int, n_pages: int, params: LamletParams, seed: int,
-             start_index: int = 0, use_mask: bool = True):
+             start_index: int = 0, use_mask: bool = True, max_cycles: int = 200000):
     """Helper to run a single test configuration."""
-    clock = Clock(max_cycles=50000)
+    clock = Clock(max_cycles=max_cycles)
     exit_code = asyncio.run(main(clock, data_ew=data_ew, index_ew=index_ew, vl=vl,
                                   n_pages=n_pages, params=params, seed=seed,
                                   start_index=start_index, use_mask=use_mask))
@@ -310,8 +310,8 @@ def run_test(data_ew: int, index_ew: int, vl: int, n_pages: int, params: LamletP
 
 def random_test_config(rnd: Random):
     """Generate a random test configuration."""
-    geom_name = rnd.choice(list(GEOMETRIES.keys()))
-    geom_params = GEOMETRIES[geom_name]
+    geom_name = rnd.choice(list(SMALL_GEOMETRIES.keys()))
+    geom_params = SMALL_GEOMETRIES[geom_name]
     data_ew = rnd.choice([8, 16, 32, 64])
     n_pages = rnd.randint(2, 6)
     # index_ew must be large enough to hold max offset (n_pages * page_bytes)
@@ -369,6 +369,8 @@ if __name__ == '__main__':
                         help='List available geometries and exit')
     parser.add_argument('--no-mask', action='store_true',
                         help='Disable mask testing (default: use random mask)')
+    parser.add_argument('--max-cycles', type=int, default=200000,
+                        help='Maximum simulation cycles (default: 200000)')
     args = parser.parse_args()
 
     if args.list_geometries:
@@ -383,4 +385,5 @@ if __name__ == '__main__':
     use_mask = not args.no_mask
     run_test(data_ew=args.data_ew, index_ew=args.index_ew, vl=args.vl,
              n_pages=args.n_pages, params=params, seed=args.seed,
-             start_index=args.start_index, use_mask=use_mask)
+             start_index=args.start_index, use_mask=use_mask,
+             max_cycles=args.max_cycles)

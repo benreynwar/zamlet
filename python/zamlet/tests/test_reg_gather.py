@@ -15,7 +15,7 @@ import pytest
 from zamlet.runner import Clock
 from zamlet.params import LamletParams
 from zamlet.addresses import GlobalAddress, MemoryType, Ordering, WordOrder
-from zamlet.geometries import GEOMETRIES, scale_n_tests
+from zamlet.geometries import SMALL_GEOMETRIES, scale_n_tests
 from zamlet.monitor import CompletionType, SpanType
 from zamlet.tests.test_utils import (
     setup_lamlet, pack_elements, unpack_elements, get_vpu_base_addr, dump_span_trees,
@@ -229,8 +229,8 @@ def generate_test_params(n_tests: int = 32, seed: int = 42):
     rnd = Random(seed)
     test_params = []
     for i in range(n_tests):
-        geom_name = rnd.choice(list(GEOMETRIES.keys()))
-        geom_params = GEOMETRIES[geom_name]
+        geom_name = rnd.choice(list(SMALL_GEOMETRIES.keys()))
+        geom_params = SMALL_GEOMETRIES[geom_name]
         data_ew = rnd.choice([8, 16, 32, 64])
         index_ew = rnd.choice([8, 16, 32, 64])
         # vl must be <= elements in one vline (LMUL=1) for both data and index

@@ -39,105 +39,49 @@ class GatheringSlot:
 WRITE_LINE_RESPONSE_R_INDEX = 0
 
 
-def get_cols_routers(params):
-    """
-    We have one memlet for every kamlet.
-    Memlets are arranged down the west and east sides of the grid.
-    
-    Consider a row of kamlets. It contains k_cols kamlets.
-    Each side contains k_cols/2 memlets.
-    Each side is j_rows high.
+def memlet_coords(params: LamletParams, kamlet_index: int):
+    """Compute router coordinates for a kamlet's memlet.
 
-    m_cols: Numbers of columns of memlets on each side.
-    n_routers_in_memlet: Number of router spots in the grid that each
-                         memlet covers.
+    Memlets are placed on the left or right edge of the grid.
+    Each edge column has k_rows * j_rows y-positions. If one
+    column has enough positions for all memlets on that side,
+    each memlet gets edge_height // n_memlets positions.
+    Otherwise, extra edge columns are added.
+
+    Returns (mem_x, coords) where coords is a list of (x, y).
     """
-    assert params.k_cols % 2 == 0
-    if params.k_cols//2 > params.j_rows:
-        assert params.k_cols//2  % params.j_rows == 0
-        m_cols = params.k_cols//2//params.j_rows
-        n_routers_in_memlet = 1
+    k_col = kamlet_index % params.k_cols
+    k_row = kamlet_index // params.k_cols
+    edge_height = params.k_rows * params.j_rows
+    left = k_col < params.k_cols // 2
+    if left:
+        n_side_cols = params.k_cols // 2
+        col_in_side = k_col
     else:
-        assert params.j_rows % (params.k_cols//2) == 0
-        m_cols = 1
-        n_routers_in_memlet = params.j_rows * 2 // params.k_cols
-    return m_cols, n_routers_in_memlet
-
-
-def memlet_coords_to_index(params: LamletParams, x: int, y: int) -> Tuple[int, int]:
-    """
-    For a given (x, y) coord we want to know what the m_index of that
-    memlet is, which is equal to the k_index of the kamlet it communicates
-    with.
-    """
-    # We require east/west symmetry.
-    m_cols, n_routers_in_memlet = get_cols_routers(params)
-    # Work out which kamlet row we are in.
-    k_y = y // params.j_rows
-    # Work out our kamlet index in that row
-    # (m_x, m_y) is the position in the rectange of memlets at the edge.
-    m_y = y % params.j_rows
-    if x < 0:
-        m_x = x + m_cols
-        row_m_index = m_y * m_cols // n_routers_in_memlet + m_x
-    elif x >= params.j_cols * params.k_cols:
-        # Here we take m going right to left for symmetry
-        m_x = (params.j_cols * params.k_cols + m_cols - 1) - x
-        # And we get the reverse row index (right to left)
-        rev_row_m_index = m_y * m_cols // n_routers_in_memlet + m_x
-        # And then the correct order index in the row
-        row_m_index = params.k_cols - 1 - rev_row_m_index
+        n_side_cols = params.k_cols - params.k_cols // 2
+        # Closest to the edge gets col_in_side=0
+        col_in_side = (params.k_cols - 1) - k_col
+    n_memlets = n_side_cols * params.k_rows
+    n_edge_cols = (n_memlets + edge_height - 1) // edge_height
+    memlets_per_col = (n_memlets + n_edge_cols - 1) // n_edge_cols
+    positions_per_memlet = edge_height // memlets_per_col
+    # Row-major: memlets in the same row are adjacent in y
+    idx = k_row * n_side_cols + col_in_side
+    edge_col = idx // memlets_per_col
+    slot = idx % memlets_per_col
+    y_start = slot * positions_per_memlet
+    if left:
+        mem_x = -(edge_col + 1)
     else:
-        raise ValueError('Bad memlet coords ({x}, {y})')
-    m_index = row_m_index + k_y * params.k_cols
-    router_index = m_y % n_routers_in_memlet
-    return m_index, router_index
+        mem_x = params.k_cols * params.j_cols + edge_col
+    return [(mem_x, y_start + dy) for dy in range(positions_per_memlet)]
 
 
-def j_in_k_to_m_router(params: LamletParams, j_in_k_index) -> int:
-    """
-    For a given jamlet in a kamlet, we want to know which
-    router in a memlet it should communicate with.
-    """
-    m_cols, n_routers_in_memlet = get_cols_routers(params)
-    assert params.j_in_k % n_routers_in_memlet == 0
-    jamlets_per_router = params.j_in_k // n_routers_in_memlet
-    return j_in_k_index//jamlets_per_router
-
-
-def m_router_coords(params: LamletParams, m_index: int, router_index: int) -> Tuple[int, int]:
-    m_cols, n_routers_in_memlet = get_cols_routers(params)
-    if m_index % params.k_cols < params.k_cols//2:
-        # We're on the west side
-        # m_side_index should number them 
-        # 0 1
-        # 2 3 ...
-        m_side_index = m_index//params.k_cols*(params.k_cols//2) + m_index % (params.k_cols//2)
-        m_x = -m_cols + (m_side_index % m_cols)
-    else:
-        # We're on the east side
-        # m_side_index should number them
-        # 1 0
-        # 3 2 ...
-        m_side_index = m_index//params.k_cols*(params.k_cols//2) + params.k_cols//2 - 1 - (m_index % params.k_cols//2)
-        m_x = params.j_cols * params.k_cols + m_cols - 1 - (m_side_index % m_cols)
-    m_y = m_side_index // m_cols * n_routers_in_memlet + router_index
-    assert 0 <= m_y < params.j_rows * params.k_rows
-    return (m_x, m_y)
-
-
-def jamlet_coords_to_m_router_coords(params: LamletParams, j_x: int, j_y: int) -> Tuple[int, int]:
-    k_x  = j_x // params.j_cols
-    k_y  = j_y // params.j_rows
-    k_index = k_y * params.k_cols + k_x
-    j_in_k_x = j_x % params.j_cols
-    j_in_k_y = j_y % params.j_rows
-    j_in_k_index = j_in_k_y * params.j_cols + j_in_k_x
-    router_index = j_in_k_to_m_router(params, j_in_k_index)
-    m_index = k_index
-    r_x, r_y = m_router_coords(params, m_index, router_index)
-    assert 0 <= r_y < params.j_rows * params.k_rows
-    return (r_x, r_y)
+def j_in_k_to_m_router(j_in_k_index: int, n_routers: int, j_in_k: int) -> int:
+    """Map a jamlet-in-kamlet index to a memlet router index."""
+    assert j_in_k % n_routers == 0
+    jamlets_per_router = j_in_k // n_routers
+    return j_in_k_index // jamlets_per_router
 
 
 class Memlet:
@@ -157,7 +101,7 @@ class Memlet:
                         for x, y in coords]
         self.lines: Dict[int, bytes] = {}
         self.n_lines = params.kamlet_memory_bytes // params.cache_line_bytes
-        self.m_cols, self.n_routers = get_cols_routers(self.params)
+        self.n_routers = len(self.coords)
         # Make send and receive queues for each router
 
         self.receive_write_line_queues = [Queue(2) for _ in range(self.params.j_in_k)]
@@ -427,7 +371,7 @@ class Memlet:
                 # Send a message back to each jamlet.
                 resp_packets = [[] for i in range(self.n_routers)]
                 for j_in_k_index, payload in enumerate(packet_payloads):
-                    router_index = j_in_k_to_m_router(self.params, j_in_k_index)
+                    router_index = j_in_k_to_m_router(j_in_k_index, self.n_routers, self.params.j_in_k)
                     target_x, target_y = self.jamlet_coords[j_in_k_index]
                     channel = CHANNEL_MAPPING[MessageType.READ_LINE_RESP]
                     source_x = self.routers[router_index][channel].x
@@ -523,7 +467,7 @@ class Memlet:
 
                 resp_packets = [[] for i in range(self.n_routers)]
                 for j_in_k_index, payload in enumerate(packet_payloads):
-                    router_index = j_in_k_to_m_router(self.params, j_in_k_index)
+                    router_index = j_in_k_to_m_router(j_in_k_index, self.n_routers, self.params.j_in_k)
                     target_x, target_y = self.jamlet_coords[j_in_k_index]
                     channel = CHANNEL_MAPPING[MessageType.WRITE_LINE_READ_LINE_RESP]
                     resp_header = AddressHeader(

@@ -17,6 +17,8 @@
 
 bitreverse_reorder64:
     beqz a0, .Ldone64
+    .insn i 0x0b, 0, x0, x0, 11    # set_index_bound 11 (indices bounded to 2^11 bytes)
+    .insn i 0x0b, 1, x0, x0, 0     # begin_writeset
 
 .Lloop64:
     # Set vl for 64-bit data width (determines elements per iteration)
@@ -25,13 +27,9 @@ bitreverse_reorder64:
     # Switch to e32 for index manipulation (vl stays the same since vlmax_e32 >= t0)
     vsetvli zero, t0, e32, m1, ta, ma
 
-    # Load 32-bit read and write indices
-    vle32.v v0, (a3)         # v0 = read element indices
-    vle32.v v1, (a4)         # v1 = write element indices
-
-    # Convert element indices to byte offsets (*8 for 64-bit data)
-    vsll.vi v0, v0, 3        # v0 = read byte offsets
-    vsll.vi v1, v1, 3        # v1 = write byte offsets
+    # Load 32-bit read and write byte offsets (pre-scaled in C)
+    vle32.v v0, (a3)         # v0 = read byte offsets
+    vle32.v v1, (a4)         # v1 = write byte offsets
 
     # Switch to e64 for data gather/scatter
     vsetvli zero, t0, e64, m1, ta, ma
@@ -50,6 +48,8 @@ bitreverse_reorder64:
     # Decrement count
     sub a0, a0, t0
     bnez a0, .Lloop64
+    .insn i 0x0b, 2, x0, x0, 0     # end_writeset
+    .insn i 0x0b, 0, x0, x0, 0     # set_index_bound 0 (disable)
 
 .Ldone64:
     ret

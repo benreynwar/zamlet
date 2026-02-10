@@ -29,6 +29,11 @@ WordOrder.STANDARD:
 
     Words are laid out row-major across the jamlet grid.
 
+WordOrder.MOORE:
+    Words are laid out following a Moore curve (closed space-filling curve)
+    across the jamlet grid. Requires a square power-of-2 grid. Adjacent
+    vw_indices map to spatially adjacent jamlets.
+
 Logical vs Physical Element Coordinates
 ---------------------------------------
 Instructions use **logical** element indices (0, 1, 2, 3...) which are sequential.
@@ -67,6 +72,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import List, Dict
 
+from zamlet.moore import moore_d2xy, moore_xy2d
 from zamlet.params import LamletParams
 
 
@@ -79,7 +85,7 @@ SizeBits = int
 class WordOrder(Enum):
 
     STANDARD = 0
-    LOOP = 1
+    MOORE = 1
 
 
 class MemoryType(Enum):
@@ -89,19 +95,44 @@ class MemoryType(Enum):
     SCALAR_NON_IDEMPOTENT = 'scalar_non_idem'  # Scalar I/O, no speculative access, tracks accesses
 
 
-def vw_index_to_j_coords(params: LamletParams, word_order: WordOrder, vw_index: int):
+def vw_index_to_j_coords(params: LamletParams, word_order: WordOrder,
+                          vw_index: int):
     if word_order == WordOrder.STANDARD:
         j_x = vw_index % (params.j_cols * params.k_cols)
         j_y = vw_index // (params.j_cols * params.k_cols)
         return j_x, j_y
-    raise NotImplementedError
+    elif word_order == WordOrder.MOORE:
+        total_cols = params.j_cols * params.k_cols
+        total_rows = params.j_rows * params.k_rows
+        # Could extend to rectangles by appending square Moore curves.
+        assert total_cols == total_rows, (
+            f"MOORE requires square grid, got {total_cols}x{total_rows}"
+        )
+        assert total_cols & (total_cols - 1) == 0, (
+            f"MOORE requires power-of-2 grid, got {total_cols}"
+        )
+        return moore_d2xy(total_cols, vw_index)
+    else:
+        raise NotImplementedError(f"Word order {word_order}")
 
 
-def j_coords_to_vw_index(params: LamletParams, word_order: WordOrder, j_x: int, j_y: int):
+def j_coords_to_vw_index(params: LamletParams, word_order: WordOrder,
+                          j_x: int, j_y: int):
     if word_order == WordOrder.STANDARD:
         vw_index = j_y * (params.j_cols * params.k_cols) + j_x
         return vw_index
-    raise NotImplementedError
+    elif word_order == WordOrder.MOORE:
+        total_cols = params.j_cols * params.k_cols
+        total_rows = params.j_rows * params.k_rows
+        assert total_cols == total_rows, (
+            f"MOORE requires square grid, got {total_cols}x{total_rows}"
+        )
+        assert total_cols & (total_cols - 1) == 0, (
+            f"MOORE requires power-of-2 grid, got {total_cols}"
+        )
+        return moore_xy2d(total_cols, j_x, j_y)
+    else:
+        raise NotImplementedError(f"Word order {word_order}")
 
 
 def vw_index_to_k_indices(params: LamletParams, word_order: WordOrder, vw_index: int):
@@ -154,6 +185,7 @@ class VectorOpResult:
     """Result of a vector operation - either success or fault."""
     fault_type: TLBFaultType | None = None
     element_index: int | None = None  # First element that faulted
+    completion_sync_idents: List[int] | None = None
 
     @property
     def success(self) -> bool:

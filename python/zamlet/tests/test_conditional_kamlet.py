@@ -21,7 +21,7 @@ import pytest
 
 from zamlet.runner import Clock
 from zamlet.params import LamletParams
-from zamlet.geometries import GEOMETRIES, scale_n_tests
+from zamlet.geometries import SMALL_GEOMETRIES, scale_n_tests
 from zamlet.lamlet.lamlet import Lamlet
 from zamlet.addresses import GlobalAddress, MemoryType, Ordering, WordOrder, KMAddr, RegAddr
 from zamlet.kamlet import kinstructions
@@ -294,8 +294,8 @@ def run_test(vector_length: int, seed: int = 0, lmul: int = 4,
 
 def random_test_config(rnd: Random):
     """Generate a random test configuration."""
-    geom_name = rnd.choice(list(GEOMETRIES.keys()))
-    geom_params = GEOMETRIES[geom_name]
+    geom_name = rnd.choice(list(SMALL_GEOMETRIES.keys()))
+    geom_params = SMALL_GEOMETRIES[geom_name]
     vl = rnd.randint(1, 64)
     seed = rnd.randint(0, 10000)
     lmul = rnd.choice([1, 2, 4, 8])

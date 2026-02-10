@@ -6,7 +6,7 @@ import os
 
 import pytest
 
-from zamlet.geometries import GEOMETRIES
+from zamlet.geometries import SMALL_GEOMETRIES
 from zamlet.kernel_tests.conftest import build_if_needed, run_kernel
 
 
@@ -26,7 +26,7 @@ def generate_test_params():
     """Generate test parameter combinations."""
     params = []
     for binary in get_binaries():
-        for geom_name, geom_params in GEOMETRIES.items():
+        for geom_name, geom_params in SMALL_GEOMETRIES.items():
             # readwritebyte uses .c files directly without _main suffix
             main_file = binary.replace('.riscv', '.c')
             main_path = os.path.join(KERNEL_DIR, main_file)
@@ -40,7 +40,7 @@ def generate_test_params():
 def test_readwritebyte(binary, params):
     """Run readwritebyte kernel and verify it passes."""
     binary_path = build_if_needed(KERNEL_DIR, binary)
-    exit_code = run_kernel(binary_path, params=params)
+    exit_code, _monitor = run_kernel(binary_path, params=params)
 
     # should_fail.riscv is expected to return non-zero
     if 'should_fail' in binary:

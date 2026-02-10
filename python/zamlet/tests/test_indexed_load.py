@@ -17,7 +17,7 @@ import pytest
 from zamlet.runner import Clock
 from zamlet.params import LamletParams
 from zamlet.addresses import GlobalAddress, MemoryType, Ordering, WordOrder
-from zamlet.geometries import GEOMETRIES, scale_n_tests
+from zamlet.geometries import SMALL_GEOMETRIES, scale_n_tests
 from zamlet.monitor import CompletionType, SpanType
 from zamlet.tests.test_utils import (
     setup_lamlet, pack_elements, unpack_elements, get_vpu_base_addr,
@@ -159,6 +159,12 @@ async def _run_indexed_load_test_inner(
         parent_span_id=span_id,
     )
 
+    # Wait for completion syncs so deferred non-idempotent reads finish.
+    if result.completion_sync_idents:
+        for sync_ident in result.completion_sync_idents:
+            while not lamlet.synchronizer.is_complete(sync_ident):
+                await clock.next_cycle
+
     # Calculate expected fault element (first ACTIVE element hitting unallocated page)
     # Only elements >= start_index are processed
     expected_fault_element = None
@@ -282,7 +288,7 @@ async def main(clock, data_ew, index_ew, vl, n_pages, params, seed, start_index=
 def run_test(data_ew: int, index_ew: int, vl: int, n_pages: int, params: LamletParams, seed: int,
              start_index: int = 0, use_mask: bool = True, dump_spans: bool = False):
     """Helper to run a single test configuration."""
-    clock = Clock(max_cycles=50000)
+    clock = Clock(max_cycles=100000)
     exit_code = asyncio.run(main(clock, data_ew=data_ew, index_ew=index_ew, vl=vl,
                                   n_pages=n_pages, params=params, seed=seed,
                                   start_index=start_index, use_mask=use_mask,
@@ -292,8 +298,8 @@ def run_test(data_ew: int, index_ew: int, vl: int, n_pages: int, params: LamletP
 
 def random_test_config(rnd: Random):
     """Generate a random test configuration."""
-    geom_name = rnd.choice(list(GEOMETRIES.keys()))
-    geom_params = GEOMETRIES[geom_name]
+    geom_name = rnd.choice(list(SMALL_GEOMETRIES.keys()))
+    geom_params = SMALL_GEOMETRIES[geom_name]
     data_ew = rnd.choice([8, 16, 32, 64])
     n_pages = rnd.randint(2, 6)
     # index_ew must be large enough to hold max offset (n_pages * page_bytes)

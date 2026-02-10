@@ -2,7 +2,7 @@
 #include <stddef.h>
 #include <stdio.h>
 
-void bitreverse_vec(size_t n, uint32_t* src, uint32_t* dst, int clog2_n);
+void bitreverse_vec(size_t n, uint32_t* src, uint32_t* dst, int reverse_bits);
 
 static int clog2(size_t value) {
     if (value == 0) return 0;
@@ -15,7 +15,8 @@ static int clog2(size_t value) {
     return n;
 }
 
-void compute_indices(size_t n, size_t vl, uint32_t* read_idx, uint32_t* write_idx) {
+void compute_indices(size_t n, size_t vl, uint32_t* read_idx, uint32_t* write_idx,
+                     int reverse_bits) {
     //printf("compute_indices: n=%d, vl=%d, read_idx=%p, write_idx=%p\n",
     //       (int)n, (int)vl, read_idx, write_idx);
 
@@ -37,7 +38,19 @@ void compute_indices(size_t n, size_t vl, uint32_t* read_idx, uint32_t* write_id
     uint32_t* read_ptr = read_idx;
     size_t n_cycles = n / vl;
 
-    if (use_algo_a) {
+    if ((1 << reverse_bits) <= (int)vl) {
+        // Permutation groups fit within vl, so sequential indices suffice.
+        for (size_t cycle = 0; cycle < n_cycles; cycle++) {
+            asm volatile (
+                "vadd.vx v1, v0, %0\n"
+                "vse32.v v1, (%1)\n"
+                :
+                : "r"(cycle * vl), "r"(read_ptr)
+                : "memory"
+            );
+            read_ptr += vl;
+        }
+    } else if (use_algo_a) {
         //printf("Using algorithm A\n");
         size_t middle_size = stride / vl;
         size_t stride_mask = stride - 1;
@@ -107,7 +120,7 @@ void compute_indices(size_t n, size_t vl, uint32_t* read_idx, uint32_t* write_id
         //printf("  read_idx[%d] = %d\n", i, read_idx[i]);
     }
 
-    bitreverse_vec(n, read_idx, write_idx, clog2_n);
+    bitreverse_vec(n, read_idx, write_idx, reverse_bits);
 
     //printf("After bitreverse_vec:\n");
     for (int i = 0; i < (int)n; i++) {

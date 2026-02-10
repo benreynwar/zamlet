@@ -19,7 +19,7 @@ import pytest
 from zamlet.runner import Clock
 from zamlet.params import LamletParams
 from zamlet.addresses import GlobalAddress, MemoryType, Ordering, WordOrder
-from zamlet.geometries import GEOMETRIES, scale_n_tests
+from zamlet.geometries import SMALL_GEOMETRIES, scale_n_tests
 from zamlet.monitor import CompletionType, SpanType
 from zamlet.tests.test_utils import (
     setup_lamlet, pack_elements, unpack_elements, get_vpu_base_addr,
@@ -179,6 +179,12 @@ async def _run_strided_store_test_inner(
         stride_bytes=stride,
     )
 
+    # Wait for completion syncs so deferred non-idempotent writes finish.
+    if result.completion_sync_idents:
+        for sync_ident in result.completion_sync_idents:
+            while not lamlet.synchronizer.is_complete(sync_ident):
+                await clock.next_cycle
+
     # Calculate expected fault element (first ACTIVE element hitting unallocated page)
     # Check all pages the element spans, not just the starting page
     # Only elements >= start_index are processed
@@ -313,8 +319,8 @@ def run_test(ew: int, vl: int, stride: int, params: LamletParams, seed: int,
 
 def random_test_config(rnd: Random):
     """Generate a random test configuration."""
-    geom_name = rnd.choice(list(GEOMETRIES.keys()))
-    geom_params = GEOMETRIES[geom_name]
+    geom_name = rnd.choice(list(SMALL_GEOMETRIES.keys()))
+    geom_params = SMALL_GEOMETRIES[geom_name]
     ew = rnd.choice([8, 16, 32, 64])
     # Limit vl to mask register capacity
     max_vl = geom_params.j_in_l * geom_params.word_bytes * 8

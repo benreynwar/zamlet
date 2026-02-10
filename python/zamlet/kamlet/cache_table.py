@@ -254,10 +254,18 @@ class CacheTable:
             ResourceType.CACHE_REQUEST_TABLE, self.kamlet_x, self.kamlet_y)
         return valid_indices[0]
 
-    def _any_reads_all_memory(self) -> bool:
-        """Check if any waiting item reads from all memory."""
+    def _any_reads_all_memory(self, writeset_ident: int | None = None,
+                              exclude: WaitingItem | None = None) -> bool:
+        """Check if any waiting item reads from all memory.
+
+        If writeset_ident is provided, items with matching writeset_ident are excluded.
+        """
         for item in self.waiting_items:
-            if item.reads_all_memory:
+            if item == exclude or not item.reads_all_memory:
+                pass
+            elif writeset_ident is not None and item.writeset_ident == writeset_ident:
+                pass
+            else:
                 return True
         return False
 
@@ -267,10 +275,11 @@ class CacheTable:
         If writeset_ident is provided, items with matching writeset_ident are excluded.
         """
         for item in self.waiting_items:
-            if item.writes_all_memory:
-                if writeset_ident is not None and hasattr(item, 'writeset_ident'):
-                    if item.writeset_ident == writeset_ident:
-                        continue
+            if not item.writes_all_memory:
+                pass
+            elif writeset_ident is not None and item.writeset_ident == writeset_ident:
+                pass
+            else:
                 return True
         return False
 
@@ -293,19 +302,22 @@ class CacheTable:
                 if blocking_span_id is not None:
                     self.monitor.add_dependency(blocked_span_id, blocking_span_id, reason)
 
-    async def wait_for_slot_to_be_writeable(self, slot: int, k_maddr: KMAddr) -> None:
+    async def wait_for_slot_to_be_writeable(self, slot: int, k_maddr: KMAddr,
+                                            writeset_ident: int | None = None) -> None:
         while True:
             assert slot == self.addr_to_slot(k_maddr)
-            if not self.slot_in_use(slot) and not self._any_reads_all_memory():
+            if (not self.slot_in_use(slot, writeset_ident=writeset_ident)
+                    and not self._any_reads_all_memory(writeset_ident)):
                 break
             await self.clock.next_cycle
         state = self.get_state(k_maddr)
         assert state.state in (CacheState.SHARED, CacheState.MODIFIED)
 
-    async def wait_for_slot_to_be_readable(self, slot: int, k_maddr: KMAddr) -> None:
+    async def wait_for_slot_to_be_readable(self, slot: int, k_maddr: KMAddr,
+                                           writeset_ident: int | None = None) -> None:
         while True:
             assert slot == self.addr_to_slot(k_maddr)
-            if not self.slot_has_write(slot):
+            if not self.slot_has_write(slot, writeset_ident=writeset_ident):
                 break
             await self.clock.next_cycle
         state = self.get_state(k_maddr)
@@ -338,15 +350,19 @@ class CacheTable:
             if self._any_writes_all_memory(witem.writeset_ident):
                 self._record_blocked_by_witems(
                     witem,
-                    lambda item: (item.writes_all_memory and
-                                  (witem.writeset_ident is None or
-                                   getattr(item, 'writeset_ident', None) != witem.writeset_ident)),
+                    lambda item: (item.writes_all_memory and (
+                        witem.writeset_ident is None
+                        or item.writeset_ident != witem.writeset_ident)),
                     "blocked_by_writes_all_memory")
                 await self._wait_for_writes_all_memory_complete(witem.writeset_ident)
-            if witem.cache_is_write and self._any_reads_all_memory():
+            if witem.cache_is_write and self._any_reads_all_memory(witem.writeset_ident):
                 self._record_blocked_by_witems(
-                    witem, lambda item: item.reads_all_memory, "blocked_by_reads_all_memory")
-                await self._wait_for_reads_all_memory_complete()
+                    witem,
+                    lambda item: (item.reads_all_memory and (
+                        witem.writeset_ident is None
+                        or item.writeset_ident != witem.writeset_ident)),
+                    "blocked_by_reads_all_memory")
+                await self._wait_for_reads_all_memory_complete(witem.writeset_ident)
             slot = self.addr_to_slot(k_maddr)
             if slot is None:
                 logger.debug(
@@ -366,21 +382,24 @@ class CacheTable:
                 )
                 witem.set_cache_slot(slot)
                 if witem.cache_is_write:
-                    if self.slot_in_use(slot) or self._any_reads_all_memory():
+                    ws = witem.writeset_ident
+                    if (self.slot_in_use(slot, writeset_ident=ws)
+                            or self._any_reads_all_memory(ws)):
                         # If there are other witems in the midst of a read or write we need
                         # to wait for them to complete
                         self._record_blocked_by_witems(
                             witem,
                             lambda item: (item.cache_slot == slot or item.reads_all_memory),
                             "blocked_by_slot_in_use")
-                        await self.wait_for_slot_to_be_writeable(slot, k_maddr)
+                        await self.wait_for_slot_to_be_writeable(slot, k_maddr, writeset_ident=ws)
                 if witem.cache_is_read:
-                    if self.slot_has_write(slot):
+                    if self.slot_has_write(slot, writeset_ident=witem.writeset_ident):
                         self._record_blocked_by_witems(
                             witem,
                             lambda item: item.cache_is_write and item.cache_slot == slot,
                             "blocked_by_slot_write")
-                        await self.wait_for_slot_to_be_readable(slot, k_maddr)
+                        await self.wait_for_slot_to_be_readable(
+                            slot, k_maddr, writeset_ident=witem.writeset_ident)
                 witem.cache_is_avail = (
                         self.slot_states[slot].state in (CacheState.SHARED, CacheState.MODIFIED))
                 logger.debug(
@@ -389,31 +408,34 @@ class CacheTable:
                 )
         # If this witem reads all memory, wait for all pending writes to complete first
         if witem.reads_all_memory:
+            ws_r = witem.writeset_ident
             self._record_blocked_by_witems(
-                witem, lambda item: item.cache_is_write, "reads_all_blocked_by_writes")
-            await self._wait_for_all_writes_complete()
+                witem,
+                lambda item: (item.cache_is_write
+                              and (ws_r is None
+                                   or item.writeset_ident != ws_r)),
+                "reads_all_blocked_by_writes")
+            await self._wait_for_all_writes_complete(ws_r)
         # If this witem writes all memory, wait for all pending reads, writes, and other
         # writes_all_memory witems to complete first
         if witem.writes_all_memory:
+            ws = witem.writeset_ident
             self._record_blocked_by_witems(
                 witem,
-                lambda item: (item.cache_is_read and
-                              (witem.writeset_ident is None or
-                               getattr(item, 'writeset_ident', None) != witem.writeset_ident)),
+                lambda item: (item.cache_is_read
+                              and (ws is None or item.writeset_ident != ws)),
                 "writes_all_blocked_by_reads")
-            await self._wait_for_all_reads_complete(witem.writeset_ident)
+            await self._wait_for_all_reads_complete(ws)
             self._record_blocked_by_witems(
                 witem,
-                lambda item: (item.cache_is_write and
-                              (witem.writeset_ident is None or
-                               getattr(item, 'writeset_ident', None) != witem.writeset_ident)),
+                lambda item: (item.cache_is_write
+                              and (ws is None or item.writeset_ident != ws)),
                 "writes_all_blocked_by_writes")
-            await self._wait_for_all_writes_complete()
+            await self._wait_for_all_writes_complete(ws)
             self._record_blocked_by_witems(
                 witem,
-                lambda item: (item.writes_all_memory and
-                              (witem.writeset_ident is None or
-                               getattr(item, 'writeset_ident', None) != witem.writeset_ident)),
+                lambda item: (item.writes_all_memory
+                              and (ws is None or item.writeset_ident != ws)),
                 "writes_all_blocked_by_writes_all")
             await self._wait_for_writes_all_memory_complete(witem.writeset_ident)
         await self.wait_for_free_witem_slot(witem, use_reserved=use_reserved)
@@ -422,18 +444,31 @@ class CacheTable:
             witem.cache_is_avail = (
                     self.slot_states[witem.cache_slot].state in (CacheState.SHARED, CacheState.MODIFIED))
 
-    async def _wait_for_all_writes_complete(self) -> None:
-        """Wait until all pending write witems have completed."""
+    async def _wait_for_all_writes_complete(
+            self, writeset_ident: int | None = None) -> None:
+        """Wait until all pending write witems have completed.
+
+        If writeset_ident is provided, items with matching writeset_ident
+        are excluded.
+        """
         while True:
-            has_writes = any(item.cache_is_write for item in self.waiting_items)
+            has_writes = False
+            for item in self.waiting_items:
+                if item.cache_is_write:
+                    if (writeset_ident is not None
+                            and item.writeset_ident == writeset_ident):
+                        continue
+                    has_writes = True
+                    break
             if not has_writes:
                 break
             await self.clock.next_cycle
 
-    async def _wait_for_reads_all_memory_complete(self) -> None:
+    async def _wait_for_reads_all_memory_complete(
+            self, writeset_ident: int | None = None) -> None:
         """Wait until all pending reads_all_memory witems have completed."""
         while True:
-            if not self._any_reads_all_memory():
+            if not self._any_reads_all_memory(writeset_ident):
                 break
             await self.clock.next_cycle
 
@@ -529,11 +564,15 @@ class CacheTable:
             return False
         state = self.get_state(k_maddr)
         good_state = state.state in (CacheState.SHARED, CacheState.MODIFIED)
-        has_write = self.slot_has_write(slot)
+        has_write = self.slot_has_write(slot, writeset_ident=writeset_ident)
         return good_state and not has_write
 
-    def can_write(self, k_maddr, witem: WaitingItem | None = None, log_if_false: bool = False):
-        writeset_ident = witem.writeset_ident if witem is not None else None
+    def can_write(self, k_maddr, witem: WaitingItem | None = None, log_if_false: bool = False,
+                  writeset_ident: int | None = None):
+        assert not (witem is not None and writeset_ident is not None), \
+            "pass witem or writeset_ident, not both"
+        if writeset_ident is None and witem is not None:
+            writeset_ident = witem.writeset_ident
         slot = self.addr_to_slot(k_maddr)
         loc = f'{self.clock.cycle}: CacheTable {self.name}'
         log = logger.error if log_if_false else logger.debug
@@ -542,11 +581,10 @@ class CacheTable:
                 f'slot=None -> False')
             return False
         # Block writes if any witem reads from all memory
-        for item in self.waiting_items:
-            if item != witem and item.reads_all_memory:
-                log(f'{loc} can_write: addr=0x{k_maddr.addr:x} writeset={writeset_ident} '
-                    f'reads_all_memory by ident={item.instr_ident} -> False')
-                return False
+        if self._any_reads_all_memory(writeset_ident, exclude=witem):
+            log(f'{loc} can_write: addr=0x{k_maddr.addr:x} writeset={writeset_ident} '
+                f'reads_all_memory -> False')
+            return False
         # Block writes if any witem writes to all memory (unless same writeset_ident)
         if self._any_writes_all_memory(writeset_ident):
             log(f'{loc} can_write: addr=0x{k_maddr.addr:x} writeset={writeset_ident} '
@@ -563,12 +601,12 @@ class CacheTable:
                 f'slot={slot} in_use -> False')
         return good_state and not in_use
 
-    def slot_has_write(self, slot):
-        # Check to see if there are any waiting items using this slot.
+    def slot_has_write(self, slot, writeset_ident: int | None = None):
+        # Check to see if there are any waiting items writing to this slot.
         slot_in_use = False
         for item in self.waiting_items:
-            using_cache = item.cache_is_write
-            if item.cache_slot == slot and using_cache:
+            same_ws = writeset_ident is not None and item.writeset_ident == writeset_ident
+            if item.cache_slot == slot and item.cache_is_write and not same_ws:
                 slot_in_use = True
         if slot_in_use:
             assert slot in self.used_slots

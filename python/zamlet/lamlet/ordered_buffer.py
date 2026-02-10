@@ -84,7 +84,10 @@ class OrderedBuffer:
         element_index = self.next_to_dispatch
         slot = self._slot(element_index)
         assert self.elements[slot] is None
-        self.elements[slot] = ElementEntry(state=ElementState.DISPATCHED, instr_ident=instr_ident)
+        self.elements[slot] = ElementEntry(
+            state=ElementState.DISPATCHED,
+            instr_ident=instr_ident,
+        )
         self.next_to_dispatch += 1
         return element_index
 
@@ -97,8 +100,9 @@ class OrderedBuffer:
         entry.addr = None
         entry.data = None
 
-        # Advance next_to_process past any completed elements
-        while self.next_to_process < self.n_elements:
+        # Advance next_to_process past any completed elements.
+        # Must not advance past next_to_dispatch to avoid aliased slots.
+        while self.next_to_process < self.next_to_dispatch:
             next_slot = self._slot(self.next_to_process)
             next_entry = self.elements[next_slot]
             if next_entry is None or next_entry.state != ElementState.COMPLETE:

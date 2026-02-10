@@ -9,7 +9,6 @@ from zamlet.message import Header, IdentHeader, AddressHeader, ValueHeader, Tagg
 from zamlet.utils import Queue
 from zamlet.router import Router
 from zamlet.kamlet import kinstructions
-from zamlet import memlet
 from zamlet import utils
 from zamlet.kamlet import ew_convert
 from zamlet.kamlet import cache_table
@@ -33,7 +32,8 @@ class Jamlet:
 
     def __init__(self, clock, params: LamletParams, x: int, y: int, cache_table: CacheTable,
                  rf_info: KamletRegisterFile, tlb: addresses.TLB, monitor: Monitor,
-                 lamlet_x: int, lamlet_y: int):
+                 lamlet_x: int, lamlet_y: int,
+                 mem_xy: Tuple[int, int]):
         self.clock = clock
         self.params = params
         self.monitor = monitor
@@ -52,7 +52,7 @@ class Jamlet:
         self.j_in_k_index = j_in_k_y * self.params.j_cols + j_in_k_x
 
         # The coords of the memlet router that this jamlet talks to.
-        self.mem_x, self.mem_y = memlet.jamlet_coords_to_m_router_coords(params, x, y)
+        self.mem_x, self.mem_y = mem_xy
 
         # The coords of the frontend that this jamlet talks to.
         self.front_x, self.front_y = jamlet_coords_to_frontend_coords(params, x, y)
@@ -120,6 +120,9 @@ class Jamlet:
         self.rf_info = rf_info
         self.tlb = tlb
 
+        # In-flight channel 1+ request tracking for source throttling
+        self._ch1_in_flight: int = 0
+
     async def send_packet(self, packet, parent_span_id: int,
                           drop_reason: str | None = None):
         header = packet[0]
@@ -127,9 +130,21 @@ class Jamlet:
         assert len(packet) == header.length, (
             f"Packet length mismatch: len(packet)={len(packet)}, header.length={header.length}")
         message_type = header.message_type
+        channel = CHANNEL_MAPPING.get(message_type, 0)
         logger.debug(
             f'{self.clock.cycle}: jamlet ({self.x}, {self.y}): send_packet queuing '
             f'{message_type.name} target=({header.target_x}, {header.target_y})')
+
+        # Source throttling: wait for channel 1+ credit
+        cap = self.params.max_in_flight_ch1
+        if channel >= 1 and cap > 0:
+            if self._ch1_in_flight >= cap:
+                logger.warning(
+                    f'{self.clock.cycle}: jamlet ({self.x},{self.y}) '
+                    f'THROTTLED ch1 in_flight={self._ch1_in_flight} cap={cap}')
+            while self._ch1_in_flight >= cap:
+                await self.clock.next_cycle
+            self._ch1_in_flight += 1
 
         # Record message as child of parent span
         tag = getattr(header, 'tag', None)
@@ -359,6 +374,10 @@ class Jamlet:
             packet = await self._receive_packet_body(queue, header, channel=0)
             result = handler(self, packet)
             assert result is None, f"Channel 0 handler for {header.message_type} must be sync (not async)"
+            # Release channel 1 credit: these are all responses to requests
+            # this jamlet sent via send_packet on channel 1+.
+            if self._ch1_in_flight > 0:
+                self._ch1_in_flight -= 1
 
     async def _receive_packet(self, queue, channel: int):
         """Handle channel 1+ packets (requests that may need to send responses)."""
@@ -445,9 +464,23 @@ class Jamlet:
     async def _monitor_witems(self) -> None:
         while True:
             await self.clock.next_cycle
+            cycle_start = self.clock.cycle
             for witem in list(self.cache_table.waiting_items):
                 if witem in self.cache_table.waiting_items:
+                    before = self.clock.cycle
                     await witem.monitor_jamlet(self)
+                    after = self.clock.cycle
+                    if after > before:
+                        logger.info(
+                            f'{after}: jamlet ({self.x},{self.y}) '
+                            f'monitor_jamlet blocked {after - before} cycles '
+                            f'on {type(witem).__name__}[{witem.instr_ident}]')
+            elapsed = self.clock.cycle - cycle_start
+            if elapsed > 0:
+                logger.info(
+                    f'{self.clock.cycle}: jamlet ({self.x},{self.y}) '
+                    f'_monitor_witems loop took {elapsed} extra cycles '
+                    f'({len(list(self.cache_table.waiting_items))} witems)')
 
     async def _record_input_queues(self) -> None:
         """Track when input queues have data ready."""

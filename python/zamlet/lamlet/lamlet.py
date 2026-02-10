@@ -34,7 +34,7 @@ from zamlet.message import (Header, MessageType, Direction, SendType, TaggedHead
                             WriteMemWordHeader, CHANNEL_MAPPING, IdentHeader,
                             ElementIndexHeader, ReadMemWordHeader)
 from zamlet.kamlet.kamlet import Kamlet
-from zamlet.memlet import Memlet
+from zamlet.memlet import Memlet, memlet_coords
 from zamlet.runner import Future
 from zamlet.kamlet import kinstructions
 from zamlet.transactions.load_stride import LoadStride
@@ -53,7 +53,7 @@ import zamlet.disasm_trace as dt
 from zamlet.synchronization import SyncDirection, Synchronizer
 from zamlet.monitor import Monitor, CompletionType, ResourceType
 from zamlet.lamlet import ident_query
-from zamlet.lamlet.ident_query import RefreshState
+from zamlet.lamlet.ident_query import IdentQuerySlot
 from zamlet.lamlet import ordered
 from zamlet.lamlet import unordered
 from zamlet.lamlet import vregister
@@ -64,7 +64,8 @@ logger = logging.getLogger(__name__)
 
 class Lamlet:
 
-    def __init__(self, clock, params: LamletParams):
+    def __init__(self, clock, params: LamletParams,
+                 word_order: WordOrder = WordOrder.STANDARD):
         self.clock = clock
         self.params = params
         self.monitor = Monitor(clock, params)
@@ -89,7 +90,7 @@ class Lamlet:
         self.vstart = 0
         self.exit_code = None
 
-        self.word_order = WordOrder.STANDARD
+        self.word_order = word_order
 
         self.min_x = 0
         self.min_y = 0
@@ -108,6 +109,7 @@ class Lamlet:
         for kamlet_index in range(params.k_in_l):
             kamlet_x = params.j_cols*(kamlet_index%params.k_cols)
             kamlet_y = params.j_rows*(kamlet_index//params.k_cols)
+            mem_coords = memlet_coords(params, kamlet_index)
             kamlet = Kamlet(
                 clock=clock,
                 params=params,
@@ -117,16 +119,9 @@ class Lamlet:
                 monitor=self.monitor,
                 lamlet_x=self.instr_x,
                 lamlet_y=self.instr_y,
+                mem_coords=mem_coords,
                 )
             self.kamlets.append(kamlet)
-            # The memlet is connected to several routers.
-            mem_coords = []
-            if kamlet_x < self.params.k_cols//2:
-                mem_x = -1
-            else:
-                mem_x = self.params.k_cols * self.params.j_cols
-            for j_in_k_row in range(self.params.j_rows):
-                mem_coords.append((mem_x, kamlet_y + j_in_k_row))
             self.memlets.append(Memlet(
                 clock=clock,
                 params=params,
@@ -145,27 +140,41 @@ class Lamlet:
         self.waiting_items: deque[LamletWaitingItem] = deque()
 
         self.next_writeset_ident = 0
+        # 0 = no bound (full 64-bit indices), N = mask indices to lower N bits
+        self.index_bound_bits: int = 0
+        self.active_writeset_ident: int | None = None
         self.next_instr_ident = 0
         # Track oldest active instr_ident for flow control (None = unknown/all free)
         self._oldest_active_ident: int | None = None
-        # Ident query state machine
-        self._ident_query_state = RefreshState.DORMANT
-        self._ident_query_ident = params.max_response_tags  # Dedicated ident for queries
-        # Dedicated idents for ordered barrier instructions (one per ordered buffer slot)
+        # Ident query circular buffer.
+        # Each slot has a dedicated sync ident. _iq_oldest is the next response
+        # we expect; _iq_newest is the next slot to use for sending.
+        # Pointers wrap at n_ident_query_slots. _iq_full distinguishes
+        # full (oldest==newest, full=True) from empty (oldest==newest,
+        # full=False).
+        n_iq = params.n_ident_query_slots
+        self._iq_slots = [IdentQuerySlot() for _ in range(n_iq)]
+        self._iq_idents = [
+            params.max_response_tags + i for i in range(n_iq)]
+        self._iq_oldest = 0
+        self._iq_newest = 0
+        self._iq_full = False
+        # Dedicated idents for ordered barrier instructions (after ident query idents)
         self._ordered_barrier_idents = [
-            params.max_response_tags + 1 + i for i in range(params.n_ordered_buffers)]
-        self._ident_query_baseline = 0
+            params.max_response_tags + n_iq + i
+            for i in range(params.n_ordered_buffers)]
         # Track last instr_ident sent to kamlets (for IdentQuery.previous_instr_ident)
-        # Initialize to max_response_tags - 2 so first query reports max_response_tags - 1 as oldest
+        # Initialize to max_response_tags - 2 so first query reports
+        # max_response_tags - 1 as oldest
         self._last_sent_instr_ident: int = params.max_response_tags - 2
 
         # Per-kamlet instruction queue token tracking
         # Available tokens = how many instructions we can send to this kamlet
-        self._available_tokens = [params.instruction_queue_length for _ in range(params.k_in_l)]
-        # Tokens used since we sent the last ident query (will be returned by NEXT query)
+        self._available_tokens = [
+            params.instruction_queue_length for _ in range(params.k_in_l)]
+        # Tokens used since we sent the last ident query (will be snapshotted
+        # into the next slot when a query is sent)
         self._tokens_used_since_query = [0 for _ in range(params.k_in_l)]
-        # Tokens that will be returned when the current in-flight query responds
-        self._tokens_in_active_query = [0 for _ in range(params.k_in_l)]
 
         # Send queues for packets going into the router network from the lamlet
         # Separate queue per message type for deterministic ordering
@@ -177,6 +186,17 @@ class Lamlet:
             # Channel 1 (requests)
             MessageType.WRITE_MEM_WORD_REQ: utils.Queue(length=2),
         }
+
+        # Lamlet network buffers. router_connections moves words between these
+        # and jamlet(0,0)'s N direction, just like any other router link.
+        self._receive_buffers = [
+            utils.Queue(length=params.router_output_buffer_length)
+            for _ in range(params.n_channels)
+        ]
+        self._send_word_buffers = [
+            utils.Queue(length=params.router_output_buffer_length)
+            for _ in range(params.n_channels)
+        ]
 
         # Lamlet's synchronizer at position (0, -1)
         self.synchronizer = Synchronizer(
@@ -264,6 +284,7 @@ class Lamlet:
             k_maddr=k_maddr,
             imm=value,
             instr_ident=instr_ident,
+            writeset_ident=ident_query.get_writeset_ident(self),
             )
         await self.add_to_instruction_buffer(kinstr, self._setup_span_id, k_maddr.k_index)
 
@@ -282,6 +303,7 @@ class Lamlet:
         kinstr = ReadByte(
             k_maddr=k_maddr,
             instr_ident=instr_ident,
+            writeset_ident=ident_query.get_writeset_ident(self),
             )
         await self.add_to_instruction_buffer(kinstr, self._setup_span_id, k_maddr.k_index)
         return future
@@ -348,6 +370,15 @@ class Lamlet:
                                 north_router.receive(Direction.S, word)
                                 north_moving = True
                                 logger.debug(f'{self.clock.cycle}: Moving word north ({x}, {y}) -> ({x}, {y-1}) {word}')
+                    elif x == 0 and y == 0:
+                        # Send to the lamlet at (0, -1)
+                        north_buffer = router._output_buffers[Direction.N]
+                        if north_buffer:
+                            recv_buf = self._receive_buffers[channel]
+                            if recv_buf.can_append():
+                                word = north_buffer.popleft()
+                                recv_buf.append(word)
+                                north_moving = True
                     if south in routers:
                         # Send to the south
                         south_buffer = router._output_buffers[Direction.S]
@@ -390,6 +421,20 @@ class Lamlet:
                                                       west_present, west_moving)
                     self.monitor.report_router_output(x, y, channel, Direction.H,
                                                       h_present, h_moving)
+
+            # Lamlet at (0, -1): move words south into jamlet(0,0)
+            send_buf = self._send_word_buffers[channel]
+            lamlet_s_present = bool(send_buf)
+            lamlet_s_moving = False
+            if send_buf:
+                j00_input = routers[(0, 0)]._input_buffers[Direction.N]
+                if j00_input.can_append():
+                    word = send_buf.popleft()
+                    j00_input.append(word)
+                    lamlet_s_moving = True
+            self.monitor.report_router_output(
+                0, -1, channel, Direction.S,
+                lamlet_s_present, lamlet_s_moving)
 
     async def sync_network_connections(self):
         """
@@ -455,7 +500,7 @@ class Lamlet:
 
     async def monitor_channel0(self):
         """Handle channel 0 packets (responses that must be consumed immediately)."""
-        buffer = self.kamlets[0].jamlets[0].routers[0]._output_buffers[Direction.N]
+        buffer = self._receive_buffers[0]
         header = None
         packet = []
         while True:
@@ -511,9 +556,9 @@ class Lamlet:
             message_span = self.monitor.get_span(message_span_id)
             kinstr_span_id = message_span.parent.span_id if message_span.parent else None
             assert len(packet) == 2, f"packet len {len(packet)}"
-            assert header.ident == self._ident_query_ident
-            min_distance = int.from_bytes(packet[1], byteorder='little')
-            ident_query.receive_ident_query_response(self, min_distance, kinstr_span_id)
+            min_distance = packet[1]
+            ident_query.receive_ident_query_response(
+                self, header.ident, min_distance, kinstr_span_id)
         elif header.message_type == MessageType.LOAD_INDEXED_ELEMENT_RESP:
             assert len(packet) == 1
             assert isinstance(header, ElementIndexHeader)
@@ -545,7 +590,7 @@ class Lamlet:
         while True:
             await self.clock.next_cycle
             for channel in range(1, self.params.n_channels):
-                buffer = self.kamlets[0].jamlets[0].routers[channel]._output_buffers[Direction.N]
+                buffer = self._receive_buffers[channel]
                 if buffer:
                     packet = await self._receive_packet(buffer)
                     await self._process_channel1andup_packet(packet)
@@ -601,18 +646,23 @@ class Lamlet:
         while len(self.instruction_buffer) >= self.params.instruction_buffer_length:
             await self.clock.next_cycle
         self.instruction_buffer.append((instruction, k_index))
+        self.monitor.record_lamlet_instr_added()
 
     def _have_tokens(self, k_index: int | None, is_ident_query: bool = False) -> bool:
         """Check if we have tokens available for the given k_index (or all if None).
 
-        Regular instructions need > 1 token (last token reserved for IdentQuery).
-        IdentQuery only needs > 0 tokens.
+        Regular instructions need > 1 token on the target kamlet and
+        > 0 on all kamlets (so a broadcast ident query is always possible).
+        IdentQuery only needs > 0 tokens on all kamlets.
         """
-        min_tokens = 0 if is_ident_query else 1
+        if not all(t > 0 for t in self._available_tokens):
+            return False
+        if is_ident_query:
+            return True
         if k_index is None:
-            return all(t > min_tokens for t in self._available_tokens)
+            return all(t > 1 for t in self._available_tokens)
         else:
-            return self._available_tokens[k_index] > min_tokens
+            return self._available_tokens[k_index] > 1
 
     def _use_token(self, k_index: int | None):
         """Use a token for the given k_index (or all if None for broadcast)."""
@@ -630,88 +680,110 @@ class Lamlet:
             logger.debug(f'{self.clock.cycle}: lamlet: _use_token k={k_index}, '
                         f'available={self._available_tokens}')
 
-    def _should_send_ident_query_for_tokens(self) -> bool:
-        """Check if we should send an ident query to reclaim tokens."""
-        # Send query if any kamlet has less than half its tokens available
-        # and we're not already waiting for a response
-        if self._ident_query_state != RefreshState.DORMANT:
-            return False
-        threshold = self.params.instruction_queue_length // 2
-        return any(t < threshold for t in self._available_tokens)
+    async def _monitor_instruction_buffer_state(self):
+        while True:
+            await self.clock.next_cycle
+            self.monitor.record_lamlet_cycle_state(
+                buf_len=len(self.instruction_buffer),
+                free_idents=ident_query.get_available_idents(self),
+                free_tokens={i: t for i, t in enumerate(self._available_tokens)},
+            )
+
+    def _dispatch_instr(self, instr):
+        """Mark an instruction as dispatched in the monitor and lamlet."""
+        span_id = self.monitor.get_kinstr_span_id(instr.instr_ident)
+        self.monitor.add_event(span_id, "dispatched")
+        witem = self.get_witem_by_ident(instr.instr_ident)
+        if witem is not None:
+            assert isinstance(witem, LamletWaitingItem)
+            witem.dispatched = True
+
+    async def _flush_packet(self, packet, packet_dest):
+        """Send a packet if non-empty. Returns ([], None)."""
+        if packet:
+            logger.info(
+                f'{self.clock.cycle}: lamlet: flush packet'
+                f' size={len(packet)} dest={packet_dest}'
+                f' tokens={self._available_tokens}')
+            await self.send_instructions(packet, packet_dest)
+        return [], None
+
+    async def _add_ident_query(self, packet, packet_dest):
+        """Add an ident query to the packet stream.
+
+        If current packet is single-kamlet, flush it first since the
+        ident query is broadcast.
+        Returns (packet, packet_dest) with the query appended.
+        """
+        if packet_dest is not None:
+            packet, packet_dest = await self._flush_packet(
+                packet, packet_dest)
+        assert self._have_tokens(None, is_ident_query=True)
+        # Use broadcast token before create so it's included in the
+        # token snapshot that create_ident_query captures.
+        self._use_token(None)
+        iq_kinstr = ident_query.create_ident_query(self)
+        self._dispatch_instr(iq_kinstr)
+        packet.append(iq_kinstr)
+        packet_dest = None
+        return packet, packet_dest
 
     async def monitor_instruction_buffer(self):
+        packet = []
+        packet_dest = None
         inactive_count = 0
-        old_length = 0
         while True:
-            # Check if we need to send an ident query to reclaim tokens
-            if self._should_send_ident_query_for_tokens():
-                self._ident_query_state = RefreshState.READY_TO_SEND
+            added_any = False
 
-            instructions = []
-            send_k_index = None
+            while self.instruction_buffer:
+                instr, k_index = self.instruction_buffer[0]
 
-            if self.instruction_buffer:
-                k_indices = [x[1] for x in self.instruction_buffer]
-                k_indices_same = all(k_indices[0] == x for x in k_indices)
-                should_send = (len(self.instruction_buffer) >= self.params.instructions_in_packet or
-                               (not k_indices_same) or inactive_count > 2)
+                # No tokens: flush what we have and stop
+                if not self._have_tokens(k_index):
+                    self.monitor.record_resource_exhausted(
+                        ResourceType.INSTR_BUFFER_TOKENS, None, None)
+                    packet, packet_dest = await self._flush_packet(
+                        packet, packet_dest)
+                    break
 
-                if should_send and self._have_tokens(k_indices[0]):
-                    send_k_index = k_indices[0]
-                    while self.instruction_buffer:
-                        instr, instr_k_index = self.instruction_buffer[0]
-                        if instr_k_index != send_k_index:
-                            break
-                        if not self._have_tokens(instr_k_index):
-                            self.monitor.record_resource_exhausted(
-                                ResourceType.INSTR_BUFFER_TOKENS, None, None)
-                            break
-                        self.instruction_buffer.popleft()
-                        span_id = self.monitor.get_kinstr_span_id(instr.instr_ident)
-                        self.monitor.add_event(span_id, "dispatched")
-                        instructions.append(instr)
-                        self._use_token(instr_k_index)
-                        # Mark the corresponding lamlet waiting item as dispatched
-                        witem = self.get_witem_by_ident(instr.instr_ident)
-                        if witem is not None:
-                            assert isinstance(witem, LamletWaitingItem)
-                            witem.dispatched = True
-                    old_length = 0
+                # Destination change: flush current packet
+                if packet and k_index != packet_dest:
+                    packet, packet_dest = await self._flush_packet(
+                        packet, packet_dest)
+
+                # Pop and add to packet
+                self.instruction_buffer.popleft()
+                packet.append(instr)
+                packet_dest = k_index
+                self._use_token(k_index)
+                self._dispatch_instr(instr)
+                added_any = True
+
+                # Ident query threshold reached
+                if ident_query.should_send_ident_query(self):
+                    packet, packet_dest = \
+                        await self._add_ident_query(packet, packet_dest)
+
+                # Max packet length
+                if len(packet) >= self.params.instructions_in_packet:
+                    packet, packet_dest = await self._flush_packet(
+                        packet, packet_dest)
+
+            # Buffer empty but ident query needed
+            if not added_any and ident_query.should_send_ident_query(self):
+                packet, packet_dest = \
+                    await self._add_ident_query(packet, packet_dest)
+                added_any = True
+
+            # Idle timeout: flush packet if no new instructions for a while
+            if added_any:
+                inactive_count = 0
+            elif self.instruction_buffer or packet:
+                inactive_count += 1
+                if inactive_count > 2 and packet:
+                    packet, packet_dest = await self._flush_packet(
+                        packet, packet_dest)
                     inactive_count = 0
-                else:
-                    new_length = len(self.instruction_buffer)
-                    if new_length == old_length:
-                        inactive_count += 1
-                    else:
-                        inactive_count = 0
-                    old_length = new_length
-
-            # Insert IdentQuery if pending - the reserved token must be available.
-            # This is guaranteed because: (1) regular instructions can't use the last token,
-            # (2) IdentQuery uses the reserved token and moves to WAITING_FOR_RESPONSE,
-            # (3) the response returns tokens (including the one used by IdentQuery),
-            # (4) only then does it return to READY_TO_SEND.
-            if self._ident_query_state == RefreshState.READY_TO_SEND:
-                assert self._have_tokens(None, is_ident_query=True)
-                iq_kinstr = ident_query.create_ident_query(self)
-                iq_span_id = self.monitor.get_kinstr_span_id(iq_kinstr.instr_ident)
-                self.monitor.add_event(iq_span_id, "dispatched")
-                self._use_token(None)
-                # Move tokens to active query tracker (will be returned when response arrives)
-                for i in range(self.params.k_in_l):
-                    self._tokens_in_active_query[i] = self._tokens_used_since_query[i]
-                    self._tokens_used_since_query[i] = 0
-                # Add to broadcast packet, or send separately if packet is single-kamlet
-                if send_k_index is None:
-                    instructions.append(iq_kinstr)
-                else:
-                    if instructions:
-                        await self.send_instructions(instructions, send_k_index)
-                    instructions = [iq_kinstr]
-                    send_k_index = None
-
-            if instructions:
-                await self.send_instructions(instructions, send_k_index)
 
             await self.clock.next_cycle
 
@@ -813,41 +885,41 @@ class Lamlet:
         send_queue.append(packet)
 
     async def _send_packets_ch0(self):
-        """Drain the channel 0 send queues and inject packets into the router network."""
-        jamlet = self.kamlets[0].jamlets[0]
-        router_queue = jamlet.routers[0]._input_buffers[Direction.N]
+        """Drain channel 0 send queues into the lamlet's send word buffer."""
+        word_buf = self._send_word_buffers[0]
         while True:
             sent_something = False
             for msg_type, send_queue in self._send_queues.items():
                 if CHANNEL_MAPPING.get(msg_type, 0) == 0 and send_queue:
                     packet = send_queue.popleft()
-                    await self._send_packet_words(packet, router_queue)
+                    await self._send_packet_words(packet, word_buf)
                     sent_something = True
             if not sent_something:
                 await self.clock.next_cycle
 
     async def _send_packets_ch1andup(self):
-        """Drain channel 1+ send queues and inject packets into the router network."""
-        jamlet = self.kamlets[0].jamlets[0]
+        """Drain channel 1+ send queues into the lamlet's send word buffers."""
         while True:
             sent_something = False
             for msg_type, send_queue in self._send_queues.items():
                 channel = CHANNEL_MAPPING.get(msg_type, 0)
                 if channel >= 1 and send_queue:
-                    router_queue = jamlet.routers[channel]._input_buffers[Direction.N]
+                    word_buf = self._send_word_buffers[channel]
                     packet = send_queue.popleft()
-                    await self._send_packet_words(packet, router_queue)
+                    await self._send_packet_words(packet, word_buf)
                     sent_something = True
             if not sent_something:
                 await self.clock.next_cycle
 
-    async def _send_packet_words(self, packet, router_queue):
-        """Send all words of a packet into the router queue, one per cycle."""
+    async def _send_packet_words(self, packet, word_buf):
+        """Send all words of a packet into a word buffer, one per cycle."""
         while packet:
             await self.clock.next_cycle
-            if router_queue.can_append():
+            if word_buf.can_append():
                 word = packet.pop(0)
-                router_queue.append(word)
+                word_buf.append(word)
+            else:
+                pass  # Wait for router_connections to drain the buffer
 
     async def set_memory(self, address: int, data: bytes):
         logger.debug(f'Writing to memory from {hex(address)} to {hex(address+len(data)-1)}')
@@ -1080,6 +1152,10 @@ class Lamlet:
         self.scalar.update()
         for queue in self._send_queues.values():
             queue.update()
+        for buf in self._receive_buffers:
+            buf.update()
+        for buf in self._send_word_buffers:
+            buf.update()
 
     async def run(self):
         for kamlet in self.kamlets:
@@ -1093,7 +1169,7 @@ class Lamlet:
         self.clock.create_task(self.monitor_channel0())
         self.clock.create_task(self.monitor_channel1andup())
         self.clock.create_task(self.monitor_instruction_buffer())
-        self.clock.create_task(ident_query.monitor_ident_query(self))
+        self.clock.create_task(self._monitor_instruction_buffer_state())
         self.clock.create_task(self._send_packets_ch0())
         self.clock.create_task(self._send_packets_ch1andup())
         self.clock.create_task(ordered.ordered_buffer_process(self))

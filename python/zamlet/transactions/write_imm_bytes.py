@@ -35,6 +35,7 @@ class WriteImmBytes(kinstructions.KInstr):
     k_maddr: KMAddr
     imm: bytes
     instr_ident: int
+    writeset_ident: int
 
     async def update_kamlet(self, kamlet):
         """
@@ -42,7 +43,7 @@ class WriteImmBytes(kinstructions.KInstr):
         They must all be within one word.
         It first makes sure that we've got the cache line ready.
         """
-        can_write = kamlet.cache_table.can_write(self.k_maddr)
+        can_write = kamlet.cache_table.can_write(self.k_maddr, writeset_ident=self.writeset_ident)
         logger.debug(
             f'{kamlet.clock.cycle}: WriteImmBytes ident={self.instr_ident} '
             f'kamlet=({kamlet.min_x},{kamlet.min_y}) can_write={can_write}')
@@ -92,7 +93,8 @@ def do_write_imm_bytes(kamlet: 'Kamlet', instr: WriteImmBytes) -> None:
 
     assert instr.k_maddr.bit_addr % 8 == 0
     if instr.k_maddr.k_index == kamlet.k_index:
-        assert kamlet.cache_table.can_write(instr.k_maddr, log_if_false=True)
+        assert kamlet.cache_table.can_write(
+            instr.k_maddr, writeset_ident=instr.writeset_ident, log_if_false=True)
         j_saddr = instr.k_maddr.to_j_saddr(kamlet.cache_table)
         jamlet = kamlet.jamlets[j_saddr.j_in_k_index]
         size = len(instr.imm)

@@ -76,7 +76,7 @@ async def handle_req(jamlet: 'Jamlet', packet: List[Any]) -> None:
         await send_drop(jamlet, header, 'parent_not_ready')
         return
 
-    can_read = jamlet.cache_table.can_read(addr)
+    can_read = jamlet.cache_table.can_read(addr, writeset_ident=parent_witem.writeset_ident)
     if can_read:
         j_saddr = addr.to_j_saddr(jamlet.cache_table)
         await send_resp(jamlet, header, j_saddr)

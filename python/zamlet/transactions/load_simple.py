@@ -41,7 +41,7 @@ class WaitingLoadSimple(WaitingItemRequiresCache):
     async def finalize(self, kamlet: 'Kamlet') -> None:
         instr = self.item
         assert isinstance(instr, kinstructions.Load)
-        if not kamlet.cache_table.can_read(instr.k_maddr):
+        if not kamlet.cache_table.can_read(instr.k_maddr, writeset_ident=self.writeset_ident):
             logger.error(
                 f'{kamlet.clock.cycle}: kamlet ({kamlet.min_x},{kamlet.min_y}): LOAD_SIMPLE '
                 f'FINALIZE FAILED instr_ident={instr.instr_ident} '
@@ -79,7 +79,7 @@ def do_load_simple(jamlet: 'Jamlet', instr: kinstructions.Load) -> None:
     This is called when the load is aligned to local kamlet memory
     and the data is already in the cache.
     """
-    assert jamlet.cache_table.can_read(instr.k_maddr)
+    assert jamlet.cache_table.can_read(instr.k_maddr, writeset_ident=instr.writeset_ident)
     slot = jamlet.cache_table.addr_to_slot(instr.k_maddr)
 
     dst_ordering = instr.dst_ordering

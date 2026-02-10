@@ -29,6 +29,7 @@ class LamletParams:
     router_output_buffer_length: int = 2
     router_input_buffer_length: int = 2
     instruction_queue_length: int = 16
+    n_ident_query_slots: int = 8
     n_channels: int = 2
 
 
@@ -37,7 +38,9 @@ class LamletParams:
     n_response_idents: int = 32
     #n_waiting: int = 16
     n_response_tags: int = 8
-    max_response_tags: int = 128 # 7 bits
+    max_response_tags: int = 512
+    sync_ident_width: int = 10
+    sync_bus_width: int = 11
 
     # The number of outstanding instructions or responses waiting
     n_items: int = 16
@@ -47,6 +50,11 @@ class LamletParams:
     n_cache_requests: int = 16
     # Number of gathering slots in memlet for WRITE_LINE_READ_LINE operations
     n_memlet_gathering_slots: int = 4
+
+    # Max in-flight channel 1+ packets per jamlet (0 = unlimited).
+    # Limits how many request packets a jamlet can have outstanding in the
+    # network. May be useful for limiting congestion.
+    max_in_flight_ch1: int = 0
 
     # Ordered indexed operation buffer parameters (for scalar memory targets)
     n_ordered_buffers: int = 2
@@ -65,6 +73,10 @@ class LamletParams:
         # Page must be bigger than a cache line
         assert self.page_bytes >= self.k_in_l * self.cache_line_bytes
         assert self.page_bytes % (self.k_in_l * self.cache_line_bytes) == 0
+        # Sync ident must fit in one bus cycle (data_width = sync_bus_width - 1)
+        assert self.sync_ident_width + 1 <= self.sync_bus_width
+        # Ident space must cover all response tags + ident query
+        assert (1 << self.sync_ident_width) > self.max_response_tags
         # Sane scalar memory
         assert self.scalar_memory_bytes > self.cache_line_bytes
         assert self.scalar_memory_bytes % self.cache_line_bytes == 0

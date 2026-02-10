@@ -12,6 +12,7 @@ pkgs.mkShell {
   LIBRARY_PATH = env.LIBRARY_PATH;
 
   shellHook = ''
+    export PYTHONPATH="$PWD/python:$PYTHONPATH"
     echo "Zamlet Development Environment"
     echo "  OpenROAD: $(openroad -version 2>/dev/null | head -1 || echo 'available')"
     echo "  Yosys:    $(yosys -V 2>/dev/null | head -1 || echo 'available')"

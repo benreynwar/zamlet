@@ -56,6 +56,23 @@ class JamletActivity(Enum):
 
 
 @dataclass
+class WitemSnapshot:
+    """Snapshot of a single waiting item's state."""
+    name: str
+    instr_ident: int
+    # Tag states: 0=empty, 1=unsent, 2=pending, 3=complete
+    tag_states: List[int] = field(default_factory=list)
+
+
+@dataclass
+class KamletSnapshot:
+    """Snapshot of a kamlet's state at a single cycle."""
+    # Next instructions in queue: [(type_name, ident), ...]
+    next_instructions: List[Tuple[str, int]] = field(default_factory=list)
+    witems: List[WitemSnapshot] = field(default_factory=list)
+
+
+@dataclass
 class CycleMetrics:
     """Per-cycle performance metrics."""
     # ALU activity per jamlet: (jx, jy) -> True if ALU active this cycle
@@ -66,6 +83,35 @@ class CycleMetrics:
 
     # Router output state: (jx, jy, channel, Direction) -> (present, moving)
     router_outputs: Dict[Tuple[int, int, int, Direction], Tuple[bool, bool]] = field(
+        default_factory=dict
+    )
+
+    # Lamlet instruction buffer
+    lamlet_instr_buf_len: int | None = None
+    lamlet_free_idents: int | None = None
+    lamlet_free_tokens: Dict[int, int] = field(default_factory=dict)
+    lamlet_instr_added: int = 0
+    lamlet_instr_removed: int = 0
+
+    # Ident query events
+    ident_query_sent: bool = False
+    ident_query_response: bool = False
+
+    # Instruction network send: True if a word was pushed this cycle
+    instr_net_sent: bool = False
+    # True if a word was waiting but couldn't be pushed (congestion)
+    instr_net_blocked: bool = False
+
+    # Kamlet instruction queues: keyed by (kx, ky)
+    kamlet_instr_queue_len: Dict[Tuple[int, int], int] = field(default_factory=dict)
+    kamlet_instr_added: Dict[Tuple[int, int], int] = field(default_factory=dict)
+    kamlet_instr_removed: Dict[Tuple[int, int], int] = field(default_factory=dict)
+
+    # Cache misses: keyed by (kx, ky)
+    cache_misses: Dict[Tuple[int, int], int] = field(default_factory=dict)
+
+    # Kamlet snapshots: keyed by (kx, ky)
+    kamlet_snapshots: Dict[Tuple[int, int], KamletSnapshot] = field(
         default_factory=dict
     )
 
@@ -224,6 +270,79 @@ class Monitor:
             f"Router output ({jx}, {jy}) ch{channel} {direction.name} already reported " \
             f"this cycle {self.clock.cycle}"
         metrics.router_outputs[key] = (present, moving)
+
+    def record_lamlet_cycle_state(self, buf_len: int, free_idents: int,
+                                   free_tokens: Dict[int, int]) -> None:
+        if not self.enabled:
+            return
+        metrics = self._get_cycle_metrics()
+        metrics.lamlet_instr_buf_len = buf_len
+        metrics.lamlet_free_idents = free_idents
+        metrics.lamlet_free_tokens = free_tokens
+
+    def record_lamlet_instr_added(self, count: int = 1) -> None:
+        if not self.enabled:
+            return
+        metrics = self._get_cycle_metrics()
+        metrics.lamlet_instr_added += count
+
+    def record_lamlet_instr_removed(self, count: int = 1) -> None:
+        if not self.enabled:
+            return
+        metrics = self._get_cycle_metrics()
+        metrics.lamlet_instr_removed += count
+
+    def record_instr_net_sent(self) -> None:
+        if not self.enabled:
+            return
+        self._get_cycle_metrics().instr_net_sent = True
+
+    def record_instr_net_blocked(self) -> None:
+        if not self.enabled:
+            return
+        self._get_cycle_metrics().instr_net_blocked = True
+
+    def record_ident_query_sent(self) -> None:
+        if not self.enabled:
+            return
+        self._get_cycle_metrics().ident_query_sent = True
+
+    def record_ident_query_response(self) -> None:
+        if not self.enabled:
+            return
+        self._get_cycle_metrics().ident_query_response = True
+
+    def record_kamlet_cycle_state(self, kx: int, ky: int,
+                                   queue_len: int) -> None:
+        if not self.enabled:
+            return
+        metrics = self._get_cycle_metrics()
+        metrics.kamlet_instr_queue_len[(kx, ky)] = queue_len
+
+    def record_kamlet_instr_added(self, kx: int, ky: int,
+                                   count: int = 1) -> None:
+        if not self.enabled:
+            return
+        metrics = self._get_cycle_metrics()
+        key = (kx, ky)
+        metrics.kamlet_instr_added[key] = metrics.kamlet_instr_added.get(key, 0) + count
+
+    def record_kamlet_instr_removed(self, kx: int, ky: int,
+                                     count: int = 1) -> None:
+        if not self.enabled:
+            return
+        metrics = self._get_cycle_metrics()
+        key = (kx, ky)
+        metrics.kamlet_instr_removed[key] = (
+            metrics.kamlet_instr_removed.get(key, 0) + count
+        )
+
+    def record_kamlet_snapshot(self, kx: int, ky: int,
+                               snapshot: 'KamletSnapshot') -> None:
+        if not self.enabled:
+            return
+        metrics = self._get_cycle_metrics()
+        metrics.kamlet_snapshots[(kx, ky)] = snapshot
 
     # -------------------------------------------------------------------------
     # Core Span methods
@@ -824,6 +943,11 @@ class Monitor:
         )
 
         self._cache_request_by_key[key] = span_id
+
+        metrics = self._get_cycle_metrics()
+        k_key = (kamlet_x, kamlet_y)
+        metrics.cache_misses[k_key] = metrics.cache_misses.get(k_key, 0) + 1
+
         return span_id
 
     def record_cache_request_completed(self, kamlet_x: int, kamlet_y: int, slot: int) -> None:
@@ -1341,14 +1465,7 @@ class Monitor:
                     print(f'  ({x},{y})      {msg_type:<30} {s["total_cycles"]:<10} '
                           f'{s["blocked_cycles"]:<10} {blocked_pct:<10.1f}')
 
-        # Show hierarchical view of slowest RISCV_INSTR spans
-        riscv_instrs = [s for s in self.spans.values()
-                        if s.span_type == SpanType.RISCV_INSTR and s.is_complete()]
-        if riscv_instrs:
-            riscv_instrs.sort(key=lambda s: s.completed_cycle - s.created_cycle, reverse=True)
-            print(f'\nSlowest instructions:')
-            for span in riscv_instrs[:3]:
-                self.print_span_tree(span.span_id)
+
 
     def get_pending_state(self) -> Dict[str, Any]:
         """Get current state of pending spans for deadlock analysis."""
@@ -1371,6 +1488,27 @@ class Monitor:
             'cycle': self.clock.cycle,
             'pending_spans': pending_info,
         }
+
+    def get_router_utilization_timeseries(self):
+        """Get average router utilization over time.
+
+        Returns:
+            List of (cycle, avg_pct_occupied, avg_pct_moving) tuples,
+            sorted by cycle. Averages are over all (jamlet, channel, direction)
+            connections.
+        """
+        result = []
+        for cycle in sorted(self.cycle_metrics.keys()):
+            metrics = self.cycle_metrics[cycle]
+            if not metrics.router_outputs:
+                continue
+            n = len(metrics.router_outputs)
+            n_present = sum(1 for (present, _moving) in metrics.router_outputs.values()
+                           if present)
+            n_moving = sum(1 for (_present, moving) in metrics.router_outputs.values()
+                          if moving)
+            result.append((cycle, n_present / n * 100, n_moving / n * 100))
+        return result
 
     def dump_to_file(self, path: str):
         """Export all data to a JSON file."""
@@ -1468,8 +1606,9 @@ class Monitor:
                     lines.append(f"{prefix}  waiting_for: {dep_span.span_type.value} @ {dep_span.component} [{timing}] ({dep_ref.reason}){details_str}")
 
     def is_complete(self):
-        allowed_incomplete = (SpanType.FLOW_CONTROL, SpanType.SETUP)
-        for span in self.spans.values():
-            if not (span.is_complete() or span.span_type in allowed_incomplete):
-                print(span)
-        return all(span.is_complete() or span.span_type in allowed_incomplete for span in self.spans.values())
+        allowed_incomplete = (SpanType.FLOW_CONTROL, SpanType.SETUP,
+                              SpanType.SYNC_LOCAL)
+        return all(
+            span.is_complete() or span.span_type in allowed_incomplete
+            for span in self.spans.values()
+        )

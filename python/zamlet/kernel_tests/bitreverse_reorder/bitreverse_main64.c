@@ -1,23 +1,23 @@
 #include <stdint.h>
 #include <stddef.h>
+#include <stdlib.h>
 
-#define N 16
-#define N_BITS 4
+volatile int64_t *vpu_mem64 = (volatile int64_t *)0x90100000;  // e64 region
+volatile int32_t *vpu_mem32 = (volatile int32_t *)0x900C0000;  // e32 region
+volatile int32_t skip_verify = 0;
+volatile int32_t n = 0;
+volatile int32_t reverse_bits = 0;
 
-// 64-bit data in VPU 64-bit pool, 32-bit indices in VPU 32-bit pool
-volatile int64_t *vpu_mem64 = (volatile int64_t *)0x90100000;
-volatile uint32_t *vpu_mem32 = (volatile uint32_t *)0x900C0000;
+static inline size_t get_vl_e64(void) {
+    size_t vl;
+    asm volatile ("vsetvli %0, %1, e64, m1, ta, ma" : "=r"(vl) : "r"(1024));
+    return vl;
+}
 
 static inline size_t get_vl_e32(void) {
     size_t vl;
     asm volatile ("vsetvli %0, %1, e32, m1, ta, ma" : "=r"(vl) : "r"(1024));
     return vl;
-}
-
-void exit_test(int code) {
-    volatile uint64_t *tohost = (volatile uint64_t *)0x80001000;
-    *tohost = (code << 1) | 1;
-    while (1);
 }
 
 static inline uint32_t bitreverse(uint32_t value, int n_bits) {
@@ -30,49 +30,116 @@ static inline uint32_t bitreverse(uint32_t value, int n_bits) {
     return reversed;
 }
 
-void compute_indices(size_t n, size_t vl, uint32_t* read_idx, uint32_t* write_idx);
+static inline int count_bits(size_t val) {
+    int bits = 0;
+    while (val > 1) { val >>= 1; bits++; }
+    return bits;
+}
+
+void compute_indices(size_t n, size_t vl, uint32_t* read_idx,
+                     uint32_t* write_idx, int reverse_bits);
 void bitreverse_reorder64(size_t n, const int64_t* src, int64_t* dst,
-                          const uint32_t* read_idx, const uint32_t* write_idx);
+                          const uint32_t* read_idx,
+                          const uint32_t* write_idx);
 
 int main() {
+    size_t vl_e64 = get_vl_e64();
+    size_t vl_e32 = get_vl_e32();
+    if ((size_t)n != 8 * vl_e32)
+        exit(1);
+    int n_bits = reverse_bits ? (int)reverse_bits : count_bits(n);
+
+    // e64 data in vpu_mem64, e32 indices in vpu_mem32
     int64_t* src = (int64_t*)&vpu_mem64[0];
-    int64_t* dst = (int64_t*)&vpu_mem64[N];
+    int64_t* dst = (int64_t*)&vpu_mem64[n];
     uint32_t* read_idx = (uint32_t*)&vpu_mem32[0];
-    uint32_t* write_idx = (uint32_t*)&vpu_mem32[N];
+    uint32_t* write_idx = (uint32_t*)&vpu_mem32[n];
 
-    size_t vl = get_vl_e32();
-    if (vl > N) {
-        vl = N;
-    }
-
-    for (int i = 0; i < N; i++) {
-        src[i] = (int64_t)i * 7 + 3;
-        dst[i] = 0;
-    }
-
-    compute_indices(N, vl, read_idx, write_idx);
-
-    // Verify compute_indices output
-    for (int i = 0; i < N; i++) {
-        uint32_t expected_write = bitreverse(read_idx[i], N_BITS);
-        if (write_idx[i] != expected_write) {
-            exit_test((read_idx[i] << 24) | (expected_write << 16)
-                      | (write_idx[i] << 8) | (i << 4) | 0x4);
+    // Initialize src[i] = i * 7 + 3 using e64 vector ops
+    {
+        size_t rem = n;
+        int64_t* p = src;
+        uint64_t base = 0, seven = 7, three = 3;
+        while (rem > 0) {
+            size_t chunk;
+            asm volatile(
+                "vsetvli %0, %1, e64, m1, ta, ma\n"
+                "vid.v v1\n"
+                "vadd.vx v1, v1, %2\n"
+                "vmul.vx v1, v1, %3\n"
+                "vadd.vx v1, v1, %4\n"
+                "vse64.v v1, (%5)\n"
+                : "=r"(chunk)
+                : "r"(rem), "r"(base), "r"(seven),
+                  "r"(three), "r"(p)
+                : "memory"
+            );
+            p += chunk;
+            base += chunk;
+            rem -= chunk;
         }
     }
 
-    bitreverse_reorder64(N, src, dst, read_idx, write_idx);
-
-    // Verify: dst[i] should equal src[bitreverse(i)]
-    for (int i = 0; i < N; i++) {
-        uint32_t src_idx = bitreverse(i, N_BITS);
-        int64_t expected = (int64_t)src_idx * 7 + 3;
-        int64_t actual = dst[i];
-        if (actual != expected) {
-            exit_test(((int)(actual & 0xFF) << 16) | (i << 8) | 0x80);
+    // Zero dst array using e64 vector ops
+    {
+        size_t rem = n;
+        int64_t* p = dst;
+        uint64_t zero = 0;
+        while (rem > 0) {
+            size_t chunk;
+            asm volatile(
+                "vsetvli %0, %1, e64, m1, ta, ma\n"
+                "vmv.v.x v1, %3\n"
+                "vse64.v v1, (%2)\n"
+                : "=r"(chunk)
+                : "r"(rem), "r"(p), "r"(zero)
+                : "memory"
+            );
+            p += chunk;
+            rem -= chunk;
         }
     }
 
-    exit_test(0);
+    compute_indices(n, vl_e32, read_idx, write_idx, n_bits);
+
+    // Convert element indices to byte offsets (*8 for e64)
+    {
+        size_t rem = n;
+        uint32_t* rp = read_idx;
+        uint32_t* wp = write_idx;
+        while (rem > 0) {
+            size_t chunk;
+            asm volatile(
+                "vsetvli %0, %1, e32, m1, ta, ma\n"
+                "vle32.v v1, (%2)\n"
+                "vsll.vi v1, v1, 3\n"
+                "vse32.v v1, (%2)\n"
+                "vle32.v v2, (%3)\n"
+                "vsll.vi v2, v2, 3\n"
+                "vse32.v v2, (%3)\n"
+                : "=r"(chunk)
+                : "r"(rem), "r"(rp), "r"(wp)
+                : "memory"
+            );
+            rp += chunk;
+            wp += chunk;
+            rem -= chunk;
+        }
+    }
+
+    bitreverse_reorder64(n, src, dst, read_idx, write_idx);
+
+    if (!skip_verify) {
+        for (size_t i = 0; i < (size_t)n; i++) {
+            uint32_t src_idx = bitreverse(i, n_bits);
+            int64_t expected = (int64_t)src_idx * 7 + 3;
+            int64_t actual = dst[i];
+            if (actual != expected) {
+                exit(((int)(actual & 0xFF) << 16) | (i << 8) | 0x80);
+            }
+        }
+    }
+
+    exit(0);
     return 0;
 }

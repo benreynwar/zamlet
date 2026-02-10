@@ -62,9 +62,13 @@ class LoadIndexedUnordered(KInstr):
                 f"mask_reg {self.mask_reg} overlaps with dst_regs {dst_regs}"
         await kamlet.wait_for_rf_available(write_regs=dst_regs, read_regs=read_regs,
                                            instr_ident=self.instr_ident)
+        span_id = kamlet.monitor.get_kinstr_exec_span_id(
+            self.instr_ident, kamlet.min_x, kamlet.min_y)
+        kamlet.monitor.add_event(span_id, "rf_ready")
         rf_write_ident = kamlet.rf_info.start(read_regs=read_regs, write_regs=dst_regs)
         witem = WaitingLoadIndexedUnordered(
-            params=kamlet.params, instr=self, rf_ident=rf_write_ident)
+            params=kamlet.params, instr=self, rf_ident=rf_write_ident,
+            index_bound_bits=kamlet.index_bound_bits)
         kamlet.monitor.record_witem_created(
             self.instr_ident, kamlet.min_x, kamlet.min_y, 'WaitingLoadIndexedUnordered',
             read_regs=read_regs, write_regs=dst_regs)
@@ -73,6 +77,11 @@ class LoadIndexedUnordered(KInstr):
 
 class WaitingLoadIndexedUnordered(WaitingLoadGatherBase):
     """Waiting item for unordered indexed loads."""
+
+    def __init__(self, instr, params, rf_ident=None, index_bound_bits: int = 0):
+        super().__init__(instr=instr, params=params, rf_ident=rf_ident)
+        # 0 = no bound, N = mask indices to lower N bits. Captured at creation time.
+        self.index_bound_bits = index_bound_bits
 
     def get_element_byte_offset(self, jamlet: 'Jamlet', element_index: int) -> int:
         """Read the byte offset from the index register for this element."""
@@ -92,6 +101,8 @@ class WaitingLoadIndexedUnordered(WaitingLoadGatherBase):
         word_data = jamlet.rf_slice[index_reg * wb: (index_reg + 1) * wb]
         index_value = int.from_bytes(word_data[byte_in_word:byte_in_word + index_bytes],
                                      byteorder='little', signed=False)
+        if self.index_bound_bits > 0:
+            index_value &= (1 << self.index_bound_bits) - 1
         return index_value
 
     def get_additional_read_regs(self, kamlet) -> List[int]:

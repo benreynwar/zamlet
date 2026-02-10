@@ -107,9 +107,16 @@ class WaitingLoadGatherBase(WaitingItem, ABC):
                         self.transaction_states[state_idx] = SendState.NEED_TO_SEND
 
             elif state == SendState.NEED_TO_SEND:
+                before = jamlet.clock.cycle
                 sent = await self._send_req(jamlet, tag)
+                after = jamlet.clock.cycle
                 if sent:
                     self.transaction_states[state_idx] = SendState.WAITING_FOR_RESPONSE
+                    if after > before:
+                        logger.info(
+                            f'{after}: gather[{self.instr_ident}] '
+                            f'jamlet ({jamlet.x},{jamlet.y}) tag={tag} '
+                            f'send blocked {after - before} cycles')
                 else:
                     self.transaction_states[state_idx] = SendState.COMPLETE
 
@@ -293,7 +300,7 @@ class WaitingLoadGatherBase(WaitingItem, ABC):
 
         if not src_page_info.local_address.is_vpu:
             if dst_eb == 0 or page_byte_offset == 0:
-                n_bytes = min(remaining_page_bytes, dst_ew // 8)
+                n_bytes = min(remaining_page_bytes, (dst_ew - dst_eb) // 8)
                 return RequiredBytes(is_vpu=False, g_addr=src_g_addr, n_bytes=n_bytes, tag=tag)
             else:
                 return None

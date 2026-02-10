@@ -16,6 +16,7 @@ from zamlet.instructions import vector as V
 from zamlet.instructions import float as F
 from zamlet.instructions import memory as M
 from zamlet.instructions import multiply as MUL
+from zamlet.instructions import custom as CUSTOM
 from zamlet.kamlet import kinstructions
 
 decode_i_imm = decode_helpers.decode_i_imm
@@ -354,6 +355,19 @@ def decode_standard(instruction_bytes: bytes) -> Instruction:
         elif funct3 == 0x6:
             return M.Lwu(rd=rd, rs1=rs1, imm=imm)
 
+    # Custom-0 opcode: VPU optimization hints (I-type encoding, funct3 selects instruction)
+    #   funct3=0: SetIndexBound — bound indexed load/store range to skip fault sync
+    #   funct3=1: BeginWriteset — open shared writeset scope to skip completion sync
+    #   funct3=2: EndWriteset — close writeset scope
+    elif opcode == 0x0b:
+        imm = decode_i_imm(inst)
+        if funct3 == 0x0:
+            return CUSTOM.SetIndexBound(rs1=rs1, imm=imm)
+        elif funct3 == 0x1:
+            return CUSTOM.BeginWriteset()
+        elif funct3 == 0x2:
+            return CUSTOM.EndWriteset()
+
     elif opcode == 0x07:
         nf = (inst >> 29) & 0x7  # Number of fields - 1 (0 = 1 field, 7 = 8 fields)
         mop = (inst >> 26) & 0x3
@@ -543,6 +557,17 @@ def decode_standard(instruction_bytes: bytes) -> Instruction:
             return I.Srlw(rd=rd, rs1=rs1, rs2=rs2)
         elif funct3 == 0x5 and funct7 == 0x20:
             return I.Sraw(rd=rd, rs1=rs1, rs2=rs2)
+        elif funct7 == 0x01:
+            if funct3 == 0x0:
+                return MUL.Mulw(rd=rd, rs1=rs1, rs2=rs2)
+            elif funct3 == 0x4:
+                return MUL.Divw(rd=rd, rs1=rs1, rs2=rs2)
+            elif funct3 == 0x5:
+                return MUL.Divuw(rd=rd, rs1=rs1, rs2=rs2)
+            elif funct3 == 0x6:
+                return MUL.Remw(rd=rd, rs1=rs1, rs2=rs2)
+            elif funct3 == 0x7:
+                return MUL.Remuw(rd=rd, rs1=rs1, rs2=rs2)
 
     elif opcode == 0x43:
         fmt = (inst >> 25) & 0x3

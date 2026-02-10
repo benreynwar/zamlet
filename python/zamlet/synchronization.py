@@ -10,17 +10,17 @@ Network Architecture:
 - Direct connections to all 8 neighbors (N, S, E, W, NE, NW, SE, SW)
 - No routing - packets only go to immediate neighbors
 
-Bus Format (9 bits per cycle):
-- [8] = last_byte (1 if this is the final byte of packet)
-- [7:0] = data byte
+Bus Format (sync_bus_width bits per cycle):
+- [data_width] = last_word (1 if this is the final word of packet)
+- [data_width-1:0] = data word (where data_width = sync_bus_width - 1)
 
-Packet Format:
-- Byte 0: sync_ident (8 bits)
-- Bytes 1+: value (1-4 bytes, little-endian) if present
+Packet Format (in data_width-bit words):
+- Word 0: sync_ident (sync_ident_width bits, fits in one word)
+- Words 1+: value (1-4 bytes packed little-endian) if present
 
 Packet length determines whether value is present:
-- Length 1: sync only, no value
-- Length 2-5: sync + 1-4 byte value
+- Length 1 word: sync only, no value
+- Length 2+ words: sync + value
 
 Send Conditions:
 - Cardinal N/S: Send when the opposite column is synchronized
@@ -46,7 +46,7 @@ from enum import Enum
 from typing import Optional, Dict, Set, List, TYPE_CHECKING
 
 from zamlet.params import LamletParams
-from zamlet.utils import Queue
+from zamlet.utils import Queue, uint_to_list_of_uints, list_of_uints_to_uint
 
 if TYPE_CHECKING:
     from zamlet.kamlet.cache_table import CacheTable
@@ -152,49 +152,57 @@ class SyncState:
 class SyncPacket:
     """A synchronization packet to be sent to a neighbor.
 
-    9-bit bus per cycle: [8] = last_byte, [7:0] = data
+    Bus sends data_width-bit words per cycle, where data_width = sync_bus_width - 1.
+    Bus format per cycle: [data_width] = last_word flag, [data_width-1:0] = data word.
 
-    Packet structure:
-    - Byte 0: sync_ident (8 bits)
-    - Bytes 1+: value (1-4 bytes, little-endian) if present
+    Packet structure (in words):
+    - Word 0: sync_ident (sync_ident_width bits, fits in data_width)
+    - Words 1+: value bytes packed into data_width-bit words, if present
 
     Packet length determines whether value is present:
-    - Length 1: sync only, no value
-    - Length 2-5: sync + 1-4 byte value
+    - Length 1 word: sync only, no value
+    - Length 2+ words: sync + value
     """
-    sync_ident: int          # 8 bits
+    sync_ident: int
     value: Optional[int]     # 1-4 bytes if present, None if no value
 
-    def to_bytes(self) -> bytes:
-        """Serialize packet to bytes for transmission."""
-        result = bytes([self.sync_ident & 0xFF])
+    def to_words(self, data_width: int, sync_ident_width: int) -> list:
+        """Serialize packet to a list of data_width-bit words.
+
+        First word contains sync_ident. Remaining words contain value
+        bytes packed little-endian. Total bit width is split into
+        data_width-bit words using uint_to_list_of_uints.
+        """
         if self.value is not None:
-            # Determine minimum bytes needed for value
             if self.value == 0:
-                n_bytes = 1
+                n_value_bytes = 1
             else:
-                n_bytes = (self.value.bit_length() + 7) // 8
-            assert n_bytes <= 4, f"Value {self.value} requires {n_bytes} bytes, max is 4"
-            result += self.value.to_bytes(n_bytes, 'little')
-        return result
+                n_value_bytes = (self.value.bit_length() + 7) // 8
+            assert n_value_bytes <= 4, (
+                f"Value {self.value} requires {n_value_bytes} bytes,"
+                f" max is 4"
+            )
+            total_bits = sync_ident_width + n_value_bytes * 8
+            combined = self.sync_ident | (self.value << sync_ident_width)
+        else:
+            total_bits = sync_ident_width
+            combined = self.sync_ident
+        n_words = (total_bits + data_width - 1) // data_width
+        return uint_to_list_of_uints(combined, data_width, n_words)
 
     @classmethod
-    def from_bytes(cls, data: bytes) -> 'SyncPacket':
-        """Deserialize packet from bytes."""
-        sync_ident = data[0]
-        value = None
-        if len(data) > 1:
-            value = int.from_bytes(data[1:], 'little')
+    def from_words(
+        cls, words: list, data_width: int, sync_ident_width: int,
+    ) -> 'SyncPacket':
+        """Deserialize packet from data_width-bit words."""
+        combined = list_of_uints_to_uint(words, data_width)
+        ident_mask = (1 << sync_ident_width) - 1
+        sync_ident = combined & ident_mask
+        if len(words) > 1:
+            value = combined >> sync_ident_width
+        else:
+            value = None
         return cls(sync_ident=sync_ident, value=value)
-
-    def length(self) -> int:
-        """Return packet length in bytes."""
-        if self.value is None:
-            return 1
-        if self.value == 0:
-            return 2
-        n_bytes = (self.value.bit_length() + 7) // 8
-        return 1 + n_bytes
 
 
 class Synchronizer:
@@ -203,7 +211,7 @@ class Synchronizer:
 
     Each Synchronizer maintains state for multiple concurrent sync operations
     (identified by sync_ident) and communicates with all 8 neighbors via a
-    dedicated 8-bit synchronization network.
+    dedicated synchronization network.
 
     The lamlet has a Synchronizer at position (0, -1). It connects to kamlet (0, 0)
     via S, and also to kamlet (1, 0) via SE when k_cols >= 2. It participates in
@@ -250,12 +258,17 @@ class Synchronizer:
         # Active sync operations indexed by sync_ident
         self._sync_states: Dict[int, SyncState] = {}
 
+        # Fault sync chaining: trigger_ident -> target_ident.
+        # When trigger completes, fire local_event for target with
+        # value=0 if trigger's min is not None, else value=None.
+        self._fault_chains: Dict[int, int] = {}
+
         # Packets being assembled from input (may span multiple cycles)
-        self._partial_packets: Dict[SyncDirection, bytearray] = {
-            d: bytearray() for d in SyncDirection
+        self._partial_packets: Dict[SyncDirection, List[int]] = {
+            d: [] for d in SyncDirection
         }
 
-        # Packets being sent (byte-by-byte, one byte per cycle per direction)
+        # Packets being sent (word-by-word, one word per cycle per direction)
         self._outgoing_packets: Dict[SyncDirection, List[int]] = {}
 
 
@@ -433,6 +446,15 @@ class Synchronizer:
         """Clear a completed synchronization."""
         del self._sync_states[sync_ident]
 
+    def chain_fault_sync(self, trigger_ident: int, target_ident: int):
+        """Chain fault syncs: when trigger completes, fire local_event for target.
+
+        If trigger's min_value is not None (fault detected), injects value=0
+        to suppress all non-idempotent accesses in the target chunk.
+        Otherwise injects value=None.
+        """
+        self._fault_chains[trigger_ident] = target_ident
+
     def _update_completed(self, sync_ident: int):
         """Check if sync is now complete and log once if so."""
         state = self._sync_states.get(sync_ident)
@@ -444,6 +466,11 @@ class Synchronizer:
             logger.debug(f'{self.clock.cycle}: SYNC_COMPLETE: synchronizer ({self.x},{self.y}) '
                          f'sync_ident={sync_ident} min_value={min_value}')
             self.monitor.record_sync_local_complete(sync_ident, self.x, self.y, min_value)
+            # Fire chained fault sync if any
+            if sync_ident in self._fault_chains:
+                target = self._fault_chains.pop(sync_ident)
+                value = 0 if min_value is not None else None
+                self.local_event(target, value=value)
 
     def _get_send_requirements(self, direction: SyncDirection) -> dict:
         """Get send requirements for a direction. Kamlet (0,0) has special requirements."""
@@ -570,36 +597,42 @@ class Synchronizer:
 
     async def run(self):
         """Main loop for the synchronizer."""
+        data_width = self.params.sync_bus_width - 1
+        sync_ident_width = self.params.sync_ident_width
+        data_mask = (1 << data_width) - 1
+
         while True:
             await self.clock.next_cycle
 
-            # Process incoming packets (one byte per direction per cycle)
+            # Process incoming packets (one word per direction per cycle)
             for direction in SyncDirection:
                 in_buf = self._input_buffers[direction]
                 partial = self._partial_packets[direction]
 
                 if in_buf:
-                    # 9-bit bus: [8] = last_byte, [7:0] = data
+                    # [data_width] = last_word, [data_width-1:0] = data
                     bus_val = in_buf.popleft()
-                    last_byte = (bus_val >> 8) & 1
-                    data_byte = bus_val & 0xFF
-                    partial.append(data_byte)
+                    last_word = (bus_val >> data_width) & 1
+                    data_word = bus_val & data_mask
+                    partial.append(data_word)
 
                     # Check if we have a complete packet
-                    if last_byte:
-                        packet = SyncPacket.from_bytes(bytes(partial))
+                    if last_word:
+                        packet = SyncPacket.from_words(
+                            partial, data_width, sync_ident_width,
+                        )
                         self._process_received_packet(packet, direction)
                         partial.clear()
 
-            # Continue sending any packets in progress (one byte per direction per cycle)
+            # Continue sending any packets in progress (one word per direction per cycle)
             for direction in SyncDirection:
                 if direction in self._outgoing_packets and self._outgoing_packets[direction]:
                     out_buf = self._output_buffers[direction]
                     if out_buf.can_append():
-                        # 9-bit bus: [8] = last_byte, [7:0] = data
-                        data_byte = self._outgoing_packets[direction].pop(0)
-                        last_byte = 1 if not self._outgoing_packets[direction] else 0
-                        bus_val = (last_byte << 8) | data_byte
+                        # [data_width] = last_word, [data_width-1:0] = data
+                        data_word = self._outgoing_packets[direction].pop(0)
+                        last_word = 1 if not self._outgoing_packets[direction] else 0
+                        bus_val = (last_word << data_width) | data_word
                         out_buf.append(bus_val)
                         if not self._outgoing_packets[direction]:
                             del self._outgoing_packets[direction]
@@ -613,8 +646,10 @@ class Synchronizer:
                             sync_ident=state.sync_ident,
                             value=value,
                         )
-                        packet_bytes = list(packet.to_bytes())
-                        self._outgoing_packets[direction] = packet_bytes
+                        packet_words = packet.to_words(
+                            data_width, sync_ident_width,
+                        )
+                        self._outgoing_packets[direction] = packet_words
                         state.sent_directions.add(direction)
                         logger.debug(f'{self.clock.cycle}: SYNC_SEND: synchronizer ({self.x},{self.y}) '
                                      f'dir={direction.name} sync_ident={state.sync_ident} '

@@ -115,9 +115,16 @@ class WaitingStoreScatterBase(WaitingItem, ABC):
                         self.transaction_states[state_idx] = SendState.NEED_TO_SEND
 
             elif state == SendState.NEED_TO_SEND:
+                before = jamlet.clock.cycle
                 sent = await self._send_req(jamlet, tag)
+                after = jamlet.clock.cycle
                 if sent:
                     self.transaction_states[state_idx] = SendState.WAITING_FOR_RESPONSE
+                    if after > before:
+                        logger.info(
+                            f'{after}: scatter[{self.instr_ident}] '
+                            f'jamlet ({jamlet.x},{jamlet.y}) tag={tag} '
+                            f'send blocked {after - before} cycles')
                 else:
                     self.transaction_states[state_idx] = SendState.COMPLETE
 
@@ -249,6 +256,8 @@ class WaitingStoreScatterBase(WaitingItem, ABC):
 
         # Get byte offset for this element (subclass-specific)
         element_byte_offset = self.get_element_byte_offset(jamlet, src_e)
+        logger.debug(f'{jamlet.clock.cycle}: STORE _get_request: '
+                     f'element={src_e} index_value={element_byte_offset}')
 
         # Compute destination address: base + element_byte_offset + byte_within_element
         dst_g_addr = instr.g_addr.bit_offset(element_byte_offset * 8 + src_eb)
@@ -267,7 +276,7 @@ class WaitingStoreScatterBase(WaitingItem, ABC):
 
         if not dst_page_info.local_address.is_vpu:
             if src_eb == 0 or page_byte_offset == 0:
-                n_bytes = min(remaining_page_bytes, src_ew // 8)
+                n_bytes = min(remaining_page_bytes, (src_ew - src_eb) // 8)
                 return RequiredBytes(is_vpu=False, g_addr=dst_g_addr, n_bytes=n_bytes, tag=tag)
             else:
                 return None

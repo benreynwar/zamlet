@@ -371,7 +371,7 @@ def _element_index_to_jamlet(lamlet: 'Lamlet', element_index: int) -> tuple[int,
     """Compute target jamlet coordinates from element index."""
     vw_index = element_index % lamlet.params.j_in_l
     k_index, j_in_k_index = addresses.vw_index_to_k_indices(
-        lamlet.params, addresses.WordOrder.STANDARD, vw_index)
+        lamlet.params, lamlet.word_order, vw_index)
     return addresses.k_indices_to_j_coords(lamlet.params, k_index, j_in_k_index)
 
 
@@ -462,7 +462,7 @@ async def vload_indexed_ordered(lamlet: 'Lamlet', vd: int, base_addr: int, index
     Returns VectorOpResult with fault info if any element faulted.
     """
     g_addr = GlobalAddress(bit_addr=base_addr * 8, params=lamlet.params)
-    data_ordering = Ordering(word_order=addresses.WordOrder.STANDARD, ew=data_ew)
+    data_ordering = Ordering(word_order=lamlet.word_order, ew=data_ew)
 
     # Set up register file ordering for destination registers
     vline_bits = lamlet.params.maxvl_bytes * 8
@@ -513,7 +513,7 @@ async def vload_indexed_ordered(lamlet: 'Lamlet', vd: int, base_addr: int, index
 
         vw_index = element_index % lamlet.params.j_in_l
         k_index, _ = addresses.vw_index_to_k_indices(
-            lamlet.params, addresses.WordOrder.STANDARD, vw_index)
+            lamlet.params, lamlet.word_order, vw_index)
 
         kinstr = LoadIndexedElement(
             dst_reg=vd,
@@ -522,6 +522,7 @@ async def vload_indexed_ordered(lamlet: 'Lamlet', vd: int, base_addr: int, index
             index_ew=index_ew,
             data_ew=data_ew,
             element_index=element_index,
+            word_order=lamlet.word_order,
             instr_ident=element_ident,
             parent_ident=barrier_ident,
             mask_reg=mask_reg,
@@ -607,7 +608,7 @@ async def vstore_indexed_ordered(lamlet: 'Lamlet', vs: int, base_addr: int, inde
 
         vw_index = element_index % lamlet.params.j_in_l
         k_index, _ = addresses.vw_index_to_k_indices(
-            lamlet.params, addresses.WordOrder.STANDARD, vw_index)
+            lamlet.params, lamlet.word_order, vw_index)
 
         kinstr = StoreIndexedElement(
             src_reg=vs,
@@ -616,6 +617,7 @@ async def vstore_indexed_ordered(lamlet: 'Lamlet', vs: int, base_addr: int, inde
             index_ew=index_ew,
             data_ew=data_ew,
             element_index=element_index,
+            word_order=lamlet.word_order,
             instr_ident=element_ident,
             mask_reg=mask_reg,
         )
