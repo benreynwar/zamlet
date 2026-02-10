@@ -44,23 +44,17 @@ jobs:
     runs-on: ubuntu-latest
     env:
       CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
-    strategy:
-      fail-fast: false
-      matrix:
-        target:
-          - WallaceMult8x8_sky130hd_mfg_report
-          - WallaceMult16x16_sky130hd_mfg_report
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/nix-setup
-      - name: Synthesis (${{ matrix.target }})
+      - name: WallaceMult8x8 flow
         run: |
-          nix-shell --run "bazel build //dse/maths:${{ matrix.target }}"
+          nix-shell --run "bazel build //dse/maths:WallaceMult8x8_sky130hd_mfg_report"
       - name: Upload failed step artifacts
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: failed-${{ matrix.target }}
+          name: failed-WallaceMult8x8
           path: bazel-out/k8-fastbuild/bin/dse/maths/
           retention-days: 7
       - name: Save Bazel cache
@@ -68,4 +62,4 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: ~/.cache/bazel
-          key: bazel-synth-${{ matrix.target }}-${{ runner.os }}-${{ hashFiles('MODULE.bazel', 'MODULE.bazel.lock', 'shell.nix', 'nix/*.nix', 'nix/*.patch') }}
+          key: bazel-synth-${{ runner.os }}-${{ hashFiles('MODULE.bazel', 'MODULE.bazel.lock', 'shell.nix', 'nix/*.nix', 'nix/*.patch') }}

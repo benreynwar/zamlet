@@ -1,7 +1,7 @@
 # Jamlet Component DSE
 # Design space exploration for jamlet components
 
-load("//bazel/flow:defs.bzl", "librelane_classic_flow")
+load("//bazel/flow:defs.bzl", "librelane_classic_flow", "librelane_synth_config")
 load("//bazel/flow:def_template.bzl", "combined_network_node_def")
 load("@sky130_fd_sc_hd_config//:defs.bzl", "pdk")
 
@@ -9,6 +9,12 @@ exports_files(["gen_combined_network_node_def.py"])
 
 # PDK target
 pdk(name = "sky130hd")
+
+# Synth config with autoname for readable timing reports
+librelane_synth_config(
+    name = "synth_autoname",
+    synth_autoname = True,
+)
 
 # (ModuleName, bazel_target_name)
 # Jamlet and NetworkNode handled separately due to custom pin placement
@@ -64,8 +70,8 @@ librelane_classic_flow(
     top = "NetworkNode",
     pdk = ":sky130hd",
     clock_period = "10.0",
-    die_area = "0 0 280 650",
-    target_density = "0.70",
+    die_area = "0 0 330 770",
+    pl_target_density_pct = "50",
     pin_order_cfg = ":networknode_pin_order.cfg",
 )
 
@@ -101,7 +107,7 @@ librelane_classic_flow(
     pdk = ":sky130hd",
     clock_period = "10.0",
     die_area = COMBINED_NETWORK_NODE_DIE_AREA,
-    target_density = "0.60",
+    pl_target_density_pct = "60",
     def_template = ":CombinedNetworkNode_default_sky130hd_def_template",
 )
 
@@ -126,7 +132,8 @@ librelane_classic_flow(
     top = module,
     pdk = ":sky130hd",
     clock_period = "10.0",
-    core_utilization = "40",
+    core_utilization = "35",
+    synth_config = ":synth_autoname",
 ) for module, _ in JAMLET_SUB_MODULES]
 
 
