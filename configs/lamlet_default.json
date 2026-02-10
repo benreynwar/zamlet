@@ -12,7 +12,7 @@
   "memAddrWidth": 48,
   "pageWordsPerJamlet": 4,
   "elementIndexWidth": 22,
-  "witemTableDepth": 16,
+  "witemTableDepth": 8,
   "identWidth": 7,
   "maxResponseTags": 128,
   "instructionQueueLength": 8,

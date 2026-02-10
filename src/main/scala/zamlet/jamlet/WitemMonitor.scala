@@ -570,8 +570,7 @@ object S11StridedIndexed {
       // Phase 0: Compute intermediate values, store in state
       // =========================================================================
 
-      // Decode strided instruction from kinstr
-      val kinstr = KInstr.asStrided(params, in_input.witemInfo.kinstr)
+      val kinstr = KInstr.asIndexed(params, in_input.witemInfo.kinstr)
 
       val wordBytes = params.wordBytes.U
       val rfEwBits = WitemMonitorUtils.ewCodeToBits(kinstr.rfEw)
@@ -772,7 +771,6 @@ class S6S7Reg(params: LamletParams) extends Bundle {
   val indexBytePos = UInt(3.W)
   val maskWord = UInt(64.W)
   val indexWord = UInt(64.W)
-  val stridedOffset = UInt(params.memAddrWidth.W)  // Pre-computed elementIndex * strideBytes
 }
 
 class S7S8Reg(params: LamletParams) extends Bundle {
@@ -1178,8 +1176,7 @@ class WitemMonitor(params: LamletParams) extends Module {
   // S3: Receive Kamlet Response
   // -------------------------------------------------------------------------
   // Pre-compute elementIndex here to break S4 critical path
-  // rfWordOrder and startIndex are at same bit positions for StridedInstr and IndexedInstr
-  val s3Kinstr = KInstr.asStrided(params, witemInfoResp.bits.kinstr)
+  val s3Kinstr = KInstr.asIndexed(params, witemInfoResp.bits.kinstr)
   val s3VwIndex = WitemMonitorUtils.coordsToVwIndex(params, s3Kinstr.rfWordOrder, thisX, thisY)
   val s3StartIndex = s3Kinstr.startIndex
   // Compute elementIndex: find this jamlet's element within the strided/indexed range
@@ -1211,26 +1208,21 @@ class WitemMonitor(params: LamletParams) extends Module {
   val s4IsWordSrc = (s4In.bits.witemType === WitemType.LoadWordSrc) ||
                     (s4In.bits.witemType === WitemType.StoreWordSrc)
 
-  val s4IsStrided = (s4In.bits.witemType === WitemType.StoreStride) ||
-                    (s4In.bits.witemType === WitemType.LoadStride)
-
   val s4IsIndexed = (s4In.bits.witemType === WitemType.StoreIdxUnord) ||
                     (s4In.bits.witemType === WitemType.LoadIdxUnord) ||
-                    (s4In.bits.witemType === WitemType.LoadIdxElement)
+                    (s4In.bits.witemType === WitemType.LoadIdxElement) ||
+                    (s4In.bits.witemType === WitemType.StoreStride) ||
+                    (s4In.bits.witemType === WitemType.LoadStride)
 
-  val s4NeedsMaskRf = s4IsStrided || s4IsIndexed
+  val s4NeedsMaskRf = s4IsIndexed
   val s4NeedsIndexRf = s4IsIndexed
 
-  // Decode kinstr for strided/indexed ops (common fields at same positions)
-  val s4KinstrStrided = KInstr.asStrided(params, s4In.bits.witemInfo.kinstr)
   val s4KinstrIndexed = KInstr.asIndexed(params, s4In.bits.witemInfo.kinstr)
 
-  // Extract common fields (using Mux for clarity even though bit positions match)
-  // Note: rfWordOrder, startIndex, and elementIndex now computed in S3
-  val s4StartIndex = Mux(s4IsIndexed, s4KinstrIndexed.startIndex, s4KinstrStrided.startIndex)
-  val s4RfEw = Mux(s4IsIndexed, s4KinstrIndexed.rfEw, s4KinstrStrided.rfEw)
-  val s4MaskReg = Mux(s4IsIndexed, s4KinstrIndexed.maskReg, s4KinstrStrided.maskReg)
-  val s4MaskEnabled = Mux(s4IsIndexed, s4KinstrIndexed.maskEnabled, s4KinstrStrided.maskEnabled)
+  val s4StartIndex = s4KinstrIndexed.startIndex
+  val s4RfEw = s4KinstrIndexed.rfEw
+  val s4MaskReg = s4KinstrIndexed.maskReg
+  val s4MaskEnabled = s4KinstrIndexed.maskEnabled
 
   // Use pre-computed elementIndex from S3 (vwIndex multiply + elementIndex arithmetic moved)
   val s4ElementIndex = s4In.bits.elementIndex
@@ -1334,18 +1326,16 @@ class WitemMonitor(params: LamletParams) extends Module {
   // -------------------------------------------------------------------------
   // S6: RF Response (receive mask and index words)
   // -------------------------------------------------------------------------
-  val s6IsStrided = (s6In.bits.witemType === WitemType.StoreStride) ||
-                    (s6In.bits.witemType === WitemType.LoadStride)
   val s6IsIndexed = (s6In.bits.witemType === WitemType.StoreIdxUnord) ||
                     (s6In.bits.witemType === WitemType.LoadIdxUnord) ||
-                    (s6In.bits.witemType === WitemType.LoadIdxElement)
+                    (s6In.bits.witemType === WitemType.LoadIdxElement) ||
+                    (s6In.bits.witemType === WitemType.StoreStride) ||
+                    (s6In.bits.witemType === WitemType.LoadStride)
 
-  // Decode kinstr for maskEnabled
-  val s6KinstrStrided = KInstr.asStrided(params, s6In.bits.witemInfo.kinstr)
   val s6KinstrIndexed = KInstr.asIndexed(params, s6In.bits.witemInfo.kinstr)
-  val s6MaskEnabled = Mux(s6IsIndexed, s6KinstrIndexed.maskEnabled, s6KinstrStrided.maskEnabled)
+  val s6MaskEnabled = s6KinstrIndexed.maskEnabled
 
-  val s6NeedsMaskResp = (s6IsStrided || s6IsIndexed) && s6MaskEnabled
+  val s6NeedsMaskResp = s6IsIndexed && s6MaskEnabled
   val s6NeedsIndexResp = s6IsIndexed
 
   val s6MaskRespReady = !s6NeedsMaskResp || maskRfResp.valid
@@ -1368,11 +1358,6 @@ class WitemMonitor(params: LamletParams) extends Module {
   s6Out.bits.indexBytePos := s6In.bits.indexBytePos
   s6Out.bits.maskWord := Mux(s6NeedsMaskResp, maskRfResp.bits.readData, 0.U)
   s6Out.bits.indexWord := Mux(s6NeedsIndexResp, indexRfResp.bits.readData, 0.U)
-  // Pre-compute strided offset for S7 (moves multiply out of critical path)
-  val s6Stride = s6In.bits.witemInfo.strideBytes
-  val s6StridedOffset = Wire(UInt(params.memAddrWidth.W))
-  s6StridedOffset := (s6In.bits.elementIndex.asSInt * s6Stride).asUInt
-  s6Out.bits.stridedOffset := s6StridedOffset
   s6In.ready := s6Out.ready && s6MaskRespReady && s6IndexRespReady
 
   val s7In = DoubleBuffer(s6Out, wmp.s6s7ForwardBuffer, wmp.s6s7BackwardBuffer)
@@ -1380,19 +1365,16 @@ class WitemMonitor(params: LamletParams) extends Module {
   // -------------------------------------------------------------------------
   // S7: Mask Check + Address Computation
   // -------------------------------------------------------------------------
-  val s7IsStrided = (s7In.bits.witemType === WitemType.StoreStride) ||
-                    (s7In.bits.witemType === WitemType.LoadStride)
   val s7IsIndexed = (s7In.bits.witemType === WitemType.StoreIdxUnord) ||
                     (s7In.bits.witemType === WitemType.LoadIdxUnord) ||
-                    (s7In.bits.witemType === WitemType.LoadIdxElement)
+                    (s7In.bits.witemType === WitemType.LoadIdxElement) ||
+                    (s7In.bits.witemType === WitemType.StoreStride) ||
+                    (s7In.bits.witemType === WitemType.LoadStride)
 
-  // Decode kinstr for strided/indexed ops
-  val s7KinstrStrided = KInstr.asStrided(params, s7In.bits.witemInfo.kinstr)
   val s7KinstrIndexed = KInstr.asIndexed(params, s7In.bits.witemInfo.kinstr)
 
-  // Extract common fields (using Mux for clarity even though bit positions match)
-  val s7MaskEnabled = Mux(s7IsIndexed, s7KinstrIndexed.maskEnabled, s7KinstrStrided.maskEnabled)
-  val s7RfEwCode = Mux(s7IsIndexed, s7KinstrIndexed.rfEw, s7KinstrStrided.rfEw)
+  val s7MaskEnabled = s7KinstrIndexed.maskEnabled
+  val s7RfEwCode = s7KinstrIndexed.rfEw
 
   // Mask check
   val s7MaskBit = s7In.bits.maskWord(s7In.bits.maskBitPos)
@@ -1416,10 +1398,9 @@ class WitemMonitor(params: LamletParams) extends Module {
   val s7IndexValue = Wire(UInt(64.W))
   s7IndexValue := s7IndexShifted & WitemMonitorUtils.ewCodeToMask(s7IndexEw)
 
-  // Address computation (stridedOffset pre-computed in S6)
   val s7BaseAddr = s7In.bits.witemInfo.baseAddr
   val s7GAddr = Wire(UInt(params.memAddrWidth.W))
-  s7GAddr := Mux(s7IsStrided, s7BaseAddr + s7In.bits.stridedOffset, s7BaseAddr + s7IndexValue)
+  s7GAddr := s7BaseAddr + s7IndexValue
 
   // Page crossing check
   val s7RfEw = Wire(UInt(7.W))
@@ -1453,17 +1434,17 @@ class WitemMonitor(params: LamletParams) extends Module {
   // -------------------------------------------------------------------------
   // S8: TLB Issue
   // -------------------------------------------------------------------------
-  // For strided/indexed ops, issue TLB request(s) to translate the element address.
+  // For indexed ops, issue TLB request(s) to translate the element address.
   // If the element crosses a page boundary, this stage splits the single input into
   // two output paths - one for each page. The first path carries gAddr, the second
   // carries pageBoundary. Each path gets its own TLB response and handles its
   // portion of the element's tags in later stages.
-  val s8IsStrided = (s8In.bits.witemType === WitemType.StoreStride) ||
-                    (s8In.bits.witemType === WitemType.LoadStride)
   val s8IsIndexed = (s8In.bits.witemType === WitemType.StoreIdxUnord) ||
                     (s8In.bits.witemType === WitemType.LoadIdxUnord) ||
-                    (s8In.bits.witemType === WitemType.LoadIdxElement)
-  val s8NeedsTlb = s8IsStrided || s8IsIndexed
+                    (s8In.bits.witemType === WitemType.LoadIdxElement) ||
+                    (s8In.bits.witemType === WitemType.StoreStride) ||
+                    (s8In.bits.witemType === WitemType.LoadStride)
+  val s8NeedsTlb = s8IsIndexed
 
   val s8IsStore = (s8In.bits.witemType === WitemType.StoreStride) ||
                   (s8In.bits.witemType === WitemType.StoreIdxUnord)
@@ -1480,10 +1461,8 @@ class WitemMonitor(params: LamletParams) extends Module {
   val s8ElementByteOffset = Mux(s8IsSecondReq, s8FirstPortionBytes, 0.U)
 
   // Total element bytes and portion bytes for this path
-  // Decode kinstr for rfEw
-  val s8KinstrStrided = KInstr.asStrided(params, s8In.bits.witemInfo.kinstr)
   val s8KinstrIndexed = KInstr.asIndexed(params, s8In.bits.witemInfo.kinstr)
-  val s8RfEw = Mux(s8IsIndexed, s8KinstrIndexed.rfEw, s8KinstrStrided.rfEw)
+  val s8RfEw = s8KinstrIndexed.rfEw
   val s8ElementBytes = WitemMonitorUtils.ewCodeToBits(s8RfEw) >> 3
   val s8SecondPortionBytes = s8ElementBytes - s8FirstPortionBytes
   val s8PortionBytes = Mux(s8IsSecondReq, s8SecondPortionBytes,
@@ -1543,12 +1522,12 @@ class WitemMonitor(params: LamletParams) extends Module {
   // -------------------------------------------------------------------------
   // S10: TLB Response
   // -------------------------------------------------------------------------
-  val s10IsStrided = (s10In.bits.witemType === WitemType.StoreStride) ||
-                     (s10In.bits.witemType === WitemType.LoadStride)
   val s10IsIndexed = (s10In.bits.witemType === WitemType.StoreIdxUnord) ||
                      (s10In.bits.witemType === WitemType.LoadIdxUnord) ||
-                     (s10In.bits.witemType === WitemType.LoadIdxElement)
-  val s10NeedsTlb = s10IsStrided || s10IsIndexed
+                     (s10In.bits.witemType === WitemType.LoadIdxElement) ||
+                     (s10In.bits.witemType === WitemType.StoreStride) ||
+                     (s10In.bits.witemType === WitemType.LoadStride)
+  val s10NeedsTlb = s10IsIndexed
 
   // Need TLB response when we issued a request (active element with TLB-needing op)
   val s10NeedsTlbResp = s10NeedsTlb && s10In.bits.elementActive
@@ -1811,7 +1790,7 @@ class WitemMonitor(params: LamletParams) extends Module {
   // Decode kinstr to get register addresses
   val s14KinstrJ2J = KInstr.asJ2J(params, s14In.bits.witemInfo.kinstr)
   val s14KinstrWord = KInstr.asWord(params, s14In.bits.witemInfo.kinstr)
-  val s14KinstrStrided = KInstr.asStrided(params, s14In.bits.witemInfo.kinstr)
+  val s14KinstrIndexed = KInstr.asIndexed(params, s14In.bits.witemInfo.kinstr)
 
   // RF address for stores: reg + rfV
   val s14IsJ2J = (s14In.bits.witemType === WitemType.LoadJ2JWords) ||
@@ -1820,7 +1799,7 @@ class WitemMonitor(params: LamletParams) extends Module {
                      (s14In.bits.witemType === WitemType.StoreWordSrc)
 
   val s14RfReg = Mux(s14IsJ2J, s14KinstrJ2J.reg,
-                 Mux(s14IsWordSrc, s14KinstrWord.reg, s14KinstrStrided.reg))
+                 Mux(s14IsWordSrc, s14KinstrWord.reg, s14KinstrIndexed.reg))
   val s14RfAddr = s14RfReg + s14In.bits.rfV
 
   // SRAM address for cache loads: cacheSlot * cacheSlotWords + rfV

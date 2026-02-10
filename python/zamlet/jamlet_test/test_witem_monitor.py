@@ -147,13 +147,13 @@ class WitemInfoResponder:
 
     def __init__(self, dut):
         self.dut = dut
-        self.responses = {}  # ident -> (kinstr, base_addr, stride_bytes, n_elements)
+        self.responses = {}  # ident -> (kinstr, base_addr, n_elements)
         self._running = False
         self.pending_resp = None
 
     def set_response(self, ident: int, kinstr: int, base_addr: int = 0,
-                     stride_bytes: int = 0, n_elements: int = 1):
-        self.responses[ident] = (kinstr, base_addr, stride_bytes, n_elements)
+                     n_elements: int = 1):
+        self.responses[ident] = (kinstr, base_addr, n_elements)
 
     async def run(self):
         self._running = True
@@ -166,11 +166,10 @@ class WitemInfoResponder:
                             int(self.dut.io_witemInfoResp_ready.value) == 1)
 
             if self.pending_resp is not None:
-                kinstr, base_addr, stride_bytes, n_elements = self.pending_resp
+                kinstr, base_addr, n_elements = self.pending_resp
                 self.dut.io_witemInfoResp_valid.value = 1
                 self.dut.io_witemInfoResp_bits_kinstr.value = kinstr
                 self.dut.io_witemInfoResp_bits_baseAddr.value = base_addr
-                self.dut.io_witemInfoResp_bits_strideBytes.value = stride_bytes
                 self.dut.io_witemInfoResp_bits_nElements.value = n_elements
                 if resp_consumed:
                     self.pending_resp = None
@@ -373,7 +372,6 @@ def initialize_inputs(dut: HierarchyObject) -> None:
     dut.io_witemInfoResp_valid.value = 0
     dut.io_witemInfoResp_bits_kinstr.value = 0
     dut.io_witemInfoResp_bits_baseAddr.value = 0
-    dut.io_witemInfoResp_bits_strideBytes.value = 0
     dut.io_witemInfoResp_bits_nElements.value = 0
 
     dut.io_tlbReq_ready.value = 1
@@ -466,7 +464,6 @@ async def witem_info_handshake_test(dut: HierarchyObject, params: JamletParams) 
     dut.io_witemInfoResp_valid.value = 1
     dut.io_witemInfoResp_bits_kinstr.value = kinstr_packed
     dut.io_witemInfoResp_bits_baseAddr.value = 0
-    dut.io_witemInfoResp_bits_strideBytes.value = 0
     dut.io_witemInfoResp_bits_nElements.value = 1
 
     # Wait for response to be consumed
@@ -504,7 +501,7 @@ async def load_j2j_packet_test(dut: HierarchyObject, params: JamletParams) -> No
     cocotb.start_soon(sram.run())
 
     witem_info = WitemInfoResponder(dut)
-    witem_info.set_response(test_ident, kinstr_packed, base_addr=0, stride_bytes=0, n_elements=1)
+    witem_info.set_response(test_ident, kinstr_packed, base_addr=0, n_elements=1)
     cocotb.start_soon(witem_info.run())
 
     packet_out = PacketOutCollector(dut)

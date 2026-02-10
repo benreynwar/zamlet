@@ -95,12 +95,11 @@ class WitemInfoReq(params: LamletParams) extends Bundle {
 
 /** Response with witem instruction parameters */
 class WitemInfoResp(params: LamletParams) extends Bundle {
-  // Raw instruction (cast to WordInstr/J2JInstr/StridedInstr/IndexedInstr based on witem type)
+  // Raw instruction (cast to WordInstr/J2JInstr/IndexedInstr based on witem type)
   val kinstr = UInt(KInstr.width.W)
 
   // Resolved values from param memory lookup (for instructions that use indices)
   val baseAddr = params.memAddr()
-  val strideBytes = SInt(params.memAddrWidth.W)
   val nElements = params.elementIndex()
 }
 

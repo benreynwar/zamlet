@@ -8,7 +8,7 @@ import zamlet.LamletParams
  * Kamlet instruction format definitions.
  *
  * KInstr is a 64-bit packed instruction format used for network communication.
- * Large values (addresses, strides, nElements) are stored in a parameter memory
+ * Large values (addresses, nElements) are stored in a parameter memory
  * and referenced by 4-bit indices.
  *
  * Python reference: python/zamlet/kamlet/kinstructions.py
@@ -25,11 +25,6 @@ object KInstr {
   /** Cast kinstr to J2JInstr */
   def asJ2J(params: LamletParams, kinstr: UInt): J2JInstr = {
     kinstr.asTypeOf(new J2JInstr(params))
-  }
-
-  /** Cast kinstr to StridedInstr */
-  def asStrided(params: LamletParams, kinstr: UInt): StridedInstr = {
-    kinstr.asTypeOf(new StridedInstr(params))
   }
 
   /** Cast kinstr to IndexedInstr */
@@ -173,38 +168,10 @@ class J2JInstr(params: LamletParams) extends Bundle {
 }
 
 /**
- * Instruction format for strided operations (LoadStride / StoreStride).
- *
- * Python reference: Load/Store with stride_bytes in kinstructions.py
- * - reg: the RF data register (dst for load, src for store)
- *
- * Common fields (same position as IndexedInstr): opcode, startIndex, rfEw,
- * rfWordOrder, reg, maskReg, maskEnabled, baseAddrIdx, nElementsIdx
- */
-class StridedInstr(params: LamletParams) extends Bundle {
-  // Common fields (must match IndexedInstr layout)
-  val opcode = KInstrOpcode()
-  val startIndex = params.elementIndex()
-  val rfEw = EwCode()
-  val rfWordOrder = WordOrder()
-  val reg = params.rfAddr()
-  val maskReg = params.rfAddr()
-  val maskEnabled = Bool()
-  val baseAddrIdx = UInt(KInstrParamIdx.width.W)
-  val nElementsIdx = UInt(KInstrParamIdx.width.W)
-  // Strided-specific fields
-  val strideBytesIdx = UInt(KInstrParamIdx.width.W)
-}
-
-/**
  * Instruction format for indexed operations (LoadIdxUnord / StoreIdxUnord / LoadIdxElement).
  * - reg: the RF data register (dst for load, src for store)
- *
- * Common fields (same position as StridedInstr): opcode, startIndex, rfEw,
- * rfWordOrder, reg, maskReg, maskEnabled, baseAddrIdx, nElementsIdx
  */
 class IndexedInstr(params: LamletParams) extends Bundle {
-  // Common fields (must match StridedInstr layout)
   val opcode = KInstrOpcode()
   val startIndex = params.elementIndex()
   val rfEw = EwCode()
