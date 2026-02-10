@@ -90,25 +90,30 @@ def _check_sdc_files_impl(ctx):
 def _check_macro_instances_impl(ctx):
     return single_step_impl(ctx, "OpenROAD.CheckMacroInstances", CHECK_MACRO_INSTANCES_CONFIG_KEYS, step_outputs = [])
 
+def _multi_corner_sta_reports(corners):
+    """Build report path list for multi-corner STA steps."""
+    reports = ["summary.rpt"]
+    for corner in corners:
+        reports.append(corner + "/max.rpt")
+        reports.append(corner + "/min.rpt")
+    return reports
+
 def _sta_pre_pnr_impl(ctx):
     """Pre-PnR timing analysis with timing reports."""
     input_info = ctx.attr.input[LibrelaneInput]
-
-    # Build report paths - only nom_* corners run pre-PNR (no parasitics yet)
-    reports = ["summary.rpt"]
-    for corner in input_info.pdk_info.sta_corners:
-        if corner.startswith("nom_"):
-            reports.append(corner + "/max.rpt")
-            reports.append(corner + "/min.rpt")
-
+    nom_corners = [c for c in input_info.pdk_info.sta_corners if c.startswith("nom_")]
     return single_step_impl(
         ctx, "OpenROAD.STAPrePNR", MULTI_CORNER_STA_CONFIG_KEYS,
         step_outputs = [],
-        extra_outputs = reports,
+        extra_outputs = _multi_corner_sta_reports(nom_corners),
     )
 
 def _sta_mid_pnr_impl(ctx):
-    return single_step_impl(ctx, "OpenROAD.STAMidPNR", STA_CONFIG_KEYS, step_outputs = [])
+    return single_step_impl(
+        ctx, "OpenROAD.STAMidPNR", STA_CONFIG_KEYS,
+        step_outputs = [],
+        extra_outputs = ["max.rpt", "min.rpt"],
+    )
 
 def _rcx_impl(ctx):
     """Parasitic extraction - produces SPEF for all corners (passes through def/odb)."""
@@ -164,62 +169,11 @@ def _rcx_impl(ctx):
 def _sta_post_pnr_impl(ctx):
     """Post-PnR timing analysis with timing reports."""
     input_info = ctx.attr.input[LibrelaneInput]
-    state_info = ctx.attr.src[LibrelaneInfo]
-    top = input_info.top
-
-    # Get STA corners from PDK
-    sta_corners = input_info.pdk_info.sta_corners
-
-    # Declare report outputs for each corner (both setup/max and hold/min)
-    report_outputs = []
-    for corner in sta_corners:
-        report_outputs.append(ctx.actions.declare_file(
-            ctx.label.name + "/" + corner + "/max.rpt"))
-        report_outputs.append(ctx.actions.declare_file(
-            ctx.label.name + "/" + corner + "/min.rpt"))
-
-    # Also declare summary report
-    summary_report = ctx.actions.declare_file(ctx.label.name + "/summary.rpt")
-
-    # Get input files
-    inputs = get_input_files(input_info, state_info)
-
-    # Create config
-    config = create_librelane_config(input_info, state_info, STA_POST_PNR_CONFIG_KEYS)
-
-    # Run STA with report outputs
-    state_out = run_librelane_step(
-        ctx = ctx,
-        step_id = "OpenROAD.STAPostPNR",
-        outputs = report_outputs + [summary_report],
-        config_content = json.encode(config),
-        inputs = inputs,
-        input_info = input_info,
-        state_info = state_info,
+    return single_step_impl(
+        ctx, "OpenROAD.STAPostPNR", STA_POST_PNR_CONFIG_KEYS,
+        step_outputs = [],
+        extra_outputs = _multi_corner_sta_reports(input_info.pdk_info.sta_corners),
     )
-
-    return [
-        DefaultInfo(files = depset(report_outputs + [summary_report, state_out])),
-        LibrelaneInfo(
-            state_out = state_out,
-            nl = state_info.nl,
-            pnl = state_info.pnl,
-            odb = state_info.odb,
-            sdc = state_info.sdc,
-            sdf = state_info.sdf,
-            spef = state_info.spef,
-            lib = state_info.lib,
-            gds = state_info.gds,
-            mag_gds = state_info.mag_gds,
-            klayout_gds = state_info.klayout_gds,
-            lef = state_info.lef,
-            mag = state_info.mag,
-            spice = state_info.spice,
-            json_h = state_info.json_h,
-            vh = state_info.vh,
-            **{"def": getattr(state_info, "def", None)}
-        ),
-    ]
 
 def _ir_drop_report_impl(ctx):
     return single_step_impl(ctx, "OpenROAD.IRDropReport", IRDROP_CONFIG_KEYS, step_outputs = [])

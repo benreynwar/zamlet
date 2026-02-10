@@ -124,7 +124,8 @@ def librelane_classic_flow(
     pnr_sdc_file = None,
     signoff_sdc_file = None,
     input_delay_constraint = None,
-    output_delay_constraint = None):
+    output_delay_constraint = None,
+    synth_config = None):
     """Flow from Verilog through detailed routing and STA.
 
     Matches librelane Classic flow order:
@@ -158,20 +159,19 @@ def librelane_classic_flow(
         run_post_grt_design_repair: Enable design repair after global routing (default False, experimental)
     """
 
-    # Generate templated SDC if delay constraints provided
+    # Generate templated SDC with delay constraints
     effective_pnr_sdc = pnr_sdc_file
     effective_signoff_sdc = signoff_sdc_file
-    if input_delay_constraint or output_delay_constraint:
-        sdc_template(
-            name = name + "_sdc",
-            template = "//bazel/flow/sdc:base.sdc",
-            input_delay_constraint = input_delay_constraint if input_delay_constraint else "50",
-            output_delay_constraint = output_delay_constraint if output_delay_constraint else "50",
-        )
-        if not pnr_sdc_file:
-            effective_pnr_sdc = ":" + name + "_sdc"
-        if not signoff_sdc_file:
-            effective_signoff_sdc = ":" + name + "_sdc"
+    sdc_template(
+        name = name + "_sdc",
+        template = "//bazel/flow/sdc:base.sdc",
+        input_delay_constraint = input_delay_constraint if input_delay_constraint else "50",
+        output_delay_constraint = output_delay_constraint if output_delay_constraint else "50",
+    )
+    if not pnr_sdc_file:
+        effective_pnr_sdc = ":" + name + "_sdc"
+    if not signoff_sdc_file:
+        effective_signoff_sdc = ":" + name + "_sdc"
 
     # PnR config - create if any PnR params are non-default
     pnr_config_kwargs = {}
@@ -216,6 +216,7 @@ def librelane_classic_flow(
         pnr_sdc_file = effective_pnr_sdc if effective_pnr_sdc else "//bazel/flow/sdc:base.sdc",
         signoff_sdc_file = effective_signoff_sdc if effective_signoff_sdc else "//bazel/flow/sdc:base.sdc",
         pnr_config = pnr_config_target,
+        synth_config = synth_config,
     )
 
     # Common input reference for all steps
