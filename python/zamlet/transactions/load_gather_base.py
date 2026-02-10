@@ -79,7 +79,8 @@ class WaitingLoadGatherBase(WaitingItem, ABC):
         return j_in_k_index * self.params.word_bytes + tag
 
     def ready(self) -> bool:
-        return self.completion_sync_state == SyncState.COMPLETE
+        return (self.completion_sync_state == SyncState.COMPLETE
+                and self.fault_sync_state == SyncState.COMPLETE)
 
     async def monitor_jamlet(self, jamlet: 'Jamlet') -> None:
         wb = jamlet.params.word_bytes

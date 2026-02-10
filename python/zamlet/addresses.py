@@ -178,18 +178,20 @@ class TLBFaultType(Enum):
     PAGE_FAULT = 1
     READ_FAULT = 2
     WRITE_FAULT = 3
+    NOT_WAITED = 4
 
 
 @dataclass
 class VectorOpResult:
     """Result of a vector operation - either success or fault."""
-    fault_type: TLBFaultType | None = None
+    fault_type: TLBFaultType = TLBFaultType.NONE
     element_index: int | None = None  # First element that faulted
     completion_sync_idents: List[int] | None = None
+    last_fault_sync_ident: int | None = None
 
     @property
     def success(self) -> bool:
-        return self.fault_type is None
+        return self.fault_type == TLBFaultType.NONE
 
 
 class PageInfo:

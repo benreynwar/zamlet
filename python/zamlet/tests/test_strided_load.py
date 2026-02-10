@@ -282,9 +282,10 @@ async def main(clock, **kwargs):
 
 
 def run_test(ew: int, vl: int, stride: int, params: LamletParams, seed: int,
-             start_index: int = 0, use_mask: bool = True, dump_spans: bool = False):
+             start_index: int = 0, use_mask: bool = True, dump_spans: bool = False,
+             max_cycles: int = 50000):
     """Helper to run a single test configuration."""
-    clock = Clock(max_cycles=50000)
+    clock = Clock(max_cycles=max_cycles)
     exit_code = asyncio.run(main(clock, ew=ew, vl=vl, stride=stride, params=params, seed=seed,
                                   start_index=start_index, use_mask=use_mask, dump_spans=dump_spans))
     assert exit_code == 0, f"Test failed with exit_code={exit_code}"
@@ -343,6 +344,8 @@ if __name__ == '__main__':
                         help='Disable mask testing (default: use random mask)')
     parser.add_argument('--dump-spans', action='store_true',
                         help='Dump span trees to span_trees.txt')
+    parser.add_argument('--max-cycles', type=int, default=50000,
+                        help='Maximum simulation cycles (default: 50000)')
     args = parser.parse_args()
 
     if args.list_geometries:
@@ -357,4 +360,5 @@ if __name__ == '__main__':
     stride = args.stride if args.stride is not None else args.ew // 8 * 2
     use_mask = not args.no_mask
     run_test(ew=args.ew, vl=args.vl, stride=stride, params=params, seed=args.seed,
-             start_index=args.start_index, use_mask=use_mask, dump_spans=args.dump_spans)
+             start_index=args.start_index, use_mask=use_mask, dump_spans=args.dump_spans,
+             max_cycles=args.max_cycles)

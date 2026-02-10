@@ -42,6 +42,7 @@ class LoadIndexedUnordered(KInstr):
     mask_reg: int | None
     writeset_ident: int
     instr_ident: int
+    index_offset: int = 0
 
     async def update_kamlet(self, kamlet):
         logger.debug(f'kamlet ({kamlet.min_x}, {kamlet.min_y}): load_indexed.update_kamlet '
@@ -50,7 +51,8 @@ class LoadIndexedUnordered(KInstr):
             start_index=self.start_index, n_elements=self.n_elements,
             ew=self.dst_ordering.ew, base_reg=self.dst)
         index_regs = kamlet.get_regs(
-            start_index=self.start_index, n_elements=self.n_elements,
+            start_index=self.start_index + self.index_offset,
+            n_elements=self.n_elements,
             ew=self.index_ordering.ew, base_reg=self.index_reg)
         overlap = set(dst_regs) & set(index_regs)
         assert not overlap, \
@@ -82,6 +84,7 @@ class WaitingLoadIndexedUnordered(WaitingLoadGatherBase):
         super().__init__(instr=instr, params=params, rf_ident=rf_ident)
         # 0 = no bound, N = mask indices to lower N bits. Captured at creation time.
         self.index_bound_bits = index_bound_bits
+        self.index_offset = instr.index_offset
 
     def get_element_byte_offset(self, jamlet: 'Jamlet', element_index: int) -> int:
         """Read the byte offset from the index register for this element."""
@@ -90,9 +93,10 @@ class WaitingLoadIndexedUnordered(WaitingLoadGatherBase):
         index_ew = instr.index_ordering.ew
         index_bytes = index_ew // 8
 
+        adjusted_index = element_index + self.index_offset
         elements_in_vline = jamlet.params.vline_bytes * 8 // index_ew
-        index_v = element_index // elements_in_vline
-        index_ve = element_index % elements_in_vline
+        index_v = adjusted_index // elements_in_vline
+        index_ve = adjusted_index % elements_in_vline
         index_we = index_ve // jamlet.params.j_in_l
 
         index_reg = instr.index_reg + index_v
@@ -100,7 +104,7 @@ class WaitingLoadIndexedUnordered(WaitingLoadGatherBase):
 
         word_data = jamlet.rf_slice[index_reg * wb: (index_reg + 1) * wb]
         index_value = int.from_bytes(word_data[byte_in_word:byte_in_word + index_bytes],
-                                     byteorder='little', signed=False)
+                                     byteorder='little', signed=True)
         if self.index_bound_bits > 0:
             index_value &= (1 << self.index_bound_bits) - 1
         return index_value
@@ -109,6 +113,7 @@ class WaitingLoadIndexedUnordered(WaitingLoadGatherBase):
         """Return the index registers that need to be read."""
         instr = self.item
         index_regs = kamlet.get_regs(
-            start_index=instr.start_index, n_elements=instr.n_elements,
+            start_index=instr.start_index + self.index_offset,
+            n_elements=instr.n_elements,
             ew=instr.index_ordering.ew, base_reg=instr.index_reg)
         return list(index_regs)

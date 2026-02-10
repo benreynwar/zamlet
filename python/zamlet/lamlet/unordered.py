@@ -426,127 +426,173 @@ async def vloadstorestride(lamlet: 'Lamlet', reg_base: int, addr: int,
                            is_store: bool, parent_span_id: int, stride_bytes: int,
                            reg_ordering: addresses.Ordering | None = None) -> VectorOpResult:
     """
-    Handle strided vector loads/stores using LoadStride/StoreStride instructions.
+    Handle strided vector loads/stores by decomposing into vid + vmul + indexed.
 
-    Strided access means elements are at addr, addr+stride, addr+2*stride, etc.
-    Elements are placed contiguously in the register file.
+    Computes byte offsets (i * stride) into a temporary register using vector
+    ALU instructions, then issues an indexed load/store. This avoids requiring
+    a hardware multiplier in the WitemMonitor.
 
-    LoadStride/StoreStride is limited to j_in_l elements per instruction,
-    so we process in chunks.
+    When the full index vector doesn't fit in the available temp registers,
+    elements are processed in batches. Each batch adjusts the base address
+    and populates the temp register with offsets for that batch only.
     """
-    g_addr = GlobalAddress(bit_addr=addr * 8, params=lamlet.params)
-    mem_ew = ordering.ew
-
     if reg_ordering is None:
         reg_ordering = ordering
     reg_ew = reg_ordering.ew
 
-    writeset_ident = ident_query.get_writeset_ident(lamlet)
-
-    # Set up register file ordering for registers
+    # Set up register file ordering for data registers
     vline_bits = lamlet.params.maxvl_bytes * 8
-    n_vlines = (reg_ew * n_elements + vline_bits - 1) // vline_bits
-    for vline_reg in range(reg_base, reg_base + n_vlines):
-        lamlet.vrf_ordering[vline_reg] = Ordering(word_order=ordering.word_order, ew=reg_ew)
+    n_data_vlines = (reg_ew * n_elements + vline_bits - 1) // vline_bits
+    for vline_reg in range(reg_base, reg_base + n_data_vlines):
+        lamlet.vrf_ordering[vline_reg] = Ordering(
+            word_order=ordering.word_order, ew=reg_ew)
 
-    # Process in chunks of j_in_l elements
-    # Active elements are [start_index, n_elements), so n_active = n_elements - start_index
+    index_ew = 64
+    elements_per_vline_64 = vline_bits // index_ew
+    n_temp_regs = len(lamlet._temp_regs)
+    batch_capacity = n_temp_regs * elements_per_vline_64
+
+    temp_regs = lamlet.alloc_temp_regs(n_temp_regs)
+    temp_base = temp_regs[0]
+    for reg in temp_regs:
+        lamlet.vrf_ordering[reg] = Ordering(
+            word_order=addresses.WordOrder.STANDARD, ew=index_ew)
+
+    # Align batch_start to j_in_l so that index element (d - batch_start) lands
+    # on the same jamlet as data element d (both have the same % j_in_l).
     j_in_l = lamlet.params.j_in_l
-    n_active = n_elements - start_index
-    completion_sync_idents = []
-    for chunk_offset in range(0, n_active, j_in_l):
-        chunk_n = min(j_in_l, n_active - chunk_offset)
-        # g_addr is the base address (element 0's location)
-        chunk_addr = addr
-        chunk_g_addr = GlobalAddress(bit_addr=chunk_addr * 8, params=lamlet.params)
-        instr_ident = await ident_query.get_instr_ident(
-            lamlet, n_idents=lamlet.params.word_bytes + 1)
+    aligned_start = (start_index // j_in_l) * j_in_l
+    n_to_process = n_elements - aligned_start
+    prev_fault_sync = None
+    all_completion_syncs = []
+    for batch_offset in range(0, n_to_process, batch_capacity):
+        batch_n = min(batch_capacity, n_to_process - batch_offset)
+        batch_start = aligned_start + batch_offset
+        batch_base = addr + batch_start * stride_bytes
+        actual_start_index = max(start_index, batch_start)
 
-        if is_store:
-            kinstr = StoreStride(
-                src=reg_base,
-                g_addr=chunk_g_addr,
-                start_index=start_index + chunk_offset,
-                n_elements=chunk_n,
-                src_ordering=reg_ordering,
-                mask_reg=mask_reg,
-                writeset_ident=writeset_ident,
-                instr_ident=instr_ident,
-                stride_bytes=stride_bytes,
-            )
-        else:
-            kinstr = LoadStride(
-                dst=reg_base,
-                g_addr=chunk_g_addr,
-                start_index=start_index + chunk_offset,
-                n_elements=chunk_n,
-                dst_ordering=reg_ordering,
-                mask_reg=mask_reg,
-                writeset_ident=writeset_ident,
-                instr_ident=instr_ident,
-                stride_bytes=stride_bytes,
-            )
-        await lamlet.add_to_instruction_buffer(kinstr, parent_span_id)
-        kinstr_span_id = lamlet.monitor.get_kinstr_span_id(instr_ident)
+        # vid.v: temp[i] = i for i in [0, batch_n)
+        vid_ident = await ident_query.get_instr_ident(lamlet)
+        vid_kinstr = kinstructions.VidOp(
+            dst=temp_base,
+            n_elements=batch_n,
+            element_width=index_ew,
+            word_order=addresses.WordOrder.STANDARD,
+            mask_reg=None,
+            instr_ident=vid_ident,
+        )
+        await lamlet.add_to_instruction_buffer(vid_kinstr, parent_span_id)
 
-        # Use instr_ident for fault sync, instr_ident + 1 for completion sync
-        fault_sync_ident = instr_ident
-        completion_sync_ident = (instr_ident + 1) % lamlet.params.max_response_tags
+        # vmul.vx: temp[i] = i * stride
+        mul_ident = await ident_query.get_instr_ident(lamlet)
+        stride_as_bytes = stride_bytes.to_bytes(8, byteorder='little', signed=True)
+        mul_kinstr = kinstructions.VArithVxOp(
+            op=kinstructions.VArithOp.MUL,
+            dst=temp_base,
+            scalar_bytes=stride_as_bytes,
+            src2=temp_base,
+            mask_reg=None,
+            n_elements=batch_n,
+            element_width=index_ew,
+            word_order=addresses.WordOrder.STANDARD,
+            instr_ident=mul_ident,
+        )
+        await lamlet.add_to_instruction_buffer(mul_kinstr, parent_span_id)
 
-        # Participate in both syncs so kamlets can coordinate internally
-        lamlet.monitor.create_sync_local_span(fault_sync_ident, 0, -1, kinstr_span_id)
-        lamlet.synchronizer.local_event(fault_sync_ident, value=None)
-        lamlet.monitor.create_sync_local_span(completion_sync_ident, 0, -1, kinstr_span_id)
-        lamlet.synchronizer.local_event(completion_sync_ident)
-        completion_sync_idents.append(completion_sync_ident)
+        # Indexed load/store with adjusted base and index_offset
+        result = await _vloadstore_indexed_unordered(
+            lamlet, reg=reg_base, base_addr=batch_base, index_reg=temp_base,
+            index_ew=index_ew, data_ew=reg_ew,
+            n_elements=batch_start + batch_n,
+            mask_reg=mask_reg, start_index=actual_start_index,
+            parent_span_id=parent_span_id, is_store=is_store,
+            index_offset=-batch_start,
+            chain_from_ident=prev_fault_sync)
+        prev_fault_sync = result.last_fault_sync_ident
+        if result.completion_sync_idents:
+            all_completion_syncs.extend(result.completion_sync_idents)
 
-        # Wait for fault sync to check for TLB faults
-        global_min_fault = await wait_for_fault_sync(lamlet, fault_sync_ident)
-        if global_min_fault is not None:
-            fault_type = TLBFaultType.WRITE_FAULT if is_store else TLBFaultType.READ_FAULT
-            return VectorOpResult(
-                fault_type=fault_type, element_index=global_min_fault,
-                completion_sync_idents=completion_sync_idents)
+    # Temp regs are safe to free: the last instruction reading them is
+    # already in the FIFO, and the kamlet handles register file blocking.
+    lamlet.free_temp_regs(temp_regs)
+    if prev_fault_sync is not None:
+        return await resolve_fault_sync(
+            lamlet,
+            VectorOpResult(
+                fault_type=TLBFaultType.NOT_WAITED,
+                completion_sync_idents=all_completion_syncs,
+                last_fault_sync_ident=prev_fault_sync),
+            is_store=is_store)
+    return VectorOpResult(completion_sync_idents=all_completion_syncs)
 
+
+async def resolve_fault_sync(lamlet: 'Lamlet', result: VectorOpResult,
+                             is_store: bool) -> VectorOpResult:
+    """Wait for a NOT_WAITED fault sync and return a resolved result."""
+    assert result.fault_type == TLBFaultType.NOT_WAITED
+    assert result.last_fault_sync_ident is not None
+    global_min_fault = await wait_for_fault_sync(
+        lamlet, result.last_fault_sync_ident)
+    if global_min_fault is not None:
+        fault_type = (TLBFaultType.WRITE_FAULT if is_store
+                      else TLBFaultType.READ_FAULT)
+        return VectorOpResult(
+            fault_type=fault_type, element_index=global_min_fault,
+            completion_sync_idents=result.completion_sync_idents,
+            last_fault_sync_ident=result.last_fault_sync_ident)
     return VectorOpResult(
-        completion_sync_idents=completion_sync_idents)
+        completion_sync_idents=result.completion_sync_idents,
+        last_fault_sync_ident=result.last_fault_sync_ident)
 
 
 async def vload_indexed_unordered(lamlet: 'Lamlet', vd: int, base_addr: int, index_reg: int,
                                   index_ew: int, data_ew: int, n_elements: int,
                                   mask_reg: int | None, start_index: int,
-                                  parent_span_id: int) -> VectorOpResult:
+                                  parent_span_id: int,
+                                  index_offset: int = 0) -> VectorOpResult:
     """Handle unordered indexed vector loads (vluxei).
 
     Indexed (gather) load: element i is loaded from address (base_addr + index_reg[i]).
     """
-    return await _vloadstore_indexed_unordered(
+    result = await _vloadstore_indexed_unordered(
         lamlet, reg=vd, base_addr=base_addr, index_reg=index_reg,
         index_ew=index_ew, data_ew=data_ew, n_elements=n_elements,
         mask_reg=mask_reg, start_index=start_index,
-        parent_span_id=parent_span_id, is_store=False)
+        parent_span_id=parent_span_id, is_store=False,
+        index_offset=index_offset)
+    if result.fault_type == TLBFaultType.NOT_WAITED:
+        result = await resolve_fault_sync(lamlet, result, is_store=False)
+    return result
 
 
 async def vstore_indexed_unordered(lamlet: 'Lamlet', vs: int, base_addr: int, index_reg: int,
                                    index_ew: int, data_ew: int, n_elements: int,
                                    mask_reg: int | None, start_index: int,
-                                   parent_span_id: int) -> VectorOpResult:
+                                   parent_span_id: int,
+                                   index_offset: int = 0) -> VectorOpResult:
     """Handle unordered indexed vector stores (vsuxei).
 
     Indexed (scatter) store: element i is stored to address (base_addr + index_reg[i]).
     """
-    return await _vloadstore_indexed_unordered(
+    result = await _vloadstore_indexed_unordered(
         lamlet, reg=vs, base_addr=base_addr, index_reg=index_reg,
         index_ew=index_ew, data_ew=data_ew, n_elements=n_elements,
         mask_reg=mask_reg, start_index=start_index,
-        parent_span_id=parent_span_id, is_store=True)
+        parent_span_id=parent_span_id, is_store=True,
+        index_offset=index_offset)
+    if result.fault_type == TLBFaultType.NOT_WAITED:
+        result = await resolve_fault_sync(lamlet, result, is_store=True)
+    return result
 
 
 async def _vloadstore_indexed_unordered(
         lamlet: 'Lamlet', reg: int, base_addr: int, index_reg: int,
         index_ew: int, data_ew: int, n_elements: int,
         mask_reg: int | None, start_index: int,
-        parent_span_id: int, is_store: bool) -> VectorOpResult:
+        parent_span_id: int, is_store: bool,
+        index_offset: int = 0,
+        chain_from_ident: int | None = None,
+        ) -> VectorOpResult:
     """Shared implementation for unordered indexed vector loads and stores.
 
     The index register contains byte offsets with element width index_ew.
@@ -579,10 +625,10 @@ async def _vloadstore_indexed_unordered(
     elements_in_vline = lamlet.params.vline_bytes * 8 // data_ew
     n_active = n_elements - start_index
 
-    fault_sync_idents = []
+    prev_fault_sync = chain_from_ident
     completion_sync_idents = []
 
-    for chunk_idx, chunk_offset in enumerate(range(0, n_active, elements_in_vline)):
+    for chunk_offset in range(0, n_active, elements_in_vline):
         chunk_n = min(elements_in_vline, n_active - chunk_offset)
         instr_ident = await ident_query.get_instr_ident(
             lamlet, n_idents=lamlet.params.word_bytes + 1)
@@ -599,6 +645,7 @@ async def _vloadstore_indexed_unordered(
                 mask_reg=mask_reg,
                 writeset_ident=writeset_ident,
                 instr_ident=instr_ident,
+                index_offset=index_offset,
             )
         else:
             kinstr = LoadIndexedUnordered(
@@ -612,57 +659,38 @@ async def _vloadstore_indexed_unordered(
                 mask_reg=mask_reg,
                 writeset_ident=writeset_ident,
                 instr_ident=instr_ident,
+                index_offset=index_offset,
             )
         await lamlet.add_to_instruction_buffer(kinstr, parent_span_id)
         kinstr_span_id = lamlet.monitor.get_kinstr_span_id(instr_ident)
 
-        # Use instr_ident for fault sync, instr_ident + 1 for completion sync
         fault_sync_ident = instr_ident
         completion_sync_ident = (
             (instr_ident + 1) % lamlet.params.max_response_tags)
 
-        # Completion sync: participate immediately for all chunks
         lamlet.monitor.create_sync_local_span(
             completion_sync_ident, 0, -1, kinstr_span_id)
         lamlet.synchronizer.local_event(completion_sync_ident)
         completion_sync_idents.append(completion_sync_ident)
 
-        # Fault sync: create span for all chunks, but only chunk 0
-        # fires immediately. Later chunks are chained so the
-        # synchronizer fires them when the previous chunk resolves.
         lamlet.monitor.create_sync_local_span(
             fault_sync_ident, 0, -1, kinstr_span_id)
         if skip_fault_wait:
             lamlet.synchronizer.local_event(fault_sync_ident, value=None)
-        elif chunk_idx == 0:
-            lamlet.synchronizer.local_event(fault_sync_ident, value=None)
-            fault_sync_idents.append(fault_sync_ident)
-        else:
+        elif prev_fault_sync is not None:
             lamlet.synchronizer.chain_fault_sync(
-                fault_sync_idents[-1], fault_sync_ident)
-            fault_sync_idents.append(fault_sync_ident)
+                prev_fault_sync, fault_sync_ident)
+            prev_fault_sync = fault_sync_ident
+        else:
+            lamlet.synchronizer.local_event(fault_sync_ident, value=None)
+            prev_fault_sync = fault_sync_ident
 
-    # Wait for the fault sync cascade to complete. Awaiting the last
-    # one is sufficient since the chain is sequential.
-    if fault_sync_idents:
-        last_fsid = fault_sync_idents[-1]
-        global_min_fault = await wait_for_fault_sync(lamlet, last_fsid)
-        if global_min_fault is not None:
-            # The first non-None min_value in the chain is the actual
-            # faulting element. Later chunks got 0 injected by the chain.
-            for fsid in fault_sync_idents:
-                min_val = lamlet.synchronizer.get_min_value(fsid)
-                if min_val is not None:
-                    global_min_fault = min_val
-                    break
-            fault_type = (TLBFaultType.WRITE_FAULT if is_store
-                          else TLBFaultType.READ_FAULT)
-            return VectorOpResult(
-                fault_type=fault_type, element_index=global_min_fault,
-                completion_sync_idents=completion_sync_idents)
-
+    fault_type = (TLBFaultType.NOT_WAITED if prev_fault_sync is not None
+                  else TLBFaultType.NONE)
     return VectorOpResult(
-        completion_sync_idents=completion_sync_idents)
+        fault_type=fault_type,
+        completion_sync_idents=completion_sync_idents,
+        last_fault_sync_ident=prev_fault_sync)
 
 
 async def vloadstore_scalar(

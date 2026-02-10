@@ -91,6 +91,9 @@ class Lamlet:
         self.exit_code = None
 
         self.word_order = word_order
+        self._temp_regs = list(range(32, params.n_vregs))
+        self._temp_reg_next = 0
+        self._temp_regs_in_use: set[int] = set()
 
         self.min_x = 0
         self.min_y = 0
@@ -240,6 +243,20 @@ class Lamlet:
     async def get_instr_ident(self, n_idents: int = 1) -> int:
         """Allocate n_idents consecutive instruction identifiers."""
         return await ident_query.get_instr_ident(self, n_idents)
+
+    def alloc_temp_regs(self, n: int) -> list[int]:
+        total = len(self._temp_regs)
+        regs = [self._temp_regs[(self._temp_reg_next + i) % total] for i in range(n)]
+        for reg in regs:
+            assert reg not in self._temp_regs_in_use, \
+                f"Temp reg {reg} already in use"
+            self._temp_regs_in_use.add(reg)
+        self._temp_reg_next = (self._temp_reg_next + n) % total
+        return regs
+
+    def free_temp_regs(self, regs: list[int]) -> None:
+        for reg in regs:
+            self._temp_regs_in_use.discard(reg)
 
     def set_pc(self, pc):
         self.pc = pc

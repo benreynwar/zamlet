@@ -452,8 +452,16 @@ class Synchronizer:
         If trigger's min_value is not None (fault detected), injects value=0
         to suppress all non-idempotent accesses in the target chunk.
         Otherwise injects value=None.
+
+        If the trigger has already completed, fires immediately.
         """
-        self._fault_chains[trigger_ident] = target_ident
+        state = self._sync_states.get(trigger_ident)
+        if state is not None and state.completed:
+            min_value = self.get_min_value(trigger_ident)
+            value = 0 if min_value is not None else None
+            self.local_event(target_ident, value=value)
+        else:
+            self._fault_chains[trigger_ident] = target_ident
 
     def _update_completed(self, sync_ident: int):
         """Check if sync is now complete and log once if so."""
@@ -469,8 +477,7 @@ class Synchronizer:
             # Fire chained fault sync if any
             if sync_ident in self._fault_chains:
                 target = self._fault_chains.pop(sync_ident)
-                value = 0 if min_value is not None else None
-                self.local_event(target, value=value)
+                self.local_event(target, value=min_value)
 
     def _get_send_requirements(self, direction: SyncDirection) -> dict:
         """Get send requirements for a direction. Kamlet (0,0) has special requirements."""
