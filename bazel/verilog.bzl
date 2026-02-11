@@ -1,75 +1,78 @@
-# Common Verilog generation utilities
-# Shared functionality for generating Verilog across DSE and test BUILD files
+"""Verilog generation macros for Chisel generators.
 
-def generate_verilog_rule(name, top_level, config_file, extra_args = [], generator_tool = "//src:verilog_generator", output_suffix = "", rename_module = None):
-    """
-    Generate a single Verilog file from a config.
-    
+Generators follow the convention: generator outputDir configFile [extra_args]
+"""
+
+load("//bazel/flow:defs.bzl", "librelane_classic_flow")
+
+def chisel_verilog(name, generator, config, extra_args = []):
+    """Generate SystemVerilog from a Chisel generator.
+
+    Creates a genrule named {name}_verilog producing {name}.sv.
+
     Args:
-        name: Name for the genrule
-        top_level: Top-level module name  
-        config_file: Path to config file (e.g., "//configs:bamlet_default.json")
-        extra_args: Additional arguments to pass to generator
-        generator_tool: Tool to use for generation (default: "//src:verilog_generator")
-        output_suffix: Optional suffix for output file naming
-        rename_module: If specified, rename the top-level module to this name
+        name: Base name (e.g. "Jamlet_default")
+        generator: Chisel binary label
+            (e.g. "//src/main/scala/zamlet/jamlet:jamlet")
+        config: Config JSON label
+            (e.g. "//configs:lamlet_default.json")
+        extra_args: Additional arguments passed to the generator
     """
-    output_name = "{}{}.sv".format(name, output_suffix)
-    
-    if rename_module:
-        cmd_template = """
-        TMPDIR=$$(mktemp -d)
-        TOP_LEVEL={top_level}
-        $(location {generator_tool}) \\
-            $$TMPDIR/{name}_verilog \\
-            $$TOP_LEVEL \\
-            $(location {config_file}) {extra_args}
-        # Concatenate all SystemVerilog files and rename the top module
-        find $$TMPDIR/{name}_verilog -name "*.sv" -type f | sort | xargs cat | sed 's/^module '$$TOP_LEVEL'(/module {rename_module}(/' > $@
-        rm -rf $$TMPDIR
-        """.format(
-            generator_tool=generator_tool,
-            name=name,
-            top_level=top_level,
-            config_file=config_file,
-            extra_args=" ".join(extra_args),
-            rename_module=rename_module
-        )
-    else:
-        cmd_template = """
-        TMPDIR=$$(mktemp -d)
-        $(location {generator_tool}) \\
-            $$TMPDIR/{name}_verilog \\
-            {top_level} \\
-            $(location {config_file}) {extra_args}
-        cat $$TMPDIR/{name}_verilog/*.sv > $@
-        rm -rf $$TMPDIR
-        """.format(
-            generator_tool=generator_tool,
-            name=name, 
-            top_level=top_level,
-            config_file=config_file,
-            extra_args=" ".join(extra_args)
-        )
-    
+    extra = " ".join(extra_args)
     native.genrule(
-        name = "{}_verilog".format(name),
-        srcs = [config_file],
-        outs = [output_name],
-        cmd = cmd_template,
-        tools = [generator_tool],
+        name = name + "_verilog",
+        srcs = [config],
+        outs = [name + ".sv"],
+        cmd = """
+    TMPDIR=$$(mktemp -d)
+    $(location {generator}) $$TMPDIR $(location {config}) {extra}
+    cat $$TMPDIR/*.sv > $@
+    rm -rf $$TMPDIR
+    """.format(
+            generator = generator,
+            config = config,
+            extra = extra,
+        ),
+        tools = [generator],
     )
 
+def chisel_dse_module(
+        name,
+        top,
+        generator,
+        config,
+        pdk,
+        extra_generator_args = [],
+        **flow_kwargs):
+    """Generate verilog and run librelane P&R flow.
 
-def generate_verilog_filegroup(name):
-    """
-    Create a filegroup for a Verilog file.
-    
+    Combines chisel_verilog + librelane_classic_flow.
+
+    Creates targets:
+        {name}_verilog     - genrule producing {name}.sv
+        {name}_sky130hd*   - librelane flow targets
+
     Args:
-        name: Base name (will create {name}_verilog_files group for {name}_verilog target)
+        name: Base name (e.g. "Jamlet_default")
+        top: Top module name for the flow (e.g. "Jamlet")
+        generator: Chisel binary label
+        config: Config JSON label
+        pdk: PDK target label (e.g. ":sky130hd")
+        extra_generator_args: Extra args for the Chisel generator
+        **flow_kwargs: Passed to librelane_classic_flow
+            (clock_period, core_utilization, pin_order_cfg, etc.)
     """
-    native.filegroup(
-        name = "{}_verilog_files".format(name),
-        srcs = [":{}_verilog".format(name)],
+    chisel_verilog(
+        name = name,
+        generator = generator,
+        config = config,
+        extra_args = extra_generator_args,
     )
 
+    librelane_classic_flow(
+        name = name + "_sky130hd",
+        verilog_files = [":" + name + ".sv"],
+        top = top,
+        pdk = pdk,
+        **flow_kwargs
+    )

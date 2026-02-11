@@ -1,13 +1,12 @@
 # Jamlet Component DSE
-# Design space exploration for jamlet components
 
+load("//bazel:verilog.bzl", "chisel_verilog", "chisel_dse_module")
 load("//bazel/flow:defs.bzl", "librelane_classic_flow", "librelane_synth_config")
 load("//bazel/flow:def_template.bzl", "combined_network_node_def")
 load("@sky130_fd_sc_hd_config//:defs.bzl", "pdk")
 
 exports_files(["gen_combined_network_node_def.py"])
 
-# PDK target
 pdk(name = "sky130hd")
 
 # Synth config with autoname for readable timing reports
@@ -16,58 +15,27 @@ librelane_synth_config(
     synth_autoname = True,
 )
 
-# (ModuleName, bazel_target_name)
-# Jamlet and NetworkNode handled separately due to custom pin placement
-JAMLET_SUB_MODULES = [
-    ("RfSlice", "rfslice"),
-    ("WitemMonitor", "witemmonitor"),
-    ("LocalExec", "localexec"),
-]
+LAMLET_CONFIG = "//configs:lamlet_default.json"
+JAMLET_PKG = "//src/main/scala/zamlet/jamlet"
 
-# Generate verilog for Jamlet top module
-genrule(
-    name = "Jamlet_default_verilog",
-    srcs = ["//configs:lamlet_default.json"],
-    outs = ["Jamlet_default.sv"],
-    cmd = """
-    TMPDIR=$$(mktemp -d)
-    $(location //src/main/scala/zamlet/jamlet:jamlet) $$TMPDIR $(location //configs:lamlet_default.json)
-    cat $$TMPDIR/*.sv > $@
-    rm -rf $$TMPDIR
-    """,
-    tools = ["//src/main/scala/zamlet/jamlet:jamlet"],
-)
-
-# Jamlet hard macro with custom pin placement
-librelane_classic_flow(
-    name = "Jamlet_default_sky130hd",
-    verilog_files = [":Jamlet_default.sv"],
+# Jamlet top module with custom pin placement
+chisel_dse_module(
+    name = "Jamlet_default",
     top = "Jamlet",
+    generator = JAMLET_PKG + ":jamlet",
+    config = LAMLET_CONFIG,
     pdk = ":sky130hd",
     clock_period = "10.0",
     core_utilization = "35",
     pin_order_cfg = ":jamlet_pin_order.cfg",
 )
 
-# NetworkNode verilog
-genrule(
-    name = "NetworkNode_default_verilog",
-    srcs = ["//configs:lamlet_default.json"],
-    outs = ["NetworkNode_default.sv"],
-    cmd = """
-    TMPDIR=$$(mktemp -d)
-    $(location //src/main/scala/zamlet/jamlet:networknode) $$TMPDIR $(location //configs:lamlet_default.json)
-    cat $$TMPDIR/*.sv > $@
-    rm -rf $$TMPDIR
-    """,
-    tools = ["//src/main/scala/zamlet/jamlet:networknode"],
-)
-
-# NetworkNode hard macro with custom pin placement
-librelane_classic_flow(
-    name = "NetworkNode_default_sky130hd",
-    verilog_files = [":NetworkNode_default.sv"],
+# NetworkNode with custom pin placement
+chisel_dse_module(
+    name = "NetworkNode_default",
     top = "NetworkNode",
+    generator = JAMLET_PKG + ":networknode",
+    config = LAMLET_CONFIG,
     pdk = ":sky130hd",
     clock_period = "10.0",
     die_area = "0 0 330 770",
@@ -75,31 +43,22 @@ librelane_classic_flow(
     pin_order_cfg = ":networknode_pin_order.cfg",
 )
 
-# CombinedNetworkNode verilog
-genrule(
-    name = "CombinedNetworkNode_default_verilog",
-    srcs = ["//configs:lamlet_default.json"],
-    outs = ["CombinedNetworkNode_default.sv"],
-    cmd = """
-    TMPDIR=$$(mktemp -d)
-    $(location //src/main/scala/zamlet/jamlet:combinednetworknode) $$TMPDIR $(location //configs:lamlet_default.json)
-    cat $$TMPDIR/*.sv > $@
-    rm -rf $$TMPDIR
-    """,
-    tools = ["//src/main/scala/zamlet/jamlet:combinednetworknode"],
+# CombinedNetworkNode needs a DEF template between verilog gen and flow
+chisel_verilog(
+    name = "CombinedNetworkNode_default",
+    generator = JAMLET_PKG + ":combinednetworknode",
+    config = LAMLET_CONFIG,
 )
 
 COMBINED_NETWORK_NODE_DIE_AREA = "0 0 500 830"
 
-# CombinedNetworkNode DEF template with precise pin placement
 combined_network_node_def(
     name = "CombinedNetworkNode_default_sky130hd_def_template",
     pdk = ":sky130hd",
-    config = "//configs:lamlet_default.json",
+    config = LAMLET_CONFIG,
     die_area = COMBINED_NETWORK_NODE_DIE_AREA,
 )
 
-# CombinedNetworkNode hard macro with DEF template for precise pin placement
 librelane_classic_flow(
     name = "CombinedNetworkNode_default_sky130hd",
     verilog_files = [":CombinedNetworkNode_default.sv"],
@@ -111,51 +70,43 @@ librelane_classic_flow(
     def_template = ":CombinedNetworkNode_default_sky130hd_def_template",
 )
 
-# Generate verilog for sub-modules
-[genrule(
-    name = "{}_default_verilog".format(module),
-    srcs = ["//configs:lamlet_default.json"],
-    outs = ["{}_default.sv".format(module)],
-    cmd = """
-    TMPDIR=$$(mktemp -d)
-    $(location //src/main/scala/zamlet/jamlet:{target}) $$TMPDIR $(location //configs:lamlet_default.json)
-    cat $$TMPDIR/*.sv > $@
-    rm -rf $$TMPDIR
-    """.format(target = target),
-    tools = ["//src/main/scala/zamlet/jamlet:{}".format(target)],
-) for module, target in JAMLET_SUB_MODULES]
+# (ModuleName, bazel_target_name)
+JAMLET_SUB_MODULES = [
+    ("RfSlice", "rfslice"),
+    ("WitemMonitor", "witemmonitor"),
+    ("LocalExec", "localexec"),
+]
 
-# Librelane hard macro flows for sub-modules
-[librelane_classic_flow(
-    name = "{}_default_sky130hd".format(module),
-    verilog_files = [":{}_default.sv".format(module)],
+[chisel_dse_module(
+    name = "{}_default".format(module),
     top = module,
+    generator = JAMLET_PKG + ":{}".format(target),
+    config = LAMLET_CONFIG,
     pdk = ":sky130hd",
     clock_period = "10.0",
     core_utilization = "35",
     synth_config = ":synth_autoname",
-) for module, _ in JAMLET_SUB_MODULES]
-
+) for module, target in JAMLET_SUB_MODULES]
 
 # PacketArbiter with 2 inputs (as used in Jamlet)
-genrule(
-    name = "PacketArbiter_default_verilog",
-    srcs = ["//configs:lamlet_default.json"],
-    outs = ["PacketArbiter_default.sv"],
-    cmd = """
-    TMPDIR=$$(mktemp -d)
-    $(location //src/main/scala/zamlet/jamlet:packetarbiter) $$TMPDIR $(location //configs:lamlet_default.json) 2
-    cat $$TMPDIR/*.sv > $@
-    rm -rf $$TMPDIR
-    """,
-    tools = ["//src/main/scala/zamlet/jamlet:packetarbiter"],
-)
-
-librelane_classic_flow(
-    name = "PacketArbiter_default_sky130hd",
-    verilog_files = [":PacketArbiter_default.sv"],
+chisel_dse_module(
+    name = "PacketArbiter_default",
     top = "PacketArbiter",
+    generator = JAMLET_PKG + ":packetarbiter",
+    config = LAMLET_CONFIG,
     pdk = ":sky130hd",
+    extra_generator_args = ["2"],
     clock_period = "10.0",
     core_utilization = "60",
+)
+
+# VectorRf - generic vector register file slice
+chisel_dse_module(
+    name = "VectorRf_3r1w",
+    top = "VectorRf",
+    generator = JAMLET_PKG + ":vectorrf",
+    config = "//configs:vector_rf_3r1w.json",
+    pdk = ":sky130hd",
+    clock_period = "10.0",
+    core_utilization = "40",
 )

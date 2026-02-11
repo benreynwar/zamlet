@@ -1,10 +1,8 @@
 # Lamlet Component DSE
-# Design space exploration for lamlet components
 
-load("//bazel/flow:defs.bzl", "librelane_classic_flow")
+load("//bazel:verilog.bzl", "chisel_dse_module")
 load("@sky130_fd_sc_hd_config//:defs.bzl", "pdk")
 
-# PDK target
 pdk(name = "sky130hd")
 
 # (ModuleName, bazel_target_name)
@@ -15,26 +13,12 @@ LAMLET_MODULES = [
     ("LamletTop", "lamlet_top"),
 ]
 
-# Generate verilog for each module
-[genrule(
-    name = "{}_default_verilog".format(module),
-    srcs = ["//configs:lamlet_default.json"],
-    outs = ["{}_default.sv".format(module)],
-    cmd = """
-    TMPDIR=$$(mktemp -d)
-    $(location //src/main/scala/zamlet/lamlet:{target}) $$TMPDIR $(location //configs:lamlet_default.json)
-    cat $$TMPDIR/*.sv > $@
-    rm -rf $$TMPDIR
-    """.format(target = target),
-    tools = ["//src/main/scala/zamlet/lamlet:{}".format(target)],
-) for module, target in LAMLET_MODULES]
-
-# Librelane flows for each module
-[librelane_classic_flow(
-    name = "{}_default_sky130hd".format(module),
-    verilog_files = [":{}_default.sv".format(module)],
+[chisel_dse_module(
+    name = "{}_default".format(module),
     top = module,
+    generator = "//src/main/scala/zamlet/lamlet:{}".format(target),
+    config = "//configs:lamlet_default.json",
     pdk = ":sky130hd",
     clock_period = "10.0",
     core_utilization = "40",
-) for module, _ in LAMLET_MODULES]
+) for module, target in LAMLET_MODULES]

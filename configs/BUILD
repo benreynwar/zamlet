@@ -23,8 +23,13 @@ UTILS_CONFIG_FILES = [
     "dropping_fifo_default.json",
 ]
 
+# List of VectorRf config JSON files
+VECTOR_RF_CONFIG_FILES = [
+    "vector_rf_3r1w.json",
+]
+
 exports_files(
     KAMLET_CONFIG_FILES + LAMLET_CONFIG_FILES + MATHS_CONFIG_FILES +
-    UTILS_CONFIG_FILES,
+    UTILS_CONFIG_FILES + VECTOR_RF_CONFIG_FILES,
     visibility = ["//visibility:public"]
 )

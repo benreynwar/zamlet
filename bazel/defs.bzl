@@ -1,14 +1,10 @@
-"""Public API for Bazel utilities and rules.
-
-This module exports the main rules and utilities:
-- chisel_binary, chisel_library: For Chisel compilation
-- generate_verilog_rule: For generating Verilog from configs
-- riscv_asm_binary: For compiling RISC-V assembly to binary
-- librelane_*: Physical design flow rules
-"""
+"""Public API for Bazel utilities and rules."""
 
 load("//bazel:chisel.bzl", _chisel_binary = "chisel_binary", _chisel_library = "chisel_library")
-load("//bazel:verilog.bzl", _generate_verilog_rule = "generate_verilog_rule", _generate_verilog_filegroup = "generate_verilog_filegroup")
+load("//bazel:verilog.bzl",
+    _chisel_verilog = "chisel_verilog",
+    _chisel_dse_module = "chisel_dse_module",
+)
 load("//bazel/flow:defs.bzl",
     _librelane_classic_flow = "librelane_classic_flow",
     _librelane_init = "librelane_init",
@@ -19,15 +15,10 @@ load("//bazel/flow:defs.bzl",
     _MacroInfo = "MacroInfo",
 )
 
-# Export Chisel rules
 chisel_binary = _chisel_binary
 chisel_library = _chisel_library
-
-# Export Verilog utilities
-generate_verilog_rule = _generate_verilog_rule
-generate_verilog_filegroup = _generate_verilog_filegroup
-
-# Export librelane flow rules
+chisel_verilog = _chisel_verilog
+chisel_dse_module = _chisel_dse_module
 librelane_classic_flow = _librelane_classic_flow
 librelane_init = _librelane_init
 librelane_synthesis = _librelane_synthesis
