@@ -1,5 +1,5 @@
+load("//bazel:verilog.bzl", "chisel_dse_module")
 load("//bazel/flow:defs.bzl",
-    "librelane_classic_flow",
     "librelane_classic_bundled_flow",
     "librelane_compare_flows_test",
     "librelane_flow_inputs",
@@ -16,23 +16,11 @@ WALLACE_MULT_CONFIGS = [
     "WallaceMult64x64",
 ]
 
-[genrule(
-    name = "{}_verilog".format(name),
-    srcs = ["//configs:{}.json".format(name)],
-    outs = ["{}.sv".format(name)],
-    cmd = """
-    TMPDIR=$$(mktemp -d)
-    $(location //src/main/scala/zamlet/maths:wallace_mult) $$TMPDIR $(location //configs:{}.json)
-    cat $$TMPDIR/*.sv > $@
-    rm -rf $$TMPDIR
-    """.format(name),
-    tools = ["//src/main/scala/zamlet/maths:wallace_mult"],
-) for name in WALLACE_MULT_CONFIGS]
-
-[librelane_classic_flow(
-    name = "{}_sky130hd".format(name),
-    verilog_files = [":{}.sv".format(name)],
+[chisel_dse_module(
+    name = name,
     top = name,
+    generator = "//src/main/scala/zamlet/maths:wallace_mult",
+    config = "//configs:{}.json".format(name),
     pdk = ":sky130hd",
     clock_period = "10.0",
     core_utilization = "40",
@@ -74,4 +62,3 @@ librelane_compare_flows_test(
     bazel_floorplan = ":WallaceMult8x8_sky130hd_floorplan",
     bazel_gpl = ":WallaceMult8x8_sky130hd_gpl",
 )
-
