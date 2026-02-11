@@ -33,9 +33,9 @@ ZAMLET_COMMON_SRCS = [
 chisel_binary(
     name = "shuttle_tile_generator",
     srcs = [
-        "//src/main/scala/zamlet/tile:shuttle_sources",
+        "//src/main/scala/zamlet/shuttle:shuttle_sources",
     ],
-    main_class = "zamlet.tile.Main",
+    main_class = "zamlet.shuttle.Main",
     deps = SHUTTLE_DEPS,
     visibility = ["//visibility:public"],
 )
@@ -44,12 +44,13 @@ chisel_binary(
 chisel_binary(
     name = "oamlet_generator",
     srcs = [
-        "//src/main/scala/zamlet/tile:tile_sources",
+        "//src/main/scala/zamlet/shuttle:shuttle_sources",
+        "//src/main/scala/zamlet/oamlet:oamlet_sources",
         "//src/main/scala/zamlet/lamlet:lamlet_sources",
         "//src/main/scala/zamlet/kamlet:kamlet_sources",
         "//src/main/scala/zamlet/jamlet:jamlet_sources",
     ] + ZAMLET_COMMON_SRCS,
-    main_class = "zamlet.tile.OamletMain",
+    main_class = "zamlet.oamlet.Main",
     deps = ZAMLET_DEPS + SHUTTLE_DEPS,
     visibility = ["//visibility:public"],
 )

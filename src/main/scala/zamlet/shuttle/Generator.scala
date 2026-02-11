@@ -1,11 +1,10 @@
-package zamlet.tile
+package zamlet.shuttle
 
 import chisel3._
 import _root_.circt.stage.ChiselStage
 
 import org.chipsalliance.cde.config._
 import org.chipsalliance.diplomacy.lazymodule._
-
 import java.io.File
 
 /** Entry point for generating ShuttleSystem Verilog.

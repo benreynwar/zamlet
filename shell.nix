@@ -12,6 +12,7 @@ pkgs.mkShell {
   LIBRARY_PATH = env.LIBRARY_PATH;
 
   shellHook = ''
+    alias bazel=bazelisk
     export PYTHONPATH="$PWD/python:$PYTHONPATH"
     echo "Zamlet Development Environment"
     echo "  OpenROAD: $(openroad -version 2>/dev/null | head -1 || echo 'available')"

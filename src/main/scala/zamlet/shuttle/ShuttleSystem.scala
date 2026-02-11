@@ -1,4 +1,4 @@
-package zamlet.tile
+package zamlet.shuttle
 
 import chisel3._
 

@@ -129,6 +129,7 @@ in {
     # Build tools
     bazelisk
     git
+    which
 
     # RISC-V toolchain for shuttle tests
     riscv-toolchain

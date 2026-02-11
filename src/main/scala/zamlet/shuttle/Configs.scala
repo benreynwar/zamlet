@@ -1,4 +1,4 @@
-package zamlet.tile
+package zamlet.shuttle
 
 import org.chipsalliance.cde.config._
 
@@ -8,9 +8,18 @@ import freechips.rocketchip.rocket.{BTBParams, BHTParams, ICacheParams}
 
 import shuttle.common._
 
+/** Scalar DRAM memory port config - 256GB starting at 0x1000000000 */
+class WithScalarMemPort extends Config((site, here, up) => {
+  case ExtMem => Some(MemoryPortParams(MasterPortParams(
+    base = 0x80000000L,
+    size = 0x80000000L,
+    beatBytes = site(MemoryBusKey).beatBytes,
+    idBits = 4), 1))
+})
+
 /** Base config for Shuttle systems - provides memory ports, timebase, bus topology */
 class ShuttleBaseConfig extends Config(
-  new WithDefaultMemPort ++
+  new WithScalarMemPort ++
   new WithDefaultMMIOPort ++
   new WithTimebase(BigInt(1000000)) ++  // 1 MHz
   new WithDTS("zamlet,shuttle", Nil) ++

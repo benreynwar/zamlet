@@ -10,7 +10,7 @@ LAMLET_MODULES = [
     ("IdentTracker", "ident_tracker"),
     ("IssueUnit", "issue_unit"),
     ("Lamlet", "lamlet"),
-    ("LamletTop", "lamlet_top"),
+    ("Zamlet", "zamlet"),
 ]
 
 [chisel_dse_module(

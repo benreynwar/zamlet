@@ -202,7 +202,7 @@ class IdentTracker(params: LamletParams) extends Module {
   }
 
   // Backend busy when any outstanding work
-  io.backendBusy := (nextInstrIdent =/= oldestActiveIdent) || !oldestActiveValid
+  io.backendBusy := oldestActiveValid && (nextInstrIdent =/= oldestActiveIdent)
 }
 
 object IdentTrackerGenerator extends zamlet.ModuleGenerator {

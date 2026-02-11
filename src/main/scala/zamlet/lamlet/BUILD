@@ -5,7 +5,7 @@ filegroup(
     name = "lamlet_sources",
     srcs = [
         "Lamlet.scala",
-        "LamletTop.scala",
+        "Zamlet.scala",
         "IssueUnit.scala",
         "IdentTracker.scala",
         "DispatchQueue.scala",
@@ -74,9 +74,9 @@ chisel_binary(
 )
 
 chisel_binary(
-    name = "lamlet_top",
+    name = "zamlet",
     srcs = [
-        "LamletTop.scala",
+        "Zamlet.scala",
         "Lamlet.scala",
         "IssueUnit.scala",
         "IdentTracker.scala",
@@ -86,7 +86,7 @@ chisel_binary(
         "//src/main/scala/zamlet/kamlet:kamlet_sources",
         "//src/main/scala/zamlet/jamlet:jamlet_sources",
     ] + LAMLET_COMMON_SRCS,
-    main_class = "zamlet.lamlet.LamletTopMain",
+    main_class = "zamlet.lamlet.ZamletMain",
     deps = LAMLET_DEPS,
     visibility = ["//visibility:public"],
 )

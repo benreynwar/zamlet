@@ -1,4 +1,4 @@
-package zamlet.tile
+package zamlet.oamlet
 
 import chisel3._
 import chisel3.util._
@@ -11,19 +11,21 @@ import freechips.rocketchip.devices.tilelink._
 
 import shuttle.common._
 import zamlet.LamletParams
-import zamlet.lamlet.{LamletTop, ZamletParamsKey, ZamletVectorDecode}
+import zamlet.lamlet.{Zamlet, ZamletParamsKey, ZamletVectorDecode}
+import zamlet.shuttle.{ShuttleBaseConfig, ShuttleSystem}
+import freechips.rocketchip.rocket.{BTBParams, BHTParams, ICacheParams}
 
 import java.io.File
 
-/** Config fragment to use LamletTop as the vector unit */
+/** Config fragment to use Zamlet as the vector unit */
 class WithZamletVector(params: LamletParams) extends Config((site, here, up) => {
   case ZamletParamsKey => params
   case TilesLocated(InSubsystem) => up(TilesLocated(InSubsystem)) map {
-    case tp: ShuttleTileAttachParams =>
+    case tp: OamletTileAttachParams =>
       tp.copy(tileParams = tp.tileParams.copy(
         core = tp.tileParams.core.copy(
           vector = Some(ShuttleCoreVectorParams(
-            build = ((p: Parameters) => new LamletTop()(p)),
+            build = ((p: Parameters) => new Zamlet()(p)),
             vLen = 128,
             vfLen = 64,
             vfh = false,
@@ -37,10 +39,36 @@ class WithZamletVector(params: LamletParams) extends Config((site, here, up) => 
   }
 })
 
+
+class WithNOamletCores(n: Int, retireWidth: Int) extends Config(
+  (site, here, up) => {
+    case TilesLocated(InSubsystem) => {
+      val prev: Seq[CanAttachTile] = up(TilesLocated(InSubsystem))
+      val idOffset: Int = up(NumTiles)
+      val newTiles: Seq[OamletTileAttachParams] = (0 until n).map { i =>
+        OamletTileAttachParams(
+          tileParams = OamletTileParams(
+            core = ShuttleCoreParams(retireWidth = retireWidth),
+            btb = Some(BTBParams(nEntries = 32, bhtParams = Some(BHTParams(counterLength = 2)))),
+            icache = Some(ICacheParams(rowBits = -1, nSets = 64, nWays = 8, fetchBytes = 2 * 4)),
+            tileId = i + idOffset
+            ),
+          crossingParams = ShuttleCrossingParams()
+          )
+      }
+      newTiles ++ prev
+    }
+    case NumTiles => up(NumTiles) + n
+  }
+)
+
 /** Oamlet config - Shuttle with Zamlet vector unit */
 class OamletConfig(params: LamletParams) extends Config(
   new WithZamletVector(params) ++
-  new shuttle.common.WithNShuttleCores(n = 1, retireWidth = 2) ++
+  new WithNOamletCores(n = 1, retireWidth = 2) ++
+  new Config((site, here, up) => {
+    case VPUMemParamsKey => VPUMemParams(base = 0x100000000L, size = 0x100000000L)
+  }) ++
   new WithCoherentBusTopology ++
   new ShuttleBaseConfig
 )
@@ -115,7 +143,7 @@ class OamletTop(implicit p: Parameters) extends RawModule {
 }
 
 /** Entry point for generating Oamlet Verilog */
-object OamletMain extends App {
+object Main extends App {
   if (args.length < 2) {
     println("Usage: <outputDir> <zamletConfigFile> [size]")
     println("  size: normal (default) or small")

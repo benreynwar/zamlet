@@ -12,19 +12,20 @@ import shuttle.common._
 import zamlet.LamletParams
 import zamlet.kamlet.{KamletMesh, MeshEdgeNeighbors}
 import zamlet.jamlet.NetworkWord
+import zamlet.oamlet.VPUMemParamsKey
 
 /** Config key for Zamlet parameters */
 case object ZamletParamsKey extends Field[LamletParams]
 
 /**
- * LamletTop - top-level vector unit containing Lamlet and KamletMesh.
+ * Zamlet - top-level vector unit containing Lamlet and KamletMesh.
  *
  * Extends ShuttleVectorUnit for integration with Shuttle scalar core.
  * Contains:
  * - Lamlet: instruction decode, dispatch, and sync coordination
  * - KamletMesh: grid of kamlets for compute
  */
-class LamletTop(implicit p: Parameters) extends ShuttleVectorUnit()(p) with HasCoreParameters {
+class Zamlet(implicit p: Parameters) extends ShuttleVectorUnit()(p) with HasCoreParameters {
 
   val zParams = p(ZamletParamsKey)
 
@@ -40,10 +41,21 @@ class LamletTop(implicit p: Parameters) extends ShuttleVectorUnit()(p) with HasC
   // Connect our TL client to the atlNode (attached TL node from ShuttleVectorUnit)
   atlNode := tlClient
 
-  override lazy val module = new LamletTopImpl(this)
+  val vpuMemParams = p(VPUMemParamsKey)
+  val vpuTLNode: TLNode = TLManagerNode(Seq(TLSlavePortParameters.v1(
+    Seq(TLSlaveParameters.v1(
+      address = Seq(AddressSet(vpuMemParams.base, vpuMemParams.size - 1)),
+      supportsGet = TransferSizes(1, 8),
+      supportsPutFull = TransferSizes(1, 8),
+      supportsPutPartial = TransferSizes(1, 8)
+      )),
+    beatBytes = 8
+  )))
+
+  override lazy val module = new ZamletImpl(this)
 }
 
-class LamletTopImpl(outer: LamletTop)
+class ZamletImpl(outer: Zamlet)
     extends ShuttleVectorUnitModuleImp(outer)
     with HasCoreParameters {
 
