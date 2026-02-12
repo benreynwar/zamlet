@@ -26,7 +26,7 @@ JAMLET_DEPS = [
 
 JAMLET_COMMON_SRCS = [
     "//src/main/scala/zamlet:ModuleGenerator.scala",
-    "//src/main/scala/zamlet:LamletParams.scala",
+    "//src/main/scala/zamlet:ZamletParams.scala",
     "//src/main/scala/zamlet/utils:utils_sources",
 ]
 

@@ -17,7 +17,7 @@ from zamlet.lamlet import ident_query
 from zamlet.monitor import SpanType, CompletionType
 
 if TYPE_CHECKING:
-    from zamlet.lamlet.lamlet import Lamlet
+    from zamlet.oamlet.oamlet import Oamlet
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +40,7 @@ class SetIndexBound:
     rs1: int
     imm: int
 
-    async def update_state(self, s: 'Lamlet'):
+    async def update_state(self, s: 'Oamlet'):
         if self.rs1 != 0:
             await s.scalar.wait_all_regs_ready(0, None, [self.rs1], [])
             n = int.from_bytes(
@@ -86,7 +86,7 @@ class BeginWriteset:
     Assembly: .insn i 0x0b, 1, x0, x0, 0
     """
 
-    async def update_state(self, s: 'Lamlet'):
+    async def update_state(self, s: 'Oamlet'):
         assert s.active_writeset_ident is None, \
             "begin_writeset while already in a writeset scope"
         ident = s.next_writeset_ident
@@ -114,7 +114,7 @@ class EndWriteset:
     Assembly: .insn i 0x0b, 2, x0, x0, 0
     """
 
-    async def update_state(self, s: 'Lamlet'):
+    async def update_state(self, s: 'Oamlet'):
         assert s.active_writeset_ident is not None, \
             "end_writeset without an active writeset scope"
         logger.debug(f'{s.clock.cycle}: end_writeset: '

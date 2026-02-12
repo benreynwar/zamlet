@@ -17,7 +17,7 @@ from random import Random
 import pytest
 
 from zamlet.runner import Clock
-from zamlet.params import LamletParams
+from zamlet.params import ZamletParams
 from zamlet.addresses import GlobalAddress, MemoryType, Ordering, WordOrder
 from zamlet.geometries import SMALL_GEOMETRIES, scale_n_tests
 from zamlet.monitor import CompletionType, SpanType
@@ -36,7 +36,7 @@ async def run_strided_store_test(
     ew: int,
     vl: int,
     stride: int,
-    params: LamletParams,
+    params: ZamletParams,
     seed: int,
     start_index: int = 0,
     use_mask: bool = True,
@@ -59,7 +59,7 @@ async def _run_strided_store_test_inner(
     ew: int,
     vl: int,
     stride: int,
-    params: LamletParams,
+    params: ZamletParams,
     seed: int,
     start_index: int,
     use_mask: bool,
@@ -308,7 +308,7 @@ async def main(clock, **kwargs):
     return exit_code
 
 
-def run_test(ew: int, vl: int, stride: int, params: LamletParams, seed: int,
+def run_test(ew: int, vl: int, stride: int, params: ZamletParams, seed: int,
              start_index: int = 0, use_mask: bool = True, dump_spans: bool = False):
     """Helper to run a single test configuration."""
     clock = Clock(max_cycles=50000)

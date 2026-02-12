@@ -13,7 +13,7 @@ from random import Random
 import pytest
 
 from zamlet.runner import Clock
-from zamlet.params import LamletParams
+from zamlet.params import ZamletParams
 from zamlet.addresses import GlobalAddress, MemoryType, Ordering, WordOrder
 from zamlet.geometries import SMALL_GEOMETRIES, scale_n_tests
 from zamlet.monitor import CompletionType, SpanType
@@ -29,7 +29,7 @@ async def run_reg_gather_test(
     data_ew: int,
     index_ew: int,
     vl: int,
-    params: LamletParams,
+    params: ZamletParams,
     seed: int,
     dump_spans: bool = False,
 ):
@@ -49,7 +49,7 @@ async def _run_reg_gather_test_inner(
     data_ew: int,
     index_ew: int,
     vl: int,
-    params: LamletParams,
+    params: ZamletParams,
     seed: int,
 ):
     rnd = Random(seed)
@@ -215,7 +215,7 @@ async def main(clock, data_ew, index_ew, vl, params, seed, dump_spans=False):
     return exit_code
 
 
-def run_test(data_ew: int, index_ew: int, vl: int, params: LamletParams, seed: int,
+def run_test(data_ew: int, index_ew: int, vl: int, params: ZamletParams, seed: int,
              dump_spans: bool = False):
     """Helper to run a single test configuration."""
     clock = Clock(max_cycles=50000)

@@ -2,7 +2,7 @@ package zamlet.lamlet
 
 import chisel3._
 import chisel3.util._
-import zamlet.LamletParams
+import zamlet.ZamletParams
 import zamlet.jamlet.{KInstr, KInstrOpcode, LoadImmInstr}
 
 /**
@@ -47,7 +47,7 @@ class TileLinkPutResp extends Bundle {
  *
  * For Phase 2 (ew=64 only): each element is one 8-byte word.
  */
-class ScalarLoadReq(params: LamletParams) extends Bundle {
+class ScalarLoadReq(params: ZamletParams) extends Bundle {
   val paddr = UInt(params.memAddrWidth.W)   // Physical base address
   val vd = params.rfAddr()                   // Destination register
   val startIndex = params.elementIndex()     // First element index
@@ -72,7 +72,7 @@ class ScalarLoadReq(params: LamletParams) extends Bundle {
  *    c. Send kinstrs to dispatch
  * 3. Signal load_complete when done
  */
-class ScalarLoadQueue(params: LamletParams) extends Module {
+class ScalarLoadQueue(params: ZamletParams) extends Module {
   val io = IO(new Bundle {
     // Request input
     val req = Flipped(Decoupled(new ScalarLoadReq(params)))
@@ -222,7 +222,7 @@ object ScalarLoadQueueGenerator extends zamlet.ModuleGenerator {
       println("Usage: <configFile>")
       System.exit(1)
     }
-    val params = LamletParams.fromFile(args(0))
+    val params = ZamletParams.fromFile(args(0))
     new ScalarLoadQueue(params)
   }
 }

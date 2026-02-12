@@ -4,7 +4,7 @@ from typing import List, Tuple, Dict, Optional, Any
 from collections import deque
 import random
 
-from zamlet.params import LamletParams
+from zamlet.params import ZamletParams
 from zamlet.runner import Clock
 from zamlet.router import Router, Direction
 from zamlet.message import Header, IdentHeader, AddressHeader
@@ -39,7 +39,7 @@ class GatheringSlot:
 WRITE_LINE_RESPONSE_R_INDEX = 0
 
 
-def memlet_coords(params: LamletParams, kamlet_index: int):
+def memlet_coords(params: ZamletParams, kamlet_index: int):
     """Compute router coordinates for a kamlet's memlet.
 
     Memlets are placed on the left or right edge of the grid.
@@ -86,7 +86,7 @@ def j_in_k_to_m_router(j_in_k_index: int, n_routers: int, j_in_k: int) -> int:
 
 class Memlet:
 
-    def __init__(self, clock: Clock, params: LamletParams, coords: List[Tuple[int, int]],
+    def __init__(self, clock: Clock, params: ZamletParams, coords: List[Tuple[int, int]],
                  kamlet_coords, monitor: Monitor):
         """
         A point of connection to off-chip DRAM.

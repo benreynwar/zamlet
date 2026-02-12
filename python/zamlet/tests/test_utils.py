@@ -6,24 +6,24 @@ from typing import List
 
 from zamlet import utils
 from zamlet.addresses import GlobalAddress, MemoryType, Ordering, WordOrder
-from zamlet.lamlet.lamlet import Lamlet
+from zamlet.oamlet.oamlet import Oamlet
 from zamlet.monitor import CompletionType, SpanType
-from zamlet.params import LamletParams
+from zamlet.params import ZamletParams
 from zamlet.runner import Clock
 
 logger = logging.getLogger(__name__)
 
 
-async def update(clock: Clock, lamlet: Lamlet):
+async def update(clock: Clock, lamlet: Oamlet):
     """Update loop for the lamlet."""
     while True:
         await clock.next_update
         lamlet.update()
 
 
-async def setup_lamlet(clock: Clock, params: LamletParams) -> Lamlet:
+async def setup_lamlet(clock: Clock, params: ZamletParams) -> Oamlet:
     """Create and initialize a lamlet with update loop."""
-    lamlet = Lamlet(clock, params)
+    lamlet = Oamlet(clock, params)
     clock.create_task(update(clock, lamlet))
     clock.create_task(lamlet.run())
     await clock.next_cycle
@@ -90,7 +90,7 @@ def get_from_list(l, index, default):
         return default
 
 
-def mask_bits_to_ew64_bytes(params: LamletParams, bits: List[bool]):
+def mask_bits_to_ew64_bytes(params: ZamletParams, bits: List[bool]):
     """
     Convert mask bits to ew=64 byte layout for loading into a mask register.
 
@@ -116,7 +116,7 @@ def mask_bits_to_ew64_bytes(params: LamletParams, bits: List[bool]):
 
 
 async def setup_mask_register(
-    lamlet: 'Lamlet',
+    lamlet: 'Oamlet',
     mask_reg: int,
     mask_bits: List[bool],
     page_bytes: int,
@@ -151,7 +151,7 @@ async def setup_mask_register(
 
 
 async def zero_register(
-    lamlet: 'Lamlet',
+    lamlet: 'Oamlet',
     reg: int,
     n_elements: int,
     ew: int,
@@ -202,7 +202,7 @@ PAGE_TYPE_EW = {
 }
 
 
-def allocate_page(lamlet: Lamlet, base_addr: int, page_idx: int, page_type: PageType):
+def allocate_page(lamlet: Oamlet, base_addr: int, page_idx: int, page_type: PageType):
     """Allocate a single page with the specified type."""
     page_bytes = lamlet.params.page_bytes
     page_addr = base_addr + page_idx * page_bytes
@@ -290,7 +290,7 @@ def generate_indices(vl: int, data_ew: int, n_pages: int, page_bytes: int, rnd: 
 
 
 async def setup_index_register(
-    lamlet: Lamlet,
+    lamlet: Oamlet,
     index_reg: int,
     indices: list[int],
     index_ew: int,
@@ -352,7 +352,7 @@ def random_stride(rnd: Random, element_bytes: int, page_bytes: int) -> int:
         return rnd.randint(page_bytes, page_bytes * 4)
 
 
-def max_vl_for_indexed(params: 'LamletParams', data_ew: int, index_ew: int) -> int:
+def max_vl_for_indexed(params: 'ZamletParams', data_ew: int, index_ew: int) -> int:
     """Calculate max vl that fits in available registers for indexed ops.
 
     Indexed ops need: ceil(vl/d) + ceil(vl/i) + 1 <= n_vregs

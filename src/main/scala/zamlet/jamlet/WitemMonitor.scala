@@ -2,11 +2,11 @@ package zamlet.jamlet
 
 import chisel3._
 import chisel3.util._
-import zamlet.LamletParams
+import zamlet.ZamletParams
 import zamlet.utils.{DoubleBuffer, ValidBuffer}
 
 object WitemMonitorUtils {
-  def coordsToVwIndex(params: LamletParams, wordOrder: WordOrder.Type, x: UInt, y: UInt): UInt = {
+  def coordsToVwIndex(params: ZamletParams, wordOrder: WordOrder.Type, x: UInt, y: UInt): UInt = {
     Mux(wordOrder === WordOrder.Standard,
         y * params.jTotalCols.U + x,
         0.U)
@@ -42,7 +42,7 @@ object WitemMonitorUtils {
     ))
   }
 
-  def elementsInVlineMask(params: LamletParams, ewCode: EwCode.Type): UInt = {
+  def elementsInVlineMask(params: ZamletParams, ewCode: EwCode.Type): UInt = {
     val vlineBits = params.wordWidth * params.jInL
     MuxLookup(ewCode.asUInt, (vlineBits / 64 - 1).U)(Seq(
       EwCode.Ew1.asUInt -> (vlineBits / 1 - 1).U,
@@ -62,7 +62,7 @@ object WitemMonitorUtils {
     ))
   }
 
-  def vwIndexToCoords(params: LamletParams, wordOrder: WordOrder.Type, vwIndex: UInt): (UInt, UInt) = {
+  def vwIndexToCoords(params: ZamletParams, wordOrder: WordOrder.Type, vwIndex: UInt): (UInt, UInt) = {
     // Use masking/shifting since jTotalCols is guaranteed power of 2
     val x = Mux(wordOrder === WordOrder.Standard,
                 vwIndex & (params.jTotalCols - 1).U,
@@ -74,7 +74,7 @@ object WitemMonitorUtils {
   }
 }
 
-class S11StridedIndexedState(params: LamletParams) extends Bundle {
+class S11StridedIndexedState(params: ZamletParams) extends Bundle {
   val iterating = Bool()
   val previousTag = UInt((params.log2WordBytes + 1).W)
   val phase = Bool()  // false = phase 0 (compute intermediates), true = phase 1 (compute outputs)
@@ -93,7 +93,7 @@ class S11StridedIndexedState(params: LamletParams) extends Bundle {
   val lastInstrIdent = params.ident()
 }
 
-class S11J2JState(params: LamletParams) extends Bundle {
+class S11J2JState(params: ZamletParams) extends Bundle {
   // Width constants derived from params
   private val ebPlusOneWidth = params.log2WordWidth + 1  // Bits to hold element width in bits (up to wordWidth)
   private val log2EwWidth = log2Ceil(params.log2WordWidth + 1)  // Bits to hold log2(element width)
@@ -136,7 +136,7 @@ class S11J2JState(params: LamletParams) extends Bundle {
   val storeMemBitAddr = UInt(bitAddrWidth.W)
 }
 
-class S11J2JResult(params: LamletParams) extends Bundle {
+class S11J2JResult(params: ZamletParams) extends Bundle {
   val output = new S12S13Reg(params)
   val nextState = new S11J2JState(params)
   val outValid = Bool()
@@ -161,7 +161,7 @@ class S11J2JResult(params: LamletParams) extends Bundle {
  */
 object S11J2J {
   def compute(
-    params: LamletParams,
+    params: ZamletParams,
     in_input: S10S11Reg,
     in_state: S11J2JState,
     thisX: UInt,
@@ -513,7 +513,7 @@ object S11J2J {
   }
 }
 
-class S11StridedIndexedResult(params: LamletParams) extends Bundle {
+class S11StridedIndexedResult(params: ZamletParams) extends Bundle {
   val output = new S12S13Reg(params)
   val nextState = new S11StridedIndexedState(params)
   val outValid = Bool()       // Emit to S12+ (send packet)
@@ -534,7 +534,7 @@ class S11StridedIndexedResult(params: LamletParams) extends Bundle {
  */
 object S11StridedIndexed {
   def compute(
-    params: LamletParams,
+    params: ZamletParams,
     in_input: S10S11Reg,
     in_state: S11StridedIndexedState
   ): S11StridedIndexedResult = {
@@ -708,25 +708,25 @@ object S11StridedIndexed {
   }
 }
 
-class CandidateSelect(params: LamletParams) extends Bundle {
+class CandidateSelect(params: ZamletParams) extends Bundle {
   val idx = UInt(log2Ceil(params.witemTableDepth).W)
   val prio = UInt(log2Ceil(params.witemTableDepth).W)
   val valid = Bool()
 }
 
-class S1S2Reg(params: LamletParams) extends Bundle {
+class S1S2Reg(params: ZamletParams) extends Bundle {
   val entryIndex = UInt(log2Ceil(params.witemTableDepth).W)
   val instrIdent = params.ident()
   val witemType = WitemType()
 }
 
-class S2S3Reg(params: LamletParams) extends Bundle {
+class S2S3Reg(params: ZamletParams) extends Bundle {
   val entryIndex = UInt(log2Ceil(params.witemTableDepth).W)
   val instrIdent = params.ident()
   val witemType = WitemType()
 }
 
-class S3S4Reg(params: LamletParams) extends Bundle {
+class S3S4Reg(params: ZamletParams) extends Bundle {
   val entryIndex = UInt(log2Ceil(params.witemTableDepth).W)
   val instrIdent = params.ident()
   val witemType = WitemType()
@@ -735,7 +735,7 @@ class S3S4Reg(params: LamletParams) extends Bundle {
   val elementIndex = params.elementIndex()
 }
 
-class S4S5Reg(params: LamletParams) extends Bundle {
+class S4S5Reg(params: ZamletParams) extends Bundle {
   val entryIndex = UInt(log2Ceil(params.witemTableDepth).W)
   val instrIdent = params.ident()
   val witemType = WitemType()
@@ -747,7 +747,7 @@ class S4S5Reg(params: LamletParams) extends Bundle {
   val indexBytePos = UInt(3.W)
 }
 
-class S5S6Reg(params: LamletParams) extends Bundle {
+class S5S6Reg(params: ZamletParams) extends Bundle {
   val entryIndex = UInt(log2Ceil(params.witemTableDepth).W)
   val instrIdent = params.ident()
   val witemType = WitemType()
@@ -759,7 +759,7 @@ class S5S6Reg(params: LamletParams) extends Bundle {
   val indexBytePos = UInt(3.W)
 }
 
-class S6S7Reg(params: LamletParams) extends Bundle {
+class S6S7Reg(params: ZamletParams) extends Bundle {
   val entryIndex = UInt(log2Ceil(params.witemTableDepth).W)
   val instrIdent = params.ident()
   val witemType = WitemType()
@@ -773,7 +773,7 @@ class S6S7Reg(params: LamletParams) extends Bundle {
   val indexWord = UInt(64.W)
 }
 
-class S7S8Reg(params: LamletParams) extends Bundle {
+class S7S8Reg(params: ZamletParams) extends Bundle {
   val entryIndex = UInt(log2Ceil(params.witemTableDepth).W)
   val instrIdent = params.ident()
   val witemType = WitemType()
@@ -786,7 +786,7 @@ class S7S8Reg(params: LamletParams) extends Bundle {
   val pageBoundary = params.memAddr()
 }
 
-class S8S9Reg(params: LamletParams) extends Bundle {
+class S8S9Reg(params: ZamletParams) extends Bundle {
   val entryIndex = UInt(log2Ceil(params.witemTableDepth).W)
   val instrIdent = params.ident()
   val witemType = WitemType()
@@ -800,7 +800,7 @@ class S8S9Reg(params: LamletParams) extends Bundle {
   val portionBytes = UInt(log2Ceil(params.wordBytes + 1).W)
 }
 
-class S10S11Reg(params: LamletParams) extends Bundle {
+class S10S11Reg(params: ZamletParams) extends Bundle {
   val entryIndex = UInt(log2Ceil(params.witemTableDepth).W)
   val instrIdent = params.ident()
   val witemType = WitemType()
@@ -820,7 +820,7 @@ class S10S11Reg(params: LamletParams) extends Bundle {
   val tlbFault = Bool()
 }
 
-class S12S13Reg(params: LamletParams) extends Bundle {
+class S12S13Reg(params: ZamletParams) extends Bundle {
   val entryIndex = UInt(log2Ceil(params.witemTableDepth).W)
   val instrIdent = params.ident()
   val witemType = WitemType()
@@ -836,7 +836,7 @@ class S12S13Reg(params: LamletParams) extends Bundle {
   val paddr = params.memAddr()
 }
 
-class S13S14Reg(params: LamletParams) extends Bundle {
+class S13S14Reg(params: ZamletParams) extends Bundle {
   val entryIndex = UInt(log2Ceil(params.witemTableDepth).W)
   val instrIdent = params.ident()
   val witemType = WitemType()
@@ -851,7 +851,7 @@ class S13S14Reg(params: LamletParams) extends Bundle {
   val paddr = params.memAddr()
 }
 
-class S14S15Reg(params: LamletParams) extends Bundle {
+class S14S15Reg(params: ZamletParams) extends Bundle {
   val entryIndex = UInt(log2Ceil(params.witemTableDepth).W)
   val instrIdent = params.ident()
   val witemType = WitemType()
@@ -868,7 +868,7 @@ class S14S15Reg(params: LamletParams) extends Bundle {
   val isSramRead = Bool()
 }
 
-class S15S16Reg(params: LamletParams) extends Bundle {
+class S15S16Reg(params: ZamletParams) extends Bundle {
   val entryIndex = UInt(log2Ceil(params.witemTableDepth).W)
   val instrIdent = params.ident()
   val witemType = WitemType()
@@ -883,7 +883,7 @@ class S15S16Reg(params: LamletParams) extends Bundle {
   val isSramRead = Bool()
 }
 
-class WitemMonitor(params: LamletParams) extends Module {
+class WitemMonitor(params: ZamletParams) extends Module {
   val wmp = params.witemMonitorParams
 
   val io = IO(new Bundle {
@@ -1409,7 +1409,7 @@ class WitemMonitor(params: LamletParams) extends Module {
   s7ElementBytes := s7RfEw >> 3.U
   val s7ElementEndAddr = Wire(UInt(params.memAddrWidth.W))
   s7ElementEndAddr := s7GAddr +& s7ElementBytes - 1.U
-  val log2PageBytes = params.log2PageBytesPerLamlet
+  val log2PageBytes = params.log2PageBytesPerZamlet
   val s7PageNum = s7GAddr(params.memAddrWidth - 1, log2PageBytes)
   val s7EndPageNum = s7ElementEndAddr(params.memAddrWidth - 1, log2PageBytes)
   val s7CrossesPage = s7PageNum =/= s7EndPageNum
@@ -2177,7 +2177,7 @@ object WitemMonitorGenerator extends zamlet.ModuleGenerator {
       println("Usage: <command> <outputDir> WitemMonitor <jamletParamsFileName>")
       null
     } else {
-      val params = LamletParams.fromFile(args(0))
+      val params = ZamletParams.fromFile(args(0))
       new WitemMonitor(params)
     }
   }

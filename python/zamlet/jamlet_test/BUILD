@@ -5,11 +5,11 @@ load("//bazel:cocotb_rules.bzl", "cocotb_binary", "cocotb_test")
 # WitemMonitor tests
 genrule(
     name = "witem_monitor_default_verilog",
-    srcs = ["//configs:lamlet_default.json"],
+    srcs = ["//configs:zamlet_default.json"],
     outs = ["WitemMonitor_default.sv"],
     cmd = """
     TMPDIR=$$(mktemp -d)
-    $(location //src/main/scala/zamlet/jamlet:witemmonitor) $$TMPDIR $(location //configs:lamlet_default.json)
+    $(location //src/main/scala/zamlet/jamlet:witemmonitor) $$TMPDIR $(location //configs:zamlet_default.json)
     cat $$TMPDIR/*.sv > $@
     rm -rf $$TMPDIR
     """,
@@ -34,9 +34,9 @@ cocotb_test(
     test_module = "zamlet.jamlet_test.test_witem_monitor",
     toplevel = "WitemMonitor",
     env = {
-        "ZAMLET_TEST_CONFIG_FILENAME": "configs/lamlet_default.json",
+        "ZAMLET_TEST_CONFIG_FILENAME": "configs/zamlet_default.json",
     },
-    data = ["//configs:lamlet_default.json"],
+    data = ["//configs:zamlet_default.json"],
     py_deps = [":test_witem_monitor_py"],
 )
 

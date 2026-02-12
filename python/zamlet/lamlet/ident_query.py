@@ -13,7 +13,7 @@ from zamlet.transactions.ident_query import IdentQuery
 from zamlet.monitor import ResourceType
 
 if TYPE_CHECKING:
-    from zamlet.lamlet.lamlet import Lamlet
+    from zamlet.oamlet.oamlet import Oamlet
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +26,7 @@ class IdentQuerySlot:
     tokens: list[int] = field(default_factory=list)
 
 
-def get_oldest_active_instr_ident_distance(lamlet: 'Lamlet', baseline: int) -> int | None:
+def get_oldest_active_instr_ident_distance(lamlet: 'Oamlet', baseline: int) -> int | None:
     """Return the distance to the oldest active instr_ident from baseline.
 
     Distance is computed as (ident - baseline) % max_response_tags, so older idents
@@ -59,7 +59,7 @@ def get_oldest_active_instr_ident_distance(lamlet: 'Lamlet', baseline: int) -> i
     return min_dist
 
 
-def get_writeset_ident(lamlet: 'Lamlet') -> int:
+def get_writeset_ident(lamlet: 'Oamlet') -> int:
     if lamlet.active_writeset_ident is not None:
         return lamlet.active_writeset_ident
     ident = lamlet.next_writeset_ident
@@ -67,7 +67,7 @@ def get_writeset_ident(lamlet: 'Lamlet') -> int:
     return ident
 
 
-def get_available_idents(lamlet: 'Lamlet') -> int:
+def get_available_idents(lamlet: 'Oamlet') -> int:
     """Return the number of idents available before collision.
 
     We subtract 1 to always leave one ident unused, avoiding the wraparound
@@ -87,7 +87,7 @@ def get_available_idents(lamlet: 'Lamlet') -> int:
     return result
 
 
-def create_ident_query(lamlet: 'Lamlet') -> IdentQuery:
+def create_ident_query(lamlet: 'Oamlet') -> IdentQuery:
     """Create an IdentQuery instruction using the next available slot."""
     assert not lamlet._iq_full
 
@@ -144,7 +144,7 @@ def create_ident_query(lamlet: 'Lamlet') -> IdentQuery:
 
 
 def receive_ident_query_response(
-        lamlet: 'Lamlet', response_ident: int,
+        lamlet: 'Oamlet', response_ident: int,
         min_distance: int, query_span_id: int):
     """Process ident query response. Called from message handler.
 
@@ -247,7 +247,7 @@ def receive_ident_query_response(
     lamlet.monitor.complete_span(query_span_id)
 
 
-def should_send_ident_query(lamlet: 'Lamlet') -> bool:
+def should_send_ident_query(lamlet: 'Oamlet') -> bool:
     """Check if we should send an ident query (for tokens or idents).
 
     Returns True if a slot is available and enough tokens have
@@ -265,7 +265,7 @@ def should_send_ident_query(lamlet: 'Lamlet') -> bool:
                for t in lamlet._tokens_used_since_query)
 
 
-async def get_instr_ident(lamlet: 'Lamlet', n_idents: int = 1) -> int:
+async def get_instr_ident(lamlet: 'Oamlet', n_idents: int = 1) -> int:
     """Allocate n_idents consecutive instruction identifiers.
 
     Waits if not enough idents are available.

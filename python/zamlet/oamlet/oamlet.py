@@ -29,7 +29,7 @@ from zamlet.lamlet.lamlet_waiting_item import (
     LamletWaitingItem, LamletWaitingFuture,
     LamletWaitingLoadIndexedElement, LamletWaitingStoreIndexedElement)
 from zamlet.monitor import CompletionType, SpanType
-from zamlet.params import LamletParams
+from zamlet.params import ZamletParams
 from zamlet.message import (Header, MessageType, Direction, SendType, TaggedHeader,
                             WriteMemWordHeader, CHANNEL_MAPPING, IdentHeader,
                             ElementIndexHeader, ReadMemWordHeader)
@@ -46,7 +46,7 @@ from zamlet.transactions.load_indexed_element import LoadIndexedElement
 from zamlet.transactions.store_indexed_element import StoreIndexedElement
 from zamlet.transactions.write_imm_bytes import WriteImmBytes
 from zamlet.transactions.read_byte import ReadByte
-from zamlet.lamlet.scalar import ScalarState
+from zamlet.oamlet.scalar import ScalarState
 from zamlet.lamlet.ordered_buffer import OrderedBuffer, ElementEntry, ElementState
 from zamlet import utils
 import zamlet.disasm_trace as dt
@@ -62,9 +62,9 @@ from zamlet.lamlet import vregister
 logger = logging.getLogger(__name__)
 
 
-class Lamlet:
+class Oamlet:
 
-    def __init__(self, clock, params: LamletParams,
+    def __init__(self, clock, params: ZamletParams,
                  word_order: WordOrder = WordOrder.STANDARD):
         self.clock = clock
         self.params = params

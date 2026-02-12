@@ -22,7 +22,7 @@ chisel_binary(
     name = "synchronizer",
     srcs = [
         "Synchronizer.scala",
-        "//src/main/scala/zamlet:LamletParams.scala",
+        "//src/main/scala/zamlet:ZamletParams.scala",
         "//src/main/scala/zamlet:ModuleGenerator.scala",
         "//src/main/scala/zamlet/utils:utils_sources",
     ],
@@ -42,7 +42,7 @@ chisel_library(
     name = "kamlet_lib",
     srcs = [
         ":kamlet_sources",
-        "//src/main/scala/zamlet:LamletParams.scala",
+        "//src/main/scala/zamlet:ZamletParams.scala",
         "//src/main/scala/zamlet:ModuleGenerator.scala",
         "//src/main/scala/zamlet/jamlet:jamlet_sources",
         "//src/main/scala/zamlet/utils:utils_sources",
@@ -62,7 +62,7 @@ chisel_binary(
     name = "kamlet",
     srcs = [
         ":kamlet_sources",
-        "//src/main/scala/zamlet:LamletParams.scala",
+        "//src/main/scala/zamlet:ZamletParams.scala",
         "//src/main/scala/zamlet:ModuleGenerator.scala",
         "//src/main/scala/zamlet/jamlet:jamlet_sources",
         "//src/main/scala/zamlet/utils:utils_sources",
@@ -83,7 +83,7 @@ chisel_binary(
     name = "kamletmesh",
     srcs = [
         ":kamlet_sources",
-        "//src/main/scala/zamlet:LamletParams.scala",
+        "//src/main/scala/zamlet:ZamletParams.scala",
         "//src/main/scala/zamlet:ModuleGenerator.scala",
         "//src/main/scala/zamlet/jamlet:jamlet_sources",
         "//src/main/scala/zamlet/utils:utils_sources",

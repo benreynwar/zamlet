@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from zamlet.lamlet.lamlet import Lamlet
+    from zamlet.oamlet.oamlet import Oamlet
 
 from zamlet.register_names import reg_name
 
@@ -43,7 +43,7 @@ class Mul:
     def __str__(self):
         return f'mul\t{reg_name(self.rd)},{reg_name(self.rs1)},{reg_name(self.rs2)}'
 
-    async def update_state(self, s: 'Lamlet'):
+    async def update_state(self, s: 'Oamlet'):
         await s.scalar.wait_all_regs_ready(self.rd, None, [self.rs1, self.rs2], [])
         s.pc += 4
         val1 = int.from_bytes(s.scalar.read_reg(self.rs1), byteorder='little', signed=False)
@@ -68,7 +68,7 @@ class Mulh:
     def __str__(self):
         return f'mulh\t{reg_name(self.rd)},{reg_name(self.rs1)},{reg_name(self.rs2)}'
 
-    async def update_state(self, s: 'Lamlet'):
+    async def update_state(self, s: 'Oamlet'):
         await s.scalar.wait_all_regs_ready(self.rd, None, [self.rs1, self.rs2], [])
         s.pc += 4
         val1 = int.from_bytes(s.scalar.read_reg(self.rs1), byteorder='little', signed=False)
@@ -97,7 +97,7 @@ class Mulhsu:
     def __str__(self):
         return f'mulhsu\t{reg_name(self.rd)},{reg_name(self.rs1)},{reg_name(self.rs2)}'
 
-    async def update_state(self, s: 'Lamlet'):
+    async def update_state(self, s: 'Oamlet'):
         await s.scalar.wait_all_regs_ready(self.rd, None, [self.rs1, self.rs2], [])
         s.pc += 4
         val1 = int.from_bytes(s.scalar.read_reg(self.rs1), byteorder='little', signed=False)
@@ -124,7 +124,7 @@ class Mulhu:
     def __str__(self):
         return f'mulhu\t{reg_name(self.rd)},{reg_name(self.rs1)},{reg_name(self.rs2)}'
 
-    async def update_state(self, s: 'Lamlet'):
+    async def update_state(self, s: 'Oamlet'):
         await s.scalar.wait_all_regs_ready(self.rd, None, [self.rs1, self.rs2], [])
         s.pc += 4
         val1 = int.from_bytes(s.scalar.read_reg(self.rs1), byteorder='little', signed=False)
@@ -149,7 +149,7 @@ class Div:
     def __str__(self):
         return f'div\t{reg_name(self.rd)},{reg_name(self.rs1)},{reg_name(self.rs2)}'
 
-    async def update_state(self, s: 'Lamlet'):
+    async def update_state(self, s: 'Oamlet'):
         await s.scalar.wait_all_regs_ready(self.rd, None, [self.rs1, self.rs2], [])
         s.pc += 4
         val1 = int.from_bytes(s.scalar.read_reg(self.rs1), byteorder='little', signed=False)
@@ -188,7 +188,7 @@ class Divu:
     def __str__(self):
         return f'divu\t{reg_name(self.rd)},{reg_name(self.rs1)},{reg_name(self.rs2)}'
 
-    async def update_state(self, s: 'Lamlet'):
+    async def update_state(self, s: 'Oamlet'):
         await s.scalar.wait_all_regs_ready(self.rd, None, [self.rs1, self.rs2], [])
         s.pc += 4
         val1 = int.from_bytes(s.scalar.read_reg(self.rs1), byteorder='little', signed=False)
@@ -216,7 +216,7 @@ class Rem:
     def __str__(self):
         return f'rem\t{reg_name(self.rd)},{reg_name(self.rs1)},{reg_name(self.rs2)}'
 
-    async def update_state(self, s: 'Lamlet'):
+    async def update_state(self, s: 'Oamlet'):
         await s.scalar.wait_all_regs_ready(self.rd, None, [self.rs1, self.rs2], [])
         s.pc += 4
         val1 = int.from_bytes(s.scalar.read_reg(self.rs1), byteorder='little', signed=False)
@@ -255,7 +255,7 @@ class Remu:
     def __str__(self):
         return f'remu\t{reg_name(self.rd)},{reg_name(self.rs1)},{reg_name(self.rs2)}'
 
-    async def update_state(self, s: 'Lamlet'):
+    async def update_state(self, s: 'Oamlet'):
         await s.scalar.wait_all_regs_ready(self.rd, None, [self.rs1, self.rs2], [])
         s.pc += 4
         val1 = int.from_bytes(s.scalar.read_reg(self.rs1), byteorder='little', signed=False)
@@ -287,7 +287,7 @@ class Mulw:
         return (f'mulw\t{reg_name(self.rd)},'
                 f'{reg_name(self.rs1)},{reg_name(self.rs2)}')
 
-    async def update_state(self, s: 'Lamlet'):
+    async def update_state(self, s: 'Oamlet'):
         await s.scalar.wait_all_regs_ready(
             self.rd, None, [self.rs1, self.rs2], [])
         s.pc += 4
@@ -319,7 +319,7 @@ class Divw:
         return (f'divw\t{reg_name(self.rd)},'
                 f'{reg_name(self.rs1)},{reg_name(self.rs2)}')
 
-    async def update_state(self, s: 'Lamlet'):
+    async def update_state(self, s: 'Oamlet'):
         await s.scalar.wait_all_regs_ready(
             self.rd, None, [self.rs1, self.rs2], [])
         s.pc += 4
@@ -358,7 +358,7 @@ class Divuw:
         return (f'divuw\t{reg_name(self.rd)},'
                 f'{reg_name(self.rs1)},{reg_name(self.rs2)}')
 
-    async def update_state(self, s: 'Lamlet'):
+    async def update_state(self, s: 'Oamlet'):
         await s.scalar.wait_all_regs_ready(
             self.rd, None, [self.rs1, self.rs2], [])
         s.pc += 4
@@ -392,7 +392,7 @@ class Remw:
         return (f'remw\t{reg_name(self.rd)},'
                 f'{reg_name(self.rs1)},{reg_name(self.rs2)}')
 
-    async def update_state(self, s: 'Lamlet'):
+    async def update_state(self, s: 'Oamlet'):
         await s.scalar.wait_all_regs_ready(
             self.rd, None, [self.rs1, self.rs2], [])
         s.pc += 4
@@ -431,7 +431,7 @@ class Remuw:
         return (f'remuw\t{reg_name(self.rd)},'
                 f'{reg_name(self.rs1)},{reg_name(self.rs2)}')
 
-    async def update_state(self, s: 'Lamlet'):
+    async def update_state(self, s: 'Oamlet'):
         await s.scalar.wait_all_regs_ready(
             self.rd, None, [self.rs1, self.rs2], [])
         s.pc += 4

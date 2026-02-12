@@ -19,7 +19,7 @@ from zamlet.waiting_item import WaitingItem, WaitingItemRequiresCache
 from zamlet.message import TaggedHeader, MessageType, SendType
 from zamlet.kamlet.cache_table import SendState, ReceiveState, CacheState
 from zamlet.kamlet import kinstructions
-from zamlet.params import LamletParams
+from zamlet.params import ZamletParams
 from zamlet.transactions import register_handler
 
 if TYPE_CHECKING:
@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 
 class WaitingStoreWordSrc(WaitingItem):
 
-    def __init__(self, params: LamletParams, instr: kinstructions.StoreWord, rf_ident: int):
+    def __init__(self, params: ZamletParams, instr: kinstructions.StoreWord, rf_ident: int):
         super().__init__(item=instr, instr_ident=instr.instr_ident, rf_ident=rf_ident)
         self.protocol_states = [SendState.COMPLETE for _ in range(params.j_in_k)]
         self.writeset_ident = instr.writeset_ident
@@ -55,7 +55,7 @@ class WaitingStoreWordDst(WaitingItemRequiresCache):
 
     cache_is_write = True
 
-    def __init__(self, params: LamletParams, instr: kinstructions.StoreWord):
+    def __init__(self, params: ZamletParams, instr: kinstructions.StoreWord):
         super().__init__(
             item=instr, instr_ident=instr.instr_ident + 1,
             writeset_ident=instr.writeset_ident, rf_ident=None)

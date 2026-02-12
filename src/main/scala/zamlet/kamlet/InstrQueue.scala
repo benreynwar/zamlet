@@ -2,7 +2,7 @@ package zamlet.kamlet
 
 import chisel3._
 import chisel3.util._
-import zamlet.LamletParams
+import zamlet.ZamletParams
 import zamlet.jamlet.{NetworkWord, PacketHeader, MessageType}
 
 /**
@@ -22,7 +22,7 @@ class InstrQueueErrors extends Bundle {
  *
  * This module strips the header and queues the kinstr payloads.
  */
-class InstrQueue(params: LamletParams, depth: Int = 8) extends Module {
+class InstrQueue(params: ZamletParams, depth: Int = 8) extends Module {
   val io = IO(new Bundle {
     // Packet input (from jamlet)
     val packetIn = Flipped(Decoupled(new NetworkWord(params)))

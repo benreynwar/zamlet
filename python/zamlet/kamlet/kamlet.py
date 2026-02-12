@@ -3,7 +3,7 @@ from typing import List, Tuple
 
 from zamlet import addresses
 from zamlet.addresses import KMAddr
-from zamlet.params import LamletParams
+from zamlet.params import ZamletParams
 from zamlet.jamlet.jamlet import Jamlet
 from zamlet.message import Header, MessageType, SendType, AddressHeader
 from zamlet.utils import Queue
@@ -36,7 +36,7 @@ class Kamlet:
     They share an instruction buffer, and cache tracking logic.
     """
 
-    def __init__(self, clock, params: LamletParams, min_x: int, min_y: int, tlb: addresses.TLB,
+    def __init__(self, clock, params: ZamletParams, min_x: int, min_y: int, tlb: addresses.TLB,
                  monitor: Monitor, lamlet_x: int, lamlet_y: int,
                  mem_coords: List[Tuple[int, int]]):
         self.clock = clock

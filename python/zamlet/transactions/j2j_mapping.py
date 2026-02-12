@@ -16,7 +16,7 @@ from typing import List, TYPE_CHECKING
 import logging
 
 from zamlet import addresses, utils
-from zamlet.params import LamletParams
+from zamlet.params import ZamletParams
 
 if TYPE_CHECKING:
     from zamlet.addresses import KMAddr, Ordering
@@ -46,7 +46,7 @@ class RegMemMapping:
 
 
 def get_mapping_from_reg(
-    params: LamletParams,
+    params: ZamletParams,
     k_maddr: 'KMAddr',
     reg_ordering: 'Ordering',
     start_index: int,
@@ -128,7 +128,7 @@ def get_mapping_from_reg(
 
 
 def get_mapping_from_mem(
-    params: LamletParams,
+    params: ZamletParams,
     k_maddr: 'KMAddr',
     reg_ordering: 'Ordering',
     start_index: int,

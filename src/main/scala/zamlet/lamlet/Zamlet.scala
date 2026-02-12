@@ -9,13 +9,13 @@ import freechips.rocketchip.tilelink._
 import freechips.rocketchip.diplomacy._
 
 import shuttle.common._
-import zamlet.LamletParams
+import zamlet.ZamletParams
 import zamlet.kamlet.{KamletMesh, MeshEdgeNeighbors}
 import zamlet.jamlet.NetworkWord
 import zamlet.oamlet.VPUMemParamsKey
 
 /** Config key for Zamlet parameters */
-case object ZamletParamsKey extends Field[LamletParams]
+case object ZamletParamsKey extends Field[ZamletParams]
 
 /**
  * Zamlet - top-level vector unit containing Lamlet and KamletMesh.

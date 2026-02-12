@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from zamlet.lamlet.lamlet import Lamlet
+    from zamlet.oamlet.oamlet import Oamlet
 
 from zamlet.register_names import reg_name, freg_name
 from zamlet.instructions.control_flow import format_branch_target
@@ -31,7 +31,7 @@ class CNop:
     def __str__(self):
         return 'nop'
 
-    async def update_state(self, s: 'Lamlet'):
+    async def update_state(self, s: 'Oamlet'):
         s.pc += 2
 
 
@@ -52,7 +52,7 @@ class CAddi4spn:
         # Match objdump pseudo-instruction convention
         return f'add\t{reg_name(self.rd)},sp,{self.imm}'
 
-    async def update_state(self, s: 'Lamlet'):
+    async def update_state(self, s: 'Oamlet'):
         await s.scalar.wait_all_regs_ready(self.rd, None, [2], [])
         sp_val = int.from_bytes(s.scalar.read_reg(2), byteorder='little', signed=False)
         mask = (1 << (s.params.word_bytes * 8)) - 1
@@ -78,7 +78,7 @@ class CAddi:
         # Match objdump pseudo-instruction (add when rd == rs1, always true for C.ADDI)
         return f'add\t{reg_name(self.rd)},{reg_name(self.rd)},{self.imm}'
 
-    async def update_state(self, s: 'Lamlet'):
+    async def update_state(self, s: 'Oamlet'):
         await s.scalar.wait_all_regs_ready(self.rd, None, [self.rd], [])
         rd_val = int.from_bytes(s.scalar.read_reg(self.rd), byteorder='little', signed=False)
         mask = (1 << (s.params.word_bytes * 8)) - 1
@@ -103,7 +103,7 @@ class CLi:
     def __str__(self):
         return f'li\t{reg_name(self.rd)},{self.imm}'
 
-    async def update_state(self, s: 'Lamlet'):
+    async def update_state(self, s: 'Oamlet'):
         await s.scalar.wait_all_regs_ready(self.rd, None, [], [])
         bs = self.imm.to_bytes(s.params.word_bytes, byteorder='little', signed=True)
         s.scalar.write_reg(self.rd, bs)
@@ -130,7 +130,7 @@ class CAddiw:
             # Match objdump pseudo-instruction (addw when rd == rs1, always true for C.ADDIW)
             return f'addw\t{reg_name(self.rd)},{reg_name(self.rd)},{self.imm}'
 
-    async def update_state(self, s: 'Lamlet'):
+    async def update_state(self, s: 'Oamlet'):
         await s.scalar.wait_all_regs_ready(self.rd, None, [self.rd], [])
         rd_val = int.from_bytes(s.scalar.read_reg(self.rd), byteorder='little', signed=False)
         result = (rd_val + self.imm) & 0xffffffff
@@ -156,7 +156,7 @@ class CLui:
     def __str__(self):
         return f'lui\t{reg_name(self.rd)},0x{self.imm & 0xfffff:x}'
 
-    async def update_state(self, s: 'Lamlet'):
+    async def update_state(self, s: 'Oamlet'):
         value = self.imm << 12
         data = value.to_bytes(s.params.word_bytes, byteorder='little', signed=True)
         s.scalar.write_reg(self.rd, data)
@@ -179,7 +179,7 @@ class CAddi16sp:
         # Match objdump pseudo-instruction (add when rd == rs1)
         return f'add\tsp,sp,{self.imm}'
 
-    async def update_state(self, s: 'Lamlet'):
+    async def update_state(self, s: 'Oamlet'):
         await s.scalar.wait_all_regs_ready(None, None, [2], [])
         sp_val = int.from_bytes(s.scalar.read_reg(2), byteorder='little', signed=False)
         mask = (1 << (s.params.word_bytes * 8)) - 1
@@ -204,7 +204,7 @@ class CMv:
     def __str__(self):
         return f'mv\t{reg_name(self.rd)},{reg_name(self.rs2)}'
 
-    async def update_state(self, s: 'Lamlet'):
+    async def update_state(self, s: 'Oamlet'):
         await s.scalar.wait_all_regs_ready(self.rd, None, [self.rs2], [])
         rs2_bytes = s.scalar.read_reg(self.rs2)
         s.scalar.write_reg(self.rd, rs2_bytes)
@@ -226,7 +226,7 @@ class CAdd:
     def __str__(self):
         return f'add\t{reg_name(self.rd)},{reg_name(self.rd)},{reg_name(self.rs2)}'
 
-    async def update_state(self, s: 'Lamlet'):
+    async def update_state(self, s: 'Oamlet'):
         await s.scalar.wait_all_regs_ready(self.rd, None, [self.rd, self.rs2], [])
         rd_val = int.from_bytes(s.scalar.read_reg(self.rd), byteorder='little', signed=False)
         rs2_val = int.from_bytes(s.scalar.read_reg(self.rs2), byteorder='little', signed=False)
@@ -252,7 +252,7 @@ class CSlli:
         # Match objdump pseudo-instruction convention (sll when rd == rs1, always true for C.SLLI)
         return f'sll\t{reg_name(self.rd)},{reg_name(self.rd)},0x{self.shamt:x}'
 
-    async def update_state(self, s: 'Lamlet'):
+    async def update_state(self, s: 'Oamlet'):
         await s.scalar.wait_all_regs_ready(self.rd, None, [self.rd], [])
         rd_val = int.from_bytes(s.scalar.read_reg(self.rd), byteorder='little', signed=False)
         mask = (1 << (s.params.word_bytes * 8)) - 1
@@ -277,7 +277,7 @@ class CSub:
     def __str__(self):
         return f'sub\t{reg_name(self.rd_rs1)},{reg_name(self.rd_rs1)},{reg_name(self.rs2)}'
 
-    async def update_state(self, s: 'Lamlet'):
+    async def update_state(self, s: 'Oamlet'):
         await s.scalar.wait_all_regs_ready(self.rd_rs1, None, [self.rd_rs1, self.rs2], [])
         rd_val = int.from_bytes(s.scalar.read_reg(self.rd_rs1), byteorder='little', signed=False)
         rs2_val = int.from_bytes(s.scalar.read_reg(self.rs2), byteorder='little', signed=False)
@@ -303,7 +303,7 @@ class CXor:
     def __str__(self):
         return f'xor\t{reg_name(self.rd_rs1)},{reg_name(self.rd_rs1)},{reg_name(self.rs2)}'
 
-    async def update_state(self, s: 'Lamlet'):
+    async def update_state(self, s: 'Oamlet'):
         await s.scalar.wait_all_regs_ready(self.rd_rs1, None, [self.rd_rs1, self.rs2], [])
         rd_val = int.from_bytes(s.scalar.read_reg(self.rd_rs1), byteorder='little', signed=False)
         rs2_val = int.from_bytes(s.scalar.read_reg(self.rs2), byteorder='little', signed=False)
@@ -328,7 +328,7 @@ class COr:
     def __str__(self):
         return f'or\t{reg_name(self.rd_rs1)},{reg_name(self.rd_rs1)},{reg_name(self.rs2)}'
 
-    async def update_state(self, s: 'Lamlet'):
+    async def update_state(self, s: 'Oamlet'):
         await s.scalar.wait_all_regs_ready(self.rd_rs1, None, [self.rd_rs1, self.rs2], [])
         rd_val = int.from_bytes(s.scalar.read_reg(self.rd_rs1), byteorder='little', signed=False)
         rs2_val = int.from_bytes(s.scalar.read_reg(self.rs2), byteorder='little', signed=False)
@@ -353,7 +353,7 @@ class CAnd:
     def __str__(self):
         return f'and\t{reg_name(self.rd_rs1)},{reg_name(self.rd_rs1)},{reg_name(self.rs2)}'
 
-    async def update_state(self, s: 'Lamlet'):
+    async def update_state(self, s: 'Oamlet'):
         await s.scalar.wait_all_regs_ready(self.rd_rs1, None, [self.rd_rs1, self.rs2], [])
         rd_val = int.from_bytes(s.scalar.read_reg(self.rd_rs1), byteorder='little', signed=False)
         rs2_val = int.from_bytes(s.scalar.read_reg(self.rs2), byteorder='little', signed=False)
@@ -379,7 +379,7 @@ class CAndi:
         # Match objdump pseudo-instruction (and when rd == rs1, always true for C.ANDI)
         return f'and\t{reg_name(self.rd_rs1)},{reg_name(self.rd_rs1)},{self.imm}'
 
-    async def update_state(self, s: 'Lamlet'):
+    async def update_state(self, s: 'Oamlet'):
         await s.scalar.wait_all_regs_ready(self.rd_rs1, None, [self.rd_rs1], [])
         rd_val = int.from_bytes(s.scalar.read_reg(self.rd_rs1), byteorder='little', signed=False)
         result = rd_val & self.imm
@@ -404,7 +404,7 @@ class CSrli:
         # Match objdump pseudo-instruction (srl when rd == rs1, always true for C.SRLI)
         return f'srl\t{reg_name(self.rd_rs1)},{reg_name(self.rd_rs1)},0x{self.shamt:x}'
 
-    async def update_state(self, s: 'Lamlet'):
+    async def update_state(self, s: 'Oamlet'):
         await s.scalar.wait_all_regs_ready(self.rd_rs1, None, [self.rd_rs1], [])
         val = int.from_bytes(s.scalar.read_reg(self.rd_rs1), byteorder='little', signed=False)
         result = val >> self.shamt
@@ -429,7 +429,7 @@ class CSrai:
         # Match objdump pseudo-instruction (sra when rd == rs1, always true for C.SRAI)
         return f'sra\t{reg_name(self.rd_rs1)},{reg_name(self.rd_rs1)},0x{self.shamt:x}'
 
-    async def update_state(self, s: 'Lamlet'):
+    async def update_state(self, s: 'Oamlet'):
         await s.scalar.wait_all_regs_ready(self.rd_rs1, None, [self.rd_rs1], [])
         val = int.from_bytes(s.scalar.read_reg(self.rd_rs1), byteorder='little', signed=True)
         result = val >> self.shamt
@@ -457,7 +457,7 @@ class CJ:
         target = format_branch_target(pc, self.offset)
         return f'j\t{target}'
 
-    async def update_state(self, s: 'Lamlet'):
+    async def update_state(self, s: 'Oamlet'):
         s.pc += self.offset
 
 
@@ -481,7 +481,7 @@ class CBeqz:
         target = format_branch_target(pc, self.offset)
         return f'beqz\t{reg_name(self.rs1)},{target}'
 
-    async def update_state(self, s: 'Lamlet'):
+    async def update_state(self, s: 'Oamlet'):
         await s.scalar.wait_all_regs_ready(None, None, [self.rs1], [])
         rs1_val = int.from_bytes(s.scalar.read_reg(self.rs1), byteorder='little', signed=False)
         if rs1_val == 0:
@@ -510,7 +510,7 @@ class CBnez:
         target = format_branch_target(pc, self.offset)
         return f'bnez\t{reg_name(self.rs1)},{target}'
 
-    async def update_state(self, s: 'Lamlet'):
+    async def update_state(self, s: 'Oamlet'):
         await s.scalar.wait_all_regs_ready(None, None, [self.rs1], [])
         rs1_val = int.from_bytes(s.scalar.read_reg(self.rs1), byteorder='little', signed=False)
         if rs1_val != 0:
@@ -534,7 +534,7 @@ class CSdsp:
     def __str__(self):
         return f'sd\t{reg_name(self.rs2)},{self.offset}(sp)'
 
-    async def update_state(self, s: 'Lamlet'):
+    async def update_state(self, s: 'Oamlet'):
         await s.scalar.wait_all_regs_ready(None, None, [2, self.rs2], [])
         sp_bytes = s.scalar.read_reg(2)
         sp = int.from_bytes(sp_bytes, byteorder='little', signed=False)
@@ -563,7 +563,7 @@ class CFldsp:
     def __str__(self):
         return f'fld\t{freg_name(self.fd)},{self.offset}(sp)'
 
-    async def update_state(self, s: 'Lamlet'):
+    async def update_state(self, s: 'Oamlet'):
         await s.scalar.wait_all_regs_ready(None, self.fd, [2], [])
         sp_bytes = s.scalar.read_reg(2)
         sp = int.from_bytes(sp_bytes, byteorder='little', signed=False)
@@ -589,7 +589,7 @@ class CFsdsp:
     def __str__(self):
         return f'fsd\t{freg_name(self.fs2)},{self.offset}(sp)'
 
-    async def update_state(self, s: 'Lamlet'):
+    async def update_state(self, s: 'Oamlet'):
         await s.scalar.wait_all_regs_ready(None, None, [2], [self.fs2])
         sp_bytes = s.scalar.read_reg(2)
         sp = int.from_bytes(sp_bytes, byteorder='little', signed=False)
@@ -614,7 +614,7 @@ class CSwsp:
     def __str__(self):
         return f'sw\t{reg_name(self.rs2)},{self.offset}(sp)'
 
-    async def update_state(self, s: 'Lamlet'):
+    async def update_state(self, s: 'Oamlet'):
         await s.scalar.wait_all_regs_ready(None, None, [2, self.rs2], [])
         sp_bytes = s.scalar.read_reg(2)
         sp = int.from_bytes(sp_bytes, byteorder='little', signed=False)
@@ -648,7 +648,7 @@ class CLwsp:
         result_bytes = value.to_bytes(s.params.word_bytes, byteorder='little', signed=False)
         result_future.set_result(result_bytes)
 
-    async def update_state(self, s: 'Lamlet'):
+    async def update_state(self, s: 'Oamlet'):
         await s.scalar.wait_all_regs_ready(None, None, [2], [])
         sp_bytes = s.scalar.read_reg(2)
         sp = int.from_bytes(sp_bytes, byteorder='little', signed=False)
@@ -675,7 +675,7 @@ class CLdsp:
     def __str__(self):
         return f'ld\t{reg_name(self.rd)},{self.offset}(sp)'
 
-    async def update_state(self, s: 'Lamlet'):
+    async def update_state(self, s: 'Oamlet'):
         await s.scalar.wait_all_regs_ready(None, None, [2], [])
         sp_bytes = s.scalar.read_reg(2)
         sp = int.from_bytes(sp_bytes, byteorder='little', signed=False)
@@ -711,7 +711,7 @@ class CLw:
         result_bytes = value.to_bytes(s.params.word_bytes, byteorder='little', signed=False)
         result_future.set_result(result_bytes)
 
-    async def update_state(self, s: 'Lamlet'):
+    async def update_state(self, s: 'Oamlet'):
         await s.scalar.wait_all_regs_ready(None, None, [self.rs1], [])
         rs1_bytes = s.scalar.read_reg(self.rs1)
         rs1_val = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
@@ -740,7 +740,7 @@ class CLd:
     def __str__(self):
         return f'ld\t{reg_name(self.rd)},{self.offset}({reg_name(self.rs1)})'
 
-    async def update_state(self, s: 'Lamlet'):
+    async def update_state(self, s: 'Oamlet'):
         await s.scalar.wait_all_regs_ready(None, None, [self.rs1], [])
         rs1_bytes = s.scalar.read_reg(self.rs1)
         rs1_val = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
@@ -767,7 +767,7 @@ class CSw:
     def __str__(self):
         return f'sw\t{reg_name(self.rs2)},{self.offset}({reg_name(self.rs1)})'
 
-    async def update_state(self, s: 'Lamlet'):
+    async def update_state(self, s: 'Oamlet'):
         await s.scalar.wait_all_regs_ready(None, None, [self.rs1, self.rs2], [])
         rs1_bytes = s.scalar.read_reg(self.rs1)
         rs1_val = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
@@ -794,7 +794,7 @@ class CSd:
     def __str__(self):
         return f'sd\t{reg_name(self.rs2)},{self.offset}({reg_name(self.rs1)})'
 
-    async def update_state(self, s: 'Lamlet'):
+    async def update_state(self, s: 'Oamlet'):
         await s.scalar.wait_all_regs_ready(None, None, [self.rs1, self.rs2], [])
         rs1_bytes = s.scalar.read_reg(self.rs1)
         rs1_val = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
@@ -821,7 +821,7 @@ class CFld:
     def __str__(self):
         return f'fld\t{freg_name(self.fd)},{self.offset}({reg_name(self.rs1)})'
 
-    async def update_state(self, s: 'Lamlet'):
+    async def update_state(self, s: 'Oamlet'):
         await s.scalar.wait_all_regs_ready(None, self.fd, [self.rs1], [])
         rs1_bytes = s.scalar.read_reg(self.rs1)
         rs1_val = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
@@ -848,7 +848,7 @@ class CFsd:
     def __str__(self):
         return f'fsd\t{freg_name(self.fs2)},{self.offset}({reg_name(self.rs1)})'
 
-    async def update_state(self, s: 'Lamlet'):
+    async def update_state(self, s: 'Oamlet'):
         await s.scalar.wait_all_regs_ready(None, None, [self.rs1], [self.fs2])
         rs1_bytes = s.scalar.read_reg(self.rs1)
         rs1_val = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
@@ -873,7 +873,7 @@ class CAddw:
     def __str__(self):
         return f'addw\t{reg_name(self.rd_rs1)},{reg_name(self.rd_rs1)},{reg_name(self.rs2)}'
 
-    async def update_state(self, s: 'Lamlet'):
+    async def update_state(self, s: 'Oamlet'):
         await s.scalar.wait_all_regs_ready(self.rd_rs1, None, [self.rd_rs1, self.rs2], [])
         rd_val = int.from_bytes(s.scalar.read_reg(self.rd_rs1), byteorder='little', signed=False)
         rs2_val = int.from_bytes(s.scalar.read_reg(self.rs2), byteorder='little', signed=False)
@@ -900,7 +900,7 @@ class CSubw:
     def __str__(self):
         return f'subw\t{reg_name(self.rd_rs1)},{reg_name(self.rd_rs1)},{reg_name(self.rs2)}'
 
-    async def update_state(self, s: 'Lamlet'):
+    async def update_state(self, s: 'Oamlet'):
         await s.scalar.wait_all_regs_ready(self.rd_rs1, None, [self.rd_rs1, self.rs2], [])
         rd_val = int.from_bytes(s.scalar.read_reg(self.rd_rs1), byteorder='little', signed=False)
         rs2_val = int.from_bytes(s.scalar.read_reg(self.rs2), byteorder='little', signed=False)
@@ -929,7 +929,7 @@ class CJr:
         else:
             return f'jr\t{reg_name(self.rs1)}'
 
-    async def update_state(self, s: 'Lamlet'):
+    async def update_state(self, s: 'Oamlet'):
         await s.scalar.wait_all_regs_ready(None, None, [self.rs1], [])
         target = int.from_bytes(s.scalar.read_reg(self.rs1), byteorder='little', signed=False)
         s.pc = target
@@ -950,7 +950,7 @@ class CJalr:
     def __str__(self):
         return f'jalr\t{reg_name(self.rs1)}'
 
-    async def update_state(self, s: 'Lamlet'):
+    async def update_state(self, s: 'Oamlet'):
         await s.scalar.wait_all_regs_ready(None, None, [self.rs1], [])
         target = int.from_bytes(s.scalar.read_reg(self.rs1), byteorder='little', signed=False)
         return_addr = s.pc + 2
@@ -972,5 +972,5 @@ class CEbreak:
     def __str__(self):
         return 'ebreak'
 
-    async def update_state(self, s: 'Lamlet'):
+    async def update_state(self, s: 'Oamlet'):
         raise NotImplementedError('C.EBREAK not implemented')

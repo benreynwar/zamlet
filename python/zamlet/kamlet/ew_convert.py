@@ -38,7 +38,7 @@ from random import Random
 from dataclasses import dataclass
 from typing import List, Dict, Tuple
 
-from zamlet.params import LamletParams
+from zamlet.params import ZamletParams
 from zamlet import utils
 from zamlet.utils import uint_to_list_of_uints, split_by_factors, join_by_factors
 
@@ -190,7 +190,7 @@ class SmallLargeMapping:
             )
 
 
-def encode_into_words(params: LamletParams, data: bytes, ew: int):
+def encode_into_words(params: ZamletParams, data: bytes, ew: int):
     #print(f'encoding to ew {ew} data {[int(x) for x in data]}')
     assert len(data) % params.vline_bytes == 0
     words = []
@@ -214,7 +214,7 @@ def encode_into_words(params: LamletParams, data: bytes, ew: int):
     return words
 
 
-def decode_from_words(params: LamletParams, words: List[bytes], ew: int):
+def decode_from_words(params: ZamletParams, words: List[bytes], ew: int):
     n_words = params.j_in_l
     assert len(words) == n_words
     assert all(len(word) == params.word_bytes for word in words)
@@ -234,7 +234,7 @@ def decode_from_words(params: LamletParams, words: List[bytes], ew: int):
     return data
 
 
-def extract_words(params: LamletParams, src_words: List[bytes], src_ew: int, dst_ew: int, src_offset: int):
+def extract_words(params: ZamletParams, src_words: List[bytes], src_ew: int, dst_ew: int, src_offset: int):
     """
     src_words is three vectors
     We want to get the middle dst vector.
@@ -296,7 +296,7 @@ def extract_words(params: LamletParams, src_words: List[bytes], src_ew: int, dst
 
 
 def get_mapping_for_dst(
-        params: LamletParams, src_ew: int, dst_ew: int,
+        params: ZamletParams, src_ew: int, dst_ew: int,
         dst_v: int, dst_vw: int, dst_tag: int, src_offset: int=0, dst_offset: int=0,
         allow_none: bool=True
         ):
@@ -371,7 +371,7 @@ def get_mapping_for_dst(
 
 
 def get_mapping_for_src(
-        params: LamletParams, src_ew: int, dst_ew: int,
+        params: ZamletParams, src_ew: int, dst_ew: int,
         src_v: int, src_vw: int, src_tag: int, src_offset:int=0, dst_offset:int=0):
     """
     Get the mapping for a source jamlet/tag.
@@ -477,7 +477,7 @@ def get_large_small_mapping(vw: int, ww: int, small_ew: int, large_ew: int,
 
 
 def get_mapping_from_large_tag(
-        params: LamletParams, small_ew: int, large_ew: int,
+        params: ZamletParams, small_ew: int, large_ew: int,
         small_offset: int, large_offset: int,
         large_v: int, large_vw: int, large_tag: int, check_consistency: bool = True,
         allow_none: bool=True):
@@ -541,7 +541,7 @@ def get_mapping_from_large_tag(
     return mapping
 
 def get_mapping_from_small_tag(
-        params: LamletParams, small_ew: int, large_ew: int,
+        params: ZamletParams, small_ew: int, large_ew: int,
         small_offset: int, large_offset: int,
         small_v: int, small_vw: int, small_tag: int, check_consistency: bool = True,
         allow_none: bool=True,
@@ -629,7 +629,7 @@ def apply_offset(rnd, data: bytes, offset: int):
     return byts
 
 
-def test_convertion(params: LamletParams, src_ew: int, dst_ew: int, offset: int):
+def test_convertion(params: ZamletParams, src_ew: int, dst_ew: int, offset: int):
     rnd = Random(0)
     vlb = params.vline_bytes
     random_data = get_rand_bytes(rnd, vlb*3)
@@ -641,7 +641,7 @@ def test_convertion(params: LamletParams, src_ew: int, dst_ew: int, offset: int)
     n_elements = params.vline_bytes * 8 // dst_ew
     #messages = create_messages(params=params, src_ew=src_ew, dst_ew=dst_ew, offset=offset, start_element=0, n_elements=n_elements)
     #dst_words = extract_words(params, src_words, messages)
-#def extract_words(params: LamletParams, src_words: List[bytes], src_ew: bool, dst_ew: bool, src_offset: int):
+#def extract_words(params: ZamletParams, src_words: List[bytes], src_ew: bool, dst_ew: bool, src_offset: int):
     dst_words = extract_words(params, src_words, src_ew, dst_ew, offset)
     rcvd_data = decode_from_words(params, dst_words, dst_ew)
     if offset % 8 == 0:
@@ -653,7 +653,7 @@ def test_convertion(params: LamletParams, src_ew: int, dst_ew: int, offset: int)
     assert expected_data == rcvd_data
 
 
-def test_mappings(params: LamletParams, small_ew: int, large_ew: int, small_offset: int, large_offset: int):
+def test_mappings(params: ZamletParams, small_ew: int, large_ew: int, small_offset: int, large_offset: int):
     assert small_ew <= large_ew
     ratio = large_ew//small_ew
     n_tags = (params.word_bytes * 8)//small_ew * 2

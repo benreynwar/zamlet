@@ -2,7 +2,7 @@ package zamlet.kamlet
 
 import chisel3._
 import chisel3.util._
-import zamlet.LamletParams
+import zamlet.ZamletParams
 import zamlet.SynchronizerParams
 import zamlet.jamlet.{Jamlet, NetworkWord}
 
@@ -14,11 +14,11 @@ import zamlet.jamlet.{Jamlet, NetworkWord}
  * Later phases add: CacheTable, WitemController, dispatch to jamlets, etc.
  */
 class Kamlet(
-  params: LamletParams,
+  params: ZamletParams,
   neighbors: SyncNeighbors
 ) extends Module {
   val io = IO(new Bundle {
-    // Position of this kamlet in the lamlet
+    // Position of this kamlet in the zamlet
     val kX = Input(UInt(log2Ceil(params.kCols).W))
     val kY = Input(UInt(log2Ceil(params.kRows).W))
 
@@ -213,7 +213,7 @@ object KamletGenerator extends zamlet.ModuleGenerator {
       println("Usage: <configFile>")
       System.exit(1)
     }
-    val params = LamletParams.fromFile(args(0))
+    val params = ZamletParams.fromFile(args(0))
     // For standalone test, assume all neighbors present
     val neighbors = SyncNeighbors()
     new Kamlet(params, neighbors)

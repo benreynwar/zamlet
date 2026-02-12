@@ -2,7 +2,7 @@ import logging
 from typing import Set, List, Any, Tuple
 
 from zamlet import addresses
-from zamlet.params import LamletParams
+from zamlet.params import ZamletParams
 from zamlet.kamlet.cache_table import CacheTable
 from zamlet.message import Direction, SendType, MessageType, CHANNEL_MAPPING, is_request_message
 from zamlet.message import Header, IdentHeader, AddressHeader, ValueHeader, TaggedHeader, WriteSetIdentHeader
@@ -30,7 +30,7 @@ class Jamlet:
     A single lane of the processor.
     """
 
-    def __init__(self, clock, params: LamletParams, x: int, y: int, cache_table: CacheTable,
+    def __init__(self, clock, params: ZamletParams, x: int, y: int, cache_table: CacheTable,
                  rf_info: KamletRegisterFile, tlb: addresses.TLB, monitor: Monitor,
                  lamlet_x: int, lamlet_y: int,
                  mem_xy: Tuple[int, int]):

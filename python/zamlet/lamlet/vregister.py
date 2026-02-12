@@ -13,12 +13,12 @@ from zamlet.transactions.reg_gather import RegGather
 from zamlet.lamlet import ident_query
 
 if TYPE_CHECKING:
-    from zamlet.lamlet.lamlet import Lamlet
+    from zamlet.oamlet.oamlet import Oamlet
 
 logger = logging.getLogger(__name__)
 
 
-async def vrgather(lamlet: 'Lamlet', vd: int, vs2: int, vs1: int,
+async def vrgather(lamlet: 'Oamlet', vd: int, vs2: int, vs1: int,
                    start_index: int, n_elements: int,
                    index_ew: int, data_ew: int,
                    word_order: WordOrder, vlmax: int,

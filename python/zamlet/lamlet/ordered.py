@@ -27,7 +27,7 @@ from zamlet.lamlet import ident_query
 
 if TYPE_CHECKING:
     from zamlet.kamlet.kamlet import Kamlet
-    from zamlet.lamlet.lamlet import Lamlet
+    from zamlet.oamlet.oamlet import Oamlet
     from zamlet.lamlet.ordered_buffer import ElementEntry
 
 logger = logging.getLogger(__name__)
@@ -80,7 +80,7 @@ class WaitingOrderedIndexedLoad(WaitingItem):
         kamlet.monitor.complete_witem(self.instr_ident, kamlet.min_x, kamlet.min_y)
 
 
-def get_free_buffer_id(lamlet: 'Lamlet') -> int | None:
+def get_free_buffer_id(lamlet: 'Oamlet') -> int | None:
     """Find a free ordered buffer slot, or None if all are in use."""
     for i, buf in enumerate(lamlet._ordered_buffers):
         if buf is None:
@@ -88,7 +88,7 @@ def get_free_buffer_id(lamlet: 'Lamlet') -> int | None:
     return None
 
 
-def handle_load_indexed_element_resp(lamlet: 'Lamlet', header: ElementIndexHeader):
+def handle_load_indexed_element_resp(lamlet: 'Oamlet', header: ElementIndexHeader):
     """Handle LOAD_INDEXED_ELEMENT_RESP: complete element and release witem.
 
     For VPU loads: element is DISPATCHED (kamlet handled internally)
@@ -115,7 +115,7 @@ def handle_load_indexed_element_resp(lamlet: 'Lamlet', header: ElementIndexHeade
     lamlet.monitor.complete_kinstr(header.ident)
 
 
-def handle_store_indexed_element_resp(lamlet: 'Lamlet', header: ElementIndexHeader,
+def handle_store_indexed_element_resp(lamlet: 'Oamlet', header: ElementIndexHeader,
                                       addr: int | None, data: bytes | None):
     """Handle STORE_INDEXED_ELEMENT_RESP: buffer the write for in-order processing.
 
@@ -152,7 +152,7 @@ def handle_store_indexed_element_resp(lamlet: 'Lamlet', header: ElementIndexHead
         entry.data = data
 
 
-def handle_ordered_write_mem_word_resp(lamlet: 'Lamlet', header: TaggedHeader):
+def handle_ordered_write_mem_word_resp(lamlet: 'Oamlet', header: TaggedHeader):
     """Handle WRITE_MEM_WORD_RESP for ordered store VPU writes."""
     parent_ident = (header.ident - header.tag - 1) % lamlet.params.max_response_tags
     witem = lamlet.get_witem_by_ident(parent_ident)
@@ -177,7 +177,7 @@ def handle_ordered_write_mem_word_resp(lamlet: 'Lamlet', header: TaggedHeader):
         lamlet.monitor.complete_kinstr(parent_ident)
 
 
-def handle_ordered_write_mem_word_drop(lamlet: 'Lamlet', header: TaggedHeader):
+def handle_ordered_write_mem_word_drop(lamlet: 'Oamlet', header: TaggedHeader):
     """Handle WRITE_MEM_WORD_DROP for ordered store VPU writes - retry later."""
     parent_ident = (header.ident - header.tag - 1) % lamlet.params.max_response_tags
     witem = lamlet.get_witem_by_ident(parent_ident)
@@ -193,7 +193,7 @@ def handle_ordered_write_mem_word_drop(lamlet: 'Lamlet', header: TaggedHeader):
     witem.transaction_states[header.tag] = SendState.NEED_TO_SEND
 
 
-def handle_ordered_write_mem_word_retry(lamlet: 'Lamlet', header: TaggedHeader):
+def handle_ordered_write_mem_word_retry(lamlet: 'Oamlet', header: TaggedHeader):
     """Handle WRITE_MEM_WORD_RETRY for ordered store VPU writes - cache ready, resend."""
     parent_ident = (header.ident - header.tag - 1) % lamlet.params.max_response_tags
     witem = lamlet.get_witem_by_ident(parent_ident)
@@ -209,7 +209,7 @@ def handle_ordered_write_mem_word_retry(lamlet: 'Lamlet', header: TaggedHeader):
     witem.transaction_states[header.tag] = SendState.NEED_TO_SEND
 
 
-def handle_read_mem_word_req_ordered(lamlet: 'Lamlet', header: 'ReadMemWordHeader',
+def handle_read_mem_word_req_ordered(lamlet: 'Oamlet', header: 'ReadMemWordHeader',
                                      scalar_addr: int):
     """Handle ordered READ_MEM_WORD_REQ: buffer request for in-order processing."""
     parent_ident = (header.ident - header.tag - 1) % lamlet.params.max_response_tags
@@ -232,7 +232,7 @@ def handle_read_mem_word_req_ordered(lamlet: 'Lamlet', header: 'ReadMemWordHeade
             f'addr=0x{scalar_addr:x} next_to_process={buf.next_to_process}')
 
 
-async def ordered_buffer_process(lamlet: 'Lamlet'):
+async def ordered_buffer_process(lamlet: 'Oamlet'):
     """Process pending requests/writes for active ordered buffers in element order."""
     while True:
         await lamlet.clock.next_cycle
@@ -264,7 +264,7 @@ async def ordered_buffer_process(lamlet: 'Lamlet'):
                 await _process_ordered_store(lamlet, buf, entry, buf.data_ew)
 
 
-async def _process_ordered_load(lamlet: 'Lamlet', buf: OrderedBuffer, entry: 'ElementEntry'):
+async def _process_ordered_load(lamlet: 'Oamlet', buf: OrderedBuffer, entry: 'ElementEntry'):
     """Process a ready ordered load element."""
 
     wb = lamlet.params.word_bytes
@@ -318,7 +318,7 @@ async def _process_ordered_load(lamlet: 'Lamlet', buf: OrderedBuffer, entry: 'El
     # Don't remove witem here - wait for LOAD_INDEXED_ELEMENT_RESP from kamlet
 
 
-async def _process_ordered_store(lamlet: 'Lamlet', buf: OrderedBuffer,
+async def _process_ordered_store(lamlet: 'Oamlet', buf: OrderedBuffer,
                                  entry: 'ElementEntry', src_ew: int):
     """Process a ready ordered store element.
 
@@ -367,7 +367,7 @@ async def _process_ordered_store(lamlet: 'Lamlet', buf: OrderedBuffer,
         lamlet.monitor.complete_kinstr(entry.instr_ident)
 
 
-def _element_index_to_jamlet(lamlet: 'Lamlet', element_index: int) -> tuple[int, int]:
+def _element_index_to_jamlet(lamlet: 'Oamlet', element_index: int) -> tuple[int, int]:
     """Compute target jamlet coordinates from element index."""
     vw_index = element_index % lamlet.params.j_in_l
     k_index, j_in_k_index = addresses.vw_index_to_k_indices(
@@ -375,7 +375,7 @@ def _element_index_to_jamlet(lamlet: 'Lamlet', element_index: int) -> tuple[int,
     return addresses.k_indices_to_j_coords(lamlet.params, k_index, j_in_k_index)
 
 
-async def _send_ordered_vpu_write(lamlet: 'Lamlet', instr_ident: int, data: bytes,
+async def _send_ordered_vpu_write(lamlet: 'Oamlet', instr_ident: int, data: bytes,
                                   dst_g_addr: GlobalAddress, tag: int, n_bytes: int,
                                   witem: LamletWaitingStoreIndexedElement):
     """Send WRITE_MEM_WORD_REQ for an ordered store VPU write."""
@@ -429,7 +429,7 @@ async def _send_ordered_vpu_write(lamlet: 'Lamlet', instr_ident: int, data: byte
     witem.transaction_states[tag] = SendState.WAITING_FOR_RESPONSE
 
 
-async def _send_pending_vpu_writes(lamlet: 'Lamlet', buf: OrderedBuffer):
+async def _send_pending_vpu_writes(lamlet: 'Oamlet', buf: OrderedBuffer):
     """Send/resend pending VPU writes for an in-flight ordered store element."""
     entry = buf.get_entry(buf.next_to_process)
     assert entry is not None and entry.state == ElementState.IN_FLIGHT
@@ -452,7 +452,7 @@ async def _send_pending_vpu_writes(lamlet: 'Lamlet', buf: OrderedBuffer):
             lamlet, entry.instr_ident, entry.data, dst_g_addr, tag, n_bytes, witem)
 
 
-async def vload_indexed_ordered(lamlet: 'Lamlet', vd: int, base_addr: int, index_reg: int,
+async def vload_indexed_ordered(lamlet: 'Oamlet', vd: int, base_addr: int, index_reg: int,
                                 index_ew: int, data_ew: int, n_elements: int,
                                 mask_reg: int | None, start_index: int,
                                 parent_span_id: int) -> VectorOpResult:
@@ -565,7 +565,7 @@ async def vload_indexed_ordered(lamlet: 'Lamlet', vd: int, base_addr: int, index
     return VectorOpResult()
 
 
-async def vstore_indexed_ordered(lamlet: 'Lamlet', vs: int, base_addr: int, index_reg: int,
+async def vstore_indexed_ordered(lamlet: 'Oamlet', vs: int, base_addr: int, index_reg: int,
                                  index_ew: int, data_ew: int, n_elements: int,
                                  mask_reg: int | None, start_index: int,
                                  parent_span_id: int) -> VectorOpResult:

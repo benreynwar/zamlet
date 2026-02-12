@@ -25,7 +25,7 @@ SHUTTLE_DEPS = [
 # Common Zamlet sources
 ZAMLET_COMMON_SRCS = [
     "//src/main/scala/zamlet:ModuleGenerator.scala",
-    "//src/main/scala/zamlet:LamletParams.scala",
+    "//src/main/scala/zamlet:ZamletParams.scala",
     "//src/main/scala/zamlet/utils:utils_sources",
 ]
 
@@ -58,11 +58,11 @@ chisel_binary(
 # Generate Oamlet Verilog (small config for faster iteration)
 genrule(
     name = "oamlet_verilog",
-    srcs = ["//configs:lamlet_default.json"],
+    srcs = ["//configs:zamlet_default.json"],
     outs = ["OamletTop.sv"],
     cmd = """
     TMPDIR=$$(mktemp -d)
-    $(location :oamlet_generator) $$TMPDIR $(location //configs:lamlet_default.json) small
+    $(location :oamlet_generator) $$TMPDIR $(location //configs:zamlet_default.json) small
     cat $$TMPDIR/*.sv > $@
     rm -rf $$TMPDIR
     """,

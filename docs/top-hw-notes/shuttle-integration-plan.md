@@ -16,7 +16,7 @@ Top-Level RTL (ZamletTile)
 ├── Shuttle Core (scalar RISC-V)
 │   └── TileLink → Scalar Memory (cocotb)
 ├── ZamletShuttleUnit extends ShuttleVectorUnit
-│   ├── LamletTop
+│   ├── Zamlet
 │   │   ├── Lamlet (instruction decode, dispatch)
 │   │   └── KamletMesh (compute tiles)
 │   └── Memlet[] → VPU Memory (cocotb)
@@ -102,7 +102,7 @@ uses the provided vconfig.
 
 ```scala
 class ZamletShuttleUnit(implicit p: Parameters) extends ShuttleVectorUnit {
-  // Contains LamletTop + Memlets
+  // Contains Zamlet + Memlets
   // Bridges ShuttleVectorCoreIO ↔ Lamlet interfaces
 }
 ```
@@ -148,7 +148,7 @@ src/main/scala/zamlet/
     ZamletTile.scala           # Tile configuration
 
   lamlet/
-    LamletTop.scala            # Lamlet + KamletMesh (exists)
+    Zamlet.scala            # Lamlet + KamletMesh (exists)
     ...
 
   memlet/

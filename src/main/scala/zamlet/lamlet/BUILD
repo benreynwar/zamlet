@@ -16,7 +16,7 @@ filegroup(
     visibility = ["//visibility:public"],
 )
 
-LAMLET_DEPS = [
+ZAMLET_DEPS = [
     "@maven//:org_typelevel_cats_core_2_13",
     "@maven//:org_typelevel_cats_kernel_2_13",
     "@maven//:io_circe_circe_core_2_13",
@@ -25,9 +25,9 @@ LAMLET_DEPS = [
     "@maven//:com_chuusai_shapeless_2_13",
 ]
 
-LAMLET_COMMON_SRCS = [
+ZAMLET_COMMON_SRCS = [
     "//src/main/scala/zamlet:ModuleGenerator.scala",
-    "//src/main/scala/zamlet:LamletParams.scala",
+    "//src/main/scala/zamlet:ZamletParams.scala",
     "//src/main/scala/zamlet/kamlet:Synchronizer.scala",
     "//src/main/scala/zamlet/utils:utils_sources",
     "//src/main/scala/zamlet/jamlet:KInstr.scala",
@@ -40,9 +40,9 @@ chisel_binary(
     srcs = [
         "IdentTracker.scala",
         "DispatchQueue.scala",
-    ] + LAMLET_COMMON_SRCS,
+    ] + ZAMLET_COMMON_SRCS,
     main_class = "zamlet.lamlet.IdentTrackerMain",
-    deps = LAMLET_DEPS,
+    deps = ZAMLET_DEPS,
     visibility = ["//visibility:public"],
 )
 
@@ -52,9 +52,9 @@ chisel_binary(
         "IssueUnit.scala",
         "IdentTracker.scala",
         "ScalarLoadQueue.scala",
-    ] + LAMLET_COMMON_SRCS,
+    ] + ZAMLET_COMMON_SRCS,
     main_class = "zamlet.lamlet.IssueUnitMain",
-    deps = LAMLET_DEPS,
+    deps = ZAMLET_DEPS,
     visibility = ["//visibility:public"],
 )
 
@@ -67,9 +67,9 @@ chisel_binary(
         "DispatchQueue.scala",
         "ScalarLoadQueue.scala",
         "VpuToScalarMem.scala",
-    ] + LAMLET_COMMON_SRCS,
+    ] + ZAMLET_COMMON_SRCS,
     main_class = "zamlet.lamlet.LamletMain",
-    deps = LAMLET_DEPS,
+    deps = ZAMLET_DEPS,
     visibility = ["//visibility:public"],
 )
 
@@ -85,9 +85,9 @@ chisel_binary(
         "VpuToScalarMem.scala",
         "//src/main/scala/zamlet/kamlet:kamlet_sources",
         "//src/main/scala/zamlet/jamlet:jamlet_sources",
-    ] + LAMLET_COMMON_SRCS,
+    ] + ZAMLET_COMMON_SRCS,
     main_class = "zamlet.lamlet.ZamletMain",
-    deps = LAMLET_DEPS,
+    deps = ZAMLET_DEPS,
     visibility = ["//visibility:public"],
 )
 
@@ -96,8 +96,8 @@ chisel_binary(
     srcs = [
         "ScalarLoadQueue.scala",
         "IdentTracker.scala",
-    ] + LAMLET_COMMON_SRCS,
+    ] + ZAMLET_COMMON_SRCS,
     main_class = "zamlet.lamlet.ScalarLoadQueueMain",
-    deps = LAMLET_DEPS,
+    deps = ZAMLET_DEPS,
     visibility = ["//visibility:public"],
 )

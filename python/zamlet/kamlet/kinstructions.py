@@ -18,7 +18,7 @@ from enum import Enum
 
 from zamlet import addresses
 from zamlet.addresses import KMAddr, GlobalAddress
-from zamlet.params import LamletParams
+from zamlet.params import ZamletParams
 from zamlet.monitor import CompletionType, SpanType
 
 

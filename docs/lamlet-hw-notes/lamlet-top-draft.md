@@ -140,7 +140,7 @@ memory requests from mesh).
 ## Parameters
 
 ```scala
-case class LamletParams(
+case class ZamletParams(
     k_cols: Int,
     k_rows: Int,
     instruction_queue_length: Int = 8,

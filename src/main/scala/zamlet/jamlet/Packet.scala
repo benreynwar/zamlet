@@ -2,7 +2,7 @@ package zamlet.jamlet
 
 import chisel3._
 import chisel3.util._
-import zamlet.LamletParams
+import zamlet.ZamletParams
 
 /**
  * Send type enumeration
@@ -76,7 +76,7 @@ object MessageType extends ChiselEnum {
  * Packet header structure (base class) - not instantiated directly
  * Python: 43 bits (target_x:8, target_y:8, source_x:8, source_y:8, length:4, message_type:5, send_type:2)
  */
-class PacketHeader(params: LamletParams) extends Bundle {
+class PacketHeader(params: ZamletParams) extends Bundle {
   val targetX = UInt(params.xPosWidth.W)
   val targetY = UInt(params.yPosWidth.W)
   val sourceX = UInt(params.xPosWidth.W)
@@ -91,7 +91,7 @@ class PacketHeader(params: LamletParams) extends Bundle {
  * Python: 48 bits (+5 for ident)
  * Note: Python uses 5-bit ident, params.identWidth is 7
  */
-class IdentHeader(params: LamletParams) extends PacketHeader(params) {
+class IdentHeader(params: ZamletParams) extends PacketHeader(params) {
   val ident = UInt(params.identWidth.W)
 }
 
@@ -99,7 +99,7 @@ class IdentHeader(params: LamletParams) extends PacketHeader(params) {
  * Header with ident and tag for multi-response protocols
  * Python: 52 bits (+4 for tag)
  */
-class TaggedHeader(params: LamletParams) extends IdentHeader(params) {
+class TaggedHeader(params: ZamletParams) extends IdentHeader(params) {
   val tag = UInt(4.W)
 }
 
@@ -107,7 +107,7 @@ class TaggedHeader(params: LamletParams) extends IdentHeader(params) {
  * Tagged header with per-word mask for J2J operations
  * 10-bit mask (reduced from Python's 12 to fit with 7-bit ident)
  */
-class MaskedTaggedHeader(params: LamletParams) extends TaggedHeader(params) {
+class MaskedTaggedHeader(params: ZamletParams) extends TaggedHeader(params) {
   val mask = UInt(10.W)
 
   require(this.getWidth <= params.wordWidth,
@@ -118,7 +118,7 @@ class MaskedTaggedHeader(params: LamletParams) extends TaggedHeader(params) {
  * Header for WriteMemWord requests
  * Python: TaggedHeader + dst_byte_in_word(3) + n_bytes(3)
  */
-class WriteMemWordHeader(params: LamletParams) extends TaggedHeader(params) {
+class WriteMemWordHeader(params: ZamletParams) extends TaggedHeader(params) {
   val dstByteInWord = UInt(3.W)
   val nBytes = UInt(3.W)
 
@@ -130,7 +130,7 @@ class WriteMemWordHeader(params: LamletParams) extends TaggedHeader(params) {
  * Header for ReadMemWord requests
  * Python: TaggedHeader + fault flag
  */
-class ReadMemWordHeader(params: LamletParams) extends TaggedHeader(params) {
+class ReadMemWordHeader(params: ZamletParams) extends TaggedHeader(params) {
   val fault = Bool()
 
   require(this.getWidth <= params.wordWidth,
@@ -140,7 +140,7 @@ class ReadMemWordHeader(params: LamletParams) extends TaggedHeader(params) {
 /**
  * Network word
  */
-class NetworkWord(params: LamletParams) extends Bundle {
+class NetworkWord(params: ZamletParams) extends Bundle {
   val data = UInt(params.wordWidth.W)
   val isHeader = Bool()
 }
@@ -189,7 +189,7 @@ object DirectionBits {
 /**
  * Packet data bundle with control signals
  */
-class PacketData(params: LamletParams) extends Bundle {
+class PacketData(params: ZamletParams) extends Bundle {
   val data = UInt(params.wordWidth.W)
   val isHeader = Bool()
   val last = Bool()
@@ -199,7 +199,7 @@ class PacketData(params: LamletParams) extends Bundle {
  * Packet routing utilities
  */
 object PacketRouting {
-  def calculateNextDirection(params: LamletParams, thisX: UInt, thisY: UInt,
+  def calculateNextDirection(params: ZamletParams, thisX: UInt, thisY: UInt,
                              targetX: UInt, targetY: UInt): NetworkDirections.Type = {
     val needsEast = targetX > thisX
     val needsWest = targetX < thisX

@@ -18,7 +18,7 @@ from zamlet.waiting_item import WaitingItemRequiresCache
 from zamlet.message import TaggedHeader, MessageType, SendType
 from zamlet.kamlet.cache_table import SendState, ReceiveState, LoadProtocolState
 from zamlet.kamlet import kinstructions
-from zamlet.params import LamletParams
+from zamlet.params import ZamletParams
 from zamlet.transactions import register_handler
 from zamlet.transactions.j2j_mapping import RegMemMapping, get_mapping_from_reg, get_mapping_from_mem
 
@@ -34,7 +34,7 @@ class WaitingLoadJ2JWords(WaitingItemRequiresCache):
 
     cache_is_read = True
 
-    def __init__(self, params: LamletParams, instr: kinstructions.Load, rf_ident: int|None=None):
+    def __init__(self, params: ZamletParams, instr: kinstructions.Load, rf_ident: int|None=None):
         super().__init__(
             item=instr, instr_ident=instr.instr_ident,
             writeset_ident=instr.writeset_ident, rf_ident=rf_ident)

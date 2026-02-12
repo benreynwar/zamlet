@@ -39,11 +39,11 @@ cocotb_test(
 # KamletMesh tests
 genrule(
     name = "kamletmesh_default_verilog",
-    srcs = ["//configs:lamlet_default.json"],
+    srcs = ["//configs:zamlet_default.json"],
     outs = ["KamletMesh_default.sv"],
     cmd = """
     TMPDIR=$$(mktemp -d)
-    $(location //src/main/scala/zamlet/kamlet:kamletmesh) $$TMPDIR $(location //configs:lamlet_default.json)
+    $(location //src/main/scala/zamlet/kamlet:kamletmesh) $$TMPDIR $(location //configs:zamlet_default.json)
     cat $$TMPDIR/*.sv > $@
     rm -rf $$TMPDIR
     """,
@@ -68,9 +68,9 @@ cocotb_test(
     test_module = "zamlet.kamlet_test.test_kamlet",
     toplevel = "KamletMesh",
     env = {
-        "ZAMLET_TEST_CONFIG_FILENAME": "configs/lamlet_default.json",
+        "ZAMLET_TEST_CONFIG_FILENAME": "configs/zamlet_default.json",
     },
-    data = ["//configs:lamlet_default.json"],
+    data = ["//configs:zamlet_default.json"],
     py_deps = [":test_kamlet_py"],
 )
 

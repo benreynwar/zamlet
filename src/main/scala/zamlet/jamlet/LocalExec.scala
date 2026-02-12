@@ -2,7 +2,7 @@ package zamlet.jamlet
 
 import chisel3._
 import chisel3.util._
-import zamlet.LamletParams
+import zamlet.ZamletParams
 
 /**
  * LocalExec handles immediate kinstr execution (LoadImm, StoreScalar, etc.)
@@ -17,7 +17,7 @@ import zamlet.LamletParams
  * 4. Build WriteMemWord packet (header + paddr + data)
  * 5. Send packet to Lamlet
  */
-class LocalExec(params: LamletParams) extends Module {
+class LocalExec(params: ZamletParams) extends Module {
   val io = IO(new Bundle {
     // Jamlet position
     val thisX = Input(params.xPos())
@@ -189,10 +189,10 @@ class LocalExec(params: LamletParams) extends Module {
 object LocalExecGenerator extends zamlet.ModuleGenerator {
   override def makeModule(args: Seq[String]): Module = {
     if (args.length < 1) {
-      println("Usage: <command> <outputDir> LocalExec <lamletParamsFileName>")
+      println("Usage: <command> <outputDir> LocalExec <zamletParamsFileName>")
       null
     } else {
-      val params = LamletParams.fromFile(args(0))
+      val params = ZamletParams.fromFile(args(0))
       new LocalExec(params)
     }
   }

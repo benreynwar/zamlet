@@ -4,9 +4,9 @@ import struct
 
 from zamlet import disasm_trace
 from zamlet import program_info
-from zamlet.lamlet import lamlet
+from zamlet.oamlet import oamlet
 from zamlet.runner import Clock
-from zamlet.params import LamletParams
+from zamlet.params import ZamletParams
 from zamlet.addresses import GlobalAddress, MemoryType, Ordering, WordOrder
 
 logger = logging.getLogger(__name__)
@@ -28,15 +28,15 @@ def write_span_trees(lam):
     logger.info("Span trees written to span_trees.txt")
 
 
-async def run(clock: Clock, filename, params: LamletParams = None,
+async def run(clock: Clock, filename, params: ZamletParams = None,
               word_order: WordOrder = WordOrder.STANDARD,
               symbol_values: dict = None):
     p_info = program_info.get_program_info(filename)
 
     if params is None:
-        params = LamletParams()
+        params = ZamletParams()
 
-    s = lamlet.Lamlet(clock, params, word_order=word_order)
+    s = oamlet.Oamlet(clock, params, word_order=word_order)
     clock.create_task(update(clock, s))
     clock.create_task(s.run())
     await clock.next_cycle
@@ -166,7 +166,7 @@ async def run(clock: Clock, filename, params: LamletParams = None,
 
 
 
-async def main(clock, filename, params: LamletParams = None,
+async def main(clock, filename, params: ZamletParams = None,
                word_order: WordOrder = WordOrder.STANDARD,
                symbol_values: dict = None) -> int:
     import signal
@@ -200,7 +200,7 @@ if __name__ == '__main__':
 
     from zamlet.geometries import GEOMETRIES, get_geometry, list_geometries
 
-    parser = argparse.ArgumentParser(description='Run RISC-V binary through lamlet simulator')
+    parser = argparse.ArgumentParser(description='Run RISC-V binary through oamlet simulator')
     parser.add_argument('filename', nargs='?', help='RISC-V binary to run')
     parser.add_argument('--geometry', '-g', default='k2x1_j1x1',
                         help=f'Geometry name (default: k2x1_j1x1)')

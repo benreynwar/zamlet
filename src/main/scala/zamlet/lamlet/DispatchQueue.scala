@@ -2,7 +2,7 @@ package zamlet.lamlet
 
 import chisel3._
 import chisel3.util._
-import zamlet.LamletParams
+import zamlet.ZamletParams
 import zamlet.jamlet.{NetworkWord, PacketHeader, SendType, MessageType}
 
 /**
@@ -16,7 +16,7 @@ import zamlet.jamlet.{NetworkWord, PacketHeader, SendType, MessageType}
  *
  * IdentQuery is just another kinstr in the stream - no special handling needed.
  */
-class DispatchQueue(params: LamletParams) extends Module {
+class DispatchQueue(params: ZamletParams) extends Module {
   val MaxBatchSize = 4
   val TimeoutCycles = 3
 

@@ -45,7 +45,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Optional, Dict, Set, List, TYPE_CHECKING
 
-from zamlet.params import LamletParams
+from zamlet.params import ZamletParams
 from zamlet.utils import Queue, uint_to_list_of_uints, list_of_uints_to_uint
 
 if TYPE_CHECKING:
@@ -221,7 +221,7 @@ class Synchronizer:
     def __init__(
         self,
         clock,
-        params: LamletParams,
+        params: ZamletParams,
         x: int,
         y: int,
         cache_table: 'CacheTable|None',

@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from zamlet.lamlet.lamlet import Lamlet
+    from zamlet.oamlet.oamlet import Oamlet
 
 from zamlet.register_names import reg_name
 
@@ -33,7 +33,7 @@ class Auipc:
     def __str__(self):
         return f'auipc\t{reg_name(self.rd)},0x{self.imm & 0xfffff:x}'
 
-    async def update_state(self, s: 'Lamlet'):
+    async def update_state(self, s: 'Oamlet'):
         await s.scalar.wait_all_regs_ready(self.rd, None, [], [])
         result = s.pc + (self.imm << 12)
         result_bytes = result.to_bytes(s.params.word_bytes, byteorder='little', signed=False)
@@ -70,7 +70,7 @@ class Jal:
         else:
             return f'jal\t{reg_name(self.rd)},{target}'
 
-    async def update_state(self, s: 'Lamlet'):
+    async def update_state(self, s: 'Oamlet'):
         await s.scalar.wait_all_regs_ready(self.rd, None, [], [])
         result = s.pc + 4
         result_bytes = result.to_bytes(s.params.word_bytes, byteorder='little', signed=False)
@@ -102,7 +102,7 @@ class Beq:
         else:
             return f'beq\t{reg_name(self.rs1)},{reg_name(self.rs2)},{target}'
 
-    async def update_state(self, s: 'Lamlet'):
+    async def update_state(self, s: 'Oamlet'):
         await s.scalar.wait_all_regs_ready(None, None, [self.rs1, self.rs2], [])
         val1 = int.from_bytes(s.scalar.read_reg(self.rs1), byteorder='little', signed=False)
         val2 = int.from_bytes(s.scalar.read_reg(self.rs2), byteorder='little', signed=False)
@@ -136,7 +136,7 @@ class Bne:
         else:
             return f'bne\t{reg_name(self.rs1)},{reg_name(self.rs2)},{target}'
 
-    async def update_state(self, s: 'Lamlet'):
+    async def update_state(self, s: 'Oamlet'):
         await s.scalar.wait_all_regs_ready(None, None, [self.rs1, self.rs2], [])
         val1 = int.from_bytes(s.scalar.read_reg(self.rs1), byteorder='little', signed=False)
         val2 = int.from_bytes(s.scalar.read_reg(self.rs2), byteorder='little', signed=False)
@@ -177,7 +177,7 @@ class Blt:
         else:
             return f'blt\t{reg_name(self.rs1)},{reg_name(self.rs2)},{target}'
 
-    async def update_state(self, s: 'Lamlet'):
+    async def update_state(self, s: 'Oamlet'):
         await s.scalar.wait_all_regs_ready(None, None, [self.rs1, self.rs2], [])
         val1 = int.from_bytes(s.scalar.read_reg(self.rs1), byteorder='little', signed=False)
         val2 = int.from_bytes(s.scalar.read_reg(self.rs2), byteorder='little', signed=False)
@@ -222,7 +222,7 @@ class Bge:
         else:
             return f'bge\t{reg_name(self.rs1)},{reg_name(self.rs2)},{target}'
 
-    async def update_state(self, s: 'Lamlet'):
+    async def update_state(self, s: 'Oamlet'):
         await s.scalar.wait_all_regs_ready(None, None, [self.rs1, self.rs2], [])
         val1 = int.from_bytes(s.scalar.read_reg(self.rs1), byteorder='little', signed=False)
         val2 = int.from_bytes(s.scalar.read_reg(self.rs2), byteorder='little', signed=False)
@@ -257,7 +257,7 @@ class Bltu:
         target = format_branch_target(pc, self.imm)
         return f'bltu\t{reg_name(self.rs1)},{reg_name(self.rs2)},{target}'
 
-    async def update_state(self, s: 'Lamlet'):
+    async def update_state(self, s: 'Oamlet'):
         await s.scalar.wait_all_regs_ready(None, None, [self.rs1, self.rs2], [])
         val1 = int.from_bytes(s.scalar.read_reg(self.rs1), byteorder='little', signed=False)
         val2 = int.from_bytes(s.scalar.read_reg(self.rs2), byteorder='little', signed=False)
@@ -288,7 +288,7 @@ class Bgeu:
         target = format_branch_target(pc, self.imm)
         return f'bgeu\t{reg_name(self.rs1)},{reg_name(self.rs2)},{target}'
 
-    async def update_state(self, s: 'Lamlet'):
+    async def update_state(self, s: 'Oamlet'):
         await s.scalar.wait_all_regs_ready(None, None, [self.rs1, self.rs2], [])
         val1 = int.from_bytes(s.scalar.read_reg(self.rs1), byteorder='little', signed=False)
         val2 = int.from_bytes(s.scalar.read_reg(self.rs2), byteorder='little', signed=False)

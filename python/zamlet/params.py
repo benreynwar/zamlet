@@ -2,7 +2,7 @@ from dataclasses import dataclass
 
 
 @dataclass
-class LamletParams:
+class ZamletParams:
     #k_cols: int = 2
     #k_rows: int = 2
 

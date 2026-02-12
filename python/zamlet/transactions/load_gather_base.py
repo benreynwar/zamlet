@@ -20,7 +20,7 @@ from zamlet.addresses import TLBFaultType, MemoryType
 from zamlet.waiting_item import WaitingItem
 from zamlet.message import TaggedHeader, ReadMemWordHeader, MessageType, SendType
 from zamlet.kamlet.cache_table import SendState
-from zamlet.params import LamletParams
+from zamlet.params import ZamletParams
 from zamlet import utils
 from zamlet.synchronization import WaitingItemSyncState as SyncState
 
@@ -44,7 +44,7 @@ class WaitingLoadGatherBase(WaitingItem, ABC):
 
     reads_all_memory = True
 
-    def __init__(self, instr, params: LamletParams, rf_ident: int | None = None):
+    def __init__(self, instr, params: ZamletParams, rf_ident: int | None = None):
         super().__init__(item=instr, instr_ident=instr.instr_ident, rf_ident=rf_ident)
         self.writeset_ident = instr.writeset_ident
         self.params = params

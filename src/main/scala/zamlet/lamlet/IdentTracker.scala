@@ -2,7 +2,7 @@ package zamlet.lamlet
 
 import chisel3._
 import chisel3.util._
-import zamlet.LamletParams
+import zamlet.ZamletParams
 import zamlet.kamlet.SyncEvent
 import zamlet.jamlet.{KInstrOpcode, IdentQueryInstr}
 import zamlet.utils.DoubleBuffer
@@ -10,7 +10,7 @@ import zamlet.utils.DoubleBuffer
 /**
  * Kinstr entry with target kamlet index.
  */
-class KinstrWithTarget(params: LamletParams) extends Bundle {
+class KinstrWithTarget(params: ZamletParams) extends Bundle {
   val kinstr = UInt(64.W)
   val kIndex = UInt(params.kIndexWidth.W)
   val isBroadcast = Bool()
@@ -32,7 +32,7 @@ class KinstrWithTarget(params: LamletParams) extends Bundle {
  * - Participates in sync network with local distance value
  * - When sync result arrives, updates oldest_active_ident and returns tokens
  */
-class IdentTracker(params: LamletParams) extends Module {
+class IdentTracker(params: ZamletParams) extends Module {
   val io = IO(new Bundle {
     // Kinstr input (from IssueUnit, ident field empty)
     val in = Flipped(Decoupled(new KinstrWithTarget(params)))
@@ -211,7 +211,7 @@ object IdentTrackerGenerator extends zamlet.ModuleGenerator {
       println("Usage: <configFile>")
       System.exit(1)
     }
-    val params = LamletParams.fromFile(args(0))
+    val params = ZamletParams.fromFile(args(0))
     new IdentTracker(params)
   }
 }

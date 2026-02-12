@@ -2,7 +2,7 @@ package zamlet.jamlet
 
 import chisel3._
 import chisel3.util._
-import zamlet.LamletParams
+import zamlet.ZamletParams
 
 /**
  * Simple round-robin arbiter for packet sources.
@@ -10,7 +10,7 @@ import zamlet.LamletParams
  * Arbitrates between multiple Decoupled packet sources, outputting complete packets
  * (header + payload words) without interleaving.
  */
-class PacketArbiter(params: LamletParams, nInputs: Int) extends Module {
+class PacketArbiter(params: ZamletParams, nInputs: Int) extends Module {
   val io = IO(new Bundle {
     val in = Vec(nInputs, Flipped(Decoupled(new NetworkWord(params))))
     val out = Decoupled(new NetworkWord(params))
@@ -89,7 +89,7 @@ object PacketArbiterGenerator extends zamlet.ModuleGenerator with App {
       println("Usage: <configFile> <nInputs>")
       System.exit(1)
     }
-    val params = LamletParams.fromFile(args(0))
+    val params = ZamletParams.fromFile(args(0))
     val nInputs = args(1).toInt
     new PacketArbiter(params, nInputs)
   }

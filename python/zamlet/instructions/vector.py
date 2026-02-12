@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from zamlet.lamlet.lamlet import Lamlet
+    from zamlet.oamlet.oamlet import Oamlet
 
 from zamlet.kamlet import kinstructions
 from zamlet import addresses
@@ -49,7 +49,7 @@ class Vsetvli:
 
         return f'vsetvli\t{reg_name(self.rd)},{reg_name(self.rs1)},{sew_str},{lmul_str},{ta_str},{ma_str}'
 
-    async def update_state(self, s: 'Lamlet'):
+    async def update_state(self, s: 'Oamlet'):
         await s.scalar.wait_all_regs_ready(self.rd, None, [self.rs1], [])
         rs1_bytes = s.scalar.read_reg(self.rs1)
         avl = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
@@ -119,7 +119,7 @@ class Vsetivli:
 
         return f'vsetivli\t{reg_name(self.rd)},{self.uimm},{sew_str},{lmul_str},{ta_str},{ma_str}'
 
-    async def update_state(self, s: 'Lamlet'):
+    async def update_state(self, s: 'Oamlet'):
         await s.scalar.wait_all_regs_ready(self.rd, None, [], [])
         avl = self.uimm
 
@@ -167,7 +167,7 @@ class VleV:
         vm_str = '' if self.vm else ',v0.t'
         return f'vle{self.element_width}.v\tv{self.vd},({reg_name(self.rs1)}){vm_str}'
 
-    async def update_state(self, s: 'Lamlet'):
+    async def update_state(self, s: 'Oamlet'):
         await s.scalar.wait_all_regs_ready(None, None, [self.rs1], [])
         rs1_bytes = s.scalar.read_reg(self.rs1)
         addr = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
@@ -203,7 +203,7 @@ class VlrV:
     def __str__(self):
         return f'vl{self.nreg}re8.v\tv{self.vd},({reg_name(self.rs1)})'
 
-    async def update_state(self, s: 'Lamlet'):
+    async def update_state(self, s: 'Oamlet'):
         await s.scalar.wait_all_regs_ready(None, None, [self.rs1], [])
         rs1_bytes = s.scalar.read_reg(self.rs1)
         addr = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
@@ -242,7 +242,7 @@ class VseV:
         vm_str = '' if self.vm else ',v0.t'
         return f'vse{self.element_width}.v\tv{self.vs3},({reg_name(self.rs1)}){vm_str}'
 
-    async def update_state(self, s: 'Lamlet'):
+    async def update_state(self, s: 'Oamlet'):
         await s.scalar.wait_all_regs_ready(None, None, [self.rs1], [])
         rs1_bytes = s.scalar.read_reg(self.rs1)
         addr = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
@@ -278,7 +278,7 @@ class VsrV:
     def __str__(self):
         return f'vs{self.nreg}r.v\tv{self.vs3},({reg_name(self.rs1)})'
 
-    async def update_state(self, s: 'Lamlet'):
+    async def update_state(self, s: 'Oamlet'):
         await s.scalar.wait_all_regs_ready(None, None, [self.rs1], [])
         rs1_bytes = s.scalar.read_reg(self.rs1)
         addr = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
@@ -318,7 +318,7 @@ class VlseV:
         vm_str = '' if self.vm else ',v0.t'
         return f'vlse{self.element_width}.v\tv{self.vd},({reg_name(self.rs1)}),{reg_name(self.rs2)}{vm_str}'
 
-    async def update_state(self, s: 'Lamlet'):
+    async def update_state(self, s: 'Oamlet'):
         await s.scalar.wait_all_regs_ready(None, None, [self.rs1, self.rs2], [])
         rs1_bytes = s.scalar.read_reg(self.rs1)
         rs2_bytes = s.scalar.read_reg(self.rs2)
@@ -358,7 +358,7 @@ class VsseV:
         vm_str = '' if self.vm else ',v0.t'
         return f'vsse{self.element_width}.v\tv{self.vs3},({reg_name(self.rs1)}),{reg_name(self.rs2)}{vm_str}'
 
-    async def update_state(self, s: 'Lamlet'):
+    async def update_state(self, s: 'Oamlet'):
         await s.scalar.wait_all_regs_ready(None, None, [self.rs1, self.rs2], [])
         rs1_bytes = s.scalar.read_reg(self.rs1)
         rs2_bytes = s.scalar.read_reg(self.rs2)
@@ -404,7 +404,7 @@ class VlsegV:
         vm_str = '' if self.vm else ',v0.t'
         return f'vlseg{self.nf}e{self.element_width}.v\tv{self.vd},({reg_name(self.rs1)}){vm_str}'
 
-    async def update_state(self, s: 'Lamlet'):
+    async def update_state(self, s: 'Oamlet'):
         await s.scalar.wait_all_regs_ready(None, None, [self.rs1], [])
         rs1_bytes = s.scalar.read_reg(self.rs1)
         addr = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
@@ -446,7 +446,7 @@ class VssegV:
         vm_str = '' if self.vm else ',v0.t'
         return f'vsseg{self.nf}e{self.element_width}.v\tv{self.vs3},({reg_name(self.rs1)}){vm_str}'
 
-    async def update_state(self, s: 'Lamlet'):
+    async def update_state(self, s: 'Oamlet'):
         await s.scalar.wait_all_regs_ready(None, None, [self.rs1], [])
         rs1_bytes = s.scalar.read_reg(self.rs1)
         addr = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
@@ -479,7 +479,7 @@ class VArithVxFloat:
         vm_str = '' if self.vm else ',v0.t'
         return f'vf{self.op.value}.vf\tv{self.vd},{freg_name(self.rs1)},v{self.vs2}{vm_str}'
 
-    async def update_state(self, s: 'Lamlet'):
+    async def update_state(self, s: 'Oamlet'):
         span_id = s.monitor.create_span(
             span_type=SpanType.RISCV_INSTR,
             component="lamlet",
@@ -540,7 +540,7 @@ class VmsleVi:
         vm_str = '' if self.vm else ',v0.t'
         return f'vmsle.vi\tv{self.vd},v{self.vs2},{self.simm5}{vm_str}'
 
-    async def update_state(self, s: 'Lamlet'):
+    async def update_state(self, s: 'Oamlet'):
         span_id = s.monitor.create_span(
             span_type=SpanType.RISCV_INSTR,
             component="lamlet",
@@ -606,7 +606,7 @@ class VmnandMm:
             return f'vmnot.m\tv{self.vd},v{self.vs2}'
         return f'vmnand.mm\tv{self.vd},v{self.vs2},v{self.vs1}'
 
-    async def update_state(self, s: 'Lamlet'):
+    async def update_state(self, s: 'Oamlet'):
         span_id = s.monitor.create_span(
             span_type=SpanType.RISCV_INSTR,
             component="lamlet",
@@ -652,7 +652,7 @@ class VmvVi:
     def __str__(self):
         return f'vmv.v.i\tv{self.vd},{self.simm5}'
 
-    async def update_state(self, s: 'Lamlet'):
+    async def update_state(self, s: 'Oamlet'):
         span_id = s.monitor.create_span(
             span_type=SpanType.RISCV_INSTR,
             component="lamlet",
@@ -697,7 +697,7 @@ class VmvVx:
     def __str__(self):
         return f'vmv.v.x\tv{self.vd},{reg_name(self.rs1)}'
 
-    async def update_state(self, s: 'Lamlet'):
+    async def update_state(self, s: 'Oamlet'):
         span_id = s.monitor.create_span(
             span_type=SpanType.RISCV_INSTR,
             component="lamlet",
@@ -745,7 +745,7 @@ class VmvVv:
     def __str__(self):
         return f'vmv.v.v\tv{self.vd},v{self.vs1}'
 
-    async def update_state(self, s: 'Lamlet'):
+    async def update_state(self, s: 'Oamlet'):
         span_id = s.monitor.create_span(
             span_type=SpanType.RISCV_INSTR,
             component="lamlet",
@@ -790,7 +790,7 @@ class VmvXs:
     def __str__(self):
         return f'vmv.x.s\t{reg_name(self.rd)},v{self.vs2}'
 
-    async def update_state(self, s: 'Lamlet'):
+    async def update_state(self, s: 'Oamlet'):
         vsew = (s.vtype >> 3) & 0x7
         element_width = 8 << vsew
 
@@ -824,7 +824,7 @@ class VreductionVs:
         op_name = f'vred{self.op.value}'
         return f'{op_name}.vs\tv{self.vd},v{self.vs2},v{self.vs1}{vm_str}'
 
-    async def update_state(self, s: 'Lamlet'):
+    async def update_state(self, s: 'Oamlet'):
         if s.vstart != 0:
             raise ValueError(f'vred{self.op.value}.vs requires vstart == 0')
 
@@ -879,7 +879,7 @@ class VArithVv:
         else:
             return f'v{self.op.value}.vv\tv{self.vd},v{self.vs2},v{self.vs1}{vm_str}'
 
-    async def update_state(self, s: 'Lamlet'):
+    async def update_state(self, s: 'Oamlet'):
         span_id = s.monitor.create_span(
             span_type=SpanType.RISCV_INSTR,
             component="lamlet",
@@ -939,7 +939,7 @@ class VArithVvFloat:
         vm_str = '' if self.vm else ',v0.t'
         return f'vf{self.op.value[1:]}.vv\tv{self.vd},v{self.vs2},v{self.vs1}{vm_str}'
 
-    async def update_state(self, s: 'Lamlet'):
+    async def update_state(self, s: 'Oamlet'):
         span_id = s.monitor.create_span(
             span_type=SpanType.RISCV_INSTR,
             component="lamlet",
@@ -1000,7 +1000,7 @@ class VArithVx:
             # vadd.vx, vmul.vx, etc: vd, vs2, rs1
             return f'v{self.op.value}.vx\tv{self.vd},v{self.vs2},{reg_name(self.rs1)}{vm_str}'
 
-    async def update_state(self, s: 'Lamlet'):
+    async def update_state(self, s: 'Oamlet'):
         span_id = s.monitor.create_span(
             span_type=SpanType.RISCV_INSTR,
             component="lamlet",
@@ -1065,7 +1065,7 @@ class VArithVi:
         vm_str = '' if self.vm else ',v0.t'
         return f'v{self.op.value}.vi\tv{self.vd},v{self.vs2},{self.simm5}{vm_str}'
 
-    async def update_state(self, s: 'Lamlet'):
+    async def update_state(self, s: 'Oamlet'):
         span_id = s.monitor.create_span(
             span_type=SpanType.RISCV_INSTR,
             component="lamlet",
@@ -1133,7 +1133,7 @@ class VIndexedLoad:
         op = 'vloxei' if self.ordered else 'vluxei'
         return f'{op}{self.index_width}.v\tv{self.vd},({reg_name(self.rs1)}),v{self.vs2}{vm_str}'
 
-    async def update_state(self, s: 'Lamlet'):
+    async def update_state(self, s: 'Oamlet'):
         await s.scalar.wait_all_regs_ready(None, None, [self.rs1], [])
         rs1_bytes = s.scalar.read_reg(self.rs1)
         base_addr = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
@@ -1185,7 +1185,7 @@ class VIndexedStore:
         op = 'vsoxei' if self.ordered else 'vsuxei'
         return f'{op}{self.index_width}.v\tv{self.vs3},({reg_name(self.rs1)}),v{self.vs2}{vm_str}'
 
-    async def update_state(self, s: 'Lamlet'):
+    async def update_state(self, s: 'Oamlet'):
         await s.scalar.wait_all_regs_ready(None, None, [self.rs1], [])
         rs1_bytes = s.scalar.read_reg(self.rs1)
         base_addr = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
@@ -1228,7 +1228,7 @@ class Vid:
         vm_str = '' if self.vm else ',v0.t'
         return f'vid.v\tv{self.vd}{vm_str}'
 
-    async def update_state(self, s: 'Lamlet'):
+    async def update_state(self, s: 'Oamlet'):
         span_id = s.monitor.create_span(
             span_type=SpanType.RISCV_INSTR,
             component="lamlet",
@@ -1277,7 +1277,7 @@ class Vrgather:
         vm_str = '' if self.vm else ',v0.t'
         return f'vrgather.vv\tv{self.vd},v{self.vs2},v{self.vs1}{vm_str}'
 
-    async def update_state(self, s: 'Lamlet'):
+    async def update_state(self, s: 'Oamlet'):
         span_id = s.monitor.create_span(
             span_type=SpanType.RISCV_INSTR,
             component="lamlet",

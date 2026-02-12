@@ -2,13 +2,13 @@ package zamlet.jamlet
 
 import chisel3._
 import chisel3.util._
-import zamlet.LamletParams
+import zamlet.ZamletParams
 import zamlet.utils.{ResetStage, DoubleBuffer}
 
 /**
  * Jamlet Network Node IO
  */
-class NetworkNodeIO(params: LamletParams, nChannels: Int) extends Bundle {
+class NetworkNodeIO(params: ZamletParams, nChannels: Int) extends Bundle {
   // Current position
   val thisX = Input(UInt(params.xPosWidth.W))
   val thisY = Input(UInt(params.yPosWidth.W))
@@ -38,7 +38,7 @@ class NetworkNodeIO(params: LamletParams, nChannels: Int) extends Bundle {
  * Handles multiple channels with a single local (hi/ho) connection.
  * nChannels parameter allows reuse for both A and B channel networks.
  */
-class NetworkNode(params: LamletParams, nChannels: Int) extends Module {
+class NetworkNode(params: ZamletParams, nChannels: Int) extends Module {
   val io = IO(new NetworkNodeIO(params, nChannels))
 
   val resetBuffered = ResetStage(clock, reset)
@@ -203,7 +203,7 @@ object NetworkNodeGenerator extends zamlet.ModuleGenerator {
       println("Usage: <command> <outputDir> NetworkNode <jamletParamsFileName>")
       null
     } else {
-      val params = LamletParams.fromFile(args(0))
+      val params = ZamletParams.fromFile(args(0))
       new NetworkNode(params, params.nAChannels)
     }
   }

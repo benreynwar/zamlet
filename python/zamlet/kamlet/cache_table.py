@@ -6,7 +6,7 @@ import random
 from typing import Coroutine, List, Any
 
 from zamlet.runner import Clock
-from zamlet.params import LamletParams
+from zamlet.params import ZamletParams
 from zamlet.utils import SettableBool
 from zamlet.message import Header, IdentHeader, TaggedHeader, WriteSetIdentHeader
 from zamlet.kamlet import kinstructions
@@ -136,7 +136,7 @@ class CacheState(Enum):
 
 class CacheTable:
 
-    def __init__(self, clock: Clock, params: LamletParams, name: str, monitor: Monitor,
+    def __init__(self, clock: Clock, params: ZamletParams, name: str, monitor: Monitor,
                  kamlet_x: int = 0, kamlet_y: int = 0):
         self.clock = clock
         self.params = params

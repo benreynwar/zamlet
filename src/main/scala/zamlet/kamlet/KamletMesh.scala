@@ -2,7 +2,7 @@ package zamlet.kamlet
 
 import chisel3._
 import chisel3.util._
-import zamlet.LamletParams
+import zamlet.ZamletParams
 import zamlet.jamlet.NetworkWord
 
 /**
@@ -63,7 +63,7 @@ class SyncIO extends Bundle {
  * Sync network: Each kamlet connects to 8 neighbors (N, S, E, W, NE, NW, SE, SW).
  * Edge kamlets connect to external neighbors based on edgeNeighbors config.
  */
-class KamletMesh(params: LamletParams, edgeNeighbors: MeshEdgeNeighbors) extends Module {
+class KamletMesh(params: ZamletParams, edgeNeighbors: MeshEdgeNeighbors) extends Module {
   val io = IO(new Bundle {
     // North edge network ports (to lamlet/external)
     val nChannelsIn = Vec(params.kCols, Vec(params.jCols,
@@ -441,7 +441,7 @@ object KamletMeshGenerator extends zamlet.ModuleGenerator {
       println("Usage: <configFile>")
       System.exit(1)
     }
-    val params = LamletParams.fromFile(args(0))
+    val params = ZamletParams.fromFile(args(0))
     val edgeNeighbors = MeshEdgeNeighbors.isolated(params.kCols, params.kRows)
     new KamletMesh(params, edgeNeighbors)
   }

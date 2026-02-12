@@ -2,7 +2,7 @@ package zamlet.jamlet
 
 import chisel3._
 import chisel3.util._
-import zamlet.LamletParams
+import zamlet.ZamletParams
 
 /** Send-side protocol state for a tag */
 object WitemSendState extends ChiselEnum {
@@ -63,7 +63,7 @@ object WitemType extends ChiselEnum {
 }
 
 /** Entry in the WitemMonitor table */
-class WitemEntry(params: LamletParams) extends Bundle {
+class WitemEntry(params: ZamletParams) extends Bundle {
   val valid = Bool()
   val instrIdent = params.ident()
   val witemType = WitemType()
@@ -82,19 +82,19 @@ class WitemEntry(params: LamletParams) extends Bundle {
 }
 
 /** Witem creation from kamlet */
-class WitemCreate(params: LamletParams) extends Bundle {
+class WitemCreate(params: ZamletParams) extends Bundle {
   val instrIdent = params.ident()
   val witemType = WitemType()
   val cacheIsAvail = Bool()
 }
 
 /** Request for witem instruction parameters */
-class WitemInfoReq(params: LamletParams) extends Bundle {
+class WitemInfoReq(params: ZamletParams) extends Bundle {
   val instrIdent = params.ident()
 }
 
 /** Response with witem instruction parameters */
-class WitemInfoResp(params: LamletParams) extends Bundle {
+class WitemInfoResp(params: ZamletParams) extends Bundle {
   // Raw instruction (cast to WordInstr/J2JInstr/IndexedInstr based on witem type)
   val kinstr = UInt(KInstr.width.W)
 
@@ -104,70 +104,70 @@ class WitemInfoResp(params: LamletParams) extends Bundle {
 }
 
 /** Witem src state update from RxCh0 */
-class WitemSrcUpdate(params: LamletParams) extends Bundle {
+class WitemSrcUpdate(params: ZamletParams) extends Bundle {
   val instrIdent = params.ident()
   val tag = UInt(log2Ceil(params.wordBytes).W)
   val newState = WitemSendState()
 }
 
 /** Witem dst state update from RxCh1 */
-class WitemDstUpdate(params: LamletParams) extends Bundle {
+class WitemDstUpdate(params: ZamletParams) extends Bundle {
   val instrIdent = params.ident()
   val tag = UInt(log2Ceil(params.wordBytes).W)
   val newState = WitemRecvState()
 }
 
 /** Witem fault ready signal to KamletWitemTable */
-class WitemFaultReady(params: LamletParams) extends Bundle {
+class WitemFaultReady(params: ZamletParams) extends Bundle {
   val instrIdent = params.ident()
   val hasFault = Bool()
   val minFaultElement = params.elementIndex()
 }
 
 /** Witem fault sync complete from KamletWitemTable */
-class WitemFaultSync(params: LamletParams) extends Bundle {
+class WitemFaultSync(params: ZamletParams) extends Bundle {
   val instrIdent = params.ident()
   val hasFault = Bool()
   val globalMinFault = params.elementIndex()
 }
 
 /** Witem completion sync complete from KamletWitemTable */
-class WitemCompletionSync(params: LamletParams) extends Bundle {
+class WitemCompletionSync(params: ZamletParams) extends Bundle {
   val instrIdent = params.ident()
 }
 
 /** SRAM read/write request */
-class SramReq(params: LamletParams) extends Bundle {
+class SramReq(params: ZamletParams) extends Bundle {
   val addr = UInt(params.sramAddrWidth.W)
   val isWrite = Bool()
   val writeData = params.word()
 }
 
 /** SRAM read response */
-class SramResp(params: LamletParams) extends Bundle {
+class SramResp(params: ZamletParams) extends Bundle {
   val readData = params.word()
 }
 
 /** RF read/write request */
-class RfReq(params: LamletParams) extends Bundle {
+class RfReq(params: ZamletParams) extends Bundle {
   val addr = params.rfAddr()
   val isWrite = Bool()
   val writeData = params.word()
 }
 
 /** RF read response */
-class RfResp(params: LamletParams) extends Bundle {
+class RfResp(params: ZamletParams) extends Bundle {
   val readData = params.word()
 }
 
 /** TLB request */
-class TlbReq(params: LamletParams) extends Bundle {
+class TlbReq(params: ZamletParams) extends Bundle {
   val vaddr = params.memAddr()
   val isWrite = Bool()
 }
 
 /** TLB response */
-class TlbResp(params: LamletParams) extends Bundle {
+class TlbResp(params: ZamletParams) extends Bundle {
   val paddr = params.memAddr()
   val isVpu = Bool()
   val memEwCode = EwCode()

@@ -2,7 +2,7 @@ package zamlet.jamlet
 
 import chisel3._
 import chisel3.util._
-import zamlet.LamletParams
+import zamlet.ZamletParams
 
 /**
  * Kamlet instruction format definitions.
@@ -23,22 +23,22 @@ object KInstr {
   val syncValueWidth = 8   // Sync value field width
 
   /** Cast kinstr to J2JInstr */
-  def asJ2J(params: LamletParams, kinstr: UInt): J2JInstr = {
+  def asJ2J(params: ZamletParams, kinstr: UInt): J2JInstr = {
     kinstr.asTypeOf(new J2JInstr(params))
   }
 
   /** Cast kinstr to IndexedInstr */
-  def asIndexed(params: LamletParams, kinstr: UInt): IndexedInstr = {
+  def asIndexed(params: ZamletParams, kinstr: UInt): IndexedInstr = {
     kinstr.asTypeOf(new IndexedInstr(params))
   }
 
   /** Cast kinstr to WordInstr */
-  def asWord(params: LamletParams, kinstr: UInt): WordInstr = {
+  def asWord(params: ZamletParams, kinstr: UInt): WordInstr = {
     kinstr.asTypeOf(new WordInstr(params))
   }
 
   /** Cast kinstr to LoadImmInstr */
-  def asLoadImm(params: LamletParams, kinstr: UInt): LoadImmInstr = {
+  def asLoadImm(params: ZamletParams, kinstr: UInt): LoadImmInstr = {
     kinstr.asTypeOf(new LoadImmInstr(params))
   }
 }
@@ -69,7 +69,7 @@ object KInstrParamIdx {
  * Kinstr bundled with resolved param memory values.
  * Used for kamlet-to-jamlet dispatch where params have been looked up.
  */
-class KinstrWithParams(params: LamletParams) extends Bundle {
+class KinstrWithParams(params: ZamletParams) extends Bundle {
   val kinstr = UInt(KInstr.width.W)
   val param0 = UInt(params.memAddrWidth.W)
   val param1 = UInt(params.memAddrWidth.W)
@@ -125,7 +125,7 @@ class IdentQueryInstr extends Bundle {
  * A location in a jamlet (k_index + j_in_k_index).
  * Python reference: derived from KMAddr/RegAddr k_index and j_in_k_index
  */
-class JamletLoc(params: LamletParams) extends Bundle {
+class JamletLoc(params: ZamletParams) extends Bundle {
   val kIndex = UInt(log2Ceil(params.kInL).W)
   val jInKIndex = UInt(log2Ceil(params.jInK).W)
 }
@@ -138,7 +138,7 @@ class JamletLoc(params: LamletParams) extends Bundle {
  * - memLoc: jamlet with the memory/cache side
  * Data flows mem→reg for load, reg→mem for store.
  */
-class WordInstr(params: LamletParams) extends Bundle {
+class WordInstr(params: ZamletParams) extends Bundle {
   val opcode = KInstrOpcode()
   val regLoc = new JamletLoc(params)
   val reg = params.rfAddr()
@@ -154,7 +154,7 @@ class WordInstr(params: LamletParams) extends Bundle {
  * Python reference: Load/Store with k_maddr in kinstructions.py
  * - reg: the RF register (dst for load, src for store)
  */
-class J2JInstr(params: LamletParams) extends Bundle {
+class J2JInstr(params: ZamletParams) extends Bundle {
   val opcode = KInstrOpcode()
   val cacheSlot = params.cacheSlot()
   val memWordOrder = WordOrder()
@@ -171,7 +171,7 @@ class J2JInstr(params: LamletParams) extends Bundle {
  * Instruction format for indexed operations (LoadIdxUnord / StoreIdxUnord / LoadIdxElement).
  * - reg: the RF data register (dst for load, src for store)
  */
-class IndexedInstr(params: LamletParams) extends Bundle {
+class IndexedInstr(params: ZamletParams) extends Bundle {
   val opcode = KInstrOpcode()
   val startIndex = params.elementIndex()
   val rfEw = EwCode()
@@ -202,7 +202,7 @@ class IndexedInstr(params: LamletParams) extends Bundle {
  *   data:      32 bits - data to write
  *   reserved:  remaining bits
  */
-class LoadImmInstr(params: LamletParams) extends Bundle {
+class LoadImmInstr(params: ZamletParams) extends Bundle {
   private val usedBits = KInstr.opcodeWidth + log2Ceil(params.jInK) +
                          params.rfAddrWidth + log2Ceil(params.wordBytes / 4) + 4 + 32
   require(usedBits <= KInstr.width, s"LoadImmInstr uses $usedBits bits but KInstr.width is ${KInstr.width}")
@@ -251,7 +251,7 @@ class WriteParamInstr extends Bundle {
  *   nElements:   16 bits - number of elements to store
  *   reserved:    16 bits
  */
-class StoreScalarInstr(params: LamletParams) extends Bundle {
+class StoreScalarInstr(params: ZamletParams) extends Bundle {
   private val usedBits = KInstr.opcodeWidth + params.rfAddrWidth + KInstrParamIdx.width + 16 + 16
   require(usedBits <= KInstr.width, s"StoreScalarInstr uses $usedBits bits but KInstr.width is ${KInstr.width}")
 

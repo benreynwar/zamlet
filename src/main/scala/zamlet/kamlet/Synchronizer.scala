@@ -33,7 +33,7 @@ object SynchronizerTestParams {
 }
 
 /**
- * Synchronizer for lamlet-wide synchronization with optional MIN value aggregation.
+ * Synchronizer for zamlet-wide synchronization with optional MIN value aggregation.
  *
  * Used by kamlets and lamlet for:
  * - IdentQuery: Find oldest active ident across all kamlets (MIN aggregation)

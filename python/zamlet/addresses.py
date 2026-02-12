@@ -73,7 +73,7 @@ from enum import Enum
 from typing import List, Dict
 
 from zamlet.moore import moore_d2xy, moore_xy2d
-from zamlet.params import LamletParams
+from zamlet.params import ZamletParams
 
 
 logger = logging.getLogger(__name__)
@@ -95,7 +95,7 @@ class MemoryType(Enum):
     SCALAR_NON_IDEMPOTENT = 'scalar_non_idem'  # Scalar I/O, no speculative access, tracks accesses
 
 
-def vw_index_to_j_coords(params: LamletParams, word_order: WordOrder,
+def vw_index_to_j_coords(params: ZamletParams, word_order: WordOrder,
                           vw_index: int):
     if word_order == WordOrder.STANDARD:
         j_x = vw_index % (params.j_cols * params.k_cols)
@@ -116,7 +116,7 @@ def vw_index_to_j_coords(params: LamletParams, word_order: WordOrder,
         raise NotImplementedError(f"Word order {word_order}")
 
 
-def j_coords_to_vw_index(params: LamletParams, word_order: WordOrder,
+def j_coords_to_vw_index(params: ZamletParams, word_order: WordOrder,
                           j_x: int, j_y: int):
     if word_order == WordOrder.STANDARD:
         vw_index = j_y * (params.j_cols * params.k_cols) + j_x
@@ -135,7 +135,7 @@ def j_coords_to_vw_index(params: LamletParams, word_order: WordOrder,
         raise NotImplementedError(f"Word order {word_order}")
 
 
-def vw_index_to_k_indices(params: LamletParams, word_order: WordOrder, vw_index: int):
+def vw_index_to_k_indices(params: ZamletParams, word_order: WordOrder, vw_index: int):
     """
     Convert the word index in a vector line into a jamlet index.
     """
@@ -149,7 +149,7 @@ def vw_index_to_k_indices(params: LamletParams, word_order: WordOrder, vw_index:
     return k_index, j_in_k_index
 
 
-def k_indices_to_j_coords(params: LamletParams, k_index: int, j_in_k_index: int):
+def k_indices_to_j_coords(params: ZamletParams, k_index: int, j_in_k_index: int):
     """Convert (k_index, j_in_k_index) to absolute jamlet coordinates (j_x, j_y)."""
     k_x = k_index % params.k_cols
     k_y = k_index // params.k_cols
@@ -160,7 +160,7 @@ def k_indices_to_j_coords(params: LamletParams, k_index: int, j_in_k_index: int)
     return j_x, j_y
 
 
-def k_indices_to_vw_index(params: LamletParams, word_order, k_index: int, j_in_k_index: int):
+def k_indices_to_vw_index(params: ZamletParams, word_order, k_index: int, j_in_k_index: int):
     j_x, j_y = k_indices_to_j_coords(params, k_index, j_in_k_index)
     vw_index = j_coords_to_vw_index(params, word_order, j_x, j_y)
     return vw_index
@@ -212,7 +212,7 @@ class PageInfo:
 
 class TLB:
 
-    def __init__(self, params: LamletParams):
+    def __init__(self, params: ZamletParams):
         self.params = params
         # Maps global address to page infos
         self.pages: Dict[int, PageInfo] = {}
@@ -358,7 +358,7 @@ class GlobalAddress:
     convert to VPU or scalar addresses.
     """
     bit_addr: int
-    params: LamletParams
+    params: ZamletParams
 
     @property
     def addr(self):
@@ -441,7 +441,7 @@ class VPUAddress:
     """
     bit_addr: int
     ordering: Ordering
-    params: LamletParams
+    params: ZamletParams
 
     @property
     def addr(self):
@@ -500,7 +500,7 @@ class LogicalVLineAddress:
     ordering: Ordering
     # The bit address within the vline (logical coordinates).
     bit_addr: int
-    params: LamletParams
+    params: ZamletParams
 
     @property
     def addr(self):
@@ -587,7 +587,7 @@ class PhysicalVLineAddress:
     ordering: Ordering
     # The bit address within the vline (physical coordinates).
     bit_addr: int
-    params: LamletParams
+    params: ZamletParams
 
     @property
     def addr(self):
@@ -671,7 +671,7 @@ class KMAddr:
     k_index: int
     ordering: Ordering
     bit_addr: int
-    params: LamletParams
+    params: ZamletParams
 
     @property
     def addr(self):
@@ -770,7 +770,7 @@ class JSAddr:
     j_in_k_index: int
     ordering: Ordering
     bit_addr: int
-    params: LamletParams
+    params: ZamletParams
 
     @property
     def addr(self):
@@ -818,7 +818,7 @@ class RegAddr:
     # The logical byte offset in that register
     addr: int
     ordering: Ordering
-    params: LamletParams
+    params: ZamletParams
 
     def valid(self):
         valid = 0 <= self.addr < self.params.vline_bytes
@@ -882,7 +882,7 @@ class RegAddr:
 
 class AddressConverter:
 
-    def __init__(self, params: LamletParams, tlb: TLB):
+    def __init__(self, params: ZamletParams, tlb: TLB):
         self.params = params
         self.tlb = tlb
         #self.cache_table = cache_table

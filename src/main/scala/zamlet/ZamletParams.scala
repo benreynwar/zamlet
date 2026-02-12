@@ -152,7 +152,7 @@ case class IssueUnitParams(
   killInputReg: Boolean = false
 )
 
-case class LamletParams(
+case class ZamletParams(
   // Position widths
   xPosWidth: Int = 8,
   yPosWidth: Int = 8,
@@ -185,7 +185,7 @@ case class LamletParams(
   // Instruction identifier
   identWidth: Int = 7,
 
-  // Lamlet-level parameters
+  // Zamlet-level parameters
   maxResponseTags: Int = 128,   // Number of instruction identifiers
   instructionQueueLength: Int = 8,  // Instruction queue depth per kamlet
   lamletDispatchQueueDepth: Int = 8,  // Lamlet dispatch queue depth
@@ -236,8 +236,8 @@ case class LamletParams(
 
   def pageBytesPerJamlet: Int = pageWordsPerJamlet * wordBytes
   def pageBytesPerKamlet: Int = pageBytesPerJamlet * jInK
-  def pageBytesPerLamlet: Int = pageBytesPerKamlet * kInL
-  def log2PageBytesPerLamlet: Int = Integer.numberOfTrailingZeros(pageBytesPerLamlet)
+  def pageBytesPerZamlet: Int = pageBytesPerKamlet * kInL
+  def log2PageBytesPerZamlet: Int = Integer.numberOfTrailingZeros(pageBytesPerZamlet)
 
   // Calculated parameters
   def wordWidth: Int = wordBytes * 8
@@ -258,17 +258,17 @@ case class LamletParams(
   def rfAddr(): UInt = UInt(rfAddrWidth.W)
 }
 
-object LamletParams {
+object ZamletParams {
   implicit val rfSliceParamsDecoder: Decoder[RfSliceParams] = deriveDecoder[RfSliceParams]
   implicit val synchronizerParamsDecoder: Decoder[SynchronizerParams] = deriveDecoder[SynchronizerParams]
   implicit val witemMonitorParamsDecoder: Decoder[WitemMonitorParams] = deriveDecoder[WitemMonitorParams]
   implicit val networkNodeParamsDecoder: Decoder[NetworkNodeParams] = deriveDecoder[NetworkNodeParams]
   implicit val issueUnitParamsDecoder: Decoder[IssueUnitParams] = deriveDecoder[IssueUnitParams]
-  implicit val lamletParamsDecoder: Decoder[LamletParams] = deriveDecoder[LamletParams]
+  implicit val zamletParamsDecoder: Decoder[ZamletParams] = deriveDecoder[ZamletParams]
 
-  def fromFile(fileName: String): LamletParams = {
+  def fromFile(fileName: String): ZamletParams = {
     val jsonContent = Source.fromFile(fileName).mkString
-    val paramsResult = decode[LamletParams](jsonContent)
+    val paramsResult = decode[ZamletParams](jsonContent)
     paramsResult match {
       case Right(params) => params
       case Left(error) =>

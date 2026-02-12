@@ -15,7 +15,7 @@ def chisel_verilog(name, generator, config, extra_args = []):
         generator: Chisel binary label
             (e.g. "//src/main/scala/zamlet/jamlet:jamlet")
         config: Config JSON label
-            (e.g. "//configs:lamlet_default.json")
+            (e.g. "//configs:zamlet_default.json")
         extra_args: Additional arguments passed to the generator
     """
     extra = " ".join(extra_args)

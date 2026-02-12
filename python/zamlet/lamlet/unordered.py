@@ -21,12 +21,12 @@ from zamlet.lamlet import ident_query
 from zamlet.message import MessageType, SendType, Direction, TaggedHeader, WriteMemWordHeader
 
 if TYPE_CHECKING:
-    from zamlet.lamlet.lamlet import Lamlet
+    from zamlet.oamlet.oamlet import Oamlet
 
 logger = logging.getLogger(__name__)
 
 
-async def wait_for_fault_sync(lamlet: 'Lamlet', fault_sync_ident: int) -> int | None:
+async def wait_for_fault_sync(lamlet: 'Oamlet', fault_sync_ident: int) -> int | None:
     """Wait for fault sync to complete.
 
     Returns the global minimum fault element, or None if no fault.
@@ -49,7 +49,7 @@ class SectionInfo:
     end_address: int
 
 
-def check_pages_for_access(lamlet: 'Lamlet', start_addr: int, n_elements: int,
+def check_pages_for_access(lamlet: 'Oamlet', start_addr: int, n_elements: int,
                            element_bytes: int, is_write: bool) -> VectorOpResult:
     """
     Check TLB for all pages touched by an access.
@@ -72,7 +72,7 @@ def check_pages_for_access(lamlet: 'Lamlet', start_addr: int, n_elements: int,
     return VectorOpResult()
 
 
-def check_page_range(lamlet: 'Lamlet', start_addr: int, end_addr: int,
+def check_page_range(lamlet: 'Oamlet', start_addr: int, end_addr: int,
                      is_write: bool) -> VectorOpResult:
     """Check TLB for all pages in [start_addr, end_addr).
 
@@ -90,7 +90,7 @@ def check_page_range(lamlet: 'Lamlet', start_addr: int, end_addr: int,
     return VectorOpResult()
 
 
-def get_memory_split(lamlet: 'Lamlet', g_addr: GlobalAddress, element_width: int,
+def get_memory_split(lamlet: 'Oamlet', g_addr: GlobalAddress, element_width: int,
                      n_elements: int, first_index: int) -> List[SectionInfo]:
     """
     Takes an address in global memory and a size.
@@ -183,7 +183,7 @@ def get_memory_split(lamlet: 'Lamlet', g_addr: GlobalAddress, element_width: int
     return sections
 
 
-async def vload(lamlet: 'Lamlet', vd: int, addr: int, ordering: addresses.Ordering,
+async def vload(lamlet: 'Oamlet', vd: int, addr: int, ordering: addresses.Ordering,
                 n_elements: int, mask_reg: int | None, start_index: int,
                 parent_span_id: int,
                 reg_ordering: addresses.Ordering | None = None,
@@ -201,7 +201,7 @@ async def vload(lamlet: 'Lamlet', vd: int, addr: int, ordering: addresses.Orderi
                                 reg_ordering=reg_ordering)
 
 
-async def vstore(lamlet: 'Lamlet', vs: int, addr: int, ordering: addresses.Ordering,
+async def vstore(lamlet: 'Oamlet', vs: int, addr: int, ordering: addresses.Ordering,
                  n_elements: int, mask_reg: int | None, start_index: int,
                  parent_span_id: int,
                  stride_bytes: int | None = None) -> VectorOpResult:
@@ -216,7 +216,7 @@ async def vstore(lamlet: 'Lamlet', vs: int, addr: int, ordering: addresses.Order
                                 is_store=True, parent_span_id=parent_span_id)
 
 
-async def vloadstore(lamlet: 'Lamlet', reg_base: int, addr: int, ordering: addresses.Ordering,
+async def vloadstore(lamlet: 'Oamlet', reg_base: int, addr: int, ordering: addresses.Ordering,
                      n_elements: int, mask_reg: int | None, start_index: int, is_store: bool,
                      parent_span_id: int,
                      reg_ordering: addresses.Ordering | None = None,
@@ -420,7 +420,7 @@ async def vloadstore(lamlet: 'Lamlet', reg_base: int, addr: int, ordering: addre
     return result
 
 
-async def vloadstorestride(lamlet: 'Lamlet', reg_base: int, addr: int,
+async def vloadstorestride(lamlet: 'Oamlet', reg_base: int, addr: int,
                            ordering: addresses.Ordering, n_elements: int,
                            mask_reg: int | None, start_index: int,
                            is_store: bool, parent_span_id: int, stride_bytes: int,
@@ -526,7 +526,7 @@ async def vloadstorestride(lamlet: 'Lamlet', reg_base: int, addr: int,
     return VectorOpResult(completion_sync_idents=all_completion_syncs)
 
 
-async def resolve_fault_sync(lamlet: 'Lamlet', result: VectorOpResult,
+async def resolve_fault_sync(lamlet: 'Oamlet', result: VectorOpResult,
                              is_store: bool) -> VectorOpResult:
     """Wait for a NOT_WAITED fault sync and return a resolved result."""
     assert result.fault_type == TLBFaultType.NOT_WAITED
@@ -545,7 +545,7 @@ async def resolve_fault_sync(lamlet: 'Lamlet', result: VectorOpResult,
         last_fault_sync_ident=result.last_fault_sync_ident)
 
 
-async def vload_indexed_unordered(lamlet: 'Lamlet', vd: int, base_addr: int, index_reg: int,
+async def vload_indexed_unordered(lamlet: 'Oamlet', vd: int, base_addr: int, index_reg: int,
                                   index_ew: int, data_ew: int, n_elements: int,
                                   mask_reg: int | None, start_index: int,
                                   parent_span_id: int,
@@ -565,7 +565,7 @@ async def vload_indexed_unordered(lamlet: 'Lamlet', vd: int, base_addr: int, ind
     return result
 
 
-async def vstore_indexed_unordered(lamlet: 'Lamlet', vs: int, base_addr: int, index_reg: int,
+async def vstore_indexed_unordered(lamlet: 'Oamlet', vs: int, base_addr: int, index_reg: int,
                                    index_ew: int, data_ew: int, n_elements: int,
                                    mask_reg: int | None, start_index: int,
                                    parent_span_id: int,
@@ -586,7 +586,7 @@ async def vstore_indexed_unordered(lamlet: 'Lamlet', vs: int, base_addr: int, in
 
 
 async def _vloadstore_indexed_unordered(
-        lamlet: 'Lamlet', reg: int, base_addr: int, index_reg: int,
+        lamlet: 'Oamlet', reg: int, base_addr: int, index_reg: int,
         index_ew: int, data_ew: int, n_elements: int,
         mask_reg: int | None, start_index: int,
         parent_span_id: int, is_store: bool,
@@ -694,7 +694,7 @@ async def _vloadstore_indexed_unordered(
 
 
 async def vloadstore_scalar(
-        lamlet: 'Lamlet', vd: int, addr: int, ordering: Ordering, n_elements: int,
+        lamlet: 'Oamlet', vd: int, addr: int, ordering: Ordering, n_elements: int,
         mask_reg: int, start_index: int, writeset_ident: int, is_store: bool,
         parent_span_id: int):
     """
@@ -767,7 +767,7 @@ async def vloadstore_scalar(
         await lamlet.add_to_instruction_buffer(kinstr, parent_span_id, k_index=k_index)
 
 
-async def vload_scalar_partial(lamlet: 'Lamlet', vd: int, addr: int, size: int,
+async def vload_scalar_partial(lamlet: 'Oamlet', vd: int, addr: int, size: int,
                                dst_ordering: Ordering, mask_reg: int, mask_index: int,
                                element_index: int, start_byte: int, writeset_ident: int,
                                parent_span_id: int):
@@ -819,14 +819,14 @@ async def vload_scalar_partial(lamlet: 'Lamlet', vd: int, addr: int, size: int,
     await lamlet.add_to_instruction_buffer(kinstr, parent_span_id, k_index=k_index)
 
 
-async def vstore_scalar_partial(lamlet: 'Lamlet', vd: int, addr: int, size: int,
+async def vstore_scalar_partial(lamlet: 'Oamlet', vd: int, addr: int, size: int,
                                 src_ordering: Ordering, mask_reg: int, mask_index: int,
                                 element_index: int, writeset_ident: int, start_byte: int):
     """FIXME: This function is untested. Add tests for vector loads/stores to scalar memory."""
     raise NotImplementedError("vstore_scalar_partial not yet implemented")
 
 
-async def handle_read_mem_word_req(lamlet: 'Lamlet', header, scalar_addr: int):
+async def handle_read_mem_word_req(lamlet: 'Oamlet', header, scalar_addr: int):
     """Handle unordered READ_MEM_WORD_REQ: read from scalar memory and respond immediately."""
     wb = lamlet.params.word_bytes
     word_addr = scalar_addr - (scalar_addr % wb)
@@ -858,7 +858,7 @@ async def handle_read_mem_word_req(lamlet: 'Lamlet', header, scalar_addr: int):
         f'-> ({header.source_x},{header.source_y}) data={data.hex()}')
 
 
-async def handle_write_mem_word_req(lamlet: 'Lamlet', header: WriteMemWordHeader,
+async def handle_write_mem_word_req(lamlet: 'Oamlet', header: WriteMemWordHeader,
                                     scalar_addr: int, src_word: bytes):
     """Handle WRITE_MEM_WORD_REQ: write to scalar memory and send response."""
     wb = lamlet.params.word_bytes

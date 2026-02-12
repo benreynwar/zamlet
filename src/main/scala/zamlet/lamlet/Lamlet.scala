@@ -2,7 +2,7 @@ package zamlet.lamlet
 
 import chisel3._
 import chisel3.util._
-import zamlet.LamletParams
+import zamlet.ZamletParams
 import zamlet.kamlet.{Synchronizer, SyncNeighbors, SyncPort, SyncDirection}
 import zamlet.jamlet.NetworkWord
 
@@ -18,7 +18,7 @@ import zamlet.jamlet.NetworkWord
  * - backendBusy: Status signal
  * - kill: Kill signal from scalar core
  */
-class Lamlet(params: LamletParams) extends Module {
+class Lamlet(params: ZamletParams) extends Module {
   val io = IO(new Bundle {
     // Scalar core interface
     val ex = Flipped(Decoupled(new IssueUnitExData))
@@ -126,7 +126,7 @@ object LamletGenerator extends zamlet.ModuleGenerator {
       println("Usage: <configFile>")
       System.exit(1)
     }
-    val params = LamletParams.fromFile(args(0))
+    val params = ZamletParams.fromFile(args(0))
     new Lamlet(params)
   }
 }

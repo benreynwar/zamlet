@@ -2,9 +2,9 @@ package zamlet.jamlet
 
 import chisel3._
 import chisel3.util._
-import zamlet.LamletParams
+import zamlet.ZamletParams
 
-class CombinedNetworkNodeIO(params: LamletParams) extends Bundle {
+class CombinedNetworkNodeIO(params: ZamletParams) extends Bundle {
   val thisX = Input(UInt(params.xPosWidth.W))
   val thisY = Input(UInt(params.yPosWidth.W))
 
@@ -33,7 +33,7 @@ class CombinedNetworkNodeIO(params: LamletParams) extends Bundle {
   val bHo = Decoupled(new NetworkWord(params))
 }
 
-class CombinedNetworkNode(params: LamletParams) extends Module {
+class CombinedNetworkNode(params: ZamletParams) extends Module {
   val io = IO(new CombinedNetworkNodeIO(params))
 
   val aNetworkNode = Module(new NetworkNode(params, params.nAChannels))
@@ -72,7 +72,7 @@ object CombinedNetworkNodeGenerator extends zamlet.ModuleGenerator {
       println("Usage: <command> <outputDir> CombinedNetworkNode <configFile>")
       null
     } else {
-      val params = LamletParams.fromFile(args(0))
+      val params = ZamletParams.fromFile(args(0))
       new CombinedNetworkNode(params)
     }
   }

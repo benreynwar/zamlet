@@ -14,7 +14,7 @@ from typing import List, Set, Tuple
 
 import pytest
 
-from zamlet.params import LamletParams
+from zamlet.params import ZamletParams
 from zamlet.geometries import SMALL_GEOMETRIES, scale_n_tests
 from zamlet.addresses import Ordering, WordOrder, KMAddr
 from zamlet.kamlet import kinstructions
@@ -25,8 +25,8 @@ logger = logging.getLogger(__name__)
 
 
 def create_test_params(k_cols: int = 2, k_rows: int = 1,
-                       j_cols: int = 1, j_rows: int = 1) -> LamletParams:
-    return LamletParams(
+                       j_cols: int = 1, j_rows: int = 1) -> ZamletParams:
+    return ZamletParams(
         k_cols=k_cols,
         k_rows=k_rows,
         j_cols=j_cols,
@@ -34,7 +34,7 @@ def create_test_params(k_cols: int = 2, k_rows: int = 1,
     )
 
 
-def create_load_instr(params: LamletParams, mem_ew: int, reg_ew: int,
+def create_load_instr(params: ZamletParams, mem_ew: int, reg_ew: int,
                       start_index: int, n_elements: int,
                       mem_offset: int = 0) -> kinstructions.Load:
     mem_ordering = Ordering(word_order=WordOrder.STANDARD, ew=mem_ew)
@@ -63,7 +63,7 @@ def mapping_to_tuple(m: RegMemMapping) -> Tuple[int, int, int, int, int, int, in
     return (m.reg_v, m.reg_vw, m.reg_wb, m.mem_v, m.mem_vw, m.mem_wb, m.n_bits)
 
 
-def get_all_mappings_from_reg(params: LamletParams,
+def get_all_mappings_from_reg(params: ZamletParams,
                                instr: kinstructions.Load) -> Set[Tuple]:
     """Generate all mappings by iterating over reg-side coordinates."""
     mappings = set()
@@ -88,7 +88,7 @@ def get_all_mappings_from_reg(params: LamletParams,
     return mappings
 
 
-def get_all_mappings_from_mem(params: LamletParams,
+def get_all_mappings_from_mem(params: ZamletParams,
                                instr: kinstructions.Load) -> Set[Tuple]:
     """Generate all mappings by iterating over mem-side coordinates."""
     mappings = set()
@@ -113,7 +113,7 @@ def get_all_mappings_from_mem(params: LamletParams,
     return mappings
 
 
-def check_mapping_consistency(params: LamletParams, mem_ew: int, reg_ew: int,
+def check_mapping_consistency(params: ZamletParams, mem_ew: int, reg_ew: int,
                               start_index: int, n_elements: int,
                               mem_offset: int = 0) -> bool:
     """Test that reg→mem and mem→reg produce the same mappings."""

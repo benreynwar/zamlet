@@ -2,10 +2,10 @@ package zamlet.jamlet
 
 import chisel3._
 import chisel3.util._
-import zamlet.LamletParams
+import zamlet.ZamletParams
 
 /** Network channels IO - Vec of channels for each direction */
-class ChannelsIO(params: LamletParams, nChannels: Int) extends Bundle {
+class ChannelsIO(params: ZamletParams, nChannels: Int) extends Bundle {
   val ni = Vec(nChannels, Flipped(Decoupled(new NetworkWord(params))))
   val no = Vec(nChannels, Decoupled(new NetworkWord(params)))
   val si = Vec(nChannels, Flipped(Decoupled(new NetworkWord(params))))
@@ -18,7 +18,7 @@ class ChannelsIO(params: LamletParams, nChannels: Int) extends Bundle {
 
 
 /** Cache slot request from jamlet (for RX-initiated witems) */
-class CacheSlotReq(params: LamletParams) extends Bundle {
+class CacheSlotReq(params: ZamletParams) extends Bundle {
   val kMAddr = UInt(32.W)  // TODO: proper width
   val isWrite = Bool()
   val instrIdent = params.ident()
@@ -27,7 +27,7 @@ class CacheSlotReq(params: LamletParams) extends Bundle {
 }
 
 /** Cache slot response from kamlet */
-class CacheSlotResp(params: LamletParams) extends Bundle {
+class CacheSlotResp(params: ZamletParams) extends Bundle {
   val instrIdent = params.ident()
   val sourceX = params.xPos()
   val sourceY = params.yPos()
@@ -36,7 +36,7 @@ class CacheSlotResp(params: LamletParams) extends Bundle {
 }
 
 /** Command to send cache line data */
-class SendCacheLineCmd(params: LamletParams) extends Bundle {
+class SendCacheLineCmd(params: ZamletParams) extends Bundle {
   val slot = params.cacheSlot()
   val ident = params.ident()
   val isWriteRead = Bool()
@@ -47,7 +47,7 @@ class SendCacheLineCmd(params: LamletParams) extends Bundle {
  *
  * Contains routers, SRAM, register file slice, and witem processing logic.
  */
-class Jamlet(params: LamletParams) extends Module {
+class Jamlet(params: ZamletParams) extends Module {
   val io = IO(new Bundle {
     // Position
     val thisX = Input(params.xPos())
@@ -280,7 +280,7 @@ object JamletGenerator extends zamlet.ModuleGenerator {
       println("Usage: <command> <outputDir> Jamlet <jamletParamsFileName>")
       null
     } else {
-      val params = LamletParams.fromFile(args(0))
+      val params = ZamletParams.fromFile(args(0))
       new Jamlet(params)
     }
   }

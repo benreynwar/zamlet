@@ -2,7 +2,7 @@ package zamlet.jamlet
 
 import chisel3._
 import chisel3.util._
-import zamlet.LamletParams
+import zamlet.ZamletParams
 import zamlet.utils.DoubleBuffer
 
 /**
@@ -18,7 +18,7 @@ import zamlet.utils.DoubleBuffer
  * Reads are combinational. All ports can read concurrently.
  * All ports can write. Two ports writing to the same address results in DontCare.
  */
-class RfSlice(params: LamletParams) extends Module {
+class RfSlice(params: ZamletParams) extends Module {
   val io = IO(new Bundle {
     // WitemMonitor ports
     val maskReq = Flipped(Decoupled(new RfReq(params)))
@@ -129,10 +129,10 @@ class RfSlice(params: LamletParams) extends Module {
 object RfSliceGenerator extends zamlet.ModuleGenerator {
   override def makeModule(args: Seq[String]): Module = {
     if (args.length < 1) {
-      println("Usage: <command> <outputDir> RfSlice <lamletParamsFileName>")
+      println("Usage: <command> <outputDir> RfSlice <zamletParamsFileName>")
       null
     } else {
-      val params = LamletParams.fromFile(args(0))
+      val params = ZamletParams.fromFile(args(0))
       new RfSlice(params)
     }
   }

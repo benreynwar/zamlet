@@ -107,7 +107,7 @@ This document describes the architecture of the RISC-V Vector Processing Unit (V
 ## Hierarchy
 
 ```
-Lamlet (top-level VPU)
+Zamlet (top-level VPU)
 ├── TLB (address translation)
 ├── Monitor (distributed tracing)
 ├── Kamlet[k_in_l] (tile clusters)

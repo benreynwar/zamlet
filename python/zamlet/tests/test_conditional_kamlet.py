@@ -20,9 +20,9 @@ from random import Random
 import pytest
 
 from zamlet.runner import Clock
-from zamlet.params import LamletParams
+from zamlet.params import ZamletParams
 from zamlet.geometries import SMALL_GEOMETRIES, scale_n_tests
-from zamlet.lamlet.lamlet import Lamlet
+from zamlet.oamlet.oamlet import Oamlet
 from zamlet.addresses import GlobalAddress, MemoryType, Ordering, WordOrder, KMAddr, RegAddr
 from zamlet.kamlet import kinstructions
 from zamlet.kamlet.kinstructions import Load, Store
@@ -39,7 +39,7 @@ async def update(clock, lamlet):
 
 
 async def run_conditional_simple(clock: Clock, vector_length: int, seed: int, lmul: int,
-                                 params: LamletParams):
+                                 params: ZamletParams):
     """
     Simple conditional test with small arrays.
 
@@ -50,7 +50,7 @@ async def run_conditional_simple(clock: Clock, vector_length: int, seed: int, lm
     - a and b are int16 arrays (data to select from)
     - z is int16 array (output)
     """
-    lamlet = Lamlet(clock, params)
+    lamlet = Oamlet(clock, params)
     clock.create_task(update(clock, lamlet))
     clock.create_task(lamlet.run())
 
@@ -262,7 +262,7 @@ async def run_conditional_simple(clock: Clock, vector_length: int, seed: int, lm
         return 1
 
 
-async def main(clock, vector_length: int, seed: int, lmul: int, params: LamletParams):
+async def main(clock, vector_length: int, seed: int, lmul: int, params: ZamletParams):
     import signal
 
     def signal_handler(signum, frame):
@@ -283,10 +283,10 @@ async def main(clock, vector_length: int, seed: int, lmul: int, params: LamletPa
 
 
 def run_test(vector_length: int, seed: int = 0, lmul: int = 4,
-             params: LamletParams = None):
+             params: ZamletParams = None):
     """Helper to run a single test configuration."""
     if params is None:
-        params = LamletParams()
+        params = ZamletParams()
     clock = Clock(max_cycles=5000)
     exit_code = asyncio.run(main(clock, vector_length, seed, lmul, params))
     assert exit_code == 0, f"Test failed with exit_code={exit_code}"

@@ -13,7 +13,7 @@ import pytest
 
 from zamlet.addresses import WordOrder
 from zamlet.runner import Clock
-from zamlet.lamlet.run_lamlet import main as run_lamlet_main
+from zamlet.oamlet.run_oamlet import main as run_lamlet_main
 
 logger = logging.getLogger(__name__)
 
@@ -81,7 +81,7 @@ def run_kernel(binary_path: str, params=None, max_cycles: int = 100000,
 
     Args:
         binary_path: Path to the .riscv binary
-        params: LamletParams configuration (uses default if None)
+        params: ZamletParams configuration (uses default if None)
         max_cycles: Maximum simulation cycles
         word_order: Word order for VPU memory layout
         symbol_values: Dict of {symbol_name: int32_value} to set before

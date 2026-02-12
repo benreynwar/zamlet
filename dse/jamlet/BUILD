@@ -15,7 +15,7 @@ librelane_synth_config(
     synth_autoname = True,
 )
 
-LAMLET_CONFIG = "//configs:lamlet_default.json"
+ZAMLET_CONFIG = "//configs:zamlet_default.json"
 JAMLET_PKG = "//src/main/scala/zamlet/jamlet"
 
 # Jamlet top module with custom pin placement
@@ -23,7 +23,7 @@ chisel_dse_module(
     name = "Jamlet_default",
     top = "Jamlet",
     generator = JAMLET_PKG + ":jamlet",
-    config = LAMLET_CONFIG,
+    config = ZAMLET_CONFIG,
     pdk = ":sky130hd",
     clock_period = "10.0",
     core_utilization = "35",
@@ -35,7 +35,7 @@ chisel_dse_module(
     name = "NetworkNode_default",
     top = "NetworkNode",
     generator = JAMLET_PKG + ":networknode",
-    config = LAMLET_CONFIG,
+    config = ZAMLET_CONFIG,
     pdk = ":sky130hd",
     clock_period = "10.0",
     die_area = "0 0 330 770",
@@ -47,7 +47,7 @@ chisel_dse_module(
 chisel_verilog(
     name = "CombinedNetworkNode_default",
     generator = JAMLET_PKG + ":combinednetworknode",
-    config = LAMLET_CONFIG,
+    config = ZAMLET_CONFIG,
 )
 
 COMBINED_NETWORK_NODE_DIE_AREA = "0 0 500 830"
@@ -55,7 +55,7 @@ COMBINED_NETWORK_NODE_DIE_AREA = "0 0 500 830"
 combined_network_node_def(
     name = "CombinedNetworkNode_default_sky130hd_def_template",
     pdk = ":sky130hd",
-    config = LAMLET_CONFIG,
+    config = ZAMLET_CONFIG,
     die_area = COMBINED_NETWORK_NODE_DIE_AREA,
 )
 
@@ -81,7 +81,7 @@ JAMLET_SUB_MODULES = [
     name = "{}_default".format(module),
     top = module,
     generator = JAMLET_PKG + ":{}".format(target),
-    config = LAMLET_CONFIG,
+    config = ZAMLET_CONFIG,
     pdk = ":sky130hd",
     clock_period = "10.0",
     core_utilization = "35",
@@ -93,7 +93,7 @@ chisel_dse_module(
     name = "PacketArbiter_default",
     top = "PacketArbiter",
     generator = JAMLET_PKG + ":packetarbiter",
-    config = LAMLET_CONFIG,
+    config = ZAMLET_CONFIG,
     pdk = ":sky130hd",
     extra_generator_args = ["2"],
     clock_period = "10.0",

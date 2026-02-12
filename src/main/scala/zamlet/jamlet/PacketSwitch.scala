@@ -2,12 +2,12 @@ package zamlet.jamlet
 
 import chisel3._
 import chisel3.util._
-import zamlet.LamletParams
+import zamlet.ZamletParams
 
 /**
  * Packet Switch IO
  */
-class PacketSwitchIO(params: LamletParams) extends Bundle {
+class PacketSwitchIO(params: ZamletParams) extends Bundle {
   // Current position
   val thisX = Input(UInt(params.xPosWidth.W))
   val thisY = Input(UInt(params.yPosWidth.W))
@@ -34,7 +34,7 @@ class PacketSwitchIO(params: LamletParams) extends Bundle {
  * Instantiates 5 PacketInHandlers (North, East, South, West, Here) and
  * 5 PacketOutHandlers (North, East, South, West, Here) and connects them together.
  */
-class PacketSwitch(params: LamletParams) extends Module {
+class PacketSwitch(params: ZamletParams) extends Module {
   val io = IO(new PacketSwitchIO(params))
 
   // Create 5 PacketInHandlers (North=0, East=1, South=2, West=3, Here=4)
@@ -116,7 +116,7 @@ object PacketSwitchGenerator extends zamlet.ModuleGenerator {
       println("Usage: <command> <outputDir> PacketSwitch <jamletParamsFileName>")
       null
     } else {
-      val params = LamletParams.fromFile(args(0))
+      val params = ZamletParams.fromFile(args(0))
       new PacketSwitch(params)
     }
   }

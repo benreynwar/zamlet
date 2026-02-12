@@ -2,7 +2,7 @@ import logging
 import random
 
 from zamlet.runner import Clock
-from zamlet.params import LamletParams
+from zamlet.params import ZamletParams
 from zamlet.register_file_slot import RegisterFileSlot
 
 
@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 class ScalarState:
 
-    def __init__(self, clock: Clock, params: LamletParams):
+    def __init__(self, clock: Clock, params: ZamletParams):
         self.clock = clock
         self.params = params
         self._rf = [RegisterFileSlot(clock, params, f'x{i}') for i in range(32)]

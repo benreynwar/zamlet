@@ -2,7 +2,7 @@ package zamlet.kamlet
 
 import chisel3._
 import chisel3.util._
-import zamlet.LamletParams
+import zamlet.ZamletParams
 import zamlet.jamlet.{KInstr, KInstrOpcode, KInstrBase, KInstrParamIdx, SyncTriggerInstr,
                        IdentQueryInstr, LoadImmInstr, WriteParamInstr, KinstrWithParams,
                        StoreScalarInstr}
@@ -13,7 +13,7 @@ import zamlet.jamlet.{KInstr, KInstrOpcode, KInstrBase, KInstrParamIdx, SyncTrig
  * For Test 0 (minimal): Only handles SyncTrigger instruction.
  * Later phases add: IdentQuery, LoadSimple, StoreSimple, dispatch to jamlets, etc.
  */
-class InstrExecutor(params: LamletParams) extends Module {
+class InstrExecutor(params: ZamletParams) extends Module {
   val io = IO(new Bundle {
     // Kinstr input (from InstrQueue)
     val kinstrIn = Flipped(Decoupled(UInt(64.W)))

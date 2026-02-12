@@ -3,7 +3,7 @@ import logging
 from typing import Set
 
 from zamlet.message import Direction, directions, Header, SendType
-from zamlet.params import LamletParams
+from zamlet.params import ZamletParams
 from zamlet.utils import Queue
 
 
@@ -21,7 +21,7 @@ class Connection:
 
 class Router:
 
-    def __init__(self, clock, params: LamletParams, x: int, y: int, channel: int = 0):
+    def __init__(self, clock, params: ZamletParams, x: int, y: int, channel: int = 0):
         self.clock = clock
         self.x = x
         self.y = y

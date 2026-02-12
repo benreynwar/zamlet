@@ -25,9 +25,9 @@ from random import Random
 import pytest
 
 from zamlet.runner import Clock
-from zamlet.params import LamletParams
+from zamlet.params import ZamletParams
 from zamlet.geometries import SMALL_GEOMETRIES, scale_n_tests
-from zamlet.lamlet.lamlet import Lamlet
+from zamlet.oamlet.oamlet import Oamlet
 from zamlet.addresses import GlobalAddress, MemoryType, Ordering, WordOrder
 from zamlet.monitor import CompletionType, SpanType
 
@@ -93,7 +93,7 @@ async def run_unaligned_test(
     src_offset: int,
     dst_offset: int,
     lmul: int,
-    params: LamletParams,
+    params: ZamletParams,
     seed: int,
 ):
     """
@@ -101,7 +101,7 @@ async def run_unaligned_test(
 
     Loads vl elements from src+src_offset, stores to dst+dst_offset.
     """
-    lamlet = Lamlet(clock, params)
+    lamlet = Oamlet(clock, params)
     clock.create_task(update(clock, lamlet))
     clock.create_task(lamlet.run())
 
@@ -256,7 +256,7 @@ async def main(
     src_offset: int,
     dst_offset: int,
     lmul: int,
-    params: LamletParams,
+    params: ZamletParams,
     seed: int,
 ):
     import signal
@@ -281,10 +281,10 @@ async def main(
 
 
 def run_test(reg_ew, src_ew, dst_ew, src_offset, dst_offset, vl, lmul=8,
-             params: LamletParams = None, seed=0):
+             params: ZamletParams = None, seed=0):
     """Helper to run a single test configuration."""
     if params is None:
-        params = LamletParams()
+        params = ZamletParams()
     clock = Clock(max_cycles=10000)
     exit_code = asyncio.run(main(
         clock, src_ew, dst_ew, vl, reg_ew, src_offset, dst_offset, lmul, params, seed

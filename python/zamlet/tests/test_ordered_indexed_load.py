@@ -19,7 +19,7 @@ from random import Random
 import pytest
 
 from zamlet.runner import Clock
-from zamlet.params import LamletParams
+from zamlet.params import ZamletParams
 from zamlet.addresses import GlobalAddress, MemoryType, Ordering, WordOrder
 from zamlet.geometries import SMALL_GEOMETRIES, scale_n_tests
 from zamlet.monitor import CompletionType, SpanType
@@ -39,7 +39,7 @@ async def run_ordered_indexed_load_test(
     index_ew: int,
     vl: int,
     n_pages: int,
-    params: LamletParams,
+    params: ZamletParams,
     seed: int,
     start_index: int = 0,
     use_mask: bool = True,
@@ -69,7 +69,7 @@ async def _run_ordered_indexed_load_test_inner(
     index_ew: int,
     vl: int,
     n_pages: int,
-    params: LamletParams,
+    params: ZamletParams,
     seed: int,
     start_index: int,
     use_mask: bool,
@@ -298,7 +298,7 @@ async def main(clock, data_ew, index_ew, vl, n_pages, params, seed, start_index=
     return exit_code
 
 
-def run_test(data_ew: int, index_ew: int, vl: int, n_pages: int, params: LamletParams, seed: int,
+def run_test(data_ew: int, index_ew: int, vl: int, n_pages: int, params: ZamletParams, seed: int,
              start_index: int = 0, use_mask: bool = True, max_cycles: int = 200000):
     """Helper to run a single test configuration."""
     clock = Clock(max_cycles=max_cycles)

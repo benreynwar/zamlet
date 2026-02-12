@@ -19,7 +19,7 @@ chisel_dse_module(
     name = "Kamlet_default",
     top = "Kamlet",
     generator = "//src/main/scala/zamlet/kamlet:kamlet",
-    config = "//configs:lamlet_default.json",
+    config = "//configs:zamlet_default.json",
     pdk = ":sky130hd",
     clock_period = "10.0",
     core_utilization = "40",

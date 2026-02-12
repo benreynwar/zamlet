@@ -2,7 +2,7 @@ package zamlet.lamlet
 
 import chisel3._
 import chisel3.util._
-import zamlet.LamletParams
+import zamlet.ZamletParams
 import zamlet.jamlet.{J2JInstr, EwCode, WordOrder, KInstr, KInstrOpcode, WriteParamInstr,
                        StoreScalarInstr}
 import zamlet.utils.{DoubleBuffer, ValidBuffer}
@@ -56,7 +56,7 @@ class IssueUnitCom extends Bundle {
   val internalReplay = Bool()
 }
 
-class IssueUnit(params: LamletParams) extends Module {
+class IssueUnit(params: ZamletParams) extends Module {
   val bufParams = params.issueUnitParams
   val io = IO(new Bundle {
     /** Instruction input from scalar core */
@@ -214,7 +214,7 @@ class IssueUnit(params: LamletParams) extends Module {
   kinstr.rfWordOrder := WordOrder.Standard
   kinstr.memEw := bitsToEwCode(eewBits)
   kinstr.rfEw := sewToEwCode(vsew)
-  // baseBitAddr: byte address within lamlet (page-aligned portion)
+  // baseBitAddr: byte address within zamlet (page-aligned portion)
   kinstr.baseBitAddr := (tlbPaddr << 3.U)(log2Ceil(params.wordWidth * params.jInL) - 1, 0)
   kinstr.startIndex := vstart.pad(params.elementIndexWidth)
   kinstr.nElementsIdx := 0.U
@@ -378,7 +378,7 @@ object IssueUnitGenerator extends zamlet.ModuleGenerator {
       println("Usage: <configFile>")
       System.exit(1)
     }
-    val params = LamletParams.fromFile(args(0))
+    val params = ZamletParams.fromFile(args(0))
     new IssueUnit(params)
   }
 }

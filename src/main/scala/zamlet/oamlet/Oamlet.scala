@@ -10,7 +10,7 @@ import freechips.rocketchip.subsystem._
 import freechips.rocketchip.devices.tilelink._
 
 import shuttle.common._
-import zamlet.LamletParams
+import zamlet.ZamletParams
 import zamlet.lamlet.{Zamlet, ZamletParamsKey, ZamletVectorDecode}
 import zamlet.shuttle.{ShuttleBaseConfig, ShuttleSystem}
 import freechips.rocketchip.rocket.{BTBParams, BHTParams, ICacheParams}
@@ -18,7 +18,7 @@ import freechips.rocketchip.rocket.{BTBParams, BHTParams, ICacheParams}
 import java.io.File
 
 /** Config fragment to use Zamlet as the vector unit */
-class WithZamletVector(params: LamletParams) extends Config((site, here, up) => {
+class WithZamletVector(params: ZamletParams) extends Config((site, here, up) => {
   case ZamletParamsKey => params
   case TilesLocated(InSubsystem) => up(TilesLocated(InSubsystem)) map {
     case tp: OamletTileAttachParams =>
@@ -63,7 +63,7 @@ class WithNOamletCores(n: Int, retireWidth: Int) extends Config(
 )
 
 /** Oamlet config - Shuttle with Zamlet vector unit */
-class OamletConfig(params: LamletParams) extends Config(
+class OamletConfig(params: ZamletParams) extends Config(
   new WithZamletVector(params) ++
   new WithNOamletCores(n = 1, retireWidth = 2) ++
   new Config((site, here, up) => {
@@ -74,7 +74,7 @@ class OamletConfig(params: LamletParams) extends Config(
 )
 
 /** Small Oamlet config - reduced cache sizes for faster simulation */
-class SmallOamletConfig(params: LamletParams) extends Config(
+class SmallOamletConfig(params: ZamletParams) extends Config(
   new shuttle.common.WithL1ICacheSets(32) ++
   new shuttle.common.WithL1ICacheWays(2) ++
   new shuttle.common.WithL1DCacheSets(32) ++
@@ -155,7 +155,7 @@ object Main extends App {
   val size = args.lift(2).getOrElse("normal")
 
   // Load Zamlet params from config file
-  val zParams = LamletParams.fromFile(configFile)
+  val zParams = ZamletParams.fromFile(configFile)
 
   // Create output directory
   val outDirFile = new File(outputDir)

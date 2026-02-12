@@ -5,9 +5,9 @@ KAMLET_CONFIG_FILES = [
     "synchronizer_default.json",
 ]
 
-# List of Lamlet config JSON files
-LAMLET_CONFIG_FILES = [
-    "lamlet_default.json",
+# List of Zamlet config JSON files
+ZAMLET_CONFIG_FILES = [
+    "zamlet_default.json",
 ]
 
 # List of Maths config JSON files
@@ -29,7 +29,7 @@ VECTOR_RF_CONFIG_FILES = [
 ]
 
 exports_files(
-    KAMLET_CONFIG_FILES + LAMLET_CONFIG_FILES + MATHS_CONFIG_FILES +
+    KAMLET_CONFIG_FILES + ZAMLET_CONFIG_FILES + MATHS_CONFIG_FILES +
     UTILS_CONFIG_FILES + VECTOR_RF_CONFIG_FILES,
     visibility = ["//visibility:public"]
 )

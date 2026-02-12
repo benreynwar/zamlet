@@ -2,7 +2,7 @@ package zamlet.lamlet
 
 import chisel3._
 import chisel3.util._
-import zamlet.LamletParams
+import zamlet.ZamletParams
 import zamlet.jamlet.{NetworkWord, PacketHeader, WriteMemWordHeader, MessageType}
 
 /**
@@ -23,7 +23,7 @@ import zamlet.jamlet.{NetworkWord, PacketHeader, WriteMemWordHeader, MessageType
  * 3. Issue TileLink Put
  * 4. When all elements complete, signal storeComplete
  */
-class VpuToScalarMem(params: LamletParams) extends Module {
+class VpuToScalarMem(params: ZamletParams) extends Module {
   val io = IO(new Bundle {
     // WriteMemWord packets from mesh (from kamlets)
     val meshIn = Flipped(Decoupled(new NetworkWord(params)))
@@ -146,7 +146,7 @@ object VpuToScalarMemGenerator extends zamlet.ModuleGenerator {
       println("Usage: <configFile>")
       System.exit(1)
     }
-    val params = LamletParams.fromFile(args(0))
+    val params = ZamletParams.fromFile(args(0))
     new VpuToScalarMem(params)
   }
 }

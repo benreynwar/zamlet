@@ -2,13 +2,13 @@ package zamlet.jamlet
 
 import chisel3._
 import chisel3.util._
-import zamlet.LamletParams
+import zamlet.ZamletParams
 import zamlet.utils.{SkidBuffer, DecoupledBuffer, DoubleBuffer}
 
 /**
  * Packet Output Handler IO
  */
-class PacketOutHandlerIO(params: LamletParams) extends Bundle {
+class PacketOutHandlerIO(params: ZamletParams) extends Bundle {
   // Output direction this handler serves
   val outputDirection = Input(NetworkDirections())
   
@@ -30,7 +30,7 @@ class PacketOutHandlerIO(params: LamletParams) extends Bundle {
  *   This helps with broadcast instructions (otherwise there are multiple paths to the same dest)
  *   Since routing in horiz then vert it doesn't mess other stuff up.
  */
-class PacketOutHandler(params: LamletParams, isNorthOrSouth: Boolean) extends Module {
+class PacketOutHandler(params: ZamletParams, isNorthOrSouth: Boolean) extends Module {
   val io = IO(new PacketOutHandlerIO(params))
   
   val outputToBuffer = Wire(Decoupled(new NetworkWord(params)))
@@ -144,7 +144,7 @@ object PacketOutHandlerGenerator extends zamlet.ModuleGenerator {
       println("Usage: <command> <outputDir> PacketOutHandler <jamletParamsFileName>")
       null
     } else {
-      val params = LamletParams.fromFile(args(0))
+      val params = ZamletParams.fromFile(args(0))
       new PacketOutHandler(params, false)
     }
   }

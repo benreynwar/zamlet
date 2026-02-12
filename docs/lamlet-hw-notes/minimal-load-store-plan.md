@@ -19,7 +19,7 @@ bazel test //python/zamlet/kamlet_test:test_kamlet_default --test_output=streame
 # PASSES - Both SyncTrigger and IdentQuery tests work
 ```
 
-**LamletTop DSE**: 84,745 instances, 11,057 um^2, meets timing at 1GHz with 97ps slack
+**Zamlet DSE**: 84,745 instances, 11,057 um^2, meets timing at 1GHz with 97ps slack
 
 ## Phase Overview
 
