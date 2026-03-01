@@ -4,3 +4,6 @@ build --action_env=PDK_ROOT
 build --action_env=PDK
 # For linking against Nix Python (needed by cocotb)
 build --action_env=LIBRARY_PATH
+# Allow Chisel's coursier to download firtool from within Bazel sandbox
+build --sandbox_writable_path=/home/user/.cache/coursier
+build --sandbox_writable_path=/home/user/.cache/llvm-firtool
