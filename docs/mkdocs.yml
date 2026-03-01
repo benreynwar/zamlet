@@ -1,0 +1,6 @@
+site_name: Zamlet
+nav:
+  - Home: index.md
+  - Memory: memory.md
+  - Gather Example: gather_example.md
+theme: readthedocs
