@@ -160,8 +160,8 @@ case class ZamletParams(
   // Grid dimensions (must all be powers of 2)
   kCols: Int = 2,
   kRows: Int = 1,
-  jCols: Int = 1,
-  jRows: Int = 1,
+  jCols: Int = 2,
+  jRows: Int = 2,
 
   // Word width (shared: SRAM, network, RF)
   wordBytes: Int = 8,
@@ -184,6 +184,12 @@ case class ZamletParams(
 
   // Instruction identifier
   identWidth: Int = 7,
+
+  // Memlet configuration
+  nMemletGatheringSlots: Int = 4, // Concurrent WRITE_LINE_READ_LINE operations
+  nResponseBufferSlots: Int = 4,  // Concurrent read responses in flight
+  memBeatWords: Int = 1,          // Words per external memory beat
+  memAxiIdBits: Int = 4,          // AXI4 transaction ID width
 
   // Zamlet-level parameters
   maxResponseTags: Int = 128,   // Number of instruction identifiers
@@ -225,6 +231,13 @@ case class ZamletParams(
   require((jRows & (jRows - 1)) == 0 && jRows > 0, s"jRows must be power of 2, got $jRows")
   require((wordBytes & (wordBytes - 1)) == 0 && wordBytes > 0,
     s"wordBytes must be power of 2, got $wordBytes")
+  require(cacheSlotWords % jInK == 0,
+    s"cacheSlotWords ($cacheSlotWords) must be divisible by jInK ($jInK)")
+  require(cacheSlotWords % memBeatWords == 0,
+    s"cacheSlotWords ($cacheSlotWords) must be divisible by memBeatWords ($memBeatWords)")
+  require(cacheSlotWordsPerJamlet <= 12,
+    s"cacheSlotWordsPerJamlet ($cacheSlotWordsPerJamlet) must be <= 12 to fit in 4-bit " +
+    s"packet length field (WRITE_LINE_READ_LINE needs 3 + wordsPerJamlet words)")
 
   def log2JInL: Int = Integer.numberOfTrailingZeros(jInL)
   def log2JTotalCols: Int = Integer.numberOfTrailingZeros(jTotalCols)
@@ -233,6 +246,20 @@ case class ZamletParams(
   def log2JRows: Int = Integer.numberOfTrailingZeros(jRows)
   def log2WordWidth: Int = Integer.numberOfTrailingZeros(wordWidth)
   def log2WordBytes: Int = Integer.numberOfTrailingZeros(wordBytes)
+
+  def cacheSlotWordsPerJamlet: Int = cacheSlotWords / jInK
+  def memBeatsPerCacheLine: Int = cacheSlotWords / memBeatWords
+
+  def nMemletRouters: Int = {
+    val edgeHeight = kRows * jRows
+    val nSideCols = kCols / 2
+    val nMemlets = nSideCols * kRows
+    val nEdgeCols = (nMemlets + edgeHeight - 1) / edgeHeight
+    val memletsPerCol = (nMemlets + nEdgeCols - 1) / nEdgeCols
+    edgeHeight / memletsPerCol
+  }
+  def memletLocalJamlets: Int = jInK / nMemletRouters
+  def memletLocalWords: Int = memletLocalJamlets * cacheSlotWordsPerJamlet
 
   def pageBytesPerJamlet: Int = pageWordsPerJamlet * wordBytes
   def pageBytesPerKamlet: Int = pageBytesPerJamlet * jInK

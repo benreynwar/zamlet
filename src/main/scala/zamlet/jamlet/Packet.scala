@@ -18,13 +18,13 @@ object SendType extends ChiselEnum {
 object MessageType extends ChiselEnum {
   val Send = Value(0.U)
   val Instructions = Value(1.U)
-  val Reserved2 = Value(2.U)
+  val CacheLineData = Value(2.U)
   val Reserved3 = Value(3.U)
-  val WriteLine = Value(4.U)
+  val WriteLineAddr = Value(4.U)
   val WriteLineResp = Value(5.U)
   val ReadLine = Value(6.U)
   val ReadLineResp = Value(7.U)
-  val WriteLineReadLine = Value(8.U)
+  val WriteLineReadLineAddr = Value(8.U)
   val WriteLineReadLineResp = Value(9.U)
   val ReadByte = Value(10.U)
   val ReadByteResp = Value(11.U)
@@ -59,9 +59,9 @@ object MessageType extends ChiselEnum {
   val IdentQueryResp = Value(40.U)
   val Reserved41 = Value(41.U)
   val WriteLineReadLineDrop = Value(42.U)
-  val Reserved43 = Value(43.U)
-  val Reserved44 = Value(44.U)
-  val Reserved45 = Value(45.U)
+  val ReadLineDrop = Value(43.U)
+  val WriteLineDrop = Value(44.U)
+  val CacheLineDataDrop = Value(45.U)
   val Reserved46 = Value(46.U)
   val Reserved47 = Value(47.U)
   val Reserved48 = Value(48.U)
@@ -70,6 +70,12 @@ object MessageType extends ChiselEnum {
   val LoadIndexedElementResp = Value(51.U)
   val Reserved52 = Value(52.U)
   val StoreIndexedElementResp = Value(53.U)
+}
+
+object PacketConstants {
+  val lengthWidth = 4.W
+  val tagWidth = 4.W
+  val maskWidth = 4.W
 }
 
 /**
@@ -81,7 +87,7 @@ class PacketHeader(params: ZamletParams) extends Bundle {
   val targetY = UInt(params.yPosWidth.W)
   val sourceX = UInt(params.xPosWidth.W)
   val sourceY = UInt(params.yPosWidth.W)
-  val length = UInt(4.W)
+  val length = UInt(PacketConstants.lengthWidth)
   val messageType = MessageType()
   val sendType = SendType()
 }
@@ -100,7 +106,7 @@ class IdentHeader(params: ZamletParams) extends PacketHeader(params) {
  * Python: 52 bits (+4 for tag)
  */
 class TaggedHeader(params: ZamletParams) extends IdentHeader(params) {
-  val tag = UInt(4.W)
+  val tag = UInt(PacketConstants.tagWidth)
 }
 
 /**
@@ -108,10 +114,21 @@ class TaggedHeader(params: ZamletParams) extends IdentHeader(params) {
  * 10-bit mask (reduced from Python's 12 to fit with 7-bit ident)
  */
 class MaskedTaggedHeader(params: ZamletParams) extends TaggedHeader(params) {
-  val mask = UInt(10.W)
+  val mask = UInt(PacketConstants.maskWidth)
 
   require(this.getWidth <= params.wordWidth,
     s"MaskedTaggedHeader exceeds word width: ${this.getWidth} > ${params.wordWidth}")
+}
+
+/**
+ * Header with ident and SRAM word address for cache line operations.
+ * Used by READ_LINE, WRITE_LINE, WRITE_LINE_READ_LINE and their responses.
+ */
+class AddressHeader(params: ZamletParams) extends IdentHeader(params) {
+  val address = UInt(params.sramAddrWidth.W)
+
+  require(this.getWidth <= params.wordWidth,
+    s"AddressHeader exceeds word width: ${this.getWidth} > ${params.wordWidth}")
 }
 
 /**
