@@ -53,3 +53,19 @@ We use jamlet/kamlet/lamlet/memlet to refer to modules in the zamlet processor.
 * Basic modelling in python.  The approach seems practical, but I don't yet have quantitative performance numbers, and many of the vector instructions don't yet have defined mappings into the hardware.
 
 * Some initial work implementing the design in Chisel. This is what I'm primarily working on at the moment.  I think the biggest risk at the moment is that the area cost of dealing with the message passing will be too high.
+
+## Setup
+
+Dependencies are installed using nix.
+The build itself is done using bazel.
+
+1. Install nix
+2. Add the following to /etc/nix/nix.conf
+    ```
+    extra-experimental-features = nix-command flakes
+    extra-substituters = https://nix-cache.fossi-foundation.org
+    extra-trusted-public-keys = nix-cache.fossi-foundation.org:3+K59iFwXqKsL7BNu6Guy0v+uTlwsxYQxjspXzqLYQs=
+    ```
+    This allows nix to use the precompiled FOSSi binaries which speeds things up a bunch.
+3. Run `nix-shell` in the project directory.
+4. Use bazel to build a target
