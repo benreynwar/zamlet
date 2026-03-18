@@ -1,5 +1,6 @@
 # Bazel stuff
 bazel-*
+.bazel-bsp-output-base/
 MODULE.bazel.lock
 .ccache
 
