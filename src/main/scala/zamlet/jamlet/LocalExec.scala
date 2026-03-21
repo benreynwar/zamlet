@@ -3,6 +3,7 @@ package zamlet.jamlet
 import chisel3._
 import chisel3.util._
 import zamlet.ZamletParams
+import zamlet.network.{NetworkWord, WriteMemWordHeader, MessageType, SendType}
 
 /**
  * LocalExec handles immediate kinstr execution (LoadImm, StoreScalar, etc.)

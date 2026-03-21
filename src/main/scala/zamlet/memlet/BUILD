@@ -1,16 +1,8 @@
 load("//bazel:chisel.bzl", "chisel_binary")
 
-exports_files(
-    [
-        "MemletBundles.scala",
-        "GatherSide.scala",
-    ],
-    visibility = ["//visibility:public"],
-)
-
 filegroup(
     name = "memlet_sources",
-    srcs = ["MemletBundles.scala", "GatherSide.scala"], #glob(["*.scala"]),
+    srcs = glob(["*.scala"]),
     visibility = ["//visibility:public"],
 )
 
@@ -27,8 +19,16 @@ MEMLET_COMMON_SRCS = [
     "//src/main/scala/zamlet:ModuleGenerator.scala",
     "//src/main/scala/zamlet:ZamletParams.scala",
     "//src/main/scala/zamlet/utils:utils_sources",
-    "//src/main/scala/zamlet/jamlet:Packet.scala",
+    "//src/main/scala/zamlet/network:network_sources",
 ]
+
+chisel_binary(
+    name = "memlet",
+    srcs = [":memlet_sources"] + MEMLET_COMMON_SRCS,
+    main_class = "zamlet.memlet.MemletMain",
+    deps = MEMLET_DEPS,
+    visibility = ["//visibility:public"],
+)
 
 chisel_binary(
     name = "gatherside",
@@ -37,4 +37,3 @@ chisel_binary(
     deps = MEMLET_DEPS,
     visibility = ["//visibility:public"],
 )
-

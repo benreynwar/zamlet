@@ -3,6 +3,8 @@ package zamlet.jamlet
 import chisel3._
 import chisel3.util._
 import zamlet.ZamletParams
+import zamlet.network.{NetworkWord, MessageType, SendType, WriteMemWordHeader, ReadMemWordHeader,
+                       MaskedTaggedHeader, TaggedHeader}
 import zamlet.utils.{DoubleBuffer, ValidBuffer}
 
 object WitemMonitorUtils {

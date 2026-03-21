@@ -45,6 +45,7 @@ chisel_library(
         "//src/main/scala/zamlet:ZamletParams.scala",
         "//src/main/scala/zamlet:ModuleGenerator.scala",
         "//src/main/scala/zamlet/jamlet:jamlet_sources",
+        "//src/main/scala/zamlet/network:network_sources",
         "//src/main/scala/zamlet/utils:utils_sources",
     ],
     deps = [
@@ -65,6 +66,7 @@ chisel_binary(
         "//src/main/scala/zamlet:ZamletParams.scala",
         "//src/main/scala/zamlet:ModuleGenerator.scala",
         "//src/main/scala/zamlet/jamlet:jamlet_sources",
+        "//src/main/scala/zamlet/network:network_sources",
         "//src/main/scala/zamlet/utils:utils_sources",
     ],
     main_class = "zamlet.kamlet.KamletMain",
@@ -86,6 +88,7 @@ chisel_binary(
         "//src/main/scala/zamlet:ZamletParams.scala",
         "//src/main/scala/zamlet:ModuleGenerator.scala",
         "//src/main/scala/zamlet/jamlet:jamlet_sources",
+        "//src/main/scala/zamlet/network:network_sources",
         "//src/main/scala/zamlet/utils:utils_sources",
     ],
     main_class = "zamlet.kamlet.KamletMeshMain",

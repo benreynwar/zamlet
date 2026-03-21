@@ -4,7 +4,8 @@ import chisel3._
 import chisel3.util._
 import zamlet.ZamletParams
 import zamlet.SynchronizerParams
-import zamlet.jamlet.{Jamlet, NetworkWord}
+import zamlet.jamlet.Jamlet
+import zamlet.network.NetworkWord
 
 /**
  * Kamlet is a cluster of jamlets that share an instruction queue, cache tracking,

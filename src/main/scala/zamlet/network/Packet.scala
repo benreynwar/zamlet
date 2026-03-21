@@ -1,4 +1,4 @@
-package zamlet.jamlet
+package zamlet.network
 
 import chisel3._
 import chisel3.util._
@@ -18,11 +18,11 @@ object SendType extends ChiselEnum {
 object MessageType extends ChiselEnum {
   val Send = Value(0.U)
   val Instructions = Value(1.U)
-  val CacheLineData = Value(2.U)
+  val WriteLineData = Value(2.U)
   val Reserved3 = Value(3.U)
   val WriteLineAddr = Value(4.U)
   val WriteLineResp = Value(5.U)
-  val ReadLine = Value(6.U)
+  val ReadLineAddr = Value(6.U)
   val ReadLineResp = Value(7.U)
   val WriteLineReadLineAddr = Value(8.U)
   val WriteLineReadLineResp = Value(9.U)
@@ -58,10 +58,10 @@ object MessageType extends ChiselEnum {
   val WriteMemWordRetry = Value(39.U)
   val IdentQueryResp = Value(40.U)
   val Reserved41 = Value(41.U)
-  val WriteLineReadLineDrop = Value(42.U)
-  val ReadLineDrop = Value(43.U)
-  val WriteLineDrop = Value(44.U)
-  val CacheLineDataDrop = Value(45.U)
+  val WriteLineReadLineAddrDrop = Value(42.U)
+  val ReadLineAddrDrop = Value(43.U)
+  val WriteLineAddrDrop = Value(44.U)
+  val WriteLineDataDrop = Value(45.U)
   val Reserved46 = Value(46.U)
   val Reserved47 = Value(47.U)
   val Reserved48 = Value(48.U)
@@ -239,4 +239,5 @@ object PacketRouting {
 
     direction
   }
+
 }

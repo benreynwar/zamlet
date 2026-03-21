@@ -174,13 +174,12 @@ and pairs WLRL write/read completions.
 
 Per entry:
 - `valid: Bool`
-- `type: WL | ReadLine | WlrlWrite | WlrlRead`
+- `type: WL | RL | WLRL_W | WLRL_R`
 - `ident: UInt(identWidth)`
 - `sramAddr: UInt(sramAddrWidth)`
 - `sourceX, sourceY: UInt` — requester coordinates (for WriteLineResp)
 - `partnerId: UInt(idBits)` — links WlrlWrite ↔ WlrlRead
 - `complete: Bool` — B received (write types) or R received (read types)
-- `responseBufAllocated: Bool` — read types only, set on first R beat
 - `responseSlotIdx: UInt` — read types only, set on first R beat
 
 ID allocation via free list (bit vector). Dequeue engine stalls if no free IDs.
@@ -190,25 +189,27 @@ ID allocation via free list (bit vector). Dequeue engine stalls if no free IDs.
 | Queue | Entry |
 |-------|-------|
 | Write Addr | {writeAddr, axiId} |
-| Write Data | cache line data (cacheSlotWords words) |
+| Write Slot | gathering slot index |
 | Read Addr | {memAddr, axiId} |
 | WriteLineResp FIFO | {ident, targetX, targetY} — fed to BufferToKamlet (router 0) |
 
-Write Addr and Write Data queues stay synchronized (same enqueue order). AXI4
-requires W data in AW issue order.
+Write Addr and Write Slot queues stay synchronized (same enqueue
+order). AXI4 requires W data in AW issue order.
 
 #### Engines (all run concurrently)
 
-**Dequeue Engine**: Pops from completeQueue and readLineQueue.
-- completeQueue: allocate one AXI4 ID for WL or two for WLRL. Initialize
-  tracker entries (copy ident, sramAddr, sourceX/Y from gathering slot;
-  set partnerId on each for WLRL). Copy cache line data from gathering
-  slot into Write Data queue. Enqueue {writeAddr, axiId} to Write Addr
-  queue. If WLRL: also enqueue {readAddr, readAxiId} to Read Addr queue.
-  **Free gathering slot immediately** (data has been copied out).
-- readLineQueue: allocate one AXI4 ID, initialize tracker entry
-  (type=ReadLine, copy ident, sramAddr from queue entry).
-  Enqueue {memAddr, axiId} to Read Addr queue.
+**Dequeue Engine**: Pops from completeQueue. Branches on writes/reads:
+- WL (writes=true, reads=false): Idle → allocate 1 ID, init tracker
+  (type=WL), enqueue writeAddrQueue, go to CopyData.
+- WLRL (writes=true, reads=true): Idle → allocate 2 IDs, init
+  tracker entries (WLRL_W + WLRL_R with partnerIds), enqueue
+  writeAddrQueue + readAddrQueue, go to CopyData.
+- RL (writes=false, reads=true): Idle → allocate 1 ID, init tracker
+  (type=RL), enqueue readAddrQueue, stay in Idle (no data to copy).
+- CopyData: copy cacheSlotWords words from gathering data read port
+  (one word per cycle, addressed by routerIdx + local word index)
+  into Write Data queue. Stalls if queue is full.
+  **Free gathering slot when done** (data has been copied out).
 
 **AW Engine**: Pop Write Addr queue → drive AW channel (awid = axiId,
 awaddr = writeAddr, awlen = memBeatsPerCacheLine - 1, awburst = INCR,
@@ -220,7 +221,7 @@ wlast on final beat. One cache line at a time, in Write Addr queue order.
 **B Engine**: Accept B channel response. Look up tracker[bid]:
 - WL: enqueue {ident, sourceX, sourceY} to WriteLineResp FIFO, free
   tracker entry.
-- WlrlWrite: set complete. Check tracker[partnerId]: if partner also
+- WLRL_W: set complete. Check tracker[partnerId]: if partner also
   complete → mark Response Buffer slot sendable, free both entries.
   Else wait.
 
@@ -228,20 +229,34 @@ wlast on final beat. One cache line at a time, in Write Addr queue order.
 araddr = memAddr, arlen = memBeatsPerCacheLine - 1, arburst = INCR,
 arsize = log2(memBeatWords * wordBytes)).
 
-**R Engine**: Accept R channel beats. Lazy Response Buffer allocation
-and scatter to distributed per-router storage (see Response Buffer
-under Shared State). On each beat:
-- If `!responseBufAllocated`: allocate a free Response Buffer slot.
-  If none free, hold RREADY low until one frees. Set
-  `responseBufAllocated = true`, record `responseSlotIdx` in tracker,
-  initialize slot metadata (ident, sramAddr, responseType from tracker).
-- Compute target router and local data index from beat position
-  (see R Engine scatter formula under Response Buffer). Write beat
-  data to that router's local storage.
-- On `rlast`, look up tracker[rid]:
-  - ReadLine: mark Response Buffer slot sendable, free tracker entry.
-  - WlrlRead: set complete. Check tracker[partnerId]: if partner
-    also complete → mark sendable, free both. Else wait.
+**R Engine**: Two-stage pipeline. Assumes AXI R does not interleave
+beats from different IDs.
+- Stage A: Accept R beat. On first beat of a burst (tracked by
+  `raNeedsAlloc` register), allocate a free Response Buffer slot.
+  If none free, stall. Record `responseSlotIdx` in tracker. Latch
+  beat data, slot index, and allocation metadata into stage B
+  registers.
+- Stage B: Scatter beat data to correct router via
+  `responseDataWrite`. On first beat, emit allocate event on
+  `responseMetaEvent`. On last beat, signal `rComplete` to
+  completion logic.
+
+**Completion logic**: Tracker scan generates sendable events and
+frees tracker entries. B and R engines set `complete` bits in the
+tracker. Separate logic scans for actionable entries each cycle:
+- WL + complete → handled directly by B Engine (enqueues
+  WriteLineResp, frees entry).
+- RL + complete → emit sendable on `responseMetaEvent`, free entry.
+- WLRL pair both complete → emit sendable, free both entries.
+R Engine allocate events have priority on `responseMetaEvent`
+(stage B). Tracker scan emits sendable only when R Engine is not
+using the port.
+
+**idAvailable update**: Multiple engines update the ID bit vector
+each cycle. Per-engine masks are combined: `idsAllocByDq` (clear
+bits), `idsFreedByB`, `idsFreedByR` (set bits). No conflicts:
+allocations pick from free IDs, frees return in-use IDs, B and R
+never free the same ID.
 
 ### BufferToKamlet (one per router)
 
@@ -479,14 +494,15 @@ all writes are local.
 Response Buffer slots are NOT pre-allocated when reads are issued.
 The R Engine allocates on the first R beat for a transaction:
 
-1. First R beat for `rid`. Look up tracker[rid].
-2. `!responseBufAllocated` → allocate free Response Buffer slot.
-   If none free: hold RREADY low until one frees. Set
-   `responseBufAllocated = true`, record `responseSlotIdx` in tracker,
-   initialize slot metadata from tracker.
-3. Store beat data into computed router's local storage.
-4. Subsequent beats: store directly (slot already allocated).
-5. On `rlast`: completion logic per MemoryEngine R Engine.
+1. First R beat for `rid` (tracked by `raNeedsAlloc` register in
+   R Engine stage A — no per-tracker allocation flag needed since
+   AXI R is assumed non-interleaving).
+2. Allocate free Response Buffer slot. If none free: stall.
+   Record `responseSlotIdx` in tracker. Broadcast allocate event
+   via `responseMetaEvent`.
+3. Store beat data into computed router's local storage (stage B).
+4. Subsequent beats: store directly (slot index latched in stage A).
+5. On `rlast`: signal `rComplete` to completion logic.
 
 This avoids wasting slots on in-flight reads that haven't returned
 data yet. The number of in-flight AXI4 reads (up to 2^idBits) can
@@ -508,23 +524,27 @@ far exceed nResponseBufferSlots.
 Memlet
 ├── MemletSlice[0..nRouters-1]
 │   ├── CombinedNetworkNode (router)
-│   ├── KamletToBuffer logic
-│   ├── BufferToKamlet logic
-│   ├── Local gathering slot storage (data + arrived)
-│   ├── Local response buffer storage (data + routerDone)
-│   └── Local drop queue
+│   ├── GatherSide (KamletToBuffer + gathering storage)
+│   └── ResponseSide (BufferToKamlet + response storage + drop queue)
 └── MemoryEngine
     ├── Transaction tracker + AXI4 ID free list
-    ├── Write Addr / Write Data / Read Addr queues
-    ├── WriteLineResp FIFO
-    ├── Response Buffer central metadata
-    └── Dequeue, AW, W, B, AR, R engines
+    ├── Write Addr / Write Slot / Read Addr queues
+    ├── Dequeue, AW, W, B, AR, R engines
+    └── Tracker scan (completion logic)
 ```
 
-The module boundary forces explicit decisions about cross-module signal
-timing. All inter-slice communication uses registered propagation chains
-(one hop per cycle). MemletSlice IO is parameterized by `routerId` —
-slice 0 has additional ports for gathering slot metadata and readLineQueue.
+MemletSlice is a thin wrapper that instantiates a router, GatherSide,
+and ResponseSide, wiring them together internally (bHo → GatherSide,
+ResponseSide → aHi, GatherSide.dropEnq → ResponseSide.dropEnq) and
+exposing everything else as IO.
+
+The Memlet top level instantiates nRouters slices + one MemoryEngine
+and handles all inter-module wiring:
+- Propagation chains (ident outward, arrived inward, sent inward)
+- Response data write demux (routerSel → per-slice valid gating)
+- Response metadata broadcast
+- Gathering data read interconnect (demux + ordering FIFO, depth 4)
+- WriteLineResp passthrough (MemoryEngine builds full NetworkWord)
 
 ### MemletSlice IO
 
@@ -559,22 +579,19 @@ forwards to MemoryEngine for slot freeing.
 #### Gathering side (slice → MemoryEngine)
 
 **Complete queue enqueue (slice 0 only):**
-Decoupled, carries `slotIdx`. Slice 0 enqueues when all arrived bits
-are set for a gathering slot.
+Decoupled, carries `GatheringSlotMeta` (slotIdx, ident, sramAddr,
+sourceX/Y, writeAddr, readAddr, writes, reads). Slice 0 enqueues
+gathering completions (writes=true) and ReadLine requests
+(writes=false, reads=true). MemoryEngine uses writes/reads to
+determine whether to copy data and which AXI4 transactions to issue.
 
-**Read line queue enqueue (slice 0 only):**
-Decoupled, carries `{ident, sramAddr, memAddr}`. Slice 0 enqueues when
-a ReadLine packet is received.
-
-**Gathering slot data read (all slices):**
-MemoryEngine's Dequeue Engine reads local gathering data from each
-slice. Port: `{slotIdx, wordIdx}` → data. For nRouters>1, Dequeue
-Engine reads from slices in memory-word order (interleaved across
-slices).
-
-**Gathering slot metadata read (slice 0 only):**
-MemoryEngine reads authoritative metadata from slice 0: `slotIdx` →
-`{ident, sramAddr, sourceX/Y, writeAddr, readAddr, needsRead}`.
+**Gathering slot data read:**
+MemoryEngine issues `GatheringDataReadReq` with `{routerIdx, slotIdx,
+wordIdx}`. Memlet top demuxes requests to slices by routerIdx and
+enqueues routerIdx into an ordering FIFO (depth 4). Responses are
+muxed back to MemoryEngine in FIFO order, preserving request ordering
+so the W Engine receives data in the correct sequence. Requests can
+run ahead of responses up to the FIFO depth.
 
 **Gathering slot free (MemoryEngine → slice 0):**
 Pulse `{slotIdx}`. After Dequeue Engine copies data, it tells slice 0
@@ -583,29 +600,32 @@ to clear the authoritative valid bit.
 #### Response side (MemoryEngine → slices)
 
 **Response Buffer data write (ME → all slices):**
-Per slice: `{valid, slotIdx, localDataIdx, data: UInt(wordWidth)}`.
-R Engine asserts valid on exactly one slice's port per beat. The slice
-latches the word at the given address — no handshake needed.
+MemoryEngine outputs `ResponseDataWrite` (`{slotIdx, localDataIdx,
+data}`) plus a separate `responseDataRouterSel` onehot. Memlet top
+gates each slice's valid with its bit in routerSel. No handshake.
 
-**Response Buffer metadata replication (ME → slice 0 → outward):**
-Event-based propagation chain, same pattern as gathering slot ident
-replication. Shared wires with a type bit to distinguish two events:
-- Allocate (`type=0`): `{valid, type, slotIdx, ident, sramAddr,
+**Response Buffer metadata broadcast (ME → all slices):**
+Direct broadcast from MemoryEngine to all slices (no propagation
+chain). Shared wires with a type bit to distinguish two events:
+- Allocate (`isSendable=false`): `{valid, slotIdx, ident, sramAddr,
   responseType}`. Sent when R Engine allocates a Response Buffer
   slot on the first R beat. Each slice latches into its local
   metadata replica for that slot.
-- Sendable (`type=1`): `{valid, type, slotIdx}`. `ident`, `sramAddr`,
-  `responseType` fields are don't-care. Sent when a slot becomes
-  sendable (all data received, and for WLRL the write is also
-  complete). Each slice sets the sendable flag in its local replica.
+- Sendable (`isSendable=true`): `{valid, slotIdx}`. `ident`,
+  `sramAddr`, `responseType` fields are don't-care. Sent when a
+  slot becomes sendable (all data received, and for WLRL the write
+  is also complete). Each slice sets the sendable flag in its
+  local replica.
 These cannot conflict: Allocate fires on the first R beat,
 Sendable fires on rlast or later (B response for WLRL).
 Freeing is local — each slice clears its replica when it sets
 `routerDone` for that slot.
 
-**WriteLineResp FIFO dequeue (ME → slice 0 only):**
-Decoupled `{ident, targetX, targetY}`. Slice 0's BufferToKamlet
-dequeues to send WriteLineResp packets.
+**WriteLineResp (ME → slice 0 only):**
+Decoupled NetworkWord. MemoryEngine builds the complete IdentHeader
+(with messageType, target/source coords, ident) in the B Engine
+when a WL transaction completes. Flows through Memlet top to
+slice 0's ResponseSide without conversion.
 
 **Response Buffer free (slice 0 → ME):**
 Pulse `{slotIdx}`. Slice 0 sends when all routerDone bits are

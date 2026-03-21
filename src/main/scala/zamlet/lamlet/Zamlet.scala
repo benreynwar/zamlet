@@ -11,7 +11,7 @@ import freechips.rocketchip.diplomacy._
 import shuttle.common._
 import zamlet.ZamletParams
 import zamlet.kamlet.{KamletMesh, MeshEdgeNeighbors}
-import zamlet.jamlet.NetworkWord
+import zamlet.network.NetworkWord
 import zamlet.oamlet.VPUMemParamsKey
 
 /** Config key for Zamlet parameters */

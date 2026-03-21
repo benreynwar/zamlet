@@ -3,7 +3,7 @@ package zamlet.lamlet
 import chisel3._
 import chisel3.util._
 import zamlet.ZamletParams
-import zamlet.jamlet.{NetworkWord, PacketHeader, SendType, MessageType}
+import zamlet.network.{NetworkWord, PacketHeader, SendType, MessageType}
 
 /**
  * DispatchQueue buffers kinstrs, batches them by target kamlet, and generates network packets.

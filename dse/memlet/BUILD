@@ -16,7 +16,16 @@ librelane_synth_config(
 ZAMLET_CONFIG = "//configs:zamlet_default.json"
 MEMLET_PKG = "//src/main/scala/zamlet/memlet"
 
-# Jamlet top module with custom pin placement
+chisel_dse_module(
+    name = "GatherSide_default",
+    top = "GatherSide",
+    generator = MEMLET_PKG + ":gatherside",
+    config = ZAMLET_CONFIG,
+    pdk = ":sky130hd",
+    clock_period = "10.0",
+    core_utilization = "50",
+)
+
 chisel_dse_module(
     name = "Memlet_default",
     top = "Memlet",

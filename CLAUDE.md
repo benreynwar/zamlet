@@ -18,6 +18,9 @@ development, uncomment the local path override in `shell.nix`.
 The librelane source code is available at `~/Code/librelane` for reference (not the version used
 by the project, but useful for understanding the code).
 
+The Chisel source code is available at `~/Code/chisel` (the `~/Code` directory itself is the
+chisel repo root). Useful for understanding Chisel internals when debugging elaboration issues.
+
 ## Comments
 NEVER add comments that explain what was changed or reference previous states of the code. Comments should explain what the code does or why it does it, not what it used to do or how it changed. Avoid diff-specific comments that only make sense in the context of changes being made.
 

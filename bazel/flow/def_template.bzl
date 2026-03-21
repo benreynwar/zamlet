@@ -51,7 +51,7 @@ combined_network_node_def = rule(
             doc = "Die area as 'x0 y0 x1 y1' in microns (overrides auto-calc)",
         ),
         "_script": attr.label(
-            default = "//dse/jamlet:gen_combined_network_node_def.py",
+            default = "//dse/network:gen_combined_network_node_def.py",
             allow_single_file = True,
         ),
     },

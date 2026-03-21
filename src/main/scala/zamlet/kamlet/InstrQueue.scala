@@ -3,7 +3,7 @@ package zamlet.kamlet
 import chisel3._
 import chisel3.util._
 import zamlet.ZamletParams
-import zamlet.jamlet.{NetworkWord, PacketHeader, MessageType}
+import zamlet.network.{NetworkWord, PacketHeader, MessageType}
 
 /**
  * InstrQueue error signals.

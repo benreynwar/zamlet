@@ -1,4 +1,4 @@
-package zamlet.jamlet
+package zamlet.network
 
 import chisel3._
 import chisel3.util._
@@ -94,5 +94,5 @@ object PacketArbiterGenerator extends zamlet.ModuleGenerator with App {
     new PacketArbiter(params, nInputs)
   }
 
-  generate(args(0), args.drop(1))
+  generate(args(0), args.drop(1).toIndexedSeq)
 }

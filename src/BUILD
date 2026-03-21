@@ -49,6 +49,7 @@ chisel_binary(
         "//src/main/scala/zamlet/lamlet:lamlet_sources",
         "//src/main/scala/zamlet/kamlet:kamlet_sources",
         "//src/main/scala/zamlet/jamlet:jamlet_sources",
+        "//src/main/scala/zamlet/network:network_sources",
     ] + ZAMLET_COMMON_SRCS,
     main_class = "zamlet.oamlet.Main",
     deps = ZAMLET_DEPS + SHUTTLE_DEPS,

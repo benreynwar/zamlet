@@ -3,6 +3,7 @@ package zamlet.jamlet
 import chisel3._
 import chisel3.util._
 import zamlet.ZamletParams
+import zamlet.network.{CombinedNetworkNode, NetworkWord, PacketArbiter, PacketHeader, MessageType}
 
 /** Network channels IO - Vec of channels for each direction */
 class ChannelsIO(params: ZamletParams, nChannels: Int) extends Bundle {

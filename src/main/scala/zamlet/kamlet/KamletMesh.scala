@@ -3,7 +3,7 @@ package zamlet.kamlet
 import chisel3._
 import chisel3.util._
 import zamlet.ZamletParams
-import zamlet.jamlet.NetworkWord
+import zamlet.network.NetworkWord
 
 /**
  * Configuration for external sync neighbors at mesh perimeter.
