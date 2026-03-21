@@ -157,6 +157,25 @@ in {
 
   # Project build setup
   buildHook = ''
+    # Deduplicate PATH to prevent Bazel cache invalidation.
+    # Each nix-shell entry can append duplicates, and --action_env=PATH
+    # hashes the full value into action keys.
+    dedupPATH() {
+      local IFS=: result=() seen=()
+      for dir in $PATH; do
+        local found=0
+        for s in "''${seen[@]}"; do
+          if [ "$s" = "$dir" ]; then found=1; break; fi
+        done
+        if [ "$found" = 0 ]; then
+          seen+=("$dir")
+          result+=("$dir")
+        fi
+      done
+      printf '%s\n' "$(IFS=:; echo "''${result[*]}")"
+    }
+    export PATH="$(dedupPATH)"
+
     export PYTHONPATH="$PWD/python:$PYTHONPATH"
 
     # Ensure sandbox writable paths exist (Bazel requires them to)

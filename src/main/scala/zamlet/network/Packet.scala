@@ -70,6 +70,16 @@ object MessageType extends ChiselEnum {
   val LoadIndexedElementResp = Value(51.U)
   val Reserved52 = Value(52.U)
   val StoreIndexedElementResp = Value(53.U)
+  val Reserved54 = Value(54.U)
+  val Reserved55 = Value(55.U)
+  val Reserved56 = Value(56.U)
+  val Reserved57 = Value(57.U)
+  val Reserved58 = Value(58.U)
+  val Reserved59 = Value(59.U)
+  val Reserved60 = Value(60.U)
+  val Reserved61 = Value(61.U)
+  val Reserved62 = Value(62.U)
+  val Reserved63 = Value(63.U)
 }
 
 object PacketConstants {

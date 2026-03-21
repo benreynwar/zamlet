@@ -218,8 +218,8 @@ class ResponseSide(params: ZamletParams) extends Module {
       }
     }
     is(TxState.SendResponseData) {
-      val dataIdx =
-        txJamletIdx * params.cacheSlotWordsPerJamlet.U + txWordIdx
+      val dataIdx = (txJamletIdx * params.cacheSlotWordsPerJamlet.U + txWordIdx)(
+        log2Ceil(localWords) - 1, 0)
       responseQueue.io.enq.valid := true.B
       responseQueue.io.enq.bits.data :=
         responseSlots(txSlotIdx).bits.data(dataIdx)

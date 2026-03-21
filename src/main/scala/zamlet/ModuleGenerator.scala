@@ -25,14 +25,13 @@ trait ModuleGenerator {
   def generate(outputDir: String, args: Seq[String]): Unit = {
     ChiselStage.emitSystemVerilogFile(
       gen = makeModule(args),
-      args = Array(
-        "--target-dir", outputDir,
-        ),
+      args = Array("--target-dir", outputDir),
       firtoolOpts = Array(
         "-disable-all-randomization",
         "-strip-debug-info",
-        "-disable-opt",
         "-default-layer-specialization=enable",
+        // Yosys 0.46 doesn't support `automatic` in always blocks
+        "-lowering-options=disallowLocalVariables",
       )
     )
   }
