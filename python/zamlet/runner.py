@@ -3,6 +3,8 @@ import logging
 import os
 import pdb
 import traceback
+import signal
+import threading
 
 logger = logging.getLogger(__name__)
 
@@ -158,6 +160,16 @@ class Clock:
         '''
         We create a task for the main task that we start the simulation with.
         '''
+        if threading.current_thread() is threading.main_thread():
+            prev_handler = signal.getsignal(signal.SIGINT)
+            def signal_handler(signum, frame):
+                # Stop the clock cleanly on Ctrl+C so async tasks don't hang.
+                self.stop()
+                if callable(prev_handler):
+                    prev_handler(signum, frame)
+                else:
+                    raise KeyboardInterrupt()
+            signal.signal(signal.SIGINT, signal_handler)
         Task(self, asyncio.current_task())
 
     def create_task(self, coro):

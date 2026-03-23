@@ -263,14 +263,6 @@ async def run_conditional_simple(clock: Clock, vector_length: int, seed: int, lm
 
 
 async def main(clock, vector_length: int, seed: int, lmul: int, params: ZamletParams):
-    import signal
-
-    def signal_handler(signum, frame):
-        clock.stop()
-        raise KeyboardInterrupt()
-
-    signal.signal(signal.SIGINT, signal_handler)
-
     clock.register_main()
 
     clock_driver_task = clock.create_task(clock.clock_driver())

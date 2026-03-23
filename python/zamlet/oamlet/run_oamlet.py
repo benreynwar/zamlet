@@ -169,14 +169,6 @@ async def run(clock: Clock, filename, params: ZamletParams = None,
 async def main(clock, filename, params: ZamletParams = None,
                word_order: WordOrder = WordOrder.STANDARD,
                symbol_values: dict = None) -> int:
-    import signal
-
-    def signal_handler(signum, frame):
-        clock.stop()
-        raise KeyboardInterrupt()
-
-    signal.signal(signal.SIGINT, signal_handler)
-
     clock.register_main()
     run_task = clock.create_task(
         run(clock, filename, params, word_order, symbol_values))

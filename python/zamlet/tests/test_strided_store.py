@@ -293,13 +293,6 @@ async def _run_strided_store_test_inner(
 
 
 async def main(clock, **kwargs):
-    import signal
-
-    def signal_handler(signum, frame):
-        clock.stop()
-        raise KeyboardInterrupt()
-
-    signal.signal(signal.SIGINT, signal_handler)
     clock.register_main()
     clock.create_task(clock.clock_driver())
 
