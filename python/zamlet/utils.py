@@ -1,10 +1,16 @@
 import logging
+from random import Random
 from collections import deque
 import struct
 from typing import List
 
 
 logger = logging.getLogger(__name__)
+
+
+def create_rng(rng: Random) -> Random:
+    seed = rng.getrandbits(32)
+    return Random(seed)
 
 
 def uint_to_bits(value, width):

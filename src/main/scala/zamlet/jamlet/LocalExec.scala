@@ -90,6 +90,7 @@ class LocalExec(params: ZamletParams) extends Module {
   header.tag := 0.U  // No tag needed for scalar stores
   header.dstByteInWord := 0.U  // Full word aligned
   header.nBytes := 8.U  // Full 8-byte word
+  header._padding := 0.U
 
   // Default outputs
   io.rfReq.valid := false.B

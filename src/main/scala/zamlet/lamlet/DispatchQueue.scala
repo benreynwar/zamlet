@@ -74,6 +74,7 @@ class DispatchQueue(params: ZamletParams) extends Module {
     header.length := count  // number of data words following header
     header.messageType := MessageType.Instructions
     header.sendType := Mux(isBroadcast, SendType.Broadcast, SendType.Single)
+    header._padding := 0.U
     header.asUInt
   }
 

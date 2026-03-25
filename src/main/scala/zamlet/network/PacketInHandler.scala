@@ -64,10 +64,14 @@ class PacketInHandler(params: ZamletParams) extends Module {
     val directions = Wire(UInt(5.W))
 
     // Calculate which directions we can still go based on broadcast bounds
-    val canGoNorth = (io.thisY > targetY)
-    val canGoSouth = (io.thisY < targetY)
-    val canGoEast = (io.thisX < targetX)
-    val canGoWest = (io.thisX > targetX)
+    val canGoNorth = Wire(Bool())
+    val canGoSouth = Wire(Bool())
+    val canGoEast = Wire(Bool())
+    val canGoWest = Wire(Bool())
+    canGoNorth := io.thisY > targetY
+    canGoSouth := io.thisY < targetY
+    canGoEast := io.thisX < targetX
+    canGoWest := io.thisX > targetX
     
     // Bit mapping: North=0, East=1, South=2, West=3, Here=4
     directions := (canGoNorth << DirectionBits.NORTH_BIT) | 
@@ -83,12 +87,16 @@ class PacketInHandler(params: ZamletParams) extends Module {
   def calculateRegularRouting(targetX: UInt, targetY: UInt): UInt = {
     val directions = Wire(UInt(5.W))
     
-    val needsEast = targetX > io.thisX
-    val needsWest = targetX < io.thisX
-    val needsNorth = targetY < io.thisY
-    val needsSouth = targetY > io.thisY
-    
-    val isAtTarget = (targetX === io.thisX) && (targetY === io.thisY)
+    val needsEast = Wire(Bool())
+    val needsWest = Wire(Bool())
+    val needsNorth = Wire(Bool())
+    val needsSouth = Wire(Bool())
+    val isAtTarget = Wire(Bool())
+    needsEast := targetX > io.thisX
+    needsWest := targetX < io.thisX
+    needsNorth := targetY < io.thisY
+    needsSouth := targetY > io.thisY
+    isAtTarget := (targetX === io.thisX) && (targetY === io.thisY)
     
     when(isAtTarget) {
       // Packet is for this node
@@ -116,11 +124,20 @@ class PacketInHandler(params: ZamletParams) extends Module {
 
   // From the output of that skid buffer we look at the header.
   // We work out what directions it wants to go.
-  val bufferedHeader = bufferedFromNetwork.bits.data.asTypeOf(new PacketHeader(params))
+  val bufferedHeader = Wire(new PacketHeader(params))
+  bufferedHeader := bufferedFromNetwork.bits.data.asTypeOf(new PacketHeader(params))
+  val identHeader = Wire(new IdentHeader(params))
+  identHeader := bufferedFromNetwork.bits.data.asTypeOf(new IdentHeader(params))
+  dontTouch(bufferedHeader)
+  dontTouch(identHeader)
   // What direction we go if this is a normal route
-  val regularDirections = calculateRegularRouting(bufferedHeader.targetX, bufferedHeader.targetY)
+  val regularDirections = Wire(UInt(5.W))
+  regularDirections := calculateRegularRouting(bufferedHeader.targetX, bufferedHeader.targetY)
+  dontTouch(regularDirections)
   // What directions we go if this is a broadcast route
-  val broadcastDirections = calculateBroadcastRouting(bufferedHeader.targetX, bufferedHeader.targetY)
+  val broadcastDirections = Wire(UInt(5.W))
+  broadcastDirections := calculateBroadcastRouting(bufferedHeader.targetX, bufferedHeader.targetY)
+  dontTouch(broadcastDirections)
 
   // Get the actual directions based on send type
   val directions = Wire(UInt(5.W))
@@ -132,9 +149,10 @@ class PacketInHandler(params: ZamletParams) extends Module {
 
   // Filter out input direction and check for routing error
   // Send handlerRequest to all the PacketOutHandlers it wants to go to (except back in same direction)
-  val inputDirMask = UIntToOH(io.inputDirection.asUInt, 5)
-  val otherDirections = directions & ~inputDirMask
-  dontTouch(otherDirections)
+  val inputDirMask = Wire(UInt(5.W))
+  inputDirMask := UIntToOH(io.inputDirection.asUInt, 5)
+  val otherDirections = Wire(UInt(5.W))
+  otherDirections := directions & ~inputDirMask
 
   // This is comes from otherDirections when we're processing the header and
   // otherwise comes from a registered version from the last header.
@@ -145,15 +163,15 @@ class PacketInHandler(params: ZamletParams) extends Module {
   } .otherwise {
     connectionDirections := bufferedDirections
   }
-  val badRegularRoute = (connectionDirections & inputDirMask) =/= 0.U
+  val badRegularRoute = Wire(Bool())
+  badRegularRoute := (connectionDirections & inputDirMask) =/= 0.U
 
   // We get ready back from those that can accept it. (have to reverse because of Uint vs Seq ordering default)
-  val outputReadys = Cat(io.outputs.map(_.ready).reverse)
-  dontTouch(outputReadys)
-  dontTouch(connectionDirections)
+  val outputReadys = Wire(UInt(5.W))
+  outputReadys := Cat(io.outputs.map(_.ready).reverse)
   // We sent valid to them all if we get ready back from all of them.
-  val allTargetOutputsReady = (outputReadys | ~connectionDirections).andR
-  dontTouch(allTargetOutputsReady)
+  val allTargetOutputsReady = Wire(Bool())
+  allTargetOutputsReady := (outputReadys | ~connectionDirections).andR
 
   // Whenever we have a header coming out of the buffer we are trying to
   // make a new connection.
@@ -188,8 +206,9 @@ class PacketInHandler(params: ZamletParams) extends Module {
     out.valid := bufferedFromNetwork.valid && connectionDirections(idx) && otherOutputsReady(idx)
     out.bits.data := bufferedFromNetwork.bits.data
     out.bits.isHeader := bufferedFromNetwork.bits.isHeader
-    val isLastWord = (!bufferedFromNetwork.bits.isHeader && remainingWords === 1.U) ||
-                     (bufferedFromNetwork.bits.isHeader && bufferedHeader.length === 0.U)
+    val isLastWord = Wire(Bool())
+    isLastWord := (!bufferedFromNetwork.bits.isHeader && remainingWords === 1.U) ||
+                  (bufferedFromNetwork.bits.isHeader && bufferedHeader.length === 0.U)
     out.bits.last := isLastWord
   }
 }

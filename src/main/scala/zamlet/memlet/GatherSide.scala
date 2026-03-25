@@ -249,6 +249,9 @@ class GatherSide(params: ZamletParams) extends Module {
   }
   val packetIdentFound = RegNext(identMatch.asUInt.orR)
   val packetIdentSlotIdx = RegNext(PriorityEncoder(identMatch))
+  dontTouch(identMatch)
+  dontTouch(packetIdentFound)
+  dontTouch(bHoHeader)
   val bHoJamletIdx = {
     val jX = bHoHeader.sourceX - io.kBaseX
     val jY = bHoHeader.sourceY - io.kBaseY
@@ -300,6 +303,7 @@ class GatherSide(params: ZamletParams) extends Module {
   dropHeader.ident := packetHeader.ident
   dropHeader.sendType := SendType.Single
   dropHeader.messageType := DontCare
+  dropHeader._padding := 0.U
 
   io.dropEnq.valid := false.B
   io.dropEnq.bits.data := dropHeader.asUInt

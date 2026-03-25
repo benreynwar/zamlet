@@ -19,6 +19,7 @@ py_library(
     name = "zamlet",
     srcs = glob([
         "*.py",
+        "cocotb/*.py",
         "instructions/*.py",
         "jamlet/*.py",
         "kamlet/*.py",

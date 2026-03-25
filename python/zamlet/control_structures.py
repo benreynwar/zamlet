@@ -27,6 +27,9 @@ def pack_fields_to_bits(obj, field_specs: List[Tuple[str, int]]) -> List[bool]:
     
     # Pack fields in reverse order to match Chisel's Bundle.asUInt behavior
     for field_name, bit_width in reversed(field_specs):
+        if field_name == '_padding':
+            all_bits.extend([False] * bit_width)
+            continue
         value = getattr(obj, field_name)
         
         if isinstance(value, bool):
@@ -102,6 +105,17 @@ def pack_fields_to_int(obj, field_specs: List[Tuple[str, int]]) -> int:
         if bit:
             result |= (1 << i)
     return result
+
+
+def unpack_int_to_fields(value: int, field_specs: List[Tuple[str, int]]) -> Dict[str, Any]:
+    """Unpack a single integer into field values, matching Chisel asUInt layout."""
+    fields = {}
+    offset = 0
+    for name, width in reversed(field_specs):
+        if name != '_padding':
+            fields[name] = (value >> offset) & ((1 << width) - 1)
+        offset += width
+    return fields
 
 
 def int_to_words(value: int, original_width: int, word_width: int) -> List[int]:

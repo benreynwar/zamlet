@@ -83,9 +83,9 @@ class Jamlet:
         self.send_queues = {
             MessageType.LOAD_BYTE_RESP: Queue(2),
             MessageType.READ_BYTE_RESP: Queue(2),
-            #MessageType.WRITE_LINE: Queue(2),
-            MessageType.READ_LINE: Queue(2),
-            MessageType.WRITE_LINE_READ_LINE: Queue(2),
+            #MessageType.WRITE_LINE_ADDR: Queue(2),
+            MessageType.READ_LINE_ADDR: Queue(2),
+            MessageType.WRITE_LINE_READ_LINE_ADDR: Queue(2),
             MessageType.LOAD_J2J_WORDS_REQ: Queue(2),
             MessageType.LOAD_J2J_WORDS_RESP: Queue(2),
             MessageType.LOAD_J2J_WORDS_DROP: Queue(2),
@@ -238,7 +238,7 @@ class Jamlet:
         address_in_sram = cache_slot * self.params.cache_line_bytes // self.params.j_in_k
         n_words = self.params.cache_line_bytes // self.params.j_in_k // self.params.word_bytes
         header = AddressHeader(
-            message_type=MessageType.WRITE_LINE_READ_LINE,
+            message_type=MessageType.WRITE_LINE_READ_LINE_ADDR,
             send_type=SendType.SINGLE,
             target_x=self.mem_x,
             target_y=self.mem_y,
@@ -360,7 +360,7 @@ class Jamlet:
             await self._receive_write_line_resp_packet(header, queue)
         elif header.message_type == MessageType.WRITE_LINE_READ_LINE_RESP:
             await self._receive_read_line_resp_packet(header, queue)
-        elif header.message_type == MessageType.WRITE_LINE_READ_LINE_DROP:
+        elif header.message_type == MessageType.WRITE_LINE_READ_LINE_ADDR_DROP:
             # Memlet couldn't handle request - clear sent flag so kamlet will re-send
             assert isinstance(header, IdentHeader)
             request = self.cache_table.cache_requests[header.ident]

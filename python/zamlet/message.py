@@ -1,66 +1,57 @@
-from enum import Enum
+from enum import Enum, IntEnum
 import dataclasses
 from dataclasses import dataclass
 
+from zamlet.control_structures import pack_fields_to_int, unpack_int_to_fields
 
-class SendType(Enum):
+
+class SendType(IntEnum):
     SINGLE = 0
     BROADCAST = 1
 
 
-
-class MessageType(Enum):
+class MessageType(IntEnum):
     SEND = 0
     INSTRUCTIONS = 1
-
-    ## Jamlet responds to scalar processor instruction  with some bytes
-    #READ_BYTES_RESP = 2
+    WRITE_LINE_DATA = 2
 
     # Jamlet tells a memory to write some cache line
-    WRITE_LINE = 4
+    WRITE_LINE_ADDR = 4
     WRITE_LINE_RESP = 5
     # Kamlet tells a memory to read a cache line
-    READ_LINE = 6
+    READ_LINE_ADDR = 6
     READ_LINE_RESP = 7
     # Kamlet tells a memory to write a cache line and read another one
-    WRITE_LINE_READ_LINE = 8
+    WRITE_LINE_READ_LINE_ADDR = 8
     WRITE_LINE_READ_LINE_RESP = 9
-    # Memlet drops the request if no gathering slots are available
-    WRITE_LINE_READ_LINE_DROP = 42
 
     # A request to read a single byte from VPU memory
-    # We use a separate command from READ_WORDS since we can fit the response byte in the header.
     READ_BYTE = 10
     READ_BYTE_RESP = 11
-    # A request to read a word from VPU memory
+
+    # Model-only types (not in RTL, reserved 12-15)
     READ_WORDS = 12
     READ_WORDS_RESP = 13
-
     LOAD_BYTE_RESP = 14
     LOAD_WORDS_RESP = 15
 
     # Sending data to another jamlet to be written to a register.
     LOAD_J2J_WORDS_REQ = 16
-    # But the receiving jamlet might not be ready to write to that
-    # register. It must also be processing this instruction.
-    # If it is not ready it can drop this.
     LOAD_J2J_WORDS_RESP = 17
     LOAD_J2J_WORDS_DROP = 18
+    LOAD_J2J_WORDS_RETRY = 19
 
     # Sending data to another jamlet to tell it to store it.
     STORE_J2J_WORDS_REQ = 20
-    # The receiving jamlet must also be processing this instruction.
-    # Otherwise these are dropped.
     STORE_J2J_WORDS_RESP = 21
-    # The receiver can immediately send a drop response
     STORE_J2J_WORDS_DROP = 22
-    # Or it can wait until it is ready and then send a retry response.
     STORE_J2J_WORDS_RETRY = 23
 
     # Load a partial word from cache to register (for unaligned loads)
     LOAD_WORD_REQ = 24
     LOAD_WORD_RESP = 25
     LOAD_WORD_DROP = 26
+    LOAD_WORD_RETRY = 27
 
     # Store a partial word from register to cache (for unaligned stores)
     STORE_WORD_REQ = 28
@@ -69,23 +60,10 @@ class MessageType(Enum):
     STORE_WORD_RETRY = 31
 
     # Load and Store with arbitrary addresses
-    # We split them into READ_MEM_WORD and WRITE_MEM_WORD messages.
-    # Request data from jamlet with cache
     READ_MEM_WORD_REQ = 32
     READ_MEM_WORD_RESP = 33
-    # When we receive a LOAD_ARB_DATA_REQ we response immediately
-    # if we can.
-    # If we can't we create a witem, to track this request.
-    # If we can't create a witem we drop it.
     READ_MEM_WORD_DROP = 34
-    # When we can respond we send the data
-    # When a load has got all responses we do a lamlet
-    # wide synchronization so that all jamlets know
-    # that this instruction is is finished. Otherwise
-    # there is no way to know that they won't get more
-    # requests.
 
-    # This is basically the same as the load (but for a store).
     WRITE_MEM_WORD_REQ = 36
     WRITE_MEM_WORD_RESP = 37
     WRITE_MEM_WORD_DROP = 38
@@ -94,32 +72,20 @@ class MessageType(Enum):
     # Ident query response (kamlet -> lamlet)
     IDENT_QUERY_RESP = 40
 
-    # Read from register file (for vrgather)
-    READ_REG_ELEMENT_REQ = 44
-    READ_REG_ELEMENT_RESP = 45
-    READ_REG_ELEMENT_DROP = 46
+    # Memlet drop types
+    WRITE_LINE_READ_LINE_ADDR_DROP = 42
+    READ_LINE_ADDR_DROP = 43
+    WRITE_LINE_ADDR_DROP = 44
+    WRITE_LINE_DATA_DROP = 45
 
     # Ordered indexed load/store responses (jamlet -> lamlet)
-    # Jamlet tells lamlet it wrote data to RF (frees buffer slot)
     LOAD_INDEXED_ELEMENT_RESP = 51
-    # Jamlet sends address and data back to lamlet
     STORE_INDEXED_ELEMENT_RESP = 53
 
-    #WRITE_REG_REQ = 8
-    #WRITE_SP_REQ = 9
-    #WRITE_MEM_REQ = 10
-
-    #WRITE_REG_RESP = 12
-    #WRITE_SP_RESP = 13
-    #WRITE_MEM_RESP = 14
-
-    #READ_REG_REQ = 16
-    #READ_SP_REQ = 17
-    #READ_MEM_REQ = 18
-
-    #READ_REG_RESP = 20 
-    #READ_SP_RESP = 21
-    #READ_MEM_RESP = 22
+    # Read from register file (for vrgather)
+    READ_REG_ELEMENT_REQ = 54
+    READ_REG_ELEMENT_RESP = 55
+    READ_REG_ELEMENT_DROP = 56
 
 # What channel do different messages travel on.
 
@@ -128,7 +94,6 @@ CHANNEL_MAPPING = {
     MessageType.READ_LINE_RESP: 0,
     MessageType.WRITE_LINE_RESP: 0,
     MessageType.WRITE_LINE_READ_LINE_RESP: 0,
-    MessageType.WRITE_LINE_READ_LINE_DROP: 0,
     MessageType.READ_BYTE_RESP: 0,
     MessageType.LOAD_J2J_WORDS_RESP: 0,
     MessageType.LOAD_J2J_WORDS_DROP: 0,
@@ -143,9 +108,15 @@ CHANNEL_MAPPING = {
 
 
     # Which channel require to send a always consumable message for them to be consumed
-    MessageType.READ_LINE: 1,
-    MessageType.WRITE_LINE: 1,
-    MessageType.WRITE_LINE_READ_LINE: 1,
+    MessageType.WRITE_LINE_READ_LINE_ADDR_DROP: 0,
+    MessageType.READ_LINE_ADDR_DROP: 0,
+    MessageType.WRITE_LINE_ADDR_DROP: 0,
+    MessageType.WRITE_LINE_DATA_DROP: 0,
+
+    MessageType.READ_LINE_ADDR: 1,
+    MessageType.WRITE_LINE_ADDR: 1,
+    MessageType.WRITE_LINE_DATA: 1,
+    MessageType.WRITE_LINE_READ_LINE_ADDR: 1,
     MessageType.LOAD_J2J_WORDS_REQ: 1,
     MessageType.STORE_J2J_WORDS_REQ: 1,
     MessageType.LOAD_WORD_REQ: 1,
@@ -187,8 +158,8 @@ class Header:
     source_x: int    # 8 bits
     source_y: int    # 8 bits
     length: int      # 4 bits
-    message_type: MessageType  # 5 bits
-    send_type: SendType        # 2 bits
+    message_type: MessageType  # 6 bits
+    send_type: SendType        # 1 bit
 
     def copy(self):
         return dataclasses.replace(self)
@@ -197,7 +168,14 @@ class Header:
 @dataclass
 class IdentHeader(Header):
     # ident is used to tie requests and responses together
-    ident: int     # 5 bits   # 48 bits specified (16 remaining)
+    ident: int     # 7 bits
+
+    def encode(self, params) -> int:
+        return pack_fields_to_int(self, params.ident_header_fields)
+
+    @classmethod
+    def decode(cls, value: int, params) -> 'IdentHeader':
+        return cls(**unpack_int_to_fields(value, params.ident_header_fields))
 
 
 @dataclass
@@ -224,6 +202,13 @@ class RegElementHeader(TaggedHeader):
 @dataclass
 class AddressHeader(IdentHeader):
     address: int   # 16 bits
+
+    def encode(self, params) -> int:
+        return pack_fields_to_int(self, params.address_header_fields)
+
+    @classmethod
+    def decode(cls, value: int, params) -> 'AddressHeader':
+        return cls(**unpack_int_to_fields(value, params.address_header_fields))
 
 
 @dataclass
@@ -284,14 +269,41 @@ REQUEST_MESSAGE_TYPES = {
 # Cache line messages are sent via kamlet/jamlet directly, not through send_packet.
 # TODO: Add tracking for these separately.
 CACHE_LINE_MESSAGE_TYPES = {
-    MessageType.READ_LINE,
-    MessageType.WRITE_LINE,
-    MessageType.WRITE_LINE_READ_LINE,
+    MessageType.READ_LINE_ADDR,
+    MessageType.WRITE_LINE_ADDR,
+    MessageType.WRITE_LINE_READ_LINE_ADDR,
 }
 
 
 def is_request_message(msg_type: MessageType) -> bool:
     """Return True if this message type expects a response."""
     return msg_type in REQUEST_MESSAGE_TYPES
+
+
+# Message types that use AddressHeader (have an address field)
+ADDRESS_HEADER_MESSAGE_TYPES = {
+    MessageType.WRITE_LINE_ADDR, MessageType.WRITE_LINE_RESP,
+    MessageType.READ_LINE_ADDR, MessageType.READ_LINE_RESP,
+    MessageType.WRITE_LINE_READ_LINE_ADDR,
+    MessageType.WRITE_LINE_READ_LINE_RESP,
+    MessageType.WRITE_LINE_DATA,
+}
+
+
+def int_to_header(value: int, params) -> Header:
+    """Decode an integer into the appropriate Header subclass."""
+    fields = unpack_int_to_fields(value, params.address_header_fields)
+    msg_type = MessageType(fields['message_type'])
+    if msg_type in ADDRESS_HEADER_MESSAGE_TYPES:
+        return AddressHeader(**fields)
+    ident_fields = unpack_int_to_fields(value, params.ident_header_fields)
+    return IdentHeader(**ident_fields)
+
+
+def header_to_int(header: Header, params) -> int:
+    """Encode a Header to an integer."""
+    if isinstance(header, AddressHeader):
+        return pack_fields_to_int(header, params.address_header_fields)
+    return pack_fields_to_int(header, params.ident_header_fields)
 
 

@@ -40,15 +40,14 @@ WRITE_LINE_RESPONSE_R_INDEX = 0
 
 
 def memlet_coords(params: ZamletParams, kamlet_index: int):
-    """Compute router coordinates for a kamlet's memlet.
+    """Compute routing coordinates for a kamlet's memlet.
 
-    Memlets are placed on the left or right edge of the grid.
-    Each edge column has k_rows * j_rows y-positions. If one
-    column has enough positions for all memlets on that side,
-    each memlet gets edge_height // n_memlets positions.
-    Otherwise, extra edge columns are added.
+    Memlets are placed on the left or right edge of the jamlet grid.
+    Returns a list of (x, y) in routing coordinates (always non-negative).
 
-    Returns (mem_x, coords) where coords is a list of (x, y).
+    Left memlets:  x = west_offset - 1 - edge_col
+    Right memlets: x = west_offset + k_cols * j_cols + edge_col
+    All y values:  north_offset + y_start + dy
     """
     k_col = kamlet_index % params.k_cols
     k_row = kamlet_index // params.k_cols
@@ -59,22 +58,21 @@ def memlet_coords(params: ZamletParams, kamlet_index: int):
         col_in_side = k_col
     else:
         n_side_cols = params.k_cols - params.k_cols // 2
-        # Closest to the edge gets col_in_side=0
         col_in_side = (params.k_cols - 1) - k_col
     n_memlets = n_side_cols * params.k_rows
     n_edge_cols = (n_memlets + edge_height - 1) // edge_height
     memlets_per_col = (n_memlets + n_edge_cols - 1) // n_edge_cols
     positions_per_memlet = edge_height // memlets_per_col
-    # Row-major: memlets in the same row are adjacent in y
     idx = k_row * n_side_cols + col_in_side
     edge_col = idx // memlets_per_col
     slot = idx % memlets_per_col
     y_start = slot * positions_per_memlet
     if left:
-        mem_x = -(edge_col + 1)
+        mem_x = params.west_offset - 1 - edge_col
     else:
-        mem_x = params.k_cols * params.j_cols + edge_col
-    return [(mem_x, y_start + dy) for dy in range(positions_per_memlet)]
+        mem_x = params.west_offset + params.k_cols * params.j_cols + edge_col
+    return [(mem_x, params.north_offset + y_start + dy)
+            for dy in range(positions_per_memlet)]
 
 
 def j_in_k_to_m_router(j_in_k_index: int, n_routers: int, j_in_k: int) -> int:
@@ -215,18 +213,18 @@ class Memlet:
                         dst_x, dst_y = self.coords[index]
                         self.monitor.record_message_received_by_header(packet[0], dst_x, dst_y)
 
-                        if packet[0].message_type == MessageType.READ_LINE:
+                        if packet[0].message_type == MessageType.READ_LINE_ADDR:
                             while not self.receive_read_line_queue.can_append():
                                 await self.clock.next_cycle
                             self.receive_read_line_queue.append(packet)
-                        elif packet[0].message_type == MessageType.WRITE_LINE:
+                        elif packet[0].message_type == MessageType.WRITE_LINE_ADDR:
                             j_x = packet[0].source_x % self.params.j_cols
                             j_y = packet[0].source_y % self.params.j_rows
                             j_index = j_y * self.params.j_cols + j_x
                             while not self.receive_write_line_queues[j_index].can_append():
                                 await self.clock.next_cycle
                             self.receive_write_line_queues[j_index].append(packet)
-                        elif packet[0].message_type == MessageType.WRITE_LINE_READ_LINE:
+                        elif packet[0].message_type == MessageType.WRITE_LINE_READ_LINE_ADDR:
                             j_x = packet[0].source_x % self.params.j_cols
                             j_y = packet[0].source_y % self.params.j_rows
                             j_index = j_y * self.params.j_cols + j_x
@@ -245,7 +243,7 @@ class Memlet:
                                 cache_request_span_id = self.monitor.get_cache_request_span_id(
                                     self.kamlet_coords[0], self.kamlet_coords[1], cache_slot)
                                 self.monitor.record_message_sent(
-                                    cache_request_span_id, MessageType.WRITE_LINE_READ_LINE_DROP.name,
+                                    cache_request_span_id, MessageType.WRITE_LINE_READ_LINE_ADDR_DROP.name,
                                     ident=ident, tag=cache_slot,
                                     src_x=dst_x, src_y=dst_y,
                                     dst_x=src_x, dst_y=src_y)
@@ -255,12 +253,12 @@ class Memlet:
                                     target_y=src_y,
                                     source_x=dst_x,
                                     source_y=dst_y,
-                                    message_type=MessageType.WRITE_LINE_READ_LINE_DROP,
+                                    message_type=MessageType.WRITE_LINE_READ_LINE_ADDR_DROP,
                                     length=1,
                                     send_type=SendType.SINGLE,
                                     ident=ident,
                                 )
-                                channel = CHANNEL_MAPPING[MessageType.WRITE_LINE_READ_LINE_DROP]
+                                channel = CHANNEL_MAPPING[MessageType.WRITE_LINE_READ_LINE_ADDR_DROP]
                                 await self.send_packet(index, channel, [drop_header])
                             else:
                                 slot = self.gathering_slots[slot_index]

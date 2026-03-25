@@ -143,13 +143,20 @@ in {
     })
     unstable-pkgs.metals
     unstable-pkgs.coursier
+    unstable-pkgs.surfer
   ];
 
   # Environment variables
   env = {
     PDK_ROOT = sky130-pdk;
     PDK = "sky130A";
-    LD_LIBRARY_PATH = "${pkgs.stdenv.cc.cc.lib}/lib";
+    LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath [
+      pkgs.stdenv.cc.cc.lib
+      unstable-pkgs.mesa.drivers
+      unstable-pkgs.libGL
+      unstable-pkgs.wayland
+      unstable-pkgs.libxkbcommon
+    ];
     # For linking against Python (needed by cocotb build)
     LIBRARY_PATH = "${pkgs.python3}/lib";
     GIT_SSL_CAINFO = "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt";

@@ -89,10 +89,11 @@ object PacketConstants {
 }
 
 /**
- * Packet header structure (base class) - not instantiated directly
- * Python: 43 bits (target_x:8, target_y:8, source_x:8, source_y:8, length:4, message_type:5, send_type:2)
+ * Abstract packet header with shared routing fields.
+ * Not instantiated directly — use PacketHeader for decoding routing fields,
+ * or a concrete subclass (AddressHeader, etc.) for full headers.
  */
-class PacketHeader(params: ZamletParams) extends Bundle {
+abstract class AbstractPacketHeader(params: ZamletParams) extends Bundle {
   val targetX = UInt(params.xPosWidth.W)
   val targetY = UInt(params.yPosWidth.W)
   val sourceX = UInt(params.xPosWidth.W)
@@ -100,68 +101,92 @@ class PacketHeader(params: ZamletParams) extends Bundle {
   val length = UInt(PacketConstants.lengthWidth)
   val messageType = MessageType()
   val sendType = SendType()
+
+  def baseWidth: Int = 2 * params.xPosWidth + 2 * params.yPosWidth +
+    PacketConstants.lengthWidth.get + MessageType.getWidth + SendType.getWidth
 }
 
 /**
- * Header with instruction identifier - not instantiated directly
- * Python: 48 bits (+5 for ident)
- * Note: Python uses 5-bit ident, params.identWidth is 7
+ * Concrete packet header padded to word width. Safe to use for decoding
+ * routing fields from any header type since the shared fields are always
+ * at the same MSB positions.
  */
-class IdentHeader(params: ZamletParams) extends PacketHeader(params) {
+class PacketHeader(params: ZamletParams) extends AbstractPacketHeader(params) {
+  val _padding = UInt((params.wordWidth - baseWidth).W)
+}
+
+/**
+ * Abstract header with instruction identifier.
+ */
+abstract class AbstractIdentHeader(params: ZamletParams) extends AbstractPacketHeader(params) {
   val ident = UInt(params.identWidth.W)
+
+  def identHeaderWidth: Int = baseWidth + params.identWidth
 }
 
 /**
- * Header with ident and tag for multi-response protocols
- * Python: 52 bits (+4 for tag)
+ * Concrete ident header padded to word width.
  */
-class TaggedHeader(params: ZamletParams) extends IdentHeader(params) {
+class IdentHeader(params: ZamletParams) extends AbstractIdentHeader(params) {
+  val _padding = UInt((params.wordWidth - identHeaderWidth).W)
+}
+
+/**
+ * Abstract header with ident and tag for multi-response protocols.
+ */
+abstract class AbstractTaggedHeader(params: ZamletParams) extends AbstractIdentHeader(params) {
   val tag = UInt(PacketConstants.tagWidth)
+
+  def taggedHeaderWidth: Int = identHeaderWidth + PacketConstants.tagWidth.get
 }
 
 /**
- * Tagged header with per-word mask for J2J operations
- * 10-bit mask (reduced from Python's 12 to fit with 7-bit ident)
+ * Concrete tagged header padded to word width.
  */
-class MaskedTaggedHeader(params: ZamletParams) extends TaggedHeader(params) {
+class TaggedHeader(params: ZamletParams) extends AbstractTaggedHeader(params) {
+  val _padding = UInt((params.wordWidth - taggedHeaderWidth).W)
+}
+
+/**
+ * Masked tagged header with per-word mask for J2J operations.
+ */
+class MaskedTaggedHeader(params: ZamletParams) extends AbstractTaggedHeader(params) {
   val mask = UInt(PacketConstants.maskWidth)
-
-  require(this.getWidth <= params.wordWidth,
-    s"MaskedTaggedHeader exceeds word width: ${this.getWidth} > ${params.wordWidth}")
+  val _padding = UInt((params.wordWidth - taggedHeaderWidth -
+    PacketConstants.maskWidth.get).W)
 }
 
 /**
- * Header with ident and SRAM word address for cache line operations.
- * Used by READ_LINE, WRITE_LINE, WRITE_LINE_READ_LINE and their responses.
+ * Abstract header with ident and SRAM word address for cache line operations.
  */
-class AddressHeader(params: ZamletParams) extends IdentHeader(params) {
+abstract class AbstractAddressHeader(params: ZamletParams) extends AbstractIdentHeader(params) {
   val address = UInt(params.sramAddrWidth.W)
 
-  require(this.getWidth <= params.wordWidth,
-    s"AddressHeader exceeds word width: ${this.getWidth} > ${params.wordWidth}")
+  def addressHeaderWidth: Int = identHeaderWidth + params.sramAddrWidth
 }
 
 /**
- * Header for WriteMemWord requests
- * Python: TaggedHeader + dst_byte_in_word(3) + n_bytes(3)
+ * Concrete address header padded to word width.
  */
-class WriteMemWordHeader(params: ZamletParams) extends TaggedHeader(params) {
+class AddressHeader(params: ZamletParams) extends AbstractAddressHeader(params) {
+  val _padding = UInt((params.wordWidth - addressHeaderWidth).W)
+}
+
+/**
+ * Header for WriteMemWord requests.
+ */
+class WriteMemWordHeader(params: ZamletParams) extends AbstractTaggedHeader(params) {
   val dstByteInWord = UInt(3.W)
   val nBytes = UInt(3.W)
-
-  require(this.getWidth <= params.wordWidth,
-    s"WriteMemWordHeader exceeds word width: ${this.getWidth} > ${params.wordWidth}")
+  val _padding = UInt((params.wordWidth - taggedHeaderWidth - 6).W)
 }
 
 /**
- * Header for ReadMemWord requests
- * Python: TaggedHeader + fault flag
+ * Header for ReadMemWord requests.
  */
-class ReadMemWordHeader(params: ZamletParams) extends TaggedHeader(params) {
+class ReadMemWordHeader(params: ZamletParams) extends AbstractTaggedHeader(params) {
   val fault = Bool()
-
-  require(this.getWidth <= params.wordWidth,
-    s"ReadMemWordHeader exceeds word width: ${this.getWidth} > ${params.wordWidth}")
+  val _padding = UInt((params.wordWidth - taggedHeaderWidth - 1).W)
 }
 
 /**

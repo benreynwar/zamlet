@@ -296,7 +296,7 @@ class Kamlet:
         send_jamlet = self.jamlets[self.params.send_read_line_j_index]
 
         header = AddressHeader(
-            message_type=MessageType.READ_LINE, #4
+            message_type=MessageType.READ_LINE_ADDR, #4
             send_type=SendType.SINGLE,          #1
             target_x=self.mem_x,                #8
             target_y=self.mem_y,                #8

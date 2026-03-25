@@ -1,3 +1,4 @@
+import math
 from dataclasses import dataclass
 
 
@@ -60,6 +61,11 @@ class ZamletParams:
     n_ordered_buffers: int = 2
     ordered_buffer_capacity: int = 16
 
+    # Bit widths for RTL header encoding/decoding
+    x_pos_width: int = 8
+    y_pos_width: int = 8
+    ident_width: int = 7
+
     def __post_init__(self):
         # Page must be bigger than a vector
         assert self.page_bytes > 0
@@ -115,3 +121,72 @@ class ZamletParams:
     @property
     def send_read_line_j_index(self):
         return 1 % self.j_in_k
+
+    @property
+    def sram_depth(self):
+        return self.jamlet_sram_bytes // self.word_bytes
+
+    @property
+    def sram_addr_width(self):
+        return int(math.log2(self.sram_depth))
+
+    @property
+    def cache_slot_words(self):
+        return self.cache_line_bytes // self.word_bytes
+
+    @property
+    def west_offset(self) -> int:
+        """Number of memlet columns on the left (west) side of the grid.
+
+        Routing coords place these at x=0..west_offset-1, so the jamlet
+        grid starts at routing x = west_offset.
+        """
+        n_left_cols = self.k_cols // 2
+        n_left_memlets = n_left_cols * self.k_rows
+        edge_height = self.k_rows * self.j_rows
+        return (n_left_memlets + edge_height - 1) // edge_height
+
+    @property
+    def north_offset(self) -> int:
+        """Number of rows above the jamlet grid (lamlet row).
+
+        Routing coords place the lamlet at y=0, so the jamlet grid
+        starts at routing y = north_offset.
+        """
+        return 1
+
+    def jamlet_to_routing(self, j_x: int, j_y: int):
+        """Convert jamlet coordinates to routing coordinates."""
+        return (j_x + self.west_offset, j_y + self.north_offset)
+
+    @property
+    def _base_header_width(self) -> int:
+        return 2 * self.x_pos_width + 2 * self.y_pos_width + 4 + 6 + 1
+
+    @property
+    def abstract_ident_header_fields(self):
+        return [
+            ('target_x', self.x_pos_width),
+            ('target_y', self.y_pos_width),
+            ('source_x', self.x_pos_width),
+            ('source_y', self.y_pos_width),
+            ('length', 4),
+            ('message_type', 6),
+            ('send_type', 1),
+            ('ident', self.ident_width),
+        ]
+
+    @property
+    def ident_header_fields(self):
+        used = self._base_header_width + self.ident_width
+        return self.abstract_ident_header_fields + [
+            ('_padding', self.word_bytes * 8 - used),
+        ]
+
+    @property
+    def address_header_fields(self):
+        used = self._base_header_width + self.ident_width + self.sram_addr_width
+        return self.abstract_ident_header_fields + [
+            ('address', self.sram_addr_width),
+            ('_padding', self.word_bytes * 8 - used),
+        ]

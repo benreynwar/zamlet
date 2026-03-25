@@ -192,6 +192,7 @@ class ResponseSide(params: ZamletParams) extends Module {
       MessageType.ReadLineResp,
       MessageType.WriteLineReadLineResp
     )
+    header._padding := 0.U
     header.asUInt
   }
 

@@ -359,6 +359,7 @@ class MemoryEngine(params: ZamletParams) extends Module {
       hdr.messageType := MessageType.WriteLineResp
       hdr.sendType := SendType.Single
       hdr.ident := trkB.ident
+      hdr._padding := 0.U
       io.writeLineRespEnq.valid := true.B
       io.writeLineRespEnq.bits.data := hdr.asUInt
       io.writeLineRespEnq.bits.isHeader := true.B
