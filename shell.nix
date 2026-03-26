@@ -4,13 +4,14 @@ let
   inherit (common) pkgs buildDeps devTools env buildHook devHook;
 in
 pkgs.mkShell {
-  buildInputs = buildDeps ++ devTools;
+  buildInputs = buildDeps ++ devTools ++ [ pkgs.glibcLocales ];
 
   PDK_ROOT = env.PDK_ROOT;
   PDK = env.PDK;
   LD_LIBRARY_PATH = env.LD_LIBRARY_PATH;
   LIBRARY_PATH = env.LIBRARY_PATH;
   GIT_SSL_CAINFO = env.GIT_SSL_CAINFO;
+  LOCALE_ARCHIVE = "${pkgs.glibcLocales}/lib/locale/locale-archive";
 
   shellHook = buildHook + devHook + ''
     echo "Zamlet Development Environment"

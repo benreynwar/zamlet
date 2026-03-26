@@ -12,7 +12,7 @@ from cocotb.clock import Clock
 from cocotb.handle import HierarchyObject
 
 from zamlet import test_utils
-from zamlet.cocotb.axi4_slave import AXI4Slave
+from zamlet.cocotb.axi_memory import AxiMemory
 from zamlet.memlet import memlet_coords
 from zamlet.memlet_test.cocotb_driver import CocotbDriver
 from zamlet.memlet_test import test_write_read
@@ -57,7 +57,31 @@ async def memlet_write_test(dut: HierarchyObject) -> None:
 
     initialize_inputs(dut, n_routers, k_base_x, k_base_y, router_coords)
 
-    axi = AXI4Slave(dut, word_bytes=params.word_bytes)
+    axi_signals = {
+        'aw_valid': dut.io_axi_aw_valid,
+        'aw_ready': dut.io_axi_aw_ready,
+        'aw_id': dut.io_axi_aw_bits_id,
+        'aw_addr': dut.io_axi_aw_bits_addr,
+        'aw_len': dut.io_axi_aw_bits_len,
+        'aw_size': dut.io_axi_aw_bits_size,
+        'aw_burst': dut.io_axi_aw_bits_burst,
+        'w_valid': dut.io_axi_w_valid,
+        'w_ready': dut.io_axi_w_ready,
+        'w_data': dut.io_axi_w_bits_data,
+        'w_last': dut.io_axi_w_bits_last,
+        'b_valid': dut.io_axi_b_valid,
+        'b_ready': dut.io_axi_b_ready,
+        'b_id': dut.io_axi_b_bits_id,
+        'b_resp': dut.io_axi_b_bits_resp,
+        'ar_valid': dut.io_axi_ar_valid,
+        'ar_ready': dut.io_axi_ar_ready,
+        'r_valid': dut.io_axi_r_valid,
+        'r_id': dut.io_axi_r_bits_id,
+        'r_data': dut.io_axi_r_bits_data,
+        'r_resp': dut.io_axi_r_bits_resp,
+        'r_last': dut.io_axi_r_bits_last,
+    }
+    axi = AxiMemory(axi_signals, dut.clock, word_bytes=params.word_bytes)
     axi.start()
 
     # Kamlet is east of the memlet router, so packets arrive from east

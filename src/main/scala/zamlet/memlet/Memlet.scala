@@ -5,6 +5,11 @@ import chisel3.util._
 import zamlet.ZamletParams
 import zamlet.network.NetworkWord
 
+class MemletErrors(params: ZamletParams) extends Bundle {
+  val gatherErrors = Vec(params.nMemletRouters, new GatherSideErrors(params))
+  val responseErrors = Vec(params.nMemletRouters, new ResponseSideErrors(params))
+}
+
 class MemletIO(params: ZamletParams) extends Bundle {
   val nRouters = params.nMemletRouters
 
@@ -15,6 +20,8 @@ class MemletIO(params: ZamletParams) extends Bundle {
     val x = UInt(params.xPosWidth.W)
     val y = UInt(params.yPosWidth.W)
   }))
+
+  val errors = new MemletErrors(params)
 
   // AXI4 master port (single, from MemoryEngine)
   val axi = new AXI4MasterIO(
@@ -169,6 +176,8 @@ class Memlet(params: ZamletParams) extends Module {
   // response to forward back to MemoryEngine.
   // ============================================================
 
+  // This is a fifo where we put the indices of the routers we've gathered
+  // from.
   val gatherOrderFifo = Module(new Queue(
     UInt(log2Ceil(nRouters).W), entries = 4))
 
@@ -177,21 +186,21 @@ class Memlet(params: ZamletParams) extends Module {
   for (r <- 0 until nRouters) {
     slices(r).io.gatheringDataReq.valid :=
       engine.io.gatheringDataReq.valid &&
-      reqRouterIdx === r.U &&
-      gatherOrderFifo.io.enq.ready
+      reqRouterIdx === r.U && gatherOrderFifo.io.enq.ready
     slices(r).io.gatheringDataReq.bits.slotIdx :=
       engine.io.gatheringDataReq.bits.slotIdx
     slices(r).io.gatheringDataReq.bits.wordIdx :=
       engine.io.gatheringDataReq.bits.wordIdx
   }
 
-  val targetSliceReady = Mux1H(
-    (0 until nRouters).map(r =>
-      (reqRouterIdx === r.U) -> slices(r).io.gatheringDataReq.ready))
-  engine.io.gatheringDataReq.ready :=
-    targetSliceReady && gatherOrderFifo.io.enq.ready
+  val sliceReadyVec = VecInit(slices.map(_.io.gatheringDataReq.ready))
+  val targetSliceReady = Wire(Bool())
+  targetSliceReady := sliceReadyVec(reqRouterIdx)
+  dontTouch(targetSliceReady)
 
-  gatherOrderFifo.io.enq.valid := engine.io.gatheringDataReq.fire
+  engine.io.gatheringDataReq.ready := targetSliceReady && gatherOrderFifo.io.enq.ready
+  gatherOrderFifo.io.enq.valid := engine.io.gatheringDataReq.valid && targetSliceReady
+
   gatherOrderFifo.io.enq.bits := reqRouterIdx
 
   // Response side: mux from slices in request order
@@ -220,6 +229,15 @@ class Memlet(params: ZamletParams) extends Module {
   for (r <- 1 until nRouters) {
     slices(r).io.writeLineRespEnq.valid := false.B
     slices(r).io.writeLineRespEnq.bits := DontCare
+  }
+
+  // ============================================================
+  // Errors
+  // ============================================================
+
+  for (r <- 0 until nRouters) {
+    io.errors.gatherErrors(r) := slices(r).io.gatherErrors
+    io.errors.responseErrors(r) := slices(r).io.responseErrors
   }
 }
 

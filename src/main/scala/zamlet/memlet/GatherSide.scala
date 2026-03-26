@@ -55,6 +55,7 @@ class GatherSideIO(params: ZamletParams) extends Bundle {
 
   // Slice 0 enqueues completed gathering slots with metadata
   // for MemoryEngine to issue AXI4 writes.
+  // Also enqueues the read requests.
   val completeEnq = Decoupled(new GatheringSlotMeta(params))
 
   // MemoryEngine tells all slices to free a gathering slot after
@@ -85,6 +86,13 @@ class GatherSide(params: ZamletParams) extends Module {
 
   val nGSlots = params.nMemletGatheringSlots
   val localJamlets = params.memletLocalJamlets
+  val wordsPerJamlet = params.cacheSlotWordsPerJamlet
+
+  // We use the prefixes pa, pb, .. to represent the pipeline stages
+  // of processing the packet stream.
+  val paFromNetwork = Wire(Decoupled(new NetworkWord(params)))
+  paFromNetwork <> io.bHo
+  dontTouch(paFromNetwork)
 
   // ============================================================
   // Local storage
@@ -108,16 +116,17 @@ class GatherSide(params: ZamletParams) extends Module {
   }))
 
 
-
   // ============================================================
   // MemoryEngine read ports
   // ============================================================
 
-  io.gatheringDataReq.ready := io.gatheringDataResp.ready
-  io.gatheringDataResp.valid := io.gatheringDataReq.valid
-  io.gatheringDataResp.bits :=
+  val gatheringDataRespQ = Module(new Queue(UInt(params.wordWidth.W), entries = 2))
+  gatheringDataRespQ.io.enq.valid := io.gatheringDataReq.valid
+  gatheringDataRespQ.io.enq.bits :=
     gatherSlots(io.gatheringDataReq.bits.slotIdx).bits
       .data(io.gatheringDataReq.bits.wordIdx)
+  io.gatheringDataReq.ready := gatheringDataRespQ.io.enq.ready
+  io.gatheringDataResp <> gatheringDataRespQ.io.deq
 
   // ============================================================
   // Gathering slot free (from MemoryEngine, broadcast to all slices)
@@ -138,7 +147,7 @@ class GatherSide(params: ZamletParams) extends Module {
   val errIdentAllocOverwrite = Wire(Bool())
   errIdentAllocOverwrite := false.B
 
-  // Latch incoming ident allocation into local replica
+  // Store incoming ident allocation
   when(io.identAllocIn.valid) {
     val idx = io.identAllocIn.bits.slotIdx
     errIdentAllocOverwrite := gatherSlots(idx).valid
@@ -180,24 +189,40 @@ class GatherSide(params: ZamletParams) extends Module {
   // Defaults
   io.arrivedOut.valid := false.B
   io.arrivedOut.bits := DontCare
-  io.completeEnq.valid := false.B
-  io.completeEnq.bits := DontCare
+
+  // Have a completeEnq for reads (doesn't use gathering slots)
+  // and one for the others.
+  val completeReadEnq = Wire(Decoupled(new GatheringSlotMeta(params)))
+  completeReadEnq.valid := false.B
+  completeReadEnq.bits := DontCare
+  completeReadEnq.ready := DontCare
+  val completeGatheredEnq = Wire(Decoupled(new GatheringSlotMeta(params)))
+  completeGatheredEnq.valid := false.B
+  completeGatheredEnq.bits := DontCare
+  completeGatheredEnq.ready := DontCare
+
+  io.completeEnq.valid := completeReadEnq.valid || completeGatheredEnq.valid
+  when (!completeReadEnq.valid) {
+    io.completeEnq.bits := completeGatheredEnq.bits
+  } .otherwise {
+    io.completeEnq.bits := completeReadEnq.bits
+  }
 
   // Signal arrived upstream (or enqueue complete at inner slice)
   when(anyComplete) {
     when(io.isInnerSlice) {
       val slot = gatherSlots(completeSlot).bits
-      io.completeEnq.valid := true.B
-      io.completeEnq.bits.slotIdx := completeSlot
-      io.completeEnq.bits.ident := slot.ident
-      io.completeEnq.bits.sramAddr := slot.sramAddr
-      io.completeEnq.bits.sourceX := slot.sourceX
-      io.completeEnq.bits.sourceY := slot.sourceY
-      io.completeEnq.bits.writeAddr := slot.writeAddr
-      io.completeEnq.bits.readAddr := slot.readAddr
-      io.completeEnq.bits.writes := true.B
-      io.completeEnq.bits.reads := slot.reads
-      when(io.completeEnq.ready) {
+      completeGatheredEnq.valid := true.B
+      completeGatheredEnq.bits.slotIdx := completeSlot
+      completeGatheredEnq.bits.ident := slot.ident
+      completeGatheredEnq.bits.sramAddr := slot.sramAddr
+      completeGatheredEnq.bits.sourceX := slot.sourceX
+      completeGatheredEnq.bits.sourceY := slot.sourceY
+      completeGatheredEnq.bits.writeAddr := slot.writeAddr
+      completeGatheredEnq.bits.readAddr := slot.readAddr
+      completeGatheredEnq.bits.writes := true.B
+      completeGatheredEnq.bits.reads := slot.reads
+      when(!completeReadEnq.valid && io.completeEnq.ready) {
         gatherSlots(completeSlot).bits.arrivedNotified := true.B
       }
     }.otherwise {
@@ -216,9 +241,15 @@ class GatherSide(params: ZamletParams) extends Module {
   }
 
   // Deal with receiving the packets.
-  val bHo = io.bHo
+  val paHeader = paFromNetwork.bits.data.asTypeOf(new AddressHeader(params))
+  dontTouch(paHeader)
+  val paLastHeaderNext = Wire(new AddressHeader(params))
+  val paLastHeader = RegNext(paLastHeaderNext)
+  paLastHeaderNext := paLastHeader
 
-  val bHoHeader = bHo.bits.data.asTypeOf(new AddressHeader(params))
+  val paFirstBodyWordNext = Wire(Bool())
+  val paFirstBodyWord = RegNext(paFirstBodyWordNext, init = false.B)
+  paFirstBodyWordNext := paFirstBodyWord
 
   // Find if there are any free slots.
 
@@ -227,38 +258,40 @@ class GatherSide(params: ZamletParams) extends Module {
     freeSlotVec(s) := !gatherSlots(s).valid
   }
 
+  // We'll use this if it is a address packet.
   val freeSlot = Wire(Valid(UInt(log2Ceil(nGSlots).W)))
   freeSlot.valid := freeSlotVec.asUInt.orR
   freeSlot.bits := PriorityEncoder(freeSlotVec)
 
-  val packetSlotNext = Wire(Valid(UInt(log2Ceil(nGSlots).W)))
-  val packetSlot = RegNext(packetSlotNext, init = {
+  // We'll use this if it is a data packet.
+  val paIdentMatch = Wire(Vec(nGSlots, Bool()))
+  for (s <- 0 until nGSlots) {
+    paIdentMatch(s) := gatherSlots(s).valid &&
+      gatherSlots(s).bits.ident === paHeader.ident
+  }
+  val paIdentMatchSlot = Wire(Valid(UInt(log2Ceil(nGSlots).W)))
+  paIdentMatchSlot.valid := paIdentMatch.asUInt.orR
+  paIdentMatchSlot.bits := PriorityEncoder(paIdentMatch)
+  dontTouch(paIdentMatchSlot)
+
+  // The slot that we need to put something in based on the arriving header.
+  val paHeaderSlot = Wire(Valid(UInt(log2Ceil(nGSlots).W)))
+  paHeaderSlot.valid := false.B
+  paHeaderSlot.bits := DontCare
+  // A register where we store the slot to use for the body.
+  val paSlotNext = Wire(Valid(UInt(log2Ceil(nGSlots).W)))
+  val paSlot = RegNext(paSlotNext, init = {
     val init = Wire(Valid(UInt(log2Ceil(nGSlots).W)))
     init.valid := false.B
     init.bits := DontCare
     init
   })
-  packetSlotNext := packetSlot
+  paSlotNext := paSlot
 
-  // Match the incoming packet's ident against the slot idents
-
-  val identMatch = Wire(Vec(nGSlots, Bool()))
-  for (s <- 0 until nGSlots) {
-    identMatch(s) := gatherSlots(s).valid &&
-      gatherSlots(s).bits.ident === bHoHeader.ident
-  }
-  val packetIdentFound = RegNext(identMatch.asUInt.orR)
-  val packetIdentSlotIdx = RegNext(PriorityEncoder(identMatch))
-  dontTouch(identMatch)
-  dontTouch(packetIdentFound)
-  dontTouch(bHoHeader)
-  val bHoJamletIdx = {
-    val jX = bHoHeader.sourceX - io.kBaseX
-    val jY = bHoHeader.sourceY - io.kBaseY
-    val jIdx = jY * params.jCols.U + jX
-    (jIdx & (localJamlets - 1).U)(log2Ceil(localJamlets) - 1, 0)
-  }
-  val packetJamletIdx = RegNext(bHoJamletIdx)
+  // The local jamlet index that the last packet header came from.
+  val paJamletIdxNext = Wire(UInt(log2Ceil(localJamlets).W))
+  val paJamletIdx = RegNext(paJamletIdxNext)
+  paJamletIdxNext := paJamletIdx
 
   // We need to grab packets and process them based on what they are.
   //
@@ -275,13 +308,9 @@ class GatherSide(params: ZamletParams) extends Module {
   // packetWordsRemaining
   // packetType
   
-  val packetWordsRemainingNext = Wire(UInt(PacketConstants.lengthWidth))
-  val packetWordsRemaining = RegNext(packetWordsRemainingNext, init=0.U)
-  packetWordsRemainingNext := packetWordsRemaining
-
-  val packetHeaderNext = Wire(new AddressHeader(params))
-  val packetHeader = RegNext(packetHeaderNext)
-  packetHeaderNext := packetHeader
+  val paWordsRemainingNext = Wire(UInt(PacketConstants.lengthWidth))
+  val paWordsRemaining = RegNext(paWordsRemainingNext, init=0.U)
+  paWordsRemainingNext := paWordsRemaining
 
   val errMissingHeader = Wire(Bool())
   val errUnexpectedHeader = Wire(Bool())
@@ -294,78 +323,118 @@ class GatherSide(params: ZamletParams) extends Module {
   errBadPacketLength := false.B
   errUnexpectedData := false.B
 
+  // Drop header is sent when we're working on the
+  // first body word.
   val dropHeader = Wire(new IdentHeader(params))
-  dropHeader.targetX := packetHeader.sourceX
-  dropHeader.targetY := packetHeader.sourceY
-  dropHeader.sourceX := packetHeader.targetX
-  dropHeader.sourceY := packetHeader.targetY
+  dropHeader.targetX := paLastHeader.sourceX
+  dropHeader.targetY := paLastHeader.sourceY
+  dropHeader.sourceX := paLastHeader.targetX
+  dropHeader.sourceY := paLastHeader.targetY
   dropHeader.length := 0.U
-  dropHeader.ident := packetHeader.ident
+  dropHeader.ident := paLastHeader.ident
   dropHeader.sendType := SendType.Single
-  dropHeader.messageType := DontCare
+  dropHeader.messageType := paLastHeader.messageType
   dropHeader._padding := 0.U
 
   io.dropEnq.valid := false.B
   io.dropEnq.bits.data := dropHeader.asUInt
   io.dropEnq.bits.isHeader := true.B
-  bHo.ready := false.B
+  paFromNetwork.ready := false.B
 
-  when(bHo.valid) {
-    when (packetWordsRemaining === 0.U) {
-      bHo.ready := true.B
-      packetSlotNext := freeSlot
-      errMissingHeader := !bHo.bits.isHeader
-      packetWordsRemainingNext := bHoHeader.length
-      packetHeaderNext := bHoHeader
+  when(paFromNetwork.valid) {
+    when (paFromNetwork.ready) {
+      paFirstBodyWordNext := paFromNetwork.bits.isHeader
+    }
+    when (paWordsRemaining === 0.U) {
+      // This should be a header.
+      errMissingHeader := !paFromNetwork.bits.isHeader
+      // Set a default value for ready. Can be overriden.
+      paFromNetwork.ready := true.B
+      // Update the state registers.
+      when (paFromNetwork.ready) {
+        paWordsRemainingNext := paHeader.length
+        paLastHeaderNext := paHeader
+        paSlotNext := paHeaderSlot
+        paJamletIdxNext := {
+          val jX = paHeader.sourceX - io.kBaseX
+          val jY = paHeader.sourceY - io.kBaseY
+          val jIdx = jY * params.jCols.U + jX
+          (jIdx & (localJamlets - 1).U)(log2Ceil(localJamlets) - 1, 0)
+        }
+      }
       errBadPacketLength := false.B
       errBadMessageType := true.B
-      switch(bHoHeader.messageType) {
+      switch(paHeader.messageType) {
         is(MessageType.WriteLineAddr) {
-          errBadPacketLength := (bHoHeader.length =/= 1.U)
+          paHeaderSlot := freeSlot
+          errBadPacketLength := (paHeader.length =/= 1.U)
           errBadMessageType := !io.isInnerSlice
+          when (!paHeaderSlot.valid) {
+            io.dropEnq.valid := true.B
+            paFromNetwork.ready := io.dropEnq.ready
+          }
         }
         is(MessageType.ReadLineAddr) {
-          errBadPacketLength := (bHoHeader.length =/= 1.U)
+          paHeaderSlot := freeSlot
+          errBadPacketLength := (paHeader.length =/= 1.U)
           errBadMessageType := !io.isInnerSlice
+          when (!paHeaderSlot.valid) {
+            io.dropEnq.valid := true.B
+            paFromNetwork.ready := io.dropEnq.ready
+          }
         }
         is(MessageType.WriteLineReadLineAddr) {
-          errBadPacketLength := (bHoHeader.length =/= 2.U)
+          paHeaderSlot := freeSlot
+          errBadPacketLength := (paHeader.length =/= 2.U)
           errBadMessageType := !io.isInnerSlice
+          when (!paHeaderSlot.valid) {
+            io.dropEnq.valid := true.B
+            paFromNetwork.ready := io.dropEnq.ready
+          }
         }
         is(MessageType.WriteLineData) {
-          errBadPacketLength :=
-            (bHoHeader.length =/= params.cacheSlotWordsPerJamlet.U)
+          paHeaderSlot := paIdentMatchSlot
+          errBadPacketLength := (paHeader.length =/= params.cacheSlotWordsPerJamlet.U)
           errBadMessageType := false.B
+          when (!paHeaderSlot.valid) {
+            io.dropEnq.valid := true.B
+            paFromNetwork.ready := io.dropEnq.ready
+          }
         }
       }
     } .otherwise {
-      errUnexpectedHeader := bHo.bits.isHeader
-      packetWordsRemainingNext := packetWordsRemaining - 1.U
-      switch(packetHeader.messageType) {
+      when (paFromNetwork.ready) {
+        paWordsRemainingNext := paWordsRemaining - 1.U
+      }
+      errUnexpectedHeader := paFromNetwork.bits.isHeader
+      switch(paLastHeader.messageType) {
         is(MessageType.WriteLineAddr) {
           // We got a new write request. We need to allocate a slot for it.
-          when (packetSlot.valid) {
-            bHo.ready := true.B
-            gatherSlots(packetSlot.bits).valid := true.B
-            gatherSlots(packetSlot.bits).bits.ident := packetHeader.ident
+          when (paSlot.valid) {
+            paFromNetwork.ready := true.B
+            gatherSlots(paSlot.bits).valid := true.B
+            gatherSlots(paSlot.bits).bits.ident := paLastHeader.ident
             for (j <- 0 until localJamlets) {
-              gatherSlots(packetSlot.bits).bits.arrived(j) := false.B
+              gatherSlots(paSlot.bits).bits.arrived(j) := false.B
             }
-            gatherSlots(packetSlot.bits).bits.arrivedNotified := false.B
-            gatherSlots(packetSlot.bits).bits.outerArrived := false.B
-            gatherSlots(packetSlot.bits).bits.sramAddr := packetHeader.address
-            gatherSlots(packetSlot.bits).bits.sourceX := packetHeader.sourceX
-            gatherSlots(packetSlot.bits).bits.sourceY := packetHeader.sourceY
-            gatherSlots(packetSlot.bits).bits.writeAddr := bHo.bits.data
-            gatherSlots(packetSlot.bits).bits.readAddr := 0.U
-            gatherSlots(packetSlot.bits).bits.reads := false.B
+            gatherSlots(paSlot.bits).bits.arrivedNotified := false.B
+            gatherSlots(paSlot.bits).bits.outerArrived := false.B
+            gatherSlots(paSlot.bits).bits.sramAddr := paLastHeader.address
+            gatherSlots(paSlot.bits).bits.sourceX := paLastHeader.sourceX
+            gatherSlots(paSlot.bits).bits.sourceY := paLastHeader.sourceY
+            gatherSlots(paSlot.bits).bits.writeAddr := paFromNetwork.bits.data
+            gatherSlots(paSlot.bits).bits.readAddr := 0.U
+            gatherSlots(paSlot.bits).bits.reads := false.B
             identAllocOutNext.valid := true.B
-            identAllocOutNext.bits.ident := packetHeader.ident
-            identAllocOutNext.bits.slotIdx := packetSlot.bits
+            identAllocOutNext.bits.ident := paLastHeader.ident
+            identAllocOutNext.bits.slotIdx := paSlot.bits
           } .otherwise {
-            dropHeader.messageType := MessageType.WriteLineAddrDrop
-            io.dropEnq.valid := true.B
-            bHo.ready := io.dropEnq.ready
+            when (paFirstBodyWord) {
+              io.dropEnq.valid := true.B
+              paFromNetwork.ready := io.dropEnq.ready
+            } .otherwise {
+              paFromNetwork.ready := true.B
+            }
           }
         }
         is(MessageType.WriteLineReadLineAddr) {
@@ -373,75 +442,75 @@ class GatherSide(params: ZamletParams) extends Module {
           // and submit a read request.
           // The first packet word is the write address.
           // The second is the read address.
-          when (packetSlot.valid) {
-            bHo.ready := true.B
-            when (packetWordsRemaining === 2.U) {
+          when (paSlot.valid) {
+            paFromNetwork.ready := true.B
+            when (paWordsRemaining === 2.U) {
               // Get the write address
-              gatherSlots(packetSlot.bits).valid := false.B
-              gatherSlots(packetSlot.bits).bits.ident := packetHeader.ident
+              gatherSlots(paSlot.bits).valid := false.B
+              gatherSlots(paSlot.bits).bits.ident := paLastHeader.ident
               for (j <- 0 until localJamlets) {
-                gatherSlots(packetSlot.bits).bits.arrived(j) := false.B
+                gatherSlots(paSlot.bits).bits.arrived(j) := false.B
               }
-              gatherSlots(packetSlot.bits).bits.arrivedNotified := false.B
-              gatherSlots(packetSlot.bits).bits.outerArrived := false.B
-              gatherSlots(packetSlot.bits).bits.sramAddr := packetHeader.address
-              gatherSlots(packetSlot.bits).bits.sourceX := packetHeader.sourceX
-              gatherSlots(packetSlot.bits).bits.sourceY := packetHeader.sourceY
-              gatherSlots(packetSlot.bits).bits.writeAddr := bHo.bits.data
-              gatherSlots(packetSlot.bits).bits.reads := true.B
+              gatherSlots(paSlot.bits).bits.arrivedNotified := false.B
+              gatherSlots(paSlot.bits).bits.outerArrived := false.B
+              gatherSlots(paSlot.bits).bits.sramAddr := paLastHeader.address
+              gatherSlots(paSlot.bits).bits.sourceX := paLastHeader.sourceX
+              gatherSlots(paSlot.bits).bits.sourceY := paLastHeader.sourceY
+              gatherSlots(paSlot.bits).bits.writeAddr := paFromNetwork.bits.data
+              gatherSlots(paSlot.bits).bits.reads := true.B
             } .otherwise {
               // Get the read address
-              gatherSlots(packetSlot.bits).valid := true.B
-              gatherSlots(packetSlot.bits).bits.readAddr := bHo.bits.data
+              gatherSlots(paSlot.bits).valid := true.B
+              gatherSlots(paSlot.bits).bits.readAddr := paFromNetwork.bits.data
               identAllocOutNext.valid := true.B
-              identAllocOutNext.bits.ident := packetHeader.ident
-              identAllocOutNext.bits.slotIdx := packetSlot.bits
+              identAllocOutNext.bits.ident := paLastHeader.ident
+              identAllocOutNext.bits.slotIdx := paSlot.bits
             }
           } .otherwise {
-            dropHeader.messageType := MessageType.WriteLineReadLineAddrDrop
-            io.dropEnq.valid := true.B
-            bHo.ready := io.dropEnq.ready
+            when (paFirstBodyWord) {
+              io.dropEnq.valid := true.B
+              paFromNetwork.ready := io.dropEnq.ready
+            } .otherwise {
+              paFromNetwork.ready := true.B
+            }
           }
         }
         is(MessageType.ReadLineAddr) {
-          val completeEnqBusy = anyComplete && io.isInnerSlice
-          io.completeEnq.bits.slotIdx := DontCare
-          io.completeEnq.bits.ident := packetHeader.ident
-          io.completeEnq.bits.sramAddr := packetHeader.address
-          io.completeEnq.bits.sourceX := packetHeader.sourceX
-          io.completeEnq.bits.sourceY := packetHeader.sourceY
-          io.completeEnq.bits.writeAddr := DontCare
-          io.completeEnq.bits.readAddr := bHo.bits.data
-          io.completeEnq.bits.writes := false.B
-          io.completeEnq.bits.reads := true.B
-          when (!completeEnqBusy) {
-            io.completeEnq.valid := true.B
-            bHo.ready := io.completeEnq.ready
+          completeReadEnq.valid := true.B
+          completeReadEnq.bits.slotIdx := DontCare
+          completeReadEnq.bits.ident := paLastHeader.ident
+          completeReadEnq.bits.sramAddr := paLastHeader.address
+          completeReadEnq.bits.sourceX := paLastHeader.sourceX
+          completeReadEnq.bits.sourceY := paLastHeader.sourceY
+          completeReadEnq.bits.writeAddr := DontCare
+          completeReadEnq.bits.readAddr := paFromNetwork.bits.data
+          completeReadEnq.bits.writes := false.B
+          completeReadEnq.bits.reads := true.B
+          when (io.completeEnq.ready) {
+            paFromNetwork.ready := true.B
           } .otherwise {
-            dropHeader.messageType := MessageType.ReadLineAddrDrop
             io.dropEnq.valid := true.B
-            bHo.ready := io.dropEnq.ready
+            paFromNetwork.ready := io.dropEnq.ready
           }
         }
         is(MessageType.WriteLineData) {
-          when (packetIdentFound) {
-            bHo.ready := true.B
-            val wordsPerJamlet = params.cacheSlotWordsPerJamlet
-            val wordOffset =
-              (wordsPerJamlet.U - packetWordsRemaining)(
-                log2Ceil(wordsPerJamlet) - 1, 0)
-            val dataIdx = packetJamletIdx * wordsPerJamlet.U + wordOffset
-            gatherSlots(packetIdentSlotIdx).bits.data(dataIdx) := bHo.bits.data
-            when (packetWordsRemaining === 1.U) {
-              gatherSlots(packetIdentSlotIdx).bits.arrived(packetJamletIdx) :=
-                true.B
-              errUnexpectedData :=
-                gatherSlots(packetIdentSlotIdx).bits.arrived(packetJamletIdx)
+          when (paSlot.valid) {
+            paFromNetwork.ready := true.B
+            val wordOffset = (wordsPerJamlet.U - paWordsRemaining)(log2Ceil(wordsPerJamlet) - 1, 0)
+            val dataIdx = paJamletIdx * wordsPerJamlet.U + wordOffset
+            gatherSlots(paSlot.bits).bits.data(dataIdx) := paFromNetwork.bits.data
+            when (paWordsRemaining === 1.U) {
+              gatherSlots(paSlot.bits).bits.arrived(paJamletIdx) := true.B
+              errUnexpectedData := gatherSlots(paSlot.bits).bits.arrived(paJamletIdx)
             }
           } .otherwise {
-            dropHeader.messageType := MessageType.WriteLineDataDrop
-            io.dropEnq.valid := true.B
-            bHo.ready := io.dropEnq.ready
+            when (paFirstBodyWord) {
+              io.dropEnq.valid := true.B
+              paFromNetwork.ready := io.dropEnq.ready
+            } .otherwise {
+              paFromNetwork.ready := true.B
+            }
+
           }
         }
       }

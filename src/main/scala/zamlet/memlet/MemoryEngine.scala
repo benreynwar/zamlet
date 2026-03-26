@@ -228,7 +228,7 @@ class MemoryEngine(params: ZamletParams) extends Module {
   }
 
   val dqCanFire = dqValid && dqCanEnqW && dqCanEnqR && dqCanEnqS
-  io.completeDeq.ready := dqCanFire
+  io.completeDeq.ready := dqCanEnqW && dqCanEnqR && dqCanEnqS && dqHaveIds
 
   when(dqCanFire) {
     tracker(dqId0).valid := true.B

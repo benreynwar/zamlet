@@ -152,7 +152,7 @@ in {
     PDK = "sky130A";
     LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath [
       pkgs.stdenv.cc.cc.lib
-      unstable-pkgs.mesa.drivers
+      unstable-pkgs.mesa
       unstable-pkgs.libGL
       unstable-pkgs.wayland
       unstable-pkgs.libxkbcommon
