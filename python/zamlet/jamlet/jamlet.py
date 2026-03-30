@@ -21,10 +21,6 @@ from zamlet.monitor import Monitor
 logger = logging.getLogger(__name__)
 
 
-def jamlet_coords_to_frontend_coords(params, x, y):
-    return (0, -1)
-
-
 class Jamlet:
     """
     A single lane of the processor.
@@ -42,20 +38,19 @@ class Jamlet:
         self.lamlet_x = lamlet_x
         self.lamlet_y = lamlet_y
 
-        k_x = x // self.params.j_cols
-        k_y = y // self.params.j_rows
-        self.k_index = k_y * self.params.k_cols + k_x
-        self.k_min_x = k_x * self.params.j_cols
-        self.k_min_y = k_y * self.params.j_rows
-        j_in_k_x = x % self.params.j_cols
-        j_in_k_y = y % self.params.j_rows
-        self.j_in_k_index = j_in_k_y * self.params.j_cols + j_in_k_x
+        self.jx = x - params.west_offset
+        self.jy = y - params.north_offset
+        kx = self.jx // params.j_cols
+        ky = self.jy // params.j_rows
+        self.k_index = ky * params.k_cols + kx
+        self.k_min_x = kx * params.j_cols + params.west_offset
+        self.k_min_y = ky * params.j_rows + params.north_offset
+        j_in_k_x = self.jx % params.j_cols
+        j_in_k_y = self.jy % params.j_rows
+        self.j_in_k_index = j_in_k_y * params.j_cols + j_in_k_x
 
-        # The coords of the memlet router that this jamlet talks to.
+        # The routing coords of the memlet router that this jamlet talks to.
         self.mem_x, self.mem_y = mem_xy
-
-        # The coords of the frontend that this jamlet talks to.
-        self.front_x, self.front_y = jamlet_coords_to_frontend_coords(params, x, y)
 
         # The register file in this jamlet.  It's referred to as a register file
         # slice since it's part of a logically larger register file.
@@ -309,7 +304,7 @@ class Jamlet:
         assert slot_state.state in (CacheState.READING, CacheState.WRITING_READING)
 
         assert s_address % wb == 0
-        assert remaining == self.params.vlines_in_cache_line
+        assert remaining == self.params.cache_slot_words_per_jamlet
         index = 0
         while remaining:
             await self.clock.next_cycle

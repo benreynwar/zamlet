@@ -46,4 +46,4 @@ class MemletDriver(ABC):
 
     @abstractmethod
     def start_soon(self, coro):
-        """Start a coroutine to run concurrently. Returns a handle with .kill()."""
+        """Start a coroutine to run concurrently. Returns a handle with .cancel()."""

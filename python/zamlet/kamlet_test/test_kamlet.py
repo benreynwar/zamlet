@@ -224,13 +224,13 @@ async def reset(dut: HierarchyObject) -> None:
     await RisingEdge(dut.clock)
 
 
-async def send_packet_to_kamlet(dut: HierarchyObject, k_x: int, data: int,
+async def send_packet_to_kamlet(dut: HierarchyObject, kx: int, data: int,
                                 is_header: bool) -> None:
     """Send a packet word to a kamlet via its north port."""
-    valid_sig = getattr(dut, f'io_nChannelsIn_{k_x}_0_0_valid')
-    data_sig = getattr(dut, f'io_nChannelsIn_{k_x}_0_0_bits_data')
-    header_sig = getattr(dut, f'io_nChannelsIn_{k_x}_0_0_bits_isHeader')
-    ready_sig = getattr(dut, f'io_nChannelsIn_{k_x}_0_0_ready')
+    valid_sig = getattr(dut, f'io_nChannelsIn_{kx}_0_0_valid')
+    data_sig = getattr(dut, f'io_nChannelsIn_{kx}_0_0_bits_data')
+    header_sig = getattr(dut, f'io_nChannelsIn_{kx}_0_0_bits_isHeader')
+    ready_sig = getattr(dut, f'io_nChannelsIn_{kx}_0_0_ready')
 
     valid_sig.value = 1
     data_sig.value = data
@@ -242,16 +242,16 @@ async def send_packet_to_kamlet(dut: HierarchyObject, k_x: int, data: int,
         if int(ready_sig.value) == 1:
             break
     else:
-        raise TimeoutError(f"Timeout waiting for ready on kamlet {k_x}")
+        raise TimeoutError(f"Timeout waiting for ready on kamlet {kx}")
 
     await RisingEdge(dut.clock)
     valid_sig.value = 0
 
 
-async def send_sync_trigger_to_kamlet(dut: HierarchyObject, k_x: int, sync_ident: int,
+async def send_sync_trigger_to_kamlet(dut: HierarchyObject, kx: int, sync_ident: int,
                                       value: int) -> None:
     """Send a SyncTrigger instruction packet to a kamlet."""
-    j_x = k_x * Params.J_COLS
+    j_x = kx * Params.J_COLS
     header = PacketHeader(
         target_x=j_x,
         target_y=0,
@@ -267,10 +267,10 @@ async def send_sync_trigger_to_kamlet(dut: HierarchyObject, k_x: int, sync_ident
         value=value
     )
 
-    logger.info(f"Sending SyncTrigger to kamlet {k_x}: sync_ident={sync_ident}, value={value}")
+    logger.info(f"Sending SyncTrigger to kamlet {kx}: sync_ident={sync_ident}, value={value}")
     logger.info(f"  header={hex(header.encode())}, kinstr={hex(kinstr.encode())}")
-    await send_packet_to_kamlet(dut, k_x, header.encode(), is_header=True)
-    await send_packet_to_kamlet(dut, k_x, kinstr.encode(), is_header=False)
+    await send_packet_to_kamlet(dut, kx, header.encode(), is_header=True)
+    await send_packet_to_kamlet(dut, kx, kinstr.encode(), is_header=False)
 
 
 async def wait_for_sync_results(dut: HierarchyObject, timeout_cycles: int = 500):
@@ -310,8 +310,8 @@ async def test_sync_aggregation(dut: HierarchyObject) -> None:
     # sync_ident must be in range [0, maxConcurrentSyncs) - default is 4
     sync_ident = 0
 
-    await send_sync_trigger_to_kamlet(dut, k_x=0, sync_ident=sync_ident, value=3)
-    await send_sync_trigger_to_kamlet(dut, k_x=1, sync_ident=sync_ident, value=5)
+    await send_sync_trigger_to_kamlet(dut, kx=0, sync_ident=sync_ident, value=3)
+    await send_sync_trigger_to_kamlet(dut, kx=1, sync_ident=sync_ident, value=5)
 
     logger.info("Sent SyncTrigger to both kamlets, waiting for sync results...")
 
@@ -333,10 +333,10 @@ async def test_sync_aggregation(dut: HierarchyObject) -> None:
     logger.info(f"test_sync_aggregation passed: both kamlets returned value={expected_min}")
 
 
-async def send_ident_query_to_kamlet(dut: HierarchyObject, k_x: int, sync_ident: int,
+async def send_ident_query_to_kamlet(dut: HierarchyObject, kx: int, sync_ident: int,
                                       baseline: int) -> None:
     """Send an IdentQuery instruction packet to a kamlet."""
-    j_x = k_x * Params.J_COLS
+    j_x = kx * Params.J_COLS
     header = PacketHeader(
         target_x=j_x,
         target_y=0,
@@ -352,10 +352,10 @@ async def send_ident_query_to_kamlet(dut: HierarchyObject, k_x: int, sync_ident:
         sync_ident=sync_ident
     )
 
-    logger.info(f"Sending IdentQuery to kamlet {k_x}: sync_ident={sync_ident}, baseline={baseline}")
+    logger.info(f"Sending IdentQuery to kamlet {kx}: sync_ident={sync_ident}, baseline={baseline}")
     logger.info(f"  header={hex(header.encode())}, kinstr={hex(kinstr.encode())}")
-    await send_packet_to_kamlet(dut, k_x, header.encode(), is_header=True)
-    await send_packet_to_kamlet(dut, k_x, kinstr.encode(), is_header=False)
+    await send_packet_to_kamlet(dut, kx, header.encode(), is_header=True)
+    await send_packet_to_kamlet(dut, kx, kinstr.encode(), is_header=False)
 
 
 async def test_ident_query(dut: HierarchyObject) -> None:
@@ -367,8 +367,8 @@ async def test_ident_query(dut: HierarchyObject) -> None:
     sync_ident = 1  # Use different sync_ident than test_sync_aggregation
     baseline = 50   # Arbitrary baseline value
 
-    await send_ident_query_to_kamlet(dut, k_x=0, sync_ident=sync_ident, baseline=baseline)
-    await send_ident_query_to_kamlet(dut, k_x=1, sync_ident=sync_ident, baseline=baseline)
+    await send_ident_query_to_kamlet(dut, kx=0, sync_ident=sync_ident, baseline=baseline)
+    await send_ident_query_to_kamlet(dut, kx=1, sync_ident=sync_ident, baseline=baseline)
 
     logger.info("Sent IdentQuery to both kamlets, waiting for sync results...")
 

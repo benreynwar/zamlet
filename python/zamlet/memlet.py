@@ -218,16 +218,16 @@ class Memlet:
                                 await self.clock.next_cycle
                             self.receive_read_line_queue.append(packet)
                         elif packet[0].message_type == MessageType.WRITE_LINE_ADDR:
-                            j_x = packet[0].source_x % self.params.j_cols
-                            j_y = packet[0].source_y % self.params.j_rows
-                            j_index = j_y * self.params.j_cols + j_x
+                            j_in_k_x = (packet[0].source_x - self.params.west_offset) % self.params.j_cols
+                            j_in_k_y = (packet[0].source_y - self.params.north_offset) % self.params.j_rows
+                            j_index = j_in_k_y * self.params.j_cols + j_in_k_x
                             while not self.receive_write_line_queues[j_index].can_append():
                                 await self.clock.next_cycle
                             self.receive_write_line_queues[j_index].append(packet)
                         elif packet[0].message_type == MessageType.WRITE_LINE_READ_LINE_ADDR:
-                            j_x = packet[0].source_x % self.params.j_cols
-                            j_y = packet[0].source_y % self.params.j_rows
-                            j_index = j_y * self.params.j_cols + j_x
+                            j_in_k_x = (packet[0].source_x - self.params.west_offset) % self.params.j_cols
+                            j_in_k_y = (packet[0].source_y - self.params.north_offset) % self.params.j_rows
+                            j_index = j_in_k_y * self.params.j_cols + j_in_k_x
                             ident = packet[0].ident
 
                             # Find or allocate a gathering slot for this ident

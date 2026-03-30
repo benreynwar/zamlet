@@ -65,7 +65,8 @@ class IdentQuery(TrackedKInstr):
                      f'distance={distance}')
 
         # Create waiting item to track sync completion and send response
-        is_origin = (kamlet.min_x == 0 and kamlet.min_y == 0)
+        is_origin = (kamlet.min_x == kamlet.params.west_offset
+                     and kamlet.min_y == kamlet.params.north_offset)
         witem = WaitingIdentQuery(
             ident=self.instr_ident,
             is_origin=is_origin,

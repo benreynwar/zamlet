@@ -399,11 +399,11 @@ class WaitingLoadIndexedElement(WaitingItem):
             k_maddr = request.g_addr.to_k_maddr(jamlet.tlb)
             word_offset = k_maddr.addr % wb
             addr = k_maddr.bit_offset(-word_offset * 8)
-            target_x, target_y = addresses.k_indices_to_j_coords(
+            target_x, target_y = addresses.k_indices_to_routing_coords(
                 jamlet.params, k_maddr.k_index, k_maddr.j_in_k_index)
         else:
             addr = request.g_addr.to_scalar_addr(jamlet.tlb)
-            target_x, target_y = 0, -1
+            target_x, target_y = jamlet.lamlet_x, jamlet.lamlet_y
 
         header = ReadMemWordHeader(
             target_x=target_x,

@@ -168,7 +168,7 @@ case class ZamletParams(
 
   // SRAM configuration
   sramDepth: Int = 256,      // Number of words in SRAM
-  cacheSlotWords: Int = 16,  // Words per cache slot
+  cacheSlotWordsPerJamlet: Int = 4,  // Words per jamlet per cache slot
 
   // Register file slice
   rfSliceWords: Int = 48,    // Number of words in RF slice
@@ -247,7 +247,7 @@ case class ZamletParams(
   def log2WordWidth: Int = Integer.numberOfTrailingZeros(wordWidth)
   def log2WordBytes: Int = Integer.numberOfTrailingZeros(wordBytes)
 
-  def cacheSlotWordsPerJamlet: Int = cacheSlotWords / jInK
+  def cacheSlotWords: Int = cacheSlotWordsPerJamlet * jInK
   def memBeatsPerCacheLine: Int = cacheSlotWords / memBeatWords
 
   def nMemletRouters: Int = {

@@ -222,26 +222,26 @@ class Synchronizer:
         self,
         clock,
         params: ZamletParams,
-        x: int,
-        y: int,
+        kx: int,
+        ky: int,
         cache_table: 'CacheTable|None',
         monitor,
     ):
         self.clock = clock
         self.params = params
-        self.x = x
-        self.y = y
+        self.kx = kx
+        self.ky = ky
         self.cache_table = cache_table
         self.monitor = monitor
 
         # Validate coordinates
-        if y == -1:
+        if ky == -1:
             # Lamlet position
-            assert x == 0, f"Lamlet must be at x=0, got x={x}"
+            assert kx == 0, f"Lamlet must be at kx=0, got kx={kx}"
         else:
             # Kamlet position
-            assert 0 <= x < params.k_cols, f"Kamlet x={x} out of range [0, {params.k_cols})"
-            assert 0 <= y < params.k_rows, f"Kamlet y={y} out of range [0, {params.k_rows})"
+            assert 0 <= kx < params.k_cols, f"Kamlet kx={kx} out of range [0, {params.k_cols})"
+            assert 0 <= ky < params.k_rows, f"Kamlet ky={ky} out of range [0, {params.k_rows})"
 
         # Calculate grid boundaries (kamlet grid, not jamlet grid)
         self.total_cols = params.k_cols
@@ -275,8 +275,8 @@ class Synchronizer:
     def has_neighbor(self, direction: SyncDirection) -> bool:
         """Check if there's a neighbor in the given direction."""
         dx, dy = self._direction_delta(direction)
-        nx, ny = self.x + dx, self.y + dy
-        if self.y == -1:
+        nx, ny = self.kx + dx, self.ky + dy
+        if self.ky == -1:
             # Lamlet at (0, -1) connects to any kamlet in its neighbor ring
             # e.g. S to kamlet (0,0), SE to kamlet (1,0) if k_cols >= 2
             return 0 <= nx < self.total_cols and 0 <= ny < self.total_rows
@@ -302,41 +302,41 @@ class Synchronizer:
     def _has_quadrant(self, quadrant: str) -> bool:
         """Check if any kamlets exist in the given quadrant."""
         if quadrant == 'NE':
-            return self.x < self.total_cols - 1 and self.y > 0
+            return self.kx < self.total_cols - 1 and self.ky > 0
         elif quadrant == 'NW':
-            return self.x > 0 and self.y > 0
+            return self.kx > 0 and self.ky > 0
         elif quadrant == 'SE':
-            return self.x < self.total_cols - 1 and self.y < self.total_rows - 1
+            return self.kx < self.total_cols - 1 and self.ky < self.total_rows - 1
         elif quadrant == 'SW':
-            return self.x > 0 and self.y < self.total_rows - 1
+            return self.kx > 0 and self.ky < self.total_rows - 1
         return False
 
     def _has_column_region(self, region: str) -> bool:
         """Check if there are kamlets in column north/south of us."""
         if region == 'N':
             # For kamlet (0,0), the lamlet is to the north
-            if self.x == 0 and self.y == 0:
+            if self.kx == 0 and self.ky == 0:
                 return True
-            return self.y > 0
+            return self.ky > 0
         elif region == 'S':
-            return self.y < self.total_rows - 1
+            return self.ky < self.total_rows - 1
         return False
 
     def _has_row_region(self, region: str) -> bool:
         """Check if there are kamlets in row east/west of us."""
-        if self.y == -1:
+        if self.ky == -1:
             # Lamlet: no row neighbors (lamlet is not in the kamlet grid row)
             return False
         if region == 'E':
-            return self.x < self.total_cols - 1
+            return self.kx < self.total_cols - 1
         elif region == 'W':
-            return self.x > 0
+            return self.kx > 0
         return False
 
     def start_sync(self, sync_ident: int):
         """Start tracking a new synchronization operation."""
         assert sync_ident not in self._sync_states, \
-            f"sync_ident={sync_ident} already exists at ({self.x},{self.y})"
+            f"sync_ident={sync_ident} already exists at ({self.kx},{self.ky})"
 
         state = SyncState(sync_ident=sync_ident)
 
@@ -357,7 +357,7 @@ class Synchronizer:
         auto_q = [q for q in ['NE', 'NW', 'SE', 'SW'] if state.quadrant_synced[q]]
         auto_c = [c for c in ['N', 'S'] if state.column_synced[c]]
         auto_r = [r for r in ['E', 'W'] if state.row_synced[r]]
-        logger.debug(f'{self.clock.cycle}: SYNC_START: synchronizer ({self.x},{self.y}) '
+        logger.debug(f'{self.clock.cycle}: SYNC_START: synchronizer ({self.kx},{self.ky}) '
                      f'sync_ident={sync_ident} auto_synced: quad={auto_q} col={auto_c} row={auto_r}')
 
     def local_event(self, sync_ident: int, value: Optional[int] = None):
@@ -371,9 +371,9 @@ class Synchronizer:
         state = self._sync_states[sync_ident]
         state.local_seen = True
         state.local_value = value
-        logger.debug(f'{self.clock.cycle}: SYNC_LOCAL: synchronizer ({self.x},{self.y}) '
+        logger.debug(f'{self.clock.cycle}: SYNC_LOCAL: synchronizer ({self.kx},{self.ky}) '
                      f'sync_ident={sync_ident} value={value}')
-        self.monitor.record_sync_local_event(sync_ident, self.x, self.y, value)
+        self.monitor.record_sync_local_event(sync_ident, self.kx, self.ky, value)
         self._update_completed(sync_ident)
 
     def _all_sends_complete(self, state: SyncState) -> bool:
@@ -404,7 +404,7 @@ class Synchronizer:
         missing_c = [c for c, v in state.column_synced.items() if not v]
         missing_r = [r for r, v in state.row_synced.items() if not v]
         if missing_q or missing_c or missing_r:
-            logger.debug(f'{self.clock.cycle}: SYNC_INCOMPLETE: synchronizer ({self.x},{self.y}) '
+            logger.debug(f'{self.clock.cycle}: SYNC_INCOMPLETE: synchronizer ({self.kx},{self.ky}) '
                          f'sync_ident={state.sync_ident} missing: quad={missing_q} col={missing_c} row={missing_r}')
             return False
 
@@ -413,7 +413,7 @@ class Synchronizer:
         if not sends_complete:
             missing_sends = [d.name for d in SyncDirection
                             if self.has_neighbor(d) and d not in state.sent_directions]
-            logger.debug(f'{self.clock.cycle}: SYNC_INCOMPLETE: synchronizer ({self.x},{self.y}) '
+            logger.debug(f'{self.clock.cycle}: SYNC_INCOMPLETE: synchronizer ({self.kx},{self.ky}) '
                          f'sync_ident={state.sync_ident} missing_sends={missing_sends}')
         return sends_complete
 
@@ -471,9 +471,9 @@ class Synchronizer:
         if self._is_complete(state):
             state.completed = True
             min_value = self.get_min_value(sync_ident)
-            logger.debug(f'{self.clock.cycle}: SYNC_COMPLETE: synchronizer ({self.x},{self.y}) '
+            logger.debug(f'{self.clock.cycle}: SYNC_COMPLETE: synchronizer ({self.kx},{self.ky}) '
                          f'sync_ident={sync_ident} min_value={min_value}')
-            self.monitor.record_sync_local_complete(sync_ident, self.x, self.y, min_value)
+            self.monitor.record_sync_local_complete(sync_ident, self.kx, self.ky, min_value)
             # Fire chained fault sync if any
             if sync_ident in self._fault_chains:
                 target = self._fault_chains.pop(sync_ident)
@@ -481,7 +481,7 @@ class Synchronizer:
 
     def _get_send_requirements(self, direction: SyncDirection) -> dict:
         """Get send requirements for a direction. Kamlet (0,0) has special requirements."""
-        if self.x == 0 and self.y == 0:
+        if self.kx == 0 and self.ky == 0:
             return SEND_REQUIREMENTS_ORIGIN[direction]
         return SEND_REQUIREMENTS[direction]
 
@@ -513,7 +513,7 @@ class Synchronizer:
                 missing.append(f'row_{r}')
 
         if missing:
-            logger.debug(f'{self.clock.cycle}: SYNC_SEND_BLOCKED: ({self.x},{self.y}) '
+            logger.debug(f'{self.clock.cycle}: SYNC_SEND_BLOCKED: ({self.kx},{self.ky}) '
                          f'sync_ident={state.sync_ident} dir={direction.name} missing={missing}')
             return False
 
@@ -590,7 +590,7 @@ class Synchronizer:
                     state.row_values[region] = min(state.row_values[region],
                                                    packet.value)
 
-        logger.debug(f'{self.clock.cycle}: SYNC_RECV: synchronizer ({self.x},{self.y}) '
+        logger.debug(f'{self.clock.cycle}: SYNC_RECV: synchronizer ({self.kx},{self.ky}) '
                      f'from={from_direction.name} sync_ident={sync_ident} '
                      f'value={packet.value}')
         self._update_completed(sync_ident)
@@ -658,7 +658,7 @@ class Synchronizer:
                         )
                         self._outgoing_packets[direction] = packet_words
                         state.sent_directions.add(direction)
-                        logger.debug(f'{self.clock.cycle}: SYNC_SEND: synchronizer ({self.x},{self.y}) '
+                        logger.debug(f'{self.clock.cycle}: SYNC_SEND: synchronizer ({self.kx},{self.ky}) '
                                      f'dir={direction.name} sync_ident={state.sync_ident} '
                                      f'value={value}')
 

@@ -4,6 +4,7 @@ Sets up the DUT, AXI4 slave, and CocotbDriver, then runs the
 shared test functions from test_write_read.
 """
 
+import json
 import logging
 from typing import List, Tuple
 
@@ -45,7 +46,9 @@ def initialize_inputs(dut: HierarchyObject, n_routers: int,
 @cocotb.test()
 async def memlet_write_test(dut: HierarchyObject) -> None:
     test_utils.configure_logging_sim("DEBUG")
-    params = ZamletParams()
+    test_params = test_utils.get_test_params()
+    with open(test_params['params_file']) as f:
+        params = ZamletParams.from_dict(json.load(f))
 
     router_coords = memlet_coords(params, 0)
     n_routers = len(router_coords)
@@ -75,7 +78,13 @@ async def memlet_write_test(dut: HierarchyObject) -> None:
         'b_resp': dut.io_axi_b_bits_resp,
         'ar_valid': dut.io_axi_ar_valid,
         'ar_ready': dut.io_axi_ar_ready,
+        'ar_id': dut.io_axi_ar_bits_id,
+        'ar_addr': dut.io_axi_ar_bits_addr,
+        'ar_len': dut.io_axi_ar_bits_len,
+        'ar_size': dut.io_axi_ar_bits_size,
+        'ar_burst': dut.io_axi_ar_bits_burst,
         'r_valid': dut.io_axi_r_valid,
+        'r_ready': dut.io_axi_r_ready,
         'r_id': dut.io_axi_r_bits_id,
         'r_data': dut.io_axi_r_bits_data,
         'r_resp': dut.io_axi_r_bits_resp,
@@ -132,5 +141,5 @@ async def memlet_write_test(dut: HierarchyObject) -> None:
                     logger.info(f"  cycle {cycle}: {sig}=1")
     cocotb.start_soon(probe())
 
-    await test_write_read.test_write_line(
+    await test_write_read.test_write_read(
         driver, params, router_coords, k_base_x, k_base_y)

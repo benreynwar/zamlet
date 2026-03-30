@@ -75,13 +75,13 @@ class KamletSnapshot:
 @dataclass
 class CycleMetrics:
     """Per-cycle performance metrics."""
-    # ALU activity per jamlet: (jx, jy) -> True if ALU active this cycle
+    # ALU activity per jamlet: (x, y) -> True if ALU active this cycle
     alu_active: Dict[Tuple[int, int], bool] = field(default_factory=dict)
 
-    # Jamlet activity: (jx, jy, channel) -> set of JamletActivity
+    # Jamlet activity: (x, y, channel) -> set of JamletActivity
     jamlet_activity: Dict[Tuple[int, int, int], set] = field(default_factory=dict)
 
-    # Router output state: (jx, jy, channel, Direction) -> (present, moving)
+    # Router output state: (x, y, channel, Direction) -> (present, moving)
     router_outputs: Dict[Tuple[int, int, int, Direction], Tuple[bool, bool]] = field(
         default_factory=dict
     )
@@ -102,15 +102,15 @@ class CycleMetrics:
     # True if a word was waiting but couldn't be pushed (congestion)
     instr_net_blocked: bool = False
 
-    # Kamlet instruction queues: keyed by (kx, ky)
+    # Kamlet instruction queues: keyed by kamlet min_x, min_y (routing coords)
     kamlet_instr_queue_len: Dict[Tuple[int, int], int] = field(default_factory=dict)
     kamlet_instr_added: Dict[Tuple[int, int], int] = field(default_factory=dict)
     kamlet_instr_removed: Dict[Tuple[int, int], int] = field(default_factory=dict)
 
-    # Cache misses: keyed by (kx, ky)
+    # Cache misses: keyed by kamlet min_x, min_y (routing coords)
     cache_misses: Dict[Tuple[int, int], int] = field(default_factory=dict)
 
-    # Kamlet snapshots: keyed by (kx, ky)
+    # Kamlet snapshots: keyed by kamlet min_x, min_y (routing coords)
     kamlet_snapshots: Dict[Tuple[int, int], KamletSnapshot] = field(
         default_factory=dict
     )
@@ -172,17 +172,19 @@ class Monitor:
 
         # Lookup tables: derive span_id from existing identifiers
         self._kinstr_by_ident: Dict[int, int] = {}  # instr_ident -> span_id
-        # kinstr_exec key: (instr_ident, kamlet_x, kamlet_y) -> span_id
+        # kinstr_exec key: (instr_ident, kamlet.min_x, kamlet.min_y) -> span_id
         self._kinstr_exec_by_key: Dict[tuple, int] = {}
-        # witem key: (instr_ident, kamlet_x, kamlet_y) -> span_id
+        # witem key: (instr_ident, kamlet.min_x, kamlet.min_y) -> span_id
         self._witem_by_key: Dict[tuple, int] = {}
         # transaction key: (ident, tag, src_x, src_y, dst_x, dst_y) -> span_id
+        # All coords are routing coords.
         self._transaction_by_key: Dict[tuple, int] = {}
         # message key: (ident, tag, src_x, src_y, dst_x, dst_y) -> span_id
+        # All coords are routing coords.
         self._message_by_key: Dict[tuple, int] = {}
-        # cache_request key: (kamlet_x, kamlet_y, slot) -> span_id
+        # cache_request key: (kamlet.min_x, kamlet.min_y, slot) -> span_id
         self._cache_request_by_key: Dict[tuple, int] = {}
-        # resource_exhausted key: (ResourceType, kamlet_x, kamlet_y) -> span_id
+        # resource_exhausted key: (ResourceType, kamlet.min_x, kamlet.min_y) -> span_id
         self._resource_exhausted_by_key: Dict[tuple, int] = {}
         # sync key: (sync_ident, name) -> span_id (name distinguishes first/second sync)
         self._sync_by_key: Dict[tuple, int] = {}
@@ -211,52 +213,52 @@ class Monitor:
             self.cycle_metrics[cycle] = CycleMetrics()
         return self.cycle_metrics[cycle]
 
-    def report_alu_active(self, jx: int, jy: int) -> None:
+    def report_alu_active(self, x: int, y: int) -> None:
         """Report that the ALU is active for this jamlet this cycle."""
         if not self.enabled:
             return
         metrics = self._get_cycle_metrics()
-        key = (jx, jy)
+        key = (x, y)
         assert key not in metrics.alu_active, \
-            f"ALU at jamlet ({jx}, {jy}) already marked active this cycle {self.clock.cycle}"
+            f"ALU at jamlet ({x}, {y}) already marked active this cycle {self.clock.cycle}"
         metrics.alu_active[key] = True
 
-    def _report_jamlet_activity(self, jx: int, jy: int, channel: int,
+    def _report_jamlet_activity(self, x: int, y: int, channel: int,
                                 activity: JamletActivity) -> None:
         """Internal: report jamlet channel activity this cycle."""
         metrics = self._get_cycle_metrics()
-        key = (jx, jy, channel)
+        key = (x, y, channel)
         if key not in metrics.jamlet_activity:
             metrics.jamlet_activity[key] = set()
         assert activity not in metrics.jamlet_activity[key], \
-            f"Jamlet ({jx}, {jy}) channel {channel} already marked {activity.value} " \
+            f"Jamlet ({x}, {y}) channel {channel} already marked {activity.value} " \
             f"this cycle {self.clock.cycle}"
         metrics.jamlet_activity[key].add(activity)
 
-    def report_jamlet_sending(self, jx: int, jy: int, channel: int) -> None:
+    def report_jamlet_sending(self, x: int, y: int, channel: int) -> None:
         """Report that this jamlet is sending on this channel this cycle."""
         if not self.enabled:
             return
-        self._report_jamlet_activity(jx, jy, channel, JamletActivity.SENDING)
+        self._report_jamlet_activity(x, y, channel, JamletActivity.SENDING)
 
-    def report_jamlet_receiving(self, jx: int, jy: int, channel: int) -> None:
+    def report_jamlet_receiving(self, x: int, y: int, channel: int) -> None:
         """Report that this jamlet is receiving on this channel this cycle."""
         if not self.enabled:
             return
-        self._report_jamlet_activity(jx, jy, channel, JamletActivity.RECEIVING)
+        self._report_jamlet_activity(x, y, channel, JamletActivity.RECEIVING)
 
-    def report_jamlet_dropping(self, jx: int, jy: int, channel: int) -> None:
+    def report_jamlet_dropping(self, x: int, y: int, channel: int) -> None:
         """Report that this jamlet is dropping a message on this channel this cycle."""
         if not self.enabled:
             return
-        self._report_jamlet_activity(jx, jy, channel, JamletActivity.DROPPING)
+        self._report_jamlet_activity(x, y, channel, JamletActivity.DROPPING)
 
-    def report_router_output(self, jx: int, jy: int, channel: int,
+    def report_router_output(self, x: int, y: int, channel: int,
                              direction: Direction, present: bool, moving: bool) -> None:
         """Report router output state for this direction this cycle.
 
         Args:
-            jx, jy: Jamlet coordinates
+            x, y: Routing coordinates
             channel: Router channel
             direction: Direction (N, S, E, W, H)
             present: True if there's data waiting for this output
@@ -265,9 +267,9 @@ class Monitor:
         if not self.enabled:
             return
         metrics = self._get_cycle_metrics()
-        key = (jx, jy, channel, direction)
+        key = (x, y, channel, direction)
         assert key not in metrics.router_outputs, \
-            f"Router output ({jx}, {jy}) ch{channel} {direction.name} already reported " \
+            f"Router output ({x}, {y}) ch{channel} {direction.name} already reported " \
             f"this cycle {self.clock.cycle}"
         metrics.router_outputs[key] = (present, moving)
 
@@ -312,37 +314,37 @@ class Monitor:
             return
         self._get_cycle_metrics().ident_query_response = True
 
-    def record_kamlet_cycle_state(self, kx: int, ky: int,
+    def record_kamlet_cycle_state(self, x: int, y: int,
                                    queue_len: int) -> None:
         if not self.enabled:
             return
         metrics = self._get_cycle_metrics()
-        metrics.kamlet_instr_queue_len[(kx, ky)] = queue_len
+        metrics.kamlet_instr_queue_len[(x, y)] = queue_len
 
-    def record_kamlet_instr_added(self, kx: int, ky: int,
+    def record_kamlet_instr_added(self, x: int, y: int,
                                    count: int = 1) -> None:
         if not self.enabled:
             return
         metrics = self._get_cycle_metrics()
-        key = (kx, ky)
+        key = (x, y)
         metrics.kamlet_instr_added[key] = metrics.kamlet_instr_added.get(key, 0) + count
 
-    def record_kamlet_instr_removed(self, kx: int, ky: int,
+    def record_kamlet_instr_removed(self, x: int, y: int,
                                      count: int = 1) -> None:
         if not self.enabled:
             return
         metrics = self._get_cycle_metrics()
-        key = (kx, ky)
+        key = (x, y)
         metrics.kamlet_instr_removed[key] = (
             metrics.kamlet_instr_removed.get(key, 0) + count
         )
 
-    def record_kamlet_snapshot(self, kx: int, ky: int,
+    def record_kamlet_snapshot(self, x: int, y: int,
                                snapshot: 'KamletSnapshot') -> None:
         if not self.enabled:
             return
         metrics = self._get_cycle_metrics()
-        metrics.kamlet_snapshots[(kx, ky)] = snapshot
+        metrics.kamlet_snapshots[(x, y)] = snapshot
 
     # -------------------------------------------------------------------------
     # Core Span methods
@@ -1070,17 +1072,17 @@ class Monitor:
         self._sync_by_key[(sync_ident, name)] = global_span_id
         return global_span_id
 
-    def record_sync_local_created(self, sync_ident: int, x: int, y: int,
+    def record_sync_local_created(self, sync_ident: int, kx: int, ky: int,
                                    parent_span_id: int,
                                    name: str | None = None) -> int | None:
         """Record a local sync span for a synchronizer."""
         if not self.enabled:
             return None
 
-        key = (sync_ident, x, y, name)
+        key = (sync_ident, kx, ky, name)
         local_span_id = self.create_span(
             span_type=SpanType.SYNC_LOCAL,
-            component=f"synchronizer({x},{y})",
+            component=f"synchronizer({kx},{ky})",
             completion_type=CompletionType.TRACKED,
             parent_span_id=parent_span_id,
             parent_reason="sync_participant",
@@ -1089,7 +1091,7 @@ class Monitor:
         self._sync_local_by_key[key] = local_span_id
         return local_span_id
 
-    def create_sync_local_span(self, sync_ident: int, x: int, y: int,
+    def create_sync_local_span(self, sync_ident: int, kx: int, ky: int,
                                 parent_span_id: int, name: str | None = None) -> None:
         """Create a local sync span, creating the global span first if needed.
 
@@ -1100,7 +1102,7 @@ class Monitor:
         if (sync_ident, name) not in self._sync_by_key:
             self.record_sync_created(sync_ident, parent_span_id, name)
         global_span_id = self._sync_by_key[(sync_ident, name)]
-        self.record_sync_local_created(sync_ident, x, y, global_span_id, name)
+        self.record_sync_local_created(sync_ident, kx, ky, global_span_id, name)
 
         # Auto-finalize when all children have been added (kamlets + lamlet synchronizer)
         global_span = self.spans[global_span_id]
@@ -1127,19 +1129,19 @@ class Monitor:
         self.record_sync_local_created(sync_ident, 0, -1, global_span_id, name)
         self.finalize_children(global_span_id)
 
-    def _find_oldest_sync_local(self, sync_ident: int, x: int, y: int,
+    def _find_oldest_sync_local(self, sync_ident: int, kx: int, ky: int,
                                  completed: bool = False) -> tuple | None:
         """Find the oldest local sync span for this location.
 
         Args:
             completed: If False, find oldest incomplete. If True, find oldest completed.
         Returns:
-            The key (sync_ident, x, y, name) or None if not found.
+            The key (sync_ident, kx, ky, name) or None if not found.
         """
         oldest_key = None
         oldest_cycle = float('inf')
         for key, span_id in self._sync_local_by_key.items():
-            if key[0] == sync_ident and key[1] == x and key[2] == y:
+            if key[0] == sync_ident and key[1] == kx and key[2] == ky:
                 span = self.spans[span_id]
                 is_complete = span.completed_cycle is not None
                 if is_complete == completed and span.created_cycle < oldest_cycle:
@@ -1147,25 +1149,25 @@ class Monitor:
                     oldest_key = key
         return oldest_key
 
-    def record_sync_local_event(self, sync_ident: int, x: int, y: int,
+    def record_sync_local_event(self, sync_ident: int, kx: int, ky: int,
                                  value: int | None = None) -> None:
         """Record that a synchronizer has seen its local event."""
         if not self.enabled:
             return
 
-        key = self._find_oldest_sync_local(sync_ident, x, y, completed=False)
-        assert key is not None, f"No incomplete sync local span for ({sync_ident}, {x}, {y})"
+        key = self._find_oldest_sync_local(sync_ident, kx, ky, completed=False)
+        assert key is not None, f"No incomplete sync local span for ({sync_ident}, {kx}, {ky})"
         span_id = self._sync_local_by_key[key]
         self.add_event(span_id, "local_event", value=value)
 
-    def record_sync_local_complete(self, sync_ident: int, x: int, y: int,
+    def record_sync_local_complete(self, sync_ident: int, kx: int, ky: int,
                                      min_value: int | None) -> None:
         """Record that sync completed at a synchronizer."""
         if not self.enabled:
             return
 
-        key = self._find_oldest_sync_local(sync_ident, x, y, completed=False)
-        assert key is not None, f"No incomplete sync local span for ({sync_ident}, {x}, {y})"
+        key = self._find_oldest_sync_local(sync_ident, kx, ky, completed=False)
+        assert key is not None, f"No incomplete sync local span for ({sync_ident}, {kx}, {ky})"
         span_id = self._sync_local_by_key[key]
         self.spans[span_id].details['min_value'] = min_value
         self.complete_span(span_id)

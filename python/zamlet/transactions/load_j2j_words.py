@@ -77,7 +77,7 @@ def init_dst_state(jamlet, witem: WaitingLoadJ2JWords, tag: int) -> None:
     mappings = get_mapping_from_reg(
         params=jamlet.params, k_maddr=instr.k_maddr, reg_ordering=instr.dst_ordering,
         start_index=instr.start_index, n_elements=instr.n_elements,
-        reg_wb=tag*8, reg_x=jamlet.x, reg_y=jamlet.y)
+        reg_wb=tag*8, reg_jx=jamlet.jx, reg_jy=jamlet.jy)
 
     response_tag = jamlet.j_in_k_index * jamlet.params.word_bytes + tag
     if len(mappings) == 0:
@@ -92,7 +92,7 @@ def init_src_state(jamlet, witem: WaitingLoadJ2JWords, tag: int) -> None:
     mappings = get_mapping_from_mem(
         params=jamlet.params, k_maddr=instr.k_maddr, reg_ordering=instr.dst_ordering,
         start_index=instr.start_index, n_elements=instr.n_elements,
-        mem_wb=tag*8, mem_x=jamlet.x, mem_y=jamlet.y)
+        mem_wb=tag*8, mem_jx=jamlet.jx, mem_jy=jamlet.jy)
 
     response_tag = jamlet.j_in_k_index * jamlet.params.word_bytes + tag
     if len(mappings) == 0:
@@ -111,7 +111,7 @@ async def send_req(jamlet, witem: WaitingLoadJ2JWords, tag: int) -> None:
     mappings = get_mapping_from_mem(
         params, k_maddr=instr.k_maddr, reg_ordering=instr.dst_ordering,
         start_index=instr.start_index, n_elements=instr.n_elements,
-        mem_wb=mem_wb, mem_x=jamlet.x, mem_y=jamlet.y)
+        mem_wb=mem_wb, mem_jx=jamlet.jx, mem_jy=jamlet.jy)
 
     word_bytes = jamlet.params.word_bytes
     kamlet_vline_bytes = jamlet.params.vline_bytes // jamlet.params.k_in_l
@@ -125,8 +125,8 @@ async def send_req(jamlet, witem: WaitingLoadJ2JWords, tag: int) -> None:
     words = []
     reg_vw = None
     for mapping in mappings:
-        cache_base_addr = witem.cache_slot * jamlet.params.vlines_in_cache_line * word_bytes
-        vline_offset_in_cache = mapping.mem_v % jamlet.params.vlines_in_cache_line
+        cache_base_addr = witem.cache_slot * jamlet.params.cache_slot_words_per_jamlet * word_bytes
+        vline_offset_in_cache = mapping.mem_v % jamlet.params.cache_slot_words_per_jamlet
         cache_addr = cache_base_addr + vline_offset_in_cache * word_bytes
         word = jamlet.sram[cache_addr: cache_addr + word_bytes]
         logger.debug(
@@ -143,7 +143,7 @@ async def send_req(jamlet, witem: WaitingLoadJ2JWords, tag: int) -> None:
         assert  reg_vw == mapping.reg_vw
     assert reg_vw is not None
 
-    target_x, target_y = addresses.vw_index_to_j_coords(
+    target_x, target_y = addresses.vw_index_to_routing_coords(
         jamlet.params, instr.dst_ordering.word_order, reg_vw)
     witem.protocol_states[response_tag].src_state = SendState.WAITING_FOR_RESPONSE
 
@@ -191,7 +191,9 @@ async def handle_req(jamlet, packet: List[Any]) -> None:
     mappings = get_mapping_from_mem(
         jamlet.params, k_maddr=instr.k_maddr, reg_ordering=instr.dst_ordering,
         start_index=instr.start_index, n_elements=instr.n_elements,
-        mem_wb=mem_wb, mem_x=header.source_x, mem_y=header.source_y)
+        mem_wb=mem_wb,
+        mem_jx=header.source_x - jamlet.params.west_offset,
+        mem_jy=header.source_y - jamlet.params.north_offset)
 
     assert len(packet) >= 2
     words = packet[1:]

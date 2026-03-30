@@ -68,7 +68,7 @@ def get_offsets_and_masks(
         mask_word = (1 << (word_bytes * 8)) - 1
 
     vw_index = addresses.j_coords_to_vw_index(
-        params, ordering.word_order, jamlet.x, jamlet.y)
+        params, ordering.word_order, jamlet.jx, jamlet.jy)
     ww = params.word_bytes * 8
     elements_in_word = ww // ordering.ew
     elements_in_vline = params.vline_bytes * 8 // ordering.ew

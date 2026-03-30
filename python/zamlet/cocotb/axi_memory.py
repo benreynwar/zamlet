@@ -22,6 +22,7 @@ class AxiMemory:
         self._aw_queue: deque = deque()
         self._w_bursts: deque = deque()
         self._b_queue: deque = deque()
+        self._ar_queue: deque = deque()
 
     def start(self):
         self.s['aw_ready'].value = 1
@@ -39,6 +40,8 @@ class AxiMemory:
         cocotb.start_soon(self._w_capture())
         cocotb.start_soon(self._match_writes())
         cocotb.start_soon(self._b_driver())
+        cocotb.start_soon(self._ar_capture())
+        cocotb.start_soon(self._r_driver())
 
     async def _aw_capture(self):
         while True:
@@ -92,3 +95,43 @@ class AxiMemory:
                 while int(self.s['b_ready'].value) != 1:
                     await RisingEdge(self.clock)
                     await ReadOnly()
+
+    async def _ar_capture(self):
+        while True:
+            await RisingEdge(self.clock)
+            self.s['ar_ready'].value = 1
+            await ReadOnly()
+            if int(self.s['ar_valid'].value) == 1:
+                entry = {
+                    'id': int(self.s['ar_id'].value),
+                    'addr': int(self.s['ar_addr'].value),
+                    'len': int(self.s['ar_len'].value),
+                    'size': int(self.s['ar_size'].value),
+                    'burst': int(self.s['ar_burst'].value),
+                }
+                self._ar_queue.append(entry)
+
+    async def _r_driver(self):
+        await RisingEdge(self.clock)
+        while True:
+            self.s['r_valid'].value = 0
+            if self._ar_queue:
+                ar = self._ar_queue.popleft()
+                addr = ar['addr']
+                beat_bytes = 1 << ar['size']
+                n_beats = ar['len'] + 1
+                for i in range(n_beats):
+                    beat_addr = addr + i * beat_bytes
+                    data = self.mem.get(beat_addr, 0)
+                    self.s['r_valid'].value = 1
+                    self.s['r_id'].value = ar['id']
+                    self.s['r_data'].value = data
+                    self.s['r_resp'].value = 0
+                    self.s['r_last'].value = 1 if i == n_beats - 1 else 0
+                    await ReadOnly()
+                    while int(self.s['r_ready'].value) != 1:
+                        await RisingEdge(self.clock)
+                        await ReadOnly()
+                    await RisingEdge(self.clock)
+            else:
+                await RisingEdge(self.clock)

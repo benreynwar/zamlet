@@ -52,8 +52,8 @@ def get_mapping_from_reg(
     start_index: int,
     n_elements: int,
     reg_wb: int,
-    reg_x: int,
-    reg_y: int,
+    reg_jx: int,
+    reg_jy: int,
 ) -> List[RegMemMapping]:
     """
     Given the byte index in the register word, find which memory bytes it maps to.
@@ -69,8 +69,8 @@ def get_mapping_from_reg(
         n_elements: Number of elements being transferred
         reg_wb: Register word bit offset (must be multiple of 8). Which byte in the register
                 word we're trying to find the mapping for.
-        reg_x, reg_y: Jamlet coordinates for word in the register file we're trying to find
-                      the mapping for.
+        reg_jx, reg_jy: Jamlet grid coordinates for word in the register file we're trying
+                        to find the mapping for.
 
     Returns:
         List of RegMemMapping for each vline that has data for this byte position
@@ -81,7 +81,7 @@ def get_mapping_from_reg(
     ww = params.word_bytes * 8
     assert reg_wb % 8 == 0
 
-    reg_vw = addresses.j_coords_to_vw_index(params, reg_ordering.word_order, reg_x, reg_y)
+    reg_vw = addresses.j_coords_to_vw_index(params, reg_ordering.word_order, reg_jx, reg_jy)
     reg_ew = reg_ordering.ew
     reg_ve = reg_wb // reg_ew * params.j_in_l + reg_vw
     reg_eb = reg_wb % reg_ew
@@ -92,7 +92,7 @@ def get_mapping_from_reg(
     mem_ew = k_maddr.ordering.ew
 
     logger.debug(
-        f'get_mapping_from_reg: reg_x={reg_x} reg_y={reg_y} reg_wb={reg_wb} '
+        f'get_mapping_from_reg: reg_jx={reg_jx} reg_jy={reg_jy} reg_wb={reg_wb} '
         f'reg_vw={reg_vw} reg_ve={reg_ve} reg_eb={reg_eb} '
         f'start_vline={start_vline} end_vline={end_vline} '
         f'mem_base_addr.index={mem_base_addr.index} mem_base_addr.bit_addr={mem_base_addr.bit_addr} '
@@ -134,8 +134,8 @@ def get_mapping_from_mem(
     start_index: int,
     n_elements: int,
     mem_wb: int,
-    mem_x: int,
-    mem_y: int,
+    mem_jx: int,
+    mem_jy: int,
 ) -> List[RegMemMapping]:
     """
     Given the byte index in the memory word, find which register bytes it maps to.
@@ -151,8 +151,8 @@ def get_mapping_from_mem(
         n_elements: Number of elements being transferred
         mem_wb: Memory word bit offset (must be multiple of 8). The byte in the memory
                 word that we're trying to find the mapping for.
-        mem_x, mem_y: Jamlet coordinates for the memory word that we're trying to find
-                      the mapping for.
+        mem_jx, mem_jy: Jamlet grid coordinates for the memory word that we're trying
+                        to find the mapping for.
 
     Returns:
         List of RegMemMapping for each vline that has data for this byte position
@@ -164,7 +164,7 @@ def get_mapping_from_mem(
     ww = params.word_bytes * 8
     assert mem_wb % 8 == 0
 
-    mem_vw = addresses.j_coords_to_vw_index(params, k_maddr.ordering.word_order, mem_x, mem_y)
+    mem_vw = addresses.j_coords_to_vw_index(params, k_maddr.ordering.word_order, mem_jx, mem_jy)
     mem_ew = k_maddr.ordering.ew
     mem_ve = mem_wb // mem_ew * params.j_in_l + mem_vw
     mem_eb = mem_wb % mem_ew
@@ -184,7 +184,7 @@ def get_mapping_from_mem(
         mem_v_offset = 0
 
     logger.debug(
-        f'get_mapping_from_mem: mem_x={mem_x} mem_y={mem_y} mem_wb={mem_wb} '
+        f'get_mapping_from_mem: mem_jx={mem_jx} mem_jy={mem_jy} mem_wb={mem_wb} '
         f'mem_vw={mem_vw} mem_ve={mem_ve} mem_eb={mem_eb} '
         f'mem_bit_addr_in_vline={mem_bit_addr_in_vline} '
         f'start_vline={start_vline} end_vline={end_vline} mem_v_offset={mem_v_offset} '

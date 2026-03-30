@@ -69,8 +69,8 @@ def get_all_mappings_from_reg(params: ZamletParams,
     mappings = set()
     word_bits = params.word_bytes * 8
 
-    for reg_y in range(params.k_rows * params.j_rows):
-        for reg_x in range(params.k_cols * params.j_cols):
+    for reg_jy in range(params.k_rows * params.j_rows):
+        for reg_jx in range(params.k_cols * params.j_cols):
             for reg_wb in range(0, word_bits, 8):
                 result = get_mapping_from_reg(
                     params=params,
@@ -79,8 +79,8 @@ def get_all_mappings_from_reg(params: ZamletParams,
                     start_index=instr.start_index,
                     n_elements=instr.n_elements,
                     reg_wb=reg_wb,
-                    reg_x=reg_x,
-                    reg_y=reg_y,
+                    reg_jx=reg_jx,
+                    reg_jy=reg_jy,
                 )
                 for m in result:
                     mappings.add(mapping_to_tuple(m))
@@ -94,8 +94,8 @@ def get_all_mappings_from_mem(params: ZamletParams,
     mappings = set()
     word_bits = params.word_bytes * 8
 
-    for mem_y in range(params.k_rows * params.j_rows):
-        for mem_x in range(params.k_cols * params.j_cols):
+    for mem_jy in range(params.k_rows * params.j_rows):
+        for mem_jx in range(params.k_cols * params.j_cols):
             for mem_wb in range(0, word_bits, 8):
                 result = get_mapping_from_mem(
                     params=params,
@@ -104,8 +104,8 @@ def get_all_mappings_from_mem(params: ZamletParams,
                     start_index=instr.start_index,
                     n_elements=instr.n_elements,
                     mem_wb=mem_wb,
-                    mem_x=mem_x,
-                    mem_y=mem_y,
+                    mem_jx=mem_jx,
+                    mem_jy=mem_jy,
                 )
                 for m in result:
                     mappings.add(mapping_to_tuple(m))

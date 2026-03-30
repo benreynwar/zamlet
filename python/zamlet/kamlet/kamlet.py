@@ -65,9 +65,9 @@ class Kamlet:
         self.tlb = tlb
 
         # One synchronizer per kamlet for tracking when operations complete across kamlets
-        k_x = self.min_x // params.j_cols
-        k_y = self.min_y // params.j_rows
-        self.synchronizer = Synchronizer(clock, params, k_x, k_y, self.cache_table, monitor)
+        kx = (self.min_x - params.west_offset) // params.j_cols
+        ky = (self.min_y - params.north_offset) // params.j_rows
+        self.synchronizer = Synchronizer(clock, params, kx, ky, self.cache_table, monitor)
 
         n_mem_routers = len(mem_coords)
         jamlets_per_router = self.n_jamlets // n_mem_routers
@@ -125,7 +125,9 @@ class Kamlet:
 
     @property
     def k_index(self):
-        return self.min_y // self.params.j_rows * self.params.k_cols + self.min_x // self.params.j_cols
+        kx = (self.min_x - self.params.west_offset) // self.params.j_cols
+        ky = (self.min_y - self.params.north_offset) // self.params.j_rows
+        return ky * self.params.k_cols + kx
 
     def get_regs(self, start_index: int, n_elements: int, base_reg: int, ew: int):
         '''

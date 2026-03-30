@@ -140,7 +140,7 @@ class WaitingStoreScatterBase(WaitingItem, ABC):
             if all(s != SendState.INITIAL for s in self.transaction_states):
                 self.fault_sync_state = SyncState.IN_PROGRESS
                 kamlet.monitor.create_sync_local_span(
-                    fault_sync_ident, kamlet.synchronizer.x, kamlet.synchronizer.y,
+                    fault_sync_ident, kamlet.synchronizer.kx, kamlet.synchronizer.ky,
                     kinstr_span_id)
                 kamlet.synchronizer.local_event(fault_sync_ident, value=self.min_fault_element)
         elif self.fault_sync_state == SyncState.IN_PROGRESS:
@@ -153,7 +153,7 @@ class WaitingStoreScatterBase(WaitingItem, ABC):
             if all(s == SendState.COMPLETE for s in self.transaction_states):
                 self.completion_sync_state = SyncState.IN_PROGRESS
                 kamlet.monitor.create_sync_local_span(
-                    completion_sync_ident, kamlet.synchronizer.x, kamlet.synchronizer.y,
+                    completion_sync_ident, kamlet.synchronizer.kx, kamlet.synchronizer.ky,
                     kinstr_span_id)
                 kamlet.synchronizer.local_event(completion_sync_ident)
         elif self.completion_sync_state == SyncState.IN_PROGRESS:
@@ -209,7 +209,7 @@ class WaitingStoreScatterBase(WaitingItem, ABC):
         """
         instr = self.item
         src_vw = addresses.j_coords_to_vw_index(
-            jamlet.params, word_order=instr.src_ordering.word_order, j_x=jamlet.x, j_y=jamlet.y)
+            jamlet.params, word_order=instr.src_ordering.word_order, jx=jamlet.jx, jy=jamlet.jy)
         src_ew = instr.src_ordering.ew
         src_wb = tag * 8
         assert (src_ew % 8) == 0
@@ -312,12 +312,12 @@ class WaitingStoreScatterBase(WaitingItem, ABC):
             k_maddr = request.g_addr.to_k_maddr(jamlet.tlb)
             word_offset = k_maddr.addr % wb
             addr = k_maddr.bit_offset(-word_offset * 8)
-            target_x, target_y = addresses.k_indices_to_j_coords(
+            target_x, target_y = addresses.k_indices_to_routing_coords(
                 jamlet.params, k_maddr.k_index, k_maddr.j_in_k_index)
             dst_byte_in_word = k_maddr.addr % wb
         else:
             addr = request.g_addr.to_scalar_addr(jamlet.tlb)
-            target_x, target_y = 0, -1
+            target_x, target_y = jamlet.lamlet_x, jamlet.lamlet_y
             dst_byte_in_word = addr % wb
 
         header = WriteMemWordHeader(

@@ -193,9 +193,9 @@ class CacheTable:
         """
         used = len(self.waiting_items)
         if use_reserved:
-            return used < self.params.n_items
+            return used < self.params.witem_table_depth
         else:
-            return used < self.params.n_items - self.params.n_items_reserved
+            return used < self.params.witem_table_depth - self.params.n_items_reserved
 
     async def wait_for_free_witem_slot(self, witem: WaitingItem | None = None,
                                         use_reserved: bool = False) -> None:

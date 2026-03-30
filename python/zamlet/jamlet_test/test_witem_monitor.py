@@ -13,7 +13,7 @@ from cocotb.triggers import RisingEdge, ReadOnly
 
 from zamlet import test_utils
 from zamlet.control_structures import pack_fields_to_int
-from zamlet.jamlet.jamlet_params import JamletParams
+from zamlet.params import ZamletParams
 
 
 logger = logging.getLogger(__name__)
@@ -60,7 +60,7 @@ class J2JInstr:
     n_elements_idx: int = 0
     reg: int = 0
 
-    def get_field_specs(self, params: JamletParams) -> List[Tuple[str, int]]:
+    def get_field_specs(self, params: ZamletParams) -> List[Tuple[str, int]]:
         """Get field specifications for bit packing. Order matches Scala bundle."""
         return [
             ('opcode', 6),  # KInstrOpcode.width
@@ -75,7 +75,7 @@ class J2JInstr:
             ('reg', params.rf_addr_width),
         ]
 
-    def to_int(self, params: JamletParams) -> int:
+    def to_int(self, params: ZamletParams) -> int:
         """Pack instruction into a 64-bit integer."""
         return pack_fields_to_int(self, self.get_field_specs(params))
 
@@ -428,7 +428,7 @@ async def basic_create_test(dut: HierarchyObject) -> None:
     logger.info("basic_create_test passed")
 
 
-async def witem_info_handshake_test(dut: HierarchyObject, params: JamletParams) -> None:
+async def witem_info_handshake_test(dut: HierarchyObject, params: ZamletParams) -> None:
     """Test the witemInfoReq/Resp handshake after creating an entry."""
     test_ident = 42
 
@@ -476,7 +476,7 @@ async def witem_info_handshake_test(dut: HierarchyObject, params: JamletParams) 
     logger.info("witem_info_handshake_test passed")
 
 
-async def load_j2j_packet_test(dut: HierarchyObject, params: JamletParams) -> None:
+async def load_j2j_packet_test(dut: HierarchyObject, params: ZamletParams) -> None:
     """Test LoadJ2JWords flow through sramReq/sramResp to packetOut."""
     test_ident = 100
     test_data = 0xDEADBEEF_CAFEBABE
@@ -534,7 +534,7 @@ async def witem_monitor_test(dut: HierarchyObject) -> None:
     # Load params
     test_params = test_utils.get_test_params()
     with open(test_params['params_file']) as f:
-        params = JamletParams.from_dict(json.load(f))
+        params = ZamletParams.from_dict(json.load(f))
 
     # Start clock
     clock_gen = Clock(dut.clock, 1, "ns")

@@ -101,7 +101,7 @@ async def send_req(jamlet: 'Jamlet', witem: WaitingStoreWordSrc) -> None:
     """SRC jamlet sends request with data to DST jamlet."""
     instr = witem.item
 
-    target_x, target_y = addresses.k_indices_to_j_coords(
+    target_x, target_y = addresses.k_indices_to_routing_coords(
         jamlet.params, instr.dst.k_index, instr.dst.j_in_k_index)
 
     witem.protocol_states[jamlet.j_in_k_index] = SendState.WAITING_FOR_RESPONSE
@@ -226,8 +226,8 @@ async def send_resp(jamlet: 'Jamlet', rcvd_header: TaggedHeader) -> None:
         ident=rcvd_header.ident, tag=0)
 
     # Get SRC witem span as parent (RESP is response to SRC's REQ)
-    src_kamlet_min_x = (rcvd_header.source_x // jamlet.params.j_cols) * jamlet.params.j_cols
-    src_kamlet_min_y = (rcvd_header.source_y // jamlet.params.j_rows) * jamlet.params.j_rows
+    src_kamlet_min_x, src_kamlet_min_y = jamlet.params.kamlet_monitor_coords(
+        rcvd_header.source_x, rcvd_header.source_y)
     witem_span_id = jamlet.monitor.get_witem_span_id(
         rcvd_header.ident, src_kamlet_min_x, src_kamlet_min_y)
 
@@ -245,8 +245,8 @@ async def send_drop(jamlet: 'Jamlet', rcvd_header: TaggedHeader) -> None:
         ident=rcvd_header.ident, tag=0)
 
     # Get SRC witem span as parent (DROP is response to SRC's REQ)
-    src_kamlet_min_x = (rcvd_header.source_x // jamlet.params.j_cols) * jamlet.params.j_cols
-    src_kamlet_min_y = (rcvd_header.source_y // jamlet.params.j_rows) * jamlet.params.j_rows
+    src_kamlet_min_x, src_kamlet_min_y = jamlet.params.kamlet_monitor_coords(
+        rcvd_header.source_x, rcvd_header.source_y)
     witem_span_id = jamlet.monitor.get_witem_span_id(
         rcvd_header.ident, src_kamlet_min_x, src_kamlet_min_y)
 
@@ -286,7 +286,7 @@ async def send_retry(jamlet: 'Jamlet', witem: WaitingStoreWordDst) -> None:
     """DST jamlet sends retry to SRC when it becomes ready."""
     instr = witem.item
 
-    target_x, target_y = addresses.k_indices_to_j_coords(
+    target_x, target_y = addresses.k_indices_to_routing_coords(
         jamlet.params, instr.src.k_index, instr.src.j_in_k_index)
 
     witem.protocol_states[jamlet.j_in_k_index] = ReceiveState.WAITING_FOR_REQUEST
@@ -300,8 +300,8 @@ async def send_retry(jamlet: 'Jamlet', witem: WaitingStoreWordDst) -> None:
         ident=instr.instr_ident, tag=0)
 
     # Get SRC witem span as parent (RETRY is part of the SRC's request-response flow)
-    src_kamlet_min_x = (target_x // jamlet.params.j_cols) * jamlet.params.j_cols
-    src_kamlet_min_y = (target_y // jamlet.params.j_rows) * jamlet.params.j_rows
+    src_kamlet_min_x, src_kamlet_min_y = jamlet.params.kamlet_monitor_coords(
+        target_x, target_y)
     witem_span_id = jamlet.monitor.get_witem_span_id(
         instr.instr_ident, src_kamlet_min_x, src_kamlet_min_y)
 
