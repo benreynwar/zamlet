@@ -156,6 +156,9 @@ if __name__ == '__main__':
         dump_span_trees(monitor, span_trees_path)
         print(f"Span trees written to {span_trees_path}")
 
+        # Skip the stat stuff for now.
+        exit(exit_code)
+
         ts = monitor.get_router_utilization_timeseries()
         if ts:
             window = 50

@@ -78,7 +78,8 @@ class Jamlet:
         self.send_queues = {
             MessageType.LOAD_BYTE_RESP: Queue(2),
             MessageType.READ_BYTE_RESP: Queue(2),
-            #MessageType.WRITE_LINE_ADDR: Queue(2),
+            MessageType.WRITE_LINE_ADDR: Queue(2),
+            MessageType.WRITE_LINE_DATA: Queue(2),
             MessageType.READ_LINE_ADDR: Queue(2),
             MessageType.WRITE_LINE_READ_LINE_ADDR: Queue(2),
             MessageType.LOAD_J2J_WORDS_REQ: Queue(2),
@@ -142,7 +143,7 @@ class Jamlet:
             self._ch1_in_flight += 1
 
         # Record message as child of parent span
-        tag = getattr(header, 'tag', None)
+        tag = self.monitor._tag_from_header(header)
         self.monitor.record_message_sent(
             parent_span_id, message_type.name,
             ident=header.ident, tag=tag,
@@ -226,12 +227,30 @@ class Jamlet:
     def has_instruction(self):
         return bool(self._instruction_buffer)
 
-    async def write_read_cache_line(self, cache_slot: int, write_address: int, read_address: int, ident: int):
-        """
-        Writes this jamlets share of a cache line to memory and reads a new cache line.
-        """
+    async def send_write_line_addr(self, cache_slot: int, write_address: int, ident: int):
+        """Send WRITE_LINE_ADDR packet (addresses only, no data). Sent by jamlet 0."""
         address_in_sram = cache_slot * self.params.cache_line_bytes // self.params.j_in_k
-        n_words = self.params.cache_line_bytes // self.params.j_in_k // self.params.word_bytes
+        header = AddressHeader(
+            message_type=MessageType.WRITE_LINE_ADDR,
+            send_type=SendType.SINGLE,
+            target_x=self.mem_x,
+            target_y=self.mem_y,
+            source_x=self.x,
+            source_y=self.y,
+            length=2,
+            ident=ident,
+            address=address_in_sram,
+            )
+        packet = [header, write_address]
+        cache_request_span_id = self.monitor.get_cache_request_span_id(
+            self.k_min_x, self.k_min_y, cache_slot)
+        await self.send_packet(packet, cache_request_span_id)
+
+    async def send_write_line_read_line_addr(
+        self, cache_slot: int, write_address: int, read_address: int, ident: int,
+    ):
+        """Send WRITE_LINE_READ_LINE_ADDR packet (addresses only). Sent by jamlet 0."""
+        address_in_sram = cache_slot * self.params.cache_line_bytes // self.params.j_in_k
         header = AddressHeader(
             message_type=MessageType.WRITE_LINE_READ_LINE_ADDR,
             send_type=SendType.SINGLE,
@@ -239,30 +258,41 @@ class Jamlet:
             target_y=self.mem_y,
             source_x=self.x,
             source_y=self.y,
-            length=n_words+3,
+            length=3,
             ident=ident,
             address=address_in_sram,
             )
         packet = [header, write_address, read_address]
-        wb = self.params.word_bytes
-        for index in range(n_words):
-            word = self.sram[address_in_sram + index * wb: address_in_sram + (index+1) * wb]
-            packet.append(word)
-        logger.debug(f'{self.clock.cycle}: jamlet ({self.x},{self.y}): Sending cache line from sram {address_in_sram} words={packet[3:]}')
-
-        # Record cache message - use slot as tag, include j_in_k_index in src coords
         cache_request_span_id = self.monitor.get_cache_request_span_id(
             self.k_min_x, self.k_min_y, cache_slot)
-        self.monitor.record_message_sent(
-            cache_request_span_id, header.message_type.name,
-            ident=ident, tag=cache_slot,
-            src_x=self.x, src_y=self.y,
-            dst_x=self.mem_x, dst_y=self.mem_y)
+        await self.send_packet(packet, cache_request_span_id)
 
-        send_queue = self.send_queues[header.message_type]
-        while not send_queue.can_append():
-            await self.clock.next_cycle
-        send_queue.append(packet)
+    async def send_write_line_data(self, cache_slot: int, ident: int):
+        """Send WRITE_LINE_DATA packet (data words from SRAM). Sent by every jamlet."""
+        address_in_sram = cache_slot * self.params.cache_line_bytes // self.params.j_in_k
+        n_words = self.params.cache_line_bytes // self.params.j_in_k // self.params.word_bytes
+        header = AddressHeader(
+            message_type=MessageType.WRITE_LINE_DATA,
+            send_type=SendType.SINGLE,
+            target_x=self.mem_x,
+            target_y=self.mem_y,
+            source_x=self.x,
+            source_y=self.y,
+            length=1 + n_words,
+            ident=ident,
+            address=address_in_sram,
+            )
+        packet = [header]
+        wb = self.params.word_bytes
+        for index in range(n_words):
+            word = self.sram[address_in_sram + index * wb: address_in_sram + (index + 1) * wb]
+            packet.append(word)
+        logger.debug(
+            f'{self.clock.cycle}: jamlet ({self.x},{self.y}): '
+            f'Sending WRITE_LINE_DATA from sram {address_in_sram} words={packet[1:]}')
+        cache_request_span_id = self.monitor.get_cache_request_span_id(
+            self.k_min_x, self.k_min_y, cache_slot)
+        await self.send_packet(packet, cache_request_span_id)
 
     def update(self):
         for router in self.routers:
@@ -321,11 +351,11 @@ class Jamlet:
                 remaining -= 1
                 index += 1
         # And we want to let the kamlet know we got this response
-        self.cache_table.receive_cache_response(header)
+        self.cache_table.receive_cache_data_response(header)
 
     async def _receive_write_line_resp_packet(self, header, queue):
         assert header.length == 1
-        self.cache_table.receive_cache_response(header)
+        self.cache_table.receive_cache_write_response(header)
 
     async def _receive_packet_channel0(self, queue):
         """
@@ -355,11 +385,21 @@ class Jamlet:
             await self._receive_write_line_resp_packet(header, queue)
         elif header.message_type == MessageType.WRITE_LINE_READ_LINE_RESP:
             await self._receive_read_line_resp_packet(header, queue)
-        elif header.message_type == MessageType.WRITE_LINE_READ_LINE_ADDR_DROP:
-            # Memlet couldn't handle request - clear sent flag so kamlet will re-send
+        elif header.message_type == MessageType.WRITE_LINE_ADDR_DROP:
             assert isinstance(header, IdentHeader)
             request = self.cache_table.cache_requests[header.ident]
-            self.cache_table.clear_cache_request_sent(header.ident, self.j_in_k_index)
+            assert request.addr_sent
+            self.cache_table.clear_addr_sent(header.ident)
+        elif header.message_type == MessageType.WRITE_LINE_READ_LINE_ADDR_DROP:
+            assert isinstance(header, IdentHeader)
+            request = self.cache_table.cache_requests[header.ident]
+            assert request.addr_sent
+            self.cache_table.clear_addr_sent(header.ident)
+        elif header.message_type == MessageType.WRITE_LINE_DATA_DROP:
+            assert isinstance(header, IdentHeader)
+            request = self.cache_table.cache_requests[header.ident]
+            assert request.data_sent[self.j_in_k_index]
+            self.cache_table.clear_data_sent(header.ident, self.j_in_k_index)
         else:
             # All other channel 0 messages are responses tracked via MESSAGE_HANDLERS
             assert isinstance(header, IdentHeader)

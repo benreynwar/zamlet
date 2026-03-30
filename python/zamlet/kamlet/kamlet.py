@@ -226,26 +226,44 @@ class Kamlet:
             for request in self.cache_table.cache_requests:
                 if request is None:
                     continue
-                if not all(request.sent):
-                    if request.request_type == CacheRequestType.READ_LINE:
-                        await self.read_cache_line(cache_slot=request.slot, address_in_memory=request.addr, ident=request.ident)
-                        self.cache_table.report_sent_request(request, 0)
-                    elif request.request_type == CacheRequestType.WRITE_LINE_READ_LINE:
-                        slot_state = self.cache_table.slot_states[request.slot]
-                        write_address = request.addr
-                        read_address = slot_state.memory_loc * self.params.cache_line_bytes
-                        tasks = []
-                        for j_in_k_index, jamlet in enumerate(self.jamlets):
-                            task = jamlet.write_read_cache_line(
+                if request.is_fully_sent():
+                    continue
+                if request.request_type == CacheRequestType.READ_LINE:
+                    if not request.addr_sent:
+                        await self.read_cache_line(
+                            cache_slot=request.slot,
+                            address_in_memory=request.addr,
+                            ident=request.ident)
+                        self.cache_table.report_addr_sent(request)
+                elif request.request_type in (
+                    CacheRequestType.WRITE_LINE,
+                    CacheRequestType.WRITE_LINE_READ_LINE,
+                ):
+                    slot_state = self.cache_table.slot_states[request.slot]
+                    write_address = request.addr
+                    if not request.addr_sent:
+                        if request.request_type == CacheRequestType.WRITE_LINE:
+                            await self.jamlets[0].send_write_line_addr(
+                                cache_slot=request.slot,
+                                write_address=write_address,
+                                ident=request.ident)
+                        else:
+                            read_address = (
+                                slot_state.memory_loc * self.params.cache_line_bytes)
+                            await self.jamlets[0].send_write_line_read_line_addr(
                                 cache_slot=request.slot,
                                 write_address=write_address,
                                 read_address=read_address,
                                 ident=request.ident)
-                            tasks.append(task)
-                        for task in tasks:
-                            await task
-                        for j_in_k_index in range(len(self.jamlets)):
-                            self.cache_table.report_sent_request(request, j_in_k_index)
+                        self.cache_table.report_addr_sent(request)
+                    else:
+                        for j_in_k_index, jamlet in enumerate(self.jamlets):
+                            if not request.data_sent[j_in_k_index]:
+                                await jamlet.send_write_line_data(
+                                    cache_slot=request.slot,
+                                    ident=request.ident)
+                                self.cache_table.report_data_sent(
+                                    request, j_in_k_index)
 
     async def _get_instructions_from_jamlets(self):
         while True:
