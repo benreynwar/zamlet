@@ -93,53 +93,12 @@ async def memlet_write_test(dut: HierarchyObject) -> None:
     axi = AxiMemory(axi_signals, dut.clock, word_bytes=params.word_bytes)
     axi.start()
 
-    # Kamlet is east of the memlet router, so packets arrive from east
-    # and responses go east.
-    driver = CocotbDriver(dut, params, n_routers=n_routers,
-                          send_dir='E', recv_dir='E')
+    driver = CocotbDriver(dut, params, router_coords=router_coords,
+                          k_base_x=k_base_x, k_base_y=k_base_y)
     await driver.reset()
     driver.start()
 
-    # Log coordinates for debugging
-    logger.info(f"router_coords={router_coords} k_base=({k_base_x},{k_base_y})")
-    from cocotb.triggers import RisingEdge, ReadOnly
-    await ReadOnly()
-    logger.info(f"DUT routerCoords_0: x={int(dut.io_routerCoords_0_x.value)}"
-                f" y={int(dut.io_routerCoords_0_y.value)}")
-
-    # Decode the first header to check target coords
-    from zamlet.control_structures import unpack_int_to_fields
-    hdr = unpack_int_to_fields(0x1fe00000022008, params.address_header_fields)
-    logger.info(f"Header decoded: {hdr}")
-
-    async def probe():
-        gs = dut.slices_0.gatherSide
-        rtr = dut.slices_0.router
-        # Check router position
-        await RisingEdge(dut.clock)
-        await ReadOnly()
-        logger.info(f"router thisX children: {dir(rtr)}")
-        for cycle in range(30):
-            await RisingEdge(dut.clock)
-            await ReadOnly()
-            # Check the B channel east input to the router
-            bei_v = int(dut.io_bEi_0_0_valid.value)
-            bei_r = int(dut.io_bEi_0_0_ready.value)
-            if bei_v:
-                bei_d = int(dut.io_bEi_0_0_bits_data.value)
-                logger.info(f"  cycle {cycle}: bEi valid=1 ready={bei_r} data=0x{bei_d:x}")
-            # Check bHo
-            bho_v = int(gs.io_bHo_valid.value)
-            if bho_v:
-                bho_r = int(gs.io_bHo_ready.value)
-                logger.info(f"  cycle {cycle}: bHo valid=1 ready={bho_r}")
-            # Check if packet went out any other direction
-            for d in ['N', 'S', 'E', 'W']:
-                sig = f'io_b{d}o_0_0_valid'
-                v = int(getattr(dut, sig).value)
-                if v:
-                    logger.info(f"  cycle {cycle}: {sig}=1")
-    cocotb.start_soon(probe())
-
-    await test_write_read.run_write_read(
-        driver, params, router_coords, k_base_x, k_base_y)
+    await test_write_read.run_write_read(driver)
+    await test_write_read.run_multi_address(driver)
+    await test_write_read.run_write_write_read_read(driver)
+    await test_write_read.run_pipelined(driver)

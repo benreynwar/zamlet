@@ -8,6 +8,7 @@ clock forward when tick() is called.
 """
 import logging
 
+from zamlet.future import Future
 from zamlet.memlet import Memlet, memlet_coords
 from zamlet.memlet_test.memlet_driver import MemletDriver
 from zamlet.message import Direction, Header
@@ -24,16 +25,13 @@ class ModelDriver(MemletDriver):
 
     def __init__(self, params: ZamletParams, kamlet_index: int = 0):
         coords = memlet_coords(params, kamlet_index)
-        super().__init__(n_routers=len(coords))
-        self.params = params
-        self.clock = Clock()
-        self.monitor = Monitor(self.clock, params, enabled=False)
-
-        # Use routing coords for kamlet base (matches RTL convention)
         kx = (kamlet_index % params.k_cols) * params.j_cols
         ky = (kamlet_index // params.k_cols) * params.j_rows
         kamlet_x = kx + params.west_offset
         kamlet_y = ky + params.north_offset
+        super().__init__(params, coords, kamlet_x, kamlet_y)
+        self.clock = Clock()
+        self.monitor = Monitor(self.clock, params, enabled=False)
         self.memlet = Memlet(
             self.clock, params, coords,
             kamlet_coords=(kamlet_x, kamlet_y),
@@ -44,6 +42,7 @@ class ModelDriver(MemletDriver):
         pass
 
     def start(self) -> None:
+        super().start()
         self.clock.create_task(self.memlet.run())
         self.clock.create_task(self._update_loop())
         for r in range(self.n_routers):
@@ -93,6 +92,9 @@ class ModelDriver(MemletDriver):
                             remaining -= 1
                     self.a_queues[r].append(packet)
             await self.clock.next_cycle
+
+    def _make_future(self):
+        return Future(self.clock.create_event())
 
     async def tick(self, n: int = 1) -> None:
         for _ in range(n):
