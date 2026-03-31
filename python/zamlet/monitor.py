@@ -441,6 +441,12 @@ class Monitor:
             kamlet_y = span.details.get("kamlet_y")
             key = (instr_ident, kamlet_x, kamlet_y)
             self._kinstr_exec_by_key.pop(key, None)
+        elif span.span_type == SpanType.SYNC:
+            sync_ident = span.details.get("sync_ident")
+            for k, v in list(self._sync_by_key.items()):
+                if v == span_id:
+                    del self._sync_by_key[k]
+                    break
 
         # Check if parent should be auto-completed
         if span.parent:
@@ -1112,15 +1118,11 @@ class Monitor:
 
     def create_sync_spans(self, sync_ident: int, parent_span_id: int, params,
                           name: str | None = None) -> None:
-        """Create global SYNC span and SYNC_LOCAL children for all synchronizers.
-
-        If spans already exist (created by another participant), does nothing.
-        """
+        """Create global SYNC span and SYNC_LOCAL children for all synchronizers."""
         if not self.enabled:
             return
-        # Check if already created
-        if (sync_ident, name) in self._sync_by_key:
-            return
+        assert (sync_ident, name) not in self._sync_by_key, \
+            f"Sync spans already exist for ({sync_ident}, {name})"
         global_span_id = self.record_sync_created(sync_ident, parent_span_id, name)
         for ky in range(params.k_rows):
             for kx in range(params.k_cols):
@@ -1171,14 +1173,6 @@ class Monitor:
         span_id = self._sync_local_by_key[key]
         self.spans[span_id].details['min_value'] = min_value
         self.complete_span(span_id)
-
-        # If parent SYNC span is now complete, clean up its lookup entry
-        parent_span_id = self.spans[span_id].parent.span_id
-        if self.spans[parent_span_id].is_complete():
-            for k, v in list(self._sync_by_key.items()):
-                if v == parent_span_id:
-                    del self._sync_by_key[k]
-                    break
 
     def record_rf_blocking(self, instr_ident: int, kamlet_x: int, kamlet_y: int,
                            read_regs, write_regs, rf_info, waiting_items) -> None:

@@ -10,10 +10,10 @@ import logging
 
 from zamlet.memlet import Memlet, memlet_coords
 from zamlet.memlet_test.memlet_driver import MemletDriver
-from zamlet.message import Header
+from zamlet.message import Direction, Header
 from zamlet.monitor import Monitor
 from zamlet.params import ZamletParams
-from zamlet.router import Direction
+from zamlet.router import xy_direction
 from zamlet.runner import Clock
 
 
@@ -58,37 +58,41 @@ class ModelDriver(MemletDriver):
     async def _send_loop(self, r: int) -> None:
         """Send packets from b_queues[r] into the memlet's router input buffer."""
         router = self.memlet.routers[r][0]
-        buf = router._input_buffers[Direction.W]
         while True:
             if self.b_queues[r]:
                 packet = self.b_queues[r].popleft()
+                header = packet[0]
+                in_dir = xy_direction(
+                    router.x, router.y, header.source_x, header.source_y)
+                buf = router._input_buffers[in_dir]
                 for word in packet:
                     while not buf.can_append():
                         await self.clock.next_cycle
+                    logger.debug(f'Sending word to router {r} via {in_dir}')
                     buf.append(word)
             else:
                 await self.clock.next_cycle
 
     async def _recv_loop(self, r: int) -> None:
-        """Read packets from the memlet's router output buffer into a_queues[r]."""
+        """Read packets from the memlet's router output buffers into a_queues[r]."""
         router = self.memlet.routers[r][0]
-        buf = router._output_buffers[Direction.W]
+        dirs = [d for d in router._output_buffers if d != Direction.H]
         while True:
-            if buf:
-                word = buf.popleft()
-                assert isinstance(word, Header)
-                header = word
-                remaining = header.length
-                packet = [header]
-                while remaining > 0:
-                    if buf:
-                        packet.append(buf.popleft())
-                        remaining -= 1
-                    else:
+            for d in dirs:
+                buf = router._output_buffers[d]
+                if buf:
+                    word = buf.popleft()
+                    assert isinstance(word, Header)
+                    header = word
+                    remaining = header.length
+                    packet = [header]
+                    while remaining > 0:
                         await self.clock.next_cycle
-                self.a_queues[r].append(packet)
-            else:
-                await self.clock.next_cycle
+                        if buf:
+                            packet.append(buf.popleft())
+                            remaining -= 1
+                    self.a_queues[r].append(packet)
+            await self.clock.next_cycle
 
     async def tick(self, n: int = 1) -> None:
         for _ in range(n):

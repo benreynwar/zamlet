@@ -9,6 +9,28 @@ from zamlet.utils import Queue
 
 logger = logging.getLogger(__name__)
 
+OPPOSITE = {
+    Direction.N: Direction.S, Direction.S: Direction.N,
+    Direction.E: Direction.W, Direction.W: Direction.E,
+}
+
+
+def xy_direction(src_x: int, src_y: int, dst_x: int, dst_y: int) -> Direction:
+    """Return the direction out of src toward dst using XY routing.
+
+    X first, then Y. src and dst must be different.
+    """
+    if dst_x > src_x:
+        return Direction.E
+    elif dst_x < src_x:
+        return Direction.W
+    elif dst_y > src_y:
+        return Direction.S
+    elif dst_y < src_y:
+        return Direction.N
+    else:
+        raise ValueError(f"src ({src_x},{src_y}) == dst ({dst_x},{dst_y})")
+
 
 @dataclass
 class Connection:
