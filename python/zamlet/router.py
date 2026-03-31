@@ -134,7 +134,7 @@ class Router:
                     # We have some data and we've already made a connection.
                     # Just make sure that we have headers when we expect them.
                     conn = self._input_connections[input_direction]
-                    if conn.remaining == conn.header.length:
+                    if conn.remaining == conn.header.length + 1:
                         assert isinstance(buffer.head(), Header)
                     else:
                         assert not isinstance(buffer.head(), Header)

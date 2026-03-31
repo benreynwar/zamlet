@@ -150,10 +150,9 @@ async def send_resp(jamlet: 'Jamlet', rcvd_header: ReadMemWordHeader, j_saddr: J
         source_x=jamlet.x, source_y=jamlet.y,
         message_type=MessageType.READ_MEM_WORD_RESP,
         send_type=SendType.SINGLE,
-        length=2,
+        length=1,
         tag=rcvd_header.tag,
         ident=rcvd_header.ident)
-    assert len(data) == jamlet.params.word_bytes
     # Look up transaction (requester is source, we are dest)
     transaction_span_id = jamlet.monitor.get_transaction_span_id(
         rcvd_header.ident, rcvd_header.tag,
@@ -174,7 +173,7 @@ async def send_drop(jamlet: 'Jamlet', rcvd_header: ReadMemWordHeader,
         source_x=jamlet.x, source_y=jamlet.y,
         message_type=MessageType.READ_MEM_WORD_DROP,
         send_type=SendType.SINGLE,
-        length=1,
+        length=0,
         tag=rcvd_header.tag,
         ident=rcvd_header.ident)
     # Look up transaction (requester is source, we are dest)

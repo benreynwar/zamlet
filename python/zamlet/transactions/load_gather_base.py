@@ -343,7 +343,7 @@ class WaitingLoadGatherBase(WaitingItem, ABC):
             source_y=jamlet.y,
             message_type=MessageType.READ_MEM_WORD_REQ,
             send_type=SendType.SINGLE,
-            length=2,
+            length=1,
             ident=ident,
             tag=tag,
             element_index=dst_e,

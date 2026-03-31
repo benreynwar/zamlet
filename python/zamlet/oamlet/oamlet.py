@@ -525,7 +525,7 @@ class Oamlet:
                 if header is None:
                     assert isinstance(word, Header)
                     header = word.copy()
-                    remaining_words = header.length
+                    remaining_words = header.length + 1
                 else:
                     assert not isinstance(word, Header)
                 packet.append(word)
@@ -539,7 +539,7 @@ class Oamlet:
         """Process a channel 0 packet (responses). These never need to send."""
         header = packet[0]
         assert isinstance(header, Header)
-        assert header.length == len(packet)
+        assert header.length == len(packet) - 1
 
         # Get message span_id before completing it (completing may trigger parent auto-complete)
         message_span_id = self.monitor.get_message_span_id_by_header(header)
@@ -617,7 +617,7 @@ class Oamlet:
         header = buffer.popleft()
         assert isinstance(header, Header)
         packet = [header]
-        remaining_words = header.length - 1
+        remaining_words = header.length
         while remaining_words > 0:
             await self.clock.next_cycle
             if buffer:
@@ -630,7 +630,7 @@ class Oamlet:
         """Process a channel 1+ packet (requests). These may need to send responses."""
         header = packet[0]
         assert isinstance(header, IdentHeader)
-        assert header.length == len(packet)
+        assert header.length == len(packet) - 1
 
         # All channel 1+ messages to lamlet have a tag
         assert hasattr(header, 'tag'), f"Header {type(header).__name__} missing tag attribute"
@@ -830,7 +830,7 @@ class Oamlet:
             target_y=y,
             source_x=self.instr_x,
             source_y=self.instr_y,
-            length=1+len(instructions),
+            length=len(instructions),
             message_type=MessageType.INSTRUCTIONS,
             send_type=send_type,
             )

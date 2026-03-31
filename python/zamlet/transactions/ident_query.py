@@ -133,7 +133,7 @@ async def send_ident_query_response(kamlet: 'Kamlet', response_ident: int, min_d
     """Send the ident query result back to the lamlet."""
     jamlet = kamlet.jamlets[0]
 
-    length = 2
+    length = 1
     packet_data = [min_distance]
 
     header = IdentHeader(

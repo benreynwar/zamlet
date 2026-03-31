@@ -256,7 +256,7 @@ class WaitingRegGather(WaitingItem):
                     source_y=jamlet.y,
                     message_type=MessageType.READ_REG_ELEMENT_REQ,
                     send_type=SendType.SINGLE,
-                    length=1,
+                    length=0,
                     ident=instr.instr_ident,
                     tag=tag,
                     src_reg=src_reg,

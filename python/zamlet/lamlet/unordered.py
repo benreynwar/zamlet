@@ -838,7 +838,7 @@ async def handle_read_mem_word_req(lamlet: 'Oamlet', header, scalar_addr: int):
         source_y=lamlet.instr_y,
         message_type=MessageType.READ_MEM_WORD_RESP,
         send_type=SendType.SINGLE,
-        length=2,
+        length=1,
         tag=header.tag,
         ident=header.ident,
     )
@@ -874,7 +874,7 @@ async def handle_write_mem_word_req(lamlet: 'Oamlet', header: WriteMemWordHeader
         source_y=lamlet.instr_y,
         message_type=MessageType.WRITE_MEM_WORD_RESP,
         send_type=SendType.SINGLE,
-        length=1,
+        length=0,
         tag=header.tag,
         ident=header.ident,
     )

@@ -122,7 +122,7 @@ async def send_req(jamlet: 'Jamlet', witem: WaitingLoadWordSrc) -> None:
         source_x=jamlet.x, source_y=jamlet.y,
         message_type=MessageType.LOAD_WORD_REQ,
         send_type=SendType.SINGLE,
-        length=2,
+        length=1,
         ident=instr.instr_ident, tag=0)
 
     # Get witem span as parent for the message
@@ -216,7 +216,7 @@ async def send_resp(jamlet: 'Jamlet', rcvd_header: TaggedHeader) -> None:
         source_x=jamlet.x, source_y=jamlet.y,
         message_type=MessageType.LOAD_WORD_RESP,
         send_type=SendType.SINGLE,
-        length=1,
+        length=0,
         ident=rcvd_header.ident, tag=0)
 
     # Get SRC witem span as parent (RESP is response to SRC's REQ)
@@ -235,7 +235,7 @@ async def send_drop(jamlet: 'Jamlet', rcvd_header: TaggedHeader) -> None:
         source_x=jamlet.x, source_y=jamlet.y,
         message_type=MessageType.LOAD_WORD_DROP,
         send_type=SendType.SINGLE,
-        length=1,
+        length=0,
         ident=rcvd_header.ident, tag=0)
 
     # Get SRC witem span as parent (SRC sent the REQ, so DROP is a response to it)

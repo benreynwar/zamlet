@@ -323,7 +323,7 @@ class Kamlet:
             source_x=send_jamlet.x,             #8
             source_y=send_jamlet.y,             #8
             address=address_in_sram,            #12
-            length=2,                           #5
+            length=1,                           #5
             ident=ident,               #5 bits
             )
         assert address_in_memory % self.params.cache_line_bytes == 0

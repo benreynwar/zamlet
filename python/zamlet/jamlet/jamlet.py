@@ -123,8 +123,9 @@ class Jamlet:
                           drop_reason: str | None = None):
         header = packet[0]
         assert isinstance(header, IdentHeader)
-        assert len(packet) == header.length, (
-            f"Packet length mismatch: len(packet)={len(packet)}, header.length={header.length}")
+        assert len(packet) == header.length + 1, (
+            f"Packet length mismatch: len(packet)={len(packet)},"
+            f" header.length={header.length}")
         message_type = header.message_type
         channel = CHANNEL_MAPPING.get(message_type, 0)
         logger.debug(
@@ -167,7 +168,7 @@ class Jamlet:
 
     async def _send_packet(self, packet):
         assert isinstance(packet[0], Header)
-        assert len(packet) == packet[0].length
+        assert len(packet) == packet[0].length + 1
         # This is only called from _send_packets
         header = packet[0]
         logger.debug(
@@ -237,7 +238,7 @@ class Jamlet:
             target_y=self.mem_y,
             source_x=self.x,
             source_y=self.y,
-            length=2,
+            length=1,
             ident=ident,
             address=address_in_sram,
             )
@@ -258,7 +259,7 @@ class Jamlet:
             target_y=self.mem_y,
             source_x=self.x,
             source_y=self.y,
-            length=3,
+            length=2,
             ident=ident,
             address=address_in_sram,
             )
@@ -302,7 +303,7 @@ class Jamlet:
             queue.update()
 
     async def _receive_instructions_packet(self, header, queue):
-        remaining = header.length - 1
+        remaining = header.length
         while remaining:
             await self.clock.next_cycle
             if queue:
@@ -323,7 +324,7 @@ class Jamlet:
     async def _receive_read_line_resp_packet(self, header, queue):
         # The packet should say where to put the data.
         # It only needs the 'slot' which should fit fine in the packet.
-        remaining = header.length - 1
+        remaining = header.length
         wb = self.params.word_bytes
         s_address = header.address
 
@@ -354,7 +355,7 @@ class Jamlet:
         self.cache_table.receive_cache_data_response(header)
 
     async def _receive_write_line_resp_packet(self, header, queue):
-        assert header.length == 1
+        assert header.length == 0
         self.cache_table.receive_cache_write_response(header)
 
     async def _receive_packet_channel0(self, queue):
@@ -438,7 +439,7 @@ class Jamlet:
 
     async def _receive_packet_body(self, queue, header, channel: int):
         packet = [header]
-        remaining_words = header.length - 1
+        remaining_words = header.length
         wait_count = 0
         while remaining_words > 0:
             await self.clock.next_cycle

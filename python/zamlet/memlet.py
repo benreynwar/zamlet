@@ -196,6 +196,7 @@ class Memlet:
         """
         assert index < len(self.coords)
         header = None
+        remaining = 0
         packet = []
         while True:
             await self.clock.next_cycle
@@ -207,12 +208,13 @@ class Memlet:
                     if not header:
                         assert isinstance(word, Header)
                         header = word.copy()
+                        remaining = header.length
                     else:
                         assert not isinstance(word, Header)
                         assert header
+                        remaining -= 1
                     packet.append(word)
-                    header.length -= 1
-                    if header.length == 0:
+                    if remaining == 0:
                         # Record message received for all cache messages
                         dst_x, dst_y = self.coords[index]
                         self.monitor.record_message_received_by_header(packet[0], dst_x, dst_y)
@@ -250,7 +252,7 @@ class Memlet:
                                     source_x=dst_x,
                                     source_y=dst_y,
                                     message_type=drop_type,
-                                    length=1,
+                                    length=0,
                                     send_type=SendType.SINGLE,
                                     ident=ident,
                                 )
@@ -281,7 +283,7 @@ class Memlet:
                                     source_x=dst_x,
                                     source_y=dst_y,
                                     message_type=MessageType.WRITE_LINE_DATA_DROP,
-                                    length=1,
+                                    length=0,
                                     send_type=SendType.SINGLE,
                                     ident=ident,
                                 )
@@ -366,7 +368,7 @@ class Memlet:
                         source_x=source_x,
                         source_y=source_y,
                         message_type=MessageType.READ_LINE_RESP,
-                        length=1 + len(payload),
+                        length=len(payload),
                         send_type=SendType.SINGLE,
                         address=packet[0].address,
                         ident=ident,
@@ -424,7 +426,7 @@ class Memlet:
             source_x=self.routers[WRITE_LINE_RESPONSE_R_INDEX][channel].x,
             source_y=self.routers[WRITE_LINE_RESPONSE_R_INDEX][channel].y,
             message_type=MessageType.WRITE_LINE_RESP,
-            length=1,
+            length=0,
             send_type=SendType.SINGLE,
             ident=ident,
             )
@@ -470,7 +472,7 @@ class Memlet:
                 source_x=self.routers[router_index][channel].x,
                 source_y=self.routers[router_index][channel].y,
                 message_type=resp_type,
-                length=1 + len(payload),
+                length=len(payload),
                 send_type=SendType.SINGLE,
                 address=sram_address,
                 ident=ident,

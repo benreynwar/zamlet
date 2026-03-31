@@ -198,7 +198,7 @@ async def send_req(jamlet, witem: WaitingStoreJ2JWords, tag: int) -> None:
         target_y=target_y,
         source_x=jamlet.x,
         source_y=jamlet.y,
-        length=1 + len(words),
+        length=len(words),
         message_type=MessageType.STORE_J2J_WORDS_REQ,
         send_type=SendType.SINGLE,
         ident=instr.instr_ident,
@@ -401,7 +401,7 @@ async def send_drop(jamlet, rcvd_header: TaggedHeader) -> None:
         source_y=jamlet.y,
         send_type=SendType.SINGLE,
         message_type=MessageType.STORE_J2J_WORDS_DROP,
-        length=1,
+        length=0,
         ident=rcvd_header.ident,
         tag=rcvd_header.tag,
     )
@@ -423,7 +423,7 @@ async def send_resp(jamlet, rcvd_header: TaggedHeader) -> None:
         source_y=jamlet.y,
         send_type=SendType.SINGLE,
         message_type=MessageType.STORE_J2J_WORDS_RESP,
-        length=1,
+        length=0,
         ident=rcvd_header.ident,
         tag=rcvd_header.tag,
     )
@@ -478,7 +478,7 @@ async def send_retry(jamlet, witem: WaitingStoreJ2JWords, tag: int) -> None:
         source_y=jamlet.y,
         send_type=SendType.SINGLE,
         message_type=MessageType.STORE_J2J_WORDS_RETRY,
-        length=1,
+        length=0,
         ident=witem.instr_ident,
         tag=src_tag,
     )

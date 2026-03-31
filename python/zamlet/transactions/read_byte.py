@@ -98,7 +98,7 @@ async def send_read_byte_resp(
         target_y=jamlet.lamlet_y,
         source_x=jamlet.x,
         source_y=jamlet.y,
-        length=1,
+        length=0,
         ident=instr.instr_ident,
     )
     packet = [header]

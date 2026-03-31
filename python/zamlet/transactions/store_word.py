@@ -120,7 +120,7 @@ async def send_req(jamlet: 'Jamlet', witem: WaitingStoreWordSrc) -> None:
         source_x=jamlet.x, source_y=jamlet.y,
         message_type=MessageType.STORE_WORD_REQ,
         send_type=SendType.SINGLE,
-        length=2,
+        length=1,
         ident=instr.instr_ident, tag=0)
 
     # Get SRC witem span as parent
@@ -222,7 +222,7 @@ async def send_resp(jamlet: 'Jamlet', rcvd_header: TaggedHeader) -> None:
         source_x=jamlet.x, source_y=jamlet.y,
         message_type=MessageType.STORE_WORD_RESP,
         send_type=SendType.SINGLE,
-        length=1,
+        length=0,
         ident=rcvd_header.ident, tag=0)
 
     # Get SRC witem span as parent (RESP is response to SRC's REQ)
@@ -241,7 +241,7 @@ async def send_drop(jamlet: 'Jamlet', rcvd_header: TaggedHeader) -> None:
         source_x=jamlet.x, source_y=jamlet.y,
         message_type=MessageType.STORE_WORD_DROP,
         send_type=SendType.SINGLE,
-        length=1,
+        length=0,
         ident=rcvd_header.ident, tag=0)
 
     # Get SRC witem span as parent (DROP is response to SRC's REQ)
@@ -296,7 +296,7 @@ async def send_retry(jamlet: 'Jamlet', witem: WaitingStoreWordDst) -> None:
         source_x=jamlet.x, source_y=jamlet.y,
         message_type=MessageType.STORE_WORD_RETRY,
         send_type=SendType.SINGLE,
-        length=1,
+        length=0,
         ident=instr.instr_ident, tag=0)
 
     # Get SRC witem span as parent (RETRY is part of the SRC's request-response flow)

@@ -327,7 +327,7 @@ class WaitingStoreScatterBase(WaitingItem, ABC):
             source_y=jamlet.y,
             message_type=MessageType.WRITE_MEM_WORD_REQ,
             send_type=SendType.SINGLE,
-            length=3,
+            length=2,
             ident=ident,
             tag=tag,
             dst_byte_in_word=dst_byte_in_word,
