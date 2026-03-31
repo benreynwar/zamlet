@@ -95,6 +95,7 @@ let
     ps.pytest
     ps.pytest-xdist
     ps.pyelftools
+    ps.mkdocs
     cocotb2
     cocotb-bus
     cocotbext-axi
