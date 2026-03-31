@@ -333,8 +333,16 @@ class GatherSide(params: ZamletParams) extends Module {
   dropHeader.length := 0.U
   dropHeader.ident := paLastHeader.ident
   dropHeader.sendType := SendType.Single
-  dropHeader.messageType := paLastHeader.messageType
   dropHeader._padding := 0.U
+  dropHeader.messageType := paLastHeader.messageType
+  switch(paLastHeader.messageType) {
+    is(MessageType.WriteLineAddr) { dropHeader.messageType := MessageType.WriteLineAddrDrop }
+    is(MessageType.ReadLineAddr) { dropHeader.messageType := MessageType.ReadLineAddrDrop }
+    is(MessageType.WriteLineReadLineAddr) {
+      dropHeader.messageType := MessageType.WriteLineReadLineAddrDrop
+    }
+    is(MessageType.WriteLineData) { dropHeader.messageType := MessageType.WriteLineDataDrop }
+  }
 
   io.dropEnq.valid := false.B
   io.dropEnq.bits.data := dropHeader.asUInt
@@ -369,37 +377,21 @@ class GatherSide(params: ZamletParams) extends Module {
           paHeaderSlot := freeSlot
           errBadPacketLength := (paHeader.length =/= 1.U)
           errBadMessageType := !io.isInnerSlice
-          when (!paHeaderSlot.valid) {
-            io.dropEnq.valid := true.B
-            paFromNetwork.ready := io.dropEnq.ready
-          }
         }
         is(MessageType.ReadLineAddr) {
           paHeaderSlot := freeSlot
           errBadPacketLength := (paHeader.length =/= 1.U)
           errBadMessageType := !io.isInnerSlice
-          when (!paHeaderSlot.valid) {
-            io.dropEnq.valid := true.B
-            paFromNetwork.ready := io.dropEnq.ready
-          }
         }
         is(MessageType.WriteLineReadLineAddr) {
           paHeaderSlot := freeSlot
           errBadPacketLength := (paHeader.length =/= 2.U)
           errBadMessageType := !io.isInnerSlice
-          when (!paHeaderSlot.valid) {
-            io.dropEnq.valid := true.B
-            paFromNetwork.ready := io.dropEnq.ready
-          }
         }
         is(MessageType.WriteLineData) {
           paHeaderSlot := paIdentMatchSlot
           errBadPacketLength := (paHeader.length =/= params.cacheSlotWordsPerJamlet.U)
           errBadMessageType := false.B
-          when (!paHeaderSlot.valid) {
-            io.dropEnq.valid := true.B
-            paFromNetwork.ready := io.dropEnq.ready
-          }
         }
       }
     } .otherwise {
