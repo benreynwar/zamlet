@@ -1,34 +1,41 @@
 # Memory Mapping
 
-There are several different kinds of memory mapping going on in the zamlet hardware.
+The mapping from the virtual address space to physical address space is complicated and goes
+through several intermediate address spaces.
+
+The bits in an address can be split into bits that address the page, the cache line, the vector line, the word
+and the byte.  By 'vector line' we mean 'number of lanes * word size'.
+
+        |--- Page ---|--- Cache line --|--- Vector line ---|--- Word --- |--- Byte ---|
+
 
 **Virtual Address -> Alpha Physical Address**
 
-The standard mapping done by the TLB.
-Only changes the address bits above the page table size.
+The standard mapping done by the TLB.  Only changes the page bits.
 
 **Alpha Physical Address -> Beta Physical Address**
 
-This is a permutation of the bytes in a vector-line (number of lanes * word size).  It depends on
+This is a permutation of the bytes in a vector line.  It depends on
 the 'element-width' configuration of the page, which is a configuration variable stored in a
-page table.  It will be discussed more later.
+page table.  It modifies the 'word' and 'byte' address bits.  It will be discussed more later.
 
 **Beta Physical Address -> Gamma Physical Address**
 
 This is a permutation of the order of the words in a vector line.  The purpose of this is to arrange
 the words in the grid so that words close in the vector line are also close in the 2-dimensional
-mesh.
+mesh.  It modifies the 'word' address bits.
 
 **Gamma Physical Address -> (DRAM instance, DRAM address)**
 
 Maps the address space into the address space of the individual DRAMs.
+It extracts some of the 'word' bits to define the DRAM instance, and the rest are used to define the DRAM address.
 
 # Caching
 
-The cache is distributed across the jamlets. Each word of memory from a DRAM is bound to a specific
-jamlet, which is responsible for caching it.  All requests for that word of memory must pass through
-that jamlet.  This makes memory accesses fast and efficient when the accesses are aligned to the
-vector-line width, and very inefficient when they are not.
+The cache is distributed across the lanes. Each word of memory from a DRAM is bound to a specific
+lane, which is responsible for caching it.  All requests for that word of memory must pass through
+that lane.  This makes memory accesses fast and efficient when the accesses are aligned to the
+vector line width, and very inefficient when they are not.
 
 # Alpha <-> Beta Mapping #
 
@@ -44,7 +51,7 @@ And if we have another vector with elements of size 32-bit using LMUL=2 it would
          f0    f1    f2    f3    f4    f5    f6    f7
          f8    f9    fA    fB    fC    fD    fE    fF
 
-This is a problem if we want to add these two vectors, and we have one word distributed in each lane.
+This is a problem if we want to add these two vectors.
 Adding e0 with f0 is no problem, adding e1 and f1 is ok, but when we try to add e2 with f2 we
 see that they are in different lanes, and so we would have to do lane-to-lane communication to support
 a simple vector add.
@@ -81,11 +88,11 @@ each physical word are the same.
 
 # Beta <-> Gamma Mapping
 
-The jamlets, when considered in address space order, are laid out in a Moore curve on the 2D mesh.  The
-words of the address space are interleaved across the jamlets following this pattern.
+The lanes, when considered in address space order, are laid out in a Moore curve on the 2D mesh.  The
+words of the address space are interleaved across the lanes following this pattern.
 This means that two words close in the address space will also be close physically on the mesh.
 
 # Gamma <-> DRAM Mapping
 
-Each kamlet has a dedicated memlet which communicates with a dedicated DRAM.  The words of a DRAM
-cache line are interleaved across the jamlets of that kamlet.
+Each lane group has a dedicated memlet which communicates with a dedicated DRAM.  The words of a DRAM
+cache line are interleaved across the lanes of that lane group.

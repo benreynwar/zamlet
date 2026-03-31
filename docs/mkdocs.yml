@@ -1,6 +1,9 @@
 site_name: Zamlet
 nav:
   - Home: index.md
-  - Memory: memory.md
-  - Gather Example: gather_example.md
+  - Design:
+    - Memory: memory.md
+    - Gather Example: gather_example.md
+  - Modelling:
+    - Python Model: python.md
 theme: readthedocs

@@ -10,14 +10,20 @@ This document goes though what the VPU does to implement an unordered gather ins
 
 3. **Every Kamlet**: Each kamlet receives the kinstrucion packet and places them in the instruction buffer.
 
+    ![Broadcasting kinstruction packet](images/gather_1.png)
+
 4. **Every Kamlet**: Each kamlet pops one of the kinstructions from the instruction buffer.  If the required
    registers are available it is placed in the pending instruction table on this kamlet
    and on all it's jamlets.
+
+    ![Broadcasting kinstruction packet](images/gather_2.png)
 
 5. **Every Jamlet**: Each jamlet sees the new kinstruction in the pending instruction table and reads the
    gather index from it's local register slice. From this it work's out what address it
    needs to gather data from, and works out which lane is responsible for caching that
    address.  The jamlet sends a message to that jamlet requesting the data.
+
+    ![Broadcasting kinstruction packet](images/gather_3.png)
 
 6. **Target Jamlets**: Jamlets receive messages requesting data. If the message maps to an active kinstruction
    in their pending instruction data they process the message. If it doesn't they send
@@ -36,10 +42,16 @@ This document goes though what the VPU does to implement an unordered gather ins
 
 11. **Target Jamlets**: The jamlets send response messages with the data to the requesting jamlets.
 
+    ![Broadcasting kinstruction packet](images/gather_4.png)
+
 12. **Every Jamlet**: Every jamlet receives a response message.  It updates the register file slice with the
     received data.  It let's the kamlet know that it has completed.
 
+    ![Broadcasting kinstruction packet](images/gather_5.png)
+
 13. **Every Kamlet**: Once all of the component jamlets have completed it triggers a synchronization.
+
+    ![Broadcasting kinstruction packet](images/gather_6.png)
 
 14. **Every Kamlet**: Once all kamlets have reached the synchronization point the kinstruction is removed from the
     pending instruction tables.
