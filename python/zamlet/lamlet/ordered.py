@@ -149,7 +149,7 @@ def handle_store_indexed_element_resp(lamlet: 'Oamlet', header: ElementIndexHead
         entry = buf.get_entry(witem.element_index)
         entry.state = ElementState.READY
         entry.addr = g_addr
-        entry.data = data
+        entry.data = data.to_bytes(buf.data_ew // 8, 'little')
 
 
 def handle_ordered_write_mem_word_resp(lamlet: 'Oamlet', header: TaggedHeader):
@@ -283,7 +283,7 @@ async def _process_ordered_load(lamlet: 'Oamlet', buf: OrderedBuffer, entry: 'El
         data = None
     else:
         word_addr = entry.addr - (entry.addr % wb)
-        data = lamlet.scalar.get_memory(word_addr, wb)
+        data = int.from_bytes(lamlet.scalar.get_memory(word_addr, wb), 'little')
 
     resp_header = ReadMemWordHeader(
         target_x=target_x,
@@ -310,7 +310,7 @@ async def _process_ordered_load(lamlet: 'Oamlet', buf: OrderedBuffer, entry: 'El
             lamlet.monitor.add_event(
                 transaction_span_id,
                 f'ordered_scalar_read element={element_index} '
-                f'addr=0x{entry.addr:x} data={data.hex()}')
+                f'addr=0x{entry.addr:x} data=0x{data:x}')
     await lamlet.send_packet(packet, jamlet, Direction.N, port=0,
                              parent_span_id=transaction_span_id)
     # Mark in-flight and advance to next element
@@ -409,7 +409,7 @@ async def _send_ordered_vpu_write(lamlet: 'Oamlet', instr_ident: int, data: byte
     # (do_write_and_respond expects src_word to be word_bytes long)
     word_data = bytearray(wb)
     word_data[tag:tag + n_bytes] = data[tag:tag + n_bytes]
-    packet = [header, k_maddr_aligned, bytes(word_data)]
+    packet = [header, k_maddr_aligned, int.from_bytes(word_data, 'little')]
 
     kinstr_span_id = lamlet.monitor.get_kinstr_span_id(instr_ident)
     assert kinstr_span_id is not None

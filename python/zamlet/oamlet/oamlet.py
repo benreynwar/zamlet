@@ -650,8 +650,8 @@ class Oamlet:
             scalar_addr = packet[1]
             src_word = packet[2]
             assert isinstance(scalar_addr, int), f"Expected int, got {type(scalar_addr)}: {scalar_addr}"
-            assert isinstance(src_word, (bytes, bytearray)), \
-                f"Expected bytes/bytearray, got {type(src_word)}: {src_word}"
+            assert isinstance(src_word, int), \
+                f"Expected int, got {type(src_word)}: {src_word}"
             await unordered.handle_write_mem_word_req(self, header, scalar_addr, src_word)
         else:
             raise NotImplementedError(f"Unexpected channel 1+ message: {header.message_type}")

@@ -110,12 +110,13 @@ async def send_req(jamlet: 'Jamlet', witem: WaitingLoadWordSrc) -> None:
     j_saddr = instr.src.to_j_saddr(jamlet.cache_table)
     wb = jamlet.params.word_bytes
     sram_addr = (j_saddr.addr // wb) * wb
-    word = jamlet.sram[sram_addr : sram_addr + jamlet.params.word_bytes]
+    word = int.from_bytes(
+        jamlet.sram[sram_addr : sram_addr + jamlet.params.word_bytes], 'little')
 
     logger.debug(
         f'{jamlet.clock.cycle}: LOAD_WORD: jamlet ({jamlet.x}, {jamlet.y}): '
         f'send_load_word_req to ({target_x}, {target_y}) ident={instr.instr_ident} '
-        f'sram_addr={sram_addr} k_maddr.bit_addr={instr.src.bit_addr} word={word.hex()}')
+        f'sram_addr={sram_addr} k_maddr.bit_addr={instr.src.bit_addr} word=0x{word:x}')
 
     header = TaggedHeader(
         target_x=target_x, target_y=target_y,
@@ -157,12 +158,10 @@ async def handle_req(jamlet: 'Jamlet', packet: List[Any]) -> None:
     assert isinstance(witem, WaitingLoadWordDst)
     assert witem.protocol_states[jamlet.j_in_k_index] == ReceiveState.WAITING_FOR_REQUEST
     instr = witem.item
-    word_as_int = int.from_bytes(word, byteorder='little')
 
-    old_word = jamlet.rf_slice[
+    old_word = int.from_bytes(jamlet.rf_slice[
         instr.dst.reg * jamlet.params.word_bytes :
-        (instr.dst.reg + 1) * jamlet.params.word_bytes]
-    old_word_as_int = int.from_bytes(old_word, byteorder='little')
+        (instr.dst.reg + 1) * jamlet.params.word_bytes], 'little')
 
     src_word_offset = instr.src.addr % jamlet.params.word_bytes
     dst_word_offset = instr.dst.offset_in_word
@@ -180,19 +179,19 @@ async def handle_req(jamlet: 'Jamlet', packet: List[Any]) -> None:
             dst_expanded_mask |= (0xFF << (byte_idx * 8))
 
     if shift_bits < 0:
-        shifted_word = word_as_int << (-shift_bits)
+        shifted_word = word << (-shift_bits)
     else:
-        shifted_word = word_as_int >> shift_bits
+        shifted_word = word >> shift_bits
 
     masked_new = shifted_word & dst_expanded_mask
-    masked_old = old_word_as_int & (~dst_expanded_mask)
+    masked_old = old_word & (~dst_expanded_mask)
     result = masked_old | masked_new
 
     logger.debug(
         f'{jamlet.clock.cycle}: LOAD_WORD: jamlet ({jamlet.x}, {jamlet.y}): '
-        f'word=0x{word_as_int:016x}, dst_mask=0x{dst_expanded_mask:016x}, '
+        f'word=0x{word:016x}, dst_mask=0x{dst_expanded_mask:016x}, '
         f'shift_bits={shift_bits}, shifted=0x{shifted_word:016x}, '
-        f'dst_mask=0x{dst_expanded_mask:016x}, old=0x{old_word_as_int:016x}, '
+        f'dst_mask=0x{dst_expanded_mask:016x}, old=0x{old_word:016x}, '
         f'masked_new=0x{masked_new:016x}')
 
     result_bytes = result.to_bytes(jamlet.params.word_bytes, byteorder='little')

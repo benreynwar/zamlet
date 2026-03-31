@@ -8,7 +8,6 @@ Can run against cocotb (RTL) or the Python model via the driver abstraction.
 
 import logging
 
-from zamlet.control_structures import unpack_int_to_fields
 from zamlet.memlet import j_in_k_to_m_router
 from zamlet.memlet_test.memlet_driver import MemletDriver
 from zamlet.message import AddressHeader, MessageType, SendType
@@ -33,7 +32,7 @@ async def write_cache_line(driver: MemletDriver, params: ZamletParams,
     Sends WRITE_LINE_ADDR on router 0, then WRITE_LINE_DATA for each
     jamlet on the appropriate router. Waits for WRITE_LINE_RESP.
 
-    data: dict mapping jamlet index to list of words.
+    data: dict mapping jamlet index to list of bytes words.
     """
     n_routers = driver.n_routers
     words_per_jamlet = params.cache_slot_words_per_jamlet
@@ -49,7 +48,7 @@ async def write_cache_line(driver: MemletDriver, params: ZamletParams,
         send_type=SendType.SINGLE,
         ident=ident, address=sram_addr,
     )
-    driver.b_queues[0].append([addr_hdr.encode(params), mem_addr])
+    driver.b_queues[0].append([addr_hdr, mem_addr])
 
     # WRITE_LINE_DATA from each jamlet, on the appropriate router.
     # Build packets keyed by (jamlet_x, jamlet_y) so we can resend on drop.
@@ -66,7 +65,7 @@ async def write_cache_line(driver: MemletDriver, params: ZamletParams,
             send_type=SendType.SINGLE,
             ident=ident, address=sram_addr,
         )
-        pkt = [data_hdr.encode(params)] + data[j]
+        pkt = [data_hdr] + data[j]
         data_packets[(j_x, j_y)] = (r, pkt)
         driver.b_queues[r].append(pkt)
 
@@ -79,34 +78,34 @@ async def write_cache_line(driver: MemletDriver, params: ZamletParams,
     async def monitor_drops(router_idx):
         while True:
             resp = await driver.recv(router_idx)
-            fields = unpack_int_to_fields(resp[0], params.ident_header_fields)
-            msg_type = fields['message_type']
-            if msg_type in DROP_TYPES:
-                target = (fields['target_x'], fields['target_y'])
-                logger.info(f"Router {router_idx}: drop (type={msg_type}),"
-                            f" resending for {target}")
+            header = resp[0]
+            if header.message_type in DROP_TYPES:
+                target = (header.target_x, header.target_y)
+                logger.info(f"Router {router_idx}: drop"
+                            f" (type={header.message_type}), resending for"
+                            f" {target}")
                 r, pkt = data_packets[target]
                 assert r == router_idx
                 driver.b_queues[r].append(pkt)
             else:
-                return fields
+                return header
 
     # Start drop monitors on non-zero routers
     drop_tasks = [driver.start_soon(monitor_drops(r))
                   for r in range(1, n_routers)]
 
     # Router 0 handles drops and receives the final WRITE_LINE_RESP
-    resp_fields = await monitor_drops(0)
+    resp_header = await monitor_drops(0)
 
     for task in drop_tasks:
         task.cancel()
 
-    assert resp_fields['message_type'] == MessageType.WRITE_LINE_RESP, (
+    assert resp_header.message_type == MessageType.WRITE_LINE_RESP, (
         f"Expected WRITE_LINE_RESP ({MessageType.WRITE_LINE_RESP}),"
-        f" got {resp_fields['message_type']}")
-    assert resp_fields['ident'] == ident
-    assert resp_fields['target_x'] == j0_x
-    assert resp_fields['target_y'] == j0_y
+        f" got {resp_header.message_type}")
+    assert resp_header.ident == ident
+    assert resp_header.target_x == j0_x
+    assert resp_header.target_y == j0_y
 
     logger.info("write_cache_line complete")
 
@@ -133,7 +132,7 @@ async def read_cache_line(driver: MemletDriver, params: ZamletParams,
             send_type=SendType.SINGLE,
             ident=ident, address=sram_addr,
         )
-        return [addr_hdr.encode(params), mem_addr]
+        return [addr_hdr, mem_addr]
 
     driver.b_queues[0].append(build_addr_packet())
 
@@ -141,30 +140,31 @@ async def read_cache_line(driver: MemletDriver, params: ZamletParams,
 
     while len(received_data) < params.j_in_k:
         resp = await driver.recv(0)
-        fields = unpack_int_to_fields(resp[0], params.address_header_fields)
-        msg_type = fields['message_type']
+        header = resp[0]
 
-        if msg_type == MessageType.READ_LINE_ADDR_DROP:
+        if header.message_type == MessageType.READ_LINE_ADDR_DROP:
             logger.info("READ_LINE_ADDR_DROP, resending")
             driver.b_queues[0].append(build_addr_packet())
             continue
 
-        assert msg_type == MessageType.READ_LINE_RESP, (
-            f"Expected READ_LINE_RESP or READ_LINE_ADDR_DROP, got {msg_type}")
-        assert fields['ident'] == ident
+        assert header.message_type == MessageType.READ_LINE_RESP, (
+            f"Expected READ_LINE_RESP or READ_LINE_ADDR_DROP,"
+            f" got {header.message_type}")
+        assert header.ident == ident
 
-        j_in_k_x = fields['target_x'] - k_base_x
-        j_in_k_y = fields['target_y'] - k_base_y
+        j_in_k_x = header.target_x - k_base_x
+        j_in_k_y = header.target_y - k_base_y
         j_index = j_in_k_y * params.j_cols + j_in_k_x
         assert 0 <= j_index < params.j_in_k, (
             f"Bad jamlet index {j_index} from target"
-            f" ({fields['target_x']}, {fields['target_y']})")
+            f" ({header.target_x}, {header.target_y})")
         assert j_index not in received_data, (
             f"Duplicate READ_LINE_RESP for jamlet {j_index}")
 
         data_words = resp[1:]
         assert len(data_words) == words_per_jamlet, (
-            f"Expected {words_per_jamlet} data words, got {len(data_words)}")
+            f"Expected {words_per_jamlet} data words,"
+            f" got {len(data_words)}")
         received_data[j_index] = data_words
         logger.info(f"READ_LINE_RESP for jamlet {j_index}:"
                     f" {[f'0x{w:x}' for w in data_words]}")
@@ -173,7 +173,7 @@ async def read_cache_line(driver: MemletDriver, params: ZamletParams,
     return received_data
 
 
-async def test_write_read(driver: MemletDriver, params: ZamletParams,
+async def run_write_read(driver: MemletDriver, params: ZamletParams,
                           router_coords, k_base_x: int, k_base_y: int,
                           timeout: int = 1000) -> None:
     """Write a cache line, read it back, and verify data matches."""

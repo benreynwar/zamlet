@@ -122,7 +122,7 @@ class Router:
                             # We'll use this the first time we send something in this direction on this connection.
                             assert output_direction not in self._output_headers
                             self._output_headers[output_direction] = new_header
-                        self._input_connections[input_direction] = Connection(header.length, set(output_dirs), set(output_dirs), 0, header.copy())
+                        self._input_connections[input_direction] = Connection(header.length + 1, set(output_dirs), set(output_dirs), 0, header.copy())
                         # We made a connection, put this at lowest priority
                         new_priority.remove(input_direction)
                         new_priority.append(input_direction)

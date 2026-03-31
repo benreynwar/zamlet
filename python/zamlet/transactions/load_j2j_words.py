@@ -128,14 +128,14 @@ async def send_req(jamlet, witem: WaitingLoadJ2JWords, tag: int) -> None:
         cache_base_addr = witem.cache_slot * jamlet.params.cache_slot_words_per_jamlet * word_bytes
         vline_offset_in_cache = mapping.mem_v % jamlet.params.cache_slot_words_per_jamlet
         cache_addr = cache_base_addr + vline_offset_in_cache * word_bytes
-        word = jamlet.sram[cache_addr: cache_addr + word_bytes]
+        word = int.from_bytes(
+            jamlet.sram[cache_addr: cache_addr + word_bytes], 'little')
         logger.debug(
             f'jamlet ({jamlet.x}, {jamlet.y}): send_load_j2j_words_req tag={mem_wb} '
             f'mapping={mapping} cache_slot={witem.cache_slot} '
             f'base_vline_in_cache={base_vline_in_cache} '
             f'vline_addr_offset={vline_offset_in_cache} cache_addr={cache_addr} '
-            f'word={word.hex()}')
-        assert len(word) == word_bytes
+            f'word=0x{word:x}')
         words.append(word)
         # Check that all the mappings point to the same word in the reg vector line
         if reg_vw is None:
@@ -203,13 +203,10 @@ async def handle_req(jamlet, packet: List[Any]) -> None:
         shift = mapping.mem_wb - mapping.reg_wb
         mask = ((1 << mapping.n_bits) - 1) << mapping.reg_wb
 
-        assert isinstance(word, (bytes, bytearray))
-        assert len(word) == jamlet.params.word_bytes
-        word_as_int = int.from_bytes(word, byteorder='little')
         if shift < 0:
-            shifted = word_as_int << (-shift)
+            shifted = word << (-shift)
         else:
-            shifted = word_as_int >> shift
+            shifted = word >> shift
 
         dst_reg = instr.dst + mapping.reg_v
 
@@ -222,7 +219,7 @@ async def handle_req(jamlet, packet: List[Any]) -> None:
         logger.debug(
             f'{jamlet.clock.cycle}: RF_WRITE LOAD_J2J: jamlet ({jamlet.x},{jamlet.y}) '
             f'rf[{dst_reg}] old={old_word.hex()} new={updated_word_bytes.hex()} '
-            f'mapping={mapping} shift={shift} mask=0x{mask:x} word=0x{word_as_int:x}')
+            f'mapping={mapping} shift={shift} mask=0x{mask:x} word=0x{word:x}')
         jamlet.rf_slice[dst_reg * word_bytes: (dst_reg+1) * word_bytes] = updated_word_bytes
         if reg_wb is None:
             reg_wb = mapping.reg_wb

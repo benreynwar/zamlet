@@ -108,12 +108,12 @@ async def send_req(jamlet: 'Jamlet', witem: WaitingStoreWordSrc) -> None:
 
     wb = jamlet.params.word_bytes
     word_addr = (instr.src.reg * wb // wb) * wb
-    word = jamlet.rf_slice[word_addr : word_addr + wb]
+    word = int.from_bytes(jamlet.rf_slice[word_addr : word_addr + wb], 'little')
 
     logger.debug(
         f'{jamlet.clock.cycle}: STORE_WORD: jamlet ({jamlet.x}, {jamlet.y}): '
         f'send_store_word_req to ({target_x}, {target_y}) ident={instr.instr_ident} '
-        f'reg={instr.src.reg} word={word.hex()}')
+        f'reg={instr.src.reg} word=0x{word:x}')
 
     header = TaggedHeader(
         target_x=target_x, target_y=target_y,
@@ -162,14 +162,12 @@ async def handle_req(jamlet: 'Jamlet', packet: List[Any]) -> None:
 
     assert witem.protocol_states[jamlet.j_in_k_index] == ReceiveState.WAITING_FOR_REQUEST
     instr = witem.item
-    word_as_int = int.from_bytes(word, byteorder='little')
 
     j_saddr = instr.dst.to_j_saddr(jamlet.cache_table)
     wb = jamlet.params.word_bytes
     sram_addr = (j_saddr.addr // wb) * wb
 
-    old_word = jamlet.sram[sram_addr : sram_addr + wb]
-    old_word_as_int = int.from_bytes(old_word, byteorder='little')
+    old_word = int.from_bytes(jamlet.sram[sram_addr : sram_addr + wb], 'little')
 
     src_word_offset = instr.src.offset_in_word
     dst_word_offset = instr.dst.addr % wb
@@ -187,16 +185,16 @@ async def handle_req(jamlet: 'Jamlet', packet: List[Any]) -> None:
             dst_expanded_mask |= (0xFF << (byte_idx * 8))
 
     if shift_bits < 0:
-        shifted_word = word_as_int << (-shift_bits)
+        shifted_word = word << (-shift_bits)
     else:
-        shifted_word = word_as_int >> shift_bits
+        shifted_word = word >> shift_bits
 
     masked_new = shifted_word & dst_expanded_mask
-    masked_old = old_word_as_int & (~dst_expanded_mask)
+    masked_old = old_word & (~dst_expanded_mask)
     result = masked_old | masked_new
 
     result_bytes = result.to_bytes(wb, byteorder='little')
-    old_bytes = old_word_as_int.to_bytes(wb, byteorder='little')
+    old_bytes = old_word.to_bytes(wb, byteorder='little')
     jamlet.sram[sram_addr : sram_addr + wb] = result_bytes
     logger.debug(
         f'{jamlet.clock.cycle}: CACHE_WRITE STORE_WORD: jamlet ({jamlet.x},{jamlet.y}) '

@@ -193,7 +193,7 @@ class WaitingLoadGatherBase(WaitingItem, ABC):
             witem_span_id,
             f'rf_write jamlet_x={jamlet.x}, jamlet_y={jamlet.y}, element={dst_e}, '
             f'reg={dst_reg}, src_byte={src_byte_in_word}, dst_byte={dst_byte_in_word}, '
-            f'n_bytes={request.n_bytes}, payload={data.hex()}, old={old_word.hex()}, '
+            f'n_bytes={request.n_bytes}, payload=0x{data:x}, old={old_word.hex()}, '
             f'new={new_word.hex()}')
         jamlet.monitor.complete_transaction(
             ident=header.ident,

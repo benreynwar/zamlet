@@ -200,6 +200,7 @@ def _get_index_value(jamlet: 'Jamlet', instr: StoreIndexedElement) -> int:
     return int.from_bytes(index_data, byteorder='little', signed=False)
 
 
-def _get_data_value(jamlet: 'Jamlet', instr: StoreIndexedElement) -> bytes:
-    """Read the data from the source register."""
-    return read_element(jamlet, instr.src_reg, instr.element_index, instr.data_ew)
+def _get_data_value(jamlet: 'Jamlet', instr: StoreIndexedElement) -> int:
+    """Read the data from the source register as an int for packet transmission."""
+    data = read_element(jamlet, instr.src_reg, instr.element_index, instr.data_ew)
+    return int.from_bytes(data, 'little')

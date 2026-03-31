@@ -141,5 +141,5 @@ async def memlet_write_test(dut: HierarchyObject) -> None:
                     logger.info(f"  cycle {cycle}: {sig}=1")
     cocotb.start_soon(probe())
 
-    await test_write_read.test_write_read(
+    await test_write_read.run_write_read(
         driver, params, router_coords, k_base_x, k_base_y)

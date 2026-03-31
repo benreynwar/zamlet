@@ -128,6 +128,7 @@ class Memlet:
                 self.jamlet_coords.append((self.kamlet_coords[0] + j_in_k_x, self.kamlet_coords[1] + j_in_k_y))
 
     def write_cache_line(self, index, data):
+        """Write a cache line. data is bytes."""
         assert index < self.n_lines
         address = index * self.params.cache_line_bytes
         logger.debug(
@@ -137,7 +138,8 @@ class Memlet:
         self.lines[index] = data
 
     def read_cache_line(self, index):
-        assert index < self.params.kamlet_memory_bytes//self.params.cache_line_bytes
+        """Read a cache line. Returns bytes."""
+        assert index < self.params.kamlet_memory_bytes // self.params.cache_line_bytes
         address = index * self.params.cache_line_bytes
         if index not in self.lines:
             data = bytes(random.getrandbits(8) for _ in range(self.params.cache_line_bytes))
@@ -351,8 +353,9 @@ class Memlet:
 
                 cache_line = self.read_cache_line(index)
                 packet_payloads = [[] for i in range(self.params.j_in_k)]
-                for word_index in range(len(cache_line)//wb):
-                    word = cache_line[word_index*wb: (word_index+1)*wb]
+                for word_index in range(len(cache_line) // wb):
+                    word = int.from_bytes(
+                        cache_line[word_index * wb: (word_index + 1) * wb], 'little')
                     packet_payloads[word_index % self.params.j_in_k].append(word)
                 # Send a message back to each jamlet.
                 resp_packets = [[] for i in range(self.n_routers)]
@@ -400,16 +403,17 @@ class Memlet:
         assert write_address % self.params.cache_line_bytes == 0
         write_index = write_address // self.params.cache_line_bytes
         n_words = len(slot.data_packets[0])
-        line = []
+        wb = self.params.word_bytes
+        line_words = []
         for word_index in range(n_words):
             for j_index in range(self.params.j_in_k):
-                line.append(slot.data_packets[j_index][word_index])
-        data = b''.join(line)
+                line_words.append(slot.data_packets[j_index][word_index])
         for j_index in range(self.params.j_in_k):
-            j_words = [slot.data_packets[j_index][w].hex() for w in range(n_words)]
+            j_words = [f'0x{slot.data_packets[j_index][w]:x}' for w in range(n_words)]
             logger.debug(
                 f'{self.clock.cycle}: [MEMLET_RECV] kamlet={self.kamlet_coords} '
                 f'j_index={j_index} write_addr=0x{write_address:x} words={j_words}')
+        data = b''.join(w.to_bytes(wb, 'little') for w in line_words)
         logger.debug(
             f'{self.clock.cycle}: [MEMLET_WRITE] kamlet={self.kamlet_coords} '
             f'write_index={write_index} write_addr=0x{write_address:x} '
@@ -455,7 +459,8 @@ class Memlet:
             f'read_addr=0x{read_address:x} data={read_cache_line.hex()}')
         packet_payloads = [[] for i in range(self.params.j_in_k)]
         for word_index in range(len(read_cache_line) // wb):
-            word = read_cache_line[word_index * wb: (word_index + 1) * wb]
+            word = int.from_bytes(
+                read_cache_line[word_index * wb: (word_index + 1) * wb], 'little')
             packet_payloads[word_index % self.params.j_in_k].append(word)
 
         cache_request_span_id = self.monitor.get_cache_request_span_id(
@@ -529,5 +534,3 @@ class Memlet:
             self.clock.create_task(self.send_packets(index))
         self.clock.create_task(self.handle_read_line_packets())
         self.clock.create_task(self.handle_gathering_complete())
-        while True:
-            await self.clock.next_cycle

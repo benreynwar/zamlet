@@ -317,7 +317,7 @@ class WaitingRegGather(WaitingItem):
         dst_offset = dst_reg * wb + tag
 
         # Write received data to destination (extract only the needed bytes)
-        jamlet.rf_slice[dst_offset:dst_offset + data_eb] = data[:data_eb]
+        jamlet.rf_slice[dst_offset:dst_offset + data_eb] = data.to_bytes(wb, 'little')[:data_eb]
 
         self.transaction_states[state_idx] = SendState.COMPLETE
 

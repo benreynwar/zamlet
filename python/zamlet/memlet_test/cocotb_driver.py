@@ -17,8 +17,8 @@ from cocotb.handle import HierarchyObject
 from cocotb.triggers import RisingEdge, ReadOnly
 
 from zamlet import utils
-from zamlet.control_structures import unpack_int_to_fields
 from zamlet.memlet_test.memlet_driver import MemletDriver
+from zamlet.message import Header, int_to_header
 from zamlet.params import ZamletParams
 
 logger = logging.getLogger(__name__)
@@ -77,9 +77,14 @@ class CocotbDriver(MemletDriver):
         while True:
             if self.b_queues[r]:
                 packet = self.b_queues[r].popleft()
-                for i, word in enumerate(packet):
+                header = packet[0]
+                assert isinstance(header, Header)
+                await self._send_b_word(
+                    r, header.encode(self.params), rng=rng, is_header=True)
+                for word in packet[1:]:
+                    assert isinstance(word, int)
                     await self._send_b_word(
-                        r, word, rng=rng, is_header=(i == 0))
+                        r, word, rng=rng, is_header=False)
             else:
                 self._b_sig(r, 'valid').value = 0
                 await RisingEdge(self.dut.clock)
@@ -110,7 +115,7 @@ class CocotbDriver(MemletDriver):
     async def _recv_loop(self, r: int, rng: Random) -> None:
         """Background: capture packets into a_queues[r] with randomized ready."""
         sig_name = f'a{self.recv_dir}o_{r}_0'
-        words = []
+        packet = []
         remaining = 0
         await RisingEdge(self.dut.clock)
         while True:
@@ -122,18 +127,21 @@ class CocotbDriver(MemletDriver):
                 is_header = int(self._a_sig(r, 'bits_isHeader').value)
                 logger.debug(f"[{sig_name}] recv 0x{data:x} hdr={is_header}")
                 if is_header:
-                    hdr = unpack_int_to_fields(data, self.params.address_header_fields)
-                    remaining = hdr['length']
-                    words = [data]
-                    logger.debug(f"[{sig_name}] msg={hdr['message_type']}"
-                                 f" ident={hdr['ident']} len={hdr['length']}")
+                    header = int_to_header(data, self.params)
+                    remaining = header.length
+                    packet = [header]
+                    logger.debug(f"[{sig_name}] msg={header.message_type}"
+                                 f" ident={header.ident}"
+                                 f" len={header.length}")
                 else:
-                    words.append(data)
+                    packet.append(data)
                     remaining -= 1
-                if remaining == 0 and words:
-                    logger.info(f"[{sig_name}] complete packet: {len(words)} words")
-                    self.a_queues[r].append(words)
-                    words = []
+                if remaining == 0 and packet:
+                    logger.info(
+                        f"[{sig_name}] complete packet:"
+                        f" {len(packet)} words")
+                    self.a_queues[r].append(packet)
+                    packet = []
                     remaining = 0
             await RisingEdge(self.dut.clock)
 

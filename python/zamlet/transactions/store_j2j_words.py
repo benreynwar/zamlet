@@ -163,10 +163,11 @@ async def send_req(jamlet, witem: WaitingStoreJ2JWords, tag: int) -> None:
     reg_ew = instr.src_ordering.ew
     for mapping in mappings:
         src_reg = instr.src + mapping.reg_v
-        word = jamlet.rf_slice[src_reg * word_bytes: (src_reg + 1) * word_bytes]
+        word = int.from_bytes(
+            jamlet.rf_slice[src_reg * word_bytes: (src_reg + 1) * word_bytes], 'little')
         logger.debug(
             f'jamlet ({jamlet.x}, {jamlet.y}): send_store_j2j_words_req tag={tag} '
-            f'mapping={mapping} src_reg={src_reg} word={word.hex()}')
+            f'mapping={mapping} src_reg={src_reg} word=0x{word:x}')
         words.append(word)
         if mem_vw is None:
             mem_vw = mapping.mem_vw
@@ -260,14 +261,11 @@ async def handle_req(jamlet, packet: List[Any]) -> None:
         shift = mapping.reg_wb - mapping.mem_wb
         mask = ((1 << mapping.n_bits) - 1) << mapping.mem_wb
 
-        assert isinstance(word, (bytes, bytearray))
-        assert len(word) == word_bytes
-        word_as_int = int.from_bytes(word, byteorder='little')
         word_mask = (1 << (word_bytes * 8)) - 1
         if shift < 0:
-            shifted = word_as_int << (-shift)
+            shifted = word << (-shift)
         else:
-            shifted = (word_as_int >> shift) & word_mask
+            shifted = (word >> shift) & word_mask
 
         if mem_wb is None:
             mem_wb = mapping.mem_wb
@@ -289,12 +287,11 @@ async def handle_req(jamlet, packet: List[Any]) -> None:
             shift = mapping.reg_wb - mapping.mem_wb
             segment_mask = ((1 << mapping.n_bits) - 1) << mapping.mem_wb
 
-            word_as_int = int.from_bytes(word, byteorder='little')
             word_mask = (1 << (word_bytes * 8)) - 1
             if shift < 0:
-                shifted = (word_as_int << (-shift)) & word_mask
+                shifted = (word << (-shift)) & word_mask
             else:
-                shifted = word_as_int >> shift
+                shifted = word >> shift
             shifted_bytes = shifted.to_bytes(word_bytes, byteorder='little')
 
             vline_offset_in_cache = mapping.mem_v % params.cache_slot_words_per_jamlet

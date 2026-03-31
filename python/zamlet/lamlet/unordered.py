@@ -830,7 +830,7 @@ async def handle_read_mem_word_req(lamlet: 'Oamlet', header, scalar_addr: int):
     """Handle unordered READ_MEM_WORD_REQ: read from scalar memory and respond immediately."""
     wb = lamlet.params.word_bytes
     word_addr = scalar_addr - (scalar_addr % wb)
-    data = lamlet.scalar.get_memory(scalar_addr, wb)
+    data = int.from_bytes(lamlet.scalar.get_memory(scalar_addr, wb), 'little')
     resp_header = TaggedHeader(
         target_x=header.source_x,
         target_y=header.source_y,
@@ -850,23 +850,24 @@ async def handle_read_mem_word_req(lamlet: 'Oamlet', header, scalar_addr: int):
     assert transaction_span_id is not None
     lamlet.monitor.add_event(
         transaction_span_id,
-        f'scalar_read addr=0x{scalar_addr:x}, word_addr=0x{word_addr:x}, data={data.hex()}')
+        f'scalar_read addr=0x{scalar_addr:x}, word_addr=0x{word_addr:x}, data=0x{data:x}')
     await lamlet.send_packet(packet, jamlet, Direction.N, port=0,
                              parent_span_id=transaction_span_id)
     logger.debug(
         f'{lamlet.clock.cycle}: lamlet: READ_MEM_WORD_REQ addr=0x{scalar_addr:x} '
-        f'-> ({header.source_x},{header.source_y}) data={data.hex()}')
+        f'-> ({header.source_x},{header.source_y}) data=0x{data:x}')
 
 
 async def handle_write_mem_word_req(lamlet: 'Oamlet', header: WriteMemWordHeader,
-                                    scalar_addr: int, src_word: bytes):
+                                    scalar_addr: int, src_word: int):
     """Handle WRITE_MEM_WORD_REQ: write to scalar memory and send response."""
     wb = lamlet.params.word_bytes
     word_addr = scalar_addr - (scalar_addr % wb)
     src_start = header.tag
     dst_start = header.dst_byte_in_word
     n_bytes = header.n_bytes
-    lamlet.scalar.set_memory(word_addr + dst_start, src_word[src_start:src_start + n_bytes])
+    src_bytes = src_word.to_bytes(wb, 'little')
+    lamlet.scalar.set_memory(word_addr + dst_start, src_bytes[src_start:src_start + n_bytes])
     resp_header = TaggedHeader(
         target_x=header.source_x,
         target_y=header.source_y,

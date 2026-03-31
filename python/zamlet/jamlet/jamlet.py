@@ -279,15 +279,15 @@ class Jamlet:
             target_y=self.mem_y,
             source_x=self.x,
             source_y=self.y,
-            length=1 + n_words,
+            length=n_words,
             ident=ident,
             address=address_in_sram,
             )
         packet = [header]
         wb = self.params.word_bytes
         for index in range(n_words):
-            word = self.sram[address_in_sram + index * wb: address_in_sram + (index + 1) * wb]
-            packet.append(word)
+            word_bytes = self.sram[address_in_sram + index * wb: address_in_sram + (index + 1) * wb]
+            packet.append(int.from_bytes(word_bytes, 'little'))
         logger.debug(
             f'{self.clock.cycle}: jamlet ({self.x},{self.y}): '
             f'Sending WRITE_LINE_DATA from sram {address_in_sram} words={packet[1:]}')
@@ -344,10 +344,11 @@ class Jamlet:
                 self.monitor.record_input_queue_consumed(self.x, self.y, is_ch0=True)
                 sram_addr = s_address + index * wb
                 old_word = self.sram[sram_addr: sram_addr + wb]
-                self.sram[sram_addr: sram_addr + wb] = word
+                word_bytes = word.to_bytes(wb, 'little')
+                self.sram[sram_addr: sram_addr + wb] = word_bytes
                 logger.debug(
                     f'{self.clock.cycle}: CACHE_WRITE READ_LINE_RESP: jamlet ({self.x},{self.y}) '
-                    f'sram[{sram_addr}] old={old_word.hex()} new={word.hex()}'
+                    f'sram[{sram_addr}] old={old_word.hex()} new={word_bytes.hex()}'
                 )
                 remaining -= 1
                 index += 1

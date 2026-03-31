@@ -304,7 +304,8 @@ class WaitingStoreScatterBase(WaitingItem, ABC):
         # Read source data from register file
         src_ve, src_e, src_eb, src_v = self._compute_src_element(jamlet, tag)
         src_reg = instr.src + src_v
-        src_word = jamlet.rf_slice[src_reg * wb: (src_reg + 1) * wb]
+        src_word = int.from_bytes(
+            jamlet.rf_slice[src_reg * wb: (src_reg + 1) * wb], 'little')
 
         ident = (instr.instr_ident + tag + 1) % jamlet.params.max_response_tags
 
