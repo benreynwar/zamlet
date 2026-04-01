@@ -95,12 +95,12 @@ class Oamlet:
         self._temp_reg_next = 0
         self._temp_regs_in_use: set[int] = set()
 
-        self.min_x = 0
-        self.min_y = 0
+        self.min_x = params.west_offset
+        self.min_y = params.north_offset
 
-        # Send instructions from left/top
-        self.instr_x = self.min_x
-        self.instr_y = self.min_y - 1
+        # Lamlet is at top of jamlet grid in routing coords
+        self.instr_x = params.west_offset
+        self.instr_y = 0
 
         self.instruction_buffer: Deque[Any] = deque()
 
@@ -110,8 +110,8 @@ class Oamlet:
         self.kamlets = []
         self.memlets = []
         for kamlet_index in range(params.k_in_l):
-            kamlet_x = params.j_cols*(kamlet_index%params.k_cols)
-            kamlet_y = params.j_rows*(kamlet_index//params.k_cols)
+            kamlet_x = params.west_offset + params.j_cols * (kamlet_index % params.k_cols)
+            kamlet_y = params.north_offset + params.j_rows * (kamlet_index // params.k_cols)
             mem_coords = memlet_coords(params, kamlet_index)
             kamlet = Kamlet(
                 clock=clock,
@@ -205,8 +205,8 @@ class Oamlet:
         self.synchronizer = Synchronizer(
             clock=clock,
             params=params,
-            x=self.instr_x,
-            y=self.instr_y,
+            kx=0,
+            ky=-1,
             cache_table=None,  # Lamlet manages its own waiting items
             monitor=self.monitor,
         )
@@ -217,7 +217,7 @@ class Oamlet:
 
     def has_free_witem_slot(self) -> bool:
         """Check if there's room for another waiting item."""
-        return len(self.waiting_items) < self.params.n_items
+        return len(self.waiting_items) < self.params.witem_table_depth
 
     async def add_witem(self, witem: LamletWaitingItem) -> None:
         """Add a waiting item to the deque, waiting if necessary."""
@@ -329,10 +329,10 @@ class Oamlet:
         '''
         Move words between router buffers
         '''
-        # We should have a grid of routers from (-1, 0) to (n_cols, n_rows-1)
         routers = {}
-        n_rows = self.params.j_rows * self.params.k_rows
-        n_cols = self.params.j_cols * self.params.k_cols
+        j_cols = self.params.j_cols * self.params.k_cols
+        j_rows = self.params.j_rows * self.params.k_rows
+        grid_width = 2 * self.params.west_offset + j_cols
         for memlet in self.memlets:
             for router_channels in memlet.routers:
                 r = router_channels[channel]
@@ -345,17 +345,15 @@ class Oamlet:
                 coords = (r.x, r.y)
                 assert coords not in routers
                 routers[coords] = r
-        for x in range(-1, n_cols+1):
-            for y in range(0, n_rows):
+        for x in range(grid_width):
+            for y in range(self.params.north_offset, self.params.north_offset + j_rows):
                 assert (x, y) in routers
 
         # Now start the logic to move the messages between the routers
         while True:
             await self.clock.next_cycle
-            n_cols = self.params.j_cols * self.params.k_cols
-            n_rows = self.params.j_rows * self.params.k_rows
-            for x in range(-1, n_cols+1):
-                for y in range(0, n_rows):
+            for x in range(grid_width):
+                for y in range(self.params.north_offset, self.params.north_offset + j_rows):
                     router = routers[(x, y)]
                     for conn in router._input_connections.values():
                         if conn.age > 500 and conn.age % 50 == 0:
@@ -387,8 +385,8 @@ class Oamlet:
                                 north_router.receive(Direction.S, word)
                                 north_moving = True
                                 logger.debug(f'{self.clock.cycle}: Moving word north ({x}, {y}) -> ({x}, {y-1}) {word}')
-                    elif x == 0 and y == 0:
-                        # Send to the lamlet at (0, -1)
+                    elif x == self.instr_x and y == self.params.north_offset:
+                        # Send to the lamlet
                         north_buffer = router._output_buffers[Direction.N]
                         if north_buffer:
                             recv_buf = self._receive_buffers[channel]
@@ -439,18 +437,18 @@ class Oamlet:
                     self.monitor.report_router_output(x, y, channel, Direction.H,
                                                       h_present, h_moving)
 
-            # Lamlet at (0, -1): move words south into jamlet(0,0)
             send_buf = self._send_word_buffers[channel]
             lamlet_s_present = bool(send_buf)
             lamlet_s_moving = False
             if send_buf:
-                j00_input = routers[(0, 0)]._input_buffers[Direction.N]
+                lamlet_target = (self.instr_x, self.params.north_offset)
+                j00_input = routers[lamlet_target]._input_buffers[Direction.N]
                 if j00_input.can_append():
                     word = send_buf.popleft()
                     j00_input.append(word)
                     lamlet_s_moving = True
             self.monitor.report_router_output(
-                0, -1, channel, Direction.S,
+                self.instr_x, 0, channel, Direction.S,
                 lamlet_s_present, lamlet_s_moving)
 
     async def sync_network_connections(self):
@@ -460,12 +458,12 @@ class Oamlet:
         Synchronizers connect to all 8 neighbors (N, S, E, W, NE, NW, SE, SW).
         The lamlet's synchronizer is at (0, -1) and connects to kamlet (0,0) and (1,0).
         """
-        # Build a map of (k_x, k_y) -> synchronizer
+        # Build a map of (kx, ky) -> synchronizer
         synchronizers = {}
         for kamlet in self.kamlets:
-            k_x = kamlet.min_x // self.params.j_cols
-            k_y = kamlet.min_y // self.params.j_rows
-            synchronizers[(k_x, k_y)] = kamlet.synchronizer
+            kx = (kamlet.min_x - self.params.west_offset) // self.params.j_cols
+            ky = (kamlet.min_y - self.params.north_offset) // self.params.j_rows
+            synchronizers[(kx, ky)] = kamlet.synchronizer
 
         # Add lamlet's synchronizer at (0, -1)
         synchronizers[(0, -1)] = self.synchronizer
@@ -527,7 +525,7 @@ class Oamlet:
                 if header is None:
                     assert isinstance(word, Header)
                     header = word.copy()
-                    remaining_words = header.length
+                    remaining_words = header.length + 1
                 else:
                     assert not isinstance(word, Header)
                 packet.append(word)
@@ -541,7 +539,7 @@ class Oamlet:
         """Process a channel 0 packet (responses). These never need to send."""
         header = packet[0]
         assert isinstance(header, Header)
-        assert header.length == len(packet)
+        assert header.length == len(packet) - 1
 
         # Get message span_id before completing it (completing may trigger parent auto-complete)
         message_span_id = self.monitor.get_message_span_id_by_header(header)
@@ -619,7 +617,7 @@ class Oamlet:
         header = buffer.popleft()
         assert isinstance(header, Header)
         packet = [header]
-        remaining_words = header.length - 1
+        remaining_words = header.length
         while remaining_words > 0:
             await self.clock.next_cycle
             if buffer:
@@ -632,11 +630,12 @@ class Oamlet:
         """Process a channel 1+ packet (requests). These may need to send responses."""
         header = packet[0]
         assert isinstance(header, IdentHeader)
-        assert header.length == len(packet)
+        assert header.length == len(packet) - 1
 
         # All channel 1+ messages to lamlet have a tag
         assert hasattr(header, 'tag'), f"Header {type(header).__name__} missing tag attribute"
-        self.monitor.record_message_received_by_header(header, 0, -1)
+        self.monitor.record_message_received_by_header(
+            header, self.instr_x, self.instr_y)
 
         if header.message_type == MessageType.READ_MEM_WORD_REQ:
             assert isinstance(header, ReadMemWordHeader)
@@ -651,8 +650,8 @@ class Oamlet:
             scalar_addr = packet[1]
             src_word = packet[2]
             assert isinstance(scalar_addr, int), f"Expected int, got {type(scalar_addr)}: {scalar_addr}"
-            assert isinstance(src_word, (bytes, bytearray)), \
-                f"Expected bytes/bytearray, got {type(src_word)}: {src_word}"
+            assert isinstance(src_word, int), \
+                f"Expected int, got {type(src_word)}: {src_word}"
             await unordered.handle_write_mem_word_req(self, header, scalar_addr, src_word)
         else:
             raise NotImplementedError(f"Unexpected channel 1+ message: {header.message_type}")
@@ -818,20 +817,20 @@ class Oamlet:
         is_broadcast = k_index is None
         if is_broadcast:
             send_type = SendType.BROADCAST
-            x = self.params.k_cols * self.params.j_cols - 1
-            y = self.params.k_rows * self.params.j_rows - 1
+            x = self.params.west_offset + self.params.k_cols * self.params.j_cols - 1
+            y = self.params.north_offset + self.params.k_rows * self.params.j_rows - 1
         else:
             send_type = SendType.SINGLE
-            k_x = k_index % self.params.k_cols
-            k_y = k_index // self.params.k_cols
-            x = self.min_x + k_x * self.params.j_cols
-            y = self.min_y + k_y * self.params.j_rows
+            kx = k_index % self.params.k_cols
+            ky = k_index // self.params.k_cols
+            x = self.min_x + kx * self.params.j_cols
+            y = self.min_y + ky * self.params.j_rows
         header = Header(
             target_x=x,
             target_y=y,
             source_x=self.instr_x,
             source_y=self.instr_y,
-            length=1+len(instructions),
+            length=len(instructions),
             message_type=MessageType.INSTRUCTIONS,
             send_type=send_type,
             )

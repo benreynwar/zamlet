@@ -99,7 +99,7 @@ async def send_req(jamlet: 'Jamlet', witem: WaitingLoadWordSrc) -> None:
     """SRC jamlet sends request with data to DST jamlet."""
     instr = witem.item
 
-    target_x, target_y = addresses.k_indices_to_j_coords(
+    target_x, target_y = addresses.k_indices_to_routing_coords(
         jamlet.params, instr.dst.k_index, instr.dst.j_in_k_index)
 
     witem.protocol_states[jamlet.j_in_k_index] = SendState.WAITING_FOR_RESPONSE
@@ -110,19 +110,20 @@ async def send_req(jamlet: 'Jamlet', witem: WaitingLoadWordSrc) -> None:
     j_saddr = instr.src.to_j_saddr(jamlet.cache_table)
     wb = jamlet.params.word_bytes
     sram_addr = (j_saddr.addr // wb) * wb
-    word = jamlet.sram[sram_addr : sram_addr + jamlet.params.word_bytes]
+    word = int.from_bytes(
+        jamlet.sram[sram_addr : sram_addr + jamlet.params.word_bytes], 'little')
 
     logger.debug(
         f'{jamlet.clock.cycle}: LOAD_WORD: jamlet ({jamlet.x}, {jamlet.y}): '
         f'send_load_word_req to ({target_x}, {target_y}) ident={instr.instr_ident} '
-        f'sram_addr={sram_addr} k_maddr.bit_addr={instr.src.bit_addr} word={word.hex()}')
+        f'sram_addr={sram_addr} k_maddr.bit_addr={instr.src.bit_addr} word=0x{word:x}')
 
     header = TaggedHeader(
         target_x=target_x, target_y=target_y,
         source_x=jamlet.x, source_y=jamlet.y,
         message_type=MessageType.LOAD_WORD_REQ,
         send_type=SendType.SINGLE,
-        length=2,
+        length=1,
         ident=instr.instr_ident, tag=0)
 
     # Get witem span as parent for the message
@@ -157,12 +158,10 @@ async def handle_req(jamlet: 'Jamlet', packet: List[Any]) -> None:
     assert isinstance(witem, WaitingLoadWordDst)
     assert witem.protocol_states[jamlet.j_in_k_index] == ReceiveState.WAITING_FOR_REQUEST
     instr = witem.item
-    word_as_int = int.from_bytes(word, byteorder='little')
 
-    old_word = jamlet.rf_slice[
+    old_word = int.from_bytes(jamlet.rf_slice[
         instr.dst.reg * jamlet.params.word_bytes :
-        (instr.dst.reg + 1) * jamlet.params.word_bytes]
-    old_word_as_int = int.from_bytes(old_word, byteorder='little')
+        (instr.dst.reg + 1) * jamlet.params.word_bytes], 'little')
 
     src_word_offset = instr.src.addr % jamlet.params.word_bytes
     dst_word_offset = instr.dst.offset_in_word
@@ -180,19 +179,19 @@ async def handle_req(jamlet: 'Jamlet', packet: List[Any]) -> None:
             dst_expanded_mask |= (0xFF << (byte_idx * 8))
 
     if shift_bits < 0:
-        shifted_word = word_as_int << (-shift_bits)
+        shifted_word = word << (-shift_bits)
     else:
-        shifted_word = word_as_int >> shift_bits
+        shifted_word = word >> shift_bits
 
     masked_new = shifted_word & dst_expanded_mask
-    masked_old = old_word_as_int & (~dst_expanded_mask)
+    masked_old = old_word & (~dst_expanded_mask)
     result = masked_old | masked_new
 
     logger.debug(
         f'{jamlet.clock.cycle}: LOAD_WORD: jamlet ({jamlet.x}, {jamlet.y}): '
-        f'word=0x{word_as_int:016x}, dst_mask=0x{dst_expanded_mask:016x}, '
+        f'word=0x{word:016x}, dst_mask=0x{dst_expanded_mask:016x}, '
         f'shift_bits={shift_bits}, shifted=0x{shifted_word:016x}, '
-        f'dst_mask=0x{dst_expanded_mask:016x}, old=0x{old_word_as_int:016x}, '
+        f'dst_mask=0x{dst_expanded_mask:016x}, old=0x{old_word:016x}, '
         f'masked_new=0x{masked_new:016x}')
 
     result_bytes = result.to_bytes(jamlet.params.word_bytes, byteorder='little')
@@ -216,12 +215,12 @@ async def send_resp(jamlet: 'Jamlet', rcvd_header: TaggedHeader) -> None:
         source_x=jamlet.x, source_y=jamlet.y,
         message_type=MessageType.LOAD_WORD_RESP,
         send_type=SendType.SINGLE,
-        length=1,
+        length=0,
         ident=rcvd_header.ident, tag=0)
 
     # Get SRC witem span as parent (RESP is response to SRC's REQ)
-    src_kamlet_min_x = (rcvd_header.source_x // jamlet.params.j_cols) * jamlet.params.j_cols
-    src_kamlet_min_y = (rcvd_header.source_y // jamlet.params.j_rows) * jamlet.params.j_rows
+    src_kamlet_min_x, src_kamlet_min_y = jamlet.params.kamlet_monitor_coords(
+        rcvd_header.source_x, rcvd_header.source_y)
     witem_span_id = jamlet.monitor.get_witem_span_id(
         rcvd_header.ident, src_kamlet_min_x, src_kamlet_min_y)
 
@@ -235,12 +234,12 @@ async def send_drop(jamlet: 'Jamlet', rcvd_header: TaggedHeader) -> None:
         source_x=jamlet.x, source_y=jamlet.y,
         message_type=MessageType.LOAD_WORD_DROP,
         send_type=SendType.SINGLE,
-        length=1,
+        length=0,
         ident=rcvd_header.ident, tag=0)
 
     # Get SRC witem span as parent (SRC sent the REQ, so DROP is a response to it)
-    src_kamlet_min_x = (rcvd_header.source_x // jamlet.params.j_cols) * jamlet.params.j_cols
-    src_kamlet_min_y = (rcvd_header.source_y // jamlet.params.j_rows) * jamlet.params.j_rows
+    src_kamlet_min_x, src_kamlet_min_y = jamlet.params.kamlet_monitor_coords(
+        rcvd_header.source_x, rcvd_header.source_y)
     witem_span_id = jamlet.monitor.get_witem_span_id(
         rcvd_header.ident, src_kamlet_min_x, src_kamlet_min_y)
 

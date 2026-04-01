@@ -132,7 +132,7 @@ class WaitingLoadGatherBase(WaitingItem, ABC):
             if all(s != SendState.INITIAL for s in self.transaction_states):
                 self.fault_sync_state = SyncState.IN_PROGRESS
                 kamlet.monitor.create_sync_local_span(
-                    fault_sync_ident, kamlet.synchronizer.x, kamlet.synchronizer.y,
+                    fault_sync_ident, kamlet.synchronizer.kx, kamlet.synchronizer.ky,
                     kinstr_span_id)
                 kamlet.synchronizer.local_event(fault_sync_ident, value=self.min_fault_element)
         elif self.fault_sync_state == SyncState.IN_PROGRESS:
@@ -145,7 +145,7 @@ class WaitingLoadGatherBase(WaitingItem, ABC):
             if all(s == SendState.COMPLETE for s in self.transaction_states):
                 self.completion_sync_state = SyncState.IN_PROGRESS
                 kamlet.monitor.create_sync_local_span(
-                    completion_sync_ident, kamlet.synchronizer.x, kamlet.synchronizer.y,
+                    completion_sync_ident, kamlet.synchronizer.kx, kamlet.synchronizer.ky,
                     kinstr_span_id)
                 kamlet.synchronizer.local_event(completion_sync_ident)
         elif self.completion_sync_state == SyncState.IN_PROGRESS:
@@ -193,7 +193,7 @@ class WaitingLoadGatherBase(WaitingItem, ABC):
             witem_span_id,
             f'rf_write jamlet_x={jamlet.x}, jamlet_y={jamlet.y}, element={dst_e}, '
             f'reg={dst_reg}, src_byte={src_byte_in_word}, dst_byte={dst_byte_in_word}, '
-            f'n_bytes={request.n_bytes}, payload={data.hex()}, old={old_word.hex()}, '
+            f'n_bytes={request.n_bytes}, payload=0x{data:x}, old={old_word.hex()}, '
             f'new={new_word.hex()}')
         jamlet.monitor.complete_transaction(
             ident=header.ident,
@@ -233,7 +233,7 @@ class WaitingLoadGatherBase(WaitingItem, ABC):
         """
         instr = self.item
         dst_vw = addresses.j_coords_to_vw_index(
-            jamlet.params, word_order=instr.dst_ordering.word_order, j_x=jamlet.x, j_y=jamlet.y)
+            jamlet.params, word_order=instr.dst_ordering.word_order, jx=jamlet.jx, jy=jamlet.jy)
         dst_ew = instr.dst_ordering.ew
         dst_wb = tag * 8
         assert (dst_ew % 8) == 0
@@ -330,11 +330,11 @@ class WaitingLoadGatherBase(WaitingItem, ABC):
             k_maddr = request.g_addr.to_k_maddr(jamlet.tlb)
             word_offset = k_maddr.addr % jamlet.params.word_bytes
             addr = k_maddr.bit_offset(-word_offset * 8)
-            target_x, target_y = addresses.k_indices_to_j_coords(
+            target_x, target_y = addresses.k_indices_to_routing_coords(
                 jamlet.params, k_maddr.k_index, k_maddr.j_in_k_index)
         else:
             addr = request.g_addr.to_scalar_addr(jamlet.tlb)
-            target_x, target_y = 0, -1
+            target_x, target_y = jamlet.lamlet_x, jamlet.lamlet_y
 
         header = ReadMemWordHeader(
             target_x=target_x,
@@ -343,7 +343,7 @@ class WaitingLoadGatherBase(WaitingItem, ABC):
             source_y=jamlet.y,
             message_type=MessageType.READ_MEM_WORD_REQ,
             send_type=SendType.SINGLE,
-            length=2,
+            length=1,
             ident=ident,
             tag=tag,
             element_index=dst_e,

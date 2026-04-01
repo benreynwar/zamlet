@@ -3,6 +3,8 @@ import logging
 import os
 import pdb
 import traceback
+import signal
+import threading
 
 logger = logging.getLogger(__name__)
 
@@ -56,16 +58,23 @@ class Event:
         assert not self.clock.running_tasks & self.tasks_waiting_on_me
         self.clock.n_waiting -= self.n_waiting_on_me
         self.clock.running_tasks |= self.tasks_waiting_on_me
+        for task_id in self.tasks_waiting_on_me:
+            self.clock.active_tasks[task_id].blocked_on_event = None
         self.clock.check_counts_good()
+
+    def wait(self):
+        return self
 
     def __await__(self):
         self.clock.check_counts_good()
         if not self.event.is_set():
             current_task = asyncio.current_task()
-            self.tasks_waiting_on_me.add(id(current_task))
-            if id(current_task) not in self.clock.running_tasks:
-                logger.error(f'current_task is {current_task}')
-            self.clock.running_tasks.remove(id(current_task))
+            task_id = id(current_task)
+            self.tasks_waiting_on_me.add(task_id)
+            assert task_id in self.clock.running_tasks, (
+                f"Task {current_task} is awaiting an Event but is not in running_tasks")
+            self.clock.running_tasks.remove(task_id)
+            self.clock.active_tasks[task_id].blocked_on_event = self
             self.clock.n_waiting += 1
             self.n_waiting_on_me += 1
             self.clock.check_counts_good()
@@ -80,6 +89,7 @@ class Task:
         self.clock.check_counts_good()
         self.tasks_waiting_on_me = set()
         self.n_waiting_on_me = 0
+        self.blocked_on_event = None
         self.task = task
         task.add_done_callback(self._task_done)
         self.clock.n_tasks += 1
@@ -91,6 +101,9 @@ class Task:
         self.clock.check_counts_good()
         self.task.cancel()
         self.clock.check_counts_good()
+
+    def done(self):
+        return self.task.done()
 
     def result(self):
         return self.task.result()
@@ -105,8 +118,14 @@ class Task:
         self.clock.n_waiting -= self.n_waiting_on_me
         self.clock.running_tasks |= self.tasks_waiting_on_me
         if self.clock.running:
-            # It might not be in running tasks if we cancelled it because we finished.
-            self.clock.running_tasks.remove(self.id)
+            if self.blocked_on_event is not None:
+                event = self.blocked_on_event
+                event.tasks_waiting_on_me.discard(self.id)
+                event.n_waiting_on_me -= 1
+                self.clock.n_waiting -= 1
+                self.blocked_on_event = None
+            else:
+                self.clock.running_tasks.remove(self.id)
         del self.clock.active_tasks[self.id]
         try:
             exception = self.task.exception()
@@ -158,6 +177,16 @@ class Clock:
         '''
         We create a task for the main task that we start the simulation with.
         '''
+        if threading.current_thread() is threading.main_thread():
+            prev_handler = signal.getsignal(signal.SIGINT)
+            def signal_handler(signum, frame):
+                # Stop the clock cleanly on Ctrl+C so async tasks don't hang.
+                self.stop()
+                if callable(prev_handler):
+                    prev_handler(signum, frame)
+                else:
+                    raise KeyboardInterrupt()
+            signal.signal(signal.SIGINT, signal_handler)
         Task(self, asyncio.current_task())
 
     def create_task(self, coro):

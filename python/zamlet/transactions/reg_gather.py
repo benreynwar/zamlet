@@ -115,7 +115,7 @@ class WaitingRegGather(WaitingItem):
         instr = self.item
         ew = instr.data_ew
         dst_vw = addresses.j_coords_to_vw_index(
-            jamlet.params, word_order=instr.word_order, j_x=jamlet.x, j_y=jamlet.y)
+            jamlet.params, word_order=instr.word_order, jx=jamlet.jx, jy=jamlet.jy)
         dst_wb = tag * 8
         assert (ew % 8) == 0
         dst_eb = dst_wb % ew
@@ -174,7 +174,8 @@ class WaitingRegGather(WaitingItem):
 
         src_k, src_j_in_k = addresses.vw_index_to_k_indices(
             jamlet.params, instr.word_order, src_vw)
-        src_x, src_y = addresses.k_indices_to_j_coords(jamlet.params, src_k, src_j_in_k)
+        src_x, src_y = addresses.k_indices_to_routing_coords(
+            jamlet.params, src_k, src_j_in_k)
 
         src_reg = instr.vs2 + src_v
         src_byte_offset = src_we * eb
@@ -255,7 +256,7 @@ class WaitingRegGather(WaitingItem):
                     source_y=jamlet.y,
                     message_type=MessageType.READ_REG_ELEMENT_REQ,
                     send_type=SendType.SINGLE,
-                    length=1,
+                    length=0,
                     ident=instr.instr_ident,
                     tag=tag,
                     src_reg=src_reg,
@@ -290,7 +291,7 @@ class WaitingRegGather(WaitingItem):
             if all(s == SendState.COMPLETE for s in self.transaction_states):
                 self.completion_sync_state = SyncState.IN_PROGRESS
                 kamlet.monitor.create_sync_local_span(
-                    completion_sync_ident, kamlet.synchronizer.x, kamlet.synchronizer.y,
+                    completion_sync_ident, kamlet.synchronizer.kx, kamlet.synchronizer.ky,
                     kinstr_span_id)
                 kamlet.synchronizer.local_event(completion_sync_ident)
         elif self.completion_sync_state == SyncState.IN_PROGRESS:
@@ -316,7 +317,7 @@ class WaitingRegGather(WaitingItem):
         dst_offset = dst_reg * wb + tag
 
         # Write received data to destination (extract only the needed bytes)
-        jamlet.rf_slice[dst_offset:dst_offset + data_eb] = data[:data_eb]
+        jamlet.rf_slice[dst_offset:dst_offset + data_eb] = data.to_bytes(wb, 'little')[:data_eb]
 
         self.transaction_states[state_idx] = SendState.COMPLETE
 

@@ -144,7 +144,7 @@ async def handle_load_indexed_element(kamlet: 'Kamlet',
             source_y=jamlet.y,
             message_type=MessageType.LOAD_INDEXED_ELEMENT_RESP,
             send_type=SendType.SINGLE,
-            length=1,
+            length=0,
             ident=instr.instr_ident,
             element_index=element_index,
             masked=True,
@@ -175,7 +175,7 @@ async def handle_load_indexed_element(kamlet: 'Kamlet',
                 source_y=jamlet.y,
                 message_type=MessageType.LOAD_INDEXED_ELEMENT_RESP,
                 send_type=SendType.SINGLE,
-                length=1,
+                length=0,
                 ident=instr.instr_ident,
                 element_index=element_index,
                 fault=True,
@@ -399,11 +399,11 @@ class WaitingLoadIndexedElement(WaitingItem):
             k_maddr = request.g_addr.to_k_maddr(jamlet.tlb)
             word_offset = k_maddr.addr % wb
             addr = k_maddr.bit_offset(-word_offset * 8)
-            target_x, target_y = addresses.k_indices_to_j_coords(
+            target_x, target_y = addresses.k_indices_to_routing_coords(
                 jamlet.params, k_maddr.k_index, k_maddr.j_in_k_index)
         else:
             addr = request.g_addr.to_scalar_addr(jamlet.tlb)
-            target_x, target_y = 0, -1
+            target_x, target_y = jamlet.lamlet_x, jamlet.lamlet_y
 
         header = ReadMemWordHeader(
             target_x=target_x,
@@ -412,7 +412,7 @@ class WaitingLoadIndexedElement(WaitingItem):
             source_y=jamlet.y,
             message_type=MessageType.READ_MEM_WORD_REQ,
             send_type=SendType.SINGLE,
-            length=2,
+            length=1,
             ident=msg_ident,
             tag=tag,
             element_index=instr.element_index,
@@ -455,7 +455,7 @@ class WaitingLoadIndexedElement(WaitingItem):
             source_y=jamlet.y,
             message_type=MessageType.LOAD_INDEXED_ELEMENT_RESP,
             send_type=SendType.SINGLE,
-            length=1,
+            length=0,
             ident=instr.instr_ident,
             element_index=instr.element_index,
         )

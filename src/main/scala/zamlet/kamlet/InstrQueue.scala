@@ -3,14 +3,18 @@ package zamlet.kamlet
 import chisel3._
 import chisel3.util._
 import zamlet.ZamletParams
-import zamlet.jamlet.{NetworkWord, PacketHeader, MessageType}
+import zamlet.network.{NetworkWord, PacketHeader, MessageType}
 
 /**
  * InstrQueue error signals.
  */
 class InstrQueueErrors extends Bundle {
-  val unexpectedHeader = Bool()    // Got header when expecting data
-  val unexpectedData = Bool()      // Got data when expecting header
+  val unexpectedHeader = Bool()
+  val unexpectedData = Bool()
+}
+
+class KamletErrors extends Bundle {
+  val instrQueue = new InstrQueueErrors
 }
 
 /**
@@ -51,6 +55,9 @@ class InstrQueue(params: ZamletParams, depth: Int = 8) extends Module {
   io.errors.unexpectedHeader := false.B
   io.errors.unexpectedData := false.B
 
+  val header = Wire(new PacketHeader(params))
+  header := io.packetIn.bits.data.asTypeOf(new PacketHeader(params))
+
   switch (state) {
     is (sIdle) {
       // Wait for header
@@ -58,9 +65,6 @@ class InstrQueue(params: ZamletParams, depth: Int = 8) extends Module {
 
       when (io.packetIn.fire) {
         when (io.packetIn.bits.isHeader) {
-          // Extract header to get length
-          val header = io.packetIn.bits.data.asTypeOf(new PacketHeader(params))
-
           // Only process Instructions packets
           when (header.messageType === MessageType.Instructions && header.length > 0.U) {
             remainingWords := header.length

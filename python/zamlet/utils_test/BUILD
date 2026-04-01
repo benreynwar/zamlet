@@ -43,7 +43,43 @@ py_library(
     py_deps = [":test_dropping_fifo_py"],
 ) for name, config in DROPPING_FIFO_CONFIGS]
 
+genrule(
+    name = "double_buffer_verilog",
+    outs = ["DoubleBuffer.sv"],
+    cmd = """
+    TMPDIR=$$(mktemp -d)
+    $(location //src/main/scala/zamlet/utils:double_buffer) $$TMPDIR 64
+    cat $$TMPDIR/*.sv > $@
+    rm -rf $$TMPDIR
+    """,
+    tools = ["//src/main/scala/zamlet/utils:double_buffer"],
+)
+
+cocotb_binary(
+    name = "double_buffer_exe",
+    verilog_files = [":double_buffer_verilog"],
+    module_top = "DoubleBuffer",
+)
+
+py_library(
+    name = "test_double_buffer_py",
+    srcs = ["test_double_buffer.py"],
+    deps = ["//python/zamlet:zamlet"],
+)
+
+cocotb_test(
+    name = "test_double_buffer",
+    binary = ":double_buffer_exe",
+    test_module = "zamlet.utils_test.test_double_buffer",
+    toplevel = "DoubleBuffer",
+    py_deps = [":test_double_buffer_py"],
+)
+
 test_suite(
     name = "all_tests",
-    tests = [":test_dropping_fifo_{}".format(name) for name, _ in DROPPING_FIFO_CONFIGS],
+    tests = [
+        ":test_dropping_fifo_{}".format(name) for name, _ in DROPPING_FIFO_CONFIGS
+    ] + [
+        ":test_double_buffer",
+    ],
 )

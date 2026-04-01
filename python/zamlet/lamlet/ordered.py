@@ -70,7 +70,7 @@ class WaitingOrderedIndexedLoad(WaitingItem):
         if self.sync_state == SyncState.NOT_STARTED:
             self.sync_state = SyncState.IN_PROGRESS
             kamlet.monitor.create_sync_local_span(
-                sync_ident, kamlet.synchronizer.x, kamlet.synchronizer.y, kinstr_span_id)
+                sync_ident, kamlet.synchronizer.kx, kamlet.synchronizer.ky, kinstr_span_id)
             kamlet.synchronizer.local_event(sync_ident)
         elif self.sync_state == SyncState.IN_PROGRESS:
             if kamlet.synchronizer.is_complete(sync_ident):
@@ -149,7 +149,7 @@ def handle_store_indexed_element_resp(lamlet: 'Oamlet', header: ElementIndexHead
         entry = buf.get_entry(witem.element_index)
         entry.state = ElementState.READY
         entry.addr = g_addr
-        entry.data = data
+        entry.data = data.to_bytes(buf.data_ew // 8, 'little')
 
 
 def handle_ordered_write_mem_word_resp(lamlet: 'Oamlet', header: TaggedHeader):
@@ -224,7 +224,8 @@ def handle_read_mem_word_req_ordered(lamlet: 'Oamlet', header: 'ReadMemWordHeade
     entry.addr = scalar_addr
     entry.tag = header.tag
     transaction_span_id = lamlet.monitor.get_transaction_span_id(
-        header.ident, header.tag, header.source_x, header.source_y, 0, -1)
+        header.ident, header.tag, header.source_x, header.source_y,
+        lamlet.instr_x, lamlet.instr_y)
     if transaction_span_id is not None:
         lamlet.monitor.add_event(
             transaction_span_id,
@@ -269,7 +270,7 @@ async def _process_ordered_load(lamlet: 'Oamlet', buf: OrderedBuffer, entry: 'El
 
     wb = lamlet.params.word_bytes
     element_index = buf.next_to_process
-    target_x, target_y = _element_index_to_jamlet(lamlet, element_index)
+    target_x, target_y = _element_index_to_jamlet_routing(lamlet, element_index)
 
     tag = entry.tag
     assert tag is not None
@@ -282,7 +283,7 @@ async def _process_ordered_load(lamlet: 'Oamlet', buf: OrderedBuffer, entry: 'El
         data = None
     else:
         word_addr = entry.addr - (entry.addr % wb)
-        data = lamlet.scalar.get_memory(word_addr, wb)
+        data = int.from_bytes(lamlet.scalar.get_memory(word_addr, wb), 'little')
 
     resp_header = ReadMemWordHeader(
         target_x=target_x,
@@ -291,7 +292,7 @@ async def _process_ordered_load(lamlet: 'Oamlet', buf: OrderedBuffer, entry: 'El
         source_y=lamlet.instr_y,
         message_type=MessageType.READ_MEM_WORD_RESP,
         send_type=SendType.SINGLE,
-        length=1 if skip_read else 2,
+        length=0 if skip_read else 1,
         tag=tag,
         ident=msg_ident,
         fault=skip_read,
@@ -309,7 +310,7 @@ async def _process_ordered_load(lamlet: 'Oamlet', buf: OrderedBuffer, entry: 'El
             lamlet.monitor.add_event(
                 transaction_span_id,
                 f'ordered_scalar_read element={element_index} '
-                f'addr=0x{entry.addr:x} data={data.hex()}')
+                f'addr=0x{entry.addr:x} data=0x{data:x}')
     await lamlet.send_packet(packet, jamlet, Direction.N, port=0,
                              parent_span_id=transaction_span_id)
     # Mark in-flight and advance to next element
@@ -367,12 +368,12 @@ async def _process_ordered_store(lamlet: 'Oamlet', buf: OrderedBuffer,
         lamlet.monitor.complete_kinstr(entry.instr_ident)
 
 
-def _element_index_to_jamlet(lamlet: 'Oamlet', element_index: int) -> tuple[int, int]:
-    """Compute target jamlet coordinates from element index."""
+def _element_index_to_jamlet_routing(lamlet: 'Oamlet', element_index: int) -> tuple[int, int]:
+    """Compute target jamlet routing coordinates from element index."""
     vw_index = element_index % lamlet.params.j_in_l
     k_index, j_in_k_index = addresses.vw_index_to_k_indices(
         lamlet.params, lamlet.word_order, vw_index)
-    return addresses.k_indices_to_j_coords(lamlet.params, k_index, j_in_k_index)
+    return addresses.k_indices_to_routing_coords(lamlet.params, k_index, j_in_k_index)
 
 
 async def _send_ordered_vpu_write(lamlet: 'Oamlet', instr_ident: int, data: bytes,
@@ -382,7 +383,7 @@ async def _send_ordered_vpu_write(lamlet: 'Oamlet', instr_ident: int, data: byte
     wb = lamlet.params.word_bytes
 
     k_maddr = dst_g_addr.to_k_maddr(lamlet.tlb)
-    target_x, target_y = addresses.k_indices_to_j_coords(
+    target_x, target_y = addresses.k_indices_to_routing_coords(
         lamlet.params, k_maddr.k_index, k_maddr.j_in_k_index)
     dst_byte_in_word = k_maddr.addr % wb
 
@@ -395,7 +396,7 @@ async def _send_ordered_vpu_write(lamlet: 'Oamlet', instr_ident: int, data: byte
         source_y=lamlet.instr_y,
         message_type=MessageType.WRITE_MEM_WORD_REQ,
         send_type=SendType.SINGLE,
-        length=3,
+        length=2,
         ident=msg_ident,
         tag=tag,
         dst_byte_in_word=dst_byte_in_word,
@@ -408,7 +409,7 @@ async def _send_ordered_vpu_write(lamlet: 'Oamlet', instr_ident: int, data: byte
     # (do_write_and_respond expects src_word to be word_bytes long)
     word_data = bytearray(wb)
     word_data[tag:tag + n_bytes] = data[tag:tag + n_bytes]
-    packet = [header, k_maddr_aligned, bytes(word_data)]
+    packet = [header, k_maddr_aligned, int.from_bytes(word_data, 'little')]
 
     kinstr_span_id = lamlet.monitor.get_kinstr_span_id(instr_ident)
     assert kinstr_span_id is not None

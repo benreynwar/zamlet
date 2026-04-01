@@ -4,7 +4,7 @@ import chisel3._
 import chisel3.util._
 import zamlet.ZamletParams
 import zamlet.kamlet.{Synchronizer, SyncNeighbors, SyncPort, SyncDirection}
-import zamlet.jamlet.NetworkWord
+import zamlet.network.NetworkWord
 
 /**
  * Lamlet top module - wires together IssueUnit, IdentTracker, DispatchQueue, and Synchronizer.

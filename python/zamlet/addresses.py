@@ -21,7 +21,7 @@ to the vector word index (vw_index). This controls which jamlet holds which word
 of a vector line.
 
 WordOrder.STANDARD:
-    vw_index = j_y * (j_cols * k_cols) + j_x
+    vw_index = jy * (j_cols * k_cols) + jx
 
     For a 2x1 grid of kamlets (k_cols=2, k_rows=1) with 1x1 jamlets each:
         jamlet (0, 0) → vw_index 0
@@ -98,9 +98,9 @@ class MemoryType(Enum):
 def vw_index_to_j_coords(params: ZamletParams, word_order: WordOrder,
                           vw_index: int):
     if word_order == WordOrder.STANDARD:
-        j_x = vw_index % (params.j_cols * params.k_cols)
-        j_y = vw_index // (params.j_cols * params.k_cols)
-        return j_x, j_y
+        jx = vw_index % (params.j_cols * params.k_cols)
+        jy = vw_index // (params.j_cols * params.k_cols)
+        return jx, jy
     elif word_order == WordOrder.MOORE:
         total_cols = params.j_cols * params.k_cols
         total_rows = params.j_rows * params.k_rows
@@ -116,10 +116,17 @@ def vw_index_to_j_coords(params: ZamletParams, word_order: WordOrder,
         raise NotImplementedError(f"Word order {word_order}")
 
 
+def vw_index_to_routing_coords(params: ZamletParams, word_order: WordOrder,
+                               vw_index: int):
+    """Convert a vector word index to routing coordinates (x, y)."""
+    jx, jy = vw_index_to_j_coords(params, word_order, vw_index)
+    return jx + params.west_offset, jy + params.north_offset
+
+
 def j_coords_to_vw_index(params: ZamletParams, word_order: WordOrder,
-                          j_x: int, j_y: int):
+                          jx: int, jy: int):
     if word_order == WordOrder.STANDARD:
-        vw_index = j_y * (params.j_cols * params.k_cols) + j_x
+        vw_index = jy * (params.j_cols * params.k_cols) + jx
         return vw_index
     elif word_order == WordOrder.MOORE:
         total_cols = params.j_cols * params.k_cols
@@ -130,7 +137,7 @@ def j_coords_to_vw_index(params: ZamletParams, word_order: WordOrder,
         assert total_cols & (total_cols - 1) == 0, (
             f"MOORE requires power-of-2 grid, got {total_cols}"
         )
-        return moore_xy2d(total_cols, j_x, j_y)
+        return moore_xy2d(total_cols, jx, jy)
     else:
         raise NotImplementedError(f"Word order {word_order}")
 
@@ -139,30 +146,36 @@ def vw_index_to_k_indices(params: ZamletParams, word_order: WordOrder, vw_index:
     """
     Convert the word index in a vector line into a jamlet index.
     """
-    j_x, j_y = vw_index_to_j_coords(params, word_order, vw_index)
-    k_x = j_x // params.j_cols
-    k_y = j_y // params.j_rows
-    k_index = k_y * params.k_cols + k_x
-    j_in_k_x = j_x % params.j_cols
-    j_in_k_y = j_y % params.j_rows
+    jx, jy = vw_index_to_j_coords(params, word_order, vw_index)
+    kx = jx // params.j_cols
+    ky = jy // params.j_rows
+    k_index = ky * params.k_cols + kx
+    j_in_k_x = jx % params.j_cols
+    j_in_k_y = jy % params.j_rows
     j_in_k_index = j_in_k_y * params.j_cols + j_in_k_x
     return k_index, j_in_k_index
 
 
 def k_indices_to_j_coords(params: ZamletParams, k_index: int, j_in_k_index: int):
-    """Convert (k_index, j_in_k_index) to absolute jamlet coordinates (j_x, j_y)."""
-    k_x = k_index % params.k_cols
-    k_y = k_index // params.k_cols
+    """Convert (k_index, j_in_k_index) to absolute jamlet coordinates (jx, jy)."""
+    kx = k_index % params.k_cols
+    ky = k_index // params.k_cols
     j_in_k_x = j_in_k_index % params.j_cols
     j_in_k_y = j_in_k_index // params.j_cols
-    j_x = k_x * params.j_cols + j_in_k_x
-    j_y = k_y * params.j_rows + j_in_k_y
-    return j_x, j_y
+    jx = kx * params.j_cols + j_in_k_x
+    jy = ky * params.j_rows + j_in_k_y
+    return jx, jy
+
+
+def k_indices_to_routing_coords(params: ZamletParams, k_index: int, j_in_k_index: int):
+    """Convert (k_index, j_in_k_index) to routing coordinates (x, y)."""
+    jx, jy = k_indices_to_j_coords(params, k_index, j_in_k_index)
+    return jx + params.west_offset, jy + params.north_offset
 
 
 def k_indices_to_vw_index(params: ZamletParams, word_order, k_index: int, j_in_k_index: int):
-    j_x, j_y = k_indices_to_j_coords(params, k_index, j_in_k_index)
-    vw_index = j_coords_to_vw_index(params, word_order, j_x, j_y)
+    jx, jy = k_indices_to_j_coords(params, k_index, j_in_k_index)
+    vw_index = j_coords_to_vw_index(params, word_order, jx, jy)
     return vw_index
 
 
@@ -260,6 +273,29 @@ class TLB:
         assert size % self.params.page_bytes == 0
         for index in range(size//self.params.page_bytes):
             logical_page_address = address.addr + index * self.params.page_bytes
+            if logical_page_address in self.pages:
+                existing = self.pages[logical_page_address]
+                assert existing.local_address.memory_type == memory_type, (
+                    f'Page 0x{logical_page_address:x} already allocated with '
+                    f'type={existing.local_address.memory_type}, '
+                    f'cannot reallocate as type={memory_type}'
+                )
+                assert existing.local_address.ordering == ordering, (
+                    f'Page 0x{logical_page_address:x} already allocated with '
+                    f'ordering={existing.local_address.ordering}, '
+                    f'cannot reallocate with ordering={ordering}'
+                )
+                assert existing.readable == readable, (
+                    f'Page 0x{logical_page_address:x} already allocated with '
+                    f'readable={existing.readable}, '
+                    f'cannot reallocate with readable={readable}'
+                )
+                assert existing.writable == writable, (
+                    f'Page 0x{logical_page_address:x} already allocated with '
+                    f'writable={existing.writable}, '
+                    f'cannot reallocate with writable={writable}'
+                )
+                continue
             global_address = GlobalAddress(bit_addr=logical_page_address*8, params=self.params)
             physical_page_address = self.get_lowest_free_page(memory_type)
             local_address = LocalAddress(
@@ -267,7 +303,6 @@ class TLB:
                 ordering=ordering,
                 bit_addr=physical_page_address*8,
                 )
-            assert logical_page_address not in self.pages
             n_cache_lines = self.params.page_bytes//self.params.cache_line_bytes//self.params.k_in_l
             info = PageInfo(
                 global_address=global_address,

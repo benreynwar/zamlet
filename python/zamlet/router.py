@@ -9,6 +9,28 @@ from zamlet.utils import Queue
 
 logger = logging.getLogger(__name__)
 
+OPPOSITE = {
+    Direction.N: Direction.S, Direction.S: Direction.N,
+    Direction.E: Direction.W, Direction.W: Direction.E,
+}
+
+
+def xy_direction(src_x: int, src_y: int, dst_x: int, dst_y: int) -> Direction:
+    """Return the direction out of src toward dst using XY routing.
+
+    X first, then Y. src and dst must be different.
+    """
+    if dst_x > src_x:
+        return Direction.E
+    elif dst_x < src_x:
+        return Direction.W
+    elif dst_y > src_y:
+        return Direction.S
+    elif dst_y < src_y:
+        return Direction.N
+    else:
+        raise ValueError(f"src ({src_x},{src_y}) == dst ({dst_x},{dst_y})")
+
 
 @dataclass
 class Connection:
@@ -122,7 +144,7 @@ class Router:
                             # We'll use this the first time we send something in this direction on this connection.
                             assert output_direction not in self._output_headers
                             self._output_headers[output_direction] = new_header
-                        self._input_connections[input_direction] = Connection(header.length, set(output_dirs), set(output_dirs), 0, header.copy())
+                        self._input_connections[input_direction] = Connection(header.length + 1, set(output_dirs), set(output_dirs), 0, header.copy())
                         # We made a connection, put this at lowest priority
                         new_priority.remove(input_direction)
                         new_priority.append(input_direction)
@@ -134,7 +156,7 @@ class Router:
                     # We have some data and we've already made a connection.
                     # Just make sure that we have headers when we expect them.
                     conn = self._input_connections[input_direction]
-                    if conn.remaining == conn.header.length:
+                    if conn.remaining == conn.header.length + 1:
                         assert isinstance(buffer.head(), Header)
                     else:
                         assert not isinstance(buffer.head(), Header)

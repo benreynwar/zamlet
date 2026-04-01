@@ -31,10 +31,11 @@ async def handle_read_reg_element_req(jamlet: 'Jamlet', packet: List[Any]) -> No
 
     wb = jamlet.params.word_bytes
 
-    # Read the requested bytes from local rf_slice, pad to word width
+    # Read the requested bytes from local rf_slice as an int
     offset = header.src_reg * wb + header.src_byte_offset
-    data = bytes(jamlet.rf_slice[offset:offset + header.n_bytes])
-    data = data + bytes(wb - len(data))
+    raw = bytes(jamlet.rf_slice[offset:offset + header.n_bytes])
+    raw = raw + bytes(wb - len(raw))
+    data = int.from_bytes(raw, 'little')
 
     # Send response back
     resp_header = RegElementHeader(
@@ -44,7 +45,7 @@ async def handle_read_reg_element_req(jamlet: 'Jamlet', packet: List[Any]) -> No
         source_y=jamlet.y,
         message_type=MessageType.READ_REG_ELEMENT_RESP,
         send_type=SendType.SINGLE,
-        length=2,
+        length=1,
         tag=header.tag,
         ident=header.ident,
         src_reg=header.src_reg,
@@ -63,7 +64,7 @@ async def handle_read_reg_element_req(jamlet: 'Jamlet', packet: List[Any]) -> No
     logger.debug(f'{jamlet.clock.cycle}: jamlet ({jamlet.x},{jamlet.y}): '
                  f'READ_REG_ELEMENT_REQ reg={header.src_reg} offset={header.src_byte_offset} '
                  f'n_bytes={header.n_bytes} -> ({header.source_x},{header.source_y}) '
-                 f'data={data.hex()}')
+                 f'data=0x{data:x}')
 
 
 @register_handler(MessageType.READ_REG_ELEMENT_RESP)
@@ -91,7 +92,7 @@ async def _send_drop(jamlet: 'Jamlet', header: RegElementHeader) -> None:
         source_y=jamlet.y,
         message_type=MessageType.READ_REG_ELEMENT_DROP,
         send_type=SendType.SINGLE,
-        length=1,
+        length=0,
         tag=header.tag,
         ident=header.ident,
         src_reg=header.src_reg,

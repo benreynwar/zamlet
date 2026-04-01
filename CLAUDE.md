@@ -1,10 +1,18 @@
 # Claude Code Guidelines for FMVPU Project
 
+## Plans
+Plans may be stored in either `.claude/plans/` (project-local) or `~/.claude/plans/` (global).
+Check both locations when looking for a plan file.
+
 ## Development Environment (Nix)
 This project uses Nix for dependency management. Enter the development shell with:
 ```bash
 nix-shell
 ```
+
+**IMPORTANT**: Before running any commands (tests, bazel, python, etc.), verify you are inside
+the nix-shell by checking for the `IN_NIX_SHELL` environment variable (`echo $IN_NIX_SHELL`).
+If not in nix-shell, enter it first. The nix-shell working directory is the repo root.
 
 The nix shell provides:
 - EDA tools: OpenROAD, Yosys, Magic, Verilator, KLayout
@@ -17,6 +25,9 @@ development, uncomment the local path override in `shell.nix`.
 
 The librelane source code is available at `~/Code/librelane` for reference (not the version used
 by the project, but useful for understanding the code).
+
+The Chisel source code is available at `~/Code/chisel` (the `~/Code` directory itself is the
+chisel repo root). Useful for understanding Chisel internals when debugging elaboration issues.
 
 ## Comments
 NEVER add comments that explain what was changed or reference previous states of the code. Comments should explain what the code does or why it does it, not what it used to do or how it changed. Avoid diff-specific comments that only make sense in the context of changes being made.
@@ -90,6 +101,10 @@ When using the Grep tool for searching code:
 - **Issue**: Patterns like `"predicate.*new PTaggedSource"` (with quotes inside) will search for literal quote characters
 - **Solution**: Use clean patterns like `predicate.*new PTaggedSource` (without extra quotes)
 - Simple patterns like `isLocal` work better than complex multi-part regex patterns
+
+## Task Ordering
+If you think a different order or approach would be better than what was asked, suggest it
+and discuss — don't just start doing something else without checking in first.
 
 ## Communication Style
 NEVER claim success with phrases like "The key achievement is" or similar when a task has failed. Be honest about failures and focus on what still needs to be done rather than trying to spin partial progress as success. This is irritating and unhelpful.

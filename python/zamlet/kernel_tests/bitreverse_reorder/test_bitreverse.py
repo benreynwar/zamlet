@@ -139,7 +139,7 @@ if __name__ == '__main__':
             print("Use --list-geometries to see available options")
             exit(1)
 
-        params = dataclasses.replace(GEOMETRIES[args.geometry], jamlet_sram_bytes=1 << 10)
+        params = GEOMETRIES[args.geometry]
         word_order = WordOrder.MOORE if args.moore else WordOrder.STANDARD
         binary_name = 'bitreverse-reorder64.riscv' if args.e64 else 'bitreverse-reorder.riscv'
         binary_path = build_if_needed(KERNEL_DIR, binary_name)
@@ -155,6 +155,9 @@ if __name__ == '__main__':
         span_trees_path = os.path.join(KERNEL_DIR, 'span_trees.txt')
         dump_span_trees(monitor, span_trees_path)
         print(f"Span trees written to {span_trees_path}")
+
+        # Skip the stat stuff for now.
+        exit(exit_code)
 
         ts = monitor.get_router_utilization_timeseries()
         if ts:

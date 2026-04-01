@@ -124,7 +124,7 @@ async def handle_store_indexed_element(kamlet: 'Kamlet',
             source_y=jamlet.y,
             message_type=MessageType.STORE_INDEXED_ELEMENT_RESP,
             send_type=SendType.SINGLE,
-            length=1,
+            length=0,
             ident=instr.instr_ident,
             element_index=element_index,
             masked=True,
@@ -156,7 +156,7 @@ async def handle_store_indexed_element(kamlet: 'Kamlet',
                 source_y=jamlet.y,
                 message_type=MessageType.STORE_INDEXED_ELEMENT_RESP,
                 send_type=SendType.SINGLE,
-                length=1,
+                length=0,
                 ident=instr.instr_ident,
                 element_index=element_index,
                 fault=True,
@@ -181,7 +181,7 @@ async def handle_store_indexed_element(kamlet: 'Kamlet',
             source_y=jamlet.y,
             message_type=MessageType.STORE_INDEXED_ELEMENT_RESP,
             send_type=SendType.SINGLE,
-            length=3,
+            length=2,
             ident=instr.instr_ident,
             element_index=element_index,
         )
@@ -200,6 +200,7 @@ def _get_index_value(jamlet: 'Jamlet', instr: StoreIndexedElement) -> int:
     return int.from_bytes(index_data, byteorder='little', signed=False)
 
 
-def _get_data_value(jamlet: 'Jamlet', instr: StoreIndexedElement) -> bytes:
-    """Read the data from the source register."""
-    return read_element(jamlet, instr.src_reg, instr.element_index, instr.data_ew)
+def _get_data_value(jamlet: 'Jamlet', instr: StoreIndexedElement) -> int:
+    """Read the data from the source register as an int for packet transmission."""
+    data = read_element(jamlet, instr.src_reg, instr.element_index, instr.data_ew)
+    return int.from_bytes(data, 'little')

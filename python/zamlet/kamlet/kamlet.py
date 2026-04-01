@@ -65,9 +65,9 @@ class Kamlet:
         self.tlb = tlb
 
         # One synchronizer per kamlet for tracking when operations complete across kamlets
-        k_x = self.min_x // params.j_cols
-        k_y = self.min_y // params.j_rows
-        self.synchronizer = Synchronizer(clock, params, k_x, k_y, self.cache_table, monitor)
+        kx = (self.min_x - params.west_offset) // params.j_cols
+        ky = (self.min_y - params.north_offset) // params.j_rows
+        self.synchronizer = Synchronizer(clock, params, kx, ky, self.cache_table, monitor)
 
         n_mem_routers = len(mem_coords)
         jamlets_per_router = self.n_jamlets // n_mem_routers
@@ -125,7 +125,9 @@ class Kamlet:
 
     @property
     def k_index(self):
-        return self.min_y // self.params.j_rows * self.params.k_cols + self.min_x // self.params.j_cols
+        kx = (self.min_x - self.params.west_offset) // self.params.j_cols
+        ky = (self.min_y - self.params.north_offset) // self.params.j_rows
+        return ky * self.params.k_cols + kx
 
     def get_regs(self, start_index: int, n_elements: int, base_reg: int, ew: int):
         '''
@@ -224,26 +226,44 @@ class Kamlet:
             for request in self.cache_table.cache_requests:
                 if request is None:
                     continue
-                if not all(request.sent):
-                    if request.request_type == CacheRequestType.READ_LINE:
-                        await self.read_cache_line(cache_slot=request.slot, address_in_memory=request.addr, ident=request.ident)
-                        self.cache_table.report_sent_request(request, 0)
-                    elif request.request_type == CacheRequestType.WRITE_LINE_READ_LINE:
-                        slot_state = self.cache_table.slot_states[request.slot]
-                        write_address = request.addr
-                        read_address = slot_state.memory_loc * self.params.cache_line_bytes
-                        tasks = []
-                        for j_in_k_index, jamlet in enumerate(self.jamlets):
-                            task = jamlet.write_read_cache_line(
+                if request.is_fully_sent():
+                    continue
+                if request.request_type == CacheRequestType.READ_LINE:
+                    if not request.addr_sent:
+                        await self.read_cache_line(
+                            cache_slot=request.slot,
+                            address_in_memory=request.addr,
+                            ident=request.ident)
+                        self.cache_table.report_addr_sent(request)
+                elif request.request_type in (
+                    CacheRequestType.WRITE_LINE,
+                    CacheRequestType.WRITE_LINE_READ_LINE,
+                ):
+                    slot_state = self.cache_table.slot_states[request.slot]
+                    write_address = request.addr
+                    if not request.addr_sent:
+                        if request.request_type == CacheRequestType.WRITE_LINE:
+                            await self.jamlets[0].send_write_line_addr(
+                                cache_slot=request.slot,
+                                write_address=write_address,
+                                ident=request.ident)
+                        else:
+                            read_address = (
+                                slot_state.memory_loc * self.params.cache_line_bytes)
+                            await self.jamlets[0].send_write_line_read_line_addr(
                                 cache_slot=request.slot,
                                 write_address=write_address,
                                 read_address=read_address,
                                 ident=request.ident)
-                            tasks.append(task)
-                        for task in tasks:
-                            await task
-                        for j_in_k_index in range(len(self.jamlets)):
-                            self.cache_table.report_sent_request(request, j_in_k_index)
+                        self.cache_table.report_addr_sent(request)
+                    else:
+                        for j_in_k_index, jamlet in enumerate(self.jamlets):
+                            if not request.data_sent[j_in_k_index]:
+                                await jamlet.send_write_line_data(
+                                    cache_slot=request.slot,
+                                    ident=request.ident)
+                                self.cache_table.report_data_sent(
+                                    request, j_in_k_index)
 
     async def _get_instructions_from_jamlets(self):
         while True:
@@ -296,14 +316,14 @@ class Kamlet:
         send_jamlet = self.jamlets[self.params.send_read_line_j_index]
 
         header = AddressHeader(
-            message_type=MessageType.READ_LINE, #4
+            message_type=MessageType.READ_LINE_ADDR, #4
             send_type=SendType.SINGLE,          #1
             target_x=self.mem_x,                #8
             target_y=self.mem_y,                #8
             source_x=send_jamlet.x,             #8
             source_y=send_jamlet.y,             #8
             address=address_in_sram,            #12
-            length=2,                           #5
+            length=1,                           #5
             ident=ident,               #5 bits
             )
         assert address_in_memory % self.params.cache_line_bytes == 0

@@ -1,19 +1,19 @@
-# Development shell - uses common.nix for shared configuration
+# Development shell - includes both project build deps and developer tooling
 let
   common = import ./nix/common.nix;
-  inherit (common) pkgs buildInputs env;
+  inherit (common) pkgs buildDeps devTools env buildHook devHook;
 in
 pkgs.mkShell {
-  inherit buildInputs;
+  buildInputs = buildDeps ++ devTools ++ [ pkgs.glibcLocales ];
 
   PDK_ROOT = env.PDK_ROOT;
   PDK = env.PDK;
   LD_LIBRARY_PATH = env.LD_LIBRARY_PATH;
   LIBRARY_PATH = env.LIBRARY_PATH;
+  GIT_SSL_CAINFO = env.GIT_SSL_CAINFO;
+  LOCALE_ARCHIVE = "${pkgs.glibcLocales}/lib/locale/locale-archive";
 
-  shellHook = ''
-    alias bazel=bazelisk
-    export PYTHONPATH="$PWD/python:$PYTHONPATH"
+  shellHook = buildHook + devHook + ''
     echo "Zamlet Development Environment"
     echo "  OpenROAD: $(openroad -version 2>/dev/null | head -1 || echo 'available')"
     echo "  Yosys:    $(yosys -V 2>/dev/null | head -1 || echo 'available')"

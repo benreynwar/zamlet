@@ -15,7 +15,7 @@ Machine Learning often fit into this category.
 
 **An additional layer of hierarchy is introduced between the lane and the processor.** As our number of lanes grows large it becomes useful to add another layer of hierarchy into the design. A grouping of lanes share an instruction buffer and other logic that is useful to keep fairly close to the lanes, but is too expensive to replicate in each lane.
 
-**Keep data local where possible, message passing between lanes when that is not possible.** Common operations should result in minimal data movement. We want to minimize the movement of data in and out of the lanes. We distribute both the cache SRAM and the vector register file throughout the lanes, and ideally instructions should just be moving data between this cache SRAM, the vector register file slice and the lane's ALU. For instructions that do need to move data between jamlets, this is done by message passing. This should be reasonably efficient when the data is moving between jamlets close to one another. It will be inefficient when we are moving data large distances (both latency and throughput).
+**Keep data local where possible, message passing between lanes when that is not possible.** Common operations should result in minimal data movement. We want to minimize the movement of data in and out of the lanes. We distribute both the cache SRAM and the vector register file throughout the lanes, and ideally instructions should just be moving data between this cache SRAM, the vector register file slice and the lane's ALU. For instructions that do need to move data between lanes, this is done by message passing. This should be reasonably efficient when the data is moving between lanes close to one another. It will be inefficient when we are moving data large distances (both latency and throughput).
 
 **Vector memory pages and vector registers have a physical byte ordering that is controlled by an element-width setting.** Each vector memory page and each vector register has an 'element-width'. This determines the order in which bytes are stored in the physical memory. If this 'element-width' matches the actual element width of the data then this will help keep the data local when vectors with different element-widths interact. The 'element-width' of the pages is stored in a supplemental page table.
 
@@ -53,3 +53,19 @@ We use jamlet/kamlet/lamlet/memlet to refer to modules in the zamlet processor.
 * Basic modelling in python.  The approach seems practical, but I don't yet have quantitative performance numbers, and many of the vector instructions don't yet have defined mappings into the hardware.
 
 * Some initial work implementing the design in Chisel. This is what I'm primarily working on at the moment.  I think the biggest risk at the moment is that the area cost of dealing with the message passing will be too high.
+
+## Setup
+
+Dependencies are installed using nix.
+The build itself is done using bazel.
+
+1. Install nix
+2. Add the following to /etc/nix/nix.conf
+    ```
+    extra-experimental-features = nix-command flakes
+    extra-substituters = https://nix-cache.fossi-foundation.org
+    extra-trusted-public-keys = nix-cache.fossi-foundation.org:3+K59iFwXqKsL7BNu6Guy0v+uTlwsxYQxjspXzqLYQs=
+    ```
+    This allows nix to use the precompiled FOSSi binaries which speeds things up a bunch.
+3. Run `nix-shell` in the project directory.
+4. Use bazel to build a target

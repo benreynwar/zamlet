@@ -281,13 +281,6 @@ async def _run_ordered_indexed_load_test_inner(
 
 
 async def main(clock, data_ew, index_ew, vl, n_pages, params, seed, start_index=0, use_mask=True):
-    import signal
-
-    def signal_handler(signum, frame):
-        clock.stop()
-        raise KeyboardInterrupt()
-
-    signal.signal(signal.SIGINT, signal_handler)
     clock.register_main()
     clock.create_task(clock.clock_driver())
 

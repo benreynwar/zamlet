@@ -100,7 +100,7 @@ def init_dst_state(jamlet, witem: WaitingStoreJ2JWords, tag: int) -> None:
     mappings = get_mapping_from_mem(
         params=jamlet.params, k_maddr=instr.k_maddr, reg_ordering=instr.src_ordering,
         start_index=instr.start_index, n_elements=instr.n_elements,
-        mem_wb=mem_wb, mem_x=jamlet.x, mem_y=jamlet.y)
+        mem_wb=mem_wb, mem_jx=jamlet.jx, mem_jy=jamlet.jy)
 
     word_bytes = jamlet.params.word_bytes
     response_tag = jamlet.j_in_k_index * word_bytes + tag
@@ -124,7 +124,7 @@ def init_src_state(jamlet, witem: WaitingStoreJ2JWords, tag: int) -> None:
     mappings = get_mapping_from_reg(
         params=jamlet.params, k_maddr=instr.k_maddr, reg_ordering=instr.src_ordering,
         start_index=instr.start_index, n_elements=instr.n_elements,
-        reg_wb=reg_wb, reg_x=jamlet.x, reg_y=jamlet.y)
+        reg_wb=reg_wb, reg_jx=jamlet.jx, reg_jy=jamlet.jy)
 
     word_bytes = jamlet.params.word_bytes
     response_tag = jamlet.j_in_k_index * word_bytes + tag
@@ -149,7 +149,7 @@ async def send_req(jamlet, witem: WaitingStoreJ2JWords, tag: int) -> None:
     mappings = get_mapping_from_reg(
         params, k_maddr=instr.k_maddr, reg_ordering=instr.src_ordering,
         start_index=instr.start_index, n_elements=instr.n_elements,
-        reg_wb=reg_wb, reg_x=jamlet.x, reg_y=jamlet.y)
+        reg_wb=reg_wb, reg_jx=jamlet.jx, reg_jy=jamlet.jy)
 
     word_bytes = params.word_bytes
     response_tag = jamlet.j_in_k_index * word_bytes + tag
@@ -163,17 +163,18 @@ async def send_req(jamlet, witem: WaitingStoreJ2JWords, tag: int) -> None:
     reg_ew = instr.src_ordering.ew
     for mapping in mappings:
         src_reg = instr.src + mapping.reg_v
-        word = jamlet.rf_slice[src_reg * word_bytes: (src_reg + 1) * word_bytes]
+        word = int.from_bytes(
+            jamlet.rf_slice[src_reg * word_bytes: (src_reg + 1) * word_bytes], 'little')
         logger.debug(
             f'jamlet ({jamlet.x}, {jamlet.y}): send_store_j2j_words_req tag={tag} '
-            f'mapping={mapping} src_reg={src_reg} word={word.hex()}')
+            f'mapping={mapping} src_reg={src_reg} word=0x{word:x}')
         words.append(word)
         if mem_vw is None:
             mem_vw = mapping.mem_vw
         assert mem_vw == mapping.mem_vw
     assert mem_vw is not None
 
-    target_x, target_y = addresses.vw_index_to_j_coords(
+    target_x, target_y = addresses.vw_index_to_routing_coords(
         params, instr.k_maddr.ordering.word_order, mem_vw)
     witem.protocol_states[response_tag].src_state = SendState.WAITING_FOR_RESPONSE
 
@@ -182,7 +183,7 @@ async def send_req(jamlet, witem: WaitingStoreJ2JWords, tag: int) -> None:
         mask_word_int = int.from_bytes(mask_word, byteorder='little')
         mask_bits = []
         reg_elements_in_vline = params.vline_bytes * 8 // reg_ew
-        reg_vw = addresses.j_coords_to_vw_index(params, instr.src_ordering.word_order, jamlet.x, jamlet.y)
+        reg_vw = addresses.j_coords_to_vw_index(params, instr.src_ordering.word_order, jamlet.jx, jamlet.jy)
         reg_ve = reg_wb // reg_ew * params.j_in_l + reg_vw
         for mapping in mappings:
             element_index = reg_ve + mapping.reg_v * reg_elements_in_vline
@@ -198,7 +199,7 @@ async def send_req(jamlet, witem: WaitingStoreJ2JWords, tag: int) -> None:
         target_y=target_y,
         source_x=jamlet.x,
         source_y=jamlet.y,
-        length=1 + len(words),
+        length=len(words),
         message_type=MessageType.STORE_J2J_WORDS_REQ,
         send_type=SendType.SINGLE,
         ident=instr.instr_ident,
@@ -246,7 +247,9 @@ async def handle_req(jamlet, packet: List[Any]) -> None:
     mappings = get_mapping_from_reg(
         params, k_maddr=instr.k_maddr, reg_ordering=instr.src_ordering,
         start_index=instr.start_index, n_elements=instr.n_elements,
-        reg_wb=reg_wb, reg_x=header.source_x, reg_y=header.source_y)
+        reg_wb=reg_wb,
+        reg_jx=header.source_x - params.west_offset,
+        reg_jy=header.source_y - params.north_offset)
 
     assert len(packet) >= 2
     words = packet[1:]
@@ -258,14 +261,11 @@ async def handle_req(jamlet, packet: List[Any]) -> None:
         shift = mapping.reg_wb - mapping.mem_wb
         mask = ((1 << mapping.n_bits) - 1) << mapping.mem_wb
 
-        assert isinstance(word, (bytes, bytearray))
-        assert len(word) == word_bytes
-        word_as_int = int.from_bytes(word, byteorder='little')
         word_mask = (1 << (word_bytes * 8)) - 1
         if shift < 0:
-            shifted = word_as_int << (-shift)
+            shifted = word << (-shift)
         else:
-            shifted = (word_as_int >> shift) & word_mask
+            shifted = (word >> shift) & word_mask
 
         if mem_wb is None:
             mem_wb = mapping.mem_wb
@@ -277,7 +277,7 @@ async def handle_req(jamlet, packet: List[Any]) -> None:
     if jamlet.cache_table.can_write(instr.k_maddr, witem=witem):
         assert witem.cache_is_avail
 
-        cache_base_addr = slot * params.vlines_in_cache_line * word_bytes
+        cache_base_addr = slot * params.cache_slot_words_per_jamlet * word_bytes
 
         for word_index, (word, mapping) in enumerate(zip(words, mappings)):
             mask_bit = (header.mask >> word_index) & 1
@@ -287,15 +287,14 @@ async def handle_req(jamlet, packet: List[Any]) -> None:
             shift = mapping.reg_wb - mapping.mem_wb
             segment_mask = ((1 << mapping.n_bits) - 1) << mapping.mem_wb
 
-            word_as_int = int.from_bytes(word, byteorder='little')
             word_mask = (1 << (word_bytes * 8)) - 1
             if shift < 0:
-                shifted = (word_as_int << (-shift)) & word_mask
+                shifted = (word << (-shift)) & word_mask
             else:
-                shifted = word_as_int >> shift
+                shifted = word >> shift
             shifted_bytes = shifted.to_bytes(word_bytes, byteorder='little')
 
-            vline_offset_in_cache = mapping.mem_v % params.vlines_in_cache_line
+            vline_offset_in_cache = mapping.mem_v % params.cache_slot_words_per_jamlet
             cache_addr = cache_base_addr + vline_offset_in_cache * word_bytes
             old_word = jamlet.sram[cache_addr: cache_addr + word_bytes]
             updated_word = utils.update_bytes_word(
@@ -399,7 +398,7 @@ async def send_drop(jamlet, rcvd_header: TaggedHeader) -> None:
         source_y=jamlet.y,
         send_type=SendType.SINGLE,
         message_type=MessageType.STORE_J2J_WORDS_DROP,
-        length=1,
+        length=0,
         ident=rcvd_header.ident,
         tag=rcvd_header.tag,
     )
@@ -421,7 +420,7 @@ async def send_resp(jamlet, rcvd_header: TaggedHeader) -> None:
         source_y=jamlet.y,
         send_type=SendType.SINGLE,
         message_type=MessageType.STORE_J2J_WORDS_RESP,
-        length=1,
+        length=0,
         ident=rcvd_header.ident,
         tag=rcvd_header.tag,
     )
@@ -446,7 +445,7 @@ async def send_retry(jamlet, witem: WaitingStoreJ2JWords, tag: int) -> None:
     mappings = get_mapping_from_mem(
         params, k_maddr=instr.k_maddr, reg_ordering=instr.src_ordering,
         start_index=instr.start_index, n_elements=instr.n_elements,
-        mem_wb=mem_wb, mem_x=jamlet.x, mem_y=jamlet.y)
+        mem_wb=mem_wb, mem_jx=jamlet.jx, mem_jy=jamlet.jy)
 
     assert len(mappings) > 0
 
@@ -462,7 +461,7 @@ async def send_retry(jamlet, witem: WaitingStoreJ2JWords, tag: int) -> None:
     assert reg_vw is not None
     assert reg_wb is not None
 
-    target_x, target_y = addresses.vw_index_to_j_coords(
+    target_x, target_y = addresses.vw_index_to_routing_coords(
         params, instr.src_ordering.word_order, reg_vw)
 
     src_tag = reg_wb // 8
@@ -476,7 +475,7 @@ async def send_retry(jamlet, witem: WaitingStoreJ2JWords, tag: int) -> None:
         source_y=jamlet.y,
         send_type=SendType.SINGLE,
         message_type=MessageType.STORE_J2J_WORDS_RETRY,
-        length=1,
+        length=0,
         ident=witem.instr_ident,
         tag=src_tag,
     )

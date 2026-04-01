@@ -144,16 +144,16 @@ async def send_resp(jamlet: 'Jamlet', rcvd_header: ReadMemWordHeader, j_saddr: J
     assert j_saddr.k_index == jamlet.k_index
     assert j_saddr.j_in_k_index == jamlet.j_in_k_index
     sram_addr = j_saddr.addr // jamlet.params.word_bytes * jamlet.params.word_bytes
-    data = jamlet.sram[sram_addr: sram_addr + jamlet.params.word_bytes]
+    data = int.from_bytes(
+        jamlet.sram[sram_addr: sram_addr + jamlet.params.word_bytes], 'little')
     header = ReadMemWordHeader(
         target_x=rcvd_header.source_x, target_y=rcvd_header.source_y,
         source_x=jamlet.x, source_y=jamlet.y,
         message_type=MessageType.READ_MEM_WORD_RESP,
         send_type=SendType.SINGLE,
-        length=2,
+        length=1,
         tag=rcvd_header.tag,
         ident=rcvd_header.ident)
-    assert len(data) == jamlet.params.word_bytes
     # Look up transaction (requester is source, we are dest)
     transaction_span_id = jamlet.monitor.get_transaction_span_id(
         rcvd_header.ident, rcvd_header.tag,
@@ -162,7 +162,7 @@ async def send_resp(jamlet: 'Jamlet', rcvd_header: ReadMemWordHeader, j_saddr: J
     # Record the data being read from SRAM
     jamlet.monitor.add_event(
         transaction_span_id,
-        f'sram_read sram_addr={sram_addr}, data={data.hex()}')
+        f'sram_read sram_addr={sram_addr}, data=0x{data:x}')
     await jamlet.send_packet([header, data], parent_span_id=transaction_span_id)
 
 
@@ -174,7 +174,7 @@ async def send_drop(jamlet: 'Jamlet', rcvd_header: ReadMemWordHeader,
         source_x=jamlet.x, source_y=jamlet.y,
         message_type=MessageType.READ_MEM_WORD_DROP,
         send_type=SendType.SINGLE,
-        length=1,
+        length=0,
         tag=rcvd_header.tag,
         ident=rcvd_header.ident)
     # Look up transaction (requester is source, we are dest)

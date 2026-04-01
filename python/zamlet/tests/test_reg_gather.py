@@ -198,13 +198,6 @@ async def _run_reg_gather_test_inner(
 
 
 async def main(clock, data_ew, index_ew, vl, params, seed, dump_spans=False):
-    import signal
-
-    def signal_handler(signum, frame):
-        clock.stop()
-        raise KeyboardInterrupt()
-
-    signal.signal(signal.SIGINT, signal_handler)
     clock.register_main()
     clock.create_task(clock.clock_driver())
 

@@ -1,4 +1,4 @@
-package zamlet.jamlet
+package zamlet.network
 
 import chisel3._
 import chisel3.util._

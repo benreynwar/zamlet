@@ -3,6 +3,8 @@ package zamlet.jamlet
 import chisel3._
 import chisel3.util._
 import zamlet.ZamletParams
+import zamlet.network.{NetworkWord, MessageType, SendType, WriteMemWordHeader, ReadMemWordHeader,
+                       MaskedTaggedHeader, TaggedHeader}
 import zamlet.utils.{DoubleBuffer, ValidBuffer}
 
 object WitemMonitorUtils {
@@ -1885,7 +1887,7 @@ class WitemMonitor(params: ZamletParams) extends Module {
   // -------------------------------------------------------------------------
 
   // Determine message type based on witem type
-  val s16MessageType = MuxLookup(s16In.bits.witemType.asUInt, MessageType.Reserved2)(Seq(
+  val s16MessageType = MuxLookup(s16In.bits.witemType.asUInt, MessageType.Reserved63)(Seq(
     WitemType.LoadJ2JWords.asUInt -> MessageType.LoadJ2JWordsReq,
     WitemType.StoreJ2JWords.asUInt -> MessageType.StoreJ2JWordsReq,
     WitemType.LoadWordSrc.asUInt -> MessageType.LoadWordReq,
@@ -1941,6 +1943,7 @@ class WitemMonitor(params: ZamletParams) extends Module {
   s16WriteMemWordHeader.tag := s16In.bits.srcTag
   s16WriteMemWordHeader.dstByteInWord := s16In.bits.dstTag
   s16WriteMemWordHeader.nBytes := s16In.bits.nBytes
+  s16WriteMemWordHeader._padding := 0.U
 
   // Build ReadMemWordHeader (for LoadStride, LoadIdxUnord, LoadIdxElement)
   val s16ReadMemWordHeader = Wire(new ReadMemWordHeader(params))
@@ -1954,6 +1957,7 @@ class WitemMonitor(params: ZamletParams) extends Module {
   s16ReadMemWordHeader.ident := s16In.bits.instrIdent
   s16ReadMemWordHeader.tag := s16In.bits.srcTag
   s16ReadMemWordHeader.fault := false.B
+  s16ReadMemWordHeader._padding := 0.U
 
   // Build MaskedTaggedHeader (for StoreJ2JWords)
   val s16MaskedTaggedHeader = Wire(new MaskedTaggedHeader(params))
@@ -1967,6 +1971,7 @@ class WitemMonitor(params: ZamletParams) extends Module {
   s16MaskedTaggedHeader.ident := s16In.bits.instrIdent
   s16MaskedTaggedHeader.tag := s16In.bits.srcTag
   s16MaskedTaggedHeader.mask := 0.U  // TODO: populate from instruction if needed
+  s16MaskedTaggedHeader._padding := 0.U
 
   // Build TaggedHeader (for LoadJ2JWords, LoadWordSrc, StoreWordSrc)
   val s16TaggedHeader = Wire(new TaggedHeader(params))
@@ -1979,6 +1984,7 @@ class WitemMonitor(params: ZamletParams) extends Module {
   s16TaggedHeader.sendType := SendType.Single
   s16TaggedHeader.ident := s16In.bits.instrIdent
   s16TaggedHeader.tag := s16In.bits.srcTag
+  s16TaggedHeader._padding := 0.U
 
   // Select header based on message type
   val s16HeaderData = MuxCase(s16TaggedHeader.asUInt, Seq(

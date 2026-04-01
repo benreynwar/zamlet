@@ -1,10 +1,16 @@
 import logging
+from random import Random
 from collections import deque
 import struct
 from typing import List
 
 
 logger = logging.getLogger(__name__)
+
+
+def create_rng(rng: Random) -> Random:
+    seed = rng.getrandbits(32)
+    return Random(seed)
 
 
 def uint_to_bits(value, width):
@@ -200,31 +206,28 @@ def update_bytes_word(old_word: bytes, new_word: bytes, mask: int) -> bytes:
     updated = updated_int.to_bytes(n_bytes, byteorder='little')
     return updated
 
-def shift_and_update_word(old_word: bytes, src_word: bytes, src_start: int, dst_start:int, n_bytes: int):
+def shift_and_update_word(old_word: bytes, src_word: int, src_start: int,
+                          dst_start: int, n_bytes: int) -> bytes:
     '''
-    We want to take `n_bytes` bytes from the `src_word` starting at byte `src_start` and write them to
-    the `old_word` starting at byte `dst_start` to produce the new word which we return.
+    Take `n_bytes` bytes from `src_word` starting at byte `src_start` and write them to
+    `old_word` starting at byte `dst_start`. Returns updated bytes.
 
-    All parameters are in bytes, not bits.
+    old_word: bytes from SRAM/RF. src_word: int from packet.
+    Offset parameters are in bytes, not bits.
     '''
     word_length = len(old_word)
-    assert word_length == len(src_word)
     assert dst_start + n_bytes <= word_length
 
-    src_word_int = int.from_bytes(src_word, byteorder='little')
-    # Convert byte offsets to bit offsets for shifting
     shift_bits = (src_start - dst_start) * 8
     if shift_bits > 0:
-        shifted = src_word_int >> shift_bits
+        shifted = src_word >> shift_bits
     else:
-        shifted = src_word_int << (-shift_bits)
-    # Create mask for n_bytes starting at dst_start (in bits)
+        shifted = src_word << (-shift_bits)
     mask = ((1 << (n_bytes * 8)) - 1) << (dst_start * 8)
     masked_shifted = shifted & mask
     old_word_int = int.from_bytes(old_word, byteorder='little')
     updated_int = update_int_word(old_word_int, masked_shifted, mask)
-    updated = updated_int.to_bytes(word_length, byteorder='little')
-    return updated
+    return updated_int.to_bytes(word_length, byteorder='little')
 
 
 def split_by_factors(value, factors, allow_remainder=True):

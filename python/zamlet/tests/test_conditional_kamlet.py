@@ -77,35 +77,31 @@ async def run_conditional_simple(clock: Clock, vector_length: int, seed: int, lm
     b_data = struct.pack(f'<{len(b_list)}H', *b_list)  # int16 -> 2 bytes each
     expected = struct.pack(f'<{len(expected_list)}H', *expected_list)  # int16 -> 2 bytes each
 
-    # Allocate memory regions
-    # x at 0x20000000 (VPU 8-bit region)
-    # a at 0x20800000 (VPU 16-bit region)
-    # b at 0x20800010 (VPU 16-bit region, offset by 16 bytes)
-    # z at 0x900C0000 (VPU 32-bit pool, will use for results)
+    # Allocate memory regions, spaced by alloc_size to avoid overlap
+    page_bytes = params.page_bytes
+    max_data_bytes = vl * 2 * lmul
+    alloc_size = ((max_data_bytes + page_bytes - 1) // page_bytes) * page_bytes
 
     x_addr = 0x20000000
     a_addr = 0x20800000
-    b_addr = 0x20801000
+    b_addr = a_addr + alloc_size
     z_addr = 0x900C0000
-
-    # Verify arrays don't overlap
-    assert b_addr - a_addr >= vl * 2, f"a and b arrays overlap: need {vl * 2} bytes, have {b_addr - a_addr}"
 
     lamlet.allocate_memory(
         GlobalAddress(bit_addr=x_addr * 8, params=params),
-        1024, memory_type=MemoryType.VPU, ordering=Ordering(WordOrder.STANDARD, 8)
+        alloc_size, memory_type=MemoryType.VPU, ordering=Ordering(WordOrder.STANDARD, 8)
     )
     lamlet.allocate_memory(
         GlobalAddress(bit_addr=a_addr * 8, params=params),
-        1024, memory_type=MemoryType.VPU, ordering=Ordering(WordOrder.STANDARD, 16)
+        alloc_size, memory_type=MemoryType.VPU, ordering=Ordering(WordOrder.STANDARD, 16)
     )
     lamlet.allocate_memory(
         GlobalAddress(bit_addr=b_addr * 8, params=params),
-        1024, memory_type=MemoryType.VPU, ordering=Ordering(WordOrder.STANDARD, 16)
+        alloc_size, memory_type=MemoryType.VPU, ordering=Ordering(WordOrder.STANDARD, 16)
     )
     lamlet.allocate_memory(
         GlobalAddress(bit_addr=z_addr * 8, params=params),
-        1024, memory_type=MemoryType.VPU, ordering=Ordering(WordOrder.STANDARD, 16)
+        alloc_size, memory_type=MemoryType.VPU, ordering=Ordering(WordOrder.STANDARD, 16)
     )
 
     # Write initial data to memory
@@ -263,14 +259,6 @@ async def run_conditional_simple(clock: Clock, vector_length: int, seed: int, lm
 
 
 async def main(clock, vector_length: int, seed: int, lmul: int, params: ZamletParams):
-    import signal
-
-    def signal_handler(signum, frame):
-        clock.stop()
-        raise KeyboardInterrupt()
-
-    signal.signal(signal.SIGINT, signal_handler)
-
     clock.register_main()
 
     clock_driver_task = clock.create_task(clock.clock_driver())

@@ -11,6 +11,7 @@ test_suite(
         "//python/zamlet/kamlet_test:all_tests",
         # "//python/zamlet/lamlet_test:all_tests",  # empty - disabled
         "//python/zamlet/shuttle_test:all_tests",
+        "//python/zamlet/memlet_test:all_tests",
     ],
 )
 
@@ -19,6 +20,7 @@ py_library(
     name = "zamlet",
     srcs = glob([
         "*.py",
+        "cocotb/*.py",
         "instructions/*.py",
         "jamlet/*.py",
         "kamlet/*.py",

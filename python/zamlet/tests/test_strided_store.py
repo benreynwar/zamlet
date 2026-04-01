@@ -293,13 +293,6 @@ async def _run_strided_store_test_inner(
 
 
 async def main(clock, **kwargs):
-    import signal
-
-    def signal_handler(signum, frame):
-        clock.stop()
-        raise KeyboardInterrupt()
-
-    signal.signal(signal.SIGINT, signal_handler)
     clock.register_main()
     clock.create_task(clock.clock_driver())
 
@@ -327,6 +320,11 @@ def random_test_config(rnd: Random):
     vl = random_vl(rnd, max_vl)
     element_bytes = ew // 8
     stride = random_stride(rnd, element_bytes, geom_params.page_bytes)
+    # Cap stride so src+dst fit in VPU memory (each side gets half)
+    if vl > 1:
+        vpu_bytes = geom_params.k_in_l * geom_params.kamlet_memory_bytes
+        max_stride = (vpu_bytes // 2 - element_bytes - 64) // (vl - 1)
+        stride = min(stride, max(element_bytes + 1, max_stride))
     start_index = random_start_index(rnd, vl)
     return geom_name, geom_params, ew, vl, stride, start_index
 
