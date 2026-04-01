@@ -226,7 +226,8 @@ class ZamletParams:
         return 2 * self.x_pos_width + 2 * self.y_pos_width + 4 + 6 + 1
 
     @property
-    def abstract_ident_header_fields(self):
+    def abstract_base_header_fields(self):
+        used = self._base_header_width
         return [
             ('target_x', self.x_pos_width),
             ('target_y', self.y_pos_width),
@@ -235,22 +236,40 @@ class ZamletParams:
             ('length', 4),
             ('message_type', 6),
             ('send_type', 1),
+        ]
+
+    @property
+    def base_header_fields(self):
+        used = self._base_header_width
+        return self.abstract_base_header_fields + [
+            ('_padding', self.word_bytes * 8 - self._base_header_width),
+        ]
+
+    @property
+    def _ident_header_width(self) -> int:
+        return self._base_header_width + self.ident_width
+
+    @property
+    def abstract_ident_header_fields(self):
+        return self.abstract_base_header_fields + [
             ('ident', self.ident_width),
         ]
 
     @property
     def ident_header_fields(self):
-        used = self._base_header_width + self.ident_width
         return self.abstract_ident_header_fields + [
-            ('_padding', self.word_bytes * 8 - used),
+            ('_padding', self.word_bytes * 8 - self._ident_header_width),
         ]
 
     @property
+    def _address_header_width(self) -> int:
+        return self._ident_header_width + self.sram_addr_width
+
+    @property
     def address_header_fields(self):
-        used = self._base_header_width + self.ident_width + self.sram_addr_width
         return self.abstract_ident_header_fields + [
             ('address', self.sram_addr_width),
-            ('_padding', self.word_bytes * 8 - used),
+            ('_padding', self.word_bytes * 8 - self._address_header_width),
         ]
 
     _FIELD_MAPPING = {

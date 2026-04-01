@@ -13,7 +13,10 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from zamlet.waiting_item import WaitingItem
-from zamlet.kamlet.kinstructions import TrackedKInstr
+from zamlet.kamlet.kinstructions import (
+    TrackedKInstr, KInstrOpcode, KINSTR_WIDTH, OPCODE_WIDTH, SYNC_IDENT_WIDTH,
+)
+from zamlet.control_structures import pack_fields_to_int
 from zamlet.message import IdentHeader, MessageType, SendType
 from zamlet.monitor import SpanType, CompletionType
 from zamlet.synchronization import WaitingItemSyncState
@@ -39,7 +42,18 @@ class IdentQuery(TrackedKInstr):
     """
     instr_ident: int  # Used for both sync and response (set to max_response_tags)
     baseline: int     # next_instr_ident at time of query
-    previous_instr_ident: int  # instr_ident of instruction ahead in queue
+    previous_instr_ident: int | None = None  # instr_ident of instruction ahead in queue
+    opcode: int = KInstrOpcode.IDENT_QUERY
+
+    FIELD_SPECS = [
+        ('opcode', OPCODE_WIDTH),
+        ('baseline', SYNC_IDENT_WIDTH),
+        ('instr_ident', SYNC_IDENT_WIDTH),
+        ('_padding', KINSTR_WIDTH - OPCODE_WIDTH - 2 * SYNC_IDENT_WIDTH),
+    ]
+
+    def encode(self) -> int:
+        return pack_fields_to_int(self, self.FIELD_SPECS)
 
     @property
     def finalize_after_send(self) -> bool:

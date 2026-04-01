@@ -27,6 +27,9 @@ trait ModuleGenerator {
       gen = makeModule(args),
       args = Array("--target-dir", outputDir),
       firtoolOpts = Array(
+        // The -O=debug is here to prevent modules getting flattened
+        // so that we can debug internal signals more easily.
+        "-O=debug",
         "-disable-all-randomization",
         "-strip-debug-info",
         "-default-layer-specialization=enable",

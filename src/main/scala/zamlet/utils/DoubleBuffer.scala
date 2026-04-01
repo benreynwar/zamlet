@@ -37,3 +37,11 @@ object DoubleBufferGenerator extends ModuleGenerator {
     }
   }
 }
+
+object DoubleBufferMain extends App {
+  if (args.length < 2) {
+    println("Usage: <outputDir> <width>")
+    System.exit(1)
+  }
+  DoubleBufferGenerator.generate(args(0), Seq(args(1)))
+}

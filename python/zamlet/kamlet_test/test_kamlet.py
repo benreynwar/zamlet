@@ -6,10 +6,9 @@ Tests the sync network MIN aggregation across kamlets:
 3. Both kamlets should output sync result = MIN(3, 5) = 3
 """
 
+import json
 import logging
-from dataclasses import dataclass
-from enum import IntEnum
-from typing import List, Tuple
+from typing import List
 
 import cocotb
 from cocotb.clock import Clock
@@ -17,202 +16,74 @@ from cocotb.handle import HierarchyObject
 from cocotb.triggers import RisingEdge, ReadOnly
 
 from zamlet import test_utils
-from zamlet.control_structures import pack_fields_to_int
+from zamlet.params import ZamletParams
+from zamlet.message import Header, MessageType, SendType
+from zamlet.kamlet.kinstructions import SyncTrigger
+from zamlet.transactions.ident_query import IdentQuery
 
 
 logger = logging.getLogger(__name__)
 
 
-class MessageType(IntEnum):
-    SEND = 0
-    INSTRUCTIONS = 1
+def initialize_inputs(dut: HierarchyObject, params: ZamletParams) -> None:
+    """Set all KamletMesh inputs to safe defaults."""
+    n_channels = params.n_a_channels + params.n_b_channels
+
+    # Network channel inputs: (prefix, outer_dim, inner_dim)
+    edge_specs = [
+        ('n', params.k_cols, params.j_cols),
+        ('s', params.k_cols, params.j_cols),
+        ('e', params.k_rows, params.j_rows),
+        ('w', params.k_rows, params.j_rows),
+    ]
+    for prefix, outer, inner in edge_specs:
+        for i in range(outer):
+            for j in range(inner):
+                for ch in range(n_channels):
+                    getattr(dut, f'io_{prefix}ChannelsIn_{i}_{j}_{ch}_valid').value = 0
+                    getattr(dut, f'io_{prefix}ChannelsIn_{i}_{j}_{ch}_bits_data').value = 0
+                    sig = f'io_{prefix}ChannelsIn_{i}_{j}_{ch}_bits_isHeader'
+                    getattr(dut, sig).value = 0
+
+    # Sync network inputs
+    sync_specs = [
+        ('nSyncN', params.k_cols), ('nSyncNE', params.k_cols),
+        ('nSyncNW', params.k_cols),
+        ('sSyncS', params.k_cols), ('sSyncSE', params.k_cols),
+        ('sSyncSW', params.k_cols),
+        ('eSyncE', params.k_rows),
+        ('eSyncNE', params.k_rows - 1), ('eSyncSE', params.k_rows - 1),
+        ('wSyncW', params.k_rows),
+        ('wSyncNW', params.k_rows - 1), ('wSyncSW', params.k_rows - 1),
+    ]
+    for name, count in sync_specs:
+        for i in range(count):
+            getattr(dut, f'io_{name}_{i}_in_valid').value = 0
+            getattr(dut, f'io_{name}_{i}_in_bits').value = 0
 
 
-class SendType(IntEnum):
-    SINGLE = 0
-    BROADCAST = 1
+async def monitor_errors(dut: HierarchyObject, params: ZamletParams) -> None:
+    """Monitor error wires on all kamlets every cycle. Asserts on any error."""
+    error_signals = []
+    for kx in range(params.k_cols):
+        for ky in range(params.k_rows):
+            kamlet = getattr(dut, f'kamlets_{kx}_{ky}')
+            error_signals.extend([
+                (f'kamlet({kx},{ky}) instrQueue unexpectedHeader',
+                 kamlet.io_errors_instrQueue_unexpectedHeader),
+                (f'kamlet({kx},{ky}) instrQueue unexpectedData',
+                 kamlet.io_errors_instrQueue_unexpectedData),
+            ])
 
-
-class KInstrOpcode(IntEnum):
-    SYNC_TRIGGER = 0
-    IDENT_QUERY = 1
-
-
-class Params:
-    X_POS_WIDTH = 8
-    Y_POS_WIDTH = 8
-    K_COLS = 2
-    K_ROWS = 1
-    J_COLS = 1
-    J_ROWS = 1
-    N_CHANNELS = 2  # nAChannels + nBChannels
-
-
-@dataclass
-class PacketHeader:
-    """Packet header matching Chisel PacketHeader Bundle."""
-    target_x: int
-    target_y: int
-    source_x: int
-    source_y: int
-    length: int
-    message_type: MessageType
-    send_type: SendType
-
-    @classmethod
-    def get_field_specs(cls) -> List[Tuple[str, int]]:
-        """Field specs in Chisel Bundle declaration order (first field = MSB)."""
-        return [
-            ('target_x', 8),
-            ('target_y', 8),
-            ('source_x', 8),
-            ('source_y', 8),
-            ('length', 4),
-            ('message_type', 6),
-            ('send_type', 1),
-        ]
-
-    def encode(self) -> int:
-        """Encode to integer matching Chisel's asUInt bit layout."""
-        return pack_fields_to_int(self, self.get_field_specs())
-
-
-@dataclass
-class SyncTriggerKInstr:
-    """SyncTrigger instruction matching Chisel SyncTriggerInstr Bundle.
-
-    64-bit kinstr format. Chisel Bundle ordering places last field at LSB,
-    so the bit layout is:
-      reserved: bits [41:0]  (42 bits, at LSB)
-      value: bits [49:42]    (8 bits)
-      sync_ident: bits [57:50] (8 bits)
-      opcode: bits [63:58]   (6 bits, at MSB)
-    """
-    opcode: KInstrOpcode
-    sync_ident: int
-    value: int
-    reserved: int = 0
-
-    @classmethod
-    def get_field_specs(cls) -> List[Tuple[str, int]]:
-        """Field specs in Chisel Bundle declaration order (first field = MSB)."""
-        return [
-            ('opcode', 6),
-            ('sync_ident', 8),
-            ('value', 8),
-            ('reserved', 42),
-        ]
-
-    def encode(self) -> int:
-        """Encode to integer matching Chisel's asUInt bit layout."""
-        return pack_fields_to_int(self, self.get_field_specs())
-
-
-@dataclass
-class IdentQueryKInstr:
-    """IdentQuery instruction matching Chisel IdentQueryInstr Bundle.
-
-    64-bit kinstr format:
-      reserved: bits [41:0]  (42 bits, at LSB)
-      sync_ident: bits [49:42] (8 bits)
-      baseline: bits [57:50] (8 bits)
-      opcode: bits [63:58]   (6 bits, at MSB)
-    """
-    opcode: KInstrOpcode
-    baseline: int
-    sync_ident: int
-    reserved: int = 0
-
-    @classmethod
-    def get_field_specs(cls) -> List[Tuple[str, int]]:
-        """Field specs in Chisel Bundle declaration order (first field = MSB)."""
-        return [
-            ('opcode', 6),
-            ('baseline', 8),
-            ('sync_ident', 8),
-            ('reserved', 42),
-        ]
-
-    def encode(self) -> int:
-        """Encode to integer matching Chisel's asUInt bit layout."""
-        return pack_fields_to_int(self, self.get_field_specs())
-
-
-def initialize_inputs(dut: HierarchyObject) -> None:
-    """Set all KamletMesh inputs to safe defaults.
-
-    Note: Chisel flattens nested Vecs inner-to-outer, so Vec(kCols, Vec(jCols, Vec(ch, ...)))
-    becomes io_name_{kX}_{j}_{ch} in the signal naming.
-    """
-    for kX in range(Params.K_COLS):
-        for j in range(Params.J_COLS):
-            for ch in range(Params.N_CHANNELS):
-                getattr(dut, f'io_nChannelsIn_{kX}_{j}_{ch}_valid').value = 0
-                getattr(dut, f'io_nChannelsIn_{kX}_{j}_{ch}_bits_data').value = 0
-                getattr(dut, f'io_nChannelsIn_{kX}_{j}_{ch}_bits_isHeader').value = 0
-
-    for kX in range(Params.K_COLS):
-        for j in range(Params.J_COLS):
-            for ch in range(Params.N_CHANNELS):
-                getattr(dut, f'io_sChannelsIn_{kX}_{j}_{ch}_valid').value = 0
-                getattr(dut, f'io_sChannelsIn_{kX}_{j}_{ch}_bits_data').value = 0
-                getattr(dut, f'io_sChannelsIn_{kX}_{j}_{ch}_bits_isHeader').value = 0
-
-    for kY in range(Params.K_ROWS):
-        for j in range(Params.J_ROWS):
-            for ch in range(Params.N_CHANNELS):
-                getattr(dut, f'io_eChannelsIn_{kY}_{j}_{ch}_valid').value = 0
-                getattr(dut, f'io_eChannelsIn_{kY}_{j}_{ch}_bits_data').value = 0
-                getattr(dut, f'io_eChannelsIn_{kY}_{j}_{ch}_bits_isHeader').value = 0
-
-    for kY in range(Params.K_ROWS):
-        for j in range(Params.J_ROWS):
-            for ch in range(Params.N_CHANNELS):
-                getattr(dut, f'io_wChannelsIn_{kY}_{j}_{ch}_valid').value = 0
-                getattr(dut, f'io_wChannelsIn_{kY}_{j}_{ch}_bits_data').value = 0
-                getattr(dut, f'io_wChannelsIn_{kY}_{j}_{ch}_bits_isHeader').value = 0
-
-    # Sync network inputs - north edge (N, NE, NW for all kCols)
-    for kX in range(Params.K_COLS):
-        getattr(dut, f'io_nSyncN_{kX}_in_valid').value = 0
-        getattr(dut, f'io_nSyncN_{kX}_in_bits').value = 0
-        getattr(dut, f'io_nSyncNE_{kX}_in_valid').value = 0
-        getattr(dut, f'io_nSyncNE_{kX}_in_bits').value = 0
-        getattr(dut, f'io_nSyncNW_{kX}_in_valid').value = 0
-        getattr(dut, f'io_nSyncNW_{kX}_in_bits').value = 0
-
-    # Sync network inputs - south edge (S, SE, SW for all kCols)
-    for kX in range(Params.K_COLS):
-        getattr(dut, f'io_sSyncS_{kX}_in_valid').value = 0
-        getattr(dut, f'io_sSyncS_{kX}_in_bits').value = 0
-        getattr(dut, f'io_sSyncSE_{kX}_in_valid').value = 0
-        getattr(dut, f'io_sSyncSE_{kX}_in_bits').value = 0
-        getattr(dut, f'io_sSyncSW_{kX}_in_valid').value = 0
-        getattr(dut, f'io_sSyncSW_{kX}_in_bits').value = 0
-
-    # Sync network inputs - east edge (E for all kRows)
-    for kY in range(Params.K_ROWS):
-        getattr(dut, f'io_eSyncE_{kY}_in_valid').value = 0
-        getattr(dut, f'io_eSyncE_{kY}_in_bits').value = 0
-
-    # Sync network inputs - east edge NE/SE (kRows-1 elements)
-    for i in range(Params.K_ROWS - 1):
-        getattr(dut, f'io_eSyncNE_{i}_in_valid').value = 0
-        getattr(dut, f'io_eSyncNE_{i}_in_bits').value = 0
-        getattr(dut, f'io_eSyncSE_{i}_in_valid').value = 0
-        getattr(dut, f'io_eSyncSE_{i}_in_bits').value = 0
-
-    # Sync network inputs - west edge (W for all kRows)
-    for kY in range(Params.K_ROWS):
-        getattr(dut, f'io_wSyncW_{kY}_in_valid').value = 0
-        getattr(dut, f'io_wSyncW_{kY}_in_bits').value = 0
-
-    # Sync network inputs - west edge NW/SW (kRows-1 elements)
-    for i in range(Params.K_ROWS - 1):
-        getattr(dut, f'io_wSyncNW_{i}_in_valid').value = 0
-        getattr(dut, f'io_wSyncNW_{i}_in_bits').value = 0
-        getattr(dut, f'io_wSyncSW_{i}_in_valid').value = 0
-        getattr(dut, f'io_wSyncSW_{i}_in_bits').value = 0
+    while True:
+        await RisingEdge(dut.clock)
+        await ReadOnly()
+        for name, sig in error_signals:
+            if int(sig.value) != 0:
+                # Let sim run a few more cycles for waveform context
+                for _ in range(3):
+                    await RisingEdge(dut.clock)
+                assert False, f"Error: {name} went high"
 
 
 async def reset(dut: HierarchyObject) -> None:
@@ -222,37 +93,44 @@ async def reset(dut: HierarchyObject) -> None:
     await RisingEdge(dut.clock)
     dut.reset.value = 0
     await RisingEdge(dut.clock)
+    await RisingEdge(dut.clock)
+    await RisingEdge(dut.clock)
 
 
-async def send_packet_to_kamlet(dut: HierarchyObject, kx: int, data: int,
-                                is_header: bool) -> None:
-    """Send a packet word to a kamlet via its north port."""
+async def send_word_to_kamlet(dut: HierarchyObject, kx: int, word: int, is_header: bool) -> None:
     valid_sig = getattr(dut, f'io_nChannelsIn_{kx}_0_0_valid')
     data_sig = getattr(dut, f'io_nChannelsIn_{kx}_0_0_bits_data')
     header_sig = getattr(dut, f'io_nChannelsIn_{kx}_0_0_bits_isHeader')
     ready_sig = getattr(dut, f'io_nChannelsIn_{kx}_0_0_ready')
-
     valid_sig.value = 1
-    data_sig.value = data
+    data_sig.value = word
     header_sig.value = 1 if is_header else 0
-
-    for _ in range(100):
+    await ReadOnly()
+    while int(ready_sig.value) != 1:
         await RisingEdge(dut.clock)
         await ReadOnly()
-        if int(ready_sig.value) == 1:
-            break
-    else:
-        raise TimeoutError(f"Timeout waiting for ready on kamlet {kx}")
-
     await RisingEdge(dut.clock)
     valid_sig.value = 0
 
 
-async def send_sync_trigger_to_kamlet(dut: HierarchyObject, kx: int, sync_ident: int,
-                                      value: int) -> None:
+async def send_packet_to_kamlet(params: ZamletParams, dut: HierarchyObject, kx: int, packet) -> None:
+    """Send a full packet (header + payload words) to a kamlet via its north port."""
+
+    header = packet[0]
+    assert isinstance(header, Header)
+    header_as_int = header.encode(params)
+    assert header.length+1 == len(packet)
+
+    await send_word_to_kamlet(dut, kx, header_as_int, True)
+    for word in packet[1:]:
+        await send_word_to_kamlet(dut, kx, word, False)
+
+
+async def send_sync_trigger_to_kamlet(dut: HierarchyObject, params: ZamletParams,
+                                      kx: int, sync_ident: int, value: int) -> None:
     """Send a SyncTrigger instruction packet to a kamlet."""
-    j_x = kx * Params.J_COLS
-    header = PacketHeader(
+    j_x = kx * params.j_cols
+    header = Header(
         target_x=j_x,
         target_y=0,
         source_x=j_x,
@@ -261,83 +139,88 @@ async def send_sync_trigger_to_kamlet(dut: HierarchyObject, kx: int, sync_ident:
         message_type=MessageType.INSTRUCTIONS,
         send_type=SendType.SINGLE
     )
-    kinstr = SyncTriggerKInstr(
-        opcode=KInstrOpcode.SYNC_TRIGGER,
-        sync_ident=sync_ident,
-        value=value
+    kinstr = SyncTrigger(sync_ident=sync_ident, value=value)
+
+    logger.info(
+        f"Sending SyncTrigger to kamlet {kx}: sync_ident={sync_ident}, value={value}"
     )
-
-    logger.info(f"Sending SyncTrigger to kamlet {kx}: sync_ident={sync_ident}, value={value}")
-    logger.info(f"  header={hex(header.encode())}, kinstr={hex(kinstr.encode())}")
-    await send_packet_to_kamlet(dut, kx, header.encode(), is_header=True)
-    await send_packet_to_kamlet(dut, kx, kinstr.encode(), is_header=False)
+    logger.info(f"  header={hex(header.encode(params))}, kinstr={hex(kinstr.encode())}")
+    await send_packet_to_kamlet(params, dut, kx, [header, kinstr.encode()])
 
 
-async def wait_for_sync_results(dut: HierarchyObject, timeout_cycles: int = 500):
-    """Wait for sync results from both kamlets. Returns dict of results or None on timeout."""
+async def wait_for_sync_results(dut: HierarchyObject, params: ZamletParams,
+                                timeout_cycles: int = 500):
+    """Wait for sync results from both kamlets. Returns dict of results or None."""
     results = {}
 
     for _ in range(timeout_cycles):
         await RisingEdge(dut.clock)
         await ReadOnly()
 
-        # Probe kamlet 0 (kamlets_0_0, kX=0, kY=0) sync result via internal synchronizer
-        if 0 not in results:
-            valid = int(dut.kamlets_0_0.synchronizer.io_result_valid.value)
-            if valid == 1:
-                ident = int(dut.kamlets_0_0.synchronizer.io_result_bits_syncIdent.value)
-                value = int(dut.kamlets_0_0.synchronizer.io_result_bits_value.value)
-                results[0] = (ident, value)
-                logger.info(f"Kamlet 0 sync result: ident={ident}, value={value}")
+        for kx in range(params.k_cols):
+            for ky in range(params.k_rows):
+                k_idx = kx * params.k_rows + ky
+                if k_idx in results:
+                    continue
+                kamlet = getattr(dut, f'kamlets_{kx}_{ky}')
+                valid = int(kamlet.synchronizer.io_result_valid.value)
+                if valid == 1:
+                    ident = int(
+                        kamlet.synchronizer.io_result_bits_syncIdent.value
+                    )
+                    value = int(kamlet.synchronizer.io_result_bits_value.value)
+                    results[k_idx] = (ident, value)
+                    logger.info(
+                        f"Kamlet ({kx},{ky}) sync result: "
+                        f"ident={ident}, value={value}"
+                    )
 
-        # Probe kamlet 1 (kamlets_1_0, kX=1, kY=0) sync result via internal synchronizer
-        if 1 not in results:
-            valid = int(dut.kamlets_1_0.synchronizer.io_result_valid.value)
-            if valid == 1:
-                ident = int(dut.kamlets_1_0.synchronizer.io_result_bits_syncIdent.value)
-                value = int(dut.kamlets_1_0.synchronizer.io_result_bits_value.value)
-                results[1] = (ident, value)
-                logger.info(f"Kamlet 1 sync result: ident={ident}, value={value}")
-
-        if len(results) == 2:
+        if len(results) == params.k_cols * params.k_rows:
             return results
 
     return results if results else None
 
 
-async def test_sync_aggregation(dut: HierarchyObject) -> None:
+async def test_sync_aggregation(dut: HierarchyObject,
+                                params: ZamletParams) -> None:
     """Test sync MIN aggregation across two kamlets."""
-    # sync_ident must be in range [0, maxConcurrentSyncs) - default is 4
     sync_ident = 0
 
-    await send_sync_trigger_to_kamlet(dut, kx=0, sync_ident=sync_ident, value=3)
-    await send_sync_trigger_to_kamlet(dut, kx=1, sync_ident=sync_ident, value=5)
+    await send_sync_trigger_to_kamlet(dut, params, kx=0,
+                                      sync_ident=sync_ident, value=3)
+    await send_sync_trigger_to_kamlet(dut, params, kx=1,
+                                      sync_ident=sync_ident, value=5)
 
     logger.info("Sent SyncTrigger to both kamlets, waiting for sync results...")
 
-    results = await wait_for_sync_results(dut, timeout_cycles=500)
+    results = await wait_for_sync_results(dut, params, timeout_cycles=500)
 
     assert results is not None, "No sync results received within timeout"
-    assert 0 in results, "Kamlet 0 did not produce sync result"
-    assert 1 in results, "Kamlet 1 did not produce sync result"
+    n_kamlets = params.k_cols * params.k_rows
+    assert len(results) == n_kamlets, (
+        f"Expected results from {n_kamlets} kamlets, got {len(results)}"
+    )
 
-    ident0, value0 = results[0]
-    ident1, value1 = results[1]
-
-    assert ident0 == sync_ident, f"Kamlet 0: expected ident {sync_ident}, got {ident0}"
-    assert ident1 == sync_ident, f"Kamlet 1: expected ident {sync_ident}, got {ident1}"
     expected_min = 3
-    assert value0 == expected_min, f"Kamlet 0: expected MIN value {expected_min}, got {value0}"
-    assert value1 == expected_min, f"Kamlet 1: expected MIN value {expected_min}, got {value1}"
+    for k_idx, (ident, value) in results.items():
+        assert ident == sync_ident, (
+            f"Kamlet {k_idx}: expected ident {sync_ident}, got {ident}"
+        )
+        assert value == expected_min, (
+            f"Kamlet {k_idx}: expected MIN value {expected_min}, got {value}"
+        )
 
-    logger.info(f"test_sync_aggregation passed: both kamlets returned value={expected_min}")
+    logger.info(
+        f"test_sync_aggregation passed: all kamlets returned value={expected_min}"
+    )
 
 
-async def send_ident_query_to_kamlet(dut: HierarchyObject, kx: int, sync_ident: int,
-                                      baseline: int) -> None:
+async def send_ident_query_to_kamlet(dut: HierarchyObject, params: ZamletParams,
+                                     kx: int, sync_ident: int,
+                                     baseline: int) -> None:
     """Send an IdentQuery instruction packet to a kamlet."""
-    j_x = kx * Params.J_COLS
-    header = PacketHeader(
+    j_x = kx * params.j_cols
+    header = Header(
         target_x=j_x,
         target_y=0,
         source_x=j_x,
@@ -346,63 +229,69 @@ async def send_ident_query_to_kamlet(dut: HierarchyObject, kx: int, sync_ident: 
         message_type=MessageType.INSTRUCTIONS,
         send_type=SendType.SINGLE
     )
-    kinstr = IdentQueryKInstr(
-        opcode=KInstrOpcode.IDENT_QUERY,
-        baseline=baseline,
-        sync_ident=sync_ident
+    kinstr = IdentQuery(instr_ident=sync_ident, baseline=baseline)
+
+    logger.info(
+        f"Sending IdentQuery to kamlet {kx}: "
+        f"sync_ident={sync_ident}, baseline={baseline}"
     )
-
-    logger.info(f"Sending IdentQuery to kamlet {kx}: sync_ident={sync_ident}, baseline={baseline}")
-    logger.info(f"  header={hex(header.encode())}, kinstr={hex(kinstr.encode())}")
-    await send_packet_to_kamlet(dut, kx, header.encode(), is_header=True)
-    await send_packet_to_kamlet(dut, kx, kinstr.encode(), is_header=False)
+    logger.info(f"  header={hex(header.encode(params))}, kinstr={hex(kinstr.encode())}")
+    await send_packet_to_kamlet(params, dut, kx, [header, kinstr.encode()])
 
 
-async def test_ident_query(dut: HierarchyObject) -> None:
+async def test_ident_query(dut: HierarchyObject, params: ZamletParams) -> None:
     """Test IdentQuery instruction decoding and sync network.
 
     Sends IdentQuery to both kamlets. Since no instructions are active,
     both should report max distance (128 = all idents free).
     """
-    sync_ident = 1  # Use different sync_ident than test_sync_aggregation
-    baseline = 50   # Arbitrary baseline value
+    sync_ident = 1
+    baseline = 50
 
-    await send_ident_query_to_kamlet(dut, kx=0, sync_ident=sync_ident, baseline=baseline)
-    await send_ident_query_to_kamlet(dut, kx=1, sync_ident=sync_ident, baseline=baseline)
+    await send_ident_query_to_kamlet(dut, params, kx=0,
+                                     sync_ident=sync_ident, baseline=baseline)
+    await send_ident_query_to_kamlet(dut, params, kx=1,
+                                     sync_ident=sync_ident, baseline=baseline)
 
     logger.info("Sent IdentQuery to both kamlets, waiting for sync results...")
 
-    results = await wait_for_sync_results(dut, timeout_cycles=500)
+    results = await wait_for_sync_results(dut, params, timeout_cycles=500)
 
     assert results is not None, "No sync results received within timeout"
-    assert 0 in results, "Kamlet 0 did not produce sync result"
-    assert 1 in results, "Kamlet 1 did not produce sync result"
+    n_kamlets = params.k_cols * params.k_rows
+    assert len(results) == n_kamlets, (
+        f"Expected results from {n_kamlets} kamlets, got {len(results)}"
+    )
 
-    ident0, value0 = results[0]
-    ident1, value1 = results[1]
-
-    assert ident0 == sync_ident, f"Kamlet 0: expected ident {sync_ident}, got {ident0}"
-    assert ident1 == sync_ident, f"Kamlet 1: expected ident {sync_ident}, got {ident1}"
-
-    # Both kamlets report max distance (128) since no instructions are active
     expected_value = 128  # params.maxResponseTags
-    assert value0 == expected_value, f"Kamlet 0: expected value {expected_value}, got {value0}"
-    assert value1 == expected_value, f"Kamlet 1: expected value {expected_value}, got {value1}"
+    for k_idx, (ident, value) in results.items():
+        assert ident == sync_ident, (
+            f"Kamlet {k_idx}: expected ident {sync_ident}, got {ident}"
+        )
+        assert value == expected_value, (
+            f"Kamlet {k_idx}: expected value {expected_value}, got {value}"
+        )
 
-    logger.info(f"test_ident_query passed: both kamlets returned value={expected_value}")
+    logger.info(
+        f"test_ident_query passed: all kamlets returned value={expected_value}"
+    )
 
 
 @cocotb.test()
 async def kamlet_mesh_test(dut: HierarchyObject) -> None:
     """Main test entry point for KamletMesh Test 0."""
     test_utils.configure_logging_sim("DEBUG")
+    test_params = test_utils.get_test_params()
+    with open(test_params['params_file']) as f:
+        params = ZamletParams.from_dict(json.load(f))
 
     clock_gen = Clock(dut.clock, 1, "ns")
     cocotb.start_soon(clock_gen.start())
 
-    initialize_inputs(dut)
+    initialize_inputs(dut, params)
     await reset(dut)
+    cocotb.start_soon(monitor_errors(dut, params))
 
-    await test_sync_aggregation(dut)
+    await test_sync_aggregation(dut, params)
     await RisingEdge(dut.clock)  # Exit ReadOnly phase before next test
-    await test_ident_query(dut)
+    await test_ident_query(dut, params)

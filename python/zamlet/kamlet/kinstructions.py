@@ -14,11 +14,12 @@ Send             src (6 bit)    target (6 bit) mask (5 bit)  length (3)  =  26 b
 import logging
 import struct
 from dataclasses import dataclass
-from enum import Enum
+from enum import Enum, IntEnum
 
 from zamlet import addresses
 from zamlet.addresses import KMAddr, GlobalAddress
 from zamlet.params import ZamletParams
+from zamlet.control_structures import pack_fields_to_int
 from zamlet.monitor import CompletionType, SpanType
 
 
@@ -95,6 +96,46 @@ class TrackedKInstr(KInstr):
             instr_type=type(self).__name__,
             instr_ident=self.instr_ident,
         )
+
+
+class KInstrOpcode(IntEnum):
+    SYNC_TRIGGER = 0
+    IDENT_QUERY = 1
+    LOAD_J2J = 2
+    STORE_J2J = 3
+    LOAD_SIMPLE = 4
+    STORE_SIMPLE = 5
+    LOAD_IMM = 6
+    WRITE_PARAM = 7
+    STORE_SCALAR = 8
+
+
+KINSTR_WIDTH = 64
+OPCODE_WIDTH = 6
+SYNC_IDENT_WIDTH = 8
+SYNC_VALUE_WIDTH = 8
+
+
+@dataclass
+class SyncTrigger(KInstr):
+    """Trigger a sync event on the sync network.
+
+    Matches Chisel SyncTriggerInstr layout:
+      opcode(6), syncIdent(8), value(8), reserved(42)
+    """
+    opcode: int = KInstrOpcode.SYNC_TRIGGER
+    sync_ident: int = 0
+    value: int = 0
+
+    FIELD_SPECS = [
+        ('opcode', OPCODE_WIDTH),
+        ('sync_ident', SYNC_IDENT_WIDTH),
+        ('value', SYNC_VALUE_WIDTH),
+        ('_padding', KINSTR_WIDTH - OPCODE_WIDTH - SYNC_IDENT_WIDTH - SYNC_VALUE_WIDTH),
+    ]
+
+    def encode(self) -> int:
+        return pack_fields_to_int(self, self.FIELD_SPECS)
 
 
 @dataclass

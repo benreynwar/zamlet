@@ -51,7 +51,7 @@ class Kamlet(
 
 
     // Error signals
-    val instrQueueErrors = Output(new InstrQueueErrors)
+    val errors = Output(new KamletErrors)
   })
 
   // ============================================================
@@ -205,7 +205,7 @@ class Kamlet(
   // Outputs
   // ============================================================
 
-  io.instrQueueErrors := instrQueue.io.errors
+  io.errors.instrQueue := instrQueue.io.errors
 }
 
 object KamletGenerator extends zamlet.ModuleGenerator {

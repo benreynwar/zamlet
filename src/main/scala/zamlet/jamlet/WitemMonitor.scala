@@ -1887,7 +1887,7 @@ class WitemMonitor(params: ZamletParams) extends Module {
   // -------------------------------------------------------------------------
 
   // Determine message type based on witem type
-  val s16MessageType = MuxLookup(s16In.bits.witemType.asUInt, MessageType.Reserved2)(Seq(
+  val s16MessageType = MuxLookup(s16In.bits.witemType.asUInt, MessageType.Reserved63)(Seq(
     WitemType.LoadJ2JWords.asUInt -> MessageType.LoadJ2JWordsReq,
     WitemType.StoreJ2JWords.asUInt -> MessageType.StoreJ2JWordsReq,
     WitemType.LoadWordSrc.asUInt -> MessageType.LoadWordReq,

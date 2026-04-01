@@ -161,6 +161,9 @@ class Header:
     message_type: MessageType  # 6 bits
     send_type: SendType        # 1 bit
 
+    def encode(self, params) -> int:
+        return pack_fields_to_int(self, params.base_header_fields)
+
     def copy(self):
         return dataclasses.replace(self)
 

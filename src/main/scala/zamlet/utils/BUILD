@@ -26,3 +26,11 @@ chisel_binary(
     deps = UTILS_DEPS,
     visibility = ["//visibility:public"],
 )
+
+chisel_binary(
+    name = "double_buffer",
+    srcs = [":utils_sources"] + UTILS_COMMON_SRCS,
+    main_class = "zamlet.utils.DoubleBufferMain",
+    deps = UTILS_DEPS,
+    visibility = ["//visibility:public"],
+)

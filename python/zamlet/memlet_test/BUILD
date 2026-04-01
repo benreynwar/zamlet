@@ -20,12 +20,6 @@ cocotb_binary(
 )
 
 py_library(
-    name = "test_memlet_py",
-    srcs = ["test_memlet.py"],
-    deps = ["//python/zamlet:zamlet"],
-)
-
-py_library(
     name = "test_cocotb_memlet_py",
     srcs = [
         "test_cocotb_memlet.py",
@@ -38,18 +32,6 @@ py_library(
 
 cocotb_test(
     name = "test_memlet_default",
-    binary = ":memlet_default_exe",
-    test_module = "zamlet.memlet_test.test_memlet",
-    toplevel = "Memlet",
-    env = {
-        "ZAMLET_TEST_CONFIG_FILENAME": "configs/zamlet_default.json",
-    },
-    data = ["//configs:zamlet_default.json"],
-    py_deps = [":test_memlet_py"],
-)
-
-cocotb_test(
-    name = "test_write_read_default",
     binary = ":memlet_default_exe",
     test_module = "zamlet.memlet_test.test_cocotb_memlet",
     toplevel = "Memlet",
@@ -64,6 +46,5 @@ test_suite(
     name = "all_tests",
     tests = [
         ":test_memlet_default",
-        ":test_write_read_default",
     ],
 )
