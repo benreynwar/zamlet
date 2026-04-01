@@ -6,7 +6,8 @@ import logging
 from zamlet.memlet_test.model_driver import ModelDriver
 from zamlet.memlet_test.test_write_read import (
     run_write_read, run_multi_address, run_write_write_read_read,
-    run_pipelined,
+    run_pipelined, run_slot_exhaustion, run_backpressure,
+    run_write_read_line,
 )
 from zamlet.params import ZamletParams
 
@@ -26,6 +27,9 @@ async def main():
     await run_multi_address(driver)
     await run_write_write_read_read(driver)
     await run_pipelined(driver)
+    await run_slot_exhaustion(driver)
+    await run_backpressure(driver)
+    await run_write_read_line(driver)
     driver.clock.running = False
 
 

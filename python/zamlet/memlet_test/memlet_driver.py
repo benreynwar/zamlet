@@ -22,8 +22,9 @@ logger = logging.getLogger(__name__)
 
 
 class _PendingWrite:
-    def __init__(self, fut):
+    def __init__(self, fut, addr_pkt: list):
         self.fut = fut
+        self.addr_pkt = addr_pkt
         self.data_pkts = {}  # (source_x, source_y) -> packet
 
 
@@ -35,8 +36,9 @@ class _PendingRead:
 
 
 class _PendingWriteRead:
-    def __init__(self, fut):
+    def __init__(self, fut, addr_pkt: list):
         self.fut = fut
+        self.addr_pkt = addr_pkt
         self.data_pkts = {}      # (source_x, source_y) -> packet
         self.received_data = {}  # (target_x, target_y) -> data words
 
@@ -44,17 +46,27 @@ class _PendingWriteRead:
 class MemletDriver(ABC):
 
     def __init__(self, params: ZamletParams, router_coords: list,
-                 k_base_x: int, k_base_y: int):
+                 k_base_x: int, k_base_y: int, a_queue_depth: int = 2):
         self.params = params
         self.router_coords = router_coords
         self.k_base_x = k_base_x
         self.k_base_y = k_base_y
         self.n_routers = len(router_coords)
+        self.a_queue_depth = a_queue_depth
         self.b_queues = [deque() for _ in range(self.n_routers)]
         self.a_queues = [deque() for _ in range(self.n_routers)]
         self._pending_writes = {}      # ident -> _PendingWrite
         self._pending_reads = {}       # ident -> _PendingRead
         self._pending_write_reads = {} # ident -> _PendingWriteRead
+        self.drop_count = 0
+        # Set to False to stop draining a_queues, causing network backpressure.
+        self.consume_responses = True
+
+    def reset_drop_count(self) -> int:
+        """Reset drop count and return the previous value."""
+        count = self.drop_count
+        self.drop_count = 0
+        return count
 
     def start(self) -> None:
         """Start background coroutines that drive b_queues and drain a_queues."""
@@ -86,6 +98,11 @@ class MemletDriver(ABC):
         """Monitor a_queues. Resolve futures on completion, resend on drop."""
         logger.debug("_handle_responses started")
         while True:
+            # When consume_responses is False, responses accumulate in a_queues,
+            # filling them up and propagating backpressure into the network.
+            if not self.consume_responses:
+                await self.tick()
+                continue
             for r in range(self.n_routers):
                 while self.a_queues[r]:
                     pkt = self.a_queues[r].popleft()
@@ -98,13 +115,20 @@ class MemletDriver(ABC):
                         pw.fut.set_result(None)
                         logger.info(f"write ident={ident} complete")
 
-                    elif msg in (MessageType.WRITE_LINE_ADDR_DROP,
-                                 MessageType.WRITE_LINE_DATA_DROP):
+                    elif msg == MessageType.WRITE_LINE_ADDR_DROP:
+                        self.drop_count += 1
                         pw = self._pending_writes[ident]
-                        target = (header.target_x, header.target_y)
-                        resend_pkt = pw.data_pkts[target]
-                        target_r = self._router_idx_for_target(*target)
-                        logger.info(f"write drop ident={ident} type={msg}, resending")
+                        logger.info(f"write addr drop ident={ident}, resending")
+                        self.submit_packet(0, pw.addr_pkt)
+
+                    elif msg == MessageType.WRITE_LINE_DATA_DROP:
+                        self.drop_count += 1
+                        pw = self._pending_writes[ident]
+                        sender = (header.target_x, header.target_y)
+                        resend_pkt = pw.data_pkts[sender]
+                        target_r = self._router_idx_for_target(
+                            resend_pkt[0].target_x, resend_pkt[0].target_y)
+                        logger.info(f"write data drop ident={ident}, resending")
                         self.submit_packet(target_r, resend_pkt)
 
                     elif msg == MessageType.READ_LINE_RESP:
@@ -119,6 +143,7 @@ class MemletDriver(ABC):
                             logger.info(f"read ident={ident} complete")
 
                     elif msg == MessageType.READ_LINE_ADDR_DROP:
+                        self.drop_count += 1
                         pr = self._pending_reads[ident]
                         logger.info(f"read drop ident={ident}, resending")
                         self.submit_packet(0, pr.addr_pkt)
@@ -135,12 +160,10 @@ class MemletDriver(ABC):
                             logger.info(f"write_read ident={ident} complete")
 
                     elif msg == MessageType.WRITE_LINE_READ_LINE_ADDR_DROP:
+                        self.drop_count += 1
                         pwr = self._pending_write_reads[ident]
-                        target = (header.target_x, header.target_y)
-                        resend_pkt = pwr.data_pkts[target]
-                        target_r = self._router_idx_for_target(*target)
-                        logger.info(f"write_read drop ident={ident}, resending")
-                        self.submit_packet(target_r, resend_pkt)
+                        logger.info(f"write_read addr drop ident={ident}, resending")
+                        self.submit_packet(0, pwr.addr_pkt)
 
                     else:
                         raise ValueError(f"Unexpected response type: {msg}")
@@ -182,7 +205,6 @@ class MemletDriver(ABC):
         """Write a cache line. Queues all packets and awaits completion future."""
         params = self.params
         fut = self._make_future()
-        self._pending_writes[ident] = _PendingWrite(fut)
 
         per_jamlet = self._bytes_to_words(data)
 
@@ -193,7 +215,9 @@ class MemletDriver(ABC):
             length=1, message_type=MessageType.WRITE_LINE_ADDR,
             send_type=SendType.SINGLE, ident=ident, address=0,
         )
-        self.submit_packet(0, [addr_hdr, mem_addr])
+        addr_pkt = [addr_hdr, mem_addr]
+        self._pending_writes[ident] = _PendingWrite(fut, addr_pkt)
+        self.submit_packet(0, addr_pkt)
 
         for j in range(params.j_in_k):
             r = j_in_k_to_m_router(j, self.n_routers, params.j_in_k)
@@ -235,7 +259,6 @@ class MemletDriver(ABC):
         """Atomic write + read. Returns read-back cache line as bytes."""
         params = self.params
         fut = self._make_future()
-        self._pending_write_reads[ident] = _PendingWriteRead(fut)
 
         per_jamlet = self._bytes_to_words(data)
 
@@ -246,7 +269,9 @@ class MemletDriver(ABC):
             length=2, message_type=MessageType.WRITE_LINE_READ_LINE_ADDR,
             send_type=SendType.SINGLE, ident=ident, address=sram_addr,
         )
-        self.submit_packet(0, [addr_hdr, write_mem_addr, read_mem_addr])
+        addr_pkt = [addr_hdr, write_mem_addr, read_mem_addr]
+        self._pending_write_reads[ident] = _PendingWriteRead(fut, addr_pkt)
+        self.submit_packet(0, addr_pkt)
 
         for j in range(params.j_in_k):
             r = j_in_k_to_m_router(j, self.n_routers, params.j_in_k)
@@ -271,10 +296,15 @@ class MemletDriver(ABC):
                 return r
         raise ValueError(f"No router at ({target_x}, {target_y})")
 
+    async def a_queue_append(self, r: int, packet: list) -> None:
+        """Append a received packet to a_queues[r]. Blocks when queue is full."""
+        while self.a_queue_depth and len(self.a_queues[r]) >= self.a_queue_depth:
+            await self.tick()
+        self.a_queues[r].append(packet)
+
     @abstractmethod
     def _make_future(self):
         """Create an awaitable future with a .set(value) method."""
-
 
     @abstractmethod
     async def tick(self, n: int = 1) -> None:

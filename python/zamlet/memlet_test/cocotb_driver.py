@@ -136,9 +136,14 @@ class CocotbDriver(MemletDriver):
                     remaining -= 1
                 if remaining == 0 and packet:
                     logger.info(f"[{sig_name}] complete packet: {len(packet)} words")
-                    self.a_queues[r].append(packet)
+                    # Deassert ready before waiting for queue space so
+                    # backpressure propagates into the network.
+                    await RisingEdge(self.dut.clock)
+                    self._a_sig(r, d, 'ready').value = 0
+                    await self.a_queue_append(r, packet)
                     packet = []
                     remaining = 0
+                    continue
             await RisingEdge(self.dut.clock)
 
     async def _error_monitor(self) -> None:

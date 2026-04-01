@@ -102,3 +102,12 @@ async def memlet_write_test(dut: HierarchyObject) -> None:
     await test_write_read.run_multi_address(driver)
     await test_write_read.run_write_write_read_read(driver)
     await test_write_read.run_pipelined(driver)
+
+    axi.aw_p_ready = 0.1
+    axi.w_p_ready = 0.1
+    await test_write_read.run_slot_exhaustion(driver)
+    axi.aw_p_ready = 1.0
+    axi.w_p_ready = 1.0
+
+    await test_write_read.run_backpressure(driver)
+    await test_write_read.run_write_read_line(driver)

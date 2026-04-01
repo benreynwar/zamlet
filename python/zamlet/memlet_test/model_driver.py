@@ -23,7 +23,9 @@ logger = logging.getLogger(__name__)
 
 class ModelDriver(MemletDriver):
 
-    def __init__(self, params: ZamletParams, kamlet_index: int = 0):
+    def __init__(self, params: ZamletParams, kamlet_index: int = 0,
+                 write_latency: int = 32, read_latency: int = 32,
+                 max_pending: int = 2):
         coords = memlet_coords(params, kamlet_index)
         kx = (kamlet_index % params.k_cols) * params.j_cols
         ky = (kamlet_index // params.k_cols) * params.j_rows
@@ -36,6 +38,9 @@ class ModelDriver(MemletDriver):
             self.clock, params, coords,
             kamlet_coords=(kamlet_x, kamlet_y),
             monitor=self.monitor,
+            write_latency=write_latency,
+            read_latency=read_latency,
+            max_pending=max_pending,
         )
 
     async def reset(self) -> None:
@@ -90,7 +95,7 @@ class ModelDriver(MemletDriver):
                         if buf:
                             packet.append(buf.popleft())
                             remaining -= 1
-                    self.a_queues[r].append(packet)
+                    await self.a_queue_append(r, packet)
             await self.clock.next_cycle
 
     def _make_future(self):

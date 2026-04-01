@@ -4,16 +4,21 @@ Captures AW+W write transactions, stores data in a dict, and
 automatically sends B responses.
 """
 
+import random
 from collections import deque
 from typing import Dict, List, Tuple
 
 import cocotb
 from cocotb.triggers import RisingEdge, ReadOnly
 
+from zamlet.utils import make_seed
+
 
 class AxiMemory:
 
-    def __init__(self, signals: dict, clock, word_bytes: int = 8):
+    def __init__(self, signals: dict, clock, word_bytes: int = 8,
+                 aw_p_ready: float = 1.0, w_p_ready: float = 1.0,
+                 ar_p_ready: float = 1.0, seed: int = 0):
         self.s = signals
         self.clock = clock
         self.word_bytes = word_bytes
@@ -23,11 +28,15 @@ class AxiMemory:
         self._w_bursts: deque = deque()
         self._b_queue: deque = deque()
         self._ar_queue: deque = deque()
+        self.aw_p_ready = aw_p_ready
+        self.w_p_ready = w_p_ready
+        self.ar_p_ready = ar_p_ready
+        self._rng = random.Random(seed)
 
     def start(self):
-        self.s['aw_ready'].value = 1
-        self.s['w_ready'].value = 1
-        self.s['ar_ready'].value = 1
+        self.s['aw_ready'].value = 0
+        self.s['w_ready'].value = 0
+        self.s['ar_ready'].value = 0
         self.s['b_valid'].value = 0
         self.s['b_id'].value = 0
         self.s['b_resp'].value = 0
@@ -36,19 +45,20 @@ class AxiMemory:
         self.s['r_data'].value = 0
         self.s['r_resp'].value = 0
         self.s['r_last'].value = 0
-        cocotb.start_soon(self._aw_capture())
-        cocotb.start_soon(self._w_capture())
+        cocotb.start_soon(self._aw_capture(random.Random(make_seed(self._rng))))
+        cocotb.start_soon(self._w_capture(random.Random(make_seed(self._rng))))
         cocotb.start_soon(self._match_writes())
         cocotb.start_soon(self._b_driver())
-        cocotb.start_soon(self._ar_capture())
+        cocotb.start_soon(self._ar_capture(random.Random(make_seed(self._rng))))
         cocotb.start_soon(self._r_driver())
 
-    async def _aw_capture(self):
+    async def _aw_capture(self, rng: random.Random):
         while True:
             await RisingEdge(self.clock)
-            self.s['aw_ready'].value = 1
+            self.s['aw_ready'].value = int(rng.random() < self.aw_p_ready)
             await ReadOnly()
-            if int(self.s['aw_valid'].value) == 1:
+            if (int(self.s['aw_valid'].value) == 1
+                    and int(self.s['aw_ready'].value) == 1):
                 entry = {
                     'id': int(self.s['aw_id'].value),
                     'addr': int(self.s['aw_addr'].value),
@@ -58,13 +68,14 @@ class AxiMemory:
                 }
                 self._aw_queue.append(entry)
 
-    async def _w_capture(self):
+    async def _w_capture(self, rng: random.Random):
         burst: List[int] = []
         while True:
             await RisingEdge(self.clock)
-            self.s['w_ready'].value = 1
+            self.s['w_ready'].value = int(rng.random() < self.w_p_ready)
             await ReadOnly()
-            if int(self.s['w_valid'].value) == 1:
+            if (int(self.s['w_valid'].value) == 1
+                    and int(self.s['w_ready'].value) == 1):
                 burst.append(int(self.s['w_data'].value))
                 if int(self.s['w_last'].value):
                     self._w_bursts.append(list(burst))
@@ -96,12 +107,13 @@ class AxiMemory:
                     await RisingEdge(self.clock)
                     await ReadOnly()
 
-    async def _ar_capture(self):
+    async def _ar_capture(self, rng: random.Random):
         while True:
             await RisingEdge(self.clock)
-            self.s['ar_ready'].value = 1
+            self.s['ar_ready'].value = int(rng.random() < self.ar_p_ready)
             await ReadOnly()
-            if int(self.s['ar_valid'].value) == 1:
+            if (int(self.s['ar_valid'].value) == 1
+                    and int(self.s['ar_ready'].value) == 1):
                 entry = {
                     'id': int(self.s['ar_id'].value),
                     'addr': int(self.s['ar_addr'].value),
