@@ -7,7 +7,7 @@ It may be useful for applications that operate on large vectors, with the contro
 relatively independent of the vector data.  Applications such as Fully Homomorphic Encryption and
 Machine Learning often fit into this category. 
 
-I've made a start on some docs at ![https://benreynwar.github.io/zamlet/](benreynwar.github.io/zamlet/).
+I've made a start on some docs at ![benreynwar.github.io/zamlet/](https://benreynwar.github.io/zamlet/).
 
 
 ## Approach
