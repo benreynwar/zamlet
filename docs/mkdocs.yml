@@ -7,4 +7,6 @@ nav:
     - Gather Example: gather_example.md
   - Modelling:
     - Python Model: python.md
-theme: readthedocs
+theme:
+  name: readthedocs
+  highlightjs: false
