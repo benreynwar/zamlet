@@ -7,7 +7,12 @@ It may be useful for applications that operate on large vectors, with the contro
 relatively independent of the vector data.  Applications such as Fully Homomorphic Encryption and
 Machine Learning often fit into this category. 
 
+I've made a start on some docs at ![https://benreynwar.github.io/zamlet/](benreynwar.github.io/zamlet/).
+
+
 ## Approach
+
+![Top-Level Diagram](docs/docs/images/oamlet.png)
 
 **Lanes are arranged in a grid.** If we want the design to scale to large numbers of lanes, we don't really have any other choices.
 
@@ -21,38 +26,7 @@ Machine Learning often fit into this category.
 
 **Custom hardware to synchronize the lane groupings.** Because of the message passing approach, the lane groupings can often be out of sync with one another. Rather than building synchronization out of the network-based message passing we add specialized hardware for synchronizing between the lane groupings when this is required.
 
-## Hierarchy
-
-We use jamlet/kamlet/lamlet/memlet to refer to modules in the zamlet processor.
-
-1. Lane (jamlet)
-   * ALU
-   * SRAM (for the distributed cache table)
-   * Vector Register Slice
-   * Pending Instruction Memory - We need a memory to keep track of instructions that involve message passing. Here we keep track of the state while we're waiting for the protocol to complete.
-
-2. Lane Grouping (kamlet)
-   * The jamlets within the group.
-   * A buffer for microinstructions that have arrived.
-   * Pending Instruction Memory - Similar to the memory in the jamlet. It is useful to have this memory at both levels of the hierarchy. Data that is shared among the jamlets is stored here.
-   * Synchronization Module
-   * TLB
-
-3. Processor (zamlet)
-   * A mesh of kamlets
-   * A Scalar Processor to Mesh Bridge (lamlet)
-       - This module acts as a bridge between the scalar processor (we use the shuttle processor from ucb-bar)
-         and the grid of kamlets.
-       - Converts the riscv vector instructions from shuttle into microoperations to send to the kamlets.
-       - Bridges memory access from the scalar processor to the vector memory, and from the vector processor unit
-         to the scalar memory.
-   * Interface modules between the kamlet mesh and the vector data memory (memlet)
-     
-## Current State
-
-* Basic modelling in python.  The approach seems practical, but I don't yet have quantitative performance numbers, and many of the vector instructions don't yet have defined mappings into the hardware.
-
-* Some initial work implementing the design in Chisel. This is what I'm primarily working on at the moment.  I think the biggest risk at the moment is that the area cost of dealing with the message passing will be too high.
+![Lane Grouping Diagram](docs/docs/images/kamlet_jamlet.png)
 
 ## Setup
 

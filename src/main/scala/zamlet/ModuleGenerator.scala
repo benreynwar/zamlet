@@ -34,7 +34,7 @@ trait ModuleGenerator {
         "-strip-debug-info",
         "-default-layer-specialization=enable",
         // Yosys 0.46 doesn't support `automatic` in always blocks
-        "-lowering-options=disallowLocalVariables",
+        "-lowering-options=disallowLocalVariables,disallowPackedArrays",
       )
     )
   }

@@ -1,6 +1,7 @@
 site_name: Zamlet
 nav:
   - Home: index.md
+  - Setup: setup.md
   - Design:
     - Memory: memory.md
     - Gather Example: gather_example.md
