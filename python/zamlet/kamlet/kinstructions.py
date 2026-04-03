@@ -48,8 +48,19 @@ class VArithOp(Enum):
     FMUL = "fmul"
     FDIV = "fdiv"
     FMACC = "fmacc"
+    FMADD = "fmadd"
     FMIN = "fmin"
     FMAX = "fmax"
+
+
+class VfcvtOp(Enum):
+    """Single-width vector float/int conversion variants (vfcvt.*.v)."""
+    XU_F = "xu.f"    # float → unsigned int
+    X_F = "x.f"      # float → signed int
+    F_XU = "f.xu"    # unsigned int → float
+    F_X = "f.x"      # signed int → float
+    RTZ_XU_F = "rtz.xu.f"  # float → unsigned int (round toward zero)
+    RTZ_X_F = "rtz.x.f"    # float → signed int (round toward zero)
 
 
 class VRedOp(Enum):
@@ -475,6 +486,78 @@ class VmvVvOp(KInstr):
 
 
 @dataclass
+class VfcvtVvOp(KInstr):
+    """Single-width vector float/int conversion. Unary: reads src (vs2), writes dst (vd)."""
+    op: VfcvtOp
+    dst: int
+    src: int
+    mask_reg: int
+    n_elements: int
+    element_width: int
+    word_order: addresses.WordOrder
+    instr_ident: int
+
+    def _convert_element(self, src_bytes, eb):
+        float_fmt = {8: 'd', 4: 'f'}[eb]
+        sint_fmt = {8: '<q', 4: '<i'}[eb]
+        uint_fmt = {8: '<Q', 4: '<I'}[eb]
+        max_uint = (1 << (eb * 8)) - 1
+        max_sint = (1 << (eb * 8 - 1)) - 1
+        min_sint = -(1 << (eb * 8 - 1))
+
+        if self.op in (VfcvtOp.XU_F, VfcvtOp.RTZ_XU_F):
+            float_val = struct.unpack(float_fmt, src_bytes)[0]
+            int_val = int(float_val)
+            int_val = max(0, min(int_val, max_uint))
+            return struct.pack(uint_fmt, int_val)
+        elif self.op in (VfcvtOp.X_F, VfcvtOp.RTZ_X_F):
+            float_val = struct.unpack(float_fmt, src_bytes)[0]
+            int_val = int(float_val)
+            int_val = max(min_sint, min(int_val, max_sint))
+            return struct.pack(sint_fmt, int_val)
+        elif self.op == VfcvtOp.F_XU:
+            uint_val = struct.unpack(uint_fmt, src_bytes)[0]
+            return struct.pack(float_fmt, float(uint_val))
+        elif self.op == VfcvtOp.F_X:
+            sint_val = struct.unpack(sint_fmt, src_bytes)[0]
+            return struct.pack(float_fmt, float(sint_val))
+        else:
+            raise NotImplementedError(f"Unknown vfcvt op: {self.op}")
+
+    async def update_kamlet(self, kamlet):
+        bits_in_vline = kamlet.params.vline_bytes * 8
+        n_vlines = (self.n_elements * self.element_width + bits_in_vline - 1) // bits_in_vline
+        src_regs = [self.src + index for index in range(n_vlines)]
+        dst_regs = [self.dst + index for index in range(n_vlines)]
+        await kamlet.wait_for_rf_available(
+            read_regs=src_regs, write_regs=dst_regs, instr_ident=self.instr_ident)
+
+        params = kamlet.params
+        vreg_bytes_per_jamlet = params.maxvl_bytes // params.j_in_l
+        src_offset = self.src * vreg_bytes_per_jamlet
+        dst_offset = self.dst * vreg_bytes_per_jamlet
+        eb = self.element_width // 8
+        wb = kamlet.params.word_bytes
+        start_index = 0
+
+        for j_in_k_index, jamlet in enumerate(kamlet.jamlets):
+            for vline_index in range(n_vlines):
+                for index_in_j in range(wb // eb):
+                    byte_offset = vline_index * wb + index_in_j * eb
+                    valid_element, mask_bit = kamlet.get_is_active(
+                        start_index, self.n_elements, self.element_width, self.word_order,
+                        self.mask_reg, vline_index, j_in_k_index, index_in_j
+                    )
+                    if valid_element and mask_bit:
+                        src_bytes = jamlet.rf_slice[
+                            src_offset + byte_offset:src_offset + byte_offset + eb]
+                        result_bytes = self._convert_element(src_bytes, eb)
+                        jamlet.rf_slice[
+                            dst_offset + byte_offset:dst_offset + byte_offset + eb] = result_bytes
+        kamlet.monitor.finalize_kinstr_exec(self.instr_ident, kamlet.min_x, kamlet.min_y)
+
+
+@dataclass
 class ReadRegElement(TrackedKInstr):
     rd: int
     src: int
@@ -529,7 +612,7 @@ class VArithVvOp(KInstr):
                         src1_bytes = jamlet.rf_slice[src1_offset + byte_offset:src1_offset + byte_offset + eb]
                         src2_bytes = jamlet.rf_slice[src2_offset + byte_offset:src2_offset + byte_offset + eb]
                         float_ops = (VArithOp.FADD, VArithOp.FSUB, VArithOp.FMUL, VArithOp.FDIV,
-                                     VArithOp.FMACC, VArithOp.FMIN, VArithOp.FMAX)
+                                     VArithOp.FMACC, VArithOp.FMADD, VArithOp.FMIN, VArithOp.FMAX)
                         signed_int_ops = (VArithOp.ADD, VArithOp.SUB, VArithOp.MUL, VArithOp.MACC,
                                           VArithOp.AND, VArithOp.OR, VArithOp.XOR,
                                           VArithOp.SLL, VArithOp.SRA, VArithOp.MIN, VArithOp.MAX)
@@ -587,6 +670,10 @@ class VArithVvOp(KInstr):
                             acc_bytes = jamlet.rf_slice[dst_offset + byte_offset:dst_offset + byte_offset + eb]
                             acc_val = struct.unpack(fmt, acc_bytes)[0]
                             result = (src1_val * src2_val) + acc_val
+                        elif self.op == VArithOp.FMADD:
+                            acc_bytes = jamlet.rf_slice[dst_offset + byte_offset:dst_offset + byte_offset + eb]
+                            acc_val = struct.unpack(fmt, acc_bytes)[0]
+                            result = (src1_val * acc_val) + src2_val
                         elif self.op == VArithOp.FMIN:
                             result = min(src1_val, src2_val)
                         elif self.op == VArithOp.FMAX:
@@ -667,6 +754,10 @@ class VArithVxOp(KInstr):
                             acc_bytes = jamlet.rf_slice[dst_offset + byte_offset:dst_offset + byte_offset + eb]
                             acc_val = unpack(acc_bytes)
                             result = acc_val + (scalar_val * src2_val)
+                        elif self.op == VArithOp.FMADD:
+                            acc_bytes = jamlet.rf_slice[dst_offset + byte_offset:dst_offset + byte_offset + eb]
+                            acc_val = unpack(acc_bytes)
+                            result = (scalar_val * acc_val) + src2_val
                         elif self.op == VArithOp.AND:
                             result = src2_val & scalar_val
                         elif self.op == VArithOp.OR:

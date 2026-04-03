@@ -39,7 +39,7 @@ class Vsetvli:
         vta = (self.vtypei >> 6) & 0x1
         vma = (self.vtypei >> 7) & 0x1
 
-        lmul_strs = ['m1', 'm2', 'm4', 'm8', 'mf8', 'mf4', 'mf2', 'reserved']
+        lmul_strs = ['m1', 'm2', 'm4', 'm8', 'reserved', 'mf8', 'mf4', 'mf2']
         sew_strs = ['e8', 'e16', 'e32', 'e64', 'e128', 'e256', 'e512', 'e1024']
 
         lmul_str = lmul_strs[vlmul]
@@ -109,7 +109,7 @@ class Vsetivli:
         vta = (self.vtypei >> 6) & 0x1
         vma = (self.vtypei >> 7) & 0x1
 
-        lmul_strs = ['m1', 'm2', 'm4', 'm8', 'mf8', 'mf4', 'mf2', 'reserved']
+        lmul_strs = ['m1', 'm2', 'm4', 'm8', 'reserved', 'mf8', 'mf4', 'mf2']
         sew_strs = ['e8', 'e16', 'e32', 'e64', 'e128', 'e256', 'e512', 'e1024']
 
         lmul_str = lmul_strs[vlmul]
@@ -477,7 +477,7 @@ class VArithVxFloat:
 
     def __str__(self):
         vm_str = '' if self.vm else ',v0.t'
-        return f'vf{self.op.value}.vf\tv{self.vd},{freg_name(self.rs1)},v{self.vs2}{vm_str}'
+        return f'v{self.op.value}.vf\tv{self.vd},{freg_name(self.rs1)},v{self.vs2}{vm_str}'
 
     async def update_state(self, s: 'Oamlet'):
         span_id = s.monitor.create_span(
@@ -777,6 +777,52 @@ class VmvVv:
 
 
 @dataclass
+class Vfcvt:
+    """Single-width vector float/int conversion (vfcvt.*.v)."""
+    vd: int
+    vs2: int
+    vm: int
+    op: kinstructions.VfcvtOp
+
+    def __str__(self):
+        vm_str = '' if self.vm else ',v0.t'
+        return f'vfcvt.{self.op.value}.v\tv{self.vd},v{self.vs2}{vm_str}'
+
+    async def update_state(self, s: 'Oamlet'):
+        span_id = s.monitor.create_span(
+            span_type=SpanType.RISCV_INSTR,
+            component="lamlet",
+            completion_type=CompletionType.FIRE_AND_FORGET,
+            mnemonic=str(self),
+            pc=s.pc,
+        )
+
+        mask_reg = None if self.vm else 0
+
+        vsew = (s.vtype >> 3) & 0x7
+        element_width = 8 << vsew
+        word_order = s.word_order
+
+        assert s.vrf_ordering[self.vs2].ew == element_width
+        s.vrf_ordering[self.vd] = addresses.Ordering(word_order, element_width)
+
+        instr_ident = await s.get_instr_ident()
+        kinstr = kinstructions.VfcvtVvOp(
+            op=self.op,
+            dst=self.vd,
+            src=self.vs2,
+            mask_reg=mask_reg,
+            n_elements=s.vl,
+            element_width=element_width,
+            word_order=word_order,
+            instr_ident=instr_ident,
+        )
+        await s.add_to_instruction_buffer(kinstr, span_id)
+        s.monitor.finalize_children(span_id)
+        s.pc += 4
+
+
+@dataclass
 class VmvXs:
     """VMV.X.S - Vector Move to Scalar Register.
 
@@ -937,7 +983,7 @@ class VArithVvFloat:
 
     def __str__(self):
         vm_str = '' if self.vm else ',v0.t'
-        return f'vf{self.op.value[1:]}.vv\tv{self.vd},v{self.vs2},v{self.vs1}{vm_str}'
+        return f'v{self.op.value}.vv\tv{self.vd},v{self.vs2},v{self.vs1}{vm_str}'
 
     async def update_state(self, s: 'Oamlet'):
         span_id = s.monitor.create_span(

@@ -70,18 +70,28 @@ def unpack_elements(data: bytes, element_width: int) -> list[int]:
         raise ValueError(f"Unsupported element width: {element_width}")
 
 
-def get_vpu_base_addr(element_width: int) -> int:
-    """Get the VPU memory base address for a given element width."""
-    if element_width == 8:
-        return 0x20000000
-    elif element_width == 16:
-        return 0x20800000
-    elif element_width == 32:
-        return 0x90080000
-    elif element_width == 64:
-        return 0x90100000
-    else:
-        raise ValueError(f"Unsupported element width: {element_width}")
+def allocate_pages(lamlet, base_addr, n_pages, rnd, params):
+    """Allocate n_pages at base_addr, each randomly scalar or VPU with random ew.
+
+    Returns a list of (is_scalar, ew) tuples for each page.
+    """
+    page_descs = []
+    for i in range(n_pages):
+        is_scalar = rnd.choice([True, False])
+        ew = rnd.choice([8, 16, 32, 64])
+        page_descs.append((is_scalar, ew))
+        page_addr = base_addr + i * params.page_bytes
+        g_addr = GlobalAddress(bit_addr=page_addr * 8, params=params)
+        if is_scalar:
+            lamlet.allocate_memory(
+                g_addr, params.page_bytes,
+                memory_type=MemoryType.SCALAR_IDEMPOTENT, ordering=None)
+        else:
+            lamlet.allocate_memory(
+                g_addr, params.page_bytes,
+                memory_type=MemoryType.VPU,
+                ordering=Ordering(WordOrder.STANDARD, ew))
+    return page_descs
 
 
 async def run_unaligned_test(
@@ -127,29 +137,25 @@ async def run_unaligned_test(
     expected_list = src_list
     expected_data = pack_elements(expected_list, reg_ew)
 
-    # Memory layout:
-    # src_base + src_offset -> source data
-    # dst_base + dst_offset -> destination data
-    src_base = get_vpu_base_addr(src_ew)
-    dst_base = get_vpu_base_addr(dst_ew) + 0x10000  # Offset to avoid overlap
+    src_base = 0x40000000
+    dst_base = 0x50000000
 
     src_addr = src_base + src_offset
     dst_addr = dst_base + dst_offset
 
-    # Allocate memory regions with enough padding for offsets (must be page-aligned)
-    # Data is packed with reg_ew, so use that for size calculation
+    # Allocate pages individually with random types (scalar or VPU with random ew)
+    page_bytes = params.page_bytes
     data_size = vl * reg_ew // 8
-    alloc_size = max(1024, data_size + max(src_offset, dst_offset) + 64)
-    alloc_size = ((alloc_size + params.page_bytes - 1) // params.page_bytes) * params.page_bytes
+    src_n_pages = (src_offset + data_size + page_bytes - 1) // page_bytes
+    dst_n_pages = (dst_offset + data_size + page_bytes - 1) // page_bytes
 
-    lamlet.allocate_memory(
-        GlobalAddress(bit_addr=src_base * 8, params=params),
-        alloc_size, memory_type=MemoryType.VPU, ordering=Ordering(WordOrder.STANDARD, src_ew)
-    )
-    lamlet.allocate_memory(
-        GlobalAddress(bit_addr=dst_base * 8, params=params),
-        alloc_size, memory_type=MemoryType.VPU, ordering=Ordering(WordOrder.STANDARD, dst_ew)
-    )
+    src_page_descs = allocate_pages(lamlet, src_base, src_n_pages, rnd, params)
+    dst_page_descs = allocate_pages(lamlet, dst_base, dst_n_pages, rnd, params)
+
+    src_desc = ' '.join(f"{'S' if s else 'V'}{ew}" for s, ew in src_page_descs)
+    dst_desc = ' '.join(f"{'S' if s else 'V'}{ew}" for s, ew in dst_page_descs)
+    logger.info(f"Source pages: {src_desc}")
+    logger.info(f"Dest pages: {dst_desc}")
 
     # Write initial data to memory at the offset address
     await lamlet.set_memory(src_addr, src_data)
@@ -284,17 +290,18 @@ def run_test(reg_ew, src_ew, dst_ew, src_offset, dst_offset, vl, lmul=8,
     assert exit_code == 0, f"Test failed with exit_code={exit_code}"
 
 
-def random_test_config(rnd: Random):
+def random_test_config(rnd: Random, params: ZamletParams):
     """Generate a random test configuration."""
-    geom_name = rnd.choice(list(SMALL_GEOMETRIES.keys()))
-    geom_params = SMALL_GEOMETRIES[geom_name]
     reg_ew = rnd.choice([8, 16, 32, 64])
     src_ew = rnd.choice([8, 16, 32, 64])
     dst_ew = rnd.choice([8, 16, 32, 64])
-    src_offset = rnd.randint(0, 512) * 8
-    dst_offset = rnd.randint(0, 512) * 8
+    # Offsets up to a few pages, element-aligned
+    eb = reg_ew // 8
+    max_offset_elements = (3 * params.page_bytes) // eb
+    src_offset = rnd.randint(0, max_offset_elements) * eb
+    dst_offset = rnd.randint(0, max_offset_elements) * eb
     vl = rnd.randint(1, 128)
-    return geom_name, geom_params, reg_ew, src_ew, dst_ew, src_offset, dst_offset, vl
+    return reg_ew, src_ew, dst_ew, src_offset, dst_offset, vl
 
 
 def generate_test_params(n_tests: int = 8, seed: int = 42):
@@ -302,8 +309,10 @@ def generate_test_params(n_tests: int = 8, seed: int = 42):
     rnd = Random(seed)
     test_params = []
     for i in range(n_tests):
-        geom_name, geom_params, reg_ew, src_ew, dst_ew, src_offset, dst_offset, vl = \
-            random_test_config(rnd)
+        geom_name = rnd.choice(list(SMALL_GEOMETRIES.keys()))
+        geom_params = SMALL_GEOMETRIES[geom_name]
+        reg_ew, src_ew, dst_ew, src_offset, dst_offset, vl = \
+            random_test_config(rnd, geom_params)
         id_str = (f"{i}_{geom_name}_reg{reg_ew}_src{src_ew}_dst{dst_ew}"
                   f"_srcoff{src_offset}_dstoff{dst_offset}_vl{vl}")
         test_params.append(pytest.param(

@@ -331,6 +331,46 @@ class Kamlet:
 
         await self._queue_cache_request(packet, cache_slot)
 
+    async def handle_load_imm_byte_instr(self, instr: kinstructions.LoadImmByte):
+        """Write an immediate byte value to a vector register."""
+        if instr.dst.k_index != self.k_index:
+            self.monitor.finalize_kinstr_exec(instr.instr_ident, self.min_x, self.min_y)
+            return
+
+        read_regs = [instr.mask_reg] if instr.mask_reg is not None else []
+        write_regs = [instr.dst.reg]
+        await self.wait_for_rf_available(
+            write_regs=write_regs, read_regs=read_regs, instr_ident=instr.instr_ident)
+
+        jamlet = self.jamlets[instr.dst.j_in_k_index]
+        wb = self.params.word_bytes
+        reg_offset = instr.dst.reg * wb + instr.dst.offset_in_word
+        old_byte = jamlet.rf_slice[reg_offset]
+        new_byte = (old_byte & ~instr.bit_mask) | (instr.imm & instr.bit_mask)
+        jamlet.rf_slice[reg_offset] = new_byte
+
+        self.monitor.finalize_kinstr_exec(instr.instr_ident, self.min_x, self.min_y)
+
+    async def handle_load_imm_word_instr(self, instr: kinstructions.LoadImmWord):
+        """Write an immediate word value to a vector register."""
+        if instr.dst.k_index != self.k_index:
+            self.monitor.finalize_kinstr_exec(instr.instr_ident, self.min_x, self.min_y)
+            return
+
+        read_regs = [instr.mask_reg] if instr.mask_reg is not None else []
+        write_regs = [instr.dst.reg]
+        await self.wait_for_rf_available(
+            write_regs=write_regs, read_regs=read_regs, instr_ident=instr.instr_ident)
+
+        jamlet = self.jamlets[instr.dst.j_in_k_index]
+        wb = self.params.word_bytes
+        reg_start = instr.dst.reg * wb
+        for byte_idx in range(wb):
+            if instr.byte_mask & (1 << byte_idx):
+                jamlet.rf_slice[reg_start + byte_idx] = instr.imm[byte_idx]
+
+        self.monitor.finalize_kinstr_exec(instr.instr_ident, self.min_x, self.min_y)
+
     async def handle_load_word_instr(self, instr: kinstructions.LoadWord):
         """Handle LoadWord instruction - load partial word from cache to register."""
         is_src_kamlet = (instr.src.k_index == self.k_index)

@@ -629,8 +629,10 @@ def decode_standard(instruction_bytes: bytes) -> Instruction:
             uimm = (inst >> 15) & 0x1f
             vtypei = (inst >> 20) & 0x3ff
             return V.Vsetivli(rd=rd, uimm=uimm, vtypei=vtypei)
+        elif funct6 == 0x28 and funct3 == 0x5:
+            return V.VArithVxFloat(vd=rd, rs1=rs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.FMADD)
         elif funct6 == 0x2c and funct3 == 0x5:
-            return V.VArithVxFloat(vd=rd, rs1=rs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.MACC)
+            return V.VArithVxFloat(vd=rd, rs1=rs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.FMACC)
         elif funct6 == 0x00 and funct3 == 0x2:
             vs1 = rs1
             return V.VreductionVs(vd=rd, vs2=vs2, vs1=vs1, vm=vm, op=kinstructions.VRedOp.SUM)
@@ -755,6 +757,19 @@ def decode_standard(instruction_bytes: bytes) -> Instruction:
         elif funct6 == 0x24 and funct3 == 0x1:
             vs1 = rs1
             return V.VArithVvFloat(vd=rd, vs1=vs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.FMUL)
+        elif funct6 == 0x12 and funct3 == 0x1:
+            # vfunary0: single-width float/int conversions, vs1 selects variant
+            vs1 = rs1
+            vfcvt_ops = {
+                0x00: kinstructions.VfcvtOp.XU_F,
+                0x01: kinstructions.VfcvtOp.X_F,
+                0x02: kinstructions.VfcvtOp.F_XU,
+                0x03: kinstructions.VfcvtOp.F_X,
+                0x06: kinstructions.VfcvtOp.RTZ_XU_F,
+                0x07: kinstructions.VfcvtOp.RTZ_X_F,
+            }
+            if vs1 in vfcvt_ops:
+                return V.Vfcvt(vd=rd, vs2=vs2, vm=vm, op=vfcvt_ops[vs1])
 
     elif opcode == 0x63:
         imm = decode_b_imm(inst)
@@ -770,6 +785,9 @@ def decode_standard(instruction_bytes: bytes) -> Instruction:
             return CF.Bltu(rs1=rs1, rs2=rs2, imm=imm)
         elif funct3 == 0x7:
             return CF.Bgeu(rs1=rs1, rs2=rs2, imm=imm)
+
+    elif opcode == 0x67:
+        return CF.Jalr(rd=rd, rs1=rs1, imm=decode_i_imm(inst))
 
     elif opcode == 0x6f:
         return CF.Jal(rd=rd, imm=decode_j_imm(inst))

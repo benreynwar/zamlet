@@ -234,7 +234,7 @@ async def vloadstore(lamlet: 'Oamlet', reg_base: int, addr: int, ordering: addre
     Returns VectorOpResult with fault info if a TLB fault occurred.
     """
     g_addr = GlobalAddress(bit_addr=addr*8, params=lamlet.params)
-    mem_ew = ordering.ew
+    instr_ew = ordering.ew
 
     # For loads, reg_ordering specifies the register element width (defaults to memory ew)
     # For stores, register ordering comes from the register file state
@@ -275,7 +275,7 @@ async def vloadstore(lamlet: 'Oamlet', reg_base: int, addr: int, ordering: addre
     base_reg_addr = addresses.RegAddr(
         reg=reg_base, addr=0, params=lamlet.params, ordering=reg_ordering)
 
-    # reg_ew determines the size of elements we're moving (not mem_ew which is just memory ordering)
+    # reg_ew determines the size of elements we're moving (not instr_ew which is the instruction ew)
     for section in get_memory_split(lamlet, g_addr, reg_ew, n_elements, start_index):
         if section.is_a_partial_element:
             reg_addr = base_reg_addr.offset_bytes(section.start_address - g_addr.addr)
@@ -381,7 +381,7 @@ async def vloadstore(lamlet: 'Oamlet', reg_base: int, addr: int, ordering: addre
             if section.is_vpu:
                 section_elements = ((section.end_address - section.start_address) * 8)//reg_ew
                 starting_g_addr = GlobalAddress(bit_addr=section.start_address*8, params=lamlet.params)
-                lamlet.check_element_width(starting_g_addr, section.end_address - section.start_address, mem_ew)
+                lamlet.check_element_width(starting_g_addr, section.end_address - section.start_address, instr_ew)
                 k_maddr = lamlet.to_k_maddr(starting_g_addr)
 
                 l_cache_line_bytes = lamlet.params.cache_line_bytes * lamlet.params.k_in_l

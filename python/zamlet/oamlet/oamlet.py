@@ -1157,8 +1157,12 @@ class Oamlet:
         for offset in range(0, size, self.params.page_bytes):
             page_address = ((base_addr+offset)//self.params.page_bytes) * self.params.page_bytes
             page_info = self.tlb.get_page_info(GlobalAddress(bit_addr=page_address*8, params=self.params))
-            assert page_info.local_address.ordering.ew == element_width
             assert page_info.local_address.is_vpu
+            if page_info.local_address.ordering.ew != element_width:
+                logger.warning(
+                    f'Element width mismatch at 0x{page_address:x}: '
+                    f'page ew={page_info.local_address.ordering.ew}, '
+                    f'load ew={element_width}')
 
     def update(self):
         for kamlet in self.kamlets:

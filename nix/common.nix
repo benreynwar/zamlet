@@ -110,12 +110,17 @@ let
 
   # RISC-V embedded toolchain (from regular nixpkgs, not librelane flake)
   riscv-toolchain = bootstrap-pkgs.pkgsCross.riscv64-embedded.buildPackages.gcc;
+
+  # RISC-V Clang/LLD (for VPU vector spill support)
+  riscv-clang = import ./riscv-clang.nix { pkgs = bootstrap-pkgs; };
 in {
   inherit pkgs sky130-pdk python-env;
 
   # Project build dependencies
   buildDeps = with pkgs; [
     stdenv.cc.cc.lib  # Standard library for Bazel-downloaded binaries
+    cmake             # For building LLVM locally
+    ninja             # For building LLVM locally
     jdk21
     circt
     openroad
@@ -130,6 +135,7 @@ in {
     jq
     which
     riscv-toolchain
+    riscv-clang
   ];
 
   # Developer tooling (editor, LSP, etc.)
