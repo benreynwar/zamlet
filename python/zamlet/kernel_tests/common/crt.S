@@ -133,6 +133,35 @@ _start:
   sll a2, a0, STKSHIFT
   add tp, tp, a2
 
+  # Initialize TLS: copy .tdata and zero .tbss relative to tp.
+  # This must be in assembly because Clang's optimizer can remove
+  # the equivalent C code in init_tls() (it doesn't connect pointer
+  # writes via tp with TLS-relocation-based reads).
+  #
+  # a0 = source pointer (tdata template in ELF)
+  # a2 = dest pointer (tp-relative runtime location)
+  # a1 = end of copy region, then end of zero region
+  la a0, _tdata_begin
+  la a1, _tdata_end
+  mv a2, tp
+1:bgeu a0, a1, 2f
+  LREG a3, 0(a0)
+  SREG a3, 0(a2)
+  addi a0, a0, REGBYTES
+  addi a2, a2, REGBYTES
+  j 1b
+2:
+  # Zero tbss: a2 is now at tp + tdata_size. Zero (tbss_end - tdata_end) more bytes.
+  la a0, _tbss_end
+  la a1, _tdata_end
+  sub a1, a0, a1         # a1 = tbss_size
+  add a1, a2, a1         # a1 = dest end address
+3:bgeu a2, a1, 4f
+  SREG zero, 0(a2)
+  addi a2, a2, REGBYTES
+  j 3b
+4:
+
   j _init
 
   .align 2

@@ -293,11 +293,20 @@ class Oamlet:
         jamlet = kamlet.get_jamlet(x, y)
         return jamlet
 
-    def set_vrf_ordering(self, vd: int, ew: int, n_elements: int):
-        """Set vrf_ordering for all vline registers touched by n_elements at ew."""
+    @property
+    def lmul(self):
+        vlmul = self.vtype & 0x7
+        if vlmul <= 3:
+            return 1 << vlmul
+        else:
+            return 1
+
+    def set_vrf_ordering(self, vd: int, ew: int):
+        """Set vrf_ordering for all vline registers in the LMUL group."""
         ordering = Ordering(self.word_order, ew)
-        vline_bits = self.params.maxvl_bytes * 8
-        n_vlines = (n_elements * ew + vline_bits - 1) // vline_bits
+        n_vlines = self.lmul
+        logger.info(f'set_vrf_ordering: vd=v{vd} ew={ew} '
+                    f'lmul={self.lmul} n_vlines={n_vlines} regs=v{vd}..v{vd + n_vlines - 1}')
         for i in range(n_vlines):
             self.vrf_ordering[vd + i] = ordering
 
@@ -1256,7 +1265,11 @@ class Oamlet:
                 logger.error(error)
                 raise ValueError(error)
 
-        await instruction.update_state(self)
+        try:
+            await instruction.update_state(self)
+        except Exception:
+            logger.error(f'Exception at pc={hex(self.pc)} instruction={inst_str}')
+            raise
 
     async def run_instructions(self, disasm_trace=None):
         while not self.finished:

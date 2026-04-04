@@ -665,7 +665,7 @@ class VmvVi:
         element_width = 8 << vsew
         word_order = s.word_order
 
-        s.set_vrf_ordering(self.vd, element_width, s.vl)
+        s.set_vrf_ordering(self.vd, element_width)
 
         sign_extended_imm = self.simm5 if self.simm5 < 16 else self.simm5 - 32
 
@@ -715,7 +715,7 @@ class VmvVx:
         rs1_bytes = s.scalar.read_reg(self.rs1)
         scalar_val = int.from_bytes(rs1_bytes, byteorder='little', signed=True)
 
-        s.set_vrf_ordering(self.vd, element_width, s.vl)
+        s.set_vrf_ordering(self.vd, element_width)
 
         instr_ident = await s.get_instr_ident()
         kinstr = kinstructions.VBroadcastOp(
@@ -799,7 +799,7 @@ class VreductionVs:
         assert s.vrf_ordering[self.vs1].ew == element_width
 
         word_order = s.word_order
-        s.set_vrf_ordering(self.vd, element_width, s.vl)
+        s.set_vrf_ordering(self.vd, element_width)
 
         await s.handle_vreduction_vs_instr(
             op=self.op,
@@ -853,13 +853,13 @@ class VArithVv:
         word_order = s.word_order
 
         if self.op == kinstructions.VArithOp.MACC and self.vd not in s.vrf_ordering:
-            s.set_vrf_ordering(self.vd, element_width, s.vl)
+            s.set_vrf_ordering(self.vd, element_width)
 
         assert s.vrf_ordering[self.vs1].ew == element_width
         assert s.vrf_ordering[self.vs2].ew == element_width
 
         if self.op != kinstructions.VArithOp.MACC:
-            s.set_vrf_ordering(self.vd, element_width, s.vl)
+            s.set_vrf_ordering(self.vd, element_width)
 
         instr_ident = await s.get_instr_ident()
         kinstr = kinstructions.VArithVvOp(
@@ -915,7 +915,7 @@ class VArithVvFloat:
         assert s.vrf_ordering[self.vs1].ew == element_width
         assert s.vrf_ordering[self.vs2].ew == element_width
 
-        s.set_vrf_ordering(self.vd, element_width, s.vl)
+        s.set_vrf_ordering(self.vd, element_width)
 
         instr_ident = await s.get_instr_ident()
         kinstr = kinstructions.VArithVvOp(
@@ -976,7 +976,7 @@ class VArithVx:
         word_order = s.word_order
 
         if self.op == kinstructions.VArithOp.MACC and self.vd not in s.vrf_ordering:
-            s.set_vrf_ordering(self.vd, element_width, s.vl)
+            s.set_vrf_ordering(self.vd, element_width)
 
         assert s.vrf_ordering[self.vs2].ew == element_width
         if self.op == kinstructions.VArithOp.MACC:
@@ -985,7 +985,7 @@ class VArithVx:
         rs1_bytes = s.scalar.read_reg(self.rs1)
 
         if self.op != kinstructions.VArithOp.MACC:
-            s.set_vrf_ordering(self.vd, element_width, s.vl)
+            s.set_vrf_ordering(self.vd, element_width)
 
         instr_ident = await s.get_instr_ident()
         kinstr = kinstructions.VArithVxOp(
@@ -1045,7 +1045,7 @@ class VArithVi:
         # Convert to bytes (using word_bytes to match scalar register size)
         imm_bytes = imm_val.to_bytes(s.params.word_bytes, byteorder='little', signed=True)
 
-        s.set_vrf_ordering(self.vd, element_width, s.vl)
+        s.set_vrf_ordering(self.vd, element_width)
 
         instr_ident = await s.get_instr_ident()
         kinstr = kinstructions.VArithVxOp(
@@ -1195,7 +1195,7 @@ class Vid:
         vsew = (s.vtype >> 3) & 0x7
         element_width = 8 << vsew
 
-        s.set_vrf_ordering(self.vd, element_width, s.vl)
+        s.set_vrf_ordering(self.vd, element_width)
 
         mask_reg = None if self.vm else 0
 
@@ -1255,7 +1255,7 @@ class VUnary:
         word_order = s.word_order
         mask_reg = None if self.vm else 0
 
-        s.set_vrf_ordering(self.vd, dst_ew, s.vl)
+        s.set_vrf_ordering(self.vd, dst_ew)
 
         instr_ident = await s.get_instr_ident()
         kinstr = kinstructions.VUnaryOvOp(
@@ -1309,7 +1309,7 @@ class Vrgather:
         assert s.vrf_ordering[self.vs1].ew == element_width
         assert s.vrf_ordering[self.vs2].ew == element_width
 
-        s.set_vrf_ordering(self.vd, element_width, s.vl)
+        s.set_vrf_ordering(self.vd, element_width)
 
         mask_reg = None if self.vm else 0
 

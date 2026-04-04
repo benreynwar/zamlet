@@ -7,6 +7,7 @@ Reads configuration from environment variables set by the kernel_test macro:
   EXPECTED_FAILURE: "1" if the kernel should fail, "0" otherwise
 """
 import asyncio
+import logging
 import os
 import sys
 
@@ -16,6 +17,8 @@ from zamlet.oamlet.run_oamlet import main as run_lamlet_main
 
 
 def main():
+    log_level = os.environ.get("LOG_LEVEL", "WARNING")
+    logging.basicConfig(level=getattr(logging, log_level), stream=sys.stderr)
     binary = os.environ["KERNEL_BINARY"]
     geometry = get_geometry(os.environ["GEOMETRY"])
     max_cycles = int(os.environ.get("MAX_CYCLES", "100000"))
