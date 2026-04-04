@@ -1,17 +1,13 @@
 """
-Direct kamlet-level test for unaligned vector load/store operations.
+Test for unaligned vector load/store operations.
 
-This test bypasses lamlet.py instruction processing and directly sends
-kinstructions to the kamlet array to test unaligned memory access:
-
-1. Load data from memory with src_offset
-2. Store data to memory with dst_offset
+Loads and stores data through a mix of scalar and VPU pages with random
+element widths. The kamlet handles ew mismatches between the register
+ordering and the memory page ordering via J2J remapping.
 
 Parameters:
-- src_ew: Source element width (8, 16, 32, 64)
-- dst_ew: Destination element width (8, 16, 32, 64)
+- reg_ew: Register/instruction element width (8, 16, 32, 64)
 - vl: Vector length (number of elements)
-- reg_ew: Register element width for vload/vstore (8, 16, 32, 64)
 - src_offset: Byte offset for source address
 - dst_offset: Byte offset for destination address
 - lmul: Number of registers grouped as one logical register
@@ -96,8 +92,6 @@ def allocate_pages(lamlet, base_addr, n_pages, rnd, params):
 
 async def run_unaligned_test(
     clock: Clock,
-    src_ew: int,
-    dst_ew: int,
     vl: int,
     reg_ew: int,
     src_offset: int,
@@ -117,23 +111,17 @@ async def run_unaligned_test(
 
     await clock.next_cycle
 
-    # Generate test data - elements are reg_ew sized (the size we load/store)
-    # The values fit in src_ew bits but are stored as reg_ew elements in memory
     rnd = Random(seed)
-    src_list = [rnd.getrandbits(src_ew) for i in range(vl)]
-    #src_list = [i for i in range(vl)]
+    src_list = [rnd.getrandbits(reg_ew) for i in range(vl)]
 
     logger.info(f"Test parameters:")
-    logger.info(f"  src_ew={src_ew}, dst_ew={dst_ew}, reg_ew={reg_ew}")
+    logger.info(f"  reg_ew={reg_ew}")
     logger.info(f"  vl={vl}, lmul={lmul}")
     logger.info(f"  src_offset={src_offset}, dst_offset={dst_offset}")
     logger.info(f"  seed={seed}")
     logger.info(f"src_list: {src_list[:16]}{'...' if len(src_list) > 16 else ''}")
 
-    # Memory stores reg_ew-sized elements (memory ordering is separate from element size)
     src_data = pack_elements(src_list, reg_ew)
-
-    # Expected output: same values, packed with reg_ew (element size in registers)
     expected_list = src_list
     expected_data = pack_elements(expected_list, reg_ew)
 
@@ -157,6 +145,7 @@ async def run_unaligned_test(
     logger.info(f"Source pages: {src_desc}")
     logger.info(f"Dest pages: {dst_desc}")
 
+
     # Write initial data to memory at the offset address
     await lamlet.set_memory(src_addr, src_data)
 
@@ -167,9 +156,7 @@ async def run_unaligned_test(
     elements_per_iteration = (lmul * vline_bytes * 8) // reg_ew
     logger.info(f"lmul={lmul}, vline_bytes={vline_bytes}, elements_per_iteration={elements_per_iteration}")
 
-    src_ordering = Ordering(WordOrder.STANDARD, src_ew)
-    dst_ordering = Ordering(WordOrder.STANDARD, dst_ew)
-    reg_ordering = Ordering(WordOrder.STANDARD, reg_ew)
+    ordering = Ordering(WordOrder.STANDARD, reg_ew)
 
     for iter_start in range(0, vl, elements_per_iteration):
         iter_count = min(elements_per_iteration, vl - iter_start)
@@ -189,19 +176,18 @@ async def run_unaligned_test(
         await lamlet.vload(
             vd=0,
             addr=src_addr + src_byte_offset,
-            ordering=src_ordering,
+            ordering=ordering,
             n_elements=iter_count,
             start_index=0,
             mask_reg=None,
             parent_span_id=span_id,
-            reg_ordering=reg_ordering,
         )
 
         # Store from v0 to destination
         await lamlet.vstore(
             vs=0,
             addr=dst_addr + dst_byte_offset,
-            ordering=dst_ordering,
+            ordering=ordering,
             n_elements=iter_count,
             start_index=0,
             mask_reg=None,
@@ -255,8 +241,6 @@ async def run_unaligned_test(
 
 async def main(
     clock,
-    src_ew: int,
-    dst_ew: int,
     vl: int,
     reg_ew: int,
     src_offset: int,
@@ -269,7 +253,7 @@ async def main(
 
     clock_driver_task = clock.create_task(clock.clock_driver())
     exit_code = await run_unaligned_test(
-        clock, src_ew, dst_ew, vl, reg_ew, src_offset, dst_offset, lmul, params, seed
+        clock, vl, reg_ew, src_offset, dst_offset, lmul, params, seed
     )
 
     logger.warning(f"Test completed with exit_code: {exit_code}")
@@ -278,30 +262,46 @@ async def main(
     return exit_code
 
 
-def run_test(reg_ew, src_ew, dst_ew, src_offset, dst_offset, vl, lmul=8,
+def run_test(reg_ew, src_offset, dst_offset, vl, lmul=8,
              params: ZamletParams = None, seed=0):
     """Helper to run a single test configuration."""
     if params is None:
         params = ZamletParams()
     clock = Clock(max_cycles=10000)
     exit_code = asyncio.run(main(
-        clock, src_ew, dst_ew, vl, reg_ew, src_offset, dst_offset, lmul, params, seed
+        clock, vl, reg_ew, src_offset, dst_offset, lmul, params, seed
     ))
     assert exit_code == 0, f"Test failed with exit_code={exit_code}"
+
+
+def random_offset(rnd: Random, params: ZamletParams, eb: int, data_size: int):
+    """Generate a random element-aligned offset.
+
+    50% of the time, choose an offset that forces the data to cross a page boundary.
+    """
+    page_bytes = params.page_bytes
+    if rnd.random() < 0.5 and data_size < page_bytes:
+        # Place the start near the end of a page so data crosses into the next page
+        page_index = rnd.randint(0, 2)
+        page_start = page_index * page_bytes
+        # Between 1 element and data_size before the page end
+        max_into_page = min(data_size, page_bytes) - eb
+        dist_from_end = rnd.randint(1, max(1, max_into_page // eb)) * eb
+        return page_start + page_bytes - dist_from_end
+    else:
+        max_offset_elements = (3 * page_bytes) // eb
+        return rnd.randint(0, max_offset_elements) * eb
 
 
 def random_test_config(rnd: Random, params: ZamletParams):
     """Generate a random test configuration."""
     reg_ew = rnd.choice([8, 16, 32, 64])
-    src_ew = rnd.choice([8, 16, 32, 64])
-    dst_ew = rnd.choice([8, 16, 32, 64])
-    # Offsets up to a few pages, element-aligned
     eb = reg_ew // 8
-    max_offset_elements = (3 * params.page_bytes) // eb
-    src_offset = rnd.randint(0, max_offset_elements) * eb
-    dst_offset = rnd.randint(0, max_offset_elements) * eb
     vl = rnd.randint(1, 128)
-    return reg_ew, src_ew, dst_ew, src_offset, dst_offset, vl
+    data_size = vl * eb
+    src_offset = random_offset(rnd, params, eb, data_size)
+    dst_offset = random_offset(rnd, params, eb, data_size)
+    return reg_ew, src_offset, dst_offset, vl
 
 
 def generate_test_params(n_tests: int = 8, seed: int = 42):
@@ -311,20 +311,18 @@ def generate_test_params(n_tests: int = 8, seed: int = 42):
     for i in range(n_tests):
         geom_name = rnd.choice(list(SMALL_GEOMETRIES.keys()))
         geom_params = SMALL_GEOMETRIES[geom_name]
-        reg_ew, src_ew, dst_ew, src_offset, dst_offset, vl = \
-            random_test_config(rnd, geom_params)
-        id_str = (f"{i}_{geom_name}_reg{reg_ew}_src{src_ew}_dst{dst_ew}"
+        reg_ew, src_offset, dst_offset, vl = random_test_config(rnd, geom_params)
+        id_str = (f"{i}_{geom_name}_reg{reg_ew}"
                   f"_srcoff{src_offset}_dstoff{dst_offset}_vl{vl}")
         test_params.append(pytest.param(
-            geom_params, reg_ew, src_ew, dst_ew,
-            src_offset, dst_offset, vl, id=id_str))
+            geom_params, reg_ew, src_offset, dst_offset, vl, id=id_str))
     return test_params
 
 
-@pytest.mark.parametrize("params,reg_ew,src_ew,dst_ew,src_offset,dst_offset,vl",
+@pytest.mark.parametrize("params,reg_ew,src_offset,dst_offset,vl",
                          generate_test_params(n_tests=scale_n_tests(128)))
-def test_unaligned(params, reg_ew, src_ew, dst_ew, src_offset, dst_offset, vl):
-    run_test(reg_ew, src_ew, dst_ew, src_offset, dst_offset, vl, params=params)
+def test_unaligned(params, reg_ew, src_offset, dst_offset, vl):
+    run_test(reg_ew, src_offset, dst_offset, vl, params=params)
 
 
 if __name__ == '__main__':
@@ -334,13 +332,9 @@ if __name__ == '__main__':
     from zamlet.geometries import get_geometry, list_geometries
 
     parser = argparse.ArgumentParser(description='Test unaligned vector load/store operations')
-    parser.add_argument('--src-ew', type=int, default=64,
-                        help='Source element width in bits (8, 16, 32, 64) (default: 64)')
-    parser.add_argument('--dst-ew', type=int, default=64,
-                        help='Destination element width in bits (8, 16, 32, 64) (default: 64)')
     parser.add_argument('--vl', type=int, default=16,
                         help='Vector length - number of elements (default: 16)')
-    parser.add_argument('--reg-ew', type=int, default=64,
+    parser.add_argument('--reg-ew', type=int, default=64, choices=[8, 16, 32, 64],
                         help='Register element width for vload/vstore (default: 64)')
     parser.add_argument('--src-offset', type=int, default=0,
                         help='Source byte offset (default: 0)')
@@ -361,53 +355,9 @@ if __name__ == '__main__':
         print(list_geometries())
         sys.exit(0)
 
-    # Validate element widths
-    valid_ews = [8, 16, 32, 64]
-    if args.src_ew not in valid_ews:
-        print(f"Error: src-ew must be one of {valid_ews}", file=sys.stderr)
-        sys.exit(1)
-    if args.dst_ew not in valid_ews:
-        print(f"Error: dst-ew must be one of {valid_ews}", file=sys.stderr)
-        sys.exit(1)
-    if args.reg_ew not in valid_ews:
-        print(f"Error: reg-ew must be one of {valid_ews}", file=sys.stderr)
-        sys.exit(1)
+    logging.basicConfig(level=logging.DEBUG, stream=sys.stdout,
+                        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
     params = get_geometry(args.geometry)
-
-    level = logging.DEBUG
-    root_logger = logging.getLogger()
-    root_logger.setLevel(level)
-    handler = logging.StreamHandler(sys.stdout)
-    handler.setLevel(level)
-    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    handler.setFormatter(formatter)
-    root_logger.addHandler(handler)
-
-    clock = Clock(max_cycles=10000)
-    exit_code = None
-    try:
-        logger.info(
-            f'Starting with src_ew={args.src_ew}, dst_ew={args.dst_ew}, vl={args.vl}, '
-            f'reg_ew={args.reg_ew}, src_offset={args.src_offset}, dst_offset={args.dst_offset}, '
-            f'lmul={args.lmul}, geometry={args.geometry}, seed={args.seed}'
-        )
-        exit_code = asyncio.run(main(
-            clock, args.src_ew, args.dst_ew, args.vl, args.reg_ew,
-            args.src_offset, args.dst_offset, args.lmul, params, args.seed
-        ))
-    except KeyboardInterrupt:
-        root_logger.warning('Test interrupted by user')
-        sys.exit(1)
-    except Exception as e:
-        root_logger.error(f'Test FAILED with exception: {e}')
-        import traceback
-        traceback.print_exc()
-        sys.exit(1)
-
-    if exit_code == 0:
-        root_logger.warning('========== TEST PASSED ==========')
-    else:
-        root_logger.warning(f'========== TEST FAILED (exit code: {exit_code}) ==========')
-
-    sys.exit(exit_code)
+    run_test(args.reg_ew, args.src_offset, args.dst_offset,
+             args.vl, lmul=args.lmul, params=params, seed=args.seed)

@@ -283,7 +283,8 @@ async def _process_ordered_load(lamlet: 'Oamlet', buf: OrderedBuffer, entry: 'El
         data = None
     else:
         word_addr = entry.addr - (entry.addr % wb)
-        data = int.from_bytes(lamlet.scalar.get_memory(word_addr, wb), 'little')
+        data = int.from_bytes(
+            await lamlet.scalar.get_memory(word_addr, wb), 'little')
 
     resp_header = ReadMemWordHeader(
         target_x=target_x,
@@ -356,7 +357,8 @@ async def _process_ordered_store(lamlet: 'Oamlet', buf: OrderedBuffer,
             remaining_page_bytes = page_bytes - page_byte_offset
             n_bytes = min(remaining_element_bytes, remaining_page_bytes)
             scalar_addr = dst_g_addr.to_scalar_addr(lamlet.tlb)
-            lamlet.scalar.set_memory(scalar_addr, data[src_eb:src_eb + n_bytes])
+            await lamlet.scalar.set_memory(
+                scalar_addr, data[src_eb:src_eb + n_bytes])
 
         src_eb += n_bytes
 
@@ -400,7 +402,7 @@ async def _send_ordered_vpu_write(lamlet: 'Oamlet', instr_ident: int, data: byte
         ident=msg_ident,
         tag=tag,
         dst_byte_in_word=dst_byte_in_word,
-        n_bytes=n_bytes,
+        n_bytes_or_bits=n_bytes,
     )
 
     word_offset = k_maddr.addr % wb

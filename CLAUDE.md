@@ -1,5 +1,8 @@
 # Claude Code Guidelines for FMVPU Project
 
+## TODOs
+`docs/TODO.md` tracks known issues and future work. Check it when relevant.
+
 ## Plans
 Plans may be stored in either `.claude/plans/` (project-local) or `~/.claude/plans/` (global).
 Check both locations when looking for a plan file.

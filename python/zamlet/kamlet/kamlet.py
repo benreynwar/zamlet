@@ -5,7 +5,7 @@ from zamlet import addresses
 from zamlet.addresses import KMAddr
 from zamlet.params import ZamletParams
 from zamlet.jamlet.jamlet import Jamlet
-from zamlet.message import Header, MessageType, SendType, AddressHeader
+from zamlet.message import Header, MessageType, SendType, AddressHeader, WriteMemWordHeader
 from zamlet.utils import Queue
 from zamlet.kamlet import kinstructions, cache_table
 from zamlet.synchronization import Synchronizer
@@ -370,6 +370,52 @@ class Kamlet:
                 jamlet.rf_slice[reg_start + byte_idx] = instr.imm[byte_idx]
 
         self.monitor.finalize_kinstr_exec(instr.instr_ident, self.min_x, self.min_y)
+
+    async def handle_store_scalar_instr(self, instr: kinstructions.StoreScalar):
+        """Read from a vector register and send to lamlet for scalar memory write."""
+        assert instr.src.k_index == self.k_index
+
+        read_regs = [instr.src.reg]
+        if instr.mask_reg is not None:
+            read_regs.append(instr.mask_reg)
+        await self.wait_for_rf_available(
+            write_regs=[], read_regs=read_regs, instr_ident=instr.instr_ident)
+
+        jamlet = self.jamlets[instr.src.j_in_k_index]
+        wb = self.params.word_bytes
+        src_word = int.from_bytes(
+            jamlet.rf_slice[instr.src.reg * wb: (instr.src.reg + 1) * wb], 'little')
+        logger.debug(
+            f'handle_store_scalar: kamlet ({self.min_x},{self.min_y}) '
+            f'reg={instr.src.reg} src_word=0x{src_word:x} '
+            f'scalar_addr=0x{instr.scalar_addr:x} tag={0} '
+            f'dst_byte_in_word={instr.dst_byte_in_word} n_bytes={instr.n_bytes_or_bits}')
+
+        header = WriteMemWordHeader(
+            target_x=jamlet.lamlet_x,
+            target_y=jamlet.lamlet_y,
+            source_x=jamlet.x,
+            source_y=jamlet.y,
+            message_type=MessageType.WRITE_MEM_WORD_REQ,
+            send_type=SendType.SINGLE,
+            length=2,
+            ident=instr.instr_ident,
+            tag=instr.src.offset_in_word,
+            dst_byte_in_word=instr.dst_byte_in_word,
+            n_bytes_or_bits=instr.n_bytes_or_bits,
+            bit_mode=instr.bit_mode,
+            dst_bit_in_byte=instr.dst_bit_in_byte,
+            no_response=True,
+            writeset_ident=instr.writeset_ident,
+        )
+        packet = [header, instr.scalar_addr, src_word]
+
+        kinstr_exec_span_id = self.monitor.get_kinstr_exec_span_id(
+            instr.instr_ident, self.min_x, self.min_y)
+        await jamlet.send_packet(packet, parent_span_id=kinstr_exec_span_id)
+
+        self.monitor.finalize_kinstr_exec(instr.instr_ident, self.min_x, self.min_y)
+        self.monitor.release_kinstr_ident(instr.instr_ident)
 
     async def handle_load_word_instr(self, instr: kinstructions.LoadWord):
         """Handle LoadWord instruction - load partial word from cache to register."""

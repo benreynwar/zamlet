@@ -332,7 +332,7 @@ class WaitingStoreScatterBase(WaitingItem, ABC):
             ident=ident,
             tag=tag,
             dst_byte_in_word=dst_byte_in_word,
-            n_bytes=request.n_bytes,
+            n_bytes_or_bits=request.n_bytes,
         )
 
         packet = [header, addr, src_word]

@@ -82,7 +82,16 @@ class Oamlet:
             completion_type=CompletionType.TRACKED,
         )
         self.pc = None
-        self.scalar = ScalarState(clock, params)
+        # Lamlet's synchronizer at position (0, -1)
+        self.synchronizer = Synchronizer(
+            clock=clock,
+            params=params,
+            kx=0,
+            ky=-1,
+            cache_table=None,  # Lamlet manages its own waiting items
+            monitor=self.monitor,
+        )
+        self.scalar = ScalarState(clock, params, synchronizer=self.synchronizer)
         self.tlb = TLB(params)
         self.vrf_ordering: List[Ordering|None] = [None for _ in range(params.n_vregs)]
         self.vl = 0
@@ -200,16 +209,6 @@ class Oamlet:
             utils.Queue(length=params.router_output_buffer_length)
             for _ in range(params.n_channels)
         ]
-
-        # Lamlet's synchronizer at position (0, -1)
-        self.synchronizer = Synchronizer(
-            clock=clock,
-            params=params,
-            kx=0,
-            ky=-1,
-            cache_table=None,  # Lamlet manages its own waiting items
-            monitor=self.monitor,
-        )
 
         # Ordered indexed operation buffers, indexed by buffer_id (0 to n_ordered_buffers-1)
         self._ordered_buffers: list[OrderedBuffer | None] = [
@@ -957,7 +956,7 @@ class Oamlet:
                 await self.clock.next_cycle
             else:
                 scalar_address = self.to_scalar_addr(byt_address)
-                self.scalar.set_memory(scalar_address, bytes([b]))
+                await self.scalar.set_memory(scalar_address, bytes([b]))
 
     def directly_set_memory(self, address: int, data: bytes):
         """
@@ -987,7 +986,7 @@ class Oamlet:
                 memlet.lines[cache_line_index][offset_in_line] = b
             else:
                 scalar_address = self.to_scalar_addr(byte_addr)
-                self.scalar.set_memory(scalar_address, bytes([b]))
+                self.scalar._memory[scalar_address] = b
 
     async def combine_read_futures(self, combined_future: Future, read_futures: List[Future]):
         for future in read_futures:
@@ -1001,8 +1000,11 @@ class Oamlet:
     async def get_memory(self, address: int, size: int) -> Future:
         """
         This blocks but only on things that should block the frontend.
-        It returns a future that resolves when the value has been
-        returned.
+        It returns a future that resolves when the value has been returned.
+
+        TODO: For scalar reads this currently stalls on all pending vector writes
+        (including instruction fetch). A store buffer tracking in-flight scalar write
+        addresses would let us only stall when there's an actual address overlap.
         """
         page_bytes = self.params.page_bytes
         page_offset = address % page_bytes
@@ -1027,7 +1029,7 @@ class Oamlet:
                 self.clock.create_task(self.combine_read_futures(read_future, read_futures))
             else:
                 local_address = start_addr.to_scalar_addr(self.tlb)
-                data = self.scalar.get_memory(local_address, size=size)
+                data = await self.scalar.get_memory(local_address, size=size)
                 read_future = self.clock.create_future()
                 read_future.set_result(data)
             result_future = read_future
@@ -1094,10 +1096,9 @@ class Oamlet:
     async def vload(self, vd: int, addr: int, ordering: addresses.Ordering,
                     n_elements: int, mask_reg: int | None, start_index: int,
                     parent_span_id: int,
-                    reg_ordering: addresses.Ordering | None = None,
                     stride_bytes: int | None = None) -> addresses.VectorOpResult:
         return await unordered.vload(self, vd, addr, ordering, n_elements, mask_reg, start_index,
-                                     parent_span_id, reg_ordering, stride_bytes)
+                                     parent_span_id, stride_bytes)
 
     async def vstore(self, vs: int, addr: int, ordering: addresses.Ordering,
                      n_elements: int, mask_reg: int | None, start_index: int,
@@ -1193,6 +1194,7 @@ class Oamlet:
         self.clock.create_task(self._send_packets_ch0())
         self.clock.create_task(self._send_packets_ch1andup())
         self.clock.create_task(ordered.ordered_buffer_process(self))
+        self.clock.create_task(self.scalar.cleanup_might_touch())
 
     async def run_instruction(self, disasm_trace=None):
         logger.debug(f'{self.clock.cycle}: run_instruction: fetching at pc={hex(self.pc)}')

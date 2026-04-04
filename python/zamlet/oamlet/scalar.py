@@ -1,5 +1,6 @@
 import logging
 import random
+from collections import defaultdict
 
 from zamlet.runner import Clock
 from zamlet.params import ZamletParams
@@ -11,9 +12,10 @@ logger = logging.getLogger(__name__)
 
 class ScalarState:
 
-    def __init__(self, clock: Clock, params: ZamletParams):
+    def __init__(self, clock: Clock, params: ZamletParams, synchronizer=None):
         self.clock = clock
         self.params = params
+        self.synchronizer = synchronizer
         self._rf = [RegisterFileSlot(clock, params, f'x{i}') for i in range(32)]
         self._frf = [RegisterFileSlot(clock, params, f'f{i}') for i in range(32)]
 
@@ -27,6 +29,55 @@ class ScalarState:
         # Initialize read-only vector CSRs
         # vlenb (0xc22) = VLEN/8 = vline_bytes
         self.csr[0xc22] = params.vline_bytes.to_bytes(params.word_bytes, 'little')
+
+        # Scalar memory ordering state
+        self.pending_known_reads: dict[int, int] = defaultdict(int)
+        self.pending_known_writes: dict[int, int] = defaultdict(int)
+        # sync_ident -> writeset_ident
+        self.might_touch_reads: dict[int, int] = {}
+        self.might_touch_writes: dict[int, int] = {}
+
+    def register_known_read(self, writeset_ident: int):
+        self.pending_known_reads[writeset_ident] += 1
+
+    def register_known_write(self, writeset_ident: int):
+        self.pending_known_writes[writeset_ident] += 1
+
+    def register_might_touch_read(self, sync_ident: int, writeset_ident: int):
+        self.might_touch_reads[sync_ident] = writeset_ident
+
+    def register_might_touch_write(self, sync_ident: int, writeset_ident: int):
+        self.might_touch_writes[sync_ident] = writeset_ident
+
+    async def cleanup_might_touch(self):
+        """Coroutine that runs every cycle, removing completed might-touch entries."""
+        while True:
+            await self.clock.next_cycle
+            if self.synchronizer is not None:
+                for sync_ident in list(self.might_touch_reads.keys()):
+                    if self.synchronizer.is_complete(sync_ident):
+                        del self.might_touch_reads[sync_ident]
+                for sync_ident in list(self.might_touch_writes.keys()):
+                    if self.synchronizer.is_complete(sync_ident):
+                        del self.might_touch_writes[sync_ident]
+
+    def has_conflicting_writes(self, writeset_ident: int | None) -> bool:
+        for ws_id, count in self.pending_known_writes.items():
+            if count > 0 and ws_id != writeset_ident:
+                return True
+        for sync_ident, ws_id in self.might_touch_writes.items():
+            if ws_id != writeset_ident:
+                return True
+        return False
+
+    def has_conflicting_reads(self, writeset_ident: int | None) -> bool:
+        for ws_id, count in self.pending_known_reads.items():
+            if count > 0 and ws_id != writeset_ident:
+                return True
+        for sync_ident, ws_id in self.might_touch_reads.items():
+            if ws_id != writeset_ident:
+                return True
+        return False
 
     def regs_ready(self, dst_reg, dst_freg, src_regs, src_fregs):
         dst_reg_ready = dst_reg is None or dst_reg == 0 or self._rf[dst_reg].can_write()
@@ -73,15 +124,49 @@ class ScalarState:
         page_addr = (address // self.params.page_bytes) * self.params.page_bytes
         return page_addr in self._non_idempotent_pages
 
-    def set_memory(self, address: int, data: bytes):
-        """Write to scalar memory."""
+    async def set_memory(self, address: int, data: bytes,
+                         writeset_ident: int | None = None, known: bool = False):
+        """Write to scalar memory. Waits for conflicting operations first."""
+        blocked = False
+        while (self.has_conflicting_reads(writeset_ident)
+               or self.has_conflicting_writes(writeset_ident)):
+            if not blocked:
+                logger.debug(
+                    f'set_memory: BLOCKED addr=0x{address:x} ws={writeset_ident} '
+                    f'known_r={dict(self.pending_known_reads)} '
+                    f'known_w={dict(self.pending_known_writes)} '
+                    f'mt_r={dict(self.might_touch_reads)} '
+                    f'mt_w={dict(self.might_touch_writes)}')
+                blocked = True
+            await self.clock.next_cycle
+        if blocked:
+            logger.debug(
+                f'set_memory: UNBLOCKED addr=0x{address:x} ws={writeset_ident}')
         if self._is_non_idempotent(address):
             self.non_idempotent_write_log.append(address)
         for i, b in enumerate(data):
             self._memory[address + i] = b
+        if known:
+            assert writeset_ident is not None
+            self.pending_known_writes[writeset_ident] -= 1
+            assert self.pending_known_writes[writeset_ident] >= 0
 
-    def get_memory(self, address: int, size: int = 1) -> bytes:
-        """Read from scalar memory."""
+    async def get_memory(self, address: int, size: int = 1,
+                         writeset_ident: int | None = None,
+                         known: bool = False) -> bytes:
+        """Read from scalar memory. Waits for conflicting writes first."""
+        blocked = False
+        while self.has_conflicting_writes(writeset_ident):
+            if not blocked:
+                logger.debug(
+                    f'get_memory: BLOCKED addr=0x{address:x} ws={writeset_ident} '
+                    f'known_w={dict(self.pending_known_writes)} '
+                    f'mt_w={dict(self.might_touch_writes)}')
+                blocked = True
+            await self.clock.next_cycle
+        if blocked:
+            logger.debug(
+                f'get_memory: UNBLOCKED addr=0x{address:x} ws={writeset_ident}')
         if self._is_non_idempotent(address):
             self.non_idempotent_access_log.append(address)
         bs = []
@@ -91,6 +176,10 @@ class ScalarState:
                 # FIXME: Make this deterministic by using a seeded RNG
                 self._memory[addr] = random.randint(0, 255)
             bs.append(self._memory[addr])
+        if known:
+            assert writeset_ident is not None
+            self.pending_known_reads[writeset_ident] -= 1
+            assert self.pending_known_reads[writeset_ident] >= 0
         return bytes(bs)
 
     def read_csr(self, csr_addr):

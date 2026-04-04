@@ -224,6 +224,30 @@ class LoadImmWord(KInstr):
         await kamlet.handle_load_imm_word_instr(self)
 
 @dataclass
+class StoreScalar(KInstr):
+    """
+    Stores data from a vector register to scalar memory.
+    The kamlet reads the register, then sends a WRITE_MEM_WORD_REQ to the lamlet.
+
+    In bit_mode: writes n_bytes_or_bits bits starting at dst_bit_in_byte within dst_byte_in_word.
+    Otherwise: writes n_bytes_or_bits contiguous bytes starting at dst_byte_in_word.
+    """
+    src: addresses.RegAddr
+    scalar_addr: int
+    dst_byte_in_word: int
+    n_bytes_or_bits: int
+    bit_mode: bool
+    dst_bit_in_byte: int
+    writeset_ident: int
+    mask_reg: int
+    mask_index: int
+    instr_ident: int
+
+    async def update_kamlet(self, kamlet):
+        await kamlet.handle_store_scalar_instr(self)
+
+
+@dataclass
 class StoreWord(KInstr):
     """
     This instruction stores a word from a vector register to memory.
