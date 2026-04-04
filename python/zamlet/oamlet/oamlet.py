@@ -104,6 +104,12 @@ class Oamlet:
         self._temp_reg_next = 0
         self._temp_regs_in_use: set[int] = set()
 
+        # Scratch VPU pages for ew remap workaround, one per (temp_reg, ew).
+        # Uses address range 0xF0000000+. See TODO.md for replacing with a
+        # dedicated register-to-register ew remap kinstr.
+        self._scratch_base = 0xF0000000
+        self._scratch_pages: set[tuple[int, int]] = set()  # allocated (reg_index, ew) pairs
+
         self.min_x = params.west_offset
         self.min_y = params.north_offset
 
@@ -257,6 +263,23 @@ class Oamlet:
         for reg in regs:
             self._temp_regs_in_use.discard(reg)
 
+    def get_scratch_page(self, temp_reg: int, ew: int) -> int:
+        """Get a scratch VPU page for a (temp_reg, ew) pair. Allocates lazily."""
+        ew_index = {1: 0, 8: 1, 16: 2, 32: 3, 64: 4}[ew]
+        reg_index = temp_reg - self._temp_regs[0]
+        key = (reg_index, ew)
+        if key not in self._scratch_pages:
+            addr = self._scratch_base + (reg_index * 8 + ew_index) * self.params.page_bytes
+            g_addr = GlobalAddress(bit_addr=addr * 8, params=self.params)
+            self.allocate_memory(
+                g_addr, self.params.page_bytes,
+                memory_type=MemoryType.VPU,
+                ordering=Ordering(self.word_order, ew))
+            self._scratch_pages.add(key)
+        else:
+            addr = self._scratch_base + (reg_index * 8 + ew_index) * self.params.page_bytes
+        return addr
+
     def set_pc(self, pc):
         self.pc = pc
 
@@ -269,6 +292,14 @@ class Oamlet:
         kamlet = self.get_kamlet(x, y)
         jamlet = kamlet.get_jamlet(x, y)
         return jamlet
+
+    def set_vrf_ordering(self, vd: int, ew: int, n_elements: int):
+        """Set vrf_ordering for all vline registers touched by n_elements at ew."""
+        ordering = Ordering(self.word_order, ew)
+        vline_bits = self.params.maxvl_bytes * 8
+        n_vlines = (n_elements * ew + vline_bits - 1) // vline_bits
+        for i in range(n_vlines):
+            self.vrf_ordering[vd + i] = ordering
 
     def allocate_memory(self, address: GlobalAddress, size: SizeBytes, memory_type: MemoryType,
                         ordering: Ordering | None, readable: bool = True, writable: bool = True):

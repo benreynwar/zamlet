@@ -707,8 +707,8 @@ def decode_standard(instruction_bytes: bytes) -> Instruction:
             vs1 = rs1
             return V.VmnandMm(vd=rd, vs2=vs2, vs1=vs1)
         elif funct6 == 0x17 and funct3 == 0x0:
-            vs1 = rs1
-            return V.VmvVv(vd=rd, vs1=vs1)
+            return V.VUnary(vd=rd, vs2=rs1, vm=1, op=kinstructions.VUnaryOp.COPY,
+                            factor=1, widening=True, mnemonic='vmv.v.v')
         elif funct6 == 0x17 and funct3 == 0x3:
             simm5 = rs1
             return V.VmvVi(vd=rd, simm5=simm5)
@@ -757,19 +757,34 @@ def decode_standard(instruction_bytes: bytes) -> Instruction:
         elif funct6 == 0x24 and funct3 == 0x1:
             vs1 = rs1
             return V.VArithVvFloat(vd=rd, vs1=vs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.FMUL)
+        elif funct6 == 0x12 and funct3 == 0x2:
+            # OPMVV vzext/vsext: rs1 selects variant
+            vzext_table = {
+                2: (kinstructions.VUnaryOp.ZEXT, 8, 'vzext.vf8'),
+                3: (kinstructions.VUnaryOp.SEXT, 8, 'vsext.vf8'),
+                4: (kinstructions.VUnaryOp.ZEXT, 4, 'vzext.vf4'),
+                5: (kinstructions.VUnaryOp.SEXT, 4, 'vsext.vf4'),
+                6: (kinstructions.VUnaryOp.ZEXT, 2, 'vzext.vf2'),
+                7: (kinstructions.VUnaryOp.SEXT, 2, 'vsext.vf2'),
+            }
+            if rs1 in vzext_table:
+                op, factor, mnemonic = vzext_table[rs1]
+                return V.VUnary(vd=rd, vs2=vs2, vm=vm, op=op,
+                                factor=factor, widening=True, mnemonic=mnemonic)
         elif funct6 == 0x12 and funct3 == 0x1:
             # vfunary0: single-width float/int conversions, vs1 selects variant
-            vs1 = rs1
             vfcvt_ops = {
-                0x00: kinstructions.VfcvtOp.XU_F,
-                0x01: kinstructions.VfcvtOp.X_F,
-                0x02: kinstructions.VfcvtOp.F_XU,
-                0x03: kinstructions.VfcvtOp.F_X,
-                0x06: kinstructions.VfcvtOp.RTZ_XU_F,
-                0x07: kinstructions.VfcvtOp.RTZ_X_F,
+                0x00: (kinstructions.VUnaryOp.FCVT_XU_F, 'vfcvt.xu.f.v'),
+                0x01: (kinstructions.VUnaryOp.FCVT_X_F, 'vfcvt.x.f.v'),
+                0x02: (kinstructions.VUnaryOp.FCVT_F_XU, 'vfcvt.f.xu.v'),
+                0x03: (kinstructions.VUnaryOp.FCVT_F_X, 'vfcvt.f.x.v'),
+                0x06: (kinstructions.VUnaryOp.FCVT_RTZ_XU_F, 'vfcvt.rtz.xu.f.v'),
+                0x07: (kinstructions.VUnaryOp.FCVT_RTZ_X_F, 'vfcvt.rtz.x.f.v'),
             }
-            if vs1 in vfcvt_ops:
-                return V.Vfcvt(vd=rd, vs2=vs2, vm=vm, op=vfcvt_ops[vs1])
+            if rs1 in vfcvt_ops:
+                op, mnemonic = vfcvt_ops[rs1]
+                return V.VUnary(vd=rd, vs2=vs2, vm=vm, op=op,
+                                factor=1, widening=True, mnemonic=mnemonic)
 
     elif opcode == 0x63:
         imm = decode_b_imm(inst)

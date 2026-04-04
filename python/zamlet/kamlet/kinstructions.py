@@ -53,14 +53,16 @@ class VArithOp(Enum):
     FMAX = "fmax"
 
 
-class VfcvtOp(Enum):
-    """Single-width vector float/int conversion variants (vfcvt.*.v)."""
-    XU_F = "xu.f"    # float → unsigned int
-    X_F = "x.f"      # float → signed int
-    F_XU = "f.xu"    # unsigned int → float
-    F_X = "f.x"      # signed int → float
-    RTZ_XU_F = "rtz.xu.f"  # float → unsigned int (round toward zero)
-    RTZ_X_F = "rtz.x.f"    # float → signed int (round toward zero)
+class VUnaryOp(Enum):
+    COPY = "copy"
+    SEXT = "sext"
+    ZEXT = "zext"
+    FCVT_XU_F = "xu.f"
+    FCVT_X_F = "x.f"
+    FCVT_F_XU = "f.xu"
+    FCVT_F_X = "f.x"
+    FCVT_RTZ_XU_F = "rtz.xu.f"
+    FCVT_RTZ_X_F = "rtz.x.f"
 
 
 class VRedOp(Enum):
@@ -471,114 +473,101 @@ class VidOp(KInstr):
 
 
 @dataclass
-class VmvVvOp(KInstr):
+class VUnaryOvOp(KInstr):
+    """Unary vector operation. Source and destination may have different element widths."""
+    op: VUnaryOp
     dst: int
     src: int
     n_elements: int
-    element_width: int
+    dst_ew: int
+    src_ew: int
     word_order: addresses.WordOrder
+    mask_reg: int | None
     instr_ident: int
 
     async def update_kamlet(self, kamlet):
         bits_in_vline = kamlet.params.vline_bytes * 8
-        n_vlines = (self.n_elements * self.element_width + bits_in_vline - 1) // bits_in_vline
-        src_regs = [self.src+index for index in range(n_vlines)]
-        dst_regs = [self.dst+index for index in range(n_vlines)]
-        await kamlet.wait_for_rf_available(read_regs=src_regs, write_regs=dst_regs,
-                                           instr_ident=self.instr_ident)
+        n_dst_vlines = (self.n_elements * self.dst_ew + bits_in_vline - 1) // bits_in_vline
+        n_src_vlines = (self.n_elements * self.src_ew + bits_in_vline - 1) // bits_in_vline
+        dst_regs = [self.dst + i for i in range(n_dst_vlines)]
+        src_regs = [self.src + i for i in range(n_src_vlines)]
+        read_regs = list(src_regs)
+        if self.mask_reg is not None:
+            read_regs.append(self.mask_reg)
+        await kamlet.wait_for_rf_available(
+            read_regs=read_regs, write_regs=dst_regs, instr_ident=self.instr_ident)
 
         params = kamlet.params
         vreg_bytes_per_jamlet = params.maxvl_bytes // params.j_in_l
-        src_offset = self.src * vreg_bytes_per_jamlet
-        dst_offset = self.dst * vreg_bytes_per_jamlet
-        eb = self.element_width // 8
-        wb = kamlet.params.word_bytes
-        start_index = 0
+        src_base = self.src * vreg_bytes_per_jamlet
+        dst_base = self.dst * vreg_bytes_per_jamlet
+        src_eb = self.src_ew // 8
+        dst_eb = self.dst_ew // 8
+        wb = params.word_bytes
 
+        dst_elements_per_word = wb // dst_eb
+        src_elements_per_word = wb // src_eb
         for j_in_k_index, jamlet in enumerate(kamlet.jamlets):
-            for vline_index in range(n_vlines):
-                for index_in_j in range(wb // eb):
-                    byte_offset = vline_index * wb + index_in_j * eb
+            for vline_index in range(n_dst_vlines):
+                for index_in_j in range(dst_elements_per_word):
                     valid_element, mask_bit = kamlet.get_is_active(
-                        start_index, self.n_elements, self.element_width, self.word_order, None,
-                        vline_index, j_in_k_index, index_in_j
-                    )
-                    if valid_element:
-                        src_bytes = jamlet.rf_slice[src_offset + byte_offset:src_offset + byte_offset + eb]
-                        jamlet.rf_slice[dst_offset + byte_offset:dst_offset + byte_offset + eb] = src_bytes
+                        0, self.n_elements, self.dst_ew, self.word_order,
+                        self.mask_reg, vline_index, j_in_k_index, index_in_j)
+                    if not (valid_element and mask_bit):
+                        continue
+                    # Element index within this jamlet
+                    dst_elem = vline_index * dst_elements_per_word + index_in_j
+                    # Same element in the source layout
+                    src_vline = dst_elem // src_elements_per_word
+                    src_idx = dst_elem % src_elements_per_word
+                    dst_byte = dst_base + vline_index * wb + index_in_j * dst_eb
+                    src_byte = src_base + src_vline * wb + src_idx * src_eb
+                    src_bytes = jamlet.rf_slice[src_byte:src_byte + src_eb]
+                    result = self._convert(src_bytes, src_eb, dst_eb)
+                    jamlet.rf_slice[dst_byte:dst_byte + dst_eb] = result
         kamlet.monitor.finalize_kinstr_exec(self.instr_ident, kamlet.min_x, kamlet.min_y)
 
-
-@dataclass
-class VfcvtVvOp(KInstr):
-    """Single-width vector float/int conversion. Unary: reads src (vs2), writes dst (vd)."""
-    op: VfcvtOp
-    dst: int
-    src: int
-    mask_reg: int
-    n_elements: int
-    element_width: int
-    word_order: addresses.WordOrder
-    instr_ident: int
-
-    def _convert_element(self, src_bytes, eb):
-        float_fmt = {8: 'd', 4: 'f'}[eb]
-        sint_fmt = {8: '<q', 4: '<i'}[eb]
-        uint_fmt = {8: '<Q', 4: '<I'}[eb]
-        max_uint = (1 << (eb * 8)) - 1
-        max_sint = (1 << (eb * 8 - 1)) - 1
-        min_sint = -(1 << (eb * 8 - 1))
-
-        if self.op in (VfcvtOp.XU_F, VfcvtOp.RTZ_XU_F):
+    def _convert(self, src_bytes: bytes, src_eb: int, dst_eb: int) -> bytes:
+        if self.op == VUnaryOp.COPY:
+            assert src_eb == dst_eb
+            return src_bytes
+        elif self.op == VUnaryOp.ZEXT:
+            return src_bytes + b'\x00' * (dst_eb - src_eb)
+        elif self.op == VUnaryOp.SEXT:
+            sign_bit = src_bytes[-1] & 0x80
+            pad = b'\xff' if sign_bit else b'\x00'
+            return src_bytes + pad * (dst_eb - src_eb)
+        elif self.op in (VUnaryOp.FCVT_XU_F, VUnaryOp.FCVT_RTZ_XU_F):
+            assert src_eb == dst_eb
+            float_fmt = {8: 'd', 4: 'f'}[src_eb]
+            uint_fmt = {8: '<Q', 4: '<I'}[dst_eb]
+            max_uint = (1 << (dst_eb * 8)) - 1
             float_val = struct.unpack(float_fmt, src_bytes)[0]
-            int_val = int(float_val)
-            int_val = max(0, min(int_val, max_uint))
+            int_val = max(0, min(int(float_val), max_uint))
             return struct.pack(uint_fmt, int_val)
-        elif self.op in (VfcvtOp.X_F, VfcvtOp.RTZ_X_F):
+        elif self.op in (VUnaryOp.FCVT_X_F, VUnaryOp.FCVT_RTZ_X_F):
+            assert src_eb == dst_eb
+            float_fmt = {8: 'd', 4: 'f'}[src_eb]
+            sint_fmt = {8: '<q', 4: '<i'}[dst_eb]
+            max_sint = (1 << (dst_eb * 8 - 1)) - 1
+            min_sint = -(1 << (dst_eb * 8 - 1))
             float_val = struct.unpack(float_fmt, src_bytes)[0]
-            int_val = int(float_val)
-            int_val = max(min_sint, min(int_val, max_sint))
+            int_val = max(min_sint, min(int(float_val), max_sint))
             return struct.pack(sint_fmt, int_val)
-        elif self.op == VfcvtOp.F_XU:
+        elif self.op == VUnaryOp.FCVT_F_XU:
+            assert src_eb == dst_eb
+            uint_fmt = {8: '<Q', 4: '<I'}[src_eb]
+            float_fmt = {8: 'd', 4: 'f'}[dst_eb]
             uint_val = struct.unpack(uint_fmt, src_bytes)[0]
             return struct.pack(float_fmt, float(uint_val))
-        elif self.op == VfcvtOp.F_X:
+        elif self.op == VUnaryOp.FCVT_F_X:
+            assert src_eb == dst_eb
+            sint_fmt = {8: '<q', 4: '<i'}[src_eb]
+            float_fmt = {8: 'd', 4: 'f'}[dst_eb]
             sint_val = struct.unpack(sint_fmt, src_bytes)[0]
             return struct.pack(float_fmt, float(sint_val))
         else:
-            raise NotImplementedError(f"Unknown vfcvt op: {self.op}")
-
-    async def update_kamlet(self, kamlet):
-        bits_in_vline = kamlet.params.vline_bytes * 8
-        n_vlines = (self.n_elements * self.element_width + bits_in_vline - 1) // bits_in_vline
-        src_regs = [self.src + index for index in range(n_vlines)]
-        dst_regs = [self.dst + index for index in range(n_vlines)]
-        await kamlet.wait_for_rf_available(
-            read_regs=src_regs, write_regs=dst_regs, instr_ident=self.instr_ident)
-
-        params = kamlet.params
-        vreg_bytes_per_jamlet = params.maxvl_bytes // params.j_in_l
-        src_offset = self.src * vreg_bytes_per_jamlet
-        dst_offset = self.dst * vreg_bytes_per_jamlet
-        eb = self.element_width // 8
-        wb = kamlet.params.word_bytes
-        start_index = 0
-
-        for j_in_k_index, jamlet in enumerate(kamlet.jamlets):
-            for vline_index in range(n_vlines):
-                for index_in_j in range(wb // eb):
-                    byte_offset = vline_index * wb + index_in_j * eb
-                    valid_element, mask_bit = kamlet.get_is_active(
-                        start_index, self.n_elements, self.element_width, self.word_order,
-                        self.mask_reg, vline_index, j_in_k_index, index_in_j
-                    )
-                    if valid_element and mask_bit:
-                        src_bytes = jamlet.rf_slice[
-                            src_offset + byte_offset:src_offset + byte_offset + eb]
-                        result_bytes = self._convert_element(src_bytes, eb)
-                        jamlet.rf_slice[
-                            dst_offset + byte_offset:dst_offset + byte_offset + eb] = result_bytes
-        kamlet.monitor.finalize_kinstr_exec(self.instr_ident, kamlet.min_x, kamlet.min_y)
+            raise NotImplementedError(f"Unknown VUnaryOp: {self.op}")
 
 
 @dataclass

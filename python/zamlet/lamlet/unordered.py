@@ -216,6 +216,40 @@ async def vstore(lamlet: 'Oamlet', vs: int, addr: int, ordering: addresses.Order
                                 is_store=True, parent_span_id=parent_span_id)
 
 
+async def remap_reg_ew(lamlet: 'Oamlet', reg_base: int, dst_ordering: Ordering,
+                       n_registers: int, parent_span_id: int) -> list[int]:
+    """Copy register data from one ew layout to another via scratch VPU memory.
+
+    Returns the temp regs holding the remapped data (temp_regs[0] is the base).
+    Caller must free them when done.
+
+    TODO: Replace with a dedicated register-to-register ew remap kinstr using
+    J2J messages. See docs/TODO.md.
+    """
+    vline_bits = lamlet.params.maxvl_bytes * 8
+    assert lamlet.params.page_bytes >= lamlet.params.maxvl_bytes
+    temp_regs = lamlet.alloc_temp_regs(n_registers)
+    scratch_addresses = []
+    for i in range(n_registers):
+        src_ordering = lamlet.vrf_ordering[reg_base + i]
+        src_elements_per_vline = vline_bits // src_ordering.ew
+        scratch_addr = lamlet.get_scratch_page(temp_regs[i], src_ordering.ew)
+        # Store from source reg at src_ew to scratch
+        await vloadstore(
+            lamlet, reg_base + i, scratch_addr, src_ordering,
+            n_elements=src_elements_per_vline, mask_reg=None, start_index=0, is_store=True,
+            parent_span_id=parent_span_id)
+        scratch_addresses.append(scratch_addr)
+    dst_elements_per_vline = vline_bits // dst_ordering.ew
+    for i, scratch_addr in enumerate(scratch_addresses):
+        # Load from scratch into temp reg at dst_ew
+        await vloadstore(
+            lamlet, temp_regs[i], scratch_addr, dst_ordering,
+            n_elements=dst_elements_per_vline, mask_reg=None, start_index=0, is_store=False,
+            parent_span_id=parent_span_id)
+    return temp_regs
+
+
 async def vloadstore(lamlet: 'Oamlet', reg_base: int, addr: int, ordering: addresses.Ordering,
                      n_elements: int, mask_reg: int | None, start_index: int, is_store: bool,
                      parent_span_id: int) -> VectorOpResult:
@@ -233,6 +267,25 @@ async def vloadstore(lamlet: 'Oamlet', reg_base: int, addr: int, ordering: addre
     """
     g_addr = GlobalAddress(bit_addr=addr*8, params=lamlet.params)
     instr_ew = ordering.ew
+    temp_regs = None
+
+    # For stores where the register ew doesn't match the instruction ew, remap
+    # via scratch memory first. See docs/TODO.md for replacing this workaround.
+    if is_store:
+        vline_bits = lamlet.params.maxvl_bytes * 8
+        elements_per_vline = vline_bits // ordering.ew
+        n_vlines = (n_elements + elements_per_vline - 1) // elements_per_vline
+        needs_remap = False
+        for i in range(n_vlines):
+            reg_ord = lamlet.vrf_ordering[reg_base + i]
+            assert reg_ord is not None
+            if reg_ord.ew != ordering.ew:
+                needs_remap = True
+                break
+        if needs_remap:
+            temp_regs = await remap_reg_ew(
+                lamlet, reg_base, ordering, n_vlines, parent_span_id)
+            reg_base = temp_regs[0]
 
     # Check all pages for access before dispatching
     element_bytes = ordering.ew // 8
@@ -242,6 +295,8 @@ async def vloadstore(lamlet: 'Oamlet', reg_base: int, addr: int, ordering: addre
         n_elements = result.element_index
 
     if n_elements == 0:
+        if temp_regs is not None:
+            lamlet.free_temp_regs(temp_regs)
         return result
 
     size = (n_elements * ordering.ew) // 8
@@ -409,6 +464,8 @@ async def vloadstore(lamlet: 'Oamlet', reg_base: int, addr: int, ordering: addre
                 await vloadstore_scalar(lamlet, reg_base, section.start_address, ordering,
                                         section_elements, mask_reg, section.start_index,
                                         writeset_ident, is_store, parent_span_id)
+    if temp_regs is not None:
+        lamlet.free_temp_regs(temp_regs)
     return result
 
 

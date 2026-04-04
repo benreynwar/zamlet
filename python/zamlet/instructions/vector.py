@@ -665,7 +665,7 @@ class VmvVi:
         element_width = 8 << vsew
         word_order = s.word_order
 
-        s.vrf_ordering[self.vd] = addresses.Ordering(word_order, element_width)
+        s.set_vrf_ordering(self.vd, element_width, s.vl)
 
         sign_extended_imm = self.simm5 if self.simm5 < 16 else self.simm5 - 32
 
@@ -715,103 +715,12 @@ class VmvVx:
         rs1_bytes = s.scalar.read_reg(self.rs1)
         scalar_val = int.from_bytes(rs1_bytes, byteorder='little', signed=True)
 
-        s.vrf_ordering[self.vd] = addresses.Ordering(word_order, element_width)
+        s.set_vrf_ordering(self.vd, element_width, s.vl)
 
         instr_ident = await s.get_instr_ident()
         kinstr = kinstructions.VBroadcastOp(
             dst=self.vd,
             scalar=scalar_val,
-            n_elements=s.vl,
-            element_width=element_width,
-            word_order=word_order,
-            instr_ident=instr_ident,
-        )
-        await s.add_to_instruction_buffer(kinstr, span_id)
-        s.monitor.finalize_children(span_id)
-        s.pc += 4
-
-
-@dataclass
-class VmvVv:
-    """VMV.V.V - Vector Move Vector Register.
-
-    vd[i] = vs1[i] (copy vector register to all active elements)
-
-    Reference: riscv-isa-manual/src/v-st-ext.adoc
-    """
-    vd: int
-    vs1: int
-
-    def __str__(self):
-        return f'vmv.v.v\tv{self.vd},v{self.vs1}'
-
-    async def update_state(self, s: 'Oamlet'):
-        span_id = s.monitor.create_span(
-            span_type=SpanType.RISCV_INSTR,
-            component="lamlet",
-            completion_type=CompletionType.FIRE_AND_FORGET,
-            mnemonic=str(self),
-            pc=s.pc,
-        )
-
-        vsew = (s.vtype >> 3) & 0x7
-        element_width = 8 << vsew
-        word_order = s.word_order
-
-        assert s.vrf_ordering[self.vs1].ew == element_width
-
-        s.vrf_ordering[self.vd] = addresses.Ordering(word_order, element_width)
-
-        instr_ident = await s.get_instr_ident()
-        kinstr = kinstructions.VmvVvOp(
-            dst=self.vd,
-            src=self.vs1,
-            n_elements=s.vl,
-            element_width=element_width,
-            word_order=word_order,
-            instr_ident=instr_ident,
-        )
-        await s.add_to_instruction_buffer(kinstr, span_id)
-        s.monitor.finalize_children(span_id)
-        s.pc += 4
-
-
-@dataclass
-class Vfcvt:
-    """Single-width vector float/int conversion (vfcvt.*.v)."""
-    vd: int
-    vs2: int
-    vm: int
-    op: kinstructions.VfcvtOp
-
-    def __str__(self):
-        vm_str = '' if self.vm else ',v0.t'
-        return f'vfcvt.{self.op.value}.v\tv{self.vd},v{self.vs2}{vm_str}'
-
-    async def update_state(self, s: 'Oamlet'):
-        span_id = s.monitor.create_span(
-            span_type=SpanType.RISCV_INSTR,
-            component="lamlet",
-            completion_type=CompletionType.FIRE_AND_FORGET,
-            mnemonic=str(self),
-            pc=s.pc,
-        )
-
-        mask_reg = None if self.vm else 0
-
-        vsew = (s.vtype >> 3) & 0x7
-        element_width = 8 << vsew
-        word_order = s.word_order
-
-        assert s.vrf_ordering[self.vs2].ew == element_width
-        s.vrf_ordering[self.vd] = addresses.Ordering(word_order, element_width)
-
-        instr_ident = await s.get_instr_ident()
-        kinstr = kinstructions.VfcvtVvOp(
-            op=self.op,
-            dst=self.vd,
-            src=self.vs2,
-            mask_reg=mask_reg,
             n_elements=s.vl,
             element_width=element_width,
             word_order=word_order,
@@ -890,7 +799,7 @@ class VreductionVs:
         assert s.vrf_ordering[self.vs1].ew == element_width
 
         word_order = s.word_order
-        s.vrf_ordering[self.vd] = addresses.Ordering(word_order, element_width)
+        s.set_vrf_ordering(self.vd, element_width, s.vl)
 
         await s.handle_vreduction_vs_instr(
             op=self.op,
@@ -944,13 +853,13 @@ class VArithVv:
         word_order = s.word_order
 
         if self.op == kinstructions.VArithOp.MACC and self.vd not in s.vrf_ordering:
-            s.vrf_ordering[self.vd] = addresses.Ordering(word_order, element_width)
+            s.set_vrf_ordering(self.vd, element_width, s.vl)
 
         assert s.vrf_ordering[self.vs1].ew == element_width
         assert s.vrf_ordering[self.vs2].ew == element_width
 
         if self.op != kinstructions.VArithOp.MACC:
-            s.vrf_ordering[self.vd] = addresses.Ordering(word_order, element_width)
+            s.set_vrf_ordering(self.vd, element_width, s.vl)
 
         instr_ident = await s.get_instr_ident()
         kinstr = kinstructions.VArithVvOp(
@@ -1006,7 +915,7 @@ class VArithVvFloat:
         assert s.vrf_ordering[self.vs1].ew == element_width
         assert s.vrf_ordering[self.vs2].ew == element_width
 
-        s.vrf_ordering[self.vd] = addresses.Ordering(word_order, element_width)
+        s.set_vrf_ordering(self.vd, element_width, s.vl)
 
         instr_ident = await s.get_instr_ident()
         kinstr = kinstructions.VArithVvOp(
@@ -1067,7 +976,7 @@ class VArithVx:
         word_order = s.word_order
 
         if self.op == kinstructions.VArithOp.MACC and self.vd not in s.vrf_ordering:
-            s.vrf_ordering[self.vd] = addresses.Ordering(word_order, element_width)
+            s.set_vrf_ordering(self.vd, element_width, s.vl)
 
         assert s.vrf_ordering[self.vs2].ew == element_width
         if self.op == kinstructions.VArithOp.MACC:
@@ -1076,7 +985,7 @@ class VArithVx:
         rs1_bytes = s.scalar.read_reg(self.rs1)
 
         if self.op != kinstructions.VArithOp.MACC:
-            s.vrf_ordering[self.vd] = addresses.Ordering(word_order, element_width)
+            s.set_vrf_ordering(self.vd, element_width, s.vl)
 
         instr_ident = await s.get_instr_ident()
         kinstr = kinstructions.VArithVxOp(
@@ -1136,7 +1045,7 @@ class VArithVi:
         # Convert to bytes (using word_bytes to match scalar register size)
         imm_bytes = imm_val.to_bytes(s.params.word_bytes, byteorder='little', signed=True)
 
-        s.vrf_ordering[self.vd] = addresses.Ordering(word_order, element_width)
+        s.set_vrf_ordering(self.vd, element_width, s.vl)
 
         instr_ident = await s.get_instr_ident()
         kinstr = kinstructions.VArithVxOp(
@@ -1286,7 +1195,7 @@ class Vid:
         vsew = (s.vtype >> 3) & 0x7
         element_width = 8 << vsew
 
-        s.vrf_ordering[self.vd] = addresses.Ordering(s.word_order, element_width)
+        s.set_vrf_ordering(self.vd, element_width, s.vl)
 
         mask_reg = None if self.vm else 0
 
@@ -1296,6 +1205,67 @@ class Vid:
             n_elements=s.vl,
             element_width=element_width,
             word_order=s.word_order,
+            mask_reg=mask_reg,
+            instr_ident=instr_ident,
+        )
+        await s.add_to_instruction_buffer(kinstr, span_id)
+        s.monitor.finalize_children(span_id)
+        s.pc += 4
+
+
+@dataclass
+class VUnary:
+    """Unary vector operation with potentially different src/dst element widths.
+
+    Used for vsext.vfN, vzext.vfN, and other unary operations.
+    factor: src_ew = dst_ew / factor (e.g. factor=4 means src is SEW/4)
+    widening: if True, dst_ew > src_ew; if False, dst_ew < src_ew
+    """
+    vd: int
+    vs2: int
+    vm: int
+    op: kinstructions.VUnaryOp
+    factor: int
+    widening: bool
+    mnemonic: str
+
+    def __str__(self):
+        vm_str = '' if self.vm else ',v0.t'
+        return f'{self.mnemonic}\tv{self.vd},v{self.vs2}{vm_str}'
+
+    async def update_state(self, s: 'Oamlet'):
+        span_id = s.monitor.create_span(
+            span_type=SpanType.RISCV_INSTR,
+            component="lamlet",
+            completion_type=CompletionType.FIRE_AND_FORGET,
+            mnemonic=str(self),
+            pc=s.pc,
+        )
+
+        vsew = (s.vtype >> 3) & 0x7
+        sew = 8 << vsew
+        if self.widening:
+            dst_ew = sew
+            src_ew = sew // self.factor
+        else:
+            src_ew = sew
+            dst_ew = sew // self.factor
+        assert src_ew >= 8 and dst_ew >= 8
+
+        word_order = s.word_order
+        mask_reg = None if self.vm else 0
+
+        s.set_vrf_ordering(self.vd, dst_ew, s.vl)
+
+        instr_ident = await s.get_instr_ident()
+        kinstr = kinstructions.VUnaryOvOp(
+            op=self.op,
+            dst=self.vd,
+            src=self.vs2,
+            n_elements=s.vl,
+            dst_ew=dst_ew,
+            src_ew=src_ew,
+            word_order=word_order,
             mask_reg=mask_reg,
             instr_ident=instr_ident,
         )
@@ -1339,7 +1309,7 @@ class Vrgather:
         assert s.vrf_ordering[self.vs1].ew == element_width
         assert s.vrf_ordering[self.vs2].ew == element_width
 
-        s.vrf_ordering[self.vd] = addresses.Ordering(word_order, element_width)
+        s.set_vrf_ordering(self.vd, element_width, s.vl)
 
         mask_reg = None if self.vm else 0
 
