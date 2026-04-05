@@ -171,7 +171,8 @@ async def run_conditional_simple(clock: Clock, vector_length: int, seed: int, lm
 
         # Step 2: Create mask (x < 5)
         instr_ident = await lamlet.get_instr_ident()
-        vmsle_instr = kinstructions.VmsleViOp(
+        vmsle_instr = kinstructions.VCmpViOp(
+            op=kinstructions.VCmpOp.LE,
             dst=0,
             src=0,
             simm5=4,

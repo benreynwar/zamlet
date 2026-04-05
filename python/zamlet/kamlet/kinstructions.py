@@ -20,6 +20,7 @@ from zamlet import addresses
 from zamlet.addresses import KMAddr, GlobalAddress
 from zamlet.params import ZamletParams
 from zamlet.control_structures import pack_fields_to_int
+from zamlet.message import IdentHeader, MessageType, SendType
 from zamlet.monitor import CompletionType, SpanType
 
 
@@ -63,6 +64,17 @@ class VUnaryOp(Enum):
     FCVT_F_X = "f.x"
     FCVT_RTZ_XU_F = "rtz.xu.f"
     FCVT_RTZ_X_F = "rtz.x.f"
+
+
+class VCmpOp(Enum):
+    EQ = "seq"
+    NE = "sne"
+    LTU = "sltu"
+    LT = "slt"
+    LEU = "sleu"
+    LE = "sle"
+    GTU = "sgtu"
+    GT = "sgt"
 
 
 class VRedOp(Enum):
@@ -311,8 +323,54 @@ class Store(KInstr):
         await kamlet.handle_store_instr(self)
 
 
+def _vcmp_evaluate(op: VCmpOp, a, b):
+    """Evaluate a vector comparison operation. Returns 1 or 0."""
+    if op == VCmpOp.EQ:
+        return 1 if a == b else 0
+    elif op == VCmpOp.NE:
+        return 1 if a != b else 0
+    elif op == VCmpOp.LE:
+        return 1 if a <= b else 0
+    elif op == VCmpOp.LT:
+        return 1 if a < b else 0
+    elif op == VCmpOp.GT:
+        return 1 if a > b else 0
+    elif op == VCmpOp.GTU:
+        return 1 if a > b else 0
+    elif op == VCmpOp.LEU:
+        return 1 if a <= b else 0
+    elif op == VCmpOp.LTU:
+        return 1 if a < b else 0
+    else:
+        raise NotImplementedError(f"Unknown comparison op: {op}")
+
+
+def _vcmp_write_bit(rf_slice, base_dst_bit_addr, element_in_jamlet, result_bit):
+    """Write a single result bit to the destination mask register."""
+    dst_bit_addr = base_dst_bit_addr + element_in_jamlet
+    dst_byte_addr = dst_bit_addr // 8
+    dst_bit_offset = dst_bit_addr % 8
+    if result_bit:
+        rf_slice[dst_byte_addr] |= (1 << dst_bit_offset)
+    else:
+        rf_slice[dst_byte_addr] &= ~(1 << dst_bit_offset)
+
+
+def _vcmp_dst_regs(dst, n_elements, vline_bytes):
+    elements_in_dst_vline = vline_bytes * 8  # 1 bit per element
+    n_dst_vlines = (n_elements + elements_in_dst_vline - 1) // elements_in_dst_vline
+    return [dst + index for index in range(n_dst_vlines)]
+
+
+def _vcmp_src_regs(src, n_elements, element_width, vline_bytes):
+    elements_in_src_vline = vline_bytes * 8 // element_width
+    n_src_vlines = (n_elements + elements_in_src_vline - 1) // elements_in_src_vline
+    return [src + index for index in range(n_src_vlines)]
+
+
 @dataclass
-class VmsleViOp(KInstr):
+class VCmpViOp(KInstr):
+    op: VCmpOp
     dst: int
     src: int
     simm5: int
@@ -322,17 +380,16 @@ class VmsleViOp(KInstr):
     instr_ident: int
 
     async def update_kamlet(self, kamlet):
-        elements_in_src_vline = kamlet.params.vline_bytes * 8 // self.element_width
-        n_src_vlines = (self.n_elements + elements_in_src_vline - 1)//elements_in_src_vline
-        src_regs = [self.src+index for index in range(n_src_vlines)]
+        src_regs = _vcmp_src_regs(
+            self.src, self.n_elements, self.element_width, kamlet.params.vline_bytes,
+        )
+        dst_regs = _vcmp_dst_regs(self.dst, self.n_elements, kamlet.params.vline_bytes)
 
-        elements_in_dst_vline = kamlet.params.vline_bytes * 8
-        n_dst_vlines = (self.n_elements + elements_in_dst_vline - 1)//elements_in_dst_vline
-        dst_regs = [self.dst+index for index in range(n_dst_vlines)]
-
-        await kamlet.wait_for_rf_available(read_regs=src_regs, write_regs=dst_regs,
-                                           instr_ident=self.instr_ident)
+        await kamlet.wait_for_rf_available(
+            read_regs=src_regs, write_regs=dst_regs, instr_ident=self.instr_ident,
+        )
         sign_extended_imm = self.simm5 if self.simm5 < 16 else self.simm5 - 32
+        unsigned = self.op in (VCmpOp.LTU, VCmpOp.LEU, VCmpOp.GTU)
 
         base_src_bit_addr = self.src * kamlet.params.word_bytes * 8
         base_dst_bit_addr = self.dst * kamlet.params.word_bytes * 8
@@ -346,16 +403,71 @@ class VmsleViOp(KInstr):
                 jamlet = kamlet.jamlets[j_in_k_index]
                 src_bit_addr = base_src_bit_addr + element_in_jamlet * self.element_width
                 assert src_bit_addr % 8 == 0
-                src_bytes = jamlet.rf_slice[src_bit_addr//8:src_bit_addr//8 + self.element_width//8]
-                src_val = int.from_bytes(src_bytes, byteorder='little', signed=True)
-                result_bit = 1 if src_val <= sign_extended_imm else 0
-                dst_bit_addr = base_dst_bit_addr + element_in_jamlet
-                dst_byte_addr = dst_bit_addr // 8
-                dst_bit_offset = dst_bit_addr % 8
-                if result_bit:
-                    jamlet.rf_slice[dst_byte_addr] |= (1 << dst_bit_offset)
-                else:
-                    jamlet.rf_slice[dst_byte_addr] &= ~(1 << dst_bit_offset)
+                eb = self.element_width // 8
+                src_bytes = jamlet.rf_slice[src_bit_addr // 8:src_bit_addr // 8 + eb]
+                src_val = int.from_bytes(
+                    src_bytes, byteorder='little', signed=not unsigned,
+                )
+                result_bit = _vcmp_evaluate(self.op, src_val, sign_extended_imm)
+                _vcmp_write_bit(
+                    jamlet.rf_slice, base_dst_bit_addr, element_in_jamlet, result_bit,
+                )
+        kamlet.monitor.finalize_kinstr_exec(self.instr_ident, kamlet.min_x, kamlet.min_y)
+
+
+@dataclass
+class VCmpVvOp(KInstr):
+    op: VCmpOp
+    dst: int
+    src1: int
+    src2: int
+    n_elements: int
+    element_width: int
+    ordering: addresses.Ordering
+    instr_ident: int
+
+    async def update_kamlet(self, kamlet):
+        src_regs = _vcmp_src_regs(
+            self.src1, self.n_elements, self.element_width, kamlet.params.vline_bytes,
+        )
+        src_regs += _vcmp_src_regs(
+            self.src2, self.n_elements, self.element_width, kamlet.params.vline_bytes,
+        )
+        dst_regs = _vcmp_dst_regs(self.dst, self.n_elements, kamlet.params.vline_bytes)
+
+        await kamlet.wait_for_rf_available(
+            read_regs=src_regs, write_regs=dst_regs, instr_ident=self.instr_ident,
+        )
+        unsigned = self.op in (VCmpOp.LTU, VCmpOp.LEU, VCmpOp.GTU)
+
+        base_src1_bit_addr = self.src1 * kamlet.params.word_bytes * 8
+        base_src2_bit_addr = self.src2 * kamlet.params.word_bytes * 8
+        base_dst_bit_addr = self.dst * kamlet.params.word_bytes * 8
+
+        for element_index in range(self.n_elements):
+            vw_index = element_index % kamlet.params.j_in_l
+            k_index, j_in_k_index = addresses.vw_index_to_k_indices(
+                kamlet.params, self.ordering.word_order, vw_index)
+            element_in_jamlet = element_index // kamlet.params.j_in_l
+            if k_index == kamlet.k_index:
+                jamlet = kamlet.jamlets[j_in_k_index]
+                src_bit_addr = element_in_jamlet * self.element_width
+                assert src_bit_addr % 8 == 0
+                eb = self.element_width // 8
+                s1_off = base_src1_bit_addr // 8 + src_bit_addr // 8
+                s2_off = base_src2_bit_addr // 8 + src_bit_addr // 8
+                src1_bytes = jamlet.rf_slice[s1_off:s1_off + eb]
+                src2_bytes = jamlet.rf_slice[s2_off:s2_off + eb]
+                src1_val = int.from_bytes(
+                    src1_bytes, byteorder='little', signed=not unsigned,
+                )
+                src2_val = int.from_bytes(
+                    src2_bytes, byteorder='little', signed=not unsigned,
+                )
+                result_bit = _vcmp_evaluate(self.op, src2_val, src1_val)
+                _vcmp_write_bit(
+                    jamlet.rf_slice, base_dst_bit_addr, element_in_jamlet, result_bit,
+                )
         kamlet.monitor.finalize_kinstr_exec(self.instr_ident, kamlet.min_x, kamlet.min_y)
 
 
@@ -571,16 +683,66 @@ class VUnaryOvOp(KInstr):
 
 
 @dataclass
-class ReadRegElement(TrackedKInstr):
-    rd: int
+class ReadRegWord(TrackedKInstr):
+    """Read a word from the register file and send it back to the lamlet."""
     src: int
-    element_index: int
-    element_width: int
-    ident: int
+    j_in_k_index: int
     instr_ident: int
 
     async def update_kamlet(self, kamlet):
-        await kamlet.handle_read_reg_element_instr(self)
+        await kamlet.wait_for_rf_available(
+            read_regs=[self.src], instr_ident=self.instr_ident,
+        )
+        jamlet = kamlet.jamlets[self.j_in_k_index]
+        wb = kamlet.params.word_bytes
+        byte_offset = self.src * wb
+        word = int.from_bytes(
+            jamlet.rf_slice[byte_offset:byte_offset + wb], 'little',
+        )
+        header = IdentHeader(
+            message_type=MessageType.READ_REG_WORD_RESP,
+            send_type=SendType.SINGLE,
+            target_x=jamlet.lamlet_x,
+            target_y=jamlet.lamlet_y,
+            source_x=jamlet.x,
+            source_y=jamlet.y,
+            length=1,
+            ident=self.instr_ident,
+        )
+        kinstr_span_id = jamlet.monitor.get_kinstr_span_id(self.instr_ident)
+        await jamlet.send_packet([header, word], parent_span_id=kinstr_span_id)
+        kamlet.monitor.finalize_kinstr_exec(
+            self.instr_ident, kamlet.min_x, kamlet.min_y,
+        )
+
+
+@dataclass
+class WriteRegElement(KInstr):
+    dst: int
+    element_index: int
+    element_width: int
+    ordering: addresses.Ordering
+    value: int
+    instr_ident: int
+
+    async def update_kamlet(self, kamlet):
+        vw_index = self.element_index % kamlet.params.j_in_l
+        k_index, j_in_k_index = addresses.vw_index_to_k_indices(
+            kamlet.params, self.ordering.word_order, vw_index)
+        assert k_index == kamlet.k_index
+        await kamlet.wait_for_rf_available(
+            write_regs=[self.dst], instr_ident=self.instr_ident,
+        )
+        jamlet = kamlet.jamlets[j_in_k_index]
+        element_in_jamlet = self.element_index // kamlet.params.j_in_l
+        eb = self.element_width // 8
+        base_addr = self.dst * kamlet.params.word_bytes
+        byte_offset = base_addr + element_in_jamlet * eb
+        value_bytes = self.value.to_bytes(eb, byteorder='little', signed=True)
+        jamlet.rf_slice[byte_offset:byte_offset + eb] = value_bytes
+        kamlet.monitor.finalize_kinstr_exec(
+            self.instr_ident, kamlet.min_x, kamlet.min_y,
+        )
 
 
 @dataclass

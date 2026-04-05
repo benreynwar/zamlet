@@ -26,7 +26,7 @@ from zamlet.addresses import AddressConverter, Ordering, GlobalAddress, KMAddr, 
 from zamlet.kamlet.cache_table import (
     CacheTable, CacheState, ProtocolState, SendState)
 from zamlet.lamlet.lamlet_waiting_item import (
-    LamletWaitingItem, LamletWaitingFuture,
+    LamletWaitingItem, LamletWaitingFuture, LamletWaitingReadRegElement,
     LamletWaitingLoadIndexedElement, LamletWaitingStoreIndexedElement)
 from zamlet.monitor import CompletionType, SpanType
 from zamlet.params import ZamletParams
@@ -364,6 +364,35 @@ class Oamlet:
         await self.add_to_instruction_buffer(kinstr, self._setup_span_id, k_maddr.k_index)
         return future
 
+    async def read_register_element(self, vreg, element_index, element_width):
+        """Read a single element from a vector register. Returns a Future.
+
+        Sends a ReadRegWord kinstr to the kamlet that owns the element.
+        The kamlet reads the full word from rf_slice and sends it back.
+        The waiting item extracts the element and sign-extends to XLEN.
+        """
+        ordering = self.vrf_ordering[vreg]
+        assert ordering.ew == element_width
+        vw_index = element_index % self.params.j_in_l
+        k_index, j_in_k_index = addresses.vw_index_to_k_indices(
+            self.params, ordering.word_order, vw_index)
+        instr_ident = await ident_query.get_instr_ident(self)
+        future = self.clock.create_future()
+        witem = LamletWaitingReadRegElement(
+            future=future, instr_ident=instr_ident,
+            element_width=element_width, word_bytes=self.params.word_bytes,
+        )
+        await self.add_witem(witem)
+        kinstr = kinstructions.ReadRegWord(
+            src=vreg,
+            j_in_k_index=j_in_k_index,
+            instr_ident=instr_ident,
+        )
+        await self.add_to_instruction_buffer(
+            kinstr, self._ident_query_span_id, k_index,
+        )
+        return future
+
     async def router_connections(self, channel):
         '''
         Move words between router buffers
@@ -596,6 +625,14 @@ class Oamlet:
             self.remove_witem_by_ident(header.ident)
             self.monitor.complete_kinstr(header.ident)
             logger.debug(f'{self.clock.cycle}: lamlet: Got a READ_BYTE_RESP from ({header.source_x, header.source_y}) is {header.value}')
+        elif header.message_type == MessageType.READ_REG_WORD_RESP:
+            assert len(packet) == 2
+            item = self.get_witem_by_ident(header.ident)
+            assert item is not None, f"No waiting item for ident {header.ident}"
+            assert isinstance(item, LamletWaitingReadRegElement)
+            item.resolve(packet[1])
+            self.remove_witem_by_ident(header.ident)
+            self.monitor.complete_kinstr(header.ident)
         elif header.message_type == MessageType.READ_WORDS_RESP:
             item = self.get_witem_by_ident(header.ident)
             assert item is not None, f"No waiting item for ident {header.ident}"

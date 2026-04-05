@@ -369,40 +369,43 @@ def decode_standard(instruction_bytes: bytes) -> Instruction:
             return CUSTOM.EndWriteset()
 
     elif opcode == 0x07:
-        nf = (inst >> 29) & 0x7  # Number of fields - 1 (0 = 1 field, 7 = 8 fields)
-        mop = (inst >> 26) & 0x3
-        vm = (inst >> 25) & 0x1
-        lumop = rs2  # For unit-stride loads, rs2 field holds lumop
         width = funct3
-        # Map width field to element width
-        width_map = {0x0: 8, 0x5: 16, 0x6: 32, 0x7: 64}
-        if mop == 0x0 and lumop == 8:
-            # Whole register load (vl1r, vl2r, vl4r, vl8r)
-            # nf encodes number of registers: 0->1, 1->2, 3->4, 7->8
-            nreg_map = {0: 1, 1: 2, 3: 4, 7: 8}
-            assert nf in nreg_map, f"Invalid nf={nf} for whole register load"
-            return V.VlrV(vd=rd, rs1=rs1, nreg=nreg_map[nf])
-        elif mop == 0x0 and width in width_map:
-            # Unit-stride load
-            ew = width_map[width]
-            if nf == 0:
-                # Regular unit-stride load (vle*.v)
-                return V.VleV(vd=rd, rs1=rs1, vm=vm, element_width=ew)
-            else:
-                # Segment load (vlseg*.v) - nf+1 fields
-                return V.VlsegV(vd=rd, rs1=rs1, vm=vm, element_width=ew, nf=nf + 1)
-        elif mop == 0x1 and width in width_map:
-            # Indexed-unordered load (vluxei*.v)
-            index_ew = width_map[width]
-            return V.VIndexedLoad(vd=rd, rs1=rs1, vs2=rs2, vm=vm, index_width=index_ew, ordered=False)
-        elif mop == 0x2 and width in width_map:
-            # Constant-stride load (vlse*.v)
-            ew = width_map[width]
-            return V.VlseV(vd=rd, rs1=rs1, rs2=rs2, vm=vm, element_width=ew)
-        elif mop == 0x3 and width in width_map:
-            # Indexed-ordered load (vloxei*.v)
-            index_ew = width_map[width]
-            return V.VIndexedLoad(vd=rd, rs1=rs1, vs2=rs2, vm=vm, index_width=index_ew, ordered=True)
+        # Width field discriminates vector vs scalar FP loads.
+        # Vector: 000(8b), 101(16b), 110(32b), 111(64b)
+        # Scalar FP: 001(flh), 010(flw), 011(fld), 100(flq)
+        vector_width_map = {0x0: 8, 0x5: 16, 0x6: 32, 0x7: 64}
+        if width in vector_width_map:
+            nf = (inst >> 29) & 0x7
+            mop = (inst >> 26) & 0x3
+            vm = (inst >> 25) & 0x1
+            lumop = rs2
+            ew = vector_width_map[width]
+            if mop == 0x0 and lumop == 8:
+                # Whole register load (vl1re8, vl2re8, vl4re8, vl8re8, etc.)
+                nreg_map = {0: 1, 1: 2, 3: 4, 7: 8}
+                assert nf in nreg_map, f"Invalid nf={nf} for whole register load"
+                return V.VlrV(vd=rd, rs1=rs1, nreg=nreg_map[nf])
+            elif mop == 0x0:
+                # Unit-stride load
+                if nf == 0:
+                    return V.VleV(vd=rd, rs1=rs1, vm=vm, element_width=ew)
+                else:
+                    return V.VlsegV(
+                        vd=rd, rs1=rs1, vm=vm, element_width=ew, nf=nf + 1,
+                    )
+            elif mop == 0x1:
+                # Indexed-unordered load (vluxei*.v)
+                return V.VIndexedLoad(
+                    vd=rd, rs1=rs1, vs2=rs2, vm=vm, index_width=ew, ordered=False,
+                )
+            elif mop == 0x2:
+                # Constant-stride load (vlse*.v)
+                return V.VlseV(vd=rd, rs1=rs1, rs2=rs2, vm=vm, element_width=ew)
+            elif mop == 0x3:
+                # Indexed-ordered load (vloxei*.v)
+                return V.VIndexedLoad(
+                    vd=rd, rs1=rs1, vs2=rs2, vm=vm, index_width=ew, ordered=True,
+                )
         elif width == 0x2:
             return F.Flw(fd=rd, rs1=rs1, imm=decode_i_imm(inst))
         elif width == 0x3:
@@ -465,41 +468,43 @@ def decode_standard(instruction_bytes: bytes) -> Instruction:
             return M.Sd(rs1=rs1, rs2=rs2, imm=imm)
 
     elif opcode == 0x27:
-        nf = (inst >> 29) & 0x7  # Number of fields - 1 (0 = 1 field, 7 = 8 fields)
-        mop = (inst >> 26) & 0x3
-        vm = (inst >> 25) & 0x1
-        sumop = rs2  # For unit-stride stores, rs2 field holds sumop
         width = funct3
         vs3 = rd
-        # Map width field to element width
-        width_map = {0x0: 8, 0x5: 16, 0x6: 32, 0x7: 64}
-        if mop == 0x0 and sumop == 8:
-            # Whole register store (vs1r, vs2r, vs4r, vs8r)
-            # nf encodes number of registers: 0->1, 1->2, 3->4, 7->8
-            nreg_map = {0: 1, 1: 2, 3: 4, 7: 8}
-            assert nf in nreg_map, f"Invalid nf={nf} for whole register store"
-            return V.VsrV(vs3=vs3, rs1=rs1, nreg=nreg_map[nf])
-        elif mop == 0x0 and width in width_map:
-            # Unit-stride store
-            ew = width_map[width]
-            if nf == 0:
-                # Regular unit-stride store (vse*.v)
-                return V.VseV(vs3=vs3, rs1=rs1, vm=vm, element_width=ew)
-            else:
-                # Segment store (vsseg*.v) - nf+1 fields
-                return V.VssegV(vs3=vs3, rs1=rs1, vm=vm, element_width=ew, nf=nf + 1)
-        elif mop == 0x1 and width in width_map:
-            # Indexed-unordered store (vsuxei*.v)
-            index_ew = width_map[width]
-            return V.VIndexedStore(vs3=vs3, rs1=rs1, vs2=rs2, vm=vm, index_width=index_ew, ordered=False)
-        elif mop == 0x2 and width in width_map:
-            # Constant-stride store (vsse*.v)
-            ew = width_map[width]
-            return V.VsseV(vs3=vs3, rs1=rs1, rs2=rs2, vm=vm, element_width=ew)
-        elif mop == 0x3 and width in width_map:
-            # Indexed-ordered store (vsoxei*.v)
-            index_ew = width_map[width]
-            return V.VIndexedStore(vs3=vs3, rs1=rs1, vs2=rs2, vm=vm, index_width=index_ew, ordered=True)
+        vector_width_map = {0x0: 8, 0x5: 16, 0x6: 32, 0x7: 64}
+        if width in vector_width_map:
+            nf = (inst >> 29) & 0x7
+            mop = (inst >> 26) & 0x3
+            vm = (inst >> 25) & 0x1
+            sumop = rs2
+            ew = vector_width_map[width]
+            if mop == 0x0 and sumop == 8:
+                # Whole register store (vs1r, vs2r, vs4r, vs8r)
+                nreg_map = {0: 1, 1: 2, 3: 4, 7: 8}
+                assert nf in nreg_map, f"Invalid nf={nf} for whole register store"
+                return V.VsrV(vs3=vs3, rs1=rs1, nreg=nreg_map[nf])
+            elif mop == 0x0:
+                # Unit-stride store
+                if nf == 0:
+                    return V.VseV(vs3=vs3, rs1=rs1, vm=vm, element_width=ew)
+                else:
+                    return V.VssegV(
+                        vs3=vs3, rs1=rs1, vm=vm, element_width=ew, nf=nf + 1,
+                    )
+            elif mop == 0x1:
+                # Indexed-unordered store (vsuxei*.v)
+                return V.VIndexedStore(
+                    vs3=vs3, rs1=rs1, vs2=rs2, vm=vm, index_width=ew, ordered=False,
+                )
+            elif mop == 0x2:
+                # Constant-stride store (vsse*.v)
+                return V.VsseV(
+                    vs3=vs3, rs1=rs1, rs2=rs2, vm=vm, element_width=ew,
+                )
+            elif mop == 0x3:
+                # Indexed-ordered store (vsoxei*.v)
+                return V.VIndexedStore(
+                    vs3=vs3, rs1=rs1, vs2=rs2, vm=vm, index_width=ew, ordered=True,
+                )
         elif width == 0x2:
             return F.Fsw(rs2=rs2, rs1=rs1, imm=decode_s_imm(inst))
         elif width == 0x3:
@@ -702,7 +707,10 @@ def decode_standard(instruction_bytes: bytes) -> Instruction:
             return V.VArithVi(vd=rd, vs2=vs2, simm5=simm5, vm=vm, op=kinstructions.VArithOp.SRA)
         elif funct6 == 0x1d and funct3 == 0x3:
             simm5 = rs1
-            return V.VmsleVi(vd=rd, vs2=vs2, simm5=simm5, vm=vm)
+            return V.VCmpVi(vd=rd, vs2=vs2, simm5=simm5, vm=vm, op=kinstructions.VCmpOp.LE)
+        elif funct6 == 0x19 and funct3 == 0x0:
+            vs1 = rs1
+            return V.VCmpVv(vd=rd, vs2=vs2, vs1=vs1, vm=vm, op=kinstructions.VCmpOp.NE)
         elif funct6 == 0x1d and funct3 == 0x2:
             vs1 = rs1
             return V.VmnandMm(vd=rd, vs2=vs2, vs1=vs1)
@@ -716,6 +724,8 @@ def decode_standard(instruction_bytes: bytes) -> Instruction:
             return V.VmvVx(vd=rd, rs1=rs1)
         elif funct6 == 0x10 and funct3 == 0x2 and rs1 == 0:
             return V.VmvXs(rd=rd, vs2=vs2)
+        elif funct6 == 0x10 and funct3 == 0x6 and rs2 == 0:
+            return V.VmvSx(vd=rd, rs1=rs1)
         elif funct6 == 0x25 and funct3 == 0x2:
             vs1 = rs1
             return V.VArithVv(vd=rd, vs1=vs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.MUL)

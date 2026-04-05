@@ -87,6 +87,9 @@ class MessageType(IntEnum):
     READ_REG_ELEMENT_RESP = 55
     READ_REG_ELEMENT_DROP = 56
 
+    # Read register word (kamlet -> lamlet, for vmv.x.s)
+    READ_REG_WORD_RESP = 57
+
 # What channel do different messages travel on.
 
 CHANNEL_MAPPING = {
@@ -132,6 +135,8 @@ CHANNEL_MAPPING = {
     MessageType.WRITE_MEM_WORD_RETRY: 0,
 
     MessageType.IDENT_QUERY_RESP: 0,
+
+    MessageType.READ_REG_WORD_RESP: 0,
 
     MessageType.READ_REG_ELEMENT_REQ: 1,
     MessageType.READ_REG_ELEMENT_RESP: 0,
