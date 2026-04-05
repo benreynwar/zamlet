@@ -433,6 +433,8 @@ class Subw:
     rs2: int
 
     def __str__(self):
+        if self.rs1 == 0:
+            return f'negw\t{reg_name(self.rd)},{reg_name(self.rs2)}'
         return f'subw\t{reg_name(self.rd)},{reg_name(self.rs1)},{reg_name(self.rs2)}'
 
     async def update_state(self, s: 'Oamlet'):
@@ -774,7 +776,9 @@ class Slt:
     rs2: int
 
     def __str__(self):
-        if self.rs2 == 0:
+        if self.rs1 == 0:
+            return f'sgtz\t{reg_name(self.rd)},{reg_name(self.rs2)}'
+        elif self.rs2 == 0:
             return f'sltz\t{reg_name(self.rd)},{reg_name(self.rs1)}'
         else:
             return f'slt\t{reg_name(self.rd)},{reg_name(self.rs1)},{reg_name(self.rs2)}'

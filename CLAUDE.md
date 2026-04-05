@@ -35,6 +35,8 @@ chisel repo root). Useful for understanding Chisel internals when debugging elab
 ## Comments
 NEVER add comments that explain what was changed or reference previous states of the code. Comments should explain what the code does or why it does it, not what it used to do or how it changed. Avoid diff-specific comments that only make sense in the context of changes being made.
 
+NEVER remove existing comments when editing code unless you are intentionally removing them and explaining why. When rewriting a block of code, preserve all existing comments that are still relevant.
+
 ## Code Style
 All imports must be placed at the top of the file, not inline within functions. Follow standard Python import ordering (standard library, third-party, local imports).
 

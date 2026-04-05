@@ -767,6 +767,10 @@ class VArithVxOp(KInstr):
                             acc_bytes = jamlet.rf_slice[dst_offset + byte_offset:dst_offset + byte_offset + eb]
                             acc_val = unpack(acc_bytes)
                             result = acc_val + (scalar_val * src2_val)
+                        elif self.op == VArithOp.FMACC:
+                            acc_bytes = jamlet.rf_slice[dst_offset + byte_offset:dst_offset + byte_offset + eb]
+                            acc_val = unpack(acc_bytes)
+                            result = (scalar_val * src2_val) + acc_val
                         elif self.op == VArithOp.FMADD:
                             acc_bytes = jamlet.rf_slice[dst_offset + byte_offset:dst_offset + byte_offset + eb]
                             acc_val = unpack(acc_bytes)

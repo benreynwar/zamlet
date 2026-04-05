@@ -1,5 +1,10 @@
 # TODO
 
+- [ ] Switch kernel test C runtime from custom crt.S/syscalls.c to picolibc.
+      The current runtime has custom printf/memcpy/etc that may diverge from
+      standard behavior, and hand-written header shims. picolibc provides all
+      of this correctly for bare-metal RISC-V with Clang.
+      See `docs/PLAN_picolibc.md`.
 - [ ] Add a Bazel macro that combines genrule + cocotb_binary + py_library + cocotb_test
       to reduce boilerplate in test BUILD files.
 - [ ] Packet header bit packing: ReadMemWordHeader and WriteMemWordHeader fields exceed

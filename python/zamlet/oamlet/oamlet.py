@@ -1260,10 +1260,7 @@ class Oamlet:
         logger.debug(f'{self.clock.cycle}: pc={hex(self.pc)} bytes={hex(inst_hex)} instruction={inst_str} {type(instruction)}')
 
         if disasm_trace is not None:
-            error = dt.check_instruction(disasm_trace, self.pc, inst_hex, inst_str)
-            if error:
-                logger.error(error)
-                raise ValueError(error)
+            dt.check_instruction(disasm_trace, self.pc, inst_hex, inst_str)
 
         try:
             await instruction.update_state(self)

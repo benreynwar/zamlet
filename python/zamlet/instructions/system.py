@@ -173,7 +173,16 @@ class Fence:
     succ: int
 
     def __str__(self):
-        return 'fence'
+        if self.pred == 0xf and self.succ == 0xf:
+            return 'fence'
+        def _bits(val):
+            s = ''
+            if val & 0x8: s += 'i'
+            if val & 0x4: s += 'o'
+            if val & 0x2: s += 'r'
+            if val & 0x1: s += 'w'
+            return s if s else 'unknown'
+        return f'fence\t{_bits(self.pred)},{_bits(self.succ)}'
 
     async def update_state(self, s: 'Oamlet'):
         s.pc += 4

@@ -97,8 +97,13 @@ SECTIONS
   } :scalar
   .bss : { *(.bss) } :scalar
 
-  /* thread-local data segment */
-  .tdata :
+  /* thread-local data segment.
+     Align to match .tbss alignment so that PT_TLS p_vaddr is a multiple of
+     p_align. LLD computes tp-relative offsets as: symbol_offset + (p_vaddr &
+     (p_align - 1)), so if p_vaddr isn't aligned, tp must be set to
+     p_vaddr rounded down — which is confusing. Aligning here makes tp =
+     _tdata_begin work directly. */
+  .tdata : ALIGN(64)
   {
     _tdata_begin = .;
     *(.tdata)
