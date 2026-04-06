@@ -47,6 +47,7 @@ from zamlet.transactions.store_indexed_element import StoreIndexedElement
 from zamlet.transactions.write_imm_bytes import WriteImmBytes
 from zamlet.transactions.read_byte import ReadByte
 from zamlet.oamlet.scalar import ScalarState
+from zamlet.oamlet import reduction
 from zamlet.lamlet.ordered_buffer import OrderedBuffer, ElementEntry, ElementState
 from zamlet import utils
 import zamlet.disasm_trace as dt
@@ -1314,12 +1315,12 @@ class Oamlet:
             logger.debug(f'{self.clock.cycle}: run_instructions: about to run second instruction')
             await self.run_instruction(disasm_trace)
 
-    async def handle_vreduction_vs_instr(self, op, dst, src_vector, src_scalar_reg, mask_reg,
-                                         n_elements, element_width, word_order):
-        """Handle vector reduction instruction.
-
-        Creates and sends a VreductionVsOp instruction to kamlet.
-        TODO: Implement this method.
-        """
-        raise NotImplementedError("handle_vreduction_vs_instr not yet implemented")
+    async def handle_vreduction_instr(self, op, dst, src_vector, src_scalar_reg, mask_reg,
+                                     n_elements, src_ew, accum_ew, word_order, vlmax,
+                                     parent_span_id):
+        """Handle vector reduction instruction via tree reduction."""
+        await reduction.handle_vreduction_instr(
+            self, op, dst, src_vector, src_scalar_reg, mask_reg,
+            n_elements, src_ew, accum_ew, word_order, vlmax, parent_span_id,
+        )
 

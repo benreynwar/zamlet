@@ -109,6 +109,7 @@ class Jamlet:
             MessageType.READ_REG_ELEMENT_REQ: Queue(2),
             MessageType.READ_REG_ELEMENT_RESP: Queue(2),
             MessageType.READ_REG_ELEMENT_DROP: Queue(2),
+            MessageType.READ_REG_WORD_RESP: Queue(2),
             }
 
         # Shared with the parent kamlet

@@ -113,10 +113,14 @@ async def _run_reg_gather_test_inner(
     lamlet.vtype = {8: 0x0, 16: 0x8, 32: 0x10, 64: 0x18}[data_ew]
     lamlet.vstart = 0
 
-    # Allocate registers: vs2=0 (source), vs1=1 (indices), vd=2 (dest)
+    # Allocate registers spaced to avoid overlap
+    elements_in_vline = params.vline_bytes * 8 // data_ew
+    index_elements_in_vline = params.vline_bytes * 8 // index_ew
+    vs2_vlines = (vlmax + elements_in_vline - 1) // elements_in_vline
+    vs1_vlines = (vl + index_elements_in_vline - 1) // index_elements_in_vline
     vs2_reg = 0
-    vs1_reg = 1
-    vd_reg = 2
+    vs1_reg = vs2_reg + vs2_vlines
+    vd_reg = vs1_reg + vs1_vlines
 
     span_id = lamlet.monitor.create_span(
         span_type=SpanType.RISCV_INSTR, component="test",

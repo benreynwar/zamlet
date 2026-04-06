@@ -866,15 +866,14 @@ class VmvSx:
 
 
 @dataclass
-class VreductionVs:
-    """Generic Vector Single-Width Integer Reduction.
+class Vreduction:
+    """Generic vector reduction.
 
     vd[0] = reduce_op(vs1[0], vs2[*])
     Reduces all active elements of vs2 with element 0 of vs1 using the specified operation.
 
-    Used for vredsum.vs, vredmax.vs, vredmin.vs, etc.
-
-    Reference: riscv-isa-manual/src/v-st-ext.adoc Section 15.3
+    Covers single-width integer, single-width float, widening integer, and widening float
+    reductions (excluding ordered float reductions).
     """
     vd: int
     vs2: int
@@ -882,43 +881,93 @@ class VreductionVs:
     vm: int
     op: kinstructions.VRedOp
 
+    _MNEMONIC = {
+        kinstructions.VRedOp.SUM: 'vredsum',
+        kinstructions.VRedOp.AND: 'vredand',
+        kinstructions.VRedOp.OR: 'vredor',
+        kinstructions.VRedOp.XOR: 'vredxor',
+        kinstructions.VRedOp.MINU: 'vredminu',
+        kinstructions.VRedOp.MIN: 'vredmin',
+        kinstructions.VRedOp.MAXU: 'vredmaxu',
+        kinstructions.VRedOp.MAX: 'vredmax',
+        kinstructions.VRedOp.FSUM: 'vfredusum',
+        kinstructions.VRedOp.FMIN: 'vfredmin',
+        kinstructions.VRedOp.FMAX: 'vfredmax',
+        kinstructions.VRedOp.WSUMU: 'vwredsumu',
+        kinstructions.VRedOp.WSUM: 'vwredsum',
+        kinstructions.VRedOp.FWSUM: 'vfwredusum',
+    }
+
+    _WIDENING = {
+        kinstructions.VRedOp.WSUMU, kinstructions.VRedOp.WSUM,
+        kinstructions.VRedOp.FWSUM,
+    }
+
     def __str__(self):
         vm_str = '' if self.vm else ',v0.t'
-        op_name = f'vred{self.op.value}'
-        return f'{op_name}.vs\tv{self.vd},v{self.vs2},v{self.vs1}{vm_str}'
+        mnemonic = self._MNEMONIC[self.op]
+        return f'{mnemonic}.vs\tv{self.vd},v{self.vs2},v{self.vs1}{vm_str}'
 
     async def update_state(self, s: 'Oamlet'):
         if s.vstart != 0:
-            raise ValueError(f'vred{self.op.value}.vs requires vstart == 0')
+            raise ValueError(f'{self._MNEMONIC[self.op]}.vs requires vstart == 0')
 
         if s.vl == 0:
             s.pc += 4
             return
 
+        span_id = s.monitor.create_span(
+            span_type=SpanType.RISCV_INSTR,
+            component="lamlet",
+            completion_type=CompletionType.FIRE_AND_FORGET,
+            mnemonic=str(self),
+            pc=s.pc,
+        )
+
         vsew = (s.vtype >> 3) & 0x7
         element_width = 8 << vsew
+        widening = self.op in self._WIDENING
 
-        if not self.vm:
-            mask_reg = 0
+        if widening:
+            src_ew = element_width
+            accum_ew = element_width * 2
         else:
-            mask_reg = None
+            src_ew = element_width
+            accum_ew = element_width
 
-        assert s.vrf_ordering[self.vs2].ew == element_width
-        assert s.vrf_ordering[self.vs1].ew == element_width
+        mask_reg = 0 if not self.vm else None
+
+        assert s.vrf_ordering[self.vs2].ew == src_ew
+        assert s.vrf_ordering[self.vs1].ew == accum_ew
 
         word_order = s.word_order
-        s.set_vrf_ordering(self.vd, element_width)
+        s.set_vrf_ordering(self.vd, accum_ew)
 
-        await s.handle_vreduction_vs_instr(
+        vlmul = (s.vtype >> 0) & 0x7
+        if vlmul < 4:
+            lmul = 1 << vlmul
+        else:
+            lmul = 1
+        elements_in_vline = s.params.vline_bytes * 8 // src_ew
+        vlmax = elements_in_vline * lmul
+        assert s.vl <= vlmax, (
+            f'{self._MNEMONIC[self.op]}.vs: vl={s.vl} exceeds vlmax={vlmax} '
+            f'(ew={src_ew}, lmul={lmul}, elements_in_vline={elements_in_vline})')
+
+        await s.handle_vreduction_instr(
             op=self.op,
             dst=self.vd,
             src_vector=self.vs2,
             src_scalar_reg=self.vs1,
             mask_reg=mask_reg,
             n_elements=s.vl,
-            element_width=element_width,
+            src_ew=src_ew,
+            accum_ew=accum_ew,
             word_order=word_order,
+            vlmax=vlmax,
+            parent_span_id=span_id,
         )
+        s.monitor.finalize_children(span_id)
         s.pc += 4
 
 

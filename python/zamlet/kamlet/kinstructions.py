@@ -78,6 +78,7 @@ class VCmpOp(Enum):
 
 
 class VRedOp(Enum):
+    # Single-width integer
     SUM = "sum"
     MAXU = "maxu"
     MAX = "max"
@@ -86,6 +87,15 @@ class VRedOp(Enum):
     AND = "and"
     OR = "or"
     XOR = "xor"
+    # Single-width float (excluding ordered)
+    FSUM = "fsum"
+    FMAX = "fmax"
+    FMIN = "fmin"
+    # Widening integer
+    WSUMU = "wsumu"
+    WSUM = "wsum"
+    # Widening float (excluding ordered)
+    FWSUM = "fwsum"
 
 
 class KInstr:
@@ -532,7 +542,8 @@ class VBroadcastOp(KInstr):
                         vline_index, j_in_k_index, index_in_j
                     )
                     if valid_element:
-                        result_bytes = self.scalar.to_bytes(eb, byteorder='little', signed=True)
+                        result_bytes = self.scalar.to_bytes(
+                            eb, byteorder='little', signed=(self.scalar < 0))
                         jamlet.rf_slice[dst_offset + byte_offset:dst_offset + byte_offset + eb] = result_bytes
         kamlet.monitor.finalize_kinstr_exec(self.instr_ident, kamlet.min_x, kamlet.min_y)
 
@@ -970,7 +981,7 @@ class VArithVxOp(KInstr):
 
 
 @dataclass
-class VreductionVsOp(KInstr):
+class VreductionOp(KInstr):
     op: VRedOp
     dst: int
     src_vector: int
@@ -982,6 +993,6 @@ class VreductionVsOp(KInstr):
     instr_ident: int
 
     async def update_kamlet(self, kamlet):
-        await kamlet.handle_vreduction_vs_instr(self)
+        await kamlet.handle_vreduction_instr(self)
 
 

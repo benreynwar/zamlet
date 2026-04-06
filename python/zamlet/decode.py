@@ -638,9 +638,55 @@ def decode_standard(instruction_bytes: bytes) -> Instruction:
             return V.VArithVxFloat(vd=rd, rs1=rs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.FMADD)
         elif funct6 == 0x2c and funct3 == 0x5:
             return V.VArithVxFloat(vd=rd, rs1=rs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.FMACC)
+        # OPMVV (funct3 = 0x2) - single-width integer reductions
         elif funct6 == 0x00 and funct3 == 0x2:
             vs1 = rs1
-            return V.VreductionVs(vd=rd, vs2=vs2, vs1=vs1, vm=vm, op=kinstructions.VRedOp.SUM)
+            return V.Vreduction(vd=rd, vs2=vs2, vs1=vs1, vm=vm, op=kinstructions.VRedOp.SUM)
+        elif funct6 == 0x01 and funct3 == 0x2:
+            vs1 = rs1
+            return V.Vreduction(vd=rd, vs2=vs2, vs1=vs1, vm=vm, op=kinstructions.VRedOp.AND)
+        elif funct6 == 0x02 and funct3 == 0x2:
+            vs1 = rs1
+            return V.Vreduction(vd=rd, vs2=vs2, vs1=vs1, vm=vm, op=kinstructions.VRedOp.OR)
+        elif funct6 == 0x03 and funct3 == 0x2:
+            vs1 = rs1
+            return V.Vreduction(vd=rd, vs2=vs2, vs1=vs1, vm=vm, op=kinstructions.VRedOp.XOR)
+        elif funct6 == 0x04 and funct3 == 0x2:
+            vs1 = rs1
+            return V.Vreduction(vd=rd, vs2=vs2, vs1=vs1, vm=vm, op=kinstructions.VRedOp.MINU)
+        elif funct6 == 0x05 and funct3 == 0x2:
+            vs1 = rs1
+            return V.Vreduction(vd=rd, vs2=vs2, vs1=vs1, vm=vm, op=kinstructions.VRedOp.MIN)
+        elif funct6 == 0x06 and funct3 == 0x2:
+            vs1 = rs1
+            return V.Vreduction(vd=rd, vs2=vs2, vs1=vs1, vm=vm, op=kinstructions.VRedOp.MAXU)
+        elif funct6 == 0x07 and funct3 == 0x2:
+            vs1 = rs1
+            return V.Vreduction(vd=rd, vs2=vs2, vs1=vs1, vm=vm, op=kinstructions.VRedOp.MAX)
+        # OPFVV (funct3 = 0x1) - single-width float reductions
+        elif funct6 == 0x01 and funct3 == 0x1:
+            vs1 = rs1
+            return V.Vreduction(vd=rd, vs2=vs2, vs1=vs1, vm=vm, op=kinstructions.VRedOp.FSUM)
+        elif funct6 == 0x05 and funct3 == 0x1:
+            vs1 = rs1
+            return V.Vreduction(vd=rd, vs2=vs2, vs1=vs1, vm=vm, op=kinstructions.VRedOp.FMIN)
+        elif funct6 == 0x07 and funct3 == 0x1:
+            vs1 = rs1
+            return V.Vreduction(vd=rd, vs2=vs2, vs1=vs1, vm=vm, op=kinstructions.VRedOp.FMAX)
+        # OPIVV (funct3 = 0x0) - widening integer reductions
+        elif funct6 == 0x30 and funct3 == 0x0:
+            vs1 = rs1
+            return V.Vreduction(
+                vd=rd, vs2=vs2, vs1=vs1, vm=vm, op=kinstructions.VRedOp.WSUMU)
+        elif funct6 == 0x31 and funct3 == 0x0:
+            vs1 = rs1
+            return V.Vreduction(
+                vd=rd, vs2=vs2, vs1=vs1, vm=vm, op=kinstructions.VRedOp.WSUM)
+        # OPFVV (funct3 = 0x1) - widening float reduction
+        elif funct6 == 0x31 and funct3 == 0x1:
+            vs1 = rs1
+            return V.Vreduction(
+                vd=rd, vs2=vs2, vs1=vs1, vm=vm, op=kinstructions.VRedOp.FWSUM)
         # OPIVV (funct3 = 0x0) - integer vector-vector
         elif funct6 == 0x00 and funct3 == 0x0:
             vs1 = rs1
