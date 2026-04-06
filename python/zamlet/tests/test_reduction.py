@@ -146,14 +146,14 @@ async def _run_reduction_test_inner(lamlet, clock, op, vl, ew, seed, lmul, param
     await lamlet.vload(
         vd=vs2_reg, addr=vs2_addr, ordering=ordering,
         n_elements=vl, start_index=0, mask_reg=None,
-        parent_span_id=span_id)
+        parent_span_id=span_id, lmul=lmul)
 
     # Load vs1 (only element 0)
     lamlet.vl = 1
     await lamlet.vload(
         vd=vs1_reg, addr=vs1_addr, ordering=ordering,
         n_elements=1, start_index=0, mask_reg=None,
-        parent_span_id=span_id)
+        parent_span_id=span_id, lmul=1)
 
     # Run the reduction
     lamlet.vl = vl

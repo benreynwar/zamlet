@@ -136,6 +136,7 @@ async def _run_indexed_store_test_inner(
         mask_reg=None,
         start_index=0,
         parent_span_id=span_id,
+        lmul=1,
     )
 
     # Setup index register

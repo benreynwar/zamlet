@@ -181,6 +181,7 @@ async def run_unaligned_test(
             start_index=0,
             mask_reg=None,
             parent_span_id=span_id,
+            lmul=1,
         )
 
         # Store from v0 to destination

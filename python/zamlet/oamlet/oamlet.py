@@ -311,6 +311,15 @@ class Oamlet:
         for i in range(n_vlines):
             self.vrf_ordering[vd + i] = ordering
 
+    def assert_vrf_ordering(self, vreg: int, ew: int):
+        """Assert vrf_ordering matches ew for all vline registers in the LMUL group."""
+        for i in range(self.lmul):
+            reg = vreg + i
+            assert self.vrf_ordering[reg] is not None, (
+                f'v{reg} has no ordering (expected ew={ew})')
+            assert self.vrf_ordering[reg].ew == ew, (
+                f'v{reg} ordering ew={self.vrf_ordering[reg].ew} != expected ew={ew}')
+
     def allocate_memory(self, address: GlobalAddress, size: SizeBytes, memory_type: MemoryType,
                         ordering: Ordering | None, readable: bool = True, writable: bool = True):
         assert size % self.params.page_bytes == 0
@@ -1173,8 +1182,15 @@ class Oamlet:
 
     async def vload(self, vd: int, addr: int, ordering: addresses.Ordering,
                     n_elements: int, mask_reg: int | None, start_index: int,
-                    parent_span_id: int,
+                    parent_span_id: int, lmul: int,
                     stride_bytes: int | None = None) -> addresses.VectorOpResult:
+        elements_per_vline = self.params.vline_bytes * 8 // ordering.ew
+        vlmax = elements_per_vline * lmul
+        assert n_elements <= vlmax, (
+            f'vload: n_elements={n_elements} exceeds vlmax={vlmax} '
+            f'(ew={ordering.ew}, lmul={lmul})')
+        for i in range(lmul):
+            self.vrf_ordering[vd + i] = ordering
         return await unordered.vload(self, vd, addr, ordering, n_elements, mask_reg, start_index,
                                      parent_span_id, stride_bytes)
 

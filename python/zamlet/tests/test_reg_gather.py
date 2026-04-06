@@ -136,6 +136,7 @@ async def _run_reg_gather_test_inner(
         mask_reg=None,
         start_index=0,
         parent_span_id=span_id,
+        lmul=1,
     )
 
     # Load indices into vs1
@@ -148,6 +149,7 @@ async def _run_reg_gather_test_inner(
         mask_reg=None,
         start_index=0,
         parent_span_id=span_id,
+        lmul=1,
     )
 
     # Set up vrf_ordering for registers

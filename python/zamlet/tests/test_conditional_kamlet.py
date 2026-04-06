@@ -167,6 +167,7 @@ async def run_conditional_simple(clock: Clock, vector_length: int, seed: int, lm
             start_index=0,
             mask_reg=None,
             parent_span_id=span_id,
+            lmul=1,
         )
 
         # Step 2: Create mask (x < 5)
@@ -193,6 +194,7 @@ async def run_conditional_simple(clock: Clock, vector_length: int, seed: int, lm
             start_index=0,
             mask_reg=None,
             parent_span_id=span_id,
+            lmul=1,
         )
 
         # Step 4: Invert mask
@@ -214,6 +216,7 @@ async def run_conditional_simple(clock: Clock, vector_length: int, seed: int, lm
             start_index=0,
             mask_reg=0,
             parent_span_id=span_id,
+            lmul=1,
         )
 
         # Step 6: Store v1 to z

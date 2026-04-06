@@ -152,6 +152,7 @@ async def _run_strided_load_test_inner(
         start_index=start_index,
         mask_reg=mask_reg,
         parent_span_id=span_id,
+        lmul=1,
         stride_bytes=stride,
     )
 

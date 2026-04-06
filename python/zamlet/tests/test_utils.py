@@ -145,6 +145,7 @@ async def setup_mask_register(
         mask_reg=None,
         start_index=0,
         parent_span_id=mask_span_id,
+        lmul=1,
     )
     lamlet.monitor.finalize_children(mask_span_id)
     logger.info(f"Mask loaded into v{mask_reg}")
@@ -178,6 +179,7 @@ async def zero_register(
         mask_reg=None,
         start_index=0,
         parent_span_id=zero_span_id,
+        lmul=1,
     )
     lamlet.monitor.finalize_children(zero_span_id)
     logger.info(f"Register v{reg} zeroed ({n_elements} elements)")
@@ -326,6 +328,7 @@ async def setup_index_register(
         mask_reg=None,
         start_index=0,
         parent_span_id=span_id,
+        lmul=1,
     )
     lamlet.monitor.finalize_children(span_id)
 

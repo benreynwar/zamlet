@@ -65,6 +65,7 @@ async def setup_data_register(lamlet, data_reg: int, values: list[int], data_ew:
         mask_reg=None,
         start_index=0,
         parent_span_id=span_id,
+        lmul=1,
     )
     lamlet.monitor.finalize_children(span_id)
 

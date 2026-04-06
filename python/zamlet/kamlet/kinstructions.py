@@ -31,8 +31,12 @@ class VArithOp(Enum):
     # Integer
     ADD = "add"
     SUB = "sub"
+    RSUB = "rsub"
     MUL = "mul"
     MACC = "macc"
+    MADD = "madd"
+    NMSAC = "nmsac"
+    NMSUB = "nmsub"
     AND = "and"
     OR = "or"
     XOR = "xor"
@@ -58,6 +62,7 @@ class VUnaryOp(Enum):
     COPY = "copy"
     SEXT = "sext"
     ZEXT = "zext"
+    NSRL = "nsrl"
     FCVT_XU_F = "xu.f"
     FCVT_X_F = "x.f"
     FCVT_F_XU = "f.xu"
@@ -511,7 +516,7 @@ class VmnandMmOp(KInstr):
 class VBroadcastOp(KInstr):
     """Broadcast a scalar value to all elements of a vector register.
 
-    Used for vmv.v.i, vmv.v.x instructions.
+    Used for vmv.v.i, vmv.v.x, vmerge instructions.
     """
     dst: int
     scalar: int
@@ -519,6 +524,7 @@ class VBroadcastOp(KInstr):
     element_width: int
     word_order: addresses.WordOrder
     instr_ident: int
+    mask_reg: int | None = None
 
     async def update_kamlet(self, kamlet):
         bits_in_vline = kamlet.params.vline_bytes * 8
@@ -538,10 +544,11 @@ class VBroadcastOp(KInstr):
                 for index_in_j in range(wb // eb):
                     byte_offset = vline_index * wb + index_in_j * eb
                     valid_element, mask_bit = kamlet.get_is_active(
-                        start_index, self.n_elements, self.element_width, self.word_order, None,
+                        start_index, self.n_elements, self.element_width,
+                        self.word_order, self.mask_reg,
                         vline_index, j_in_k_index, index_in_j
                     )
-                    if valid_element:
+                    if valid_element and mask_bit:
                         result_bytes = self.scalar.to_bytes(
                             eb, byteorder='little', signed=(self.scalar < 0))
                         jamlet.rf_slice[dst_offset + byte_offset:dst_offset + byte_offset + eb] = result_bytes
@@ -607,6 +614,7 @@ class VUnaryOvOp(KInstr):
     word_order: addresses.WordOrder
     mask_reg: int | None
     instr_ident: int
+    shift_amount: int = 0  # For NSRL: 5-bit uimm, masked to lg2(2*SEW) bits at compute time
 
     async def update_kamlet(self, kamlet):
         bits_in_vline = kamlet.params.vline_bytes * 8
@@ -660,6 +668,12 @@ class VUnaryOvOp(KInstr):
             sign_bit = src_bytes[-1] & 0x80
             pad = b'\xff' if sign_bit else b'\x00'
             return src_bytes + pad * (dst_eb - src_eb)
+        elif self.op == VUnaryOp.NSRL:
+            src_val = int.from_bytes(src_bytes, byteorder='little', signed=False)
+            shift_mask = src_eb * 8 * 2 - 1  # low lg2(2*SEW) bits
+            shifted = src_val >> (self.shift_amount & shift_mask)
+            return (shifted & ((1 << (dst_eb * 8)) - 1)).to_bytes(
+                dst_eb, byteorder='little')
         elif self.op in (VUnaryOp.FCVT_XU_F, VUnaryOp.FCVT_RTZ_XU_F):
             assert src_eb == dst_eb
             float_fmt = {8: 'd', 4: 'f'}[src_eb]
@@ -799,7 +813,9 @@ class VArithVvOp(KInstr):
                         src2_bytes = jamlet.rf_slice[src2_offset + byte_offset:src2_offset + byte_offset + eb]
                         float_ops = (VArithOp.FADD, VArithOp.FSUB, VArithOp.FMUL, VArithOp.FDIV,
                                      VArithOp.FMACC, VArithOp.FMADD, VArithOp.FMIN, VArithOp.FMAX)
-                        signed_int_ops = (VArithOp.ADD, VArithOp.SUB, VArithOp.MUL, VArithOp.MACC,
+                        signed_int_ops = (VArithOp.ADD, VArithOp.SUB, VArithOp.MUL,
+                                          VArithOp.MACC, VArithOp.MADD,
+                                          VArithOp.NMSAC, VArithOp.NMSUB,
                                           VArithOp.AND, VArithOp.OR, VArithOp.XOR,
                                           VArithOp.SLL, VArithOp.SRA, VArithOp.MIN, VArithOp.MAX)
                         unsigned_int_ops = (VArithOp.MINU, VArithOp.MAXU, VArithOp.SRL)
@@ -824,6 +840,18 @@ class VArithVvOp(KInstr):
                             acc_bytes = jamlet.rf_slice[dst_offset + byte_offset:dst_offset + byte_offset + eb]
                             acc_val = struct.unpack(fmt, acc_bytes)[0]
                             result = (src1_val * src2_val) + acc_val
+                        elif self.op == VArithOp.MADD:
+                            acc_bytes = jamlet.rf_slice[dst_offset + byte_offset:dst_offset + byte_offset + eb]
+                            acc_val = struct.unpack(fmt, acc_bytes)[0]
+                            result = (src1_val * acc_val) + src2_val
+                        elif self.op == VArithOp.NMSAC:
+                            acc_bytes = jamlet.rf_slice[dst_offset + byte_offset:dst_offset + byte_offset + eb]
+                            acc_val = struct.unpack(fmt, acc_bytes)[0]
+                            result = acc_val - (src1_val * src2_val)
+                        elif self.op == VArithOp.NMSUB:
+                            acc_bytes = jamlet.rf_slice[dst_offset + byte_offset:dst_offset + byte_offset + eb]
+                            acc_val = struct.unpack(fmt, acc_bytes)[0]
+                            result = src2_val - (src1_val * acc_val)
                         elif self.op == VArithOp.AND:
                             result = src1_val & src2_val
                         elif self.op == VArithOp.OR:
@@ -934,12 +962,26 @@ class VArithVxOp(KInstr):
                             result = src2_val + scalar_val
                         elif self.op == VArithOp.SUB:
                             result = src2_val - scalar_val
+                        elif self.op == VArithOp.RSUB:
+                            result = scalar_val - src2_val
                         elif self.op == VArithOp.MUL:
                             result = src2_val * scalar_val
                         elif self.op == VArithOp.MACC:
                             acc_bytes = jamlet.rf_slice[dst_offset + byte_offset:dst_offset + byte_offset + eb]
                             acc_val = unpack(acc_bytes)
                             result = acc_val + (scalar_val * src2_val)
+                        elif self.op == VArithOp.MADD:
+                            acc_bytes = jamlet.rf_slice[dst_offset + byte_offset:dst_offset + byte_offset + eb]
+                            acc_val = unpack(acc_bytes)
+                            result = (scalar_val * acc_val) + src2_val
+                        elif self.op == VArithOp.NMSAC:
+                            acc_bytes = jamlet.rf_slice[dst_offset + byte_offset:dst_offset + byte_offset + eb]
+                            acc_val = unpack(acc_bytes)
+                            result = acc_val - (scalar_val * src2_val)
+                        elif self.op == VArithOp.NMSUB:
+                            acc_bytes = jamlet.rf_slice[dst_offset + byte_offset:dst_offset + byte_offset + eb]
+                            acc_val = unpack(acc_bytes)
+                            result = src2_val - (scalar_val * acc_val)
                         elif self.op == VArithOp.FMACC:
                             acc_bytes = jamlet.rf_slice[dst_offset + byte_offset:dst_offset + byte_offset + eb]
                             acc_val = unpack(acc_bytes)

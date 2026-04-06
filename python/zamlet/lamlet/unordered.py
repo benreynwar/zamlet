@@ -306,18 +306,16 @@ async def vloadstore(lamlet: 'Oamlet', reg_base: int, addr: int, ordering: addre
     # These writes are guanteed to work on separate bytes so that the write order does not matter.
     writeset_ident = ident_query.get_writeset_ident(lamlet)
 
-    # If we're loading into registers we need to set the vrf_ordering for the affected
-    # registers. If we're storing we check the registers have matching ordering.
+    # Verify vrf_ordering is set for affected registers.
+    # For loads, vload() sets ordering for the full lmul group before calling here.
+    # For stores, the producing instruction set it.
     vline_bits = lamlet.params.maxvl_bytes * 8
     regs = []
     for element_index in range(start_index, start_index + n_elements):
         reg = reg_base + (element_index * ordering.ew) // vline_bits
         if reg not in regs:
             regs.append(reg)
-            if is_store:
-                assert lamlet.vrf_ordering[reg] == ordering
-            else:
-                lamlet.vrf_ordering[reg] = ordering
+            assert lamlet.vrf_ordering[reg] == ordering
 
     base_reg_addr = addresses.RegAddr(
         reg=reg_base, addr=0, params=lamlet.params, ordering=ordering)

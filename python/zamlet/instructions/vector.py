@@ -182,7 +182,8 @@ class VleV:
             pc=s.pc,
         )
         ordering = addresses.Ordering(s.word_order, self.element_width)
-        await s.vload(self.vd, addr, ordering, s.vl, mask_reg, s.vstart, parent_span_id=span_id)
+        await s.vload(self.vd, addr, ordering, s.vl, mask_reg, s.vstart,
+                       parent_span_id=span_id, lmul=s.lmul)
         s.monitor.finalize_children(span_id)
         s.pc += 4
 
@@ -222,7 +223,8 @@ class VlrV:
         ew = reg_ordering.ew
         n_elements = (s.params.vline_bytes * self.nreg * 8) // ew
         ordering = addresses.Ordering(reg_ordering.word_order, ew)
-        await s.vload(self.vd, addr, ordering, n_elements, None, 0, parent_span_id=span_id)
+        await s.vload(self.vd, addr, ordering, n_elements, None, 0,
+                       parent_span_id=span_id, lmul=self.nreg)
         s.monitor.finalize_children(span_id)
         s.pc += 4
 
@@ -335,8 +337,8 @@ class VlseV:
             pc=s.pc,
         )
         ordering = addresses.Ordering(s.word_order, self.element_width)
-        await s.vload(self.vd, addr, ordering, s.vl, mask_reg, s.vstart, parent_span_id=span_id,
-                      stride_bytes=stride)
+        await s.vload(self.vd, addr, ordering, s.vl, mask_reg, s.vstart,
+                       parent_span_id=span_id, lmul=s.lmul, stride_bytes=stride)
         s.monitor.finalize_children(span_id)
         s.pc += 4
 
@@ -495,8 +497,8 @@ class VArithVxFloat:
         vsew = (s.vtype >> 3) & 0x7
         element_width = 8 << vsew
         word_order = s.word_order
-        assert s.vrf_ordering[self.vd].ew == element_width
-        assert s.vrf_ordering[self.vs2].ew == element_width
+        s.assert_vrf_ordering(self.vd, element_width)
+        s.assert_vrf_ordering(self.vs2, element_width)
 
         scalar_bytes = s.scalar.read_freg(self.rs1)
 
@@ -787,6 +789,74 @@ class VmvVx:
 
 
 @dataclass
+class VmergeVx:
+    """vmerge.vxm vd, vs2, rs1, v0
+
+    vd[i] = v0.mask[i] ? x[rs1] : vs2[i]
+    Always uses v0 as mask (vm=0 encoding).
+    """
+    vd: int
+    rs1: int
+    vs2: int
+
+    def __str__(self):
+        return f'vmerge.vxm\tv{self.vd},v{self.vs2},{reg_name(self.rs1)},v0'
+
+    async def update_state(self, s: 'Oamlet'):
+        span_id = s.monitor.create_span(
+            span_type=SpanType.RISCV_INSTR,
+            component="lamlet",
+            completion_type=CompletionType.FIRE_AND_FORGET,
+            mnemonic=str(self),
+            pc=s.pc,
+        )
+
+        await s.scalar.wait_all_regs_ready(None, None, [self.rs1], [])
+
+        vsew = (s.vtype >> 3) & 0x7
+        element_width = 8 << vsew
+        word_order = s.word_order
+
+        s.assert_vrf_ordering(self.vs2, element_width)
+        s.set_vrf_ordering(self.vd, element_width)
+
+        rs1_bytes = s.scalar.read_reg(self.rs1)
+        scalar_val = int.from_bytes(rs1_bytes[:element_width // 8],
+                                    byteorder='little', signed=True)
+
+        # Step 1: copy vs2 to vd (unmasked)
+        instr_ident = await s.get_instr_ident()
+        kinstr = kinstructions.VUnaryOvOp(
+            op=kinstructions.VUnaryOp.COPY,
+            dst=self.vd,
+            src=self.vs2,
+            n_elements=s.vl,
+            dst_ew=element_width,
+            src_ew=element_width,
+            word_order=word_order,
+            mask_reg=None,
+            instr_ident=instr_ident,
+        )
+        await s.add_to_instruction_buffer(kinstr, span_id)
+
+        # Step 2: broadcast rs1 to vd where v0 mask is set
+        instr_ident = await s.get_instr_ident()
+        kinstr = kinstructions.VBroadcastOp(
+            dst=self.vd,
+            scalar=scalar_val,
+            n_elements=s.vl,
+            element_width=element_width,
+            word_order=word_order,
+            instr_ident=instr_ident,
+            mask_reg=0,
+        )
+        await s.add_to_instruction_buffer(kinstr, span_id)
+
+        s.monitor.finalize_children(span_id)
+        s.pc += 4
+
+
+@dataclass
 class VmvXs:
     """VMV.X.S - Vector Move to Scalar Register.
 
@@ -838,7 +908,8 @@ class VmvSx:
         vsew = (s.vtype >> 3) & 0x7
         element_width = 8 << vsew
 
-        if self.vd not in s.vrf_ordering:
+        # vmv.s.x only writes element 0, so preserve existing ordering if set.
+        if s.vrf_ordering[self.vd] is None:
             s.set_vrf_ordering(self.vd, element_width)
         else:
             assert s.vrf_ordering[self.vd].ew == element_width
@@ -861,6 +932,58 @@ class VmvSx:
             instr_ident=instr_ident,
         )
         await s.add_to_instruction_buffer(kinstr, span_id, k_index)
+        s.monitor.finalize_children(span_id)
+        s.pc += 4
+
+
+@dataclass
+class VmvNr:
+    """Whole register move: copy nreg consecutive registers.
+
+    vmvNr.v vd, vs2 — copies vs2..vs2+(nreg-1) to vd..vd+(nreg-1).
+    No element width interpretation, no masking. Copies raw register bytes.
+    """
+    vd: int
+    vs2: int
+    nreg: int
+
+    def __str__(self):
+        return f'vmv{self.nreg}r.v\tv{self.vd},v{self.vs2}'
+
+    async def update_state(self, s: 'Oamlet'):
+        span_id = s.monitor.create_span(
+            span_type=SpanType.RISCV_INSTR,
+            component="lamlet",
+            completion_type=CompletionType.FIRE_AND_FORGET,
+            mnemonic=str(self),
+            pc=s.pc,
+        )
+
+        word_order = s.word_order
+
+        for i in range(self.nreg):
+            src_reg = self.vs2 + i
+            dst_reg = self.vd + i
+            assert s.vrf_ordering[src_reg] is not None, (
+                f'vmv{self.nreg}r.v: source v{src_reg} has no ordering')
+            copy_ew = s.vrf_ordering[src_reg].ew
+            s.vrf_ordering[dst_reg] = s.vrf_ordering[src_reg]
+            elements_per_vline = s.params.vline_bytes * 8 // copy_ew
+
+            instr_ident = await s.get_instr_ident()
+            kinstr = kinstructions.VUnaryOvOp(
+                op=kinstructions.VUnaryOp.COPY,
+                dst=dst_reg,
+                src=src_reg,
+                n_elements=elements_per_vline,
+                dst_ew=copy_ew,
+                src_ew=copy_ew,
+                word_order=word_order,
+                mask_reg=None,
+                instr_ident=instr_ident,
+            )
+            await s.add_to_instruction_buffer(kinstr, span_id)
+
         s.monitor.finalize_children(span_id)
         s.pc += 4
 
@@ -937,8 +1060,8 @@ class Vreduction:
 
         mask_reg = 0 if not self.vm else None
 
-        assert s.vrf_ordering[self.vs2].ew == src_ew
-        assert s.vrf_ordering[self.vs1].ew == accum_ew
+        s.assert_vrf_ordering(self.vs2, src_ew)
+        assert s.vrf_ordering[self.vs1].ew == accum_ew  # vs1 is scalar, only element 0
 
         word_order = s.word_order
         s.set_vrf_ordering(self.vd, accum_ew)
@@ -985,8 +1108,10 @@ class VArithVv:
 
     def __str__(self):
         vm_str = '' if self.vm else ',v0.t'
-        # MACC uses vs1,vs2 order; MUL uses vs2,vs1 order
-        if self.op == kinstructions.VArithOp.MACC:
+        _ACCUM_OPS = (kinstructions.VArithOp.MACC, kinstructions.VArithOp.MADD,
+                      kinstructions.VArithOp.NMSAC, kinstructions.VArithOp.NMSUB)
+        # Accumulator ops use vs1,vs2 order; others use vs2,vs1 order
+        if self.op in _ACCUM_OPS:
             return f'v{self.op.value}.vv\tv{self.vd},v{self.vs1},v{self.vs2}{vm_str}'
         else:
             return f'v{self.op.value}.vv\tv{self.vd},v{self.vs2},v{self.vs1}{vm_str}'
@@ -1005,18 +1130,18 @@ class VArithVv:
         else:
             mask_reg = 0
 
+        _ACCUM_OPS = (kinstructions.VArithOp.MACC, kinstructions.VArithOp.MADD,
+                      kinstructions.VArithOp.NMSAC, kinstructions.VArithOp.NMSUB)
         vsew = (s.vtype >> 3) & 0x7
         element_width = 8 << vsew
         word_order = s.word_order
 
-        if self.op == kinstructions.VArithOp.MACC and self.vd not in s.vrf_ordering:
-            s.set_vrf_ordering(self.vd, element_width)
+        s.assert_vrf_ordering(self.vs1, element_width)
+        s.assert_vrf_ordering(self.vs2, element_width)
+        if self.op in _ACCUM_OPS:
+            s.assert_vrf_ordering(self.vd, element_width)
 
-        assert s.vrf_ordering[self.vs1].ew == element_width
-        assert s.vrf_ordering[self.vs2].ew == element_width
-
-        if self.op != kinstructions.VArithOp.MACC:
-            s.set_vrf_ordering(self.vd, element_width)
+        s.set_vrf_ordering(self.vd, element_width)
 
         instr_ident = await s.get_instr_ident()
         kinstr = kinstructions.VArithVvOp(
@@ -1069,8 +1194,8 @@ class VArithVvFloat:
         element_width = 8 << vsew
         word_order = s.word_order
 
-        assert s.vrf_ordering[self.vs1].ew == element_width
-        assert s.vrf_ordering[self.vs2].ew == element_width
+        s.assert_vrf_ordering(self.vs1, element_width)
+        s.assert_vrf_ordering(self.vs2, element_width)
 
         s.set_vrf_ordering(self.vd, element_width)
 
@@ -1103,10 +1228,12 @@ class VArithVx:
     vm: int
     op: kinstructions.VArithOp
 
+    _ACCUM_OPS = (kinstructions.VArithOp.MACC, kinstructions.VArithOp.MADD,
+                  kinstructions.VArithOp.NMSAC, kinstructions.VArithOp.NMSUB)
+
     def __str__(self):
         vm_str = '' if self.vm else ',v0.t'
-        if self.op == kinstructions.VArithOp.MACC:
-            # vmacc.vx vd, rs1, vs2 (accumulator instructions have scalar first)
+        if self.op in self._ACCUM_OPS:
             return f'v{self.op.value}.vx\tv{self.vd},{reg_name(self.rs1)},v{self.vs2}{vm_str}'
         else:
             # vadd.vx, vmul.vx, etc: vd, vs2, rs1
@@ -1132,17 +1259,13 @@ class VArithVx:
         element_width = 8 << vsew
         word_order = s.word_order
 
-        if self.op == kinstructions.VArithOp.MACC and self.vd not in s.vrf_ordering:
-            s.set_vrf_ordering(self.vd, element_width)
-
-        assert s.vrf_ordering[self.vs2].ew == element_width
-        if self.op == kinstructions.VArithOp.MACC:
-            assert s.vrf_ordering[self.vd].ew == element_width
+        s.assert_vrf_ordering(self.vs2, element_width)
+        if self.op in self._ACCUM_OPS:
+            s.assert_vrf_ordering(self.vd, element_width)
 
         rs1_bytes = s.scalar.read_reg(self.rs1)
 
-        if self.op != kinstructions.VArithOp.MACC:
-            s.set_vrf_ordering(self.vd, element_width)
+        s.set_vrf_ordering(self.vd, element_width)
 
         instr_ident = await s.get_instr_ident()
         kinstr = kinstructions.VArithVxOp(
@@ -1195,7 +1318,7 @@ class VArithVi:
         element_width = 8 << vsew
         word_order = s.word_order
 
-        assert s.vrf_ordering[self.vs2].ew == element_width
+        s.assert_vrf_ordering(self.vs2, element_width)
 
         # Sign-extend the 5-bit immediate
         imm_val = self.simm5 if self.simm5 < 16 else self.simm5 - 32
@@ -1374,9 +1497,12 @@ class Vid:
 class VUnary:
     """Unary vector operation with potentially different src/dst element widths.
 
-    Used for vsext.vfN, vzext.vfN, and other unary operations.
-    factor: src_ew = dst_ew / factor (e.g. factor=4 means src is SEW/4)
-    widening: if True, dst_ew > src_ew; if False, dst_ew < src_ew
+    Used for vsext.vfN, vzext.vfN, vnsrl.wi, vmv.v.v, and other unary operations.
+
+    Width modes (controlled by `widening` and `narrowing`):
+    - widening=True:  dst_ew = SEW, src_ew = SEW / factor (vzext, vsext)
+    - narrowing=True: dst_ew = SEW, src_ew = SEW * factor (vnsrl)
+    - both False:     dst_ew = SEW / factor, src_ew = SEW
     """
     vd: int
     vs2: int
@@ -1385,9 +1511,14 @@ class VUnary:
     factor: int
     widening: bool
     mnemonic: str
+    narrowing: bool = False
+    shift_amount: int = 0
 
     def __str__(self):
         vm_str = '' if self.vm else ',v0.t'
+        if self.shift_amount:
+            return (f'{self.mnemonic}\tv{self.vd},v{self.vs2},'
+                    f'0x{self.shift_amount:x}{vm_str}')
         return f'{self.mnemonic}\tv{self.vd},v{self.vs2}{vm_str}'
 
     async def update_state(self, s: 'Oamlet'):
@@ -1401,7 +1532,10 @@ class VUnary:
 
         vsew = (s.vtype >> 3) & 0x7
         sew = 8 << vsew
-        if self.widening:
+        if self.narrowing:
+            dst_ew = sew
+            src_ew = sew * self.factor
+        elif self.widening:
             dst_ew = sew
             src_ew = sew // self.factor
         else:
@@ -1425,6 +1559,7 @@ class VUnary:
             word_order=word_order,
             mask_reg=mask_reg,
             instr_ident=instr_ident,
+            shift_amount=self.shift_amount,
         )
         await s.add_to_instruction_buffer(kinstr, span_id)
         s.monitor.finalize_children(span_id)
@@ -1463,8 +1598,8 @@ class Vrgather:
         element_width = 8 << vsew
         word_order = s.word_order
 
-        assert s.vrf_ordering[self.vs1].ew == element_width
-        assert s.vrf_ordering[self.vs2].ew == element_width
+        s.assert_vrf_ordering(self.vs1, element_width)
+        s.assert_vrf_ordering(self.vs2, element_width)
 
         s.set_vrf_ordering(self.vd, element_width)
 

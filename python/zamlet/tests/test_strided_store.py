@@ -143,6 +143,7 @@ async def _run_strided_store_test_inner(
         start_index=0,
         mask_reg=None,
         parent_span_id=span_id,
+        lmul=1,
     )
 
     # Set up mask register if using masks
