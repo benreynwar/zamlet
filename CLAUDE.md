@@ -37,8 +37,20 @@ NEVER add comments that explain what was changed or reference previous states of
 
 NEVER remove existing comments when editing code unless you are intentionally removing them and explaining why. When rewriting a block of code, preserve all existing comments that are still relevant.
 
+## Defensive Coding
+DO NOT add `if x is None` or `if x is not None` checks that silently handle unexpected states.
+This hides serious bugs. If a value should never be None, access it directly and let it fail
+with a clear error if the assumption is wrong.
+
+DO NOT remove assert statements when tidying or refactoring code. Assert statements are valuable
+for catching bugs early. When cleaning up code, always preserve existing assert statements.
+
+Make liberal use of assert statements — failing with good error messages is useful. Prefer
+asserting expected conditions over defensive if-checks that silently handle unexpected states.
+
 ## Code Style
-All imports must be placed at the top of the file, not inline within functions. Follow standard Python import ordering (standard library, third-party, local imports).
+All imports must be placed at the top of the file, not inline within functions. Follow standard
+Python import ordering (standard library, third-party, local imports).
 
 NEVER add imports inside functions - always place them at the top of the file.
 
@@ -52,7 +64,15 @@ Avoid unnecessary marketing/promotional words like "comprehensive", "robust", "p
 NEVER paraphrase when using quote marks. If you use quotation marks, the text must be verbatim from the source. If you need to summarize or paraphrase, do not use quote marks.
 
 ## References
-NEVER add a reference (e.g., "Reference: riscv-isa-manual/src/f-st-ext.adoc") without first reading the referenced document to verify it is correct. Don't guess which document something is in based on naming patterns.
+NEVER add a reference (e.g., "Reference: riscv-isa-manual/src/f-st-ext.adoc") without first
+reading the referenced document to verify it is correct. Don't guess which document something
+is in based on naming patterns.
+
+## RISC-V ISA Manual Location
+The RISC-V ISA manual is located at `~/Code/riscv-isa-manual`. The vector extension spec is at:
+```
+~/Code/riscv-isa-manual/src/v-st-ext.adoc
+```
 
 ## Running Commands
 Never pipe command output through `head` or `tail` if you might need to see more of it later - this forces re-running the command. Either:
@@ -66,7 +86,17 @@ python python/zamlet/amlet_test/test_alu_basic.py > test_output.log 2>&1
 ```
 This allows you to read the file multiple times to analyze different parts of the output.
 
-**IMPORTANT**: DO NOT use `timeout` command when running tests. If a test hangs, the user will interrupt it manually.
+### Running tests directly (without pytest)
+Tests in `python/zamlet/tests/` can be run directly with Python. Use `--list-geometries` to see
+available configurations. Test names from pytest encode the parameters:
+
+```
+# pytest test name: test_strided_store[14_k2x2_j1x2_ew32_vl127_s3657]
+# Format: {index}_{geometry}_ew{ew}_vl{vl}_s{stride}
+# Decodes to: geometry=k2x2_j1x2, ew=32, vl=127, stride=3657, seed=14
+python python/zamlet/tests/test_strided_store.py -g k2x2_j1x2 --ew=32 --vl=127 \
+  --stride=3657 --seed=14 --dump-spans > tests/log.txt 2>&1
+```
 
 ### Running Tests with Bazel
 Tests are generated with config suffixes. To run a test using bazel:
@@ -99,6 +129,13 @@ NEVER run `bazel clean` or `bazel clean --expunge` unless explicitly told to by 
 ## Chisel
 NEVER use the `%` (modulo) operator in Chisel code. It synthesizes to expensive divider hardware. Use bit masking instead when the divisor is a power of 2 (e.g., `x & (n-1).U` instead of `x % n.U`).
 
+## Bug Investigation
+When you find and fix a bug, always search for similar bugs elsewhere in the codebase:
+- If the bug is in a pattern (e.g., missing page alignment), grep for similar patterns
+- If it's in one of a pair of functions (e.g., load_stride/store_stride), check the counterpart
+- If it's in test code, check other test files for the same issue
+- Document the search you did and what you found
+
 ## Grep Tool Usage
 When using the Grep tool for searching code:
 - **DO NOT** put extra quotes inside the pattern parameter value
@@ -112,7 +149,12 @@ If you think a different order or approach would be better than what was asked, 
 and discuss — don't just start doing something else without checking in first.
 
 ## Communication Style
-NEVER claim success with phrases like "The key achievement is" or similar when a task has failed. Be honest about failures and focus on what still needs to be done rather than trying to spin partial progress as success. This is irritating and unhelpful.
+When I ask you to show me something (e.g., grep output, log excerpts), just show it and wait.
+Don't continue with analysis unless I ask for it.
+
+NEVER claim success with phrases like "The key achievement is" or similar when a task has failed.
+Be honest about failures and focus on what still needs to be done rather than trying to spin
+partial progress as success. This is irritating and unhelpful.
 
 NEVER declare a task "successfully complete" or use similar language until the actual end goal is achieved. Making incremental progress (like builds completing or components initializing) is not the same as task completion. The task is only complete when the final success criteria are met (e.g., tests pass, features work end-to-end). Premature success declarations are frustrating and misleading.
 
