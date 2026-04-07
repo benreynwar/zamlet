@@ -216,38 +216,46 @@ async def vstore(lamlet: 'Oamlet', vs: int, addr: int, ordering: addresses.Order
                                 is_store=True, parent_span_id=parent_span_id)
 
 
-async def remap_reg_ew(lamlet: 'Oamlet', reg_base: int, dst_ordering: Ordering,
-                       n_registers: int, parent_span_id: int) -> list[int]:
-    """Copy register data from one ew layout to another via scratch VPU memory.
+async def remap_reg_ew(
+    lamlet: 'Oamlet', src_regs: list[int], dst_regs: list[int],
+    dst_ordering: Ordering, parent_span_id: int,
+):
+    """Remap register data from one ew layout to another via scratch VPU memory.
 
-    Returns the temp regs holding the remapped data (temp_regs[0] is the base).
-    Caller must free them when done.
+    Stores src_regs at their current ew, then loads into dst_regs at dst_ordering.ew.
+    src_regs and dst_regs may overlap (for in-place remap).
+
+    Caller is responsible for allocating/freeing any temp regs used as dst_regs.
 
     TODO: Replace with a dedicated register-to-register ew remap kinstr using
     J2J messages. See docs/TODO.md.
     """
+    assert len(src_regs) == len(dst_regs)
+    n = len(src_regs)
     vline_bits = lamlet.params.maxvl_bytes * 8
     assert lamlet.params.page_bytes >= lamlet.params.maxvl_bytes
-    temp_regs = lamlet.alloc_temp_regs(n_registers)
+
+    scratch_temp = lamlet.alloc_temp_regs(1)
     scratch_addresses = []
-    for i in range(n_registers):
-        src_ordering = lamlet.vrf_ordering[reg_base + i]
+    for i in range(n):
+        src_ordering = lamlet.vrf_ordering[src_regs[i]]
         src_elements_per_vline = vline_bits // src_ordering.ew
-        scratch_addr = lamlet.get_scratch_page(temp_regs[i], src_ordering.ew)
-        # Store from source reg at src_ew to scratch
-        await vloadstore(
-            lamlet, reg_base + i, scratch_addr, src_ordering,
-            n_elements=src_elements_per_vline, mask_reg=None, start_index=0, is_store=True,
-            parent_span_id=parent_span_id)
+        scratch_addr = lamlet.get_scratch_page(scratch_temp[0], src_ordering.ew)
+        await lamlet.vstore(
+            src_regs[i], scratch_addr, src_ordering,
+            n_elements=src_elements_per_vline, mask_reg=None, start_index=0,
+            parent_span_id=parent_span_id,
+        )
         scratch_addresses.append(scratch_addr)
+
     dst_elements_per_vline = vline_bits // dst_ordering.ew
     for i, scratch_addr in enumerate(scratch_addresses):
-        # Load from scratch into temp reg at dst_ew
-        await vloadstore(
-            lamlet, temp_regs[i], scratch_addr, dst_ordering,
-            n_elements=dst_elements_per_vline, mask_reg=None, start_index=0, is_store=False,
-            parent_span_id=parent_span_id)
-    return temp_regs
+        await lamlet.vload(
+            dst_regs[i], scratch_addr, dst_ordering,
+            n_elements=dst_elements_per_vline, mask_reg=None, start_index=0,
+            parent_span_id=parent_span_id, lmul=1,
+        )
+    lamlet.free_temp_regs(scratch_temp)
 
 
 async def vloadstore(lamlet: 'Oamlet', reg_base: int, addr: int, ordering: addresses.Ordering,
@@ -283,8 +291,9 @@ async def vloadstore(lamlet: 'Oamlet', reg_base: int, addr: int, ordering: addre
                 needs_remap = True
                 break
         if needs_remap:
-            temp_regs = await remap_reg_ew(
-                lamlet, reg_base, ordering, n_vlines, parent_span_id)
+            src_regs = list(range(reg_base, reg_base + n_vlines))
+            temp_regs = lamlet.alloc_temp_regs(n_vlines)
+            await remap_reg_ew(lamlet, src_regs, temp_regs, ordering, parent_span_id)
             reg_base = temp_regs[0]
 
     # Check all pages for access before dispatching

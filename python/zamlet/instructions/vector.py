@@ -16,6 +16,7 @@ from zamlet import addresses
 from zamlet.addresses import Ordering, WordOrder
 from zamlet.register_names import reg_name, freg_name
 from zamlet.monitor import CompletionType, SpanType
+from zamlet.lamlet.unordered import remap_reg_ew
 
 logger = logging.getLogger(__name__)
 
@@ -471,13 +472,15 @@ class VssegV:
 class VArithVxFloat:
     """Generic vector-scalar floating-point arithmetic instruction.
 
-    Used for vfmacc.vf, etc.
+    Used for vfadd.vf, vfmacc.vf, etc.
     """
     vd: int
     rs1: int
     vs2: int
     vm: int
     op: kinstructions.VArithOp
+
+    _ACCUM_OPS = kinstructions.ACCUM_OPS
 
     def __str__(self):
         vm_str = '' if self.vm else ',v0.t'
@@ -497,8 +500,11 @@ class VArithVxFloat:
         vsew = (s.vtype >> 3) & 0x7
         element_width = 8 << vsew
         word_order = s.word_order
-        s.assert_vrf_ordering(self.vd, element_width)
         s.assert_vrf_ordering(self.vs2, element_width)
+        if self.op in self._ACCUM_OPS:
+            s.assert_vrf_ordering(self.vd, element_width)
+
+        s.set_vrf_ordering(self.vd, element_width)
 
         scalar_bytes = s.scalar.read_freg(self.rs1)
 
@@ -632,6 +638,69 @@ class VCmpVv:
             dst=self.vd,
             src1=self.vs1,
             src2=self.vs2,
+            n_elements=s.vl,
+            element_width=element_width,
+            ordering=s.vrf_ordering[self.vs2],
+            instr_ident=instr_ident,
+        )
+        await s.add_to_instruction_buffer(kinstr, span_id)
+        s.monitor.finalize_children(span_id)
+        s.pc += 4
+
+
+@dataclass
+class VCmpVx:
+    """Vector compare, vector-scalar form.
+
+    vd.mask[i] = (vs2[i] <op> x[rs1]) ? 1 : 0
+    """
+    vd: int
+    vs2: int
+    rs1: int
+    vm: int
+    op: kinstructions.VCmpOp
+
+    def __str__(self):
+        vm_str = '' if self.vm else ',v0.t'
+        return (f'vm{self.op.value}.vx\tv{self.vd},v{self.vs2},'
+                f'{reg_name(self.rs1)}{vm_str}')
+
+    async def update_state(self, s: 'Oamlet'):
+        span_id = s.monitor.create_span(
+            span_type=SpanType.RISCV_INSTR,
+            component="lamlet",
+            completion_type=CompletionType.FIRE_AND_FORGET,
+            mnemonic=str(self),
+            pc=s.pc,
+        )
+
+        await s.scalar.wait_all_regs_ready(None, None, [self.rs1], [])
+
+        vsew = (s.vtype >> 3) & 0x7
+        element_width = 8 << vsew
+
+        vline_bytes = s.params.word_bytes * s.params.j_in_l
+        elements_in_src_vline = vline_bytes * 8 // element_width
+        n_src_vlines = (s.vl + elements_in_src_vline - 1) // elements_in_src_vline
+
+        for i in range(n_src_vlines):
+            assert s.vrf_ordering[self.vs2 + i].ew == element_width
+
+        elements_in_dst_vline = vline_bytes * 8  # 1 bit per element
+        n_dst_vlines = (s.vl + elements_in_dst_vline - 1) // elements_in_dst_vline
+
+        mask_ordering = Ordering(s.word_order, 1)
+        for i in range(n_dst_vlines):
+            s.vrf_ordering[self.vd + i] = mask_ordering
+
+        rs1_bytes = s.scalar.read_reg(self.rs1)
+
+        instr_ident = await s.get_instr_ident()
+        kinstr = kinstructions.VCmpVxOp(
+            op=self.op,
+            dst=self.vd,
+            src=self.vs2,
+            scalar_bytes=rs1_bytes,
             n_elements=s.vl,
             element_width=element_width,
             ordering=s.vrf_ordering[self.vs2],
@@ -857,6 +926,136 @@ class VmergeVx:
 
 
 @dataclass
+class VmergeVvm:
+    """vmerge.vvm vd, vs2, vs1, v0
+
+    vd[i] = v0.mask[i] ? vs1[i] : vs2[i]
+    Always uses v0 as mask (vm=0 encoding).
+    """
+    vd: int
+    vs1: int
+    vs2: int
+
+    def __str__(self):
+        return f'vmerge.vvm\tv{self.vd},v{self.vs2},v{self.vs1},v0'
+
+    async def update_state(self, s: 'Oamlet'):
+        span_id = s.monitor.create_span(
+            span_type=SpanType.RISCV_INSTR,
+            component="lamlet",
+            completion_type=CompletionType.FIRE_AND_FORGET,
+            mnemonic=str(self),
+            pc=s.pc,
+        )
+
+        vsew = (s.vtype >> 3) & 0x7
+        element_width = 8 << vsew
+        word_order = s.word_order
+
+        s.assert_vrf_ordering(self.vs2, element_width)
+        s.assert_vrf_ordering(self.vs1, element_width)
+        s.set_vrf_ordering(self.vd, element_width)
+
+        # Step 1: copy vs2 to vd (unmasked)
+        instr_ident = await s.get_instr_ident()
+        kinstr = kinstructions.VUnaryOvOp(
+            op=kinstructions.VUnaryOp.COPY,
+            dst=self.vd,
+            src=self.vs2,
+            n_elements=s.vl,
+            dst_ew=element_width,
+            src_ew=element_width,
+            word_order=word_order,
+            mask_reg=None,
+            instr_ident=instr_ident,
+        )
+        await s.add_to_instruction_buffer(kinstr, span_id)
+
+        # Step 2: copy vs1 to vd where v0 mask is set
+        instr_ident = await s.get_instr_ident()
+        kinstr = kinstructions.VUnaryOvOp(
+            op=kinstructions.VUnaryOp.COPY,
+            dst=self.vd,
+            src=self.vs1,
+            n_elements=s.vl,
+            dst_ew=element_width,
+            src_ew=element_width,
+            word_order=word_order,
+            mask_reg=0,
+            instr_ident=instr_ident,
+        )
+        await s.add_to_instruction_buffer(kinstr, span_id)
+
+        s.monitor.finalize_children(span_id)
+        s.pc += 4
+
+
+@dataclass
+class VmergeVim:
+    """vmerge.vim vd, vs2, imm, v0
+
+    vd[i] = v0.mask[i] ? imm : vs2[i]
+    Always uses v0 as mask (vm=0 encoding).
+    """
+    vd: int
+    vs2: int
+    simm5: int
+
+    def __str__(self):
+        return f'vmerge.vim\tv{self.vd},v{self.vs2},{self.simm5},v0'
+
+    async def update_state(self, s: 'Oamlet'):
+        span_id = s.monitor.create_span(
+            span_type=SpanType.RISCV_INSTR,
+            component="lamlet",
+            completion_type=CompletionType.FIRE_AND_FORGET,
+            mnemonic=str(self),
+            pc=s.pc,
+        )
+
+        vsew = (s.vtype >> 3) & 0x7
+        element_width = 8 << vsew
+        word_order = s.word_order
+
+        s.assert_vrf_ordering(self.vs2, element_width)
+        s.set_vrf_ordering(self.vd, element_width)
+
+        # Sign-extend 5-bit immediate
+        scalar_val = self.simm5 if self.simm5 < 16 else self.simm5 - 32
+
+        # Step 1: copy vs2 to vd (unmasked)
+        instr_ident = await s.get_instr_ident()
+        kinstr = kinstructions.VUnaryOvOp(
+            op=kinstructions.VUnaryOp.COPY,
+            dst=self.vd,
+            src=self.vs2,
+            n_elements=s.vl,
+            dst_ew=element_width,
+            src_ew=element_width,
+            word_order=word_order,
+            mask_reg=None,
+            instr_ident=instr_ident,
+        )
+        await s.add_to_instruction_buffer(kinstr, span_id)
+
+        # Step 2: broadcast immediate to vd where v0 mask is set
+        instr_ident = await s.get_instr_ident()
+        kinstr = kinstructions.VBroadcastOp(
+            dst=self.vd,
+            scalar=scalar_val,
+            n_elements=s.vl,
+            element_width=element_width,
+            word_order=word_order,
+            instr_ident=instr_ident,
+            mask_reg=0,
+        )
+        await s.add_to_instruction_buffer(kinstr, span_id)
+
+        s.monitor.finalize_children(span_id)
+        s.pc += 4
+
+
+@dataclass
 class VmvXs:
     """VMV.X.S - Vector Move to Scalar Register.
 
@@ -908,11 +1107,18 @@ class VmvSx:
         vsew = (s.vtype >> 3) & 0x7
         element_width = 8 << vsew
 
-        # vmv.s.x only writes element 0, so preserve existing ordering if set.
         if s.vrf_ordering[self.vd] is None:
             s.set_vrf_ordering(self.vd, element_width)
-        else:
-            assert s.vrf_ordering[self.vd].ew == element_width
+        elif s.vrf_ordering[self.vd].ew != element_width:
+            # Register has data at a different ew. Remap in-place so the data layout
+            # matches the current SEW before we write element 0.
+            logger.warning(
+                f'vmv.s.x v{self.vd}: ew mismatch, remapping from '
+                f'{s.vrf_ordering[self.vd].ew} to {element_width}')
+            dst_ordering = Ordering(s.word_order, element_width)
+            await remap_reg_ew(
+                s, [self.vd], [self.vd], dst_ordering, span_id)
+            s.set_vrf_ordering(self.vd, element_width)
 
         rs1_bytes = s.scalar.read_reg(self.rs1)
         scalar_val = int.from_bytes(rs1_bytes, byteorder='little', signed=True)
@@ -1108,8 +1314,7 @@ class VArithVv:
 
     def __str__(self):
         vm_str = '' if self.vm else ',v0.t'
-        _ACCUM_OPS = (kinstructions.VArithOp.MACC, kinstructions.VArithOp.MADD,
-                      kinstructions.VArithOp.NMSAC, kinstructions.VArithOp.NMSUB)
+        _ACCUM_OPS = kinstructions.ACCUM_OPS
         # Accumulator ops use vs1,vs2 order; others use vs2,vs1 order
         if self.op in _ACCUM_OPS:
             return f'v{self.op.value}.vv\tv{self.vd},v{self.vs1},v{self.vs2}{vm_str}'
@@ -1130,8 +1335,7 @@ class VArithVv:
         else:
             mask_reg = 0
 
-        _ACCUM_OPS = (kinstructions.VArithOp.MACC, kinstructions.VArithOp.MADD,
-                      kinstructions.VArithOp.NMSAC, kinstructions.VArithOp.NMSUB)
+        _ACCUM_OPS = kinstructions.ACCUM_OPS
         vsew = (s.vtype >> 3) & 0x7
         element_width = 8 << vsew
         word_order = s.word_order
@@ -1164,13 +1368,15 @@ class VArithVv:
 class VArithVvFloat:
     """Floating-point vector-vector arithmetic instruction.
 
-    Used for vfadd.vv, vfsub.vv, vfmul.vv, etc.
+    Used for vfadd.vv, vfsub.vv, vfmul.vv, vfmacc.vv, etc.
     """
     vd: int
     vs1: int
     vs2: int
     vm: int
     op: kinstructions.VArithOp
+
+    _ACCUM_OPS = kinstructions.ACCUM_OPS
 
     def __str__(self):
         vm_str = '' if self.vm else ',v0.t'
@@ -1196,6 +1402,8 @@ class VArithVvFloat:
 
         s.assert_vrf_ordering(self.vs1, element_width)
         s.assert_vrf_ordering(self.vs2, element_width)
+        if self.op in self._ACCUM_OPS:
+            s.assert_vrf_ordering(self.vd, element_width)
 
         s.set_vrf_ordering(self.vd, element_width)
 
@@ -1228,8 +1436,7 @@ class VArithVx:
     vm: int
     op: kinstructions.VArithOp
 
-    _ACCUM_OPS = (kinstructions.VArithOp.MACC, kinstructions.VArithOp.MADD,
-                  kinstructions.VArithOp.NMSAC, kinstructions.VArithOp.NMSUB)
+    _ACCUM_OPS = kinstructions.ACCUM_OPS
 
     def __str__(self):
         vm_str = '' if self.vm else ',v0.t'

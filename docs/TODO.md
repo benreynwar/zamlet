@@ -17,6 +17,10 @@
 - [ ] Replace store-ew-mismatch workaround (store to scratch memory + reload at new ew)
       with a dedicated register-to-register ew remap kinstr using J2J messages.
       Currently in `vloadstore` in `lamlet/unordered.py`.
+- [ ] Narrowing shifts (vnsrl, vnsra): currently only vnsrl.wi is implemented, and it's
+      hacked into VUnaryOvOp which is the wrong place for it. Need to think about how
+      narrowing ops should work properly, then implement all 6 forms
+      (vnsrl.wv/wx/wi, vnsra.wv/wx/wi).
 - [ ] When an instruction writes to a register with a different ew than the existing
       contents, and doesn't update all elements (e.g. masked or vl < vlmax), the
       unwritten elements still have the old ew layout. May need to ew-remap the old

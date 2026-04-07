@@ -634,10 +634,39 @@ def decode_standard(instruction_bytes: bytes) -> Instruction:
             uimm = (inst >> 15) & 0x1f
             vtypei = (inst >> 20) & 0x3ff
             return V.Vsetivli(rd=rd, uimm=uimm, vtypei=vtypei)
+        # OPFVF (funct3 = 0x5) - floating-point vector-scalar
+        elif funct6 == 0x00 and funct3 == 0x5:
+            return V.VArithVxFloat(vd=rd, rs1=rs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.FADD)
+        elif funct6 == 0x02 and funct3 == 0x5:
+            return V.VArithVxFloat(vd=rd, rs1=rs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.FSUB)
+        elif funct6 == 0x27 and funct3 == 0x5:
+            return V.VArithVxFloat(vd=rd, rs1=rs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.FRSUB)
+        elif funct6 == 0x04 and funct3 == 0x5:
+            return V.VArithVxFloat(vd=rd, rs1=rs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.FMIN)
+        elif funct6 == 0x06 and funct3 == 0x5:
+            return V.VArithVxFloat(vd=rd, rs1=rs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.FMAX)
+        elif funct6 == 0x24 and funct3 == 0x5:
+            return V.VArithVxFloat(vd=rd, rs1=rs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.FMUL)
+        elif funct6 == 0x20 and funct3 == 0x5:
+            return V.VArithVxFloat(vd=rd, rs1=rs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.FDIV)
+        elif funct6 == 0x21 and funct3 == 0x5:
+            return V.VArithVxFloat(vd=rd, rs1=rs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.FRDIV)
         elif funct6 == 0x28 and funct3 == 0x5:
             return V.VArithVxFloat(vd=rd, rs1=rs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.FMADD)
+        elif funct6 == 0x29 and funct3 == 0x5:
+            return V.VArithVxFloat(vd=rd, rs1=rs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.FNMADD)
+        elif funct6 == 0x2a and funct3 == 0x5:
+            return V.VArithVxFloat(vd=rd, rs1=rs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.FMSUB)
+        elif funct6 == 0x2b and funct3 == 0x5:
+            return V.VArithVxFloat(vd=rd, rs1=rs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.FNMSUB)
         elif funct6 == 0x2c and funct3 == 0x5:
             return V.VArithVxFloat(vd=rd, rs1=rs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.FMACC)
+        elif funct6 == 0x2d and funct3 == 0x5:
+            return V.VArithVxFloat(vd=rd, rs1=rs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.FNMACC)
+        elif funct6 == 0x2e and funct3 == 0x5:
+            return V.VArithVxFloat(vd=rd, rs1=rs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.FMSAC)
+        elif funct6 == 0x2f and funct3 == 0x5:
+            return V.VArithVxFloat(vd=rd, rs1=rs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.FNMSAC)
         # OPMVV (funct3 = 0x2) - single-width integer reductions
         elif funct6 == 0x00 and funct3 == 0x2:
             vs1 = rs1
@@ -761,6 +790,13 @@ def decode_standard(instruction_bytes: bytes) -> Instruction:
             return V.VUnary(vd=rd, vs2=vs2, vm=vm, op=kinstructions.VUnaryOp.NSRL,
                             factor=2, widening=False, narrowing=True,
                             mnemonic='vnsrl.wi', shift_amount=uimm)
+        # Comparison .vi forms (funct3=0x3 = OPIVI)
+        elif funct6 == 0x18 and funct3 == 0x3:
+            simm5 = rs1
+            return V.VCmpVi(vd=rd, vs2=vs2, simm5=simm5, vm=vm, op=kinstructions.VCmpOp.EQ)
+        elif funct6 == 0x19 and funct3 == 0x3:
+            simm5 = rs1
+            return V.VCmpVi(vd=rd, vs2=vs2, simm5=simm5, vm=vm, op=kinstructions.VCmpOp.NE)
         elif funct6 == 0x1c and funct3 == 0x3:
             simm5 = rs1
             return V.VCmpVi(vd=rd, vs2=vs2, simm5=simm5, vm=vm, op=kinstructions.VCmpOp.LEU)
@@ -770,21 +806,63 @@ def decode_standard(instruction_bytes: bytes) -> Instruction:
         elif funct6 == 0x1e and funct3 == 0x3:
             simm5 = rs1
             return V.VCmpVi(vd=rd, vs2=vs2, simm5=simm5, vm=vm, op=kinstructions.VCmpOp.GTU)
+        elif funct6 == 0x1f and funct3 == 0x3:
+            simm5 = rs1
+            return V.VCmpVi(vd=rd, vs2=vs2, simm5=simm5, vm=vm, op=kinstructions.VCmpOp.GT)
+        # Comparison .vv forms (funct3=0x0 = OPIVV)
+        elif funct6 == 0x18 and funct3 == 0x0:
+            vs1 = rs1
+            return V.VCmpVv(vd=rd, vs2=vs2, vs1=vs1, vm=vm, op=kinstructions.VCmpOp.EQ)
         elif funct6 == 0x19 and funct3 == 0x0:
             vs1 = rs1
             return V.VCmpVv(vd=rd, vs2=vs2, vs1=vs1, vm=vm, op=kinstructions.VCmpOp.NE)
+        elif funct6 == 0x1a and funct3 == 0x0:
+            vs1 = rs1
+            return V.VCmpVv(vd=rd, vs2=vs2, vs1=vs1, vm=vm, op=kinstructions.VCmpOp.LTU)
+        elif funct6 == 0x1b and funct3 == 0x0:
+            vs1 = rs1
+            return V.VCmpVv(vd=rd, vs2=vs2, vs1=vs1, vm=vm, op=kinstructions.VCmpOp.LT)
+        elif funct6 == 0x1c and funct3 == 0x0:
+            vs1 = rs1
+            return V.VCmpVv(vd=rd, vs2=vs2, vs1=vs1, vm=vm, op=kinstructions.VCmpOp.LEU)
+        elif funct6 == 0x1d and funct3 == 0x0:
+            vs1 = rs1
+            return V.VCmpVv(vd=rd, vs2=vs2, vs1=vs1, vm=vm, op=kinstructions.VCmpOp.LE)
+        # Comparison .vx forms (funct3=0x4 = OPIVX)
+        elif funct6 == 0x18 and funct3 == 0x4:
+            return V.VCmpVx(vd=rd, vs2=vs2, rs1=rs1, vm=vm, op=kinstructions.VCmpOp.EQ)
+        elif funct6 == 0x19 and funct3 == 0x4:
+            return V.VCmpVx(vd=rd, vs2=vs2, rs1=rs1, vm=vm, op=kinstructions.VCmpOp.NE)
+        elif funct6 == 0x1a and funct3 == 0x4:
+            return V.VCmpVx(vd=rd, vs2=vs2, rs1=rs1, vm=vm, op=kinstructions.VCmpOp.LTU)
+        elif funct6 == 0x1b and funct3 == 0x4:
+            return V.VCmpVx(vd=rd, vs2=vs2, rs1=rs1, vm=vm, op=kinstructions.VCmpOp.LT)
+        elif funct6 == 0x1c and funct3 == 0x4:
+            return V.VCmpVx(vd=rd, vs2=vs2, rs1=rs1, vm=vm, op=kinstructions.VCmpOp.LEU)
+        elif funct6 == 0x1d and funct3 == 0x4:
+            return V.VCmpVx(vd=rd, vs2=vs2, rs1=rs1, vm=vm, op=kinstructions.VCmpOp.LE)
+        elif funct6 == 0x1e and funct3 == 0x4:
+            return V.VCmpVx(vd=rd, vs2=vs2, rs1=rs1, vm=vm, op=kinstructions.VCmpOp.GTU)
+        elif funct6 == 0x1f and funct3 == 0x4:
+            return V.VCmpVx(vd=rd, vs2=vs2, rs1=rs1, vm=vm, op=kinstructions.VCmpOp.GT)
         elif funct6 == 0x1d and funct3 == 0x2:
             vs1 = rs1
             return V.VmnandMm(vd=rd, vs2=vs2, vs1=vs1)
-        elif funct6 == 0x17 and funct3 == 0x0:
+        elif funct6 == 0x17 and funct3 == 0x0 and vm == 0:
+            vs1 = rs1
+            return V.VmergeVvm(vd=rd, vs1=vs1, vs2=vs2)
+        elif funct6 == 0x17 and funct3 == 0x0 and vm == 1:
             return V.VUnary(vd=rd, vs2=rs1, vm=1, op=kinstructions.VUnaryOp.COPY,
                             factor=1, widening=True, mnemonic='vmv.v.v')
-        elif funct6 == 0x17 and funct3 == 0x3:
+        elif funct6 == 0x17 and funct3 == 0x3 and vm == 0:
+            simm5 = rs1
+            return V.VmergeVim(vd=rd, vs2=vs2, simm5=simm5)
+        elif funct6 == 0x17 and funct3 == 0x3 and vm == 1:
             simm5 = rs1
             return V.VmvVi(vd=rd, simm5=simm5)
         elif funct6 == 0x17 and funct3 == 0x4 and vm == 0:
             return V.VmergeVx(vd=rd, rs1=rs1, vs2=vs2)
-        elif funct6 == 0x17 and funct3 == 0x4:
+        elif funct6 == 0x17 and funct3 == 0x4 and vm == 1:
             return V.VmvVx(vd=rd, rs1=rs1)
         elif funct6 == 0x10 and funct3 == 0x2 and rs1 == 0:
             return V.VmvXs(rd=rd, vs2=vs2)
@@ -832,9 +910,42 @@ def decode_standard(instruction_bytes: bytes) -> Instruction:
         elif funct6 == 0x02 and funct3 == 0x1:
             vs1 = rs1
             return V.VArithVvFloat(vd=rd, vs1=vs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.FSUB)
+        elif funct6 == 0x04 and funct3 == 0x1:
+            vs1 = rs1
+            return V.VArithVvFloat(vd=rd, vs1=vs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.FMIN)
+        elif funct6 == 0x06 and funct3 == 0x1:
+            vs1 = rs1
+            return V.VArithVvFloat(vd=rd, vs1=vs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.FMAX)
+        elif funct6 == 0x20 and funct3 == 0x1:
+            vs1 = rs1
+            return V.VArithVvFloat(vd=rd, vs1=vs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.FDIV)
         elif funct6 == 0x24 and funct3 == 0x1:
             vs1 = rs1
             return V.VArithVvFloat(vd=rd, vs1=vs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.FMUL)
+        elif funct6 == 0x28 and funct3 == 0x1:
+            vs1 = rs1
+            return V.VArithVvFloat(vd=rd, vs1=vs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.FMADD)
+        elif funct6 == 0x29 and funct3 == 0x1:
+            vs1 = rs1
+            return V.VArithVvFloat(vd=rd, vs1=vs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.FNMADD)
+        elif funct6 == 0x2a and funct3 == 0x1:
+            vs1 = rs1
+            return V.VArithVvFloat(vd=rd, vs1=vs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.FMSUB)
+        elif funct6 == 0x2b and funct3 == 0x1:
+            vs1 = rs1
+            return V.VArithVvFloat(vd=rd, vs1=vs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.FNMSUB)
+        elif funct6 == 0x2c and funct3 == 0x1:
+            vs1 = rs1
+            return V.VArithVvFloat(vd=rd, vs1=vs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.FMACC)
+        elif funct6 == 0x2d and funct3 == 0x1:
+            vs1 = rs1
+            return V.VArithVvFloat(vd=rd, vs1=vs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.FNMACC)
+        elif funct6 == 0x2e and funct3 == 0x1:
+            vs1 = rs1
+            return V.VArithVvFloat(vd=rd, vs1=vs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.FMSAC)
+        elif funct6 == 0x2f and funct3 == 0x1:
+            vs1 = rs1
+            return V.VArithVvFloat(vd=rd, vs1=vs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.FNMSAC)
         elif funct6 == 0x12 and funct3 == 0x2:
             # OPMVV vzext/vsext: rs1 selects variant
             vzext_table = {

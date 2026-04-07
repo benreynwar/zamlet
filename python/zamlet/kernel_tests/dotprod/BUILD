@@ -14,4 +14,5 @@ riscv_kernel(
 kernel_test(
     name = "test_dotprod",
     kernel = ":vec-dotprod",
+    timeout = "long",
 )

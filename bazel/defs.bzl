@@ -131,6 +131,7 @@ def kernel_test(
         geometries = None,
         expected_failure = False,
         max_cycles = 100000,
+        timeout = "moderate",
         tags = [],
         deps = []):
     """Generate py_test targets for a kernel binary across geometries.
@@ -165,6 +166,7 @@ def kernel_test(
                 "MAX_CYCLES": str(max_cycles),
                 "EXPECTED_FAILURE": "1" if expected_failure else "0",
             },
+            timeout = timeout,
             tags = tags,
         )
 
