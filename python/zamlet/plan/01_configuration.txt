@@ -41,20 +41,15 @@ VSETVLI (Status: ✓)
     - Updates vtype and vl CSRs in Vsetvli.update_state()
     - Implements VLMAX calculation: (VLEN / SEW) * LMUL
 
-VSETIVLI (Status: ✗)
+VSETIVLI (Status: ✓)
   Spec: v-st-ext.adoc lines 1143, 1252-1260, vcfg-format.edn
   Format: vsetivli rd, uimm, vtypei
   Encoding: 11|vtypei[9:0]|uimm[4:0]|111|rd|1010111
            bit[31:30]=11, funct3=7, opcode=0x57
   Tests: vsetivli.toml
-  Implementation: Not implemented
+  Implementation: class Vsetivli in instructions/vector.py
+  Decoding: Search decode.py for "Vsetivli"
   Description: Set vl and vtype with AVL as 5-bit zero-extended immediate (0-31)
-  Notes:
-    - Similar to vsetvli but AVL comes from uimm[4:0] immediate field
-    - Used for small, known-size vectors
-    - More compact encoding when dimensions fit in registers
-    - TODO: Add decode pattern to opcode 0x57 block in decode.py
-    - TODO: Create class Vsetivli in instructions/vector.py
 
 VSETVL (Status: ✗)
   Spec: v-st-ext.adoc lines 1144, 1178-1179, vcfg-format.edn

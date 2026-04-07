@@ -17,11 +17,12 @@ See test_suite_reference.txt for complete list
 
 Implementation Summary
 ----------------------
-Currently implemented: 4 instructions (VMV.X.S, VMV.V.V, VMV.V.X, VMV.V.I)
+Currently implemented: 8 instructions (VMV.X.S, VMV.S.X, VMV.V.V, VMV.V.X,
+VMV.V.I, VMERGE variants, VRGATHER.VV, VMV<NR>R.V)
 Total in spec: ~20 permutation instructions
-Coverage: ~20%
+Coverage: ~40%
 
-INTEGER SCALAR MOVE (Status: ⚠ Partial)
+INTEGER SCALAR MOVE (Status: ✓)
 ========================================
 
 Spec: v-st-ext.adoc lines 4429-4458
@@ -44,11 +45,11 @@ VMV.X.S (Status: ✓)
     - Operates even if vstart >= vl or vl=0
     - Masked version (vm=0) reserved
 
-VMV.S.X (Status: ✗)
+VMV.S.X (Status: ✓)
   Spec: v-st-ext.adoc lines 4437, 4447-4455
   Encoding: funct6=0x10, vs2=0x00, funct3=OPMVX
   Format: vmv.s.x vd, rs1
-  Implementation: Not implemented
+  Implementation: VmvSx class in instructions/vector.py
   Description: vd[0] = x[rs1]
   Notes:
     - Copies scalar x register to vector element 0
@@ -197,18 +198,18 @@ VFSLIDE1DOWN.VF (Status: ✗)
   Description: vd[i]=vs2[i+1], vd[vl-1]=f[rs1]
   Notes: Like vslide1down.vx but sources from f register
 
-VECTOR REGISTER GATHER (Status: ✗)
+VECTOR REGISTER GATHER (Status: ⚠ Partial)
 ===================================
 
 Spec: v-st-ext.adoc lines 4674-4720
 
 Read elements from source vector at indices given by second vector.
 
-VRGATHER.VV (Status: ✗)
+VRGATHER.VV (Status: ✓)
   Spec: v-st-ext.adoc lines 4687-4693
   Encoding: funct6=0x0c, funct3=OPIVV
   Format: vrgather.vv vd, vs2, vs1, vm
-  Implementation: Not implemented
+  Implementation: Vrgather class in instructions/vector.py
   Description: vd[i] = (vs1[i] >= VLMAX) ? 0 : vs2[vs1[i]]
   Notes:
     - Indices in vs1 treated as unsigned
@@ -268,7 +269,7 @@ VCOMPRESS.VM (Status: ✗)
     - Restart always from element 0 after trap
     - Synthesize vdecompress using viota + vrgather (see spec example)
 
-WHOLE VECTOR REGISTER MOVE (Status: ⚠ Partial)
+WHOLE VECTOR REGISTER MOVE (Status: ✓)
 ===============================================
 
 Spec: v-st-ext.adoc lines 4802-4853
@@ -278,18 +279,18 @@ Copy whole vector registers or register groups, ignoring vl.
 VMV.V.V, VMV.V.X, VMV.V.I (Status: ✓)
   Spec: v-st-ext.adoc (referenced in integer arithmetic section)
   Encoding: funct6=0x17, funct3=OPIVV/OPIVX/OPIVI
-  Implementation: class VmvVv, VmvVx, VmvVi in instructions/vector.py lines 373, 336, 302
+  Implementation: class VmvVv, VmvVx, VmvVi in instructions/vector.py
   Notes:
     - VMV.V.V: Copy vector register
     - VMV.V.X: Splat scalar x register to vector
     - VMV.V.I: Splat immediate to vector
     - These are single-register moves, not whole register group moves
 
-VMV<NR>R.V (Status: ✗)
+VMV<NR>R.V (Status: ✓)
   Spec: v-st-ext.adoc lines 4804-4850
   Encoding: funct6=0x27, funct3=OPIVI, simm[2:0]=NREG-1
   Format: vmv1r.v/vmv2r.v/vmv4r.v/vmv8r.v vd, vs2
-  Implementation: Not implemented
+  Implementation: VmvNr class in instructions/vector.py
   Description: Copy whole vector register groups
   Notes:
     - Copies all VLEN bits of NREG registers
@@ -307,16 +308,18 @@ IMPLEMENTATION INFRASTRUCTURE
 
 Existing Support:
 - VmvXs class (extract element 0 to x register)
+- VmvSx class (insert element 0 from x register)
 - VmvVv, VmvVx, VmvVi classes (single vector moves/splat)
+- VmvNr class (whole register group moves)
+- Vrgather class (vector register gather with vector indices)
+- VmergeVx, VmergeVvm, VmergeVim classes (merge operations)
 - VmvVvOp kernel operation
 
 What's Missing:
-- VmvSx class (insert element 0 from x register)
 - VfmvFs, VfmvSf classes (FP scalar moves)
 - All slide instructions (up/down/1up/1down)
-- All gather instructions (vv/ei16/vx/vi)
+- vrgatherei16, vrgather.vx, vrgather.vi (other gather variants)
 - Vcompress class
-- Vmv<nr>r classes (whole register group moves)
 - Non-overlap checking for slides, gathers, compress
 - vstart==0 checking for compress
 
@@ -328,10 +331,12 @@ Test Coverage
 
 TODO Items
 ----------
-1. Implement remaining scalar moves
-   - vmv.s.x (insert element 0 from x register)
-   - vfmv.f.s, vfmv.s.f (FP scalar moves)
-   - Handle SEW vs XLEN/FLEN conversions
+1. ✓ Implement remaining integer scalar moves (DONE)
+   - vmv.s.x implemented
+
+1b. Implement FP scalar moves
+   - vfmv.f.s, vfmv.s.f
+   - Handle SEW vs FLEN conversions
 
 2. Implement slide instructions
    - vslideup.vx/vi (slide elements up)
@@ -341,12 +346,12 @@ TODO Items
    - Add non-overlap checking (vd vs vs2)
    - Handle vstart >= vl (no operation)
 
-3. Implement register gather
-   - vrgather.vv (vector indices)
+3. ✓ Implement vrgather.vv (DONE)
+
+3b. Implement remaining gather variants
    - vrgatherei16.vv (16-bit indices)
    - vrgather.vx (scalar index, splat)
    - vrgather.vi (immediate index, splat)
-   - Handle out-of-range indices (return 0)
    - Add non-overlap checking
 
 4. Implement compress
@@ -355,11 +360,8 @@ TODO Items
    - Verify vstart == 0
    - Add non-overlap checking (vd vs vs2/vs1)
 
-5. Implement whole register group moves
-   - vmv1r.v, vmv2r.v, vmv4r.v, vmv8r.v
-   - Handle NREG encoding in simm field
-   - Check register alignment
-   - Use evl instead of vl
+5. ✓ Implement whole register group moves (DONE)
+   - vmv1r.v, vmv2r.v, vmv4r.v, vmv8r.v via VmvNr class
 
 6. Add comprehensive permutation tests
    - Test all scalar move variants
@@ -374,15 +376,16 @@ TODO Items
 
 Summary
 -------
-Basic permutation support exists. 4 of ~20 instructions implemented:
-- ✓ vmv.x.s (extract element 0 to x register)
+Moderate permutation support. ~8 of ~20 instructions implemented:
+- ✓ vmv.x.s, vmv.s.x (integer scalar move both directions)
 - ✓ vmv.v.v, vmv.v.x, vmv.v.i (single vector moves/splat)
-- ✗ vmv.s.x (insert element 0 from x register)
+- ✓ vmerge.vxm, vmerge.vvm, vmerge.vim (merge operations)
+- ✓ vrgather.vv (vector register gather)
+- ✓ vmv<nr>r.v (whole register group moves)
 - ✗ vfmv.f.s, vfmv.s.f (FP scalar moves)
 - ✗ 8 slide instructions (up/down/1up/1down, int/fp)
-- ✗ 4 gather instructions (vv/ei16/vx/vi)
+- ✗ 3 other gather variants (ei16/vx/vi)
 - ✗ vcompress.vm (compress selected elements)
-- ✗ vmv<nr>r.v (whole register group moves)
 
 Permutation instructions are critical for:
 - Data reorganization and shuffling

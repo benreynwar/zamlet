@@ -22,66 +22,67 @@ narrowing operations. See test_suite_reference.txt for complete list
 
 Implementation Summary
 ----------------------
-Currently implemented: 1 instruction (VFMACC.VF)
+Currently implemented: ~30 instructions (all basic arithmetic .vv/.vf, all 8 FMA .vv/.vf,
+min/max .vv/.vf)
 Total in spec: ~60 single-width FP arithmetic instructions
-Coverage: ~2%
+Coverage: ~50%
 
-SINGLE-WIDTH FP ADD/SUBTRACT (Status: ✗)
+SINGLE-WIDTH FP ADD/SUBTRACT (Status: ✓)
 =========================================
 
 Spec: v-st-ext.adoc lines 3274-3285
 
-VFADD.VV, VFADD.VF (Status: ✗)
+VFADD.VV, VFADD.VF (Status: ✓)
   Spec: v-st-ext.adoc lines 3278-3279
   Encoding: funct6=0x00, funct3=OPFVV/OPFVF
   Format: vfadd.vv vd, vs2, vs1, vm / vfadd.vf vd, vs2, rs1, vm
-  Implementation: Not implemented
+  Implementation: VArithVvFloat / VArithVxFloat in instructions/vector.py
   Description: Floating-point add
   Notes: Uses dynamic rounding mode from frm
 
-VFSUB.VV, VFSUB.VF (Status: ✗)
+VFSUB.VV, VFSUB.VF (Status: ✓)
   Spec: v-st-ext.adoc lines 3282-3283
   Encoding: funct6=0x02, funct3=OPFVV/OPFVF
   Format: vfsub.vv vd, vs2, vs1, vm / vfsub.vf vd, vs2, rs1, vm
-  Implementation: Not implemented
+  Implementation: VArithVvFloat / VArithVxFloat in instructions/vector.py
   Description: Floating-point subtract, vd[i] = vs2[i] - vs1[i]/f[rs1]
 
-VFRSUB.VF (Status: ✗)
+VFRSUB.VF (Status: ✓)
   Spec: v-st-ext.adoc line 3284
   Encoding: funct6=0x27, funct3=OPFVF
   Format: vfrsub.vf vd, vs2, rs1, vm
-  Implementation: Not implemented
+  Implementation: VArithVxFloat in instructions/vector.py
   Description: Reverse subtract, vd[i] = f[rs1] - vs2[i]
   Notes: Only .vf form (no .vv)
 
-SINGLE-WIDTH FP MULTIPLY/DIVIDE (Status: ✗)
+SINGLE-WIDTH FP MULTIPLY/DIVIDE (Status: ✓)
 ============================================
 
 Spec: v-st-ext.adoc lines 3303-3316
 
-VFMUL.VV, VFMUL.VF (Status: ✗)
+VFMUL.VV, VFMUL.VF (Status: ✓)
   Spec: v-st-ext.adoc lines 3307-3308
   Encoding: funct6=0x24, funct3=OPFVV/OPFVF
   Format: vfmul.vv vd, vs2, vs1, vm / vfmul.vf vd, vs2, rs1, vm
-  Implementation: Not implemented
+  Implementation: VArithVvFloat / VArithVxFloat in instructions/vector.py
   Description: Floating-point multiply
 
-VFDIV.VV, VFDIV.VF (Status: ✗)
+VFDIV.VV, VFDIV.VF (Status: ✓)
   Spec: v-st-ext.adoc lines 3311-3312
   Encoding: funct6=0x20, funct3=OPFVV/OPFVF
   Format: vfdiv.vv vd, vs2, vs1, vm / vfdiv.vf vd, vs2, rs1, vm
-  Implementation: Not implemented
+  Implementation: VArithVvFloat / VArithVxFloat in instructions/vector.py
   Description: Floating-point divide, vd[i] = vs2[i] / vs1[i]/f[rs1]
 
-VFRDIV.VF (Status: ✗)
+VFRDIV.VF (Status: ✓)
   Spec: v-st-ext.adoc line 3315
   Encoding: funct6=0x21, funct3=OPFVF
   Format: vfrdiv.vf vd, vs2, rs1, vm
-  Implementation: Not implemented
+  Implementation: VArithVxFloat in instructions/vector.py
   Description: Reverse divide, vd[i] = f[rs1] / vs2[i]
   Notes: Only .vf form (no .vv)
 
-SINGLE-WIDTH FP FUSED MULTIPLY-ADD (Status: ⚠ Partial)
+SINGLE-WIDTH FP FUSED MULTIPLY-ADD (Status: ✓)
 =======================================================
 
 Spec: v-st-ext.adoc lines 3326-3364
@@ -90,70 +91,62 @@ All FMA operations are destructive (overwrite one operand). There are two forms:
 - MACC/NMACC/MSAC/NMSAC: Overwrite addend (vd is accumulator)
 - MADD/NMADD/MSUB/NMSUB: Overwrite multiplicand (vd is multiplier)
 
-VFMACC.VV, VFMACC.VF (Status: ⚠ Partial)
+VFMACC.VV, VFMACC.VF (Status: ✓)
   Spec: v-st-ext.adoc lines 3334-3335
   Encoding: funct6=0x2c, funct3=OPFVV/OPFVF
   Format: vfmacc.vv vd, vs1, vs2, vm / vfmacc.vf vd, rs1, vs2, vm
-  Implementation: class VArithVxFloat in instructions/vector.py line 155
-  Decoding: decode.py line 543
+  Implementation: VArithVvFloat / VArithVxFloat in instructions/vector.py
   Description: vd[i] = (vs1[i]/f[rs1] * vs2[i]) + vd[i]
-  Notes:
-    - Only .vf variant implemented
-    - Missing .vv form
-    - Used in daxpy test (tests/daxpy/)
-    - vd is both source and destination (accumulator)
+  Notes: vd is both source and destination (accumulator)
 
-VFNMACC.VV, VFNMACC.VF (Status: ✗)
+VFNMACC.VV, VFNMACC.VF (Status: ✓)
   Spec: v-st-ext.adoc lines 3338-3339
   Encoding: funct6=0x2d, funct3=OPFVV/OPFVF
   Format: vfnmacc.vv vd, vs1, vs2, vm / vfnmacc.vf vd, rs1, vs2, vm
-  Implementation: Not implemented
+  Implementation: VArithVvFloat / VArithVxFloat in instructions/vector.py
   Description: vd[i] = -(vs1[i]/f[rs1] * vs2[i]) - vd[i]
-  Notes: Negated multiply-accumulate
 
-VFMSAC.VV, VFMSAC.VF (Status: ✗)
+VFMSAC.VV, VFMSAC.VF (Status: ✓)
   Spec: v-st-ext.adoc lines 3342-3343
   Encoding: funct6=0x2e, funct3=OPFVV/OPFVF
   Format: vfmsac.vv vd, vs1, vs2, vm / vfmsac.vf vd, rs1, vs2, vm
-  Implementation: Not implemented
+  Implementation: VArithVvFloat / VArithVxFloat in instructions/vector.py
   Description: vd[i] = (vs1[i]/f[rs1] * vs2[i]) - vd[i]
-  Notes: Multiply-subtract-accumulator
 
-VFNMSAC.VV, VFNMSAC.VF (Status: ✗)
+VFNMSAC.VV, VFNMSAC.VF (Status: ✓)
   Spec: v-st-ext.adoc lines 3346-3347
   Encoding: funct6=0x2f, funct3=OPFVV/OPFVF
   Format: vfnmsac.vv vd, vs1, vs2, vm / vfnmsac.vf vd, rs1, vs2, vm
-  Implementation: Not implemented
+  Implementation: VArithVvFloat / VArithVxFloat in instructions/vector.py
   Description: vd[i] = -(vs1[i]/f[rs1] * vs2[i]) + vd[i]
-  Notes: Negated multiply-subtract-accumulator
 
-VFMADD.VV, VFMADD.VF (Status: ✗)
+VFMADD.VV, VFMADD.VF (Status: ✓)
   Spec: v-st-ext.adoc lines 3350-3351
   Encoding: funct6=0x28, funct3=OPFVV/OPFVF
   Format: vfmadd.vv vd, vs1, vs2, vm / vfmadd.vf vd, rs1, vs2, vm
-  Implementation: Not implemented
+  Implementation: VArithVvFloat / VArithVxFloat in instructions/vector.py
   Description: vd[i] = (vs1[i]/f[rs1] * vd[i]) + vs2[i]
   Notes: vd is multiplicand (different from vfmacc)
 
-VFNMADD.VV, VFNMADD.VF (Status: ✗)
+VFNMADD.VV, VFNMADD.VF (Status: ✓)
   Spec: v-st-ext.adoc lines 3354-3355
   Encoding: funct6=0x29, funct3=OPFVV/OPFVF
   Format: vfnmadd.vv vd, vs1, vs2, vm / vfnmadd.vf vd, rs1, vs2, vm
-  Implementation: Not implemented
+  Implementation: VArithVvFloat / VArithVxFloat in instructions/vector.py
   Description: vd[i] = -(vs1[i]/f[rs1] * vd[i]) - vs2[i]
 
-VFMSUB.VV, VFMSUB.VF (Status: ✗)
+VFMSUB.VV, VFMSUB.VF (Status: ✓)
   Spec: v-st-ext.adoc lines 3358-3359
   Encoding: funct6=0x2a, funct3=OPFVV/OPFVF
   Format: vfmsub.vv vd, vs1, vs2, vm / vfmsub.vf vd, rs1, vs2, vm
-  Implementation: Not implemented
+  Implementation: VArithVvFloat / VArithVxFloat in instructions/vector.py
   Description: vd[i] = (vs1[i]/f[rs1] * vd[i]) - vs2[i]
 
-VFNMSUB.VV, VFNMSUB.VF (Status: ✗)
+VFNMSUB.VV, VFNMSUB.VF (Status: ✓)
   Spec: v-st-ext.adoc lines 3362-3363
   Encoding: funct6=0x2b, funct3=OPFVV/OPFVF
   Format: vfnmsub.vv vd, vs1, vs2, vm / vfnmsub.vf vd, rs1, vs2, vm
-  Implementation: Not implemented
+  Implementation: VArithVvFloat / VArithVxFloat in instructions/vector.py
   Description: vd[i] = -(vs1[i]/f[rs1] * vd[i]) + vs2[i]
 
 FP SQUARE ROOT (Status: ✗)
@@ -197,24 +190,24 @@ VFREC7.V (Status: ✗)
     - Output may depend on rounding mode for overflow cases
     - Uses lookup table (see spec lines 3526-3551)
 
-FP MIN/MAX (Status: ✗)
+FP MIN/MAX (Status: ✓)
 =======================
 
 Spec: v-st-ext.adoc lines 3568-3583
 
-VFMIN.VV, VFMIN.VF (Status: ✗)
+VFMIN.VV, VFMIN.VF (Status: ✓)
   Spec: v-st-ext.adoc lines 3577-3578
   Encoding: funct6=0x04, funct3=OPFVV/OPFVF
   Format: vfmin.vv vd, vs2, vs1, vm / vfmin.vf vd, vs2, rs1, vm
-  Implementation: Not implemented
+  Implementation: VArithVvFloat / VArithVxFloat in instructions/vector.py
   Description: Floating-point minimum (minimumNumber operation)
   Notes: Same behavior as RISC-V F/D/Q v2.2 scalar instructions
 
-VFMAX.VV, VFMAX.VF (Status: ✗)
+VFMAX.VV, VFMAX.VF (Status: ✓)
   Spec: v-st-ext.adoc lines 3581-3582
   Encoding: funct6=0x06, funct3=OPFVV/OPFVF
   Format: vfmax.vv vd, vs2, vs1, vm / vfmax.vf vd, vs2, rs1, vm
-  Implementation: Not implemented
+  Implementation: VArithVvFloat / VArithVxFloat in instructions/vector.py
   Description: Floating-point maximum (maximumNumber operation)
 
 FP SIGN-INJECTION (Status: ✗)
@@ -356,17 +349,11 @@ Test Coverage
 
 TODO Items
 ----------
-1. Implement basic FP arithmetic
-   - vfadd.vv/vf (add)
-   - vfsub.vv/vf, vfrsub.vf (subtract)
-   - vfmul.vv/vf (multiply)
-   - vfdiv.vv/vf, vfrdiv.vf (divide)
+1. ✓ Implement basic FP arithmetic
+   - vfadd.vv/vf, vfsub.vv/vf, vfrsub.vf, vfmul.vv/vf, vfdiv.vv/vf, vfrdiv.vf
 
-2. Complete FMA instruction family
-   - vfmacc.vv (currently only .vf implemented)
-   - vfnmacc.vv/vf, vfmsac.vv/vf, vfnmsac.vv/vf (other accumulating forms)
-   - vfmadd.vv/vf, vfnmadd.vv/vf, vfmsub.vv/vf, vfnmsub.vv/vf (multiplicand-destructive forms)
-   - Extend VArithVxFloat to support all operation types
+2. ✓ Complete FMA instruction family
+   - All 8 FMA variants in both .vv and .vf forms
 
 3. Implement square root and reciprocal estimates
    - vfsqrt.v (square root)
@@ -374,9 +361,8 @@ TODO Items
    - vfrec7.v (reciprocal estimate)
    - Implement lookup tables for estimate instructions
 
-4. Implement min/max operations
+4. ✓ Implement min/max operations
    - vfmin.vv/vf, vfmax.vv/vf
-   - Follow IEEE-754 minimumNumber/maximumNumber semantics
 
 5. Implement sign-injection operations
    - vfsgnj.vv/vf, vfsgnjn.vv/vf, vfsgnjx.vv/vf
@@ -411,25 +397,22 @@ TODO Items
 
 Summary
 -------
-Minimal FP arithmetic support exists. Only 1 of ~60 instructions implemented:
-- vfmacc.vf (FP multiply-accumulate, vector-scalar only)
+Good FP arithmetic coverage. ~30 of ~60 instructions implemented:
+- ✓ Basic arithmetic: vfadd, vfsub, vfrsub, vfmul, vfdiv, vfrdiv (.vv and/or .vf)
+- ✓ All 8 FMA variants in both .vv and .vf forms (16 instructions)
+- ✓ Min/max: vfmin, vfmax (.vv and .vf)
 
-Missing ~59 instructions including:
-- All basic arithmetic (add, sub, mul, div)
-- 7 other FMA variants (.vv forms and other operations)
-- Square root
-- Reciprocal estimates
-- Min/max operations
-- Sign-injection (negate, abs)
-- All comparisons
-- Classify
-- Merge and move
+Still missing ~30 instructions:
+- Square root and reciprocal estimates (3 instructions)
+- Sign-injection (6 instructions)
+- All comparisons (10 instructions)
+- Classify (1 instruction)
+- Merge and move (2 instructions)
+- FP exception handling not implemented
 
 Priority for implementation:
-1. Basic arithmetic (add, sub, mul, div) - most commonly used
-2. Complete vfmacc family - extend existing implementation
-3. Min/max - common in ML and signal processing
-4. Comparisons - needed for conditional operations
-5. Sign-injection - cheap operations for negate/abs
-6. Square root and estimates - DSP and scientific computing
-7. Classify and merge - less common utility operations
+1. Comparisons - needed for conditional operations
+2. Sign-injection - cheap operations for negate/abs
+3. Merge/move - useful for data manipulation
+4. Square root and estimates - DSP and scientific computing
+5. Classify - less common utility operation

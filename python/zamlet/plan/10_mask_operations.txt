@@ -24,9 +24,9 @@ vmsif, vmsof, viota, vid). See test_suite_reference.txt for complete list
 
 Implementation Summary
 ----------------------
-Currently implemented: 1 instruction (VMNAND.MM)
+Currently implemented: 2 instructions (VMNAND.MM, VID.V)
 Total in spec: 16 mask instructions
-Coverage: ~6%
+Coverage: ~12%
 
 MASK-REGISTER LOGICAL OPERATIONS (Status: ⚠ Partial)
 =====================================================
@@ -210,16 +210,16 @@ VIOTA.M (Status: ✗)
     - vd cannot overlap vs2 or v0 (if masked)
     - Used with indexed stores for vector compress (see spec example)
 
-ELEMENT INDEX (Status: ✗)
+ELEMENT INDEX (Status: ✓)
 ==========================
 
 Spec: v-st-ext.adoc lines 4401-4421
 
-VID.V (Status: ✗)
+VID.V (Status: ✓)
   Spec: v-st-ext.adoc lines 4403-4418
   Encoding: funct6=0x14, vs1=0x11, vs2=v0, funct3=OPMVV
   Format: vid.v vd, vm
-  Implementation: Not implemented
+  Implementation: Vid class in instructions/vector.py, VidOp kinstr
   Description: Write element index to each element (0 to vl-1)
   Notes:
     - Can be masked (masking doesn't change index values)
@@ -307,14 +307,14 @@ TODO Items
 
 Summary
 -------
-Minimal mask operation support exists. Only 1 of 16 instructions implemented:
+Minimal mask operation support. 2 of 16 instructions implemented:
 - ✓ vmnand.mm (mask NAND and vmnot pseudoinstruction)
+- ✓ vid.v (element index)
 - ✗ 7 other mask logical operations
 - ✗ vcpop.m (population count to x register)
 - ✗ vfirst.m (find-first-set to x register)
 - ✗ vmsbf.m, vmsif.m, vmsof.m (set-before/including/only-first)
 - ✗ viota.m (parallel prefix sum, used for compress)
-- ✗ vid.v (element index)
 
 Mask operations are critical for:
 - Conditional execution and predication
