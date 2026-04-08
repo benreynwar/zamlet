@@ -2,7 +2,7 @@ exports_files(["run_kernel_test.py"])
 
 test_suite(
     name = "all_tests",
-    tests = [":tests_a", ":tests_b"],
+    tests = [":tests_a", ":tests_b", ":tests_c"],
 )
 
 test_suite(
@@ -13,6 +13,12 @@ test_suite(
         "//python/zamlet/kernel_tests/conditional:test_conditional_tiny",
         "//python/zamlet/kernel_tests/daxpy:test_daxpy",
         "//python/zamlet/kernel_tests/daxpy:test_daxpy_small",
+    ],
+)
+
+test_suite(
+    name = "tests_c",
+    tests = [
         "//python/zamlet/kernel_tests/dotprod:test_dotprod",
         "//python/zamlet/kernel_tests/readwritebyte:test_should_fail",
         "//python/zamlet/kernel_tests/readwritebyte:test_simple_vpu",
