@@ -2,11 +2,15 @@ site_name: Zamlet
 nav:
   - Home: index.md
   - Setup: setup.md
-  - Design:
-    - Memory: memory.md
+  - Current State: scope.md
+  - Examples:
     - Gather Example: gather_example.md
+  - Architecture Details:
+    - Memory: memory.md
   - Modelling:
     - Python Model: python.md
+  - Tools:
+    - LLM Usage: llm.md
 theme:
   name: readthedocs
   highlightjs: false

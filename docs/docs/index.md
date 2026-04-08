@@ -43,9 +43,9 @@ As our number of lanes grows large it becomes useful to add another layer of hie
 
 Common operations should result in minimal data movement. We want to minimize the movement of data in and out of the lanes. We distribute both the cache SRAM and the vector register file throughout the lanes, and ideally instructions should just be moving data between this cache SRAM, the vector register file slice and the lane's ALU. For instructions that do need to move data between lanes, this is done by message passing. This should be reasonably efficient when the data is moving between lanes close to one another. It will be inefficient when we are moving data large distances (both latency and throughput).
 
-### Vector memory pages and vector registers have a physical byte ordering that is configurable
+### Vector memory lines and vector registers have a physical byte ordering that is configurable
 
-Each vector memory page and each vector register has an 'element-width'. This determines the order in which bytes are stored in the physical memory. The is configured on the fly depending on what data it contains.  If this 'element-width' configuration matches the actual element width of the data then this will help keep the data local when vectors with different element widths interact. The 'element-width' of the pages is stored in a supplemental page table.
+Each vector memory line and each vector register has an 'element-width'. This determines the order in which bytes are stored in the physical memory. The is configured on the fly depending on what data it contains.  If this 'element-width' configuration matches the actual element width of the data then this will help keep the data local when vectors with different element widths interact. The 'element-width' of the lines in each page is stored in a supplemental page table.
 
 ### Custom hardware to synchronize the lane groupings.
 
