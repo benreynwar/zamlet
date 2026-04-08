@@ -18,7 +18,10 @@ from zamlet.transactions.load_indexed_unordered import LoadIndexedUnordered
 from zamlet.transactions.store_indexed_unordered import StoreIndexedUnordered
 from zamlet import utils
 from zamlet.lamlet import ident_query
-from zamlet.message import MessageType, SendType, Direction, TaggedHeader, WriteMemWordHeader
+from zamlet.message import (
+    MessageType, SendType, Direction, TaggedHeader,
+    ReadMemWordHeader, WriteMemWordHeader,
+)
 
 if TYPE_CHECKING:
     from zamlet.oamlet.oamlet import Oamlet
@@ -185,26 +188,23 @@ def get_memory_split(lamlet: 'Oamlet', g_addr: GlobalAddress, element_width: int
 
 async def vload(lamlet: 'Oamlet', vd: int, addr: int, ordering: addresses.Ordering,
                 n_elements: int, mask_reg: int | None, start_index: int,
-                parent_span_id: int,
-                reg_ordering: addresses.Ordering | None = None,
-                stride_bytes: int | None = None) -> VectorOpResult:
+                parent_span_id: int, stride_bytes: int | None = None) -> VectorOpResult:
+    assert ordering.ew % 8 == 0
     element_bytes = ordering.ew // 8
     if stride_bytes is not None and stride_bytes != element_bytes:
         return await vloadstorestride(lamlet, vd, addr, ordering, n_elements, mask_reg,
                                       start_index, is_store=False,
                                       parent_span_id=parent_span_id,
-                                      reg_ordering=reg_ordering,
                                       stride_bytes=stride_bytes)
     else:
         return await vloadstore(lamlet, vd, addr, ordering, n_elements, mask_reg, start_index,
-                                is_store=False, parent_span_id=parent_span_id,
-                                reg_ordering=reg_ordering)
+                                is_store=False, parent_span_id=parent_span_id)
 
 
 async def vstore(lamlet: 'Oamlet', vs: int, addr: int, ordering: addresses.Ordering,
                  n_elements: int, mask_reg: int | None, start_index: int,
-                 parent_span_id: int,
-                 stride_bytes: int | None = None) -> VectorOpResult:
+                 parent_span_id: int, stride_bytes: int | None = None) -> VectorOpResult:
+    assert ordering.ew % 8 == 0
     element_bytes = ordering.ew // 8
     if stride_bytes is not None and stride_bytes != element_bytes:
         return await vloadstorestride(lamlet, vs, addr, ordering, n_elements, mask_reg,
@@ -216,11 +216,51 @@ async def vstore(lamlet: 'Oamlet', vs: int, addr: int, ordering: addresses.Order
                                 is_store=True, parent_span_id=parent_span_id)
 
 
+async def remap_reg_ew(
+    lamlet: 'Oamlet', src_regs: list[int], dst_regs: list[int],
+    dst_ordering: Ordering, parent_span_id: int,
+):
+    """Remap register data from one ew layout to another via scratch VPU memory.
+
+    Stores src_regs at their current ew, then loads into dst_regs at dst_ordering.ew.
+    src_regs and dst_regs may overlap (for in-place remap).
+
+    Caller is responsible for allocating/freeing any temp regs used as dst_regs.
+
+    TODO: Replace with a dedicated register-to-register ew remap kinstr using
+    J2J messages. See docs/TODO.md.
+    """
+    assert len(src_regs) == len(dst_regs)
+    n = len(src_regs)
+    vline_bits = lamlet.params.maxvl_bytes * 8
+    assert lamlet.params.page_bytes >= lamlet.params.maxvl_bytes
+
+    scratch_temp = lamlet.alloc_temp_regs(1)
+    scratch_addresses = []
+    for i in range(n):
+        src_ordering = lamlet.vrf_ordering[src_regs[i]]
+        src_elements_per_vline = vline_bits // src_ordering.ew
+        scratch_addr = lamlet.get_scratch_page(scratch_temp[0], src_ordering.ew)
+        await lamlet.vstore(
+            src_regs[i], scratch_addr, src_ordering,
+            n_elements=src_elements_per_vline, mask_reg=None, start_index=0,
+            parent_span_id=parent_span_id,
+        )
+        scratch_addresses.append(scratch_addr)
+
+    dst_elements_per_vline = vline_bits // dst_ordering.ew
+    for i, scratch_addr in enumerate(scratch_addresses):
+        await lamlet.vload(
+            dst_regs[i], scratch_addr, dst_ordering,
+            n_elements=dst_elements_per_vline, mask_reg=None, start_index=0,
+            parent_span_id=parent_span_id, lmul=1,
+        )
+    lamlet.free_temp_regs(scratch_temp)
+
+
 async def vloadstore(lamlet: 'Oamlet', reg_base: int, addr: int, ordering: addresses.Ordering,
                      n_elements: int, mask_reg: int | None, start_index: int, is_store: bool,
-                     parent_span_id: int,
-                     reg_ordering: addresses.Ordering | None = None,
-                     stride_bytes: int | None = None) -> VectorOpResult:
+                     parent_span_id: int) -> VectorOpResult:
     """
     We have 3 different kinds of vector loads/stores.
     - In VPU memory and aligned (this is the fastest by far)
@@ -234,49 +274,62 @@ async def vloadstore(lamlet: 'Oamlet', reg_base: int, addr: int, ordering: addre
     Returns VectorOpResult with fault info if a TLB fault occurred.
     """
     g_addr = GlobalAddress(bit_addr=addr*8, params=lamlet.params)
-    mem_ew = ordering.ew
+    instr_ew = ordering.ew
+    temp_regs = None
 
-    # For loads, reg_ordering specifies the register element width (defaults to memory ew)
-    # For stores, register ordering comes from the register file state
-    # We need to determine this BEFORE page checking since n_elements is in reg_ew units
+    # For stores where the register ew doesn't match the instruction ew, remap
+    # via scratch memory first. See docs/TODO.md for replacing this workaround.
     if is_store:
-        # For stores, caller should not specify reg_ordering - we get it from register file
-        assert reg_ordering is None, "reg_ordering should not be specified for stores"
-        reg_ordering = lamlet.vrf_ordering[reg_base]
-        assert reg_ordering is not None, f"Register v{reg_base} has no ordering set"
-    elif reg_ordering is None:
-        # For loads without explicit reg_ordering, use memory ordering
-        reg_ordering = ordering
-    reg_ew = reg_ordering.ew
+        vline_bits = lamlet.params.maxvl_bytes * 8
+        elements_per_vline = vline_bits // ordering.ew
+        n_vlines = (n_elements + elements_per_vline - 1) // elements_per_vline
+        needs_remap = False
+        for i in range(n_vlines):
+            reg_ord = lamlet.vrf_ordering[reg_base + i]
+            assert reg_ord is not None
+            if reg_ord.ew != ordering.ew:
+                needs_remap = True
+                break
+        if needs_remap:
+            src_regs = list(range(reg_base, reg_base + n_vlines))
+            temp_regs = lamlet.alloc_temp_regs(n_vlines)
+            await remap_reg_ew(lamlet, src_regs, temp_regs, ordering, parent_span_id)
+            reg_base = temp_regs[0]
 
     # Check all pages for access before dispatching
-    # n_elements is count of register elements, so use reg_ew for byte size
-    element_bytes = reg_ew // 8
+    element_bytes = ordering.ew // 8
     result = check_pages_for_access(lamlet, addr, n_elements, element_bytes, is_store)
     if not result.success:
         # Reduce n_elements to only process up to the faulting element
         n_elements = result.element_index
 
     if n_elements == 0:
+        if temp_regs is not None:
+            lamlet.free_temp_regs(temp_regs)
         return result
 
-    size = (n_elements * reg_ew) // 8
+    size = (n_elements * ordering.ew) // 8
     wb = lamlet.params.word_bytes
 
     # This is an identifier that groups a number of writes to a vector register together.
     # These writes are guanteed to work on separate bytes so that the write order does not matter.
     writeset_ident = ident_query.get_writeset_ident(lamlet)
 
+    # Verify vrf_ordering is set for affected registers.
+    # For loads, vload() sets ordering for the full lmul group before calling here.
+    # For stores, the producing instruction set it.
     vline_bits = lamlet.params.maxvl_bytes * 8
-    n_vlines = (reg_ew * n_elements + vline_bits - 1) // vline_bits
-    for vline_reg in range(reg_base, reg_base+n_vlines):
-        lamlet.vrf_ordering[vline_reg] = Ordering(word_order=ordering.word_order, ew=reg_ew)
+    regs = []
+    for element_index in range(start_index, start_index + n_elements):
+        reg = reg_base + (element_index * ordering.ew) // vline_bits
+        if reg not in regs:
+            regs.append(reg)
+            assert lamlet.vrf_ordering[reg] == ordering
 
     base_reg_addr = addresses.RegAddr(
-        reg=reg_base, addr=0, params=lamlet.params, ordering=reg_ordering)
+        reg=reg_base, addr=0, params=lamlet.params, ordering=ordering)
 
-    # reg_ew determines the size of elements we're moving (not mem_ew which is just memory ordering)
-    for section in get_memory_split(lamlet, g_addr, reg_ew, n_elements, start_index):
+    for section in get_memory_split(lamlet, g_addr, ordering.ew, n_elements, start_index):
         if section.is_a_partial_element:
             reg_addr = base_reg_addr.offset_bytes(section.start_address - g_addr.addr)
             # The partial is either the start of an element or the end of an element.
@@ -292,14 +345,14 @@ async def vloadstore(lamlet: 'Oamlet', reg_base: int, addr: int, ordering: addre
             assert not (start_is_cacheline_boundary and end_is_cacheline_boundary)
             starting_g_addr = GlobalAddress(bit_addr=section.start_address*8, params=lamlet.params)
             k_maddr = lamlet.to_k_maddr(starting_g_addr)
-            assert reg_ew % 8 == 0
+            assert ordering.ew % 8 == 0
             mask_index = section.start_index // lamlet.params.j_in_l
             size = section.end_address - section.start_address
             if section.is_vpu:
-                dst = reg_base + (section.start_index * reg_ew)//(lamlet.params.vline_bytes * 8)
+                dst = reg_base + (section.start_index * ordering.ew)//(lamlet.params.vline_bytes * 8)
                 kinstr: kinstructions.KInstr
                 if size <= 1:
-                    dst_offset = ((section.start_index * reg_ew) % (lamlet.params.vline_bytes * 8))//8
+                    dst_offset = ((section.start_index * ordering.ew) % (lamlet.params.vline_bytes * 8))//8
                     bit_mask = (1 << 8) - 1
                     if is_store:
                         kinstr = kinstructions.StoreByte(
@@ -357,11 +410,11 @@ async def vloadstore(lamlet: 'Oamlet', reg_base: int, addr: int, ordering: addre
             else:
                 element_offset = starting_g_addr.bit_addr % (lamlet.params.word_bytes * 8)
                 assert element_offset % 8 == 0
-                assert reg_ew % 8 == 0
+                assert ordering.ew % 8 == 0
                 start_is_page_boundary = section.start_address % lamlet.params.page_bytes == 0
                 if start_is_page_boundary:
                     # We're the second segment of the element
-                    start_byte_in_element = (reg_ew - element_offset)//8
+                    start_byte_in_element = (ordering.ew - element_offset)//8
                 else:
                     # We're the first segment of the element
                     start_byte_in_element = (element_offset)//8
@@ -370,7 +423,8 @@ async def vloadstore(lamlet: 'Oamlet', reg_base: int, addr: int, ordering: addre
                         lamlet, vd=reg_base, addr=section.start_address, size=size,
                         src_ordering=ordering, mask_reg=mask_reg, mask_index=mask_index,
                         element_index=section.start_index, writeset_ident=writeset_ident,
-                        start_byte=start_byte_in_element)
+                        start_byte=start_byte_in_element,
+                        parent_span_id=parent_span_id)
                 else:
                     await vload_scalar_partial(
                         lamlet, vd=reg_base, addr=section.start_address, size=size,
@@ -379,9 +433,9 @@ async def vloadstore(lamlet: 'Oamlet', reg_base: int, addr: int, ordering: addre
                         start_byte=start_byte_in_element, parent_span_id=parent_span_id)
         else:
             if section.is_vpu:
-                section_elements = ((section.end_address - section.start_address) * 8)//reg_ew
+                section_elements = ((section.end_address - section.start_address) * 8)//ordering.ew
                 starting_g_addr = GlobalAddress(bit_addr=section.start_address*8, params=lamlet.params)
-                lamlet.check_element_width(starting_g_addr, section.end_address - section.start_address, mem_ew)
+                lamlet.check_element_width(starting_g_addr, section.end_address - section.start_address, instr_ew)
                 k_maddr = lamlet.to_k_maddr(starting_g_addr)
 
                 l_cache_line_bytes = lamlet.params.cache_line_bytes * lamlet.params.k_in_l
@@ -394,7 +448,7 @@ async def vloadstore(lamlet: 'Oamlet', reg_base: int, addr: int, ordering: addre
                         k_maddr=k_maddr,
                         start_index=section.start_index,
                         n_elements=section_elements,
-                        src_ordering=reg_ordering,
+                        src_ordering=ordering,
                         mask_reg=mask_reg,
                         writeset_ident=writeset_ident,
                         instr_ident=instr_ident,
@@ -406,25 +460,27 @@ async def vloadstore(lamlet: 'Oamlet', reg_base: int, addr: int, ordering: addre
                         k_maddr=k_maddr,
                         start_index=section.start_index,
                         n_elements=section_elements,
-                        dst_ordering=reg_ordering,
+                        dst_ordering=ordering,
                         mask_reg=mask_reg,
                         writeset_ident=writeset_ident,
                         instr_ident=instr_ident,
                     )
                 await lamlet.add_to_instruction_buffer(kinstr, parent_span_id)
             else:
-                section_elements = ((section.end_address - section.start_address) * 8)//reg_ew
+                section_elements = ((section.end_address - section.start_address) * 8)//ordering.ew
                 await vloadstore_scalar(lamlet, reg_base, section.start_address, ordering,
                                         section_elements, mask_reg, section.start_index,
                                         writeset_ident, is_store, parent_span_id)
+    if temp_regs is not None:
+        lamlet.free_temp_regs(temp_regs)
     return result
 
 
 async def vloadstorestride(lamlet: 'Oamlet', reg_base: int, addr: int,
                            ordering: addresses.Ordering, n_elements: int,
                            mask_reg: int | None, start_index: int,
-                           is_store: bool, parent_span_id: int, stride_bytes: int,
-                           reg_ordering: addresses.Ordering | None = None) -> VectorOpResult:
+                           is_store: bool, parent_span_id: int, stride_bytes: int
+                           ) -> VectorOpResult:
     """
     Handle strided vector loads/stores by decomposing into vid + vmul + indexed.
 
@@ -436,16 +492,15 @@ async def vloadstorestride(lamlet: 'Oamlet', reg_base: int, addr: int,
     elements are processed in batches. Each batch adjusts the base address
     and populates the temp register with offsets for that batch only.
     """
-    if reg_ordering is None:
-        reg_ordering = ordering
-    reg_ew = reg_ordering.ew
 
     # Set up register file ordering for data registers
     vline_bits = lamlet.params.maxvl_bytes * 8
-    n_data_vlines = (reg_ew * n_elements + vline_bits - 1) // vline_bits
+    n_data_vlines = (ordering.ew * n_elements + vline_bits - 1) // vline_bits
     for vline_reg in range(reg_base, reg_base + n_data_vlines):
-        lamlet.vrf_ordering[vline_reg] = Ordering(
-            word_order=ordering.word_order, ew=reg_ew)
+        if is_store:
+            assert lamlet.vrf_ordering[vline_reg] == ordering
+        else:
+            lamlet.vrf_ordering[vline_reg] = ordering
 
     index_ew = 64
     elements_per_vline_64 = vline_bits // index_ew
@@ -465,6 +520,7 @@ async def vloadstorestride(lamlet: 'Oamlet', reg_base: int, addr: int,
     n_to_process = n_elements - aligned_start
     prev_fault_sync = None
     all_completion_syncs = []
+    writeset_ident = ident_query.get_writeset_ident(lamlet)
     for batch_offset in range(0, n_to_process, batch_capacity):
         batch_n = min(batch_capacity, n_to_process - batch_offset)
         batch_start = aligned_start + batch_offset
@@ -502,12 +558,13 @@ async def vloadstorestride(lamlet: 'Oamlet', reg_base: int, addr: int,
         # Indexed load/store with adjusted base and index_offset
         result = await _vloadstore_indexed_unordered(
             lamlet, reg=reg_base, base_addr=batch_base, index_reg=temp_base,
-            index_ew=index_ew, data_ew=reg_ew,
+            index_ew=index_ew, data_ew=ordering.ew,
             n_elements=batch_start + batch_n,
             mask_reg=mask_reg, start_index=actual_start_index,
             parent_span_id=parent_span_id, is_store=is_store,
             index_offset=-batch_start,
-            chain_from_ident=prev_fault_sync)
+            chain_from_ident=prev_fault_sync,
+            writeset_ident=writeset_ident)
         prev_fault_sync = result.last_fault_sync_ident
         if result.completion_sync_idents:
             all_completion_syncs.extend(result.completion_sync_idents)
@@ -592,6 +649,7 @@ async def _vloadstore_indexed_unordered(
         parent_span_id: int, is_store: bool,
         index_offset: int = 0,
         chain_from_ident: int | None = None,
+        writeset_ident: int | None = None,
         ) -> VectorOpResult:
     """Shared implementation for unordered indexed vector loads and stores.
 
@@ -602,7 +660,17 @@ async def _vloadstore_indexed_unordered(
     data_ordering = Ordering(word_order=lamlet.word_order, ew=data_ew)
     index_ordering = Ordering(word_order=lamlet.word_order, ew=index_ew)
 
-    writeset_ident = ident_query.get_writeset_ident(lamlet)
+    if writeset_ident is None:
+        writeset_ident = ident_query.get_writeset_ident(lamlet)
+
+    if is_store:
+        # Scatter stores send WRITE_MEM_WORD_REQ from the kamlet back to the lamlet.
+        # The lamlet doesn't know which scalar addresses will be written until the
+        # messages arrive, so we must wait for prior writesets to drain before
+        # dispatching to avoid write-write conflicts at the scalar memory.
+        while (lamlet.scalar.has_conflicting_writes(writeset_ident)
+               or lamlet.scalar.has_conflicting_reads(writeset_ident)):
+            await lamlet.clock.next_cycle
 
     if not is_store:
         # Set up register file ordering for destination registers
@@ -673,6 +741,13 @@ async def _vloadstore_indexed_unordered(
         lamlet.synchronizer.local_event(completion_sync_ident)
         completion_sync_idents.append(completion_sync_ident)
 
+        if is_store:
+            lamlet.scalar.register_might_touch_write(
+                completion_sync_ident, writeset_ident)
+        else:
+            lamlet.scalar.register_might_touch_read(
+                completion_sync_ident, writeset_ident)
+
         lamlet.monitor.create_sync_local_span(
             fault_sync_ident, 0, -1, kinstr_span_id)
         if skip_fault_wait:
@@ -703,67 +778,84 @@ async def vloadstore_scalar(
 
     FIXME: This function is untested. Add tests for vector loads/stores to scalar memory.
     """
+    # Wait for prior scalar operations with different writeset_idents to complete.
+    # This ensures the lamlet doesn't need to reorder or buffer incoming messages
+    # to apply them in the correct order.
+    if is_store:
+        while (lamlet.scalar.has_conflicting_writes(writeset_ident)
+               or lamlet.scalar.has_conflicting_reads(writeset_ident)):
+            await lamlet.clock.next_cycle
+    else:
+        while lamlet.scalar.has_conflicting_writes(writeset_ident):
+            await lamlet.clock.next_cycle
     for element_index in range(start_index, start_index+n_elements):
         start_addr_bits = addr * 8 + (element_index - start_index) * ordering.ew
         g_addr = GlobalAddress(bit_addr=start_addr_bits, params=lamlet.params)
         scalar_addr = g_addr.to_scalar_addr(lamlet.tlb)
         vw_index = element_index % lamlet.params.j_in_l
         k_index, j_in_k_index = addresses.vw_index_to_k_indices(
-            lamlet.params, ordering.word_order, vw_index)
+                lamlet.params, ordering.word_order, vw_index)
         wb = lamlet.params.word_bytes
         mask_index = element_index // lamlet.params.j_in_l
-        if ordering.ew in (1, 8):
-            # We're just sending a byte
-            if ordering.ew == 1:
-                bit_mask = 1 << (addr.bit_addr % 8)
-            else:
-                bit_mask = (1 << 8) - 1
-            if is_store:
-                kinstr = kinstructions.StoreByte(
-                    src=vd,
-                    bit_mask=bit_mask,
-                    mask_reg=mask_reg,
-                    mask_index=mask_index,
-                    writeset_ident=writeset_ident,
-                )
-            else:
-                byte_imm = lamlet.scalar.get_memory(scalar_addr, 1)[0]
-                instr_ident = await ident_query.get_instr_ident(lamlet)
-                kinstr = kinstructions.LoadImmByte(
-                    dst=vd,
-                    imm=byte_imm,
-                    bit_mask=bit_mask,
-                    mask_reg=mask_reg,
-                    mask_index=mask_index,
-                    writeset_ident=writeset_ident,
-                    instr_ident=instr_ident,
-                )
+        assert ordering.ew >= 8
+        eb = ordering.ew // 8
+        vlb = lamlet.params.vline_bytes
+        byte_offset = element_index * eb
+        reg_addr = addresses.RegAddr(
+            vd + byte_offset // vlb, byte_offset % vlb, ordering, lamlet.params)
+        instr_ident = await ident_query.get_instr_ident(lamlet)
+        if is_store:
+            lamlet.scalar.register_known_write(writeset_ident)
+            logger.debug(
+                f'vloadstore_scalar: store element_index={element_index} '
+                f'reg_addr={reg_addr} scalar_addr=0x{scalar_addr:x} eb={eb}')
+            kinstr = kinstructions.StoreScalar(
+                src=reg_addr,
+                scalar_addr=scalar_addr,
+                dst_byte_in_word=scalar_addr % wb,
+                n_bytes_or_bits=eb,
+                bit_mode=False,
+                dst_bit_in_byte=0,
+                writeset_ident=writeset_ident,
+                mask_reg=mask_reg,
+                mask_index=mask_index,
+                instr_ident=instr_ident,
+            )
+        elif eb == 1:
+            lamlet.scalar.register_known_read(writeset_ident)
+            byte_imm = (await lamlet.scalar.get_memory(
+                scalar_addr, 1, writeset_ident=writeset_ident, known=True))[0]
+            kinstr = kinstructions.LoadImmByte(
+                dst=reg_addr,
+                imm=byte_imm,
+                bit_mask=(1 << 8) - 1,
+                mask_reg=mask_reg,
+                mask_index=mask_index,
+                writeset_ident=writeset_ident,
+                instr_ident=instr_ident,
+            )
         else:
-            # We're sending a word
-            word_addr = (scalar_addr//wb) * wb
+            lamlet.scalar.register_known_read(writeset_ident)
+            start_byte = (mask_index * eb) % wb
+            element_data = await lamlet.scalar.get_memory(
+                scalar_addr, eb, writeset_ident=writeset_ident, known=True)
+            word_imm = bytearray(wb)
+            for i in range(eb):
+                word_imm[start_byte + i] = element_data[i]
+            word_imm = bytes(word_imm)
             byte_mask = [0] * wb
-            start_byte = element_index//lamlet.params.j_in_l * ordering.ew//8
-            if ordering.ew == 1:
-                end_byte = start_byte
-            else:
-                end_byte = start_byte + ordering.ew//8 - 1
-            for byte_index in range(start_byte, end_byte+1):
-                byte_mask[byte_index] = 1
+            for i in range(start_byte, start_byte + eb):
+                byte_mask[i] = 1
             byte_mask_as_int = utils.list_of_uints_to_uint(byte_mask, width=1)
-            if is_store:
-                raise NotImplementedError("StoreWord for scalar memory not yet implemented")
-            else:
-                word_imm = lamlet.scalar.get_memory(word_addr, wb)
-                instr_ident = await ident_query.get_instr_ident(lamlet)
-                kinstr = kinstructions.LoadImmWord(
-                    dst=vd,
-                    imm=word_imm,
-                    byte_mask=byte_mask_as_int,
-                    mask_reg=mask_reg,
-                    mask_index=mask_index,
-                    writeset_ident=writeset_ident,
-                    instr_ident=instr_ident,
-                )
+            kinstr = kinstructions.LoadImmWord(
+                dst=reg_addr,
+                imm=word_imm,
+                byte_mask=byte_mask_as_int,
+                mask_reg=mask_reg,
+                mask_index=mask_index,
+                writeset_ident=writeset_ident,
+                instr_ident=instr_ident,
+            )
         await lamlet.add_to_instruction_buffer(kinstr, parent_span_id, k_index=k_index)
 
 
@@ -780,6 +872,8 @@ async def vload_scalar_partial(lamlet: 'Oamlet', vd: int, addr: int, size: int,
 
     FIXME: This function is untested. Add tests for vector loads/stores to scalar memory.
     """
+    while lamlet.scalar.has_conflicting_writes(writeset_ident):
+        await lamlet.clock.next_cycle
     assert start_byte + size < lamlet.params.word_bytes
     g_addr = GlobalAddress(bit_addr=addr*8, params=lamlet.params)
     scalar_addr = g_addr.to_scalar_addr(lamlet.tlb)
@@ -789,8 +883,10 @@ async def vload_scalar_partial(lamlet: 'Oamlet', vd: int, addr: int, size: int,
     kinstr: kinstructions.KInstr
     instr_ident = await ident_query.get_instr_ident(lamlet)
     if size == 1:
+        lamlet.scalar.register_known_read(writeset_ident)
         bit_mask = (1 << 8) - 1
-        byte_imm = lamlet.scalar.get_memory(scalar_addr.addr, 1)[0]
+        byte_imm = (await lamlet.scalar.get_memory(
+            scalar_addr.addr, 1, writeset_ident=writeset_ident, known=True))[0]
         kinstr = kinstructions.LoadImmByte(
             dst=addresses.RegAddr(vd, start_byte, dst_ordering, lamlet.params),
             imm=byte_imm,
@@ -801,8 +897,11 @@ async def vload_scalar_partial(lamlet: 'Oamlet', vd: int, addr: int, size: int,
             instr_ident=instr_ident,
         )
     else:
+        lamlet.scalar.register_known_read(writeset_ident)
         word_addr = scalar_addr - start_byte
-        word_imm = lamlet.scalar.get_memory(word_addr, lamlet.params.word_bytes)
+        word_imm = await lamlet.scalar.get_memory(
+            word_addr, lamlet.params.word_bytes,
+            writeset_ident=writeset_ident, known=True)
         byte_mask = [0]*lamlet.params.word_bytes
         for byte_index in range(start_byte, start_byte+size):
             byte_mask[byte_index] = 1
@@ -821,16 +920,50 @@ async def vload_scalar_partial(lamlet: 'Oamlet', vd: int, addr: int, size: int,
 
 async def vstore_scalar_partial(lamlet: 'Oamlet', vd: int, addr: int, size: int,
                                 src_ordering: Ordering, mask_reg: int, mask_index: int,
-                                element_index: int, writeset_ident: int, start_byte: int):
-    """FIXME: This function is untested. Add tests for vector loads/stores to scalar memory."""
-    raise NotImplementedError("vstore_scalar_partial not yet implemented")
+                                element_index: int, writeset_ident: int, start_byte: int,
+                                parent_span_id: int):
+    """
+    Stores a partial element from a vector register to scalar memory.
+
+    start_byte: Which byte in element we start storing from.
+    size: How many bytes from the element we store.
+    """
+    while (lamlet.scalar.has_conflicting_writes(writeset_ident)
+           or lamlet.scalar.has_conflicting_reads(writeset_ident)):
+        await lamlet.clock.next_cycle
+    assert start_byte + size < lamlet.params.word_bytes
+    wb = lamlet.params.word_bytes
+    g_addr = GlobalAddress(bit_addr=addr*8, params=lamlet.params)
+    scalar_addr = g_addr.to_scalar_addr(lamlet.tlb)
+    vw_index = element_index % lamlet.params.j_in_l
+    k_index, j_in_k_index = addresses.vw_index_to_k_indices(
+        lamlet.params, src_ordering.word_order, vw_index)
+    lamlet.scalar.register_known_write(writeset_ident)
+    instr_ident = await ident_query.get_instr_ident(lamlet)
+    reg_addr = addresses.RegAddr(vd, start_byte, src_ordering, lamlet.params)
+    kinstr = kinstructions.StoreScalar(
+        src=reg_addr,
+        scalar_addr=scalar_addr,
+        dst_byte_in_word=scalar_addr % wb,
+        n_bytes_or_bits=size,
+        bit_mode=False,
+        dst_bit_in_byte=0,
+        writeset_ident=writeset_ident,
+        mask_reg=mask_reg,
+        mask_index=mask_index,
+        instr_ident=instr_ident,
+    )
+    await lamlet.add_to_instruction_buffer(kinstr, parent_span_id, k_index=k_index)
 
 
-async def handle_read_mem_word_req(lamlet: 'Oamlet', header, scalar_addr: int):
+async def handle_read_mem_word_req(lamlet: 'Oamlet', header: ReadMemWordHeader,
+                                   scalar_addr: int):
     """Handle unordered READ_MEM_WORD_REQ: read from scalar memory and respond immediately."""
     wb = lamlet.params.word_bytes
     word_addr = scalar_addr - (scalar_addr % wb)
-    data = int.from_bytes(lamlet.scalar.get_memory(scalar_addr, wb), 'little')
+    lamlet.scalar.register_known_read(header.writeset_ident)
+    data = int.from_bytes(await lamlet.scalar.get_memory(
+        scalar_addr, wb, writeset_ident=header.writeset_ident, known=True), 'little')
     resp_header = TaggedHeader(
         target_x=header.source_x,
         target_y=header.source_y,
@@ -863,31 +996,59 @@ async def handle_write_mem_word_req(lamlet: 'Oamlet', header: WriteMemWordHeader
     """Handle WRITE_MEM_WORD_REQ: write to scalar memory and send response."""
     wb = lamlet.params.word_bytes
     word_addr = scalar_addr - (scalar_addr % wb)
-    src_start = header.tag
-    dst_start = header.dst_byte_in_word
-    n_bytes = header.n_bytes
-    src_bytes = src_word.to_bytes(wb, 'little')
-    lamlet.scalar.set_memory(word_addr + dst_start, src_bytes[src_start:src_start + n_bytes])
-    resp_header = TaggedHeader(
-        target_x=header.source_x,
-        target_y=header.source_y,
-        source_x=lamlet.instr_x,
-        source_y=lamlet.instr_y,
-        message_type=MessageType.WRITE_MEM_WORD_RESP,
-        send_type=SendType.SINGLE,
-        length=0,
-        tag=header.tag,
-        ident=header.ident,
-    )
-    packet = [resp_header]
-    jamlet = lamlet.kamlets[0].jamlets[0]
-    transaction_span_id = lamlet.monitor.get_transaction_span_id(
-        header.ident, header.tag, header.source_x, header.source_y,
-        lamlet.instr_x, lamlet.instr_y)
-    assert transaction_span_id is not None
-    await lamlet.send_packet(packet, jamlet, Direction.N, port=0,
-                             parent_span_id=transaction_span_id)
-    logger.debug(
-        f'{lamlet.clock.cycle}: lamlet: WRITE_MEM_WORD_REQ addr=0x{scalar_addr:x} '
-        f'src_start={src_start} dst_start={dst_start} n_bytes={n_bytes} '
-        f'-> ({header.source_x},{header.source_y})')
+    # no_response means this was a known write (pre-registered at dispatch via StoreScalar).
+    # With response means this is a scatter write (not pre-registered).
+    known = header.no_response
+    if header.bit_mode:
+        # Bit-level write: read-modify-write a single byte
+        byte_addr = word_addr + header.dst_byte_in_word
+        existing = (await lamlet.scalar.get_memory(
+            byte_addr, 1, writeset_ident=header.writeset_ident))[0]
+        n_bits = header.n_bytes_or_bits
+        bit_offset = header.dst_bit_in_byte
+        src_byte = (src_word >> (header.dst_byte_in_word * 8)) & 0xFF
+        mask = ((1 << n_bits) - 1) << bit_offset
+        new_byte = (existing & ~mask) | (src_byte & mask)
+        await lamlet.scalar.set_memory(
+            byte_addr, bytes([new_byte]),
+            writeset_ident=header.writeset_ident, known=known)
+    else:
+        src_start = header.tag
+        dst_start = header.dst_byte_in_word
+        n_bytes = header.n_bytes_or_bits
+        src_bytes = src_word.to_bytes(wb, 'little')
+        await lamlet.scalar.set_memory(
+            word_addr + dst_start, src_bytes[src_start:src_start + n_bytes],
+            writeset_ident=header.writeset_ident, known=known)
+    if not header.no_response:
+        resp_header = TaggedHeader(
+            target_x=header.source_x,
+            target_y=header.source_y,
+            source_x=lamlet.instr_x,
+            source_y=lamlet.instr_y,
+            message_type=MessageType.WRITE_MEM_WORD_RESP,
+            send_type=SendType.SINGLE,
+            length=0,
+            tag=header.tag,
+            ident=header.ident,
+        )
+        packet = [resp_header]
+        jamlet = lamlet.kamlets[0].jamlets[0]
+        transaction_span_id = lamlet.monitor.get_transaction_span_id(
+            header.ident, header.tag, header.source_x, header.source_y,
+            lamlet.instr_x, lamlet.instr_y)
+        assert transaction_span_id is not None
+        await lamlet.send_packet(packet, jamlet, Direction.N, port=0,
+                                 parent_span_id=transaction_span_id)
+    if header.bit_mode:
+        logger.debug(
+            f'{lamlet.clock.cycle}: lamlet: WRITE_MEM_WORD_REQ bit_mode '
+            f'addr=0x{scalar_addr:x} byte={header.dst_byte_in_word} '
+            f'bit={header.dst_bit_in_byte} n_bits={header.n_bytes_or_bits} '
+            f'-> ({header.source_x},{header.source_y})')
+    else:
+        logger.debug(
+            f'{lamlet.clock.cycle}: lamlet: WRITE_MEM_WORD_REQ addr=0x{scalar_addr:x} '
+            f'src_start={header.tag} dst_start={header.dst_byte_in_word} '
+            f'n_bytes={header.n_bytes_or_bits} '
+            f'-> ({header.source_x},{header.source_y})')

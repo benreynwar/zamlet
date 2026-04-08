@@ -23,111 +23,114 @@ See test_suite_reference.txt for complete list
 
 Implementation Summary
 ----------------------
-Currently implemented: 5 instructions (ADD, MUL, MACC vector ops, VMSLE.VI compare)
+Currently implemented: ~40 instructions (ADD, SUB, RSUB, AND, OR, XOR, SLL, SRL, SRA,
+MUL, MACC, MADD, NMSAC, NMSUB across VV/VX/VI forms; comparisons; moves; merge)
 Total in spec: ~70 single-width integer arithmetic instructions
-Coverage: ~7%
+Coverage: ~57%
 
-ADDITION AND SUBTRACTION (Status: ⚠ Partial)
-=============================================
+ADDITION AND SUBTRACTION (Status: ✓)
+=====================================
 
 Spec: v-st-ext.adoc lines 2372-2395
 
-VADD.VV, VADD.VX (Status: ✓ Partial)
+VADD.VV, VADD.VX (Status: ✓)
   Format: vadd.vv vd, vs2, vs1, vm / vadd.vx vd, vs2, rs1, vm
-  Implementation: VArithVx class with VArithOp.ADD in instructions/vector.py
+  Implementation: VArithVv/VArithVx with VArithOp.ADD in instructions/vector.py
   Decoding: Search decode.py for "VArithOp.ADD"
-  Notes:
-    - Only .vx form implemented
-    - Missing .vv and .vi forms
-    - TODO: Add decode for .vv and .vi variants
 
-VADD.VI (Status: ✗)
+VADD.VI (Status: ✓)
   Format: vadd.vi vd, vs2, imm, vm
-  Implementation: Not implemented
-  Notes: Vector-immediate add
+  Implementation: VArithVi with VArithOp.ADD in instructions/vector.py
 
-VSUB.VV, VSUB.VX (Status: ✗)
+VSUB.VV, VSUB.VX (Status: ✓)
   Spec: v-st-ext.adoc line 2384-2385
   Format: vsub.vv vd, vs2, vs1, vm / vsub.vx vd, vs2, rs1, vm
-  Implementation: Not implemented
-  Notes: Vector subtract operations
+  Implementation: VArithVv/VArithVx with VArithOp.SUB in instructions/vector.py
 
-VRSUB.VX, VRSUB.VI (Status: ✗)
+VRSUB.VX, VRSUB.VI (Status: ✓)
   Spec: v-st-ext.adoc line 2388-2389
   Format: vrsub.vx vd, vs2, rs1, vm / vrsub.vi vd, vs2, imm, vm
-  Implementation: Not implemented
+  Implementation: VArithVx/VArithVi with VArithOp.RSUB in instructions/vector.py
   Description: Reverse subtract vd[i] = rs1/imm - vs2[i]
   Notes: Used for negation with x0 (pseudoinstruction vneg.v)
 
-BITWISE LOGICAL OPERATIONS (Status: ✗)
+BITWISE LOGICAL OPERATIONS (Status: ✓)
 =======================================
 
 Spec: v-st-ext.adoc lines 2572-2592
 
-VAND.VV, VAND.VX, VAND.VI (Status: ✗)
-VOR.VV, VOR.VX, VOR.VI (Status: ✗)
-VXOR.VV, VXOR.VX, VXOR.VI (Status: ✗)
+VAND.VV, VAND.VX, VAND.VI (Status: ✓)
+VOR.VV, VOR.VX, VOR.VI (Status: ✓)
+VXOR.VV, VXOR.VX, VXOR.VI (Status: ✓)
   Spec: v-st-ext.adoc lines 2576-2586
-  Implementation: Not implemented
+  Implementation: VArithVv/VArithVx/VArithVi with VArithOp.AND/OR/XOR
+  Decoding: Search decode.py for "VArithOp.AND", "VArithOp.OR", "VArithOp.XOR"
   Notes: Basic bitwise AND, OR, XOR operations
         vnot.v pseudoinstruction = vxor.vi vd,vs,-1
 
-SHIFT OPERATIONS (Status: ✗)
+SHIFT OPERATIONS (Status: ✓)
 =============================
 
 Spec: v-st-ext.adoc lines 2593-2618
 
-VSLL.VV, VSLL.VX, VSLL.VI (Status: ✗)
+VSLL.VV, VSLL.VX, VSLL.VI (Status: ✓)
   Description: Shift left logical
+  Implementation: VArithVv/VArithVx/VArithVi with VArithOp.SLL
   Notes: Only low lg2(SEW) bits of shift amount used
 
-VSRL.VV, VSRL.VX, VSRL.VI (Status: ✗)
+VSRL.VV, VSRL.VX, VSRL.VI (Status: ✓)
   Description: Shift right logical (zero-extending)
+  Implementation: VArithVv/VArithVx/VArithVi with VArithOp.SRL
 
-VSRA.VV, VSRA.VX, VSRA.VI (Status: ✗)
+VSRA.VV, VSRA.VX, VSRA.VI (Status: ✓)
   Description: Shift right arithmetic (sign-extending)
+  Implementation: VArithVv/VArithVx/VArithVi with VArithOp.SRA
 
-COMPARISON OPERATIONS (Status: ⚠ Partial)
-==========================================
+COMPARISON OPERATIONS (Status: ✓)
+==================================
 
 Spec: v-st-ext.adoc lines 2648-2817
 Note: Comparisons write 1-bit mask values to destination
 
-VMSEQ.VV, VMSEQ.VX, VMSEQ.VI (Status: ✗)
+VMSEQ.VV, VMSEQ.VX, VMSEQ.VI (Status: ✓)
   Description: Set if equal
+  Implementation: VCmpVv/VCmpVx/VCmpVi with VCmpOp.EQ
 
-VMSNE.VV, VMSNE.VX, VMSNE.VI (Status: ✗)
+VMSNE.VV, VMSNE.VX, VMSNE.VI (Status: ✓)
   Description: Set if not equal
+  Implementation: VCmpVv/VCmpVx/VCmpVi with VCmpOp.NE
 
-VMSLTU.VV, VMSLTU.VX (Status: ✗)
+VMSLTU.VV, VMSLTU.VX (Status: ✓)
   Description: Set if less than, unsigned
+  Implementation: VCmpVv/VCmpVx with VCmpOp.LTU
+  Notes: No .vi form in spec
 
-VMSLT.VV, VMSLT.VX (Status: ✗)
+VMSLT.VV, VMSLT.VX (Status: ✓)
   Description: Set if less than, signed
+  Implementation: VCmpVv/VCmpVx with VCmpOp.LT
+  Notes: No .vi form in spec
 
-VMSLEU.VV, VMSLEU.VX, VMSLEU.VI (Status: ✗)
+VMSLEU.VV, VMSLEU.VX, VMSLEU.VI (Status: ✓)
   Description: Set if less than or equal, unsigned
+  Implementation: VCmpVv/VCmpVx/VCmpVi with VCmpOp.LEU
 
-VMSLE.VV, VMSLE.VX (Status: ✗)
-  Description: Set if less than or equal, signed
-
-VMSLE.VI (Status: ✓)
+VMSLE.VV, VMSLE.VX, VMSLE.VI (Status: ✓)
   Spec: v-st-ext.adoc line 2684
-  Format: vmsle.vi vd, vs2, simm5, vm
-  Implementation: class VmsleVi in instructions/vector.py
-  Decoding: Search decode.py for "VmsleVi"
+  Description: Set if less than or equal, signed
+  Implementation: VCmpVv/VCmpVx/VCmpVi with VCmpOp.LE
   Notes:
-    - Fully implemented
     - Sets mask register with 1-bit elements
     - Used in conditional test
 
-VMSGTU.VX, VMSGTU.VI (Status: ✗)
+VMSGTU.VX, VMSGTU.VI (Status: ✓)
   Description: Set if greater than, unsigned
-  Notes: Only .vx and .vi forms (no .vv)
+  Implementation: VCmpVx/VCmpVi with VCmpOp.GTU
+  Notes: Only .vx and .vi forms (no .vv per spec)
 
-VMSGT.VX, VMSGT.VI (Status: ✗)
+VMSGT.VX, VMSGT.VI (Status: ✓)
   Description: Set if greater than, signed
-  Notes: Only .vx and .vi forms (no .vv)
+  Implementation: VCmpVx/VCmpVi with VCmpOp.GT
+  Notes: Only .vx and .vi forms (no .vv per spec)
 
 Pseudoinstructions for Missing Compares:
   - vmsgt{u}.vv: Swap operands and use vmslt{u}.vv
@@ -158,7 +161,7 @@ MULTIPLY OPERATIONS (Status: ⚠ Partial)
 
 Spec: v-st-ext.adoc lines 2841-2878
 
-VMUL.VV, VMUL.VX (Status: ✓ Partial)
+VMUL.VV, VMUL.VX (Status: ✓)
   Spec: v-st-ext.adoc line 2852-2853
   Format: vmul.vv vd, vs2, vs1, vm / vmul.vx vd, vs2, rs1, vm
   Implementation: VArithVv/VArithVx with VArithOp.MUL in instructions/vector.py
@@ -166,7 +169,7 @@ VMUL.VV, VMUL.VX (Status: ✓ Partial)
   Notes:
     - Both .vv and .vx implemented
     - Returns low SEW bits of product
-    - Missing .vi form (not in spec either)
+    - No .vi form in spec
 
 VMULH.VV, VMULH.VX (Status: ✗)
   Description: Signed multiply, return high SEW bits of product
@@ -195,8 +198,8 @@ VREM.VV, VREM.VX (Status: ✗)
   Description: Signed remainder
   Notes: Same semantics as RISC-V scalar divide/remainder
 
-MULTIPLY-ADD OPERATIONS (Status: ⚠ Partial)
-============================================
+MULTIPLY-ADD OPERATIONS (Status: ✓)
+====================================
 
 Spec: v-st-ext.adoc lines 2931-2962
 
@@ -211,16 +214,20 @@ VMACC.VV, VMACC.VX (Status: ✓)
     - Used in dot product operations
     - vd is both source and destination (accumulator)
 
-VNMSAC.VV, VNMSAC.VX (Status: ✗)
+VNMSAC.VV, VNMSAC.VX (Status: ✓)
   Description: vd[i] = vd[i] - (vs1[i] * vs2[i])
-  Notes: Negative multiply-subtract-accumulate
+  Implementation: VArithVv/VArithVx with VArithOp.NMSAC in instructions/vector.py
+  Decoding: Search decode.py for "VArithOp.NMSAC"
 
-VMADD.VV, VMADD.VX (Status: ✗)
+VMADD.VV, VMADD.VX (Status: ✓)
   Description: vd[i] = (vs1[i] * vd[i]) + vs2[i]
-  Notes: Different operand order than vmacc
+  Implementation: VArithVv/VArithVx with VArithOp.MADD in instructions/vector.py
+  Decoding: Search decode.py for "VArithOp.MADD"
 
-VNMSUB.VV, VNMSUB.VX (Status: ✗)
-  Description: vd[i] = (vs1[i] * vd[i]) - vs2[i]
+VNMSUB.VV, VNMSUB.VX (Status: ✓)
+  Description: vd[i] = vs2[i] - (vs1[i] * vd[i])
+  Implementation: VArithVv/VArithVx with VArithOp.NMSUB in instructions/vector.py
+  Decoding: Search decode.py for "VArithOp.NMSUB"
 
 ADD-WITH-CARRY / SUBTRACT-WITH-BORROW (Status: ✗)
 ==================================================
@@ -254,10 +261,12 @@ MERGE AND MOVE OPERATIONS (Status: ⚠ Partial)
 
 Spec: v-st-ext.adoc lines 2987-3009, 3010-3046
 
-VMERGE.VVM, VMERGE.VXM, VMERGE.VIM (Status: ✗)
+VMERGE.VVM, VMERGE.VXM, VMERGE.VIM (Status: ✓)
   Spec: v-st-ext.adoc lines 2987-3009
   Description: vd[i] = v0.mask[i] ? vs1[i]/rs1/imm : vs2[i]
-  Notes: Used to select between two sources based on mask
+  Implementation: VmergeVvm, VmergeVx, VmergeVim in instructions/vector.py
+  Decoding: Search decode.py for "Vmerge"
+  Notes: Two-step: copy vs2 to vd (unmasked), then masked write of merge source
 
 VMV.V.V (Status: ✓)
   Spec: v-st-ext.adoc line 3010-3046
@@ -285,8 +294,10 @@ VMV.X.S (Status: ✓)
   Description: Extract element 0 from vector to scalar
   Notes: rd = vs2[0]
 
-VMV.S.X (Status: ✗)
-  Description: vs2[0] = rs1, vs2[i>0] unchanged
+VMV.S.X (Status: ✓)
+  Description: vd[0] = rs1, vd[i>0] unchanged
+  Implementation: class VmvSx in instructions/vector.py
+  Decoding: Search decode.py for "VmvSx"
   Notes: Opposite of vmv.x.s
 
 Test Coverage

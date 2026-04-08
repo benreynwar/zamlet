@@ -12,7 +12,6 @@ Where:
 - z is int16_t array (output)
 """
 
-import asyncio
 import logging
 import struct
 from random import Random
@@ -27,19 +26,13 @@ from zamlet.addresses import GlobalAddress, MemoryType, Ordering, WordOrder, KMA
 from zamlet.kamlet import kinstructions
 from zamlet.kamlet.kinstructions import Load, Store
 from zamlet.monitor import CompletionType, SpanType
+from zamlet.tests import test_utils
 
 logger = logging.getLogger(__name__)
 
 
-async def update(clock, lamlet):
-    """Update loop for the lamlet"""
-    while True:
-        await clock.next_update
-        lamlet.update()
-
-
-async def run_conditional_simple(clock: Clock, vector_length: int, seed: int, lmul: int,
-                                 params: ZamletParams):
+async def run_conditional_simple(clock: Clock, lamlet: Oamlet, vector_length: int, seed: int,
+                                 lmul: int, params: ZamletParams):
     """
     Simple conditional test with small arrays.
 
@@ -50,12 +43,6 @@ async def run_conditional_simple(clock: Clock, vector_length: int, seed: int, lm
     - a and b are int16 arrays (data to select from)
     - z is int16 array (output)
     """
-    lamlet = Oamlet(clock, params)
-    clock.create_task(update(clock, lamlet))
-    clock.create_task(lamlet.run())
-
-    await clock.next_cycle
-
     # Generate random test data
     rnd = Random(seed)
     vl = vector_length
@@ -158,7 +145,7 @@ async def run_conditional_simple(clock: Clock, vector_length: int, seed: int, lm
 
         # Step 1: Load x into v0 (e8)
         lamlet.vl = iter_count
-        lamlet.vtype = 0x0  # e8, m1
+        lamlet.set_vtype(8, lmul)
         await lamlet.vload(
             vd=0,
             addr=x_addr + iter_start,
@@ -171,7 +158,8 @@ async def run_conditional_simple(clock: Clock, vector_length: int, seed: int, lm
 
         # Step 2: Create mask (x < 5)
         instr_ident = await lamlet.get_instr_ident()
-        vmsle_instr = kinstructions.VmsleViOp(
+        vmsle_instr = kinstructions.VCmpViOp(
+            op=kinstructions.VCmpOp.LE,
             dst=0,
             src=0,
             simm5=4,
@@ -183,7 +171,7 @@ async def run_conditional_simple(clock: Clock, vector_length: int, seed: int, lm
         await lamlet.add_to_instruction_buffer(vmsle_instr, span_id)
 
         # Step 3: Load a into v1 (e16, unmasked)
-        lamlet.vtype = 0x1  # e16, m1
+        lamlet.set_vtype(16, lmul)
         await lamlet.vload(
             vd=1,
             addr=a_addr + iter_start * 2,
@@ -258,26 +246,16 @@ async def run_conditional_simple(clock: Clock, vector_length: int, seed: int, lm
         return 1
 
 
-async def main(clock, vector_length: int, seed: int, lmul: int, params: ZamletParams):
-    clock.register_main()
-
-    clock_driver_task = clock.create_task(clock.clock_driver())
-    exit_code = await run_conditional_simple(clock, vector_length, seed, lmul, params)
-
-    logger.warning(f"Test completed with exit_code: {exit_code}")
-    clock.running = False
-
-    return exit_code
-
-
 def run_test(vector_length: int, seed: int = 0, lmul: int = 4,
-             params: ZamletParams = None):
+             params: ZamletParams = None, dump_spans: bool = False, max_cycles: int = 5000):
     """Helper to run a single test configuration."""
     if params is None:
         params = ZamletParams()
-    clock = Clock(max_cycles=5000)
-    exit_code = asyncio.run(main(clock, vector_length, seed, lmul, params))
-    assert exit_code == 0, f"Test failed with exit_code={exit_code}"
+
+    async def test_fn(clock: Clock, lamlet: Oamlet):
+        return await run_conditional_simple(clock, lamlet, vector_length, seed, lmul, params)
+
+    test_utils.run_test(test_fn, params, max_cycles=max_cycles, dump_spans=dump_spans)
 
 
 def random_test_config(rnd: Random):
@@ -323,6 +301,10 @@ if __name__ == '__main__':
                         help='Geometry name (default: k2x1_j1x1)')
     parser.add_argument('--list-geometries', action='store_true',
                         help='List available geometries and exit')
+    parser.add_argument('--dump-spans', action='store_true',
+                        help='Dump span trees to span_trees.txt')
+    parser.add_argument('--max-cycles', type=int, default=5000,
+                        help='Maximum simulation cycles (default: 5000)')
     args = parser.parse_args()
 
     if args.list_geometries:
@@ -330,35 +312,9 @@ if __name__ == '__main__':
         print(list_geometries())
         sys.exit(0)
 
+    logging.basicConfig(level=logging.DEBUG, stream=sys.stdout,
+                        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+
     params = get_geometry(args.geometry)
-
-    level = logging.DEBUG
-    root_logger = logging.getLogger()
-    root_logger.setLevel(level)
-    handler = logging.StreamHandler(sys.stdout)
-    handler.setLevel(level)
-    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    handler.setFormatter(formatter)
-    root_logger.addHandler(handler)
-
-    clock = Clock(max_cycles=5000)
-    exit_code = None
-    try:
-        logger.info(f'Starting with vector_length={args.vector_length}, seed={args.seed}, '
-                    f'lmul={args.lmul}, geometry={args.geometry}')
-        exit_code = asyncio.run(main(clock, args.vector_length, args.seed, args.lmul, params))
-    except KeyboardInterrupt:
-        root_logger.warning('Test interrupted by user')
-        sys.exit(1)
-    except Exception as e:
-        root_logger.error(f'Test FAILED with exception: {e}')
-        import traceback
-        traceback.print_exc()
-        sys.exit(1)
-
-    if exit_code == 0:
-        root_logger.warning('========== TEST PASSED ==========')
-    else:
-        root_logger.warning(f'========== TEST FAILED (exit code: {exit_code}) ==========')
-
-    sys.exit(exit_code)
+    run_test(vector_length=args.vector_length, seed=args.seed, lmul=args.lmul,
+             params=params, dump_spans=args.dump_spans, max_cycles=args.max_cycles)

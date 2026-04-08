@@ -37,12 +37,13 @@ The nf field encodes NFIELDS (number of fields) from 1 to 8.
 UNIT-STRIDE SEGMENT LOADS
 --------------------------
 
-VLSEG2E8.V through VLSEG8E8.V (Status: ✗)
+VLSEG2E8.V through VLSEG8E8.V (Status: ⚠)
   Spec: v-st-ext.adoc lines 1825-1888, vmem-format.edn
   Format: vlseg<nf>e8.v vd, (rs1), vm
   Encoding: nf|mew|00|vm|lumop|rs1|000|vd|0000111
            mop=00, width=000, nf encodes NFIELDS-1
-  Implementation: Not implemented
+  Implementation: class VlsegV in instructions/vector.py (decoded but vsegload() not implemented)
+  Decoding: Search decode.py for "VlsegV"
   Description: Unit-stride segment load of 8-bit fields
   Notes:
     - NFIELDS from 2-8 (nf from 1-7, when nf=0 it's regular vle8)
@@ -55,51 +56,51 @@ VLSEG2E8.V through VLSEG8E8.V (Status: ✗)
     - TODO: Add segment decoding logic to decode.py
     - TODO: Create instruction classes for each NFIELDS/EEW combination
 
-VLSEG2E16.V through VLSEG8E16.V (Status: ✗)
+VLSEG2E16.V through VLSEG8E16.V (Status: ⚠)
   Spec: v-st-ext.adoc lines 1825-1888, vmem-format.edn
   Format: vlseg<nf>e16.v vd, (rs1), vm
   Encoding: nf|mew|00|vm|lumop|rs1|101|vd|0000111
            mop=00, width=101, nf encodes NFIELDS-1
-  Implementation: Not implemented
+  Implementation: class VlsegV in instructions/vector.py (decoded but vsegload() not implemented)
   Description: Unit-stride segment load of 16-bit fields
 
-VLSEG2E32.V through VLSEG8E32.V (Status: ✗)
+VLSEG2E32.V through VLSEG8E32.V (Status: ⚠)
   Spec: v-st-ext.adoc lines 1825-1888, vmem-format.edn
   Format: vlseg<nf>e32.v vd, (rs1), vm
   Encoding: nf|mew|00|vm|lumop|rs1|110|vd|0000111
            mop=00, width=110, nf encodes NFIELDS-1
-  Implementation: Not implemented
+  Implementation: class VlsegV in instructions/vector.py (decoded but vsegload() not implemented)
   Description: Unit-stride segment load of 32-bit fields
 
-VLSEG2E64.V through VLSEG8E64.V (Status: ✗)
+VLSEG2E64.V through VLSEG8E64.V (Status: ⚠)
   Spec: v-st-ext.adoc lines 1825-1888, vmem-format.edn
   Format: vlseg<nf>e64.v vd, (rs1), vm
   Encoding: nf|mew|00|vm|lumop|rs1|111|vd|0000111
            mop=00, width=111, nf encodes NFIELDS-1
-  Implementation: Not implemented
+  Implementation: class VlsegV in instructions/vector.py (decoded but vsegload() not implemented)
   Description: Unit-stride segment load of 64-bit fields
 
 UNIT-STRIDE SEGMENT STORES
 ---------------------------
 
-VSSEG2E8.V through VSSEG8E8.V (Status: ✗)
+VSSEG2E8.V through VSSEG8E8.V (Status: ⚠)
   Spec: v-st-ext.adoc lines 1825-1888, vmem-format.edn
   Format: vsseg<nf>e8.v vs3, (rs1), vm
   Encoding: nf|mew|00|vm|sumop|rs1|000|vs3|0100111
            mop=00, width=000, nf encodes NFIELDS-1
-  Implementation: Not implemented
+  Implementation: class VssegV in instructions/vector.py (decoded but vsegstore() not implemented)
+  Decoding: Search decode.py for "VssegV"
   Description: Unit-stride segment store of 8-bit fields
   Notes:
     - Stores NFIELDS consecutive vector registers starting at vs3
-    - TODO: Add segment decoding logic to decode.py
-    - TODO: Create instruction classes for each NFIELDS/EEW combination
+    - TODO: Implement vsegstore() in oamlet.py
 
-VSSEG2E16.V through VSSEG8E16.V (Status: ✗)
-VSSEG2E32.V through VSSEG8E32.V (Status: ✗)
-VSSEG2E64.V through VSSEG8E64.V (Status: ✗)
+VSSEG2E16.V through VSSEG8E16.V (Status: ⚠)
+VSSEG2E32.V through VSSEG8E32.V (Status: ⚠)
+VSSEG2E64.V through VSSEG8E64.V (Status: ⚠)
   Spec: v-st-ext.adoc lines 1825-1888
   Similar to 8-bit variants with different element widths
-  Implementation: Not implemented
+  Implementation: class VssegV in instructions/vector.py (decoded but vsegstore() not implemented)
 
 STRIDED SEGMENT LOADS
 ----------------------
@@ -247,51 +248,51 @@ and vl. Used for context switches, register spills, and function calls.
 WHOLE REGISTER LOADS
 ---------------------
 
-VL1RE8.V, VL1RE16.V, VL1RE32.V, VL1RE64.V (Status: ✗)
+VL1RE8.V, VL1RE16.V, VL1RE32.V, VL1RE64.V (Status: ✓)
   Spec: v-st-ext.adoc lines 1959-2117
   Format: vl1re<eew>.v vd, (rs1)
   Encoding: 000|mew|00|1|01000|rs1|width|vd|0000111
            nf=000 (NFIELDS=1), mop=00, vm=1, lumop=01000
-  Implementation: Not implemented
+  Implementation: class VlrV in instructions/vector.py
+  Decoding: Search decode.py for "VlrV"
   Description: Load 1 whole vector register
   Notes:
     - Loads VLEN/EEW elements (entire register)
     - Effective vl = VLEN/EEW (ignores vtype.vl)
     - EEW provides hint for future access pattern
     - Pseudoinstruction: vl1r.v is alias for vl1re8.v
-    - TODO: Add decode patterns for lumop=01000
-    - TODO: Implement whole register load logic
+    - Uses existing vload() with lmul=nreg
 
-VL2RE8.V, VL2RE16.V, VL2RE32.V, VL2RE64.V (Status: ✗)
+VL2RE8.V, VL2RE16.V, VL2RE32.V, VL2RE64.V (Status: ✓)
   Spec: v-st-ext.adoc lines 1959-2117
   Format: vl2re<eew>.v vd, (rs1)
   Encoding: 001|mew|00|1|01000|rs1|width|vd|0000111
            nf=001 (NFIELDS=2)
-  Implementation: Not implemented
+  Implementation: class VlrV in instructions/vector.py (same class with nreg=2)
   Description: Load 2 whole vector registers (vd, vd+1)
   Notes:
     - vd must be aligned to 2 (even register number)
     - Loads 2*VLEN/EEW total elements
     - Pseudoinstruction: vl2r.v is alias for vl2re8.v
 
-VL4RE8.V, VL4RE16.V, VL4RE32.V, VL4RE64.V (Status: ✗)
+VL4RE8.V, VL4RE16.V, VL4RE32.V, VL4RE64.V (Status: ✓)
   Spec: v-st-ext.adoc lines 1959-2117
   Format: vl4re<eew>.v vd, (rs1)
   Encoding: 011|mew|00|1|01000|rs1|width|vd|0000111
            nf=011 (NFIELDS=4)
-  Implementation: Not implemented
+  Implementation: class VlrV in instructions/vector.py (same class with nreg=4)
   Description: Load 4 whole vector registers (vd through vd+3)
   Notes:
     - vd must be aligned to 4
     - Loads 4*VLEN/EEW total elements
     - Pseudoinstruction: vl4r.v is alias for vl4re8.v
 
-VL8RE8.V, VL8RE16.V, VL8RE32.V, VL8RE64.V (Status: ✗)
+VL8RE8.V, VL8RE16.V, VL8RE32.V, VL8RE64.V (Status: ✓)
   Spec: v-st-ext.adoc lines 1959-2117
   Format: vl8re<eew>.v vd, (rs1)
   Encoding: 111|mew|00|1|01000|rs1|width|vd|0000111
            nf=111 (NFIELDS=8)
-  Implementation: Not implemented
+  Implementation: class VlrV in instructions/vector.py (same class with nreg=8)
   Description: Load 8 whole vector registers (vd through vd+7)
   Notes:
     - vd must be aligned to 8
@@ -301,45 +302,45 @@ VL8RE8.V, VL8RE16.V, VL8RE32.V, VL8RE64.V (Status: ✗)
 WHOLE REGISTER STORES
 ----------------------
 
-VS1R.V (Status: ✗)
+VS1R.V (Status: ✓)
   Spec: v-st-ext.adoc lines 1959-2117
   Format: vs1r.v vs3, (rs1)
   Encoding: 000|0|00|1|01000|rs1|000|vs3|0100111
            nf=000 (NFIELDS=1), mop=00, vm=1, sumop=01000, width=000
-  Implementation: Not implemented
+  Implementation: class VsrV in instructions/vector.py
+  Decoding: Search decode.py for "VsrV"
   Description: Store 1 whole vector register
   Notes:
     - Stores VLEN/8 bytes (treated as EEW=8)
     - Effective vl = VLEN/8 (ignores vtype.vl)
-    - TODO: Add decode patterns for sumop=01000
-    - TODO: Implement whole register store logic
+    - Uses existing vstore() infrastructure
 
-VS2R.V (Status: ✗)
+VS2R.V (Status: ✓)
   Spec: v-st-ext.adoc lines 1959-2117
   Format: vs2r.v vs3, (rs1)
   Encoding: 001|0|00|1|01000|rs1|000|vs3|0100111
            nf=001 (NFIELDS=2)
-  Implementation: Not implemented
+  Implementation: class VsrV in instructions/vector.py (same class with nreg=2)
   Description: Store 2 whole vector registers (vs3, vs3+1)
   Notes:
     - vs3 must be aligned to 2
 
-VS4R.V (Status: ✗)
+VS4R.V (Status: ✓)
   Spec: v-st-ext.adoc lines 1959-2117
   Format: vs4r.v vs3, (rs1)
   Encoding: 011|0|00|1|01000|rs1|000|vs3|0100111
            nf=011 (NFIELDS=4)
-  Implementation: Not implemented
+  Implementation: class VsrV in instructions/vector.py (same class with nreg=4)
   Description: Store 4 whole vector registers (vs3 through vs3+3)
   Notes:
     - vs3 must be aligned to 4
 
-VS8R.V (Status: ✗)
+VS8R.V (Status: ✓)
   Spec: v-st-ext.adoc lines 1959-2117
   Format: vs8r.v vs3, (rs1)
   Encoding: 111|0|00|1|01000|rs1|000|vs3|0100111
            nf=111 (NFIELDS=8)
-  Implementation: Not implemented
+  Implementation: class VsrV in instructions/vector.py (same class with nreg=8)
   Description: Store 8 whole vector registers (vs3 through vs3+7)
   Notes:
     - vs3 must be aligned to 8

@@ -538,6 +538,20 @@ class Monitor:
             return dispatch_events[0].cycle
         return None
 
+    def release_kinstr_ident(self, instr_ident: int) -> None:
+        """Mark a kinstr's ident as released from ident tracking.
+
+        The span stays open (it still has in-flight child spans like messages),
+        but the ident is no longer considered active for ident query purposes.
+        Used for fire-and-forget instructions where the kamlet frees the ident
+        before the span completes.
+        """
+        if not self.enabled:
+            return
+        span_id = self._kinstr_by_ident.get(instr_ident)
+        if span_id is not None:
+            self.spans[span_id].details["ident_released"] = True
+
     def complete_kinstr(self, instr_ident: int) -> None:
         """Complete a kinstr span by its instr_ident."""
         if not self.enabled:
@@ -590,7 +604,10 @@ class Monitor:
         assert self.enabled
         # Filter to regular idents only
         max_tags = self.params.max_response_tags
-        regular_idents = {k: v for k, v in self._kinstr_by_ident.items() if k < max_tags}
+        regular_idents = {
+            k: v for k, v in self._kinstr_by_ident.items()
+            if k < max_tags and not self.spans[v].details.get("ident_released")
+        }
         if not regular_idents:
             return None
         oldest_span_id = min(regular_idents.values())

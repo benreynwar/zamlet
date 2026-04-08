@@ -116,8 +116,19 @@ _start:
   la gp, __global_pointer$
 .option pop
 
-  la  tp, _end + 63
-  and tp, tp, -64
+  # Set tp to TLS segment base. LLD resolves tp-relative offsets as
+  # symbol_offset + (p_vaddr & (p_align - 1)). The linker script aligns
+  # .tdata to p_align so the padding term is 0 and tp = _tdata_begin works.
+  la  tp, _tdata_begin
+
+  # Zero .tbss in place. .tdata is already loaded at its VMA by the ELF loader.
+  la a0, _tdata_end
+  la a1, _tbss_end
+1:bgeu a0, a1, 2f
+  SREG zero, 0(a0)
+  addi a0, a0, REGBYTES
+  j 1b
+2:
 
   # get core id
   csrr a0, mhartid
@@ -125,13 +136,13 @@ _start:
   li a1, 1
 1:bgeu a0, a1, 1b
 
-  # give each core 128KB of stack + TLS
+  # Set up stack: 128KB per core, based above _end.
 #define STKSHIFT 17
-  add sp, a0, 1
-  sll sp, sp, STKSHIFT
-  add sp, sp, tp
-  sll a2, a0, STKSHIFT
-  add tp, tp, a2
+  la sp, _end + 63
+  and sp, sp, -64
+  add a2, a0, 1
+  sll a2, a2, STKSHIFT
+  add sp, sp, a2
 
   j _init
 

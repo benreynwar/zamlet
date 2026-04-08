@@ -25,9 +25,11 @@ py_library(
         "test_cocotb_memlet.py",
         "test_write_read.py",
         "memlet_driver.py",
+        "model_driver.py",
         "cocotb_driver.py",
     ],
     deps = ["//python/zamlet:zamlet"],
+    visibility = ["//python/zamlet/tests:__pkg__"],
 )
 
 cocotb_test(

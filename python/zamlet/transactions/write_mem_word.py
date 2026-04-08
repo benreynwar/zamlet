@@ -83,7 +83,7 @@ async def handle_req(jamlet: 'Jamlet', packet: List[Any]) -> None:
     data = packet[2]
     src_start = header.tag
     dst_start = header.dst_byte_in_word
-    n_bytes = header.n_bytes
+    n_bytes = header.n_bytes_or_bits
     assert header.message_type == MessageType.WRITE_MEM_WORD_REQ
 
     # Check if the parent instruction exists on this jamlet
@@ -299,7 +299,7 @@ async def do_write_and_respond(jamlet: 'Jamlet', rcvd_header: WriteMemWordHeader
         tag=rcvd_header.tag,
         ident=rcvd_header.ident,
         dst_byte_in_word=0,
-        n_bytes=0)
+        n_bytes_or_bits=0)
     await jamlet.send_packet([header], parent_span_id=transaction_span_id)
 
 
@@ -314,7 +314,7 @@ async def send_drop(jamlet: 'Jamlet', rcvd_header: WriteMemWordHeader) -> None:
         tag=rcvd_header.tag,
         ident=rcvd_header.ident,
         dst_byte_in_word=0,
-        n_bytes=0)
+        n_bytes_or_bits=0)
     # Look up transaction (requester is source, we are dest)
     transaction_span_id = jamlet.monitor.get_transaction_span_id(
         rcvd_header.ident, rcvd_header.tag,
@@ -336,7 +336,7 @@ async def send_retry(jamlet: 'Jamlet', rcvd_header: WriteMemWordHeader) -> None:
         tag=rcvd_header.tag,
         ident=rcvd_header.ident,
         dst_byte_in_word=0,
-        n_bytes=0)
+        n_bytes_or_bits=0)
     # Look up transaction (requester is source, we are dest)
     transaction_span_id = jamlet.monitor.get_transaction_span_id(
         rcvd_header.ident, rcvd_header.tag,

@@ -369,40 +369,43 @@ def decode_standard(instruction_bytes: bytes) -> Instruction:
             return CUSTOM.EndWriteset()
 
     elif opcode == 0x07:
-        nf = (inst >> 29) & 0x7  # Number of fields - 1 (0 = 1 field, 7 = 8 fields)
-        mop = (inst >> 26) & 0x3
-        vm = (inst >> 25) & 0x1
-        lumop = rs2  # For unit-stride loads, rs2 field holds lumop
         width = funct3
-        # Map width field to element width
-        width_map = {0x0: 8, 0x5: 16, 0x6: 32, 0x7: 64}
-        if mop == 0x0 and lumop == 8:
-            # Whole register load (vl1r, vl2r, vl4r, vl8r)
-            # nf encodes number of registers: 0->1, 1->2, 3->4, 7->8
-            nreg_map = {0: 1, 1: 2, 3: 4, 7: 8}
-            assert nf in nreg_map, f"Invalid nf={nf} for whole register load"
-            return V.VlrV(vd=rd, rs1=rs1, nreg=nreg_map[nf])
-        elif mop == 0x0 and width in width_map:
-            # Unit-stride load
-            ew = width_map[width]
-            if nf == 0:
-                # Regular unit-stride load (vle*.v)
-                return V.VleV(vd=rd, rs1=rs1, vm=vm, element_width=ew)
-            else:
-                # Segment load (vlseg*.v) - nf+1 fields
-                return V.VlsegV(vd=rd, rs1=rs1, vm=vm, element_width=ew, nf=nf + 1)
-        elif mop == 0x1 and width in width_map:
-            # Indexed-unordered load (vluxei*.v)
-            index_ew = width_map[width]
-            return V.VIndexedLoad(vd=rd, rs1=rs1, vs2=rs2, vm=vm, index_width=index_ew, ordered=False)
-        elif mop == 0x2 and width in width_map:
-            # Constant-stride load (vlse*.v)
-            ew = width_map[width]
-            return V.VlseV(vd=rd, rs1=rs1, rs2=rs2, vm=vm, element_width=ew)
-        elif mop == 0x3 and width in width_map:
-            # Indexed-ordered load (vloxei*.v)
-            index_ew = width_map[width]
-            return V.VIndexedLoad(vd=rd, rs1=rs1, vs2=rs2, vm=vm, index_width=index_ew, ordered=True)
+        # Width field discriminates vector vs scalar FP loads.
+        # Vector: 000(8b), 101(16b), 110(32b), 111(64b)
+        # Scalar FP: 001(flh), 010(flw), 011(fld), 100(flq)
+        vector_width_map = {0x0: 8, 0x5: 16, 0x6: 32, 0x7: 64}
+        if width in vector_width_map:
+            nf = (inst >> 29) & 0x7
+            mop = (inst >> 26) & 0x3
+            vm = (inst >> 25) & 0x1
+            lumop = rs2
+            ew = vector_width_map[width]
+            if mop == 0x0 and lumop == 8:
+                # Whole register load (vl1re8, vl2re8, vl4re8, vl8re8, etc.)
+                nreg_map = {0: 1, 1: 2, 3: 4, 7: 8}
+                assert nf in nreg_map, f"Invalid nf={nf} for whole register load"
+                return V.VlrV(vd=rd, rs1=rs1, nreg=nreg_map[nf])
+            elif mop == 0x0:
+                # Unit-stride load
+                if nf == 0:
+                    return V.VleV(vd=rd, rs1=rs1, vm=vm, element_width=ew)
+                else:
+                    return V.VlsegV(
+                        vd=rd, rs1=rs1, vm=vm, element_width=ew, nf=nf + 1,
+                    )
+            elif mop == 0x1:
+                # Indexed-unordered load (vluxei*.v)
+                return V.VIndexedLoad(
+                    vd=rd, rs1=rs1, vs2=rs2, vm=vm, index_width=ew, ordered=False,
+                )
+            elif mop == 0x2:
+                # Constant-stride load (vlse*.v)
+                return V.VlseV(vd=rd, rs1=rs1, rs2=rs2, vm=vm, element_width=ew)
+            elif mop == 0x3:
+                # Indexed-ordered load (vloxei*.v)
+                return V.VIndexedLoad(
+                    vd=rd, rs1=rs1, vs2=rs2, vm=vm, index_width=ew, ordered=True,
+                )
         elif width == 0x2:
             return F.Flw(fd=rd, rs1=rs1, imm=decode_i_imm(inst))
         elif width == 0x3:
@@ -465,41 +468,43 @@ def decode_standard(instruction_bytes: bytes) -> Instruction:
             return M.Sd(rs1=rs1, rs2=rs2, imm=imm)
 
     elif opcode == 0x27:
-        nf = (inst >> 29) & 0x7  # Number of fields - 1 (0 = 1 field, 7 = 8 fields)
-        mop = (inst >> 26) & 0x3
-        vm = (inst >> 25) & 0x1
-        sumop = rs2  # For unit-stride stores, rs2 field holds sumop
         width = funct3
         vs3 = rd
-        # Map width field to element width
-        width_map = {0x0: 8, 0x5: 16, 0x6: 32, 0x7: 64}
-        if mop == 0x0 and sumop == 8:
-            # Whole register store (vs1r, vs2r, vs4r, vs8r)
-            # nf encodes number of registers: 0->1, 1->2, 3->4, 7->8
-            nreg_map = {0: 1, 1: 2, 3: 4, 7: 8}
-            assert nf in nreg_map, f"Invalid nf={nf} for whole register store"
-            return V.VsrV(vs3=vs3, rs1=rs1, nreg=nreg_map[nf])
-        elif mop == 0x0 and width in width_map:
-            # Unit-stride store
-            ew = width_map[width]
-            if nf == 0:
-                # Regular unit-stride store (vse*.v)
-                return V.VseV(vs3=vs3, rs1=rs1, vm=vm, element_width=ew)
-            else:
-                # Segment store (vsseg*.v) - nf+1 fields
-                return V.VssegV(vs3=vs3, rs1=rs1, vm=vm, element_width=ew, nf=nf + 1)
-        elif mop == 0x1 and width in width_map:
-            # Indexed-unordered store (vsuxei*.v)
-            index_ew = width_map[width]
-            return V.VIndexedStore(vs3=vs3, rs1=rs1, vs2=rs2, vm=vm, index_width=index_ew, ordered=False)
-        elif mop == 0x2 and width in width_map:
-            # Constant-stride store (vsse*.v)
-            ew = width_map[width]
-            return V.VsseV(vs3=vs3, rs1=rs1, rs2=rs2, vm=vm, element_width=ew)
-        elif mop == 0x3 and width in width_map:
-            # Indexed-ordered store (vsoxei*.v)
-            index_ew = width_map[width]
-            return V.VIndexedStore(vs3=vs3, rs1=rs1, vs2=rs2, vm=vm, index_width=index_ew, ordered=True)
+        vector_width_map = {0x0: 8, 0x5: 16, 0x6: 32, 0x7: 64}
+        if width in vector_width_map:
+            nf = (inst >> 29) & 0x7
+            mop = (inst >> 26) & 0x3
+            vm = (inst >> 25) & 0x1
+            sumop = rs2
+            ew = vector_width_map[width]
+            if mop == 0x0 and sumop == 8:
+                # Whole register store (vs1r, vs2r, vs4r, vs8r)
+                nreg_map = {0: 1, 1: 2, 3: 4, 7: 8}
+                assert nf in nreg_map, f"Invalid nf={nf} for whole register store"
+                return V.VsrV(vs3=vs3, rs1=rs1, nreg=nreg_map[nf])
+            elif mop == 0x0:
+                # Unit-stride store
+                if nf == 0:
+                    return V.VseV(vs3=vs3, rs1=rs1, vm=vm, element_width=ew)
+                else:
+                    return V.VssegV(
+                        vs3=vs3, rs1=rs1, vm=vm, element_width=ew, nf=nf + 1,
+                    )
+            elif mop == 0x1:
+                # Indexed-unordered store (vsuxei*.v)
+                return V.VIndexedStore(
+                    vs3=vs3, rs1=rs1, vs2=rs2, vm=vm, index_width=ew, ordered=False,
+                )
+            elif mop == 0x2:
+                # Constant-stride store (vsse*.v)
+                return V.VsseV(
+                    vs3=vs3, rs1=rs1, rs2=rs2, vm=vm, element_width=ew,
+                )
+            elif mop == 0x3:
+                # Indexed-ordered store (vsoxei*.v)
+                return V.VIndexedStore(
+                    vs3=vs3, rs1=rs1, vs2=rs2, vm=vm, index_width=ew, ordered=True,
+                )
         elif width == 0x2:
             return F.Fsw(rs2=rs2, rs1=rs1, imm=decode_s_imm(inst))
         elif width == 0x3:
@@ -629,11 +634,88 @@ def decode_standard(instruction_bytes: bytes) -> Instruction:
             uimm = (inst >> 15) & 0x1f
             vtypei = (inst >> 20) & 0x3ff
             return V.Vsetivli(rd=rd, uimm=uimm, vtypei=vtypei)
+        # OPFVF (funct3 = 0x5) - floating-point vector-scalar
+        elif funct6 == 0x00 and funct3 == 0x5:
+            return V.VArithVxFloat(vd=rd, rs1=rs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.FADD)
+        elif funct6 == 0x02 and funct3 == 0x5:
+            return V.VArithVxFloat(vd=rd, rs1=rs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.FSUB)
+        elif funct6 == 0x27 and funct3 == 0x5:
+            return V.VArithVxFloat(vd=rd, rs1=rs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.FRSUB)
+        elif funct6 == 0x04 and funct3 == 0x5:
+            return V.VArithVxFloat(vd=rd, rs1=rs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.FMIN)
+        elif funct6 == 0x06 and funct3 == 0x5:
+            return V.VArithVxFloat(vd=rd, rs1=rs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.FMAX)
+        elif funct6 == 0x24 and funct3 == 0x5:
+            return V.VArithVxFloat(vd=rd, rs1=rs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.FMUL)
+        elif funct6 == 0x20 and funct3 == 0x5:
+            return V.VArithVxFloat(vd=rd, rs1=rs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.FDIV)
+        elif funct6 == 0x21 and funct3 == 0x5:
+            return V.VArithVxFloat(vd=rd, rs1=rs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.FRDIV)
+        elif funct6 == 0x28 and funct3 == 0x5:
+            return V.VArithVxFloat(vd=rd, rs1=rs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.FMADD)
+        elif funct6 == 0x29 and funct3 == 0x5:
+            return V.VArithVxFloat(vd=rd, rs1=rs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.FNMADD)
+        elif funct6 == 0x2a and funct3 == 0x5:
+            return V.VArithVxFloat(vd=rd, rs1=rs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.FMSUB)
+        elif funct6 == 0x2b and funct3 == 0x5:
+            return V.VArithVxFloat(vd=rd, rs1=rs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.FNMSUB)
         elif funct6 == 0x2c and funct3 == 0x5:
-            return V.VArithVxFloat(vd=rd, rs1=rs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.MACC)
+            return V.VArithVxFloat(vd=rd, rs1=rs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.FMACC)
+        elif funct6 == 0x2d and funct3 == 0x5:
+            return V.VArithVxFloat(vd=rd, rs1=rs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.FNMACC)
+        elif funct6 == 0x2e and funct3 == 0x5:
+            return V.VArithVxFloat(vd=rd, rs1=rs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.FMSAC)
+        elif funct6 == 0x2f and funct3 == 0x5:
+            return V.VArithVxFloat(vd=rd, rs1=rs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.FNMSAC)
+        # OPMVV (funct3 = 0x2) - single-width integer reductions
         elif funct6 == 0x00 and funct3 == 0x2:
             vs1 = rs1
-            return V.VreductionVs(vd=rd, vs2=vs2, vs1=vs1, vm=vm, op=kinstructions.VRedOp.SUM)
+            return V.Vreduction(vd=rd, vs2=vs2, vs1=vs1, vm=vm, op=kinstructions.VRedOp.SUM)
+        elif funct6 == 0x01 and funct3 == 0x2:
+            vs1 = rs1
+            return V.Vreduction(vd=rd, vs2=vs2, vs1=vs1, vm=vm, op=kinstructions.VRedOp.AND)
+        elif funct6 == 0x02 and funct3 == 0x2:
+            vs1 = rs1
+            return V.Vreduction(vd=rd, vs2=vs2, vs1=vs1, vm=vm, op=kinstructions.VRedOp.OR)
+        elif funct6 == 0x03 and funct3 == 0x2:
+            vs1 = rs1
+            return V.Vreduction(vd=rd, vs2=vs2, vs1=vs1, vm=vm, op=kinstructions.VRedOp.XOR)
+        elif funct6 == 0x04 and funct3 == 0x2:
+            vs1 = rs1
+            return V.Vreduction(vd=rd, vs2=vs2, vs1=vs1, vm=vm, op=kinstructions.VRedOp.MINU)
+        elif funct6 == 0x05 and funct3 == 0x2:
+            vs1 = rs1
+            return V.Vreduction(vd=rd, vs2=vs2, vs1=vs1, vm=vm, op=kinstructions.VRedOp.MIN)
+        elif funct6 == 0x06 and funct3 == 0x2:
+            vs1 = rs1
+            return V.Vreduction(vd=rd, vs2=vs2, vs1=vs1, vm=vm, op=kinstructions.VRedOp.MAXU)
+        elif funct6 == 0x07 and funct3 == 0x2:
+            vs1 = rs1
+            return V.Vreduction(vd=rd, vs2=vs2, vs1=vs1, vm=vm, op=kinstructions.VRedOp.MAX)
+        # OPFVV (funct3 = 0x1) - single-width float reductions
+        elif funct6 == 0x01 and funct3 == 0x1:
+            vs1 = rs1
+            return V.Vreduction(vd=rd, vs2=vs2, vs1=vs1, vm=vm, op=kinstructions.VRedOp.FSUM)
+        elif funct6 == 0x05 and funct3 == 0x1:
+            vs1 = rs1
+            return V.Vreduction(vd=rd, vs2=vs2, vs1=vs1, vm=vm, op=kinstructions.VRedOp.FMIN)
+        elif funct6 == 0x07 and funct3 == 0x1:
+            vs1 = rs1
+            return V.Vreduction(vd=rd, vs2=vs2, vs1=vs1, vm=vm, op=kinstructions.VRedOp.FMAX)
+        # OPIVV (funct3 = 0x0) - widening integer reductions
+        elif funct6 == 0x30 and funct3 == 0x0:
+            vs1 = rs1
+            return V.Vreduction(
+                vd=rd, vs2=vs2, vs1=vs1, vm=vm, op=kinstructions.VRedOp.WSUMU)
+        elif funct6 == 0x31 and funct3 == 0x0:
+            vs1 = rs1
+            return V.Vreduction(
+                vd=rd, vs2=vs2, vs1=vs1, vm=vm, op=kinstructions.VRedOp.WSUM)
+        # OPFVV (funct3 = 0x1) - widening float reduction
+        elif funct6 == 0x31 and funct3 == 0x1:
+            vs1 = rs1
+            return V.Vreduction(
+                vd=rd, vs2=vs2, vs1=vs1, vm=vm, op=kinstructions.VRedOp.FWSUM)
         # OPIVV (funct3 = 0x0) - integer vector-vector
         elif funct6 == 0x00 and funct3 == 0x0:
             vs1 = rs1
@@ -664,6 +746,11 @@ def decode_standard(instruction_bytes: bytes) -> Instruction:
             return V.VArithVx(vd=rd, rs1=rs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.ADD)
         elif funct6 == 0x02 and funct3 == 0x4:
             return V.VArithVx(vd=rd, rs1=rs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.SUB)
+        elif funct6 == 0x03 and funct3 == 0x4:
+            return V.VArithVx(vd=rd, rs1=rs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.RSUB)
+        elif funct6 == 0x03 and funct3 == 0x3:
+            simm5 = rs1
+            return V.VArithVi(vd=rd, vs2=vs2, simm5=simm5, vm=vm, op=kinstructions.VArithOp.RSUB)
         elif funct6 == 0x09 and funct3 == 0x4:
             return V.VArithVx(vd=rd, rs1=rs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.AND)
         elif funct6 == 0x0a and funct3 == 0x4:
@@ -698,22 +785,89 @@ def decode_standard(instruction_bytes: bytes) -> Instruction:
         elif funct6 == 0x29 and funct3 == 0x3:
             simm5 = rs1
             return V.VArithVi(vd=rd, vs2=vs2, simm5=simm5, vm=vm, op=kinstructions.VArithOp.SRA)
+        elif funct6 == 0x2c and funct3 == 0x3:
+            uimm = rs1
+            return V.VUnary(vd=rd, vs2=vs2, vm=vm, op=kinstructions.VUnaryOp.NSRL,
+                            factor=2, widening=False, narrowing=True,
+                            mnemonic='vnsrl.wi', shift_amount=uimm)
+        # Comparison .vi forms (funct3=0x3 = OPIVI)
+        elif funct6 == 0x18 and funct3 == 0x3:
+            simm5 = rs1
+            return V.VCmpVi(vd=rd, vs2=vs2, simm5=simm5, vm=vm, op=kinstructions.VCmpOp.EQ)
+        elif funct6 == 0x19 and funct3 == 0x3:
+            simm5 = rs1
+            return V.VCmpVi(vd=rd, vs2=vs2, simm5=simm5, vm=vm, op=kinstructions.VCmpOp.NE)
+        elif funct6 == 0x1c and funct3 == 0x3:
+            simm5 = rs1
+            return V.VCmpVi(vd=rd, vs2=vs2, simm5=simm5, vm=vm, op=kinstructions.VCmpOp.LEU)
         elif funct6 == 0x1d and funct3 == 0x3:
             simm5 = rs1
-            return V.VmsleVi(vd=rd, vs2=vs2, simm5=simm5, vm=vm)
+            return V.VCmpVi(vd=rd, vs2=vs2, simm5=simm5, vm=vm, op=kinstructions.VCmpOp.LE)
+        elif funct6 == 0x1e and funct3 == 0x3:
+            simm5 = rs1
+            return V.VCmpVi(vd=rd, vs2=vs2, simm5=simm5, vm=vm, op=kinstructions.VCmpOp.GTU)
+        elif funct6 == 0x1f and funct3 == 0x3:
+            simm5 = rs1
+            return V.VCmpVi(vd=rd, vs2=vs2, simm5=simm5, vm=vm, op=kinstructions.VCmpOp.GT)
+        # Comparison .vv forms (funct3=0x0 = OPIVV)
+        elif funct6 == 0x18 and funct3 == 0x0:
+            vs1 = rs1
+            return V.VCmpVv(vd=rd, vs2=vs2, vs1=vs1, vm=vm, op=kinstructions.VCmpOp.EQ)
+        elif funct6 == 0x19 and funct3 == 0x0:
+            vs1 = rs1
+            return V.VCmpVv(vd=rd, vs2=vs2, vs1=vs1, vm=vm, op=kinstructions.VCmpOp.NE)
+        elif funct6 == 0x1a and funct3 == 0x0:
+            vs1 = rs1
+            return V.VCmpVv(vd=rd, vs2=vs2, vs1=vs1, vm=vm, op=kinstructions.VCmpOp.LTU)
+        elif funct6 == 0x1b and funct3 == 0x0:
+            vs1 = rs1
+            return V.VCmpVv(vd=rd, vs2=vs2, vs1=vs1, vm=vm, op=kinstructions.VCmpOp.LT)
+        elif funct6 == 0x1c and funct3 == 0x0:
+            vs1 = rs1
+            return V.VCmpVv(vd=rd, vs2=vs2, vs1=vs1, vm=vm, op=kinstructions.VCmpOp.LEU)
+        elif funct6 == 0x1d and funct3 == 0x0:
+            vs1 = rs1
+            return V.VCmpVv(vd=rd, vs2=vs2, vs1=vs1, vm=vm, op=kinstructions.VCmpOp.LE)
+        # Comparison .vx forms (funct3=0x4 = OPIVX)
+        elif funct6 == 0x18 and funct3 == 0x4:
+            return V.VCmpVx(vd=rd, vs2=vs2, rs1=rs1, vm=vm, op=kinstructions.VCmpOp.EQ)
+        elif funct6 == 0x19 and funct3 == 0x4:
+            return V.VCmpVx(vd=rd, vs2=vs2, rs1=rs1, vm=vm, op=kinstructions.VCmpOp.NE)
+        elif funct6 == 0x1a and funct3 == 0x4:
+            return V.VCmpVx(vd=rd, vs2=vs2, rs1=rs1, vm=vm, op=kinstructions.VCmpOp.LTU)
+        elif funct6 == 0x1b and funct3 == 0x4:
+            return V.VCmpVx(vd=rd, vs2=vs2, rs1=rs1, vm=vm, op=kinstructions.VCmpOp.LT)
+        elif funct6 == 0x1c and funct3 == 0x4:
+            return V.VCmpVx(vd=rd, vs2=vs2, rs1=rs1, vm=vm, op=kinstructions.VCmpOp.LEU)
+        elif funct6 == 0x1d and funct3 == 0x4:
+            return V.VCmpVx(vd=rd, vs2=vs2, rs1=rs1, vm=vm, op=kinstructions.VCmpOp.LE)
+        elif funct6 == 0x1e and funct3 == 0x4:
+            return V.VCmpVx(vd=rd, vs2=vs2, rs1=rs1, vm=vm, op=kinstructions.VCmpOp.GTU)
+        elif funct6 == 0x1f and funct3 == 0x4:
+            return V.VCmpVx(vd=rd, vs2=vs2, rs1=rs1, vm=vm, op=kinstructions.VCmpOp.GT)
         elif funct6 == 0x1d and funct3 == 0x2:
             vs1 = rs1
             return V.VmnandMm(vd=rd, vs2=vs2, vs1=vs1)
-        elif funct6 == 0x17 and funct3 == 0x0:
+        elif funct6 == 0x17 and funct3 == 0x0 and vm == 0:
             vs1 = rs1
-            return V.VmvVv(vd=rd, vs1=vs1)
-        elif funct6 == 0x17 and funct3 == 0x3:
+            return V.VmergeVvm(vd=rd, vs1=vs1, vs2=vs2)
+        elif funct6 == 0x17 and funct3 == 0x0 and vm == 1:
+            return V.VUnary(vd=rd, vs2=rs1, vm=1, op=kinstructions.VUnaryOp.COPY,
+                            factor=1, widening=True, mnemonic='vmv.v.v')
+        elif funct6 == 0x17 and funct3 == 0x3 and vm == 0:
+            simm5 = rs1
+            return V.VmergeVim(vd=rd, vs2=vs2, simm5=simm5)
+        elif funct6 == 0x17 and funct3 == 0x3 and vm == 1:
             simm5 = rs1
             return V.VmvVi(vd=rd, simm5=simm5)
-        elif funct6 == 0x17 and funct3 == 0x4:
+        elif funct6 == 0x17 and funct3 == 0x4 and vm == 0:
+            return V.VmergeVx(vd=rd, rs1=rs1, vs2=vs2)
+        elif funct6 == 0x17 and funct3 == 0x4 and vm == 1:
             return V.VmvVx(vd=rd, rs1=rs1)
         elif funct6 == 0x10 and funct3 == 0x2 and rs1 == 0:
             return V.VmvXs(rd=rd, vs2=vs2)
+        elif funct6 == 0x10 and funct3 == 0x6 and rs2 == 0:
+            return V.VmvSx(vd=rd, rs1=rs1)
         elif funct6 == 0x25 and funct3 == 0x2:
             vs1 = rs1
             return V.VArithVv(vd=rd, vs1=vs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.MUL)
@@ -726,25 +880,29 @@ def decode_standard(instruction_bytes: bytes) -> Instruction:
             return V.VArithVx(vd=rd, rs1=rs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.MACC)
         elif funct6 == 0x2f and funct3 == 0x2:
             vs1 = rs1
-            return V.VnmsacVv(vd=rd, vs1=vs1, vs2=vs2, vm=vm)
+            return V.VArithVv(vd=rd, vs1=vs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.NMSAC)
         elif funct6 == 0x2f and funct3 == 0x6:
-            return V.VnmsacVx(vd=rd, rs1=rs1, vs2=vs2, vm=vm)
+            return V.VArithVx(vd=rd, rs1=rs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.NMSAC)
         elif funct6 == 0x29 and funct3 == 0x2:
             vs1 = rs1
-            return V.VmaddVv(vd=rd, vs1=vs1, vs2=vs2, vm=vm)
+            return V.VArithVv(vd=rd, vs1=vs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.MADD)
         elif funct6 == 0x29 and funct3 == 0x6:
-            return V.VmaddVx(vd=rd, rs1=rs1, vs2=vs2, vm=vm)
+            return V.VArithVx(vd=rd, rs1=rs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.MADD)
         elif funct6 == 0x2b and funct3 == 0x2:
             vs1 = rs1
-            return V.VnmsubVv(vd=rd, vs1=vs1, vs2=vs2, vm=vm)
+            return V.VArithVv(vd=rd, vs1=vs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.NMSUB)
         elif funct6 == 0x2b and funct3 == 0x6:
-            return V.VnmsubVx(vd=rd, rs1=rs1, vs2=vs2, vm=vm)
+            return V.VArithVx(vd=rd, rs1=rs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.NMSUB)
         elif funct6 == 0x0c and funct3 == 0x0:
             vs1 = rs1
             return V.Vrgather(vd=rd, vs2=vs2, vs1=vs1, vm=vm)
         elif funct6 == 0x14 and funct3 == 0x2 and rs1 == 0x11:
             # vid.v - vmunary0 with vs1=10001
             return V.Vid(vd=rd, vm=vm)
+        elif funct6 == 0x27 and funct3 == 0x3:
+            # vmvNr.v - whole register move, N = simm5 + 1
+            nreg = rs1 + 1
+            return V.VmvNr(vd=rd, vs2=vs2, nreg=nreg)
         # OPFVV (funct3 = 0x1) - floating-point vector-vector
         elif funct6 == 0x00 and funct3 == 0x1:
             vs1 = rs1
@@ -752,9 +910,70 @@ def decode_standard(instruction_bytes: bytes) -> Instruction:
         elif funct6 == 0x02 and funct3 == 0x1:
             vs1 = rs1
             return V.VArithVvFloat(vd=rd, vs1=vs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.FSUB)
+        elif funct6 == 0x04 and funct3 == 0x1:
+            vs1 = rs1
+            return V.VArithVvFloat(vd=rd, vs1=vs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.FMIN)
+        elif funct6 == 0x06 and funct3 == 0x1:
+            vs1 = rs1
+            return V.VArithVvFloat(vd=rd, vs1=vs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.FMAX)
+        elif funct6 == 0x20 and funct3 == 0x1:
+            vs1 = rs1
+            return V.VArithVvFloat(vd=rd, vs1=vs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.FDIV)
         elif funct6 == 0x24 and funct3 == 0x1:
             vs1 = rs1
             return V.VArithVvFloat(vd=rd, vs1=vs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.FMUL)
+        elif funct6 == 0x28 and funct3 == 0x1:
+            vs1 = rs1
+            return V.VArithVvFloat(vd=rd, vs1=vs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.FMADD)
+        elif funct6 == 0x29 and funct3 == 0x1:
+            vs1 = rs1
+            return V.VArithVvFloat(vd=rd, vs1=vs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.FNMADD)
+        elif funct6 == 0x2a and funct3 == 0x1:
+            vs1 = rs1
+            return V.VArithVvFloat(vd=rd, vs1=vs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.FMSUB)
+        elif funct6 == 0x2b and funct3 == 0x1:
+            vs1 = rs1
+            return V.VArithVvFloat(vd=rd, vs1=vs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.FNMSUB)
+        elif funct6 == 0x2c and funct3 == 0x1:
+            vs1 = rs1
+            return V.VArithVvFloat(vd=rd, vs1=vs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.FMACC)
+        elif funct6 == 0x2d and funct3 == 0x1:
+            vs1 = rs1
+            return V.VArithVvFloat(vd=rd, vs1=vs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.FNMACC)
+        elif funct6 == 0x2e and funct3 == 0x1:
+            vs1 = rs1
+            return V.VArithVvFloat(vd=rd, vs1=vs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.FMSAC)
+        elif funct6 == 0x2f and funct3 == 0x1:
+            vs1 = rs1
+            return V.VArithVvFloat(vd=rd, vs1=vs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.FNMSAC)
+        elif funct6 == 0x12 and funct3 == 0x2:
+            # OPMVV vzext/vsext: rs1 selects variant
+            vzext_table = {
+                2: (kinstructions.VUnaryOp.ZEXT, 8, 'vzext.vf8'),
+                3: (kinstructions.VUnaryOp.SEXT, 8, 'vsext.vf8'),
+                4: (kinstructions.VUnaryOp.ZEXT, 4, 'vzext.vf4'),
+                5: (kinstructions.VUnaryOp.SEXT, 4, 'vsext.vf4'),
+                6: (kinstructions.VUnaryOp.ZEXT, 2, 'vzext.vf2'),
+                7: (kinstructions.VUnaryOp.SEXT, 2, 'vsext.vf2'),
+            }
+            if rs1 in vzext_table:
+                op, factor, mnemonic = vzext_table[rs1]
+                return V.VUnary(vd=rd, vs2=vs2, vm=vm, op=op,
+                                factor=factor, widening=True, mnemonic=mnemonic)
+        elif funct6 == 0x12 and funct3 == 0x1:
+            # vfunary0: single-width float/int conversions, vs1 selects variant
+            vfcvt_ops = {
+                0x00: (kinstructions.VUnaryOp.FCVT_XU_F, 'vfcvt.xu.f.v'),
+                0x01: (kinstructions.VUnaryOp.FCVT_X_F, 'vfcvt.x.f.v'),
+                0x02: (kinstructions.VUnaryOp.FCVT_F_XU, 'vfcvt.f.xu.v'),
+                0x03: (kinstructions.VUnaryOp.FCVT_F_X, 'vfcvt.f.x.v'),
+                0x06: (kinstructions.VUnaryOp.FCVT_RTZ_XU_F, 'vfcvt.rtz.xu.f.v'),
+                0x07: (kinstructions.VUnaryOp.FCVT_RTZ_X_F, 'vfcvt.rtz.x.f.v'),
+            }
+            if rs1 in vfcvt_ops:
+                op, mnemonic = vfcvt_ops[rs1]
+                return V.VUnary(vd=rd, vs2=vs2, vm=vm, op=op,
+                                factor=1, widening=True, mnemonic=mnemonic)
 
     elif opcode == 0x63:
         imm = decode_b_imm(inst)
@@ -770,6 +989,9 @@ def decode_standard(instruction_bytes: bytes) -> Instruction:
             return CF.Bltu(rs1=rs1, rs2=rs2, imm=imm)
         elif funct3 == 0x7:
             return CF.Bgeu(rs1=rs1, rs2=rs2, imm=imm)
+
+    elif opcode == 0x67:
+        return CF.Jalr(rd=rd, rs1=rs1, imm=decode_i_imm(inst))
 
     elif opcode == 0x6f:
         return CF.Jal(rd=rd, imm=decode_j_imm(inst))

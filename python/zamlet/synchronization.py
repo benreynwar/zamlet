@@ -458,8 +458,7 @@ class Synchronizer:
         state = self._sync_states.get(trigger_ident)
         if state is not None and state.completed:
             min_value = self.get_min_value(trigger_ident)
-            value = 0 if min_value is not None else None
-            self.local_event(target_ident, value=value)
+            self.local_event(target_ident, value=min_value)
         else:
             self._fault_chains[trigger_ident] = target_ident
 

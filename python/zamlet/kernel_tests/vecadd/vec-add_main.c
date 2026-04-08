@@ -26,7 +26,9 @@ int main() {
     }
 
     // Call vector add function to add SCALAR_VALUE to each element
-    vec_add_scalar(ARRAY_SIZE, vpu_mem, vpu_mem, SCALAR_VALUE);
+    // Cast drops volatile, which is safe: vec_add_scalar is assembly so the compiler
+    // can't optimize away or reorder its memory accesses anyway.
+    vec_add_scalar(ARRAY_SIZE, (const int32_t*)vpu_mem, (int32_t*)vpu_mem, SCALAR_VALUE);
 
     // Verify results
     for (int i = 0; i < ARRAY_SIZE; i++) {

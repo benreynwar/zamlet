@@ -1,5 +1,8 @@
+import logging
 import subprocess
 import re
+
+logger = logging.getLogger(__name__)
 
 
 def parse_objdump(binary_path):
@@ -35,7 +38,11 @@ def parse_objdump(binary_path):
 
 
 def check_instruction(trace, pc, actual_bytes, actual_text):
-    """Compare actual execution against reference trace"""
+    """Compare actual execution against reference trace.
+
+    Raises ValueError on byte mismatches. Logs a warning for disassembly text
+    mismatches (pseudoinstruction aliases like negw vs subw).
+    """
     if pc not in trace:
         logger.error(f"WARNING: PC {hex(pc)} not in objdump trace")
 
@@ -50,9 +57,9 @@ def check_instruction(trace, pc, actual_bytes, actual_text):
         expected_bytes = expected['bytes']
 
     if actual_bytes_masked != expected_bytes:
-        return (f"BYTE MISMATCH at {hex(pc)}: "
-                f"expected bytes {hex(expected_bytes)} ({expected['text']}), "
-                f"got {hex(actual_bytes_masked)} ({actual_text})")
+        raise ValueError(f"BYTE MISMATCH at {hex(pc)}: "
+                         f"expected bytes {hex(expected_bytes)} ({expected['text']}), "
+                         f"got {hex(actual_bytes_masked)} ({actual_text})")
 
     # Also compare disassembly text as a sanity check
     # Strip comments (anything after #) and symbol annotations (anything after <) before comparing
@@ -65,9 +72,6 @@ def check_instruction(trace, pc, actual_bytes, actual_text):
     # Skip text comparison when objdump doesn't recognize the instruction
     # (outputs ".insn" for custom opcodes that our decoder knows about)
     if expected_normalized != actual_normalized and not expected_normalized.startswith('.insn'):
-        return (f"DISASM MISMATCH at {hex(pc)}: "
-                f"expected '{expected_text_clean}', "
-                f"got '{actual_text_clean}' "
-                f"(bytes={hex(actual_bytes_masked)})")
-
-    return None
+        logger.warning(f"DISASM MISMATCH at {hex(pc)}: "
+                       f"expected '{expected_text_clean}', "
+                       f"got '{actual_text_clean}'")

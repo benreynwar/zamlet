@@ -99,7 +99,7 @@ class WaitingStoreIndexedUnordered(WaitingStoreScatterBase):
 
         word_data = jamlet.rf_slice[index_reg * wb: (index_reg + 1) * wb]
         index_value = int.from_bytes(word_data[byte_in_word:byte_in_word + index_bytes],
-                                     byteorder='little', signed=True)
+                                     byteorder='little', signed=False)
         if self.index_bound_bits > 0:
             index_value &= (1 << self.index_bound_bits) - 1
         return index_value

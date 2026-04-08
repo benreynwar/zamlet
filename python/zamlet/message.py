@@ -87,6 +87,9 @@ class MessageType(IntEnum):
     READ_REG_ELEMENT_RESP = 55
     READ_REG_ELEMENT_DROP = 56
 
+    # Read register word (kamlet -> lamlet, for vmv.x.s)
+    READ_REG_WORD_RESP = 57
+
 # What channel do different messages travel on.
 
 CHANNEL_MAPPING = {
@@ -132,6 +135,8 @@ CHANNEL_MAPPING = {
     MessageType.WRITE_MEM_WORD_RETRY: 0,
 
     MessageType.IDENT_QUERY_RESP: 0,
+
+    MessageType.READ_REG_WORD_RESP: 0,
 
     MessageType.READ_REG_ELEMENT_REQ: 1,
     MessageType.READ_REG_ELEMENT_RESP: 0,
@@ -226,10 +231,14 @@ class WriteSetIdentHeader(IdentHeader):
 
 @dataclass
 class WriteMemWordHeader(TaggedHeader):
-    dst_byte_in_word: int # 3 bits - dst byte in word (0-7)
-    n_bytes: int          # 3 bits - number of bytes (1-8)
+    dst_byte_in_word: int    # 3 bits - dst byte in word (0-7)
+    n_bytes_or_bits: int     # 3 bits - number of bytes (1-8), or number of bits in bit_mode
     element_index: int = 0  # Element index for ordered operations
     ordered: bool = False   # Whether this is an ordered operation
+    bit_mode: bool = False      # 1 bit - if True, n_bytes_or_bits is n_bits
+    dst_bit_in_byte: int = 0   # 3 bits - bit offset within byte (0-7), only used in bit_mode
+    no_response: bool = False  # 1 bit - if True, no WRITE_MEM_WORD_RESP is sent
+    writeset_ident: int = 0    # bit packing concerns: see docs/TODO.md
 
 
 @dataclass
@@ -239,6 +248,7 @@ class ReadMemWordHeader(TaggedHeader):
     ordered: bool = False   # Whether this is an ordered operation
     parent_ident: int = 0   # Parent instruction ident for ordering checks
     fault: bool = False     # Earlier element faulted, skip this read
+    writeset_ident: int = 0  # bit packing concerns: see docs/TODO.md
 
 
 @dataclass

@@ -79,6 +79,39 @@ class Jal:
 
 
 @dataclass
+class Jalr:
+    """JALR - Jump and Link Register.
+
+    Jumps to (rs1 + sign-extended imm) & ~1 and stores return address (PC+4) in rd.
+
+    Reference: riscv-isa-manual/src/rv32.adoc
+    """
+    rd: int
+    rs1: int
+    imm: int
+
+    def __str__(self):
+        if self.rd == 0 and self.imm == 0:
+            return f'jr\t{reg_name(self.rs1)}'
+        elif self.rd == 0:
+            return f'jr\t{self.imm}({reg_name(self.rs1)})'
+        elif self.rd == 1:
+            return f'jalr\t{self.imm}({reg_name(self.rs1)})'
+        elif self.imm == 0:
+            return f'jalr\t{reg_name(self.rd)},{reg_name(self.rs1)}'
+        else:
+            return f'jalr\t{reg_name(self.rd)},{self.imm}({reg_name(self.rs1)})'
+
+    async def update_state(self, s: 'Oamlet'):
+        await s.scalar.wait_all_regs_ready(self.rd, self.rs1, [], [])
+        rs1_val = int.from_bytes(s.scalar.read_reg(self.rs1), byteorder='little', signed=False)
+        result = s.pc + 4
+        result_bytes = result.to_bytes(s.params.word_bytes, byteorder='little', signed=False)
+        s.scalar.write_reg(self.rd, result_bytes)
+        s.pc = (rs1_val + self.imm) & ~1
+
+
+@dataclass
 class Beq:
     """BEQ - Branch if Equal.
 

@@ -31,8 +31,9 @@ See `VCOMPRESS_PLAN.md` for detailed implementation.
       element i+N. Elements crossing jamlet boundaries use J2J messaging (similar to
       unaligned load/store). Elements sliding out of range are zero-filled.
 - [ ] vslide1up/vslide1down - Same as above but N=1 and element 0 (or vl-1) comes from scalar.
-- [ ] vrgather.vv/vx/vi - `RegGather` kinstr (inverse of RegScatter). For each dst element i,
+- [x] vrgather.vv - Uses J2J load infrastructure. For each dst element i,
       read index[i], send request to jamlet holding src[index[i]], receive and write to dst[i].
+- [ ] vrgather.vx/vi
 - [ ] vrgatherei16.vv - Same as vrgather but index_ew fixed at 16 bits.
 
 #### 2. Reductions
@@ -54,25 +55,23 @@ See `09_reductions.txt` for detailed spec coverage.
 - Reduction op enum: SUM, MAX, MAXU, MIN, MINU, AND, OR, XOR (integer); FSUM, FMAX, FMIN (FP)
 
 **Single-width integer**:
-- [ ] vredsum.vs - J2J tree with SUM (sync network doesn't support SUM)
-- [ ] vredmax.vs / vredmaxu.vs - Sync network MAX or J2J tree (sync network supports MAX)
-- [ ] vredmin.vs / vredminu.vs - Sync network MIN or J2J tree (sync network supports MIN)
-- [ ] vredand.vs / vredor.vs / vredxor.vs - J2J tree (sync network doesn't support bitwise)
+- [x] vredsum.vs - Decomposed into existing kinstrs (gather + arith) via oamlet/reduction.py
+- [x] vredmax.vs / vredmaxu.vs
+- [x] vredmin.vs / vredminu.vs
+- [x] vredand.vs / vredor.vs / vredxor.vs
 
 **Widening integer** (2*SEW accumulator):
-- [ ] vwredsum.vs / vwredsumu.vs - Widen elements before local reduction, tree uses 2*SEW partials
+- [x] vwredsum.vs / vwredsumu.vs - Widen elements before tree, tree uses 2*SEW partials
 
 **Single-width floating-point**:
 - [ ] vfredosum.vs - **Complex**: Must sum in strict element order. Options:
       (a) Serial chain: jamlet 0→1→2→...→n-1, each adds its elements to running sum (slow)
       (b) Use vfredusum implementation (allowed by spec as valid implementation)
-- [ ] vfredusum.vs - Same J2J tree as integer, but FP add. Spec allows any deterministic tree.
-- [ ] vfredmax.vs / vfredmin.vs - Could use sync network MIN/MAX, but FP NaN handling may
-      complicate this (need to check if sync network can handle FP comparison semantics)
+- [x] vfredusum.vs - Same tree approach as integer, but FP add.
+- [x] vfredmax.vs / vfredmin.vs
 
 **Widening floating-point**:
-- [ ] vfwredosum.vs / vfwredusum.vs - Promote elements to 2*SEW before local reduction, tree
-      uses 2*SEW partials
+- [x] vfwredosum.vs / vfwredusum.vs - Promote elements to 2*SEW before tree
 
 #### 3. Scalar-Vector Element Access
 Element 0 lives in a specific jamlet determined by word_order. Scalar registers live in lamlet.
@@ -82,8 +81,8 @@ Element 0 lives in a specific jamlet determined by word_order. Scalar registers 
 - For vmv.x.s: Send request to that jamlet, jamlet reads RF, sends value back to lamlet
 - For vmv.s.x: Lamlet sends scalar value to that jamlet, jamlet writes to RF element 0
 
-- [ ] vmv.x.s - New message type `READ_REG_ELEMENT_REQ/RESP`. Jamlet reads element 0, returns.
-- [ ] vmv.s.x - New message type `WRITE_REG_ELEMENT_REQ/RESP`. Jamlet writes element 0.
+- [x] vmv.x.s - Uses ReadRegElement kinstr + READ_REG_WORD message.
+- [x] vmv.s.x - Uses VBroadcastOp with n_elements=1.
 - [ ] vfmv.f.s / vfmv.s.f - Same as above, just FP register instead of integer.
 
 ### Local Operations (No Cross-Jamlet Communication)
@@ -91,11 +90,11 @@ Element 0 lives in a specific jamlet determined by word_order. Scalar registers 
 These operations work independently within each jamlet.
 
 #### 4. Element Index Generation
-- [ ] vid.v - Vector element index (each jamlet computes its own indices)
+- [x] vid.v - Vector element index (each jamlet computes its own indices)
 
 #### 5. Whole Register Operations
-- [ ] vmv1r.v, vmv2r.v, vmv4r.v, vmv8r.v - Whole register moves (local copy)
-- [ ] vl1r.v, vl2r.v, etc. / vs1r.v, vs2r.v, etc. - Whole register load/store
+- [x] vmv1r.v, vmv2r.v, vmv4r.v, vmv8r.v - Whole register moves (local copy)
+- [x] vl1r.v, vl2r.v, etc. / vs1r.v, vs2r.v, etc. - Whole register load/store
 
 #### 6. Special Loads
 - [ ] Fault-only-first loads (vle*ff.v) - Local with vl update coordination
@@ -115,7 +114,46 @@ These operations work independently within each jamlet.
 - Strided load/store (vlse/vsse) ✓
 - Indexed load/store unordered (vluxei/vsuxei) ✓
 - Indexed load/store ordered (vloxei/vsoxei) ✓
+- Whole register load/store (vl1r-vl8r / vs1r-vs8r) ✓
+- Segment load/store (vlseg/vsseg, unit-stride) ✓
 - Page fault handling ✓
+
+### Integer Arithmetic
+- VV: add, sub, and, or, xor, sll, srl, sra, mul, macc, madd, nmsac, nmsub ✓
+- VX: add, sub, rsub, and, or, xor, sll, srl, sra, mul, macc, madd, nmsac, nmsub ✓
+- VI: add, rsub, and, or, xor, sll, srl, sra ✓
+
+### Float Arithmetic
+- VV: fadd, fsub, fmul ✓
+- VF: fmadd, fmacc ✓
+
+### Comparisons
+- VI: msle, msleu, msgt, msgtu ✓
+- VV: msne ✓
+
+### Reductions (via oamlet/reduction.py, decomposed into gather + arith kinstrs)
+- Integer: sum, max, maxu, min, minu, and, or, xor ✓
+- Widening integer: wsum, wsumu ✓
+- Float: fredusum, fredmax, fredmin ✓
+- Widening float: fwredusum ✓
+
+### Unary / Conversion
+- vmv.v.v (copy) ✓
+- vzext.vf2/vf4/vf8, vsext.vf2/vf4/vf8 ✓
+- vnsrl.wi (narrow shift right) ✓
+- vfcvt.xu.f.v, vfcvt.x.f.v, vfcvt.f.xu.v, vfcvt.f.x.v ✓
+- vfcvt.rtz.xu.f.v, vfcvt.rtz.x.f.v ✓
+
+### Move / Merge / Permutation
+- vmv.v.i, vmv.v.x (broadcast) ✓
+- vmv.x.s, vmv.s.x (scalar-vector element access) ✓
+- vmv1r-vmv8r (whole register move) ✓
+- vmerge.vxm ✓
+- vid.v ✓
+- vrgather.vv ✓
+
+### Mask
+- vmnand.mm ✓
 
 ### Infrastructure
 - ReadMemWord/WriteMemWord transactions ✓

@@ -26,7 +26,7 @@ from zamlet.addresses import AddressConverter, Ordering, GlobalAddress, KMAddr, 
 from zamlet.kamlet.cache_table import (
     CacheTable, CacheState, ProtocolState, SendState)
 from zamlet.lamlet.lamlet_waiting_item import (
-    LamletWaitingItem, LamletWaitingFuture,
+    LamletWaitingItem, LamletWaitingFuture, LamletWaitingReadRegElement,
     LamletWaitingLoadIndexedElement, LamletWaitingStoreIndexedElement)
 from zamlet.monitor import CompletionType, SpanType
 from zamlet.params import ZamletParams
@@ -47,6 +47,7 @@ from zamlet.transactions.store_indexed_element import StoreIndexedElement
 from zamlet.transactions.write_imm_bytes import WriteImmBytes
 from zamlet.transactions.read_byte import ReadByte
 from zamlet.oamlet.scalar import ScalarState
+from zamlet.oamlet import reduction
 from zamlet.lamlet.ordered_buffer import OrderedBuffer, ElementEntry, ElementState
 from zamlet import utils
 import zamlet.disasm_trace as dt
@@ -82,7 +83,16 @@ class Oamlet:
             completion_type=CompletionType.TRACKED,
         )
         self.pc = None
-        self.scalar = ScalarState(clock, params)
+        # Lamlet's synchronizer at position (0, -1)
+        self.synchronizer = Synchronizer(
+            clock=clock,
+            params=params,
+            kx=0,
+            ky=-1,
+            cache_table=None,  # Lamlet manages its own waiting items
+            monitor=self.monitor,
+        )
+        self.scalar = ScalarState(clock, params, synchronizer=self.synchronizer)
         self.tlb = TLB(params)
         self.vrf_ordering: List[Ordering|None] = [None for _ in range(params.n_vregs)]
         self.vl = 0
@@ -94,6 +104,12 @@ class Oamlet:
         self._temp_regs = list(range(32, params.n_vregs))
         self._temp_reg_next = 0
         self._temp_regs_in_use: set[int] = set()
+
+        # Scratch VPU pages for ew remap workaround, one per (temp_reg, ew).
+        # Uses address range 0xF0000000+. See TODO.md for replacing with a
+        # dedicated register-to-register ew remap kinstr.
+        self._scratch_base = 0xF0000000
+        self._scratch_pages: set[tuple[int, int]] = set()  # allocated (reg_index, ew) pairs
 
         self.min_x = params.west_offset
         self.min_y = params.north_offset
@@ -201,16 +217,6 @@ class Oamlet:
             for _ in range(params.n_channels)
         ]
 
-        # Lamlet's synchronizer at position (0, -1)
-        self.synchronizer = Synchronizer(
-            clock=clock,
-            params=params,
-            kx=0,
-            ky=-1,
-            cache_table=None,  # Lamlet manages its own waiting items
-            monitor=self.monitor,
-        )
-
         # Ordered indexed operation buffers, indexed by buffer_id (0 to n_ordered_buffers-1)
         self._ordered_buffers: list[OrderedBuffer | None] = [
             None for _ in range(self.params.n_ordered_buffers)]
@@ -258,6 +264,23 @@ class Oamlet:
         for reg in regs:
             self._temp_regs_in_use.discard(reg)
 
+    def get_scratch_page(self, temp_reg: int, ew: int) -> int:
+        """Get a scratch VPU page for a (temp_reg, ew) pair. Allocates lazily."""
+        ew_index = {1: 0, 8: 1, 16: 2, 32: 3, 64: 4}[ew]
+        reg_index = temp_reg - self._temp_regs[0]
+        key = (reg_index, ew)
+        if key not in self._scratch_pages:
+            addr = self._scratch_base + (reg_index * 8 + ew_index) * self.params.page_bytes
+            g_addr = GlobalAddress(bit_addr=addr * 8, params=self.params)
+            self.allocate_memory(
+                g_addr, self.params.page_bytes,
+                memory_type=MemoryType.VPU,
+                ordering=Ordering(self.word_order, ew))
+            self._scratch_pages.add(key)
+        else:
+            addr = self._scratch_base + (reg_index * 8 + ew_index) * self.params.page_bytes
+        return addr
+
     def set_pc(self, pc):
         self.pc = pc
 
@@ -270,6 +293,42 @@ class Oamlet:
         kamlet = self.get_kamlet(x, y)
         jamlet = kamlet.get_jamlet(x, y)
         return jamlet
+
+    @property
+    def sew(self):
+        vsew = (self.vtype >> 3) & 0x7
+        return 8 << vsew
+
+    @property
+    def lmul(self):
+        vlmul = self.vtype & 0x7
+        if vlmul <= 3:
+            return 1 << vlmul
+        else:
+            return 1
+
+    def set_vtype(self, ew: int, lmul: int):
+        vsew = {8: 0, 16: 1, 32: 2, 64: 3}[ew]
+        vlmul = {1: 0, 2: 1, 4: 2, 8: 3}[lmul]
+        self.vtype = (vsew << 3) | vlmul
+
+    def set_vrf_ordering(self, vd: int, ew: int):
+        """Set vrf_ordering for all vline registers in the LMUL group."""
+        ordering = Ordering(self.word_order, ew)
+        n_vlines = self.lmul
+        logger.info(f'set_vrf_ordering: vd=v{vd} ew={ew} '
+                    f'lmul={self.lmul} n_vlines={n_vlines} regs=v{vd}..v{vd + n_vlines - 1}')
+        for i in range(n_vlines):
+            self.vrf_ordering[vd + i] = ordering
+
+    def assert_vrf_ordering(self, vreg: int, ew: int):
+        """Assert vrf_ordering matches ew for all vline registers in the LMUL group."""
+        for i in range(self.lmul):
+            reg = vreg + i
+            assert self.vrf_ordering[reg] is not None, (
+                f'v{reg} has no ordering (expected ew={ew})')
+            assert self.vrf_ordering[reg].ew == ew, (
+                f'v{reg} ordering ew={self.vrf_ordering[reg].ew} != expected ew={ew}')
 
     def allocate_memory(self, address: GlobalAddress, size: SizeBytes, memory_type: MemoryType,
                         ordering: Ordering | None, readable: bool = True, writable: bool = True):
@@ -323,6 +382,35 @@ class Oamlet:
             writeset_ident=ident_query.get_writeset_ident(self),
             )
         await self.add_to_instruction_buffer(kinstr, self._setup_span_id, k_maddr.k_index)
+        return future
+
+    async def read_register_element(self, vreg, element_index, element_width):
+        """Read a single element from a vector register. Returns a Future.
+
+        Sends a ReadRegWord kinstr to the kamlet that owns the element.
+        The kamlet reads the full word from rf_slice and sends it back.
+        The waiting item extracts the element and sign-extends to XLEN.
+        """
+        ordering = self.vrf_ordering[vreg]
+        assert ordering.ew == element_width
+        vw_index = element_index % self.params.j_in_l
+        k_index, j_in_k_index = addresses.vw_index_to_k_indices(
+            self.params, ordering.word_order, vw_index)
+        instr_ident = await ident_query.get_instr_ident(self)
+        future = self.clock.create_future()
+        witem = LamletWaitingReadRegElement(
+            future=future, instr_ident=instr_ident,
+            element_width=element_width, word_bytes=self.params.word_bytes,
+        )
+        await self.add_witem(witem)
+        kinstr = kinstructions.ReadRegWord(
+            src=vreg,
+            j_in_k_index=j_in_k_index,
+            instr_ident=instr_ident,
+        )
+        await self.add_to_instruction_buffer(
+            kinstr, self._ident_query_span_id, k_index,
+        )
         return future
 
     async def router_connections(self, channel):
@@ -557,6 +645,14 @@ class Oamlet:
             self.remove_witem_by_ident(header.ident)
             self.monitor.complete_kinstr(header.ident)
             logger.debug(f'{self.clock.cycle}: lamlet: Got a READ_BYTE_RESP from ({header.source_x, header.source_y}) is {header.value}')
+        elif header.message_type == MessageType.READ_REG_WORD_RESP:
+            assert len(packet) == 2
+            item = self.get_witem_by_ident(header.ident)
+            assert item is not None, f"No waiting item for ident {header.ident}"
+            assert isinstance(item, LamletWaitingReadRegElement)
+            item.resolve(packet[1])
+            self.remove_witem_by_ident(header.ident)
+            self.monitor.complete_kinstr(header.ident)
         elif header.message_type == MessageType.READ_WORDS_RESP:
             item = self.get_witem_by_ident(header.ident)
             assert item is not None, f"No waiting item for ident {header.ident}"
@@ -957,7 +1053,8 @@ class Oamlet:
                 await self.clock.next_cycle
             else:
                 scalar_address = self.to_scalar_addr(byt_address)
-                self.scalar.set_memory(scalar_address, bytes([b]))
+                await self.scalar.set_memory(
+                    scalar_address, bytes([b]), allow_wait=True)
 
     def directly_set_memory(self, address: int, data: bytes):
         """
@@ -987,7 +1084,7 @@ class Oamlet:
                 memlet.lines[cache_line_index][offset_in_line] = b
             else:
                 scalar_address = self.to_scalar_addr(byte_addr)
-                self.scalar.set_memory(scalar_address, bytes([b]))
+                self.scalar._memory[scalar_address] = b
 
     async def combine_read_futures(self, combined_future: Future, read_futures: List[Future]):
         for future in read_futures:
@@ -1001,8 +1098,11 @@ class Oamlet:
     async def get_memory(self, address: int, size: int) -> Future:
         """
         This blocks but only on things that should block the frontend.
-        It returns a future that resolves when the value has been
-        returned.
+        It returns a future that resolves when the value has been returned.
+
+        TODO: For scalar reads this currently stalls on all pending vector writes
+        (including instruction fetch). A store buffer tracking in-flight scalar write
+        addresses would let us only stall when there's an actual address overlap.
         """
         page_bytes = self.params.page_bytes
         page_offset = address % page_bytes
@@ -1027,7 +1127,8 @@ class Oamlet:
                 self.clock.create_task(self.combine_read_futures(read_future, read_futures))
             else:
                 local_address = start_addr.to_scalar_addr(self.tlb)
-                data = self.scalar.get_memory(local_address, size=size)
+                data = await self.scalar.get_memory(
+                    local_address, size=size, allow_wait=True)
                 read_future = self.clock.create_future()
                 read_future.set_result(data)
             result_future = read_future
@@ -1093,11 +1194,20 @@ class Oamlet:
 
     async def vload(self, vd: int, addr: int, ordering: addresses.Ordering,
                     n_elements: int, mask_reg: int | None, start_index: int,
-                    parent_span_id: int,
-                    reg_ordering: addresses.Ordering | None = None,
+                    parent_span_id: int, lmul: int | None = None,
                     stride_bytes: int | None = None) -> addresses.VectorOpResult:
+        if lmul is None:
+            lmul = self.lmul
+        assert lmul in (1, 2, 4, 8), f'vload: invalid lmul={lmul}'
+        elements_per_vline = self.params.vline_bytes * 8 // ordering.ew
+        vlmax = elements_per_vline * lmul
+        assert n_elements <= vlmax, (
+            f'vload: n_elements={n_elements} exceeds vlmax={vlmax} '
+            f'(ew={ordering.ew}, lmul={lmul})')
+        for i in range(lmul):
+            self.vrf_ordering[vd + i] = ordering
         return await unordered.vload(self, vd, addr, ordering, n_elements, mask_reg, start_index,
-                                     parent_span_id, reg_ordering, stride_bytes)
+                                     parent_span_id, stride_bytes)
 
     async def vstore(self, vs: int, addr: int, ordering: addresses.Ordering,
                      n_elements: int, mask_reg: int | None, start_index: int,
@@ -1157,8 +1267,12 @@ class Oamlet:
         for offset in range(0, size, self.params.page_bytes):
             page_address = ((base_addr+offset)//self.params.page_bytes) * self.params.page_bytes
             page_info = self.tlb.get_page_info(GlobalAddress(bit_addr=page_address*8, params=self.params))
-            assert page_info.local_address.ordering.ew == element_width
             assert page_info.local_address.is_vpu
+            if page_info.local_address.ordering.ew != element_width:
+                logger.warning(
+                    f'Element width mismatch at 0x{page_address:x}: '
+                    f'page ew={page_info.local_address.ordering.ew}, '
+                    f'load ew={element_width}')
 
     def update(self):
         for kamlet in self.kamlets:
@@ -1189,6 +1303,7 @@ class Oamlet:
         self.clock.create_task(self._send_packets_ch0())
         self.clock.create_task(self._send_packets_ch1andup())
         self.clock.create_task(ordered.ordered_buffer_process(self))
+        self.clock.create_task(self.scalar.cleanup_might_touch())
 
     async def run_instruction(self, disasm_trace=None):
         logger.debug(f'{self.clock.cycle}: run_instruction: fetching at pc={hex(self.pc)}')
@@ -1214,12 +1329,13 @@ class Oamlet:
         logger.debug(f'{self.clock.cycle}: pc={hex(self.pc)} bytes={hex(inst_hex)} instruction={inst_str} {type(instruction)}')
 
         if disasm_trace is not None:
-            error = dt.check_instruction(disasm_trace, self.pc, inst_hex, inst_str)
-            if error:
-                logger.error(error)
-                raise ValueError(error)
+            dt.check_instruction(disasm_trace, self.pc, inst_hex, inst_str)
 
-        await instruction.update_state(self)
+        try:
+            await instruction.update_state(self)
+        except Exception:
+            logger.error(f'Exception at pc={hex(self.pc)} instruction={inst_str}')
+            raise
 
     async def run_instructions(self, disasm_trace=None):
         while not self.finished:
@@ -1230,12 +1346,12 @@ class Oamlet:
             logger.debug(f'{self.clock.cycle}: run_instructions: about to run second instruction')
             await self.run_instruction(disasm_trace)
 
-    async def handle_vreduction_vs_instr(self, op, dst, src_vector, src_scalar_reg, mask_reg,
-                                         n_elements, element_width, word_order):
-        """Handle vector reduction instruction.
-
-        Creates and sends a VreductionVsOp instruction to kamlet.
-        TODO: Implement this method.
-        """
-        raise NotImplementedError("handle_vreduction_vs_instr not yet implemented")
+    async def handle_vreduction_instr(self, op, dst, src_vector, src_scalar_reg, mask_reg,
+                                     n_elements, src_ew, accum_ew, word_order, vlmax,
+                                     parent_span_id):
+        """Handle vector reduction instruction via tree reduction."""
+        await reduction.handle_vreduction_instr(
+            self, op, dst, src_vector, src_scalar_reg, mask_reg,
+            n_elements, src_ew, accum_ew, word_order, vlmax, parent_span_id,
+        )
 

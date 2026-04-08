@@ -1,9 +1,23 @@
 name: 'Nix Setup'
-description: 'Set up Nix with FOSSi and Cachix caches'
+description: 'Set up Nix with caches'
+
+inputs:
+  cache-prefix:
+    description: 'Prefix for the Bazel cache key (e.g. bazel-model, bazel-synth)'
+    required: true
+
+outputs:
+  cache-key:
+    description: 'Bazel cache key for use in save step'
+    value: ${{ steps.cache-key.outputs.key }}
 
 runs:
   using: 'composite'
   steps:
+    - uses: jlumbroso/free-disk-space@main
+      with:
+        tool-cache: false
+
     - uses: cachix/install-nix-action@v27
       with:
         nix_path: nixpkgs=channel:nixos-24.05
@@ -12,17 +26,21 @@ runs:
           extra-trusted-public-keys = nix-cache.fossi-foundation.org:3+K59iFwXqKsL7BNu6Guy0v+uTlwsxYQxjspXzqLYQs=
           trusted-substituters = https://nix-cache.fossi-foundation.org
 
+    - uses: DeterminateSystems/magic-nix-cache-action@main
+
     - uses: cachix/cachix-action@v15
       with:
         name: benreynwar
         authToken: '${{ env.CACHIX_AUTH_TOKEN }}'
 
+    - name: Compute cache key
+      id: cache-key
+      shell: bash
+      run: echo "key=${{ inputs.cache-prefix }}-${{ runner.os }}-${{ hashFiles('MODULE.bazel', 'MODULE.bazel.lock', 'shell.nix', 'nix/*.nix', 'nix/*.patch') }}" >> "$GITHUB_OUTPUT"
+
     - name: Restore Bazel cache
       uses: actions/cache/restore@v4
       with:
         path: ~/.cache/bazel
-        key: bazel-${{ runner.os }}-${{ hashFiles('MODULE.bazel', 'MODULE.bazel.lock', 'shell.nix', 'nix/*.nix', 'nix/*.patch') }}
-        restore-keys: |
-          bazel-cocotb-${{ runner.os }}-
-          bazel-synth-
-          bazel-
+        key: ${{ steps.cache-key.outputs.key }}
+        restore-keys: ${{ inputs.cache-prefix }}-${{ runner.os }}-

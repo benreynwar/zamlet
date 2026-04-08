@@ -33,7 +33,8 @@ class Sb:
         rs1_val = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
         address = rs1_val + self.imm
         rs2_bytes = s.scalar.read_reg(self.rs2)
-        logger.debug(f'Setting memory address {hex(address)} reg {self.rs1} imm {self.imm} reg contents {rs1_val}')
+        logger.debug(f'sb: address={hex(address)} pc={hex(s.pc)} '
+                     f'rs1=x{self.rs1}={hex(rs1_val)} imm={self.imm}')
         await s.set_memory(address, rs2_bytes[:1])
         s.pc += 4
 

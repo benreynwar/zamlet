@@ -26,9 +26,9 @@ multiply-add, narrowing shifts, extensions). See test_suite_reference.txt
 
 Implementation Summary
 ----------------------
-Currently implemented: 0 instructions
+Currently implemented: 7 instructions (6 extensions + vnsrl.wi)
 Total in spec: ~40 widening/narrowing instructions
-Coverage: 0%
+Coverage: ~18%
 
 WIDENING ADD/SUBTRACT (Status: ✗)
 ==================================
@@ -96,7 +96,7 @@ VWSUB.WV, VWSUB.WX (Status: ✗)
   Implementation: Not implemented
   Description: Widening signed subtract, 2*SEW = 2*SEW - SEW
 
-INTEGER EXTENSION (Status: ✗)
+INTEGER EXTENSION (Status: ✓)
 ==============================
 
 Spec: v-st-ext.adoc lines 2433-2462
@@ -104,43 +104,44 @@ Spec: v-st-ext.adoc lines 2433-2462
 These extend narrow values to wider without arithmetic. Source EEW is
 SEW/2, SEW/4, or SEW/8. Source EMUL is (EEW/SEW)*LMUL.
 
-VZEXT.VF2 (Status: ✗)
+VZEXT.VF2 (Status: ✓)
   Spec: v-st-ext.adoc line 2442
   Format: vzext.vf2 vd, vs2, vm
-  Implementation: Not implemented
+  Implementation: class VUnary with VUnaryOp.ZEXT, factor=2 in instructions/vector.py
+  Decoding: Search decode.py for "ZEXT"
   Description: Zero-extend SEW/2 source to SEW destination
   Notes: vf2 means "from 1/2 width"
 
-VSEXT.VF2 (Status: ✗)
+VSEXT.VF2 (Status: ✓)
   Spec: v-st-ext.adoc line 2443
   Format: vsext.vf2 vd, vs2, vm
-  Implementation: Not implemented
+  Implementation: class VUnary with VUnaryOp.SEXT, factor=2 in instructions/vector.py
   Description: Sign-extend SEW/2 source to SEW destination
 
-VZEXT.VF4 (Status: ✗)
+VZEXT.VF4 (Status: ✓)
   Spec: v-st-ext.adoc line 2444
   Format: vzext.vf4 vd, vs2, vm
-  Implementation: Not implemented
+  Implementation: class VUnary with VUnaryOp.ZEXT, factor=4 in instructions/vector.py
   Description: Zero-extend SEW/4 source to SEW destination
   Notes: vf4 means "from 1/4 width"
 
-VSEXT.VF4 (Status: ✗)
+VSEXT.VF4 (Status: ✓)
   Spec: v-st-ext.adoc line 2445
   Format: vsext.vf4 vd, vs2, vm
-  Implementation: Not implemented
+  Implementation: class VUnary with VUnaryOp.SEXT, factor=4 in instructions/vector.py
   Description: Sign-extend SEW/4 source to SEW destination
 
-VZEXT.VF8 (Status: ✗)
+VZEXT.VF8 (Status: ✓)
   Spec: v-st-ext.adoc line 2446
   Format: vzext.vf8 vd, vs2, vm
-  Implementation: Not implemented
+  Implementation: class VUnary with VUnaryOp.ZEXT, factor=8 in instructions/vector.py
   Description: Zero-extend SEW/8 source to SEW destination
   Notes: vf8 means "from 1/8 width"
 
-VSEXT.VF8 (Status: ✗)
+VSEXT.VF8 (Status: ✓)
   Spec: v-st-ext.adoc line 2447
   Format: vsext.vf8 vd, vs2, vm
-  Implementation: Not implemented
+  Implementation: class VUnary with VUnaryOp.SEXT, factor=8 in instructions/vector.py
   Description: Sign-extend SEW/8 source to SEW destination
 
 NARROWING SHIFTS (Status: ✗)
@@ -151,18 +152,25 @@ Spec: v-st-ext.adoc lines 2619-2647
 Take 2*SEW source, shift right, store SEW-bit result. Essentially combines
 shift and narrowing into one operation.
 
-VNSRL.WV, VNSRL.WX, VNSRL.WI (Status: ✗)
+VNSRL.WI (Status: ⚠)
   Spec: v-st-ext.adoc line 2631-2633
-  Format: vnsrl.wv vd, vs2, vs1, vm / vnsrl.wx vd, vs2, rs1, vm /
-          vnsrl.wi vd, vs2, uimm, vm
-  Implementation: Not implemented
+  Format: vnsrl.wi vd, vs2, uimm, vm
+  Implementation: class VUnary with VUnaryOp.NSRL, narrowing=True in instructions/vector.py
+  Decoding: Search decode.py for "NSRL"
   Description: Narrowing shift right logical, SEW = (2*SEW) >> shift
   Notes:
     - vs2 has 2*SEW elements, result has SEW elements
     - Low lg2(2*SEW) bits of shift amount used
     - Zero-extending (logical) shift
+    - Currently hacked into VUnaryOvOp — needs proper narrowing op implementation
+    - See docs/TODO.md
     - Pseudoinstruction: vncvt.x.x.w vd,vs,vm = vnsrl.wx vd,vs,x0,vm
       (narrow without shift)
+
+VNSRL.WV, VNSRL.WX (Status: ✗)
+  Format: vnsrl.wv vd, vs2, vs1, vm / vnsrl.wx vd, vs2, rs1, vm
+  Implementation: Not implemented
+  Description: .wv and .wx forms need per-element/scalar shift amounts
 
 VNSRA.WV, VNSRA.WX, VNSRA.WI (Status: ✗)
   Spec: v-st-ext.adoc line 2636-2638
