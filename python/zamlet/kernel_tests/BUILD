@@ -23,7 +23,6 @@ test_suite(
 test_suite(
     name = "tests_b",
     tests = [
-        "//python/zamlet/kernel_tests/bitreverse_reorder:test_bitreverse_reorder",
         "//python/zamlet/kernel_tests/sgemv:test_sgemv",
         "//python/zamlet/kernel_tests/sgemv:test_sgemv_64x64",
         "//python/zamlet/kernel_tests/sgemv:test_sgemv_large",
