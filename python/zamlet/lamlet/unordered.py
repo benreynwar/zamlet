@@ -520,6 +520,7 @@ async def vloadstorestride(lamlet: 'Oamlet', reg_base: int, addr: int,
     n_to_process = n_elements - aligned_start
     prev_fault_sync = None
     all_completion_syncs = []
+    writeset_ident = ident_query.get_writeset_ident(lamlet)
     for batch_offset in range(0, n_to_process, batch_capacity):
         batch_n = min(batch_capacity, n_to_process - batch_offset)
         batch_start = aligned_start + batch_offset
@@ -562,7 +563,8 @@ async def vloadstorestride(lamlet: 'Oamlet', reg_base: int, addr: int,
             mask_reg=mask_reg, start_index=actual_start_index,
             parent_span_id=parent_span_id, is_store=is_store,
             index_offset=-batch_start,
-            chain_from_ident=prev_fault_sync)
+            chain_from_ident=prev_fault_sync,
+            writeset_ident=writeset_ident)
         prev_fault_sync = result.last_fault_sync_ident
         if result.completion_sync_idents:
             all_completion_syncs.extend(result.completion_sync_idents)
@@ -647,6 +649,7 @@ async def _vloadstore_indexed_unordered(
         parent_span_id: int, is_store: bool,
         index_offset: int = 0,
         chain_from_ident: int | None = None,
+        writeset_ident: int | None = None,
         ) -> VectorOpResult:
     """Shared implementation for unordered indexed vector loads and stores.
 
@@ -657,7 +660,8 @@ async def _vloadstore_indexed_unordered(
     data_ordering = Ordering(word_order=lamlet.word_order, ew=data_ew)
     index_ordering = Ordering(word_order=lamlet.word_order, ew=index_ew)
 
-    writeset_ident = ident_query.get_writeset_ident(lamlet)
+    if writeset_ident is None:
+        writeset_ident = ident_query.get_writeset_ident(lamlet)
 
     if is_store:
         # Scatter stores send WRITE_MEM_WORD_REQ from the kamlet back to the lamlet.
