@@ -1,5 +1,5 @@
 name: 'Nix Setup'
-description: 'Set up Nix with FOSSi and Cachix caches'
+description: 'Set up Nix with caches'
 
 inputs:
   cache-prefix:
@@ -21,6 +21,8 @@ runs:
           extra-substituters = https://nix-cache.fossi-foundation.org
           extra-trusted-public-keys = nix-cache.fossi-foundation.org:3+K59iFwXqKsL7BNu6Guy0v+uTlwsxYQxjspXzqLYQs=
           trusted-substituters = https://nix-cache.fossi-foundation.org
+
+    - uses: DeterminateSystems/magic-nix-cache-action@main
 
     - uses: cachix/cachix-action@v15
       with:
