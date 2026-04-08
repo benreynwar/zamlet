@@ -1,148 +1,193 @@
 name: CI
 
-# When to run this workflow
 on:
   push:
     branches: [main]
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+  packages: write
+
 jobs:
-  python-model-tests-a:
+  build-image:
     runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.check.outputs.image }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check if image needs rebuild
+        id: check
+        run: |
+          HASH=$(sha256sum shell.nix nix/*.nix nix/*.patch 2>/dev/null | sha256sum | cut -d' ' -f1)
+          HASH_SHORT=${HASH:0:16}
+          IMAGE="ghcr.io/benreynwar/zamlet:ci-nix-${HASH_SHORT}"
+          echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
+          if docker pull "$IMAGE" 2>/dev/null; then
+            echo "rebuild=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "rebuild=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: jlumbroso/free-disk-space@main
+        if: steps.check.outputs.rebuild == 'true'
+        with:
+          tool-cache: false
+
+      - uses: docker/login-action@v3
+        if: steps.check.outputs.rebuild == 'true'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v5
+        if: steps.check.outputs.rebuild == 'true'
+        with:
+          context: .
+          file: Dockerfile.ci
+          push: true
+          tags: ${{ steps.check.outputs.image }}
+
+  python-model-tests-a:
+    needs: [build-image]
+    runs-on: ubuntu-latest
+    container:
+      image: ${{ needs.build-image.outputs.image }}
     env:
-      CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
       ZAMLET_TEST_SCALE: "0.1"
     steps:
       - uses: actions/checkout@v4
-      - uses: ./.github/actions/nix-setup
-        id: setup
+      - uses: ./.github/actions/bazel-cache
+        id: cache
         with:
           cache-prefix: bazel-model-a
       - name: Run Python model tests (group A)
-        run: |
-          nix-shell --run "bazel test //python/zamlet/tests:tests_a --test_output=errors --keep_going"
+        run: nix-shell --run "bazel test //python/zamlet/tests:tests_a --test_output=errors --keep_going"
       - name: Save Bazel cache
         if: always()
         uses: actions/cache/save@v4
         with:
           path: ~/.cache/bazel
-          key: ${{ steps.setup.outputs.cache-key }}
+          key: ${{ steps.cache.outputs.cache-key }}
 
   python-model-tests-b:
+    needs: [build-image]
     runs-on: ubuntu-latest
+    container:
+      image: ${{ needs.build-image.outputs.image }}
     env:
-      CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
       ZAMLET_TEST_SCALE: "0.1"
     steps:
       - uses: actions/checkout@v4
-      - uses: ./.github/actions/nix-setup
-        id: setup
+      - uses: ./.github/actions/bazel-cache
+        id: cache
         with:
           cache-prefix: bazel-model-b
       - name: Run Python model tests (group B)
-        run: |
-          nix-shell --run "bazel test //python/zamlet/tests:tests_b --test_output=errors --keep_going"
+        run: nix-shell --run "bazel test //python/zamlet/tests:tests_b --test_output=errors --keep_going"
       - name: Save Bazel cache
         if: always()
         uses: actions/cache/save@v4
         with:
           path: ~/.cache/bazel
-          key: ${{ steps.setup.outputs.cache-key }}
+          key: ${{ steps.cache.outputs.cache-key }}
 
   kernel-tests-a:
+    needs: [build-image]
     runs-on: ubuntu-latest
-    env:
-      CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
+    container:
+      image: ${{ needs.build-image.outputs.image }}
     steps:
       - uses: actions/checkout@v4
-      - uses: ./.github/actions/nix-setup
-        id: setup
+      - uses: ./.github/actions/bazel-cache
+        id: cache
         with:
           cache-prefix: bazel-kernel-a
       - name: Run kernel tests (group A)
-        run: |
-          nix-shell --run "bazel test //python/zamlet/kernel_tests:tests_a --test_output=errors --keep_going"
+        run: nix-shell --run "bazel test //python/zamlet/kernel_tests:tests_a --test_output=errors --keep_going"
       - name: Save Bazel cache
         if: always()
         uses: actions/cache/save@v4
         with:
           path: ~/.cache/bazel
-          key: ${{ steps.setup.outputs.cache-key }}
-
-  kernel-tests-c:
-    runs-on: ubuntu-latest
-    env:
-      CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: ./.github/actions/nix-setup
-        id: setup
-        with:
-          cache-prefix: bazel-kernel-c
-      - name: Run kernel tests (group C)
-        run: |
-          nix-shell --run "bazel test //python/zamlet/kernel_tests:tests_c --test_output=errors --keep_going"
-      - name: Save Bazel cache
-        if: always()
-        uses: actions/cache/save@v4
-        with:
-          path: ~/.cache/bazel
-          key: ${{ steps.setup.outputs.cache-key }}
+          key: ${{ steps.cache.outputs.cache-key }}
 
   kernel-tests-b:
+    needs: [build-image]
     runs-on: ubuntu-latest
-    env:
-      CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
+    container:
+      image: ${{ needs.build-image.outputs.image }}
     steps:
       - uses: actions/checkout@v4
-      - uses: ./.github/actions/nix-setup
-        id: setup
+      - uses: ./.github/actions/bazel-cache
+        id: cache
         with:
           cache-prefix: bazel-kernel-b
       - name: Run kernel tests (group B)
-        run: |
-          nix-shell --run "bazel test //python/zamlet/kernel_tests:tests_b --test_output=errors --keep_going"
+        run: nix-shell --run "bazel test //python/zamlet/kernel_tests:tests_b --test_output=errors --keep_going"
       - name: Save Bazel cache
         if: always()
         uses: actions/cache/save@v4
         with:
           path: ~/.cache/bazel
-          key: ${{ steps.setup.outputs.cache-key }}
+          key: ${{ steps.cache.outputs.cache-key }}
 
-  cocotb-tests:
+  kernel-tests-c:
+    needs: [build-image]
     runs-on: ubuntu-latest
-    env:
-      CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
+    container:
+      image: ${{ needs.build-image.outputs.image }}
     steps:
       - uses: actions/checkout@v4
-      - uses: ./.github/actions/nix-setup
-        id: setup
+      - uses: ./.github/actions/bazel-cache
+        id: cache
+        with:
+          cache-prefix: bazel-kernel-c
+      - name: Run kernel tests (group C)
+        run: nix-shell --run "bazel test //python/zamlet/kernel_tests:tests_c --test_output=errors --keep_going"
+      - name: Save Bazel cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.cache/bazel
+          key: ${{ steps.cache.outputs.cache-key }}
+
+  cocotb-tests:
+    needs: [build-image]
+    runs-on: ubuntu-latest
+    container:
+      image: ${{ needs.build-image.outputs.image }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/bazel-cache
+        id: cache
         with:
           cache-prefix: bazel-cocotb
       - name: Run cocotb tests
-        run: |
-          nix-shell --run "bazel test //python/zamlet:cocotb_tests --test_output=errors --keep_going"
+        run: nix-shell --run "bazel test //python/zamlet:cocotb_tests --test_output=errors --keep_going"
       - name: Save Bazel cache
         if: always()
         uses: actions/cache/save@v4
         with:
           path: ~/.cache/bazel
-          key: ${{ steps.setup.outputs.cache-key }}
+          key: ${{ steps.cache.outputs.cache-key }}
 
   synthesis:
+    needs: [build-image]
     runs-on: ubuntu-latest
-    env:
-      CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
+    container:
+      image: ${{ needs.build-image.outputs.image }}
     steps:
       - uses: actions/checkout@v4
-      - uses: ./.github/actions/nix-setup
-        id: setup
+      - uses: ./.github/actions/bazel-cache
+        id: cache
         with:
           cache-prefix: bazel-synth
       - name: WallaceMult8x8 flow
-        run: |
-          nix-shell --run "bazel build //dse/maths:WallaceMult8x8_sky130hd_mfg_report"
+        run: nix-shell --run "bazel build //dse/maths:WallaceMult8x8_sky130hd_mfg_report"
       - name: Upload failed step artifacts
         if: failure()
         uses: actions/upload-artifact@v4
@@ -155,4 +200,4 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: ~/.cache/bazel
-          key: ${{ steps.setup.outputs.cache-key }}
+          key: ${{ steps.cache.outputs.cache-key }}
