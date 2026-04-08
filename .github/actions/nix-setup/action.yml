@@ -17,12 +17,3 @@ runs:
         name: benreynwar
         authToken: '${{ env.CACHIX_AUTH_TOKEN }}'
 
-    - name: Restore Bazel cache
-      uses: actions/cache/restore@v4
-      with:
-        path: ~/.cache/bazel
-        key: bazel-${{ runner.os }}-${{ hashFiles('MODULE.bazel', 'MODULE.bazel.lock', 'shell.nix', 'nix/*.nix', 'nix/*.patch') }}
-        restore-keys: |
-          bazel-cocotb-${{ runner.os }}-
-          bazel-synth-
-          bazel-

@@ -7,6 +7,9 @@ on:
   pull_request:
     branches: [main]
 
+env:
+  BAZEL_CACHE_HASH: ${{ hashFiles('MODULE.bazel', 'MODULE.bazel.lock', 'shell.nix', 'nix/*.nix', 'nix/*.patch') }}
+
 jobs:
   python-model-tests:
     runs-on: ubuntu-latest
@@ -16,12 +19,44 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/nix-setup
+      - name: Restore Bazel cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.cache/bazel
+          key: bazel-model-${{ runner.os }}-${{ env.BAZEL_CACHE_HASH }}
+          restore-keys: bazel-model-${{ runner.os }}-
       - name: Run Python model tests
         run: |
           nix-shell --run "bazel test //python/zamlet/tests:all_tests --test_output=errors --keep_going"
+      - name: Save Bazel cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.cache/bazel
+          key: bazel-model-${{ runner.os }}-${{ env.BAZEL_CACHE_HASH }}
+
+  kernel-tests:
+    runs-on: ubuntu-latest
+    env:
+      CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/nix-setup
+      - name: Restore Bazel cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.cache/bazel
+          key: bazel-kernel-${{ runner.os }}-${{ env.BAZEL_CACHE_HASH }}
+          restore-keys: bazel-kernel-${{ runner.os }}-
       - name: Run kernel tests
         run: |
           nix-shell --run "bazel test //python/zamlet/kernel_tests/... --test_output=errors --keep_going"
+      - name: Save Bazel cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.cache/bazel
+          key: bazel-kernel-${{ runner.os }}-${{ env.BAZEL_CACHE_HASH }}
 
   cocotb-tests:
     runs-on: ubuntu-latest
@@ -30,6 +65,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/nix-setup
+      - name: Restore Bazel cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.cache/bazel
+          key: bazel-cocotb-${{ runner.os }}-${{ env.BAZEL_CACHE_HASH }}
+          restore-keys: bazel-cocotb-${{ runner.os }}-
       - name: Run cocotb tests
         run: |
           nix-shell --run "bazel test //python/zamlet:cocotb_tests --test_output=errors --keep_going"
@@ -38,7 +79,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: ~/.cache/bazel
-          key: bazel-cocotb-${{ runner.os }}-${{ hashFiles('MODULE.bazel', 'MODULE.bazel.lock', 'shell.nix', 'nix/*.nix', 'nix/*.patch') }}
+          key: bazel-cocotb-${{ runner.os }}-${{ env.BAZEL_CACHE_HASH }}
 
   synthesis:
     runs-on: ubuntu-latest
@@ -47,6 +88,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/nix-setup
+      - name: Restore Bazel cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.cache/bazel
+          key: bazel-synth-${{ runner.os }}-${{ env.BAZEL_CACHE_HASH }}
+          restore-keys: bazel-synth-${{ runner.os }}-
       - name: WallaceMult8x8 flow
         run: |
           nix-shell --run "bazel build //dse/maths:WallaceMult8x8_sky130hd_mfg_report"
@@ -62,4 +109,4 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: ~/.cache/bazel
-          key: bazel-synth-${{ runner.os }}-${{ hashFiles('MODULE.bazel', 'MODULE.bazel.lock', 'shell.nix', 'nix/*.nix', 'nix/*.patch') }}
+          key: bazel-synth-${{ runner.os }}-${{ env.BAZEL_CACHE_HASH }}
