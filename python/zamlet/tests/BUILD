@@ -70,5 +70,30 @@ py_test(
 
 test_suite(
     name = "all_tests",
-    tests = TEST_FILES + ["test_memlet_model"],
+    tests = [":tests_a", ":tests_b"],
+)
+
+test_suite(
+    name = "tests_a",
+    tests = [
+        "test_unaligned",
+        "test_indexed_load",
+        "test_indexed_store",
+        "test_ordered_indexed_load",
+        "test_ordered_indexed_store",
+        "test_memlet_model",
+        "test_reg_mem_mapping",
+        "test_synchronization",
+    ],
+)
+
+test_suite(
+    name = "tests_b",
+    tests = [
+        "test_conditional_kamlet",
+        "test_reg_gather",
+        "test_strided_load",
+        "test_strided_store",
+        "test_reduction",
+    ],
 )

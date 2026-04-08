@@ -8,7 +8,7 @@ on:
     branches: [main]
 
 jobs:
-  python-model-tests:
+  python-model-tests-a:
     runs-on: ubuntu-latest
     env:
       CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
@@ -18,10 +18,10 @@ jobs:
       - uses: ./.github/actions/nix-setup
         id: setup
         with:
-          cache-prefix: bazel-model
-      - name: Run Python model tests
+          cache-prefix: bazel-model-a
+      - name: Run Python model tests (group A)
         run: |
-          nix-shell --run "bazel test //python/zamlet/tests:all_tests --test_output=errors --keep_going"
+          nix-shell --run "bazel test //python/zamlet/tests:tests_a --test_output=errors --keep_going"
       - name: Save Bazel cache
         if: always()
         uses: actions/cache/save@v4
@@ -29,7 +29,28 @@ jobs:
           path: ~/.cache/bazel
           key: ${{ steps.setup.outputs.cache-key }}
 
-  kernel-tests:
+  python-model-tests-b:
+    runs-on: ubuntu-latest
+    env:
+      CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
+      ZAMLET_TEST_SCALE: "0.1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/nix-setup
+        id: setup
+        with:
+          cache-prefix: bazel-model-b
+      - name: Run Python model tests (group B)
+        run: |
+          nix-shell --run "bazel test //python/zamlet/tests:tests_b --test_output=errors --keep_going"
+      - name: Save Bazel cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.cache/bazel
+          key: ${{ steps.setup.outputs.cache-key }}
+
+  kernel-tests-a:
     runs-on: ubuntu-latest
     env:
       CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
@@ -38,10 +59,30 @@ jobs:
       - uses: ./.github/actions/nix-setup
         id: setup
         with:
-          cache-prefix: bazel-kernel
-      - name: Run kernel tests
+          cache-prefix: bazel-kernel-a
+      - name: Run kernel tests (group A)
         run: |
-          nix-shell --run "bazel test //python/zamlet/kernel_tests/... --test_output=errors --keep_going"
+          nix-shell --run "bazel test //python/zamlet/kernel_tests:tests_a --test_output=errors --keep_going"
+      - name: Save Bazel cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.cache/bazel
+          key: ${{ steps.setup.outputs.cache-key }}
+
+  kernel-tests-b:
+    runs-on: ubuntu-latest
+    env:
+      CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/nix-setup
+        id: setup
+        with:
+          cache-prefix: bazel-kernel-b
+      - name: Run kernel tests (group B)
+        run: |
+          nix-shell --run "bazel test //python/zamlet/kernel_tests:tests_b --test_output=errors --keep_going"
       - name: Save Bazel cache
         if: always()
         uses: actions/cache/save@v4
