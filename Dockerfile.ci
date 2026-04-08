@@ -1,0 +1,23 @@
+FROM ubuntu:24.04
+
+RUN apt-get update && apt-get install -y curl xz-utils sudo git && \
+    rm -rf /var/lib/apt/lists/*
+
+# Install nix (single-user mode)
+RUN curl -L https://nixos.org/nix/install | bash -s -- --no-daemon
+
+ENV PATH="/root/.nix-profile/bin:/nix/var/nix/profiles/default/bin:${PATH}"
+
+# Add FOSSi and cachix substituters to nix config
+RUN mkdir -p /etc/nix && echo "\
+extra-substituters = https://nix-cache.fossi-foundation.org\n\
+extra-trusted-public-keys = nix-cache.fossi-foundation.org:3+K59iFwXqKsL7BNu6Guy0v+uTlwsxYQxjspXzqLYQs=\n\
+trusted-substituters = https://nix-cache.fossi-foundation.org\n\
+" >> /etc/nix/nix.conf
+
+# Copy nix files and populate the store
+COPY shell.nix /workspace/shell.nix
+COPY nix/ /workspace/nix/
+
+WORKDIR /workspace
+RUN nix-shell --run "echo 'Nix store populated'"

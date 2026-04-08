@@ -21,7 +21,7 @@ jobs:
       - name: Check if image needs rebuild
         id: check
         run: |
-          HASH=$(sha256sum shell.nix nix/*.nix nix/*.patch 2>/dev/null | sha256sum | cut -d' ' -f1)
+          HASH=$(sha256sum Dockerfile.ci shell.nix nix/*.nix nix/*.patch 2>/dev/null | sha256sum | cut -d' ' -f1)
           HASH_SHORT=${HASH:0:16}
           IMAGE="ghcr.io/benreynwar/zamlet:ci-nix-${HASH_SHORT}"
           echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
