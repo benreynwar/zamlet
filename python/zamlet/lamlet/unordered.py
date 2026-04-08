@@ -659,6 +659,15 @@ async def _vloadstore_indexed_unordered(
 
     writeset_ident = ident_query.get_writeset_ident(lamlet)
 
+    if is_store:
+        # Scatter stores send WRITE_MEM_WORD_REQ from the kamlet back to the lamlet.
+        # The lamlet doesn't know which scalar addresses will be written until the
+        # messages arrive, so we must wait for prior writesets to drain before
+        # dispatching to avoid write-write conflicts at the scalar memory.
+        while (lamlet.scalar.has_conflicting_writes(writeset_ident)
+               or lamlet.scalar.has_conflicting_reads(writeset_ident)):
+            await lamlet.clock.next_cycle
+
     if not is_store:
         # Set up register file ordering for destination registers
         vline_bits = lamlet.params.maxvl_bytes * 8
@@ -948,6 +957,7 @@ async def handle_read_mem_word_req(lamlet: 'Oamlet', header: ReadMemWordHeader,
     """Handle unordered READ_MEM_WORD_REQ: read from scalar memory and respond immediately."""
     wb = lamlet.params.word_bytes
     word_addr = scalar_addr - (scalar_addr % wb)
+    lamlet.scalar.register_known_read(header.writeset_ident)
     data = int.from_bytes(await lamlet.scalar.get_memory(
         scalar_addr, wb, writeset_ident=header.writeset_ident, known=True), 'little')
     resp_header = TaggedHeader(
@@ -982,6 +992,9 @@ async def handle_write_mem_word_req(lamlet: 'Oamlet', header: WriteMemWordHeader
     """Handle WRITE_MEM_WORD_REQ: write to scalar memory and send response."""
     wb = lamlet.params.word_bytes
     word_addr = scalar_addr - (scalar_addr % wb)
+    # no_response means this was a known write (pre-registered at dispatch via StoreScalar).
+    # With response means this is a scatter write (not pre-registered).
+    known = header.no_response
     if header.bit_mode:
         # Bit-level write: read-modify-write a single byte
         byte_addr = word_addr + header.dst_byte_in_word
@@ -994,7 +1007,7 @@ async def handle_write_mem_word_req(lamlet: 'Oamlet', header: WriteMemWordHeader
         new_byte = (existing & ~mask) | (src_byte & mask)
         await lamlet.scalar.set_memory(
             byte_addr, bytes([new_byte]),
-            writeset_ident=header.writeset_ident, known=True)
+            writeset_ident=header.writeset_ident, known=known)
     else:
         src_start = header.tag
         dst_start = header.dst_byte_in_word
@@ -1002,7 +1015,7 @@ async def handle_write_mem_word_req(lamlet: 'Oamlet', header: WriteMemWordHeader
         src_bytes = src_word.to_bytes(wb, 'little')
         await lamlet.scalar.set_memory(
             word_addr + dst_start, src_bytes[src_start:src_start + n_bytes],
-            writeset_ident=header.writeset_ident, known=True)
+            writeset_ident=header.writeset_ident, known=known)
     if not header.no_response:
         resp_header = TaggedHeader(
             target_x=header.source_x,

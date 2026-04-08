@@ -125,23 +125,22 @@ class ScalarState:
         return page_addr in self._non_idempotent_pages
 
     async def set_memory(self, address: int, data: bytes,
-                         writeset_ident: int | None = None, known: bool = False):
-        """Write to scalar memory. Waits for conflicting operations first."""
-        blocked = False
-        while (self.has_conflicting_reads(writeset_ident)
-               or self.has_conflicting_writes(writeset_ident)):
-            if not blocked:
-                logger.debug(
-                    f'set_memory: BLOCKED addr=0x{address:x} ws={writeset_ident} '
-                    f'known_r={dict(self.pending_known_reads)} '
-                    f'known_w={dict(self.pending_known_writes)} '
-                    f'mt_r={dict(self.might_touch_reads)} '
-                    f'mt_w={dict(self.might_touch_writes)}')
-                blocked = True
-            await self.clock.next_cycle
-        if blocked:
-            logger.debug(
-                f'set_memory: UNBLOCKED addr=0x{address:x} ws={writeset_ident}')
+                         writeset_ident: int | None = None, known: bool = False,
+                         allow_wait: bool = False):
+        """Write to scalar memory."""
+        if allow_wait:
+            while (self.has_conflicting_reads(writeset_ident)
+                   or self.has_conflicting_writes(writeset_ident)):
+                await self.clock.next_cycle
+        else:
+            assert not self.has_conflicting_reads(writeset_ident), (
+                f'set_memory: conflicting reads addr=0x{address:x} ws={writeset_ident} '
+                f'known_r={dict(self.pending_known_reads)} '
+                f'mt_r={dict(self.might_touch_reads)}')
+            assert not self.has_conflicting_writes(writeset_ident), (
+                f'set_memory: conflicting writes addr=0x{address:x} ws={writeset_ident} '
+                f'known_w={dict(self.pending_known_writes)} '
+                f'mt_w={dict(self.might_touch_writes)}')
         if self._is_non_idempotent(address):
             self.non_idempotent_write_log.append(address)
         for i, b in enumerate(data):
@@ -153,20 +152,23 @@ class ScalarState:
 
     async def get_memory(self, address: int, size: int = 1,
                          writeset_ident: int | None = None,
-                         known: bool = False) -> bytes:
-        """Read from scalar memory. Waits for conflicting writes first."""
-        blocked = False
-        while self.has_conflicting_writes(writeset_ident):
-            if not blocked:
-                logger.debug(
-                    f'get_memory: BLOCKED addr=0x{address:x} ws={writeset_ident} '
-                    f'known_w={dict(self.pending_known_writes)} '
-                    f'mt_w={dict(self.might_touch_writes)}')
-                blocked = True
-            await self.clock.next_cycle
-        if blocked:
-            logger.debug(
-                f'get_memory: UNBLOCKED addr=0x{address:x} ws={writeset_ident}')
+                         known: bool = False, allow_wait: bool = False) -> bytes:
+        """Read from scalar memory."""
+        if allow_wait:
+            logged = False
+            while self.has_conflicting_writes(writeset_ident):
+                if not logged:
+                    logger.debug(
+                        f'get_memory waiting: addr=0x{address:x} ws={writeset_ident} '
+                        f'known_w={dict(self.pending_known_writes)} '
+                        f'mt_w={dict(self.might_touch_writes)}')
+                    logged = True
+                await self.clock.next_cycle
+        else:
+            assert not self.has_conflicting_writes(writeset_ident), (
+                f'get_memory: conflicting writes addr=0x{address:x} ws={writeset_ident} '
+                f'known_w={dict(self.pending_known_writes)} '
+                f'mt_w={dict(self.might_touch_writes)}')
         if self._is_non_idempotent(address):
             self.non_idempotent_access_log.append(address)
         bs = []

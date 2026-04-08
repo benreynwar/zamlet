@@ -8,7 +8,6 @@ Tests LoadStride instruction with mixed page types:
 - Unallocated pages (trigger faults)
 """
 
-import asyncio
 import logging
 from random import Random
 
@@ -16,12 +15,14 @@ import pytest
 
 from zamlet.runner import Clock
 from zamlet.params import ZamletParams
+from zamlet.oamlet.oamlet import Oamlet
 from zamlet.addresses import GlobalAddress, MemoryType, Ordering, WordOrder
 from zamlet.geometries import SMALL_GEOMETRIES, scale_n_tests
 from zamlet.monitor import CompletionType, SpanType
+from zamlet.tests import test_utils
 from zamlet.tests.test_utils import (
-    setup_lamlet, pack_elements, unpack_elements, get_vpu_base_addr,
-    setup_mask_register, zero_register, dump_span_trees,
+    pack_elements, unpack_elements, get_vpu_base_addr,
+    setup_mask_register, zero_register,
     PageType, allocate_page, generate_page_types, random_stride, random_vl,
     random_start_index, choose_mask_pattern, generate_mask_pattern,
 )
@@ -31,35 +32,14 @@ logger = logging.getLogger(__name__)
 
 async def run_strided_load_test(
     clock: Clock,
-    ew: int,
-    vl: int,
-    stride: int,
-    params: ZamletParams,
-    seed: int,
-    start_index: int = 0,
-    use_mask: bool = True,
-    dump_spans: bool = False,
-):
-    """Test strided vector load operations with mixed page types."""
-    lamlet = await setup_lamlet(clock, params)
-
-    try:
-        return await _run_strided_load_test_inner(
-            lamlet, clock, ew, vl, stride, params, seed, start_index, use_mask)
-    finally:
-        if dump_spans:
-            dump_span_trees(lamlet.monitor)
-
-
-async def _run_strided_load_test_inner(
-    lamlet,
-    clock: Clock,
+    lamlet: Oamlet,
     ew: int,
     vl: int,
     stride: int,
     params: ZamletParams,
     seed: int,
     start_index: int,
+    lmul: int,
     use_mask: bool,
 ):
     rnd = Random(seed)
@@ -117,7 +97,7 @@ async def _run_strided_load_test_inner(
                 await lamlet.set_memory(src_base + offset + byte_off, bytes([byte_val]))
 
     lamlet.vl = vl
-    lamlet.vtype = {8: 0x0, 16: 0x1, 32: 0x2, 64: 0x3}[ew]
+    lamlet.set_vtype(ew, lmul)
 
     elements_per_vline = params.vline_bytes * 8 // ew
     n_data_regs = (vl + elements_per_vline - 1) // elements_per_vline
@@ -152,7 +132,6 @@ async def _run_strided_load_test_inner(
         start_index=start_index,
         mask_reg=mask_reg,
         parent_span_id=span_id,
-        lmul=1,
         stride_bytes=stride,
     )
 
@@ -266,23 +245,16 @@ async def _run_strided_load_test_inner(
     return 0
 
 
-async def main(clock, **kwargs):
-    clock.register_main()
-    clock.create_task(clock.clock_driver())
-
-    exit_code = await run_strided_load_test(clock, **kwargs)
-    clock.running = False
-    return exit_code
-
-
 def run_test(ew: int, vl: int, stride: int, params: ZamletParams, seed: int,
-             start_index: int = 0, use_mask: bool = True, dump_spans: bool = False,
+             start_index: int = 0, lmul: int = 1,
+             use_mask: bool = True, dump_spans: bool = False,
              max_cycles: int = 50000):
     """Helper to run a single test configuration."""
-    clock = Clock(max_cycles=max_cycles)
-    exit_code = asyncio.run(main(clock, ew=ew, vl=vl, stride=stride, params=params, seed=seed,
-                                  start_index=start_index, use_mask=use_mask, dump_spans=dump_spans))
-    assert exit_code == 0, f"Test failed with exit_code={exit_code}"
+    async def test_fn(clock: Clock, lamlet: Oamlet):
+        return await run_strided_load_test(
+            clock, lamlet, ew, vl, stride, params, seed, start_index, lmul, use_mask)
+
+    test_utils.run_test(test_fn, params, max_cycles=max_cycles, dump_spans=dump_spans)
 
 
 def random_test_config(rnd: Random):
@@ -290,8 +262,11 @@ def random_test_config(rnd: Random):
     geom_name = rnd.choice(list(SMALL_GEOMETRIES.keys()))
     geom_params = SMALL_GEOMETRIES[geom_name]
     ew = rnd.choice([8, 16, 32, 64])
-    # Limit vl to mask register capacity
-    max_vl = geom_params.j_in_l * geom_params.word_bytes * 8
+    lmul = rnd.choice([1, 2, 4, 8])
+    elements_per_vline = geom_params.vline_bytes * 8 // ew
+    vlmax = elements_per_vline * lmul
+    # Limit vl to mask register capacity and vlmax
+    max_vl = min(geom_params.j_in_l * geom_params.word_bytes * 8, vlmax)
     vl = random_vl(rnd, max_vl)
     element_bytes = ew // 8
     stride = random_stride(rnd, element_bytes, geom_params.page_bytes)
@@ -301,7 +276,7 @@ def random_test_config(rnd: Random):
         max_stride = (vpu_bytes // 2 - element_bytes - 64) // (vl - 1)
         stride = min(stride, max(element_bytes + 1, max_stride))
     start_index = random_start_index(rnd, vl)
-    return geom_name, geom_params, ew, vl, stride, start_index
+    return geom_name, geom_params, ew, vl, stride, start_index, lmul
 
 
 def generate_test_params(n_tests: int = 64, seed: int = 42):
@@ -309,18 +284,20 @@ def generate_test_params(n_tests: int = 64, seed: int = 42):
     rnd = Random(seed)
     test_params = []
     for i in range(n_tests):
-        geom_name, geom_params, ew, vl, stride, start_index = random_test_config(rnd)
+        geom_name, geom_params, ew, vl, stride, start_index, lmul = random_test_config(rnd)
         # Use i as the seed for each test so page types vary
         id_str = f"{i}_{geom_name}_ew{ew}_vl{vl}_s{stride}_si{start_index}"
-        test_params.append(pytest.param(geom_params, ew, vl, stride, start_index, i, id=id_str))
+        test_params.append(pytest.param(
+            geom_params, ew, vl, stride, start_index, lmul, i, id=id_str))
     return test_params
 
 
-@pytest.mark.parametrize("params,ew,vl,stride,start_index,seed",
+@pytest.mark.parametrize("params,ew,vl,stride,start_index,lmul,seed",
                          generate_test_params(n_tests=scale_n_tests(32)))
-def test_strided_load(params, ew, vl, stride, start_index, seed):
+def test_strided_load(params, ew, vl, stride, start_index, lmul, seed):
     """Strided load with random mix of page types."""
-    run_test(ew=ew, vl=vl, stride=stride, params=params, seed=seed, start_index=start_index)
+    run_test(ew=ew, vl=vl, stride=stride, params=params, seed=seed,
+             start_index=start_index, lmul=lmul)
 
 
 if __name__ == '__main__':
@@ -341,6 +318,7 @@ if __name__ == '__main__':
                         help='List available geometries and exit')
     parser.add_argument('--no-mask', action='store_true',
                         help='Disable mask testing (default: use random mask)')
+    parser.add_argument('--lmul', type=int, default=1, help='LMUL (1, 2, 4, 8)')
     parser.add_argument('--dump-spans', action='store_true',
                         help='Dump span trees to span_trees.txt')
     parser.add_argument('--max-cycles', type=int, default=50000,
@@ -359,5 +337,5 @@ if __name__ == '__main__':
     stride = args.stride if args.stride is not None else args.ew // 8 * 2
     use_mask = not args.no_mask
     run_test(ew=args.ew, vl=args.vl, stride=stride, params=params, seed=args.seed,
-             start_index=args.start_index, use_mask=use_mask, dump_spans=args.dump_spans,
-             max_cycles=args.max_cycles)
+             start_index=args.start_index, lmul=args.lmul, use_mask=use_mask,
+             dump_spans=args.dump_spans, max_cycles=args.max_cycles)

@@ -295,12 +295,22 @@ class Oamlet:
         return jamlet
 
     @property
+    def sew(self):
+        vsew = (self.vtype >> 3) & 0x7
+        return 8 << vsew
+
+    @property
     def lmul(self):
         vlmul = self.vtype & 0x7
         if vlmul <= 3:
             return 1 << vlmul
         else:
             return 1
+
+    def set_vtype(self, ew: int, lmul: int):
+        vsew = {8: 0, 16: 1, 32: 2, 64: 3}[ew]
+        vlmul = {1: 0, 2: 1, 4: 2, 8: 3}[lmul]
+        self.vtype = (vsew << 3) | vlmul
 
     def set_vrf_ordering(self, vd: int, ew: int):
         """Set vrf_ordering for all vline registers in the LMUL group."""
@@ -1043,7 +1053,8 @@ class Oamlet:
                 await self.clock.next_cycle
             else:
                 scalar_address = self.to_scalar_addr(byt_address)
-                await self.scalar.set_memory(scalar_address, bytes([b]))
+                await self.scalar.set_memory(
+                    scalar_address, bytes([b]), allow_wait=True)
 
     def directly_set_memory(self, address: int, data: bytes):
         """
@@ -1116,7 +1127,8 @@ class Oamlet:
                 self.clock.create_task(self.combine_read_futures(read_future, read_futures))
             else:
                 local_address = start_addr.to_scalar_addr(self.tlb)
-                data = await self.scalar.get_memory(local_address, size=size)
+                data = await self.scalar.get_memory(
+                    local_address, size=size, allow_wait=True)
                 read_future = self.clock.create_future()
                 read_future.set_result(data)
             result_future = read_future
@@ -1182,8 +1194,11 @@ class Oamlet:
 
     async def vload(self, vd: int, addr: int, ordering: addresses.Ordering,
                     n_elements: int, mask_reg: int | None, start_index: int,
-                    parent_span_id: int, lmul: int,
+                    parent_span_id: int, lmul: int | None = None,
                     stride_bytes: int | None = None) -> addresses.VectorOpResult:
+        if lmul is None:
+            lmul = self.lmul
+        assert lmul in (1, 2, 4, 8), f'vload: invalid lmul={lmul}'
         elements_per_vline = self.params.vline_bytes * 8 // ordering.ew
         vlmax = elements_per_vline * lmul
         assert n_elements <= vlmax, (

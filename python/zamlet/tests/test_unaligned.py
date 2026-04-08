@@ -13,9 +13,7 @@ Parameters:
 - lmul: Number of registers grouped as one logical register
 """
 
-import asyncio
 import logging
-import struct
 from random import Random
 
 import pytest
@@ -26,44 +24,10 @@ from zamlet.geometries import SMALL_GEOMETRIES, scale_n_tests
 from zamlet.oamlet.oamlet import Oamlet
 from zamlet.addresses import GlobalAddress, MemoryType, Ordering, WordOrder
 from zamlet.monitor import CompletionType, SpanType
+from zamlet.tests import test_utils
+from zamlet.tests.test_utils import pack_elements, unpack_elements
 
 logger = logging.getLogger(__name__)
-
-
-async def update(clock, lamlet):
-    """Update loop for the lamlet"""
-    while True:
-        await clock.next_update
-        lamlet.update()
-
-
-def pack_elements(values: list[int], element_width: int) -> bytes:
-    """Pack a list of integer values into bytes based on element width."""
-    if element_width == 8:
-        return bytes(v & 0xFF for v in values)
-    elif element_width == 16:
-        return struct.pack(f'<{len(values)}H', *[v & 0xFFFF for v in values])
-    elif element_width == 32:
-        return struct.pack(f'<{len(values)}I', *[v & 0xFFFFFFFF for v in values])
-    elif element_width == 64:
-        return struct.pack(f'<{len(values)}Q', *[v & 0xFFFFFFFFFFFFFFFF for v in values])
-    else:
-        raise ValueError(f"Unsupported element width: {element_width}")
-
-
-def unpack_elements(data: bytes, element_width: int) -> list[int]:
-    """Unpack bytes into a list of integer values based on element width."""
-    n_elements = len(data) * 8 // element_width
-    if element_width == 8:
-        return list(data)
-    elif element_width == 16:
-        return list(struct.unpack(f'<{n_elements}H', data))
-    elif element_width == 32:
-        return list(struct.unpack(f'<{n_elements}I', data))
-    elif element_width == 64:
-        return list(struct.unpack(f'<{n_elements}Q', data))
-    else:
-        raise ValueError(f"Unsupported element width: {element_width}")
 
 
 def allocate_pages(lamlet, base_addr, n_pages, rnd, params):
@@ -92,6 +56,7 @@ def allocate_pages(lamlet, base_addr, n_pages, rnd, params):
 
 async def run_unaligned_test(
     clock: Clock,
+    lamlet: Oamlet,
     vl: int,
     reg_ew: int,
     src_offset: int,
@@ -105,12 +70,6 @@ async def run_unaligned_test(
 
     Loads vl elements from src+src_offset, stores to dst+dst_offset.
     """
-    lamlet = Oamlet(clock, params)
-    clock.create_task(update(clock, lamlet))
-    clock.create_task(lamlet.run())
-
-    await clock.next_cycle
-
     rnd = Random(seed)
     src_list = [rnd.getrandbits(reg_ew) for i in range(vl)]
 
@@ -172,7 +131,7 @@ async def run_unaligned_test(
 
         # Load from source into v0
         lamlet.vl = iter_count
-        lamlet.vtype = {8: 0x0, 16: 0x1, 32: 0x2, 64: 0x3}[reg_ew]  # Set SEW
+        lamlet.set_vtype(reg_ew, lmul)
         await lamlet.vload(
             vd=0,
             addr=src_addr + src_byte_offset,
@@ -181,7 +140,6 @@ async def run_unaligned_test(
             start_index=0,
             mask_reg=None,
             parent_span_id=span_id,
-            lmul=1,
         )
 
         # Store from v0 to destination
@@ -205,14 +163,6 @@ async def run_unaligned_test(
     result = future.result()
     logger.info(f"Result: {result.hex()}")
     logger.info(f"Expected: {expected_data.hex()}")
-
-    # Write span trees for debugging
-    with open('span_trees.txt', 'w') as f:
-        for span in lamlet.monitor.spans.values():
-            if span.parent is None:
-                f.write(lamlet.monitor.format_span_tree(span.span_id, max_depth=20))
-                f.write('\n')
-    logger.info("Span trees written to span_trees.txt")
 
     # Compare
     if result == expected_data:
@@ -240,39 +190,18 @@ async def run_unaligned_test(
         return 1
 
 
-async def main(
-    clock,
-    vl: int,
-    reg_ew: int,
-    src_offset: int,
-    dst_offset: int,
-    lmul: int,
-    params: ZamletParams,
-    seed: int,
-):
-    clock.register_main()
-
-    clock_driver_task = clock.create_task(clock.clock_driver())
-    exit_code = await run_unaligned_test(
-        clock, vl, reg_ew, src_offset, dst_offset, lmul, params, seed
-    )
-
-    logger.warning(f"Test completed with exit_code: {exit_code}")
-    clock.running = False
-
-    return exit_code
-
-
 def run_test(reg_ew, src_offset, dst_offset, vl, lmul=8,
-             params: ZamletParams = None, seed=0):
+             params: ZamletParams = None, seed=0, dump_spans=False,
+             max_cycles: int = 10000):
     """Helper to run a single test configuration."""
     if params is None:
         params = ZamletParams()
-    clock = Clock(max_cycles=10000)
-    exit_code = asyncio.run(main(
-        clock, vl, reg_ew, src_offset, dst_offset, lmul, params, seed
-    ))
-    assert exit_code == 0, f"Test failed with exit_code={exit_code}"
+
+    async def test_fn(clock, lamlet):
+        return await run_unaligned_test(
+            clock, lamlet, vl, reg_ew, src_offset, dst_offset, lmul, params, seed)
+
+    test_utils.run_test(test_fn, params, max_cycles=max_cycles, dump_spans=dump_spans)
 
 
 def random_offset(rnd: Random, params: ZamletParams, eb: int, data_size: int):
@@ -297,12 +226,15 @@ def random_offset(rnd: Random, params: ZamletParams, eb: int, data_size: int):
 def random_test_config(rnd: Random, params: ZamletParams):
     """Generate a random test configuration."""
     reg_ew = rnd.choice([8, 16, 32, 64])
+    lmul = rnd.choice([1, 2, 4, 8])
+    elements_per_vline = params.vline_bytes * 8 // reg_ew
+    vlmax = elements_per_vline * lmul
     eb = reg_ew // 8
-    vl = rnd.randint(1, 128)
+    vl = rnd.randint(0, vlmax)
     data_size = vl * eb
-    src_offset = random_offset(rnd, params, eb, data_size)
-    dst_offset = random_offset(rnd, params, eb, data_size)
-    return reg_ew, src_offset, dst_offset, vl
+    src_offset = random_offset(rnd, params, eb, max(1, data_size))
+    dst_offset = random_offset(rnd, params, eb, max(1, data_size))
+    return reg_ew, src_offset, dst_offset, vl, lmul
 
 
 def generate_test_params(n_tests: int = 8, seed: int = 42):
@@ -312,18 +244,18 @@ def generate_test_params(n_tests: int = 8, seed: int = 42):
     for i in range(n_tests):
         geom_name = rnd.choice(list(SMALL_GEOMETRIES.keys()))
         geom_params = SMALL_GEOMETRIES[geom_name]
-        reg_ew, src_offset, dst_offset, vl = random_test_config(rnd, geom_params)
+        reg_ew, src_offset, dst_offset, vl, lmul = random_test_config(rnd, geom_params)
         id_str = (f"{i}_{geom_name}_reg{reg_ew}"
                   f"_srcoff{src_offset}_dstoff{dst_offset}_vl{vl}")
         test_params.append(pytest.param(
-            geom_params, reg_ew, src_offset, dst_offset, vl, id=id_str))
+            geom_params, reg_ew, src_offset, dst_offset, vl, lmul, id=id_str))
     return test_params
 
 
-@pytest.mark.parametrize("params,reg_ew,src_offset,dst_offset,vl",
+@pytest.mark.parametrize("params,reg_ew,src_offset,dst_offset,vl,lmul",
                          generate_test_params(n_tests=scale_n_tests(128)))
-def test_unaligned(params, reg_ew, src_offset, dst_offset, vl):
-    run_test(reg_ew, src_offset, dst_offset, vl, params=params)
+def test_unaligned(params, reg_ew, src_offset, dst_offset, vl, lmul):
+    run_test(reg_ew, src_offset, dst_offset, vl, lmul=lmul, params=params)
 
 
 if __name__ == '__main__':
@@ -349,6 +281,10 @@ if __name__ == '__main__':
                         help='List available geometries and exit')
     parser.add_argument('--seed', '-s', type=int, default=0,
                         help='Random seed for test data generation (default: 0)')
+    parser.add_argument('--dump-spans', action='store_true',
+                        help='Dump span trees to span_trees.txt')
+    parser.add_argument('--max-cycles', type=int, default=10000,
+                        help='Maximum simulation cycles (default: 10000)')
     args = parser.parse_args()
 
     if args.list_geometries:
@@ -361,4 +297,5 @@ if __name__ == '__main__':
 
     params = get_geometry(args.geometry)
     run_test(args.reg_ew, args.src_offset, args.dst_offset,
-             args.vl, lmul=args.lmul, params=params, seed=args.seed)
+             args.vl, lmul=args.lmul, params=params, seed=args.seed,
+             dump_spans=args.dump_spans, max_cycles=args.max_cycles)

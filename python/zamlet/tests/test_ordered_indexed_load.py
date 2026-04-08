@@ -12,7 +12,6 @@ and a fault at element N means elements 0..N-1 were accessed in order,
 and elements N+ were not accessed at all.
 """
 
-import asyncio
 import logging
 from random import Random
 
@@ -20,11 +19,13 @@ import pytest
 
 from zamlet.runner import Clock
 from zamlet.params import ZamletParams
+from zamlet.oamlet.oamlet import Oamlet
 from zamlet.addresses import GlobalAddress, MemoryType, Ordering, WordOrder
 from zamlet.geometries import SMALL_GEOMETRIES, scale_n_tests
 from zamlet.monitor import CompletionType, SpanType
+from zamlet.tests import test_utils
 from zamlet.tests.test_utils import (
-    setup_lamlet, pack_elements, unpack_elements, get_vpu_base_addr,
+    pack_elements, unpack_elements, get_vpu_base_addr,
     setup_mask_register, zero_register,
     PageType, allocate_page, generate_page_types, generate_indices, setup_index_register,
     random_vl, max_vl_for_indexed, random_start_index, choose_mask_pattern, generate_mask_pattern,
@@ -35,36 +36,7 @@ logger = logging.getLogger(__name__)
 
 async def run_ordered_indexed_load_test(
     clock: Clock,
-    data_ew: int,
-    index_ew: int,
-    vl: int,
-    n_pages: int,
-    params: ZamletParams,
-    seed: int,
-    start_index: int = 0,
-    use_mask: bool = True,
-):
-    """Test ordered indexed load with mixed page types and fault handling."""
-    lamlet = await setup_lamlet(clock, params)
-
-    def dump_span_trees():
-        with open('span_trees.txt', 'w') as f:
-            for span in lamlet.monitor.spans.values():
-                if span.parent is None:
-                    f.write(lamlet.monitor.format_span_tree(span.span_id, max_depth=20))
-                    f.write('\n')
-        logger.info("Span trees written to span_trees.txt")
-
-    try:
-        return await _run_ordered_indexed_load_test_inner(
-            lamlet, clock, data_ew, index_ew, vl, n_pages, params, seed, start_index, use_mask)
-    finally:
-        dump_span_trees()
-
-
-async def _run_ordered_indexed_load_test_inner(
-    lamlet,
-    clock: Clock,
+    lamlet: Oamlet,
     data_ew: int,
     index_ew: int,
     vl: int,
@@ -72,6 +44,7 @@ async def _run_ordered_indexed_load_test_inner(
     params: ZamletParams,
     seed: int,
     start_index: int,
+    lmul: int,
     use_mask: bool,
 ):
     rnd = Random(seed)
@@ -127,7 +100,7 @@ async def _run_ordered_indexed_load_test_inner(
             await lamlet.set_memory(addr, pack_elements([val], data_ew))
 
     lamlet.vl = vl
-    lamlet.vtype = {8: 0x0, 16: 0x1, 32: 0x2, 64: 0x3}[data_ew]
+    lamlet.set_vtype(data_ew, lmul)
 
     elements_per_vline = params.vline_bytes * 8 // data_ew
     n_data_regs = (vl + elements_per_vline - 1) // elements_per_vline
@@ -280,25 +253,16 @@ async def _run_ordered_indexed_load_test_inner(
     return 0
 
 
-async def main(clock, data_ew, index_ew, vl, n_pages, params, seed, start_index=0, use_mask=True):
-    clock.register_main()
-    clock.create_task(clock.clock_driver())
-
-    exit_code = await run_ordered_indexed_load_test(
-        clock, data_ew=data_ew, index_ew=index_ew, vl=vl,
-        n_pages=n_pages, params=params, seed=seed, start_index=start_index, use_mask=use_mask)
-    clock.running = False
-    return exit_code
-
-
 def run_test(data_ew: int, index_ew: int, vl: int, n_pages: int, params: ZamletParams, seed: int,
-             start_index: int = 0, use_mask: bool = True, max_cycles: int = 200000):
+             start_index: int = 0, lmul: int = 1,
+             use_mask: bool = True, dump_spans: bool = False, max_cycles: int = 200000):
     """Helper to run a single test configuration."""
-    clock = Clock(max_cycles=max_cycles)
-    exit_code = asyncio.run(main(clock, data_ew=data_ew, index_ew=index_ew, vl=vl,
-                                  n_pages=n_pages, params=params, seed=seed,
-                                  start_index=start_index, use_mask=use_mask))
-    assert exit_code == 0, f"Test failed with exit_code={exit_code}"
+    async def test_fn(clock: Clock, lamlet: Oamlet):
+        return await run_ordered_indexed_load_test(
+            clock, lamlet, data_ew, index_ew, vl, n_pages, params, seed,
+            start_index, lmul, use_mask)
+
+    test_utils.run_test(test_fn, params, max_cycles=max_cycles, dump_spans=dump_spans)
 
 
 def random_test_config(rnd: Random):
@@ -315,12 +279,19 @@ def random_test_config(rnd: Random):
         index_ew = rnd.choice([16, 32, 64])
     else:
         index_ew = rnd.choice([32, 64])
-    # Limit vl by mask capacity and register availability
+    # lmul must produce valid index_emul = lmul * index_ew / data_ew in {1,2,4,8}
+    valid_lmuls = [m for m in [1, 2, 4, 8]
+                   if 1 <= m * index_ew // data_ew <= 8
+                   and m * index_ew % data_ew == 0]
+    lmul = rnd.choice(valid_lmuls)
+    elements_per_vline = geom_params.vline_bytes * 8 // max(data_ew, index_ew)
+    vlmax = elements_per_vline * lmul
+    # Limit vl by mask capacity, register availability, and vlmax
     max_vl_mask = geom_params.j_in_l * geom_params.word_bytes * 8
     max_vl_regs = max_vl_for_indexed(geom_params, data_ew, index_ew)
-    vl = random_vl(rnd, min(max_vl_mask, max_vl_regs))
+    vl = random_vl(rnd, min(max_vl_mask, max_vl_regs, vlmax))
     start_index = random_start_index(rnd, vl)
-    return geom_name, geom_params, data_ew, index_ew, vl, n_pages, start_index
+    return geom_name, geom_params, data_ew, index_ew, vl, n_pages, start_index, lmul
 
 
 def generate_test_params(n_tests: int = 64, seed: int = 42):
@@ -328,19 +299,20 @@ def generate_test_params(n_tests: int = 64, seed: int = 42):
     rnd = Random(seed)
     test_params = []
     for i in range(n_tests):
-        geom_name, geom_params, data_ew, index_ew, vl, n_pages, start_index = random_test_config(rnd)
+        (geom_name, geom_params, data_ew, index_ew, vl,
+         n_pages, start_index, lmul) = random_test_config(rnd)
         id_str = f"{i}_{geom_name}_dew{data_ew}_iew{index_ew}_vl{vl}_p{n_pages}_si{start_index}"
         test_params.append(pytest.param(
-            geom_params, data_ew, index_ew, vl, n_pages, start_index, i, id=id_str))
+            geom_params, data_ew, index_ew, vl, n_pages, start_index, lmul, i, id=id_str))
     return test_params
 
 
-@pytest.mark.parametrize("params,data_ew,index_ew,vl,n_pages,start_index,seed",
+@pytest.mark.parametrize("params,data_ew,index_ew,vl,n_pages,start_index,lmul,seed",
                          generate_test_params(n_tests=scale_n_tests(32)))
-def test_ordered_indexed_load(params, data_ew, index_ew, vl, n_pages, start_index, seed):
+def test_ordered_indexed_load(params, data_ew, index_ew, vl, n_pages, start_index, lmul, seed):
     """Ordered indexed load with random mix of page types."""
     run_test(data_ew=data_ew, index_ew=index_ew, vl=vl, n_pages=n_pages, params=params, seed=seed,
-             start_index=start_index)
+             start_index=start_index, lmul=lmul)
 
 
 if __name__ == '__main__':
@@ -362,6 +334,9 @@ if __name__ == '__main__':
                         help='List available geometries and exit')
     parser.add_argument('--no-mask', action='store_true',
                         help='Disable mask testing (default: use random mask)')
+    parser.add_argument('--lmul', type=int, default=1, help='LMUL (1, 2, 4, 8)')
+    parser.add_argument('--dump-spans', action='store_true',
+                        help='Dump span trees to span_trees.txt')
     parser.add_argument('--max-cycles', type=int, default=200000,
                         help='Maximum simulation cycles (default: 200000)')
     args = parser.parse_args()
@@ -378,5 +353,5 @@ if __name__ == '__main__':
     use_mask = not args.no_mask
     run_test(data_ew=args.data_ew, index_ew=args.index_ew, vl=args.vl,
              n_pages=args.n_pages, params=params, seed=args.seed,
-             start_index=args.start_index, use_mask=use_mask,
-             max_cycles=args.max_cycles)
+             start_index=args.start_index, lmul=args.lmul, use_mask=use_mask,
+             dump_spans=args.dump_spans, max_cycles=args.max_cycles)

@@ -184,7 +184,7 @@ class VleV:
         )
         ordering = addresses.Ordering(s.word_order, self.element_width)
         await s.vload(self.vd, addr, ordering, s.vl, mask_reg, s.vstart,
-                       parent_span_id=span_id, lmul=s.lmul)
+                       parent_span_id=span_id)
         s.monitor.finalize_children(span_id)
         s.pc += 4
 
@@ -339,7 +339,7 @@ class VlseV:
         )
         ordering = addresses.Ordering(s.word_order, self.element_width)
         await s.vload(self.vd, addr, ordering, s.vl, mask_reg, s.vstart,
-                       parent_span_id=span_id, lmul=s.lmul, stride_bytes=stride)
+                       parent_span_id=span_id, stride_bytes=stride)
         s.monitor.finalize_children(span_id)
         s.pc += 4
 

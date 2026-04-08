@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import struct
 from enum import Enum
@@ -67,6 +68,37 @@ def dump_span_trees(monitor, filename='span_trees.txt'):
                 f.write(monitor.format_span_tree(span.span_id, max_depth=20))
                 f.write('\n')
     logger.info(f"Span trees written to {filename}")
+
+
+def run_test(test_coro_fn, params: ZamletParams, max_cycles: int = 50000,
+             dump_spans: bool = False):
+    """Run a test with standard clock/lamlet setup, span dump on failure or timeout.
+
+    test_coro_fn: async function(clock, lamlet) -> int (exit code)
+    """
+    clock = Clock(max_cycles=max_cycles)
+    lamlet_holder = []
+
+    async def main():
+        clock.register_main()
+        clock.create_task(clock.clock_driver())
+        lamlet = await setup_lamlet(clock, params)
+        lamlet_holder.append(lamlet)
+
+        def on_timeout():
+            dump_span_trees(lamlet.monitor)
+        clock.on_timeout = on_timeout
+
+        try:
+            exit_code = await test_coro_fn(clock, lamlet)
+        finally:
+            if dump_spans:
+                dump_span_trees(lamlet.monitor)
+        clock.running = False
+        return exit_code
+
+    exit_code = asyncio.run(main())
+    assert exit_code == 0, f"Test failed with exit_code={exit_code}"
 
 
 def get_vpu_base_addr(element_width: int) -> int:
@@ -168,6 +200,7 @@ async def zero_register(
         ordering=Ordering(WordOrder.STANDARD, ew)
     )
     await lamlet.set_memory(zero_mem_addr, bytes(n_elements * element_bytes))
+
     zero_span_id = lamlet.monitor.create_span(
         span_type=SpanType.RISCV_INSTR, component="test",
         completion_type=CompletionType.FIRE_AND_FORGET, mnemonic="zero_reg")
@@ -179,7 +212,6 @@ async def zero_register(
         mask_reg=None,
         start_index=0,
         parent_span_id=zero_span_id,
-        lmul=1,
     )
     lamlet.monitor.finalize_children(zero_span_id)
     logger.info(f"Register v{reg} zeroed ({n_elements} elements)")
@@ -317,6 +349,8 @@ async def setup_index_register(
         addr = index_mem_addr + i * index_bytes
         await lamlet.set_memory(addr, idx.to_bytes(index_bytes, byteorder='little'))
 
+    index_emul = lamlet.lmul * index_ew // lamlet.sew
+
     span_id = lamlet.monitor.create_span(
         span_type=SpanType.RISCV_INSTR, component="test",
         completion_type=CompletionType.FIRE_AND_FORGET, mnemonic="setup_index")
@@ -328,7 +362,7 @@ async def setup_index_register(
         mask_reg=None,
         start_index=0,
         parent_span_id=span_id,
-        lmul=1,
+        lmul=index_emul,
     )
     lamlet.monitor.finalize_children(span_id)
 
@@ -392,12 +426,11 @@ def random_vl(rnd: Random, max_vl: int) -> int:
     Favors smaller vl values while still testing larger ones.
     Uses fractional ranges of max_vl to adapt to any max_vl value.
     """
-    # Define ranges as fractions: [1, max_vl/8], [max_vl/8, max_vl/4], etc.
+    # Define ranges as fractions: [0, max_vl/8], [max_vl/8, max_vl/4], etc.
     # This gives roughly logarithmic distribution that adapts to max_vl
-    boundaries = [1, max(2, max_vl // 8), max(3, max_vl // 4),
-                  max(4, max_vl // 2), max_vl]
+    boundaries = sorted(set([0, max_vl // 8, max_vl // 4, max_vl // 2, max_vl]))
 
-    range_choice = rnd.randint(0, 3)
+    range_choice = rnd.randint(0, len(boundaries) - 2)
     lo = boundaries[range_choice]
     hi = boundaries[range_choice + 1]
     return rnd.randint(lo, hi)

@@ -279,7 +279,7 @@ async def do_write_and_respond(jamlet: 'Jamlet', rcvd_header: WriteMemWordHeader
         src_word=data,
         src_start=src_start,
         dst_start=dst_start,
-        n_bytes_or_bits=n_bytes,
+        n_bytes=n_bytes,
     )
     jamlet.sram[sram_addr: sram_addr + wb] = new_word
     logger.debug(f'{jamlet.clock.cycle}: CACHE_WRITE WRITE_MEM_WORD: jamlet ({jamlet.x},{jamlet.y}) '
