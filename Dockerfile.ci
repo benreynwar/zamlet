@@ -3,16 +3,18 @@ FROM ubuntu:24.04
 RUN apt-get update && apt-get install -y curl xz-utils sudo git && \
     rm -rf /var/lib/apt/lists/*
 
-# Install nix (single-user mode)
-RUN curl -L https://nixos.org/nix/install | bash -s -- --no-daemon
+# Install nix using Determinate Systems installer (works as root)
+RUN curl --proto '=https' --tlsv1.2 -sSf -L \
+    https://install.determinate.systems/nix | sh -s -- install linux \
+    --init none --no-confirm
 
-ENV PATH="/root/.nix-profile/bin:/nix/var/nix/profiles/default/bin:${PATH}"
+ENV PATH="/nix/var/nix/profiles/default/bin:${PATH}"
 
-# Add FOSSi and cachix substituters to nix config
-RUN mkdir -p /etc/nix && echo "\
-extra-substituters = https://nix-cache.fossi-foundation.org\n\
-extra-trusted-public-keys = nix-cache.fossi-foundation.org:3+K59iFwXqKsL7BNu6Guy0v+uTlwsxYQxjspXzqLYQs=\n\
-trusted-substituters = https://nix-cache.fossi-foundation.org\n\
+# Add FOSSi substituter to nix config
+RUN echo "\
+extra-substituters = https://nix-cache.fossi-foundation.org https://benreynwar.cachix.org\n\
+extra-trusted-public-keys = nix-cache.fossi-foundation.org:3+K59iFwXqKsL7BNu6Guy0v+uTlwsxYQxjspXzqLYQs= benreynwar.cachix.org-1:B5c3K0482lv8t3muNMRbICNhphMPqK1yK7lNH2WukX0=\n\
+trusted-substituters = https://nix-cache.fossi-foundation.org https://benreynwar.cachix.org\n\
 " >> /etc/nix/nix.conf
 
 # Copy nix files and populate the store
