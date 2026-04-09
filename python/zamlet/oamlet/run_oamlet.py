@@ -67,14 +67,11 @@ async def run(clock: Clock, filename, params: ZamletParams = None,
         s.allocate_memory(GlobalAddress(bit_addr=page_start*8, params=params),
                           alloc_size, memory_type=memory_type)
 
-    # Allocate VPU memory pools
-    # Each pool is 256KB as defined in vpu_alloc.c
-    pool_size = 256 * 1024
-    s.allocate_memory(GlobalAddress(bit_addr=0x90000000*8, params=params), pool_size, memory_type=MemoryType.VPU)
-    s.allocate_memory(GlobalAddress(bit_addr=0x90040000*8, params=params), pool_size, memory_type=MemoryType.VPU)
-    s.allocate_memory(GlobalAddress(bit_addr=0x90080000*8, params=params), pool_size, memory_type=MemoryType.VPU)
-    s.allocate_memory(GlobalAddress(bit_addr=0x900C0000*8, params=params), pool_size, memory_type=MemoryType.VPU)
-    s.allocate_memory(GlobalAddress(bit_addr=0x90100000*8, params=params), pool_size, memory_type=MemoryType.VPU)
+    # Allocate VPU memory pool (1MB as defined in vpu_alloc.c)
+    pool_size = 1024 * 1024
+    s.allocate_memory(
+        GlobalAddress(bit_addr=0x90000000*8, params=params),
+        pool_size, memory_type=MemoryType.VPU)
 
     for section in p_info['sections']:
         address = section['address']
@@ -101,8 +98,8 @@ async def run(clock: Clock, filename, params: ZamletParams = None,
     # Verify data will be in .data.vpu section at 0x20000000
     # The offset is the same as before (~0x400 into the data)
     verify_addr = 0x20000400
-    # Results are written to the first allocation from the 32-bit pool at 0x900C0000
-    results_addr = 0x900C0000
+    # Results are written to the first allocation from the VPU pool at 0x90000000
+    results_addr = 0x90000000
 
     clock.create_task(s.run_instructions(disasm_trace=trace))
     exit_code = 1  # Default to failure

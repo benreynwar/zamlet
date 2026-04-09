@@ -23,7 +23,7 @@ from zamlet.geometries import SMALL_GEOMETRIES, scale_n_tests
 from zamlet.monitor import CompletionType, SpanType
 from zamlet.tests import test_utils
 from zamlet.tests.test_utils import (
-    pack_elements, unpack_elements, get_vpu_base_addr,
+    pack_elements, unpack_elements,
     setup_mask_register, set_vline_random_ew,
     PageType, allocate_page, generate_page_types, random_stride, random_vl,
     random_start_index, choose_mask_pattern, generate_mask_pattern,
@@ -65,7 +65,7 @@ async def run_strided_store_test(
                 f"start_index={start_index}, use_mask={use_mask}")
 
     # Calculate memory layout
-    src_base = get_vpu_base_addr(ew)
+    src_base = 0x90000000
     mem_size = (vl - 1) * stride + element_bytes + 64
     # Ensure dst_base doesn't overlap with source
     dst_offset = ((mem_size + 0xFFFFF) // 0x100000) * 0x100000  # Round up to 1MB boundary

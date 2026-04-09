@@ -2,7 +2,7 @@
 #include <stddef.h>
 #include <stdlib.h>
 
-volatile int32_t *vpu_mem = (volatile int32_t *)0x900C0000;
+volatile int32_t *vpu_mem = (volatile int32_t *)0x90000000;
 volatile int32_t skip_verify = 0;
 volatile int32_t n = 0;
 volatile int32_t reverse_bits = 0;

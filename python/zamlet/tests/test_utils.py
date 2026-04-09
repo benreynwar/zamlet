@@ -101,19 +101,6 @@ def run_test(test_coro_fn, params: ZamletParams, max_cycles: int = 50000,
     assert exit_code == 0, f"Test failed with exit_code={exit_code}"
 
 
-def get_vpu_base_addr(element_width: int) -> int:
-    """Get the VPU memory base address for a given element width."""
-    if element_width == 8:
-        return 0x20000000
-    elif element_width == 16:
-        return 0x20800000
-    elif element_width == 32:
-        return 0x90080000
-    elif element_width == 64:
-        return 0x90100000
-    else:
-        raise ValueError(f"Unsupported element width: {element_width}")
-
 
 def get_from_list(l, index, default):
     if index < len(l):

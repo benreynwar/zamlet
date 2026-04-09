@@ -42,7 +42,7 @@ void vec_conditional(size_t n, int8_t x[], int16_t a[], int16_t b[], int16_t z[]
 
 int main( int argc, char* argv[] )
 {
-  int16_t* results_data = (int16_t*)vpu_alloc(DATA_SIZE * sizeof(int16_t), 16);
+  int16_t* results_data = (int16_t*)vpu_alloc(DATA_SIZE * sizeof(int16_t));
 
 #if PREALLOCATE
   // If needed we preallocate everything in the caches

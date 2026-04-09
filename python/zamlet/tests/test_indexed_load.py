@@ -21,7 +21,7 @@ from zamlet.geometries import SMALL_GEOMETRIES, scale_n_tests
 from zamlet.monitor import CompletionType, SpanType
 from zamlet.tests import test_utils
 from zamlet.tests.test_utils import (
-    pack_elements, unpack_elements, get_vpu_base_addr,
+    pack_elements, unpack_elements,
     setup_mask_register, zero_register, set_vline_random_ew,
     PageType, allocate_page, generate_page_types, generate_indices, setup_index_register,
     random_vl, max_vl_for_indexed, random_start_index, choose_mask_pattern, generate_mask_pattern,
@@ -54,8 +54,8 @@ async def run_indexed_load_test(
     logger.info(f"Test parameters: data_ew={data_ew}, index_ew={index_ew}, vl={vl}, "
                 f"n_pages={n_pages}, seed={seed}, start_index={start_index}, use_mask={use_mask}")
 
-    src_base = get_vpu_base_addr(data_ew)
-    dst_base = get_vpu_base_addr(data_ew) + 0x100000
+    src_base = 0x90000000
+    dst_base = 0x90000000 + 0x100000
     page_bytes = params.page_bytes
 
     page_types = generate_page_types(n_pages, rnd)

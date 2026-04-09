@@ -18,7 +18,7 @@ from zamlet.addresses import GlobalAddress, MemoryType, Ordering, WordOrder
 from zamlet.geometries import SMALL_GEOMETRIES, scale_n_tests
 from zamlet.monitor import CompletionType, SpanType
 from zamlet.tests.test_utils import (
-    setup_lamlet, pack_elements, unpack_elements, get_vpu_base_addr, dump_span_trees,
+    setup_lamlet, pack_elements, unpack_elements, dump_span_trees,
 )
 
 logger = logging.getLogger(__name__)
@@ -58,15 +58,11 @@ async def _run_reg_gather_test_inner(
 
     logger.info(f"Test parameters: data_ew={data_ew}, index_ew={index_ew}, vl={vl}, seed={seed}")
 
-    data_base_addr = get_vpu_base_addr(data_ew)
-    index_base_addr = get_vpu_base_addr(index_ew)
+    data_base_addr = 0x90000000
     page_bytes = params.page_bytes
+    index_base_addr = data_base_addr + 4 * page_bytes
     data_ordering = Ordering(lamlet.word_order, data_ew)
     index_ordering = Ordering(lamlet.word_order, index_ew)
-
-    # If same ew, use different offsets within the same address space
-    if data_ew == index_ew:
-        index_base_addr = data_base_addr + 4 * page_bytes
 
     # Allocate memory for source and destination data
     for i in range(4):

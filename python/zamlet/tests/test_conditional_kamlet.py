@@ -72,7 +72,7 @@ async def run_conditional_simple(clock: Clock, lamlet: Oamlet, vector_length: in
     x_addr = 0x20000000
     a_addr = 0x20800000
     b_addr = a_addr + alloc_size
-    z_addr = 0x900C0000
+    z_addr = 0x90000000
 
     lamlet.allocate_memory(
         GlobalAddress(bit_addr=x_addr * 8, params=params),

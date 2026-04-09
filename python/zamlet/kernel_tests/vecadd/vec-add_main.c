@@ -1,8 +1,7 @@
 #include <stdint.h>
 #include <stddef.h>
 
-// VPU memory starts at 0x90000000 (32-bit pool)
-volatile int32_t *vpu_mem = (volatile int32_t *)0x900C0000;
+volatile int32_t *vpu_mem = (volatile int32_t *)0x90000000;
 
 // Simple exit function using HTIF
 void exit_test(int code) {

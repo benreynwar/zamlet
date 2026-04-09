@@ -23,7 +23,7 @@ void *vec_sgemv (size_t, size_t, const float*, const float*, float*);
 
 int main( int argc, char* argv[] )
 {
-  float* results_data = vpu_alloc(N_DIM * sizeof(float), 32);
+  float* results_data = vpu_alloc(N_DIM * sizeof(float));
   memset(results_data, 0, N_DIM * sizeof(float));
 
   printf("sgemv M,N = %ld,%ld\n", M_DIM, N_DIM);
