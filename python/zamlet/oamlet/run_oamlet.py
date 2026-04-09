@@ -73,6 +73,12 @@ async def run(clock: Clock, filename, params: ZamletParams = None,
         GlobalAddress(bit_addr=0x90000000*8, params=params),
         pool_size, memory_type=MemoryType.VPU)
 
+    # Allocate VPU stack (16KB at isolated address, s11 starts at top)
+    vpu_stack_size = 16 * 1024
+    s.allocate_memory(
+        GlobalAddress(bit_addr=0xA0000000*8, params=params),
+        vpu_stack_size, memory_type=MemoryType.VPU)
+
     for section in p_info['sections']:
         address = section['address']
         data = section['contents']

@@ -144,6 +144,9 @@ _start:
   sll a2, a2, STKSHIFT
   add sp, sp, a2
 
+  # VPU stack pointer (grows downward from top of dedicated region)
+  li s11, 0xA0004000
+
   j _init
 
   .align 2
