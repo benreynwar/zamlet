@@ -43,21 +43,15 @@ async def run(clock: Clock, filename, params: ZamletParams = None,
 
     s.set_pc(p_info['pc'])
 
-    # Allocate memory for all segments, with extra for scalar regions (stack/heap)
-    for segment in p_info['segments']:
-        address = segment['address']
-        size = len(segment['contents'])
+    # Allocate memory for all sections, with extra for scalar regions (stack/heap)
+    for section in p_info['sections']:
+        address = section['address']
+        size = len(section['contents'])
         page_start = (address // params.page_bytes) * params.page_bytes
-        page_end = (address + size + params.page_bytes - 1) // params.page_bytes * params.page_bytes
+        page_end = (
+            (address + size + params.page_bytes - 1) // params.page_bytes * params.page_bytes)
 
-        # Determine if this is VPU memory
-        # 0x20000000-0x207FFFFF: .data.vpu8 (8-bit static data)
-        # 0x20800000-0x20FFFFFF: .data.vpu16 (16-bit static data)
-        # 0x21000000-0x217FFFFF: .data.vpu32 (32-bit static data)
-        # 0x21800000-0x21FFFFFF: .data.vpu64 (64-bit static data)
-        # 0x90000000-0x9FFFFFFF: VPU dynamic allocation pools
-        is_vpu = ((address >= 0x20000000 and address < 0x22000000) or
-                  (address >= 0x90000000 and address < 0xa0000000))
+        is_vpu = section['ew'] is not None
 
         # For scalar memory at 0x10000000, allocate extra for stack/heap (2MB total)
         if address >= 0x10000000 and address < 0x20000000:
@@ -65,44 +59,32 @@ async def run(clock: Clock, filename, params: ZamletParams = None,
         else:
             alloc_size = page_end - page_start
 
-        # Determine element width based on memory region
-        if is_vpu:
-            if address >= 0x20000000 and address < 0x20800000:
-                ew = 8   # .data.vpu8
-            elif address >= 0x20800000 and address < 0x21000000:
-                ew = 16  # .data.vpu16
-            elif address >= 0x21000000 and address < 0x21800000:
-                ew = 32  # .data.vpu32
-            elif address >= 0x21800000 and address < 0x22000000:
-                ew = 64  # .data.vpu64
-            else:
-                ew = 8   # Dynamic pools (will be overridden below)
-            ordering = Ordering(word_order, ew)
-        else:
-            ordering = None
         memory_type = MemoryType.VPU if is_vpu else MemoryType.SCALAR_IDEMPOTENT
         logger.info(
             f'[ALLOC] addr=0x{address:x} size={size} page_start=0x{page_start:x} '
-            f'alloc_size={alloc_size} memory_type={memory_type} ordering={ordering}'
+            f'alloc_size={alloc_size} memory_type={memory_type}'
         )
         s.allocate_memory(GlobalAddress(bit_addr=page_start*8, params=params),
-                          alloc_size, memory_type=memory_type, ordering=ordering)
+                          alloc_size, memory_type=memory_type)
 
-    # Allocate VPU memory pools with fixed element widths
+    # Allocate VPU memory pools
     # Each pool is 256KB as defined in vpu_alloc.c
     pool_size = 256 * 1024
-    s.allocate_memory(GlobalAddress(bit_addr=0x90000000*8, params=params), pool_size, memory_type=MemoryType.VPU, ordering=Ordering(word_order, 1))   # 1-bit pool (masks)
-    s.allocate_memory(GlobalAddress(bit_addr=0x90040000*8, params=params), pool_size, memory_type=MemoryType.VPU, ordering=Ordering(word_order, 8))   # 8-bit pool
-    s.allocate_memory(GlobalAddress(bit_addr=0x90080000*8, params=params), pool_size, memory_type=MemoryType.VPU, ordering=Ordering(word_order, 16))  # 16-bit pool
-    s.allocate_memory(GlobalAddress(bit_addr=0x900C0000*8, params=params), pool_size, memory_type=MemoryType.VPU, ordering=Ordering(word_order, 32))  # 32-bit pool
-    s.allocate_memory(GlobalAddress(bit_addr=0x90100000*8, params=params), pool_size, memory_type=MemoryType.VPU, ordering=Ordering(word_order, 64))  # 64-bit pool
+    s.allocate_memory(GlobalAddress(bit_addr=0x90000000*8, params=params), pool_size, memory_type=MemoryType.VPU)
+    s.allocate_memory(GlobalAddress(bit_addr=0x90040000*8, params=params), pool_size, memory_type=MemoryType.VPU)
+    s.allocate_memory(GlobalAddress(bit_addr=0x90080000*8, params=params), pool_size, memory_type=MemoryType.VPU)
+    s.allocate_memory(GlobalAddress(bit_addr=0x900C0000*8, params=params), pool_size, memory_type=MemoryType.VPU)
+    s.allocate_memory(GlobalAddress(bit_addr=0x90100000*8, params=params), pool_size, memory_type=MemoryType.VPU)
 
-    for segment in p_info['segments']:
-        address = segment['address']
-        data = segment['contents']
-        logger.info(f'[MEM_INIT] Segment addr=0x{address:x} size={len(data)} bytes')
-        await s.set_memory(address, data)
-        logger.info(f'[MEM_INIT] Segment addr=0x{address:x} complete')
+    for section in p_info['sections']:
+        address = section['address']
+        data = section['contents']
+        ew = section['ew']
+        ordering = Ordering(word_order, ew) if ew is not None else None
+        logger.info(
+            f'[MEM_INIT] Section addr=0x{address:x} size={len(data)} ew={ew}')
+        s.directly_set_memory(address, data, ordering=ordering)
+        logger.info(f'[MEM_INIT] Section addr=0x{address:x} complete')
 
     if symbol_values:
         for name, value in symbol_values.items():

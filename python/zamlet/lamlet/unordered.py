@@ -132,7 +132,22 @@ def get_memory_split(lamlet: 'Oamlet', g_addr: GlobalAddress, element_width: int
 
         end_addr = min(current_element_addr + remaining_elements * eb, next_boundary)
 
-        lumps.append((page_info.local_address.is_vpu, start_index, start_addr, end_addr))
+        # For VPU pages, split at vline boundaries where the ew changes.
+        if page_info.is_vpu:
+            vline_bytes = lamlet.params.vline_bytes
+            first_vline_addr = (start_addr // vline_bytes) * vline_bytes
+            first_g = GlobalAddress(bit_addr=first_vline_addr * 8, params=lamlet.params)
+            first_ew = lamlet.tlb.get_vline_info(first_g).local_address.ordering
+            vline_addr = first_vline_addr + vline_bytes
+            while vline_addr < end_addr:
+                vg = GlobalAddress(bit_addr=vline_addr * 8, params=lamlet.params)
+                vline_ew = lamlet.tlb.get_vline_info(vg).local_address.ordering
+                if vline_ew != first_ew:
+                    end_addr = vline_addr
+                    break
+                vline_addr += vline_bytes
+
+        lumps.append((page_info.is_vpu, start_index, start_addr, end_addr))
         start_index = (end_addr - g_addr.addr)//eb
         start_addr = end_addr
 
@@ -253,9 +268,137 @@ async def remap_reg_ew(
         await lamlet.vload(
             dst_regs[i], scratch_addr, dst_ordering,
             n_elements=dst_elements_per_vline, mask_reg=None, start_index=0,
-            parent_span_id=parent_span_id, lmul=1,
+            parent_span_id=parent_span_id, emul=1,
         )
     lamlet.free_temp_regs(scratch_temp)
+
+
+async def _handle_partial_element_scalar(
+        lamlet: 'Oamlet', section: 'MemorySection', reg_base: int,
+        ordering: addresses.Ordering, mask_reg: int | None,
+        writeset_ident: int, is_store: bool, parent_span_id: int):
+    """Handle a partial element that falls in scalar memory."""
+    starting_g_addr = GlobalAddress(
+        bit_addr=section.start_address * 8, params=lamlet.params)
+    mask_index = section.start_index // lamlet.params.j_in_l
+    size = section.end_address - section.start_address
+    element_offset = starting_g_addr.bit_addr % (lamlet.params.word_bytes * 8)
+    assert element_offset % 8 == 0
+    start_is_page_boundary = section.start_address % lamlet.params.page_bytes == 0
+    if start_is_page_boundary:
+        # We're the second segment of the element
+        start_byte_in_element = (ordering.ew - element_offset) // 8
+    else:
+        # We're the first segment of the element
+        start_byte_in_element = element_offset // 8
+    if is_store:
+        await vstore_scalar_partial(
+            lamlet, vd=reg_base, addr=section.start_address, size=size,
+            src_ordering=ordering, mask_reg=mask_reg, mask_index=mask_index,
+            element_index=section.start_index, writeset_ident=writeset_ident,
+            start_byte=start_byte_in_element, parent_span_id=parent_span_id)
+    else:
+        await vload_scalar_partial(
+            lamlet, vd=reg_base, addr=section.start_address, size=size,
+            dst_ordering=ordering, mask_reg=mask_reg, mask_index=mask_index,
+            element_index=section.start_index, writeset_ident=writeset_ident,
+            start_byte=start_byte_in_element, parent_span_id=parent_span_id)
+
+
+async def _handle_partial_element_vpu(
+        lamlet: 'Oamlet', section: 'MemorySection', reg_base: int,
+        reg_addr: addresses.RegAddr, ordering: addresses.Ordering,
+        mask_reg: int | None, writeset_ident: int, is_store: bool,
+        parent_span_id: int):
+    """Handle a partial element that falls in VPU memory.
+
+    The partial element's bytes may not be contiguous in VPU memory when the
+    vline's ew differs from the instruction's ew. Split into chunks at vline
+    element boundaries so each chunk is contiguous within a single word.
+    """
+    mask_index = section.start_index // lamlet.params.j_in_l
+    wb = lamlet.params.word_bytes
+
+    starting_g_addr = GlobalAddress(
+        bit_addr=section.start_address * 8, params=lamlet.params)
+    vline_info = lamlet.tlb.get_vline_info(starting_g_addr)
+    vline_eb = vline_info.local_address.ordering.ew // 8
+    vline_bytes = lamlet.params.vline_bytes
+    vline_start_addr = (section.start_address // vline_bytes) * vline_bytes
+    assert section.end_address <= vline_start_addr + vline_bytes
+
+    pos = section.start_address
+    while pos < section.end_address:
+        offset_in_vline = pos - vline_start_addr
+        remaining_in_vline_element = vline_eb - (offset_in_vline % vline_eb)
+        chunk_end = min(pos + remaining_in_vline_element, section.end_address)
+        chunk_size = chunk_end - pos
+
+        chunk_g_addr = GlobalAddress(bit_addr=pos * 8, params=lamlet.params)
+        chunk_k_maddr = lamlet.to_k_maddr(chunk_g_addr)
+        chunk_reg_addr = reg_addr.offset_bytes(pos - section.start_address)
+
+        start_word_byte = chunk_k_maddr.addr % wb
+        assert start_word_byte + chunk_size <= wb
+        byte_mask = [0] * wb
+        for byte_index in range(start_word_byte, start_word_byte + chunk_size):
+            byte_mask[byte_index] = 1
+        byte_mask_as_int = utils.list_of_uints_to_uint(byte_mask, width=1)
+        instr_ident = await ident_query.get_instr_ident(lamlet, 2)
+        if is_store:
+            kinstr = kinstructions.StoreWord(
+                src=chunk_reg_addr, dst=chunk_k_maddr,
+                byte_mask=byte_mask_as_int,
+                writeset_ident=writeset_ident, mask_reg=mask_reg,
+                mask_index=mask_index, instr_ident=instr_ident,
+            )
+        else:
+            kinstr = kinstructions.LoadWord(
+                dst=chunk_reg_addr, src=chunk_k_maddr,
+                byte_mask=byte_mask_as_int,
+                writeset_ident=writeset_ident, mask_reg=mask_reg,
+                mask_index=mask_index, instr_ident=instr_ident,
+            )
+        await lamlet.add_to_instruction_buffer(kinstr, parent_span_id)
+        pos = chunk_end
+
+
+async def _handle_full_elements_vpu(
+        lamlet: 'Oamlet', section: 'MemorySection', reg_base: int,
+        ordering: addresses.Ordering, mask_reg: int | None,
+        writeset_ident: int, is_store: bool, parent_span_id: int):
+    section_elements = ((section.end_address - section.start_address) * 8) // ordering.ew
+    starting_g_addr = GlobalAddress(bit_addr=section.start_address * 8, params=lamlet.params)
+    k_maddr = lamlet.to_k_maddr(starting_g_addr)
+
+    l_cache_line_bytes = lamlet.params.cache_line_bytes * lamlet.params.k_in_l
+    assert (section.start_address // l_cache_line_bytes
+            == (section.end_address - 1) // l_cache_line_bytes)
+
+    instr_ident = await ident_query.get_instr_ident(lamlet)
+    if is_store:
+        kinstr = kinstructions.Store(
+            src=reg_base,
+            k_maddr=k_maddr,
+            start_index=section.start_index,
+            n_elements=section_elements,
+            src_ordering=ordering,
+            mask_reg=mask_reg,
+            writeset_ident=writeset_ident,
+            instr_ident=instr_ident,
+        )
+    else:
+        kinstr = kinstructions.Load(
+            dst=reg_base,
+            k_maddr=k_maddr,
+            start_index=section.start_index,
+            n_elements=section_elements,
+            dst_ordering=ordering,
+            mask_reg=mask_reg,
+            writeset_ident=writeset_ident,
+            instr_ident=instr_ident,
+        )
+    await lamlet.add_to_instruction_buffer(kinstr, parent_span_id)
 
 
 async def vloadstore(lamlet: 'Oamlet', reg_base: int, addr: int, ordering: addresses.Ordering,
@@ -274,7 +417,6 @@ async def vloadstore(lamlet: 'Oamlet', reg_base: int, addr: int, ordering: addre
     Returns VectorOpResult with fault info if a TLB fault occurred.
     """
     g_addr = GlobalAddress(bit_addr=addr*8, params=lamlet.params)
-    instr_ew = ordering.ew
     temp_regs = None
 
     # For stores where the register ew doesn't match the instruction ew, remap
@@ -308,9 +450,6 @@ async def vloadstore(lamlet: 'Oamlet', reg_base: int, addr: int, ordering: addre
             lamlet.free_temp_regs(temp_regs)
         return result
 
-    size = (n_elements * ordering.ew) // 8
-    wb = lamlet.params.word_bytes
-
     # This is an identifier that groups a number of writes to a vector register together.
     # These writes are guanteed to work on separate bytes so that the write order does not matter.
     writeset_ident = ident_query.get_writeset_ident(lamlet)
@@ -330,142 +469,50 @@ async def vloadstore(lamlet: 'Oamlet', reg_base: int, addr: int, ordering: addre
         reg=reg_base, addr=0, params=lamlet.params, ordering=ordering)
 
     for section in get_memory_split(lamlet, g_addr, ordering.ew, n_elements, start_index):
+        # Set ordering on any uninitialized VPU vlines so address translation works.
+        # For aligned unit-stride, oamlet.vstore/vload already handles this.
+        # For unaligned unit-stride, the vline may not have been touched yet.
+        if section.is_vpu:
+            vline_bytes = lamlet.params.vline_bytes
+            vline_start = (section.start_address // vline_bytes) * vline_bytes
+            vline_end = ((section.end_address - 1) // vline_bytes) * vline_bytes
+            for vline_addr in range(vline_start, vline_end + 1, vline_bytes):
+                vline_g_addr = GlobalAddress(
+                    bit_addr=vline_addr * 8, params=lamlet.params)
+                vline_info = lamlet.tlb.get_vline_info(vline_g_addr)
+                if vline_info.local_address.ordering is None:
+                    lamlet.tlb.set_vline_ordering(vline_g_addr, ordering)
         if section.is_a_partial_element:
             reg_addr = base_reg_addr.offset_bytes(section.start_address - g_addr.addr)
             # The partial is either the start of an element or the end of an element.
             # Either the starting_addr or the ending_addr must be a cache line boundary
-            start_is_cacheline_boundary = section.start_address % lamlet.params.cache_line_bytes == 0
-            end_is_cacheline_boundary = section.end_address % lamlet.params.cache_line_bytes == 0
+            start_is_cacheline_boundary = (
+                section.start_address % lamlet.params.cache_line_bytes == 0)
+            end_is_cacheline_boundary = (
+                section.end_address % lamlet.params.cache_line_bytes == 0)
             if not (start_is_cacheline_boundary or end_is_cacheline_boundary):
-                logger.error(f'Partial element not at cache line boundary: '
-                             f'start=0x{section.start_address:x}, end=0x{section.end_address:x}, '
-                             f'cache_line_bytes={lamlet.params.cache_line_bytes}, '
-                             f'start_idx={section.start_index}')
+                logger.error(
+                    f'Partial element not at cache line boundary: '
+                    f'start=0x{section.start_address:x}, '
+                    f'end=0x{section.end_address:x}, '
+                    f'cache_line_bytes={lamlet.params.cache_line_bytes}, '
+                    f'start_idx={section.start_index}')
             assert start_is_cacheline_boundary or end_is_cacheline_boundary
             assert not (start_is_cacheline_boundary and end_is_cacheline_boundary)
-            starting_g_addr = GlobalAddress(bit_addr=section.start_address*8, params=lamlet.params)
-            k_maddr = lamlet.to_k_maddr(starting_g_addr)
             assert ordering.ew % 8 == 0
-            mask_index = section.start_index // lamlet.params.j_in_l
-            size = section.end_address - section.start_address
             if section.is_vpu:
-                dst = reg_base + (section.start_index * ordering.ew)//(lamlet.params.vline_bytes * 8)
-                kinstr: kinstructions.KInstr
-                if size <= 1:
-                    dst_offset = ((section.start_index * ordering.ew) % (lamlet.params.vline_bytes * 8))//8
-                    bit_mask = (1 << 8) - 1
-                    if is_store:
-                        kinstr = kinstructions.StoreByte(
-                            src=reg_addr,
-                            dst=k_maddr,
-                            bit_mask=bit_mask,
-                            writeset_ident=writeset_ident,
-                            mask_reg=mask_reg,
-                            mask_index=mask_index,
-                            ident=writeset_ident,
-                        )
-                    else:
-                        kinstr = kinstructions.LoadByte(
-                            dst=reg_addr,
-                            src=k_maddr,
-                            bit_mask=bit_mask,
-                            writeset_ident=writeset_ident,
-                            mask_reg=mask_reg,
-                            mask_index=mask_index,
-                            ident=writeset_ident,
-                        )
-                else:
-                    instr_ident = await ident_query.get_instr_ident(lamlet, 2)
-                    if is_store:
-                        byte_mask = [0] * wb
-                        start_word_byte = k_maddr.addr % wb
-                        for byte_index in range(start_word_byte, start_word_byte + size):
-                            byte_mask[byte_index] = 1
-                        byte_mask_as_int = utils.list_of_uints_to_uint(byte_mask, width=1)
-                        kinstr = kinstructions.StoreWord(
-                            src=reg_addr,
-                            dst=k_maddr,
-                            byte_mask=byte_mask_as_int,
-                            writeset_ident=writeset_ident,
-                            mask_reg=mask_reg,
-                            mask_index=mask_index,
-                            instr_ident=instr_ident,
-                        )
-                    else:
-                        byte_mask = [0] * wb
-                        start_word_byte = reg_addr.offset_in_word % wb
-                        for byte_index in range(start_word_byte, start_word_byte + size):
-                            byte_mask[byte_index] = 1
-                        byte_mask_as_int = utils.list_of_uints_to_uint(byte_mask, width=1)
-                        kinstr = kinstructions.LoadWord(
-                            dst=reg_addr,
-                            src=k_maddr,
-                            byte_mask=byte_mask_as_int,
-                            writeset_ident=writeset_ident,
-                            mask_reg=mask_reg,
-                            mask_index=mask_index,
-                            instr_ident=instr_ident,
-                        )
-                await lamlet.add_to_instruction_buffer(kinstr, parent_span_id)
+                await _handle_partial_element_vpu(
+                    lamlet, section, reg_base, reg_addr, ordering, mask_reg,
+                    writeset_ident, is_store, parent_span_id)
             else:
-                element_offset = starting_g_addr.bit_addr % (lamlet.params.word_bytes * 8)
-                assert element_offset % 8 == 0
-                assert ordering.ew % 8 == 0
-                start_is_page_boundary = section.start_address % lamlet.params.page_bytes == 0
-                if start_is_page_boundary:
-                    # We're the second segment of the element
-                    start_byte_in_element = (ordering.ew - element_offset)//8
-                else:
-                    # We're the first segment of the element
-                    start_byte_in_element = (element_offset)//8
-                if is_store:
-                    await vstore_scalar_partial(
-                        lamlet, vd=reg_base, addr=section.start_address, size=size,
-                        src_ordering=ordering, mask_reg=mask_reg, mask_index=mask_index,
-                        element_index=section.start_index, writeset_ident=writeset_ident,
-                        start_byte=start_byte_in_element,
-                        parent_span_id=parent_span_id)
-                else:
-                    await vload_scalar_partial(
-                        lamlet, vd=reg_base, addr=section.start_address, size=size,
-                        dst_ordering=ordering, mask_reg=mask_reg, mask_index=mask_index,
-                        element_index=section.start_index, writeset_ident=writeset_ident,
-                        start_byte=start_byte_in_element, parent_span_id=parent_span_id)
+                await _handle_partial_element_scalar(
+                    lamlet, section, reg_base, ordering, mask_reg,
+                    writeset_ident, is_store, parent_span_id)
         else:
             if section.is_vpu:
-                section_elements = ((section.end_address - section.start_address) * 8)//ordering.ew
-                starting_g_addr = GlobalAddress(bit_addr=section.start_address*8, params=lamlet.params)
-                lamlet.check_element_width(starting_g_addr, section.end_address - section.start_address, instr_ew)
-                k_maddr = lamlet.to_k_maddr(starting_g_addr)
-
-                l_cache_line_bytes = lamlet.params.cache_line_bytes * lamlet.params.k_in_l
-                assert section.start_address//l_cache_line_bytes == (section.end_address-1)//l_cache_line_bytes
-
-                if is_store:
-                    instr_ident = await ident_query.get_instr_ident(lamlet)
-                    kinstr = kinstructions.Store(
-                        src=reg_base,
-                        k_maddr=k_maddr,
-                        start_index=section.start_index,
-                        n_elements=section_elements,
-                        src_ordering=ordering,
-                        mask_reg=mask_reg,
-                        writeset_ident=writeset_ident,
-                        instr_ident=instr_ident,
-                    )
-                else:
-                    instr_ident = await ident_query.get_instr_ident(lamlet)
-                    kinstr = kinstructions.Load(
-                        dst=reg_base,
-                        k_maddr=k_maddr,
-                        start_index=section.start_index,
-                        n_elements=section_elements,
-                        dst_ordering=ordering,
-                        mask_reg=mask_reg,
-                        writeset_ident=writeset_ident,
-                        instr_ident=instr_ident,
-                    )
-                await lamlet.add_to_instruction_buffer(kinstr, parent_span_id)
+                await _handle_full_elements_vpu(
+                    lamlet, section, reg_base, ordering, mask_reg,
+                    writeset_ident, is_store, parent_span_id)
             else:
                 section_elements = ((section.end_address - section.start_address) * 8)//ordering.ew
                 await vloadstore_scalar(lamlet, reg_base, section.start_address, ordering,

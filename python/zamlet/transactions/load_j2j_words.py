@@ -20,7 +20,9 @@ from zamlet.kamlet.cache_table import SendState, ReceiveState, LoadProtocolState
 from zamlet.kamlet import kinstructions
 from zamlet.params import ZamletParams
 from zamlet.transactions import register_handler
-from zamlet.transactions.j2j_mapping import RegMemMapping, get_mapping_from_reg, get_mapping_from_mem
+from zamlet.transactions.j2j_mapping import (
+    RegMemMapping, get_mapping_from_reg, get_mapping_from_mem,
+    mapping_element_index)
 
 if TYPE_CHECKING:
     from zamlet.jamlet.jamlet import Jamlet
@@ -173,8 +175,6 @@ async def send_req(jamlet, witem: WaitingLoadJ2JWords, tag: int) -> None:
 @register_handler(MessageType.LOAD_J2J_WORDS_REQ)
 async def handle_req(jamlet, packet: List[Any]) -> None:
     '''DST jamlet receives data and writes to register file.'''
-    # FIXME: Check if mask handling is missing here. load_simple uses get_offsets_and_masks()
-    # to skip masked elements, but this function writes all received data unconditionally.
     header = packet[0]
     assert isinstance(header, TaggedHeader)
     assert header.message_type == MessageType.LOAD_J2J_WORDS_REQ
@@ -195,35 +195,57 @@ async def handle_req(jamlet, packet: List[Any]) -> None:
         mem_jx=header.source_x - jamlet.params.west_offset,
         mem_jy=header.source_y - jamlet.params.north_offset)
 
+    if instr.mask_reg is not None:
+        mask_word = int.from_bytes(
+            jamlet.rf_slice[
+                instr.mask_reg * word_bytes:
+                (instr.mask_reg + 1) * word_bytes],
+            byteorder='little')
+    else:
+        mask_word = None
+
     assert len(packet) >= 2
     words = packet[1:]
     assert len(mappings) == len(words)
     reg_wb = None
     for word, mapping in zip(words, mappings):
-        shift = mapping.mem_wb - mapping.reg_wb
-        mask = ((1 << mapping.n_bits) - 1) << mapping.reg_wb
-
-        if shift < 0:
-            shifted = word << (-shift)
-        else:
-            shifted = word >> shift
-
-        dst_reg = instr.dst + mapping.reg_v
-
-        old_word = jamlet.rf_slice[dst_reg * word_bytes: (dst_reg+1) * word_bytes]
-        old_word_as_int = int.from_bytes(old_word, byteorder='little')
-        masked_old_word = old_word_as_int & (~mask)
-        masked_shifted = shifted & mask
-        updated_word = masked_old_word | masked_shifted
-        updated_word_bytes = updated_word.to_bytes(word_bytes, byteorder='little')
-        logger.debug(
-            f'{jamlet.clock.cycle}: RF_WRITE LOAD_J2J: jamlet ({jamlet.x},{jamlet.y}) '
-            f'rf[{dst_reg}] old={old_word.hex()} new={updated_word_bytes.hex()} '
-            f'mapping={mapping} shift={shift} mask=0x{mask:x} word=0x{word:x}')
-        jamlet.rf_slice[dst_reg * word_bytes: (dst_reg+1) * word_bytes] = updated_word_bytes
         if reg_wb is None:
             reg_wb = mapping.reg_wb
         assert reg_wb == mapping.reg_wb
+
+        ei = mapping_element_index(
+            jamlet.params, instr.dst_ordering,
+            jamlet.jx, jamlet.jy, mapping)
+        mask_bit = ei // jamlet.params.j_in_l
+        masked = mask_word is not None and not ((mask_word >> mask_bit) & 1)
+
+        if not masked:
+            shift = mapping.mem_wb - mapping.reg_wb
+            mask = ((1 << mapping.n_bits) - 1) << mapping.reg_wb
+
+            if shift < 0:
+                shifted = word << (-shift)
+            else:
+                shifted = word >> shift
+
+            dst_reg = instr.dst + mapping.reg_v
+
+            old_word = jamlet.rf_slice[dst_reg * word_bytes: (dst_reg+1) * word_bytes]
+            old_word_as_int = int.from_bytes(old_word, byteorder='little')
+            masked_old_word = old_word_as_int & (~mask)
+            masked_shifted = shifted & mask
+            updated_word = masked_old_word | masked_shifted
+            updated_word_bytes = updated_word.to_bytes(word_bytes, byteorder='little')
+            logger.debug(
+                f'{jamlet.clock.cycle}: RF_WRITE LOAD_J2J: '
+                f'jamlet ({jamlet.x},{jamlet.y}) '
+                f'rf[{dst_reg}] old={old_word.hex()} '
+                f'new={updated_word_bytes.hex()} '
+                f'mapping={mapping} shift={shift} '
+                f'mask=0x{mask:x} word=0x{word:x}')
+            jamlet.rf_slice[
+                dst_reg * word_bytes:
+                (dst_reg+1) * word_bytes] = updated_word_bytes
     assert reg_wb is not None
 
     response_index = jamlet.j_in_k_index * word_bytes + reg_wb//8

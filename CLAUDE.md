@@ -80,6 +80,10 @@ Never pipe command output through `head` or `tail` if you might need to see more
 2. Redirect to a file first, then read the file
 
 ## Testing
+Do NOT run large test suites (e.g. `bazel test //python/zamlet/tests:all_tests` or
+`//python/zamlet/kernel_tests:all_tests`). The user will run those. You can run individual
+tests or small groups of tests yourself.
+
 When running Python tests, always redirect output to a file so you can examine the complete output without needing to rerun the test. For example:
 ```bash
 python python/zamlet/amlet_test/test_alu_basic.py > test_output.log 2>&1
@@ -122,6 +126,9 @@ To get area analysis for components, add them to the appropriate DSE BUILD file:
 
 Run DSE flows using: `bazel build //dse/{component}:{study_name}__{pdk}_results`
 Example: `bazel build //dse/bamlet:Bamlet_default__asap7_results`
+
+## Git
+NEVER use `git stash`. If you need to test the original code, discuss it with me first.
 
 ## Bazel
 NEVER run `bazel clean` or `bazel clean --expunge` unless explicitly told to by the user.

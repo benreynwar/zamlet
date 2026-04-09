@@ -207,21 +207,45 @@ class VectorOpResult:
         return self.fault_type == TLBFaultType.NONE
 
 
+class VLineInfo:
+    """Per-vline metadata. Each VPU page contains multiple vlines, each with its own ordering."""
+
+    def __init__(self, global_address: 'GlobalAddress', local_address: 'LocalAddress'):
+        self.global_address = global_address
+        self.local_address = local_address
+        self.weakly_ordered = False
+
+
 class PageInfo:
 
-    def __init__(self, global_address: 'GlobalAddress', local_address: 'LocalAddress',
-                 fresh: List[bool], readable: bool = True, writable: bool = True):
-        # Logical address
-        self.global_address = global_address
-        # Local address in the scalar or VPU memory
-        # class stores information about reordering of the address space
-        self.local_address = local_address
+    def __init__(self, memory_type: MemoryType, global_addr: int, physical_addr: int,
+                 params: 'ZamletParams', fresh: List[bool],
+                 readable: bool = True, writable: bool = True):
+        self.memory_type = memory_type
+        self.global_addr = global_addr
+        self.physical_addr = physical_addr
         # A list with an entry for each cache line size chunk.
-        # Whether is has ever been read or written to.
+        # Whether it has ever been read or written to.
         self.fresh = fresh
-        # Permission flags
         self.readable = readable
         self.writable = writable
+        # Per-vline info for VPU pages. None for scalar pages.
+        if memory_type == MemoryType.VPU:
+            self.vlines: List[VLineInfo] | None = []
+            for vi in range(params.page_bytes // params.vline_bytes):
+                vg_bit = global_addr * 8 + vi * params.vline_bytes * 8
+                vl_bit = physical_addr * 8 + vi * params.vline_bytes * 8
+                self.vlines.append(VLineInfo(
+                    global_address=GlobalAddress(bit_addr=vg_bit, params=params),
+                    local_address=LocalAddress(
+                        memory_type=memory_type, bit_addr=vl_bit, ordering=None),
+                ))
+        else:
+            self.vlines = None
+
+    @property
+    def is_vpu(self) -> bool:
+        return self.memory_type == MemoryType.VPU
 
 class TLB:
 
@@ -268,22 +292,17 @@ class TLB:
         return page
 
     def allocate_memory(self, address: 'GlobalAddress', size: SizeBytes, memory_type: MemoryType,
-                        ordering: Ordering | None, readable: bool = True, writable: bool = True):
+                        readable: bool = True, writable: bool = True):
         logger.info(f'Allocating memory to address {hex(address.addr)} type={memory_type.value}')
         assert size % self.params.page_bytes == 0
         for index in range(size//self.params.page_bytes):
             logical_page_address = address.addr + index * self.params.page_bytes
             if logical_page_address in self.pages:
                 existing = self.pages[logical_page_address]
-                assert existing.local_address.memory_type == memory_type, (
+                assert existing.memory_type == memory_type, (
                     f'Page 0x{logical_page_address:x} already allocated with '
-                    f'type={existing.local_address.memory_type}, '
+                    f'type={existing.memory_type}, '
                     f'cannot reallocate as type={memory_type}'
-                )
-                assert existing.local_address.ordering == ordering, (
-                    f'Page 0x{logical_page_address:x} already allocated with '
-                    f'ordering={existing.local_address.ordering}, '
-                    f'cannot reallocate with ordering={ordering}'
                 )
                 assert existing.readable == readable, (
                     f'Page 0x{logical_page_address:x} already allocated with '
@@ -296,21 +315,18 @@ class TLB:
                     f'cannot reallocate with writable={writable}'
                 )
                 continue
-            global_address = GlobalAddress(bit_addr=logical_page_address*8, params=self.params)
             physical_page_address = self.get_lowest_free_page(memory_type)
-            local_address = LocalAddress(
-                memory_type=memory_type,
-                ordering=ordering,
-                bit_addr=physical_page_address*8,
-                )
-            n_cache_lines = self.params.page_bytes//self.params.cache_line_bytes//self.params.k_in_l
+            n_cache_lines = (
+                self.params.page_bytes // self.params.cache_line_bytes // self.params.k_in_l)
             info = PageInfo(
-                global_address=global_address,
-                local_address=local_address,
+                memory_type=memory_type,
+                global_addr=logical_page_address,
+                physical_addr=physical_page_address,
+                params=self.params,
                 fresh=[True]*n_cache_lines,
                 readable=readable,
                 writable=writable,
-                )
+            )
             if memory_type == MemoryType.VPU:
                 self.vpu_pages[physical_page_address] = info
             else:
@@ -320,10 +336,12 @@ class TLB:
             global_end = logical_page_address + self.params.page_bytes - 1
             l_cache_line_bytes = self.params.cache_line_bytes * self.params.k_in_l
             memory_loc_start = physical_page_address // l_cache_line_bytes
-            memory_loc_end = (physical_page_address + self.params.page_bytes - 1) // l_cache_line_bytes
+            memory_loc_end = (
+                (physical_page_address + self.params.page_bytes - 1) // l_cache_line_bytes)
             logger.debug(
                 f'PAGE_ALLOC: global=0x{logical_page_address:x}-0x{global_end:x} -> '
-                f'physical=0x{physical_page_address:x} memory_loc=0x{memory_loc_start:x}-0x{memory_loc_end:x} '
+                f'physical=0x{physical_page_address:x} '
+                f'memory_loc=0x{memory_loc_start:x}-0x{memory_loc_end:x} '
                 f'type={memory_type.value}'
             )
 
@@ -332,13 +350,12 @@ class TLB:
         for index in range(size//self.params.page_bytes):
             logical_page_address = address.addr + index * self.params.page_bytes
             info = self.pages.pop(logical_page_address)
-            memory_type = info.local_address.memory_type
-            if memory_type == MemoryType.VPU:
-                self.vpu_freed_pages.append(info.local_address.addr)
-                self.vpu_pages.pop(info.local_address.addr)
+            if info.memory_type == MemoryType.VPU:
+                self.vpu_freed_pages.append(info.physical_addr)
+                self.vpu_pages.pop(info.physical_addr)
             else:
-                self.scalar_freed_pages.append(info.local_address.addr)
-                self.scalar_pages.pop(info.local_address.addr)
+                self.scalar_freed_pages.append(info.physical_addr)
+                self.scalar_pages.pop(info.physical_addr)
 
     def get_page_info(self, address: 'GlobalAddress') -> PageInfo:
         assert address.addr % self.params.page_bytes == 0
@@ -371,11 +388,27 @@ class TLB:
     def set_not_fresh(self, address: 'GlobalAddress'):
         page_address = address.get_page()
         page_info = self.get_page_info(page_address)
-        page_offset = address.addr - page_info.global_address.addr
+        page_offset = address.addr - page_info.global_addr
         cache_line_index = page_offset // self.params.cache_line_bytes // self.params.k_in_l
         is_fresh = page_info.fresh[cache_line_index]
         assert is_fresh
         page_info.fresh[cache_line_index] = False
+
+    def get_vline_info(self, address: 'GlobalAddress') -> VLineInfo:
+        page_addr = address.get_page()
+        page_info = self.get_page_info(page_addr)
+        assert page_info.vlines is not None
+        vline_index = (address.addr - page_addr.addr) // self.params.vline_bytes
+        return page_info.vlines[vline_index]
+
+    def set_vline_ordering(self, address: 'GlobalAddress', ordering: Ordering,
+                           weak: bool = False):
+        vline_info = self.get_vline_info(address)
+        vline_info.local_address = LocalAddress(
+            memory_type=vline_info.local_address.memory_type,
+            bit_addr=vline_info.local_address.bit_addr,
+            ordering=ordering)
+        vline_info.weakly_ordered = weak
 
     def get_page_info_from_vpu_addr(self, address: 'VPUAddress') -> PageInfo:
         assert address.addr % self.params.page_bytes == 0
@@ -415,23 +448,22 @@ class GlobalAddress:
     def is_vpu(self, tlb):
         page_address = self.get_page()
         page_info = tlb.get_page_info(page_address)
-        return page_info.local_address.is_vpu
+        return page_info.is_vpu
 
     def to_vpu_addr(self, tlb):
-        page_address = self.get_page()
-        page_info = tlb.get_page_info(page_address)
-        assert page_info.local_address.is_vpu
-        page_bit_offset = self.bit_addr - page_address.bit_addr
-        return VPUAddress(bit_addr=page_info.local_address.addr*8 + page_bit_offset,
-                          ordering=page_info.local_address.ordering, params=self.params)
+        vline_info = tlb.get_vline_info(self)
+        assert vline_info.local_address.is_vpu
+        vline_bit_offset = self.bit_addr - vline_info.global_address.bit_addr
+        return VPUAddress(bit_addr=vline_info.local_address.addr*8 + vline_bit_offset,
+                          ordering=vline_info.local_address.ordering, params=self.params)
 
     def to_scalar_addr(self, tlb):
         page_address = self.get_page()
         page_info = tlb.get_page_info(page_address)
-        assert not page_info.local_address.is_vpu
+        assert not page_info.is_vpu
         page_bit_offset = self.bit_addr - page_address.bit_addr
         assert page_bit_offset % 8 == 0
-        scalar_addr = page_info.local_address.addr + page_bit_offset//8
+        scalar_addr = page_info.physical_addr + page_bit_offset//8
         return scalar_addr
 
     def to_logical_vline_addr(self, tlb):
@@ -504,7 +536,7 @@ class VPUAddress:
                                       params=self.params)
         info = tlb.get_page_info_from_vpu_addr(base_vpu_address)
         return GlobalAddress(
-            bit_addr = info.global_address.bit_addr + page_offset_bits, params=self.params
+            bit_addr = info.global_addr * 8 + page_offset_bits, params=self.params
             )
 
     def offset_bits(self, n_bits):

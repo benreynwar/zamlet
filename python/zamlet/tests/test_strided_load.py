@@ -22,7 +22,7 @@ from zamlet.monitor import CompletionType, SpanType
 from zamlet.tests import test_utils
 from zamlet.tests.test_utils import (
     pack_elements, unpack_elements, get_vpu_base_addr,
-    setup_mask_register, zero_register,
+    setup_mask_register, zero_register, set_vline_random_ew,
     PageType, allocate_page, generate_page_types, random_stride, random_vl,
     random_start_index, choose_mask_pattern, generate_mask_pattern,
 )
@@ -78,13 +78,19 @@ async def run_strided_load_test(
     for i, pt in enumerate(page_types):
         allocate_page(lamlet, src_base, i, pt)
 
+    # Zero VPU source pages, setting random ew per vline
+    for i, pt in enumerate(page_types):
+        if pt == PageType.VPU:
+            page_addr = src_base + i * page_bytes
+            set_vline_random_ew(lamlet, page_addr, page_bytes, rnd)
+
     # Allocate all destination pages as VPU
-    dst_ordering = Ordering(WordOrder.STANDARD, ew)
+    dst_ordering = Ordering(lamlet.word_order, ew)
     for i in range(n_pages):
         page_addr = dst_base + i * page_bytes
         lamlet.allocate_memory(
             GlobalAddress(bit_addr=page_addr * 8, params=params),
-            page_bytes, memory_type=MemoryType.VPU, ordering=dst_ordering)
+            page_bytes, memory_type=MemoryType.VPU)
 
     # Write source data at strided locations (only to allocated pages)
     # Write byte-by-byte to handle elements spanning page boundaries
@@ -94,7 +100,8 @@ async def run_strided_load_test(
         for byte_off, byte_val in enumerate(val_bytes):
             page_idx = (offset + byte_off) // page_bytes
             if page_idx < len(page_types) and page_types[page_idx] != PageType.UNALLOCATED:
-                await lamlet.set_memory(src_base + offset + byte_off, bytes([byte_val]))
+                await lamlet.set_memory_existing_ew(
+                    src_base + offset + byte_off, bytes([byte_val]))
 
     lamlet.vl = vl
     lamlet.set_vtype(ew, lmul)
@@ -123,7 +130,7 @@ async def run_strided_load_test(
     # Clear non-idempotent access log before the load
     lamlet.scalar.non_idempotent_access_log.clear()
 
-    reg_ordering = Ordering(WordOrder.STANDARD, ew)
+    reg_ordering = Ordering(lamlet.word_order, ew)
     result = await lamlet.vload(
         vd=data_reg,
         addr=src_base,

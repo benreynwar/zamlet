@@ -116,16 +116,16 @@ async def _run_reduction_test_inner(lamlet, clock, op, vl, ew, seed, lmul, param
     vs2_addr = base_addr
     vs1_addr = base_addr + alloc_size
     vd_addr = base_addr + 2 * alloc_size
-    ordering = Ordering(WordOrder.STANDARD, ew)
+    ordering = Ordering(lamlet.word_order, ew)
 
     for addr in (vs2_addr, vs1_addr, vd_addr):
         lamlet.allocate_memory(
             GlobalAddress(bit_addr=addr * 8, params=params),
-            alloc_size, memory_type=MemoryType.VPU, ordering=ordering)
+            alloc_size, memory_type=MemoryType.VPU)
 
     # Write test data
-    await lamlet.set_memory(vs2_addr, pack_elements(vs2_list, ew))
-    await lamlet.set_memory(vs1_addr, pack_elements([vs1_scalar], ew))
+    await lamlet.set_memory(vs2_addr, pack_elements(vs2_list, ew), ordering=ordering)
+    await lamlet.set_memory(vs1_addr, pack_elements([vs1_scalar], ew), ordering=ordering)
 
     # Set vtype
     vsew = {8: 0, 16: 1, 32: 2}[ew]
@@ -146,14 +146,14 @@ async def _run_reduction_test_inner(lamlet, clock, op, vl, ew, seed, lmul, param
     await lamlet.vload(
         vd=vs2_reg, addr=vs2_addr, ordering=ordering,
         n_elements=vl, start_index=0, mask_reg=None,
-        parent_span_id=span_id, lmul=lmul)
+        parent_span_id=span_id, emul=lmul)
 
     # Load vs1 (only element 0)
     lamlet.vl = 1
     await lamlet.vload(
         vd=vs1_reg, addr=vs1_addr, ordering=ordering,
         n_elements=1, start_index=0, mask_reg=None,
-        parent_span_id=span_id, lmul=1)
+        parent_span_id=span_id, emul=1)
 
     # Run the reduction
     lamlet.vl = vl

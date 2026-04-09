@@ -94,7 +94,7 @@ class WaitingLoadGatherBase(WaitingItem, ABC):
                     self.transaction_states[state_idx] = SendState.COMPLETE
                 else:
                     page_info = jamlet.tlb.get_page_info(request.g_addr.get_page())
-                    if page_info.local_address.memory_type != MemoryType.SCALAR_NON_IDEMPOTENT:
+                    if page_info.memory_type != MemoryType.SCALAR_NON_IDEMPOTENT:
                         self.transaction_states[state_idx] = SendState.NEED_TO_SEND
                     else:
                         self.transaction_states[state_idx] = SendState.WAITING_IN_CASE_FAULT
@@ -299,15 +299,16 @@ class WaitingLoadGatherBase(WaitingItem, ABC):
         page_byte_offset = src_g_addr.addr % jamlet.params.page_bytes
         remaining_page_bytes = jamlet.params.page_bytes - page_byte_offset
 
-        if not src_page_info.local_address.is_vpu:
+        if not src_page_info.is_vpu:
             if dst_eb == 0 or page_byte_offset == 0:
                 n_bytes = min(remaining_page_bytes, (dst_ew - dst_eb) // 8)
                 return RequiredBytes(is_vpu=False, g_addr=src_g_addr, n_bytes=n_bytes, tag=tag)
             else:
                 return None
         else:
-            assert src_page_info.local_address.ordering is not None
-            src_ew = src_page_info.local_address.ordering.ew
+            src_vline_info = jamlet.tlb.get_vline_info(src_g_addr)
+            assert src_vline_info.local_address.ordering is not None
+            src_ew = src_vline_info.local_address.ordering.ew
             src_eb = src_g_addr.bit_addr % src_ew
             if src_eb == 0 or dst_eb == 0 or page_byte_offset == 0:
                 n_bytes = min((src_ew - src_eb) // 8, (dst_ew - dst_eb) // 8, remaining_page_bytes)

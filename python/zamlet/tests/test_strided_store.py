@@ -24,7 +24,7 @@ from zamlet.monitor import CompletionType, SpanType
 from zamlet.tests import test_utils
 from zamlet.tests.test_utils import (
     pack_elements, unpack_elements, get_vpu_base_addr,
-    setup_mask_register,
+    setup_mask_register, set_vline_random_ew,
     PageType, allocate_page, generate_page_types, random_stride, random_vl,
     random_start_index, choose_mask_pattern, generate_mask_pattern,
 )
@@ -85,14 +85,14 @@ async def run_strided_store_test(
         logger.info(f"Mask bits: {mask_bits[:16]}{'...' if len(mask_bits) > 16 else ''}")
 
     # Allocate source pages as VPU (contiguous)
-    src_ordering = Ordering(WordOrder.STANDARD, ew)
+    src_ordering = Ordering(lamlet.word_order, ew)
     src_alloc_size = vl * element_bytes
     src_n_pages = (src_alloc_size + page_bytes - 1) // page_bytes
     for i in range(src_n_pages):
         page_addr = src_base + i * page_bytes
         lamlet.allocate_memory(
             GlobalAddress(bit_addr=page_addr * 8, params=params),
-            page_bytes, memory_type=MemoryType.VPU, ordering=src_ordering)
+            page_bytes, memory_type=MemoryType.VPU)
 
     # Allocate destination pages with mixed types
     for i, pt in enumerate(page_types):
@@ -101,7 +101,7 @@ async def run_strided_store_test(
     # Write source data contiguously
     for i, val in enumerate(src_list):
         addr = src_base + i * element_bytes
-        await lamlet.set_memory(addr, pack_elements([val], ew))
+        await lamlet.set_memory(addr, pack_elements([val], ew), ordering=src_ordering)
 
     lamlet.vl = vl
     lamlet.set_vtype(ew, lmul)
@@ -134,6 +134,12 @@ async def run_strided_store_test(
         mask_mem_addr = dst_base + 0x400000
         await setup_mask_register(lamlet, mask_reg, mask_bits, page_bytes, mask_mem_addr)
 
+    # Zero VPU destination pages, setting random ew per vline
+    for i, pt in enumerate(page_types):
+        if pt == PageType.VPU:
+            page_addr = dst_base + i * page_bytes
+            set_vline_random_ew(lamlet, page_addr, page_bytes, rnd)
+
     # Initialize destination memory to zeros (for masked element verification)
     # Only write bytes that fall within allocated pages
     for i in range(vl):
@@ -141,13 +147,14 @@ async def run_strided_store_test(
         for byte_off in range(element_bytes):
             page_idx = (offset + byte_off) // page_bytes
             if page_idx < len(page_types) and page_types[page_idx] != PageType.UNALLOCATED:
-                await lamlet.set_memory(dst_base + offset + byte_off, bytes(1))
+                await lamlet.set_memory_existing_ew(
+                    dst_base + offset + byte_off, bytes(1))
 
     # Clear non-idempotent write log before the strided store
     lamlet.scalar.non_idempotent_write_log.clear()
 
     # Store with stride to mixed page types
-    reg_ordering = Ordering(WordOrder.STANDARD, ew)
+    reg_ordering = Ordering(lamlet.word_order, ew)
     result = await lamlet.vstore(
         vs=data_reg,
         addr=dst_base,

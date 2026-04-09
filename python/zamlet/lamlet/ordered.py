@@ -345,9 +345,10 @@ async def _process_ordered_store(lamlet: 'Oamlet', buf: OrderedBuffer,
         page_info = lamlet.tlb.get_page_info(dst_g_addr.get_page())
         remaining_element_bytes = element_bytes - src_eb
 
-        if page_info.local_address.is_vpu:
-            assert page_info.local_address.ordering is not None
-            dst_ew = page_info.local_address.ordering.ew
+        if page_info.is_vpu:
+            vline_info = lamlet.tlb.get_vline_info(dst_g_addr)
+            assert vline_info.local_address.ordering is not None
+            dst_ew = vline_info.local_address.ordering.ew
             dst_eb = dst_g_addr.bit_addr % dst_ew
             n_bytes = min((dst_ew - dst_eb) // 8, remaining_element_bytes)
             has_vpu_writes = True
@@ -447,8 +448,9 @@ async def _send_pending_vpu_writes(lamlet: 'Oamlet', buf: OrderedBuffer):
             continue
         dst_g_addr = entry.addr.bit_offset(tag * 8)
         page_info = lamlet.tlb.get_page_info(dst_g_addr.get_page())
-        assert page_info.local_address.is_vpu
-        dst_ew = page_info.local_address.ordering.ew
+        assert page_info.is_vpu
+        vline_info = lamlet.tlb.get_vline_info(dst_g_addr)
+        dst_ew = vline_info.local_address.ordering.ew
         dst_eb = dst_g_addr.bit_addr % dst_ew
         n_bytes = min((dst_ew - dst_eb) // 8, element_bytes - tag)
         await _send_ordered_vpu_write(

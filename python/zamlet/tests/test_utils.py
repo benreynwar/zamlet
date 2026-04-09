@@ -155,14 +155,14 @@ async def setup_mask_register(
     mask_mem_addr: int,
 ) -> None:
     """Write mask bits to memory and load into a vector register."""
-    mask_ordering = Ordering(WordOrder.STANDARD, 64)
+    mask_ordering = Ordering(lamlet.word_order, 64)
     lamlet.allocate_memory(
         GlobalAddress(bit_addr=mask_mem_addr * 8, params=lamlet.params),
-        page_bytes, memory_type=MemoryType.VPU, ordering=mask_ordering
+        page_bytes, memory_type=MemoryType.VPU,
     )
 
     mask_bytes = mask_bits_to_ew64_bytes(lamlet.params, mask_bits)
-    await lamlet.set_memory(mask_mem_addr, bytes(mask_bytes))
+    await lamlet.set_memory(mask_mem_addr, bytes(mask_bytes), ordering=mask_ordering)
     logger.info(f"Mask bytes written to 0x{mask_mem_addr:x}: {mask_bytes.hex()}")
 
     mask_span_id = lamlet.monitor.create_span(
@@ -177,7 +177,7 @@ async def setup_mask_register(
         mask_reg=None,
         start_index=0,
         parent_span_id=mask_span_id,
-        lmul=1,
+        emul=1,
     )
     lamlet.monitor.finalize_children(mask_span_id)
     logger.info(f"Mask loaded into v{mask_reg}")
@@ -197,9 +197,9 @@ async def zero_register(
     lamlet.allocate_memory(
         GlobalAddress(bit_addr=zero_mem_addr * 8, params=lamlet.params),
         page_bytes * max(1, n_pages), memory_type=MemoryType.VPU,
-        ordering=Ordering(WordOrder.STANDARD, ew)
     )
-    await lamlet.set_memory(zero_mem_addr, bytes(n_elements * element_bytes))
+    ordering = Ordering(lamlet.word_order, ew)
+    await lamlet.set_memory(zero_mem_addr, bytes(n_elements * element_bytes), ordering=ordering)
 
     zero_span_id = lamlet.monitor.create_span(
         span_type=SpanType.RISCV_INSTR, component="test",
@@ -207,7 +207,7 @@ async def zero_register(
     await lamlet.vload(
         vd=reg,
         addr=zero_mem_addr,
-        ordering=Ordering(WordOrder.STANDARD, ew),
+        ordering=ordering,
         n_elements=n_elements,
         mask_reg=None,
         start_index=0,
@@ -217,23 +217,43 @@ async def zero_register(
     logger.info(f"Register v{reg} zeroed ({n_elements} elements)")
 
 
+def set_vline_random_ew(lamlet: 'Oamlet', addr: int, n_bytes: int, rnd: Random):
+    """Set random ew ordering per vline on fresh VPU memory.
+
+    Only sets the TLB vline ordering metadata — does not write data.
+    Pages must be fresh (already zeroed). addr must be vline-aligned.
+    """
+    vline_bytes = lamlet.params.vline_bytes
+    assert addr % vline_bytes == 0, (
+        f'addr 0x{addr:x} not aligned to vline_bytes {vline_bytes}')
+    for offset in range(0, n_bytes, vline_bytes):
+        ew = rnd.choice([8, 16, 32, 64])
+        ordering = Ordering(lamlet.word_order, ew)
+        g_addr = GlobalAddress(bit_addr=(addr + offset) * 8, params=lamlet.params)
+        lamlet.tlb.set_vline_ordering(g_addr, ordering)
+
+
+async def set_memory_random_ew(lamlet: 'Oamlet', addr: int, data: bytes, rnd: Random):
+    """Write data to VPU memory, assigning a random ew per vline.
+
+    addr must be vline-aligned.
+    """
+    vline_bytes = lamlet.params.vline_bytes
+    assert addr % vline_bytes == 0, (
+        f'addr 0x{addr:x} not aligned to vline_bytes {vline_bytes}')
+    for offset in range(0, len(data), vline_bytes):
+        ew = rnd.choice([8, 16, 32, 64])
+        ordering = Ordering(lamlet.word_order, ew)
+        chunk = data[offset:offset + vline_bytes]
+        await lamlet.set_memory(addr + offset, chunk, ordering=ordering)
+
+
 class PageType(Enum):
     """Page types for mixed memory testing."""
-    VPU_EW8 = 'vpu_ew8'
-    VPU_EW16 = 'vpu_ew16'
-    VPU_EW32 = 'vpu_ew32'
-    VPU_EW64 = 'vpu_ew64'
+    VPU = 'vpu'
     SCALAR_IDEMPOTENT = 'scalar_idempotent'
     SCALAR_NON_IDEMPOTENT = 'scalar_non_idempotent'
     UNALLOCATED = 'unallocated'
-
-
-PAGE_TYPE_EW = {
-    PageType.VPU_EW8: 8,
-    PageType.VPU_EW16: 16,
-    PageType.VPU_EW32: 32,
-    PageType.VPU_EW64: 64,
-}
 
 
 def allocate_page(lamlet: Oamlet, base_addr: int, page_idx: int, page_type: PageType):
@@ -244,16 +264,12 @@ def allocate_page(lamlet: Oamlet, base_addr: int, page_idx: int, page_type: Page
 
     if page_type == PageType.UNALLOCATED:
         return
-    elif page_type in PAGE_TYPE_EW:
-        ew = PAGE_TYPE_EW[page_type]
-        ordering = Ordering(WordOrder.STANDARD, ew)
-        lamlet.allocate_memory(g_addr, page_bytes, memory_type=MemoryType.VPU, ordering=ordering)
+    elif page_type == PageType.VPU:
+        lamlet.allocate_memory(g_addr, page_bytes, memory_type=MemoryType.VPU)
     elif page_type == PageType.SCALAR_IDEMPOTENT:
-        lamlet.allocate_memory(g_addr, page_bytes, memory_type=MemoryType.SCALAR_IDEMPOTENT,
-                               ordering=None)
+        lamlet.allocate_memory(g_addr, page_bytes, memory_type=MemoryType.SCALAR_IDEMPOTENT)
     elif page_type == PageType.SCALAR_NON_IDEMPOTENT:
-        lamlet.allocate_memory(g_addr, page_bytes, memory_type=MemoryType.SCALAR_NON_IDEMPOTENT,
-                               ordering=None)
+        lamlet.allocate_memory(g_addr, page_bytes, memory_type=MemoryType.SCALAR_NON_IDEMPOTENT)
 
 
 def generate_page_types(n_pages: int, rnd: Random) -> list[PageType]:
@@ -337,17 +353,19 @@ async def setup_index_register(
 
     index_size = len(indices) * index_bytes + 64
     n_pages = (max(1024, index_size) + page_bytes - 1) // page_bytes
-    index_ordering = Ordering(WordOrder.STANDARD, index_ew)
+    index_ordering = Ordering(lamlet.word_order, index_ew)
 
     for page_idx in range(n_pages):
         page_addr = index_mem_addr + page_idx * page_bytes
         lamlet.allocate_memory(
             GlobalAddress(bit_addr=page_addr * 8, params=lamlet.params),
-            page_bytes, memory_type=MemoryType.VPU, ordering=index_ordering)
+            page_bytes, memory_type=MemoryType.VPU)
 
     for i, idx in enumerate(indices):
         addr = index_mem_addr + i * index_bytes
-        await lamlet.set_memory(addr, idx.to_bytes(index_bytes, byteorder='little'))
+        await lamlet.set_memory(
+            addr, idx.to_bytes(index_bytes, byteorder='little'),
+            ordering=index_ordering)
 
     index_emul = lamlet.lmul * index_ew // lamlet.sew
 
@@ -362,7 +380,7 @@ async def setup_index_register(
         mask_reg=None,
         start_index=0,
         parent_span_id=span_id,
-        lmul=index_emul,
+        emul=index_emul,
     )
     lamlet.monitor.finalize_children(span_id)
 

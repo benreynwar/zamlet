@@ -1,4 +1,9 @@
+import re
+
 from elftools.elf.elffile import ELFFile
+
+
+VPU_SECTION_EW_RE = re.compile(r'\..*\.vpu(\d+)')
 
 
 def get_program_info(filename='vec-sgemv.riscv'):
@@ -6,24 +11,24 @@ def get_program_info(filename='vec-sgemv.riscv'):
     with open(filename, 'rb') as f:
         elf = ELFFile(f)
 
-        segments = []
-        for segment in elf.iter_segments():
-            if segment['p_type'] == 'PT_LOAD':
-                vaddr = segment['p_vaddr']
-                memsz = segment['p_memsz']
-                filesz = segment['p_filesz']
-                offset = segment['p_offset']
-
-                f.seek(offset)
-                data = f.read(filesz)
-
-                if memsz > filesz:
-                    data += bytes(memsz - filesz)
-
-                segments.append({
-                    'address': vaddr,
-                    'contents': data,
-                })
+        sections = []
+        for section in elf.iter_sections():
+            if not (section['sh_flags'] & 0x2):  # SHF_ALLOC
+                continue
+            addr = section['sh_addr']
+            size = section['sh_size']
+            if size == 0:
+                continue
+            data = section.data()
+            if len(data) < size:
+                data += bytes(size - len(data))
+            m = VPU_SECTION_EW_RE.match(section.name)
+            ew = int(m.group(1)) if m else None
+            sections.append({
+                'address': addr,
+                'contents': data,
+                'ew': ew,
+            })
 
         entry_point = elf['e_entry']
 
@@ -35,7 +40,7 @@ def get_program_info(filename='vec-sgemv.riscv'):
                     symbols[symbol.name] = symbol['st_value']
 
         return {
-            'segments': segments,
+            'sections': sections,
             'pc': entry_point,
             'tohost': symbols['tohost'],
             'symbols': symbols,

@@ -24,6 +24,7 @@ from zamlet.tests.test_utils import (
     pack_elements, unpack_elements, get_vpu_base_addr,
     setup_mask_register,
     PageType, allocate_page, generate_page_types, generate_indices, setup_index_register,
+    set_vline_random_ew,
     random_vl, max_vl_for_indexed, random_start_index, choose_mask_pattern, generate_mask_pattern,
 )
 
@@ -73,14 +74,14 @@ async def run_indexed_store_test(
         logger.info(f"Mask bits: {mask_bits[:16]}{'...' if len(mask_bits) > 16 else ''}")
 
     # Allocate source pages (contiguous VPU)
-    src_ordering = Ordering(WordOrder.STANDARD, data_ew)
+    src_ordering = Ordering(lamlet.word_order, data_ew)
     src_size = vl * element_bytes + 64
     n_src_pages = (max(1024, src_size) + page_bytes - 1) // page_bytes
     for i in range(n_src_pages):
         page_addr = src_base + i * page_bytes
         lamlet.allocate_memory(
             GlobalAddress(bit_addr=page_addr * 8, params=params),
-            page_bytes, memory_type=MemoryType.VPU, ordering=src_ordering)
+            page_bytes, memory_type=MemoryType.VPU)
 
     # Allocate destination pages with mixed types
     for i, pt in enumerate(page_types):
@@ -89,7 +90,8 @@ async def run_indexed_store_test(
     # Write source data contiguously
     for i, val in enumerate(src_list):
         addr = src_base + i * element_bytes
-        await lamlet.set_memory(addr, pack_elements([val], data_ew))
+        await lamlet.set_memory(
+            addr, pack_elements([val], data_ew), ordering=src_ordering)
 
     lamlet.vl = vl
     lamlet.set_vtype(data_ew, lmul)
@@ -129,11 +131,18 @@ async def run_indexed_store_test(
         mask_mem_addr = dst_base + 0x400000
         await setup_mask_register(lamlet, mask_reg, mask_bits, page_bytes, mask_mem_addr)
 
+    # Zero VPU destination pages, setting random ew per vline
+    for i, pt in enumerate(page_types):
+        if pt == PageType.VPU:
+            page_addr = dst_base + i * page_bytes
+            set_vline_random_ew(lamlet, page_addr, page_bytes, rnd)
+
     # Initialize destination memory to zeros (for masked element verification)
     for offset in set(indices):
         page_idx = offset // page_bytes
         if page_types[page_idx] != PageType.UNALLOCATED:
-            await lamlet.set_memory(dst_base + offset, bytes(element_bytes))
+            await lamlet.set_memory_existing_ew(
+                dst_base + offset, bytes(element_bytes))
 
     # Clear non-idempotent write log before the indexed store
     lamlet.scalar.non_idempotent_write_log.clear()

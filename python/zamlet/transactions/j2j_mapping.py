@@ -45,6 +45,17 @@ class RegMemMapping:
     n_bits: int
 
 
+def mapping_element_index(
+    params: ZamletParams, ordering: 'Ordering',
+    jx: int, jy: int, mapping: RegMemMapping,
+) -> int:
+    """Compute the element index for the register side of a mapping."""
+    vw = addresses.j_coords_to_vw_index(params, ordering.word_order, jx, jy)
+    ve = mapping.reg_wb // ordering.ew * params.j_in_l + vw
+    elements_in_vline = params.vline_bytes * 8 // ordering.ew
+    return ve + mapping.reg_v * elements_in_vline
+
+
 def get_mapping_from_reg(
     params: ZamletParams,
     k_maddr: 'KMAddr',
