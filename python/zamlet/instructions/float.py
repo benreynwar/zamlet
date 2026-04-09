@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from zamlet.oamlet.oamlet import Oamlet
 
+from zamlet.addresses import Ordering
 from zamlet.register_names import reg_name, freg_name
 from zamlet import utils
 
@@ -202,7 +203,8 @@ class Fsw:
         addr = rs1_val + self.imm
         freg_bytes = s.scalar.read_freg(self.rs2)
         data = freg_bytes[:4]
-        await s.set_memory(addr, data)
+        await s.set_memory(addr, data,
+                           weak_ordering=Ordering(s.word_order, 32))
         s.pc += 4
 
 
@@ -228,7 +230,8 @@ class Fsd:
         rs1_val = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
         addr = rs1_val + self.imm
         freg_bytes = s.scalar.read_freg(self.rs2)
-        await s.set_memory(addr, freg_bytes[:8])
+        await s.set_memory(addr, freg_bytes[:8],
+                           weak_ordering=Ordering(s.word_order, 64))
         s.pc += 4
 
 

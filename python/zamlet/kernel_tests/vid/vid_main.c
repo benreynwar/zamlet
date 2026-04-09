@@ -1,7 +1,7 @@
 #include <stdint.h>
 #include <stddef.h>
 
-volatile int32_t *vpu_mem = (volatile int32_t *)0x900C0000;
+volatile int32_t *vpu_mem = (volatile int32_t *)0x90000000;
 
 void exit_test(int code) {
     volatile uint64_t *tohost = (volatile uint64_t *)0x80001000;

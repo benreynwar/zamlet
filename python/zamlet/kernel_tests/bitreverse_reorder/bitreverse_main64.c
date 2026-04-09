@@ -2,8 +2,8 @@
 #include <stddef.h>
 #include <stdlib.h>
 
-volatile int64_t *vpu_mem64 = (volatile int64_t *)0x90100000;  // e64 region
-volatile int32_t *vpu_mem32 = (volatile int32_t *)0x900C0000;  // e32 region
+volatile int64_t *vpu_mem64 = (volatile int64_t *)0x90000000;
+volatile int32_t *vpu_mem32 = (volatile int32_t *)0x90080000;
 volatile int32_t skip_verify = 0;
 volatile int32_t n = 0;
 volatile int32_t reverse_bits = 0;

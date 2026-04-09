@@ -18,7 +18,7 @@ from zamlet.addresses import GlobalAddress, MemoryType, Ordering, WordOrder
 from zamlet.geometries import SMALL_GEOMETRIES, scale_n_tests
 from zamlet.monitor import CompletionType, SpanType
 from zamlet.tests.test_utils import (
-    setup_lamlet, pack_elements, unpack_elements, get_vpu_base_addr, dump_span_trees,
+    setup_lamlet, pack_elements, unpack_elements, dump_span_trees,
 )
 
 logger = logging.getLogger(__name__)
@@ -58,29 +58,25 @@ async def _run_reg_gather_test_inner(
 
     logger.info(f"Test parameters: data_ew={data_ew}, index_ew={index_ew}, vl={vl}, seed={seed}")
 
-    data_base_addr = get_vpu_base_addr(data_ew)
-    index_base_addr = get_vpu_base_addr(index_ew)
+    data_base_addr = 0x90000000
     page_bytes = params.page_bytes
-    data_ordering = Ordering(WordOrder.STANDARD, data_ew)
-    index_ordering = Ordering(WordOrder.STANDARD, index_ew)
-
-    # If same ew, use different offsets within the same address space
-    if data_ew == index_ew:
-        index_base_addr = data_base_addr + 4 * page_bytes
+    index_base_addr = data_base_addr + 4 * page_bytes
+    data_ordering = Ordering(lamlet.word_order, data_ew)
+    index_ordering = Ordering(lamlet.word_order, index_ew)
 
     # Allocate memory for source and destination data
     for i in range(4):
         page_addr = data_base_addr + i * page_bytes
         lamlet.allocate_memory(
             GlobalAddress(bit_addr=page_addr * 8, params=params),
-            page_bytes, memory_type=MemoryType.VPU, ordering=data_ordering)
+            page_bytes, memory_type=MemoryType.VPU)
 
     # Allocate memory for index data
     for i in range(2):
         page_addr = index_base_addr + i * page_bytes
         lamlet.allocate_memory(
             GlobalAddress(bit_addr=page_addr * 8, params=params),
-            page_bytes, memory_type=MemoryType.VPU, ordering=index_ordering)
+            page_bytes, memory_type=MemoryType.VPU)
 
     # Compute VLMAX for data element width
     elements_in_vline = params.vline_bytes * 8 // data_ew
@@ -102,11 +98,13 @@ async def _run_reg_gather_test_inner(
 
     # Write source data to memory
     src_mem_addr = data_base_addr
-    await lamlet.set_memory(src_mem_addr, pack_elements(src_data, data_ew))
+    await lamlet.set_memory(
+        src_mem_addr, pack_elements(src_data, data_ew), ordering=data_ordering)
 
     # Write indices to memory
     index_mem_addr = index_base_addr
-    await lamlet.set_memory(index_mem_addr, pack_elements(indices, index_ew))
+    await lamlet.set_memory(
+        index_mem_addr, pack_elements(indices, index_ew), ordering=index_ordering)
 
     # Set up lamlet vector state
     lamlet.vl = vl
@@ -136,7 +134,7 @@ async def _run_reg_gather_test_inner(
         mask_reg=None,
         start_index=0,
         parent_span_id=span_id,
-        lmul=1,
+        emul=1,
     )
 
     # Load indices into vs1
@@ -149,7 +147,7 @@ async def _run_reg_gather_test_inner(
         mask_reg=None,
         start_index=0,
         parent_span_id=span_id,
-        lmul=1,
+        emul=1,
     )
 
     # Set up vrf_ordering for registers
@@ -163,7 +161,7 @@ async def _run_reg_gather_test_inner(
         vd=vd_reg, vs2=vs2_reg, vs1=vs1_reg,
         start_index=0, n_elements=vl,
         index_ew=index_ew, data_ew=data_ew,
-        word_order=WordOrder.STANDARD, vlmax=vlmax,
+        word_order=lamlet.word_order, vlmax=vlmax,
         mask_reg=None, parent_span_id=span_id,
     )
 

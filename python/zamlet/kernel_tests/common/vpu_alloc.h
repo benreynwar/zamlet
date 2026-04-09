@@ -3,6 +3,6 @@
 
 #include <stddef.h>
 
-void* vpu_alloc(size_t size, int element_width);
+void* vpu_alloc(size_t size);
 
 #endif

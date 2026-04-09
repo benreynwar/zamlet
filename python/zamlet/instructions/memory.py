@@ -6,6 +6,7 @@ Reference: riscv-isa-manual/src/rv32.adoc
 import logging
 from dataclasses import dataclass
 
+from zamlet.addresses import Ordering
 from zamlet.register_names import reg_name
 
 
@@ -35,7 +36,8 @@ class Sb:
         rs2_bytes = s.scalar.read_reg(self.rs2)
         logger.debug(f'sb: address={hex(address)} pc={hex(s.pc)} '
                      f'rs1=x{self.rs1}={hex(rs1_val)} imm={self.imm}')
-        await s.set_memory(address, rs2_bytes[:1])
+        await s.set_memory(address, rs2_bytes[:1],
+                           weak_ordering=Ordering(s.word_order, 8))
         s.pc += 4
 
 
@@ -60,7 +62,8 @@ class Sh:
         rs1_val = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
         address = rs1_val + self.imm
         rs2_bytes = s.scalar.read_reg(self.rs2)
-        await s.set_memory(address, rs2_bytes[:2])
+        await s.set_memory(address, rs2_bytes[:2],
+                           weak_ordering=Ordering(s.word_order, 16))
         s.pc += 4
 
 
@@ -85,7 +88,8 @@ class Sw:
         rs1_val = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
         address = rs1_val + self.imm
         rs2_bytes = s.scalar.read_reg(self.rs2)
-        await s.set_memory(address, rs2_bytes[:4])
+        await s.set_memory(address, rs2_bytes[:4],
+                           weak_ordering=Ordering(s.word_order, 32))
         s.pc += 4
 
 @dataclass
@@ -110,7 +114,8 @@ class Sd:
         address = rs1_val + self.imm
         rs2_bytes = s.scalar.read_reg(self.rs2)
         logger.debug(f'About to set memory {address} to {rs2_bytes[:8]}')
-        await s.set_memory(address, rs2_bytes[:8])
+        await s.set_memory(address, rs2_bytes[:8],
+                           weak_ordering=Ordering(s.word_order, 64))
         s.pc += 4
 
 @dataclass

@@ -25,8 +25,8 @@ from zamlet.geometries import SMALL_GEOMETRIES, scale_n_tests
 from zamlet.monitor import CompletionType, SpanType
 from zamlet.tests import test_utils
 from zamlet.tests.test_utils import (
-    pack_elements, unpack_elements, get_vpu_base_addr,
-    setup_mask_register,
+    pack_elements, unpack_elements,
+    setup_mask_register, set_vline_random_ew,
     PageType, allocate_page, generate_page_types, generate_indices, setup_index_register,
     random_vl, max_vl_for_indexed, random_start_index, choose_mask_pattern, generate_mask_pattern,
 )
@@ -43,17 +43,18 @@ async def setup_data_register(lamlet, data_reg: int, values: list[int], data_ew:
 
     data_size = len(values) * element_bytes + 64
     n_pages = (max(1024, data_size) + page_bytes - 1) // page_bytes
-    data_ordering = Ordering(WordOrder.STANDARD, data_ew)
+    data_ordering = Ordering(lamlet.word_order, data_ew)
 
     for page_idx in range(n_pages):
         page_addr = data_mem_addr + page_idx * page_bytes
         lamlet.allocate_memory(
             GlobalAddress(bit_addr=page_addr * 8, params=lamlet.params),
-            page_bytes, memory_type=MemoryType.VPU, ordering=data_ordering)
+            page_bytes, memory_type=MemoryType.VPU)
 
     for i, val in enumerate(values):
         addr = data_mem_addr + i * element_bytes
-        await lamlet.set_memory(addr, pack_elements([val], data_ew))
+        await lamlet.set_memory(
+            addr, pack_elements([val], data_ew), ordering=data_ordering)
 
     span_id = lamlet.monitor.create_span(
         span_type=SpanType.RISCV_INSTR, component="test",
@@ -96,7 +97,7 @@ async def run_ordered_indexed_store_test(
     logger.info(f"Test parameters: data_ew={data_ew}, index_ew={index_ew}, vl={vl}, "
                 f"n_pages={n_pages}, seed={seed}, start_index={start_index}, use_mask={use_mask}")
 
-    dst_base = get_vpu_base_addr(data_ew)
+    dst_base = 0x90000000
 
     page_types = generate_page_types(n_pages, rnd)
     indices = generate_indices(vl, data_ew, n_pages, page_bytes, rnd, allow_duplicates=True)
@@ -115,11 +116,18 @@ async def run_ordered_indexed_store_test(
     for i, pt in enumerate(page_types):
         allocate_page(lamlet, dst_base, i, pt)
 
+    # Zero VPU destination pages, setting random ew per vline
+    for i, pt in enumerate(page_types):
+        if pt == PageType.VPU:
+            page_addr = dst_base + i * page_bytes
+            set_vline_random_ew(lamlet, page_addr, page_bytes, rnd)
+
     # Initialize destination memory to zeros (for masked element verification)
     for offset in set(indices):
         page_idx = offset // page_bytes
         if page_types[page_idx] != PageType.UNALLOCATED:
-            await lamlet.set_memory(dst_base + offset, bytes(element_bytes))
+            await lamlet.set_memory_existing_ew(
+                dst_base + offset, bytes(element_bytes))
 
     lamlet.vl = vl
     lamlet.set_vtype(data_ew, lmul)

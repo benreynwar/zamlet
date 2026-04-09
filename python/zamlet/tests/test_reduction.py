@@ -20,7 +20,7 @@ from zamlet.kamlet.kinstructions import VRedOp
 from zamlet.instructions.vector import Vreduction
 from zamlet.monitor import CompletionType, SpanType
 from zamlet.tests.test_utils import (
-    setup_lamlet, pack_elements, unpack_elements, get_vpu_base_addr, dump_span_trees,
+    setup_lamlet, pack_elements, unpack_elements, dump_span_trees,
 )
 
 logger = logging.getLogger(__name__)
@@ -112,20 +112,20 @@ async def _run_reduction_test_inner(lamlet, clock, op, vl, ew, seed, lmul, param
     data_size = max(vl, 1) * byte_width * lmul
     alloc_size = max(page_bytes, ((data_size + page_bytes - 1) // page_bytes) * page_bytes)
 
-    base_addr = get_vpu_base_addr(ew)
+    base_addr = 0x90000000
     vs2_addr = base_addr
     vs1_addr = base_addr + alloc_size
     vd_addr = base_addr + 2 * alloc_size
-    ordering = Ordering(WordOrder.STANDARD, ew)
+    ordering = Ordering(lamlet.word_order, ew)
 
     for addr in (vs2_addr, vs1_addr, vd_addr):
         lamlet.allocate_memory(
             GlobalAddress(bit_addr=addr * 8, params=params),
-            alloc_size, memory_type=MemoryType.VPU, ordering=ordering)
+            alloc_size, memory_type=MemoryType.VPU)
 
     # Write test data
-    await lamlet.set_memory(vs2_addr, pack_elements(vs2_list, ew))
-    await lamlet.set_memory(vs1_addr, pack_elements([vs1_scalar], ew))
+    await lamlet.set_memory(vs2_addr, pack_elements(vs2_list, ew), ordering=ordering)
+    await lamlet.set_memory(vs1_addr, pack_elements([vs1_scalar], ew), ordering=ordering)
 
     # Set vtype
     vsew = {8: 0, 16: 1, 32: 2}[ew]
@@ -146,14 +146,14 @@ async def _run_reduction_test_inner(lamlet, clock, op, vl, ew, seed, lmul, param
     await lamlet.vload(
         vd=vs2_reg, addr=vs2_addr, ordering=ordering,
         n_elements=vl, start_index=0, mask_reg=None,
-        parent_span_id=span_id, lmul=lmul)
+        parent_span_id=span_id, emul=lmul)
 
     # Load vs1 (only element 0)
     lamlet.vl = 1
     await lamlet.vload(
         vd=vs1_reg, addr=vs1_addr, ordering=ordering,
         n_elements=1, start_index=0, mask_reg=None,
-        parent_span_id=span_id, lmul=1)
+        parent_span_id=span_id, emul=1)
 
     # Run the reduction
     lamlet.vl = vl

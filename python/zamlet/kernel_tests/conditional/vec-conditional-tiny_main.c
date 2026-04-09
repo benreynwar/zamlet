@@ -34,7 +34,7 @@ void vec_conditional(size_t n, int64_t x[], int64_t a[], int64_t b[], int64_t z[
 
 int main( int argc, char* argv[] )
 {
-  int64_t* results_data = (int64_t*)vpu_alloc(DATA_SIZE * sizeof(int64_t), 64);
+  int64_t* results_data = (int64_t*)vpu_alloc(DATA_SIZE * sizeof(int64_t));
 
   // Do the conditional
   setStats(1);

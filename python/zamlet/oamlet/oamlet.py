@@ -273,9 +273,7 @@ class Oamlet:
             addr = self._scratch_base + (reg_index * 8 + ew_index) * self.params.page_bytes
             g_addr = GlobalAddress(bit_addr=addr * 8, params=self.params)
             self.allocate_memory(
-                g_addr, self.params.page_bytes,
-                memory_type=MemoryType.VPU,
-                ordering=Ordering(self.word_order, ew))
+                g_addr, self.params.page_bytes, memory_type=MemoryType.VPU)
             self._scratch_pages.add(key)
         else:
             addr = self._scratch_base + (reg_index * 8 + ew_index) * self.params.page_bytes
@@ -331,15 +329,16 @@ class Oamlet:
                 f'v{reg} ordering ew={self.vrf_ordering[reg].ew} != expected ew={ew}')
 
     def allocate_memory(self, address: GlobalAddress, size: SizeBytes, memory_type: MemoryType,
-                        ordering: Ordering | None, readable: bool = True, writable: bool = True):
+                        readable: bool = True, writable: bool = True):
         assert size % self.params.page_bytes == 0
-        self.tlb.allocate_memory(address, size, memory_type, ordering, readable, writable)
+        self.tlb.allocate_memory(address, size, memory_type, readable, writable)
         # Register non-idempotent pages with ScalarState
         if memory_type == MemoryType.SCALAR_NON_IDEMPOTENT:
             for page_offset in range(0, size, self.params.page_bytes):
                 page_addr = address.addr + page_offset
-                page_info = self.tlb.get_page_info(GlobalAddress(bit_addr=page_addr*8, params=self.params))
-                self.scalar.register_non_idempotent_page(page_info.local_address.addr)
+                page_info = self.tlb.get_page_info(
+                    GlobalAddress(bit_addr=page_addr*8, params=self.params))
+                self.scalar.register_non_idempotent_page(page_info.physical_addr)
 
     def to_scalar_addr(self, addr: GlobalAddress):
         return self.conv.to_scalar_addr(addr)
@@ -1033,7 +1032,11 @@ class Oamlet:
             else:
                 pass  # Wait for router_connections to drain the buffer
 
-    async def set_memory(self, address: int, data: bytes):
+    async def set_memory(self, address: int, data: bytes,
+                         ordering: 'addresses.Ordering | None' = None,
+                         weak_ordering: 'addresses.Ordering | None' = None):
+        assert not (ordering is not None and weak_ordering is not None), (
+            'set_memory: cannot pass both ordering and weak_ordering')
         logger.debug(f'Writing to memory from {hex(address)} to {hex(address+len(data)-1)}')
         global_addr = GlobalAddress(bit_addr=address*8, params=self.params)
         # Check for HTIF tohost write (8-byte aligned)
@@ -1048,6 +1051,22 @@ class Oamlet:
             # If this cache line is fresh then we need to set it to all 0.
             # If the cache line is not loaded then we need to load it.
             if byt_address.is_vpu(self.tlb):
+                vline_info = self.tlb.get_vline_info(byt_address)
+                if vline_info.local_address.ordering is None:
+                    if ordering is not None:
+                        self.tlb.set_vline_ordering(byt_address, ordering)
+                    elif weak_ordering is not None:
+                        self.tlb.set_vline_ordering(
+                            byt_address, weak_ordering, weak=True)
+                    else:
+                        assert False, (
+                            f'set_memory to VPU address 0x{byt_address.addr:x} '
+                            f'requires ordering or weak_ordering')
+                elif ordering is not None:
+                    assert vline_info.local_address.ordering == ordering, (
+                        f'set_memory ordering mismatch at 0x{byt_address.addr:x}: '
+                        f'vline has {vline_info.local_address.ordering}, '
+                        f'caller passed {ordering}')
                 await self.write_bytes(byt_address, bytes([b]))
                 # TODO: Be a bit more careful about whether we need to add this.
                 await self.clock.next_cycle
@@ -1056,7 +1075,31 @@ class Oamlet:
                 await self.scalar.set_memory(
                     scalar_address, bytes([b]), allow_wait=True)
 
-    def directly_set_memory(self, address: int, data: bytes):
+    async def set_memory_existing_ew(self, address: int, data: bytes):
+        """Write data to memory using existing vline orderings.
+
+        For VPU bytes, the vline must already have an ordering set.
+        For scalar bytes, no ordering is needed.
+        Only used during test setup.
+        """
+        global_addr = GlobalAddress(bit_addr=address*8, params=self.params)
+        for index, b in enumerate(data):
+            byt_address = GlobalAddress(
+                bit_addr=global_addr.addr*8+index*8, params=self.params)
+            if byt_address.is_vpu(self.tlb):
+                vline_info = self.tlb.get_vline_info(byt_address)
+                assert vline_info.local_address.ordering is not None, (
+                    f'set_memory_existing_ew at 0x{byt_address.addr:x}: '
+                    f'vline has no ordering')
+                await self.write_bytes(byt_address, bytes([b]))
+                await self.clock.next_cycle
+            else:
+                scalar_address = self.to_scalar_addr(byt_address)
+                await self.scalar.set_memory(
+                    scalar_address, bytes([b]), allow_wait=True)
+
+    def directly_set_memory(self, address: int, data: bytes,
+                            ordering: 'addresses.Ordering | None' = None):
         """
         Write bytes directly to memory, bypassing simulation.
 
@@ -1070,6 +1113,12 @@ class Oamlet:
         for index, b in enumerate(data):
             byte_addr = GlobalAddress(bit_addr=(address + index) * 8, params=self.params)
             if byte_addr.is_vpu(self.tlb):
+                vline_info = self.tlb.get_vline_info(byte_addr)
+                if vline_info.local_address.ordering is None:
+                    assert ordering is not None, (
+                        f'directly_set_memory to VPU address 0x{byte_addr.addr:x} '
+                        f'requires ordering')
+                    self.tlb.set_vline_ordering(byte_addr, ordering)
                 k_maddr = byte_addr.to_k_maddr(self.tlb)
                 memlet = self.memlets[k_maddr.k_index]
                 cache_line_index = k_maddr.addr // self.params.cache_line_bytes
@@ -1192,27 +1241,136 @@ class Oamlet:
         # Signal completion by writing to fromhost
         await self.set_memory(self.params.fromhost_addr, (1).to_bytes(8, byteorder='little'))
 
+    async def _remap_vline(self, vline_addr: int, new_ordering: addresses.Ordering,
+                           parent_span_id: int):
+        """Remap a single vline's data from its current ew to new_ordering's ew.
+
+        Loads the full vline at old ew into a temp reg, then stores it back at the new ew.
+        The full-vline store sets the vline ordering and vloadstore handles the reg ew
+        conversion via remap_reg_ew.
+        """
+        vline_bytes = self.params.vline_bytes
+        g_addr = addresses.GlobalAddress(bit_addr=vline_addr * 8, params=self.params)
+        vline_info = self.tlb.get_vline_info(g_addr)
+        old_ordering = vline_info.local_address.ordering
+        assert old_ordering is not None
+        old_elements = vline_bytes * 8 // old_ordering.ew
+        new_elements = vline_bytes * 8 // new_ordering.ew
+        temp_regs = self.alloc_temp_regs(1)
+        await self.vload(
+            temp_regs[0], vline_addr, old_ordering,
+            n_elements=old_elements, mask_reg=None, start_index=0,
+            parent_span_id=parent_span_id, emul=1)
+        await self.vstore(
+            temp_regs[0], vline_addr, new_ordering,
+            n_elements=new_elements, mask_reg=None, start_index=0,
+            parent_span_id=parent_span_id, emul=1)
+        self.free_temp_regs(temp_regs)
+
+    def _vline_is_partial(self, vline_index: int, elements_per_vline: int,
+                          n_elements: int, start_index: int,
+                          mask_reg: int | None) -> bool:
+        """Check whether a vline will be only partially written/read."""
+        if mask_reg is not None:
+            return True
+        vline_first_element = vline_index * elements_per_vline
+        vline_last_element = vline_first_element + elements_per_vline
+        return start_index > vline_first_element or \
+            start_index + n_elements < vline_last_element
+
+    async def _remap_partial_vlines_for_store(
+            self, addr: int, ordering: addresses.Ordering, emul: int,
+            n_elements: int, start_index: int, mask_reg: int | None,
+            parent_span_id: int):
+        """Remap partial vlines with ew mismatch before a unit-stride store."""
+        vline_bytes = self.params.vline_bytes
+        elements_per_vline = vline_bytes * 8 // ordering.ew
+        for i in range(emul):
+            vline_addr = addr + i * vline_bytes
+            if not self._vline_is_partial(
+                    i, elements_per_vline, n_elements, start_index, mask_reg):
+                continue
+            g_addr = addresses.GlobalAddress(
+                bit_addr=vline_addr * 8, params=self.params)
+            page_info = self.tlb.get_page_info(g_addr.get_page())
+            if page_info.is_vpu:
+                existing = self.tlb.get_vline_info(g_addr).local_address.ordering
+                if existing is not None and existing != ordering:
+                    await self._remap_vline(
+                        vline_addr, ordering, parent_span_id)
+
+    async def _remap_weak_vlines_for_load(
+            self, addr: int, ordering: addresses.Ordering, emul: int,
+            parent_span_id: int):
+        """Remap weakly-ordered vlines with ew mismatch before a unit-stride load."""
+        vline_bytes = self.params.vline_bytes
+        for i in range(emul):
+            vline_addr = addr + i * vline_bytes
+            g_addr = addresses.GlobalAddress(
+                bit_addr=vline_addr * 8, params=self.params)
+            page_info = self.tlb.get_page_info(g_addr.get_page())
+            if page_info.is_vpu:
+                vline_info = self.tlb.get_vline_info(g_addr)
+                existing = vline_info.local_address.ordering
+                if (vline_info.weakly_ordered and existing is not None
+                        and existing != ordering):
+                    await self._remap_vline(
+                        vline_addr, ordering, parent_span_id)
+
+    def _set_vline_orderings_unit_stride(self, addr: int, ordering: addresses.Ordering,
+                                         emul: int):
+        """Set ordering on vlines touched by an aligned unit-stride load/store."""
+        vline_bytes = self.params.vline_bytes
+        assert addr % vline_bytes == 0
+        for i in range(emul):
+            vline_addr = addr + i * vline_bytes
+            g_addr = addresses.GlobalAddress(
+                bit_addr=vline_addr * 8, params=self.params)
+            page_info = self.tlb.get_page_info(g_addr.get_page())
+            if page_info.is_vpu:
+                self.tlb.set_vline_ordering(g_addr, ordering)
+
     async def vload(self, vd: int, addr: int, ordering: addresses.Ordering,
                     n_elements: int, mask_reg: int | None, start_index: int,
-                    parent_span_id: int, lmul: int | None = None,
+                    parent_span_id: int, emul: int | None = None,
                     stride_bytes: int | None = None) -> addresses.VectorOpResult:
-        if lmul is None:
-            lmul = self.lmul
-        assert lmul in (1, 2, 4, 8), f'vload: invalid lmul={lmul}'
+        if n_elements == 0:
+            return addresses.VectorOpResult()
+        if emul is None:
+            emul = self.lmul
+        assert emul in (1, 2, 4, 8), f'vload: invalid emul={emul}'
         elements_per_vline = self.params.vline_bytes * 8 // ordering.ew
-        vlmax = elements_per_vline * lmul
+        vlmax = elements_per_vline * emul
         assert n_elements <= vlmax, (
             f'vload: n_elements={n_elements} exceeds vlmax={vlmax} '
-            f'(ew={ordering.ew}, lmul={lmul})')
-        for i in range(lmul):
+            f'(ew={ordering.ew}, emul={emul})')
+        element_bytes = ordering.ew // 8
+        is_unit_stride = stride_bytes is None or stride_bytes == element_bytes
+        is_aligned = addr % self.params.vline_bytes == 0
+        if is_unit_stride and is_aligned:
+            await self._remap_weak_vlines_for_load(
+                addr, ordering, emul, parent_span_id)
+        for i in range(emul):
             self.vrf_ordering[vd + i] = ordering
         return await unordered.vload(self, vd, addr, ordering, n_elements, mask_reg, start_index,
                                      parent_span_id, stride_bytes)
 
     async def vstore(self, vs: int, addr: int, ordering: addresses.Ordering,
                      n_elements: int, mask_reg: int | None, start_index: int,
-                     parent_span_id: int,
+                     parent_span_id: int, emul: int | None = None,
                      stride_bytes: int | None = None) -> addresses.VectorOpResult:
+        if n_elements == 0:
+            return addresses.VectorOpResult()
+        if emul is None:
+            emul = self.lmul
+        element_bytes = ordering.ew // 8
+        is_unit_stride = stride_bytes is None or stride_bytes == element_bytes
+        is_aligned = addr % self.params.vline_bytes == 0
+        if is_unit_stride and is_aligned:
+            await self._remap_partial_vlines_for_store(
+                addr, ordering, emul, n_elements, start_index, mask_reg,
+                parent_span_id)
+            self._set_vline_orderings_unit_stride(addr, ordering, emul)
         return await unordered.vstore(self, vs, addr, ordering, n_elements, mask_reg, start_index,
                                       parent_span_id, stride_bytes)
 
@@ -1258,21 +1416,6 @@ class Oamlet:
                                         index_ew, data_ew, word_order, vlmax,
                                         mask_reg, parent_span_id)
 
-    def check_element_width(self, addr: GlobalAddress, size: int, element_width: int):
-        """
-        Check that this region of memory all has this element width
-        """
-        # Split the load into a continous load for each cache line
-        base_addr = addr.addr
-        for offset in range(0, size, self.params.page_bytes):
-            page_address = ((base_addr+offset)//self.params.page_bytes) * self.params.page_bytes
-            page_info = self.tlb.get_page_info(GlobalAddress(bit_addr=page_address*8, params=self.params))
-            assert page_info.local_address.is_vpu
-            if page_info.local_address.ordering.ew != element_width:
-                logger.warning(
-                    f'Element width mismatch at 0x{page_address:x}: '
-                    f'page ew={page_info.local_address.ordering.ew}, '
-                    f'load ew={element_width}')
 
     def update(self):
         for kamlet in self.kamlets:

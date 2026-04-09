@@ -2,8 +2,7 @@
 #include <stddef.h>
 #include <string.h>
 
-// VPU memory for 64-bit elements starts at 0x90100000
-volatile uint8_t *vpu_mem = (volatile uint8_t *)0x90100000;
+volatile uint8_t *vpu_mem = (volatile uint8_t *)0x90000000;
 
 // Simple exit function using HTIF
 void exit_test(int code) {

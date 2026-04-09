@@ -72,29 +72,31 @@ async def run_conditional_simple(clock: Clock, lamlet: Oamlet, vector_length: in
     x_addr = 0x20000000
     a_addr = 0x20800000
     b_addr = a_addr + alloc_size
-    z_addr = 0x900C0000
+    z_addr = 0x90000000
 
     lamlet.allocate_memory(
         GlobalAddress(bit_addr=x_addr * 8, params=params),
-        alloc_size, memory_type=MemoryType.VPU, ordering=Ordering(WordOrder.STANDARD, 8)
+        alloc_size, memory_type=MemoryType.VPU,
     )
     lamlet.allocate_memory(
         GlobalAddress(bit_addr=a_addr * 8, params=params),
-        alloc_size, memory_type=MemoryType.VPU, ordering=Ordering(WordOrder.STANDARD, 16)
+        alloc_size, memory_type=MemoryType.VPU,
     )
     lamlet.allocate_memory(
         GlobalAddress(bit_addr=b_addr * 8, params=params),
-        alloc_size, memory_type=MemoryType.VPU, ordering=Ordering(WordOrder.STANDARD, 16)
+        alloc_size, memory_type=MemoryType.VPU,
     )
     lamlet.allocate_memory(
         GlobalAddress(bit_addr=z_addr * 8, params=params),
-        alloc_size, memory_type=MemoryType.VPU, ordering=Ordering(WordOrder.STANDARD, 16)
+        alloc_size, memory_type=MemoryType.VPU,
     )
 
     # Write initial data to memory
-    await lamlet.set_memory(x_addr, x_data)
-    await lamlet.set_memory(a_addr, a_data)
-    await lamlet.set_memory(b_addr, b_data)
+    x_mem_ordering = Ordering(lamlet.word_order, 8)
+    ab_mem_ordering = Ordering(lamlet.word_order, 16)
+    await lamlet.set_memory(x_addr, x_data, ordering=x_mem_ordering)
+    await lamlet.set_memory(a_addr, a_data, ordering=ab_mem_ordering)
+    await lamlet.set_memory(b_addr, b_data, ordering=ab_mem_ordering)
 
     logger.info("Memory initialized")
 
@@ -114,7 +116,7 @@ async def run_conditional_simple(clock: Clock, lamlet: Oamlet, vector_length: in
     x_vpu_addr = lamlet.to_vpu_addr(x_global_addr)
 
     # Create Load instruction for v0 with e8
-    x_ordering = Ordering(WordOrder.STANDARD, 8)
+    x_ordering = Ordering(lamlet.word_order, 8)
 
     # We need to manually create kinstructions for each kamlet
     # In the real system, lamlet.vload() would do this, but we're bypassing that
@@ -131,9 +133,9 @@ async def run_conditional_simple(clock: Clock, lamlet: Oamlet, vector_length: in
     elements_per_iteration = (lmul * vline_bytes) // 2  # for e16
     logger.info(f"lmul={lmul}, vline_bytes={vline_bytes}, elements_per_iteration={elements_per_iteration}")
 
-    a_ordering = Ordering(WordOrder.STANDARD, 16)
-    b_ordering = Ordering(WordOrder.STANDARD, 16)
-    z_ordering = Ordering(WordOrder.STANDARD, 16)
+    a_ordering = Ordering(lamlet.word_order, 16)
+    b_ordering = Ordering(lamlet.word_order, 16)
+    z_ordering = Ordering(lamlet.word_order, 16)
 
     for iter_start in range(0, vl, elements_per_iteration):
         iter_count = min(elements_per_iteration, vl - iter_start)

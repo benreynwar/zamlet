@@ -21,8 +21,8 @@ from zamlet.geometries import SMALL_GEOMETRIES, scale_n_tests
 from zamlet.monitor import CompletionType, SpanType
 from zamlet.tests import test_utils
 from zamlet.tests.test_utils import (
-    pack_elements, unpack_elements, get_vpu_base_addr,
-    setup_mask_register, zero_register,
+    pack_elements, unpack_elements,
+    setup_mask_register, zero_register, set_vline_random_ew,
     PageType, allocate_page, generate_page_types, generate_indices, setup_index_register,
     random_vl, max_vl_for_indexed, random_start_index, choose_mask_pattern, generate_mask_pattern,
 )
@@ -54,8 +54,8 @@ async def run_indexed_load_test(
     logger.info(f"Test parameters: data_ew={data_ew}, index_ew={index_ew}, vl={vl}, "
                 f"n_pages={n_pages}, seed={seed}, start_index={start_index}, use_mask={use_mask}")
 
-    src_base = get_vpu_base_addr(data_ew)
-    dst_base = get_vpu_base_addr(data_ew) + 0x100000
+    src_base = 0x90000000
+    dst_base = 0x90000000 + 0x100000
     page_bytes = params.page_bytes
 
     page_types = generate_page_types(n_pages, rnd)
@@ -76,22 +76,29 @@ async def run_indexed_load_test(
     for i, pt in enumerate(page_types):
         allocate_page(lamlet, src_base, i, pt)
 
+    # Zero VPU source pages, setting random ew per vline
+    for i, pt in enumerate(page_types):
+        if pt == PageType.VPU:
+            page_addr = src_base + i * page_bytes
+            set_vline_random_ew(lamlet, page_addr, page_bytes, rnd)
+
     # Allocate destination pages
-    dst_ordering = Ordering(WordOrder.STANDARD, data_ew)
+    dst_ordering = Ordering(lamlet.word_order, data_ew)
     dst_size = vl * element_bytes + 64
     n_dst_pages = (max(1024, dst_size) + page_bytes - 1) // page_bytes
     for i in range(n_dst_pages):
         page_addr = dst_base + i * page_bytes
         lamlet.allocate_memory(
             GlobalAddress(bit_addr=page_addr * 8, params=params),
-            page_bytes, memory_type=MemoryType.VPU, ordering=dst_ordering)
+            page_bytes, memory_type=MemoryType.VPU)
 
     # Write source data at indexed locations (only to allocated pages)
     for i, (offset, val) in enumerate(zip(indices, src_list)):
         page_idx = offset // page_bytes
         if page_types[page_idx] != PageType.UNALLOCATED:
             addr = src_base + offset
-            await lamlet.set_memory(addr, pack_elements([val], data_ew))
+            await lamlet.set_memory_existing_ew(
+                addr, pack_elements([val], data_ew))
 
     lamlet.vl = vl
     lamlet.set_vtype(data_ew, lmul)

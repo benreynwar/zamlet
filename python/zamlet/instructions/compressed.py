@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from zamlet.oamlet.oamlet import Oamlet
 
+from zamlet.addresses import Ordering
 from zamlet.register_names import reg_name, freg_name
 from zamlet.instructions.control_flow import format_branch_target
 from zamlet import utils
@@ -543,7 +544,8 @@ class CSdsp:
         value = int.from_bytes(value_bytes, byteorder='little', signed=False)
         logger.debug(f'C.SDSP: sp=0x{sp:016x}, offset={self.offset}, '
                      f'address=0x{address:016x}, rs2={self.rs2}, value=0x{value:016x}')
-        await s.set_memory(address, value_bytes[:8])
+        await s.set_memory(address, value_bytes[:8],
+                           weak_ordering=Ordering(s.word_order, 64))
         s.pc += 2
 
 
@@ -595,7 +597,8 @@ class CFsdsp:
         sp = int.from_bytes(sp_bytes, byteorder='little', signed=False)
         address = sp + self.offset
         freg_bytes = s.scalar.read_freg(self.fs2)
-        await s.set_memory(address, freg_bytes[:8])
+        await s.set_memory(address, freg_bytes[:8],
+                           weak_ordering=Ordering(s.word_order, 64))
         s.pc += 2
 
 
@@ -620,7 +623,8 @@ class CSwsp:
         sp = int.from_bytes(sp_bytes, byteorder='little', signed=False)
         address = sp + self.offset
         value_bytes = s.scalar.read_reg(self.rs2)
-        await s.set_memory(address, value_bytes[:4])
+        await s.set_memory(address, value_bytes[:4],
+                           weak_ordering=Ordering(s.word_order, 32))
         s.pc += 2
 
 
@@ -773,7 +777,8 @@ class CSw:
         rs1_val = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
         address = rs1_val + self.offset
         value_bytes = s.scalar.read_reg(self.rs2)
-        await s.set_memory(address, value_bytes[:4])
+        await s.set_memory(address, value_bytes[:4],
+                           weak_ordering=Ordering(s.word_order, 32))
         s.pc += 2
 
 
@@ -800,7 +805,8 @@ class CSd:
         rs1_val = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
         address = rs1_val + self.offset
         value_bytes = s.scalar.read_reg(self.rs2)
-        await s.set_memory(address, value_bytes[:8])
+        await s.set_memory(address, value_bytes[:8],
+                           weak_ordering=Ordering(s.word_order, 64))
         s.pc += 2
 
 
@@ -854,7 +860,8 @@ class CFsd:
         rs1_val = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
         address = rs1_val + self.offset
         freg_bytes = s.scalar.read_freg(self.fs2)
-        await s.set_memory(address, freg_bytes[:8])
+        await s.set_memory(address, freg_bytes[:8],
+                           weak_ordering=Ordering(s.word_order, 64))
         s.pc += 2
 
 

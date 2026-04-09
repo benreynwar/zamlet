@@ -183,8 +183,9 @@ class VleV:
             pc=s.pc,
         )
         ordering = addresses.Ordering(s.word_order, self.element_width)
+        emul = max(1, (self.element_width * s.lmul) // s.sew)
         await s.vload(self.vd, addr, ordering, s.vl, mask_reg, s.vstart,
-                       parent_span_id=span_id)
+                       parent_span_id=span_id, emul=emul)
         s.monitor.finalize_children(span_id)
         s.pc += 4
 
@@ -225,7 +226,7 @@ class VlrV:
         n_elements = (s.params.vline_bytes * self.nreg * 8) // ew
         ordering = addresses.Ordering(reg_ordering.word_order, ew)
         await s.vload(self.vd, addr, ordering, n_elements, None, 0,
-                       parent_span_id=span_id, lmul=self.nreg)
+                       parent_span_id=span_id, emul=self.nreg)
         s.monitor.finalize_children(span_id)
         s.pc += 4
 
@@ -260,7 +261,10 @@ class VseV:
             pc=s.pc,
         )
         ordering = addresses.Ordering(s.word_order, self.element_width)
-        await s.vstore(self.vs3, addr, ordering, s.vl, mask_reg, s.vstart, parent_span_id=span_id)
+        emul = max(1, (self.element_width * s.lmul) // s.sew)
+        await s.vstore(
+            self.vs3, addr, ordering, s.vl, mask_reg, s.vstart,
+            parent_span_id=span_id, emul=emul)
         s.monitor.finalize_children(span_id)
         s.pc += 4
 
@@ -299,7 +303,8 @@ class VsrV:
         ew = reg_ordering.ew
         n_elements = (s.params.vline_bytes * self.nreg * 8) // ew
         ordering = addresses.Ordering(reg_ordering.word_order, ew)
-        await s.vstore(self.vs3, addr, ordering, n_elements, None, 0, parent_span_id=span_id)
+        await s.vstore(self.vs3, addr, ordering, n_elements, None, 0,
+                       parent_span_id=span_id, emul=self.nreg)
         s.monitor.finalize_children(span_id)
         s.pc += 4
 
@@ -338,8 +343,9 @@ class VlseV:
             pc=s.pc,
         )
         ordering = addresses.Ordering(s.word_order, self.element_width)
+        emul = max(1, (self.element_width * s.lmul) // s.sew)
         await s.vload(self.vd, addr, ordering, s.vl, mask_reg, s.vstart,
-                       parent_span_id=span_id, stride_bytes=stride)
+                       parent_span_id=span_id, emul=emul, stride_bytes=stride)
         s.monitor.finalize_children(span_id)
         s.pc += 4
 
@@ -378,8 +384,9 @@ class VsseV:
             pc=s.pc,
         )
         ordering = addresses.Ordering(s.word_order, self.element_width)
-        await s.vstore(self.vs3, addr, ordering, s.vl, mask_reg, s.vstart, parent_span_id=span_id,
-                       stride_bytes=stride)
+        emul = max(1, (self.element_width * s.lmul) // s.sew)
+        await s.vstore(self.vs3, addr, ordering, s.vl, mask_reg, s.vstart,
+                       parent_span_id=span_id, emul=emul, stride_bytes=stride)
         s.monitor.finalize_children(span_id)
         s.pc += 4
 
