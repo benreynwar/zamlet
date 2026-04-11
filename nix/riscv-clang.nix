@@ -3,8 +3,8 @@
 let
   llvm-src = builtins.fetchGit {
     url = "https://github.com/benreynwar/llvm-project";
-    ref = "main";
-    rev = "e5a7a9a95ffda04e4ce2398d1950662873b8cd65";
+    ref = "zamlet";
+    rev = "27de313b6f6f9ecf7237062bebba9f11ef5d768c";
   };
 in
 pkgs.stdenv.mkDerivation {

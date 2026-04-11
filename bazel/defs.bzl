@@ -107,6 +107,7 @@ def riscv_kernel(
                 -mcmodel=medany -static -ffreestanding -O2 -g \
                 -fno-common -fno-builtin-printf \
                 -march={march} -mabi={mabi} -std=gnu99 \
+                -mllvm -riscv-vpu-stack \
                 {copts} \
                 -I$$COMMON_DIR -I$$COMMON_DIR/ara \
                 -I$$(dirname $(location {local_anchor})) \
