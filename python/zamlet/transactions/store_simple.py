@@ -31,10 +31,16 @@ class WaitingStoreSimple(WaitingItemRequiresCache):
 
     cache_is_write = True
 
-    def __init__(self, instr: kinstructions.Store, rf_ident: int | None = None):
+    def __init__(self, instr: kinstructions.Store, src_pregs: list[int],
+                 mask_preg: int | None, rf_ident: int | None = None):
         super().__init__(
             item=instr, instr_ident=instr.instr_ident,
             writeset_ident=instr.writeset_ident, rf_ident=rf_ident)
+        # Phys regs locked at start time, indexed by vline_offset (the offset
+        # from the start_vline of the operation). The kamlet's rename table
+        # may rotate the src arch by the time finalize runs.
+        self.src_pregs = src_pregs
+        self.mask_preg = mask_preg
 
     def ready(self) -> bool:
         return self.cache_is_avail
@@ -45,26 +51,28 @@ class WaitingStoreSimple(WaitingItemRequiresCache):
         assert kamlet.cache_table.can_write(instr.k_maddr, writeset_ident=self.writeset_ident)
 
         for jamlet in kamlet.jamlets:
-            do_store_simple(jamlet, instr)
+            do_store_simple(jamlet, instr, self.src_pregs, self.mask_preg)
 
         cache_state = kamlet.cache_table.get_state(instr.k_maddr)
         cache_state.state = CacheState.MODIFIED
 
-        src_regs = kamlet.get_regs(
-            start_index=instr.start_index, n_elements=instr.n_elements,
-            ew=instr.src_ordering.ew, base_reg=instr.src)
-        read_regs = src_regs + ([instr.mask_reg] if instr.mask_reg is not None else [])
+        read_regs = list(self.src_pregs)
+        if self.mask_preg is not None:
+            read_regs.append(self.mask_preg)
 
         assert self.rf_ident is not None
         kamlet.rf_info.finish(self.rf_ident, read_regs=read_regs)
 
 
-def do_store_simple(jamlet: 'Jamlet', instr: kinstructions.Store) -> None:
+def do_store_simple(jamlet: 'Jamlet', instr: kinstructions.Store,
+                    src_pregs: list[int], mask_preg: int | None) -> None:
     """
     Copy data from register file to cache for an aligned store.
 
     This is called when the store is aligned to local kamlet memory
     and the cache line is available for writing.
+
+    src_pregs is indexed by vline_offset (relative to first_vline).
     """
     assert jamlet.cache_table.can_write(instr.k_maddr, writeset_ident=instr.writeset_ident)
     slot = jamlet.cache_table.addr_to_slot(instr.k_maddr)
@@ -74,18 +82,16 @@ def do_store_simple(jamlet: 'Jamlet', instr: kinstructions.Store) -> None:
     assert dst_ordering == src_ordering
 
     vline_offsets_and_masks = get_offsets_and_masks(
-        jamlet, instr.start_index, instr.n_elements, instr.src_ordering, instr.mask_reg)
+        jamlet, instr.start_index, instr.n_elements, instr.src_ordering, mask_preg)
 
     params = jamlet.params
     word_bytes = params.word_bytes
     vline_bytes_per_kamlet = params.word_bytes * params.j_in_k
     base_vline = (instr.k_maddr.addr % params.cache_line_bytes) // vline_bytes_per_kamlet
     cache_line_bytes_per_jamlet = params.cache_line_bytes // params.j_in_k
-    elements_in_vline = params.vline_bytes * 8 // instr.src_ordering.ew
-    first_vline = instr.start_index // elements_in_vline
 
     for vline_offset, mask in vline_offsets_and_masks:
-        rf_word_addr = instr.src + first_vline + vline_offset
+        rf_word_addr = src_pregs[vline_offset]
         sram_addr = slot * cache_line_bytes_per_jamlet + (base_vline + vline_offset) * word_bytes
         new_word = jamlet.rf_slice[rf_word_addr * word_bytes: (rf_word_addr + 1) * word_bytes]
         old_word = jamlet.sram[sram_addr: sram_addr + word_bytes]

@@ -47,16 +47,30 @@ class StoreIndexedUnordered(KInstr):
     async def update_kamlet(self, kamlet):
         logger.debug(f'kamlet ({kamlet.min_x}, {kamlet.min_y}): store_indexed.update_kamlet '
                      f'addr={hex(self.g_addr.addr)} ident={self.instr_ident}')
-        src_regs = kamlet.get_regs(
-            start_index=self.start_index, n_elements=self.n_elements,
-            ew=self.src_ordering.ew, base_reg=self.src)
-        index_regs = kamlet.get_regs(
-            start_index=self.start_index + self.index_offset,
-            n_elements=self.n_elements,
-            ew=self.index_ordering.ew, base_reg=self.index_reg)
-        read_regs = list(src_regs) + list(index_regs)
-        if self.mask_reg is not None:
-            read_regs.append(self.mask_reg)
+        src_ew = self.src_ordering.ew
+        src_elements_in_vline = kamlet.params.vline_bytes * 8 // src_ew
+        src_start_vline = self.start_index // src_elements_in_vline
+        src_end_vline = (self.start_index + self.n_elements - 1) // src_elements_in_vline
+
+        index_ew = self.index_ordering.ew
+        index_elements_in_vline = kamlet.params.vline_bytes * 8 // index_ew
+        index_start_vline = (self.start_index + self.index_offset) // index_elements_in_vline
+        index_end_vline = (
+            self.start_index + self.index_offset + self.n_elements - 1
+        ) // index_elements_in_vline
+
+        src_pregs = {
+            v: kamlet.r(self.src + v) for v in range(src_start_vline, src_end_vline + 1)
+        }
+        index_pregs = {
+            v: kamlet.r(self.index_reg + v)
+            for v in range(index_start_vline, index_end_vline + 1)
+        }
+        mask_preg = kamlet.r(self.mask_reg) if self.mask_reg is not None else None
+
+        read_regs = list(src_pregs.values()) + list(index_pregs.values())
+        if mask_preg is not None:
+            read_regs.append(mask_preg)
         await kamlet.wait_for_rf_available(write_regs=[], read_regs=read_regs,
                                            instr_ident=self.instr_ident)
         span_id = kamlet.monitor.get_kinstr_exec_span_id(
@@ -65,6 +79,7 @@ class StoreIndexedUnordered(KInstr):
         rf_read_ident = kamlet.rf_info.start(read_regs=read_regs, write_regs=[])
         witem = WaitingStoreIndexedUnordered(
             params=kamlet.params, instr=self, rf_ident=rf_read_ident,
+            src_pregs=src_pregs, mask_preg=mask_preg, index_pregs=index_pregs,
             index_bound_bits=kamlet.index_bound_bits)
         kamlet.monitor.record_witem_created(
             self.instr_ident, kamlet.min_x, kamlet.min_y, 'WaitingStoreIndexedUnordered',
@@ -75,17 +90,22 @@ class StoreIndexedUnordered(KInstr):
 class WaitingStoreIndexedUnordered(WaitingStoreScatterBase):
     """Waiting item for unordered indexed stores."""
 
-    def __init__(self, instr, params, rf_ident=None, index_bound_bits: int = 0):
-        super().__init__(instr=instr, params=params, rf_ident=rf_ident)
+    def __init__(self, instr, params, src_pregs: dict[int, int],
+                 mask_preg: int | None, index_pregs: dict[int, int],
+                 rf_ident=None, index_bound_bits: int = 0):
+        super().__init__(instr=instr, params=params, src_pregs=src_pregs,
+                         mask_preg=mask_preg, rf_ident=rf_ident)
         # 0 = no bound, N = mask indices to lower N bits. Captured at creation time.
         self.index_bound_bits = index_bound_bits
         self.index_offset = instr.index_offset
+        # Phys regs for the index vector, locked at start time, keyed by
+        # absolute vline index (index_v).
+        self.index_pregs = index_pregs
 
     def get_element_byte_offset(self, jamlet: 'Jamlet', element_index: int) -> int:
         """Read the byte offset from the index register for this element."""
-        instr = self.item
         wb = jamlet.params.word_bytes
-        index_ew = instr.index_ordering.ew
+        index_ew = self.item.index_ordering.ew
         index_bytes = index_ew // 8
 
         adjusted_index = element_index + self.index_offset
@@ -94,21 +114,16 @@ class WaitingStoreIndexedUnordered(WaitingStoreScatterBase):
         index_ve = adjusted_index % elements_in_vline
         index_we = index_ve // jamlet.params.j_in_l
 
-        index_reg = instr.index_reg + index_v
+        index_preg = self.index_pregs[index_v]
         byte_in_word = (index_we * index_bytes) % wb
 
-        word_data = jamlet.rf_slice[index_reg * wb: (index_reg + 1) * wb]
+        word_data = jamlet.rf_slice[index_preg * wb: (index_preg + 1) * wb]
         index_value = int.from_bytes(word_data[byte_in_word:byte_in_word + index_bytes],
                                      byteorder='little', signed=False)
         if self.index_bound_bits > 0:
             index_value &= (1 << self.index_bound_bits) - 1
         return index_value
 
-    def get_additional_read_regs(self, kamlet) -> List[int]:
-        """Return the index registers that need to be read."""
-        instr = self.item
-        index_regs = kamlet.get_regs(
-            start_index=instr.start_index + self.index_offset,
-            n_elements=instr.n_elements,
-            ew=instr.index_ordering.ew, base_reg=instr.index_reg)
-        return list(index_regs)
+    def get_additional_read_pregs(self) -> List[int]:
+        """Return the index phys regs that were locked at start time."""
+        return list(self.index_pregs.values())

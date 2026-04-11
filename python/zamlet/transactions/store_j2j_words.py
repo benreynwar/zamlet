@@ -34,7 +34,9 @@ class WaitingStoreJ2JWords(WaitingItemRequiresCache):
 
     cache_is_write = True
 
-    def __init__(self, params: ZamletParams, instr: kinstructions.Store, rf_ident: int | None = None):
+    def __init__(self, params: ZamletParams, instr: kinstructions.Store,
+                 src_pregs: dict[int, int], mask_preg: int | None,
+                 rf_ident: int | None = None):
         super().__init__(
             item=instr, instr_ident=instr.instr_ident,
             writeset_ident=instr.writeset_ident, rf_ident=rf_ident)
@@ -42,6 +44,10 @@ class WaitingStoreJ2JWords(WaitingItemRequiresCache):
         self.protocol_states: List[StoreProtocolState] = [
             StoreProtocolState() for _ in range(n_tags)]
         self.params = params
+        # Phys regs locked at start time, keyed by absolute vline index
+        # (mapping.reg_v from j2j mappings, not relative to start_vline).
+        self.src_pregs = src_pregs
+        self.mask_preg = mask_preg
 
     def state_summary(self) -> str:
         """Return a compact summary of protocol states for logging."""
@@ -80,13 +86,11 @@ class WaitingStoreJ2JWords(WaitingItemRequiresCache):
                 await send_retry(jamlet, self, tag)
 
     async def finalize(self, kamlet: 'Kamlet') -> None:
-        instr = self.item
         for pstate in self.protocol_states:
             assert pstate.finished()
-        src_regs = kamlet.get_regs(
-            start_index=instr.start_index, n_elements=instr.n_elements,
-            ew=instr.src_ordering.ew, base_reg=instr.src)
-        read_regs = src_regs + ([instr.mask_reg] if instr.mask_reg is not None else [])
+        read_regs = list(self.src_pregs.values())
+        if self.mask_preg is not None:
+            read_regs.append(self.mask_preg)
         assert self.rf_ident is not None
         kamlet.rf_info.finish(self.rf_ident, write_regs=[], read_regs=read_regs)
 
@@ -162,12 +166,12 @@ async def send_req(jamlet, witem: WaitingStoreJ2JWords, tag: int) -> None:
     mem_vw = None
     reg_ew = instr.src_ordering.ew
     for mapping in mappings:
-        src_reg = instr.src + mapping.reg_v
+        src_preg = witem.src_pregs[mapping.reg_v]
         word = int.from_bytes(
-            jamlet.rf_slice[src_reg * word_bytes: (src_reg + 1) * word_bytes], 'little')
+            jamlet.rf_slice[src_preg * word_bytes: (src_preg + 1) * word_bytes], 'little')
         logger.debug(
             f'jamlet ({jamlet.x}, {jamlet.y}): send_store_j2j_words_req tag={tag} '
-            f'mapping={mapping} src_reg={src_reg} word=0x{word:x}')
+            f'mapping={mapping} src_preg={src_preg} word=0x{word:x}')
         words.append(word)
         if mem_vw is None:
             mem_vw = mapping.mem_vw
@@ -178,8 +182,9 @@ async def send_req(jamlet, witem: WaitingStoreJ2JWords, tag: int) -> None:
         params, instr.k_maddr.ordering.word_order, mem_vw)
     witem.protocol_states[response_tag].src_state = SendState.WAITING_FOR_RESPONSE
 
-    if instr.mask_reg is not None:
-        mask_word = jamlet.rf_slice[instr.mask_reg * word_bytes: (instr.mask_reg + 1) * word_bytes]
+    if witem.mask_preg is not None:
+        mask_word = jamlet.rf_slice[
+            witem.mask_preg * word_bytes: (witem.mask_preg + 1) * word_bytes]
         mask_word_int = int.from_bytes(mask_word, byteorder='little')
         mask_bits = []
         reg_elements_in_vline = params.vline_bytes * 8 // reg_ew

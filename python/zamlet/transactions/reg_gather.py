@@ -55,42 +55,77 @@ class RegGather(KInstr):
         logger.debug(f'kamlet ({kamlet.min_x}, {kamlet.min_y}): RegGather.update_kamlet '
                      f'vd={self.vd} vs2={self.vs2} vs1={self.vs1} ident={self.instr_ident}')
 
-        dst_regs = kamlet.get_regs(
+        params = kamlet.params
+        dst_elements_in_vline = params.vline_bytes * 8 // self.data_ew
+        index_elements_in_vline = params.vline_bytes * 8 // self.index_ew
+
+        dst_start_vline = self.start_index // dst_elements_in_vline
+        dst_end_vline = (self.start_index + self.n_elements - 1) // dst_elements_in_vline
+
+        vs1_start_vline = self.start_index // index_elements_in_vline
+        vs1_end_vline = (self.start_index + self.n_elements - 1) // index_elements_in_vline
+
+        # vs2 is read across [0, vlmax); the entire range must be locked because
+        # any element of vs2 may be gathered.
+        vs2_n_vlines = (self.vlmax + dst_elements_in_vline - 1) // dst_elements_in_vline
+
+        # Resolve src/mask phys lookups BEFORE allocating dst phys, so an arch
+        # overlap (mask_reg == dst arch) resolves to the old phys.
+        vs1_pregs = {
+            v: kamlet.r(self.vs1 + v) for v in range(vs1_start_vline, vs1_end_vline + 1)
+        }
+        vs2_pregs = {v: kamlet.r(self.vs2 + v) for v in range(vs2_n_vlines)}
+        mask_preg = kamlet.r(self.mask_reg) if self.mask_reg is not None else None
+
+        dst_preg_list = kamlet.alloc_dst_pregs(
+            base_arch=self.vd, start_vline=dst_start_vline, end_vline=dst_end_vline,
             start_index=self.start_index, n_elements=self.n_elements,
-            ew=self.data_ew, base_reg=self.vd)
-        vs1_regs = kamlet.get_regs(
-            start_index=self.start_index, n_elements=self.n_elements,
-            ew=self.index_ew, base_reg=self.vs1)
-        vs2_regs = kamlet.get_regs(
-            start_index=0, n_elements=self.vlmax, ew=self.data_ew, base_reg=self.vs2)
+            elements_in_vline=dst_elements_in_vline,
+            mask_present=self.mask_reg is not None)
+        dst_pregs = {
+            dst_start_vline + i: dst_preg_list[i] for i in range(len(dst_preg_list))
+        }
 
-        # Check for overlaps (vd cannot overlap vs1 or vs2)
-        assert not (set(dst_regs) & set(vs1_regs)), \
-            f"vd overlaps vs1: {dst_regs} & {vs1_regs}"
-        assert not (set(dst_regs) & set(vs2_regs)), \
-            f"vd overlaps vs2: {dst_regs} & {vs2_regs}"
+        # vd cannot overlap vs1 or vs2 (RVV constraint).
+        assert not (set(dst_pregs.values()) & set(vs1_pregs.values())), \
+            f"vd overlaps vs1: {dst_pregs} & {vs1_pregs}"
+        assert not (set(dst_pregs.values()) & set(vs2_pregs.values())), \
+            f"vd overlaps vs2: {dst_pregs} & {vs2_pregs}"
 
-        read_regs = list(set(vs1_regs) | set(vs2_regs))
-        if self.mask_reg is not None:
-            read_regs.append(self.mask_reg)
-            assert self.mask_reg not in dst_regs
+        read_regs = list(set(vs1_pregs.values()) | set(vs2_pregs.values()))
+        if mask_preg is not None:
+            read_regs.append(mask_preg)
+            assert mask_preg not in dst_pregs.values()
+        write_regs = list(dst_pregs.values())
 
-        await kamlet.wait_for_rf_available(write_regs=dst_regs, read_regs=read_regs,
+        await kamlet.wait_for_rf_available(write_regs=write_regs, read_regs=read_regs,
                                            instr_ident=self.instr_ident)
-        rf_ident = kamlet.rf_info.start(read_regs=read_regs, write_regs=dst_regs)
-        witem = WaitingRegGather(params=kamlet.params, instr=self, rf_ident=rf_ident)
+        rf_ident = kamlet.rf_info.start(read_regs=read_regs, write_regs=write_regs)
+        witem = WaitingRegGather(
+            params=kamlet.params, instr=self, rf_ident=rf_ident,
+            dst_pregs=dst_pregs, vs1_pregs=vs1_pregs, vs2_pregs=vs2_pregs,
+            mask_preg=mask_preg)
         kamlet.monitor.record_witem_created(
             self.instr_ident, kamlet.min_x, kamlet.min_y, 'WaitingRegGather',
-            read_regs=read_regs, write_regs=dst_regs)
+            read_regs=read_regs, write_regs=write_regs)
         await kamlet.cache_table.add_witem(witem=witem)
 
 
 class WaitingRegGather(WaitingItem):
     """Waiting item for vector register gather (vrgather.vv)."""
 
-    def __init__(self, params, instr: RegGather, rf_ident: int):
+    def __init__(self, params, instr: RegGather, rf_ident: int,
+                 dst_pregs: dict[int, int], vs1_pregs: dict[int, int],
+                 vs2_pregs: dict[int, int], mask_preg: int | None):
         super().__init__(item=instr, instr_ident=instr.instr_ident, rf_ident=rf_ident)
         self.params = params
+        # Phys regs locked at start time, all keyed by absolute vline index.
+        # The kamlet rename table may rotate the arch regs by the time the
+        # witem runs.
+        self.dst_pregs = dst_pregs
+        self.vs1_pregs = vs1_pregs
+        self.vs2_pregs = vs2_pregs
+        self.mask_preg = mask_preg
         n_tags = params.j_in_k * params.word_bytes
         self.transaction_states: List[SendState] = [SendState.INITIAL for _ in range(n_tags)]
         self.completion_sync_state = SyncState.NOT_STARTED
@@ -144,10 +179,10 @@ class WaitingRegGather(WaitingItem):
         ve = element_index % elements_in_vline
         we = ve // jamlet.params.j_in_l
 
-        reg = instr.vs1 + v
+        preg = self.vs1_pregs[v]
         byte_in_word = (we * eb) % wb
 
-        word_data = jamlet.rf_slice[reg * wb: (reg + 1) * wb]
+        word_data = jamlet.rf_slice[preg * wb: (preg + 1) * wb]
         index_value = int.from_bytes(word_data[byte_in_word:byte_in_word + eb],
                                      byteorder='little', signed=False)
         return index_value
@@ -157,7 +192,11 @@ class WaitingRegGather(WaitingItem):
 
         Uses data_ew since vs2 uses data element width.
 
-        Returns: (src_x, src_y, src_reg, src_byte_offset) or None if index >= vlmax
+        Returns: (src_x, src_y, src_v, src_byte_offset) or None if index >= vlmax.
+        src_v is the vline offset into vs2; the caller resolves it to a phys
+        reg via self.vs2_pregs[src_v] for local reads, or sends it in the
+        message header for remote reads (the receiver does the same lookup
+        on its own kamlet's witem).
         """
         instr = self.item
         if index >= instr.vlmax:
@@ -177,10 +216,9 @@ class WaitingRegGather(WaitingItem):
         src_x, src_y = addresses.k_indices_to_routing_coords(
             jamlet.params, src_k, src_j_in_k)
 
-        src_reg = instr.vs2 + src_v
         src_byte_offset = src_we * eb
 
-        return (src_x, src_y, src_reg, src_byte_offset)
+        return (src_x, src_y, src_v, src_byte_offset)
 
     async def monitor_jamlet(self, jamlet: 'Jamlet') -> None:
         wb = jamlet.params.word_bytes
@@ -200,9 +238,9 @@ class WaitingRegGather(WaitingItem):
                     continue
 
                 # Check mask
-                if instr.mask_reg is not None:
+                if self.mask_preg is not None:
                     mask_word = int.from_bytes(
-                        jamlet.rf_slice[instr.mask_reg * wb: (instr.mask_reg + 1) * wb],
+                        jamlet.rf_slice[self.mask_preg * wb: (self.mask_preg + 1) * wb],
                         byteorder='little')
                     bit_index = dst_e // jamlet.params.j_in_l
                     mask_bit = (mask_word >> bit_index) & 1
@@ -215,8 +253,8 @@ class WaitingRegGather(WaitingItem):
 
                 # Handle out-of-range: write 0
                 if index >= instr.vlmax:
-                    dst_reg = instr.vd + dst_v
-                    dst_offset = dst_reg * wb + tag
+                    dst_preg = self.dst_pregs[dst_v]
+                    dst_offset = dst_preg * wb + tag
                     jamlet.rf_slice[dst_offset:dst_offset + data_eb] = bytes(data_eb)
                     self.transaction_states[state_idx] = SendState.COMPLETE
                     continue
@@ -228,14 +266,16 @@ class WaitingRegGather(WaitingItem):
                     self.transaction_states[state_idx] = SendState.COMPLETE
                     continue
 
-                src_x, src_y, src_reg, src_byte_offset = src_loc
+                src_x, src_y, src_v, src_byte_offset = src_loc
 
-                # Local read - same jamlet
+                # Local read - same jamlet (and therefore same kamlet, so we
+                # can use this kamlet's vs2_pregs directly).
                 if src_x == jamlet.x and src_y == jamlet.y:
-                    src_offset = src_reg * wb + src_byte_offset
+                    src_preg = self.vs2_pregs[src_v]
+                    src_offset = src_preg * wb + src_byte_offset
                     src_data = jamlet.rf_slice[src_offset:src_offset + data_eb]
-                    dst_reg = instr.vd + dst_v
-                    dst_offset = dst_reg * wb + tag
+                    dst_preg = self.dst_pregs[dst_v]
+                    dst_offset = dst_preg * wb + tag
                     jamlet.rf_slice[dst_offset:dst_offset + data_eb] = src_data
                     self.transaction_states[state_idx] = SendState.COMPLETE
                 else:
@@ -247,7 +287,7 @@ class WaitingRegGather(WaitingItem):
                 index = self._read_index(jamlet, dst_e)
                 src_loc = self._compute_src_location(jamlet, index)
                 assert src_loc is not None
-                src_x, src_y, src_reg, src_byte_offset = src_loc
+                src_x, src_y, src_v, src_byte_offset = src_loc
 
                 header = RegElementHeader(
                     target_x=src_x,
@@ -259,7 +299,7 @@ class WaitingRegGather(WaitingItem):
                     length=0,
                     ident=instr.instr_ident,
                     tag=tag,
-                    src_reg=src_reg,
+                    src_vline_offset=src_v,
                     src_byte_offset=src_byte_offset,
                     n_bytes=data_eb,
                 )
@@ -313,8 +353,8 @@ class WaitingRegGather(WaitingItem):
         assert self.transaction_states[state_idx] == SendState.WAITING_FOR_RESPONSE
 
         _, _, _, dst_v = self._compute_dst_element(jamlet, tag)
-        dst_reg = instr.vd + dst_v
-        dst_offset = dst_reg * wb + tag
+        dst_preg = self.dst_pregs[dst_v]
+        dst_offset = dst_preg * wb + tag
 
         # Write received data to destination (extract only the needed bytes)
         jamlet.rf_slice[dst_offset:dst_offset + data_eb] = data.to_bytes(wb, 'little')[:data_eb]
@@ -342,16 +382,8 @@ class WaitingRegGather(WaitingItem):
                      f'jamlet ({jamlet.x},{jamlet.y}) ident={self.instr_ident} tag={tag} will resend')
 
     async def finalize(self, kamlet) -> None:
-        instr = self.item
-        dst_regs = kamlet.get_regs(
-            start_index=instr.start_index, n_elements=instr.n_elements,
-            ew=instr.data_ew, base_reg=instr.vd)
-        vs1_regs = kamlet.get_regs(
-            start_index=instr.start_index, n_elements=instr.n_elements,
-            ew=instr.index_ew, base_reg=instr.vs1)
-        vs2_regs = kamlet.get_regs(
-            start_index=0, n_elements=instr.vlmax, ew=instr.data_ew, base_reg=instr.vs2)
-        read_regs = list(set(vs1_regs) | set(vs2_regs))
-        if instr.mask_reg is not None:
-            read_regs.append(instr.mask_reg)
-        kamlet.rf_info.finish(self.rf_ident, write_regs=dst_regs, read_regs=read_regs)
+        write_regs = list(self.dst_pregs.values())
+        read_regs = list(set(self.vs1_pregs.values()) | set(self.vs2_pregs.values()))
+        if self.mask_preg is not None:
+            read_regs.append(self.mask_preg)
+        kamlet.rf_info.finish(self.rf_ident, write_regs=write_regs, read_regs=read_regs)

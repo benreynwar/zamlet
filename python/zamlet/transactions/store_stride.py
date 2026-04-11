@@ -43,18 +43,23 @@ class StoreStride(KInstr):
     async def update_kamlet(self, kamlet):
         logger.debug(f'kamlet ({kamlet.min_x}, {kamlet.min_y}): store_stride.update_kamlet '
                      f'addr={hex(self.g_addr.addr)} ident={self.instr_ident}')
-        src_regs = kamlet.get_regs(
-            start_index=self.start_index, n_elements=self.n_elements,
-            ew=self.src_ordering.ew, base_reg=self.src)
-        if self.mask_reg is not None:
-            read_regs = src_regs + [self.mask_reg]
-        else:
-            read_regs = src_regs
+        ew = self.src_ordering.ew
+        elements_in_vline = kamlet.params.vline_bytes * 8 // ew
+        start_vline = self.start_index // elements_in_vline
+        end_vline = (self.start_index + self.n_elements - 1) // elements_in_vline
+
+        src_pregs = {v: kamlet.r(self.src + v) for v in range(start_vline, end_vline + 1)}
+        mask_preg = kamlet.r(self.mask_reg) if self.mask_reg is not None else None
+
+        read_regs = list(src_pregs.values())
+        if mask_preg is not None:
+            read_regs.append(mask_preg)
         await kamlet.wait_for_rf_available(write_regs=[], read_regs=read_regs,
                                            instr_ident=self.instr_ident)
         rf_read_ident = kamlet.rf_info.start(read_regs=read_regs, write_regs=[])
         witem = WaitingStoreStride(
-            params=kamlet.params, instr=self, rf_ident=rf_read_ident)
+            params=kamlet.params, instr=self, rf_ident=rf_read_ident,
+            src_pregs=src_pregs, mask_preg=mask_preg)
         kamlet.monitor.record_witem_created(
             self.instr_ident, kamlet.min_x, kamlet.min_y, 'WaitingStoreStride',
             read_regs=read_regs)
@@ -69,6 +74,6 @@ class WaitingStoreStride(WaitingStoreScatterBase):
         instr = self.item
         return element_index * instr.stride_bytes
 
-    def get_additional_read_regs(self, kamlet) -> List[int]:
+    def get_additional_read_pregs(self) -> List[int]:
         """No additional registers to read for strided stores."""
         return []

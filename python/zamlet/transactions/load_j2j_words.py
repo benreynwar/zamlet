@@ -36,13 +36,19 @@ class WaitingLoadJ2JWords(WaitingItemRequiresCache):
 
     cache_is_read = True
 
-    def __init__(self, params: ZamletParams, instr: kinstructions.Load, rf_ident: int|None=None):
+    def __init__(self, params: ZamletParams, instr: kinstructions.Load,
+                 dst_pregs: dict[int, int], mask_preg: int | None,
+                 rf_ident: int|None=None):
         super().__init__(
             item=instr, instr_ident=instr.instr_ident,
             writeset_ident=instr.writeset_ident, rf_ident=rf_ident)
         n_tags = params.word_bytes * params.j_in_k
         self.protocol_states: List[LoadProtocolState] = [
             LoadProtocolState() for _ in range(n_tags)]
+        # Phys regs locked at start time, keyed by absolute vline index
+        # (mapping.reg_v from j2j mappings, not relative to start_vline).
+        self.dst_pregs = dst_pregs
+        self.mask_preg = mask_preg
 
     def ready(self) -> bool:
         return all(state.finished() for state in self.protocol_states) and self.cache_is_avail
@@ -60,15 +66,12 @@ class WaitingLoadJ2JWords(WaitingItemRequiresCache):
                 await send_req(jamlet, self, tag)
 
     async def finalize(self, kamlet: 'Kamlet') -> None:
-        instr = self.item
         for pstate in self.protocol_states:
             assert pstate.finished()
-        dst_regs = kamlet.get_regs(
-            start_index=instr.start_index, n_elements=instr.n_elements,
-            ew=instr.dst_ordering.ew, base_reg=instr.dst)
-        read_regs = [instr.mask_reg] if instr.mask_reg is not None else []
+        write_regs = list(self.dst_pregs.values())
+        read_regs = [self.mask_preg] if self.mask_preg is not None else []
         assert self.rf_ident is not None
-        kamlet.rf_info.finish(self.rf_ident, write_regs=dst_regs, read_regs=read_regs)
+        kamlet.rf_info.finish(self.rf_ident, write_regs=write_regs, read_regs=read_regs)
 
 
 def init_dst_state(jamlet, witem: WaitingLoadJ2JWords, tag: int) -> None:
@@ -183,6 +186,7 @@ async def handle_req(jamlet, packet: List[Any]) -> None:
     if witem is None:
         await send_drop(jamlet, header)
         return
+    assert isinstance(witem, WaitingLoadJ2JWords)
     instr = witem.item
     assert isinstance(instr, kinstructions.Load)
 
@@ -195,11 +199,11 @@ async def handle_req(jamlet, packet: List[Any]) -> None:
         mem_jx=header.source_x - jamlet.params.west_offset,
         mem_jy=header.source_y - jamlet.params.north_offset)
 
-    if instr.mask_reg is not None:
+    if witem.mask_preg is not None:
         mask_word = int.from_bytes(
             jamlet.rf_slice[
-                instr.mask_reg * word_bytes:
-                (instr.mask_reg + 1) * word_bytes],
+                witem.mask_preg * word_bytes:
+                (witem.mask_preg + 1) * word_bytes],
             byteorder='little')
     else:
         mask_word = None
@@ -228,9 +232,9 @@ async def handle_req(jamlet, packet: List[Any]) -> None:
             else:
                 shifted = word >> shift
 
-            dst_reg = instr.dst + mapping.reg_v
+            dst_preg = witem.dst_pregs[mapping.reg_v]
 
-            old_word = jamlet.rf_slice[dst_reg * word_bytes: (dst_reg+1) * word_bytes]
+            old_word = jamlet.rf_slice[dst_preg * word_bytes: (dst_preg+1) * word_bytes]
             old_word_as_int = int.from_bytes(old_word, byteorder='little')
             masked_old_word = old_word_as_int & (~mask)
             masked_shifted = shifted & mask
@@ -239,13 +243,13 @@ async def handle_req(jamlet, packet: List[Any]) -> None:
             logger.debug(
                 f'{jamlet.clock.cycle}: RF_WRITE LOAD_J2J: '
                 f'jamlet ({jamlet.x},{jamlet.y}) '
-                f'rf[{dst_reg}] old={old_word.hex()} '
+                f'rf[{dst_preg}] old={old_word.hex()} '
                 f'new={updated_word_bytes.hex()} '
                 f'mapping={mapping} shift={shift} '
                 f'mask=0x{mask:x} word=0x{word:x}')
             jamlet.rf_slice[
-                dst_reg * word_bytes:
-                (dst_reg+1) * word_bytes] = updated_word_bytes
+                dst_preg * word_bytes:
+                (dst_preg+1) * word_bytes] = updated_word_bytes
     assert reg_wb is not None
 
     response_index = jamlet.j_in_k_index * word_bytes + reg_wb//8

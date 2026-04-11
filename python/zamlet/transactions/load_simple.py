@@ -30,10 +30,16 @@ class WaitingLoadSimple(WaitingItemRequiresCache):
 
     cache_is_read = True
 
-    def __init__(self, instr: kinstructions.Load, rf_ident: int | None = None):
+    def __init__(self, instr: kinstructions.Load, dst_pregs: list[int],
+                 mask_preg: int | None, rf_ident: int | None = None):
         super().__init__(
             item=instr, instr_ident=instr.instr_ident,
             writeset_ident=instr.writeset_ident, rf_ident=rf_ident)
+        # Phys regs locked at start time, indexed by vline_offset (the offset
+        # from the start_vline of the operation). The kamlet's rename table
+        # may rotate the dst arch by the time finalize runs.
+        self.dst_pregs = dst_pregs
+        self.mask_preg = mask_preg
 
     def ready(self) -> bool:
         return self.cache_is_avail
@@ -53,31 +59,33 @@ class WaitingLoadSimple(WaitingItemRequiresCache):
         logger.debug(
             f'{kamlet.clock.cycle}: kamlet ({kamlet.min_x},{kamlet.min_y}): LOAD_SIMPLE '
             f'instr_ident={instr.instr_ident} dst=v{instr.dst} '
-            f'mask_reg={instr.mask_reg} rf_ident={self.rf_ident}')
+            f'dst_pregs={self.dst_pregs} mask_preg={self.mask_preg} '
+            f'rf_ident={self.rf_ident}')
 
         for jamlet in kamlet.jamlets:
-            do_load_simple(jamlet, instr)
+            do_load_simple(jamlet, instr, self.dst_pregs, self.mask_preg)
 
-        dst_regs = kamlet.get_regs(
-            start_index=instr.start_index, n_elements=instr.n_elements,
-            ew=instr.dst_ordering.ew, base_reg=instr.dst)
-        read_regs = [instr.mask_reg] if instr.mask_reg is not None else []
+        read_regs = [self.mask_preg] if self.mask_preg is not None else []
 
         logger.debug(
             f'>>>>>>>>>>> {kamlet.clock.cycle}: kamlet ({kamlet.min_x},{kamlet.min_y}): '
             f'LOAD_SIMPLE FINISH instr_ident={instr.instr_ident} '
-            f'dst_regs={dst_regs} read_regs={read_regs}')
+            f'dst_pregs={self.dst_pregs} read_regs={read_regs}')
 
         assert self.rf_ident is not None
-        kamlet.rf_info.finish(self.rf_ident, write_regs=dst_regs, read_regs=read_regs)
+        kamlet.rf_info.finish(
+            self.rf_ident, write_regs=self.dst_pregs, read_regs=read_regs)
 
 
-def do_load_simple(jamlet: 'Jamlet', instr: kinstructions.Load) -> None:
+def do_load_simple(jamlet: 'Jamlet', instr: kinstructions.Load,
+                   dst_pregs: list[int], mask_preg: int | None) -> None:
     """
     Copy data from cache to register file for an aligned load.
 
     This is called when the load is aligned to local kamlet memory
     and the data is already in the cache.
+
+    dst_pregs is indexed by vline_offset (relative to first_vline).
     """
     assert jamlet.cache_table.can_read(instr.k_maddr, writeset_ident=instr.writeset_ident)
     slot = jamlet.cache_table.addr_to_slot(instr.k_maddr)
@@ -87,18 +95,16 @@ def do_load_simple(jamlet: 'Jamlet', instr: kinstructions.Load) -> None:
     assert dst_ordering == src_ordering
 
     vline_offsets_and_masks = get_offsets_and_masks(
-        jamlet, instr.start_index, instr.n_elements, instr.dst_ordering, instr.mask_reg)
+        jamlet, instr.start_index, instr.n_elements, instr.dst_ordering, mask_preg)
 
     params = jamlet.params
     vline_bytes_per_kamlet = params.word_bytes * params.j_in_k
     base_vline = (instr.k_maddr.addr % params.cache_line_bytes) // vline_bytes_per_kamlet
     cache_line_bytes_per_jamlet = params.cache_line_bytes // params.j_in_k
     word_bytes = params.word_bytes
-    elements_in_vline = params.vline_bytes * 8 // instr.dst_ordering.ew
-    first_vline = instr.start_index // elements_in_vline
 
     for vline_offset, mask in vline_offsets_and_masks:
-        rf_word_addr = instr.dst + first_vline + vline_offset
+        rf_word_addr = dst_pregs[vline_offset]
         assert vline_offset * word_bytes < cache_line_bytes_per_jamlet - (word_bytes - 1)
         sram_addr = slot * cache_line_bytes_per_jamlet + (base_vline + vline_offset) * word_bytes
         new_word = jamlet.sram[sram_addr: sram_addr + word_bytes]

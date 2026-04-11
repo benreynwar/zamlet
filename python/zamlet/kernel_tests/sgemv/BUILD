@@ -5,7 +5,7 @@ LOCAL_HDRS = glob(["*.h"])
 
 riscv_kernel(
     name = "vec-sgemv",
-    srcs = ["vec-sgemv_main.c", "vec-sgemv.S"],
+    srcs = ["vec-sgemv_main.c", "vec-sgemv.c"],
     common_srcs = ["//python/zamlet/kernel_tests/common:ara_runtime"],
     hdrs = ["//python/zamlet/kernel_tests/common:headers"] + LOCAL_HDRS,
     linker_script = "//python/zamlet/kernel_tests/common:test.ld",
@@ -14,7 +14,7 @@ riscv_kernel(
 
 riscv_kernel(
     name = "vec-sgemv-large",
-    srcs = ["vec-sgemv-large_main.c", "vec-sgemv.S"],
+    srcs = ["vec-sgemv-large_main.c", "vec-sgemv.c"],
     common_srcs = ["//python/zamlet/kernel_tests/common:ara_runtime"],
     hdrs = ["//python/zamlet/kernel_tests/common:headers"] + LOCAL_HDRS,
     linker_script = "//python/zamlet/kernel_tests/common:test.ld",
@@ -23,7 +23,7 @@ riscv_kernel(
 
 riscv_kernel(
     name = "vec-sgemv-64x64",
-    srcs = ["vec-sgemv-64x64_main.c", "vec-sgemv.S"],
+    srcs = ["vec-sgemv-64x64_main.c", "vec-sgemv.c"],
     common_srcs = ["//python/zamlet/kernel_tests/common:ara_runtime"],
     hdrs = ["//python/zamlet/kernel_tests/common:headers"] + LOCAL_HDRS,
     linker_script = "//python/zamlet/kernel_tests/common:test.ld",

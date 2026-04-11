@@ -103,6 +103,13 @@ class ZamletParams:
         assert self.kamlet_memory_bytes % self.cache_line_bytes == 0
 
     @property
+    def n_arch_vregs(self) -> int:
+        """Number of architectural vector registers exposed by the ISA.
+        Fixed by RVV at 32. Arch indices in [n_arch_vregs, n_vregs) are
+        scratch names used by compound lamlet ops."""
+        return 32
+
+    @property
     def cache_slot_words(self) -> int:
         return self.cache_slot_words_per_jamlet * self.j_in_k
 

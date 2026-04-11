@@ -52,10 +52,16 @@ class WaitingLoadWordSrc(WaitingItemRequiresCache):
 
 class WaitingLoadWordDst(WaitingItem):
 
-    def __init__(self, params: ZamletParams, instr: kinstructions.LoadWord, rf_ident: int):
+    def __init__(self, params: ZamletParams, instr: kinstructions.LoadWord,
+                 rf_ident: int, dst_preg: int, mask_preg: int | None):
         super().__init__(item=instr, instr_ident=instr.instr_ident + 1, rf_ident=rf_ident)
         self.protocol_states = [ReceiveState.COMPLETE for _ in range(params.j_in_k)]
         self.writeset_ident = instr.writeset_ident
+        # Phys reg for the dst register, locked at start time. The kamlet's
+        # rename table may rotate the dst arch by the time finalize runs, so
+        # we cannot re-derive these from instr.
+        self.dst_preg = dst_preg
+        self.mask_preg = mask_preg
 
     def ready(self) -> bool:
         return all(state == ReceiveState.COMPLETE for state in self.protocol_states)
@@ -66,9 +72,8 @@ class WaitingLoadWordDst(WaitingItem):
     async def finalize(self, kamlet: 'Kamlet') -> None:
         assert all(state == ReceiveState.COMPLETE for state in self.protocol_states)
         assert self.rf_ident is not None
-        instr = self.item
-        read_regs = [instr.mask_reg] if instr.mask_reg is not None else []
-        kamlet.rf_info.finish(self.rf_ident, write_regs=[instr.dst.reg], read_regs=read_regs)
+        read_regs = [self.mask_preg] if self.mask_preg is not None else []
+        kamlet.rf_info.finish(self.rf_ident, write_regs=[self.dst_preg], read_regs=read_regs)
 
 
 def init_src_state(jamlet: 'Jamlet', witem: WaitingLoadWordSrc) -> None:
@@ -158,10 +163,11 @@ async def handle_req(jamlet: 'Jamlet', packet: List[Any]) -> None:
     assert isinstance(witem, WaitingLoadWordDst)
     assert witem.protocol_states[jamlet.j_in_k_index] == ReceiveState.WAITING_FOR_REQUEST
     instr = witem.item
+    dst_preg = witem.dst_preg
 
     old_word = int.from_bytes(jamlet.rf_slice[
-        instr.dst.reg * jamlet.params.word_bytes :
-        (instr.dst.reg + 1) * jamlet.params.word_bytes], 'little')
+        dst_preg * jamlet.params.word_bytes :
+        (dst_preg + 1) * jamlet.params.word_bytes], 'little')
 
     src_word_offset = instr.src.addr % jamlet.params.word_bytes
     dst_word_offset = instr.dst.offset_in_word
@@ -196,14 +202,14 @@ async def handle_req(jamlet: 'Jamlet', packet: List[Any]) -> None:
 
     result_bytes = result.to_bytes(jamlet.params.word_bytes, byteorder='little')
     jamlet.rf_slice[
-        instr.dst.reg * jamlet.params.word_bytes :
-        (instr.dst.reg + 1) * jamlet.params.word_bytes] = result_bytes
+        dst_preg * jamlet.params.word_bytes :
+        (dst_preg + 1) * jamlet.params.word_bytes] = result_bytes
 
     witem.protocol_states[jamlet.j_in_k_index] = ReceiveState.COMPLETE
 
     logger.debug(
         f'{jamlet.clock.cycle}: LOAD_WORD: jamlet ({jamlet.x}, {jamlet.y}): '
-        f'wrote to reg={instr.dst.reg} result={result_bytes.hex()}')
+        f'wrote to dst_preg={dst_preg} result={result_bytes.hex()}')
 
     await send_resp(jamlet, header)
 

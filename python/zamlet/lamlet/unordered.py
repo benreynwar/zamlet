@@ -270,7 +270,7 @@ async def remap_reg_ew(
             n_elements=dst_elements_per_vline, mask_reg=None, start_index=0,
             parent_span_id=parent_span_id, emul=1,
         )
-    lamlet.free_temp_regs(scratch_temp)
+    await lamlet.free_temp_regs(scratch_temp, parent_span_id)
 
 
 async def _handle_partial_element_scalar(
@@ -447,7 +447,7 @@ async def vloadstore(lamlet: 'Oamlet', reg_base: int, addr: int, ordering: addre
 
     if n_elements == 0:
         if temp_regs is not None:
-            lamlet.free_temp_regs(temp_regs)
+            await lamlet.free_temp_regs(temp_regs, parent_span_id)
         return result
 
     # This is an identifier that groups a number of writes to a vector register together.
@@ -519,7 +519,7 @@ async def vloadstore(lamlet: 'Oamlet', reg_base: int, addr: int, ordering: addre
                                         section_elements, mask_reg, section.start_index,
                                         writeset_ident, is_store, parent_span_id)
     if temp_regs is not None:
-        lamlet.free_temp_regs(temp_regs)
+        await lamlet.free_temp_regs(temp_regs, parent_span_id)
     return result
 
 
@@ -551,7 +551,7 @@ async def vloadstorestride(lamlet: 'Oamlet', reg_base: int, addr: int,
 
     index_ew = 64
     elements_per_vline_64 = vline_bits // index_ew
-    n_temp_regs = len(lamlet._temp_regs)
+    n_temp_regs = lamlet.params.n_vregs - lamlet.params.n_arch_vregs
     batch_capacity = n_temp_regs * elements_per_vline_64
 
     temp_regs = lamlet.alloc_temp_regs(n_temp_regs)
@@ -618,7 +618,7 @@ async def vloadstorestride(lamlet: 'Oamlet', reg_base: int, addr: int,
 
     # Temp regs are safe to free: the last instruction reading them is
     # already in the FIFO, and the kamlet handles register file blocking.
-    lamlet.free_temp_regs(temp_regs)
+    await lamlet.free_temp_regs(temp_regs, parent_span_id)
     if prev_fault_sync is not None:
         return await resolve_fault_sync(
             lamlet,

@@ -44,10 +44,17 @@ class WaitingLoadGatherBase(WaitingItem, ABC):
 
     reads_all_memory = True
 
-    def __init__(self, instr, params: ZamletParams, rf_ident: int | None = None):
+    def __init__(self, instr, params: ZamletParams,
+                 dst_pregs: dict[int, int], mask_preg: int | None,
+                 rf_ident: int | None = None):
         super().__init__(item=instr, instr_ident=instr.instr_ident, rf_ident=rf_ident)
         self.writeset_ident = instr.writeset_ident
         self.params = params
+        # Phys regs locked at start time, keyed by absolute vline index (dst_v).
+        # The kamlet's rename table may rotate the dst arch by the time the
+        # witem runs, so we cannot re-derive these from instr.dst.
+        self.dst_pregs = dst_pregs
+        self.mask_preg = mask_preg
         n_tags = params.j_in_k * params.word_bytes
         self.transaction_states: List[SendState] = [SendState.INITIAL for _ in range(n_tags)]
         self.fault_sync_state = SyncState.NOT_STARTED
@@ -67,8 +74,14 @@ class WaitingLoadGatherBase(WaitingItem, ABC):
         pass
 
     @abstractmethod
-    def get_additional_read_regs(self, kamlet) -> List[int]:
-        """Return additional registers that need to be read (e.g., index register)."""
+    def get_additional_read_pregs(self) -> List[int]:
+        """Return phys regs the subclass took read locks on at start time that
+        the base doesn't already know about (i.e. anything besides dst and
+        mask, which the base handles directly).
+
+        Strided gathers return []. Indexed gathers return their index_pregs —
+        finalize releases them in the same rf_info.finish call as dst+mask.
+        """
         pass
 
     def is_ordered(self) -> bool:
@@ -173,9 +186,9 @@ class WaitingLoadGatherBase(WaitingItem, ABC):
         dst_byte_in_word = tag
 
         dst_ve, dst_e, dst_eb, dst_v = self._compute_dst_element(jamlet, tag)
-        dst_reg = instr.dst + dst_v
+        dst_preg = self.dst_pregs[dst_v]
 
-        old_word = jamlet.rf_slice[dst_reg * wb: (dst_reg + 1) * wb]
+        old_word = jamlet.rf_slice[dst_preg * wb: (dst_preg + 1) * wb]
         new_word = utils.shift_and_update_word(
             old_word=old_word,
             src_word=data,
@@ -183,16 +196,16 @@ class WaitingLoadGatherBase(WaitingItem, ABC):
             dst_start=dst_byte_in_word,
             n_bytes=request.n_bytes,
         )
-        jamlet.rf_slice[dst_reg * wb: (dst_reg + 1) * wb] = new_word
+        jamlet.rf_slice[dst_preg * wb: (dst_preg + 1) * wb] = new_word
         logger.debug(f'{jamlet.clock.cycle}: RF_WRITE {self.__class__.__name__}: '
                      f'jamlet ({jamlet.x},{jamlet.y}) ident={instr.instr_ident} '
-                     f'rf[{dst_reg}] old={old_word.hex()} new={new_word.hex()}')
+                     f'rf[{dst_preg}] old={old_word.hex()} new={new_word.hex()}')
         witem_span_id = jamlet.monitor.get_witem_span_id(
             instr.instr_ident, jamlet.k_min_x, jamlet.k_min_y)
         jamlet.monitor.add_event(
             witem_span_id,
             f'rf_write jamlet_x={jamlet.x}, jamlet_y={jamlet.y}, element={dst_e}, '
-            f'reg={dst_reg}, src_byte={src_byte_in_word}, dst_byte={dst_byte_in_word}, '
+            f'reg={dst_preg}, src_byte={src_byte_in_word}, dst_byte={dst_byte_in_word}, '
             f'n_bytes={request.n_bytes}, payload=0x{data:x}, old={old_word.hex()}, '
             f'new={new_word.hex()}')
         jamlet.monitor.complete_transaction(
@@ -213,14 +226,11 @@ class WaitingLoadGatherBase(WaitingItem, ABC):
         self.transaction_states[state_idx] = SendState.NEED_TO_SEND
 
     async def finalize(self, kamlet) -> None:
-        instr = self.item
-        dst_regs = kamlet.get_regs(
-            start_index=instr.start_index, n_elements=instr.n_elements,
-            ew=instr.dst_ordering.ew, base_reg=instr.dst)
-        read_regs = self.get_additional_read_regs(kamlet)
-        if instr.mask_reg is not None:
-            read_regs.append(instr.mask_reg)
-        kamlet.rf_info.finish(self.rf_ident, write_regs=dst_regs, read_regs=read_regs)
+        write_regs = list(self.dst_pregs.values())
+        read_regs = list(self.get_additional_read_pregs())
+        if self.mask_preg is not None:
+            read_regs.append(self.mask_preg)
+        kamlet.rf_info.finish(self.rf_ident, write_regs=write_regs, read_regs=read_regs)
 
     def _compute_dst_element(self, jamlet: 'Jamlet', tag: int) -> tuple[int, int, int, int]:
         """Compute destination element info for a given tag.
@@ -261,10 +271,10 @@ class WaitingLoadGatherBase(WaitingItem, ABC):
                          f'out of range [{instr.start_index}, {instr.start_index + instr.n_elements})')
             return None
 
-        if instr.mask_reg is not None:
+        if self.mask_preg is not None:
             wb = jamlet.params.word_bytes
             mask_word = int.from_bytes(
-                jamlet.rf_slice[instr.mask_reg * wb: (instr.mask_reg + 1) * wb],
+                jamlet.rf_slice[self.mask_preg * wb: (self.mask_preg + 1) * wb],
                 byteorder='little')
             bit_index = dst_e // jamlet.params.j_in_l
             mask_bit = (mask_word >> bit_index) & 1

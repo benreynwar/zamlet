@@ -25,3 +25,22 @@
       contents, and doesn't update all elements (e.g. masked or vl < vlmax), the
       unwritten elements still have the old ew layout. May need to ew-remap the old
       contents before the partial write so everything is consistent.
+- [ ] vta/vma support in the python model. Today the model implicitly does
+      fully-undisturbed for both tail and inactive elements, which forces every
+      partial-vline write to use rw() under the kamlet rename design and inhibits
+      pipelining of partial-vl tail iterations of rolled loops. Adding explicit
+      vta/vma plumbing lets the rename allocator pick w()+fill-with-1s instead of
+      rw() whenever the spec permits. See `docs/PLAN_vta_vma.md`.
+- [ ] Kinstruction bit-budget cleanup. Give every python kinstruction a proper
+      bit-packed encoding (`FIELD_SPECS` + `encode()`) matching Chisel-compatible
+      64-bit layouts, and design Chisel bundles for the python-only vector ops
+      (`VArithV{v,x}Op`, `VCmpV{i,x,v}Op`, `VBroadcastOp`, `VidOp`, `VUnaryOvOp`,
+      `VreductionOp`, `VmnandMmOp`, `RegGather`). Also allocate opcodes for
+      `IndexedInstr` family (`LoadIdxUnord`/`StoreIdxUnord`/`LoadIdxElement`/
+      `StoreIdxElement`) which are currently defined in Chisel but unwired in
+      `KInstrOpcode`. Decide mask field representation for bundles that don't have
+      one today (`WordInstr`, `J2JInstr`, `StoreScalarInstr`). Delete dead
+      `LoadStride`/`StoreStride` kinstruction classes (strided path goes through
+      `Load`/`Store` with `stride_bytes`, these classes are imported but never
+      instantiated). Verify whether Chisel's `WitemEntry.scala` still uses the
+      stride witem types for actual work.

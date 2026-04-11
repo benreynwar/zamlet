@@ -31,10 +31,15 @@ logger = logging.getLogger(__name__)
 
 class WaitingStoreWordSrc(WaitingItem):
 
-    def __init__(self, params: ZamletParams, instr: kinstructions.StoreWord, rf_ident: int):
+    def __init__(self, params: ZamletParams, instr: kinstructions.StoreWord,
+                 rf_ident: int, src_preg: int, mask_preg: int | None):
         super().__init__(item=instr, instr_ident=instr.instr_ident, rf_ident=rf_ident)
         self.protocol_states = [SendState.COMPLETE for _ in range(params.j_in_k)]
         self.writeset_ident = instr.writeset_ident
+        # Phys regs locked at start time. The kamlet's rename table may
+        # rotate the src arch by the time finalize runs.
+        self.src_preg = src_preg
+        self.mask_preg = mask_preg
 
     def ready(self) -> bool:
         return all(state == SendState.COMPLETE for state in self.protocol_states)
@@ -46,8 +51,9 @@ class WaitingStoreWordSrc(WaitingItem):
     async def finalize(self, kamlet: 'Kamlet') -> None:
         assert all(state == SendState.COMPLETE for state in self.protocol_states)
         assert self.rf_ident is not None
-        instr = self.item
-        read_regs = [instr.src.reg] + ([instr.mask_reg] if instr.mask_reg is not None else [])
+        read_regs = [self.src_preg]
+        if self.mask_preg is not None:
+            read_regs.append(self.mask_preg)
         kamlet.rf_info.finish(self.rf_ident, read_regs=read_regs)
 
 
@@ -107,13 +113,13 @@ async def send_req(jamlet: 'Jamlet', witem: WaitingStoreWordSrc) -> None:
     witem.protocol_states[jamlet.j_in_k_index] = SendState.WAITING_FOR_RESPONSE
 
     wb = jamlet.params.word_bytes
-    word_addr = (instr.src.reg * wb // wb) * wb
+    word_addr = witem.src_preg * wb
     word = int.from_bytes(jamlet.rf_slice[word_addr : word_addr + wb], 'little')
 
     logger.debug(
         f'{jamlet.clock.cycle}: STORE_WORD: jamlet ({jamlet.x}, {jamlet.y}): '
         f'send_store_word_req to ({target_x}, {target_y}) ident={instr.instr_ident} '
-        f'reg={instr.src.reg} word=0x{word:x}')
+        f'src_preg={witem.src_preg} word=0x{word:x}')
 
     header = TaggedHeader(
         target_x=target_x, target_y=target_y,

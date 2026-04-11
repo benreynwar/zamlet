@@ -377,4 +377,4 @@ async def handle_vreduction_instr(lamlet, op, dst, src_vector, src_scalar_reg,
             instr_ident=instr_ident,
         ), parent_span_id)
 
-    lamlet.free_temp_regs(temp_regs)
+    await lamlet.free_temp_regs(temp_regs, parent_span_id)
