@@ -103,7 +103,7 @@ class Jalr:
             return f'jalr\t{reg_name(self.rd)},{self.imm}({reg_name(self.rs1)})'
 
     async def update_state(self, s: 'Oamlet'):
-        await s.scalar.wait_all_regs_ready(self.rd, self.rs1, [], [])
+        await s.scalar.wait_all_regs_ready(self.rd, None, [self.rs1], [])
         rs1_val = int.from_bytes(s.scalar.read_reg(self.rs1), byteorder='little', signed=False)
         result = s.pc + 4
         result_bytes = result.to_bytes(s.params.word_bytes, byteorder='little', signed=False)

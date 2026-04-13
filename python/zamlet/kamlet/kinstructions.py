@@ -749,6 +749,7 @@ class VUnaryOvOp(KInstr):
     mask_reg: int | None
     instr_ident: int
     shift_amount: int = 0  # For NSRL: 5-bit uimm, masked to lg2(2*SEW) bits at compute time
+    invert_mask: bool = False
 
     async def update_kamlet(self, kamlet):
         bits_in_vline = kamlet.params.vline_bytes * 8
@@ -782,6 +783,8 @@ class VUnaryOvOp(KInstr):
                     valid_element, mask_bit = kamlet.get_is_active(
                         0, self.n_elements, self.dst_ew, self.word_order,
                         mask_preg, vline_index, j_in_k_index, index_in_j)
+                    if self.invert_mask:
+                        mask_bit = 1 - mask_bit
                     if not (valid_element and mask_bit):
                         continue
                     # Element index within this jamlet

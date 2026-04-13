@@ -43,10 +43,7 @@ void bitreverse_reorder64(size_t n, const int64_t* src, int64_t* dst,
                           const uint32_t* write_idx);
 
 int main() {
-    size_t vl_e64 = get_vl_e64();
     size_t vl_e32 = get_vl_e32();
-    if ((size_t)n != 8 * vl_e32)
-        exit(1);
     int n_bits = reverse_bits ? (int)reverse_bits : count_bits(n);
 
     // e64 data in vpu_mem64, e32 indices in vpu_mem32

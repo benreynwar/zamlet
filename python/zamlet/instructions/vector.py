@@ -963,35 +963,69 @@ class VmergeVvm:
         s.assert_vrf_ordering(self.vs1, element_width)
         s.set_vrf_ordering(self.vd, element_width)
 
-        # Step 1: copy vs2 to vd (unmasked)
-        instr_ident = await s.get_instr_ident()
-        kinstr = kinstructions.VUnaryOvOp(
-            op=kinstructions.VUnaryOp.COPY,
-            dst=self.vd,
-            src=self.vs2,
-            n_elements=s.vl,
-            dst_ew=element_width,
-            src_ew=element_width,
-            word_order=word_order,
-            mask_reg=None,
-            instr_ident=instr_ident,
-        )
-        await s.add_to_instruction_buffer(kinstr, span_id)
+        if self.vd == self.vs1 and self.vd == self.vs2:
+            # vd == vs1 == vs2: result is always vd, no-op.
+            pass
+        elif self.vd == self.vs2:
+            # vd == vs2: just copy vs1 where mask is set.
+            instr_ident = await s.get_instr_ident()
+            kinstr = kinstructions.VUnaryOvOp(
+                op=kinstructions.VUnaryOp.COPY,
+                dst=self.vd,
+                src=self.vs1,
+                n_elements=s.vl,
+                dst_ew=element_width,
+                src_ew=element_width,
+                word_order=word_order,
+                mask_reg=0,
+                instr_ident=instr_ident,
+            )
+            await s.add_to_instruction_buffer(kinstr, span_id)
+        elif self.vd == self.vs1:
+            # vd == vs1: just copy vs2 where mask is NOT set.
+            instr_ident = await s.get_instr_ident()
+            kinstr = kinstructions.VUnaryOvOp(
+                op=kinstructions.VUnaryOp.COPY,
+                dst=self.vd,
+                src=self.vs2,
+                n_elements=s.vl,
+                dst_ew=element_width,
+                src_ew=element_width,
+                word_order=word_order,
+                mask_reg=0,
+                instr_ident=instr_ident,
+                invert_mask=True,
+            )
+            await s.add_to_instruction_buffer(kinstr, span_id)
+        else:
+            # No overlap: copy vs2 unconditionally, then vs1 where mask set.
+            instr_ident = await s.get_instr_ident()
+            kinstr = kinstructions.VUnaryOvOp(
+                op=kinstructions.VUnaryOp.COPY,
+                dst=self.vd,
+                src=self.vs2,
+                n_elements=s.vl,
+                dst_ew=element_width,
+                src_ew=element_width,
+                word_order=word_order,
+                mask_reg=None,
+                instr_ident=instr_ident,
+            )
+            await s.add_to_instruction_buffer(kinstr, span_id)
 
-        # Step 2: copy vs1 to vd where v0 mask is set
-        instr_ident = await s.get_instr_ident()
-        kinstr = kinstructions.VUnaryOvOp(
-            op=kinstructions.VUnaryOp.COPY,
-            dst=self.vd,
-            src=self.vs1,
-            n_elements=s.vl,
-            dst_ew=element_width,
-            src_ew=element_width,
-            word_order=word_order,
-            mask_reg=0,
-            instr_ident=instr_ident,
-        )
-        await s.add_to_instruction_buffer(kinstr, span_id)
+            instr_ident = await s.get_instr_ident()
+            kinstr = kinstructions.VUnaryOvOp(
+                op=kinstructions.VUnaryOp.COPY,
+                dst=self.vd,
+                src=self.vs1,
+                n_elements=s.vl,
+                dst_ew=element_width,
+                src_ew=element_width,
+                word_order=word_order,
+                mask_reg=0,
+                instr_ident=instr_ident,
+            )
+            await s.add_to_instruction_buffer(kinstr, span_id)
 
         s.monitor.finalize_children(span_id)
         s.pc += 4
