@@ -19,8 +19,8 @@
 void bitreverse_reorder64(size_t n,
                           const int64_t* __restrict__ src,
                           int64_t* __restrict__ dst,
-                          const uint32_t* __restrict__ read_idx,
-                          const uint32_t* __restrict__ write_idx) {
+                          const uint64_t* __restrict__ read_idx,
+                          const uint64_t* __restrict__ write_idx) {
     if (n == 0) return;
 
     // Bound indexed byte offsets to the minimum range that covers [0, n*8).
@@ -33,10 +33,10 @@ void bitreverse_reorder64(size_t n,
 
     for (size_t avl = n; avl > 0; ) {
         size_t vl = __riscv_vsetvl_e64m1(avl);
-        vuint32mf2_t ri = __riscv_vle32_v_u32mf2(read_idx, vl);
-        vuint32mf2_t wi = __riscv_vle32_v_u32mf2(write_idx, vl);
-        vint64m1_t data = __riscv_vluxei32_v_i64m1(src, ri, vl);
-        __riscv_vsuxei32_v_i64m1(dst, wi, data, vl);
+        vuint64m1_t ri = __riscv_vle64_v_u64m1(read_idx, vl);
+        vuint64m1_t wi = __riscv_vle64_v_u64m1(write_idx, vl);
+        vint64m1_t data = __riscv_vluxei64_v_i64m1(src, ri, vl);
+        __riscv_vsuxei64_v_i64m1(dst, wi, data, vl);
         read_idx += vl;
         write_idx += vl;
         avl -= vl;

@@ -101,7 +101,7 @@ class Kamlet:
         (add result to scoreboard read_regs)."""
         return self.rename_table.lookup_read(arch)
 
-    async def w(self, arch: int) -> int:
+    async def w(self, arch: int, exclude_reuse: set[int] | None = None) -> int:
         """Allocate a fresh phys for arch and return it. Used for pure dest regs
         (add result to scoreboard write_regs).
 
@@ -116,10 +116,17 @@ class Kamlet:
         a chance to release pregs from pending_free. This provides
         backpressure on register-renaming bursts without hard-failing
         on transient exhaustion.
+
+        exclude_reuse: pregs the current kinstr already uses as sources.
+        Reusing one of them as dst would alias a read and write within
+        the same kinstr, which the rename/scoreboard design forbids.
+        Pass `set(source_pregs)` from the caller (e.g. indexed gather
+        when dst arch == index arch after register coalescing).
         """
+        exclude = exclude_reuse or set()
         if self.rename_table.is_mapped(arch):
             current = self.rename_table.arch[arch]
-            if self._is_preg_idle(current):
+            if current not in exclude and self._is_preg_idle(current):
                 return current
         waited = 0
         while not self.rename_table.free_queue:
@@ -130,7 +137,7 @@ class Kamlet:
             # because no FreeRegister can be admitted behind us.
             if self.rename_table.is_mapped(arch):
                 current = self.rename_table.arch[arch]
-                if self._is_preg_idle(current):
+                if current not in exclude and self._is_preg_idle(current):
                     return current
             if waited == 0:
                 logger.debug(
@@ -177,7 +184,8 @@ class Kamlet:
 
     async def alloc_dst_pregs(self, base_arch: int, start_vline: int, end_vline: int,
                               start_index: int, n_elements: int, elements_in_vline: int,
-                              mask_present: bool) -> List[int]:
+                              mask_present: bool,
+                              exclude_reuse: set[int] | None = None) -> List[int]:
         """Allocate dst phys regs for a multi-vline op under the current
         fully-undisturbed policy (vta=vma=False).
 
@@ -212,7 +220,7 @@ class Kamlet:
             # First write to a freshly allocated scratch arch: nothing to
             # preserve, w() unconditionally (also: rw() would assert).
             if not self.rename_table.is_mapped(arch):
-                pregs.append(await self.w(arch))
+                pregs.append(await self.w(arch, exclude_reuse=exclude_reuse))
                 continue
             # Under fully-undisturbed (vma=False), masked op needs rw() on
             # every vline because mask-off positions could fall anywhere.
@@ -225,7 +233,7 @@ class Kamlet:
             if partial:
                 pregs.append(self.rw(arch))
             else:
-                pregs.append(await self.w(arch))
+                pregs.append(await self.w(arch, exclude_reuse=exclude_reuse))
         return pregs
 
     def rf_available(self, read_regs=None, write_regs=None):

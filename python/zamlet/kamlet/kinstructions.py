@@ -523,7 +523,8 @@ class VCmpViOp(KInstr):
         dst_pregs = await kamlet.alloc_dst_pregs(
             base_arch=self.dst, start_vline=0, end_vline=n_dst_vlines - 1,
             start_index=0, n_elements=self.n_elements,
-            elements_in_vline=dst_elements_in_vline, mask_present=False)
+            elements_in_vline=dst_elements_in_vline, mask_present=False,
+            exclude_reuse=set(src_pregs))
         return self.rename(
             src_pregs={v: src_pregs[v] for v in range(n_src_vlines)},
             dst_pregs={v: dst_pregs[v] for v in range(n_dst_vlines)},
@@ -593,7 +594,8 @@ class VCmpVxOp(KInstr):
         dst_pregs = await kamlet.alloc_dst_pregs(
             base_arch=self.dst, start_vline=0, end_vline=n_dst_vlines - 1,
             start_index=0, n_elements=self.n_elements,
-            elements_in_vline=dst_elements_in_vline, mask_present=False)
+            elements_in_vline=dst_elements_in_vline, mask_present=False,
+            exclude_reuse=set(src_pregs))
         return self.rename(
             src_pregs={v: src_pregs[v] for v in range(n_src_vlines)},
             dst_pregs={v: dst_pregs[v] for v in range(n_dst_vlines)},
@@ -666,7 +668,8 @@ class VCmpVvOp(KInstr):
         dst_pregs = await kamlet.alloc_dst_pregs(
             base_arch=self.dst, start_vline=0, end_vline=n_dst_vlines - 1,
             start_index=0, n_elements=self.n_elements,
-            elements_in_vline=dst_elements_in_vline, mask_present=False)
+            elements_in_vline=dst_elements_in_vline, mask_present=False,
+            exclude_reuse=set(src1_pregs) | set(src2_pregs))
         return self.rename(
             src_pregs={v: src1_pregs[v] for v in range(n_src_vlines)},
             src2_pregs={v: src2_pregs[v] for v in range(n_src_vlines)},
@@ -771,11 +774,13 @@ class VBroadcastOp(KInstr):
 
         # Rename: lookup mask phys before allocating dst phys.
         mask_preg = kamlet.r(self.mask_reg) if self.mask_reg is not None else None
+        exclude = {mask_preg} if mask_preg is not None else set()
         dst_pregs = await kamlet.alloc_dst_pregs(
             base_arch=self.dst, start_vline=0, end_vline=n_vlines - 1,
             start_index=0, n_elements=self.n_elements,
             elements_in_vline=elements_in_vline,
-            mask_present=self.mask_reg is not None)
+            mask_present=self.mask_reg is not None,
+            exclude_reuse=exclude)
         return self.rename(
             dst_pregs={v: dst_pregs[v] for v in range(n_vlines)},
             mask_preg=mask_preg,
@@ -828,11 +833,13 @@ class VidOp(KInstr):
 
         # Rename: lookup mask phys before allocating dst phys.
         mask_preg = kamlet.r(self.mask_reg) if self.mask_reg is not None else None
+        exclude = {mask_preg} if mask_preg is not None else set()
         dst_pregs = await kamlet.alloc_dst_pregs(
             base_arch=self.dst, start_vline=0, end_vline=n_vlines - 1,
             start_index=0, n_elements=self.n_elements,
             elements_in_vline=elements_in_vline,
-            mask_present=self.mask_reg is not None)
+            mask_present=self.mask_reg is not None,
+            exclude_reuse=exclude)
         return self.rename(
             dst_pregs={v: dst_pregs[v] for v in range(n_vlines)},
             mask_preg=mask_preg,
@@ -893,11 +900,15 @@ class VUnaryOvOp(KInstr):
         # Rename: lookup src physes (and mask) before allocating dst physes.
         src_pregs = [kamlet.r(self.src + i) for i in range(n_src_vlines)]
         mask_preg = kamlet.r(self.mask_reg) if self.mask_reg is not None else None
+        exclude = set(src_pregs)
+        if mask_preg is not None:
+            exclude.add(mask_preg)
         dst_pregs = await kamlet.alloc_dst_pregs(
             base_arch=self.dst, start_vline=0, end_vline=n_dst_vlines - 1,
             start_index=0, n_elements=self.n_elements,
             elements_in_vline=dst_elements_in_vline,
-            mask_present=self.mask_reg is not None)
+            mask_present=self.mask_reg is not None,
+            exclude_reuse=exclude)
         return self.rename(
             src_pregs={v: src_pregs[v] for v in range(n_src_vlines)},
             dst_pregs={v: dst_pregs[v] for v in range(n_dst_vlines)},
@@ -1204,11 +1215,15 @@ class VArithVvOp(KInstr):
         else:
             # n_elements operates on elements 0..n_elements-1 (start_index=0
             # for the per-element arith ops).
+            exclude = set(src1_pregs) | set(src2_pregs)
+            if mask_preg is not None:
+                exclude.add(mask_preg)
             dst_pregs = await kamlet.alloc_dst_pregs(
                 base_arch=self.dst, start_vline=0, end_vline=n_vlines - 1,
                 start_index=0, n_elements=self.n_elements,
                 elements_in_vline=elements_in_vline,
-                mask_present=self.mask_reg is not None)
+                mask_present=self.mask_reg is not None,
+                exclude_reuse=exclude)
         return self.rename(
             src_pregs={v: src1_pregs[v] for v in range(n_vlines)},
             src2_pregs={v: src2_pregs[v] for v in range(n_vlines)},
@@ -1279,11 +1294,15 @@ class VArithVxOp(KInstr):
         if is_accum:
             dst_pregs = [kamlet.rw(self.dst + i) for i in range(n_vlines)]
         else:
+            exclude = set(src2_pregs)
+            if mask_preg is not None:
+                exclude.add(mask_preg)
             dst_pregs = await kamlet.alloc_dst_pregs(
                 base_arch=self.dst, start_vline=0, end_vline=n_vlines - 1,
                 start_index=0, n_elements=self.n_elements,
                 elements_in_vline=elements_in_vline,
-                mask_present=self.mask_reg is not None)
+                mask_present=self.mask_reg is not None,
+                exclude_reuse=exclude)
         return self.rename(
             src2_pregs={v: src2_pregs[v] for v in range(n_vlines)},
             dst_pregs={v: dst_pregs[v] for v in range(n_vlines)},

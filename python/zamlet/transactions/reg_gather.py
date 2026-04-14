@@ -74,11 +74,15 @@ class RegGather(KInstr):
         vs2_pregs = {v: kamlet.r(self.vs2 + v) for v in range(vs2_n_vlines)}
         mask_preg = kamlet.r(self.mask_reg) if self.mask_reg is not None else None
 
+        exclude = set(vs1_pregs.values()) | set(vs2_pregs.values())
+        if mask_preg is not None:
+            exclude.add(mask_preg)
         dst_preg_list = await kamlet.alloc_dst_pregs(
             base_arch=self.vd, start_vline=dst_start_vline, end_vline=dst_end_vline,
             start_index=self.start_index, n_elements=self.n_elements,
             elements_in_vline=dst_elements_in_vline,
-            mask_present=self.mask_reg is not None)
+            mask_present=self.mask_reg is not None,
+            exclude_reuse=exclude)
         dst_pregs = {
             dst_start_vline + i: dst_preg_list[i] for i in range(len(dst_preg_list))
         }

@@ -5,6 +5,7 @@ exports_files([
     "bitreverse.S",
     "bitreverse_reorder.S",
     "bitreverse_reorder64.S",
+    "bitreverse_reorder64.c",
 ])
 
 riscv_kernel(

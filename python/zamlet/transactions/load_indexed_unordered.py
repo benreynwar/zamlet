@@ -66,11 +66,15 @@ class LoadIndexedUnordered(KInstr):
                        for v in range(index_start_vline, index_end_vline + 1)}
         mask_preg = kamlet.r(self.mask_reg) if self.mask_reg is not None else None
 
+        exclude = set(index_pregs.values())
+        if mask_preg is not None:
+            exclude.add(mask_preg)
         dst_preg_list = await kamlet.alloc_dst_pregs(
             base_arch=self.dst, start_vline=dst_start_vline, end_vline=dst_end_vline,
             start_index=self.start_index, n_elements=self.n_elements,
             elements_in_vline=dst_elements_in_vline,
-            mask_present=self.mask_reg is not None)
+            mask_present=self.mask_reg is not None,
+            exclude_reuse=exclude)
         dst_pregs = {dst_start_vline + i: p for i, p in enumerate(dst_preg_list)}
 
         dst_values = set(dst_pregs.values())
