@@ -101,15 +101,22 @@ class Oamlet:
         self.exit_code = None
 
         self.word_order = word_order
-        self._temp_regs = list(range(32, params.n_vregs))
-        self._temp_reg_next = 0
-        self._temp_regs_in_use: set[int] = set()
+        # Scratch arch index tracker. Compound lamlet ops (e.g. reductions,
+        # strided/indexed batches) use arch indices in [N_ARCH_VREGS, n_vregs)
+        # for internal temporaries. The kamlet rename table treats these the
+        # same as ISA arch indices: w() allocates a fresh phys on first
+        # write, and a FreeRegister kinstr at the release point unmaps the
+        # arch and returns its phys to the kamlet's free queue. The lamlet
+        # tracker below just remembers which scratch arch indices are
+        # currently in use so we don't double-allocate.
+        self._scratch_arch_free: deque[int] = deque(
+            range(params.n_arch_vregs, params.n_vregs))
 
-        # Scratch VPU pages for ew remap workaround, one per (temp_reg, ew).
+        # Scratch VPU pages for ew remap workaround, one per (phys, ew).
         # Uses address range 0xF0000000+. See TODO.md for replacing with a
         # dedicated register-to-register ew remap kinstr.
         self._scratch_base = 0xF0000000
-        self._scratch_pages: set[tuple[int, int]] = set()  # allocated (reg_index, ew) pairs
+        self._scratch_pages: set[tuple[int, int]] = set()  # allocated (phys, ew) pairs
 
         self.min_x = params.west_offset
         self.min_y = params.north_offset
@@ -250,33 +257,63 @@ class Oamlet:
         """Allocate n_idents consecutive instruction identifiers."""
         return await ident_query.get_instr_ident(self, n_idents)
 
+    def _scratch_active_count(self) -> int:
+        return self.params.n_vregs - self.params.n_arch_vregs - len(self._scratch_arch_free)
+
     def alloc_temp_regs(self, n: int) -> list[int]:
-        total = len(self._temp_regs)
-        regs = [self._temp_regs[(self._temp_reg_next + i) % total] for i in range(n)]
-        for reg in regs:
-            assert reg not in self._temp_regs_in_use, \
-                f"Temp reg {reg} already in use"
-            self._temp_regs_in_use.add(reg)
-        self._temp_reg_next = (self._temp_reg_next + n) % total
+        """Reserve n scratch arch indices in [n_arch_vregs, n_vregs).
+
+        These get embedded directly in kinstructions; the kamlet's rename
+        table allocates a phys for each on first write. The caller must
+        await free_temp_regs at the release point — that emits a
+        FreeRegister kinstr per arch (which returns the phys to the
+        kamlet's free queue) and returns the arch slot to this lamlet
+        tracker for reuse.
+        """
+        assert len(self._scratch_arch_free) >= n, \
+            f"only {len(self._scratch_arch_free)} scratch arches free, need {n}"
+        regs = [self._scratch_arch_free.popleft() for _ in range(n)]
+        active = self._scratch_active_count()
+        capacity = self.params.n_vregs - self.params.n_arch_vregs
+        logger.debug(
+            f'{self.clock.cycle}: lamlet alloc_temp_regs n={n} regs={regs} '
+            f'active={active}/{capacity}')
         return regs
 
-    def free_temp_regs(self, regs: list[int]) -> None:
-        for reg in regs:
-            self._temp_regs_in_use.discard(reg)
+    async def free_temp_regs(self, regs: list[int], parent_span_id: int) -> None:
+        """Release scratch arch indices.
 
-    def get_scratch_page(self, temp_reg: int, ew: int) -> int:
-        """Get a scratch VPU page for a (temp_reg, ew) pair. Allocates lazily."""
+        Emits a FreeRegister kinstr for each arch (so the kamlet returns its
+        phys to the free queue) and then returns the arch index to the
+        lamlet tracker. The kinstr goes into the FIFO after every prior
+        instruction that used the arch, so the kamlet handles ordering;
+        callers do not need to wait for the prior uses to drain.
+        """
+        capacity = self.params.n_vregs - self.params.n_arch_vregs
+        logger.debug(
+            f'{self.clock.cycle}: lamlet free_temp_regs n={len(regs)} regs={regs} '
+            f'active_before={self._scratch_active_count()}/{capacity}')
+        for reg in regs:
+            assert self.params.n_arch_vregs <= reg < self.params.n_vregs, \
+                f"reg={reg} is not a scratch arch index"
+            assert reg not in self._scratch_arch_free, \
+                f"reg={reg} already in scratch free queue"
+            free_ident = await ident_query.get_instr_ident(self)
+            await self.add_to_instruction_buffer(
+                kinstructions.FreeRegister(reg=reg, instr_ident=free_ident),
+                parent_span_id)
+            self._scratch_arch_free.append(reg)
+
+    def get_scratch_page(self, phys: int, ew: int) -> int:
+        """Get a scratch VPU page for a (phys, ew) pair. Allocates lazily."""
         ew_index = {1: 0, 8: 1, 16: 2, 32: 3, 64: 4}[ew]
-        reg_index = temp_reg - self._temp_regs[0]
-        key = (reg_index, ew)
+        key = (phys, ew)
+        addr = self._scratch_base + (phys * 8 + ew_index) * self.params.page_bytes
         if key not in self._scratch_pages:
-            addr = self._scratch_base + (reg_index * 8 + ew_index) * self.params.page_bytes
             g_addr = GlobalAddress(bit_addr=addr * 8, params=self.params)
             self.allocate_memory(
                 g_addr, self.params.page_bytes, memory_type=MemoryType.VPU)
             self._scratch_pages.add(key)
-        else:
-            addr = self._scratch_base + (reg_index * 8 + ew_index) * self.params.page_bytes
         return addr
 
     def set_pc(self, pc):
@@ -1265,7 +1302,7 @@ class Oamlet:
             temp_regs[0], vline_addr, new_ordering,
             n_elements=new_elements, mask_reg=None, start_index=0,
             parent_span_id=parent_span_id, emul=1)
-        self.free_temp_regs(temp_regs)
+        await self.free_temp_regs(temp_regs, parent_span_id)
 
     def _vline_is_partial(self, vline_index: int, elements_per_vline: int,
                           n_elements: int, start_index: int,

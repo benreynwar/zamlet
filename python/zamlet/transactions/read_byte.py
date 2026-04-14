@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from zamlet.addresses import KMAddr
 from zamlet.waiting_item import WaitingItemRequiresCache
 from zamlet.kamlet import kinstructions
+from zamlet.kamlet.kinstructions import Renamed
 from zamlet.message import MessageType, SendType, ValueHeader
 
 if TYPE_CHECKING:
@@ -37,19 +38,18 @@ class ReadByte(kinstructions.TrackedKInstr):
     instr_ident: int
     writeset_ident: int
 
-    async def update_kamlet(self, kamlet: 'Kamlet'):
-        """
-        Reads a byte from memory.
-        It first makes sure that we've got the cache line ready.
-        """
-        if not kamlet.cache_table.can_read(self.k_maddr, writeset_ident=self.writeset_ident):
-            witem = WaitingReadByte(self)
-            kamlet.monitor.record_witem_created(
-                self.instr_ident, kamlet.min_x, kamlet.min_y, 'WaitingReadByte')
-            await kamlet.cache_table.add_witem(witem=witem, k_maddr=self.k_maddr)
-        else:
-            await do_read_byte(kamlet, self)
-            kamlet.monitor.finalize_kinstr_exec(self.instr_ident, kamlet.min_x, kamlet.min_y)
+    async def admit(self, kamlet: 'Kamlet') -> 'ReadByte | None':
+        return self.rename(
+            cache_is_read=True,
+            writeset_ident=self.writeset_ident,
+            needs_witem=1,
+        )
+
+    async def execute(self, kamlet: 'Kamlet') -> None:
+        witem = WaitingReadByte(self)
+        kamlet.monitor.record_witem_created(
+            self.instr_ident, kamlet.min_x, kamlet.min_y, 'WaitingReadByte')
+        kamlet.cache_table.add_witem_immediately(witem=witem, k_maddr=self.k_maddr)
 
 
 class WaitingReadByte(WaitingItemRequiresCache):

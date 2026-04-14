@@ -12,10 +12,14 @@ from typing import TYPE_CHECKING, List, Tuple
 from zamlet import addresses
 from zamlet.addresses import GlobalAddress, Ordering, TLBFaultType, VectorOpResult
 from zamlet.kamlet import kinstructions
+from zamlet.transactions.load import Load
+from zamlet.transactions.store import Store
 from zamlet.transactions.load_stride import LoadStride
 from zamlet.transactions.store_stride import StoreStride
 from zamlet.transactions.load_indexed_unordered import LoadIndexedUnordered
 from zamlet.transactions.store_indexed_unordered import StoreIndexedUnordered
+from zamlet.transactions.load_word import LoadWord
+from zamlet.transactions.store_word import StoreWord
 from zamlet import utils
 from zamlet.lamlet import ident_query
 from zamlet.message import (
@@ -75,22 +79,26 @@ def check_pages_for_access(lamlet: 'Oamlet', start_addr: int, n_elements: int,
     return VectorOpResult()
 
 
-def check_page_range(lamlet: 'Oamlet', start_addr: int, end_addr: int,
-                     is_write: bool) -> VectorOpResult:
+def check_page_range(
+        lamlet: 'Oamlet', start_addr: int, end_addr: int,
+        is_write: bool) -> Tuple[bool, bool]:
     """Check TLB for all pages in [start_addr, end_addr).
 
-    Returns VectorOpResult with fault info if any page is inaccessible.
-    element_index is set to 0 since we can't identify the specific element.
+    Returns (accessible, all_vpu) where accessible is True if every page is
+    accessible, and all_vpu is True if every page is VPU memory.
     """
     page_bytes = lamlet.params.page_bytes
     current_addr = start_addr
+    all_vpu = True
     while current_addr < end_addr:
         g_addr = GlobalAddress(bit_addr=current_addr * 8, params=lamlet.params)
         fault_type = lamlet.tlb.check_access(g_addr, is_write)
         if fault_type != TLBFaultType.NONE:
-            return VectorOpResult(fault_type=fault_type, element_index=0)
+            return False, False
+        if not g_addr.is_vpu(lamlet.tlb):
+            all_vpu = False
         current_addr = ((current_addr // page_bytes) + 1) * page_bytes
-    return VectorOpResult()
+    return True, all_vpu
 
 
 def get_memory_split(lamlet: 'Oamlet', g_addr: GlobalAddress, element_width: int,
@@ -270,7 +278,7 @@ async def remap_reg_ew(
             n_elements=dst_elements_per_vline, mask_reg=None, start_index=0,
             parent_span_id=parent_span_id, emul=1,
         )
-    lamlet.free_temp_regs(scratch_temp)
+    await lamlet.free_temp_regs(scratch_temp, parent_span_id)
 
 
 async def _handle_partial_element_scalar(
@@ -346,14 +354,14 @@ async def _handle_partial_element_vpu(
         byte_mask_as_int = utils.list_of_uints_to_uint(byte_mask, width=1)
         instr_ident = await ident_query.get_instr_ident(lamlet, 2)
         if is_store:
-            kinstr = kinstructions.StoreWord(
+            kinstr = StoreWord(
                 src=chunk_reg_addr, dst=chunk_k_maddr,
                 byte_mask=byte_mask_as_int,
                 writeset_ident=writeset_ident, mask_reg=mask_reg,
                 mask_index=mask_index, instr_ident=instr_ident,
             )
         else:
-            kinstr = kinstructions.LoadWord(
+            kinstr = LoadWord(
                 dst=chunk_reg_addr, src=chunk_k_maddr,
                 byte_mask=byte_mask_as_int,
                 writeset_ident=writeset_ident, mask_reg=mask_reg,
@@ -377,7 +385,7 @@ async def _handle_full_elements_vpu(
 
     instr_ident = await ident_query.get_instr_ident(lamlet)
     if is_store:
-        kinstr = kinstructions.Store(
+        kinstr = Store(
             src=reg_base,
             k_maddr=k_maddr,
             start_index=section.start_index,
@@ -388,7 +396,7 @@ async def _handle_full_elements_vpu(
             instr_ident=instr_ident,
         )
     else:
-        kinstr = kinstructions.Load(
+        kinstr = Load(
             dst=reg_base,
             k_maddr=k_maddr,
             start_index=section.start_index,
@@ -447,7 +455,7 @@ async def vloadstore(lamlet: 'Oamlet', reg_base: int, addr: int, ordering: addre
 
     if n_elements == 0:
         if temp_regs is not None:
-            lamlet.free_temp_regs(temp_regs)
+            await lamlet.free_temp_regs(temp_regs, parent_span_id)
         return result
 
     # This is an identifier that groups a number of writes to a vector register together.
@@ -519,7 +527,7 @@ async def vloadstore(lamlet: 'Oamlet', reg_base: int, addr: int, ordering: addre
                                         section_elements, mask_reg, section.start_index,
                                         writeset_ident, is_store, parent_span_id)
     if temp_regs is not None:
-        lamlet.free_temp_regs(temp_regs)
+        await lamlet.free_temp_regs(temp_regs, parent_span_id)
     return result
 
 
@@ -551,7 +559,11 @@ async def vloadstorestride(lamlet: 'Oamlet', reg_base: int, addr: int,
 
     index_ew = 64
     elements_per_vline_64 = vline_bits // index_ew
-    n_temp_regs = len(lamlet._temp_regs)
+    # Use at most half the scratch arch pool so the kamlet has spare pregs
+    # to rotate through for vid -> vmul -> indexed pipelining within and
+    # across batches. Floor of 1 in case the pool is tiny.
+    n_scratch = lamlet.params.n_vregs - lamlet.params.n_arch_vregs
+    n_temp_regs = max(1, n_scratch // 2)
     batch_capacity = n_temp_regs * elements_per_vline_64
 
     temp_regs = lamlet.alloc_temp_regs(n_temp_regs)
@@ -618,7 +630,7 @@ async def vloadstorestride(lamlet: 'Oamlet', reg_base: int, addr: int,
 
     # Temp regs are safe to free: the last instruction reading them is
     # already in the FIFO, and the kamlet handles register file blocking.
-    lamlet.free_temp_regs(temp_regs)
+    await lamlet.free_temp_regs(temp_regs, parent_span_id)
     if prev_fault_sync is not None:
         return await resolve_fault_sync(
             lamlet,
@@ -730,11 +742,14 @@ async def _vloadstore_indexed_unordered(
     # skip per-element fault detection. Otherwise fall back to normal fault sync
     # since only the kamlets can identify which element faulted.
     skip_fault_wait = False
+    range_is_vpu = False
     if lamlet.index_bound_bits > 0:
         end_addr = base_addr + (1 << lamlet.index_bound_bits)
-        if check_page_range(lamlet, base_addr, end_addr, is_write=is_store).success:
+        accessible, all_vpu = check_page_range(
+            lamlet, base_addr, end_addr, is_write=is_store)
+        if accessible:
             skip_fault_wait = True
-
+            range_is_vpu = all_vpu
     # Process in chunks of elements_in_vline elements (max one vline per kinstr)
     # Active elements are [start_index, n_elements), so n_active = n_elements - start_index
     elements_in_vline = lamlet.params.vline_bytes * 8 // data_ew
@@ -788,12 +803,13 @@ async def _vloadstore_indexed_unordered(
         lamlet.synchronizer.local_event(completion_sync_ident)
         completion_sync_idents.append(completion_sync_ident)
 
-        if is_store:
-            lamlet.scalar.register_might_touch_write(
-                completion_sync_ident, writeset_ident)
-        else:
-            lamlet.scalar.register_might_touch_read(
-                completion_sync_ident, writeset_ident)
+        if not range_is_vpu:
+            if is_store:
+                lamlet.scalar.register_might_touch_write(
+                    completion_sync_ident, writeset_ident)
+            else:
+                lamlet.scalar.register_might_touch_read(
+                    completion_sync_ident, writeset_ident)
 
         lamlet.monitor.create_sync_local_span(
             fault_sync_ident, 0, -1, kinstr_span_id)

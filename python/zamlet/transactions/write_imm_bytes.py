@@ -17,7 +17,7 @@ from dataclasses import dataclass
 
 from zamlet.addresses import KMAddr
 from zamlet.waiting_item import WaitingItemRequiresCache
-from zamlet.kamlet import kinstructions
+from zamlet.kamlet.kinstructions import KInstr, Renamed
 
 if TYPE_CHECKING:
     from zamlet.kamlet.kamlet import Kamlet
@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
-class WriteImmBytes(kinstructions.KInstr):
+class WriteImmBytes(KInstr):
     """
     This instruction writes an immediate to the VPU memory.
     The scalar processor does not receive a response.
@@ -37,33 +37,18 @@ class WriteImmBytes(kinstructions.KInstr):
     instr_ident: int
     writeset_ident: int
 
-    async def update_kamlet(self, kamlet):
-        """
-        Writes bytes to memory.
-        They must all be within one word.
-        It first makes sure that we've got the cache line ready.
-        """
-        can_write = kamlet.cache_table.can_write(self.k_maddr, writeset_ident=self.writeset_ident)
-        logger.debug(
-            f'{kamlet.clock.cycle}: WriteImmBytes ident={self.instr_ident} '
-            f'kamlet=({kamlet.min_x},{kamlet.min_y}) can_write={can_write}')
-        if not can_write:
-            witem = WaitingWriteImmBytes(self)
-            logger.debug(
-                f'{kamlet.clock.cycle}: WriteImmBytes ident={self.instr_ident} '
-                f'creating witem, calling record_witem_created')
-            kamlet.monitor.record_witem_created(
-                self.instr_ident, kamlet.min_x, kamlet.min_y, 'WaitingWriteImmBytes')
-            logger.debug(
-                f'{kamlet.clock.cycle}: WriteImmBytes ident={self.instr_ident} '
-                f'witem recorded, calling add_witem')
-            await kamlet.cache_table.add_witem(witem, self.k_maddr)
-            logger.debug(
-                f'{kamlet.clock.cycle}: WriteImmBytes ident={self.instr_ident} '
-                f'add_witem returned')
-        else:
-            do_write_imm_bytes(kamlet, self)
-            kamlet.monitor.finalize_kinstr_exec(self.instr_ident, kamlet.min_x, kamlet.min_y)
+    async def admit(self, kamlet: 'Kamlet') -> 'WriteImmBytes | None':
+        return self.rename(
+            cache_is_write=True,
+            writeset_ident=self.writeset_ident,
+            needs_witem=1,
+        )
+
+    async def execute(self, kamlet: 'Kamlet') -> None:
+        witem = WaitingWriteImmBytes(self)
+        kamlet.monitor.record_witem_created(
+            self.instr_ident, kamlet.min_x, kamlet.min_y, 'WaitingWriteImmBytes')
+        kamlet.cache_table.add_witem_immediately(witem=witem, k_maddr=self.k_maddr)
 
 
 

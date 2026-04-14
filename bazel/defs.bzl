@@ -132,6 +132,7 @@ def kernel_test(
         geometries = None,
         expected_failure = False,
         max_cycles = 100000,
+        symbol_values = None,
         timeout = "moderate",
         tags = [],
         deps = []):
@@ -145,6 +146,7 @@ def kernel_test(
         geometries: List of geometry name strings; defaults to SMALL_GEOMETRY_NAMES
         expected_failure: If True, assert non-zero exit code
         max_cycles: Maximum simulation cycles
+        symbol_values: Dict of symbol name -> int value to inject before running
         tags: Extra Bazel tags
         deps: Extra Python deps
     """
@@ -155,18 +157,21 @@ def kernel_test(
     for geom in geometries:
         test_name = "{}_{}".format(name, geom)
         test_names.append(test_name)
+        env = {
+            "KERNEL_BINARY": "$(rootpath {})".format(kernel),
+            "GEOMETRY": geom,
+            "MAX_CYCLES": str(max_cycles),
+            "EXPECTED_FAILURE": "1" if expected_failure else "0",
+        }
+        if symbol_values:
+            env["SYMBOL_VALUES"] = json.encode(symbol_values)
         native.py_test(
             name = test_name,
             srcs = ["//python/zamlet/kernel_tests:run_kernel_test.py"],
             main = "//python/zamlet/kernel_tests:run_kernel_test.py",
             data = [kernel],
             deps = ["//python/zamlet:zamlet"] + deps,
-            env = {
-                "KERNEL_BINARY": "$(rootpath {})".format(kernel),
-                "GEOMETRY": geom,
-                "MAX_CYCLES": str(max_cycles),
-                "EXPECTED_FAILURE": "1" if expected_failure else "0",
-            },
+            env = env,
             timeout = timeout,
             tags = tags,
         )

@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 import struct
 
 from zamlet import disasm_trace
@@ -19,13 +20,19 @@ async def update(clock, lamlet):
 
 
 def write_span_trees(lam):
-    """Write span trees to file for debugging."""
-    with open('span_trees.txt', 'w') as f:
+    """Write span trees to file for debugging.
+
+    Under bazel test, writes to $TEST_UNDECLARED_OUTPUTS_DIR so the file
+    is preserved in test.outputs/outputs.zip alongside test.log.
+    """
+    out_dir = os.environ.get('TEST_UNDECLARED_OUTPUTS_DIR', '.')
+    path = os.path.join(out_dir, 'span_trees.txt')
+    with open(path, 'w') as f:
         for span in lam.monitor.spans.values():
             if span.parent is None:
                 f.write(lam.monitor.format_span_tree(span.span_id, max_depth=20))
                 f.write('\n\n')
-    logger.info("Span trees written to span_trees.txt")
+    logger.info(f"Span trees written to {path}")
 
 
 async def run(clock: Clock, filename, params: ZamletParams = None,

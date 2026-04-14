@@ -11,13 +11,15 @@ Messages:
     LOAD_WORD_DROP  - DST jamlet wasn't ready, SRC should retry
 '''
 from typing import List, Any, TYPE_CHECKING
+from dataclasses import dataclass
 import logging
 
 from zamlet import addresses
+from zamlet.addresses import KMAddr
 from zamlet.waiting_item import WaitingItem, WaitingItemRequiresCache
 from zamlet.message import TaggedHeader, MessageType, SendType
 from zamlet.kamlet.cache_table import SendState, ReceiveState
-from zamlet.kamlet import kinstructions
+from zamlet.kamlet.kinstructions import KInstr, Renamed
 from zamlet.params import ZamletParams
 from zamlet.transactions import register_handler
 
@@ -28,11 +30,88 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+@dataclass
+class LoadWord(KInstr):
+    """
+    This instruction loads a word from memory to a location in a vector register.
+
+    Two per-kamlet roles: the SRC kamlet holds the cache line and sends the
+    word across J2J; the DST kamlet receives the word and writes the register.
+    Both sides can land on the same kamlet, in which case two witems are
+    created (and `needs_witem=2` reserves both slots ahead of dispatch).
+    """
+    dst: addresses.RegAddr
+    src: KMAddr
+    byte_mask: int
+    writeset_ident: int
+    mask_reg: int
+    mask_index: int
+    instr_ident: int
+
+    @property
+    def k_maddr(self) -> KMAddr:
+        """Cache slot address used by is_ready when cache_is_read is set."""
+        return self.src
+
+    async def admit(self, kamlet) -> 'LoadWord | None':
+        is_src = (self.src.k_index == kamlet.k_index)
+        is_dst = (self.dst.k_index == kamlet.k_index)
+        if not (is_src or is_dst):
+            kamlet.monitor.finalize_kinstr_exec(
+                self.instr_ident, kamlet.min_x, kamlet.min_y)
+            return None
+        mask_preg = None
+        dst_preg = None
+        if is_dst:
+            mask_preg = kamlet.r(self.mask_reg) if self.mask_reg is not None else None
+            dst_preg = kamlet.rw(self.dst.reg)
+        new = self.rename(
+            cache_is_read=is_src,
+            writeset_ident=self.writeset_ident,
+            needs_witem=2 if (is_src and is_dst) else 1,
+            dst_pregs={0: dst_preg} if dst_preg is not None else {},
+            mask_preg=mask_preg,
+        )
+        new._is_src = is_src
+        new._is_dst = is_dst
+        return new
+
+    async def execute(self, kamlet) -> None:
+        r = self.renamed
+        if self._is_src:
+            witem_src = WaitingLoadWordSrc(params=kamlet.params, instr=self)
+            kamlet.monitor.record_witem_created(
+                self.instr_ident, kamlet.min_x, kamlet.min_y, 'WaitingLoadWordSrc',
+                finalize=not self._is_dst)
+            kamlet.cache_table.add_witem_immediately(witem=witem_src, k_maddr=self.src)
+            for jamlet in kamlet.jamlets:
+                init_src_state(jamlet, witem_src)
+
+        if self._is_dst:
+            dst_preg = r.dst_pregs[0]
+            mask_preg = r.mask_preg
+            read_regs = [mask_preg] if mask_preg is not None else []
+            write_regs = [dst_preg]
+            rf_write_ident = kamlet.rf_info.start(
+                read_regs=read_regs, write_regs=write_regs)
+            witem_dst = WaitingLoadWordDst(
+                params=kamlet.params, instr=self, rf_ident=rf_write_ident,
+                dst_preg=dst_preg, mask_preg=mask_preg)
+            parent_span = kamlet.monitor.get_kinstr_exec_span_id(
+                self.instr_ident, kamlet.min_x, kamlet.min_y)
+            kamlet.monitor.record_witem_created(
+                self.instr_ident + 1, kamlet.min_x, kamlet.min_y, 'WaitingLoadWordDst',
+                parent_span_id=parent_span, read_regs=read_regs, write_regs=write_regs)
+            kamlet.cache_table.add_witem_immediately(witem=witem_dst)
+            for jamlet in kamlet.jamlets:
+                init_dst_state(jamlet, witem_dst)
+
+
 class WaitingLoadWordSrc(WaitingItemRequiresCache):
 
     cache_is_read = True
 
-    def __init__(self, params: ZamletParams, instr: kinstructions.LoadWord):
+    def __init__(self, params: ZamletParams, instr: 'LoadWord'):
         super().__init__(
             item=instr, instr_ident=instr.instr_ident,
             writeset_ident=instr.writeset_ident, rf_ident=None)
@@ -52,10 +131,16 @@ class WaitingLoadWordSrc(WaitingItemRequiresCache):
 
 class WaitingLoadWordDst(WaitingItem):
 
-    def __init__(self, params: ZamletParams, instr: kinstructions.LoadWord, rf_ident: int):
+    def __init__(self, params: ZamletParams, instr: 'LoadWord',
+                 rf_ident: int, dst_preg: int, mask_preg: int | None):
         super().__init__(item=instr, instr_ident=instr.instr_ident + 1, rf_ident=rf_ident)
         self.protocol_states = [ReceiveState.COMPLETE for _ in range(params.j_in_k)]
         self.writeset_ident = instr.writeset_ident
+        # Phys reg for the dst register, locked at start time. The kamlet's
+        # rename table may rotate the dst arch by the time finalize runs, so
+        # we cannot re-derive these from instr.
+        self.dst_preg = dst_preg
+        self.mask_preg = mask_preg
 
     def ready(self) -> bool:
         return all(state == ReceiveState.COMPLETE for state in self.protocol_states)
@@ -66,9 +151,8 @@ class WaitingLoadWordDst(WaitingItem):
     async def finalize(self, kamlet: 'Kamlet') -> None:
         assert all(state == ReceiveState.COMPLETE for state in self.protocol_states)
         assert self.rf_ident is not None
-        instr = self.item
-        read_regs = [instr.mask_reg] if instr.mask_reg is not None else []
-        kamlet.rf_info.finish(self.rf_ident, write_regs=[instr.dst.reg], read_regs=read_regs)
+        read_regs = [self.mask_preg] if self.mask_preg is not None else []
+        kamlet.rf_info.finish(self.rf_ident, write_regs=[self.dst_preg], read_regs=read_regs)
 
 
 def init_src_state(jamlet: 'Jamlet', witem: WaitingLoadWordSrc) -> None:
@@ -158,10 +242,11 @@ async def handle_req(jamlet: 'Jamlet', packet: List[Any]) -> None:
     assert isinstance(witem, WaitingLoadWordDst)
     assert witem.protocol_states[jamlet.j_in_k_index] == ReceiveState.WAITING_FOR_REQUEST
     instr = witem.item
+    dst_preg = witem.dst_preg
 
     old_word = int.from_bytes(jamlet.rf_slice[
-        instr.dst.reg * jamlet.params.word_bytes :
-        (instr.dst.reg + 1) * jamlet.params.word_bytes], 'little')
+        dst_preg * jamlet.params.word_bytes :
+        (dst_preg + 1) * jamlet.params.word_bytes], 'little')
 
     src_word_offset = instr.src.addr % jamlet.params.word_bytes
     dst_word_offset = instr.dst.offset_in_word
@@ -196,14 +281,14 @@ async def handle_req(jamlet: 'Jamlet', packet: List[Any]) -> None:
 
     result_bytes = result.to_bytes(jamlet.params.word_bytes, byteorder='little')
     jamlet.rf_slice[
-        instr.dst.reg * jamlet.params.word_bytes :
-        (instr.dst.reg + 1) * jamlet.params.word_bytes] = result_bytes
+        dst_preg * jamlet.params.word_bytes :
+        (dst_preg + 1) * jamlet.params.word_bytes] = result_bytes
 
     witem.protocol_states[jamlet.j_in_k_index] = ReceiveState.COMPLETE
 
     logger.debug(
         f'{jamlet.clock.cycle}: LOAD_WORD: jamlet ({jamlet.x}, {jamlet.y}): '
-        f'wrote to reg={instr.dst.reg} result={result_bytes.hex()}')
+        f'wrote to dst_preg={dst_preg} result={result_bytes.hex()}')
 
     await send_resp(jamlet, header)
 

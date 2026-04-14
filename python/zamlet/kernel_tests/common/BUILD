@@ -1,27 +1,33 @@
 package(default_visibility = ["//python/zamlet/kernel_tests:__subpackages__"])
 
-exports_files([
-    "crt.S",
-    "syscalls.c",
-    "test.ld",
-    "vpu_alloc.c",
-    "util.h",
+HEADERS = [
     "encoding.h",
+    "util.h",
     "vpu_alloc.h",
     "stdlib.h",
     "stdio.h",
     "string.h",
     "math.h",
     "assert.h",
-    "ara/util.c",
-    "ara/util.h",
-    "ara/gemv.c",
-    "ara/gemv.h",
-    "ara/fdotproduct.c",
-    "ara/fdotproduct.h",
+    "zamlet_custom.h",
     "ara/exp.h",
+    "ara/util.h",
+    "ara/gemv.h",
+    "ara/fdotproduct.h",
     "ara/rivec/vector_defines.h",
-])
+]
+
+NON_HEADER_EXPORTS = [
+    "crt.S",
+    "syscalls.c",
+    "test.ld",
+    "vpu_alloc.c",
+    "ara/util.c",
+    "ara/gemv.c",
+    "ara/fdotproduct.c",
+]
+
+exports_files(HEADERS + NON_HEADER_EXPORTS)
 
 filegroup(
     name = "standard_runtime",
@@ -35,19 +41,5 @@ filegroup(
 
 filegroup(
     name = "headers",
-    srcs = [
-        "encoding.h",
-        "util.h",
-        "vpu_alloc.h",
-        "stdlib.h",
-        "stdio.h",
-        "string.h",
-        "math.h",
-        "assert.h",
-        "ara/exp.h",
-        "ara/util.h",
-        "ara/gemv.h",
-        "ara/fdotproduct.h",
-        "ara/rivec/vector_defines.h",
-    ],
+    srcs = HEADERS,
 )

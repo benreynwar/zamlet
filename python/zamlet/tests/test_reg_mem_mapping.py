@@ -17,7 +17,7 @@ import pytest
 from zamlet.params import ZamletParams
 from zamlet.geometries import SMALL_GEOMETRIES, scale_n_tests
 from zamlet.addresses import Ordering, WordOrder, KMAddr
-from zamlet.kamlet import kinstructions
+from zamlet.transactions.load import Load
 from zamlet.transactions.j2j_mapping import RegMemMapping, get_mapping_from_reg, get_mapping_from_mem
 
 
@@ -36,7 +36,7 @@ def create_test_params(k_cols: int = 2, k_rows: int = 1,
 
 def create_load_instr(params: ZamletParams, mem_ew: int, reg_ew: int,
                       start_index: int, n_elements: int,
-                      mem_offset: int = 0) -> kinstructions.Load:
+                      mem_offset: int = 0) -> Load:
     mem_ordering = Ordering(word_order=WordOrder.STANDARD, ew=mem_ew)
     reg_ordering = Ordering(word_order=WordOrder.STANDARD, ew=reg_ew)
 
@@ -47,7 +47,7 @@ def create_load_instr(params: ZamletParams, mem_ew: int, reg_ew: int,
         params=params,
     )
 
-    return kinstructions.Load(
+    return Load(
         dst=0,
         k_maddr=k_maddr,
         start_index=start_index,
@@ -64,7 +64,7 @@ def mapping_to_tuple(m: RegMemMapping) -> Tuple[int, int, int, int, int, int, in
 
 
 def get_all_mappings_from_reg(params: ZamletParams,
-                               instr: kinstructions.Load) -> Set[Tuple]:
+                               instr: Load) -> Set[Tuple]:
     """Generate all mappings by iterating over reg-side coordinates."""
     mappings = set()
     word_bits = params.word_bytes * 8
@@ -89,7 +89,7 @@ def get_all_mappings_from_reg(params: ZamletParams,
 
 
 def get_all_mappings_from_mem(params: ZamletParams,
-                               instr: kinstructions.Load) -> Set[Tuple]:
+                               instr: Load) -> Set[Tuple]:
     """Generate all mappings by iterating over mem-side coordinates."""
     mappings = set()
     word_bits = params.word_bytes * 8

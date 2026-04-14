@@ -50,10 +50,17 @@ class WaitingStoreScatterBase(WaitingItem, ABC):
 
     writes_all_memory = True
 
-    def __init__(self, instr, params: ZamletParams, rf_ident: int | None = None):
+    def __init__(self, instr, params: ZamletParams,
+                 src_pregs: dict[int, int], mask_preg: int | None,
+                 rf_ident: int | None = None):
         super().__init__(item=instr, instr_ident=instr.instr_ident, rf_ident=rf_ident)
         self.writeset_ident = instr.writeset_ident
         self.params = params
+        # Phys regs locked at start time, keyed by absolute vline index (src_v).
+        # The kamlet's rename table may rotate the src arch by the time the
+        # witem runs, so we cannot re-derive these from instr.src.
+        self.src_pregs = src_pregs
+        self.mask_preg = mask_preg
         n_tags = params.j_in_k * params.word_bytes
         self.transaction_states: List[SendState] = [SendState.INITIAL for _ in range(n_tags)]
         self.fault_sync_state = SyncState.NOT_STARTED
@@ -73,8 +80,14 @@ class WaitingStoreScatterBase(WaitingItem, ABC):
         pass
 
     @abstractmethod
-    def get_additional_read_regs(self, kamlet) -> List[int]:
-        """Return additional registers that need to be read (e.g., index register)."""
+    def get_additional_read_pregs(self) -> List[int]:
+        """Return phys regs the subclass took read locks on at start time that
+        the base doesn't already know about (i.e. anything besides src and
+        mask, which the base handles directly).
+
+        Strided scatters return []. Indexed scatters return their index_pregs —
+        finalize releases them in the same rf_info.finish call as src+mask.
+        """
         pass
 
     def _state_index(self, j_in_k_index: int, tag: int) -> int:
@@ -189,13 +202,9 @@ class WaitingStoreScatterBase(WaitingItem, ABC):
                      f'jamlet ({jamlet.x},{jamlet.y}) ident={self.instr_ident} tag={tag} will resend')
 
     async def finalize(self, kamlet) -> None:
-        instr = self.item
-        src_regs = kamlet.get_regs(
-            start_index=instr.start_index, n_elements=instr.n_elements,
-            ew=instr.src_ordering.ew, base_reg=instr.src)
-        read_regs = list(src_regs) + self.get_additional_read_regs(kamlet)
-        if instr.mask_reg is not None:
-            read_regs.append(instr.mask_reg)
+        read_regs = list(self.src_pregs.values()) + list(self.get_additional_read_pregs())
+        if self.mask_preg is not None:
+            read_regs.append(self.mask_preg)
         kamlet.rf_info.finish(self.rf_ident, write_regs=[], read_regs=read_regs)
 
     def _compute_src_element(self, jamlet: 'Jamlet', tag: int) -> tuple[int, int, int, int]:
@@ -239,10 +248,10 @@ class WaitingStoreScatterBase(WaitingItem, ABC):
         if src_e < instr.start_index or src_e >= instr.start_index + instr.n_elements:
             return None
 
-        if instr.mask_reg is not None:
+        if self.mask_preg is not None:
             wb = jamlet.params.word_bytes
             mask_word = int.from_bytes(
-                jamlet.rf_slice[instr.mask_reg * wb: (instr.mask_reg + 1) * wb],
+                jamlet.rf_slice[self.mask_preg * wb: (self.mask_preg + 1) * wb],
                 byteorder='little')
             bit_index = src_e // jamlet.params.j_in_l
             mask_bit = (mask_word >> bit_index) & 1
@@ -304,9 +313,9 @@ class WaitingStoreScatterBase(WaitingItem, ABC):
 
         # Read source data from register file
         src_ve, src_e, src_eb, src_v = self._compute_src_element(jamlet, tag)
-        src_reg = instr.src + src_v
+        src_preg = self.src_pregs[src_v]
         src_word = int.from_bytes(
-            jamlet.rf_slice[src_reg * wb: (src_reg + 1) * wb], 'little')
+            jamlet.rf_slice[src_preg * wb: (src_preg + 1) * wb], 'little')
 
         ident = (instr.instr_ident + tag + 1) % jamlet.params.max_response_tags
 

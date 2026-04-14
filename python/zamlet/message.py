@@ -202,9 +202,15 @@ class MaskedTaggedHeader(TaggedHeader):
 @dataclass
 class RegElementHeader(TaggedHeader):
     # For READ_REG_ELEMENT_REQ/RESP - fits in the 12 remaining bits
-    src_reg: int = 0        # 6 bits - source register number
-    src_byte_offset: int = 0  # 3 bits - byte offset within register word
-    n_bytes: int = 0        # 3 bits - number of bytes to read
+    # src_vline_offset is the vline offset within the source vector register
+    # (e.g. vs2 for vrgather). The receiver looks up the matching phys reg in
+    # its own witem's vs2_pregs[src_vline_offset] — sending arch reg indices
+    # across kamlets would require the receiver to also have access to its
+    # kamlet's rename table, while vline offsets are universally meaningful
+    # (purely a function of the gather index and elements_in_vline).
+    src_vline_offset: int = 0  # 6 bits - source vline offset within vs2
+    src_byte_offset: int = 0   # 3 bits - byte offset within register word
+    n_bytes: int = 0           # 3 bits - number of bytes to read
 
 
 @dataclass

@@ -31,8 +31,12 @@ async def handle_read_reg_element_req(jamlet: 'Jamlet', packet: List[Any]) -> No
 
     wb = jamlet.params.word_bytes
 
+    # Translate the vline offset into our local kamlet's phys reg via the
+    # witem (which locked vs2 at start time on this kamlet too).
+    src_preg = parent_witem.vs2_pregs[header.src_vline_offset]
+
     # Read the requested bytes from local rf_slice as an int
-    offset = header.src_reg * wb + header.src_byte_offset
+    offset = src_preg * wb + header.src_byte_offset
     raw = bytes(jamlet.rf_slice[offset:offset + header.n_bytes])
     raw = raw + bytes(wb - len(raw))
     data = int.from_bytes(raw, 'little')
@@ -48,7 +52,7 @@ async def handle_read_reg_element_req(jamlet: 'Jamlet', packet: List[Any]) -> No
         length=1,
         tag=header.tag,
         ident=header.ident,
-        src_reg=header.src_reg,
+        src_vline_offset=header.src_vline_offset,
         src_byte_offset=header.src_byte_offset,
         n_bytes=header.n_bytes,
     )
@@ -62,7 +66,8 @@ async def handle_read_reg_element_req(jamlet: 'Jamlet', packet: List[Any]) -> No
     await jamlet.send_packet(resp_packet, parent_span_id=transaction_span_id)
 
     logger.debug(f'{jamlet.clock.cycle}: jamlet ({jamlet.x},{jamlet.y}): '
-                 f'READ_REG_ELEMENT_REQ reg={header.src_reg} offset={header.src_byte_offset} '
+                 f'READ_REG_ELEMENT_REQ src_vline={header.src_vline_offset} '
+                 f'preg={src_preg} offset={header.src_byte_offset} '
                  f'n_bytes={header.n_bytes} -> ({header.source_x},{header.source_y}) '
                  f'data=0x{data:x}')
 
@@ -95,7 +100,7 @@ async def _send_drop(jamlet: 'Jamlet', header: RegElementHeader) -> None:
         length=0,
         tag=header.tag,
         ident=header.ident,
-        src_reg=header.src_reg,
+        src_vline_offset=header.src_vline_offset,
         src_byte_offset=header.src_byte_offset,
         n_bytes=header.n_bytes,
     )

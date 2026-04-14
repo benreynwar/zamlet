@@ -17,16 +17,14 @@ static int clog2(size_t value) {
 
 void compute_indices(size_t n, size_t vl, uint32_t* read_idx, uint32_t* write_idx,
                      int reverse_bits) {
-    //printf("compute_indices: n=%d, vl=%d, read_idx=%p, write_idx=%p\n",
-    //       (int)n, (int)vl, read_idx, write_idx);
+    // Cap vl to n: when VL > n the loops would run zero iterations.
+    if (vl > n) vl = n;
 
     int clog2_n = clog2(n);
-    //printf("clog2_n=%d\n", clog2_n);
 
     size_t vl_squared = vl * vl;
     int use_algo_a = (n >= vl_squared);
     size_t stride = n / vl;
-    //printf("vl²=%d, use_algo_a=%d, stride=%d\n", (int)vl_squared, use_algo_a, (int)stride);
 
     asm volatile (
         "vsetvli zero, %0, e32, m1, ta, ma\n"

@@ -705,6 +705,7 @@ class Monitor:
             write_regs=write_regs,
         )
         self._witem_by_key[key] = span_id
+        self.add_event(parent_span_id, "add_to_witem_table")
         if finalize:
             self.finalize_children(parent_span_id)
         return span_id

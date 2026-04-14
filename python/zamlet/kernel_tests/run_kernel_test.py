@@ -5,8 +5,10 @@ Reads configuration from environment variables set by the kernel_test macro:
   GEOMETRY: geometry name (e.g. "k2x1_j1x1")
   MAX_CYCLES: maximum simulation cycles (default 100000)
   EXPECTED_FAILURE: "1" if the kernel should fail, "0" otherwise
+  SYMBOL_VALUES: JSON dict of symbol name -> int value to inject (optional)
 """
 import asyncio
+import json
 import logging
 import os
 import sys
@@ -23,9 +25,12 @@ def main():
     geometry = get_geometry(os.environ["GEOMETRY"])
     max_cycles = int(os.environ.get("MAX_CYCLES", "100000"))
     expected_failure = os.environ.get("EXPECTED_FAILURE", "0") == "1"
+    symbol_values_str = os.environ.get("SYMBOL_VALUES")
+    symbol_values = json.loads(symbol_values_str) if symbol_values_str else None
 
     clock = Clock(max_cycles=max_cycles)
-    exit_code, _monitor = asyncio.run(run_lamlet_main(clock, binary, geometry))
+    exit_code, _monitor = asyncio.run(
+        run_lamlet_main(clock, binary, geometry, symbol_values=symbol_values))
 
     if expected_failure:
         assert exit_code != 0, f"Kernel {binary} should have failed but returned 0"

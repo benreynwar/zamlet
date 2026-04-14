@@ -114,7 +114,7 @@ let
   # RISC-V Clang/LLD (for VPU vector spill support)
   riscv-clang = import ./riscv-clang.nix { pkgs = bootstrap-pkgs; };
 in {
-  inherit pkgs sky130-pdk python-env;
+  inherit pkgs sky130-pdk python-env riscv-clang;
 
   # Project build dependencies
   buildDeps = with pkgs; [
@@ -140,6 +140,7 @@ in {
 
   # Developer tooling (editor, LSP, etc.)
   devTools = [
+    pkgs.cachix
     ((pkgs.vim_configurable.override { guiSupport = "no"; }).customize {
       vimrcConfig.packages.zamlet = with pkgs.vimPlugins; {
         start = [ ale ];

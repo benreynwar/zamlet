@@ -39,21 +39,21 @@ static inline int count_bits(size_t val) {
 void compute_indices(size_t n, size_t vl, uint32_t* read_idx,
                      uint32_t* write_idx, int reverse_bits);
 void bitreverse_reorder64(size_t n, const int64_t* src, int64_t* dst,
-                          const uint32_t* read_idx,
-                          const uint32_t* write_idx);
+                          const uint64_t* read_idx,
+                          const uint64_t* write_idx);
 
 int main() {
-    size_t vl_e64 = get_vl_e64();
     size_t vl_e32 = get_vl_e32();
-    if ((size_t)n != 8 * vl_e32)
-        exit(1);
     int n_bits = reverse_bits ? (int)reverse_bits : count_bits(n);
 
-    // e64 data in vpu_mem64, e32 indices in vpu_mem32
+    // e64 data in vpu_mem64, e32 indices in vpu_mem32.
+    // 64-bit widened/scaled indices live in vpu_mem64 after dst.
     int64_t* src = (int64_t*)&vpu_mem64[0];
     int64_t* dst = (int64_t*)&vpu_mem64[n];
-    uint32_t* read_idx = (uint32_t*)&vpu_mem32[0];
-    uint32_t* write_idx = (uint32_t*)&vpu_mem32[n];
+    uint32_t* read_idx32 = (uint32_t*)&vpu_mem32[0];
+    uint32_t* write_idx32 = (uint32_t*)&vpu_mem32[n];
+    uint64_t* read_idx = (uint64_t*)&vpu_mem64[2 * n];
+    uint64_t* write_idx = (uint64_t*)&vpu_mem64[3 * n];
 
     // Initialize src[i] = i * 7 + 3 using e64 vector ops
     {
@@ -100,31 +100,13 @@ int main() {
         }
     }
 
-    compute_indices(n, vl_e32, read_idx, write_idx, n_bits);
+    compute_indices(n, vl_e32, read_idx32, write_idx32, n_bits);
 
-    // Convert element indices to byte offsets (*8 for e64)
-    {
-        size_t rem = n;
-        uint32_t* rp = read_idx;
-        uint32_t* wp = write_idx;
-        while (rem > 0) {
-            size_t chunk;
-            asm volatile(
-                "vsetvli %0, %1, e32, m1, ta, ma\n"
-                "vle32.v v1, (%2)\n"
-                "vsll.vi v1, v1, 3\n"
-                "vse32.v v1, (%2)\n"
-                "vle32.v v2, (%3)\n"
-                "vsll.vi v2, v2, 3\n"
-                "vse32.v v2, (%3)\n"
-                : "=r"(chunk)
-                : "r"(rem), "r"(rp), "r"(wp)
-                : "memory"
-            );
-            rp += chunk;
-            wp += chunk;
-            rem -= chunk;
-        }
+    // Widen 32-bit element indices to 64-bit byte offsets (*8 for e64).
+    // Scalar loop — outside the timed kernel region, so simplicity wins.
+    for (size_t i = 0; i < (size_t)n; i++) {
+        read_idx[i]  = ((uint64_t)read_idx32[i])  << 3;
+        write_idx[i] = ((uint64_t)write_idx32[i]) << 3;
     }
 
     bitreverse_reorder64(n, src, dst, read_idx, write_idx);

@@ -9,13 +9,19 @@ if TYPE_CHECKING:
     from zamlet.jamlet.jamlet import Jamlet
 
 
-def read_element(jamlet: 'Jamlet', reg: int, element_index: int, ew: int) -> bytes:
-    """Read a single element from a jamlet's register file.
+def read_element(jamlet: 'Jamlet', preg: int, element_index: int, ew: int) -> bytes:
+    """Read a single element from a single phys register.
+
+    The caller is responsible for resolving the correct phys register for the
+    vline that owns this element. Under kamlet-side rename, adjacent vlines
+    may map to non-adjacent phys regs, so this helper cannot recover the
+    phys for vline N by adding N to a base phys.
 
     Args:
         jamlet: The jamlet with the register file
-        reg: Base register number
-        element_index: Global element index (across all jamlets)
+        preg: Phys register holding the vline that contains this element
+        element_index: Global element index (across all jamlets) — used only
+            to compute which element-within-word to read
         ew: Element width in bits
 
     Returns:
@@ -23,16 +29,12 @@ def read_element(jamlet: 'Jamlet', reg: int, element_index: int, ew: int) -> byt
     """
     wb = jamlet.params.word_bytes
     element_bytes = ew // 8
-    elements_in_vline = jamlet.params.vline_bytes * 8 // ew
 
     element_in_jamlet = element_index // jamlet.params.j_in_l
-    vline_index = element_in_jamlet // (wb * 8 // ew)
     element_in_word = element_in_jamlet % (wb * 8 // ew)
-
-    src_reg = reg + vline_index
     byte_offset = element_in_word * element_bytes
 
-    word_data = jamlet.rf_slice[src_reg * wb: (src_reg + 1) * wb]
+    word_data = jamlet.rf_slice[preg * wb: (preg + 1) * wb]
     return word_data[byte_offset:byte_offset + element_bytes]
 
 

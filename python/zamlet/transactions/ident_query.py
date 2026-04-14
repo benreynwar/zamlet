@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING
 
 from zamlet.waiting_item import WaitingItem
 from zamlet.kamlet.kinstructions import (
-    TrackedKInstr, KInstrOpcode, KINSTR_WIDTH, OPCODE_WIDTH, SYNC_IDENT_WIDTH,
+    TrackedKInstr, Renamed, KInstrOpcode, KINSTR_WIDTH, OPCODE_WIDTH, SYNC_IDENT_WIDTH,
 )
 from zamlet.control_structures import pack_fields_to_int
 from zamlet.message import IdentHeader, MessageType, SendType
@@ -71,14 +71,19 @@ class IdentQuery(TrackedKInstr):
             baseline=self.baseline,
         )
 
-    async def update_kamlet(self, kamlet: 'Kamlet'):
-        distance = kamlet.cache_table.get_oldest_active_instr_ident_distance(self.baseline)
+    async def admit(self, kamlet: 'Kamlet') -> 'IdentQuery | None':
+        # Snapshot the oldest-active distance at admit time: later-admitted
+        # instructions can't have witems yet and must not skew the answer.
+        distance = kamlet.get_oldest_active_instr_ident_distance(self.baseline)
+        return self.rename(needs_witem=1, ident_query_distance=distance)
+
+    async def execute(self, kamlet: 'Kamlet') -> None:
+        distance = self.renamed.ident_query_distance
 
         logger.debug(f'{kamlet.clock.cycle}: IdentQuery: kamlet ({kamlet.min_x},{kamlet.min_y}) '
                      f'baseline={self.baseline} previous={self.previous_instr_ident} '
                      f'distance={distance}')
 
-        # Create waiting item to track sync completion and send response
         is_origin = (kamlet.min_x == kamlet.params.west_offset
                      and kamlet.min_y == kamlet.params.north_offset)
         witem = WaitingIdentQuery(
@@ -89,7 +94,7 @@ class IdentQuery(TrackedKInstr):
         )
         kamlet.monitor.record_witem_created(
             self.instr_ident, kamlet.min_x, kamlet.min_y, 'WaitingIdentQuery')
-        await kamlet.cache_table.add_witem(witem)
+        kamlet.cache_table.add_witem_immediately(witem=witem)
 
         # Report to synchronizer (uses min aggregation, None if no waiting items)
         kamlet.synchronizer.local_event(self.instr_ident, value=distance)

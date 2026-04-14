@@ -24,7 +24,8 @@ from zamlet.geometries import SMALL_GEOMETRIES, scale_n_tests
 from zamlet.oamlet.oamlet import Oamlet
 from zamlet.addresses import GlobalAddress, MemoryType, Ordering, WordOrder, KMAddr, RegAddr
 from zamlet.kamlet import kinstructions
-from zamlet.kamlet.kinstructions import Load, Store
+from zamlet.transactions.load import Load
+from zamlet.transactions.store import Store
 from zamlet.monitor import CompletionType, SpanType
 from zamlet.tests import test_utils
 
