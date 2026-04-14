@@ -12,7 +12,7 @@ from dataclasses import dataclass
 import logging
 
 from zamlet import addresses
-from zamlet.kamlet.kinstructions import KInstr
+from zamlet.kamlet.kinstructions import KInstr, Renamed
 from zamlet.transactions.load_gather_base import WaitingLoadGatherBase
 
 if TYPE_CHECKING:
@@ -44,9 +44,7 @@ class LoadIndexedUnordered(KInstr):
     instr_ident: int
     index_offset: int = 0
 
-    async def update_kamlet(self, kamlet):
-        logger.debug(f'kamlet ({kamlet.min_x}, {kamlet.min_y}): load_indexed.update_kamlet '
-                     f'addr={hex(self.g_addr.addr)} ident={self.instr_ident}')
+    async def admit(self, kamlet) -> 'LoadIndexedUnordered | None':
         dst_ew = self.dst_ordering.ew
         dst_elements_in_vline = kamlet.params.vline_bytes * 8 // dst_ew
         dst_start_vline = self.start_index // dst_elements_in_vline
@@ -54,52 +52,59 @@ class LoadIndexedUnordered(KInstr):
 
         index_ew = self.index_ordering.ew
         index_elements_in_vline = kamlet.params.vline_bytes * 8 // index_ew
-        index_start_vline = (self.start_index + self.index_offset) // index_elements_in_vline
+        index_start_vline = (
+            (self.start_index + self.index_offset) // index_elements_in_vline
+        )
         index_end_vline = (
-            self.start_index + self.index_offset + self.n_elements - 1
-        ) // index_elements_in_vline
+            (self.start_index + self.index_offset + self.n_elements - 1)
+            // index_elements_in_vline
+        )
 
         # Resolve src/mask phys lookups BEFORE allocating dst phys, so an
         # arch overlap (e.g. mask_reg == dst arch) resolves to the old phys.
-        index_pregs = {
-            v: kamlet.r(self.index_reg + v)
-            for v in range(index_start_vline, index_end_vline + 1)
-        }
+        index_pregs = {v: kamlet.r(self.index_reg + v)
+                       for v in range(index_start_vline, index_end_vline + 1)}
         mask_preg = kamlet.r(self.mask_reg) if self.mask_reg is not None else None
 
-        dst_preg_list = kamlet.alloc_dst_pregs(
+        dst_preg_list = await kamlet.alloc_dst_pregs(
             base_arch=self.dst, start_vline=dst_start_vline, end_vline=dst_end_vline,
             start_index=self.start_index, n_elements=self.n_elements,
             elements_in_vline=dst_elements_in_vline,
             mask_present=self.mask_reg is not None)
-        dst_pregs = {
-            dst_start_vline + i: dst_preg_list[i] for i in range(len(dst_preg_list))
-        }
+        dst_pregs = {dst_start_vline + i: p for i, p in enumerate(dst_preg_list)}
 
-        overlap = set(dst_pregs.values()) & set(index_pregs.values())
+        dst_values = set(dst_pregs.values())
+        overlap = dst_values & set(index_pregs.values())
         assert not overlap, \
             f"dst_pregs {dst_pregs} overlaps with index_pregs {index_pregs}: {overlap}"
-
-        read_regs = list(index_pregs.values())
         if mask_preg is not None:
-            read_regs.append(mask_preg)
-            assert mask_preg not in dst_pregs.values(), \
+            assert mask_preg not in dst_values, \
                 f"mask_preg {mask_preg} overlaps with dst_pregs {dst_pregs}"
-        write_regs = list(dst_pregs.values())
-        await kamlet.wait_for_rf_available(write_regs=write_regs, read_regs=read_regs,
-                                           instr_ident=self.instr_ident)
-        span_id = kamlet.monitor.get_kinstr_exec_span_id(
-            self.instr_ident, kamlet.min_x, kamlet.min_y)
-        kamlet.monitor.add_event(span_id, "rf_ready")
-        rf_write_ident = kamlet.rf_info.start(read_regs=read_regs, write_regs=write_regs)
+
+        return self.rename(
+            reads_all_memory=True, writeset_ident=self.writeset_ident,
+            needs_witem=1,
+            dst_pregs=dst_pregs, src2_pregs=index_pregs,
+            mask_preg=mask_preg, index_bound_bits=kamlet.index_bound_bits,
+        )
+
+    async def execute(self, kamlet) -> None:
+        r = self.renamed
+        logger.debug(
+            f'kamlet ({kamlet.min_x}, {kamlet.min_y}): load_indexed.execute '
+            f'addr={hex(self.g_addr.addr)} ident={self.instr_ident}')
+        rf_write_ident = kamlet.rf_info.start(
+            read_regs=r.read_pregs, write_regs=r.write_pregs)
         witem = WaitingLoadIndexedUnordered(
             params=kamlet.params, instr=self, rf_ident=rf_write_ident,
-            dst_pregs=dst_pregs, mask_preg=mask_preg, index_pregs=index_pregs,
-            index_bound_bits=kamlet.index_bound_bits)
+            dst_pregs=r.dst_pregs, mask_preg=r.mask_preg,
+            index_pregs=r.src2_pregs,
+            index_bound_bits=r.index_bound_bits)
         kamlet.monitor.record_witem_created(
-            self.instr_ident, kamlet.min_x, kamlet.min_y, 'WaitingLoadIndexedUnordered',
-            read_regs=read_regs, write_regs=write_regs)
-        await kamlet.cache_table.add_witem(witem=witem)
+            self.instr_ident, kamlet.min_x, kamlet.min_y,
+            'WaitingLoadIndexedUnordered',
+            read_regs=r.read_pregs, write_regs=r.write_pregs)
+        kamlet.cache_table.add_witem_immediately(witem=witem)
 
 
 class WaitingLoadIndexedUnordered(WaitingLoadGatherBase):

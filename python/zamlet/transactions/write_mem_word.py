@@ -45,12 +45,12 @@ class WaitingWriteMemWord(WaitingItemRequiresCache):
     cache_is_write = True
     use_source_to_match = True
 
-    def __init__(self, header: WriteMemWordHeader, cache_slot: int, j_saddr: addresses.JSAddr,
+    def __init__(self, header: WriteMemWordHeader, addr: addresses.KMAddr,
                  writeset_ident: int | None = None):
-        super().__init__(item=header, instr_ident=header.ident, cache_slot=cache_slot,
+        super().__init__(item=header, instr_ident=header.ident,
                          writeset_ident=writeset_ident,
                          source=(header.source_x, header.source_y))
-        self.j_saddr = j_saddr
+        self.addr = addr
         self.state = ReceiveState.NEED_TO_ASK_FOR_RESEND
 
     def ready(self):
@@ -59,7 +59,8 @@ class WaitingWriteMemWord(WaitingItemRequiresCache):
     async def monitor_kamlet(self, kamlet) -> None:
         '''Send RETRY when cache becomes ready, then wait for resent REQ.'''
         if self.state == ReceiveState.NEED_TO_ASK_FOR_RESEND and self.cache_is_avail:
-            jamlet = kamlet.jamlets[self.j_saddr.j_in_k_index]
+            j_saddr = self.addr.to_j_saddr(kamlet.cache_table)
+            jamlet = kamlet.jamlets[j_saddr.j_in_k_index]
             await send_retry(jamlet, self.item)
             self.state = ReceiveState.WAITING_FOR_REQUEST
 
@@ -144,10 +145,9 @@ async def handle_req(jamlet: 'Jamlet', packet: List[Any]) -> None:
         can_get_witem = jamlet.cache_table.has_free_witem_slot(use_reserved=True)
         if can_get_witem:
             slot_state = jamlet.cache_table.slot_states[slot]
-            j_saddr = addr.to_j_saddr(jamlet.cache_table)
-            witem = WaitingWriteMemWord(header, slot, j_saddr,
+            witem = WaitingWriteMemWord(header, addr,
                                         writeset_ident=parent_witem.writeset_ident)
-            jamlet.cache_table.add_witem_immediately(witem, use_reserved=True)
+            jamlet.cache_table.add_witem_immediately(witem, k_maddr=addr, use_reserved=True)
             # Track witem span - parent is the transaction
             transaction_span_id = jamlet.monitor.get_transaction_span_id(
                 header.ident, header.tag, header.source_x, header.source_y, jamlet.x, jamlet.y)
@@ -173,13 +173,11 @@ async def handle_req(jamlet: 'Jamlet', packet: List[Any]) -> None:
         can_get_witem = jamlet.cache_table.has_free_witem_slot(use_reserved=True)
         can_get_slot = jamlet.cache_table.can_get_slot(addr)
         if can_get_witem and can_get_slot:
-            cache_slot = jamlet.cache_table.get_slot_if_exists(addr)
-            assert cache_slot is not None
-            slot_state = jamlet.cache_table.slot_states[cache_slot]
-            j_saddr = addr.to_j_saddr(jamlet.cache_table)
-            witem = WaitingWriteMemWord(header, cache_slot, j_saddr,
+            witem = WaitingWriteMemWord(header, addr,
                                         writeset_ident=writeset_ident)
-            jamlet.cache_table.add_witem_immediately(witem, use_reserved=True)
+            jamlet.cache_table.add_witem_immediately(witem, k_maddr=addr, use_reserved=True)
+            cache_slot = witem.cache_slot
+            slot_state = jamlet.cache_table.slot_states[cache_slot]
             # Track witem span - parent is the transaction
             transaction_span_id = jamlet.monitor.get_transaction_span_id(
                 header.ident, header.tag, header.source_x, header.source_y, jamlet.x, jamlet.y)

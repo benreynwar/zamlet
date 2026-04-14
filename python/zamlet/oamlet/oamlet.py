@@ -257,6 +257,9 @@ class Oamlet:
         """Allocate n_idents consecutive instruction identifiers."""
         return await ident_query.get_instr_ident(self, n_idents)
 
+    def _scratch_active_count(self) -> int:
+        return self.params.n_vregs - self.params.n_arch_vregs - len(self._scratch_arch_free)
+
     def alloc_temp_regs(self, n: int) -> list[int]:
         """Reserve n scratch arch indices in [n_arch_vregs, n_vregs).
 
@@ -269,7 +272,13 @@ class Oamlet:
         """
         assert len(self._scratch_arch_free) >= n, \
             f"only {len(self._scratch_arch_free)} scratch arches free, need {n}"
-        return [self._scratch_arch_free.popleft() for _ in range(n)]
+        regs = [self._scratch_arch_free.popleft() for _ in range(n)]
+        active = self._scratch_active_count()
+        capacity = self.params.n_vregs - self.params.n_arch_vregs
+        logger.debug(
+            f'{self.clock.cycle}: lamlet alloc_temp_regs n={n} regs={regs} '
+            f'active={active}/{capacity}')
+        return regs
 
     async def free_temp_regs(self, regs: list[int], parent_span_id: int) -> None:
         """Release scratch arch indices.
@@ -280,6 +289,10 @@ class Oamlet:
         instruction that used the arch, so the kamlet handles ordering;
         callers do not need to wait for the prior uses to drain.
         """
+        capacity = self.params.n_vregs - self.params.n_arch_vregs
+        logger.debug(
+            f'{self.clock.cycle}: lamlet free_temp_regs n={len(regs)} regs={regs} '
+            f'active_before={self._scratch_active_count()}/{capacity}')
         for reg in regs:
             assert self.params.n_arch_vregs <= reg < self.params.n_vregs, \
                 f"reg={reg} is not a scratch arch index"

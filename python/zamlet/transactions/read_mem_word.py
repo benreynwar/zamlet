@@ -39,18 +39,21 @@ class WaitingReadMemWord(WaitingItemRequiresCache):
     cache_is_read = True
     use_source_to_match = True
 
-    def __init__(self, header: IdentHeader, cache_slot: int, j_saddr: addresses.JSAddr):
-        super().__init__(item=header, instr_ident=header.ident, cache_slot=cache_slot,
+    def __init__(self, header: IdentHeader, addr: addresses.KMAddr,
+                 writeset_ident: int | None = None):
+        super().__init__(item=header, instr_ident=header.ident,
+                         writeset_ident=writeset_ident,
                          source=(header.source_x, header.source_y))
-        self.j_saddr = j_saddr
+        self.addr = addr
 
     def ready(self):
         return self.cache_is_avail
 
     async def finalize(self, kamlet) -> None:
         '''Called when cache is ready - send the response.'''
-        jamlet = kamlet.jamlets[self.j_saddr.j_in_k_index]
-        await send_resp(jamlet, self.item, self.j_saddr)
+        j_saddr = self.addr.to_j_saddr(kamlet.cache_table)
+        jamlet = kamlet.jamlets[j_saddr.j_in_k_index]
+        await send_resp(jamlet, self.item, j_saddr)
 
 
 @register_handler(MessageType.READ_MEM_WORD_REQ)
@@ -90,11 +93,9 @@ async def handle_req(jamlet: 'Jamlet', packet: List[Any]) -> None:
         await send_drop(jamlet, header, 'cache_slot_unavailable')
         return
 
-    cache_slot = jamlet.cache_table.get_slot_if_exists(addr)
-    assert cache_slot is not None
-    j_saddr = addr.to_j_saddr(jamlet.cache_table)
-    witem = WaitingReadMemWord(header, cache_slot, j_saddr)
-    jamlet.cache_table.add_witem_immediately(witem, use_reserved=True)
+    witem = WaitingReadMemWord(header, addr,
+                               writeset_ident=parent_witem.writeset_ident)
+    jamlet.cache_table.add_witem_immediately(witem, k_maddr=addr, use_reserved=True)
     # Track witem span - parent is the transaction
     transaction_span_id = jamlet.monitor.get_transaction_span_id(
         header.ident, header.tag, header.source_x, header.source_y, jamlet.x, jamlet.y)

@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from zamlet import addresses
 from zamlet.addresses import GlobalAddress, TLBFaultType
 from zamlet.waiting_item import WaitingItem
-from zamlet.kamlet.kinstructions import TrackedKInstr
+from zamlet.kamlet.kinstructions import TrackedKInstr, Renamed
 from zamlet.message import (
     MessageType, SendType, ReadMemWordHeader, ElementIndexHeader, TaggedHeader
 )
@@ -69,8 +69,79 @@ class LoadIndexedElement(TrackedKInstr):
     parent_ident: int  # Barrier instruction ident for ordering
     mask_reg: int | None = None
 
-    async def update_kamlet(self, kamlet):
-        await handle_load_indexed_element(kamlet, self)
+    async def admit(self, kamlet: 'Kamlet') -> 'LoadIndexedElement | None':
+        params = kamlet.params
+        data_ew = self.data_ew
+        index_ew = self.index_ew
+        element_index = self.element_index
+
+        elements_in_vline = params.vline_bytes * 8 // data_ew
+        vw_index = element_index % params.j_in_l
+        k_index, j_in_k_index = addresses.vw_index_to_k_indices(
+            params, self.word_order, vw_index)
+
+        assert k_index == kamlet.k_index, \
+            f"LoadIndexedElement sent to wrong kamlet: expected {k_index}, got {kamlet.k_index}"
+
+        # Source phys lookups happen BEFORE dst allocation so an arch overlap
+        # resolves to the old phys.
+        index_elements_in_vline = params.vline_bytes * 8 // index_ew
+        index_v = element_index // index_elements_in_vline
+        dst_v = element_index // elements_in_vline
+
+        index_preg = kamlet.r(self.index_reg + index_v)
+        mask_preg = kamlet.r(self.mask_reg) if self.mask_reg is not None else None
+        # Single-element write touches only one element of one vline; the
+        # rest of the vline is undisturbed, so we use rw() (no rotation).
+        dst_preg = kamlet.rw(self.dst_reg + dst_v)
+
+        new = self.rename(
+            needs_witem=1,
+            src_pregs={index_v: index_preg},
+            dst_pregs={dst_v: dst_preg},
+            mask_preg=mask_preg,
+        )
+        new._j_in_k_index = j_in_k_index
+        new._index_v = index_v
+        new._dst_v = dst_v
+        return new
+
+    async def execute(self, kamlet: 'Kamlet') -> None:
+        r = self.renamed
+        jamlet = kamlet.jamlets[self._j_in_k_index]
+        index_preg = r.src_pregs[self._index_v]
+        dst_preg = r.dst_pregs[self._dst_v]
+
+        rf_write_ident = kamlet.rf_info.start(
+            read_regs=r.read_pregs, write_regs=r.write_pregs)
+
+        if r.mask_preg is not None and not _get_mask_bit(
+                jamlet, r.mask_preg, self.element_index):
+            logger.debug(f'{kamlet.clock.cycle}: LoadIndexedElement masked: '
+                         f'element={self.element_index} mask_reg={self.mask_reg}')
+            kamlet.rf_info.finish(
+                rf_write_ident, read_regs=r.read_pregs, write_regs=r.write_pregs)
+            await _send_short_circuit_resp(kamlet, jamlet, self, masked=True)
+            return
+
+        fault_type = _check_element_access(jamlet, self, index_preg)
+        if fault_type != TLBFaultType.NONE:
+            logger.debug(f'{kamlet.clock.cycle}: LoadIndexedElement fault: '
+                         f'element={self.element_index} fault_type={fault_type}')
+            kamlet.rf_info.finish(
+                rf_write_ident, read_regs=r.read_pregs, write_regs=r.write_pregs)
+            await _send_short_circuit_resp(kamlet, jamlet, self, fault=True)
+            return
+
+        witem = WaitingLoadIndexedElement(
+            instr=self, params=kamlet.params, rf_ident=rf_write_ident,
+            j_in_k_index=self._j_in_k_index,
+            dst_preg=dst_preg, index_preg=index_preg)
+        kamlet.monitor.record_witem_created(
+            self.instr_ident, kamlet.min_x, kamlet.min_y,
+            'WaitingLoadIndexedElement',
+            read_regs=r.read_pregs, write_regs=r.write_pregs)
+        kamlet.cache_table.add_witem_immediately(witem=witem)
 
 
 def _get_mask_bit(jamlet: 'Jamlet', mask_preg: int, element_index: int) -> bool:
@@ -110,102 +181,29 @@ def _check_element_access(jamlet: 'Jamlet', instr: 'LoadIndexedElement',
     return TLBFaultType.NONE
 
 
-async def handle_load_indexed_element(kamlet: 'Kamlet',
-                                       instr: LoadIndexedElement):
-    """Handle LoadIndexedElement instruction at kamlet level.
-
-    Find the jamlet that owns this element and create a waiting item for it.
-    If masked, immediately send response without doing any work.
-    """
-    params = kamlet.params
-    data_ew = instr.data_ew
-    index_ew = instr.index_ew
-    element_index = instr.element_index
-
-    elements_in_vline = params.vline_bytes * 8 // data_ew
-    vw_index = element_index % params.j_in_l
-    k_index, j_in_k_index = addresses.vw_index_to_k_indices(
-        params, instr.word_order, vw_index)
-
-    assert k_index == kamlet.k_index, \
-        f"LoadIndexedElement sent to wrong kamlet: expected {k_index}, got {kamlet.k_index}"
-
-    jamlet = kamlet.jamlets[j_in_k_index]
-
-    # Resolve phys regs under the kamlet rename table.
-    # Source phys lookups happen BEFORE dst allocation so an arch overlap
-    # resolves to the old phys.
-    index_elements_in_vline = params.vline_bytes * 8 // index_ew
-    index_v = element_index // index_elements_in_vline
-    index_preg = kamlet.r(instr.index_reg + index_v)
-    mask_preg = kamlet.r(instr.mask_reg) if instr.mask_reg is not None else None
-
-    # Check mask - if element is masked, immediately send response.
-    # Note: this read is unlocked (matches pre-rename behaviour); the lamlet
-    # is responsible for not dispatching this instr until the mask is ready.
-    is_masked = (mask_preg is not None and
-                 not _get_mask_bit(jamlet, mask_preg, element_index))
-
-    if is_masked:
-        logger.debug(f'{kamlet.clock.cycle}: LoadIndexedElement masked: '
-                     f'element={element_index} mask_reg={instr.mask_reg}')
-        resp_header = ElementIndexHeader(
-            target_x=jamlet.lamlet_x,
-            target_y=jamlet.lamlet_y,
-            source_x=jamlet.x,
-            source_y=jamlet.y,
-            message_type=MessageType.LOAD_INDEXED_ELEMENT_RESP,
-            send_type=SendType.SINGLE,
-            length=0,
-            ident=instr.instr_ident,
-            element_index=element_index,
-            masked=True,
-        )
-        kinstr_span_id = kamlet.monitor.get_kinstr_span_id(instr.instr_ident)
-        await jamlet.send_packet([resp_header], parent_span_id=kinstr_span_id)
-        kamlet.monitor.finalize_kinstr_exec(instr.instr_ident, kamlet.min_x, kamlet.min_y)
-    else:
-        # Single-element write touches only one element of one vline; the
-        # rest of the vline is undisturbed, so we use rw() (no rotation).
-        dst_v = element_index // elements_in_vline
-        dst_preg = kamlet.rw(instr.dst_reg + dst_v)
-        write_regs = [dst_preg]
-        read_regs = [index_preg]
-
-        await kamlet.wait_for_rf_available(write_regs=write_regs, read_regs=read_regs,
-                                           instr_ident=instr.instr_ident)
-        rf_write_ident = kamlet.rf_info.start(read_regs=read_regs, write_regs=write_regs)
-
-        # Check TLB access - if fault, send fault response and release RF
-        fault_type = _check_element_access(jamlet, instr, index_preg)
-        if fault_type != TLBFaultType.NONE:
-            logger.debug(f'{kamlet.clock.cycle}: LoadIndexedElement fault: '
-                         f'element={element_index} fault_type={fault_type}')
-            kamlet.rf_info.finish(rf_write_ident, write_regs=write_regs, read_regs=read_regs)
-            resp_header = ElementIndexHeader(
-                target_x=jamlet.lamlet_x,
-                target_y=jamlet.lamlet_y,
-                source_x=jamlet.x,
-                source_y=jamlet.y,
-                message_type=MessageType.LOAD_INDEXED_ELEMENT_RESP,
-                send_type=SendType.SINGLE,
-                length=0,
-                ident=instr.instr_ident,
-                element_index=element_index,
-                fault=True,
-            )
-            kinstr_span_id = kamlet.monitor.get_kinstr_span_id(instr.instr_ident)
-            await jamlet.send_packet([resp_header], parent_span_id=kinstr_span_id)
-            kamlet.monitor.finalize_kinstr_exec(instr.instr_ident, kamlet.min_x, kamlet.min_y)
-            return
-
-        witem = WaitingLoadIndexedElement(
-            instr=instr, params=params, rf_ident=rf_write_ident, j_in_k_index=j_in_k_index,
-            dst_preg=dst_preg, index_preg=index_preg)
-        kamlet.monitor.record_witem_created(
-            instr.instr_ident, kamlet.min_x, kamlet.min_y, 'WaitingLoadIndexedElement',
-            read_regs=read_regs, write_regs=write_regs)
-        await kamlet.cache_table.add_witem(witem=witem)
+async def _send_short_circuit_resp(kamlet: 'Kamlet', jamlet: 'Jamlet',
+                                   instr: 'LoadIndexedElement',
+                                   masked: bool = False,
+                                   fault: bool = False) -> None:
+    """Send LOAD_INDEXED_ELEMENT_RESP for a masked or faulted element
+    (no witem) and finalize the kinstr_exec span."""
+    resp_header = ElementIndexHeader(
+        target_x=jamlet.lamlet_x,
+        target_y=jamlet.lamlet_y,
+        source_x=jamlet.x,
+        source_y=jamlet.y,
+        message_type=MessageType.LOAD_INDEXED_ELEMENT_RESP,
+        send_type=SendType.SINGLE,
+        length=0,
+        ident=instr.instr_ident,
+        element_index=instr.element_index,
+        masked=masked,
+        fault=fault,
+    )
+    kinstr_span_id = kamlet.monitor.get_kinstr_span_id(instr.instr_ident)
+    await jamlet.send_packet([resp_header], parent_span_id=kinstr_span_id)
+    kamlet.monitor.finalize_kinstr_exec(
+        instr.instr_ident, kamlet.min_x, kamlet.min_y)
 
 
 class WaitingLoadIndexedElement(WaitingItem):

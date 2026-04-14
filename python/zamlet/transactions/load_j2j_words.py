@@ -17,7 +17,6 @@ from zamlet import addresses
 from zamlet.waiting_item import WaitingItemRequiresCache
 from zamlet.message import TaggedHeader, MessageType, SendType
 from zamlet.kamlet.cache_table import SendState, ReceiveState, LoadProtocolState
-from zamlet.kamlet import kinstructions
 from zamlet.params import ZamletParams
 from zamlet.transactions import register_handler
 from zamlet.transactions.j2j_mapping import (
@@ -27,6 +26,7 @@ from zamlet.transactions.j2j_mapping import (
 if TYPE_CHECKING:
     from zamlet.jamlet.jamlet import Jamlet
     from zamlet.kamlet.kamlet import Kamlet
+    from zamlet.transactions.load import Load
 
 
 logger = logging.getLogger(__name__)
@@ -36,7 +36,7 @@ class WaitingLoadJ2JWords(WaitingItemRequiresCache):
 
     cache_is_read = True
 
-    def __init__(self, params: ZamletParams, instr: kinstructions.Load,
+    def __init__(self, params: ZamletParams, instr: 'Load',
                  dst_pregs: dict[int, int], mask_preg: int | None,
                  rf_ident: int|None=None):
         super().__init__(
@@ -57,7 +57,6 @@ class WaitingLoadJ2JWords(WaitingItemRequiresCache):
         if not self.cache_is_avail:
             return
         instr = self.item
-        assert isinstance(instr, kinstructions.Load)
         word_bytes = jamlet.params.word_bytes
         for tag in range(word_bytes):
             response_index = jamlet.j_in_k_index * word_bytes + tag
@@ -77,7 +76,6 @@ class WaitingLoadJ2JWords(WaitingItemRequiresCache):
 def init_dst_state(jamlet, witem: WaitingLoadJ2JWords, tag: int) -> None:
     '''Initialize the dst_state for a given tag.'''
     instr = witem.item
-    assert isinstance(instr, kinstructions.Load)
 
     mappings = get_mapping_from_reg(
         params=jamlet.params, k_maddr=instr.k_maddr, reg_ordering=instr.dst_ordering,
@@ -92,7 +90,6 @@ def init_dst_state(jamlet, witem: WaitingLoadJ2JWords, tag: int) -> None:
 def init_src_state(jamlet, witem: WaitingLoadJ2JWords, tag: int) -> None:
     '''Initialize the src_state for a given tag.'''
     instr = witem.item
-    assert isinstance(instr, kinstructions.Load)
 
     mappings = get_mapping_from_mem(
         params=jamlet.params, k_maddr=instr.k_maddr, reg_ordering=instr.dst_ordering,
@@ -107,7 +104,6 @@ def init_src_state(jamlet, witem: WaitingLoadJ2JWords, tag: int) -> None:
 async def send_req(jamlet, witem: WaitingLoadJ2JWords, tag: int) -> None:
     '''SRC jamlet reads cache and sends data to DST jamlet.'''
     instr = witem.item
-    assert isinstance(instr, kinstructions.Load)
     assert witem.cache_slot is not None
     params = jamlet.params
 
@@ -188,7 +184,6 @@ async def handle_req(jamlet, packet: List[Any]) -> None:
         return
     assert isinstance(witem, WaitingLoadJ2JWords)
     instr = witem.item
-    assert isinstance(instr, kinstructions.Load)
 
     word_bytes = jamlet.params.word_bytes
     mem_wb = header.tag * 8

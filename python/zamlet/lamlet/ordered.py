@@ -13,6 +13,7 @@ from zamlet import addresses
 from zamlet.addresses import GlobalAddress, Ordering, TLBFaultType, VectorOpResult
 from zamlet.kamlet.cache_table import SendState
 from zamlet.kamlet import kinstructions
+from zamlet.kamlet.kinstructions import Renamed
 from zamlet.lamlet.ordered_buffer import OrderedBuffer, ElementState
 from zamlet.lamlet.lamlet_waiting_item import (
     LamletWaitingLoadIndexedElement, LamletWaitingStoreIndexedElement)
@@ -41,11 +42,14 @@ class OrderedIndexedLoad(kinstructions.KInstr):
     """
     instr_ident: int
 
-    async def update_kamlet(self, kamlet: 'Kamlet'):
+    async def admit(self, kamlet: 'Kamlet') -> 'OrderedIndexedLoad | None':
+        return self.rename(reads_all_memory=True, needs_witem=1)
+
+    async def execute(self, kamlet: 'Kamlet') -> None:
         witem = WaitingOrderedIndexedLoad(self.instr_ident)
         kamlet.monitor.record_witem_created(
             self.instr_ident, kamlet.min_x, kamlet.min_y, 'WaitingOrderedIndexedLoad')
-        await kamlet.cache_table.add_witem(witem)
+        kamlet.cache_table.add_witem_immediately(witem=witem)
 
 
 class WaitingOrderedIndexedLoad(WaitingItem):

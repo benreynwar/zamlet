@@ -20,7 +20,7 @@ class ZamletParams:
     j_cols: int = 1
     j_rows: int = 1
 
-    n_vregs: int = 40
+    n_vregs: int = 48
     cache_slot_words_per_jamlet: int = 2
     word_bytes: int = 8
     page_words_per_jamlet: int = 64
@@ -34,6 +34,7 @@ class ZamletParams:
     router_output_buffer_length: int = 2
     router_input_buffer_length: int = 2
     instruction_queue_length: int = 16
+    reservation_station_depth: int = 8
     n_ident_query_slots: int = 8
     n_a_channels: int = 1
     n_b_channels: int = 1
@@ -301,6 +302,7 @@ class ZamletParams:
         'memAxiIdBits': 'mem_axi_id_bits',
         'maxResponseTags': 'max_response_tags',
         'instructionQueueLength': 'instruction_queue_length',
+        'reservationStationDepth': 'reservation_station_depth',
         'lamletDispatchQueueDepth': 'lamlet_dispatch_queue_depth',
         'nAChannels': 'n_a_channels',
         'nBChannels': 'n_b_channels',

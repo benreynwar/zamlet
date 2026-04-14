@@ -16,12 +16,12 @@ import logging
 
 from zamlet import utils
 from zamlet.waiting_item import WaitingItemRequiresCache
-from zamlet.kamlet import kinstructions
 from zamlet.transactions.helpers import get_offsets_and_masks
 
 if TYPE_CHECKING:
     from zamlet.kamlet.kamlet import Kamlet
     from zamlet.jamlet.jamlet import Jamlet
+    from zamlet.transactions.load import Load
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +30,7 @@ class WaitingLoadSimple(WaitingItemRequiresCache):
 
     cache_is_read = True
 
-    def __init__(self, instr: kinstructions.Load, dst_pregs: list[int],
+    def __init__(self, instr: 'Load', dst_pregs: list[int],
                  mask_preg: int | None, rf_ident: int | None = None):
         super().__init__(
             item=instr, instr_ident=instr.instr_ident,
@@ -46,7 +46,6 @@ class WaitingLoadSimple(WaitingItemRequiresCache):
 
     async def finalize(self, kamlet: 'Kamlet') -> None:
         instr = self.item
-        assert isinstance(instr, kinstructions.Load)
         if not kamlet.cache_table.can_read(instr.k_maddr, writeset_ident=self.writeset_ident):
             logger.error(
                 f'{kamlet.clock.cycle}: kamlet ({kamlet.min_x},{kamlet.min_y}): LOAD_SIMPLE '
@@ -77,7 +76,7 @@ class WaitingLoadSimple(WaitingItemRequiresCache):
             self.rf_ident, write_regs=self.dst_pregs, read_regs=read_regs)
 
 
-def do_load_simple(jamlet: 'Jamlet', instr: kinstructions.Load,
+def do_load_simple(jamlet: 'Jamlet', instr: 'Load',
                    dst_pregs: list[int], mask_preg: int | None) -> None:
     """
     Copy data from cache to register file for an aligned load.

@@ -12,13 +12,15 @@ Messages:
     STORE_WORD_RETRY - DST asks SRC to resend (after becoming ready)
 '''
 from typing import List, Any, TYPE_CHECKING
+from dataclasses import dataclass
 import logging
 
 from zamlet import addresses
+from zamlet.addresses import KMAddr
 from zamlet.waiting_item import WaitingItem, WaitingItemRequiresCache
 from zamlet.message import TaggedHeader, MessageType, SendType
 from zamlet.kamlet.cache_table import SendState, ReceiveState, CacheState
-from zamlet.kamlet import kinstructions
+from zamlet.kamlet.kinstructions import KInstr, Renamed
 from zamlet.params import ZamletParams
 from zamlet.transactions import register_handler
 
@@ -29,9 +31,87 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+@dataclass
+class StoreWord(KInstr):
+    """
+    This instruction stores a word from a vector register to memory.
+
+    Two per-kamlet roles: the SRC kamlet reads the register and sends the
+    word across J2J; the DST kamlet receives the word and writes the cache.
+    Both sides can land on the same kamlet, in which case two witems are
+    created (and `needs_witem=2` reserves both slots ahead of dispatch).
+    """
+    src: addresses.RegAddr
+    dst: KMAddr
+    byte_mask: int
+    writeset_ident: int
+    mask_reg: int
+    mask_index: int
+    instr_ident: int
+
+    @property
+    def k_maddr(self) -> KMAddr:
+        """Cache slot address used by is_ready when cache_is_write is set."""
+        return self.dst
+
+    async def admit(self, kamlet) -> 'StoreWord | None':
+        is_src = (self.src.k_index == kamlet.k_index)
+        is_dst = (self.dst.k_index == kamlet.k_index)
+        if not (is_src or is_dst):
+            kamlet.monitor.finalize_kinstr_exec(
+                self.instr_ident, kamlet.min_x, kamlet.min_y)
+            return None
+        src_preg = None
+        mask_preg = None
+        if is_src:
+            src_preg = kamlet.r(self.src.reg)
+            mask_preg = kamlet.r(self.mask_reg) if self.mask_reg is not None else None
+        src_pregs = {0: src_preg} if src_preg is not None else {}
+        new = self.rename(
+            cache_is_write=is_dst,
+            writeset_ident=self.writeset_ident,
+            needs_witem=2 if (is_src and is_dst) else 1,
+            src_pregs=src_pregs,
+            mask_preg=mask_preg,
+        )
+        new._is_src = is_src
+        new._is_dst = is_dst
+        return new
+
+    async def execute(self, kamlet) -> None:
+        r = self.renamed
+        if self._is_src:
+            src_preg = r.src_pregs[0]
+            mask_preg = r.mask_preg
+            read_regs = [src_preg]
+            if mask_preg is not None:
+                read_regs.append(mask_preg)
+            rf_read_ident = kamlet.rf_info.start(read_regs=read_regs)
+            witem_src = WaitingStoreWordSrc(
+                params=kamlet.params, instr=self, rf_ident=rf_read_ident,
+                src_preg=src_preg, mask_preg=mask_preg)
+            kamlet.monitor.record_witem_created(
+                self.instr_ident, kamlet.min_x, kamlet.min_y, 'WaitingStoreWordSrc',
+                finalize=not self._is_dst, read_regs=read_regs)
+            kamlet.cache_table.add_witem_immediately(witem=witem_src)
+            for jamlet in kamlet.jamlets:
+                init_src_state(jamlet, witem_src)
+
+        if self._is_dst:
+            witem_dst = WaitingStoreWordDst(params=kamlet.params, instr=self)
+            parent_span = kamlet.monitor.get_kinstr_exec_span_id(
+                self.instr_ident, kamlet.min_x, kamlet.min_y)
+            kamlet.monitor.record_witem_created(
+                self.instr_ident + 1, kamlet.min_x, kamlet.min_y, 'WaitingStoreWordDst',
+                parent_span_id=parent_span)
+            kamlet.cache_table.add_witem_immediately(witem=witem_dst, k_maddr=self.dst)
+            for jamlet in kamlet.jamlets:
+                init_dst_state(jamlet, witem_dst)
+
+
 class WaitingStoreWordSrc(WaitingItem):
 
-    def __init__(self, params: ZamletParams, instr: kinstructions.StoreWord,
+    def __init__(self, params: ZamletParams, instr: 'StoreWord',
                  rf_ident: int, src_preg: int, mask_preg: int | None):
         super().__init__(item=instr, instr_ident=instr.instr_ident, rf_ident=rf_ident)
         self.protocol_states = [SendState.COMPLETE for _ in range(params.j_in_k)]
@@ -61,7 +141,7 @@ class WaitingStoreWordDst(WaitingItemRequiresCache):
 
     cache_is_write = True
 
-    def __init__(self, params: ZamletParams, instr: kinstructions.StoreWord):
+    def __init__(self, params: ZamletParams, instr: 'StoreWord'):
         super().__init__(
             item=instr, instr_ident=instr.instr_ident + 1,
             writeset_ident=instr.writeset_ident, rf_ident=None)

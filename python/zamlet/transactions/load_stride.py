@@ -10,7 +10,7 @@ from dataclasses import dataclass
 import logging
 
 from zamlet import addresses
-from zamlet.kamlet.kinstructions import KInstr
+from zamlet.kamlet.kinstructions import KInstr, Renamed
 from zamlet.transactions.load_gather_base import WaitingLoadGatherBase
 
 if TYPE_CHECKING:
@@ -44,9 +44,7 @@ class LoadStride(KInstr):
     instr_ident: int
     stride_bytes: int | None = None
 
-    async def update_kamlet(self, kamlet):
-        logger.debug(f'kamlet ({kamlet.min_x}, {kamlet.min_y}): load_stride.update_kamlet '
-                     f'addr={hex(self.g_addr.addr)} ident={self.instr_ident}')
+    async def admit(self, kamlet) -> 'LoadStride | None':
         ew = self.dst_ordering.ew
         elements_in_vline = kamlet.params.vline_bytes * 8 // ew
         start_vline = self.start_index // elements_in_vline
@@ -55,25 +53,31 @@ class LoadStride(KInstr):
         # Resolve src/mask phys lookups BEFORE allocating dst phys, so an
         # arch overlap (mask_reg == dst arch) resolves to the old phys.
         mask_preg = kamlet.r(self.mask_reg) if self.mask_reg is not None else None
-        dst_preg_list = kamlet.alloc_dst_pregs(
+        dst_preg_list = await kamlet.alloc_dst_pregs(
             base_arch=self.dst, start_vline=start_vline, end_vline=end_vline,
             start_index=self.start_index, n_elements=self.n_elements,
             elements_in_vline=elements_in_vline,
             mask_present=self.mask_reg is not None)
         dst_pregs = {start_vline + i: dst_preg_list[i] for i in range(len(dst_preg_list))}
+        return self.rename(
+            reads_all_memory=True, writeset_ident=self.writeset_ident,
+            needs_witem=1,
+            dst_pregs=dst_pregs, mask_preg=mask_preg,
+        )
 
-        read_regs = [mask_preg] if mask_preg is not None else []
-        write_regs = list(dst_pregs.values())
-        await kamlet.wait_for_rf_available(write_regs=write_regs, read_regs=read_regs,
-                                           instr_ident=self.instr_ident)
-        rf_write_ident = kamlet.rf_info.start(read_regs=read_regs, write_regs=write_regs)
+    async def execute(self, kamlet) -> None:
+        r = self.renamed
+        logger.debug(f'kamlet ({kamlet.min_x}, {kamlet.min_y}): load_stride.execute '
+                     f'addr={hex(self.g_addr.addr)} ident={self.instr_ident}')
+        rf_write_ident = kamlet.rf_info.start(
+            read_regs=r.read_pregs, write_regs=r.write_pregs)
         witem = WaitingLoadStride(
             params=kamlet.params, instr=self, rf_ident=rf_write_ident,
-            dst_pregs=dst_pregs, mask_preg=mask_preg)
+            dst_pregs=r.dst_pregs, mask_preg=r.mask_preg)
         kamlet.monitor.record_witem_created(
             self.instr_ident, kamlet.min_x, kamlet.min_y, 'WaitingLoadStride',
-            read_regs=read_regs, write_regs=write_regs)
-        await kamlet.cache_table.add_witem(witem=witem)
+            read_regs=r.read_pregs, write_regs=r.write_pregs)
+        kamlet.cache_table.add_witem_immediately(witem=witem)
 
 
 class WaitingLoadStride(WaitingLoadGatherBase):

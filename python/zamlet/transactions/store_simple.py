@@ -16,13 +16,13 @@ import logging
 
 from zamlet import utils
 from zamlet.waiting_item import WaitingItemRequiresCache
-from zamlet.kamlet import kinstructions
 from zamlet.kamlet.cache_table import CacheState
 from zamlet.transactions.helpers import get_offsets_and_masks
 
 if TYPE_CHECKING:
     from zamlet.kamlet.kamlet import Kamlet
     from zamlet.jamlet.jamlet import Jamlet
+    from zamlet.transactions.store import Store
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +31,7 @@ class WaitingStoreSimple(WaitingItemRequiresCache):
 
     cache_is_write = True
 
-    def __init__(self, instr: kinstructions.Store, src_pregs: list[int],
+    def __init__(self, instr: 'Store', src_pregs: list[int],
                  mask_preg: int | None, rf_ident: int | None = None):
         super().__init__(
             item=instr, instr_ident=instr.instr_ident,
@@ -47,7 +47,6 @@ class WaitingStoreSimple(WaitingItemRequiresCache):
 
     async def finalize(self, kamlet: 'Kamlet') -> None:
         instr = self.item
-        assert isinstance(instr, kinstructions.Store)
         assert kamlet.cache_table.can_write(instr.k_maddr, writeset_ident=self.writeset_ident)
 
         for jamlet in kamlet.jamlets:
@@ -64,7 +63,7 @@ class WaitingStoreSimple(WaitingItemRequiresCache):
         kamlet.rf_info.finish(self.rf_ident, read_regs=read_regs)
 
 
-def do_store_simple(jamlet: 'Jamlet', instr: kinstructions.Store,
+def do_store_simple(jamlet: 'Jamlet', instr: 'Store',
                     src_pregs: list[int], mask_preg: int | None) -> None:
     """
     Copy data from register file to cache for an aligned store.

@@ -15,7 +15,7 @@ from dataclasses import dataclass
 
 from zamlet import addresses
 from zamlet.addresses import GlobalAddress, TLBFaultType
-from zamlet.kamlet.kinstructions import TrackedKInstr
+from zamlet.kamlet.kinstructions import TrackedKInstr, Renamed
 from zamlet.message import MessageType, SendType, ElementIndexHeader
 from zamlet.transactions.helpers import read_element
 
@@ -49,8 +49,118 @@ class StoreIndexedElement(TrackedKInstr):
     instr_ident: int
     mask_reg: int | None = None
 
-    async def update_kamlet(self, kamlet):
-        await handle_store_indexed_element(kamlet, self)
+    async def admit(self, kamlet: 'Kamlet') -> 'StoreIndexedElement | None':
+        params = kamlet.params
+        data_ew = self.data_ew
+        index_ew = self.index_ew
+        element_index = self.element_index
+
+        elements_in_vline = params.vline_bytes * 8 // data_ew
+        vw_index = element_index % params.j_in_l
+        k_index, j_in_k_index = addresses.vw_index_to_k_indices(
+            params, self.word_order, vw_index)
+
+        assert k_index == kamlet.k_index, \
+            f"StoreIndexedElement sent to wrong kamlet: expected {k_index}, got {kamlet.k_index}"
+
+        src_v = element_index // elements_in_vline
+        index_elements_in_vline = params.vline_bytes * 8 // index_ew
+        index_v = element_index // index_elements_in_vline
+
+        src_preg = kamlet.r(self.src_reg + src_v)
+        index_preg = kamlet.r(self.index_reg + index_v)
+        mask_preg = kamlet.r(self.mask_reg) if self.mask_reg is not None else None
+
+        new = self.rename(
+            src_pregs={index_v: index_preg},
+            src2_pregs={src_v: src_preg},
+            mask_preg=mask_preg,
+        )
+        new._j_in_k_index = j_in_k_index
+        new._src_v = src_v
+        new._index_v = index_v
+        return new
+
+    async def execute(self, kamlet: 'Kamlet') -> None:
+        r = self.renamed
+        jamlet = kamlet.jamlets[self._j_in_k_index]
+        src_preg = r.src2_pregs[self._src_v]
+        index_preg = r.src_pregs[self._index_v]
+
+        rf_ident = kamlet.rf_info.start(
+            read_regs=r.read_pregs, write_regs=r.write_pregs)
+
+        if r.mask_preg is not None and not _get_mask_bit(
+                jamlet, r.mask_preg, self.element_index):
+            logger.debug(f'{kamlet.clock.cycle}: StoreIndexedElement masked: '
+                         f'element={self.element_index} mask_reg={self.mask_reg}')
+            kamlet.rf_info.finish(
+                rf_ident, read_regs=r.read_pregs, write_regs=r.write_pregs)
+            await _send_short_circuit_resp(kamlet, jamlet, self, masked=True)
+            return
+
+        fault_type = _check_element_access(jamlet, self, index_preg)
+        if fault_type != TLBFaultType.NONE:
+            logger.debug(f'{kamlet.clock.cycle}: StoreIndexedElement fault: '
+                         f'element={self.element_index} fault_type={fault_type}')
+            kamlet.rf_info.finish(
+                rf_ident, read_regs=r.read_pregs, write_regs=r.write_pregs)
+            await _send_short_circuit_resp(kamlet, jamlet, self, fault=True)
+            return
+
+        byte_offset = _get_index_value(jamlet, self, index_preg)
+        data = _get_data_value(jamlet, self, src_preg)
+        g_addr = self.base_addr.bit_offset(byte_offset * 8)
+
+        kamlet.rf_info.finish(
+            rf_ident, read_regs=r.read_pregs, write_regs=r.write_pregs)
+
+        header = ElementIndexHeader(
+            target_x=jamlet.lamlet_x,
+            target_y=jamlet.lamlet_y,
+            source_x=jamlet.x,
+            source_y=jamlet.y,
+            message_type=MessageType.STORE_INDEXED_ELEMENT_RESP,
+            send_type=SendType.SINGLE,
+            length=2,
+            ident=self.instr_ident,
+            element_index=self.element_index,
+        )
+        packet = [header, g_addr.addr, data]
+
+        kinstr_exec_span_id = kamlet.monitor.get_kinstr_exec_span_id(
+            self.instr_ident, kamlet.min_x, kamlet.min_y)
+        assert kinstr_exec_span_id is not None
+        await jamlet.send_packet(packet, parent_span_id=kinstr_exec_span_id)
+        kamlet.monitor.finalize_kinstr_exec(
+            self.instr_ident, kamlet.min_x, kamlet.min_y)
+
+
+async def _send_short_circuit_resp(kamlet: 'Kamlet', jamlet: 'Jamlet',
+                                   instr: 'StoreIndexedElement',
+                                   masked: bool = False,
+                                   fault: bool = False) -> None:
+    """Send STORE_INDEXED_ELEMENT_RESP for a masked or faulted element and
+    finalize the kinstr_exec span."""
+    header = ElementIndexHeader(
+        target_x=jamlet.lamlet_x,
+        target_y=jamlet.lamlet_y,
+        source_x=jamlet.x,
+        source_y=jamlet.y,
+        message_type=MessageType.STORE_INDEXED_ELEMENT_RESP,
+        send_type=SendType.SINGLE,
+        length=0,
+        ident=instr.instr_ident,
+        element_index=instr.element_index,
+        masked=masked,
+        fault=fault,
+    )
+    kinstr_exec_span_id = kamlet.monitor.get_kinstr_exec_span_id(
+        instr.instr_ident, kamlet.min_x, kamlet.min_y)
+    assert kinstr_exec_span_id is not None
+    await jamlet.send_packet([header], parent_span_id=kinstr_exec_span_id)
+    kamlet.monitor.finalize_kinstr_exec(
+        instr.instr_ident, kamlet.min_x, kamlet.min_y)
 
 
 def _get_mask_bit(jamlet: 'Jamlet', mask_preg: int, element_index: int) -> bool:
@@ -88,119 +198,6 @@ def _check_element_access(jamlet: 'Jamlet', instr: 'StoreIndexedElement',
         current_byte += remaining_in_page
 
     return TLBFaultType.NONE
-
-
-async def handle_store_indexed_element(kamlet: 'Kamlet',
-                                        instr: StoreIndexedElement):
-    """Handle StoreIndexedElement instruction at kamlet level.
-
-    Find the jamlet that owns this element, read index and data, send response to lamlet.
-    If masked, immediately send response without reading data.
-    """
-    params = kamlet.params
-    data_ew = instr.data_ew
-    index_ew = instr.index_ew
-    element_index = instr.element_index
-
-    elements_in_vline = params.vline_bytes * 8 // data_ew
-    vw_index = element_index % params.j_in_l
-    k_index, j_in_k_index = addresses.vw_index_to_k_indices(
-        params, instr.word_order, vw_index)
-
-    assert k_index == kamlet.k_index, \
-        f"StoreIndexedElement sent to wrong kamlet: expected {k_index}, got {kamlet.k_index}"
-
-    jamlet = kamlet.jamlets[j_in_k_index]
-
-    # Resolve phys regs under the kamlet rename table.
-    src_v = element_index // elements_in_vline
-    index_elements_in_vline = params.vline_bytes * 8 // index_ew
-    index_v = element_index // index_elements_in_vline
-    src_preg = kamlet.r(instr.src_reg + src_v)
-    index_preg = kamlet.r(instr.index_reg + index_v)
-    mask_preg = kamlet.r(instr.mask_reg) if instr.mask_reg is not None else None
-
-    # Check mask - if element is masked, immediately send response.
-    # Note: this read is unlocked (matches pre-rename behaviour); the lamlet
-    # is responsible for not dispatching this instr until the mask is ready.
-    is_masked = (mask_preg is not None and
-                 not _get_mask_bit(jamlet, mask_preg, element_index))
-
-    if is_masked:
-        logger.debug(f'{kamlet.clock.cycle}: StoreIndexedElement masked: '
-                     f'element={element_index} mask_reg={instr.mask_reg}')
-        header = ElementIndexHeader(
-            target_x=jamlet.lamlet_x,
-            target_y=jamlet.lamlet_y,
-            source_x=jamlet.x,
-            source_y=jamlet.y,
-            message_type=MessageType.STORE_INDEXED_ELEMENT_RESP,
-            send_type=SendType.SINGLE,
-            length=0,
-            ident=instr.instr_ident,
-            element_index=element_index,
-            masked=True,
-        )
-        kinstr_exec_span_id = kamlet.monitor.get_kinstr_exec_span_id(
-            instr.instr_ident, kamlet.min_x, kamlet.min_y)
-        assert kinstr_exec_span_id is not None
-        await jamlet.send_packet([header], parent_span_id=kinstr_exec_span_id)
-        kamlet.monitor.finalize_kinstr_exec(instr.instr_ident, kamlet.min_x, kamlet.min_y)
-    else:
-        read_regs = [src_preg, index_preg]
-
-        await kamlet.wait_for_rf_available(read_regs=read_regs, instr_ident=instr.instr_ident)
-        rf_ident = kamlet.rf_info.start(read_regs=read_regs, write_regs=[])
-
-        # Check TLB access - if fault, send fault response and release RF
-        fault_type = _check_element_access(jamlet, instr, index_preg)
-        if fault_type != TLBFaultType.NONE:
-            logger.debug(f'{kamlet.clock.cycle}: StoreIndexedElement fault: '
-                         f'element={element_index} fault_type={fault_type}')
-            kamlet.rf_info.finish(rf_ident, read_regs=read_regs, write_regs=[])
-            header = ElementIndexHeader(
-                target_x=jamlet.lamlet_x,
-                target_y=jamlet.lamlet_y,
-                source_x=jamlet.x,
-                source_y=jamlet.y,
-                message_type=MessageType.STORE_INDEXED_ELEMENT_RESP,
-                send_type=SendType.SINGLE,
-                length=0,
-                ident=instr.instr_ident,
-                element_index=element_index,
-                fault=True,
-            )
-            kinstr_exec_span_id = kamlet.monitor.get_kinstr_exec_span_id(
-                instr.instr_ident, kamlet.min_x, kamlet.min_y)
-            assert kinstr_exec_span_id is not None
-            await jamlet.send_packet([header], parent_span_id=kinstr_exec_span_id)
-            kamlet.monitor.finalize_kinstr_exec(instr.instr_ident, kamlet.min_x, kamlet.min_y)
-            return
-
-        byte_offset = _get_index_value(jamlet, instr, index_preg)
-        data = _get_data_value(jamlet, instr, src_preg)
-        g_addr = instr.base_addr.bit_offset(byte_offset * 8)
-
-        kamlet.rf_info.finish(rf_ident, read_regs=read_regs, write_regs=[])
-
-        header = ElementIndexHeader(
-            target_x=jamlet.lamlet_x,
-            target_y=jamlet.lamlet_y,
-            source_x=jamlet.x,
-            source_y=jamlet.y,
-            message_type=MessageType.STORE_INDEXED_ELEMENT_RESP,
-            send_type=SendType.SINGLE,
-            length=2,
-            ident=instr.instr_ident,
-            element_index=element_index,
-        )
-        packet = [header, g_addr.addr, data]
-
-        kinstr_exec_span_id = kamlet.monitor.get_kinstr_exec_span_id(
-            instr.instr_ident, kamlet.min_x, kamlet.min_y)
-        assert kinstr_exec_span_id is not None
-        await jamlet.send_packet(packet, parent_span_id=kinstr_exec_span_id)
-        kamlet.monitor.finalize_kinstr_exec(instr.instr_ident, kamlet.min_x, kamlet.min_y)
 
 
 def _get_index_value(jamlet: 'Jamlet', instr: StoreIndexedElement,

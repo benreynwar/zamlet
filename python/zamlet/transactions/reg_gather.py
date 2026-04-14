@@ -14,7 +14,7 @@ from dataclasses import dataclass
 import logging
 
 from zamlet import addresses
-from zamlet.kamlet.kinstructions import KInstr
+from zamlet.kamlet.kinstructions import KInstr, Renamed
 from zamlet.waiting_item import WaitingItem
 from zamlet.kamlet.cache_table import SendState
 from zamlet.message import RegElementHeader, MessageType, SendType
@@ -51,10 +51,7 @@ class RegGather(KInstr):
     mask_reg: int | None
     instr_ident: int
 
-    async def update_kamlet(self, kamlet):
-        logger.debug(f'kamlet ({kamlet.min_x}, {kamlet.min_y}): RegGather.update_kamlet '
-                     f'vd={self.vd} vs2={self.vs2} vs1={self.vs1} ident={self.instr_ident}')
-
+    async def admit(self, kamlet) -> 'RegGather | None':
         params = kamlet.params
         dst_elements_in_vline = params.vline_bytes * 8 // self.data_ew
         index_elements_in_vline = params.vline_bytes * 8 // self.index_ew
@@ -77,7 +74,7 @@ class RegGather(KInstr):
         vs2_pregs = {v: kamlet.r(self.vs2 + v) for v in range(vs2_n_vlines)}
         mask_preg = kamlet.r(self.mask_reg) if self.mask_reg is not None else None
 
-        dst_preg_list = kamlet.alloc_dst_pregs(
+        dst_preg_list = await kamlet.alloc_dst_pregs(
             base_arch=self.vd, start_vline=dst_start_vline, end_vline=dst_end_vline,
             start_index=self.start_index, n_elements=self.n_elements,
             elements_in_vline=dst_elements_in_vline,
@@ -91,24 +88,29 @@ class RegGather(KInstr):
             f"vd overlaps vs1: {dst_pregs} & {vs1_pregs}"
         assert not (set(dst_pregs.values()) & set(vs2_pregs.values())), \
             f"vd overlaps vs2: {dst_pregs} & {vs2_pregs}"
-
-        read_regs = list(set(vs1_pregs.values()) | set(vs2_pregs.values()))
         if mask_preg is not None:
-            read_regs.append(mask_preg)
             assert mask_preg not in dst_pregs.values()
-        write_regs = list(dst_pregs.values())
 
-        await kamlet.wait_for_rf_available(write_regs=write_regs, read_regs=read_regs,
-                                           instr_ident=self.instr_ident)
-        rf_ident = kamlet.rf_info.start(read_regs=read_regs, write_regs=write_regs)
+        return self.rename(
+            needs_witem=1,
+            src_pregs=vs1_pregs, src2_pregs=vs2_pregs,
+            dst_pregs=dst_pregs, mask_preg=mask_preg,
+        )
+
+    async def execute(self, kamlet) -> None:
+        r = self.renamed
+        logger.debug(f'kamlet ({kamlet.min_x}, {kamlet.min_y}): RegGather.execute '
+                     f'vd={self.vd} vs2={self.vs2} vs1={self.vs1} ident={self.instr_ident}')
+        rf_ident = kamlet.rf_info.start(
+            read_regs=r.read_pregs, write_regs=r.write_pregs)
         witem = WaitingRegGather(
             params=kamlet.params, instr=self, rf_ident=rf_ident,
-            dst_pregs=dst_pregs, vs1_pregs=vs1_pregs, vs2_pregs=vs2_pregs,
-            mask_preg=mask_preg)
+            dst_pregs=r.dst_pregs, vs1_pregs=r.src_pregs, vs2_pregs=r.src2_pregs,
+            mask_preg=r.mask_preg)
         kamlet.monitor.record_witem_created(
             self.instr_ident, kamlet.min_x, kamlet.min_y, 'WaitingRegGather',
-            read_regs=read_regs, write_regs=write_regs)
-        await kamlet.cache_table.add_witem(witem=witem)
+            read_regs=r.read_pregs, write_regs=r.write_pregs)
+        kamlet.cache_table.add_witem_immediately(witem=witem)
 
 
 class WaitingRegGather(WaitingItem):

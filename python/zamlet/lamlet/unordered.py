@@ -12,10 +12,14 @@ from typing import TYPE_CHECKING, List, Tuple
 from zamlet import addresses
 from zamlet.addresses import GlobalAddress, Ordering, TLBFaultType, VectorOpResult
 from zamlet.kamlet import kinstructions
+from zamlet.transactions.load import Load
+from zamlet.transactions.store import Store
 from zamlet.transactions.load_stride import LoadStride
 from zamlet.transactions.store_stride import StoreStride
 from zamlet.transactions.load_indexed_unordered import LoadIndexedUnordered
 from zamlet.transactions.store_indexed_unordered import StoreIndexedUnordered
+from zamlet.transactions.load_word import LoadWord
+from zamlet.transactions.store_word import StoreWord
 from zamlet import utils
 from zamlet.lamlet import ident_query
 from zamlet.message import (
@@ -350,14 +354,14 @@ async def _handle_partial_element_vpu(
         byte_mask_as_int = utils.list_of_uints_to_uint(byte_mask, width=1)
         instr_ident = await ident_query.get_instr_ident(lamlet, 2)
         if is_store:
-            kinstr = kinstructions.StoreWord(
+            kinstr = StoreWord(
                 src=chunk_reg_addr, dst=chunk_k_maddr,
                 byte_mask=byte_mask_as_int,
                 writeset_ident=writeset_ident, mask_reg=mask_reg,
                 mask_index=mask_index, instr_ident=instr_ident,
             )
         else:
-            kinstr = kinstructions.LoadWord(
+            kinstr = LoadWord(
                 dst=chunk_reg_addr, src=chunk_k_maddr,
                 byte_mask=byte_mask_as_int,
                 writeset_ident=writeset_ident, mask_reg=mask_reg,
@@ -381,7 +385,7 @@ async def _handle_full_elements_vpu(
 
     instr_ident = await ident_query.get_instr_ident(lamlet)
     if is_store:
-        kinstr = kinstructions.Store(
+        kinstr = Store(
             src=reg_base,
             k_maddr=k_maddr,
             start_index=section.start_index,
@@ -392,7 +396,7 @@ async def _handle_full_elements_vpu(
             instr_ident=instr_ident,
         )
     else:
-        kinstr = kinstructions.Load(
+        kinstr = Load(
             dst=reg_base,
             k_maddr=k_maddr,
             start_index=section.start_index,
@@ -555,7 +559,11 @@ async def vloadstorestride(lamlet: 'Oamlet', reg_base: int, addr: int,
 
     index_ew = 64
     elements_per_vline_64 = vline_bits // index_ew
-    n_temp_regs = lamlet.params.n_vregs - lamlet.params.n_arch_vregs
+    # Use at most half the scratch arch pool so the kamlet has spare pregs
+    # to rotate through for vid -> vmul -> indexed pipelining within and
+    # across batches. Floor of 1 in case the pool is tiny.
+    n_scratch = lamlet.params.n_vregs - lamlet.params.n_arch_vregs
+    n_temp_regs = max(1, n_scratch // 2)
     batch_capacity = n_temp_regs * elements_per_vline_64
 
     temp_regs = lamlet.alloc_temp_regs(n_temp_regs)

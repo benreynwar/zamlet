@@ -26,8 +26,17 @@ class RegisterRenameTable:
     """Arch -> phys mapping plus a free queue of unmapped phys regs.
 
     Invariant: every phys reg in [0, n_phys) is either currently mapped by
-    some arch[i] (with valid[i] True) or currently in free_queue. The sum of
-    (live arch mappings) + (free queue length) is exactly n_phys.
+    some arch[i] (with valid[i] True), in the real free_queue, or in
+    pending_free (rotated out but not yet safe to reuse). The sum of
+    (live arch mappings) + len(free_queue) + len(pending_free) == n_phys.
+
+    With out-of-order execution, a phys rotated out of the rename table
+    may still be referenced by an older, not-yet-dispatched reservation
+    station entry. Such pregs go to `pending_free` (a set — drain order
+    doesn't matter) instead of going straight back to `free_queue`. A
+    caller drains pending pregs each cycle via `drain_pending` with a
+    callback that decides whether each preg is now idle (no RF locks,
+    no station references).
     """
 
     N_ARCH_VREGS = 32
@@ -43,6 +52,7 @@ class RegisterRenameTable:
         self.valid: List[bool] = [True] * self.N_ARCH_VREGS + \
             [False] * (n_phys - self.N_ARCH_VREGS)
         self.free_queue: deque[int] = deque(range(self.N_ARCH_VREGS, n_phys))
+        self.pending_free: set[int] = set()
 
     def is_mapped(self, arch_reg: int) -> bool:
         """Return True if arch_reg currently has a phys mapping.
@@ -66,9 +76,11 @@ class RegisterRenameTable:
     def allocate_write(self, arch_reg: int) -> int:
         """Assign a fresh phys to arch_reg and return it.
 
-        If arch_reg was previously mapped, its old phys goes to the tail of
-        the free queue before a fresh phys is popped from the head. This
-        gives the newly released phys maximum drain time before reuse.
+        If arch_reg was previously mapped, its old phys goes to the
+        pending_free set — older reservation station entries may still
+        reference it. The drain_pending callback releases it to the real
+        free_queue once no references remain. allocate_write only pulls
+        from the real free_queue.
         """
         assert 0 <= arch_reg < self.n_phys, \
             f"arch_reg={arch_reg} out of range [0, {self.n_phys})"
@@ -76,7 +88,9 @@ class RegisterRenameTable:
             old_phys = self.arch[arch_reg]
             assert old_phys not in self.free_queue, \
                 f"arch[{arch_reg}]={old_phys} was already in free_queue"
-            self.free_queue.append(old_phys)
+            assert old_phys not in self.pending_free, \
+                f"arch[{arch_reg}]={old_phys} was already in pending_free"
+            self.pending_free.add(old_phys)
         assert len(self.free_queue) > 0, \
             f"free_queue is empty — cannot allocate for arch_reg={arch_reg}"
         new_phys = self.free_queue.popleft()
@@ -89,6 +103,10 @@ class RegisterRenameTable:
 
         Invoked by the `FreeRegister` kinstruction handler. Primary use is
         releasing scratch arch indices at the end of a compound lamlet op.
+
+        The phys goes to pending_free rather than free_queue directly —
+        older station entries may still reference it. drain_pending
+        releases it once idle.
 
         No-op when arch_reg is already unmapped: the lamlet allocates a
         worst-case batch of scratch arches up front (e.g. vloadstorestride
@@ -106,5 +124,19 @@ class RegisterRenameTable:
         phys = self.arch[arch_reg]
         assert phys not in self.free_queue, \
             f"arch[{arch_reg}]={phys} was already in free_queue"
+        assert phys not in self.pending_free, \
+            f"arch[{arch_reg}]={phys} was already in pending_free"
         self.valid[arch_reg] = False
-        self.free_queue.append(phys)
+        self.pending_free.add(phys)
+
+    def release_pending(self, preg: int) -> None:
+        """Move a specific preg from pending_free to free_queue. The
+        caller is responsible for deciding when a preg is safe to
+        release (no RF locks, no station references).
+        """
+        assert preg in self.pending_free, \
+            f"preg={preg} not in pending_free={self.pending_free}"
+        assert preg not in self.free_queue, \
+            f"preg={preg} already in free_queue"
+        self.pending_free.remove(preg)
+        self.free_queue.append(preg)

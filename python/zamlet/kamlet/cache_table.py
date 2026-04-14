@@ -19,6 +19,60 @@ from zamlet.monitor import Monitor, ResourceType
 logger = logging.getLogger(__name__)
 
 
+def has_cache_line_conflict(this_instr, other_instr, cache_line_bytes: int) -> bool:
+    """True when two reservation-station entries collide on the same cache
+    line such that they cannot reorder.
+
+    Unlike `has_memory_ordering_conflict`, this is address-specific: it
+    only fires when both entries target the same cache line. Covers the
+    admit-to-dispatch window where `other` is an earlier-order station
+    entry that hasn't yet registered a witem with cache_table — the
+    slot-level `slot_has_write` / `slot_in_use` checks only see dispatched
+    witems, so same-line RAW/WAW/WAR between two un-dispatched stations
+    entries needs catching here.
+    """
+    this = this_instr.renamed
+    other = other_instr.renamed
+    if not (this.cache_is_read or this.cache_is_write):
+        return False
+    if not (other.cache_is_read or other.cache_is_write):
+        return False
+    if (this.writeset_ident is not None
+            and other.writeset_ident == this.writeset_ident):
+        return False
+    this_line = this_instr.k_maddr.addr // cache_line_bytes
+    other_line = other_instr.k_maddr.addr // cache_line_bytes
+    if this_line != other_line:
+        return False
+    return this.cache_is_write or other.cache_is_write
+
+
+def has_memory_ordering_conflict(this, other) -> bool:
+    """Return True if `this` must wait for `other` due to memory ordering.
+
+    Both `this` and `other` expose the same duck-typed attributes:
+    `writes_all_memory`, `reads_all_memory`, `cache_is_read`,
+    `cache_is_write`, and `writeset_ident`. Used by both the kamlet's
+    `is_ready` (scanning the reservation station and waiting_items) and
+    `add_witem_immediately` (scanning waiting_items).
+    """
+    same_writeset = (
+        this.writeset_ident is not None
+        and other.writeset_ident == this.writeset_ident)
+    if same_writeset:
+        return False
+    if this.writes_all_memory:
+        return (other.writes_all_memory or other.reads_all_memory
+                or other.cache_is_read or other.cache_is_write)
+    if this.reads_all_memory:
+        return other.writes_all_memory or other.cache_is_write
+    if this.cache_is_write:
+        return other.writes_all_memory or other.reads_all_memory
+    if this.cache_is_read:
+        return other.writes_all_memory
+    return False
+
+
 class CacheRequestType(Enum):
     WRITE_LINE = "WRITE_LINE"
     READ_LINE = "READ_LINE"
@@ -206,18 +260,19 @@ class CacheTable:
             f'req={ident} slot={state.slot}'
         )
 
-    def has_free_witem_slot(self, use_reserved: bool = False) -> bool:
-        """Check if a witem slot is available.
+    def has_free_witem_slot(self, use_reserved: bool = False, n: int = 1) -> bool:
+        """Check if `n` witem slots are available.
 
         Args:
             use_reserved: If True, can use reserved slots (for message handlers).
                          If False, must leave n_items_reserved slots free (for kinstructions).
+            n: Number of free slots required.
         """
         used = len(self.waiting_items)
         if use_reserved:
-            return used < self.params.witem_table_depth
+            return used + n <= self.params.witem_table_depth
         else:
-            return used < self.params.witem_table_depth - self.params.n_items_reserved
+            return used + n <= self.params.witem_table_depth - self.params.n_items_reserved
 
     async def wait_for_free_witem_slot(self, witem: WaitingItem | None = None,
                                         use_reserved: bool = False) -> None:
@@ -345,7 +400,15 @@ class CacheTable:
         state = self.get_state(k_maddr)
         assert state.state in (CacheState.SHARED, CacheState.MODIFIED)
 
-    def add_witem_immediately(self, witem: WaitingItem, use_reserved: bool = False):
+    def add_witem_immediately(self, witem: WaitingItem,
+                               k_maddr: KMAddr | None = None,
+                               use_reserved: bool = False):
+        """Add `witem` to waiting_items with full precondition assertions.
+
+        For cache-accessing witems (`cache_is_read` / `cache_is_write`),
+        `k_maddr` must be provided and the cache slot will be acquired
+        synchronously. Callers must have verified via `is_ready` that the
+        slot is available and memory ordering permits the add."""
         assert self.has_free_witem_slot(use_reserved=use_reserved)
         existing = []
         for w in self.waiting_items:
@@ -361,110 +424,42 @@ class CacheTable:
             f"existing={[(id(w), type(w).__name__) for w in existing]} "
             f"new={id(witem)} {type(witem).__name__}"
         )
-        self.waiting_items.append(witem)
-
-    async def add_witem(self, witem: WaitingItem, k_maddr: KMAddr|None=None,
-                        use_reserved: bool = False):
+        assert not (witem.cache_is_read and witem.cache_is_write)
         if witem.cache_is_read or witem.cache_is_write:
-            assert k_maddr is not None
-            assert not (witem.cache_is_read and witem.cache_is_write)
-            # Wait for writes_all_memory/reads_all_memory to complete first, then check slot
-            if self._any_writes_all_memory(witem.writeset_ident):
-                self._record_blocked_by_witems(
-                    witem,
-                    lambda item: (item.writes_all_memory and (
-                        witem.writeset_ident is None
-                        or item.writeset_ident != witem.writeset_ident)),
-                    "blocked_by_writes_all_memory")
-                await self._wait_for_writes_all_memory_complete(witem.writeset_ident)
-            if witem.cache_is_write and self._any_reads_all_memory(witem.writeset_ident):
-                self._record_blocked_by_witems(
-                    witem,
-                    lambda item: (item.reads_all_memory and (
-                        witem.writeset_ident is None
-                        or item.writeset_ident != witem.writeset_ident)),
-                    "blocked_by_reads_all_memory")
-                await self._wait_for_reads_all_memory_complete(witem.writeset_ident)
+            assert k_maddr is not None, (
+                f"{self.name} add_witem_immediately: cache_is_{'write' if witem.cache_is_write else 'read'} "
+                f"witem {type(witem).__name__} ident={witem.instr_ident} requires k_maddr")
+            assert witem.cache_slot is None, (
+                f"{self.name} add_witem_immediately: witem already has cache_slot={witem.cache_slot} — "
+                f"slot acquisition is this function's responsibility")
             slot = self.addr_to_slot(k_maddr)
             if slot is None:
-                logger.debug(
-                    f'{self.clock.cycle}: {self.name}: cache miss for '
-                    f'addr={hex(k_maddr.addr)}, getting new slot'
-                )
-                slot = await self._get_new_slot(k_maddr)
-                witem.set_cache_slot(slot)
-                logger.debug(
-                    f'{self.clock.cycle}: {self.name}: got new slot={slot} '
-                    f'cache_is_avail={witem.cache_is_avail} state={self.slot_states[slot].state}'
-                )
-            else:
-                logger.debug(
-                    f'{self.clock.cycle}: {self.name}: cache hit for '
-                    f'addr={hex(k_maddr.addr)}, slot={slot}'
-                )
-                witem.set_cache_slot(slot)
-                if witem.cache_is_write:
-                    ws = witem.writeset_ident
-                    if (self.slot_in_use(slot, writeset_ident=ws)
-                            or self._any_reads_all_memory(ws)):
-                        # If there are other witems in the midst of a read or write we need
-                        # to wait for them to complete
-                        self._record_blocked_by_witems(
-                            witem,
-                            lambda item: (item.cache_slot == slot or item.reads_all_memory),
-                            "blocked_by_slot_in_use")
-                        await self.wait_for_slot_to_be_writeable(slot, k_maddr, writeset_ident=ws)
-                if witem.cache_is_read:
-                    if self.slot_has_write(slot, writeset_ident=witem.writeset_ident):
-                        self._record_blocked_by_witems(
-                            witem,
-                            lambda item: item.cache_is_write and item.cache_slot == slot,
-                            "blocked_by_slot_write")
-                        await self.wait_for_slot_to_be_readable(
-                            slot, k_maddr, writeset_ident=witem.writeset_ident)
-                witem.cache_is_avail = (
-                        self.slot_states[slot].state in (CacheState.SHARED, CacheState.MODIFIED))
-                logger.debug(
-                    f'{self.clock.cycle}: {self.name}: slot state={self.slot_states[slot].state}, '
-                    f'cache_is_avail={witem.cache_is_avail}'
-                )
-        # If this witem reads all memory, wait for all pending writes to complete first
-        if witem.reads_all_memory:
-            ws_r = witem.writeset_ident
-            self._record_blocked_by_witems(
-                witem,
-                lambda item: (item.cache_is_write
-                              and (ws_r is None
-                                   or item.writeset_ident != ws_r)),
-                "reads_all_blocked_by_writes")
-            await self._wait_for_all_writes_complete(ws_r)
-        # If this witem writes all memory, wait for all pending reads, writes, and other
-        # writes_all_memory witems to complete first
-        if witem.writes_all_memory:
+                slot = self._get_new_slot_if_exists(k_maddr)
+                assert slot is not None, (
+                    f"{self.name} add_witem_immediately: no slot available for "
+                    f"addr=0x{k_maddr.addr:x} — is_ready guarantee violated")
             ws = witem.writeset_ident
-            self._record_blocked_by_witems(
-                witem,
-                lambda item: (item.cache_is_read
-                              and (ws is None or item.writeset_ident != ws)),
-                "writes_all_blocked_by_reads")
-            await self._wait_for_all_reads_complete(ws)
-            self._record_blocked_by_witems(
-                witem,
-                lambda item: (item.cache_is_write
-                              and (ws is None or item.writeset_ident != ws)),
-                "writes_all_blocked_by_writes")
-            await self._wait_for_all_writes_complete(ws)
-            self._record_blocked_by_witems(
-                witem,
-                lambda item: (item.writes_all_memory
-                              and (ws is None or item.writeset_ident != ws)),
-                "writes_all_blocked_by_writes_all")
-            await self._wait_for_writes_all_memory_complete(witem.writeset_ident)
-        await self.wait_for_free_witem_slot(witem, use_reserved=use_reserved)
-        self.add_witem_immediately(witem, use_reserved=use_reserved)
-        if witem.cache_is_read or witem.cache_is_write:
+            if witem.cache_is_write:
+                assert not self.slot_in_use(slot, writeset_ident=ws), (
+                    f"{self.name} add_witem_immediately: slot {slot} "
+                    f"in use for write by another writeset (ws={ws})")
+            if witem.cache_is_read:
+                assert not self.slot_has_write(slot, writeset_ident=ws), (
+                    f"{self.name} add_witem_immediately: slot {slot} "
+                    f"has pending write from another writeset (ws={ws})")
+            witem.set_cache_slot(slot)
             witem.cache_is_avail = (
-                    self.slot_states[witem.cache_slot].state in (CacheState.SHARED, CacheState.MODIFIED))
+                self.slot_states[slot].state in (CacheState.SHARED, CacheState.MODIFIED))
+        else:
+            assert k_maddr is None, (
+                f"{self.name} add_witem_immediately: k_maddr given but witem "
+                f"{type(witem).__name__} is not cache-accessing")
+        for other in self.waiting_items:
+            assert not has_memory_ordering_conflict(witem, other), (
+                f"{self.name} add_witem_immediately: {type(witem).__name__} "
+                f"ident={witem.instr_ident} ws={witem.writeset_ident} conflicts with "
+                f"{type(other).__name__} ident={other.instr_ident} ws={other.writeset_ident}")
+        self.waiting_items.append(witem)
 
     async def _wait_for_all_writes_complete(
             self, writeset_ident: int | None = None) -> None:
@@ -667,34 +662,6 @@ class CacheTable:
             return None
         assert len(matching_items) == 1
         return matching_items[0]
-
-    def get_oldest_active_instr_ident_distance(self, baseline: int) -> int | None:
-        """Return the distance to the oldest active instr_ident from baseline.
-
-        Distance is computed as (ident - baseline) % max_response_tags, so older idents
-        (further back in the circular space) have smaller distances.
-
-        Returns None if no waiting items have an instr_ident set (all free).
-        """
-        max_tags = self.params.max_response_tags
-        all_items = [(type(item).__name__, item.instr_ident) for item in self.waiting_items]
-        # Only include regular idents (< max_response_tags), not special idents like IdentQuery or barriers
-        idents = [item.instr_ident for item in self.waiting_items
-                  if item.instr_ident is not None and item.instr_ident < max_tags]
-        logger.debug(f'{self.clock.cycle}: get_oldest_active_instr_ident_distance: '
-                     f'baseline={baseline} waiting_items={all_items} idents={idents}')
-        if not idents:
-            return None  # All free
-        distances = []
-        for ident in idents:
-            d = (ident - baseline) % max_tags
-            if d == 0:
-                d = max_tags  # ident at baseline is newest, not oldest
-            distances.append(d)
-        result = min(distances)
-        if result == max_tags:
-            return None  # only active ident is at baseline (newest)
-        return result
 
     def can_get_slot(self, k_maddr: KMAddr) -> bool:
         slot = self.addr_to_slot(k_maddr)

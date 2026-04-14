@@ -10,7 +10,7 @@ from dataclasses import dataclass
 import logging
 
 from zamlet import addresses
-from zamlet.kamlet.kinstructions import KInstr
+from zamlet.kamlet.kinstructions import KInstr, Renamed
 from zamlet.transactions.store_scatter_base import WaitingStoreScatterBase
 
 if TYPE_CHECKING:
@@ -40,9 +40,7 @@ class StoreStride(KInstr):
     instr_ident: int
     stride_bytes: int
 
-    async def update_kamlet(self, kamlet):
-        logger.debug(f'kamlet ({kamlet.min_x}, {kamlet.min_y}): store_stride.update_kamlet '
-                     f'addr={hex(self.g_addr.addr)} ident={self.instr_ident}')
+    async def admit(self, kamlet) -> 'StoreStride | None':
         ew = self.src_ordering.ew
         elements_in_vline = kamlet.params.vline_bytes * 8 // ew
         start_vline = self.start_index // elements_in_vline
@@ -50,20 +48,25 @@ class StoreStride(KInstr):
 
         src_pregs = {v: kamlet.r(self.src + v) for v in range(start_vline, end_vline + 1)}
         mask_preg = kamlet.r(self.mask_reg) if self.mask_reg is not None else None
+        return self.rename(
+            writes_all_memory=True, writeset_ident=self.writeset_ident,
+            needs_witem=1,
+            src_pregs=src_pregs, mask_preg=mask_preg,
+        )
 
-        read_regs = list(src_pregs.values())
-        if mask_preg is not None:
-            read_regs.append(mask_preg)
-        await kamlet.wait_for_rf_available(write_regs=[], read_regs=read_regs,
-                                           instr_ident=self.instr_ident)
-        rf_read_ident = kamlet.rf_info.start(read_regs=read_regs, write_regs=[])
+    async def execute(self, kamlet) -> None:
+        r = self.renamed
+        logger.debug(f'kamlet ({kamlet.min_x}, {kamlet.min_y}): store_stride.execute '
+                     f'addr={hex(self.g_addr.addr)} ident={self.instr_ident}')
+        rf_read_ident = kamlet.rf_info.start(
+            read_regs=r.read_pregs, write_regs=r.write_pregs)
         witem = WaitingStoreStride(
             params=kamlet.params, instr=self, rf_ident=rf_read_ident,
-            src_pregs=src_pregs, mask_preg=mask_preg)
+            src_pregs=r.src_pregs, mask_preg=r.mask_preg)
         kamlet.monitor.record_witem_created(
             self.instr_ident, kamlet.min_x, kamlet.min_y, 'WaitingStoreStride',
-            read_regs=read_regs)
-        await kamlet.cache_table.add_witem(witem=witem)
+            read_regs=r.read_pregs)
+        kamlet.cache_table.add_witem_immediately(witem=witem)
 
 
 class WaitingStoreStride(WaitingStoreScatterBase):

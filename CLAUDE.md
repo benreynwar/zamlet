@@ -86,7 +86,8 @@ tests or small groups of tests yourself.
 
 When running Python tests, always redirect output to a file so you can examine the complete output without needing to rerun the test. For example:
 ```bash
-python python/zamlet/amlet_test/test_alu_basic.py > test_output.log 2>&1
+python python/zamlet/tests/test_strided_store.py -g k2x2_j1x2 --ew=32 --vl=127 \
+  --stride=3657 --seed=14 > test_output.log 2>&1
 ```
 This allows you to read the file multiple times to analyze different parts of the output.
 
@@ -105,8 +106,8 @@ python python/zamlet/tests/test_strided_store.py -g k2x2_j1x2 --ew=32 --vl=127 \
 ### Running Tests with Bazel
 Tests are generated with config suffixes. To run a test using bazel:
 ```bash
-bazel test //python/zamlet/bamlet_test:test_basic_default --test_output=streamed
-bazel test //python/zamlet/amlet_test:test_alu_basic_default --test_output=streamed
+bazel test //python/zamlet/kamlet_test:test_kamlet_default --test_output=streamed
+bazel test //python/zamlet/lamlet_test:test_zamlet_default --test_output=streamed
 ```
 The pattern is: `//python/zamlet/{module}_test:{test_name}_{config_name}`
 Always use `--test_output=streamed` to see test output in real-time.
