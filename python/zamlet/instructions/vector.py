@@ -6,6 +6,7 @@ Reference: riscv-isa-manual/src/v-st-ext.adoc
 import logging
 import struct
 from dataclasses import dataclass
+from enum import Enum
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -1745,11 +1746,11 @@ class Vid:
 class VUnary:
     """Unary vector operation with potentially different src/dst element widths.
 
-    Used for vsext.vfN, vzext.vfN, vnsrl.wi, vmv.v.v, and other unary operations.
+    Used for vsext.vfN, vzext.vfN, vmv.v.v, and other unary operations.
 
     Width modes (controlled by `widening` and `narrowing`):
     - widening=True:  dst_ew = SEW, src_ew = SEW / factor (vzext, vsext)
-    - narrowing=True: dst_ew = SEW, src_ew = SEW * factor (vnsrl)
+    - narrowing=True: dst_ew = SEW, src_ew = SEW * factor
     - both False:     dst_ew = SEW / factor, src_ew = SEW
     """
     vd: int
@@ -1760,13 +1761,9 @@ class VUnary:
     widening: bool
     mnemonic: str
     narrowing: bool = False
-    shift_amount: int = 0
 
     def __str__(self):
         vm_str = '' if self.vm else ',v0.t'
-        if self.shift_amount:
-            return (f'{self.mnemonic}\tv{self.vd},v{self.vs2},'
-                    f'0x{self.shift_amount:x}{vm_str}')
         return f'{self.mnemonic}\tv{self.vd},v{self.vs2}{vm_str}'
 
     async def update_state(self, s: 'Oamlet'):
@@ -1807,7 +1804,182 @@ class VUnary:
             word_order=word_order,
             mask_reg=mask_reg,
             instr_ident=instr_ident,
-            shift_amount=self.shift_amount,
+        )
+        await s.add_to_instruction_buffer(kinstr, span_id)
+        s.monitor.finalize_children(span_id)
+        s.pc += 4
+
+
+class OvShape(Enum):
+    """Width relationship for the Ov (width-asymmetric) arithmetic classes.
+
+    BASE   — widening with both srcs at SEW (vw{add,sub,mul,mac}.vv/.vx,
+             vfw*.vv/.vf): dst_ew = 2*SEW.
+    WIDE   — widening with src2 already at 2*SEW (vw{add,sub}.wv/.wx,
+             vfw{add,sub}.wv/.wf): dst_ew = 2*SEW.
+    NARROW — narrowing with src2 at 2*SEW and dst at SEW (vnsrl, vnsra).
+    """
+    BASE = 'base'
+    WIDE = 'wide'
+    NARROW = 'narrow'
+
+
+def _ov_widths(shape: OvShape, sew: int) -> tuple[int, int, int]:
+    """Return (src1_ew, src2_ew, dst_ew) for the requested Ov shape."""
+    if shape is OvShape.BASE:
+        return sew, sew, sew * 2
+    if shape is OvShape.WIDE:
+        return sew, sew * 2, sew * 2
+    if shape is OvShape.NARROW:
+        return sew, sew * 2, sew
+    raise ValueError(f"unknown Ov shape: {shape!r}")
+
+
+@dataclass
+class VArithVvOv:
+    """Width-asymmetric binary vector-vector arithmetic.
+
+    Used for the widening (vw{add,sub,mul,mac}{u}.vv/.wv, vfw*.vv/.wv) and
+    narrowing-shift (vnsrl.wv, vnsra.wv) families. ``shape`` selects the
+    width relationship between the operands; per-source signedness controls
+    unpack format and the destination signedness convention.
+    """
+    vd: int
+    vs1: int
+    vs2: int
+    vm: int
+    op: kinstructions.VArithOp
+    shape: OvShape
+    src1_signed: bool
+    src2_signed: bool
+    mnemonic: str
+
+    def __str__(self):
+        vm_str = '' if self.vm else ',v0.t'
+        return f'{self.mnemonic}\tv{self.vd},v{self.vs2},v{self.vs1}{vm_str}'
+
+    async def update_state(self, s: 'Oamlet'):
+        span_id = s.monitor.create_span(
+            span_type=SpanType.RISCV_INSTR,
+            component="lamlet",
+            completion_type=CompletionType.FIRE_AND_FORGET,
+            mnemonic=str(self),
+            pc=s.pc,
+        )
+
+        vsew = (s.vtype >> 3) & 0x7
+        sew = 8 << vsew
+        src1_ew, src2_ew, dst_ew = _ov_widths(self.shape, sew)
+
+        mask_reg = None if self.vm else 0
+        word_order = s.word_order
+
+        s.assert_vrf_ordering(self.vs1, src1_ew)
+        s.assert_vrf_ordering(self.vs2, src2_ew)
+        if self.op in kinstructions.ACCUM_OPS:
+            s.assert_vrf_ordering(self.vd, dst_ew)
+        s.set_vrf_ordering(self.vd, dst_ew)
+
+        instr_ident = await s.get_instr_ident()
+        kinstr = kinstructions.VArithVvOvOp(
+            op=self.op,
+            dst=self.vd,
+            src1=self.vs1,
+            src2=self.vs2,
+            mask_reg=mask_reg,
+            n_elements=s.vl,
+            src1_ew=src1_ew,
+            src2_ew=src2_ew,
+            dst_ew=dst_ew,
+            src1_signed=self.src1_signed,
+            src2_signed=self.src2_signed,
+            word_order=word_order,
+            instr_ident=instr_ident,
+            is_float=self.op in kinstructions.FLOAT_OPS,
+        )
+        await s.add_to_instruction_buffer(kinstr, span_id)
+        s.monitor.finalize_children(span_id)
+        s.pc += 4
+
+
+@dataclass
+class VArithVxOv:
+    """Width-asymmetric binary vector-scalar arithmetic.
+
+    Covers .vx/.wx (rs1 holds the scalar) and .wi (5-bit immediate) forms of
+    the widening / narrowing arithmetic family. When ``is_imm`` is True,
+    ``rs1`` carries the 5-bit immediate value and is sign- or zero-extended
+    based on ``scalar_signed``.
+    """
+    vd: int
+    rs1: int
+    vs2: int
+    vm: int
+    op: kinstructions.VArithOp
+    shape: OvShape
+    scalar_signed: bool
+    src2_signed: bool
+    mnemonic: str
+    is_imm: bool = False
+
+    def __str__(self):
+        vm_str = '' if self.vm else ',v0.t'
+        if self.is_imm:
+            return f'{self.mnemonic}\tv{self.vd},v{self.vs2},0x{self.rs1:x}{vm_str}'
+        return f'{self.mnemonic}\tv{self.vd},v{self.vs2},{reg_name(self.rs1)}{vm_str}'
+
+    async def update_state(self, s: 'Oamlet'):
+        span_id = s.monitor.create_span(
+            span_type=SpanType.RISCV_INSTR,
+            component="lamlet",
+            completion_type=CompletionType.FIRE_AND_FORGET,
+            mnemonic=str(self),
+            pc=s.pc,
+        )
+
+        vsew = (s.vtype >> 3) & 0x7
+        sew = 8 << vsew
+        src1_ew, src2_ew, dst_ew = _ov_widths(self.shape, sew)
+        # Scalar uses src1 width.
+        scalar_ew = src1_ew
+
+        mask_reg = None if self.vm else 0
+        word_order = s.word_order
+
+        s.assert_vrf_ordering(self.vs2, src2_ew)
+        if self.op in kinstructions.ACCUM_OPS:
+            s.assert_vrf_ordering(self.vd, dst_ew)
+
+        if self.is_imm:
+            if self.scalar_signed:
+                imm_val = self.rs1 if self.rs1 < 16 else self.rs1 - 32
+                scalar_bytes = imm_val.to_bytes(
+                    s.params.word_bytes, byteorder='little', signed=True)
+            else:
+                scalar_bytes = self.rs1.to_bytes(
+                    s.params.word_bytes, byteorder='little', signed=False)
+        else:
+            await s.scalar.wait_all_regs_ready(None, None, [self.rs1], [])
+            scalar_bytes = s.scalar.read_reg(self.rs1)
+
+        s.set_vrf_ordering(self.vd, dst_ew)
+
+        instr_ident = await s.get_instr_ident()
+        kinstr = kinstructions.VArithVxOvOp(
+            op=self.op,
+            dst=self.vd,
+            scalar_bytes=scalar_bytes,
+            src2=self.vs2,
+            mask_reg=mask_reg,
+            n_elements=s.vl,
+            scalar_ew=scalar_ew,
+            src2_ew=src2_ew,
+            dst_ew=dst_ew,
+            scalar_signed=self.scalar_signed,
+            src2_signed=self.src2_signed,
+            word_order=word_order,
+            instr_ident=instr_ident,
+            is_float=self.op in kinstructions.FLOAT_OPS,
         )
         await s.add_to_instruction_buffer(kinstr, span_id)
         s.monitor.finalize_children(span_id)

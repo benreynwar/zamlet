@@ -347,23 +347,31 @@ class Oamlet:
         vlmul = {1: 0, 2: 1, 4: 2, 8: 3}[lmul]
         self.vtype = (vsew << 3) | vlmul
 
-    def set_vrf_ordering(self, vd: int, ew: int):
-        """Set vrf_ordering for all vline registers in the LMUL group."""
-        ordering = Ordering(self.word_order, ew)
-        n_vlines = self.lmul
-        logger.info(f'set_vrf_ordering: vd=v{vd} ew={ew} '
+    def _emul_for_eew(self, eew: int) -> int:
+        """EMUL = LMUL * EEW / SEW, clamped to a minimum of 1 vline
+        (fractional EMUL still occupies one register)."""
+        return max(1, self.lmul * eew // self.sew)
+
+    def set_vrf_ordering(self, vd: int, eew: int):
+        """Set vrf_ordering for every vline register in the EMUL group derived
+        from ``eew``. Covers the case where widening/narrowing ops have a
+        destination EMUL that differs from LMUL."""
+        ordering = Ordering(self.word_order, eew)
+        n_vlines = self._emul_for_eew(eew)
+        logger.info(f'set_vrf_ordering: vd=v{vd} eew={eew} '
                     f'lmul={self.lmul} n_vlines={n_vlines} regs=v{vd}..v{vd + n_vlines - 1}')
         for i in range(n_vlines):
             self.vrf_ordering[vd + i] = ordering
 
-    def assert_vrf_ordering(self, vreg: int, ew: int):
-        """Assert vrf_ordering matches ew for all vline registers in the LMUL group."""
-        for i in range(self.lmul):
+    def assert_vrf_ordering(self, vreg: int, eew: int):
+        """Assert vrf_ordering matches eew for every vline register in the EMUL group."""
+        n_vlines = self._emul_for_eew(eew)
+        for i in range(n_vlines):
             reg = vreg + i
             assert self.vrf_ordering[reg] is not None, (
-                f'v{reg} has no ordering (expected ew={ew})')
-            assert self.vrf_ordering[reg].ew == ew, (
-                f'v{reg} ordering ew={self.vrf_ordering[reg].ew} != expected ew={ew}')
+                f'v{reg} has no ordering (expected eew={eew})')
+            assert self.vrf_ordering[reg].ew == eew, (
+                f'v{reg} ordering ew={self.vrf_ordering[reg].ew} != expected eew={eew}')
 
     def allocate_memory(self, address: GlobalAddress, size: SizeBytes, memory_type: MemoryType,
                         readable: bool = True, writable: bool = True):

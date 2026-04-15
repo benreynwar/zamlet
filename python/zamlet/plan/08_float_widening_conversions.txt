@@ -25,11 +25,26 @@ test count (119 total FP tests). See test_suite_reference.txt for complete list
 
 Implementation Summary
 ----------------------
-Currently implemented: 0 instructions
+Currently implemented: 16 widening FP arithmetic instructions
+  (vfwadd/vfwsub .vv/.vf and .wv/.wf, vfwmul .vv/.vf, vfwmacc/vfwnmacc/
+   vfwmsac/vfwnmsac .vv/.vf)
 Total in spec: ~36 widening/conversion instructions
-Coverage: 0%
+Coverage: ~44%
 
-WIDENING FP ADD/SUBTRACT (Status: ✗)
+Implementation: widening FP arithmetic shares the VArithVvOv / VArithVxOv
+classes used for the integer widening family (see
+06_integer_widening_narrowing.txt for the lowering chain). The
+kinstruction's `_ov_arith_fmt` helper picks the float struct format ('d',
+'f', 'e') based on the op-category check (op in FLOAT_OPS), so the same
+shape/width machinery applies. Float ops set src{1,2}_signed=False at the
+wrapper layer; signedness is irrelevant for float fmt selection. Accumulator
+ops (FMACC/FNMACC/FMSAC/FNMSAC) read vd as the addend at 2*SEW.
+
+Conversion ops (vf{c,wc,nc}vt*, including vfwcvt.f.f.v and vfncvt.f.f.w)
+are still unimplemented — these stay on the unary (Ov-unary) path and are
+tracked separately.
+
+WIDENING FP ADD/SUBTRACT (Status: ✓)
 =====================================
 
 Spec: v-st-ext.adoc lines 3287-3301
@@ -38,92 +53,84 @@ These come in two forms:
 1. SEW + SEW → 2*SEW (both operands narrow)
 2. 2*SEW + SEW → 2*SEW (one operand wide, .w suffix)
 
-VFWADD.VV, VFWADD.VF (Status: ✗)
+VFWADD.VV, VFWADD.VF (Status: ✓)
   Spec: v-st-ext.adoc lines 3291-3292
-  Encoding: funct6=0x30, funct3=OPFVV/OPFVF
+  Encoding: funct6=0x30, funct3=OPFVV (0x1) / OPFVF (0x5)
   Format: vfwadd.vv vd, vs2, vs1, vm / vfwadd.vf vd, vs2, rs1, vm
-  Implementation: Not implemented
+  Implementation: VArithVvOv / VArithVxOv with op=FADD, shape=BASE.
   Description: Widening FP add, 2*SEW = SEW + SEW
-  Notes: Uses dynamic rounding mode from frm
+  Notes: Rounding mode is the host Python double rounding (no frm yet).
 
-VFWSUB.VV, VFWSUB.VF (Status: ✗)
+VFWSUB.VV, VFWSUB.VF (Status: ✓)
   Spec: v-st-ext.adoc lines 3293-3294
   Encoding: funct6=0x32, funct3=OPFVV/OPFVF
   Format: vfwsub.vv vd, vs2, vs1, vm / vfwsub.vf vd, vs2, rs1, vm
-  Implementation: Not implemented
+  Implementation: VArithVvOv / VArithVxOv with op=FSUB, shape=BASE.
   Description: Widening FP subtract, 2*SEW = SEW - SEW
 
-VFWADD.WV, VFWADD.WF (Status: ✗)
+VFWADD.WV, VFWADD.WF (Status: ✓)
   Spec: v-st-ext.adoc lines 3297-3298
   Encoding: funct6=0x34, funct3=OPFVV/OPFVF
   Format: vfwadd.wv vd, vs2, vs1, vm / vfwadd.wf vd, vs2, rs1, vm
-  Implementation: Not implemented
+  Implementation: VArithVvOv / VArithVxOv with op=FADD, shape=WIDE (vs2 at
+    2*SEW, vs1/rs1 at SEW).
   Description: Widening FP add, 2*SEW = 2*SEW + SEW
-  Notes:
-    - vs2 is 2*SEW (wide), vs1/rs1 is SEW (narrow)
-    - .w suffix indicates first operand is wide
-    - Useful for accumulating into wider register
 
-VFWSUB.WV, VFWSUB.WF (Status: ✗)
+VFWSUB.WV, VFWSUB.WF (Status: ✓)
   Spec: v-st-ext.adoc lines 3299-3300
   Encoding: funct6=0x36, funct3=OPFVV/OPFVF
   Format: vfwsub.wv vd, vs2, vs1, vm / vfwsub.wf vd, vs2, rs1, vm
-  Implementation: Not implemented
+  Implementation: VArithVvOv / VArithVxOv with op=FSUB, shape=WIDE.
   Description: Widening FP subtract, 2*SEW = 2*SEW - SEW
 
-WIDENING FP MULTIPLY (Status: ✗)
+WIDENING FP MULTIPLY (Status: ✓)
 =================================
 
 Spec: v-st-ext.adoc lines 3318-3324
 
-VFWMUL.VV, VFWMUL.VF (Status: ✗)
+VFWMUL.VV, VFWMUL.VF (Status: ✓)
   Spec: v-st-ext.adoc lines 3322-3323
   Encoding: funct6=0x38, funct3=OPFVV/OPFVF
   Format: vfwmul.vv vd, vs2, vs1, vm / vfwmul.vf vd, vs2, rs1, vm
-  Implementation: Not implemented
+  Implementation: VArithVvOv / VArithVxOv with op=FMUL, shape=BASE.
   Description: Widening FP multiply, 2*SEW = SEW * SEW
-  Notes:
-    - Returns full 2*SEW product
-    - Common for avoiding rounding in intermediate products
 
-WIDENING FP FUSED MULTIPLY-ADD (Status: ✗)
+WIDENING FP FUSED MULTIPLY-ADD (Status: ✓)
 ===========================================
 
 Spec: v-st-ext.adoc lines 3371-3393
 
 All widening FMA operations overwrite the wide addend (vd). The multiplier
 inputs are SEW wide, while the addend and destination are 2*SEW bits wide.
+Implemented via VArithVvOv / VArithVxOv with shape=BASE; vd is treated as
+the accumulator (ACCUM_OPS path) and read at 2*SEW.
 
-VFWMACC.VV, VFWMACC.VF (Status: ✗)
+VFWMACC.VV, VFWMACC.VF (Status: ✓)
   Spec: v-st-ext.adoc lines 3379-3380
   Encoding: funct6=0x3c, funct3=OPFVV/OPFVF
   Format: vfwmacc.vv vd, vs1, vs2, vm / vfwmacc.vf vd, rs1, vs2, vm
-  Implementation: Not implemented
+  Implementation: op=FMACC.
   Description: vd[i] = (vs1[i] * vs2[i]) + vd[i]
-  Notes:
-    - vd is 2*SEW (both source and dest)
-    - vs1, vs2 are SEW
-    - Product is widened to 2*SEW, then added to 2*SEW vd
 
-VFWNMACC.VV, VFWNMACC.VF (Status: ✗)
+VFWNMACC.VV, VFWNMACC.VF (Status: ✓)
   Spec: v-st-ext.adoc lines 3383-3384
   Encoding: funct6=0x3d, funct3=OPFVV/OPFVF
   Format: vfwnmacc.vv vd, vs1, vs2, vm / vfwnmacc.vf vd, rs1, vs2, vm
-  Implementation: Not implemented
+  Implementation: op=FNMACC.
   Description: vd[i] = -(vs1[i] * vs2[i]) - vd[i]
 
-VFWMSAC.VV, VFWMSAC.VF (Status: ✗)
+VFWMSAC.VV, VFWMSAC.VF (Status: ✓)
   Spec: v-st-ext.adoc lines 3387-3388
   Encoding: funct6=0x3e, funct3=OPFVV/OPFVF
   Format: vfwmsac.vv vd, vs1, vs2, vm / vfwmsac.vf vd, rs1, vs2, vm
-  Implementation: Not implemented
+  Implementation: op=FMSAC.
   Description: vd[i] = (vs1[i] * vs2[i]) - vd[i]
 
-VFWNMSAC.VV, VFWNMSAC.VF (Status: ✗)
+VFWNMSAC.VV, VFWNMSAC.VF (Status: ✓)
   Spec: v-st-ext.adoc lines 3391-3392
   Encoding: funct6=0x3f, funct3=OPFVV/OPFVF
   Format: vfwnmsac.vv vd, vs1, vs2, vm / vfwnmsac.vf vd, rs1, vs2, vm
-  Implementation: Not implemented
+  Implementation: op=FNMSAC.
   Description: vd[i] = -(vs1[i] * vs2[i]) + vd[i]
 
 SINGLE-WIDTH FP/INTEGER CONVERSIONS (Status: ✗)
@@ -331,76 +338,53 @@ Test Coverage
 - No widening FP or conversion operations tested
 - tests/common/encoding.h has encoding macros but no execution
 
-TODO Items
-----------
-1. Implement widening FP add/subtract
-   - vfwadd.vv/vf, vfwsub.vv/vf (SEW+SEW→2*SEW)
-   - vfwadd.wv/wf, vfwsub.wv/wf (2*SEW+SEW→2*SEW)
-   - Handle destination register width correctly
-   - Verify no register overlap
-
-2. Implement widening FP multiply
-   - vfwmul.vv/vf
-   - Returns full 2*SEW product
-
-3. Implement widening FP multiply-add
-   - vfwmacc.vv/vf, vfwnmacc.vv/vf
-   - vfwmsac.vv/vf, vfwnmsac.vv/vf
-   - Accumulator is 2*SEW
-
-4. Implement single-width FP/integer conversions
+Remaining work
+--------------
+1. Single-width FP/integer conversions
    - vfcvt.xu.f.v, vfcvt.x.f.v (float to integer)
    - vfcvt.f.xu.v, vfcvt.f.x.v (integer to float)
    - vfcvt.rtz.xu.f.v, vfcvt.rtz.x.f.v (truncating float to int)
-   - Handle rounding modes correctly
-   - Follow scalar FP conversion exception semantics
+   - Several of these already exist via VUnaryOvOp; check coverage.
 
-5. Implement widening FP/integer conversions
+2. Widening FP/integer conversions
    - vfwcvt.xu.f.v, vfwcvt.x.f.v (float to 2*int)
    - vfwcvt.f.xu.v, vfwcvt.f.x.v (int to 2*float)
    - vfwcvt.f.f.v (float to 2*float)
    - vfwcvt.rtz.xu.f.v, vfwcvt.rtz.x.f.v (truncating)
-   - Verify exact representation guarantees
 
-6. Implement narrowing FP/integer conversions
+3. Narrowing FP/integer conversions
    - vfncvt.xu.f.w, vfncvt.x.f.w (2*float to int)
    - vfncvt.f.xu.w, vfncvt.f.x.w (2*int to float)
    - vfncvt.f.f.w (2*float to float)
    - vfncvt.rod.f.f.w (round-odd for multi-step)
    - vfncvt.rtz.xu.f.w, vfncvt.rtz.x.f.w (truncating)
-   - Implement round-odd correctly
-   - Handle overflow to largest finite value for ROD
 
-7. Add overlap checking
-   - Verify vd doesn't overlap source operands for widening/narrowing
-   - Check EMUL constraints for register groups
-   - Reserve encoding for illegal overlap cases
+4. Rounding-mode (frm) plumbing for the widening FMA family. Today the
+   model uses host Python double rounding throughout.
 
-8. Add comprehensive tests
-   - Test conversions FP16↔FP32, FP32↔FP64
-   - Test integer conversions with various bit widths
-   - Test rounding modes (dynamic frm and RTZ)
-   - Test round-odd for narrowing sequences
-   - Test exception handling
-   - Test with various LMUL settings
-   - Test register overlap detection
+5. Overlap / register-group constraint checking (shared with the integer
+   widening/narrowing path; see 06_integer_widening_narrowing.txt).
+
+6. Dedicated unit tests for the float Ov classes.
 
 Summary
 -------
-No widening FP or conversion operations are currently implemented. These operations
-are critical for:
-- Mixed-precision arithmetic (e.g., FP16 multiply accumulating to FP32)
-- Avoiding loss of precision in intermediate results
-- Efficient type conversions between FP and integer
-- Multi-precision calculations
-- ML inference workloads (mixed precision training/inference)
+Widening FP add/sub (BASE + WIDE), widening FP multiply, and widening FP
+fused multiply-add (FMACC, FNMACC, FMSAC, FNMSAC, .vv and .vf forms) are
+implemented through VArithVvOv / VArithVxOv with op set to the float
+VArithOp value. The shared Ov machinery handles the per-operand width
+unpack/pack.
 
-Total unimplemented: ~36 instructions
-- 8 widening FP add/subtract/multiply variants
-- 8 widening FP multiply-add variants
-- 6 single-width FP/integer conversions
-- 7 widening FP/integer conversions
-- 8 narrowing FP/integer conversions
+Implemented (this round): 16 instructions
+  - 8 widening FP add/subtract variants (BASE + WIDE shapes, .vv/.vf)
+  - 2 widening FP multiply variants (vfwmul .vv/.vf)
+  - 8 widening FP fused multiply-add variants
+    (vfwmacc, vfwnmacc, vfwmsac, vfwnmsac, .vv/.vf)
 
-Priority: High - These are essential for ML workloads, scientific computing,
-and any mixed-precision arithmetic where maintaining accuracy is critical.
+Still unimplemented: ~21 conversion instructions
+  - 6 single-width FP/integer
+  - 7 widening FP/integer
+  - 8 narrowing FP/integer (including ROD)
+
+Priority: medium for FP→int/int→FP conversions (commonly emitted by
+compilers); FFT path doesn't depend on them.

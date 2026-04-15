@@ -12,6 +12,7 @@ FAST_TESTS = [
     "test_reg_gather",
     "test_reg_mem_mapping",
     "test_synchronization",
+    "test_widening_arith",
 ]
 
 SLOW_TESTS = [
@@ -95,5 +96,6 @@ test_suite(
         "test_strided_load",
         "test_strided_store",
         "test_reduction",
+        "test_widening_arith",
     ],
 )
