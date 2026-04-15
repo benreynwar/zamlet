@@ -15,13 +15,17 @@
 #define N_FFTS 1
 #define TOL 1e-9
 
-// Bitreverse index arrays (32-bit, in VPU 32-bit memory)
-uint32_t br_read_idx[N] __attribute__((section(".data.vpu32")));
-uint32_t br_write_idx[N] __attribute__((section(".data.vpu32")));
+// Bitreverse indices. compute_indices writes 32-bit element indices; we then
+// widen and scale them to 64-bit byte offsets for bitreverse_reorder64.
+uint32_t br_read_idx32[N] __attribute__((section(".data.vpu32")));
+uint32_t br_write_idx32[N] __attribute__((section(".data.vpu32")));
+uint64_t br_read_idx[N] __attribute__((section(".data.vpu64")));
+uint64_t br_write_idx[N] __attribute__((section(".data.vpu64")));
 
-void compute_indices(size_t n, size_t vl, uint32_t* read_idx, uint32_t* write_idx);
+void compute_indices(size_t n, size_t vl, uint32_t* read_idx, uint32_t* write_idx,
+                     int reverse_bits);
 void bitreverse_reorder64(size_t n, const int64_t* src, int64_t* dst,
-                          const uint32_t* read_idx, const uint32_t* write_idx);
+                          const uint64_t* read_idx, const uint64_t* write_idx);
 
 // Gather indices for each stage (in VPU memory)
 size_t stage0_idx_a[8] __attribute__((section(".data.vpu64"))) = {0, 0, 2, 2, 4, 4, 6, 6};
@@ -144,10 +148,18 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // Compute bitreverse indices (once, before FFT loop)
+    // Compute bitreverse indices (once, before FFT loop). compute_indices
+    // emits 32-bit element indices; widen to 64-bit byte offsets (*8 for e64)
+    // for bitreverse_reorder64. Scalar widen — outside the timed region.
     size_t vl_e32;
     asm volatile ("vsetvli %0, %1, e32, m1, ta, ma" : "=r"(vl_e32) : "r"(N));
-    compute_indices(N, vl_e32, br_read_idx, br_write_idx);
+    int n_bits = 0;
+    for (size_t v = N; v > 1; v >>= 1) n_bits++;
+    compute_indices(N, vl_e32, br_read_idx32, br_write_idx32, n_bits);
+    for (size_t i = 0; i < N; i++) {
+        br_read_idx[i]  = ((uint64_t)br_read_idx32[i])  << 3;
+        br_write_idx[i] = ((uint64_t)br_write_idx32[i]) << 3;
+    }
 
     printf("Running %d x FFT-8\n", N_FFTS);
 

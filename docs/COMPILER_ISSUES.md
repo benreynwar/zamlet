@@ -36,3 +36,21 @@ The LLVM backend unconditionally emits `vsoxei` (ordered scatter) for
 
 A proper fix would use loop-independence metadata to select unordered
 scatter during lowering.
+
+## VPU-stack placement for non-scalable locals
+
+The VPU-stack patch (`PLAN_llvm_vpu_spills.md`) redirects only
+`StackID::ScalableVector` frame objects to s11. Plain C-level arrays
+(e.g. `uint64_t idx[N]`) that need to be vector-loaded/stored still
+land on the scalar stack, which the VPU cannot access efficiently.
+Kernels therefore have to declare such buffers as file-scope globals in
+`.data.vpuN` sections (or use `vpu_alloc`) even when the buffer is
+logically local to one function.
+
+A proper fix would add an attribute — e.g.
+`__attribute__((vpu_stack))` or a dedicated address space — and extend
+`RISCVFrameLowering` to route tagged frame objects to s11 in addition
+to the existing `StackID::ScalableVector` path. Then C-idiomatic
+locals like `uint64_t idx[N] __attribute__((vpu_stack))` would Just
+Work inside functions, and the globals-with-sections boilerplate could
+go away.

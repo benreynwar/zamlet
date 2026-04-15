@@ -334,6 +334,91 @@ static void vprintfmt(void (*putch)(int, void**), void **putdat, const char *fmt
       printnum(putch, putdat, num, base, width, padc);
       break;
 
+    // floating point: %f (fixed) and %e (scientific)
+    case 'f':
+    case 'e':
+    {
+      double d = va_arg(ap, double);
+      union { double d; uint64_t u; } cast;
+      cast.d = d;
+      uint64_t bits = cast.u;
+      int sign = (bits >> 63) & 1;
+      int bexp = (bits >> 52) & 0x7ff;
+      uint64_t mant = bits & 0xfffffffffffffULL;
+      int prec = (precision < 0) ? 6 : precision;
+      if (prec > 17) prec = 17;
+
+      // NaN / Inf
+      if (bexp == 0x7ff) {
+        if (mant) {
+          putch('n', putdat); putch('a', putdat); putch('n', putdat);
+        } else {
+          if (sign) putch('-', putdat);
+          putch('i', putdat); putch('n', putdat); putch('f', putdat);
+        }
+        break;
+      }
+
+      if (sign) { putch('-', putdat); d = -d; }
+
+      if (ch == 'e') {
+        // normalize d into [1,10) and track decimal exponent
+        int dexp = 0;
+        if (d != 0.0) {
+          while (d >= 10.0) { d /= 10.0; dexp++; }
+          while (d < 1.0)   { d *= 10.0; dexp--; }
+        }
+        // round mantissa to prec digits after the decimal
+        double scale = 1.0;
+        for (int k = 0; k < prec; k++) scale *= 10.0;
+        uint64_t scaled = (uint64_t)(d * scale + 0.5);
+        // handle rollover (e.g. 9.9995 -> 10.000)
+        uint64_t cap = 10;
+        for (int k = 0; k < prec; k++) cap *= 10;
+        if (scaled >= cap) { scaled /= 10; dexp++; }
+        // print leading digit
+        char dbuf[24];
+        int dpos = 0;
+        uint64_t tmp = scaled;
+        while (dpos <= prec) { dbuf[dpos++] = '0' + (tmp % 10); tmp /= 10; }
+        putch(dbuf[--dpos], putdat);
+        if (prec > 0) {
+          putch('.', putdat);
+          while (dpos > 0) putch(dbuf[--dpos], putdat);
+        }
+        putch('e', putdat);
+        if (dexp < 0) { putch('-', putdat); dexp = -dexp; }
+        else          { putch('+', putdat); }
+        // exponent is at least 2 digits
+        char ebuf[8];
+        int epos = 0;
+        do { ebuf[epos++] = '0' + (dexp % 10); dexp /= 10; } while (dexp);
+        while (epos < 2) ebuf[epos++] = '0';
+        while (epos > 0) putch(ebuf[--epos], putdat);
+        break;
+      }
+
+      // %f path
+      uint64_t ipart = (uint64_t)d;
+      double frac = d - (double)ipart;
+      double scale = 1.0;
+      for (int k = 0; k < prec; k++) scale *= 10.0;
+      uint64_t fpart = (uint64_t)(frac * scale + 0.5);
+      if (fpart >= (uint64_t)scale && scale > 0.0) {
+        ipart += 1;
+        fpart -= (uint64_t)scale;
+      }
+      printnum(putch, putdat, ipart, 10, 0, ' ');
+      if (prec > 0) {
+        putch('.', putdat);
+        char fbuf[24];
+        int fpos = 0;
+        while (fpos < prec) { fbuf[fpos++] = '0' + (fpart % 10); fpart /= 10; }
+        while (fpos > 0) putch(fbuf[--fpos], putdat);
+      }
+      break;
+    }
+
     // escaped '%' character
     case '%':
       putch(ch, putdat);

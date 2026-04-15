@@ -574,51 +574,98 @@ def decode_standard(instruction_bytes: bytes) -> Instruction:
             elif funct3 == 0x7:
                 return MUL.Remuw(rd=rd, rs1=rs1, rs2=rs2)
 
-    elif opcode == 0x43:
+    elif opcode in (0x43, 0x47, 0x4b, 0x4f):
         fmt = (inst >> 25) & 0x3
         rs3 = (inst >> 27) & 0x1f
-        if fmt == 0x1:
-            return F.FmaddD(fd=rd, rs1=rs1, rs2=rs2, rs3=rs3)
+        if fmt in (0x0, 0x1):
+            is_double = (fmt == 0x1)
+            fma_op = {
+                0x43: F.FmaOp.FMADD,
+                0x47: F.FmaOp.FMSUB,
+                0x4b: F.FmaOp.FNMSUB,
+                0x4f: F.FmaOp.FNMADD,
+            }[opcode]
+            return F.FMA(fd=rd, rs1=rs1, rs2=rs2, rs3=rs3, op=fma_op, is_double=is_double)
 
     elif opcode == 0x53:
         funct7_full = (inst >> 25) & 0x7f
-        funct5 = (inst >> 27) & 0x1f
-        fmt = (inst >> 25) & 0x3
+        fmt = funct7_full & 0x1
+        is_double = (fmt == 0x1)
+        arith_binary = {
+            0x00: F.FArithOp.FADD, 0x01: F.FArithOp.FADD,
+            0x04: F.FArithOp.FSUB, 0x05: F.FArithOp.FSUB,
+            0x08: F.FArithOp.FMUL, 0x09: F.FArithOp.FMUL,
+            0x0c: F.FArithOp.FDIV, 0x0d: F.FArithOp.FDIV,
+        }
+        int_type = {0x0: F.FType.I32, 0x1: F.FType.U32,
+                    0x2: F.FType.I64, 0x3: F.FType.U64}
 
-        if funct7_full == 0x71 and rs2 == 0 and funct3 == 0x0:
+        # Integer <-> FP register moves (bit-preserving, funct3=0)
+        if funct7_full == 0x70 and rs2 == 0 and funct3 == 0x0:
+            return F.FmvXW(rd=rd, rs1=rs1)
+        elif funct7_full == 0x71 and rs2 == 0 and funct3 == 0x0:
             return F.FmvXD(rd=rd, rs1=rs1)
-        elif funct7_full == 0x78 and funct3 == 0x0:
+        elif funct7_full == 0x78 and rs2 == 0 and funct3 == 0x0:
             return F.FmvWX(fd=rd, rs1=rs1)
         elif funct7_full == 0x79 and rs2 == 0 and funct3 == 0x0:
             return F.FmvDX(fd=rd, rs1=rs1)
-        elif funct7_full == 0x04:
-            return F.FsubS(fd=rd, rs1=rs1, rs2=rs2)
-        elif funct7_full == 0x05:
-            return F.FsubD(fd=rd, rs1=rs1, rs2=rs2)
-        elif funct7_full == 0x50 and funct3 == 0x2:
-            return F.FeqS(rd=rd, rs1=rs1, rs2=rs2)
-        elif funct7_full == 0x50 and funct3 == 0x1:
-            return F.FltS(rd=rd, rs1=rs1, rs2=rs2)
-        elif funct7_full == 0x50 and funct3 == 0x0:
-            return F.FleS(rd=rd, rs1=rs1, rs2=rs2)
-        elif funct7_full == 0x51 and funct3 == 0x2:
-            return F.FeqD(rd=rd, rs1=rs1, rs2=rs2)
-        elif funct7_full == 0x51 and funct3 == 0x1:
-            return F.FltD(rd=rd, rs1=rs1, rs2=rs2)
-        elif funct7_full == 0x51 and funct3 == 0x0:
-            return F.FleD(rd=rd, rs1=rs1, rs2=rs2)
-        elif funct7_full == 0x10 and rs2 == rs1 and funct3 == 0x2:
-            return F.FabsS(fd=rd, rs1=rs1)
-        elif funct7_full == 0x11 and rs2 == rs1 and funct3 == 0x2:
-            return F.FabsD(fd=rd, rs1=rs1)
-        elif funct7_full == 0x11 and rs2 == rs1 and funct3 == 0x0:
-            return F.FmvD(fd=rd, rs1=rs1)
-        elif funct7_full == 0x69 and rs2 == 0x0:
-            return F.FcvtDW(fd=rd, rs1=rs1)
-        elif funct7_full == 0x69 and rs2 == 0x2:
-            return F.FcvtDL(fd=rd, rs1=rs1)
-        elif funct7_full == 0x61 and rs2 == 0x2:
-            return F.FcvtLD(rd=rd, rs1=rs1)
+
+        # Classify (funct3=1)
+        elif funct7_full == 0x70 and rs2 == 0 and funct3 == 0x1:
+            return F.FClass(rd=rd, rs1=rs1, is_double=False)
+        elif funct7_full == 0x71 and rs2 == 0 and funct3 == 0x1:
+            return F.FClass(rd=rd, rs1=rs1, is_double=True)
+
+        # Arithmetic (FArith)
+        elif funct7_full in arith_binary:
+            return F.FArith(fd=rd, rs1=rs1, rs2=rs2,
+                            op=arith_binary[funct7_full], is_double=is_double)
+        elif funct7_full in (0x2c, 0x2d) and rs2 == 0:
+            return F.FArith(fd=rd, rs1=rs1, rs2=0,
+                            op=F.FArithOp.FSQRT, is_double=is_double)
+        elif funct7_full in (0x10, 0x11) and funct3 in (0x0, 0x1, 0x2):
+            sgnj_op = {0x0: F.FArithOp.FSGNJ,
+                       0x1: F.FArithOp.FSGNJN,
+                       0x2: F.FArithOp.FSGNJX}[funct3]
+            return F.FArith(fd=rd, rs1=rs1, rs2=rs2,
+                            op=sgnj_op, is_double=is_double)
+        elif funct7_full in (0x14, 0x15) and funct3 in (0x0, 0x1):
+            minmax_op = {0x0: F.FArithOp.FMIN,
+                         0x1: F.FArithOp.FMAX}[funct3]
+            return F.FArith(fd=rd, rs1=rs1, rs2=rs2,
+                            op=minmax_op, is_double=is_double)
+
+        # Compare (FCmp — writes integer reg)
+        elif funct7_full in (0x50, 0x51) and funct3 in (0x0, 0x1, 0x2):
+            cmp_op = {0x2: F.FCmpOp.FEQ,
+                      0x1: F.FCmpOp.FLT,
+                      0x0: F.FCmpOp.FLE}[funct3]
+            return F.FCmp(rd=rd, rs1=rs1, rs2=rs2,
+                          op=cmp_op, is_double=is_double)
+
+        # Precision conversions (F<->F)
+        elif funct7_full == 0x20 and rs2 == 0x1:
+            return F.FCvt(dst=rd, src=rs1,
+                          dst_type=F.FType.F32, src_type=F.FType.F64, rm=funct3)
+        elif funct7_full == 0x21 and rs2 == 0x0:
+            return F.FCvt(dst=rd, src=rs1,
+                          dst_type=F.FType.F64, src_type=F.FType.F32, rm=funct3)
+
+        # Float -> Int (funct7 0x60=.S, 0x61=.D; rs2 selects signed/width)
+        elif funct7_full == 0x60 and rs2 in int_type:
+            return F.FCvt(dst=rd, src=rs1,
+                          dst_type=int_type[rs2], src_type=F.FType.F32, rm=funct3)
+        elif funct7_full == 0x61 and rs2 in int_type:
+            return F.FCvt(dst=rd, src=rs1,
+                          dst_type=int_type[rs2], src_type=F.FType.F64, rm=funct3)
+
+        # Int -> Float (funct7 0x68=.S, 0x69=.D; rs2 selects signed/width)
+        elif funct7_full == 0x68 and rs2 in int_type:
+            return F.FCvt(dst=rd, src=rs1,
+                          dst_type=F.FType.F32, src_type=int_type[rs2], rm=funct3)
+        elif funct7_full == 0x69 and rs2 in int_type:
+            return F.FCvt(dst=rd, src=rs1,
+                          dst_type=F.FType.F64, src_type=int_type[rs2], rm=funct3)
 
     elif opcode == 0x57:
         bit31 = (inst >> 31) & 0x1
