@@ -92,7 +92,8 @@ class Oamlet:
             cache_table=None,  # Lamlet manages its own waiting items
             monitor=self.monitor,
         )
-        self.scalar = ScalarState(clock, params, synchronizer=self.synchronizer)
+        self.scalar = ScalarState(clock, params, self.monitor,
+                                  synchronizer=self.synchronizer)
         self.tlb = TLB(params)
         self.vrf_ordering: List[Ordering|None] = [None for _ in range(params.n_vregs)]
         self.vl = 0

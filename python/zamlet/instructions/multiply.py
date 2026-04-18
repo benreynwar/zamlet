@@ -10,6 +10,7 @@ if TYPE_CHECKING:
     from zamlet.oamlet.oamlet import Oamlet
 
 from zamlet.register_names import reg_name
+from zamlet.instructions.riscv_instr import riscv_instr
 
 
 def _sign_extend_32_to_64(val):
@@ -43,14 +44,15 @@ class Mul:
     def __str__(self):
         return f'mul\t{reg_name(self.rd)},{reg_name(self.rs1)},{reg_name(self.rs2)}'
 
-    async def update_state(self, s: 'Oamlet'):
+    @riscv_instr
+    async def update_state(self, s: 'Oamlet', span_id: int):
         await s.scalar.wait_all_regs_ready(self.rd, None, [self.rs1, self.rs2], [])
         s.pc += 4
         val1 = int.from_bytes(s.scalar.read_reg(self.rs1), byteorder='little', signed=False)
         val2 = int.from_bytes(s.scalar.read_reg(self.rs2), byteorder='little', signed=False)
         result = (val1 * val2) & 0xffffffffffffffff
         result_bytes = result.to_bytes(s.params.word_bytes, byteorder='little', signed=False)
-        s.scalar.write_reg(self.rd, result_bytes)
+        s.scalar.write_reg(self.rd, result_bytes, span_id)
 
 
 @dataclass
@@ -68,7 +70,8 @@ class Mulh:
     def __str__(self):
         return f'mulh\t{reg_name(self.rd)},{reg_name(self.rs1)},{reg_name(self.rs2)}'
 
-    async def update_state(self, s: 'Oamlet'):
+    @riscv_instr
+    async def update_state(self, s: 'Oamlet', span_id: int):
         await s.scalar.wait_all_regs_ready(self.rd, None, [self.rs1, self.rs2], [])
         s.pc += 4
         val1 = int.from_bytes(s.scalar.read_reg(self.rs1), byteorder='little', signed=False)
@@ -79,7 +82,7 @@ class Mulh:
             val2 = val2 - 0x10000000000000000
         result = (val1 * val2) >> 64
         result_bytes = (result & 0xffffffffffffffff).to_bytes(s.params.word_bytes, byteorder='little', signed=False)
-        s.scalar.write_reg(self.rd, result_bytes)
+        s.scalar.write_reg(self.rd, result_bytes, span_id)
 
 
 @dataclass
@@ -97,7 +100,8 @@ class Mulhsu:
     def __str__(self):
         return f'mulhsu\t{reg_name(self.rd)},{reg_name(self.rs1)},{reg_name(self.rs2)}'
 
-    async def update_state(self, s: 'Oamlet'):
+    @riscv_instr
+    async def update_state(self, s: 'Oamlet', span_id: int):
         await s.scalar.wait_all_regs_ready(self.rd, None, [self.rs1, self.rs2], [])
         s.pc += 4
         val1 = int.from_bytes(s.scalar.read_reg(self.rs1), byteorder='little', signed=False)
@@ -106,7 +110,7 @@ class Mulhsu:
             val1 = val1 - 0x10000000000000000
         result = (val1 * val2) >> 64
         result_bytes = (result & 0xffffffffffffffff).to_bytes(s.params.word_bytes, byteorder='little', signed=False)
-        s.scalar.write_reg(self.rd, result_bytes)
+        s.scalar.write_reg(self.rd, result_bytes, span_id)
 
 
 @dataclass
@@ -124,14 +128,15 @@ class Mulhu:
     def __str__(self):
         return f'mulhu\t{reg_name(self.rd)},{reg_name(self.rs1)},{reg_name(self.rs2)}'
 
-    async def update_state(self, s: 'Oamlet'):
+    @riscv_instr
+    async def update_state(self, s: 'Oamlet', span_id: int):
         await s.scalar.wait_all_regs_ready(self.rd, None, [self.rs1, self.rs2], [])
         s.pc += 4
         val1 = int.from_bytes(s.scalar.read_reg(self.rs1), byteorder='little', signed=False)
         val2 = int.from_bytes(s.scalar.read_reg(self.rs2), byteorder='little', signed=False)
         result = (val1 * val2) >> 64
         result_bytes = (result & 0xffffffffffffffff).to_bytes(s.params.word_bytes, byteorder='little', signed=False)
-        s.scalar.write_reg(self.rd, result_bytes)
+        s.scalar.write_reg(self.rd, result_bytes, span_id)
 
 
 @dataclass
@@ -149,7 +154,8 @@ class Div:
     def __str__(self):
         return f'div\t{reg_name(self.rd)},{reg_name(self.rs1)},{reg_name(self.rs2)}'
 
-    async def update_state(self, s: 'Oamlet'):
+    @riscv_instr
+    async def update_state(self, s: 'Oamlet', span_id: int):
         await s.scalar.wait_all_regs_ready(self.rd, None, [self.rs1, self.rs2], [])
         s.pc += 4
         val1 = int.from_bytes(s.scalar.read_reg(self.rs1), byteorder='little', signed=False)
@@ -170,7 +176,7 @@ class Div:
             result = val1_signed // val2_signed
             result = result & 0xffffffffffffffff
         result_bytes = result.to_bytes(s.params.word_bytes, byteorder='little', signed=False)
-        s.scalar.write_reg(self.rd, result_bytes)
+        s.scalar.write_reg(self.rd, result_bytes, span_id)
 
 
 @dataclass
@@ -188,7 +194,8 @@ class Divu:
     def __str__(self):
         return f'divu\t{reg_name(self.rd)},{reg_name(self.rs1)},{reg_name(self.rs2)}'
 
-    async def update_state(self, s: 'Oamlet'):
+    @riscv_instr
+    async def update_state(self, s: 'Oamlet', span_id: int):
         await s.scalar.wait_all_regs_ready(self.rd, None, [self.rs1, self.rs2], [])
         s.pc += 4
         val1 = int.from_bytes(s.scalar.read_reg(self.rs1), byteorder='little', signed=False)
@@ -198,7 +205,7 @@ class Divu:
         else:
             result = val1 // val2
         result_bytes = (result & 0xffffffffffffffff).to_bytes(s.params.word_bytes, byteorder='little', signed=False)
-        s.scalar.write_reg(self.rd, result_bytes)
+        s.scalar.write_reg(self.rd, result_bytes, span_id)
 
 
 @dataclass
@@ -216,7 +223,8 @@ class Rem:
     def __str__(self):
         return f'rem\t{reg_name(self.rd)},{reg_name(self.rs1)},{reg_name(self.rs2)}'
 
-    async def update_state(self, s: 'Oamlet'):
+    @riscv_instr
+    async def update_state(self, s: 'Oamlet', span_id: int):
         await s.scalar.wait_all_regs_ready(self.rd, None, [self.rs1, self.rs2], [])
         s.pc += 4
         val1 = int.from_bytes(s.scalar.read_reg(self.rs1), byteorder='little', signed=False)
@@ -237,7 +245,7 @@ class Rem:
             result = val1_signed % val2_signed
             result = result & 0xffffffffffffffff
         result_bytes = result.to_bytes(s.params.word_bytes, byteorder='little', signed=False)
-        s.scalar.write_reg(self.rd, result_bytes)
+        s.scalar.write_reg(self.rd, result_bytes, span_id)
 
 
 @dataclass
@@ -255,7 +263,8 @@ class Remu:
     def __str__(self):
         return f'remu\t{reg_name(self.rd)},{reg_name(self.rs1)},{reg_name(self.rs2)}'
 
-    async def update_state(self, s: 'Oamlet'):
+    @riscv_instr
+    async def update_state(self, s: 'Oamlet', span_id: int):
         await s.scalar.wait_all_regs_ready(self.rd, None, [self.rs1, self.rs2], [])
         s.pc += 4
         val1 = int.from_bytes(s.scalar.read_reg(self.rs1), byteorder='little', signed=False)
@@ -265,7 +274,7 @@ class Remu:
         else:
             result = val1 % val2
         result_bytes = (result & 0xffffffffffffffff).to_bytes(s.params.word_bytes, byteorder='little', signed=False)
-        s.scalar.write_reg(self.rd, result_bytes)
+        s.scalar.write_reg(self.rd, result_bytes, span_id)
 
 
 # RV64M *W instructions - operate on lower 32 bits, sign-extend result.
@@ -287,7 +296,8 @@ class Mulw:
         return (f'mulw\t{reg_name(self.rd)},'
                 f'{reg_name(self.rs1)},{reg_name(self.rs2)}')
 
-    async def update_state(self, s: 'Oamlet'):
+    @riscv_instr
+    async def update_state(self, s: 'Oamlet', span_id: int):
         await s.scalar.wait_all_regs_ready(
             self.rd, None, [self.rs1, self.rs2], [])
         s.pc += 4
@@ -301,7 +311,7 @@ class Mulw:
         result = _sign_extend_32_to_64(product)
         result_bytes = (result & 0xffffffffffffffff).to_bytes(
             s.params.word_bytes, byteorder='little', signed=False)
-        s.scalar.write_reg(self.rd, result_bytes)
+        s.scalar.write_reg(self.rd, result_bytes, span_id)
 
 
 @dataclass
@@ -319,7 +329,8 @@ class Divw:
         return (f'divw\t{reg_name(self.rd)},'
                 f'{reg_name(self.rs1)},{reg_name(self.rs2)}')
 
-    async def update_state(self, s: 'Oamlet'):
+    @riscv_instr
+    async def update_state(self, s: 'Oamlet', span_id: int):
         await s.scalar.wait_all_regs_ready(
             self.rd, None, [self.rs1, self.rs2], [])
         s.pc += 4
@@ -340,7 +351,7 @@ class Divw:
             result = _sign_extend_32_to_64(q)
         result_bytes = (result & 0xffffffffffffffff).to_bytes(
             s.params.word_bytes, byteorder='little', signed=False)
-        s.scalar.write_reg(self.rd, result_bytes)
+        s.scalar.write_reg(self.rd, result_bytes, span_id)
 
 
 @dataclass
@@ -358,7 +369,8 @@ class Divuw:
         return (f'divuw\t{reg_name(self.rd)},'
                 f'{reg_name(self.rs1)},{reg_name(self.rs2)}')
 
-    async def update_state(self, s: 'Oamlet'):
+    @riscv_instr
+    async def update_state(self, s: 'Oamlet', span_id: int):
         await s.scalar.wait_all_regs_ready(
             self.rd, None, [self.rs1, self.rs2], [])
         s.pc += 4
@@ -374,7 +386,7 @@ class Divuw:
             result = _sign_extend_32_to_64(val1 // val2)
         result_bytes = (result & 0xffffffffffffffff).to_bytes(
             s.params.word_bytes, byteorder='little', signed=False)
-        s.scalar.write_reg(self.rd, result_bytes)
+        s.scalar.write_reg(self.rd, result_bytes, span_id)
 
 
 @dataclass
@@ -392,7 +404,8 @@ class Remw:
         return (f'remw\t{reg_name(self.rd)},'
                 f'{reg_name(self.rs1)},{reg_name(self.rs2)}')
 
-    async def update_state(self, s: 'Oamlet'):
+    @riscv_instr
+    async def update_state(self, s: 'Oamlet', span_id: int):
         await s.scalar.wait_all_regs_ready(
             self.rd, None, [self.rs1, self.rs2], [])
         s.pc += 4
@@ -413,7 +426,7 @@ class Remw:
             result = _sign_extend_32_to_64(r)
         result_bytes = (result & 0xffffffffffffffff).to_bytes(
             s.params.word_bytes, byteorder='little', signed=False)
-        s.scalar.write_reg(self.rd, result_bytes)
+        s.scalar.write_reg(self.rd, result_bytes, span_id)
 
 
 @dataclass
@@ -431,7 +444,8 @@ class Remuw:
         return (f'remuw\t{reg_name(self.rd)},'
                 f'{reg_name(self.rs1)},{reg_name(self.rs2)}')
 
-    async def update_state(self, s: 'Oamlet'):
+    @riscv_instr
+    async def update_state(self, s: 'Oamlet', span_id: int):
         await s.scalar.wait_all_regs_ready(
             self.rd, None, [self.rs1, self.rs2], [])
         s.pc += 4
@@ -447,4 +461,4 @@ class Remuw:
             result = _sign_extend_32_to_64(val1 % val2)
         result_bytes = (result & 0xffffffffffffffff).to_bytes(
             s.params.word_bytes, byteorder='little', signed=False)
-        s.scalar.write_reg(self.rd, result_bytes)
+        s.scalar.write_reg(self.rd, result_bytes, span_id)

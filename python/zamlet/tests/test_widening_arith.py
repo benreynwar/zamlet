@@ -289,12 +289,12 @@ async def _run_vx(
     vsew = {8: 0, 16: 1, 32: 2, 64: 3}[sew]
     lamlet.vtype = vsew << 3
 
-    rs1 = 5
-    lamlet.scalar.write_reg(rs1, scalar_bytes8)
-
     span_id = lamlet.monitor.create_span(
         span_type=SpanType.RISCV_INSTR, component="test",
         completion_type=CompletionType.FIRE_AND_FORGET, mnemonic=f'test_{mnemonic}')
+
+    rs1 = 5
+    lamlet.scalar.write_reg(rs1, scalar_bytes8, span_id)
 
     vs2_reg = 4
     vd_reg = 8

@@ -15,6 +15,7 @@ if TYPE_CHECKING:
 
 from zamlet.addresses import Ordering
 from zamlet.register_names import reg_name, freg_name
+from zamlet.instructions.riscv_instr import riscv_instr
 from zamlet import utils
 
 
@@ -42,11 +43,11 @@ def _read_fp(s, freg: int, is_double: bool) -> float:
     return struct.unpack(_fp_pack_char(is_double), s.scalar.read_freg(freg)[:w])[0]
 
 
-def _write_fp(s, freg: int, value: float, is_double: bool) -> None:
+def _write_fp(s, freg: int, value: float, is_double: bool, span_id: int) -> None:
     packed = struct.pack(_fp_pack_char(is_double), value)
     if not is_double:
         packed = packed + bytes(4)
-    s.scalar.write_freg(freg, packed)
+    s.scalar.write_freg(freg, packed, span_id)
 
 
 def _read_fp_bits(s, freg: int, is_double: bool) -> int:
@@ -54,12 +55,12 @@ def _read_fp_bits(s, freg: int, is_double: bool) -> int:
     return int.from_bytes(s.scalar.read_freg(freg)[:w], byteorder='little', signed=False)
 
 
-def _write_fp_bits(s, freg: int, bits: int, is_double: bool) -> None:
+def _write_fp_bits(s, freg: int, bits: int, is_double: bool, span_id: int) -> None:
     w = _fp_width(is_double)
     data = bits.to_bytes(w, byteorder='little', signed=False)
     if not is_double:
         data = data + bytes(4)
-    s.scalar.write_freg(freg, data)
+    s.scalar.write_freg(freg, data, span_id)
 
 
 # ---------------------------------------------------------------------------
@@ -78,12 +79,13 @@ class FmvWX:
     def __str__(self):
         return f'fmv.w.x\t{freg_name(self.fd)},{reg_name(self.rs1)}'
 
-    async def update_state(self, s: 'Oamlet'):
+    @riscv_instr
+    async def update_state(self, s: 'Oamlet', span_id: int):
         await s.scalar.wait_all_regs_ready(None, self.fd, [self.rs1], [])
         rs1_bytes = s.scalar.read_reg(self.rs1)
         value = int.from_bytes(rs1_bytes, byteorder='little', signed=False) & 0xffffffff
         value_bytes = value.to_bytes(8, byteorder='little', signed=False)
-        s.scalar.write_freg(self.fd, value_bytes)
+        s.scalar.write_freg(self.fd, value_bytes, span_id)
         s.pc += 4
 
 
@@ -99,13 +101,14 @@ class FmvXW:
     def __str__(self):
         return f'fmv.x.w\t{reg_name(self.rd)},{freg_name(self.rs1)}'
 
-    async def update_state(self, s: 'Oamlet'):
+    @riscv_instr
+    async def update_state(self, s: 'Oamlet', span_id: int):
         await s.scalar.wait_all_regs_ready(self.rd, None, [], [self.rs1])
         freg_bytes = s.scalar.read_freg(self.rs1)
         # Sign-extend the 32-bit value to XLEN, per RISC-V spec.
         value = int.from_bytes(freg_bytes[:4], byteorder='little', signed=True)
         value_bytes = value.to_bytes(s.params.word_bytes, byteorder='little', signed=True)
-        s.scalar.write_reg(self.rd, value_bytes)
+        s.scalar.write_reg(self.rd, value_bytes, span_id)
         s.pc += 4
 
 
@@ -121,12 +124,13 @@ class FmvXD:
     def __str__(self):
         return f'fmv.x.d\t{reg_name(self.rd)},{freg_name(self.rs1)}'
 
-    async def update_state(self, s: 'Oamlet'):
+    @riscv_instr
+    async def update_state(self, s: 'Oamlet', span_id: int):
         await s.scalar.wait_all_regs_ready(self.rd, None, [], [self.rs1])
         freg_bytes = s.scalar.read_freg(self.rs1)
         value = int.from_bytes(freg_bytes[:8], byteorder='little', signed=False)
         value_bytes = value.to_bytes(s.params.word_bytes, byteorder='little', signed=False)
-        s.scalar.write_reg(self.rd, value_bytes)
+        s.scalar.write_reg(self.rd, value_bytes, span_id)
         s.pc += 4
 
 
@@ -142,12 +146,13 @@ class FmvDX:
     def __str__(self):
         return f'fmv.d.x\t{freg_name(self.fd)},{reg_name(self.rs1)}'
 
-    async def update_state(self, s: 'Oamlet'):
+    @riscv_instr
+    async def update_state(self, s: 'Oamlet', span_id: int):
         await s.scalar.wait_all_regs_ready(None, self.fd, [self.rs1], [])
         rs1_bytes = s.scalar.read_reg(self.rs1)
         value = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
         value_bytes = value.to_bytes(8, byteorder='little', signed=False)
-        s.scalar.write_freg(self.fd, value_bytes)
+        s.scalar.write_freg(self.fd, value_bytes, span_id)
         s.pc += 4
 
 
@@ -178,7 +183,8 @@ class Flw:
         scalar_val = struct.unpack('f', f_data)[0]
         logger.debug(f'{s.clock.cycle} freg: {self.fd} padding the flw result, set result {scalar_val} ')
 
-    async def update_state(self, s: 'Oamlet'):
+    @riscv_instr
+    async def update_state(self, s: 'Oamlet', span_id: int):
         await s.scalar.wait_all_regs_ready(None, self.fd, [self.rs1], [])
         rs1_bytes = s.scalar.read_reg(self.rs1)
         rs1_val = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
@@ -186,7 +192,7 @@ class Flw:
         data_future = await s.get_memory(addr, 4)
         padded_future = s.clock.create_future()
         s.clock.create_task(self.update_resolve(s, padded_future, data_future))
-        s.scalar.write_freg_future(self.fd, padded_future)
+        s.scalar.write_freg_future(self.fd, padded_future, span_id)
         s.pc += 4
 
 
@@ -203,14 +209,15 @@ class Fld:
     def __str__(self):
         return f'fld\t{freg_name(self.fd)},{self.imm}({reg_name(self.rs1)})'
 
-    async def update_state(self, s: 'Oamlet'):
+    @riscv_instr
+    async def update_state(self, s: 'Oamlet', span_id: int):
         await s.scalar.wait_all_regs_ready(None, self.fd, [self.rs1], [])
         rs1_bytes = s.scalar.read_reg(self.rs1)
         rs1_val = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
         addr = rs1_val + self.imm
         logger.debug(f'Fld: {freg_name(self.fd)} <- mem[0x{addr:x}]')
         data_future = await s.get_memory(addr, 8)
-        s.scalar.write_freg_future(self.fd, data_future)
+        s.scalar.write_freg_future(self.fd, data_future, span_id)
         s.pc += 4
 
 
@@ -227,7 +234,8 @@ class Fsw:
     def __str__(self):
         return f'fsw\t{freg_name(self.rs2)},{self.imm}({reg_name(self.rs1)})'
 
-    async def update_state(self, s: 'Oamlet'):
+    @riscv_instr
+    async def update_state(self, s: 'Oamlet', span_id: int):
         await s.scalar.wait_all_regs_ready(None, None, [self.rs1], [self.rs2])
         rs1_bytes = s.scalar.read_reg(self.rs1)
         rs1_val = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
@@ -252,7 +260,8 @@ class Fsd:
     def __str__(self):
         return f'fsd\t{freg_name(self.rs2)},{self.imm}({reg_name(self.rs1)})'
 
-    async def update_state(self, s: 'Oamlet'):
+    @riscv_instr
+    async def update_state(self, s: 'Oamlet', span_id: int):
         await s.scalar.wait_all_regs_ready(None, None, [self.rs1], [self.rs2])
         rs1_bytes = s.scalar.read_reg(self.rs1)
         rs1_val = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
@@ -320,7 +329,8 @@ class FArith:
         return (f'{mnem}\t{freg_name(self.fd)},'
                 f'{freg_name(self.rs1)},{freg_name(self.rs2)}')
 
-    async def update_state(self, s: 'Oamlet'):
+    @riscv_instr
+    async def update_state(self, s: 'Oamlet', span_id: int):
         if self.op in _FARITH_UNARY:
             src_fregs = [self.rs1]
         else:
@@ -339,7 +349,7 @@ class FArith:
                 new_sign = (b2 & sign_bit) ^ sign_bit
             else:
                 new_sign = (b1 ^ b2) & sign_bit
-            _write_fp_bits(s, self.fd, magnitude | new_sign, self.is_double)
+            _write_fp_bits(s, self.fd, magnitude | new_sign, self.is_double, span_id)
             s.pc += 4
             return
 
@@ -362,7 +372,7 @@ class FArith:
                 result = max(v1, v2)
             else:
                 raise AssertionError(f'unhandled FArithOp {self.op}')
-        _write_fp(s, self.fd, result, self.is_double)
+        _write_fp(s, self.fd, result, self.is_double, span_id)
         s.pc += 4
 
 
@@ -393,7 +403,8 @@ class FCmp:
         return (f'{mnem}\t{reg_name(self.rd)},'
                 f'{freg_name(self.rs1)},{freg_name(self.rs2)}')
 
-    async def update_state(self, s: 'Oamlet'):
+    @riscv_instr
+    async def update_state(self, s: 'Oamlet', span_id: int):
         await s.scalar.wait_all_regs_ready(self.rd, None, [], [self.rs1, self.rs2])
         v1 = _read_fp(s, self.rs1, self.is_double)
         v2 = _read_fp(s, self.rs2, self.is_double)
@@ -406,7 +417,7 @@ class FCmp:
         else:
             raise AssertionError(f'unhandled FCmpOp {self.op}')
         result_bytes = result.to_bytes(s.params.word_bytes, byteorder='little', signed=False)
-        s.scalar.write_reg(self.rd, result_bytes)
+        s.scalar.write_reg(self.rd, result_bytes, span_id)
         s.pc += 4
 
 
@@ -461,7 +472,8 @@ class FCvt:
         tail = f',{suffix}' if suffix is not None else ''
         return f'{mnem}\t{dst_name},{src_name}{tail}'
 
-    async def update_state(self, s: 'Oamlet'):
+    @riscv_instr
+    async def update_state(self, s: 'Oamlet', span_id: int):
         dst_is_fp = self.dst_type in _FT_IS_FP
         src_is_fp = self.src_type in _FT_IS_FP
         rd_arg = None if dst_is_fp else self.dst
@@ -483,7 +495,7 @@ class FCvt:
             packed = struct.pack(_fp_pack_char(self.dst_type is FType.F64), float_val)
             if self.dst_type is FType.F32:
                 packed = packed + bytes(4)
-            s.scalar.write_freg(self.dst, packed)
+            s.scalar.write_freg(self.dst, packed, span_id)
         else:
             int_val = int(value)
             dst_w = _FT_BYTES[self.dst_type]
@@ -503,7 +515,7 @@ class FCvt:
             if len(data) < word_bytes:
                 pad_byte = 0xff if (signed and int_val < 0) else 0x00
                 data = data + bytes([pad_byte] * (word_bytes - len(data)))
-            s.scalar.write_reg(self.dst, data)
+            s.scalar.write_reg(self.dst, data, span_id)
         s.pc += 4
 
 
@@ -536,7 +548,8 @@ class FMA:
         return (f'{mnem}\t{freg_name(self.fd)},{freg_name(self.rs1)},'
                 f'{freg_name(self.rs2)},{freg_name(self.rs3)}')
 
-    async def update_state(self, s: 'Oamlet'):
+    @riscv_instr
+    async def update_state(self, s: 'Oamlet', span_id: int):
         await s.scalar.wait_all_regs_ready(
             None, self.fd, [], [self.rs1, self.rs2, self.rs3])
         v1 = _read_fp(s, self.rs1, self.is_double)
@@ -553,7 +566,7 @@ class FMA:
             result = -prod - v3
         else:
             raise AssertionError(f'unhandled FmaOp {self.op}')
-        _write_fp(s, self.fd, result, self.is_double)
+        _write_fp(s, self.fd, result, self.is_double, span_id)
         s.pc += 4
 
 
@@ -575,7 +588,8 @@ class FClass:
         return (f'fclass.{_fp_suffix(self.is_double)}\t'
                 f'{reg_name(self.rd)},{freg_name(self.rs1)}')
 
-    async def update_state(self, s: 'Oamlet'):
+    @riscv_instr
+    async def update_state(self, s: 'Oamlet', span_id: int):
         await s.scalar.wait_all_regs_ready(self.rd, None, [], [self.rs1])
         bits = _read_fp_bits(s, self.rs1, self.is_double)
         if self.is_double:
@@ -601,6 +615,6 @@ class FClass:
             cls = 1 if sign else 6              # ±normal
         result = 1 << cls
         result_bytes = result.to_bytes(s.params.word_bytes, byteorder='little', signed=False)
-        s.scalar.write_reg(self.rd, result_bytes)
+        s.scalar.write_reg(self.rd, result_bytes, span_id)
         s.pc += 4
 

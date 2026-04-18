@@ -18,6 +18,7 @@ from zamlet.addresses import Ordering, WordOrder
 from zamlet.register_names import reg_name, freg_name
 from zamlet.monitor import CompletionType, SpanType
 from zamlet.lamlet.unordered import remap_reg_ew
+from zamlet.instructions.riscv_instr import riscv_instr
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +52,8 @@ class Vsetvli:
 
         return f'vsetvli\t{reg_name(self.rd)},{reg_name(self.rs1)},{sew_str},{lmul_str},{ta_str},{ma_str}'
 
-    async def update_state(self, s: 'Oamlet'):
+    @riscv_instr
+    async def update_state(self, s: 'Oamlet', span_id: int):
         await s.scalar.wait_all_regs_ready(self.rd, None, [self.rs1], [])
         rs1_bytes = s.scalar.read_reg(self.rs1)
         avl = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
@@ -89,7 +91,7 @@ class Vsetvli:
             s.vl = vlmax
 
         vl_bytes = s.vl.to_bytes(s.params.word_bytes, byteorder='little', signed=False)
-        s.scalar.write_reg(self.rd, vl_bytes)
+        s.scalar.write_reg(self.rd, vl_bytes, span_id)
         logger.info(f'Set vl to {s.vl}')
         s.pc += 4
 
@@ -123,7 +125,8 @@ class Vsetivli:
 
         return f'vsetivli\t{reg_name(self.rd)},{self.uimm},{sew_str},{lmul_str},{ta_str},{ma_str}'
 
-    async def update_state(self, s: 'Oamlet'):
+    @riscv_instr
+    async def update_state(self, s: 'Oamlet', span_id: int):
         await s.scalar.wait_all_regs_ready(self.rd, None, [], [])
         avl = self.uimm
 
@@ -149,7 +152,7 @@ class Vsetivli:
             s.vl = vlmax
 
         vl_bytes = s.vl.to_bytes(s.params.word_bytes, byteorder='little', signed=False)
-        s.scalar.write_reg(self.rd, vl_bytes)
+        s.scalar.write_reg(self.rd, vl_bytes, span_id)
         logger.info(f'Set vl to {s.vl}')
         s.pc += 4
 
@@ -1111,7 +1114,8 @@ class VmvXs:
     def __str__(self):
         return f'vmv.x.s\t{reg_name(self.rd)},v{self.vs2}'
 
-    async def update_state(self, s: 'Oamlet'):
+    @riscv_instr
+    async def update_state(self, s: 'Oamlet', span_id: int):
         vsew = (s.vtype >> 3) & 0x7
         element_width = 8 << vsew
 
@@ -1119,7 +1123,7 @@ class VmvXs:
 
         # Read element 0 from the vector register
         value_future = await s.read_register_element(self.vs2, element_index=0, element_width=element_width)
-        s.scalar.write_reg_future(self.rd, value_future)
+        s.scalar.write_reg_future(self.rd, value_future, span_id)
         s.pc += 4
 
 
