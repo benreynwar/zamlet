@@ -230,6 +230,8 @@ class WaitingRegGather(WaitingItem):
         wb = jamlet.params.word_bytes
         instr = self.item
         data_eb = instr.data_ew // 8
+        witem_span_id = jamlet.monitor.get_witem_span_id(
+            instr.instr_ident, jamlet.k_min_x, jamlet.k_min_y)
 
         for tag in range(wb):
             state_idx = self._state_index(jamlet.j_in_k_index, tag)
@@ -260,8 +262,12 @@ class WaitingRegGather(WaitingItem):
                 # Handle out-of-range: write 0
                 if index >= instr.vlmax:
                     dst_preg = self.dst_pregs[dst_v]
-                    dst_offset = dst_preg * wb + tag
-                    jamlet.rf_slice[dst_offset:dst_offset + data_eb] = bytes(data_eb)
+                    jamlet.write_vreg(
+                        dst_preg, tag, bytes(data_eb),
+                        span_id=witem_span_id,
+                        event_details={'element': dst_e, 'tag': tag,
+                                       'reason': 'index>=vlmax'},
+                    )
                     self.transaction_states[state_idx] = SendState.COMPLETE
                     continue
 
@@ -281,8 +287,14 @@ class WaitingRegGather(WaitingItem):
                     src_offset = src_preg * wb + src_byte_offset
                     src_data = jamlet.rf_slice[src_offset:src_offset + data_eb]
                     dst_preg = self.dst_pregs[dst_v]
-                    dst_offset = dst_preg * wb + tag
-                    jamlet.rf_slice[dst_offset:dst_offset + data_eb] = src_data
+                    jamlet.write_vreg(
+                        dst_preg, tag, bytes(src_data),
+                        span_id=witem_span_id,
+                        event_details={'element': dst_e, 'tag': tag,
+                                       'src_preg': src_preg,
+                                       'src_byte': src_byte_offset,
+                                       'source': 'local'},
+                    )
                     self.transaction_states[state_idx] = SendState.COMPLETE
                 else:
                     # Need to send request to remote jamlet
@@ -358,12 +370,17 @@ class WaitingRegGather(WaitingItem):
         state_idx = self._state_index(jamlet.j_in_k_index, tag)
         assert self.transaction_states[state_idx] == SendState.WAITING_FOR_RESPONSE
 
-        _, _, _, dst_v = self._compute_dst_element(jamlet, tag)
+        _, dst_e, _, dst_v = self._compute_dst_element(jamlet, tag)
         dst_preg = self.dst_pregs[dst_v]
-        dst_offset = dst_preg * wb + tag
 
         # Write received data to destination (extract only the needed bytes)
-        jamlet.rf_slice[dst_offset:dst_offset + data_eb] = data.to_bytes(wb, 'little')[:data_eb]
+        witem_span_id = jamlet.monitor.get_witem_span_id(
+            instr.instr_ident, jamlet.k_min_x, jamlet.k_min_y)
+        jamlet.write_vreg(
+            dst_preg, tag, data.to_bytes(wb, 'little')[:data_eb],
+            span_id=witem_span_id,
+            event_details={'element': dst_e, 'tag': tag, 'source': 'remote'},
+        )
 
         self.transaction_states[state_idx] = SendState.COMPLETE
 

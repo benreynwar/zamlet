@@ -357,11 +357,13 @@ class LoadImmByte(KInstr):
         r = self.renamed
         dst_preg = r.dst_pregs[0]
         jamlet = kamlet.jamlets[self.dst.j_in_k_index]
-        wb = kamlet.params.word_bytes
-        reg_offset = dst_preg * wb + self.dst.offset_in_word
-        old_byte = jamlet.rf_slice[reg_offset]
+        reg_offset = self.dst.offset_in_word
+        old_byte = jamlet.rf_slice[dst_preg * kamlet.params.word_bytes + reg_offset]
         new_byte = (old_byte & ~self.bit_mask) | (self.imm & self.bit_mask)
-        jamlet.rf_slice[reg_offset] = new_byte
+        span_id = kamlet.monitor.get_kinstr_exec_span_id(
+            self.instr_ident, kamlet.min_x, kamlet.min_y)
+        jamlet.write_vreg(dst_preg, reg_offset, bytes([new_byte]), span_id=span_id,
+                          event_details={'bit_mask': f'0x{self.bit_mask:02x}'})
         kamlet.monitor.finalize_kinstr_exec(
             self.instr_ident, kamlet.min_x, kamlet.min_y)
 
@@ -398,10 +400,13 @@ class LoadImmWord(KInstr):
         dst_preg = r.dst_pregs[0]
         jamlet = kamlet.jamlets[self.dst.j_in_k_index]
         wb = kamlet.params.word_bytes
-        reg_start = dst_preg * wb
+        span_id = kamlet.monitor.get_kinstr_exec_span_id(
+            self.instr_ident, kamlet.min_x, kamlet.min_y)
         for byte_idx in range(wb):
             if self.byte_mask & (1 << byte_idx):
-                jamlet.rf_slice[reg_start + byte_idx] = self.imm[byte_idx]
+                jamlet.write_vreg(dst_preg, byte_idx, bytes([self.imm[byte_idx]]),
+                                  span_id=span_id,
+                                  event_details={'byte_mask': f'0x{self.byte_mask:02x}'})
         kamlet.monitor.finalize_kinstr_exec(
             self.instr_ident, kamlet.min_x, kamlet.min_y)
 
@@ -536,6 +541,8 @@ class VCmpViOp(KInstr):
         sign_extended_imm = self.simm5 if self.simm5 < 16 else self.simm5 - 32
         unsigned = self.op in (VCmpOp.LTU, VCmpOp.LEU, VCmpOp.GTU)
         eb = self.element_width // 8
+        span_id = kamlet.monitor.get_kinstr_exec_span_id(
+            self.instr_ident, kamlet.min_x, kamlet.min_y)
 
         for element_index in range(self.n_elements):
             vw_index = element_index % kamlet.params.j_in_l
@@ -561,11 +568,17 @@ class VCmpViOp(KInstr):
             dst_bit_in_vline = dst_bit_in_jvec % bits_per_jamlet_vline
             dst_byte_in_vline = dst_bit_in_vline // 8
             dst_bit_offset = dst_bit_in_vline % 8
-            dst_base = r.dst_pregs[dst_vline_idx] * wb
+            dst_preg = r.dst_pregs[dst_vline_idx]
+            old_byte = jamlet.rf_slice[dst_preg * wb + dst_byte_in_vline]
             if result_bit:
-                jamlet.rf_slice[dst_base + dst_byte_in_vline] |= (1 << dst_bit_offset)
+                new_byte = old_byte | (1 << dst_bit_offset)
             else:
-                jamlet.rf_slice[dst_base + dst_byte_in_vline] &= ~(1 << dst_bit_offset)
+                new_byte = old_byte & ~(1 << dst_bit_offset)
+            jamlet.write_vreg(dst_preg, dst_byte_in_vline, bytes([new_byte]),
+                              span_id=span_id,
+                              event_details={'element_index': element_index,
+                                             'bit': dst_bit_offset,
+                                             'result': bool(result_bit)})
 
         kamlet.monitor.finalize_kinstr_exec(self.instr_ident, kamlet.min_x, kamlet.min_y)
 
@@ -609,6 +622,8 @@ class VCmpVxOp(KInstr):
         scalar_val = int.from_bytes(
             self.scalar_bytes[:eb], byteorder='little', signed=not unsigned,
         )
+        span_id = kamlet.monitor.get_kinstr_exec_span_id(
+            self.instr_ident, kamlet.min_x, kamlet.min_y)
 
         for element_index in range(self.n_elements):
             vw_index = element_index % kamlet.params.j_in_l
@@ -634,11 +649,17 @@ class VCmpVxOp(KInstr):
             dst_bit_in_vline = dst_bit_in_jvec % bits_per_jamlet_vline
             dst_byte_in_vline = dst_bit_in_vline // 8
             dst_bit_offset = dst_bit_in_vline % 8
-            dst_base = r.dst_pregs[dst_vline_idx] * wb
+            dst_preg = r.dst_pregs[dst_vline_idx]
+            old_byte = jamlet.rf_slice[dst_preg * wb + dst_byte_in_vline]
             if result_bit:
-                jamlet.rf_slice[dst_base + dst_byte_in_vline] |= (1 << dst_bit_offset)
+                new_byte = old_byte | (1 << dst_bit_offset)
             else:
-                jamlet.rf_slice[dst_base + dst_byte_in_vline] &= ~(1 << dst_bit_offset)
+                new_byte = old_byte & ~(1 << dst_bit_offset)
+            jamlet.write_vreg(dst_preg, dst_byte_in_vline, bytes([new_byte]),
+                              span_id=span_id,
+                              event_details={'element_index': element_index,
+                                             'bit': dst_bit_offset,
+                                             'result': bool(result_bit)})
 
         kamlet.monitor.finalize_kinstr_exec(self.instr_ident, kamlet.min_x, kamlet.min_y)
 
@@ -681,6 +702,8 @@ class VCmpVvOp(KInstr):
         bits_per_jamlet_vline = wb * 8
         unsigned = self.op in (VCmpOp.LTU, VCmpOp.LEU, VCmpOp.GTU)
         eb = self.element_width // 8
+        span_id = kamlet.monitor.get_kinstr_exec_span_id(
+            self.instr_ident, kamlet.min_x, kamlet.min_y)
 
         for element_index in range(self.n_elements):
             vw_index = element_index % kamlet.params.j_in_l
@@ -708,11 +731,17 @@ class VCmpVvOp(KInstr):
             dst_bit_in_vline = dst_bit_in_jvec % bits_per_jamlet_vline
             dst_byte_in_vline = dst_bit_in_vline // 8
             dst_bit_offset = dst_bit_in_vline % 8
-            dst_base = r.dst_pregs[dst_vline_idx] * wb
+            dst_preg = r.dst_pregs[dst_vline_idx]
+            old_byte = jamlet.rf_slice[dst_preg * wb + dst_byte_in_vline]
             if result_bit:
-                jamlet.rf_slice[dst_base + dst_byte_in_vline] |= (1 << dst_bit_offset)
+                new_byte = old_byte | (1 << dst_bit_offset)
             else:
-                jamlet.rf_slice[dst_base + dst_byte_in_vline] &= ~(1 << dst_bit_offset)
+                new_byte = old_byte & ~(1 << dst_bit_offset)
+            jamlet.write_vreg(dst_preg, dst_byte_in_vline, bytes([new_byte]),
+                              span_id=span_id,
+                              event_details={'element_index': element_index,
+                                             'bit': dst_bit_offset,
+                                             'result': bool(result_bit)})
 
         kamlet.monitor.finalize_kinstr_exec(self.instr_ident, kamlet.min_x, kamlet.min_y)
 
@@ -742,13 +771,15 @@ class VmnandMmOp(KInstr):
         wb = kamlet.params.word_bytes
         src1_base = src1_preg * wb
         src2_base = src2_preg * wb
-        dst_base = dst_preg * wb
+        span_id = kamlet.monitor.get_kinstr_exec_span_id(
+            self.instr_ident, kamlet.min_x, kamlet.min_y)
         for jamlet in kamlet.jamlets:
             for byte_offset in range(wb):
                 src1_byte = jamlet.rf_slice[src1_base + byte_offset]
                 src2_byte = jamlet.rf_slice[src2_base + byte_offset]
                 result_byte = ~(src1_byte & src2_byte) & 0xff
-                jamlet.rf_slice[dst_base + byte_offset] = result_byte
+                jamlet.write_vreg(dst_preg, byte_offset, bytes([result_byte]),
+                                  span_id=span_id)
         kamlet.monitor.finalize_kinstr_exec(self.instr_ident, kamlet.min_x, kamlet.min_y)
 
 
@@ -794,10 +825,12 @@ class VBroadcastOp(KInstr):
         eb = self.element_width // 8
         wb = kamlet.params.word_bytes
         start_index = 0
+        span_id = kamlet.monitor.get_kinstr_exec_span_id(
+            self.instr_ident, kamlet.min_x, kamlet.min_y)
 
         for j_in_k_index, jamlet in enumerate(kamlet.jamlets):
             for vline_index in range(n_vlines):
-                dst_base = r.dst_pregs[vline_index] * wb
+                dst_preg = r.dst_pregs[vline_index]
                 for index_in_j in range(wb // eb):
                     byte_offset = index_in_j * eb
                     valid_element, mask_bit = kamlet.get_is_active(
@@ -808,7 +841,8 @@ class VBroadcastOp(KInstr):
                     if valid_element and mask_bit:
                         result_bytes = self.scalar.to_bytes(
                             eb, byteorder='little', signed=(self.scalar < 0))
-                        jamlet.rf_slice[dst_base + byte_offset:dst_base + byte_offset + eb] = result_bytes
+                        jamlet.write_vreg(dst_preg, byte_offset, result_bytes,
+                                          span_id=span_id)
         kamlet.monitor.finalize_kinstr_exec(self.instr_ident, kamlet.min_x, kamlet.min_y)
 
 
@@ -853,12 +887,14 @@ class VidOp(KInstr):
         wb = params.word_bytes
         start_index = 0
         elements_in_vline = params.vline_bytes * 8 // self.element_width
+        span_id = kamlet.monitor.get_kinstr_exec_span_id(
+            self.instr_ident, kamlet.min_x, kamlet.min_y)
 
         for j_in_k_index, jamlet in enumerate(kamlet.jamlets):
             vw_index = addresses.k_indices_to_vw_index(
                 params, self.word_order, kamlet.k_index, j_in_k_index)
             for vline_index in range(n_vlines):
-                dst_base = r.dst_pregs[vline_index] * wb
+                dst_preg = r.dst_pregs[vline_index]
                 for index_in_j in range(wb // eb):
                     byte_offset = index_in_j * eb
                     element_index = (vline_index * elements_in_vline +
@@ -869,9 +905,9 @@ class VidOp(KInstr):
                     )
                     if valid_element and mask_bit:
                         result_bytes = element_index.to_bytes(eb, byteorder='little', signed=False)
-                        jamlet.rf_slice[dst_base + byte_offset:dst_base + byte_offset + eb] = (
-                            result_bytes
-                        )
+                        jamlet.write_vreg(dst_preg, byte_offset, result_bytes,
+                                          span_id=span_id,
+                                          event_details={'element_index': element_index})
         kamlet.monitor.finalize_kinstr_exec(self.instr_ident, kamlet.min_x, kamlet.min_y)
 
 
@@ -922,12 +958,14 @@ class VUnaryOvOp(KInstr):
         src_eb = self.src_ew // 8
         dst_eb = self.dst_ew // 8
         wb = params.word_bytes
+        span_id = kamlet.monitor.get_kinstr_exec_span_id(
+            self.instr_ident, kamlet.min_x, kamlet.min_y)
 
         dst_elements_per_word = wb // dst_eb
         src_elements_per_word = wb // src_eb
         for j_in_k_index, jamlet in enumerate(kamlet.jamlets):
             for vline_index in range(n_dst_vlines):
-                dst_base = r.dst_pregs[vline_index] * wb
+                dst_preg = r.dst_pregs[vline_index]
                 for index_in_j in range(dst_elements_per_word):
                     valid_element, mask_bit = kamlet.get_is_active(
                         0, self.n_elements, self.dst_ew, self.word_order,
@@ -942,11 +980,12 @@ class VUnaryOvOp(KInstr):
                     src_vline = dst_elem // src_elements_per_word
                     src_idx = dst_elem % src_elements_per_word
                     src_base = r.src_pregs[src_vline] * wb
-                    dst_byte = dst_base + index_in_j * dst_eb
+                    dst_byte_in_word = index_in_j * dst_eb
                     src_byte = src_base + src_idx * src_eb
                     src_bytes = jamlet.rf_slice[src_byte:src_byte + src_eb]
                     result = self._convert(src_bytes, src_eb, dst_eb)
-                    jamlet.rf_slice[dst_byte:dst_byte + dst_eb] = result
+                    jamlet.write_vreg(dst_preg, dst_byte_in_word, result,
+                                      span_id=span_id)
         kamlet.monitor.finalize_kinstr_exec(self.instr_ident, kamlet.min_x, kamlet.min_y)
 
     def _convert(self, src_bytes: bytes, src_eb: int, dst_eb: int) -> bytes:
@@ -1062,10 +1101,12 @@ class WriteRegElement(KInstr):
         jamlet = kamlet.jamlets[j_in_k_index]
         element_in_jamlet = self.element_index // kamlet.params.j_in_l
         eb = self.element_width // 8
-        base_addr = dst_preg * kamlet.params.word_bytes
-        byte_offset = base_addr + element_in_jamlet * eb
+        offset_in_word = element_in_jamlet * eb
         value_bytes = self.value.to_bytes(eb, byteorder='little', signed=True)
-        jamlet.rf_slice[byte_offset:byte_offset + eb] = value_bytes
+        span_id = kamlet.monitor.get_kinstr_exec_span_id(
+            self.instr_ident, kamlet.min_x, kamlet.min_y)
+        jamlet.write_vreg(dst_preg, offset_in_word, value_bytes, span_id=span_id,
+                          event_details={'element_index': self.element_index})
         kamlet.monitor.finalize_kinstr_exec(
             self.instr_ident, kamlet.min_x, kamlet.min_y,
         )
@@ -1238,12 +1279,15 @@ class VArithVvOp(KInstr):
         eb = self.element_width // 8
         wb = kamlet.params.word_bytes
         start_index = 0
+        span_id = kamlet.monitor.get_kinstr_exec_span_id(
+            self.instr_ident, kamlet.min_x, kamlet.min_y)
 
         for j_in_k_index, jamlet in enumerate(kamlet.jamlets):
             for vline_index in range(n_vlines):
                 src1_base = r.src_pregs[vline_index] * wb
                 src2_base = r.src2_pregs[vline_index] * wb
-                dst_base = r.dst_pregs[vline_index] * wb
+                dst_preg = r.dst_pregs[vline_index]
+                dst_base = dst_preg * wb
                 for index_in_j in range(wb // eb):
                     byte_offset = index_in_j * eb
                     valid_element, mask_bit = kamlet.get_is_active(
@@ -1262,7 +1306,8 @@ class VArithVvOp(KInstr):
                             acc_val = struct.unpack(fmt, acc_bytes)[0]
                         result = _compute_arith(self.op, src1_val, src2_val, acc_val, eb)
                         result = _arith_truncate_int(self.op, result, eb)
-                        jamlet.rf_slice[dst_base + byte_offset:dst_base + byte_offset + eb] = struct.pack(fmt, result)
+                        jamlet.write_vreg(dst_preg, byte_offset, struct.pack(fmt, result),
+                                          span_id=span_id)
         kamlet.monitor.finalize_kinstr_exec(self.instr_ident, kamlet.min_x, kamlet.min_y)
 
 
@@ -1319,11 +1364,14 @@ class VArithVxOp(KInstr):
         fmt = _arith_fmt(self.op, eb)
         scalar_val = struct.unpack(fmt, self.scalar_bytes[:eb])[0]
         start_index = 0
+        span_id = kamlet.monitor.get_kinstr_exec_span_id(
+            self.instr_ident, kamlet.min_x, kamlet.min_y)
 
         for j_in_k_index, jamlet in enumerate(kamlet.jamlets):
             for vline_index in range(n_vlines):
                 src2_base = r.src2_pregs[vline_index] * wb
-                dst_base = r.dst_pregs[vline_index] * wb
+                dst_preg = r.dst_pregs[vline_index]
+                dst_base = dst_preg * wb
                 for index_in_j in range(wb // eb):
                     byte_offset = index_in_j * eb
                     valid_element, mask_bit = kamlet.get_is_active(
@@ -1338,7 +1386,8 @@ class VArithVxOp(KInstr):
                             acc_val = struct.unpack(fmt, acc_bytes)[0]
                         result = _compute_arith(self.op, scalar_val, src2_val, acc_val, eb)
                         result = _arith_truncate_int(self.op, result, eb)
-                        jamlet.rf_slice[dst_base + byte_offset:dst_base + byte_offset + eb] = struct.pack(fmt, result)
+                        jamlet.write_vreg(dst_preg, byte_offset, struct.pack(fmt, result),
+                                          span_id=span_id)
         kamlet.monitor.finalize_kinstr_exec(self.instr_ident, kamlet.min_x, kamlet.min_y)
 
 
@@ -1456,10 +1505,13 @@ class VArithVvOvOp(KInstr):
         dst_fmt = _ov_arith_fmt(self.op, dst_eb, dst_signed)
         # Narrowing shifts mask the count by lg2(2*SEW); src2_eb is 2*SEW.
         shift_eb = src2_eb if self.op in _SHIFT_OPS else dst_eb
+        span_id = kamlet.monitor.get_kinstr_exec_span_id(
+            self.instr_ident, kamlet.min_x, kamlet.min_y)
 
         for j_in_k_index, jamlet in enumerate(kamlet.jamlets):
             for vline_index in range(n_dst_vlines):
-                dst_base = r.dst_pregs[vline_index] * wb
+                dst_preg = r.dst_pregs[vline_index]
+                dst_base = dst_preg * wb
                 for index_in_j in range(dst_elements_per_word):
                     valid_element, mask_bit = kamlet.get_is_active(
                         0, self.n_elements, self.dst_ew, self.word_order,
@@ -1475,7 +1527,8 @@ class VArithVvOvOp(KInstr):
                     src2_base = r.src2_pregs[src2_vline] * wb
                     src1_byte = src1_base + src1_idx * src1_eb
                     src2_byte = src2_base + src2_idx * src2_eb
-                    dst_byte = dst_base + index_in_j * dst_eb
+                    dst_byte_in_word = index_in_j * dst_eb
+                    dst_byte = dst_base + dst_byte_in_word
                     src1_bytes = jamlet.rf_slice[src1_byte:src1_byte + src1_eb]
                     src2_bytes = jamlet.rf_slice[src2_byte:src2_byte + src2_eb]
                     src1_val = struct.unpack(src1_fmt, src1_bytes)[0]
@@ -1489,8 +1542,9 @@ class VArithVvOvOp(KInstr):
                         shift_eb=shift_eb,
                     )
                     result = _ov_truncate_int(self.op, result, dst_eb, dst_signed)
-                    jamlet.rf_slice[dst_byte:dst_byte + dst_eb] = struct.pack(
-                        dst_fmt, result)
+                    jamlet.write_vreg(dst_preg, dst_byte_in_word,
+                                      struct.pack(dst_fmt, result),
+                                      span_id=span_id)
         kamlet.monitor.finalize_kinstr_exec(self.instr_ident, kamlet.min_x, kamlet.min_y)
 
 
@@ -1561,10 +1615,13 @@ class VArithVxOvOp(KInstr):
         dst_fmt = _ov_arith_fmt(self.op, dst_eb, dst_signed)
         scalar_val = struct.unpack(scalar_fmt, self.scalar_bytes[:scalar_eb])[0]
         shift_eb = src2_eb if self.op in _SHIFT_OPS else dst_eb
+        span_id = kamlet.monitor.get_kinstr_exec_span_id(
+            self.instr_ident, kamlet.min_x, kamlet.min_y)
 
         for j_in_k_index, jamlet in enumerate(kamlet.jamlets):
             for vline_index in range(n_dst_vlines):
-                dst_base = r.dst_pregs[vline_index] * wb
+                dst_preg = r.dst_pregs[vline_index]
+                dst_base = dst_preg * wb
                 for index_in_j in range(dst_elements_per_word):
                     valid_element, mask_bit = kamlet.get_is_active(
                         0, self.n_elements, self.dst_ew, self.word_order,
@@ -1576,7 +1633,8 @@ class VArithVxOvOp(KInstr):
                     src2_idx = dst_elem % src2_elements_per_word
                     src2_base = r.src2_pregs[src2_vline] * wb
                     src2_byte = src2_base + src2_idx * src2_eb
-                    dst_byte = dst_base + index_in_j * dst_eb
+                    dst_byte_in_word = index_in_j * dst_eb
+                    dst_byte = dst_base + dst_byte_in_word
                     src2_bytes = jamlet.rf_slice[src2_byte:src2_byte + src2_eb]
                     src2_val = struct.unpack(src2_fmt, src2_bytes)[0]
                     acc_val = None
@@ -1588,8 +1646,9 @@ class VArithVxOvOp(KInstr):
                         shift_eb=shift_eb,
                     )
                     result = _ov_truncate_int(self.op, result, dst_eb, dst_signed)
-                    jamlet.rf_slice[dst_byte:dst_byte + dst_eb] = struct.pack(
-                        dst_fmt, result)
+                    jamlet.write_vreg(dst_preg, dst_byte_in_word,
+                                      struct.pack(dst_fmt, result),
+                                      span_id=span_id)
         kamlet.monitor.finalize_kinstr_exec(self.instr_ident, kamlet.min_x, kamlet.min_y)
 
 

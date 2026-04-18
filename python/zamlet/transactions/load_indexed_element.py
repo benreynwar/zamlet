@@ -299,17 +299,21 @@ class WaitingLoadIndexedElement(WaitingItem):
             dst_start=dst_byte_in_word,
             n_bytes=request.n_bytes,
         )
-        jamlet.rf_slice[dst_preg * wb: (dst_preg + 1) * wb] = new_word
 
         witem_span_id = jamlet.monitor.get_witem_span_id(
             instr.instr_ident, jamlet.k_min_x, jamlet.k_min_y)
         assert witem_span_id is not None
-        jamlet.monitor.add_event(
-            witem_span_id,
-            f'rf_write jamlet=({jamlet.x},{jamlet.y}) element={element_index} '
-            f'tag={tag} reg={dst_preg} src_byte={src_byte_in_word} '
-            f'dst_byte={dst_byte_in_word} n_bytes={request.n_bytes} '
-            f'old={old_word.hex()} new={new_word.hex()}')
+        jamlet.write_vreg(
+            dst_preg, 0, new_word,
+            span_id=witem_span_id,
+            event_details={
+                'element_index': element_index,
+                'tag': tag,
+                'src_byte': src_byte_in_word,
+                'dst_byte': dst_byte_in_word,
+                'n_bytes_written': request.n_bytes,
+            },
+        )
         jamlet.monitor.complete_transaction(
             ident=header.ident,
             tag=tag,

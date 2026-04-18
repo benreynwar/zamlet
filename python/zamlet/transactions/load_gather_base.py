@@ -196,18 +196,22 @@ class WaitingLoadGatherBase(WaitingItem, ABC):
             dst_start=dst_byte_in_word,
             n_bytes=request.n_bytes,
         )
-        jamlet.rf_slice[dst_preg * wb: (dst_preg + 1) * wb] = new_word
         logger.debug(f'{jamlet.clock.cycle}: RF_WRITE {self.__class__.__name__}: '
                      f'jamlet ({jamlet.x},{jamlet.y}) ident={instr.instr_ident} '
                      f'rf[{dst_preg}] old={old_word.hex()} new={new_word.hex()}')
         witem_span_id = jamlet.monitor.get_witem_span_id(
             instr.instr_ident, jamlet.k_min_x, jamlet.k_min_y)
-        jamlet.monitor.add_event(
-            witem_span_id,
-            f'rf_write jamlet_x={jamlet.x}, jamlet_y={jamlet.y}, element={dst_e}, '
-            f'reg={dst_preg}, src_byte={src_byte_in_word}, dst_byte={dst_byte_in_word}, '
-            f'n_bytes={request.n_bytes}, payload=0x{data:x}, old={old_word.hex()}, '
-            f'new={new_word.hex()}')
+        jamlet.write_vreg(
+            dst_preg, 0, new_word,
+            span_id=witem_span_id,
+            event_details={
+                'element': dst_e,
+                'src_byte': src_byte_in_word,
+                'dst_byte': dst_byte_in_word,
+                'n_bytes_written': request.n_bytes,
+                'payload': f'0x{data:x}',
+            },
+        )
         jamlet.monitor.complete_transaction(
             ident=header.ident,
             tag=tag,
