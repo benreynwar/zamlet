@@ -166,6 +166,12 @@ async def setup_mask_register(
         parent_span_id=mask_span_id,
         emul=1,
     )
+    # TODO: clean this up once we have native ew=1 loads/stores. For now the
+    # bytes are written in the ew=1 jamlet layout but the vload tags the vreg
+    # as ew=64; consumers that ensure_vrf_ordering(..., 1, ...) would otherwise
+    # trip the "mask regs cannot round-trip through memory" assert. Retag
+    # directly since no data movement is needed.
+    lamlet.vrf_ordering[mask_reg] = Ordering(lamlet.word_order, 1)
     lamlet.monitor.finalize_children(mask_span_id)
     logger.info(f"Mask loaded into v{mask_reg}")
 

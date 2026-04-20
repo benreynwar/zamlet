@@ -374,9 +374,10 @@ class Oamlet:
             await self.clock.next_cycle
 
     def set_vrf_ordering(self, vd: int, eew: int):
-        """Set vrf_ordering for every vline register in the EMUL group derived
-        from ``eew``. Covers the case where widening/narrowing ops have a
-        destination EMUL that differs from LMUL."""
+        """Unconditionally relabel vrf_ordering for every vline in ``vd``'s
+        EMUL group. Intended for full-overwrite destinations where the prior
+        data is being replaced — no read, no remap, no check. For partial
+        writes or reads, use ``ensure_vrf_ordering`` instead."""
         ordering = Ordering(self.word_order, eew)
         n_vlines = self.emul_for_eew(eew)
         logger.info(f'set_vrf_ordering: vd=v{vd} eew={eew} '
@@ -384,15 +385,43 @@ class Oamlet:
         for i in range(n_vlines):
             self.vrf_ordering[vd + i] = ordering
 
-    def assert_vrf_ordering(self, vreg: int, eew: int):
-        """Assert vrf_ordering matches eew for every vline register in the EMUL group."""
-        n_vlines = self.emul_for_eew(eew)
+    async def ensure_vrf_ordering(
+            self, vreg: int, ew: int, span_id: int,
+            *, allow_uninitialized: bool = False) -> None:
+        """Make vreg's ordering match (self.word_order, ew) across its EMUL group.
+
+        Uninitialized entries (None): set the target ordering if
+        ``allow_uninitialized`` is True, else assert. word_order mismatch is
+        always a fatal assert — we never silently remap across word_orders.
+        ew mismatches are remapped via scratch memory, except that either side
+        at ew=1 (mask register) asserts because remap_reg_ew requires
+        ew % 8 == 0. After any required remap, the final ordering is set.
+        """
+        n_vlines = self.emul_for_eew(ew)
+        regs_to_remap = []
         for i in range(n_vlines):
             reg = vreg + i
-            assert self.vrf_ordering[reg] is not None, (
-                f'v{reg} has no ordering (expected eew={eew})')
-            assert self.vrf_ordering[reg].ew == eew, (
-                f'v{reg} ordering ew={self.vrf_ordering[reg].ew} != expected eew={eew}')
+            cur = self.vrf_ordering[reg]
+            if cur is None:
+                assert allow_uninitialized, (
+                    f'v{reg} has no ordering (expected ew={ew})')
+                continue
+            assert cur.word_order == self.word_order, (
+                f'v{reg} word_order={cur.word_order} does not match current '
+                f'word_order={self.word_order}; refusing to silently remap')
+            if cur.ew == ew:
+                continue
+            assert cur.ew != 1 and ew != 1, (
+                f'v{reg} mask-register ew mismatch (cur ew={cur.ew}, '
+                f'target ew={ew}); mask regs cannot round-trip through memory')
+            regs_to_remap.append(reg)
+        if regs_to_remap:
+            dst_ordering = Ordering(self.word_order, ew)
+            logger.warning(
+                f'ensure_vrf_ordering: remapping v{regs_to_remap} to ew={ew}')
+            await unordered.remap_reg_ew(
+                self, regs_to_remap, regs_to_remap, dst_ordering, span_id)
+        self.set_vrf_ordering(vreg, ew)
 
     def mark_vreg_write_pending(self, vreg: int, eew: int) -> None:
         """Increment the pending-write counter for every vline in vreg's EMUL group."""

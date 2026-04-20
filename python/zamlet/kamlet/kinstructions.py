@@ -785,40 +785,139 @@ class VCmpVvOp(KInstr):
         kamlet.monitor.finalize_kinstr_exec(self.instr_ident, kamlet.min_x, kamlet.min_y)
 
 
+def _vmlogic_eval(op: VmLogicOp, a: int, b: int) -> int:
+    """Apply an 8-bit-wide mask-mask logical op.
+
+    Per the VmLogicOp docstring, `a` carries the kinstr's src1 bits (= RVV vs2)
+    and `b` carries src2 (= RVV vs1).
+    """
+    a &= 0xff
+    b &= 0xff
+    if op == VmLogicOp.AND:
+        return a & b
+    if op == VmLogicOp.ANDN:
+        return a & (~b & 0xff)
+    if op == VmLogicOp.OR:
+        return a | b
+    if op == VmLogicOp.ORN:
+        return a | (~b & 0xff)
+    if op == VmLogicOp.XOR:
+        return a ^ b
+    if op == VmLogicOp.NAND:
+        return (~(a & b)) & 0xff
+    if op == VmLogicOp.NOR:
+        return (~(a | b)) & 0xff
+    if op == VmLogicOp.XNOR:
+        return (~(a ^ b)) & 0xff
+    raise NotImplementedError(f"Unknown VmLogicOp: {op}")
+
+
 @dataclass
-class VmnandMmOp(KInstr):
+class VmLogicMmOp(KInstr):
+    """Vector mask-mask logical op (vm{and,andn,or,orn,xor,nand,nor,xnor}.mm).
+
+    dst.mask[i] = op(src1.mask[i], src2.mask[i]) for i in [start_index, n_elements).
+    Elements outside that range are left undisturbed under the current
+    fully-undisturbed policy (vta=vma=False).
+
+    Mask registers are laid out at ew=1 (one bit per element). Sources and
+    destination must already be at ew=1; the lamlet wrapper asserts this.
+    """
+    op: VmLogicOp
     dst: int
     src1: int
     src2: int
+    start_index: int
+    n_elements: int
+    word_order: addresses.WordOrder
     instr_ident: int
 
-    async def admit(self, kamlet) -> 'VmnandMmOp | None':
-        # Rename: lookup src physes before allocating dst phys.
-        src1_preg = kamlet.r(self.src1)
-        src2_preg = kamlet.r(self.src2)
-        dst_preg = await kamlet.w(self.dst)
+    def _vline_range(self, kamlet) -> tuple[int, int] | None:
+        """Return (start_vline, end_vline) inclusive, or None for no-op.
+
+        No-op cases: n_elements == 0 (empty vector), or start_index >= n_elements
+        (the active region [start_index, n_elements) is empty).
+        """
+        if self.n_elements == 0 or self.start_index >= self.n_elements:
+            return None
+        elements_in_vline = kamlet.params.vline_bytes * 8
+        start_vline = self.start_index // elements_in_vline
+        end_vline = (self.n_elements - 1) // elements_in_vline
+        return start_vline, end_vline
+
+    async def admit(self, kamlet) -> 'VmLogicMmOp | None':
+        vrange = self._vline_range(kamlet)
+        if vrange is None:
+            return self.rename()
+        start_vline, end_vline = vrange
+        elements_in_vline = kamlet.params.vline_bytes * 8
+
+        src1_pregs = {v: kamlet.r(self.src1 + v)
+                      for v in range(start_vline, end_vline + 1)}
+        src2_pregs = {v: kamlet.r(self.src2 + v)
+                      for v in range(start_vline, end_vline + 1)}
+        dst_pregs_list = await kamlet.alloc_dst_pregs(
+            base_arch=self.dst, start_vline=start_vline, end_vline=end_vline,
+            start_index=self.start_index, n_elements=self.n_elements,
+            elements_in_vline=elements_in_vline, mask_present=False,
+            exclude_reuse=set(src1_pregs.values()) | set(src2_pregs.values()))
+        dst_pregs = {start_vline + i: dst_pregs_list[i]
+                     for i in range(len(dst_pregs_list))}
         return self.rename(
-            src_pregs={0: src1_preg}, src2_pregs={0: src2_preg},
-            dst_pregs={0: dst_preg},
+            src_pregs=src1_pregs,
+            src2_pregs=src2_pregs,
+            dst_pregs=dst_pregs,
         )
 
     async def execute(self, kamlet) -> None:
+        vrange = self._vline_range(kamlet)
+        if vrange is None:
+            kamlet.monitor.finalize_kinstr_exec(
+                self.instr_ident, kamlet.min_x, kamlet.min_y)
+            return
+        start_vline, end_vline = vrange
         r = self.renamed
-        src1_preg = r.src_pregs[0]
-        src2_preg = r.src2_pregs[0]
-        dst_preg = r.dst_pregs[0]
         wb = kamlet.params.word_bytes
-        src1_base = src1_preg * wb
-        src2_base = src2_preg * wb
+        j_in_l = kamlet.params.j_in_l
+        bits_per_jamlet_vline = wb * 8
         span_id = kamlet.monitor.get_kinstr_exec_span_id(
             self.instr_ident, kamlet.min_x, kamlet.min_y)
-        for jamlet in kamlet.jamlets:
-            for byte_offset in range(wb):
-                src1_byte = jamlet.rf_slice[src1_base + byte_offset]
-                src2_byte = jamlet.rf_slice[src2_base + byte_offset]
-                result_byte = ~(src1_byte & src2_byte) & 0xff
-                jamlet.write_vreg(dst_preg, byte_offset, bytes([result_byte]),
-                                  span_id=span_id)
+
+        for j_in_k_index, jamlet in enumerate(kamlet.jamlets):
+            # Per-vline wb-byte active mask: 1 for each bit whose element is in
+            # [start_index, n_elements) and maps to this jamlet.
+            active_masks = {v: bytearray(wb)
+                            for v in range(start_vline, end_vline + 1)}
+            vw_index = addresses.k_indices_to_vw_index(
+                kamlet.params, self.word_order, kamlet.k_index, j_in_k_index)
+            low = start_vline * bits_per_jamlet_vline
+            high = (end_vline + 1) * bits_per_jamlet_vline
+            for element_in_jamlet in range(low, high):
+                e = vw_index + j_in_l * element_in_jamlet
+                if e < self.start_index or e >= self.n_elements:
+                    continue
+                vline_idx = element_in_jamlet // bits_per_jamlet_vline
+                bit_in_jvec = element_in_jamlet % bits_per_jamlet_vline
+                byte_idx = bit_in_jvec // 8
+                bit_in_byte = bit_in_jvec % 8
+                active_masks[vline_idx][byte_idx] |= (1 << bit_in_byte)
+
+            for vline_idx in range(start_vline, end_vline + 1):
+                src1_base = r.src_pregs[vline_idx] * wb
+                src2_base = r.src2_pregs[vline_idx] * wb
+                dst_preg = r.dst_pregs[vline_idx]
+                dst_base = dst_preg * wb
+                for byte_offset in range(wb):
+                    active = active_masks[vline_idx][byte_offset]
+                    if active == 0:
+                        continue
+                    s1 = jamlet.rf_slice[src1_base + byte_offset]
+                    s2 = jamlet.rf_slice[src2_base + byte_offset]
+                    op_byte = _vmlogic_eval(self.op, s1, s2)
+                    old = jamlet.rf_slice[dst_base + byte_offset]
+                    new_byte = (op_byte & active) | (old & (~active & 0xff))
+                    jamlet.write_vreg(dst_preg, byte_offset, bytes([new_byte]),
+                                      span_id=span_id)
         kamlet.monitor.finalize_kinstr_exec(self.instr_ident, kamlet.min_x, kamlet.min_y)
 
 

@@ -944,9 +944,30 @@ def decode_standard(instruction_bytes: bytes) -> Instruction:
             return V.VCmpVx(vd=rd, vs2=vs2, rs1=rs1, vm=vm, op=kinstructions.VCmpOp.GTU)
         elif funct6 == 0x1f and funct3 == 0x4:
             return V.VCmpVx(vd=rd, vs2=vs2, rs1=rs1, vm=vm, op=kinstructions.VCmpOp.GT)
+        elif funct6 == 0x18 and funct3 == 0x2:
+            return V.VmLogicMm(vd=rd, vs2=vs2, vs1=rs1,
+                               op=kinstructions.VmLogicOp.ANDN)
+        elif funct6 == 0x19 and funct3 == 0x2:
+            return V.VmLogicMm(vd=rd, vs2=vs2, vs1=rs1,
+                               op=kinstructions.VmLogicOp.AND)
+        elif funct6 == 0x1a and funct3 == 0x2:
+            return V.VmLogicMm(vd=rd, vs2=vs2, vs1=rs1,
+                               op=kinstructions.VmLogicOp.OR)
+        elif funct6 == 0x1b and funct3 == 0x2:
+            return V.VmLogicMm(vd=rd, vs2=vs2, vs1=rs1,
+                               op=kinstructions.VmLogicOp.XOR)
+        elif funct6 == 0x1c and funct3 == 0x2:
+            return V.VmLogicMm(vd=rd, vs2=vs2, vs1=rs1,
+                               op=kinstructions.VmLogicOp.ORN)
         elif funct6 == 0x1d and funct3 == 0x2:
-            vs1 = rs1
-            return V.VmnandMm(vd=rd, vs2=vs2, vs1=vs1)
+            return V.VmLogicMm(vd=rd, vs2=vs2, vs1=rs1,
+                               op=kinstructions.VmLogicOp.NAND)
+        elif funct6 == 0x1e and funct3 == 0x2:
+            return V.VmLogicMm(vd=rd, vs2=vs2, vs1=rs1,
+                               op=kinstructions.VmLogicOp.NOR)
+        elif funct6 == 0x1f and funct3 == 0x2:
+            return V.VmLogicMm(vd=rd, vs2=vs2, vs1=rs1,
+                               op=kinstructions.VmLogicOp.XNOR)
         elif funct6 == 0x17 and funct3 == 0x0 and vm == 0:
             vs1 = rs1
             return V.VmergeVvm(vd=rd, vs1=vs1, vs2=vs2)

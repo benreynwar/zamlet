@@ -14,9 +14,38 @@
       writeset_ident to both headers without resolving packing. When no_response=True
       on WriteMemWordHeader, source_x/source_y (16 bits) are unused and could carry
       writeset_ident in hardware.
-- [ ] Replace store-ew-mismatch workaround (store to scratch memory + reload at new ew)
-      with a dedicated register-to-register ew remap kinstr using J2J messages.
-      Currently in `vloadstore` in `lamlet/unordered.py`.
+- [ ] ew remap infrastructure. Today a store-ew-mismatch is handled by
+      `vloadstore` in `lamlet/unordered.py` by storing src to scratch memory and
+      reloading at the new ew — slow and can't handle ew=1 because `vload` /
+      `vstore` assert `ordering.ew % 8 == 0` (`unordered.py:215,230`). Plan:
+      (a) Dedicated register-to-register ew remap kinstr that moves data
+          between jamlets via J2J messages (no memory round-trip).
+      (b) Load/store support for ew=1 restricted to aligned unit-stride access
+          only. Any other ew=1 access (misaligned, strided, or indexed) is
+          handled as a fault at the lamlet; the lamlet's fault handler remaps
+          the affected page into a temporary memory region at the required
+          layout before the op retries.
+      (c) Once (a) lands, plumb `ensure_mask_ew1(reg)` at every mask-consumer
+          site so mask registers are always read at ew=1 regardless of how
+          they were produced. Today those sites just assert ew==1 (see the
+          asserts added alongside VmLogicMm); remap is a follow-up.
+      (d) Drop the manual ew=1 retag at the end of
+          `tests/test_utils.py:setup_mask_register` once ew=1 loads exist —
+          the helper currently bulk-loads at ew=64 and then relabels the
+          vreg as ew=1 because the byte layout already matches.
+- [ ] vstart / start_index is ignored by almost all kinstrs (they hardcode
+      start_index=0 in execute and in alloc_dst_pregs). Only vrgather and
+      the new VmLogicMm thread `s.vstart` through. RVV spec requires
+      elements [0, vstart) to be undisturbed on every vector op. In practice
+      today this is harmless because the toolchain always zeros vstart before
+      each op, but any trap-resume path or any op that leaves a non-zero
+      vstart in an operand will silently clobber the prestart region. Audit /
+      fix: VBroadcastOp, VidOp, VArithV{v,x}Op, VCmpV{i,x,v}Op, VUnaryOvOp,
+      VmergeVvm / VmergeVim / VmergeVx, VreductionOp, vloadstore paths (these
+      honour start_index from the caller but callers typically pass 0),
+      slides, and scalar moves that use it implicitly. See
+      `docs/PLAN_vta_vma.md` (related tail/mask policy) and the `vrgather`
+      implementation as a reference for correct plumbing.
 - [ ] Narrowing shifts (vnsrl, vnsra): currently only vnsrl.wi is implemented, and it's
       hacked into VUnaryOvOp which is the wrong place for it. Need to think about how
       narrowing ops should work properly, then implement all 6 forms
