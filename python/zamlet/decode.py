@@ -18,6 +18,7 @@ from zamlet.instructions import memory as M
 from zamlet.instructions import multiply as MUL
 from zamlet.instructions import custom as CUSTOM
 from zamlet.kamlet import kinstructions
+from zamlet.transactions.reg_slide import SlideDirection
 
 decode_i_imm = decode_helpers.decode_i_imm
 decode_b_imm = decode_helpers.decode_b_imm
@@ -692,6 +693,12 @@ def decode_standard(instruction_bytes: bytes) -> Instruction:
             return V.VArithVxFloat(vd=rd, rs1=rs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.FMIN)
         elif funct6 == 0x06 and funct3 == 0x5:
             return V.VArithVxFloat(vd=rd, rs1=rs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.FMAX)
+        elif funct6 == 0x08 and funct3 == 0x5:
+            return V.VArithVxFloat(vd=rd, rs1=rs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.FSGNJ)
+        elif funct6 == 0x09 and funct3 == 0x5:
+            return V.VArithVxFloat(vd=rd, rs1=rs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.FSGNJN)
+        elif funct6 == 0x0a and funct3 == 0x5:
+            return V.VArithVxFloat(vd=rd, rs1=rs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.FSGNJX)
         elif funct6 == 0x24 and funct3 == 0x5:
             return V.VArithVxFloat(vd=rd, rs1=rs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.FMUL)
         elif funct6 == 0x20 and funct3 == 0x5:
@@ -948,6 +955,10 @@ def decode_standard(instruction_bytes: bytes) -> Instruction:
             return V.VmvXs(rd=rd, vs2=vs2)
         elif funct6 == 0x10 and funct3 == 0x6 and rs2 == 0:
             return V.VmvSx(vd=rd, rs1=rs1)
+        elif funct6 == 0x10 and funct3 == 0x1 and rs1 == 0:
+            return V.VfmvFs(rd=rd, vs2=vs2)
+        elif funct6 == 0x10 and funct3 == 0x5 and rs2 == 0:
+            return V.VfmvSf(vd=rd, rs1=rs1)
         elif funct6 == 0x25 and funct3 == 0x2:
             vs1 = rs1
             return V.VArithVv(vd=rd, vs1=vs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.MUL)
@@ -976,6 +987,46 @@ def decode_standard(instruction_bytes: bytes) -> Instruction:
         elif funct6 == 0x0c and funct3 == 0x0:
             vs1 = rs1
             return V.Vrgather(vd=rd, vs2=vs2, vs1=vs1, vm=vm)
+        elif funct6 == 0x0c and funct3 == 0x4:
+            return V.VrgatherVxVi(vd=rd, vs2=vs2, index_src=rs1,
+                                  is_imm=False, vm=vm)
+        elif funct6 == 0x0c and funct3 == 0x3:
+            uimm = rs1
+            return V.VrgatherVxVi(vd=rd, vs2=vs2, index_src=uimm,
+                                  is_imm=True, vm=vm)
+        elif funct6 == 0x0e and funct3 == 0x0:
+            vs1 = rs1
+            return V.Vrgather(vd=rd, vs2=vs2, vs1=vs1, vm=vm, index_ew_fixed=16)
+        # Slides: funct6 0x0e = vslideup, 0x0f = vslidedown.
+        # funct3 0x4 = .vx (rs1 offset), 0x3 = .vi (uimm5 offset).
+        elif funct6 == 0x0e and funct3 == 0x4:
+            return V.Vslide(vd=rd, vs2=vs2, offset_src=rs1, is_imm=False, vm=vm,
+                            direction=SlideDirection.UP)
+        elif funct6 == 0x0e and funct3 == 0x3:
+            uimm = rs1
+            return V.Vslide(vd=rd, vs2=vs2, offset_src=uimm, is_imm=True, vm=vm,
+                            direction=SlideDirection.UP)
+        elif funct6 == 0x0f and funct3 == 0x4:
+            return V.Vslide(vd=rd, vs2=vs2, offset_src=rs1, is_imm=False, vm=vm,
+                            direction=SlideDirection.DOWN)
+        elif funct6 == 0x0f and funct3 == 0x3:
+            uimm = rs1
+            return V.Vslide(vd=rd, vs2=vs2, offset_src=uimm, is_imm=True, vm=vm,
+                            direction=SlideDirection.DOWN)
+        # vslide1up.vx / vslide1down.vx: funct3 = OPMVX (0x6).
+        elif funct6 == 0x0e and funct3 == 0x6:
+            return V.Vslide1(vd=rd, vs2=vs2, rs1=rs1, vm=vm,
+                             direction=SlideDirection.UP)
+        elif funct6 == 0x0f and funct3 == 0x6:
+            return V.Vslide1(vd=rd, vs2=vs2, rs1=rs1, vm=vm,
+                             direction=SlideDirection.DOWN)
+        # vfslide1up.vf / vfslide1down.vf: funct3 = OPFVF (0x5).
+        elif funct6 == 0x0e and funct3 == 0x5:
+            return V.Vslide1(vd=rd, vs2=vs2, rs1=rs1, vm=vm,
+                             direction=SlideDirection.UP, is_float=True)
+        elif funct6 == 0x0f and funct3 == 0x5:
+            return V.Vslide1(vd=rd, vs2=vs2, rs1=rs1, vm=vm,
+                             direction=SlideDirection.DOWN, is_float=True)
         elif funct6 == 0x14 and funct3 == 0x2 and rs1 == 0x11:
             # vid.v - vmunary0 with vs1=10001
             return V.Vid(vd=rd, vm=vm)
@@ -996,6 +1047,15 @@ def decode_standard(instruction_bytes: bytes) -> Instruction:
         elif funct6 == 0x06 and funct3 == 0x1:
             vs1 = rs1
             return V.VArithVvFloat(vd=rd, vs1=vs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.FMAX)
+        elif funct6 == 0x08 and funct3 == 0x1:
+            vs1 = rs1
+            return V.VArithVvFloat(vd=rd, vs1=vs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.FSGNJ)
+        elif funct6 == 0x09 and funct3 == 0x1:
+            vs1 = rs1
+            return V.VArithVvFloat(vd=rd, vs1=vs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.FSGNJN)
+        elif funct6 == 0x0a and funct3 == 0x1:
+            vs1 = rs1
+            return V.VArithVvFloat(vd=rd, vs1=vs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.FSGNJX)
         elif funct6 == 0x20 and funct3 == 0x1:
             vs1 = rs1
             return V.VArithVvFloat(vd=rd, vs1=vs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.FDIV)

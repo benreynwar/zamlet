@@ -65,6 +65,9 @@ class VArithOp(Enum):
     FRDIV = "frdiv"
     FMIN = "fmin"
     FMAX = "fmax"
+    FSGNJ = "fsgnj"
+    FSGNJN = "fsgnjn"
+    FSGNJX = "fsgnjx"
 
 
 class VUnaryOp(Enum):
@@ -1080,6 +1083,10 @@ class WriteRegElement(KInstr):
     ordering: addresses.Ordering
     value: int
     instr_ident: int
+    # When mask_reg is not None, check bit `mask_index` of that jamlet's word
+    # in the mask register; skip the write when the bit is 0.
+    mask_reg: int | None = None
+    mask_index: int = 0
 
     async def admit(self, kamlet) -> 'WriteRegElement | None':
         vw_index = self.element_index % kamlet.params.j_in_l
@@ -1089,8 +1096,9 @@ class WriteRegElement(KInstr):
         # Single-element patch: the unwritten elements must keep their old
         # values, so this is semantically RMW. Use rw() to reuse the existing
         # phys rather than rotating in a fresh (uninitialised) one.
+        mask_preg = kamlet.r(self.mask_reg) if self.mask_reg is not None else None
         dst_preg = kamlet.rw(self.dst)
-        return self.rename(dst_pregs={0: dst_preg})
+        return self.rename(dst_pregs={0: dst_preg}, mask_preg=mask_preg)
 
     async def execute(self, kamlet) -> None:
         r = self.renamed
@@ -1099,6 +1107,17 @@ class WriteRegElement(KInstr):
             kamlet.params, self.ordering.word_order, vw_index)
         dst_preg = r.dst_pregs[0]
         jamlet = kamlet.jamlets[j_in_k_index]
+        if r.mask_preg is not None:
+            wb = kamlet.params.word_bytes
+            mask_word = int.from_bytes(
+                jamlet.rf_slice[r.mask_preg * wb: (r.mask_preg + 1) * wb],
+                byteorder='little')
+            mask_bit = (mask_word >> self.mask_index) & 1
+            if not mask_bit:
+                kamlet.monitor.finalize_kinstr_exec(
+                    self.instr_ident, kamlet.min_x, kamlet.min_y,
+                )
+                return
         element_in_jamlet = self.element_index // kamlet.params.j_in_l
         eb = self.element_width // 8
         offset_in_word = element_in_jamlet * eb
@@ -1118,7 +1137,9 @@ FLOAT_OPS = (
     VArithOp.FMACC, VArithOp.FNMACC, VArithOp.FMADD, VArithOp.FNMADD,
     VArithOp.FMSAC, VArithOp.FNMSAC, VArithOp.FMSUB, VArithOp.FNMSUB,
     VArithOp.FMIN, VArithOp.FMAX,
+    VArithOp.FSGNJ, VArithOp.FSGNJN, VArithOp.FSGNJX,
 )
+SGNJ_OPS = (VArithOp.FSGNJ, VArithOp.FSGNJN, VArithOp.FSGNJX)
 SIGNED_INT_OPS = (
     VArithOp.ADD, VArithOp.SUB, VArithOp.RSUB, VArithOp.MUL,
     VArithOp.MACC, VArithOp.MADD, VArithOp.NMSAC, VArithOp.NMSUB,
@@ -1196,6 +1217,27 @@ def _compute_arith(op, src1_val, src2_val, acc_val, eb, shift_eb=None):
         return (src1_val * acc_val) - src2_val
     elif op == VArithOp.NMSUB or op == VArithOp.FNMSUB:
         return src2_val - (src1_val * acc_val)
+    elif op in SGNJ_OPS:
+        # RVV vfsgnj{,n,x}.vv vd, vs2, vs1: magnitude from vs2 (=src2), sign
+        # from vs1 (=src1) / negated / XORed with src2 sign. Bit-level, so
+        # round-trip through the int view of the float to manipulate the
+        # sign bit directly.
+        int_fmt = {8: '<Q', 4: '<I', 2: '<H'}[eb]
+        float_fmt = {8: '<d', 4: '<f', 2: '<e'}[eb]
+        width = eb * 8
+        sign_bit = 1 << (width - 1)
+        b1 = struct.unpack(int_fmt, struct.pack(float_fmt, src1_val))[0]
+        b2 = struct.unpack(int_fmt, struct.pack(float_fmt, src2_val))[0]
+        magnitude = b2 & (sign_bit - 1)
+        if op is VArithOp.FSGNJ:
+            new_sign = b1 & sign_bit
+        elif op is VArithOp.FSGNJN:
+            new_sign = (b1 & sign_bit) ^ sign_bit
+        elif op is VArithOp.FSGNJX:
+            new_sign = (b1 ^ b2) & sign_bit
+        else:
+            raise AssertionError(f"unhandled sign-inject op: {op}")
+        return struct.unpack(float_fmt, struct.pack(int_fmt, magnitude | new_sign))[0]
     else:
         raise NotImplementedError(f"Unknown arith op: {op}")
 

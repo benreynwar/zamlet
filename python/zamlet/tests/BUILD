@@ -10,8 +10,11 @@ py_library(
 FAST_TESTS = [
     "test_conditional_kamlet",
     "test_reg_gather",
+    "test_reg_gather_vx_vi",
     "test_reg_mem_mapping",
+    "test_reg_slide",
     "test_synchronization",
+    "test_vfmv_scalar",
     "test_widening_arith",
 ]
 
@@ -93,9 +96,12 @@ test_suite(
     tests = [
         "test_conditional_kamlet",
         "test_reg_gather",
+        "test_reg_gather_vx_vi",
+        "test_reg_slide",
         "test_strided_load",
         "test_strided_store",
         "test_reduction",
+        "test_vfmv_scalar",
         "test_widening_arith",
     ],
 )

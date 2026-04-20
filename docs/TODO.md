@@ -31,6 +31,23 @@
       pipelining of partial-vl tail iterations of rolled loops. Adding explicit
       vta/vma plumbing lets the rename allocator pick w()+fill-with-1s instead of
       rw() whenever the spec permits. See `docs/PLAN_vta_vma.md`.
+- [ ] Fix scalar floating-point correctness. Several issues, all orthogonal:
+      (1) NaN-boxing: producers of F32 values in the 64-bit freg zero-pad instead
+      of setting upper 32 bits to 1s; consumers read low 4 bytes without checking
+      the NaN-box invariant, so a non-NaN-boxed freg read as F32 does not
+      substitute canonical qNaN `0x7fc00000`. Affects `FmvWX`, `Flw`, `_write_fp`,
+      `_write_fp_bits`, `FCvt` (F32 dst); and `_read_fp`, `_read_fp_bits`, `FCvt`
+      (F32 src). Vector side: `VArithVxFloat` and any future `.vf` forms read
+      `scalar_bytes = read_freg(rs1)` without the check. Design plan: thread a
+      `width: int` param through `scalar.read_freg`/`write_freg`/`write_freg_future`
+      so the box/unbox logic lives in one place. F64, `FMV.X.W`, `FSW` stay
+      bit-preserving (width=64, slice). See `docs/PLAN_fp_nan_boxing.md` (deferred).
+      (2) Rounding mode: `FCvt` ignores the `rm` field and relies on Python's host
+      rounding (truncation for FP→int via `int()`, host RNE for int→FP via
+      `struct.pack`). No `fcsr` plumbing, no dynamic-rm lookup.
+      (3) NaN payload propagation and exception flags: Python native float
+      arithmetic produces implementation-defined NaN bits and does not set
+      RISC-V accrued flags (NV/DZ/OF/UF/NX) in `fcsr`.
 - [ ] Kinstruction bit-budget cleanup. Give every python kinstruction a proper
       bit-packed encoding (`FIELD_SPECS` + `encode()`) matching Chisel-compatible
       64-bit layouts, and design Chisel bundles for the python-only vector ops

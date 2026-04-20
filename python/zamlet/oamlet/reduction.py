@@ -275,12 +275,17 @@ async def handle_vreduction_instr(lamlet, op, dst, src_vector, src_scalar_reg,
     lmul = lamlet.lmul
     elements_in_vline = lamlet.params.vline_bytes * 8 // accum_ew
 
+    await lamlet.await_vreg_write_pending(src_vector, lamlet.emul_for_eew(src_ew))
+    if mask_reg is not None:
+        await lamlet.await_vreg_write_pending(mask_reg, 1)
+
     if lmul > 1:
         # Phase 1: Copy vs2 into lmul temp registers with identity/mask handling
         all_temps = lamlet.alloc_temp_regs(8)
         accum_ordering = addresses.Ordering(word_order, accum_ew)
         mask_ordering = addresses.Ordering(word_order, 1)
         for reg in all_temps:
+            await lamlet.await_vreg_write_pending(reg, 1)
             lamlet.vrf_ordering[reg] = accum_ordering
 
         vline_regs = await _emit_lmul_setup(
@@ -301,6 +306,7 @@ async def handle_vreduction_instr(lamlet, op, dst, src_vector, src_scalar_reg,
         assert len(remaining) >= 7, f"Need 7 temps for cross-jamlet, have {len(remaining)}"
         temp_id, temp_idx, temp_mask = remaining[0], remaining[1], remaining[2]
         data_regs = remaining[3:7]
+        await lamlet.await_vreg_write_pending(temp_mask, 1)
         lamlet.vrf_ordering[temp_mask] = mask_ordering
 
         # Phase 3: Cross-jamlet tree on the single vline
@@ -319,7 +325,9 @@ async def handle_vreduction_instr(lamlet, op, dst, src_vector, src_scalar_reg,
         accum_ordering = addresses.Ordering(word_order, accum_ew)
         mask_ordering = addresses.Ordering(word_order, 1)
         for reg in [temp_id, temp_idx] + list(data_regs):
+            await lamlet.await_vreg_write_pending(reg, 1)
             lamlet.vrf_ordering[reg] = accum_ordering
+        await lamlet.await_vreg_write_pending(temp_mask, 1)
         lamlet.vrf_ordering[temp_mask] = mask_ordering
 
         # Setup: broadcast identity into data_regs[0], masked copy vs2 over it

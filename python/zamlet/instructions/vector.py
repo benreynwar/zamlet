@@ -18,6 +18,9 @@ from zamlet.addresses import Ordering, WordOrder
 from zamlet.register_names import reg_name, freg_name
 from zamlet.monitor import CompletionType, SpanType
 from zamlet.lamlet.unordered import remap_reg_ew
+from zamlet.lamlet import ident_query
+from zamlet.lamlet.lamlet_waiting_item import LamletWaitingVrgatherBroadcast
+from zamlet.transactions.reg_slide import SlideDirection
 from zamlet.instructions.riscv_instr import riscv_instr
 
 logger = logging.getLogger(__name__)
@@ -511,10 +514,12 @@ class VArithVxFloat:
         vsew = (s.vtype >> 3) & 0x7
         element_width = 8 << vsew
         word_order = s.word_order
+        n_vlines = s.emul_for_eew(element_width)
+        await s.await_vreg_write_pending(self.vs2, n_vlines)
         s.assert_vrf_ordering(self.vs2, element_width)
+        await s.await_vreg_write_pending(self.vd, n_vlines)
         if self.op in self._ACCUM_OPS:
             s.assert_vrf_ordering(self.vd, element_width)
-
         s.set_vrf_ordering(self.vd, element_width)
 
         scalar_bytes = s.scalar.read_freg(self.rs1)
@@ -802,6 +807,7 @@ class VmvVi:
         element_width = 8 << vsew
         word_order = s.word_order
 
+        await s.await_vreg_write_pending(self.vd, s.emul_for_eew(element_width))
         s.set_vrf_ordering(self.vd, element_width)
 
         sign_extended_imm = self.simm5 if self.simm5 < 16 else self.simm5 - 32
@@ -852,6 +858,7 @@ class VmvVx:
         rs1_bytes = s.scalar.read_reg(self.rs1)
         scalar_val = int.from_bytes(rs1_bytes, byteorder='little', signed=True)
 
+        await s.await_vreg_write_pending(self.vd, s.emul_for_eew(element_width))
         s.set_vrf_ordering(self.vd, element_width)
 
         instr_ident = await s.get_instr_ident()
@@ -897,7 +904,10 @@ class VmergeVx:
         element_width = 8 << vsew
         word_order = s.word_order
 
+        n_vlines = s.emul_for_eew(element_width)
+        await s.await_vreg_write_pending(self.vs2, n_vlines)
         s.assert_vrf_ordering(self.vs2, element_width)
+        await s.await_vreg_write_pending(self.vd, n_vlines)
         s.set_vrf_ordering(self.vd, element_width)
 
         rs1_bytes = s.scalar.read_reg(self.rs1)
@@ -963,8 +973,12 @@ class VmergeVvm:
         element_width = 8 << vsew
         word_order = s.word_order
 
+        n_vlines = s.emul_for_eew(element_width)
+        await s.await_vreg_write_pending(self.vs2, n_vlines)
         s.assert_vrf_ordering(self.vs2, element_width)
+        await s.await_vreg_write_pending(self.vs1, n_vlines)
         s.assert_vrf_ordering(self.vs1, element_width)
+        await s.await_vreg_write_pending(self.vd, n_vlines)
         s.set_vrf_ordering(self.vd, element_width)
 
         if self.vd == self.vs1 and self.vd == self.vs2:
@@ -1062,7 +1076,10 @@ class VmergeVim:
         element_width = 8 << vsew
         word_order = s.word_order
 
+        n_vlines = s.emul_for_eew(element_width)
+        await s.await_vreg_write_pending(self.vs2, n_vlines)
         s.assert_vrf_ordering(self.vs2, element_width)
+        await s.await_vreg_write_pending(self.vd, n_vlines)
         s.set_vrf_ordering(self.vd, element_width)
 
         # Sign-extend 5-bit immediate
@@ -1128,6 +1145,41 @@ class VmvXs:
 
 
 @dataclass
+class VfmvFs:
+    """VFMV.F.S - Floating-Point Vector-to-Scalar Move.
+
+    f[rd] = vs2[0] (extract element 0 into an FP scalar register).
+    Ignores LMUL. Executes even if vstart >= vl or vl == 0.
+
+    NaN-boxing (per RISC-V F spec, required when SEW < FLEN) is not applied
+    here; we reuse LamletWaitingReadRegElement which sign-extends into 8
+    bytes. This matches the existing zero-pad convention used by every
+    other narrow-FP producer in the model. Broader FP-correctness fix is
+    tracked in docs/TODO.md.
+
+    Reference: riscv-isa-manual/src/v-st-ext.adoc
+    (sec "Floating-Point Scalar Move Instructions")
+    """
+    rd: int
+    vs2: int
+
+    def __str__(self):
+        return f'vfmv.f.s\t{freg_name(self.rd)},v{self.vs2}'
+
+    @riscv_instr
+    async def update_state(self, s: 'Oamlet', span_id: int):
+        vsew = (s.vtype >> 3) & 0x7
+        element_width = 8 << vsew
+
+        assert s.vrf_ordering[self.vs2].ew == element_width
+
+        value_future = await s.read_register_element(
+            self.vs2, element_index=0, element_width=element_width)
+        s.scalar.write_freg_future(self.rd, value_future, span_id)
+        s.pc += 4
+
+
+@dataclass
 class VmvSx:
     """VMV.S.X - Vector Move from Scalar Register.
 
@@ -1153,6 +1205,8 @@ class VmvSx:
         vsew = (s.vtype >> 3) & 0x7
         element_width = 8 << vsew
 
+        n_vlines = s.emul_for_eew(element_width)
+        await s.await_vreg_write_pending(self.vd, n_vlines)
         if s.vrf_ordering[self.vd] is None:
             s.set_vrf_ordering(self.vd, element_width)
         elif s.vrf_ordering[self.vd].ew != element_width:
@@ -1168,6 +1222,82 @@ class VmvSx:
 
         rs1_bytes = s.scalar.read_reg(self.rs1)
         scalar_val = int.from_bytes(rs1_bytes, byteorder='little', signed=True)
+
+        ordering = s.vrf_ordering[self.vd]
+        vw_index = 0 % s.params.j_in_l
+        k_index, j_in_k_index = addresses.vw_index_to_k_indices(
+            s.params, ordering.word_order, vw_index)
+
+        instr_ident = await s.get_instr_ident()
+        kinstr = kinstructions.WriteRegElement(
+            dst=self.vd,
+            element_index=0,
+            element_width=element_width,
+            ordering=ordering,
+            value=scalar_val,
+            instr_ident=instr_ident,
+        )
+        await s.add_to_instruction_buffer(kinstr, span_id, k_index)
+        s.monitor.finalize_children(span_id)
+        s.pc += 4
+
+
+@dataclass
+class VfmvSf:
+    """VFMV.S.F - Floating-Point Scalar-to-Vector Move.
+
+    vd[0] = f[rs1] (write FP scalar to element 0 of vector register).
+    Ignores LMUL. Per spec: if vstart >= vl, no operation is performed.
+    The masked encoding is reserved; only the unmasked form is decoded.
+
+    Reference: riscv-isa-manual/src/v-st-ext.adoc
+    (sec "Floating-Point Scalar Move Instructions")
+    """
+    vd: int
+    rs1: int
+
+    def __str__(self):
+        return f'vfmv.s.f\tv{self.vd},{freg_name(self.rs1)}'
+
+    async def update_state(self, s: 'Oamlet'):
+        span_id = s.monitor.create_span(
+            span_type=SpanType.RISCV_INSTR,
+            component="lamlet",
+            completion_type=CompletionType.FIRE_AND_FORGET,
+            mnemonic=str(self),
+            pc=s.pc,
+        )
+
+        await s.scalar.wait_all_regs_ready(None, None, [], [self.rs1])
+
+        vsew = (s.vtype >> 3) & 0x7
+        element_width = 8 << vsew
+
+        n_vlines = s.emul_for_eew(element_width)
+        await s.await_vreg_write_pending(self.vd, n_vlines)
+        if s.vrf_ordering[self.vd] is None:
+            s.set_vrf_ordering(self.vd, element_width)
+        elif s.vrf_ordering[self.vd].ew != element_width:
+            logger.warning(
+                f'vfmv.s.f v{self.vd}: ew mismatch, remapping from '
+                f'{s.vrf_ordering[self.vd].ew} to {element_width}')
+            dst_ordering = Ordering(s.word_order, element_width)
+            await remap_reg_ew(
+                s, [self.vd], [self.vd], dst_ordering, span_id)
+            s.set_vrf_ordering(self.vd, element_width)
+
+        # Per spec: vstart >= vl => no-op (destination register not updated).
+        if s.vstart >= s.vl:
+            s.monitor.finalize_children(span_id)
+            s.pc += 4
+            return
+
+        rs1_bytes = s.scalar.read_freg(self.rs1)
+        # Truncate the (zero-padded, today) freg bytes to SEW before sign-extending.
+        # When proper NaN-boxing lands, this site will need a NaN-box check that
+        # substitutes canonical qNaN on violation (see docs/TODO.md).
+        eb = element_width // 8
+        scalar_val = int.from_bytes(rs1_bytes[:eb], byteorder='little', signed=True)
 
         ordering = s.vrf_ordering[self.vd]
         vw_index = 0 % s.params.j_in_l
@@ -1312,10 +1442,12 @@ class Vreduction:
 
         mask_reg = 0 if not self.vm else None
 
+        await s.await_vreg_write_pending(self.vs2, s.emul_for_eew(src_ew))
         s.assert_vrf_ordering(self.vs2, src_ew)
         assert s.vrf_ordering[self.vs1].ew == accum_ew  # vs1 is scalar, only element 0
 
         word_order = s.word_order
+        await s.await_vreg_write_pending(self.vd, s.emul_for_eew(accum_ew))
         s.set_vrf_ordering(self.vd, accum_ew)
 
         vlmul = (s.vtype >> 0) & 0x7
@@ -1386,11 +1518,14 @@ class VArithVv:
         element_width = 8 << vsew
         word_order = s.word_order
 
+        n_vlines = s.emul_for_eew(element_width)
+        await s.await_vreg_write_pending(self.vs1, n_vlines)
         s.assert_vrf_ordering(self.vs1, element_width)
+        await s.await_vreg_write_pending(self.vs2, n_vlines)
         s.assert_vrf_ordering(self.vs2, element_width)
+        await s.await_vreg_write_pending(self.vd, n_vlines)
         if self.op in _ACCUM_OPS:
             s.assert_vrf_ordering(self.vd, element_width)
-
         s.set_vrf_ordering(self.vd, element_width)
 
         instr_ident = await s.get_instr_ident()
@@ -1446,11 +1581,14 @@ class VArithVvFloat:
         element_width = 8 << vsew
         word_order = s.word_order
 
+        n_vlines = s.emul_for_eew(element_width)
+        await s.await_vreg_write_pending(self.vs1, n_vlines)
         s.assert_vrf_ordering(self.vs1, element_width)
+        await s.await_vreg_write_pending(self.vs2, n_vlines)
         s.assert_vrf_ordering(self.vs2, element_width)
+        await s.await_vreg_write_pending(self.vd, n_vlines)
         if self.op in self._ACCUM_OPS:
             s.assert_vrf_ordering(self.vd, element_width)
-
         s.set_vrf_ordering(self.vd, element_width)
 
         instr_ident = await s.get_instr_ident()
@@ -1512,7 +1650,10 @@ class VArithVx:
         element_width = 8 << vsew
         word_order = s.word_order
 
+        n_vlines = s.emul_for_eew(element_width)
+        await s.await_vreg_write_pending(self.vs2, n_vlines)
         s.assert_vrf_ordering(self.vs2, element_width)
+        await s.await_vreg_write_pending(self.vd, n_vlines)
         if self.op in self._ACCUM_OPS:
             s.assert_vrf_ordering(self.vd, element_width)
 
@@ -1571,6 +1712,8 @@ class VArithVi:
         element_width = 8 << vsew
         word_order = s.word_order
 
+        n_vlines = s.emul_for_eew(element_width)
+        await s.await_vreg_write_pending(self.vs2, n_vlines)
         s.assert_vrf_ordering(self.vs2, element_width)
 
         # Sign-extend the 5-bit immediate
@@ -1578,6 +1721,7 @@ class VArithVi:
         # Convert to bytes (using word_bytes to match scalar register size)
         imm_bytes = imm_val.to_bytes(s.params.word_bytes, byteorder='little', signed=True)
 
+        await s.await_vreg_write_pending(self.vd, n_vlines)
         s.set_vrf_ordering(self.vd, element_width)
 
         instr_ident = await s.get_instr_ident()
@@ -1728,6 +1872,7 @@ class Vid:
         vsew = (s.vtype >> 3) & 0x7
         element_width = 8 << vsew
 
+        await s.await_vreg_write_pending(self.vd, s.emul_for_eew(element_width))
         s.set_vrf_ordering(self.vd, element_width)
 
         mask_reg = None if self.vm else 0
@@ -1795,6 +1940,7 @@ class VUnary:
         word_order = s.word_order
         mask_reg = None if self.vm else 0
 
+        await s.await_vreg_write_pending(self.vd, s.emul_for_eew(dst_ew))
         s.set_vrf_ordering(self.vd, dst_ew)
 
         instr_ident = await s.get_instr_ident()
@@ -1878,8 +2024,11 @@ class VArithVvOv:
         mask_reg = None if self.vm else 0
         word_order = s.word_order
 
+        await s.await_vreg_write_pending(self.vs1, s.emul_for_eew(src1_ew))
         s.assert_vrf_ordering(self.vs1, src1_ew)
+        await s.await_vreg_write_pending(self.vs2, s.emul_for_eew(src2_ew))
         s.assert_vrf_ordering(self.vs2, src2_ew)
+        await s.await_vreg_write_pending(self.vd, s.emul_for_eew(dst_ew))
         if self.op in kinstructions.ACCUM_OPS:
             s.assert_vrf_ordering(self.vd, dst_ew)
         s.set_vrf_ordering(self.vd, dst_ew)
@@ -1950,7 +2099,9 @@ class VArithVxOv:
         mask_reg = None if self.vm else 0
         word_order = s.word_order
 
+        await s.await_vreg_write_pending(self.vs2, s.emul_for_eew(src2_ew))
         s.assert_vrf_ordering(self.vs2, src2_ew)
+        await s.await_vreg_write_pending(self.vd, s.emul_for_eew(dst_ew))
         if self.op in kinstructions.ACCUM_OPS:
             s.assert_vrf_ordering(self.vd, dst_ew)
 
@@ -1990,13 +2141,244 @@ class VArithVxOv:
         s.pc += 4
 
 
+def _compute_vlmax(s: 'Oamlet', element_width: int) -> int:
+    vlmul = (s.vtype >> 0) & 0x7
+    if vlmul < 4:
+        lmul = 1 << vlmul
+    else:
+        # Fractional LMUL is treated as 1 for VLMAX.
+        lmul = 1
+    elements_in_vline = s.params.vline_bytes * 8 // element_width
+    return elements_in_vline * lmul
+
+
+async def _dispatch_vslide(s: 'Oamlet', vd: int, vs2: int, offset: int,
+                           direction: SlideDirection, vm: int, span_id: int) -> None:
+    vsew = (s.vtype >> 3) & 0x7
+    element_width = 8 << vsew
+    word_order = s.word_order
+
+    n_vlines = s.emul_for_eew(element_width)
+    await s.await_vreg_write_pending(vs2, n_vlines)
+    s.assert_vrf_ordering(vs2, element_width)
+    await s.await_vreg_write_pending(vd, n_vlines)
+    s.set_vrf_ordering(vd, element_width)
+
+    mask_reg = None if vm else 0
+    vlmax = _compute_vlmax(s, element_width)
+
+    # Per RVV: vstart >= vl -> no-op.
+    if s.vstart >= s.vl:
+        return
+
+    if direction == SlideDirection.UP:
+        start_index = max(s.vstart, offset)
+    else:
+        start_index = s.vstart
+
+    # Nothing to write (e.g. offset >= vl for slideup).
+    if start_index >= s.vl:
+        return
+
+    await s.vslide(
+        vd=vd,
+        vs2=vs2,
+        offset=offset,
+        direction=direction,
+        start_index=start_index,
+        n_elements=s.vl,
+        data_ew=element_width,
+        word_order=word_order,
+        vlmax=vlmax,
+        mask_reg=mask_reg,
+        parent_span_id=span_id,
+    )
+
+
+@dataclass
+class Vslide:
+    """VSLIDEUP / VSLIDEDOWN (.VX / .VI) - Vector Slide by scalar/immediate offset.
+
+    up:   vd[i+OFFSET] = vs2[i]   (i.e. vd[i] = vs2[i-OFFSET])  for i in [OFFSET, vl)
+          Destination elements below OFFSET are unchanged.
+          vd must not overlap vs2.
+    down: vd[i] = vs2[i+OFFSET]   for i in [vstart, vl)
+          vd[i] = 0               when i+OFFSET >= VLMAX
+    OFFSET is zero-extended (unsigned).
+
+    Reference: riscv-isa-manual/src/v-st-ext.adoc
+    """
+    vd: int
+    vs2: int
+    offset_src: int    # rs1 (for .vx) or uimm5 (for .vi)
+    is_imm: bool
+    vm: int
+    direction: SlideDirection
+
+    def __str__(self):
+        vm_str = '' if self.vm else ',v0.t'
+        mnemonic = ('vslideup' if self.direction == SlideDirection.UP
+                    else 'vslidedown')
+        suffix = 'vi' if self.is_imm else 'vx'
+        offset_str = (str(self.offset_src) if self.is_imm
+                      else reg_name(self.offset_src))
+        return f'{mnemonic}.{suffix}\tv{self.vd},v{self.vs2},{offset_str}{vm_str}'
+
+    async def update_state(self, s: 'Oamlet'):
+        span_id = s.monitor.create_span(
+            span_type=SpanType.RISCV_INSTR,
+            component="lamlet",
+            completion_type=CompletionType.FIRE_AND_FORGET,
+            mnemonic=str(self),
+            pc=s.pc,
+        )
+
+        if self.is_imm:
+            offset = self.offset_src & 0x1f
+        else:
+            await s.scalar.wait_all_regs_ready(None, None, [self.offset_src], [])
+            rs1_bytes = s.scalar.read_reg(self.offset_src)
+            offset = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
+
+        await _dispatch_vslide(s, self.vd, self.vs2, offset,
+                               self.direction, self.vm, span_id)
+        s.monitor.finalize_children(span_id)
+        s.pc += 4
+
+
+async def _inject_scalar_element(s: 'Oamlet', vd: int, element_index: int,
+                                  element_width: int, scalar_val: int,
+                                  span_id: int,
+                                  mask_reg: int | None = None) -> None:
+    """Write `scalar_val` into a single element of `vd` via WriteRegElement.
+
+    vd's vrf_ordering must already be set. `element_index` is the logical RVV
+    element index (may span multiple vlines when LMUL>1); this helper resolves
+    it to (vline-offset, within-vline element, kamlet) before dispatching.
+
+    When mask_reg is not None, the kamlet checks v0's bit for this element
+    and suppresses the write if it is 0.
+    """
+    ordering = s.vrf_ordering[vd]
+    elements_in_vline = s.params.vline_bytes * 8 // element_width
+    v_offset = element_index // elements_in_vline
+    ei_in_vline = element_index % elements_in_vline
+    vw_index = ei_in_vline % s.params.j_in_l
+    k_index, _ = addresses.vw_index_to_k_indices(
+        s.params, ordering.word_order, vw_index)
+
+    # Mask bit for the full logical element index lives at bit
+    # (element_index // j_in_l) of the same jamlet's mask word.
+    mask_index = element_index // s.params.j_in_l
+
+    instr_ident = await s.get_instr_ident()
+    kinstr = kinstructions.WriteRegElement(
+        dst=vd + v_offset,
+        element_index=ei_in_vline,
+        element_width=element_width,
+        ordering=ordering,
+        value=scalar_val,
+        instr_ident=instr_ident,
+        mask_reg=mask_reg,
+        mask_index=mask_index,
+    )
+    await s.add_to_instruction_buffer(kinstr, span_id, k_index)
+
+
+@dataclass
+class Vslide1:
+    """VSLIDE1UP / VSLIDE1DOWN (.VX or .VF) - Vector Slide-1 with scalar inject.
+
+    up:   vd[0]    = scalar (when vstart == 0); vd[i+1] = vs2[i] for the rest.
+    down: vd[vl-1] = scalar (when vl > vstart); vd[i]   = vs2[i+1] for the rest.
+
+    is_float=False: scalar = x[rs1] (integer register, .vx form).
+    is_float=True:  scalar = f[rs1] (FP register, .vf form).
+
+    For up, vd must not overlap vs2.
+
+    Reference: riscv-isa-manual/src/v-st-ext.adoc
+    (vslide1up.vx, vslide1down.vx, vfslide1up.vf, vfslide1down.vf)
+    """
+    vd: int
+    vs2: int
+    rs1: int
+    vm: int
+    direction: SlideDirection
+    is_float: bool = False
+
+    def __str__(self):
+        vm_str = '' if self.vm else ',v0.t'
+        if self.is_float:
+            mnemonic = ('vfslide1up.vf' if self.direction == SlideDirection.UP
+                        else 'vfslide1down.vf')
+            scalar_name = freg_name(self.rs1)
+        else:
+            mnemonic = ('vslide1up.vx' if self.direction == SlideDirection.UP
+                        else 'vslide1down.vx')
+            scalar_name = reg_name(self.rs1)
+        return f'{mnemonic}\tv{self.vd},v{self.vs2},{scalar_name}{vm_str}'
+
+    async def update_state(self, s: 'Oamlet'):
+        span_id = s.monitor.create_span(
+            span_type=SpanType.RISCV_INSTR,
+            component="lamlet",
+            completion_type=CompletionType.FIRE_AND_FORGET,
+            mnemonic=str(self),
+            pc=s.pc,
+        )
+
+        if self.is_float:
+            await s.scalar.wait_all_regs_ready(None, None, [], [self.rs1])
+            rs1_bytes = s.scalar.read_freg(self.rs1)
+        else:
+            await s.scalar.wait_all_regs_ready(None, None, [self.rs1], [])
+            rs1_bytes = s.scalar.read_reg(self.rs1)
+
+        await _dispatch_vslide(s, self.vd, self.vs2, 1,
+                               self.direction, self.vm, span_id)
+
+        vsew = (s.vtype >> 3) & 0x7
+        element_width = 8 << vsew
+
+        # Per RVV: XLEN > SEW => use LSBs; XLEN < SEW => sign-extend.
+        # Truncate rs1 to SEW bytes before sign-extending into a Python int.
+        eb = element_width // 8
+        scalar_val = int.from_bytes(
+            rs1_bytes[:eb], byteorder='little', signed=True)
+
+        # The boundary-lane inject is also gated by v0 when masked; the kamlet
+        # tests the bit in WriteRegElement and drops the write if it's 0.
+        inject_mask_reg = None if self.vm else 0
+
+        # Boundary lane for the scalar inject:
+        # - up: index 0, written only when vstart == 0 and vl >= 1.
+        # - down: index vl-1, written only when vl > vstart.
+        if self.direction == SlideDirection.UP:
+            if s.vstart == 0 and s.vl >= 1:
+                await _inject_scalar_element(
+                    s, self.vd, 0, element_width, scalar_val, span_id,
+                    mask_reg=inject_mask_reg)
+        else:
+            if s.vl > s.vstart and s.vl >= 1:
+                await _inject_scalar_element(
+                    s, self.vd, s.vl - 1, element_width, scalar_val, span_id,
+                    mask_reg=inject_mask_reg)
+
+        s.monitor.finalize_children(span_id)
+        s.pc += 4
+
+
 @dataclass
 class Vrgather:
-    """VRGATHER.VV - Vector Register Gather.
+    """VRGATHER.VV / VRGATHEREI16.VV - Vector Register Gather.
 
     vd[i] = (vs1[i] >= VLMAX) ? 0 : vs2[vs1[i]]
 
     Gathers elements from vs2 using indices in vs1.
+
+    index_ew_fixed: None for vrgather.vv (index EEW = SEW); 16 for
+    vrgatherei16.vv (index EEW = 16 regardless of SEW).
 
     Reference: riscv-isa-manual/src/v-st-ext.adoc
     """
@@ -2004,10 +2386,85 @@ class Vrgather:
     vs2: int
     vs1: int
     vm: int
+    index_ew_fixed: int | None = None
 
     def __str__(self):
         vm_str = '' if self.vm else ',v0.t'
-        return f'vrgather.vv\tv{self.vd},v{self.vs2},v{self.vs1}{vm_str}'
+        mnemonic = 'vrgatherei16.vv' if self.index_ew_fixed == 16 else 'vrgather.vv'
+        return f'{mnemonic}\tv{self.vd},v{self.vs2},v{self.vs1}{vm_str}'
+
+    async def update_state(self, s: 'Oamlet'):
+        span_id = s.monitor.create_span(
+            span_type=SpanType.RISCV_INSTR,
+            component="lamlet",
+            completion_type=CompletionType.FIRE_AND_FORGET,
+            mnemonic=str(self),
+            pc=s.pc,
+        )
+
+        vsew = (s.vtype >> 3) & 0x7
+        data_ew = 8 << vsew
+        index_ew = data_ew if self.index_ew_fixed is None else self.index_ew_fixed
+        word_order = s.word_order
+
+        index_n_vlines = s.emul_for_eew(index_ew)
+        await s.await_vreg_write_pending(self.vs1, index_n_vlines)
+        s.assert_vrf_ordering(self.vs1, index_ew)
+
+        data_n_vlines = s.emul_for_eew(data_ew)
+        await s.await_vreg_write_pending(self.vs2, data_n_vlines)
+        s.assert_vrf_ordering(self.vs2, data_ew)
+
+        await s.await_vreg_write_pending(self.vd, data_n_vlines)
+        s.set_vrf_ordering(self.vd, data_ew)
+
+        mask_reg = None if self.vm else 0
+        vlmax = _compute_vlmax(s, data_ew)
+
+        await s.vrgather(
+            vd=self.vd,
+            vs2=self.vs2,
+            vs1=self.vs1,
+            start_index=s.vstart,
+            n_elements=s.vl,
+            index_ew=index_ew,
+            data_ew=data_ew,
+            word_order=word_order,
+            vlmax=vlmax,
+            mask_reg=mask_reg,
+            parent_span_id=span_id,
+        )
+        s.monitor.finalize_children(span_id)
+        s.pc += 4
+
+
+@dataclass
+class VrgatherVxVi:
+    """VRGATHER.VX / .VI - Vector Register Gather with scalar/immediate index.
+
+    vd[i] = (idx >= VLMAX) ? 0 : vs2[idx]
+    where idx = x[rs1] (zero-extended) for .vx, or uimm5 for .vi.
+
+    Decomposed at the lamlet. The rare ``idx >= vlmax`` case emits a
+    VBroadcastOp of 0 directly. Otherwise the lamlet dispatches a ReadRegWord
+    for vs2[idx] and immediately returns (pc += 4). The destination ``vd`` is
+    marked write-pending so any later instruction touching vd blocks until
+    the response arrives, at which point LamletWaitingVrgatherBroadcast
+    appends a VBroadcastOp and clears the pending counter.
+
+    Reference: riscv-isa-manual/src/v-st-ext.adoc
+    """
+    vd: int
+    vs2: int
+    index_src: int    # rs1 (for .vx) or uimm5 (for .vi)
+    is_imm: bool
+    vm: int
+
+    def __str__(self):
+        vm_str = '' if self.vm else ',v0.t'
+        if self.is_imm:
+            return f'vrgather.vi\tv{self.vd},v{self.vs2},{self.index_src}{vm_str}'
+        return f'vrgather.vx\tv{self.vd},v{self.vs2},{reg_name(self.index_src)}{vm_str}'
 
     async def update_state(self, s: 'Oamlet'):
         span_id = s.monitor.create_span(
@@ -2022,36 +2479,73 @@ class Vrgather:
         element_width = 8 << vsew
         word_order = s.word_order
 
-        s.assert_vrf_ordering(self.vs1, element_width)
+        n_vlines = s.emul_for_eew(element_width)
+        await s.await_vreg_write_pending(self.vs2, n_vlines)
         s.assert_vrf_ordering(self.vs2, element_width)
-
+        await s.await_vreg_write_pending(self.vd, n_vlines)
         s.set_vrf_ordering(self.vd, element_width)
 
         mask_reg = None if self.vm else 0
+        vlmax = _compute_vlmax(s, element_width)
 
-        # Compute VLMAX
-        vlmul = (s.vtype >> 0) & 0x7
-        if vlmul < 4:
-            lmul = 1 << vlmul
+        # Per RVV: vstart >= vl -> no-op.
+        if s.vstart >= s.vl:
+            s.monitor.finalize_children(span_id)
+            s.pc += 4
+            return
+
+        if self.is_imm:
+            idx = self.index_src & 0x1f
         else:
-            lmul = 1  # fractional LMUL treated as 1 for VLMAX
-        elements_in_vline = s.params.vline_bytes * 8 // element_width
-        vlmax = elements_in_vline * lmul
+            await s.scalar.wait_all_regs_ready(None, None, [self.index_src], [])
+            rs1_bytes = s.scalar.read_reg(self.index_src)
+            idx = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
 
-        # For vrgather.vv, both index and data use the same SEW
-        # For vrgatherei16, index_ew would be 16
-        await s.vrgather(
+        if idx >= vlmax:
+            # Out-of-range: broadcast 0 directly. No remote fetch needed.
+            broadcast_ident = await ident_query.get_instr_ident(s)
+            kinstr = kinstructions.VBroadcastOp(
+                dst=self.vd,
+                scalar=0,
+                n_elements=s.vl,
+                element_width=element_width,
+                word_order=word_order,
+                instr_ident=broadcast_ident,
+                mask_reg=mask_reg,
+            )
+            await s.add_to_instruction_buffer(kinstr, span_id)
+            s.monitor.finalize_children(span_id)
+            s.pc += 4
+            return
+
+        eb = element_width // 8
+        elements_in_vline = s.params.vline_bytes * 8 // element_width
+        src_v = idx // elements_in_vline
+        src_ve = idx % elements_in_vline
+        src_vw = src_ve % s.params.j_in_l
+        src_we = src_ve // s.params.j_in_l
+        src_k, src_j_in_k = addresses.vw_index_to_k_indices(
+            s.params, word_order, src_vw)
+        src_byte_offset = src_we * eb
+
+        s.mark_vreg_write_pending(self.vd, element_width)
+
+        instr_ident = await ident_query.get_instr_ident(s)
+        witem = LamletWaitingVrgatherBroadcast(
+            instr_ident=instr_ident,
             vd=self.vd,
-            vs2=self.vs2,
-            vs1=self.vs1,
-            start_index=s.vstart,
             n_elements=s.vl,
-            index_ew=element_width,
-            data_ew=element_width,
+            element_width=element_width,
             word_order=word_order,
-            vlmax=vlmax,
             mask_reg=mask_reg,
-            parent_span_id=span_id,
+            src_byte_offset=src_byte_offset,
+            span_id=span_id,
         )
-        s.monitor.finalize_children(span_id)
+        await s.add_witem(witem)
+        read_kinstr = kinstructions.ReadRegWord(
+            src=self.vs2 + src_v,
+            j_in_k_index=src_j_in_k,
+            instr_ident=instr_ident,
+        )
+        await s.add_to_instruction_buffer(read_kinstr, span_id, src_k)
         s.pc += 4

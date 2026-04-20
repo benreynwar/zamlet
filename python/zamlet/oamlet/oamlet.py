@@ -27,6 +27,7 @@ from zamlet.kamlet.cache_table import (
     CacheTable, CacheState, ProtocolState, SendState)
 from zamlet.lamlet.lamlet_waiting_item import (
     LamletWaitingItem, LamletWaitingFuture, LamletWaitingReadRegElement,
+    LamletWaitingVrgatherBroadcast,
     LamletWaitingLoadIndexedElement, LamletWaitingStoreIndexedElement)
 from zamlet.monitor import CompletionType, SpanType
 from zamlet.params import ZamletParams
@@ -96,6 +97,14 @@ class Oamlet:
                                   synchronizer=self.synchronizer)
         self.tlb = TLB(params)
         self.vrf_ordering: List[Ordering|None] = [None for _ in range(params.n_vregs)]
+        # Per-vline pending-write counter. Incremented when the lamlet has
+        # dispatched an async operation that will eventually emit a kinstr
+        # writing this vreg (e.g. vrgather.vx waiting on a remote element
+        # read), decremented when the kinstr is appended to the instruction
+        # buffer. Dispatch sites must ``await_vreg_write_pending`` before
+        # emitting kinstrs that read or write the vreg, so later instructions
+        # can't slip a kinstr past the pending write.
+        self.vrf_write_pending: List[int] = [0 for _ in range(params.n_vregs)]
         self.vl = 0
         self.vtype = 0
         self.vstart = 0
@@ -348,17 +357,28 @@ class Oamlet:
         vlmul = {1: 0, 2: 1, 4: 2, 8: 3}[lmul]
         self.vtype = (vsew << 3) | vlmul
 
-    def _emul_for_eew(self, eew: int) -> int:
+    def emul_for_eew(self, eew: int) -> int:
         """EMUL = LMUL * EEW / SEW, clamped to a minimum of 1 vline
         (fractional EMUL still occupies one register)."""
         return max(1, self.lmul * eew // self.sew)
+
+    async def await_vreg_write_pending(self, vreg: int, n_vlines: int) -> None:
+        """Block until no pending async writes target any vline in the range.
+
+        Dispatch sites that read or write architectural vreg state must call
+        this before setting/asserting ``vrf_ordering`` or emitting kinstrs
+        that touch the vreg, so deferred writes (e.g. vrgather.vx's
+        VBroadcastOp) are ordered ahead of later consumers.
+        """
+        while any(self.vrf_write_pending[vreg + i] > 0 for i in range(n_vlines)):
+            await self.clock.next_cycle
 
     def set_vrf_ordering(self, vd: int, eew: int):
         """Set vrf_ordering for every vline register in the EMUL group derived
         from ``eew``. Covers the case where widening/narrowing ops have a
         destination EMUL that differs from LMUL."""
         ordering = Ordering(self.word_order, eew)
-        n_vlines = self._emul_for_eew(eew)
+        n_vlines = self.emul_for_eew(eew)
         logger.info(f'set_vrf_ordering: vd=v{vd} eew={eew} '
                     f'lmul={self.lmul} n_vlines={n_vlines} regs=v{vd}..v{vd + n_vlines - 1}')
         for i in range(n_vlines):
@@ -366,13 +386,27 @@ class Oamlet:
 
     def assert_vrf_ordering(self, vreg: int, eew: int):
         """Assert vrf_ordering matches eew for every vline register in the EMUL group."""
-        n_vlines = self._emul_for_eew(eew)
+        n_vlines = self.emul_for_eew(eew)
         for i in range(n_vlines):
             reg = vreg + i
             assert self.vrf_ordering[reg] is not None, (
                 f'v{reg} has no ordering (expected eew={eew})')
             assert self.vrf_ordering[reg].ew == eew, (
                 f'v{reg} ordering ew={self.vrf_ordering[reg].ew} != expected eew={eew}')
+
+    def mark_vreg_write_pending(self, vreg: int, eew: int) -> None:
+        """Increment the pending-write counter for every vline in vreg's EMUL group."""
+        n_vlines = self.emul_for_eew(eew)
+        for i in range(n_vlines):
+            self.vrf_write_pending[vreg + i] += 1
+
+    def clear_vreg_write_pending(self, vreg: int, eew: int) -> None:
+        """Decrement the pending-write counter (paired with mark_vreg_write_pending)."""
+        n_vlines = self.emul_for_eew(eew)
+        for i in range(n_vlines):
+            assert self.vrf_write_pending[vreg + i] > 0, (
+                f'clear_vreg_write_pending: v{vreg + i} counter already zero')
+            self.vrf_write_pending[vreg + i] -= 1
 
     def allocate_memory(self, address: GlobalAddress, size: SizeBytes, memory_type: MemoryType,
                         readable: bool = True, writable: bool = True):
@@ -646,6 +680,26 @@ class Oamlet:
                                 if byte_val is not None:
                                     neighbor.receive(recv_dir, byte_val)
 
+    async def monitor_waiting_items(self):
+        """Advance post-response state on lamlet waiting items.
+
+        Each cycle, iterates the waiting_items deque and calls
+        ``monitor_lamlet`` on each. Items that transition to ``ready()``
+        (e.g. LamletWaitingVrgatherBroadcast after the VBroadcastOp is
+        appended) are removed. Items with purely sync response-path
+        removal (LamletWaitingReadRegElement etc.) have a no-op
+        ``monitor_lamlet`` and never become ``ready`` via this path.
+        """
+        while True:
+            await self.clock.next_cycle
+            for item in list(self.waiting_items):
+                if item not in self.waiting_items:
+                    continue
+                await item.monitor_lamlet(self)
+                if item.ready():
+                    self.waiting_items.remove(item)
+                    break
+
     async def monitor_channel0(self):
         """Handle channel 0 packets (responses that must be consumed immediately)."""
         buffer = self._receive_buffers[0]
@@ -694,10 +748,16 @@ class Oamlet:
             assert len(packet) == 2
             item = self.get_witem_by_ident(header.ident)
             assert item is not None, f"No waiting item for ident {header.ident}"
-            assert isinstance(item, LamletWaitingReadRegElement)
-            item.resolve(packet[1])
-            self.remove_witem_by_ident(header.ident)
-            self.monitor.complete_kinstr(header.ident)
+            if isinstance(item, LamletWaitingVrgatherBroadcast):
+                # Stash the word; monitor_waiting_items will emit the
+                # VBroadcastOp and remove the item once the buffer has room.
+                item.resolve(packet[1])
+                self.monitor.complete_kinstr(header.ident)
+            else:
+                assert isinstance(item, LamletWaitingReadRegElement)
+                item.resolve(packet[1])
+                self.remove_witem_by_ident(header.ident)
+                self.monitor.complete_kinstr(header.ident)
         elif header.message_type == MessageType.READ_WORDS_RESP:
             item = self.get_witem_by_ident(header.ident)
             assert item is not None, f"No waiting item for ident {header.ident}"
@@ -858,7 +918,7 @@ class Oamlet:
     async def _flush_packet(self, packet, packet_dest):
         """Send a packet if non-empty. Returns ([], None)."""
         if packet:
-            logger.info(
+            logger.debug(
                 f'{self.clock.cycle}: lamlet: flush packet'
                 f' size={len(packet)} dest={packet_dest}'
                 f' tokens={self._available_tokens}')
@@ -1393,6 +1453,7 @@ class Oamlet:
         element_bytes = ordering.ew // 8
         is_unit_stride = stride_bytes is None or stride_bytes == element_bytes
         is_aligned = addr % self.params.vline_bytes == 0
+        await self.await_vreg_write_pending(vd, emul)
         if is_unit_stride and is_aligned:
             await self._remap_weak_vlines_for_load(
                 addr, ordering, emul, parent_span_id)
@@ -1412,6 +1473,7 @@ class Oamlet:
         element_bytes = ordering.ew // 8
         is_unit_stride = stride_bytes is None or stride_bytes == element_bytes
         is_aligned = addr % self.params.vline_bytes == 0
+        await self.await_vreg_write_pending(vs, emul)
         if is_unit_stride and is_aligned:
             await self._remap_partial_vlines_for_store(
                 addr, ordering, emul, n_elements, start_index, mask_reg,
@@ -1462,6 +1524,17 @@ class Oamlet:
                                         index_ew, data_ew, word_order, vlmax,
                                         mask_reg, parent_span_id)
 
+    async def vslide(self, vd: int, vs2: int,
+                     offset: int, direction: 'vregister.SlideDirection',
+                     start_index: int, n_elements: int,
+                     data_ew: int,
+                     word_order: addresses.WordOrder, vlmax: int,
+                     mask_reg: int | None, parent_span_id: int) -> int:
+        """Execute vslideup / vslidedown. Returns sync_ident."""
+        return await vregister.vslide(self, vd, vs2, offset, direction,
+                                      start_index, n_elements, data_ew,
+                                      word_order, vlmax, mask_reg, parent_span_id)
+
 
     def update(self):
         for kamlet in self.kamlets:
@@ -1486,6 +1559,7 @@ class Oamlet:
         self.clock.create_task(self.sync_network_connections())
         self.clock.create_task(self.synchronizer.run())
         self.clock.create_task(self.monitor_channel0())
+        self.clock.create_task(self.monitor_waiting_items())
         self.clock.create_task(self.monitor_channel1andup())
         self.clock.create_task(self.monitor_instruction_buffer())
         self.clock.create_task(self._monitor_instruction_buffer_state())

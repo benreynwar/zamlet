@@ -203,9 +203,9 @@ def get_memory_split(lamlet: 'Oamlet', g_addr: GlobalAddress, element_width: int
                                             end_whole_addr, lump_end_addr))
     logger.info(f'get_memory_split: Generated {len(sections)} sections')
     for i, section in enumerate(sections):
-        logger.info(f'  Section {i}: is_vpu={section.is_vpu}, partial={section.is_a_partial_element}, '
-                   f'idx={section.start_index}, start=0x{section.start_address:x}, '
-                   f'end=0x{section.end_address:x}')
+        logger.debug(f'  Section {i}: is_vpu={section.is_vpu}, partial={section.is_a_partial_element}, '
+                    f'idx={section.start_index}, start=0x{section.start_address:x}, '
+                    f'end=0x{section.end_address:x}')
     return sections
 
 
@@ -267,7 +267,7 @@ async def remap_reg_ew(
         await lamlet.vstore(
             src_regs[i], scratch_addr, src_ordering,
             n_elements=src_elements_per_vline, mask_reg=None, start_index=0,
-            parent_span_id=parent_span_id,
+            parent_span_id=parent_span_id, emul=1,
         )
         scratch_addresses.append(scratch_addr)
 
@@ -427,12 +427,14 @@ async def vloadstore(lamlet: 'Oamlet', reg_base: int, addr: int, ordering: addre
     g_addr = GlobalAddress(bit_addr=addr*8, params=lamlet.params)
     temp_regs = None
 
+    vline_bits = lamlet.params.maxvl_bytes * 8
+    elements_per_vline = vline_bits // ordering.ew
+    n_vlines = (n_elements + elements_per_vline - 1) // elements_per_vline
+    await lamlet.await_vreg_write_pending(reg_base, n_vlines)
+
     # For stores where the register ew doesn't match the instruction ew, remap
     # via scratch memory first. See docs/TODO.md for replacing this workaround.
     if is_store:
-        vline_bits = lamlet.params.maxvl_bytes * 8
-        elements_per_vline = vline_bits // ordering.ew
-        n_vlines = (n_elements + elements_per_vline - 1) // elements_per_vline
         needs_remap = False
         for i in range(n_vlines):
             reg_ord = lamlet.vrf_ordering[reg_base + i]
@@ -465,7 +467,6 @@ async def vloadstore(lamlet: 'Oamlet', reg_base: int, addr: int, ordering: addre
     # Verify vrf_ordering is set for affected registers.
     # For loads, vload() sets ordering for the full lmul group before calling here.
     # For stores, the producing instruction set it.
-    vline_bits = lamlet.params.maxvl_bytes * 8
     regs = []
     for element_index in range(start_index, start_index + n_elements):
         reg = reg_base + (element_index * ordering.ew) // vline_bits
@@ -551,6 +552,7 @@ async def vloadstorestride(lamlet: 'Oamlet', reg_base: int, addr: int,
     # Set up register file ordering for data registers
     vline_bits = lamlet.params.maxvl_bytes * 8
     n_data_vlines = (ordering.ew * n_elements + vline_bits - 1) // vline_bits
+    await lamlet.await_vreg_write_pending(reg_base, n_data_vlines)
     for vline_reg in range(reg_base, reg_base + n_data_vlines):
         if is_store:
             assert lamlet.vrf_ordering[vline_reg] == ordering
@@ -569,6 +571,7 @@ async def vloadstorestride(lamlet: 'Oamlet', reg_base: int, addr: int,
     temp_regs = lamlet.alloc_temp_regs(n_temp_regs)
     temp_base = temp_regs[0]
     for reg in temp_regs:
+        await lamlet.await_vreg_write_pending(reg, 1)
         lamlet.vrf_ordering[reg] = Ordering(
             word_order=addresses.WordOrder.STANDARD, ew=index_ew)
 
@@ -731,10 +734,16 @@ async def _vloadstore_indexed_unordered(
                or lamlet.scalar.has_conflicting_reads(writeset_ident)):
             await lamlet.clock.next_cycle
 
+    vline_bits = lamlet.params.maxvl_bytes * 8
+    n_vlines = (data_ew * n_elements + vline_bits - 1) // vline_bits
+    # The strided caller batches and passes index_offset=-batch_start; the index
+    # reg then covers positions [0, n_elements + index_offset) = [0, batch_n).
+    n_index_positions = n_elements + index_offset
+    n_index_vlines = (index_ew * n_index_positions + vline_bits - 1) // vline_bits
+    await lamlet.await_vreg_write_pending(reg, n_vlines)
+    await lamlet.await_vreg_write_pending(index_reg, n_index_vlines)
     if not is_store:
         # Set up register file ordering for destination registers
-        vline_bits = lamlet.params.maxvl_bytes * 8
-        n_vlines = (data_ew * n_elements + vline_bits - 1) // vline_bits
         for vline_reg in range(reg, reg + n_vlines):
             lamlet.vrf_ordering[vline_reg] = data_ordering
 

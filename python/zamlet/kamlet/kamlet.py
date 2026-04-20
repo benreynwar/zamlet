@@ -479,7 +479,7 @@ class Kamlet:
             span_id = self.monitor.get_kinstr_exec_span_id(
                 instr_ident, self.min_x, self.min_y)
             self.monitor.add_event(span_id, "admitted")
-            logger.info(
+            logger.debug(
                 f'{self.clock.cycle}: kamlet ({self.min_x},{self.min_y})'
                 f' instr_queue: {len(self._instruction_queue)}'
                 f' ADMIT {instr_name} ident={instr_ident}')
@@ -508,7 +508,7 @@ class Kamlet:
             instruction = self._reservation_station[chosen_index]
             instr_name = type(instruction).__name__
             instr_ident = getattr(instruction, 'instr_ident', '?')
-            logger.info(
+            logger.debug(
                 f'{self.clock.cycle}: kamlet ({self.min_x},{self.min_y})'
                 f' DISPATCH {instr_name} ident={instr_ident}'
                 f' order={instruction.renamed.order}')
