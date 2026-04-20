@@ -34,6 +34,10 @@ class GatherSideIO(params: ZamletParams) extends Bundle {
 
   // Enqueue port for drop responses. The drop queue itself lives in
   // MemletSlice; BufferToKamlet dequeues from the other end.
+  //
+  // When the drop queue is full, back-pressuring the incoming B channel is
+  // safe: drop responses go out on channel A, which is always consumable, so
+  // this cannot close a cycle.
   val dropEnq = Decoupled(new NetworkWord(params))
 
   // Ident allocation propagation chain (outward from slice 0).

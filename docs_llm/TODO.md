@@ -77,6 +77,16 @@
       (3) NaN payload propagation and exception flags: Python native float
       arithmetic produces implementation-defined NaN bits and does not set
       RISC-V accrued flags (NV/DZ/OF/UF/NX) in `fcsr`.
+- [ ] Ordered float reductions: `vfredosum.vs` and `vfwredosum.vs`. Out of scope
+      for the original reductions work because they require strictly left-to-right
+      accumulation and cannot use a tree. The unordered variants (FREDUSUM,
+      FWREDUSUM) are in.
+- [ ] Masked `vslide1up.vx` / `vslide1down.vx`. The `Vslide1` class currently
+      asserts `vm=1`. Boundary-lane scalar injection needs to read
+      `v0[inject_idx]` at the lamlet before issuing the `WriteRegElement`.
+- [ ] Non-overlap / register-group-overlap and `vstart` checking for the Ov
+      classes, slides, and gathers. RVV spec forbids certain vd/vs overlaps;
+      `vstart >= vl` should make the op a no-op.
 - [ ] Kinstruction bit-budget cleanup. Give every python kinstruction a proper
       bit-packed encoding (`FIELD_SPECS` + `encode()`) matching Chisel-compatible
       64-bit layouts, and design Chisel bundles for the python-only vector ops
