@@ -727,6 +727,142 @@ class VCmpVx:
         s.pc += 4
 
 
+_VCMP_FLOAT_MNEMONIC = {
+    kinstructions.VCmpOp.EQ: 'vmfeq',
+    kinstructions.VCmpOp.NE: 'vmfne',
+    kinstructions.VCmpOp.LT: 'vmflt',
+    kinstructions.VCmpOp.LE: 'vmfle',
+    kinstructions.VCmpOp.GT: 'vmfgt',
+    kinstructions.VCmpOp.GE: 'vmfge',
+}
+
+
+@dataclass
+class VCmpVvFloat:
+    """Floating-point vector compare, vector-vector form.
+
+    vd.mask[i] = (vs2[i] <op> vs1[i]) ? 1 : 0
+    """
+    vd: int
+    vs2: int
+    vs1: int
+    vm: int
+    op: kinstructions.VCmpOp
+
+    def __str__(self):
+        vm_str = '' if self.vm else ',v0.t'
+        mnemonic = _VCMP_FLOAT_MNEMONIC[self.op]
+        return f'{mnemonic}.vv\tv{self.vd},v{self.vs2},v{self.vs1}{vm_str}'
+
+    async def update_state(self, s: 'Oamlet'):
+        span_id = s.monitor.create_span(
+            span_type=SpanType.RISCV_INSTR,
+            component="lamlet",
+            completion_type=CompletionType.FIRE_AND_FORGET,
+            mnemonic=str(self),
+            pc=s.pc,
+        )
+
+        vsew = (s.vtype >> 3) & 0x7
+        element_width = 8 << vsew
+
+        vline_bytes = s.params.word_bytes * s.params.j_in_l
+        elements_in_src_vline = vline_bytes * 8 // element_width
+        n_src_vlines = (s.vl + elements_in_src_vline - 1) // elements_in_src_vline
+
+        for i in range(n_src_vlines):
+            assert s.vrf_ordering[self.vs2 + i].ew == element_width
+            assert s.vrf_ordering[self.vs1 + i].ew == element_width
+
+        elements_in_dst_vline = vline_bytes * 8
+        n_dst_vlines = (s.vl + elements_in_dst_vline - 1) // elements_in_dst_vline
+
+        mask_ordering = Ordering(s.word_order, 1)
+        for i in range(n_dst_vlines):
+            s.vrf_ordering[self.vd + i] = mask_ordering
+
+        instr_ident = await s.get_instr_ident()
+        kinstr = kinstructions.VCmpVvOp(
+            op=self.op,
+            dst=self.vd,
+            src1=self.vs1,
+            src2=self.vs2,
+            n_elements=s.vl,
+            element_width=element_width,
+            ordering=s.vrf_ordering[self.vs2],
+            is_float=True,
+            instr_ident=instr_ident,
+        )
+        await s.add_to_instruction_buffer(kinstr, span_id)
+        s.monitor.finalize_children(span_id)
+        s.pc += 4
+
+
+@dataclass
+class VCmpVxFloat:
+    """Floating-point vector compare, vector-scalar form.
+
+    vd.mask[i] = (vs2[i] <op> f[rs1]) ? 1 : 0
+    """
+    vd: int
+    vs2: int
+    rs1: int
+    vm: int
+    op: kinstructions.VCmpOp
+
+    def __str__(self):
+        vm_str = '' if self.vm else ',v0.t'
+        mnemonic = _VCMP_FLOAT_MNEMONIC[self.op]
+        return (f'{mnemonic}.vf\tv{self.vd},v{self.vs2},'
+                f'{freg_name(self.rs1)}{vm_str}')
+
+    async def update_state(self, s: 'Oamlet'):
+        span_id = s.monitor.create_span(
+            span_type=SpanType.RISCV_INSTR,
+            component="lamlet",
+            completion_type=CompletionType.FIRE_AND_FORGET,
+            mnemonic=str(self),
+            pc=s.pc,
+        )
+
+        await s.scalar.wait_all_regs_ready(None, None, [], [self.rs1])
+
+        vsew = (s.vtype >> 3) & 0x7
+        element_width = 8 << vsew
+
+        vline_bytes = s.params.word_bytes * s.params.j_in_l
+        elements_in_src_vline = vline_bytes * 8 // element_width
+        n_src_vlines = (s.vl + elements_in_src_vline - 1) // elements_in_src_vline
+
+        for i in range(n_src_vlines):
+            assert s.vrf_ordering[self.vs2 + i].ew == element_width
+
+        elements_in_dst_vline = vline_bytes * 8
+        n_dst_vlines = (s.vl + elements_in_dst_vline - 1) // elements_in_dst_vline
+
+        mask_ordering = Ordering(s.word_order, 1)
+        for i in range(n_dst_vlines):
+            s.vrf_ordering[self.vd + i] = mask_ordering
+
+        rs1_bytes = s.scalar.read_freg(self.rs1)
+
+        instr_ident = await s.get_instr_ident()
+        kinstr = kinstructions.VCmpVxOp(
+            op=self.op,
+            dst=self.vd,
+            src=self.vs2,
+            scalar_bytes=rs1_bytes,
+            n_elements=s.vl,
+            element_width=element_width,
+            ordering=s.vrf_ordering[self.vs2],
+            is_float=True,
+            instr_ident=instr_ident,
+        )
+        await s.add_to_instruction_buffer(kinstr, span_id)
+        s.monitor.finalize_children(span_id)
+        s.pc += 4
+
+
 @dataclass
 class VmnandMm:
     """VMNAND.MM - Vector Mask NAND.

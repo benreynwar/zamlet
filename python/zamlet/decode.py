@@ -699,6 +699,18 @@ def decode_standard(instruction_bytes: bytes) -> Instruction:
             return V.VArithVxFloat(vd=rd, rs1=rs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.FSGNJN)
         elif funct6 == 0x0a and funct3 == 0x5:
             return V.VArithVxFloat(vd=rd, rs1=rs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.FSGNJX)
+        elif funct6 == 0x18 and funct3 == 0x5:
+            return V.VCmpVxFloat(vd=rd, rs1=rs1, vs2=vs2, vm=vm, op=kinstructions.VCmpOp.EQ)
+        elif funct6 == 0x19 and funct3 == 0x5:
+            return V.VCmpVxFloat(vd=rd, rs1=rs1, vs2=vs2, vm=vm, op=kinstructions.VCmpOp.LE)
+        elif funct6 == 0x1b and funct3 == 0x5:
+            return V.VCmpVxFloat(vd=rd, rs1=rs1, vs2=vs2, vm=vm, op=kinstructions.VCmpOp.LT)
+        elif funct6 == 0x1c and funct3 == 0x5:
+            return V.VCmpVxFloat(vd=rd, rs1=rs1, vs2=vs2, vm=vm, op=kinstructions.VCmpOp.NE)
+        elif funct6 == 0x1d and funct3 == 0x5:
+            return V.VCmpVxFloat(vd=rd, rs1=rs1, vs2=vs2, vm=vm, op=kinstructions.VCmpOp.GT)
+        elif funct6 == 0x1f and funct3 == 0x5:
+            return V.VCmpVxFloat(vd=rd, rs1=rs1, vs2=vs2, vm=vm, op=kinstructions.VCmpOp.GE)
         elif funct6 == 0x24 and funct3 == 0x5:
             return V.VArithVxFloat(vd=rd, rs1=rs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.FMUL)
         elif funct6 == 0x20 and funct3 == 0x5:
@@ -1056,6 +1068,18 @@ def decode_standard(instruction_bytes: bytes) -> Instruction:
         elif funct6 == 0x0a and funct3 == 0x1:
             vs1 = rs1
             return V.VArithVvFloat(vd=rd, vs1=vs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.FSGNJX)
+        elif funct6 == 0x18 and funct3 == 0x1:
+            vs1 = rs1
+            return V.VCmpVvFloat(vd=rd, vs1=vs1, vs2=vs2, vm=vm, op=kinstructions.VCmpOp.EQ)
+        elif funct6 == 0x19 and funct3 == 0x1:
+            vs1 = rs1
+            return V.VCmpVvFloat(vd=rd, vs1=vs1, vs2=vs2, vm=vm, op=kinstructions.VCmpOp.LE)
+        elif funct6 == 0x1b and funct3 == 0x1:
+            vs1 = rs1
+            return V.VCmpVvFloat(vd=rd, vs1=vs1, vs2=vs2, vm=vm, op=kinstructions.VCmpOp.LT)
+        elif funct6 == 0x1c and funct3 == 0x1:
+            vs1 = rs1
+            return V.VCmpVvFloat(vd=rd, vs1=vs1, vs2=vs2, vm=vm, op=kinstructions.VCmpOp.NE)
         elif funct6 == 0x20 and funct3 == 0x1:
             vs1 = rs1
             return V.VArithVvFloat(vd=rd, vs1=vs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.FDIV)

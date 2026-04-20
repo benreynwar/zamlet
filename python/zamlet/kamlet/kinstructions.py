@@ -91,6 +91,23 @@ class VCmpOp(Enum):
     LE = "sle"
     GTU = "sgtu"
     GT = "sgt"
+    GE = "sge"
+
+
+class VmLogicOp(Enum):
+    """Vector mask-mask logical ops (vm*.mm).
+
+    Operand convention per RVV: `vm<op>.mm vd, vs2, vs1` — the first kinstr
+    source (src1) is always vs2 and the second (src2) is vs1.
+    """
+    AND = "vmand"
+    ANDN = "vmandn"
+    OR = "vmor"
+    ORN = "vmorn"
+    XOR = "vmxor"
+    NAND = "vmnand"
+    NOR = "vmnor"
+    XNOR = "vmxnor"
 
 
 class VRedOp(Enum):
@@ -497,6 +514,8 @@ def _vcmp_evaluate(op: VCmpOp, a, b):
         return 1 if a < b else 0
     elif op == VCmpOp.GT:
         return 1 if a > b else 0
+    elif op == VCmpOp.GE:
+        return 1 if a >= b else 0
     elif op == VCmpOp.GTU:
         return 1 if a > b else 0
     elif op == VCmpOp.LEU:
@@ -586,6 +605,9 @@ class VCmpViOp(KInstr):
         kamlet.monitor.finalize_kinstr_exec(self.instr_ident, kamlet.min_x, kamlet.min_y)
 
 
+_CMP_FLOAT_FMT = {8: '<d', 4: '<f', 2: '<e'}
+
+
 @dataclass
 class VCmpVxOp(KInstr):
     op: VCmpOp
@@ -596,6 +618,7 @@ class VCmpVxOp(KInstr):
     element_width: int
     ordering: addresses.Ordering
     instr_ident: int
+    is_float: bool = False
 
     async def admit(self, kamlet) -> 'VCmpVxOp | None':
         vline_bytes = kamlet.params.vline_bytes
@@ -622,9 +645,13 @@ class VCmpVxOp(KInstr):
         bits_per_jamlet_vline = wb * 8
         unsigned = self.op in (VCmpOp.LTU, VCmpOp.LEU, VCmpOp.GTU)
         eb = self.element_width // 8
-        scalar_val = int.from_bytes(
-            self.scalar_bytes[:eb], byteorder='little', signed=not unsigned,
-        )
+        if self.is_float:
+            fmt = _CMP_FLOAT_FMT[eb]
+            scalar_val = struct.unpack(fmt, self.scalar_bytes[:eb])[0]
+        else:
+            scalar_val = int.from_bytes(
+                self.scalar_bytes[:eb], byteorder='little', signed=not unsigned,
+            )
         span_id = kamlet.monitor.get_kinstr_exec_span_id(
             self.instr_ident, kamlet.min_x, kamlet.min_y)
 
@@ -644,7 +671,10 @@ class VCmpVxOp(KInstr):
             src_base = r.src_pregs[src_vline_idx] * wb
             src_bytes = jamlet.rf_slice[src_base + src_byte_in_vline:
                                         src_base + src_byte_in_vline + eb]
-            src_val = int.from_bytes(src_bytes, byteorder='little', signed=not unsigned)
+            if self.is_float:
+                src_val = struct.unpack(fmt, src_bytes)[0]
+            else:
+                src_val = int.from_bytes(src_bytes, byteorder='little', signed=not unsigned)
             result_bit = _vcmp_evaluate(self.op, src_val, scalar_val)
 
             dst_bit_in_jvec = element_in_jamlet
@@ -677,6 +707,7 @@ class VCmpVvOp(KInstr):
     element_width: int
     ordering: addresses.Ordering
     instr_ident: int
+    is_float: bool = False
 
     async def admit(self, kamlet) -> 'VCmpVvOp | None':
         vline_bytes = kamlet.params.vline_bytes
@@ -705,6 +736,7 @@ class VCmpVvOp(KInstr):
         bits_per_jamlet_vline = wb * 8
         unsigned = self.op in (VCmpOp.LTU, VCmpOp.LEU, VCmpOp.GTU)
         eb = self.element_width // 8
+        fmt = _CMP_FLOAT_FMT[eb] if self.is_float else None
         span_id = kamlet.monitor.get_kinstr_exec_span_id(
             self.instr_ident, kamlet.min_x, kamlet.min_y)
 
@@ -725,8 +757,12 @@ class VCmpVvOp(KInstr):
             s2_off = r.src2_pregs[src_vline_idx] * wb + src_byte_in_vline
             src1_bytes = jamlet.rf_slice[s1_off:s1_off + eb]
             src2_bytes = jamlet.rf_slice[s2_off:s2_off + eb]
-            src1_val = int.from_bytes(src1_bytes, byteorder='little', signed=not unsigned)
-            src2_val = int.from_bytes(src2_bytes, byteorder='little', signed=not unsigned)
+            if self.is_float:
+                src1_val = struct.unpack(fmt, src1_bytes)[0]
+                src2_val = struct.unpack(fmt, src2_bytes)[0]
+            else:
+                src1_val = int.from_bytes(src1_bytes, byteorder='little', signed=not unsigned)
+                src2_val = int.from_bytes(src2_bytes, byteorder='little', signed=not unsigned)
             result_bit = _vcmp_evaluate(self.op, src2_val, src1_val)
 
             dst_bit_in_jvec = element_in_jamlet
