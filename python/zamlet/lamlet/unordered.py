@@ -40,7 +40,7 @@ async def wait_for_fault_sync(lamlet: 'Oamlet', fault_sync_ident: int) -> int | 
     """
     while not lamlet.synchronizer.is_complete(fault_sync_ident):
         await lamlet.clock.next_cycle
-    global_min_fault = lamlet.synchronizer.get_min_value(fault_sync_ident)
+    global_min_fault = lamlet.synchronizer.get_aggregated_value(fault_sync_ident)
     logger.debug(f'{lamlet.clock.cycle}: wait_for_fault_sync: '
                  f'fault_sync {fault_sync_ident} complete, min_fault={global_min_fault}')
     return global_min_fault

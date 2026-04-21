@@ -14,6 +14,8 @@ FAST_TESTS = [
     "test_reg_mem_mapping",
     "test_reg_slide",
     "test_synchronization",
+    "test_vcpop",
+    "test_vfirst",
     "test_vfmv_scalar",
     "test_widening_arith",
 ]
@@ -101,6 +103,8 @@ test_suite(
         "test_strided_load",
         "test_strided_store",
         "test_reduction",
+        "test_vcpop",
+        "test_vfirst",
         "test_vfmv_scalar",
         "test_widening_arith",
     ],

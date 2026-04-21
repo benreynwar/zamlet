@@ -922,6 +922,73 @@ class VmLogicMmOp(KInstr):
 
 
 @dataclass
+class MaskPopcountLocal(KInstr):
+    """Per-jamlet popcount of a mask register.
+
+    Reads one vline of mask register `src` (ew=1). For each jamlet, counts the
+    number of set mask bits whose global RVV element index is in [0, n_elements).
+    Writes that count as an ew=32 value into the jamlet's first ew=32 element of
+    `dst` (the word-local index_in_j=0 slot). Other ew=32 slots in each jamlet's
+    word are zeroed so a downstream SUM reduction totals the per-jamlet counts
+    correctly regardless of how many positions it scans.
+
+    Used by vcpop.m.
+    """
+    dst: int
+    src: int
+    n_elements: int
+    word_order: addresses.WordOrder
+    instr_ident: int
+
+    async def admit(self, kamlet) -> 'MaskPopcountLocal | None':
+        src_preg = kamlet.r(self.src)
+        dst_elements_in_vline = kamlet.params.vline_bytes * 8 // 32
+        dst_pregs = await kamlet.alloc_dst_pregs(
+            base_arch=self.dst, start_vline=0, end_vline=0,
+            start_index=0, n_elements=dst_elements_in_vline,
+            elements_in_vline=dst_elements_in_vline,
+            mask_present=False,
+            exclude_reuse={src_preg})
+        return self.rename(
+            src_pregs={0: src_preg},
+            dst_pregs={0: dst_pregs[0]},
+        )
+
+    async def execute(self, kamlet) -> None:
+        r = self.renamed
+        params = kamlet.params
+        wb = params.word_bytes
+        j_in_l = params.j_in_l
+        ww = wb * 8
+        dst_eb = 4
+        dst_elements_per_word = wb // dst_eb
+        span_id = kamlet.monitor.get_kinstr_exec_span_id(
+            self.instr_ident, kamlet.min_x, kamlet.min_y)
+
+        for j_in_k_index, jamlet in enumerate(kamlet.jamlets):
+            vw_index = addresses.k_indices_to_vw_index(
+                params, self.word_order, kamlet.k_index, j_in_k_index)
+            src_base = r.src_pregs[0] * wb
+            count = 0
+            for bit in range(ww):
+                e = bit * j_in_l + vw_index
+                if e >= self.n_elements:
+                    break
+                byte = jamlet.rf_slice[src_base + bit // 8]
+                if (byte >> (bit % 8)) & 1:
+                    count += 1
+
+            dst_preg = r.dst_pregs[0]
+            for idx in range(dst_elements_per_word):
+                byte_offset = idx * dst_eb
+                value = count if idx == 0 else 0
+                result_bytes = value.to_bytes(dst_eb, byteorder='little', signed=False)
+                jamlet.write_vreg(dst_preg, byte_offset, result_bytes,
+                                  span_id=span_id)
+        kamlet.monitor.finalize_kinstr_exec(self.instr_ident, kamlet.min_x, kamlet.min_y)
+
+
+@dataclass
 class VBroadcastOp(KInstr):
     """Broadcast a scalar value to all elements of a vector register.
 

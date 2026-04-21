@@ -159,7 +159,7 @@ class WaitingStoreScatterBase(WaitingItem, ABC):
         elif self.fault_sync_state == SyncState.IN_PROGRESS:
             if kamlet.synchronizer.is_complete(fault_sync_ident):
                 self.fault_sync_state = SyncState.COMPLETE
-                self.global_min_fault = kamlet.synchronizer.get_min_value(fault_sync_ident)
+                self.global_min_fault = kamlet.synchronizer.get_aggregated_value(fault_sync_ident)
 
         # Completion sync - after all transactions complete (independent of fault sync)
         if self.completion_sync_state == SyncState.NOT_STARTED:

@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 
 from zamlet.transactions.ident_query import IdentQuery
 from zamlet.monitor import ResourceType
+from zamlet.lamlet import lamlet_waiting_item
 
 if TYPE_CHECKING:
     from zamlet.oamlet.oamlet import Oamlet
@@ -24,6 +25,10 @@ class IdentQuerySlot:
     baseline: int = 0
     lamlet_dist: int | None = None
     tokens: list[int] = field(default_factory=list)
+    # Set once the lamlet's own sync for this slot's sync_ident has
+    # drained (local is_complete holds). Reclaim of _iq_oldest walks
+    # forward while head slots are drained.
+    sync_drained: bool = False
 
 
 def get_oldest_active_instr_ident_distance(lamlet: 'Oamlet', baseline: int) -> int | None:
@@ -156,13 +161,14 @@ def receive_ident_query_response(
     lookup table when completed.
     """
     n_iq = lamlet.params.n_ident_query_slots
-    # Must have at least one in-flight query
-    assert lamlet._iq_oldest != lamlet._iq_newest or lamlet._iq_full
+    # Must have at least one slot awaiting a response.
+    assert lamlet._iq_response_head != lamlet._iq_newest or lamlet._iq_full
 
-    ident = lamlet._iq_idents[lamlet._iq_oldest]
+    response_slot_idx = lamlet._iq_response_head
+    ident = lamlet._iq_idents[response_slot_idx]
     assert response_ident == ident, \
         f"Expected response for ident {ident}, got {response_ident}"
-    slot = lamlet._iq_slots[lamlet._iq_oldest]
+    slot = lamlet._iq_slots[response_slot_idx]
 
     lamlet.monitor.record_ident_query_response()
 
@@ -176,9 +182,6 @@ def receive_ident_query_response(
         lamlet._oldest_active_ident = baseline
     else:
         lamlet._oldest_active_ident = (baseline + min_distance) % max_tags
-
-    # Clean up lamlet's sync state
-    lamlet.synchronizer.clear_sync(ident)
 
     if lamlet.monitor.enabled:
         # Only check kinstrs dispatched before the query
@@ -225,10 +228,6 @@ def receive_ident_query_response(
         lamlet.monitor.record_resource_available(
             ResourceType.INSTR_BUFFER_TOKENS, None, None)
 
-    # Advance oldest pointer
-    lamlet._iq_oldest = (lamlet._iq_oldest + 1) % n_iq
-    lamlet._iq_full = False
-
     logger.debug(f'{lamlet.clock.cycle}: lamlet: ident query response '
                  f'ident={ident} baseline={baseline} '
                  f'min_distance={min_distance} '
@@ -245,6 +244,33 @@ def receive_ident_query_response(
         if not child_span.is_complete():
             lamlet.monitor.complete_span(child_ref.span_id, skip_children_check=True)
     lamlet.monitor.complete_span(query_span_id)
+
+    # Defer clear_sync + slot reclaim until the lamlet's own sync for this
+    # sync_ident has drained. The mesh response can arrive before the
+    # slower sync-network packet; clearing here would delete the in-progress
+    # sync state and let the late packet auto-create a zombie state that
+    # would collide with the next generation on the same slot.
+    lamlet.waiting_items.append(
+        lamlet_waiting_item.LamletWaitingIdentQuery(
+            instr_ident=ident, slot_idx=response_slot_idx))
+    lamlet._iq_response_head = (response_slot_idx + 1) % n_iq
+
+
+def finalize_iq_slot(lamlet: 'Oamlet', slot_idx: int):
+    """Called by LamletWaitingIdentQuery when the lamlet's own sync for the
+    slot's sync_ident has completed. Marks the slot drained and advances
+    _iq_oldest past any consecutive drained head slots.
+    """
+    lamlet._iq_slots[slot_idx].sync_drained = True
+    n_iq = lamlet.params.n_ident_query_slots
+    while lamlet._iq_oldest != lamlet._iq_newest or lamlet._iq_full:
+        head = lamlet._iq_oldest
+        if not lamlet._iq_slots[head].sync_drained:
+            break
+        lamlet.synchronizer.clear_sync(lamlet._iq_idents[head])
+        lamlet._iq_slots[head].sync_drained = False
+        lamlet._iq_oldest = (lamlet._iq_oldest + 1) % n_iq
+        lamlet._iq_full = False
 
 
 def should_send_ident_query(lamlet: 'Oamlet') -> bool:

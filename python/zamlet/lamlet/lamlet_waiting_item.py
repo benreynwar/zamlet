@@ -139,6 +139,36 @@ class LamletWaitingVrgatherBroadcast(LamletWaitingItem):
         return self._done
 
 
+class LamletWaitingIdentQuery(LamletWaitingItem):
+    """Defers IdentQuery slot reclaim until the lamlet's own sync for this
+    sync_ident has drained.
+
+    The mesh IDENT_QUERY_RESP can arrive before the slower sync-network
+    packet for the same sync_ident, so clearing the sync state and
+    reclaiming the slot on response arrival would let a late sync packet
+    auto-create a zombie state that collides with the next generation on
+    the same slot. This item polls ``synchronizer.is_complete`` each cycle
+    and, once drained, hands off to ``ident_query.finalize_iq_slot`` which
+    advances ``_iq_oldest`` past any consecutive drained head slots.
+    """
+
+    def __init__(self, instr_ident: int, slot_idx: int):
+        super().__init__(instr_ident=instr_ident)
+        self.slot_idx = slot_idx
+        self._done = False
+
+    async def monitor_lamlet(self, lamlet) -> None:
+        if self._done:
+            return
+        if not lamlet.synchronizer.is_complete(self.instr_ident):
+            return
+        ident_query.finalize_iq_slot(lamlet, self.slot_idx)
+        self._done = True
+
+    def ready(self) -> bool:
+        return self._done
+
+
 class LamletWaitingLoadIndexedElement(LamletWaitingItem):
     """Per-element waiting item for ordered indexed load."""
 

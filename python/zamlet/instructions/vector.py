@@ -19,6 +19,8 @@ from zamlet.register_names import reg_name, freg_name
 from zamlet.monitor import CompletionType, SpanType
 from zamlet.lamlet import ident_query
 from zamlet.lamlet.lamlet_waiting_item import LamletWaitingVrgatherBroadcast
+from zamlet.synchronization import SyncAggOp
+from zamlet.transactions.reduce_sync import ReduceSync
 from zamlet.transactions.reg_slide import SlideDirection
 from zamlet.instructions.riscv_instr import riscv_instr
 
@@ -1287,6 +1289,213 @@ class VmergeVim:
 
 
 @dataclass
+class VcpopM:
+    """VCPOP.M - Population count of active mask bits.
+
+    x[rd] = sum_i (vs2.mask[i] && (vm || v0.mask[i])) for i in [0, vl).
+
+    Writes rd even when vl == 0 (with the value 0). Spec requires vstart == 0.
+
+    Decomposition:
+      if vm == 0: tmp_mask = vs2 AND v0          (VmLogicMmOp)
+      per-jamlet popcount of the mask into tmp32 (MaskPopcountLocal)
+      tree-reduce SUM over tmp32 into result_vreg[0] with no vs1 accumulator
+      rd <- result_vreg[0]
+
+    Reference: riscv-isa-manual/src/v-st-ext.adoc (sec "vcpop.m")
+    """
+    rd: int
+    vs2: int
+    vm: int
+
+    def __str__(self):
+        vm_str = '' if self.vm else ',v0.t'
+        return f'vcpop.m\t{reg_name(self.rd)},v{self.vs2}{vm_str}'
+
+    async def update_state(self, s: 'Oamlet'):
+        assert s.vstart == 0, 'vcpop.m requires vstart == 0 (spec v-st-ext.adoc:4159)'
+
+        span_id = s.monitor.create_span(
+            span_type=SpanType.RISCV_INSTR,
+            component="lamlet",
+            completion_type=CompletionType.FIRE_AND_FORGET,
+            mnemonic=str(self),
+            pc=s.pc,
+        )
+
+        if s.vl == 0:
+            s.scalar.write_reg(self.rd, bytes(8), span_id)
+            s.monitor.finalize_children(span_id)
+            s.pc += 4
+            return
+
+        await s.await_vreg_write_pending(self.vs2, 1)
+        await s.ensure_vrf_ordering(self.vs2, 1, span_id)
+
+        word_order = s.word_order
+        accum_ew = 32
+        accum_ordering = Ordering(word_order, accum_ew)
+        mask_ordering = Ordering(word_order, 1)
+        elements_in_vline_ew32 = s.params.vline_bytes * 8 // accum_ew
+
+        temps = s.alloc_temp_regs(2 if self.vm else 3)
+        tmp_count, result_vreg = temps[0], temps[1]
+
+        if self.vm:
+            src_mask = self.vs2
+        else:
+            tmp_mask = temps[2]
+            await s.await_vreg_write_pending(tmp_mask, 1)
+            await s.ensure_vrf_ordering(0, 1, span_id)
+            instr_ident = await s.get_instr_ident()
+            await s.add_to_instruction_buffer(
+                kinstructions.VmLogicMmOp(
+                    op=kinstructions.VmLogicOp.AND,
+                    dst=tmp_mask, src1=self.vs2, src2=0,
+                    start_index=0, n_elements=s.vl,
+                    word_order=word_order,
+                    instr_ident=instr_ident,
+                ), span_id)
+            s.vrf_ordering[tmp_mask] = mask_ordering
+            src_mask = tmp_mask
+
+        for reg in (tmp_count, result_vreg):
+            await s.await_vreg_write_pending(reg, 1)
+            s.vrf_ordering[reg] = accum_ordering
+
+        instr_ident = await s.get_instr_ident()
+        await s.add_to_instruction_buffer(
+            kinstructions.MaskPopcountLocal(
+                dst=tmp_count, src=src_mask,
+                n_elements=s.vl, word_order=word_order,
+                instr_ident=instr_ident,
+            ), span_id)
+
+        await s.handle_vreduction_instr(
+            op=kinstructions.VRedOp.SUM,
+            dst=result_vreg,
+            src_vector=tmp_count,
+            src_scalar_reg=None,
+            mask_reg=None,
+            n_elements=elements_in_vline_ew32,
+            src_ew=accum_ew,
+            accum_ew=accum_ew,
+            word_order=word_order,
+            vlmax=elements_in_vline_ew32,
+            parent_span_id=span_id,
+        )
+
+        value_future = await s.read_register_element(
+            result_vreg, element_index=0, element_width=accum_ew)
+        s.scalar.write_reg_future(self.rd, value_future, span_id)
+
+        await s.free_temp_regs(temps, span_id)
+        s.monitor.finalize_children(span_id)
+        s.pc += 4
+
+
+@dataclass
+class VfirstM:
+    """VFIRST.M - Find first set mask bit.
+
+    x[rd] = lowest i in [0, vl) with vs2.mask[i] == 1 && (vm || v0.mask[i]),
+    else -1. vstart must be 0.
+
+    Decomposition:
+      if vm == 0: tmp_mask = vs2 AND v0          (VmLogicMmOp)
+      ReduceSync(MIN_EL_INDEX) on tmp_mask -> result_vreg (every ew=32 slot
+        holds the aggregate across all jamlets; sentinel 0xFFFFFFFF when
+        no active bit is set)
+      rd <- result_vreg[0] (sign-extended: 0xFFFFFFFF -> -1)
+
+    Reference: riscv-isa-manual/src/v-st-ext.adoc (sec "vfirst.m")
+    """
+    rd: int
+    vs2: int
+    vm: int
+
+    def __str__(self):
+        vm_str = '' if self.vm else ',v0.t'
+        return f'vfirst.m\t{reg_name(self.rd)},v{self.vs2}{vm_str}'
+
+    async def update_state(self, s: 'Oamlet'):
+        assert s.vstart == 0, 'vfirst.m requires vstart == 0 (spec v-st-ext.adoc)'
+
+        span_id = s.monitor.create_span(
+            span_type=SpanType.RISCV_INSTR,
+            component="lamlet",
+            completion_type=CompletionType.FIRE_AND_FORGET,
+            mnemonic=str(self),
+            pc=s.pc,
+        )
+
+        if s.vl == 0:
+            s.scalar.write_reg(self.rd, (-1).to_bytes(8, 'little', signed=True),
+                               span_id)
+            s.monitor.finalize_children(span_id)
+            s.pc += 4
+            return
+
+        await s.await_vreg_write_pending(self.vs2, 1)
+        await s.ensure_vrf_ordering(self.vs2, 1, span_id)
+
+        word_order = s.word_order
+        accum_ew = 32
+        accum_ordering = Ordering(word_order, accum_ew)
+        mask_ordering = Ordering(word_order, 1)
+
+        temps = s.alloc_temp_regs(1 if self.vm else 2)
+        result_vreg = temps[0]
+
+        if self.vm:
+            src_mask = self.vs2
+        else:
+            tmp_mask = temps[1]
+            await s.await_vreg_write_pending(tmp_mask, 1)
+            await s.ensure_vrf_ordering(0, 1, span_id)
+            logic_ident = await s.get_instr_ident()
+            await s.add_to_instruction_buffer(
+                kinstructions.VmLogicMmOp(
+                    op=kinstructions.VmLogicOp.AND,
+                    dst=tmp_mask, src1=self.vs2, src2=0,
+                    start_index=0, n_elements=s.vl,
+                    word_order=word_order,
+                    instr_ident=logic_ident,
+                ), span_id)
+            s.vrf_ordering[tmp_mask] = mask_ordering
+            src_mask = tmp_mask
+
+        await s.await_vreg_write_pending(result_vreg, 1)
+        s.vrf_ordering[result_vreg] = accum_ordering
+
+        reduce_ident = await s.get_instr_ident()
+        reduce_kinstr = ReduceSync(
+            dst=result_vreg, src=src_mask,
+            op=SyncAggOp.MINU, width=32,
+            n_elements=s.vl,
+            sync_ident=reduce_ident,
+            word_order=word_order,
+            instr_ident=reduce_ident,
+            src_is_mask=True,
+        )
+        await s.add_to_instruction_buffer(reduce_kinstr, span_id)
+        kinstr_span_id = s.monitor.get_kinstr_span_id(reduce_ident)
+        s.monitor.create_sync_local_span(
+            reduce_ident, 0, -1, kinstr_span_id)
+        s.synchronizer.local_event(
+            reduce_ident, value=None,
+            op=SyncAggOp.MINU, width=32)
+
+        value_future = await s.read_register_element(
+            result_vreg, element_index=0, element_width=accum_ew)
+        s.scalar.write_reg_future(self.rd, value_future, span_id)
+
+        await s.free_temp_regs(temps, span_id)
+        s.monitor.finalize_children(span_id)
+        s.pc += 4
+
+
+@dataclass
 class VmvXs:
     """VMV.X.S - Vector Move to Scalar Register.
 
@@ -1940,16 +2149,32 @@ class VIndexedLoad:
         )
         vsew = (s.vtype >> 3) & 0x7
         data_ew = 8 << vsew
+
+        # RVV permits vd==vs2 overlap for vluxei/vloxei when the dst EEW
+        # equals the index EEW (per the §5.2 overlap rule). The kamlet
+        # can't execute the gather with dst and index aliased to a single
+        # preg, so copy vs2 into a scratch arch first.
+        scratch_reg: int | None = None
+        index_reg = self.vs2
+        if self.vd == self.vs2:
+            scratch_reg = await _copy_vreg_to_scratch(
+                s, self.vs2, self.index_width, s.vl, span_id)
+            index_reg = scratch_reg
+
         if self.ordered:
             await s.vload_indexed_ordered(
-                self.vd, base_addr, self.vs2, self.index_width, data_ew,
+                self.vd, base_addr, index_reg, self.index_width, data_ew,
                 s.vl, mask_reg, s.vstart, parent_span_id=span_id
             )
         else:
             await s.vload_indexed_unordered(
-                self.vd, base_addr, self.vs2, self.index_width, data_ew,
+                self.vd, base_addr, index_reg, self.index_width, data_ew,
                 s.vl, mask_reg, s.vstart, parent_span_id=span_id
             )
+
+        if scratch_reg is not None:
+            await s.free_temp_regs([scratch_reg], span_id)
+
         s.monitor.finalize_children(span_id)
         s.pc += 4
 
@@ -2317,6 +2542,43 @@ def _compute_vlmax(s: 'Oamlet', element_width: int) -> int:
     return elements_in_vline * lmul
 
 
+async def _copy_vreg_to_scratch(s: 'Oamlet', src_reg: int, ew: int,
+                                n_elements: int, span_id: int) -> int:
+    """Copy src_reg into a fresh scratch arch and return the scratch reg.
+
+    Used to break a dst/src aliasing that RVV permits but that our
+    micro-arch's non-local-access kinstrs (gathers, slides, indexed
+    loads, ...) cannot safely execute — a single kinstr can't read from
+    and write to the same preg because element-level read/write order
+    isn't serialized. Caller is responsible for emitting
+    `free_temp_regs([scratch], span_id)` after the aliased-source op.
+
+    Limited to single-vline (EMUL=1) for now: allocating a multi-vline
+    scratch group requires consecutive scratch arches, which
+    alloc_temp_regs doesn't guarantee.
+    """
+    vline_bits = s.params.vline_bytes * 8
+    n_vlines = (ew * n_elements + vline_bits - 1) // vline_bits
+    assert n_vlines == 1, (
+        f"_copy_vreg_to_scratch needs single-vline source, got {n_vlines} "
+        f"(ew={ew}, n_elements={n_elements})")
+    scratch = s.alloc_temp_regs(1)[0]
+    copy_ident = await s.get_instr_ident()
+    await s.add_to_instruction_buffer(
+        kinstructions.VUnaryOvOp(
+            op=kinstructions.VUnaryOp.COPY,
+            dst=scratch,
+            src=src_reg,
+            n_elements=n_elements,
+            dst_ew=ew,
+            src_ew=ew,
+            word_order=s.word_order,
+            mask_reg=None,
+            instr_ident=copy_ident,
+        ), span_id)
+    return scratch
+
+
 async def _dispatch_vslide(s: 'Oamlet', vd: int, vs2: int, offset: int,
                            direction: SlideDirection, vm: int, span_id: int) -> None:
     vsew = (s.vtype >> 3) & 0x7
@@ -2347,6 +2609,16 @@ async def _dispatch_vslide(s: 'Oamlet', vd: int, vs2: int, offset: int,
     if start_index >= s.vl:
         return
 
+    # RVV allows vd == vs2 for vslidedown / vslide1down (only vslideup
+    # and vslide1up forbid overlap). The kamlet-level RegSlide requires
+    # distinct dst/vs2 pregs, so break the alias by copying vs2 into a
+    # scratch arch first.
+    scratch_reg = None
+    if direction == SlideDirection.DOWN and vd == vs2:
+        scratch_reg = await _copy_vreg_to_scratch(
+            s, vs2, element_width, vlmax, span_id)
+        vs2 = scratch_reg
+
     await s.vslide(
         vd=vd,
         vs2=vs2,
@@ -2360,6 +2632,9 @@ async def _dispatch_vslide(s: 'Oamlet', vd: int, vs2: int, offset: int,
         mask_reg=mask_reg,
         parent_span_id=span_id,
     )
+
+    if scratch_reg is not None:
+        await s.free_temp_regs([scratch_reg], span_id)
 
 
 @dataclass

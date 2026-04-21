@@ -375,14 +375,27 @@ async def handle_vreduction_instr(lamlet, op, dst, src_vector, src_scalar_reg,
             temp_id, temp_idx, temp_mask, data_regs,
             parent_span_id)
 
-    # Finalize: vd[0] = last_result[0] <op> vs1[0]
+    # Finalize: vd[0] = last_result[0] <op> vs1[0], or just last_result[0] when
+    # src_scalar_reg is None (caller has no vs1 accumulator — e.g. vcpop.m).
     instr_ident = await lamlet.get_instr_ident()
-    await lamlet.add_to_instruction_buffer(
-        kinstructions.VArithVvOp(
-            op=combine_op, dst=dst, src1=data_regs[src_idx],
-            src2=src_scalar_reg, mask_reg=None, n_elements=1,
-            element_width=accum_ew, word_order=word_order,
-            instr_ident=instr_ident,
-        ), parent_span_id)
+    if src_scalar_reg is None:
+        scalar_zero = (0).to_bytes(
+            accum_ew // 8, byteorder='little', signed=False)
+        await lamlet.add_to_instruction_buffer(
+            kinstructions.VArithVxOp(
+                op=VArithOp.ADD, dst=dst,
+                scalar_bytes=scalar_zero, src2=data_regs[src_idx],
+                mask_reg=None, n_elements=1,
+                element_width=accum_ew, word_order=word_order,
+                instr_ident=instr_ident,
+            ), parent_span_id)
+    else:
+        await lamlet.add_to_instruction_buffer(
+            kinstructions.VArithVvOp(
+                op=combine_op, dst=dst, src1=data_regs[src_idx],
+                src2=src_scalar_reg, mask_reg=None, n_elements=1,
+                element_width=accum_ew, word_order=word_order,
+                instr_ident=instr_ident,
+            ), parent_span_id)
 
     await lamlet.free_temp_regs(temp_regs, parent_span_id)

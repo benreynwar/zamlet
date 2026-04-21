@@ -183,16 +183,24 @@ class Oamlet:
         # Track oldest active instr_ident for flow control (None = unknown/all free)
         self._oldest_active_ident: int | None = None
         # Ident query circular buffer.
-        # Each slot has a dedicated sync ident. _iq_oldest is the next response
-        # we expect; _iq_newest is the next slot to use for sending.
-        # Pointers wrap at n_ident_query_slots. _iq_full distinguishes
-        # full (oldest==newest, full=True) from empty (oldest==newest,
-        # full=False).
+        # Each slot has a dedicated sync ident. _iq_newest is the next
+        # slot to use for sending. Pointers wrap at n_ident_query_slots.
+        # _iq_full distinguishes full (_iq_oldest == _iq_newest,
+        # full=True) from empty (equal, full=False).
         n_iq = params.n_ident_query_slots
         self._iq_slots = [IdentQuerySlot() for _ in range(n_iq)]
         self._iq_idents = [
             params.max_response_tags + i for i in range(n_iq)]
+        # _iq_oldest: oldest slot not yet fully drained (gates _iq_full /
+        # slot reuse; advances when the lamlet's local sync for that
+        # slot's sync_ident has drained).
+        # _iq_response_head: next slot expected to receive its response
+        # (preserves FIFO matching of response → slot). Advances on
+        # response arrival.
+        # Invariant: _iq_oldest is "behind or equal to" _iq_response_head,
+        # which is "behind or equal to" _iq_newest (mod n_iq).
         self._iq_oldest = 0
+        self._iq_response_head = 0
         self._iq_newest = 0
         self._iq_full = False
         # Dedicated idents for ordered barrier instructions (after ident query idents)

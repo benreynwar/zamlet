@@ -986,6 +986,10 @@ def decode_standard(instruction_bytes: bytes) -> Instruction:
             return V.VmvVx(vd=rd, rs1=rs1)
         elif funct6 == 0x10 and funct3 == 0x2 and rs1 == 0:
             return V.VmvXs(rd=rd, vs2=vs2)
+        elif funct6 == 0x10 and funct3 == 0x2 and rs1 == 0b10000:
+            return V.VcpopM(rd=rd, vs2=vs2, vm=vm)
+        elif funct6 == 0x10 and funct3 == 0x2 and rs1 == 0b10001:
+            return V.VfirstM(rd=rd, vs2=vs2, vm=vm)
         elif funct6 == 0x10 and funct3 == 0x6 and rs2 == 0:
             return V.VmvSx(vd=rd, rs1=rs1)
         elif funct6 == 0x10 and funct3 == 0x1 and rs1 == 0:

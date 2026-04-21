@@ -87,6 +87,48 @@
 - [ ] Non-overlap / register-group-overlap and `vstart` checking for the Ov
       classes, slides, and gathers. RVV spec forbids certain vd/vs overlaps;
       `vstart >= vl` should make the op a no-op.
+- [ ] Vector segment loads/stores (vlseg/vsseg + strided/indexed/ff variants).
+      Today `VlsegV` and `VssegV` decode but call `s.vsegload`/`s.vsegstore`
+      which don't exist; everything else (vlsseg, vluxseg, vloxseg, vsuxseg,
+      vsoxseg, vlseg*ff, vle*ff) is unimplemented. Plan, in this order:
+      (a) **Fast path first** — NFIELDS ∈ {2,4,8}. Treat as a wide-ew load with
+          `ew = nf * field_ew`, giving new effective ew values 128/256/512. With
+          the existing consecutive jamlet placement, segment `i` lands entirely
+          in jamlet `i mod n_j` at slot `i / n_j`, and the destination field
+          registers `v_d..v_d+nf-1` line up at the same `(jamlet, slot)`. So the
+          deinterleave is a local in-jamlet fan-out — zero cross-jamlet traffic.
+          Required changes:
+            - Address generator gains a "burst per element" mode: each element
+              step emits `ew / word_size` contiguous word addresses, all routed
+              to the same jamlet/slot.
+            - During the op, `v_d..v_d+nf-1` are treated as a coupled wide-ew
+              register group (like LMUL=nf). Enforce `vd mod nf == 0` and
+              `EMUL * nf <= 8`. Hazard tracking covers the whole group.
+            - Writeback in each jamlet routes burst word `f` to `v_d+f` at the
+              local slot.
+            - Strided/indexed segment variants reuse the same per-jamlet
+              fan-out; only the address source changes (rs2 stride / vs2 index).
+      (b) **Slow path second** — NFIELDS ∈ {3,5,6,7}. `nf * field_ew` isn't a
+          power of two and the wide-ew mapping breaks. Fall back to nf
+          independent strided passes (stride = nf*field_ew, base offsets
+          0, field_ew, ..., (nf-1)*field_ew). Each pass is a vanilla strided
+          load/store at normal ew. Correctness only; performance is nf×.
+      (c) Fault-only-first variants (`vle*ff`, `vlseg*ff`) last — needs
+          jamlet-coordinated vl trimming, lower priority.
+      Architectural constraint implied by the fast path: the byte→jamlet
+      stripe unit is ew-dependent (ew=64 → 8B stripe, ew=512 → 64B stripe), so
+      the byte→page mapping is only well-defined relative to the page's ew
+      tag. Raising max pseudo-ew to 512 widens the stripe unit 8×, which
+      forces:
+        - Minimum page size must hold one full stripe across all jamlets at
+          the new max ew (n_j × max_pseudo_ew / 8 bytes), otherwise a page
+          can't fully own a contiguous stripe of the data it appears to
+          contain.
+        - Page-tag bookkeeping must accept 128/256/512 as legal page ews, not
+          just transient access modes.
+        - Mixed-ew access on a 512-tagged page requires the same remap
+          machinery already planned for ew=1 (see ew-remap TODO above).
+      Spec ref: `riscv-isa-manual/src/v-st-ext.adoc` lines 1758-1957.
 - [ ] Kinstruction bit-budget cleanup. Give every python kinstruction a proper
       bit-packed encoding (`FIELD_SPECS` + `encode()`) matching Chisel-compatible
       64-bit layouts, and design Chisel bundles for the python-only vector ops
