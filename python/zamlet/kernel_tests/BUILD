@@ -2,7 +2,7 @@ exports_files(["run_kernel_test.py"])
 
 test_suite(
     name = "all_tests",
-    tests = [":tests_a", ":tests_b", ":tests_c"],
+    tests = [":tests_a", ":tests_b", ":tests_c", ":tests_fft"],
 )
 
 test_suite(
@@ -36,5 +36,12 @@ test_suite(
         "//python/zamlet/kernel_tests/vecadd:test_vecadd",
         "//python/zamlet/kernel_tests/vecadd:test_vecadd_evict",
         "//python/zamlet/kernel_tests/vid:test_vid",
+    ],
+)
+
+test_suite(
+    name = "tests_fft",
+    tests = [
+        "//python/zamlet/kernel_tests/fft:all_fft_tests",
     ],
 )

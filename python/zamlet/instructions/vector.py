@@ -2154,12 +2154,12 @@ class VIndexedLoad:
         # equals the index EEW (per the §5.2 overlap rule). The kamlet
         # can't execute the gather with dst and index aliased to a single
         # preg, so copy vs2 into a scratch arch first.
-        scratch_reg: int | None = None
+        scratch_regs: list[int] | None = None
         index_reg = self.vs2
         if self.vd == self.vs2:
-            scratch_reg = await _copy_vreg_to_scratch(
+            scratch_regs = await _copy_vreg_to_scratch(
                 s, self.vs2, self.index_width, s.vl, span_id)
-            index_reg = scratch_reg
+            index_reg = scratch_regs[0]
 
         if self.ordered:
             await s.vload_indexed_ordered(
@@ -2172,8 +2172,8 @@ class VIndexedLoad:
                 s.vl, mask_reg, s.vstart, parent_span_id=span_id
             )
 
-        if scratch_reg is not None:
-            await s.free_temp_regs([scratch_reg], span_id)
+        if scratch_regs is not None:
+            await s.free_temp_regs(scratch_regs, span_id)
 
         s.monitor.finalize_children(span_id)
         s.pc += 4
@@ -2543,31 +2543,24 @@ def _compute_vlmax(s: 'Oamlet', element_width: int) -> int:
 
 
 async def _copy_vreg_to_scratch(s: 'Oamlet', src_reg: int, ew: int,
-                                n_elements: int, span_id: int) -> int:
-    """Copy src_reg into a fresh scratch arch and return the scratch reg.
+                                n_elements: int, span_id: int) -> list[int]:
+    """Copy src_reg into a fresh scratch arch group and return the group.
 
     Used to break a dst/src aliasing that RVV permits but that our
     micro-arch's non-local-access kinstrs (gathers, slides, indexed
     loads, ...) cannot safely execute — a single kinstr can't read from
     and write to the same preg because element-level read/write order
     isn't serialized. Caller is responsible for emitting
-    `free_temp_regs([scratch], span_id)` after the aliased-source op.
-
-    Limited to single-vline (EMUL=1) for now: allocating a multi-vline
-    scratch group requires consecutive scratch arches, which
-    alloc_temp_regs doesn't guarantee.
+    `free_temp_regs(scratch_regs, span_id)` after the aliased-source op.
     """
     vline_bits = s.params.vline_bytes * 8
     n_vlines = (ew * n_elements + vline_bits - 1) // vline_bits
-    assert n_vlines == 1, (
-        f"_copy_vreg_to_scratch needs single-vline source, got {n_vlines} "
-        f"(ew={ew}, n_elements={n_elements})")
-    scratch = s.alloc_temp_regs(1)[0]
+    scratch_regs = s.alloc_temp_reg_group(n_vlines)
     copy_ident = await s.get_instr_ident()
     await s.add_to_instruction_buffer(
         kinstructions.VUnaryOvOp(
             op=kinstructions.VUnaryOp.COPY,
-            dst=scratch,
+            dst=scratch_regs[0],
             src=src_reg,
             n_elements=n_elements,
             dst_ew=ew,
@@ -2576,7 +2569,7 @@ async def _copy_vreg_to_scratch(s: 'Oamlet', src_reg: int, ew: int,
             mask_reg=None,
             instr_ident=copy_ident,
         ), span_id)
-    return scratch
+    return scratch_regs
 
 
 async def _dispatch_vslide(s: 'Oamlet', vd: int, vs2: int, offset: int,
@@ -2613,11 +2606,11 @@ async def _dispatch_vslide(s: 'Oamlet', vd: int, vs2: int, offset: int,
     # and vslide1up forbid overlap). The kamlet-level RegSlide requires
     # distinct dst/vs2 pregs, so break the alias by copying vs2 into a
     # scratch arch first.
-    scratch_reg = None
+    scratch_regs = None
     if direction == SlideDirection.DOWN and vd == vs2:
-        scratch_reg = await _copy_vreg_to_scratch(
+        scratch_regs = await _copy_vreg_to_scratch(
             s, vs2, element_width, vlmax, span_id)
-        vs2 = scratch_reg
+        vs2 = scratch_regs[0]
 
     await s.vslide(
         vd=vd,
@@ -2633,8 +2626,8 @@ async def _dispatch_vslide(s: 'Oamlet', vd: int, vs2: int, offset: int,
         parent_span_id=span_id,
     )
 
-    if scratch_reg is not None:
-        await s.free_temp_regs([scratch_reg], span_id)
+    if scratch_regs is not None:
+        await s.free_temp_regs(scratch_regs, span_id)
 
 
 @dataclass

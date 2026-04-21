@@ -293,6 +293,26 @@ class Oamlet:
             f'active={active}/{capacity}')
         return regs
 
+    def alloc_temp_reg_group(self, n: int) -> list[int]:
+        """Reserve an aligned consecutive scratch arch register group."""
+        assert n >= 1 and (n & (n - 1)) == 0, \
+            f"scratch register group size must be a power of two, got {n}"
+        free = set(self._scratch_arch_free)
+        for start in range(self.params.n_arch_vregs, self.params.n_vregs - n + 1, n):
+            regs = list(range(start, start + n))
+            if all(reg in free for reg in regs):
+                for reg in regs:
+                    self._scratch_arch_free.remove(reg)
+                active = self._scratch_active_count()
+                capacity = self.params.n_vregs - self.params.n_arch_vregs
+                logger.debug(
+                    f'{self.clock.cycle}: lamlet alloc_temp_reg_group '
+                    f'n={n} regs={regs} active={active}/{capacity}')
+                return regs
+        raise AssertionError(
+            f"no aligned consecutive scratch group of {n} regs available; "
+            f"free={list(self._scratch_arch_free)}")
+
     async def free_temp_regs(self, regs: list[int], parent_span_id: int) -> None:
         """Release scratch arch indices.
 

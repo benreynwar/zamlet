@@ -1,20 +1,19 @@
-load("//bazel:defs.bzl", "riscv_kernel", "kernel_test")
+load(":defs.bzl", "fft_n_target", "fft_n_corrupt_target")
 
-riscv_kernel(
-    name = "vec-fft8",
-    srcs = [
-        "vec-fft8.c",
-        "//python/zamlet/kernel_tests/bitreverse_reorder:compute_indices.c",
-        "//python/zamlet/kernel_tests/bitreverse_reorder:bitreverse.S",
-        "//python/zamlet/kernel_tests/bitreverse_reorder:bitreverse_reorder64.c",
+fft_n_target(8)
+fft_n_target(16)
+fft_n_target(32)
+
+# Sanity negative test: same FFT kernel + wrong expected[]. Must FAIL; guards
+# against the test harness vacuously reporting pass.
+fft_n_corrupt_target(16)
+
+test_suite(
+    name = "all_fft_tests",
+    tests = [
+        ":test_fftN8",
+        ":test_fftN16",
+        ":test_fftN32",
+        ":test_fftN16_corrupt",
     ],
-    common_srcs = ["//python/zamlet/kernel_tests/common:ara_runtime"],
-    hdrs = ["//python/zamlet/kernel_tests/common:headers"],
-    linker_script = "//python/zamlet/kernel_tests/common:test.ld",
-    copts = ["-DPREALLOCATE=1", "-ffast-math"],
-)
-
-kernel_test(
-    name = "test_fft",
-    kernel = ":vec-fft8",
 )
