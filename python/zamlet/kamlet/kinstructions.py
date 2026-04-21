@@ -110,6 +110,13 @@ class VmLogicOp(Enum):
     XNOR = "vmxnor"
 
 
+class SetMaskBitsMode(Enum):
+    """Comparison mode for SetMaskBits."""
+    LT = "lt"
+    LE = "le"
+    EQ = "eq"
+
+
 class VRedOp(Enum):
     # Single-width integer
     SUM = "sum"
@@ -985,6 +992,95 @@ class MaskPopcountLocal(KInstr):
                 result_bytes = value.to_bytes(dst_eb, byteorder='little', signed=False)
                 jamlet.write_vreg(dst_preg, byte_offset, result_bytes,
                                   span_id=span_id)
+        kamlet.monitor.finalize_kinstr_exec(self.instr_ident, kamlet.min_x, kamlet.min_y)
+
+
+@dataclass
+class SetMaskBits(KInstr):
+    """Build an ew=1 mask from an ew=32 first-set index.
+
+    `src` is a temporary vector whose ew=32 elements contain the same unsigned
+    value, produced by ReduceSync(MIN_EL_INDEX). For each destination mask bit,
+    compare its global RVV element index against that value.
+    """
+    mode: SetMaskBitsMode
+    dst: int
+    src: int
+    n_elements: int
+    word_order: addresses.WordOrder
+    instr_ident: int
+    mask_reg: int | None = None
+
+    async def admit(self, kamlet) -> 'SetMaskBits | None':
+        src_preg = kamlet.r(self.src)
+        mask_preg = kamlet.r(self.mask_reg) if self.mask_reg is not None else None
+        exclude = {src_preg}
+        if mask_preg is not None:
+            exclude.add(mask_preg)
+        dst_pregs = await kamlet.alloc_dst_pregs(
+            base_arch=self.dst, start_vline=0, end_vline=0,
+            start_index=0, n_elements=self.n_elements,
+            elements_in_vline=kamlet.params.vline_bytes * 8,
+            mask_present=False,
+            exclude_reuse=exclude)
+        return self.rename(
+            src_pregs={0: src_preg},
+            dst_pregs={0: dst_pregs[0]},
+            mask_preg=mask_preg,
+        )
+
+    def _compare(self, element_index: int, value: int) -> bool:
+        if self.mode == SetMaskBitsMode.LT:
+            return element_index < value
+        if self.mode == SetMaskBitsMode.LE:
+            return element_index <= value
+        if self.mode == SetMaskBitsMode.EQ:
+            return element_index == value
+        raise NotImplementedError(f"Unknown SetMaskBitsMode: {self.mode}")
+
+    async def execute(self, kamlet) -> None:
+        r = self.renamed
+        params = kamlet.params
+        wb = params.word_bytes
+        j_in_l = params.j_in_l
+        ww = wb * 8
+        span_id = kamlet.monitor.get_kinstr_exec_span_id(
+            self.instr_ident, kamlet.min_x, kamlet.min_y)
+
+        for j_in_k_index, jamlet in enumerate(kamlet.jamlets):
+            vw_index = addresses.k_indices_to_vw_index(
+                params, self.word_order, kamlet.k_index, j_in_k_index)
+            src_base = r.src_pregs[0] * wb
+            mask_base = None if r.mask_preg is None else r.mask_preg * wb
+            dst_preg = r.dst_pregs[0]
+            dst_base = dst_preg * wb
+            value = int.from_bytes(
+                jamlet.rf_slice[src_base:src_base + 4],
+                byteorder='little', signed=False)
+            out = bytearray(jamlet.rf_slice[dst_base:dst_base + wb])
+
+            for bit in range(ww):
+                e = bit * j_in_l + vw_index
+                if e >= self.n_elements:
+                    break
+                byte_idx = bit // 8
+                bit_mask = 1 << (bit % 8)
+                if mask_base is not None:
+                    mask_byte = jamlet.rf_slice[mask_base + byte_idx]
+                    if not (mask_byte & bit_mask):
+                        continue
+                if self._compare(e, value):
+                    out[byte_idx] |= bit_mask
+                else:
+                    out[byte_idx] &= (~bit_mask & 0xff)
+
+            for byte_offset, byte_value in enumerate(out):
+                jamlet.write_vreg(
+                    dst_preg, byte_offset, bytes([byte_value]),
+                    span_id=span_id,
+                    event_details={'source': 'set_mask_bits',
+                                   'mode': self.mode.value,
+                                   'value': value})
         kamlet.monitor.finalize_kinstr_exec(self.instr_ident, kamlet.min_x, kamlet.min_y)
 
 
@@ -1894,5 +1990,3 @@ class VArithVxOvOp(KInstr):
                                       struct.pack(dst_fmt, result),
                                       span_id=span_id)
         kamlet.monitor.finalize_kinstr_exec(self.instr_ident, kamlet.min_x, kamlet.min_y)
-
-

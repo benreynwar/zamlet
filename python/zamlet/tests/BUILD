@@ -16,6 +16,7 @@ FAST_TESTS = [
     "test_synchronization",
     "test_vcpop",
     "test_vfirst",
+    "test_vms_first_mask",
     "test_vfmv_scalar",
     "test_widening_arith",
 ]
@@ -105,6 +106,7 @@ test_suite(
         "test_reduction",
         "test_vcpop",
         "test_vfirst",
+        "test_vms_first_mask",
         "test_vfmv_scalar",
         "test_widening_arith",
     ],

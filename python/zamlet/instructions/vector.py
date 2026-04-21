@@ -1496,6 +1496,112 @@ class VfirstM:
 
 
 @dataclass
+class VmsFirstMask:
+    """VMSBF.M / VMSIF.M / VMSOF.M - masks around the first active set bit.
+
+    Decomposition:
+      if vm == 0: tmp_mask = vs2 AND v0
+      ReduceSync(MIN_EL_INDEX) on src mask -> result_vreg
+      SetMaskBits(result_vreg, vd, mode)
+    """
+    vd: int
+    vs2: int
+    vm: int
+    mode: kinstructions.SetMaskBitsMode
+    mnemonic: str
+
+    def __str__(self):
+        vm_str = '' if self.vm else ',v0.t'
+        return f'{self.mnemonic}\tv{self.vd},v{self.vs2}{vm_str}'
+
+    async def update_state(self, s: 'Oamlet'):
+        assert s.vstart == 0, f'{self.mnemonic} requires vstart == 0'
+        assert self.vd != self.vs2, (
+            f'{self.mnemonic}: vd must not overlap vs2')
+        assert self.vm == 1 or self.vd != 0, (
+            f'{self.mnemonic}: masked form vd must not overlap v0')
+
+        span_id = s.monitor.create_span(
+            span_type=SpanType.RISCV_INSTR,
+            component="lamlet",
+            completion_type=CompletionType.FIRE_AND_FORGET,
+            mnemonic=str(self),
+            pc=s.pc,
+        )
+
+        await s.await_vreg_write_pending(self.vd, 1)
+        s.vrf_ordering[self.vd] = Ordering(s.word_order, 1)
+
+        if s.vl > 0:
+            await s.await_vreg_write_pending(self.vs2, 1)
+            await s.ensure_vrf_ordering(self.vs2, 1, span_id)
+
+            word_order = s.word_order
+            accum_ew = 32
+            accum_ordering = Ordering(word_order, accum_ew)
+            mask_ordering = Ordering(word_order, 1)
+
+            temps = s.alloc_temp_regs(1 if self.vm else 2)
+            result_vreg = temps[0]
+
+            if self.vm:
+                src_mask = self.vs2
+            else:
+                tmp_mask = temps[1]
+                await s.await_vreg_write_pending(tmp_mask, 1)
+                await s.ensure_vrf_ordering(0, 1, span_id)
+                logic_ident = await s.get_instr_ident()
+                await s.add_to_instruction_buffer(
+                    kinstructions.VmLogicMmOp(
+                        op=kinstructions.VmLogicOp.AND,
+                        dst=tmp_mask, src1=self.vs2, src2=0,
+                        start_index=0, n_elements=s.vl,
+                        word_order=word_order,
+                        instr_ident=logic_ident,
+                    ), span_id)
+                s.vrf_ordering[tmp_mask] = mask_ordering
+                src_mask = tmp_mask
+
+            await s.await_vreg_write_pending(result_vreg, 1)
+            s.vrf_ordering[result_vreg] = accum_ordering
+
+            reduce_ident = await s.get_instr_ident()
+            reduce_kinstr = ReduceSync(
+                dst=result_vreg, src=src_mask,
+                op=SyncAggOp.MINU, width=32,
+                n_elements=s.vl,
+                sync_ident=reduce_ident,
+                word_order=word_order,
+                instr_ident=reduce_ident,
+                src_is_mask=True,
+            )
+            await s.add_to_instruction_buffer(reduce_kinstr, span_id)
+            kinstr_span_id = s.monitor.get_kinstr_span_id(reduce_ident)
+            s.monitor.create_sync_local_span(
+                reduce_ident, 0, -1, kinstr_span_id)
+            s.synchronizer.local_event(
+                reduce_ident, value=None,
+                op=SyncAggOp.MINU, width=32)
+
+            set_ident = await s.get_instr_ident()
+            await s.add_to_instruction_buffer(
+                kinstructions.SetMaskBits(
+                    mode=self.mode,
+                    dst=self.vd,
+                    src=result_vreg,
+                    n_elements=s.vl,
+                    word_order=word_order,
+                    instr_ident=set_ident,
+                    mask_reg=None if self.vm else 0,
+                ), span_id)
+
+            await s.free_temp_regs(temps, span_id)
+
+        s.monitor.finalize_children(span_id)
+        s.pc += 4
+
+
+@dataclass
 class VmvXs:
     """VMV.X.S - Vector Move to Scalar Register.
 
