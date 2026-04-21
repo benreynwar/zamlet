@@ -103,7 +103,6 @@ class Jamlet:
             MessageType.WRITE_MEM_WORD_RESP: Queue(2),
             MessageType.WRITE_MEM_WORD_DROP: Queue(2),
             MessageType.WRITE_MEM_WORD_RETRY: Queue(2),
-            MessageType.IDENT_QUERY_RESP: Queue(2),
             MessageType.LOAD_INDEXED_ELEMENT_RESP: Queue(2),
             MessageType.STORE_INDEXED_ELEMENT_RESP: Queue(2),
             MessageType.READ_REG_ELEMENT_REQ: Queue(2),

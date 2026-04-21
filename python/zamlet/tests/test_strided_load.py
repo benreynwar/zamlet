@@ -330,6 +330,9 @@ if __name__ == '__main__':
                         help='Dump span trees to span_trees.txt')
     parser.add_argument('--max-cycles', type=int, default=50000,
                         help='Maximum simulation cycles (default: 50000)')
+    parser.add_argument('--log-level', default='DEBUG',
+                        choices=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'],
+                        help='Logging level (default: DEBUG)')
     args = parser.parse_args()
 
     if args.list_geometries:
@@ -337,7 +340,7 @@ if __name__ == '__main__':
         print(list_geometries())
         sys.exit(0)
 
-    logging.basicConfig(level=logging.DEBUG, stream=sys.stdout,
+    logging.basicConfig(level=getattr(logging, args.log_level), stream=sys.stdout,
                         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
     params = get_geometry(args.geometry)

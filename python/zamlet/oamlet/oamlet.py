@@ -183,26 +183,21 @@ class Oamlet:
         # Track oldest active instr_ident for flow control (None = unknown/all free)
         self._oldest_active_ident: int | None = None
         # Ident query circular buffer.
-        # Each slot has a dedicated sync ident. _iq_newest is the next
-        # slot to use for sending. Pointers wrap at n_ident_query_slots.
-        # _iq_full distinguishes full (_iq_oldest == _iq_newest,
-        # full=True) from empty (equal, full=False).
+        # Each slot has a dedicated sync ident. _next_ident_query_slot is the next
+        # slot to use for sending. A slot is free iff _iq_slots[idx] is None.
+        # Pointers wrap at n_ident_query_slots.
+        # _oldest_active_ident_query_slot: oldest slot still allocated (hasn't been freed).
+        # _next_unconsumed_ident_query_slot: next slot whose response the poller expects.
+        # A slot is freed when some later query's MIN_PAIR.high confirms
+        # every participant has drained sync state for it; at that point
+        # _oldest_active_ident_query_slot advances past the slot.
         n_iq = params.n_ident_query_slots
-        self._iq_slots = [IdentQuerySlot() for _ in range(n_iq)]
+        self._iq_slots = [None for _ in range(n_iq)]
         self._iq_idents = [
             params.max_response_tags + i for i in range(n_iq)]
-        # _iq_oldest: oldest slot not yet fully drained (gates _iq_full /
-        # slot reuse; advances when the lamlet's local sync for that
-        # slot's sync_ident has drained).
-        # _iq_response_head: next slot expected to receive its response
-        # (preserves FIFO matching of response → slot). Advances on
-        # response arrival.
-        # Invariant: _iq_oldest is "behind or equal to" _iq_response_head,
-        # which is "behind or equal to" _iq_newest (mod n_iq).
-        self._iq_oldest = 0
-        self._iq_response_head = 0
-        self._iq_newest = 0
-        self._iq_full = False
+        self._oldest_active_ident_query_slot = None
+        self._next_unconsumed_ident_query_slot = 0
+        self._next_ident_query_slot = 0
         # Dedicated idents for ordered barrier instructions (after ident query idents)
         self._ordered_barrier_idents = [
             params.max_response_tags + n_iq + i
@@ -737,6 +732,18 @@ class Oamlet:
                     self.waiting_items.remove(item)
                     break
 
+    async def monitor_ident_queries(self):
+        """Poll the lamlet synchronizer for completed IdentQuery syncs.
+
+        The lamlet is a participant in each IdentQuery's sync network;
+        when its own sync for a slot's ident becomes complete, the
+        aggregated MIN_PAIR value is available directly from
+        ``self.synchronizer``. No mesh response is needed.
+        """
+        while True:
+            await self.clock.next_cycle
+            ident_query.poll_ident_query_response(self)
+
     async def monitor_channel0(self):
         """Handle channel 0 packets (responses that must be consumed immediately)."""
         buffer = self._receive_buffers[0]
@@ -764,9 +771,6 @@ class Oamlet:
         header = packet[0]
         assert isinstance(header, Header)
         assert header.length == len(packet) - 1
-
-        # Get message span_id before completing it (completing may trigger parent auto-complete)
-        message_span_id = self.monitor.get_message_span_id_by_header(header)
 
         # Record message received for all channel 0 responses
         self.monitor.record_message_received_by_header(
@@ -803,15 +807,6 @@ class Oamlet:
             self.remove_witem_by_ident(header.ident)
             self.monitor.complete_kinstr(header.ident)
             logger.debug(f'{self.clock.cycle}: lamlet: Got a READ_WORDS_RESP from ({header.source_x, header.source_y}) is {packet[1:]}')
-        elif header.message_type == MessageType.IDENT_QUERY_RESP:
-            # Get kinstr span_id from message span (message already completed above,
-            # which may have auto-completed the kinstr and removed it from lookup)
-            message_span = self.monitor.get_span(message_span_id)
-            kinstr_span_id = message_span.parent.span_id if message_span.parent else None
-            assert len(packet) == 2, f"packet len {len(packet)}"
-            min_distance = packet[1]
-            ident_query.receive_ident_query_response(
-                self, header.ident, min_distance, kinstr_span_id)
         elif header.message_type == MessageType.LOAD_INDEXED_ELEMENT_RESP:
             assert len(packet) == 1
             assert isinstance(header, ElementIndexHeader)
@@ -1007,6 +1002,7 @@ class Oamlet:
 
                 # Pop and add to packet
                 self.instruction_buffer.popleft()
+                logger.info('popping from instr buffer')
                 packet.append(instr)
                 packet_dest = k_index
                 self._use_token(k_index)
@@ -1015,19 +1011,26 @@ class Oamlet:
 
                 # Ident query threshold reached
                 if ident_query.should_send_ident_query(self):
+                    logger.info('trying to add ident query')
                     packet, packet_dest = \
                         await self._add_ident_query(packet, packet_dest)
+                    logger.info('added ident query')
 
                 # Max packet length
                 if len(packet) >= self.params.instructions_in_packet:
+                    logger.info('flush packet: start')
                     packet, packet_dest = await self._flush_packet(
                         packet, packet_dest)
+                    logger.info('flush packet: end')
+            logger.info('instr buffer empty')
 
             # Buffer empty but ident query needed
             if not added_any and ident_query.should_send_ident_query(self):
+                logger.info('add_ident_query: start')
                 packet, packet_dest = \
                     await self._add_ident_query(packet, packet_dest)
                 added_any = True
+                logger.info('add_ident_query: end')
 
             # Idle timeout: flush packet if no new instructions for a while
             if added_any:
@@ -1597,6 +1600,7 @@ class Oamlet:
         self.clock.create_task(self.synchronizer.run())
         self.clock.create_task(self.monitor_channel0())
         self.clock.create_task(self.monitor_waiting_items())
+        self.clock.create_task(self.monitor_ident_queries())
         self.clock.create_task(self.monitor_channel1andup())
         self.clock.create_task(self.monitor_instruction_buffer())
         self.clock.create_task(self._monitor_instruction_buffer_state())
@@ -1654,4 +1658,3 @@ class Oamlet:
             self, op, dst, src_vector, src_scalar_reg, mask_reg,
             n_elements, src_ew, accum_ew, word_order, vlmax, parent_span_id,
         )
-

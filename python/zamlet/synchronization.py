@@ -81,6 +81,67 @@ class SyncAggOp(Enum):
     MAXU = 3           # unsigned max
     AND = 4            # bitwise AND
     OR = 5             # bitwise OR
+    MIN_PAIR = 6       # packed pair of unsigned mins (see below)
+
+
+# MIN_PAIR layout: two unsigned sub-fields packed into the low 12 bits of a
+# 16-bit value (2 sync-bus bytes). Low field = MIN_PAIR_LOW_WIDTH bits,
+# high field = MIN_PAIR_HIGH_WIDTH bits starting at bit MIN_PAIR_LOW_WIDTH.
+#
+# The low field uses 0 as the "absent" sentinel (its valid range is
+# [1, max_response_tags-1], so 0 is unused).
+#
+# The high field carries an IQ-slot distance in [1, n_iq-1] — d=0 (the
+# current slot) is always excluded from participants' contributions. We
+# store d-1 so stored values occupy [0, n_iq-2] and all-1's remains
+# unused as the absent sentinel. Using a max-value sentinel lets MIN
+# naturally ignore absent participants: real contributions are strictly
+# smaller than the sentinel. With n_iq up to 8, stored range is [0, 6]
+# and sentinel is 7 — all within 3 bits.
+#
+# The IdentQuery flow uses this to carry both the regular-ident distance
+# (low, 9 bits for max_response_tags up to 512) and the IQ-slot distance
+# (high, 3 bits for up to n_ident_query_slots = 8).
+MIN_PAIR_LOW_WIDTH = 9
+MIN_PAIR_HIGH_WIDTH = 3
+MIN_PAIR_TOTAL_WIDTH = MIN_PAIR_LOW_WIDTH + MIN_PAIR_HIGH_WIDTH
+
+
+def pack_min_pair(low: Optional[int], high: Optional[int]) -> int:
+    """Pack two sub-field values into a MIN_PAIR word.
+
+    Low field: None → 0 (absent sentinel); non-None must be > 0.
+    High field: stored as d-1 for real distances
+    """
+    low_mask = (1 << MIN_PAIR_LOW_WIDTH) - 1
+    high_mask = (1 << MIN_PAIR_HIGH_WIDTH) - 1
+    if low is None:
+        low_val = 0
+    else:
+        low_val = low
+        assert low != 0
+    assert 2 <= high <= high_mask+1, f'high must be in range 2 to {high_mask+1} but it is {high}'
+    high_val = high - 1
+    assert 0 <= low_val <= low_mask
+    return low_val | (high_val << MIN_PAIR_LOW_WIDTH)
+
+
+def unpack_min_pair(value: int) -> tuple:
+    """Decode a MIN_PAIR word into (low, high).
+
+    Low field: 0 returns None (absent sentinel). High field is always
+    returned as stored+1, an integer in [1, 2**MIN_PAIR_HIGH_WIDTH].
+    The sentinel (stored=all-1's) decodes to 2**MIN_PAIR_HIGH_WIDTH,
+    a value callers can use uniformly: e.g. (slot_idx + high) % n_iq
+    equals slot_idx for the sentinel (when n_iq divides
+    2**MIN_PAIR_HIGH_WIDTH).
+    """
+    low_mask = (1 << MIN_PAIR_LOW_WIDTH) - 1
+    high_mask = (1 << MIN_PAIR_HIGH_WIDTH) - 1
+    low = value & low_mask
+    high_stored = (value >> MIN_PAIR_LOW_WIDTH) & high_mask
+    high = high_stored + 1
+    return (low if low != 0 else None, high)
 
 
 def _sign_extend(value: int, width: int) -> int:
@@ -123,6 +184,18 @@ def aggregate_sync_values(
         for v in filtered:
             result |= v
         return result
+    if op == SyncAggOp.MIN_PAIR:
+        low_mask = (1 << MIN_PAIR_LOW_WIDTH) - 1
+        high_mask = (1 << MIN_PAIR_HIGH_WIDTH) - 1
+        lows = [v & low_mask for v in filtered if (v & low_mask) != 0]
+        # High field uses all-1's as the absent sentinel, so we take a
+        # plain min — real contributions (stored as d-1) are strictly
+        # less than the sentinel and naturally win. When every
+        # participant is absent the min equals the sentinel.
+        highs = [(v >> MIN_PAIR_LOW_WIDTH) & high_mask for v in filtered]
+        low_min = min(lows) if lows else 0
+        high_min = min(highs) if highs else high_mask
+        return low_min | (high_min << MIN_PAIR_LOW_WIDTH)
     raise AssertionError(f"unknown SyncAggOp {op}")
 
 
@@ -491,6 +564,10 @@ class Synchronizer:
     def has_sync(self, sync_ident: int) -> bool:
         """Check if a sync operation exists for this sync_ident."""
         return sync_ident in self._sync_states
+
+    def has_local_seen(self, sync_ident: int) -> bool:
+        """Check if a sync operation exists for this sync_ident."""
+        return sync_ident in self._sync_states and self._sync_states[sync_ident].local_seen
 
     def is_complete(self, sync_ident: int) -> bool:
         """Check if synchronization is complete (all kamlets have seen the event)."""
