@@ -26,11 +26,22 @@ multiply-add, narrowing shifts, extensions). See test_suite_reference.txt
 
 Implementation Summary
 ----------------------
-Currently implemented: 7 instructions (6 extensions + vnsrl.wi)
+Currently implemented: 6 extensions + 30 widening/narrowing arith
 Total in spec: ~40 widening/narrowing instructions
-Coverage: ~18%
+Coverage: ~90%
 
-WIDENING ADD/SUBTRACT (Status: ✗)
+Implementation: the width-asymmetric arithmetic family (widening add/sub/mul/
+mac and narrowing right shifts) is handled by `VArithVvOv` / `VArithVxOv` in
+python/zamlet/instructions/vector.py, which lower to `VArithVvOvOp` /
+`VArithVxOvOp` in python/zamlet/kamlet/kinstructions.py. The wrapper carries
+an `OvShape` enum (BASE = both srcs at SEW; WIDE = src2 at 2*SEW; NARROW =
+src2 at 2*SEW, dst at SEW) and per-source signedness flags; the kinstruction
+unpacks each operand at its own width, computes via `_compute_arith` (with
+the shift mask widened via `shift_eb` for narrowing shifts), and packs the
+destination. Decoder entries live in python/zamlet/decode.py under the
+opcode==0x57 block, funct6 0x2c–0x2f (narrowing) and 0x30–0x3f (widening).
+
+WIDENING ADD/SUBTRACT (Status: ✓)
 ==================================
 
 Spec: v-st-ext.adoc lines 2396-2432
@@ -39,62 +50,63 @@ These come in two forms:
 1. SEW + SEW → 2*SEW (both operands narrow)
 2. 2*SEW + SEW → 2*SEW (one operand wide, .w suffix)
 
-VWADDU.VV, VWADDU.VX (Status: ✗)
+VWADDU.VV, VWADDU.VX (Status: ✓)
   Spec: v-st-ext.adoc line 2404-2405
   Format: vwaddu.vv vd, vs2, vs1, vm / vwaddu.vx vd, vs2, rs1, vm
-  Implementation: Not implemented
+  Implementation: VArithVvOv / VArithVxOv with op=ADD, shape=BASE, both
+    sources unsigned. Decoder: funct6=0x30, funct3=0x2/0x6.
   Description: Widening unsigned add, 2*SEW = SEW + SEW
-  Notes: Zero-extend operands before adding
 
-VWADD.VV, VWADD.VX (Status: ✗)
+VWADD.VV, VWADD.VX (Status: ✓)
   Spec: v-st-ext.adoc line 2410-2411
   Format: vwadd.vv vd, vs2, vs1, vm / vwadd.vx vd, vs2, rs1, vm
-  Implementation: Not implemented
+  Implementation: VArithVvOv / VArithVxOv with op=ADD, shape=BASE, both
+    sources signed. Decoder: funct6=0x31, funct3=0x2/0x6.
   Description: Widening signed add, 2*SEW = SEW + SEW
-  Notes:
-    - Sign-extend operands before adding
-    - Pseudoinstruction: vwcvt.x.x.v vd,vs,vm = vwadd.vx vd,vs,x0,vm
-      (widen integer with x0 add)
+  Notes: Pseudoinstruction vwcvt.x.x.v vd,vs,vm = vwadd.vx vd,vs,x0,vm
+    (widen integer with x0 add) is supported via the same path.
 
-VWSUBU.VV, VWSUBU.VX (Status: ✗)
+VWSUBU.VV, VWSUBU.VX (Status: ✓)
   Spec: v-st-ext.adoc line 2406-2407
   Format: vwsubu.vv vd, vs2, vs1, vm / vwsubu.vx vd, vs2, rs1, vm
-  Implementation: Not implemented
+  Implementation: VArithVvOv / VArithVxOv with op=SUB, shape=BASE, both
+    sources unsigned. Decoder: funct6=0x32, funct3=0x2/0x6.
   Description: Widening unsigned subtract, 2*SEW = SEW - SEW
 
-VWSUB.VV, VWSUB.VX (Status: ✗)
+VWSUB.VV, VWSUB.VX (Status: ✓)
   Spec: v-st-ext.adoc line 2412-2413
   Format: vwsub.vv vd, vs2, vs1, vm / vwsub.vx vd, vs2, rs1, vm
-  Implementation: Not implemented
+  Implementation: VArithVvOv / VArithVxOv with op=SUB, shape=BASE, both
+    sources signed. Decoder: funct6=0x33, funct3=0x2/0x6.
   Description: Widening signed subtract, 2*SEW = SEW - SEW
 
-VWADDU.WV, VWADDU.WX (Status: ✗)
+VWADDU.WV, VWADDU.WX (Status: ✓)
   Spec: v-st-ext.adoc line 2416-2417
   Format: vwaddu.wv vd, vs2, vs1, vm / vwaddu.wx vd, vs2, rs1, vm
-  Implementation: Not implemented
-  Description: Widening unsigned add, 2*SEW = 2*SEW + SEW
-  Notes:
-    - vs2 is 2*SEW (wide), vs1/rs1 is SEW (narrow)
-    - .w suffix indicates first operand is wide
-    - Useful for accumulating into wider register
+  Implementation: VArithVvOv / VArithVxOv with op=ADD, shape=WIDE, both
+    sources unsigned. Decoder: funct6=0x34, funct3=0x2/0x6.
+  Description: Widening unsigned add, 2*SEW = 2*SEW + SEW (vs2 wide)
 
-VWADD.WV, VWADD.WX (Status: ✗)
+VWADD.WV, VWADD.WX (Status: ✓)
   Spec: v-st-ext.adoc line 2422-2423
   Format: vwadd.wv vd, vs2, vs1, vm / vwadd.wx vd, vs2, rs1, vm
-  Implementation: Not implemented
-  Description: Widening signed add, 2*SEW = 2*SEW + SEW
+  Implementation: VArithVvOv / VArithVxOv with op=ADD, shape=WIDE, both
+    sources signed. Decoder: funct6=0x35, funct3=0x2/0x6.
+  Description: Widening signed add, 2*SEW = 2*SEW + SEW (vs2 wide)
 
-VWSUBU.WV, VWSUBU.WX (Status: ✗)
+VWSUBU.WV, VWSUBU.WX (Status: ✓)
   Spec: v-st-ext.adoc line 2418-2419
   Format: vwsubu.wv vd, vs2, vs1, vm / vwsubu.wx vd, vs2, rs1, vm
-  Implementation: Not implemented
-  Description: Widening unsigned subtract, 2*SEW = 2*SEW - SEW
+  Implementation: VArithVvOv / VArithVxOv with op=SUB, shape=WIDE, both
+    sources unsigned. Decoder: funct6=0x36, funct3=0x2/0x6.
+  Description: Widening unsigned subtract, 2*SEW = 2*SEW - SEW (vs2 wide)
 
-VWSUB.WV, VWSUB.WX (Status: ✗)
+VWSUB.WV, VWSUB.WX (Status: ✓)
   Spec: v-st-ext.adoc line 2424-2425
   Format: vwsub.wv vd, vs2, vs1, vm / vwsub.wx vd, vs2, rs1, vm
-  Implementation: Not implemented
-  Description: Widening signed subtract, 2*SEW = 2*SEW - SEW
+  Implementation: VArithVvOv / VArithVxOv with op=SUB, shape=WIDE, both
+    sources signed. Decoder: funct6=0x37, funct3=0x2/0x6.
+  Description: Widening signed subtract, 2*SEW = 2*SEW - SEW (vs2 wide)
 
 INTEGER EXTENSION (Status: ✓)
 ==============================
@@ -144,106 +156,106 @@ VSEXT.VF8 (Status: ✓)
   Implementation: class VUnary with VUnaryOp.SEXT, factor=8 in instructions/vector.py
   Description: Sign-extend SEW/8 source to SEW destination
 
-NARROWING SHIFTS (Status: ✗)
+NARROWING SHIFTS (Status: ✓)
 =============================
 
 Spec: v-st-ext.adoc lines 2619-2647
 
 Take 2*SEW source, shift right, store SEW-bit result. Essentially combines
-shift and narrowing into one operation.
+shift and narrowing into one operation. Implemented through VArithVvOv /
+VArithVxOv with shape=NARROW. The shift count is masked to lg2(2*SEW) bits
+via the `shift_eb` parameter on `_compute_arith` (the kinstruction passes
+src2_eb = 2*SEW so the mask is widened from the dst width).
 
-VNSRL.WI (Status: ⚠)
+VNSRL.WI, VNSRL.WV, VNSRL.WX (Status: ✓)
   Spec: v-st-ext.adoc line 2631-2633
-  Format: vnsrl.wi vd, vs2, uimm, vm
-  Implementation: class VUnary with VUnaryOp.NSRL, narrowing=True in instructions/vector.py
-  Decoding: Search decode.py for "NSRL"
-  Description: Narrowing shift right logical, SEW = (2*SEW) >> shift
-  Notes:
-    - vs2 has 2*SEW elements, result has SEW elements
-    - Low lg2(2*SEW) bits of shift amount used
-    - Zero-extending (logical) shift
-    - Currently hacked into VUnaryOvOp — needs proper narrowing op implementation
-    - See docs/TODO.md
-    - Pseudoinstruction: vncvt.x.x.w vd,vs,vm = vnsrl.wx vd,vs,x0,vm
-      (narrow without shift)
+  Format: vnsrl.wi vd, vs2, uimm, vm / vnsrl.wv vd, vs2, vs1, vm /
+          vnsrl.wx vd, vs2, rs1, vm
+  Implementation: VArithVvOv / VArithVxOv with op=SRL, shape=NARROW, both
+    sources unsigned (src2 is the wide value, src1/scalar is the count).
+    Decoder: funct6=0x2c, funct3=0x0 (.wv) / 0x3 (.wi, is_imm=True) /
+    0x4 (.wx).
+  Description: Narrowing logical shift right, SEW = (2*SEW) >> shift
+  Notes: Pseudoinstruction vncvt.x.x.w vd,vs,vm = vnsrl.wx vd,vs,x0,vm
+    (narrow without shift) is supported via the same path.
 
-VNSRL.WV, VNSRL.WX (Status: ✗)
-  Format: vnsrl.wv vd, vs2, vs1, vm / vnsrl.wx vd, vs2, rs1, vm
-  Implementation: Not implemented
-  Description: .wv and .wx forms need per-element/scalar shift amounts
-
-VNSRA.WV, VNSRA.WX, VNSRA.WI (Status: ✗)
+VNSRA.WI, VNSRA.WV, VNSRA.WX (Status: ✓)
   Spec: v-st-ext.adoc line 2636-2638
-  Format: vnsra.wv vd, vs2, vs1, vm / vnsra.wx vd, vs2, rs1, vm /
-          vnsra.wi vd, vs2, uimm, vm
-  Implementation: Not implemented
-  Description: Narrowing shift right arithmetic, SEW = (2*SEW) >> shift
-  Notes: Sign-extending (arithmetic) shift
+  Format: vnsra.wi vd, vs2, uimm, vm / vnsra.wv vd, vs2, vs1, vm /
+          vnsra.wx vd, vs2, rs1, vm
+  Implementation: VArithVvOv / VArithVxOv with op=SRA, shape=NARROW, src2
+    signed (sign-extending shift), src1/scalar unsigned (count). Decoder:
+    funct6=0x2d, funct3=0x0/0x3/0x4.
+  Description: Narrowing arithmetic shift right, SEW = (2*SEW) >> shift
 
-WIDENING MULTIPLY (Status: ✗)
+WIDENING MULTIPLY (Status: ✓)
 ==============================
 
 Spec: v-st-ext.adoc lines 2912-2930
 
-Returns full 2*SEW-bit product from SEW * SEW multiply.
+Returns full 2*SEW-bit product from SEW * SEW multiply. Implemented via
+VArithVvOv / VArithVxOv with op=MUL, shape=BASE.
 
-VWMUL.VV, VWMUL.VX (Status: ✗)
+VWMUL.VV, VWMUL.VX (Status: ✓)
   Spec: v-st-ext.adoc line 2919-2920
   Format: vwmul.vv vd, vs2, vs1, vm / vwmul.vx vd, vs2, rs1, vm
-  Implementation: Not implemented
+  Implementation: VArithVvOv / VArithVxOv with op=MUL, shape=BASE, both
+    sources signed. Decoder: funct6=0x3b, funct3=0x2/0x6.
   Description: Widening signed multiply, 2*SEW = SEW * SEW
   Notes: Unlike vmul, returns full product (not just low bits)
 
-VWMULU.VV, VWMULU.VX (Status: ✗)
+VWMULU.VV, VWMULU.VX (Status: ✓)
   Spec: v-st-ext.adoc line 2923-2924
   Format: vwmulu.vv vd, vs2, vs1, vm / vwmulu.vx vd, vs2, rs1, vm
-  Implementation: Not implemented
+  Implementation: VArithVvOv / VArithVxOv with op=MUL, shape=BASE, both
+    sources unsigned. Decoder: funct6=0x38, funct3=0x2/0x6.
   Description: Widening unsigned multiply, 2*SEW = SEW * SEW
 
-VWMULSU.VV, VWMULSU.VX (Status: ✗)
+VWMULSU.VV, VWMULSU.VX (Status: ✓)
   Spec: v-st-ext.adoc line 2927-2928
   Format: vwmulsu.vv vd, vs2, vs1, vm / vwmulsu.vx vd, vs2, rs1, vm
-  Implementation: Not implemented
-  Description: Widening signed(vs2)-unsigned(vs1) multiply
+  Implementation: VArithVvOv / VArithVxOv with op=MUL, shape=BASE, src2
+    (vs2) signed, src1/scalar unsigned. Decoder: funct6=0x3a, funct3=0x2/0x6.
+  Description: Widening signed(vs2)-unsigned(vs1/rs1) multiply
 
-WIDENING MULTIPLY-ADD (Status: ✗)
+WIDENING MULTIPLY-ADD (Status: ✓)
 ==================================
 
 Spec: v-st-ext.adoc lines 2963-2986
 
-Multiply SEW * SEW → 2*SEW, then add to 2*SEW accumulator.
-Result is 2*SEW.
+Multiply SEW * SEW → 2*SEW, then add to 2*SEW accumulator. Result is 2*SEW.
+Implemented via VArithVvOv / VArithVxOv with op=MACC, shape=BASE; vd is
+treated as the accumulator and read at 2*SEW (ACCUM_OPS path in admit /
+execute).
 
-VWMACCU.VV, VWMACCU.VX (Status: ✗)
+VWMACCU.VV, VWMACCU.VX (Status: ✓)
   Spec: v-st-ext.adoc line 2972-2973
   Format: vwmaccu.vv vd, vs1, vs2, vm / vwmaccu.vx vd, rs1, vs2, vm
-  Implementation: Not implemented
-  Description: Widening unsigned multiply-add
-  Notes:
-    - vd is 2*SEW (both source and dest)
-    - vd[i] = (vs1[i] * vs2[i]) + vd[i]
-    - vs1, vs2 are SEW, product is 2*SEW, added to 2*SEW vd
+  Implementation: VArithVvOv / VArithVxOv with op=MACC, shape=BASE, both
+    sources unsigned. Decoder: funct6=0x3c, funct3=0x2/0x6.
+  Description: Widening unsigned multiply-add, vd[2*SEW] += vs1[SEW]*vs2[SEW]
 
-VWMACC.VV, VWMACC.VX (Status: ✗)
+VWMACC.VV, VWMACC.VX (Status: ✓)
   Spec: v-st-ext.adoc line 2976-2977
   Format: vwmacc.vv vd, vs1, vs2, vm / vwmacc.vx vd, rs1, vs2, vm
-  Implementation: Not implemented
+  Implementation: VArithVvOv / VArithVxOv with op=MACC, shape=BASE, both
+    sources signed. Decoder: funct6=0x3d, funct3=0x2/0x6.
   Description: Widening signed multiply-add
-  Notes: Like vwmaccu but signed operands
 
-VWMACCSU.VV, VWMACCSU.VX (Status: ✗)
+VWMACCSU.VV, VWMACCSU.VX (Status: ✓)
   Spec: v-st-ext.adoc line 2980-2981
   Format: vwmaccsu.vv vd, vs1, vs2, vm / vwmaccsu.vx vd, rs1, vs2, vm
-  Implementation: Not implemented
+  Implementation: VArithVvOv / VArithVxOv with op=MACC, shape=BASE, src1
+    (vs1/rs1) signed, src2 (vs2) unsigned. Decoder: funct6=0x3f, funct3=0x2/0x6.
   Description: Widening signed(vs1)-unsigned(vs2) multiply-add
-  Notes: vs1 is signed, vs2 is unsigned
 
-VWMACCUS.VX (Status: ✗)
+VWMACCUS.VX (Status: ✓)
   Spec: v-st-ext.adoc line 2984
   Format: vwmaccus.vx vd, rs1, vs2, vm
-  Implementation: Not implemented
+  Implementation: VArithVxOv with op=MACC, shape=BASE, scalar (rs1)
+    unsigned, src2 (vs2) signed. Decoder: funct6=0x3e, funct3=0x6 (no .vv
+    encoding in the spec).
   Description: Widening unsigned(rs1)-signed(vs2) multiply-add
-  Notes: Only .vx form (no .vv form)
 
 REGISTER CONSTRAINTS
 ====================
@@ -267,75 +279,44 @@ Extension Operations:
 
 Test Coverage
 -------------
-- No widening or narrowing operations tested
-- test/common/encoding.h has encoding macros but no execution
+- No dedicated unit tests in python/zamlet/tests yet — coverage comes from
+  kernel tests that exercise these instructions through compiled C
+  (vec-fft8 in particular drives vwmulu.vx through the LLVM auto-vectoriser
+  for the index widening loop).
+- test/common/encoding.h has encoding macros but no execution.
 
-TODO Items
-----------
-1. Implement widening add/subtract (SEW+SEW→2*SEW)
-   - vwaddu.vv/vx, vwadd.vv/vx (add)
-   - vwsubu.vv/vx, vwsub.vv/vx (subtract)
-   - Handle signed vs unsigned extension
-   - Verify destination register width
+Remaining work
+--------------
+1. Narrowing saturating shifts (vnclip / vnclipu, funct6 0x2e/0x2f).
+   Distinct from the SRL/SRA path because the destination is saturated to
+   the signed/unsigned range and vxsat is updated. Requires new
+   VArithOp.NCLIP / VArithOp.NCLIPU values plus saturation logic in
+   _compute_arith / _ov_truncate_int. Out of scope for the FFT push.
 
-2. Implement widening add/subtract (2*SEW+SEW→2*SEW)
-   - vwaddu.wv/wx, vwadd.wv/wx
-   - vwsubu.wv/wx, vwsub.wv/wx
-   - .w suffix indicates first operand is wide
+2. Overlap / register-group constraint checking.
+   Spec forbids vd overlapping the source group when the widths differ
+   (widening vd is 2*LMUL, .w form has src2 also 2*LMUL, narrowing vd
+   cannot overlap vs2). Currently the kinstruction admits and renames
+   without checking these constraints.
 
-3. Implement integer extension operations
-   - vzext.vf2/vf4/vf8 (zero-extend)
-   - vsext.vf2/vf4/vf8 (sign-extend)
-   - Calculate source EMUL correctly
-   - Verify source EEW is supported
-
-4. Implement narrowing shifts
-   - vnsrl.wv/wx/wi (logical right shift + narrow)
-   - vnsra.wv/wx/wi (arithmetic right shift + narrow)
-   - Handle 2*SEW source to SEW destination
-
-5. Implement widening multiply
-   - vwmul.vv/vx (signed)
-   - vwmulu.vv/vx (unsigned)
-   - vwmulsu.vv/vx (signed-unsigned)
-   - Return full 2*SEW product
-
-6. Implement widening multiply-add
-   - vwmaccu.vv/vx (unsigned)
-   - vwmacc.vv/vx (signed)
-   - vwmaccsu.vv/vx (signed-unsigned)
-   - vwmaccus.vx (unsigned-signed, .vx only)
-   - Accumulator is 2*SEW
-
-7. Add overlap checking
-   - Verify vd doesn't overlap source operands
-   - Check EMUL constraints for register groups
-   - Reserve encoding for illegal overlap cases
-
-8. Add comprehensive tests
-   - Test widening from 8→16, 16→32, 32→64 bits
-   - Test narrowing from 16→8, 32→16, 64→32 bits
-   - Test signed vs unsigned behavior
-   - Test with various LMUL settings
-   - Test register overlap detection
-   - Test extension from different fractional widths
+3. Dedicated unit tests for the Ov classes (8→16, 16→32, 32→64 widening;
+   16→8, 32→16, 64→32 narrowing; mixed-signedness mul/mac variants;
+   varying LMUL).
 
 Summary
 -------
-No widening or narrowing operations are currently implemented. These operations
-are critical for:
-- Mixed-precision arithmetic (e.g., 8-bit multiply accumulating to 32-bit)
-- Avoiding overflow in intermediate results
-- Efficient type conversions
-- Multi-word arithmetic
-- DSP applications
+Width-asymmetric integer add/sub/mul/mac and narrowing right shifts are
+implemented through the VArithVvOv / VArithVxOv classes (see top of file
+for the lowering chain). Saturating narrowing (vnclip/vnclipu) and overlap
+checking remain.
 
-Total unimplemented: ~40 instructions
-- 16 widening add/subtract variants
-- 6 integer extension operations
-- 6 narrowing shift operations
-- 6 widening multiply variants
-- 7 widening multiply-add variants
+Implemented (this round): 30 instructions
+  - 16 widening add/subtract variants (BASE + WIDE shapes, .vv/.vx, signed
+    and unsigned)
+  - 6 widening multiply variants (vwmul / vwmulu / vwmulsu, .vv/.vx)
+  - 7 widening multiply-add variants (vwmaccu, vwmacc, vwmaccsu .vv/.vx
+    plus vwmaccus .vx-only)
+  - 6 narrowing right-shift variants (vnsrl/vnsra .wv/.wx/.wi)
 
-Priority: High - These are commonly used in DSP, machine learning, and
-numerical computation workloads where precision management is critical.
+Still unimplemented: ~4 narrowing-saturating-shift instructions
+  (vnclip, vnclipu, .wv/.wx/.wi forms collapsed under each).

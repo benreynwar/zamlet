@@ -199,6 +199,7 @@ class VectorOpResult:
     """Result of a vector operation - either success or fault."""
     fault_type: TLBFaultType = TLBFaultType.NONE
     element_index: int | None = None  # First element that faulted
+    fault_addr: int | None = None     # Byte address that faulted (for mtval)
     completion_sync_idents: List[int] | None = None
     last_fault_sync_ident: int | None = None
 

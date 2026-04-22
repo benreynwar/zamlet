@@ -5,7 +5,7 @@ let
   llvm-src = builtins.fetchGit {
     url = "https://github.com/benreynwar/llvm-project";
     ref = "zamlet";
-    rev = "27de313b6f6f9ecf7237062bebba9f11ef5d768c";
+    rev = "c6b60333e730bc0f56def6ef412edc12133ed5a6";
   };
 
   riscv-clang-github = pkgs.stdenv.mkDerivation {

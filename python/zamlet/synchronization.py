@@ -67,6 +67,138 @@ class SyncDirection(Enum):
     SW = 7
 
 
+class SyncAggOp(Enum):
+    """Idempotent aggregation ops supported by the sync network.
+
+    All operands are unsigned integers up to 32 bits wide. Signed variants
+    (MIN/MAX) interpret values according to the declared width at the call
+    site; the network itself only sees unsigned bits. None-valued
+    participants are skipped (existing MIN-with-None semantics).
+    """
+    MIN = 0            # signed min, width-dependent
+    MINU = 1           # unsigned min
+    MAX = 2            # signed max, width-dependent
+    MAXU = 3           # unsigned max
+    AND = 4            # bitwise AND
+    OR = 5             # bitwise OR
+    MIN_PAIR = 6       # packed pair of unsigned mins (see below)
+
+
+# MIN_PAIR layout: two unsigned sub-fields packed into the low 12 bits of a
+# 16-bit value (2 sync-bus bytes). Low field = MIN_PAIR_LOW_WIDTH bits,
+# high field = MIN_PAIR_HIGH_WIDTH bits starting at bit MIN_PAIR_LOW_WIDTH.
+#
+# The low field uses 0 as the "absent" sentinel (its valid range is
+# [1, max_response_tags-1], so 0 is unused).
+#
+# The high field carries an IQ-slot distance in [1, n_iq-1] — d=0 (the
+# current slot) is always excluded from participants' contributions. We
+# store d-1 so stored values occupy [0, n_iq-2] and all-1's remains
+# unused as the absent sentinel. Using a max-value sentinel lets MIN
+# naturally ignore absent participants: real contributions are strictly
+# smaller than the sentinel. With n_iq up to 8, stored range is [0, 6]
+# and sentinel is 7 — all within 3 bits.
+#
+# The IdentQuery flow uses this to carry both the regular-ident distance
+# (low, 9 bits for max_response_tags up to 512) and the IQ-slot distance
+# (high, 3 bits for up to n_ident_query_slots = 8).
+MIN_PAIR_LOW_WIDTH = 9
+MIN_PAIR_HIGH_WIDTH = 3
+MIN_PAIR_TOTAL_WIDTH = MIN_PAIR_LOW_WIDTH + MIN_PAIR_HIGH_WIDTH
+
+
+def pack_min_pair(low: Optional[int], high: Optional[int]) -> int:
+    """Pack two sub-field values into a MIN_PAIR word.
+
+    Low field: None → 0 (absent sentinel); non-None must be > 0.
+    High field: stored as d-1 for real distances
+    """
+    low_mask = (1 << MIN_PAIR_LOW_WIDTH) - 1
+    high_mask = (1 << MIN_PAIR_HIGH_WIDTH) - 1
+    if low is None:
+        low_val = 0
+    else:
+        low_val = low
+        assert low != 0
+    assert 2 <= high <= high_mask+1, f'high must be in range 2 to {high_mask+1} but it is {high}'
+    high_val = high - 1
+    assert 0 <= low_val <= low_mask
+    return low_val | (high_val << MIN_PAIR_LOW_WIDTH)
+
+
+def unpack_min_pair(value: int) -> tuple:
+    """Decode a MIN_PAIR word into (low, high).
+
+    Low field: 0 returns None (absent sentinel). High field is always
+    returned as stored+1, an integer in [1, 2**MIN_PAIR_HIGH_WIDTH].
+    The sentinel (stored=all-1's) decodes to 2**MIN_PAIR_HIGH_WIDTH,
+    a value callers can use uniformly: e.g. (slot_idx + high) % n_iq
+    equals slot_idx for the sentinel (when n_iq divides
+    2**MIN_PAIR_HIGH_WIDTH).
+    """
+    low_mask = (1 << MIN_PAIR_LOW_WIDTH) - 1
+    high_mask = (1 << MIN_PAIR_HIGH_WIDTH) - 1
+    low = value & low_mask
+    high_stored = (value >> MIN_PAIR_LOW_WIDTH) & high_mask
+    high = high_stored + 1
+    return (low if low != 0 else None, high)
+
+
+def _sign_extend(value: int, width: int) -> int:
+    """Interpret the low `width` bits of value as signed."""
+    mask = (1 << width) - 1
+    v = value & mask
+    sign_bit = 1 << (width - 1)
+    if v & sign_bit:
+        return v - (1 << width)
+    return v
+
+
+def aggregate_sync_values(
+    op: SyncAggOp, values: List[int], width: int = 32,
+) -> Optional[int]:
+    """Aggregate a list of per-region unsigned values with op.
+
+    None entries are skipped. Returns None if values is empty.
+    `width` is the operand bit-width for signed MIN/MAX.
+    """
+    filtered = [v for v in values if v is not None]
+    if not filtered:
+        return None
+    if op == SyncAggOp.MIN:
+        # Signed min according to declared width.
+        return min(filtered, key=lambda v: _sign_extend(v, width))
+    if op == SyncAggOp.MINU:
+        return min(filtered)
+    if op == SyncAggOp.MAX:
+        return max(filtered, key=lambda v: _sign_extend(v, width))
+    if op == SyncAggOp.MAXU:
+        return max(filtered)
+    if op == SyncAggOp.AND:
+        result = filtered[0]
+        for v in filtered[1:]:
+            result &= v
+        return result
+    if op == SyncAggOp.OR:
+        result = 0
+        for v in filtered:
+            result |= v
+        return result
+    if op == SyncAggOp.MIN_PAIR:
+        low_mask = (1 << MIN_PAIR_LOW_WIDTH) - 1
+        high_mask = (1 << MIN_PAIR_HIGH_WIDTH) - 1
+        lows = [v & low_mask for v in filtered if (v & low_mask) != 0]
+        # High field uses all-1's as the absent sentinel, so we take a
+        # plain min — real contributions (stored as d-1) are strictly
+        # less than the sentinel and naturally win. When every
+        # participant is absent the min equals the sentinel.
+        highs = [(v >> MIN_PAIR_LOW_WIDTH) & high_mask for v in filtered]
+        low_min = min(lows) if lows else 0
+        high_min = min(highs) if highs else high_mask
+        return low_min | (high_min << MIN_PAIR_LOW_WIDTH)
+    raise AssertionError(f"unknown SyncAggOp {op}")
+
+
 class WaitingItemSyncState(Enum):
     """Synchronization state for waiting items that require lamlet-wide sync."""
     NOT_STARTED = 0
@@ -110,9 +242,19 @@ class SyncState:
     """Tracks synchronization state for a single sync_ident."""
     sync_ident: int
 
+    # Aggregation op for this sync. Set by the first start_sync / local_event
+    # caller on any given kamlet; must match across all participants of the
+    # same sync_ident. Receiving kamlets that start_sync from an incoming
+    # packet leave this None until their own local_event supplies the op;
+    # aggregation is deferred until then.
+    op: Optional[SyncAggOp] = None
+    # Width (in bits) of the aggregated value, used by signed MIN/MAX.
+    # 32 for MIN_EL_INDEX / MAX_EL_INDEX by definition.
+    width: int = 32
+
     # Whether this jamlet has locally seen the event
     local_seen: bool = False
-    # None means no value provided, otherwise the local value for min aggregation
+    # None means no value provided, otherwise the local value for aggregation
     local_value: Optional[int] = None
 
     # Quadrant sync status (NE, NW, SE, SW)
@@ -166,15 +308,31 @@ class SyncPacket:
     sync_ident: int
     value: Optional[int]     # 1-4 bytes if present, None if no value
 
-    def to_words(self, data_width: int, sync_ident_width: int) -> list:
+    def to_words(
+        self,
+        data_width: int,
+        sync_ident_width: int,
+        value_bytes: Optional[int] = None,
+    ) -> list:
         """Serialize packet to a list of data_width-bit words.
 
         First word contains sync_ident. Remaining words contain value
         bytes packed little-endian. Total bit width is split into
         data_width-bit words using uint_to_list_of_uints.
+
+        If value_bytes is given, the value is serialized as exactly that
+        many bytes so all participants of a given sync_ident emit the
+        same packet length (needed whenever the op's value width is >
+        1 byte). Otherwise the value is auto-sized from bit_length.
         """
         if self.value is not None:
-            if self.value == 0:
+            if value_bytes is not None:
+                n_value_bytes = value_bytes
+                assert 1 <= n_value_bytes <= 4, (
+                    f"value_bytes={n_value_bytes} out of range [1, 4]")
+                assert self.value.bit_length() <= n_value_bytes * 8, (
+                    f"Value {self.value} exceeds {n_value_bytes}-byte width")
+            elif self.value == 0:
                 n_value_bytes = 1
             else:
                 n_value_bytes = (self.value.bit_length() + 7) // 8
@@ -299,46 +457,44 @@ class Synchronizer:
         }
         return deltas[direction]
 
+    # Region ⇔ direction mappings. A region is "present" iff the
+    # corresponding neighbor in that direction exists; this keeps auto-sync
+    # consistent with packet delivery. In particular, the lamlet at (0,-1)
+    # is a direct NW neighbor of kamlet (1,0) and a direct N neighbor of
+    # kamlet (0,0); both have_neighbor and the region helpers must agree.
+    _QUADRANT_DIRECTION = {
+        'NE': SyncDirection.NE, 'NW': SyncDirection.NW,
+        'SE': SyncDirection.SE, 'SW': SyncDirection.SW,
+    }
+    _COLUMN_DIRECTION = {'N': SyncDirection.N, 'S': SyncDirection.S}
+    _ROW_DIRECTION = {'E': SyncDirection.E, 'W': SyncDirection.W}
+
     def _has_quadrant(self, quadrant: str) -> bool:
-        """Check if any kamlets exist in the given quadrant."""
-        if quadrant == 'NE':
-            return self.kx < self.total_cols - 1 and self.ky > 0
-        elif quadrant == 'NW':
-            return self.kx > 0 and self.ky > 0
-        elif quadrant == 'SE':
-            return self.kx < self.total_cols - 1 and self.ky < self.total_rows - 1
-        elif quadrant == 'SW':
-            return self.kx > 0 and self.ky < self.total_rows - 1
-        return False
+        return self.has_neighbor(self._QUADRANT_DIRECTION[quadrant])
 
     def _has_column_region(self, region: str) -> bool:
-        """Check if there are kamlets in column north/south of us."""
-        if region == 'N':
-            # For kamlet (0,0), the lamlet is to the north
-            if self.kx == 0 and self.ky == 0:
-                return True
-            return self.ky > 0
-        elif region == 'S':
-            return self.ky < self.total_rows - 1
-        return False
+        return self.has_neighbor(self._COLUMN_DIRECTION[region])
 
     def _has_row_region(self, region: str) -> bool:
-        """Check if there are kamlets in row east/west of us."""
-        if self.ky == -1:
-            # Lamlet: no row neighbors (lamlet is not in the kamlet grid row)
-            return False
-        if region == 'E':
-            return self.kx < self.total_cols - 1
-        elif region == 'W':
-            return self.kx > 0
-        return False
+        return self.has_neighbor(self._ROW_DIRECTION[region])
 
-    def start_sync(self, sync_ident: int):
-        """Start tracking a new synchronization operation."""
+    def start_sync(
+        self,
+        sync_ident: int,
+        op: Optional[SyncAggOp] = None,
+        width: int = 32,
+    ):
+        """Start tracking a new synchronization operation.
+
+        `op` may be left None when the sync is auto-created on receiving a
+        packet before this kamlet's own local_event has fired. In that case,
+        raw per-region values are stored and aggregation is deferred until
+        local_event supplies the op.
+        """
         assert sync_ident not in self._sync_states, \
             f"sync_ident={sync_ident} already exists at ({self.kx},{self.ky})"
 
-        state = SyncState(sync_ident=sync_ident)
+        state = SyncState(sync_ident=sync_ident, op=op, width=width)
 
         # Mark non-existent regions as already synced
         for q in ['NE', 'NW', 'SE', 'SW']:
@@ -360,19 +516,41 @@ class Synchronizer:
         logger.debug(f'{self.clock.cycle}: SYNC_START: synchronizer ({self.kx},{self.ky}) '
                      f'sync_ident={sync_ident} auto_synced: quad={auto_q} col={auto_c} row={auto_r}')
 
-    def local_event(self, sync_ident: int, value: Optional[int] = None):
-        """Report that this kamlet has seen the event."""
+    def local_event(
+        self,
+        sync_ident: int,
+        value: Optional[int] = None,
+        op: SyncAggOp = SyncAggOp.MIN,
+        width: int = 32,
+    ):
+        """Report that this kamlet has seen the event.
+
+        `op` declares the aggregation mode for this sync_ident. If the sync
+        was auto-started from an earlier incoming packet (op still None),
+        this call supplies it. If the sync already has an op set by a
+        prior caller, the passed op must match.
+        """
         # sync_ident may be reused after a previous sync completed - clear old state
         if sync_ident in self._sync_states and self._sync_states[sync_ident].completed:
             del self._sync_states[sync_ident]
         if sync_ident not in self._sync_states:
-            self.start_sync(sync_ident)
+            self.start_sync(sync_ident, op=op, width=width)
 
         state = self._sync_states[sync_ident]
+        if state.op is None:
+            state.op = op
+            state.width = width
+        else:
+            assert state.op == op, (
+                f"sync_ident={sync_ident} already has op={state.op}, "
+                f"caller supplied {op}")
+            assert state.width == width, (
+                f"sync_ident={sync_ident} already has width={state.width}, "
+                f"caller supplied {width}")
         state.local_seen = True
         state.local_value = value
         logger.debug(f'{self.clock.cycle}: SYNC_LOCAL: synchronizer ({self.kx},{self.ky}) '
-                     f'sync_ident={sync_ident} value={value}')
+                     f'sync_ident={sync_ident} value={value} op={op.name}')
         self.monitor.record_sync_local_event(sync_ident, self.kx, self.ky, value)
         self._update_completed(sync_ident)
 
@@ -386,6 +564,10 @@ class Synchronizer:
     def has_sync(self, sync_ident: int) -> bool:
         """Check if a sync operation exists for this sync_ident."""
         return sync_ident in self._sync_states
+
+    def has_local_seen(self, sync_ident: int) -> bool:
+        """Check if a sync operation exists for this sync_ident."""
+        return sync_ident in self._sync_states and self._sync_states[sync_ident].local_seen
 
     def is_complete(self, sync_ident: int) -> bool:
         """Check if synchronization is complete (all kamlets have seen the event)."""
@@ -417,8 +599,8 @@ class Synchronizer:
                          f'sync_ident={state.sync_ident} missing_sends={missing_sends}')
         return sends_complete
 
-    def get_min_value(self, sync_ident: int) -> Optional[int]:
-        """Get the minimum value across all kamlets.
+    def get_aggregated_value(self, sync_ident: int) -> Optional[int]:
+        """Get the op-aggregated value across all kamlets.
 
         Returns None if no values were provided by any kamlet.
         """
@@ -427,20 +609,18 @@ class Synchronizer:
 
         state = self._sync_states[sync_ident]
 
-        values = []
-        if state.local_value is not None:
-            values.append(state.local_value)
+        values = [state.local_value]
         for v in state.quadrant_values.values():
-            if v is not None:
-                values.append(v)
+            values.append(v)
         for v in state.column_values.values():
-            if v is not None:
-                values.append(v)
+            values.append(v)
         for v in state.row_values.values():
-            if v is not None:
-                values.append(v)
+            values.append(v)
 
-        return min(values) if values else None
+        assert state.op is not None, (
+            f"sync_ident={sync_ident} has no op set; get_aggregated_value "
+            f"called before local_event")
+        return aggregate_sync_values(state.op, values, width=state.width)
 
     def clear_sync(self, sync_ident: int):
         """Clear a completed synchronization."""
@@ -457,7 +637,7 @@ class Synchronizer:
         """
         state = self._sync_states.get(trigger_ident)
         if state is not None and state.completed:
-            min_value = self.get_min_value(trigger_ident)
+            min_value = self.get_aggregated_value(trigger_ident)
             self.local_event(target_ident, value=min_value)
         else:
             self._fault_chains[trigger_ident] = target_ident
@@ -469,7 +649,7 @@ class Synchronizer:
             return
         if self._is_complete(state):
             state.completed = True
-            min_value = self.get_min_value(sync_ident)
+            min_value = self.get_aggregated_value(sync_ident)
             logger.debug(f'{self.clock.cycle}: SYNC_COMPLETE: synchronizer ({self.kx},{self.ky}) '
                          f'sync_ident={sync_ident} min_value={min_value}')
             self.monitor.record_sync_local_complete(sync_ident, self.kx, self.ky, min_value)
@@ -518,30 +698,26 @@ class Synchronizer:
 
         return True
 
-    def _get_min_for_direction(self, state: SyncState, direction: SyncDirection) -> Optional[int]:
-        """Calculate min value to send in a direction (includes local + all required regions).
+    def _get_value_for_direction(
+        self, state: SyncState, direction: SyncDirection,
+    ) -> Optional[int]:
+        """Calculate op-aggregated value to send in a direction.
 
-        Returns None if no values are available.
+        Combines local_value with the values from all regions this send
+        depends on. Returns None if no values are available.
         """
-        values = []
-        if state.local_value is not None:
-            values.append(state.local_value)
-
+        values = [state.local_value]
         reqs = self._get_send_requirements(direction)
-
         for q in reqs.get('quadrant', []):
-            if state.quadrant_values[q] is not None:
-                values.append(state.quadrant_values[q])
-
+            values.append(state.quadrant_values[q])
         for c in reqs.get('column', []):
-            if state.column_values[c] is not None:
-                values.append(state.column_values[c])
-
+            values.append(state.column_values[c])
         for r in reqs.get('row', []):
-            if state.row_values[r] is not None:
-                values.append(state.row_values[r])
-
-        return min(values) if values else None
+            values.append(state.row_values[r])
+        assert state.op is not None, (
+            f"sync_ident={state.sync_ident} has no op set; cannot send "
+            f"(should_send should have gated on local_seen)")
+        return aggregate_sync_values(state.op, values, width=state.width)
 
     def _process_received_packet(self, packet: SyncPacket, from_direction: SyncDirection):
         """Process a received sync packet from a neighbor."""
@@ -559,35 +735,37 @@ class Synchronizer:
         # If we receive from NE, it tells us NE quadrant is synced
         # If we receive from N, it tells us N column is synced
         # etc.
-
+        #
+        # Each (sync_ident, region) slot is written exactly once per
+        # generation: the sender's _should_send dedupes on sent_directions,
+        # and the lamlet's IdentQuery-gated allocation ensures sync_ident X
+        # is not reissued to any kamlet until every kamlet has drained X's
+        # prior generation. The assert documents and enforces this.
+        # Aggregation across the local value and region values is deferred
+        # to _get_value_for_direction / get_aggregated_value, which depend
+        # on the op being known.
         if from_direction in [SyncDirection.NE, SyncDirection.NW,
                                SyncDirection.SE, SyncDirection.SW]:
             region = from_direction.name
+            assert not state.quadrant_synced[region], (
+                f"double packet from quadrant {region} for "
+                f"sync_ident={sync_ident} at ({self.kx},{self.ky})")
             state.quadrant_synced[region] = True
-            if packet.value is not None:
-                if state.quadrant_values[region] is None:
-                    state.quadrant_values[region] = packet.value
-                else:
-                    state.quadrant_values[region] = min(state.quadrant_values[region],
-                                                        packet.value)
+            state.quadrant_values[region] = packet.value
         elif from_direction in [SyncDirection.N, SyncDirection.S]:
             region = from_direction.name
+            assert not state.column_synced[region], (
+                f"double packet from column {region} for "
+                f"sync_ident={sync_ident} at ({self.kx},{self.ky})")
             state.column_synced[region] = True
-            if packet.value is not None:
-                if state.column_values[region] is None:
-                    state.column_values[region] = packet.value
-                else:
-                    state.column_values[region] = min(state.column_values[region],
-                                                      packet.value)
+            state.column_values[region] = packet.value
         elif from_direction in [SyncDirection.E, SyncDirection.W]:
             region = from_direction.name
+            assert not state.row_synced[region], (
+                f"double packet from row {region} for "
+                f"sync_ident={sync_ident} at ({self.kx},{self.ky})")
             state.row_synced[region] = True
-            if packet.value is not None:
-                if state.row_values[region] is None:
-                    state.row_values[region] = packet.value
-                else:
-                    state.row_values[region] = min(state.row_values[region],
-                                                   packet.value)
+            state.row_values[region] = packet.value
 
         logger.debug(f'{self.clock.cycle}: SYNC_RECV: synchronizer ({self.kx},{self.ky}) '
                      f'from={from_direction.name} sync_ident={sync_ident} '
@@ -647,13 +825,18 @@ class Synchronizer:
             for state in list(self._sync_states.values()):
                 for direction in SyncDirection:
                     if direction not in self._outgoing_packets and self._should_send(state, direction):
-                        value = self._get_min_for_direction(state, direction)
+                        value = self._get_value_for_direction(state, direction)
                         packet = SyncPacket(
                             sync_ident=state.sync_ident,
                             value=value,
                         )
+                        # Fixed value width so all participants of a sync_ident
+                        # emit same-length packets (required once we support
+                        # widths > 8 bits like MIN_EL_INDEX's 32-bit values).
+                        value_bytes = (state.width + 7) // 8
                         packet_words = packet.to_words(
                             data_width, sync_ident_width,
+                            value_bytes=value_bytes,
                         )
                         self._outgoing_packets[direction] = packet_words
                         state.sent_directions.add(direction)
@@ -673,6 +856,10 @@ class Synchronizer:
         """Receive a byte from a neighbor (called by external network)."""
         assert self._input_buffers[direction].can_append()
         self._input_buffers[direction].append(byte_val)
+        logger.debug(
+            f'{self.clock.cycle}: SYNC_RX_EXTERNAL at ({self.kx},{self.ky}) '
+            f'from_dir={direction.name} byte_val=0x{byte_val:x} '
+            f'in_buf_size={len(self._input_buffers[direction])}')
 
     def has_output(self, direction: SyncDirection) -> bool:
         """Check if there's output to send in a direction."""

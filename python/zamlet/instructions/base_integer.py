@@ -10,6 +10,7 @@ if TYPE_CHECKING:
     from zamlet.oamlet.oamlet import Oamlet
 
 from zamlet.register_names import reg_name
+from zamlet.instructions.riscv_instr import riscv_instr
 
 
 @dataclass
@@ -34,13 +35,14 @@ class Addi:
             # Match objdump pseudo-instruction convention
             return f'add\t{reg_name(self.rd)},{reg_name(self.rs1)},{self.imm}'
 
-    async def update_state(self, s: 'Oamlet'):
+    @riscv_instr
+    async def update_state(self, s: 'Oamlet', span_id: int):
         await s.scalar.wait_all_regs_ready(self.rd, None, [self.rs1], [])
         rs1_val = int.from_bytes(s.scalar.read_reg(self.rs1), byteorder='little', signed=False)
         mask = (1 << (s.params.word_bytes * 8)) - 1
         result = (rs1_val + self.imm) & mask
         result_bytes = result.to_bytes(s.params.word_bytes, byteorder='little', signed=False)
-        s.scalar.write_reg(self.rd, result_bytes)
+        s.scalar.write_reg(self.rd, result_bytes, span_id)
         s.pc += 4
 
 
@@ -64,12 +66,13 @@ class Andi:
             # Match objdump pseudo-instruction convention
             return f'and\t{reg_name(self.rd)},{reg_name(self.rs1)},{self.imm}'
 
-    async def update_state(self, s: 'Oamlet'):
+    @riscv_instr
+    async def update_state(self, s: 'Oamlet', span_id: int):
         await s.scalar.wait_all_regs_ready(self.rd, None, [self.rs1], [])
         rs1_val = int.from_bytes(s.scalar.read_reg(self.rs1), byteorder='little', signed=False)
         result = rs1_val & self.imm
         result_bytes = result.to_bytes(s.params.word_bytes, byteorder='little', signed=False)
-        s.scalar.write_reg(self.rd, result_bytes)
+        s.scalar.write_reg(self.rd, result_bytes, span_id)
         s.pc += 4
 
 
@@ -90,13 +93,14 @@ class Ori:
         # Match objdump pseudo-instruction convention
         return f'or\t{reg_name(self.rd)},{reg_name(self.rs1)},{self.imm}'
 
-    async def update_state(self, s: 'Oamlet'):
+    @riscv_instr
+    async def update_state(self, s: 'Oamlet', span_id: int):
         await s.scalar.wait_all_regs_ready(self.rd, None, [self.rs1], [])
         rs1_val = int.from_bytes(s.scalar.read_reg(self.rs1), byteorder='little', signed=False)
         mask = (1 << (s.params.word_bytes * 8)) - 1
         result = (rs1_val | self.imm) & mask
         result_bytes = result.to_bytes(s.params.word_bytes, byteorder='little', signed=False)
-        s.scalar.write_reg(self.rd, result_bytes)
+        s.scalar.write_reg(self.rd, result_bytes, span_id)
         s.pc += 4
 
 
@@ -121,13 +125,14 @@ class Xori:
             # Match objdump pseudo-instruction convention
             return f'xor\t{reg_name(self.rd)},{reg_name(self.rs1)},{self.imm}'
 
-    async def update_state(self, s: 'Oamlet'):
+    @riscv_instr
+    async def update_state(self, s: 'Oamlet', span_id: int):
         await s.scalar.wait_all_regs_ready(self.rd, None, [self.rs1], [])
         rs1_val = int.from_bytes(s.scalar.read_reg(self.rs1), byteorder='little', signed=False)
         mask = (1 << (s.params.word_bytes * 8)) - 1
         result = (rs1_val ^ self.imm) & mask
         result_bytes = result.to_bytes(s.params.word_bytes, byteorder='little', signed=False)
-        s.scalar.write_reg(self.rd, result_bytes)
+        s.scalar.write_reg(self.rd, result_bytes, span_id)
         s.pc += 4
 
 
@@ -148,13 +153,14 @@ class Slli:
         # Match objdump pseudo-instruction convention
         return f'sll\t{reg_name(self.rd)},{reg_name(self.rs1)},0x{self.shamt:x}'
 
-    async def update_state(self, s: 'Oamlet'):
+    @riscv_instr
+    async def update_state(self, s: 'Oamlet', span_id: int):
         await s.scalar.wait_all_regs_ready(self.rd, None, [self.rs1], [])
         rs1_val = int.from_bytes(s.scalar.read_reg(self.rs1), byteorder='little', signed=False)
         mask = (1 << (s.params.word_bytes * 8)) - 1
         result = (rs1_val << self.shamt) & mask
         result_bytes = result.to_bytes(s.params.word_bytes, byteorder='little', signed=False)
-        s.scalar.write_reg(self.rd, result_bytes)
+        s.scalar.write_reg(self.rd, result_bytes, span_id)
         s.pc += 4
 
 
@@ -172,12 +178,13 @@ class Srli:
     def __str__(self):
         return f'srl\t{reg_name(self.rd)},{reg_name(self.rs1)},0x{self.shamt:x}'
 
-    async def update_state(self, s: 'Oamlet'):
+    @riscv_instr
+    async def update_state(self, s: 'Oamlet', span_id: int):
         await s.scalar.wait_all_regs_ready(self.rd, None, [self.rs1], [])
         rs1_val = int.from_bytes(s.scalar.read_reg(self.rs1), byteorder='little', signed=False)
         result = rs1_val >> self.shamt
         result_bytes = result.to_bytes(s.params.word_bytes, byteorder='little', signed=False)
-        s.scalar.write_reg(self.rd, result_bytes)
+        s.scalar.write_reg(self.rd, result_bytes, span_id)
         s.pc += 4
 
 
@@ -195,12 +202,13 @@ class Srai:
     def __str__(self):
         return f'sra\t{reg_name(self.rd)},{reg_name(self.rs1)},0x{self.shamt:x}'
 
-    async def update_state(self, s: 'Oamlet'):
+    @riscv_instr
+    async def update_state(self, s: 'Oamlet', span_id: int):
         await s.scalar.wait_all_regs_ready(self.rd, None, [self.rs1], [])
         rs1_val = int.from_bytes(s.scalar.read_reg(self.rs1), byteorder='little', signed=True)
         result = rs1_val >> self.shamt
         result_bytes = result.to_bytes(s.params.word_bytes, byteorder='little', signed=True)
-        s.scalar.write_reg(self.rd, result_bytes)
+        s.scalar.write_reg(self.rd, result_bytes, span_id)
         s.pc += 4
 
 
@@ -219,14 +227,15 @@ class Add:
     def __str__(self):
         return f'add\t{reg_name(self.rd)},{reg_name(self.rs1)},{reg_name(self.rs2)}'
 
-    async def update_state(self, s: 'Oamlet'):
+    @riscv_instr
+    async def update_state(self, s: 'Oamlet', span_id: int):
         await s.scalar.wait_all_regs_ready(self.rd, None, [self.rs1, self.rs2], [])
         rs1_val = int.from_bytes(s.scalar.read_reg(self.rs1), byteorder='little', signed=False)
         rs2_val = int.from_bytes(s.scalar.read_reg(self.rs2), byteorder='little', signed=False)
         mask = (1 << (s.params.word_bytes * 8)) - 1
         result = (rs1_val + rs2_val) & mask
         result_bytes = result.to_bytes(s.params.word_bytes, byteorder='little', signed=False)
-        s.scalar.write_reg(self.rd, result_bytes)
+        s.scalar.write_reg(self.rd, result_bytes, span_id)
         s.pc += 4
 
 
@@ -248,14 +257,15 @@ class Sub:
         else:
             return f'sub\t{reg_name(self.rd)},{reg_name(self.rs1)},{reg_name(self.rs2)}'
 
-    async def update_state(self, s: 'Oamlet'):
+    @riscv_instr
+    async def update_state(self, s: 'Oamlet', span_id: int):
         await s.scalar.wait_all_regs_ready(self.rd, None, [self.rs1, self.rs2], [])
         rs1_val = int.from_bytes(s.scalar.read_reg(self.rs1), byteorder='little', signed=False)
         rs2_val = int.from_bytes(s.scalar.read_reg(self.rs2), byteorder='little', signed=False)
         mask = (1 << (s.params.word_bytes * 8)) - 1
         result = (rs1_val - rs2_val) & mask
         result_bytes = result.to_bytes(s.params.word_bytes, byteorder='little', signed=False)
-        s.scalar.write_reg(self.rd, result_bytes)
+        s.scalar.write_reg(self.rd, result_bytes, span_id)
         s.pc += 4
 
 
@@ -274,13 +284,14 @@ class And:
     def __str__(self):
         return f'and\t{reg_name(self.rd)},{reg_name(self.rs1)},{reg_name(self.rs2)}'
 
-    async def update_state(self, s: 'Oamlet'):
+    @riscv_instr
+    async def update_state(self, s: 'Oamlet', span_id: int):
         await s.scalar.wait_all_regs_ready(self.rd, None, [self.rs1, self.rs2], [])
         rs1_val = int.from_bytes(s.scalar.read_reg(self.rs1), byteorder='little', signed=False)
         rs2_val = int.from_bytes(s.scalar.read_reg(self.rs2), byteorder='little', signed=False)
         result = rs1_val & rs2_val
         result_bytes = result.to_bytes(s.params.word_bytes, byteorder='little', signed=False)
-        s.scalar.write_reg(self.rd, result_bytes)
+        s.scalar.write_reg(self.rd, result_bytes, span_id)
         s.pc += 4
 
 
@@ -299,13 +310,14 @@ class Or:
     def __str__(self):
         return f'or\t{reg_name(self.rd)},{reg_name(self.rs1)},{reg_name(self.rs2)}'
 
-    async def update_state(self, s: 'Oamlet'):
+    @riscv_instr
+    async def update_state(self, s: 'Oamlet', span_id: int):
         await s.scalar.wait_all_regs_ready(self.rd, None, [self.rs1, self.rs2], [])
         rs1_val = int.from_bytes(s.scalar.read_reg(self.rs1), byteorder='little', signed=False)
         rs2_val = int.from_bytes(s.scalar.read_reg(self.rs2), byteorder='little', signed=False)
         result = rs1_val | rs2_val
         result_bytes = result.to_bytes(s.params.word_bytes, byteorder='little', signed=False)
-        s.scalar.write_reg(self.rd, result_bytes)
+        s.scalar.write_reg(self.rd, result_bytes, span_id)
         s.pc += 4
 
 
@@ -324,13 +336,14 @@ class Xor:
     def __str__(self):
         return f'xor\t{reg_name(self.rd)},{reg_name(self.rs1)},{reg_name(self.rs2)}'
 
-    async def update_state(self, s: 'Oamlet'):
+    @riscv_instr
+    async def update_state(self, s: 'Oamlet', span_id: int):
         await s.scalar.wait_all_regs_ready(self.rd, None, [self.rs1, self.rs2], [])
         rs1_val = int.from_bytes(s.scalar.read_reg(self.rs1), byteorder='little', signed=False)
         rs2_val = int.from_bytes(s.scalar.read_reg(self.rs2), byteorder='little', signed=False)
         result = rs1_val ^ rs2_val
         result_bytes = result.to_bytes(s.params.word_bytes, byteorder='little', signed=False)
-        s.scalar.write_reg(self.rd, result_bytes)
+        s.scalar.write_reg(self.rd, result_bytes, span_id)
         s.pc += 4
 
 
@@ -349,14 +362,15 @@ class Lui:
     def __str__(self):
         return f'lui\t{reg_name(self.rd)},0x{self.imm & 0xfffff:x}'
 
-    async def update_state(self, s: 'Oamlet'):
+    @riscv_instr
+    async def update_state(self, s: 'Oamlet', span_id: int):
         await s.scalar.wait_all_regs_ready(self.rd, None, [], [])
         s.pc += 4
         value = self.imm << 12
         if value & 0x80000000:
             value = value - 0x100000000
         value_bytes = value.to_bytes(s.params.word_bytes, byteorder='little', signed=True)
-        s.scalar.write_reg(self.rd, value_bytes)
+        s.scalar.write_reg(self.rd, value_bytes, span_id)
 
 
 @dataclass
@@ -379,7 +393,8 @@ class Addiw:
             # Match objdump pseudo-instruction convention
             return f'addw\t{reg_name(self.rd)},{reg_name(self.rs1)},{self.imm}'
 
-    async def update_state(self, s: 'Oamlet'):
+    @riscv_instr
+    async def update_state(self, s: 'Oamlet', span_id: int):
         await s.scalar.wait_all_regs_ready(self.rd, None, [self.rs1], [])
         s.pc += 4
         rs1_bytes = s.scalar.read_reg(self.rs1)
@@ -388,7 +403,7 @@ class Addiw:
         if result & 0x80000000:
             result = result - 0x100000000
         result_bytes = result.to_bytes(s.params.word_bytes, byteorder='little', signed=True)
-        s.scalar.write_reg(self.rd, result_bytes)
+        s.scalar.write_reg(self.rd, result_bytes, span_id)
 
 
 @dataclass
@@ -407,7 +422,8 @@ class Addw:
     def __str__(self):
         return f'addw\t{reg_name(self.rd)},{reg_name(self.rs1)},{reg_name(self.rs2)}'
 
-    async def update_state(self, s: 'Oamlet'):
+    @riscv_instr
+    async def update_state(self, s: 'Oamlet', span_id: int):
         await s.scalar.wait_all_regs_ready(self.rd, None, [self.rs1, self.rs2], [])
         s.pc += 4
         rs1_val = int.from_bytes(s.scalar.read_reg(self.rs1), byteorder='little', signed=False)
@@ -416,7 +432,7 @@ class Addw:
         if result & 0x80000000:
             result = result - 0x100000000
         result_bytes = result.to_bytes(s.params.word_bytes, byteorder='little', signed=True)
-        s.scalar.write_reg(self.rd, result_bytes)
+        s.scalar.write_reg(self.rd, result_bytes, span_id)
 
 
 @dataclass
@@ -437,7 +453,8 @@ class Subw:
             return f'negw\t{reg_name(self.rd)},{reg_name(self.rs2)}'
         return f'subw\t{reg_name(self.rd)},{reg_name(self.rs1)},{reg_name(self.rs2)}'
 
-    async def update_state(self, s: 'Oamlet'):
+    @riscv_instr
+    async def update_state(self, s: 'Oamlet', span_id: int):
         await s.scalar.wait_all_regs_ready(self.rd, None, [self.rs1, self.rs2], [])
         s.pc += 4
         rs1_val = int.from_bytes(s.scalar.read_reg(self.rs1), byteorder='little', signed=False)
@@ -446,7 +463,7 @@ class Subw:
         if result & 0x80000000:
             result = result - 0x100000000
         result_bytes = result.to_bytes(s.params.word_bytes, byteorder='little', signed=True)
-        s.scalar.write_reg(self.rd, result_bytes)
+        s.scalar.write_reg(self.rd, result_bytes, span_id)
 
 
 @dataclass
@@ -466,7 +483,8 @@ class Slliw:
         # Match objdump pseudo-instruction convention
         return f'sllw\t{reg_name(self.rd)},{reg_name(self.rs1)},0x{self.shamt:x}'
 
-    async def update_state(self, s: 'Oamlet'):
+    @riscv_instr
+    async def update_state(self, s: 'Oamlet', span_id: int):
         await s.scalar.wait_all_regs_ready(self.rd, None, [self.rs1], [])
         s.pc += 4
         rs1_val = int.from_bytes(s.scalar.read_reg(self.rs1), byteorder='little', signed=False)
@@ -475,7 +493,7 @@ class Slliw:
         if result & 0x80000000:
             result = result - 0x100000000
         result_bytes = result.to_bytes(s.params.word_bytes, byteorder='little', signed=True)
-        s.scalar.write_reg(self.rd, result_bytes)
+        s.scalar.write_reg(self.rd, result_bytes, span_id)
 
 
 @dataclass
@@ -495,7 +513,8 @@ class Srliw:
         # Match objdump pseudo-instruction convention
         return f'srlw\t{reg_name(self.rd)},{reg_name(self.rs1)},0x{self.shamt:x}'
 
-    async def update_state(self, s: 'Oamlet'):
+    @riscv_instr
+    async def update_state(self, s: 'Oamlet', span_id: int):
         await s.scalar.wait_all_regs_ready(self.rd, None, [self.rs1], [])
         s.pc += 4
         rs1_val = int.from_bytes(s.scalar.read_reg(self.rs1), byteorder='little', signed=False)
@@ -504,7 +523,7 @@ class Srliw:
         if result & 0x80000000:
             result = result - 0x100000000
         result_bytes = result.to_bytes(s.params.word_bytes, byteorder='little', signed=True)
-        s.scalar.write_reg(self.rd, result_bytes)
+        s.scalar.write_reg(self.rd, result_bytes, span_id)
 
 
 @dataclass
@@ -524,7 +543,8 @@ class Sraiw:
         # Match objdump pseudo-instruction convention
         return f'sraw\t{reg_name(self.rd)},{reg_name(self.rs1)},0x{self.shamt:x}'
 
-    async def update_state(self, s: 'Oamlet'):
+    @riscv_instr
+    async def update_state(self, s: 'Oamlet', span_id: int):
         await s.scalar.wait_all_regs_ready(self.rd, None, [self.rs1], [])
         s.pc += 4
         rs1_val = int.from_bytes(s.scalar.read_reg(self.rs1), byteorder='little', signed=False)
@@ -535,7 +555,7 @@ class Sraiw:
         if result & 0x80000000:
             result = result - 0x100000000
         result_bytes = result.to_bytes(s.params.word_bytes, byteorder='little', signed=True)
-        s.scalar.write_reg(self.rd, result_bytes)
+        s.scalar.write_reg(self.rd, result_bytes, span_id)
 
 
 @dataclass
@@ -553,14 +573,15 @@ class Sll:
     def __str__(self):
         return f'sll\t{reg_name(self.rd)},{reg_name(self.rs1)},{reg_name(self.rs2)}'
 
-    async def update_state(self, s: 'Oamlet'):
+    @riscv_instr
+    async def update_state(self, s: 'Oamlet', span_id: int):
         await s.scalar.wait_all_regs_ready(self.rd, None, [self.rs1, self.rs2], [])
         rs1_val = int.from_bytes(s.scalar.read_reg(self.rs1), byteorder='little', signed=False)
         rs2_val = int.from_bytes(s.scalar.read_reg(self.rs2), byteorder='little', signed=False)
         shamt = rs2_val & 0x3f  # RV64I: lower 6 bits
         result = (rs1_val << shamt) & ((1 << 64) - 1)
         result_bytes = result.to_bytes(s.params.word_bytes, byteorder='little', signed=False)
-        s.scalar.write_reg(self.rd, result_bytes)
+        s.scalar.write_reg(self.rd, result_bytes, span_id)
         s.pc += 4
 
 
@@ -579,14 +600,15 @@ class Srl:
     def __str__(self):
         return f'srl\t{reg_name(self.rd)},{reg_name(self.rs1)},{reg_name(self.rs2)}'
 
-    async def update_state(self, s: 'Oamlet'):
+    @riscv_instr
+    async def update_state(self, s: 'Oamlet', span_id: int):
         await s.scalar.wait_all_regs_ready(self.rd, None, [self.rs1, self.rs2], [])
         rs1_val = int.from_bytes(s.scalar.read_reg(self.rs1), byteorder='little', signed=False)
         rs2_val = int.from_bytes(s.scalar.read_reg(self.rs2), byteorder='little', signed=False)
         shamt = rs2_val & 0x3f  # RV64I: lower 6 bits
         result = rs1_val >> shamt
         result_bytes = result.to_bytes(s.params.word_bytes, byteorder='little', signed=False)
-        s.scalar.write_reg(self.rd, result_bytes)
+        s.scalar.write_reg(self.rd, result_bytes, span_id)
         s.pc += 4
 
 
@@ -605,14 +627,15 @@ class Sra:
     def __str__(self):
         return f'sra\t{reg_name(self.rd)},{reg_name(self.rs1)},{reg_name(self.rs2)}'
 
-    async def update_state(self, s: 'Oamlet'):
+    @riscv_instr
+    async def update_state(self, s: 'Oamlet', span_id: int):
         await s.scalar.wait_all_regs_ready(self.rd, None, [self.rs1, self.rs2], [])
         rs1_val = int.from_bytes(s.scalar.read_reg(self.rs1), byteorder='little', signed=True)
         rs2_val = int.from_bytes(s.scalar.read_reg(self.rs2), byteorder='little', signed=False)
         shamt = rs2_val & 0x3f  # RV64I: lower 6 bits
         result = rs1_val >> shamt
         result_bytes = result.to_bytes(s.params.word_bytes, byteorder='little', signed=True)
-        s.scalar.write_reg(self.rd, result_bytes)
+        s.scalar.write_reg(self.rd, result_bytes, span_id)
         s.pc += 4
 
 
@@ -632,7 +655,8 @@ class Sllw:
     def __str__(self):
         return f'sllw\t{reg_name(self.rd)},{reg_name(self.rs1)},{reg_name(self.rs2)}'
 
-    async def update_state(self, s: 'Oamlet'):
+    @riscv_instr
+    async def update_state(self, s: 'Oamlet', span_id: int):
         await s.scalar.wait_all_regs_ready(self.rd, None, [self.rs1, self.rs2], [])
         s.pc += 4
         rs1_val = int.from_bytes(s.scalar.read_reg(self.rs1), byteorder='little', signed=False)
@@ -643,7 +667,7 @@ class Sllw:
         if result & 0x80000000:
             result = result - 0x100000000
         result_bytes = result.to_bytes(s.params.word_bytes, byteorder='little', signed=True)
-        s.scalar.write_reg(self.rd, result_bytes)
+        s.scalar.write_reg(self.rd, result_bytes, span_id)
 
 
 @dataclass
@@ -662,7 +686,8 @@ class Srlw:
     def __str__(self):
         return f'srlw\t{reg_name(self.rd)},{reg_name(self.rs1)},{reg_name(self.rs2)}'
 
-    async def update_state(self, s: 'Oamlet'):
+    @riscv_instr
+    async def update_state(self, s: 'Oamlet', span_id: int):
         await s.scalar.wait_all_regs_ready(self.rd, None, [self.rs1, self.rs2], [])
         s.pc += 4
         rs1_val = int.from_bytes(s.scalar.read_reg(self.rs1), byteorder='little', signed=False)
@@ -673,7 +698,7 @@ class Srlw:
         if result & 0x80000000:
             result = result - 0x100000000
         result_bytes = result.to_bytes(s.params.word_bytes, byteorder='little', signed=True)
-        s.scalar.write_reg(self.rd, result_bytes)
+        s.scalar.write_reg(self.rd, result_bytes, span_id)
 
 
 @dataclass
@@ -692,7 +717,8 @@ class Sraw:
     def __str__(self):
         return f'sraw\t{reg_name(self.rd)},{reg_name(self.rs1)},{reg_name(self.rs2)}'
 
-    async def update_state(self, s: 'Oamlet'):
+    @riscv_instr
+    async def update_state(self, s: 'Oamlet', span_id: int):
         await s.scalar.wait_all_regs_ready(self.rd, None, [self.rs1, self.rs2], [])
         s.pc += 4
         rs1_val = int.from_bytes(s.scalar.read_reg(self.rs1), byteorder='little', signed=False)
@@ -705,7 +731,7 @@ class Sraw:
         if result & 0x80000000:
             result = result - 0x100000000
         result_bytes = result.to_bytes(s.params.word_bytes, byteorder='little', signed=True)
-        s.scalar.write_reg(self.rd, result_bytes)
+        s.scalar.write_reg(self.rd, result_bytes, span_id)
 
 
 @dataclass
@@ -723,7 +749,8 @@ class Slti:
     def __str__(self):
         return f'slti\t{reg_name(self.rd)},{reg_name(self.rs1)},{self.imm}'
 
-    async def update_state(self, s: 'Oamlet'):
+    @riscv_instr
+    async def update_state(self, s: 'Oamlet', span_id: int):
         await s.scalar.wait_all_regs_ready(self.rd, None, [self.rs1], [])
         s.pc += 4
         rs1_val = int.from_bytes(s.scalar.read_reg(self.rs1), byteorder='little', signed=False)
@@ -731,7 +758,7 @@ class Slti:
             rs1_val = rs1_val - 0x10000000000000000
         result = 1 if rs1_val < self.imm else 0
         result_bytes = result.to_bytes(s.params.word_bytes, byteorder='little', signed=False)
-        s.scalar.write_reg(self.rd, result_bytes)
+        s.scalar.write_reg(self.rd, result_bytes, span_id)
 
 
 @dataclass
@@ -753,14 +780,15 @@ class Sltiu:
         else:
             return f'sltiu\t{reg_name(self.rd)},{reg_name(self.rs1)},{self.imm}'
 
-    async def update_state(self, s: 'Oamlet'):
+    @riscv_instr
+    async def update_state(self, s: 'Oamlet', span_id: int):
         await s.scalar.wait_all_regs_ready(self.rd, None, [self.rs1], [])
         s.pc += 4
         rs1_val = int.from_bytes(s.scalar.read_reg(self.rs1), byteorder='little', signed=False)
         imm_unsigned = self.imm if self.imm >= 0 else self.imm + 0x10000000000000000
         result = 1 if rs1_val < imm_unsigned else 0
         result_bytes = result.to_bytes(s.params.word_bytes, byteorder='little', signed=False)
-        s.scalar.write_reg(self.rd, result_bytes)
+        s.scalar.write_reg(self.rd, result_bytes, span_id)
 
 
 @dataclass
@@ -783,7 +811,8 @@ class Slt:
         else:
             return f'slt\t{reg_name(self.rd)},{reg_name(self.rs1)},{reg_name(self.rs2)}'
 
-    async def update_state(self, s: 'Oamlet'):
+    @riscv_instr
+    async def update_state(self, s: 'Oamlet', span_id: int):
         await s.scalar.wait_all_regs_ready(self.rd, None, [self.rs1, self.rs2], [])
         s.pc += 4
         rs1_val = int.from_bytes(s.scalar.read_reg(self.rs1), byteorder='little', signed=False)
@@ -794,7 +823,7 @@ class Slt:
             rs2_val = rs2_val - 0x10000000000000000
         result = 1 if rs1_val < rs2_val else 0
         result_bytes = result.to_bytes(s.params.word_bytes, byteorder='little', signed=False)
-        s.scalar.write_reg(self.rd, result_bytes)
+        s.scalar.write_reg(self.rd, result_bytes, span_id)
 
 
 @dataclass
@@ -816,11 +845,12 @@ class Sltu:
         else:
             return f'sltu\t{reg_name(self.rd)},{reg_name(self.rs1)},{reg_name(self.rs2)}'
 
-    async def update_state(self, s: 'Oamlet'):
+    @riscv_instr
+    async def update_state(self, s: 'Oamlet', span_id: int):
         await s.scalar.wait_all_regs_ready(self.rd, None, [self.rs1, self.rs2], [])
         s.pc += 4
         rs1_val = int.from_bytes(s.scalar.read_reg(self.rs1), byteorder='little', signed=False)
         rs2_val = int.from_bytes(s.scalar.read_reg(self.rs2), byteorder='little', signed=False)
         result = 1 if rs1_val < rs2_val else 0
         result_bytes = result.to_bytes(s.params.word_bytes, byteorder='little', signed=False)
-        s.scalar.write_reg(self.rd, result_bytes)
+        s.scalar.write_reg(self.rd, result_bytes, span_id)

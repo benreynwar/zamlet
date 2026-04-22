@@ -368,6 +368,45 @@ class Kamlet:
         assert jamlet.y == y
         return jamlet
 
+    def get_oldest_pending_iq_slot_distance(
+            self, query_ident: int) -> int:
+        """Distance to the oldest IdentQuery slot with pending sync state.
+
+        Scans the synchronizer for IQ-slot sync_idents (those in
+        [max_response_tags, max_response_tags + n_ident_query_slots)).
+        Distance is (sync_ident - query_ident) mod n_iq. The query ident
+        itself maps to distance 0; d=0 means "the current slot is itself
+        the oldest active at this participant" — there is no older slot to
+        protect. For other pending slots, distance wraps around the ring
+        so the oldest active slot gets the smallest non-zero distance and
+        MIN picks it.
+
+        Returns n_iq when no older IQ slot is pending at this participant
+        (so MIN aggregation with d-1 packing makes this participant a
+        no-op — stored value n_iq-1 loses to any real d in [1, n_iq-1]
+        which store as [0, n_iq-2]). Real older-pending distances are
+        returned in [1, n_iq-1].
+        """
+        max_tags = self.params.max_response_tags
+        n_iq = self.params.n_ident_query_slots
+        distances: list[int] = []
+        for sync_ident in self.synchronizer._sync_states:
+            # We check has_local_seen because it's possible that the synchronizer has state for this
+            # ident because the sync messages beat this instruction here and it's actually a sync
+            # state that comes after this one. If that is the case the local seen won't be set yet.
+
+            # local seen isn't set if we're waiting for the next instr to become free. I don't think that
+            # is a concern here since if we're waiting for the next ident to get free we shoudln't have
+            # to worry about the next ident query arriving.
+            if max_tags <= sync_ident < max_tags + n_iq and self.synchronizer.has_local_seen(sync_ident):
+                d = (sync_ident - query_ident) % n_iq
+                assert d != 0 # We shouldn't be 'local_seen' yet.
+                distances.append(d)
+        if not distances:
+            return n_iq
+        else:
+            return min(distances)
+
     def get_oldest_active_instr_ident_distance(self, baseline: int) -> int | None:
         """Distance to the oldest active instr_ident from baseline across the
         kamlet's live state — reservation-station entries (admitted but not yet
@@ -479,7 +518,7 @@ class Kamlet:
             span_id = self.monitor.get_kinstr_exec_span_id(
                 instr_ident, self.min_x, self.min_y)
             self.monitor.add_event(span_id, "admitted")
-            logger.info(
+            logger.debug(
                 f'{self.clock.cycle}: kamlet ({self.min_x},{self.min_y})'
                 f' instr_queue: {len(self._instruction_queue)}'
                 f' ADMIT {instr_name} ident={instr_ident}')
@@ -508,7 +547,7 @@ class Kamlet:
             instruction = self._reservation_station[chosen_index]
             instr_name = type(instruction).__name__
             instr_ident = getattr(instruction, 'instr_ident', '?')
-            logger.info(
+            logger.debug(
                 f'{self.clock.cycle}: kamlet ({self.min_x},{self.min_y})'
                 f' DISPATCH {instr_name} ident={instr_ident}'
                 f' order={instruction.renamed.order}')

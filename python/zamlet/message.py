@@ -69,9 +69,6 @@ class MessageType(IntEnum):
     WRITE_MEM_WORD_DROP = 38
     WRITE_MEM_WORD_RETRY = 39
 
-    # Ident query response (kamlet -> lamlet)
-    IDENT_QUERY_RESP = 40
-
     # Memlet drop types
     WRITE_LINE_READ_LINE_ADDR_DROP = 42
     READ_LINE_ADDR_DROP = 43
@@ -133,8 +130,6 @@ CHANNEL_MAPPING = {
     MessageType.WRITE_MEM_WORD_RESP: 0,
     MessageType.WRITE_MEM_WORD_DROP: 0,
     MessageType.WRITE_MEM_WORD_RETRY: 0,
-
-    MessageType.IDENT_QUERY_RESP: 0,
 
     MessageType.READ_REG_WORD_RESP: 0,
 

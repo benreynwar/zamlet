@@ -103,7 +103,6 @@ class Jamlet:
             MessageType.WRITE_MEM_WORD_RESP: Queue(2),
             MessageType.WRITE_MEM_WORD_DROP: Queue(2),
             MessageType.WRITE_MEM_WORD_RETRY: Queue(2),
-            MessageType.IDENT_QUERY_RESP: Queue(2),
             MessageType.LOAD_INDEXED_ELEMENT_RESP: Queue(2),
             MessageType.STORE_INDEXED_ELEMENT_RESP: Queue(2),
             MessageType.READ_REG_ELEMENT_REQ: Queue(2),
@@ -119,6 +118,28 @@ class Jamlet:
 
         # In-flight channel 1+ request tracking for source throttling
         self._ch1_in_flight: int = 0
+
+    def write_vreg(self, reg: int, offset_in_word: int, data: bytes,
+                   *, span_id: int,
+                   event_details: dict | None = None) -> None:
+        """Write bytes into this jamlet's vector register file, emitting a
+        vreg_write event on span_id for tracing. Use instead of writing
+        rf_slice directly so register writes show up in the span tree.
+        event_details is an optional dict of call-site specific context
+        (e.g. element_index, tag) merged into the event details.
+        """
+        wb = self.params.word_bytes
+        byte_addr = reg * wb + offset_in_word
+        n = len(data)
+        old = bytes(self.rf_slice[byte_addr:byte_addr + n])
+        self.rf_slice[byte_addr:byte_addr + n] = data
+        details = dict(
+            jamlet=(self.x, self.y), reg=reg, offset=offset_in_word,
+            old=old.hex(), new=bytes(data).hex(), n_bytes=n,
+        )
+        if event_details:
+            details.update(event_details)
+        self.monitor.add_event(span_id, 'vreg_write', **details)
 
     async def send_packet(self, packet, parent_span_id: int,
                           drop_reason: str | None = None):

@@ -1,9 +1,9 @@
 """
 Ident Query
 
-This transaction queries each kamlet for its oldest active instr_ident,
-synchronizes across all kamlets to find the global minimum distance,
-and sends the result back to the lamlet.
+This transaction queries each kamlet for its oldest active instr_ident and
+synchronizes across all kamlets to aggregate a MIN_PAIR packed word. The
+lamlet participates in the sync directly, so no mesh response is sent.
 
 Used for flow control to prevent instr_ident collisions when wrapping.
 """
@@ -17,9 +17,10 @@ from zamlet.kamlet.kinstructions import (
     TrackedKInstr, Renamed, KInstrOpcode, KINSTR_WIDTH, OPCODE_WIDTH, SYNC_IDENT_WIDTH,
 )
 from zamlet.control_structures import pack_fields_to_int
-from zamlet.message import IdentHeader, MessageType, SendType
 from zamlet.monitor import SpanType, CompletionType
-from zamlet.synchronization import WaitingItemSyncState
+from zamlet.synchronization import (
+    SyncAggOp, MIN_PAIR_TOTAL_WIDTH, pack_min_pair,
+)
 
 if TYPE_CHECKING:
     from zamlet.kamlet.kamlet import Kamlet
@@ -32,13 +33,14 @@ logger = logging.getLogger(__name__)
 class IdentQuery(TrackedKInstr):
     """Query the oldest active instr_ident across all kamlets.
 
-    Each kamlet computes the distance from baseline to its oldest active ident,
-    synchronizes to find the minimum, and kamlet (0,0) sends the result to lamlet.
+    Each kamlet computes the distance from baseline to its oldest active
+    ident and contributes to a MIN_PAIR sync aggregation over the kamlet
+    grid plus the lamlet. The lamlet is itself a sync participant; it
+    reads the aggregated result directly from its own synchronizer, so no
+    mesh response is sent from any kamlet.
 
-    Uses TrackedKInstr because the lamlet explicitly completes the kinstr when
-    it receives the response. Overrides can_complete_before_children because the
-    response can arrive before all kamlets have finished processing (due to sync
-    timing differences).
+    Uses TrackedKInstr because the lamlet explicitly completes the kinstr
+    once it consumes the aggregated value.
     """
     instr_ident: int  # Used for both sync and response (set to max_response_tags)
     baseline: int     # next_instr_ident at time of query
@@ -80,94 +82,86 @@ class IdentQuery(TrackedKInstr):
     async def execute(self, kamlet: 'Kamlet') -> None:
         distance = self.renamed.ident_query_distance
 
-        logger.debug(f'{kamlet.clock.cycle}: IdentQuery: kamlet ({kamlet.min_x},{kamlet.min_y}) '
-                     f'baseline={self.baseline} previous={self.previous_instr_ident} '
+        logger.debug(f'{kamlet.clock.cycle}: IdentQuery: kamlet '
+                     f'({kamlet.min_x},{kamlet.min_y}) witem created '
+                     f'ident={self.instr_ident} baseline={self.baseline} '
                      f'distance={distance}')
 
-        is_origin = (kamlet.min_x == kamlet.params.west_offset
-                     and kamlet.min_y == kamlet.params.north_offset)
+        n_iq = kamlet.params.n_ident_query_slots
+        max_tags = kamlet.params.max_response_tags
+        next_instr_ident = max_tags + ((self.instr_ident + 1) % n_iq)
+        next_iq_free = not kamlet.synchronizer.has_local_seen(next_instr_ident)
         witem = WaitingIdentQuery(
-            ident=self.instr_ident,
-            is_origin=is_origin,
-            baseline=self.baseline,
-            previous_instr_ident=self.previous_instr_ident,
-        )
+            ident=self.instr_ident, distance=distance)
+        # Explicitly call monitor once so that they are guaranteed to try to
+        # sync before the next IdentQuery comes.
+        sync_keys = [x for x in range(512, 512+16) if kamlet.synchronizer.has_local_seen(x)]
+        logger.info(f'{kamlet.clock.cycle}: ({kamlet.min_x}, {kamlet.min_y}) IdentQuery executing. sync keys are {sync_keys}')
+        await witem.monitor_kamlet(kamlet)
         kamlet.monitor.record_witem_created(
             self.instr_ident, kamlet.min_x, kamlet.min_y, 'WaitingIdentQuery')
         kamlet.cache_table.add_witem_immediately(witem=witem)
-
-        # Report to synchronizer (uses min aggregation, None if no waiting items)
-        kamlet.synchronizer.local_event(self.instr_ident, value=distance)
+        
 
 
 class WaitingIdentQuery(WaitingItem):
     """Waiting item for IdentQuery instruction.
 
-    Monitors sync completion and has kamlet (0,0) send the result to lamlet.
+    Defers the synchronizer local_event until the kamlet has at least one
+    IQ slot other than this query's free in its own sync states. Without
+    that gating, a saturated kamlet would contribute "every slot still
+    pending" to the MIN_PAIR aggregation and stall slot reclaim on the
+    lamlet, since MIN_PAIR can never drop once every participant has
+    contributed a saturated value.
+
+    Once local_event has fired and the synchronizer's sync is complete,
+    ready() returns True so finalize can clear the sync state.
     """
 
-    def __init__(self, ident: int, is_origin: bool, baseline: int, previous_instr_ident: int):
+    def __init__(self, ident: int, distance: int | None):
         super().__init__(item=None, instr_ident=ident)
-        self.is_origin = is_origin
-        self.baseline = baseline
-        self.previous_instr_ident = previous_instr_ident
-        self.response_sent = False
-        self.sync_state = WaitingItemSyncState.IN_PROGRESS
-        self.sync_min_value: int | None = None
+        self.distance = distance
+        self.local_event_fired = False
+        self.complete = False
 
     def ready(self) -> bool:
-        return self.response_sent
+        return self.complete
 
     async def monitor_kamlet(self, kamlet: 'Kamlet') -> None:
-        if self.response_sent:
-            return
-
-        # Poll synchronizer for completion
-        if self.sync_state == WaitingItemSyncState.IN_PROGRESS:
-            if kamlet.synchronizer.is_complete(self.instr_ident):
-                self.sync_state = WaitingItemSyncState.COMPLETE
-                self.sync_min_value = kamlet.synchronizer.get_min_value(self.instr_ident)
-
-        if self.sync_state == WaitingItemSyncState.COMPLETE:
-            if self.is_origin:
-                # If no kamlet had waiting items, compute fallback distance
-                min_distance = self.sync_min_value
-                if min_distance is None:
-                    max_tags = kamlet.params.max_response_tags
-                    # No active items anywhere - all idents are free
-                    min_distance = max_tags
-
-                logger.debug(f'{kamlet.clock.cycle}: IdentQuery: kamlet (0,0) '
-                             f'sending response min_distance={min_distance} '
-                             f'(sync_min={self.sync_min_value}) ident={self.instr_ident}')
-                await send_ident_query_response(kamlet, self.instr_ident, min_distance)
-            self.response_sent = True
+        n_iq = kamlet.params.n_ident_query_slots
+        max_tags = kamlet.params.max_response_tags
+        next_instr_ident = max_tags + ((self.instr_ident + 1) % n_iq)
+        next_iq_free = not kamlet.synchronizer.has_local_seen(next_instr_ident)
+        if not self.local_event_fired and not next_iq_free:
+            logger.info(
+                f'{kamlet.clock.cycle}: IdentQuery: kamlet '
+                f'({kamlet.min_x},{kamlet.min_y}) not firing local_event because next iq not free'
+                f'ident={self.instr_ident} next_ident is {next_instr_ident}'
+                )
+        if not self.local_event_fired and next_iq_free:
+            iq_slot_distance = (
+                kamlet.get_oldest_pending_iq_slot_distance(self.instr_ident))
+            packed = pack_min_pair(self.distance, iq_slot_distance)
+            logger.info(
+                f'{kamlet.clock.cycle}: IdentQuery: kamlet '
+                f'({kamlet.min_x},{kamlet.min_y}) firing local_event '
+                f'ident={self.instr_ident} distance={self.distance} '
+                f'iq_slot_distance={iq_slot_distance} packed=0x{packed:x}')
+            kamlet.synchronizer.local_event(
+                self.instr_ident, value=packed,
+                op=SyncAggOp.MIN_PAIR, width=MIN_PAIR_TOTAL_WIDTH)
+            self.local_event_fired = True
+        elif not self.complete and kamlet.synchronizer.is_complete(self.instr_ident):
+            self.complete = True
+            logger.debug(
+                f'{kamlet.clock.cycle}: IdentQuery: kamlet '
+                f'({kamlet.min_x},{kamlet.min_y}) witem complete '
+                f'ident={self.instr_ident}')
 
     async def finalize(self, kamlet: 'Kamlet') -> None:
         # Clean up sync state
+        logger.debug(
+            f'{kamlet.clock.cycle}: IdentQuery: kamlet '
+            f'({kamlet.min_x},{kamlet.min_y}) finalize cleared sync_state '
+            f'ident={self.instr_ident}')
         kamlet.synchronizer.clear_sync(self.instr_ident)
-
-
-async def send_ident_query_response(kamlet: 'Kamlet', response_ident: int, min_distance: int):
-    """Send the ident query result back to the lamlet."""
-    jamlet = kamlet.jamlets[0]
-
-    length = 1
-    packet_data = [min_distance]
-
-    header = IdentHeader(
-        target_x=jamlet.lamlet_x,
-        target_y=jamlet.lamlet_y,
-        source_x=jamlet.x,
-        source_y=jamlet.y,
-        message_type=MessageType.IDENT_QUERY_RESP,
-        send_type=SendType.SINGLE,
-        length=length,
-        ident=response_ident,
-    )
-
-    # Get kinstr span as parent (message completes when lamlet receives it)
-    kinstr_span_id = jamlet.monitor.get_kinstr_span_id(response_ident)
-
-    packet = [header] + packet_data
-    await jamlet.send_packet(packet, parent_span_id=kinstr_span_id)

@@ -27,6 +27,7 @@ from zamlet.kamlet.cache_table import (
     CacheTable, CacheState, ProtocolState, SendState)
 from zamlet.lamlet.lamlet_waiting_item import (
     LamletWaitingItem, LamletWaitingFuture, LamletWaitingReadRegElement,
+    LamletWaitingVrgatherBroadcast,
     LamletWaitingLoadIndexedElement, LamletWaitingStoreIndexedElement)
 from zamlet.monitor import CompletionType, SpanType
 from zamlet.params import ZamletParams
@@ -92,9 +93,18 @@ class Oamlet:
             cache_table=None,  # Lamlet manages its own waiting items
             monitor=self.monitor,
         )
-        self.scalar = ScalarState(clock, params, synchronizer=self.synchronizer)
+        self.scalar = ScalarState(clock, params, self.monitor,
+                                  synchronizer=self.synchronizer)
         self.tlb = TLB(params)
         self.vrf_ordering: List[Ordering|None] = [None for _ in range(params.n_vregs)]
+        # Per-vline pending-write counter. Incremented when the lamlet has
+        # dispatched an async operation that will eventually emit a kinstr
+        # writing this vreg (e.g. vrgather.vx waiting on a remote element
+        # read), decremented when the kinstr is appended to the instruction
+        # buffer. Dispatch sites must ``await_vreg_write_pending`` before
+        # emitting kinstrs that read or write the vreg, so later instructions
+        # can't slip a kinstr past the pending write.
+        self.vrf_write_pending: List[int] = [0 for _ in range(params.n_vregs)]
         self.vl = 0
         self.vtype = 0
         self.vstart = 0
@@ -173,18 +183,21 @@ class Oamlet:
         # Track oldest active instr_ident for flow control (None = unknown/all free)
         self._oldest_active_ident: int | None = None
         # Ident query circular buffer.
-        # Each slot has a dedicated sync ident. _iq_oldest is the next response
-        # we expect; _iq_newest is the next slot to use for sending.
-        # Pointers wrap at n_ident_query_slots. _iq_full distinguishes
-        # full (oldest==newest, full=True) from empty (oldest==newest,
-        # full=False).
+        # Each slot has a dedicated sync ident. _next_ident_query_slot is the next
+        # slot to use for sending. A slot is free iff _iq_slots[idx] is None.
+        # Pointers wrap at n_ident_query_slots.
+        # _oldest_active_ident_query_slot: oldest slot still allocated (hasn't been freed).
+        # _next_unconsumed_ident_query_slot: next slot whose response the poller expects.
+        # A slot is freed when some later query's MIN_PAIR.high confirms
+        # every participant has drained sync state for it; at that point
+        # _oldest_active_ident_query_slot advances past the slot.
         n_iq = params.n_ident_query_slots
-        self._iq_slots = [IdentQuerySlot() for _ in range(n_iq)]
+        self._iq_slots = [None for _ in range(n_iq)]
         self._iq_idents = [
             params.max_response_tags + i for i in range(n_iq)]
-        self._iq_oldest = 0
-        self._iq_newest = 0
-        self._iq_full = False
+        self._oldest_active_ident_query_slot = None
+        self._next_unconsumed_ident_query_slot = 0
+        self._next_ident_query_slot = 0
         # Dedicated idents for ordered barrier instructions (after ident query idents)
         self._ordered_barrier_idents = [
             params.max_response_tags + n_iq + i
@@ -280,6 +293,26 @@ class Oamlet:
             f'active={active}/{capacity}')
         return regs
 
+    def alloc_temp_reg_group(self, n: int) -> list[int]:
+        """Reserve an aligned consecutive scratch arch register group."""
+        assert n >= 1 and (n & (n - 1)) == 0, \
+            f"scratch register group size must be a power of two, got {n}"
+        free = set(self._scratch_arch_free)
+        for start in range(self.params.n_arch_vregs, self.params.n_vregs - n + 1, n):
+            regs = list(range(start, start + n))
+            if all(reg in free for reg in regs):
+                for reg in regs:
+                    self._scratch_arch_free.remove(reg)
+                active = self._scratch_active_count()
+                capacity = self.params.n_vregs - self.params.n_arch_vregs
+                logger.debug(
+                    f'{self.clock.cycle}: lamlet alloc_temp_reg_group '
+                    f'n={n} regs={regs} active={active}/{capacity}')
+                return regs
+        raise AssertionError(
+            f"no aligned consecutive scratch group of {n} regs available; "
+            f"free={list(self._scratch_arch_free)}")
+
     async def free_temp_regs(self, regs: list[int], parent_span_id: int) -> None:
         """Release scratch arch indices.
 
@@ -347,23 +380,85 @@ class Oamlet:
         vlmul = {1: 0, 2: 1, 4: 2, 8: 3}[lmul]
         self.vtype = (vsew << 3) | vlmul
 
-    def set_vrf_ordering(self, vd: int, ew: int):
-        """Set vrf_ordering for all vline registers in the LMUL group."""
-        ordering = Ordering(self.word_order, ew)
-        n_vlines = self.lmul
-        logger.info(f'set_vrf_ordering: vd=v{vd} ew={ew} '
+    def emul_for_eew(self, eew: int) -> int:
+        """EMUL = LMUL * EEW / SEW, clamped to a minimum of 1 vline
+        (fractional EMUL still occupies one register)."""
+        return max(1, self.lmul * eew // self.sew)
+
+    async def await_vreg_write_pending(self, vreg: int, n_vlines: int) -> None:
+        """Block until no pending async writes target any vline in the range.
+
+        Dispatch sites that read or write architectural vreg state must call
+        this before setting/asserting ``vrf_ordering`` or emitting kinstrs
+        that touch the vreg, so deferred writes (e.g. vrgather.vx's
+        VBroadcastOp) are ordered ahead of later consumers.
+        """
+        while any(self.vrf_write_pending[vreg + i] > 0 for i in range(n_vlines)):
+            await self.clock.next_cycle
+
+    def set_vrf_ordering(self, vd: int, eew: int):
+        """Unconditionally relabel vrf_ordering for every vline in ``vd``'s
+        EMUL group. Intended for full-overwrite destinations where the prior
+        data is being replaced — no read, no remap, no check. For partial
+        writes or reads, use ``ensure_vrf_ordering`` instead."""
+        ordering = Ordering(self.word_order, eew)
+        n_vlines = self.emul_for_eew(eew)
+        logger.info(f'set_vrf_ordering: vd=v{vd} eew={eew} '
                     f'lmul={self.lmul} n_vlines={n_vlines} regs=v{vd}..v{vd + n_vlines - 1}')
         for i in range(n_vlines):
             self.vrf_ordering[vd + i] = ordering
 
-    def assert_vrf_ordering(self, vreg: int, ew: int):
-        """Assert vrf_ordering matches ew for all vline registers in the LMUL group."""
-        for i in range(self.lmul):
+    async def ensure_vrf_ordering(
+            self, vreg: int, ew: int, span_id: int,
+            *, allow_uninitialized: bool = False) -> None:
+        """Make vreg's ordering match (self.word_order, ew) across its EMUL group.
+
+        Uninitialized entries (None): set the target ordering if
+        ``allow_uninitialized`` is True, else assert. word_order mismatch is
+        always a fatal assert — we never silently remap across word_orders.
+        ew mismatches are remapped via scratch memory, except that either side
+        at ew=1 (mask register) asserts because remap_reg_ew requires
+        ew % 8 == 0. After any required remap, the final ordering is set.
+        """
+        n_vlines = self.emul_for_eew(ew)
+        regs_to_remap = []
+        for i in range(n_vlines):
             reg = vreg + i
-            assert self.vrf_ordering[reg] is not None, (
-                f'v{reg} has no ordering (expected ew={ew})')
-            assert self.vrf_ordering[reg].ew == ew, (
-                f'v{reg} ordering ew={self.vrf_ordering[reg].ew} != expected ew={ew}')
+            cur = self.vrf_ordering[reg]
+            if cur is None:
+                assert allow_uninitialized, (
+                    f'v{reg} has no ordering (expected ew={ew})')
+                continue
+            assert cur.word_order == self.word_order, (
+                f'v{reg} word_order={cur.word_order} does not match current '
+                f'word_order={self.word_order}; refusing to silently remap')
+            if cur.ew == ew:
+                continue
+            assert cur.ew != 1 and ew != 1, (
+                f'v{reg} mask-register ew mismatch (cur ew={cur.ew}, '
+                f'target ew={ew}); mask regs cannot round-trip through memory')
+            regs_to_remap.append(reg)
+        if regs_to_remap:
+            dst_ordering = Ordering(self.word_order, ew)
+            logger.warning(
+                f'ensure_vrf_ordering: remapping v{regs_to_remap} to ew={ew}')
+            await unordered.remap_reg_ew(
+                self, regs_to_remap, regs_to_remap, dst_ordering, span_id)
+        self.set_vrf_ordering(vreg, ew)
+
+    def mark_vreg_write_pending(self, vreg: int, eew: int) -> None:
+        """Increment the pending-write counter for every vline in vreg's EMUL group."""
+        n_vlines = self.emul_for_eew(eew)
+        for i in range(n_vlines):
+            self.vrf_write_pending[vreg + i] += 1
+
+    def clear_vreg_write_pending(self, vreg: int, eew: int) -> None:
+        """Decrement the pending-write counter (paired with mark_vreg_write_pending)."""
+        n_vlines = self.emul_for_eew(eew)
+        for i in range(n_vlines):
+            assert self.vrf_write_pending[vreg + i] > 0, (
+                f'clear_vreg_write_pending: v{vreg + i} counter already zero')
+            self.vrf_write_pending[vreg + i] -= 1
 
     def allocate_memory(self, address: GlobalAddress, size: SizeBytes, memory_type: MemoryType,
                         readable: bool = True, writable: bool = True):
@@ -637,6 +732,38 @@ class Oamlet:
                                 if byte_val is not None:
                                     neighbor.receive(recv_dir, byte_val)
 
+    async def monitor_waiting_items(self):
+        """Advance post-response state on lamlet waiting items.
+
+        Each cycle, iterates the waiting_items deque and calls
+        ``monitor_lamlet`` on each. Items that transition to ``ready()``
+        (e.g. LamletWaitingVrgatherBroadcast after the VBroadcastOp is
+        appended) are removed. Items with purely sync response-path
+        removal (LamletWaitingReadRegElement etc.) have a no-op
+        ``monitor_lamlet`` and never become ``ready`` via this path.
+        """
+        while True:
+            await self.clock.next_cycle
+            for item in list(self.waiting_items):
+                if item not in self.waiting_items:
+                    continue
+                await item.monitor_lamlet(self)
+                if item.ready():
+                    self.waiting_items.remove(item)
+                    break
+
+    async def monitor_ident_queries(self):
+        """Poll the lamlet synchronizer for completed IdentQuery syncs.
+
+        The lamlet is a participant in each IdentQuery's sync network;
+        when its own sync for a slot's ident becomes complete, the
+        aggregated MIN_PAIR value is available directly from
+        ``self.synchronizer``. No mesh response is needed.
+        """
+        while True:
+            await self.clock.next_cycle
+            ident_query.poll_ident_query_response(self)
+
     async def monitor_channel0(self):
         """Handle channel 0 packets (responses that must be consumed immediately)."""
         buffer = self._receive_buffers[0]
@@ -665,9 +792,6 @@ class Oamlet:
         assert isinstance(header, Header)
         assert header.length == len(packet) - 1
 
-        # Get message span_id before completing it (completing may trigger parent auto-complete)
-        message_span_id = self.monitor.get_message_span_id_by_header(header)
-
         # Record message received for all channel 0 responses
         self.monitor.record_message_received_by_header(
             header, dst_x=self.instr_x, dst_y=self.instr_y)
@@ -685,10 +809,16 @@ class Oamlet:
             assert len(packet) == 2
             item = self.get_witem_by_ident(header.ident)
             assert item is not None, f"No waiting item for ident {header.ident}"
-            assert isinstance(item, LamletWaitingReadRegElement)
-            item.resolve(packet[1])
-            self.remove_witem_by_ident(header.ident)
-            self.monitor.complete_kinstr(header.ident)
+            if isinstance(item, LamletWaitingVrgatherBroadcast):
+                # Stash the word; monitor_waiting_items will emit the
+                # VBroadcastOp and remove the item once the buffer has room.
+                item.resolve(packet[1])
+                self.monitor.complete_kinstr(header.ident)
+            else:
+                assert isinstance(item, LamletWaitingReadRegElement)
+                item.resolve(packet[1])
+                self.remove_witem_by_ident(header.ident)
+                self.monitor.complete_kinstr(header.ident)
         elif header.message_type == MessageType.READ_WORDS_RESP:
             item = self.get_witem_by_ident(header.ident)
             assert item is not None, f"No waiting item for ident {header.ident}"
@@ -697,15 +827,6 @@ class Oamlet:
             self.remove_witem_by_ident(header.ident)
             self.monitor.complete_kinstr(header.ident)
             logger.debug(f'{self.clock.cycle}: lamlet: Got a READ_WORDS_RESP from ({header.source_x, header.source_y}) is {packet[1:]}')
-        elif header.message_type == MessageType.IDENT_QUERY_RESP:
-            # Get kinstr span_id from message span (message already completed above,
-            # which may have auto-completed the kinstr and removed it from lookup)
-            message_span = self.monitor.get_span(message_span_id)
-            kinstr_span_id = message_span.parent.span_id if message_span.parent else None
-            assert len(packet) == 2, f"packet len {len(packet)}"
-            min_distance = packet[1]
-            ident_query.receive_ident_query_response(
-                self, header.ident, min_distance, kinstr_span_id)
         elif header.message_type == MessageType.LOAD_INDEXED_ELEMENT_RESP:
             assert len(packet) == 1
             assert isinstance(header, ElementIndexHeader)
@@ -849,7 +970,7 @@ class Oamlet:
     async def _flush_packet(self, packet, packet_dest):
         """Send a packet if non-empty. Returns ([], None)."""
         if packet:
-            logger.info(
+            logger.debug(
                 f'{self.clock.cycle}: lamlet: flush packet'
                 f' size={len(packet)} dest={packet_dest}'
                 f' tokens={self._available_tokens}')
@@ -901,6 +1022,7 @@ class Oamlet:
 
                 # Pop and add to packet
                 self.instruction_buffer.popleft()
+                logger.info('popping from instr buffer')
                 packet.append(instr)
                 packet_dest = k_index
                 self._use_token(k_index)
@@ -909,19 +1031,26 @@ class Oamlet:
 
                 # Ident query threshold reached
                 if ident_query.should_send_ident_query(self):
+                    logger.info('trying to add ident query')
                     packet, packet_dest = \
                         await self._add_ident_query(packet, packet_dest)
+                    logger.info('added ident query')
 
                 # Max packet length
                 if len(packet) >= self.params.instructions_in_packet:
+                    logger.info('flush packet: start')
                     packet, packet_dest = await self._flush_packet(
                         packet, packet_dest)
+                    logger.info('flush packet: end')
+            logger.info('instr buffer empty')
 
             # Buffer empty but ident query needed
             if not added_any and ident_query.should_send_ident_query(self):
+                logger.info('add_ident_query: start')
                 packet, packet_dest = \
                     await self._add_ident_query(packet, packet_dest)
                 added_any = True
+                logger.info('add_ident_query: end')
 
             # Idle timeout: flush packet if no new instructions for a while
             if added_any:
@@ -1384,6 +1513,7 @@ class Oamlet:
         element_bytes = ordering.ew // 8
         is_unit_stride = stride_bytes is None or stride_bytes == element_bytes
         is_aligned = addr % self.params.vline_bytes == 0
+        await self.await_vreg_write_pending(vd, emul)
         if is_unit_stride and is_aligned:
             await self._remap_weak_vlines_for_load(
                 addr, ordering, emul, parent_span_id)
@@ -1403,6 +1533,7 @@ class Oamlet:
         element_bytes = ordering.ew // 8
         is_unit_stride = stride_bytes is None or stride_bytes == element_bytes
         is_aligned = addr % self.params.vline_bytes == 0
+        await self.await_vreg_write_pending(vs, emul)
         if is_unit_stride and is_aligned:
             await self._remap_partial_vlines_for_store(
                 addr, ordering, emul, n_elements, start_index, mask_reg,
@@ -1453,6 +1584,17 @@ class Oamlet:
                                         index_ew, data_ew, word_order, vlmax,
                                         mask_reg, parent_span_id)
 
+    async def vslide(self, vd: int, vs2: int,
+                     offset: int, direction: 'vregister.SlideDirection',
+                     start_index: int, n_elements: int,
+                     data_ew: int,
+                     word_order: addresses.WordOrder, vlmax: int,
+                     mask_reg: int | None, parent_span_id: int) -> int:
+        """Execute vslideup / vslidedown. Returns sync_ident."""
+        return await vregister.vslide(self, vd, vs2, offset, direction,
+                                      start_index, n_elements, data_ew,
+                                      word_order, vlmax, mask_reg, parent_span_id)
+
 
     def update(self):
         for kamlet in self.kamlets:
@@ -1477,6 +1619,8 @@ class Oamlet:
         self.clock.create_task(self.sync_network_connections())
         self.clock.create_task(self.synchronizer.run())
         self.clock.create_task(self.monitor_channel0())
+        self.clock.create_task(self.monitor_waiting_items())
+        self.clock.create_task(self.monitor_ident_queries())
         self.clock.create_task(self.monitor_channel1andup())
         self.clock.create_task(self.monitor_instruction_buffer())
         self.clock.create_task(self._monitor_instruction_buffer_state())
@@ -1534,4 +1678,3 @@ class Oamlet:
             self, op, dst, src_vector, src_scalar_reg, mask_reg,
             n_elements, src_ew, accum_ew, word_order, vlmax, parent_span_id,
         )
-

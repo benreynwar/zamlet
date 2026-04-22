@@ -110,6 +110,26 @@ jobs:
           path: ~/.cache/bazel
           key: ${{ steps.setup.outputs.cache-key }}
 
+  kernel-tests-fft:
+    runs-on: ubuntu-latest
+    env:
+      CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/nix-setup
+        id: setup
+        with:
+          cache-prefix: bazel-kernel-fft
+      - name: Run kernel tests (FFT)
+        run: |
+          nix-shell --run "bazel test //python/zamlet/kernel_tests:tests_fft --test_output=errors --keep_going"
+      - name: Save Bazel cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.cache/bazel
+          key: ${{ steps.setup.outputs.cache-key }}
+
   cocotb-tests:
     runs-on: ubuntu-latest
     env:

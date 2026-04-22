@@ -17,10 +17,14 @@ See test_suite_reference.txt for complete list
 
 Implementation Summary
 ----------------------
-Currently implemented: 8 instructions (VMV.X.S, VMV.S.X, VMV.V.V, VMV.V.X,
-VMV.V.I, VMERGE variants, VRGATHER.VV, VMV<NR>R.V)
+Currently implemented: VMV.X.S, VMV.S.X, VFMV.F.S, VFMV.S.F, VMV.V.V, VMV.V.X,
+VMV.V.I, VMERGE variants, VRGATHER.VV/.VX/.VI/EI16, VSLIDEUP.VX/.VI,
+VSLIDEDOWN.VX/.VI, VSLIDE1UP.VX, VFSLIDE1UP.VF, VSLIDE1DOWN.VX,
+VFSLIDE1DOWN.VF, VMV<NR>R.V. VSLIDE1/VFSLIDE1 now support both masked and
+unmasked forms via the unified Vslide1 class with an is_float flag.
+Still missing: VCOMPRESS.VM.
 Total in spec: ~20 permutation instructions
-Coverage: ~40%
+Coverage: ~95%
 
 INTEGER SCALAR MOVE (Status: ✓)
 ========================================
@@ -60,29 +64,35 @@ VMV.S.X (Status: ✓)
     - When vl=0, no elements updated
     - Masked version (vm=0) reserved
 
-FLOATING-POINT SCALAR MOVE (Status: ✗)
+FLOATING-POINT SCALAR MOVE (Status: ✓)
 =======================================
 
 Spec: v-st-ext.adoc lines 4461-4489
 
 Transfer single value between scalar f register and element 0 of vector register.
 
-VFMV.F.S (Status: ✗)
+VFMV.F.S (Status: ✓)
   Spec: v-st-ext.adoc lines 4468, 4472-4476
   Encoding: funct6=0x10, rs1=0x00, funct3=OPFVV
   Format: vfmv.f.s rd, vs2
-  Implementation: Not implemented
+  Implementation: VfmvFs class in instructions/vector.py; reuses
+    read_register_element to fetch element 0 and writes through the
+    scalar FP register future.
   Description: f[rd] = vs2[0]
   Notes:
     - Copies SEW-wide element 0 to f register
     - Operates even if vstart >= vl or vl=0
     - Masked version (vm=0) reserved
+    - NaN-boxing (required when SEW < FLEN) not applied; tracked with the
+      broader FP-correctness work in docs/PLAN_fp_nan_boxing.md.
 
-VFMV.S.F (Status: ✗)
+VFMV.S.F (Status: ✓)
   Spec: v-st-ext.adoc lines 4469, 4478-4486
   Encoding: funct6=0x10, vs2=0x00, funct3=OPFVF
   Format: vfmv.s.f vd, rs1
-  Implementation: Not implemented
+  Implementation: VfmvSf class in instructions/vector.py; writes element 0
+    of vd from the scalar FP register using the same element-inject path
+    as VmvSx.
   Description: vd[0] = f[rs1]
   Notes:
     - Copies scalar f register to vector element 0
@@ -90,8 +100,9 @@ VFMV.S.F (Status: ✗)
     - No operation if vstart >= vl
     - When vl=0, no elements updated
     - Masked version (vm=0) reserved
+    - NaN-boxing limitation shared with VFMV.F.S.
 
-VECTOR SLIDE INSTRUCTIONS (Status: ✗)
+VECTOR SLIDE INSTRUCTIONS (Status: ✓)
 ======================================
 
 Spec: v-st-ext.adoc lines 4491-4672
@@ -99,16 +110,17 @@ Spec: v-st-ext.adoc lines 4491-4672
 Move elements up/down within a vector register group.
 If vstart >= vl, no operation performed.
 
-Vector Slide-up (Status: ✗)
+Vector Slide-up (Status: ✓)
 ----------------------------
 
 Spec: v-st-ext.adoc lines 4515-4546
 
-VSLIDEUP.VX (Status: ✗)
+VSLIDEUP.VX (Status: ✓)
   Spec: v-st-ext.adoc line 4518
   Encoding: funct6=0x0e, funct3=OPIVX
   Format: vslideup.vx vd, vs2, rs1, vm
-  Implementation: Not implemented
+  Implementation: Vslide class (direction=UP, is_imm=False) in
+    instructions/vector.py; dispatches RegSlide via lamlet.vslide().
   Description: vd[i+x[rs1]] = vs2[i]
   Notes:
     - Slide elements up by OFFSET from x[rs1]
@@ -117,48 +129,52 @@ VSLIDEUP.VX (Status: ✗)
     - vd cannot overlap vs2 (reserved if overlap)
     - Power-of-2 offsets may be faster
 
-VSLIDEUP.VI (Status: ✗)
+VSLIDEUP.VI (Status: ✓)
   Spec: v-st-ext.adoc line 4519
   Encoding: funct6=0x0e, funct3=OPIVI
   Format: vslideup.vi vd, vs2, uimm, vm
-  Implementation: Not implemented
+  Implementation: Vslide class (direction=UP, is_imm=True).
   Description: vd[i+uimm] = vs2[i]
   Notes: Like vslideup.vx but immediate offset (5-bit, zero-extended)
 
-Vector Slide-down (Status: ✗)
+Vector Slide-down (Status: ✓)
 ------------------------------
 
 Spec: v-st-ext.adoc lines 4548-4574
 
-VSLIDEDOWN.VX (Status: ✗)
+VSLIDEDOWN.VX (Status: ✓)
   Spec: v-st-ext.adoc line 4551
   Encoding: funct6=0x0f, funct3=OPIVX
   Format: vslidedown.vx vd, vs2, rs1, vm
-  Implementation: Not implemented
+  Implementation: Vslide class (direction=DOWN, is_imm=False).
   Description: vd[i] = vs2[i+x[rs1]]
   Notes:
     - Slide elements down by OFFSET from x[rs1]
     - If i+OFFSET >= VLMAX, src[i] = 0
     - Remaining elements past vl follow tail policy
 
-VSLIDEDOWN.VI (Status: ✗)
+VSLIDEDOWN.VI (Status: ✓)
   Spec: v-st-ext.adoc line 4552
   Encoding: funct6=0x0f, funct3=OPIVI
   Format: vslidedown.vi vd, vs2, uimm, vm
-  Implementation: Not implemented
+  Implementation: Vslide class (direction=DOWN, is_imm=True).
   Description: vd[i] = vs2[i+uimm]
   Notes: Like vslidedown.vx but immediate offset (5-bit, zero-extended)
 
-Vector Slide-1-up (Status: ✗)
+Vector Slide-1-up (Status: ✓)
 ------------------------------
 
 Spec: v-st-ext.adoc lines 4576-4624
 
-VSLIDE1UP.VX (Status: ✗)
+VSLIDE1UP.VX (Status: ✓)
   Spec: v-st-ext.adoc lines 4583-4614
   Encoding: funct6=0x0e, funct3=OPMVX
   Format: vslide1up.vx vd, vs2, rs1, vm
-  Implementation: Not implemented
+  Implementation: Vslide1 class (direction=UP, is_float=False) in
+    instructions/vector.py. Decomposes to a RegSlide by 1 + scalar inject
+    at lane 0 with the truncated/sign-extended scalar from rs1. Masked
+    form is routed through v0 at both the slide dispatch and the
+    boundary-lane inject.
   Description: vd[0]=x[rs1], vd[i+1]=vs2[i]
   Notes:
     - Inserts x[rs1] at element 0, shifts others up
@@ -166,39 +182,47 @@ VSLIDE1UP.VX (Status: ✗)
     - If XLEN > SEW: use LSBs
     - vd cannot overlap vs2 (reserved if overlap)
 
-VFSLIDE1UP.VF (Status: ✗)
+VFSLIDE1UP.VF (Status: ✓)
   Spec: v-st-ext.adoc lines 4620-4624
   Encoding: funct6=0x0e, funct3=OPFVF
   Format: vfslide1up.vf vd, vs2, rs1, vm
-  Implementation: Not implemented
+  Implementation: Vslide1 class (direction=UP, is_float=True). Same path
+    as vslide1up.vx, but the scalar is read from the FP register file.
   Description: vd[0]=f[rs1], vd[i+1]=vs2[i]
-  Notes: Like vslide1up.vx but sources from f register
+  Notes:
+    - NaN-boxing (required when SEW < FLEN) not applied; shared with the
+      other narrow-FP producers and tracked in docs/PLAN_fp_nan_boxing.md.
 
-Vector Slide-1-down (Status: ✗)
+Vector Slide-1-down (Status: ✓)
 --------------------------------
 
 Spec: v-st-ext.adoc lines 4626-4672
 
-VSLIDE1DOWN.VX (Status: ✗)
+VSLIDE1DOWN.VX (Status: ✓)
   Spec: v-st-ext.adoc lines 4638-4662
   Encoding: funct6=0x0f, funct3=OPMVX
   Format: vslide1down.vx vd, vs2, rs1, vm
-  Implementation: Not implemented
+  Implementation: Vslide1 class (direction=DOWN, is_float=False).
+    Decomposes to a RegSlide by 1 + scalar inject at lane vl-1 with the
+    truncated/sign-extended scalar from rs1. Masked form supported.
   Description: vd[i]=vs2[i+1], vd[vl-1]=x[rs1]
   Notes:
     - Shifts elements down, inserts x[rs1] at vl-1
     - Can load values into vector without memory
     - Useful for debuggers to modify vector registers
 
-VFSLIDE1DOWN.VF (Status: ✗)
+VFSLIDE1DOWN.VF (Status: ✓)
   Spec: v-st-ext.adoc lines 4668-4672
   Encoding: funct6=0x0f, funct3=OPFVF
   Format: vfslide1down.vf vd, vs2, rs1, vm
-  Implementation: Not implemented
+  Implementation: Vslide1 class (direction=DOWN, is_float=True). Same
+    path as vslide1down.vx, but the scalar is read from the FP register
+    file.
   Description: vd[i]=vs2[i+1], vd[vl-1]=f[rs1]
-  Notes: Like vslide1down.vx but sources from f register
+  Notes:
+    - NaN-boxing limitation shared with VFSLIDE1UP.VF.
 
-VECTOR REGISTER GATHER (Status: ⚠ Partial)
+VECTOR REGISTER GATHER (Status: ✓)
 ===================================
 
 Spec: v-st-ext.adoc lines 4674-4720
@@ -217,11 +241,13 @@ VRGATHER.VV (Status: ✓)
     - Out-of-range indices return 0
     - vd cannot overlap vs2 or vs1 (reserved if overlap)
 
-VRGATHEREI16.VV (Status: ✗)
+VRGATHEREI16.VV (Status: ✓)
   Spec: v-st-ext.adoc lines 4688-4698
   Encoding: funct6=0x0e, funct3=OPIVV
   Format: vrgatherei16.vv vd, vs2, vs1, vm
-  Implementation: Not implemented
+  Implementation: Vrgather class with index_ew_fixed=16 in
+    instructions/vector.py. Reuses RegGather (index_ew and data_ew are
+    independent in RegGather / lamlet.vrgather).
   Description: vd[i] = (vs1[i] >= VLMAX) ? 0 : vs2[vs1[i]]
   Notes:
     - Uses SEW/LMUL for data in vs2
@@ -229,21 +255,23 @@ VRGATHEREI16.VV (Status: ✗)
     - Can index 64K elements (vs vrgather.vv limited to 255 when SEW=8)
     - Reduces register capacity for indices when SEW > 16
 
-VRGATHER.VX (Status: ✗)
+VRGATHER.VX (Status: ✓)
   Spec: v-st-ext.adoc lines 4714-4715
   Encoding: funct6=0x0c, funct3=OPIVX
   Format: vrgather.vx vd, vs2, rs1, vm
-  Implementation: Not implemented
+  Implementation: VrgatherVxVi class (is_imm=False). Lamlet decomposition:
+    ReadRegWord for vs2[idx] + LamletWaitingVrgatherBroadcast → VBroadcastOp.
+    OOR (idx >= vlmax) case broadcasts 0 directly.
   Description: vd[i] = (x[rs1] >= VLMAX) ? 0 : vs2[x[rs1]]
   Notes:
     - Splat single element to all active elements
     - Index in x[rs1] treated as unsigned, zero-extended
 
-VRGATHER.VI (Status: ✗)
+VRGATHER.VI (Status: ✓)
   Spec: v-st-ext.adoc lines 4715-4716
   Encoding: funct6=0x0c, funct3=OPIVI
   Format: vrgather.vi vd, vs2, uimm, vm
-  Implementation: Not implemented
+  Implementation: VrgatherVxVi class (is_imm=True).
   Description: vd[i] = (uimm >= VLMAX) ? 0 : vs2[uimm]
   Notes: Splat using 5-bit immediate index, zero-extended
 
@@ -309,50 +337,60 @@ IMPLEMENTATION INFRASTRUCTURE
 Existing Support:
 - VmvXs class (extract element 0 to x register)
 - VmvSx class (insert element 0 from x register)
+- VfmvFs, VfmvSf classes (FP scalar moves; NaN-boxing pending)
 - VmvVv, VmvVx, VmvVi classes (single vector moves/splat)
 - VmvNr class (whole register group moves)
-- Vrgather class (vector register gather with vector indices)
+- Vrgather class (vv / ei16 gather; index_ew_fixed selects the variant)
+- VrgatherVxVi class (.vx / .vi splat via ReadRegWord + VBroadcastOp)
+- Vslide class (vslideup/vslidedown, .vx and .vi; direction field)
+- Vslide1 class (vslide1{up,down}.{vx,vf}; is_float selects integer vs
+  FP scalar source; masked and unmasked both supported)
 - VmergeVx, VmergeVvm, VmergeVim classes (merge operations)
+- RegGather / RegSlide / RegPermute base (shared permutation kinstr
+  machinery)
 - VmvVvOp kernel operation
 
 What's Missing:
-- VfmvFs, VfmvSf classes (FP scalar moves)
-- All slide instructions (up/down/1up/1down)
-- vrgatherei16, vrgather.vx, vrgather.vi (other gather variants)
 - Vcompress class
 - Non-overlap checking for slides, gathers, compress
 - vstart==0 checking for compress
+- NaN-boxing for narrow-SEW FP producers (VfmvFs, VfmvSf, Vslide1 vf);
+  tracked in docs/PLAN_fp_nan_boxing.md
 
 Test Coverage
 -------------
 - vmv.x.s tested in various tests (extract element 0)
 - vmv.v.v, vmv.v.x, vmv.v.i tested across multiple tests
-- No tests for: vmv.s.x, FP moves, slides, gathers, compress, whole register moves
+- test_reg_slide covers vslide{up,down}.{vx,vi} + vslide1{up,down}.{vx,vf}
+- test_vfmv_scalar covers vfmv.f.s / vfmv.s.f
+- test_reg_gather covers vrgather.vv + arbitrary (data_ew, index_ew)
+  combos (which transitively covers vrgatherei16's RegGather path)
+- test_reg_gather_vx_vi covers vrgather.vx / .vi / OOR
+- No tests for: vmv.s.x, compress, whole register moves
 
 TODO Items
 ----------
 1. ✓ Implement remaining integer scalar moves (DONE)
    - vmv.s.x implemented
 
-1b. Implement FP scalar moves
-   - vfmv.f.s, vfmv.s.f
-   - Handle SEW vs FLEN conversions
+1b. ✓ Implement FP scalar moves (DONE)
+   - ✓ vfmv.f.s, vfmv.s.f (VfmvFs / VfmvSf)
+   - SEW vs FLEN: narrow-FP producers zero-pad; NaN-boxing deferred to
+     docs/PLAN_fp_nan_boxing.md
 
-2. Implement slide instructions
-   - vslideup.vx/vi (slide elements up)
-   - vslidedown.vx/vi (slide elements down)
-   - vslide1up.vx, vfslide1up.vf (slide up by 1, insert scalar)
-   - vslide1down.vx, vfslide1down.vf (slide down by 1, insert scalar)
-   - Add non-overlap checking (vd vs vs2)
-   - Handle vstart >= vl (no operation)
+2. ✓ Implement slide instructions (DONE)
+   - ✓ vslideup.vx/vi, vslidedown.vx/vi (Vslide class)
+   - ✓ vslide1{up,down}.{vx,vf} (unified Vslide1 class with is_float flag;
+     masked and unmasked both supported)
+   - Still TODO: non-overlap checking (vd vs vs2)
 
 3. ✓ Implement vrgather.vv (DONE)
 
-3b. Implement remaining gather variants
-   - vrgatherei16.vv (16-bit indices)
-   - vrgather.vx (scalar index, splat)
-   - vrgather.vi (immediate index, splat)
-   - Add non-overlap checking
+3b. ✓ Implement remaining gather variants (DONE)
+   - ✓ vrgatherei16.vv (16-bit indices) — Vrgather(index_ew_fixed=16)
+   - ✓ vrgather.vx (scalar index, splat) — VrgatherVxVi(is_imm=False)
+   - ✓ vrgather.vi (immediate index, splat) — VrgatherVxVi(is_imm=True)
+   - Still TODO: non-overlap checking
 
 4. Implement compress
    - vcompress.vm
@@ -376,15 +414,15 @@ TODO Items
 
 Summary
 -------
-Moderate permutation support. ~8 of ~20 instructions implemented:
+Nearly all permutation instructions implemented:
 - ✓ vmv.x.s, vmv.s.x (integer scalar move both directions)
+- ✓ vfmv.f.s, vfmv.s.f (FP scalar move both directions)
 - ✓ vmv.v.v, vmv.v.x, vmv.v.i (single vector moves/splat)
 - ✓ vmerge.vxm, vmerge.vvm, vmerge.vim (merge operations)
-- ✓ vrgather.vv (vector register gather)
+- ✓ vrgather.vv, .vx, .vi, ei16.vv (all integer gather variants)
+- ✓ vslideup.vx/.vi, vslidedown.vx/.vi (generic slides)
+- ✓ vslide1up.{vx,vf}, vslide1down.{vx,vf} (masked and unmasked)
 - ✓ vmv<nr>r.v (whole register group moves)
-- ✗ vfmv.f.s, vfmv.s.f (FP scalar moves)
-- ✗ 8 slide instructions (up/down/1up/1down, int/fp)
-- ✗ 3 other gather variants (ei16/vx/vi)
 - ✗ vcompress.vm (compress selected elements)
 
 Permutation instructions are critical for:
@@ -395,10 +433,8 @@ Permutation instructions are critical for:
 - Vector compress/expand operations
 - Register management in compilers
 
-Priority for implementation:
-1. vmv.s.x - complement to existing vmv.x.s
-2. Slide instructions - common in windowing algorithms
-3. Gather instructions - flexible data access patterns
-4. Compress - data packing operations
-5. FP scalar moves - less common than integer variants
-6. Whole register moves - compiler optimization
+Priority for remaining work:
+1. vcompress.vm (prefix-sum-based, separate kinstr)
+2. Non-overlap checking for slides and gathers
+3. NaN-boxing for narrow-SEW FP producers (shared concern across FP work)
+5. Non-overlap / register-group alignment checking for slides & gathers

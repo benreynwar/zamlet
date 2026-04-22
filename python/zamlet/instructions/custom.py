@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING
 from zamlet.register_names import reg_name
 from zamlet.kamlet import kinstructions
 from zamlet.lamlet import ident_query
-from zamlet.monitor import SpanType, CompletionType
+from zamlet.instructions.riscv_instr import riscv_instr
 
 if TYPE_CHECKING:
     from zamlet.oamlet.oamlet import Oamlet
@@ -40,7 +40,8 @@ class SetIndexBound:
     rs1: int
     imm: int
 
-    async def update_state(self, s: 'Oamlet'):
+    @riscv_instr
+    async def update_state(self, s: 'Oamlet', span_id: int):
         if self.rs1 != 0:
             await s.scalar.wait_all_regs_ready(0, None, [self.rs1], [])
             n = int.from_bytes(
@@ -53,15 +54,7 @@ class SetIndexBound:
         instr_ident = await ident_query.get_instr_ident(s)
         kinstr = kinstructions.SetIndexBound(
             index_bound_bits=n, instr_ident=instr_ident)
-        span_id = s.monitor.create_span(
-            span_type=SpanType.RISCV_INSTR,
-            component="lamlet",
-            completion_type=CompletionType.FIRE_AND_FORGET,
-            mnemonic=str(self),
-            pc=s.pc,
-        )
         await s.add_to_instruction_buffer(kinstr, span_id)
-        s.monitor.finalize_children(span_id)
         s.pc += 4
 
     def disasm(self, pc: int) -> str:
@@ -86,7 +79,8 @@ class BeginWriteset:
     Assembly: .insn i 0x0b, 1, x0, x0, 0
     """
 
-    async def update_state(self, s: 'Oamlet'):
+    @riscv_instr
+    async def update_state(self, s: 'Oamlet', span_id: int):
         assert s.active_writeset_ident is None, \
             "begin_writeset while already in a writeset scope"
         ident = s.next_writeset_ident
@@ -114,7 +108,8 @@ class EndWriteset:
     Assembly: .insn i 0x0b, 2, x0, x0, 0
     """
 
-    async def update_state(self, s: 'Oamlet'):
+    @riscv_instr
+    async def update_state(self, s: 'Oamlet', span_id: int):
         assert s.active_writeset_ident is not None, \
             "end_writeset without an active writeset scope"
         logger.debug(f'{s.clock.cycle}: end_writeset: '

@@ -1,10 +1,13 @@
 import logging
 import random
 from collections import defaultdict
+from typing import List, Optional
 
-from zamlet.runner import Clock
+from zamlet.runner import Clock, Future
 from zamlet.params import ZamletParams
+from zamlet.monitor import Monitor
 from zamlet.register_file_slot import RegisterFileSlot
+from zamlet.synchronization import Synchronizer
 
 
 logger = logging.getLogger(__name__)
@@ -12,12 +15,16 @@ logger = logging.getLogger(__name__)
 
 class ScalarState:
 
-    def __init__(self, clock: Clock, params: ZamletParams, synchronizer=None):
-        self.clock = clock
-        self.params = params
-        self.synchronizer = synchronizer
-        self._rf = [RegisterFileSlot(clock, params, f'x{i}') for i in range(32)]
-        self._frf = [RegisterFileSlot(clock, params, f'f{i}') for i in range(32)]
+    def __init__(self, clock: Clock, params: ZamletParams, monitor: Monitor,
+                 synchronizer: Optional[Synchronizer] = None):
+        self.clock: Clock = clock
+        self.params: ZamletParams = params
+        self.monitor: Monitor = monitor
+        self.synchronizer: Optional[Synchronizer] = synchronizer
+        self._rf: List[RegisterFileSlot] = [
+            RegisterFileSlot(clock, params, f'x{i}', monitor) for i in range(32)]
+        self._frf: List[RegisterFileSlot] = [
+            RegisterFileSlot(clock, params, f'f{i}', monitor) for i in range(32)]
 
         self._memory: dict[int, int] = {}
         # Set of page-aligned addresses for non-idempotent pages
@@ -98,21 +105,21 @@ class ScalarState:
     def read_freg(self, freg_num):
         return self._frf[freg_num].get_value()
 
-    def write_reg(self, reg_num, value: bytes):
+    def write_reg(self, reg_num: int, value: bytes, span_id: int) -> None:
         assert isinstance(value, bytes)
         assert len(value) == 8
-        self._rf[reg_num].set_value(value)
+        self._rf[reg_num].set_value(value, span_id)
 
-    def write_freg(self, freg_num, value: bytes):
+    def write_freg(self, freg_num: int, value: bytes, span_id: int) -> None:
         assert isinstance(value, bytes)
         assert len(value) == 8
-        self._frf[freg_num].set_value(value)
+        self._frf[freg_num].set_value(value, span_id)
 
-    def write_reg_future(self, reg_num, future):
-        self._rf[reg_num].set_future(future)
+    def write_reg_future(self, reg_num: int, future: Future, span_id: int) -> None:
+        self._rf[reg_num].set_future(future, span_id)
 
-    def write_freg_future(self, freg_num, future):
-        self._frf[freg_num].set_future(future)
+    def write_freg_future(self, freg_num: int, future: Future, span_id: int) -> None:
+        self._frf[freg_num].set_future(future, span_id)
 
     def register_non_idempotent_page(self, page_addr: int):
         """Register a page as non-idempotent. page_addr must be page-aligned."""

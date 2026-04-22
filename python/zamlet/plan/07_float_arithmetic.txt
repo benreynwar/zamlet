@@ -210,31 +210,34 @@ VFMAX.VV, VFMAX.VF (Status: ✓)
   Implementation: VArithVvFloat / VArithVxFloat in instructions/vector.py
   Description: Floating-point maximum (maximumNumber operation)
 
-FP SIGN-INJECTION (Status: ✗)
+FP SIGN-INJECTION (Status: ✓)
 ==============================
 
 Spec: v-st-ext.adoc lines 3585-3609
 
-VFSGNJ.VV, VFSGNJ.VF (Status: ✗)
+VFSGNJ.VV, VFSGNJ.VF (Status: ✓)
   Spec: v-st-ext.adoc lines 3591-3592
   Encoding: funct6=0x08, funct3=OPFVV/OPFVF
   Format: vfsgnj.vv vd, vs2, vs1, vm / vfsgnj.vf vd, vs2, rs1, vm
-  Implementation: Not implemented
+  Implementation: VArithVvFloat / VArithVxFloat (op=VArithOp.FSGNJ),
+    bit-level compute in kinstructions._compute_arith.
   Description: Sign-injection, copy sign from vs1/rs1 to magnitude of vs2
+  Notes: NaN bit-pattern preservation is incomplete; see
+    docs/PLAN_fp_nan_boxing.md. Finite values are bit-exact.
 
-VFSGNJN.VV, VFSGNJN.VF (Status: ✗)
+VFSGNJN.VV, VFSGNJN.VF (Status: ✓)
   Spec: v-st-ext.adoc lines 3594-3595
   Encoding: funct6=0x09, funct3=OPFVV/OPFVF
   Format: vfsgnjn.vv vd, vs2, vs1, vm / vfsgnjn.vf vd, vs2, rs1, vm
-  Implementation: Not implemented
+  Implementation: VArithVvFloat / VArithVxFloat (op=VArithOp.FSGNJN).
   Description: Negated sign-injection
   Notes: Pseudoinstruction vfneg.v vd,vs = vfsgnjn.vv vd,vs,vs
 
-VFSGNJX.VV, VFSGNJX.VF (Status: ✗)
+VFSGNJX.VV, VFSGNJX.VF (Status: ✓)
   Spec: v-st-ext.adoc lines 3597-3598
   Encoding: funct6=0x0a, funct3=OPFVV/OPFVF
   Format: vfsgnjx.vv vd, vs2, vs1, vm / vfsgnjx.vf vd, vs2, rs1, vm
-  Implementation: Not implemented
+  Implementation: VArithVvFloat / VArithVxFloat (op=VArithOp.FSGNJX).
   Description: XOR sign bits
   Notes: Pseudoinstruction vfabs.v vd,vs = vfsgnjx.vv vd,vs,vs
 
@@ -364,9 +367,10 @@ TODO Items
 4. ✓ Implement min/max operations
    - vfmin.vv/vf, vfmax.vv/vf
 
-5. Implement sign-injection operations
+5. ✓ Implement sign-injection operations
    - vfsgnj.vv/vf, vfsgnjn.vv/vf, vfsgnjx.vv/vf
-   - Support vfneg.v and vfabs.v pseudoinstructions
+   - vfneg.v and vfabs.v pseudoinstructions covered via FSGNJN/FSGNJX with
+     rs1 == rs2.
 
 6. Implement FP comparisons
    - vmfeq.vv/vf, vmfne.vv/vf (equality)
@@ -397,14 +401,14 @@ TODO Items
 
 Summary
 -------
-Good FP arithmetic coverage. ~30 of ~60 instructions implemented:
+Good FP arithmetic coverage:
 - ✓ Basic arithmetic: vfadd, vfsub, vfrsub, vfmul, vfdiv, vfrdiv (.vv and/or .vf)
 - ✓ All 8 FMA variants in both .vv and .vf forms (16 instructions)
 - ✓ Min/max: vfmin, vfmax (.vv and .vf)
+- ✓ Sign-injection: vfsgnj, vfsgnjn, vfsgnjx (.vv and .vf)
 
-Still missing ~30 instructions:
+Still missing:
 - Square root and reciprocal estimates (3 instructions)
-- Sign-injection (6 instructions)
 - All comparisons (10 instructions)
 - Classify (1 instruction)
 - Merge and move (2 instructions)
@@ -412,7 +416,6 @@ Still missing ~30 instructions:
 
 Priority for implementation:
 1. Comparisons - needed for conditional operations
-2. Sign-injection - cheap operations for negate/abs
-3. Merge/move - useful for data manipulation
+2. Merge/move - useful for data manipulation
 4. Square root and estimates - DSP and scientific computing
 5. Classify - less common utility operation

@@ -1,11 +1,13 @@
 """Floating-point instructions.
 
-Reference: riscv-isa-manual/src/f-st-ext.adoc
+Reference: riscv-isa-manual/src/f-st-ext.adoc and d-st-ext.adoc
 """
 
+import math
 import struct
 import logging
 from dataclasses import dataclass
+from enum import Enum
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -13,18 +15,61 @@ if TYPE_CHECKING:
 
 from zamlet.addresses import Ordering
 from zamlet.register_names import reg_name, freg_name
+from zamlet.instructions.riscv_instr import riscv_instr
 from zamlet import utils
 
 
 logger = logging.getLogger(__name__)
 
 
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _fp_suffix(is_double: bool) -> str:
+    return 'd' if is_double else 's'
+
+
+def _fp_pack_char(is_double: bool) -> str:
+    return 'd' if is_double else 'f'
+
+
+def _fp_width(is_double: bool) -> int:
+    return 8 if is_double else 4
+
+
+def _read_fp(s, freg: int, is_double: bool) -> float:
+    w = _fp_width(is_double)
+    return struct.unpack(_fp_pack_char(is_double), s.scalar.read_freg(freg)[:w])[0]
+
+
+def _write_fp(s, freg: int, value: float, is_double: bool, span_id: int) -> None:
+    packed = struct.pack(_fp_pack_char(is_double), value)
+    if not is_double:
+        packed = packed + bytes(4)
+    s.scalar.write_freg(freg, packed, span_id)
+
+
+def _read_fp_bits(s, freg: int, is_double: bool) -> int:
+    w = _fp_width(is_double)
+    return int.from_bytes(s.scalar.read_freg(freg)[:w], byteorder='little', signed=False)
+
+
+def _write_fp_bits(s, freg: int, bits: int, is_double: bool, span_id: int) -> None:
+    w = _fp_width(is_double)
+    data = bits.to_bytes(w, byteorder='little', signed=False)
+    if not is_double:
+        data = data + bytes(4)
+    s.scalar.write_freg(freg, data, span_id)
+
+
+# ---------------------------------------------------------------------------
+# Integer <-> FP register moves (bit-preserving, no type conversion)
+# ---------------------------------------------------------------------------
+
 @dataclass
 class FmvWX:
-    """FMV.W.X - Move from integer register to FP register.
-
-    Moves the single-precision value from the lower 32 bits of integer
-    register rs1 to floating-point register fd. Bits are not modified.
+    """FMV.W.X - Move from integer register to FP register (single-precision).
 
     Reference: riscv-isa-manual/src/f-st-ext.adoc
     """
@@ -34,45 +79,42 @@ class FmvWX:
     def __str__(self):
         return f'fmv.w.x\t{freg_name(self.fd)},{reg_name(self.rs1)}'
 
-    async def update_state(self, s: 'Oamlet'):
+    @riscv_instr
+    async def update_state(self, s: 'Oamlet', span_id: int):
         await s.scalar.wait_all_regs_ready(None, self.fd, [self.rs1], [])
         rs1_bytes = s.scalar.read_reg(self.rs1)
         value = int.from_bytes(rs1_bytes, byteorder='little', signed=False) & 0xffffffff
         value_bytes = value.to_bytes(8, byteorder='little', signed=False)
-        s.scalar.write_freg(self.fd, value_bytes)
+        s.scalar.write_freg(self.fd, value_bytes, span_id)
         s.pc += 4
 
 
 @dataclass
-class FmvD:
-    """FMV.D - Move double FP register (pseudo-instruction using FSGNJ.D).
+class FmvXW:
+    """FMV.X.W - Move from FP register (single-precision) to integer register.
 
-    Copies the double-precision value from floating-point register rs1
-    to floating-point register fd.
-
-    Reference: riscv-isa-manual/src/d-st-ext.adoc
+    Reference: riscv-isa-manual/src/f-st-ext.adoc
     """
-    fd: int
+    rd: int
     rs1: int
 
     def __str__(self):
-        return f'fmv.d\t{freg_name(self.fd)},{freg_name(self.rs1)}'
+        return f'fmv.x.w\t{reg_name(self.rd)},{freg_name(self.rs1)}'
 
-    async def update_state(self, s: 'Oamlet'):
-        await s.scalar.wait_all_regs_ready(None, self.fd, [], [self.rs1])
-        value_bytes = s.scalar.read_freg(self.rs1)
-        value = struct.unpack('d', value_bytes[:8])[0]
-        logger.debug(f'FmvD: {freg_name(self.fd)} <- {freg_name(self.rs1)} = {value}')
-        s.scalar.write_freg(self.fd, value_bytes)
+    @riscv_instr
+    async def update_state(self, s: 'Oamlet', span_id: int):
+        await s.scalar.wait_all_regs_ready(self.rd, None, [], [self.rs1])
+        freg_bytes = s.scalar.read_freg(self.rs1)
+        # Sign-extend the 32-bit value to XLEN, per RISC-V spec.
+        value = int.from_bytes(freg_bytes[:4], byteorder='little', signed=True)
+        value_bytes = value.to_bytes(s.params.word_bytes, byteorder='little', signed=True)
+        s.scalar.write_reg(self.rd, value_bytes, span_id)
         s.pc += 4
 
 
 @dataclass
 class FmvXD:
     """FMV.X.D - Move from double FP register to integer register.
-
-    Moves the double-precision value from floating-point register rs1
-    to integer register rd. Bits are not modified.
 
     Reference: riscv-isa-manual/src/d-st-ext.adoc
     """
@@ -82,21 +124,19 @@ class FmvXD:
     def __str__(self):
         return f'fmv.x.d\t{reg_name(self.rd)},{freg_name(self.rs1)}'
 
-    async def update_state(self, s: 'Oamlet'):
+    @riscv_instr
+    async def update_state(self, s: 'Oamlet', span_id: int):
         await s.scalar.wait_all_regs_ready(self.rd, None, [], [self.rs1])
         freg_bytes = s.scalar.read_freg(self.rs1)
         value = int.from_bytes(freg_bytes[:8], byteorder='little', signed=False)
         value_bytes = value.to_bytes(s.params.word_bytes, byteorder='little', signed=False)
-        s.scalar.write_reg(self.rd, value_bytes)
+        s.scalar.write_reg(self.rd, value_bytes, span_id)
         s.pc += 4
 
 
 @dataclass
 class FmvDX:
     """FMV.D.X - Move from integer register to double FP register.
-
-    Moves the double-precision value from the lower 64 bits of integer
-    register rs1 to floating-point register fd. Bits are not modified.
 
     Reference: riscv-isa-manual/src/d-st-ext.adoc
     """
@@ -106,21 +146,23 @@ class FmvDX:
     def __str__(self):
         return f'fmv.d.x\t{freg_name(self.fd)},{reg_name(self.rs1)}'
 
-    async def update_state(self, s: 'Oamlet'):
+    @riscv_instr
+    async def update_state(self, s: 'Oamlet', span_id: int):
         await s.scalar.wait_all_regs_ready(None, self.fd, [self.rs1], [])
         rs1_bytes = s.scalar.read_reg(self.rs1)
         value = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
         value_bytes = value.to_bytes(8, byteorder='little', signed=False)
-        s.scalar.write_freg(self.fd, value_bytes)
+        s.scalar.write_freg(self.fd, value_bytes, span_id)
         s.pc += 4
 
+
+# ---------------------------------------------------------------------------
+# Loads / stores
+# ---------------------------------------------------------------------------
 
 @dataclass
 class Flw:
     """FLW - Floating-Point Load Word.
-
-    Loads a single-precision floating-point value from memory into
-    floating-point register fd.
 
     Reference: riscv-isa-manual/src/f-st-ext.adoc
     """
@@ -141,7 +183,8 @@ class Flw:
         scalar_val = struct.unpack('f', f_data)[0]
         logger.debug(f'{s.clock.cycle} freg: {self.fd} padding the flw result, set result {scalar_val} ')
 
-    async def update_state(self, s: 'Oamlet'):
+    @riscv_instr
+    async def update_state(self, s: 'Oamlet', span_id: int):
         await s.scalar.wait_all_regs_ready(None, self.fd, [self.rs1], [])
         rs1_bytes = s.scalar.read_reg(self.rs1)
         rs1_val = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
@@ -149,7 +192,7 @@ class Flw:
         data_future = await s.get_memory(addr, 4)
         padded_future = s.clock.create_future()
         s.clock.create_task(self.update_resolve(s, padded_future, data_future))
-        s.scalar.write_freg_future(self.fd, padded_future)
+        s.scalar.write_freg_future(self.fd, padded_future, span_id)
         s.pc += 4
 
 
@@ -157,10 +200,7 @@ class Flw:
 class Fld:
     """FLD - Floating-Point Load Double.
 
-    Loads a double-precision floating-point value from memory into
-    floating-point register fd.
-
-    Reference: riscv-isa-manual/src/f-st-ext.adoc
+    Reference: riscv-isa-manual/src/d-st-ext.adoc
     """
     fd: int
     rs1: int
@@ -169,23 +209,21 @@ class Fld:
     def __str__(self):
         return f'fld\t{freg_name(self.fd)},{self.imm}({reg_name(self.rs1)})'
 
-    async def update_state(self, s: 'Oamlet'):
+    @riscv_instr
+    async def update_state(self, s: 'Oamlet', span_id: int):
         await s.scalar.wait_all_regs_ready(None, self.fd, [self.rs1], [])
         rs1_bytes = s.scalar.read_reg(self.rs1)
         rs1_val = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
         addr = rs1_val + self.imm
         logger.debug(f'Fld: {freg_name(self.fd)} <- mem[0x{addr:x}]')
         data_future = await s.get_memory(addr, 8)
-        s.scalar.write_freg_future(self.fd, data_future)
+        s.scalar.write_freg_future(self.fd, data_future, span_id)
         s.pc += 4
 
 
 @dataclass
 class Fsw:
     """FSW - Floating-Point Store Word.
-
-    Stores a single-precision floating-point value from floating-point
-    register rs2 to memory.
 
     Reference: riscv-isa-manual/src/f-st-ext.adoc
     """
@@ -196,7 +234,8 @@ class Fsw:
     def __str__(self):
         return f'fsw\t{freg_name(self.rs2)},{self.imm}({reg_name(self.rs1)})'
 
-    async def update_state(self, s: 'Oamlet'):
+    @riscv_instr
+    async def update_state(self, s: 'Oamlet', span_id: int):
         await s.scalar.wait_all_regs_ready(None, None, [self.rs1], [self.rs2])
         rs1_bytes = s.scalar.read_reg(self.rs1)
         rs1_val = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
@@ -212,10 +251,7 @@ class Fsw:
 class Fsd:
     """FSD - Floating-Point Store Double.
 
-    Stores a double-precision floating-point value from floating-point
-    register rs2 to memory.
-
-    Reference: riscv-isa-manual/src/f-st-ext.adoc
+    Reference: riscv-isa-manual/src/d-st-ext.adoc
     """
     rs2: int
     rs1: int
@@ -224,7 +260,8 @@ class Fsd:
     def __str__(self):
         return f'fsd\t{freg_name(self.rs2)},{self.imm}({reg_name(self.rs1)})'
 
-    async def update_state(self, s: 'Oamlet'):
+    @riscv_instr
+    async def update_state(self, s: 'Oamlet', span_id: int):
         await s.scalar.wait_all_regs_ready(None, None, [self.rs1], [self.rs2])
         rs1_bytes = s.scalar.read_reg(self.rs1)
         rs1_val = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
@@ -235,389 +272,349 @@ class Fsd:
         s.pc += 4
 
 
-@dataclass
-class FeqS:
-    """FEQ.S - Floating-Point Equal (Single-Precision).
+# ---------------------------------------------------------------------------
+# Arithmetic, sign-injection, min/max, sqrt (FArith)
+# ---------------------------------------------------------------------------
 
-    Compares two single-precision floating-point values for equality.
-    Writes 1 to rd if equal, 0 otherwise.
-
-    Reference: riscv-isa-manual/src/f-st-ext.adoc
-    """
-    rd: int
-    rs1: int
-    rs2: int
-
-    def __str__(self):
-        return f'feq.s\t{reg_name(self.rd)},{freg_name(self.rs1)},{freg_name(self.rs2)}'
-
-    async def update_state(self, s: 'Oamlet'):
-        import struct
-        await s.scalar.wait_all_regs_ready(self.rd, None, [], [self.rs1, self.rs2])
-        val1_bytes = s.scalar.read_freg(self.rs1)
-        val2_bytes = s.scalar.read_freg(self.rs2)
-        val1 = struct.unpack('f', val1_bytes[:4])[0]
-        val2 = struct.unpack('f', val2_bytes[:4])[0]
-        result = 1 if val1 == val2 else 0
-        result_bytes = result.to_bytes(s.params.word_bytes, byteorder='little', signed=False)
-        s.scalar.write_reg(self.rd, result_bytes)
-        s.pc += 4
+class FArithOp(Enum):
+    FADD = 'fadd'       # binary
+    FSUB = 'fsub'       # binary
+    FMUL = 'fmul'       # binary
+    FDIV = 'fdiv'       # binary
+    FSQRT = 'fsqrt'     # unary (rs2 ignored)
+    FMIN = 'fmin'       # binary
+    FMAX = 'fmax'       # binary
+    FSGNJ = 'fsgnj'     # binary (bit-level: sign from rs2, magnitude from rs1)
+    FSGNJN = 'fsgnjn'   # binary (bit-level: sign = ~rs2.sign)
+    FSGNJX = 'fsgnjx'   # binary (bit-level: sign = rs1.sign ^ rs2.sign)
 
 
-@dataclass
-class FleS:
-    """FLE.S - Floating-Point Less Than or Equal (Single-Precision).
+_FARITH_UNARY = {FArithOp.FSQRT}
+_FARITH_SGNJ = {FArithOp.FSGNJ, FArithOp.FSGNJN, FArithOp.FSGNJX}
 
-    Compares two single-precision floating-point values.
-    Writes 1 to rd if rs1 <= rs2, 0 otherwise.
+# Pseudo-mnemonic for sgnj ops when rs1 == rs2.
+_FARITH_SGNJ_PSEUDO = {
+    FArithOp.FSGNJ: 'fmv',
+    FArithOp.FSGNJN: 'fneg',
+    FArithOp.FSGNJX: 'fabs',
+}
 
-    Reference: riscv-isa-manual/src/f-st-ext.adoc
-    """
-    rd: int
-    rs1: int
-    rs2: int
-
-    def __str__(self):
-        return f'fle.s\t{reg_name(self.rd)},{freg_name(self.rs1)},{freg_name(self.rs2)}'
-
-    async def update_state(self, s: 'Oamlet'):
-        import struct
-        await s.scalar.wait_all_regs_ready(self.rd, None, [], [self.rs1, self.rs2])
-        val1_bytes = s.scalar.read_freg(self.rs1)
-        val2_bytes = s.scalar.read_freg(self.rs2)
-        val1 = struct.unpack('f', val1_bytes[:4])[0]
-        val2 = struct.unpack('f', val2_bytes[:4])[0]
-        result = 1 if val1 <= val2 else 0
-        result_bytes = result.to_bytes(s.params.word_bytes, byteorder='little', signed=False)
-        s.scalar.write_reg(self.rd, result_bytes)
-        s.pc += 4
+# Rounding-mode suffix (funct3 field). DYN (7) is the default and is omitted.
+_RM_SUFFIX = {0: 'rne', 1: 'rtz', 2: 'rdn', 3: 'rup', 4: 'rmm'}
 
 
 @dataclass
-class FleD:
-    """FLE.D - Floating-Point Less Than or Equal (Double-Precision).
+class FArith:
+    """Generic scalar FP arithmetic / sign-inject / min-max / sqrt.
 
-    Compares two double-precision floating-point values.
-    Writes 1 to rd if rs1 <= rs2, 0 otherwise.
+    Covers FADD.{S,D}, FSUB.{S,D}, FMUL.{S,D}, FDIV.{S,D}, FSQRT.{S,D},
+    FMIN.{S,D}, FMAX.{S,D}, FSGNJ{,N,X}.{S,D}.
 
-    Reference: riscv-isa-manual/src/f-st-ext.adoc
-    """
-    rd: int
-    rs1: int
-    rs2: int
-
-    def __str__(self):
-        return f'fle.d\t{reg_name(self.rd)},{freg_name(self.rs1)},{freg_name(self.rs2)}'
-
-    async def update_state(self, s: 'Oamlet'):
-        import struct
-        await s.scalar.wait_all_regs_ready(self.rd, None, [], [self.rs1, self.rs2])
-        val1_bytes = s.scalar.read_freg(self.rs1)
-        val2_bytes = s.scalar.read_freg(self.rs2)
-        val1 = struct.unpack('d', val1_bytes[:8])[0]
-        val2 = struct.unpack('d', val2_bytes[:8])[0]
-        result = 1 if val1 <= val2 else 0
-        result_bytes = result.to_bytes(s.params.word_bytes, byteorder='little', signed=False)
-        s.scalar.write_reg(self.rd, result_bytes)
-        s.pc += 4
-
-
-@dataclass
-class FltS:
-    """FLT.S - Floating-Point Less Than (Single-Precision).
-
-    Compares two single-precision floating-point values.
-    Writes 1 to rd if rs1 < rs2, 0 otherwise.
-
-    Reference: riscv-isa-manual/src/f-st-ext.adoc
-    """
-    rd: int
-    rs1: int
-    rs2: int
-
-    def __str__(self):
-        return f'flt.s\t{reg_name(self.rd)},{freg_name(self.rs1)},{freg_name(self.rs2)}'
-
-    async def update_state(self, s: 'Oamlet'):
-        import struct
-        await s.scalar.wait_all_regs_ready(self.rd, None, [], [self.rs1, self.rs2])
-        val1_bytes = s.scalar.read_freg(self.rs1)
-        val2_bytes = s.scalar.read_freg(self.rs2)
-        val1 = struct.unpack('f', val1_bytes[:4])[0]
-        val2 = struct.unpack('f', val2_bytes[:4])[0]
-        result = 1 if val1 < val2 else 0
-        result_bytes = result.to_bytes(s.params.word_bytes, byteorder='little', signed=False)
-        s.scalar.write_reg(self.rd, result_bytes)
-        s.pc += 4
-
-
-@dataclass
-class FltD:
-    """FLT.D - Floating-Point Less Than (Double-Precision).
-
-    Compares two double-precision floating-point values.
-    Writes 1 to rd if rs1 < rs2, 0 otherwise.
-
-    Reference: riscv-isa-manual/src/f-st-ext.adoc
-    """
-    rd: int
-    rs1: int
-    rs2: int
-
-    def __str__(self):
-        return f'flt.d\t{reg_name(self.rd)},{freg_name(self.rs1)},{freg_name(self.rs2)}'
-
-    async def update_state(self, s: 'Oamlet'):
-        import struct
-        await s.scalar.wait_all_regs_ready(self.rd, None, [], [self.rs1, self.rs2])
-        val1_bytes = s.scalar.read_freg(self.rs1)
-        val2_bytes = s.scalar.read_freg(self.rs2)
-        val1 = struct.unpack('d', val1_bytes[:8])[0]
-        val2 = struct.unpack('d', val2_bytes[:8])[0]
-        result = 1 if val1 < val2 else 0
-        result_bytes = result.to_bytes(s.params.word_bytes, byteorder='little', signed=False)
-        s.scalar.write_reg(self.rd, result_bytes)
-        s.pc += 4
-
-
-@dataclass
-class FeqD:
-    """FEQ.D - Floating-Point Equal (Double-Precision).
-
-    Compares two double-precision floating-point values.
-    Writes 1 to rd if rs1 == rs2, 0 otherwise.
-
-    Reference: riscv-isa-manual/src/f-st-ext.adoc
-    """
-    rd: int
-    rs1: int
-    rs2: int
-
-    def __str__(self):
-        return f'feq.d\t{reg_name(self.rd)},{freg_name(self.rs1)},{freg_name(self.rs2)}'
-
-    async def update_state(self, s: 'Oamlet'):
-        import struct
-        await s.scalar.wait_all_regs_ready(self.rd, None, [], [self.rs1, self.rs2])
-        val1_bytes = s.scalar.read_freg(self.rs1)
-        val2_bytes = s.scalar.read_freg(self.rs2)
-        val1 = struct.unpack('d', val1_bytes[:8])[0]
-        val2 = struct.unpack('d', val2_bytes[:8])[0]
-        result = 1 if val1 == val2 else 0
-        result_bytes = result.to_bytes(s.params.word_bytes, byteorder='little', signed=False)
-        s.scalar.write_reg(self.rd, result_bytes)
-        s.pc += 4
-
-
-@dataclass
-class FsubS:
-    """FSUB.S - Floating-Point Subtract (Single-Precision).
-
-    Subtracts single-precision floating-point values: fd = fs1 - fs2
-
-    Reference: riscv-isa-manual/src/f-st-ext.adoc
+    Reference: riscv-isa-manual/src/f-st-ext.adoc and d-st-ext.adoc
     """
     fd: int
     rs1: int
-    rs2: int
+    rs2: int       # ignored for unary ops
+    op: FArithOp
+    is_double: bool
 
     def __str__(self):
-        return f'fsub.s\t{freg_name(self.fd)},{freg_name(self.rs1)},{freg_name(self.rs2)}'
+        if self.op in _FARITH_SGNJ and self.rs1 == self.rs2:
+            pseudo = _FARITH_SGNJ_PSEUDO[self.op]
+            return (f'{pseudo}.{_fp_suffix(self.is_double)}\t'
+                    f'{freg_name(self.fd)},{freg_name(self.rs1)}')
+        mnem = f'{self.op.value}.{_fp_suffix(self.is_double)}'
+        if self.op in _FARITH_UNARY:
+            return f'{mnem}\t{freg_name(self.fd)},{freg_name(self.rs1)}'
+        return (f'{mnem}\t{freg_name(self.fd)},'
+                f'{freg_name(self.rs1)},{freg_name(self.rs2)}')
 
-    async def update_state(self, s: 'Oamlet'):
-        import struct
-        await s.scalar.wait_all_regs_ready(None, self.fd, [], [self.rs1, self.rs2])
-        val1_bytes = s.scalar.read_freg(self.rs1)
-        val2_bytes = s.scalar.read_freg(self.rs2)
-        val1 = struct.unpack('f', val1_bytes[:4])[0]
-        val2 = struct.unpack('f', val2_bytes[:4])[0]
-        result = val1 - val2
-        result_bytes = struct.pack('f', result) + bytes(4)
-        s.scalar.write_freg(self.fd, result_bytes)
+    @riscv_instr
+    async def update_state(self, s: 'Oamlet', span_id: int):
+        if self.op in _FARITH_UNARY:
+            src_fregs = [self.rs1]
+        else:
+            src_fregs = [self.rs1, self.rs2]
+        await s.scalar.wait_all_regs_ready(None, self.fd, [], src_fregs)
+
+        if self.op in _FARITH_SGNJ:
+            width = 64 if self.is_double else 32
+            sign_bit = 1 << (width - 1)
+            b1 = _read_fp_bits(s, self.rs1, self.is_double)
+            b2 = _read_fp_bits(s, self.rs2, self.is_double)
+            magnitude = b1 & (sign_bit - 1)
+            if self.op is FArithOp.FSGNJ:
+                new_sign = b2 & sign_bit
+            elif self.op is FArithOp.FSGNJN:
+                new_sign = (b2 & sign_bit) ^ sign_bit
+            else:
+                new_sign = (b1 ^ b2) & sign_bit
+            _write_fp_bits(s, self.fd, magnitude | new_sign, self.is_double, span_id)
+            s.pc += 4
+            return
+
+        v1 = _read_fp(s, self.rs1, self.is_double)
+        if self.op is FArithOp.FSQRT:
+            result = math.sqrt(v1)
+        else:
+            v2 = _read_fp(s, self.rs2, self.is_double)
+            if self.op is FArithOp.FADD:
+                result = v1 + v2
+            elif self.op is FArithOp.FSUB:
+                result = v1 - v2
+            elif self.op is FArithOp.FMUL:
+                result = v1 * v2
+            elif self.op is FArithOp.FDIV:
+                result = v1 / v2
+            elif self.op is FArithOp.FMIN:
+                result = min(v1, v2)
+            elif self.op is FArithOp.FMAX:
+                result = max(v1, v2)
+            else:
+                raise AssertionError(f'unhandled FArithOp {self.op}')
+        _write_fp(s, self.fd, result, self.is_double, span_id)
         s.pc += 4
 
 
-@dataclass
-class FsubD:
-    """FSUB.D - Floating-Point Subtract (Double-Precision).
+# ---------------------------------------------------------------------------
+# Comparisons (FEQ / FLT / FLE)
+# ---------------------------------------------------------------------------
 
-    Subtracts double-precision floating-point values: fd = fs1 - fs2
-
-    Reference: riscv-isa-manual/src/f-st-ext.adoc
-    """
-    fd: int
-    rs1: int
-    rs2: int
-
-    def __str__(self):
-        return f'fsub.d\t{freg_name(self.fd)},{freg_name(self.rs1)},{freg_name(self.rs2)}'
-
-    async def update_state(self, s: 'Oamlet'):
-        import struct
-        await s.scalar.wait_all_regs_ready(None, self.fd, [], [self.rs1, self.rs2])
-        val1_bytes = s.scalar.read_freg(self.rs1)
-        val2_bytes = s.scalar.read_freg(self.rs2)
-        val1 = struct.unpack('d', val1_bytes[:8])[0]
-        val2 = struct.unpack('d', val2_bytes[:8])[0]
-        result = val1 - val2
-        result_bytes = struct.pack('d', result)
-        s.scalar.write_freg(self.fd, result_bytes)
-        s.pc += 4
+class FCmpOp(Enum):
+    FEQ = 'feq'
+    FLT = 'flt'
+    FLE = 'fle'
 
 
 @dataclass
-class FabsS:
-    """FABS.S - Floating-Point Absolute Value (Single-Precision).
+class FCmp:
+    """Generic scalar FP comparison. Writes 0/1 to integer register rd.
 
-    Pseudo-instruction: fsgnj.s fd, fs, fs
-    Computes absolute value of single-precision floating-point value.
-
-    Reference: riscv-isa-manual/src/f-st-ext.adoc
-    """
-    fd: int
-    rs1: int
-
-    def __str__(self):
-        return f'fabs.s\t{freg_name(self.fd)},{freg_name(self.rs1)}'
-
-    async def update_state(self, s: 'Oamlet'):
-        import struct
-        await s.scalar.wait_all_regs_ready(None, self.fd, [], [self.rs1])
-        val_bytes = s.scalar.read_freg(self.rs1)
-        val = struct.unpack('f', val_bytes[:4])[0]
-        result = abs(val)
-        result_bytes = struct.pack('f', result) + bytes(4)
-        s.scalar.write_freg(self.fd, result_bytes)
-        s.pc += 4
-
-
-@dataclass
-class FabsD:
-    """FABS.D - Floating-Point Absolute Value (Double-Precision).
-
-    Pseudo-instruction: fsgnj.d fd, fs, fs
-    Computes absolute value of double-precision floating-point value.
-
-    Reference: riscv-isa-manual/src/f-st-ext.adoc
-    """
-    fd: int
-    rs1: int
-
-    def __str__(self):
-        return f'fabs.d\t{freg_name(self.fd)},{freg_name(self.rs1)}'
-
-    async def update_state(self, s: 'Oamlet'):
-        import struct
-        await s.scalar.wait_all_regs_ready(None, self.fd, [], [self.rs1])
-        val_bytes = s.scalar.read_freg(self.rs1)
-        val = struct.unpack('d', val_bytes[:8])[0]
-        result = abs(val)
-        result_bytes = struct.pack('d', result)
-        s.scalar.write_freg(self.fd, result_bytes)
-        s.pc += 4
-
-
-@dataclass
-class FcvtDW:
-    """FCVT.D.W - Convert signed word to double-precision float.
-
-    Converts a 32-bit signed integer in integer register rs1 to a
-    double-precision floating-point value in floating-point register fd.
-
-    Reference: riscv-isa-manual/src/d-st-ext.adoc
-    """
-    fd: int
-    rs1: int
-
-    def __str__(self):
-        return f'fcvt.d.w\t{freg_name(self.fd)},{reg_name(self.rs1)}'
-
-    async def update_state(self, s: 'Oamlet'):
-        await s.scalar.wait_all_regs_ready(None, self.fd, [self.rs1], [])
-        rs1_bytes = s.scalar.read_reg(self.rs1)
-        int_val = int.from_bytes(rs1_bytes[:4], byteorder='little', signed=True)
-        float_val = float(int_val)
-        result_bytes = struct.pack('d', float_val)
-        s.scalar.write_freg(self.fd, result_bytes)
-        s.pc += 4
-
-
-@dataclass
-class FcvtDL:
-    """FCVT.D.L - Convert signed long to double-precision float.
-
-    Converts a 64-bit signed integer in integer register rs1 to a
-    double-precision floating-point value in floating-point register fd.
-
-    Reference: riscv-isa-manual/src/d-st-ext.adoc
-    """
-    fd: int
-    rs1: int
-
-    def __str__(self):
-        return f'fcvt.d.l\t{freg_name(self.fd)},{reg_name(self.rs1)}'
-
-    async def update_state(self, s: 'Oamlet'):
-        await s.scalar.wait_all_regs_ready(None, self.fd, [self.rs1], [])
-        rs1_bytes = s.scalar.read_reg(self.rs1)
-        int_val = int.from_bytes(rs1_bytes, byteorder='little', signed=True)
-        float_val = float(int_val)
-        result_bytes = struct.pack('d', float_val)
-        s.scalar.write_freg(self.fd, result_bytes)
-        s.pc += 4
-
-
-@dataclass
-class FcvtLD:
-    """FCVT.L.D - Convert double-precision float to signed long.
-
-    Converts a double-precision floating-point value in floating-point
-    register rs1 to a 64-bit signed integer in integer register rd.
-
-    Reference: riscv-isa-manual/src/f-st-ext.adoc
+    Reference: riscv-isa-manual/src/f-st-ext.adoc and d-st-ext.adoc
     """
     rd: int
     rs1: int
+    rs2: int
+    op: FCmpOp
+    is_double: bool
 
     def __str__(self):
-        return f'fcvt.l.d\t{reg_name(self.rd)},{freg_name(self.rs1)}'
+        mnem = f'{self.op.value}.{_fp_suffix(self.is_double)}'
+        return (f'{mnem}\t{reg_name(self.rd)},'
+                f'{freg_name(self.rs1)},{freg_name(self.rs2)}')
 
-    async def update_state(self, s: 'Oamlet'):
-        await s.scalar.wait_all_regs_ready(self.rd, None, [], [self.rs1])
-        freg_bytes = s.scalar.read_freg(self.rs1)
-        float_val = struct.unpack('d', freg_bytes[:8])[0]
-        int_val = int(float_val)
-        result_bytes = int_val.to_bytes(s.params.word_bytes, byteorder='little', signed=True)
-        s.scalar.write_reg(self.rd, result_bytes)
+    @riscv_instr
+    async def update_state(self, s: 'Oamlet', span_id: int):
+        await s.scalar.wait_all_regs_ready(self.rd, None, [], [self.rs1, self.rs2])
+        v1 = _read_fp(s, self.rs1, self.is_double)
+        v2 = _read_fp(s, self.rs2, self.is_double)
+        if self.op is FCmpOp.FEQ:
+            result = 1 if v1 == v2 else 0
+        elif self.op is FCmpOp.FLT:
+            result = 1 if v1 < v2 else 0
+        elif self.op is FCmpOp.FLE:
+            result = 1 if v1 <= v2 else 0
+        else:
+            raise AssertionError(f'unhandled FCmpOp {self.op}')
+        result_bytes = result.to_bytes(s.params.word_bytes, byteorder='little', signed=False)
+        s.scalar.write_reg(self.rd, result_bytes, span_id)
         s.pc += 4
 
 
+# ---------------------------------------------------------------------------
+# Conversions (int<->float, precision)
+# ---------------------------------------------------------------------------
+
+class FType(Enum):
+    F32 = 'f32'
+    F64 = 'f64'
+    I32 = 'i32'
+    I64 = 'i64'
+    U32 = 'u32'
+    U64 = 'u64'
+
+
+_FT_IS_FP = {FType.F32, FType.F64}
+_FT_BYTES = {
+    FType.F32: 4, FType.F64: 8,
+    FType.I32: 4, FType.U32: 4,
+    FType.I64: 8, FType.U64: 8,
+}
+_FT_MNEMONIC = {
+    FType.F32: 's', FType.F64: 'd',
+    FType.I32: 'w', FType.U32: 'wu',
+    FType.I64: 'l', FType.U64: 'lu',
+}
+_FT_SIGNED = {FType.I32: True, FType.I64: True, FType.U32: False, FType.U64: False}
+
+
 @dataclass
-class FmaddD:
-    """FMADD.D - Fused Multiply-Add (Double-Precision).
+class FCvt:
+    """Generic FP conversion (int<->float or precision change).
 
-    Performs fused multiply-add: fd = (fs1 * fs2) + fs3
-    The operation is performed with a single rounding at the end.
+    dst/src are register numbers; whether each refers to an FP or integer
+    register is determined by dst_type / src_type. rm is the rounding-mode
+    field (funct3); 7 = DYN (default, omitted from disasm).
 
-    Reference: riscv-isa-manual/src/f-st-ext.adoc
+    Reference: riscv-isa-manual/src/f-st-ext.adoc and d-st-ext.adoc
+    """
+    dst: int
+    src: int
+    dst_type: FType
+    src_type: FType
+    rm: int = 7
+
+    def __str__(self):
+        mnem = f'fcvt.{_FT_MNEMONIC[self.dst_type]}.{_FT_MNEMONIC[self.src_type]}'
+        dst_name = freg_name(self.dst) if self.dst_type in _FT_IS_FP else reg_name(self.dst)
+        src_name = freg_name(self.src) if self.src_type in _FT_IS_FP else reg_name(self.src)
+        suffix = _RM_SUFFIX.get(self.rm)
+        tail = f',{suffix}' if suffix is not None else ''
+        return f'{mnem}\t{dst_name},{src_name}{tail}'
+
+    @riscv_instr
+    async def update_state(self, s: 'Oamlet', span_id: int):
+        dst_is_fp = self.dst_type in _FT_IS_FP
+        src_is_fp = self.src_type in _FT_IS_FP
+        rd_arg = None if dst_is_fp else self.dst
+        fd_arg = self.dst if dst_is_fp else None
+        src_regs = [] if src_is_fp else [self.src]
+        src_fregs = [self.src] if src_is_fp else []
+        await s.scalar.wait_all_regs_ready(rd_arg, fd_arg, src_regs, src_fregs)
+
+        src_w = _FT_BYTES[self.src_type]
+        if src_is_fp:
+            raw = s.scalar.read_freg(self.src)[:src_w]
+            value = struct.unpack(_fp_pack_char(self.src_type is FType.F64), raw)[0]
+        else:
+            raw = s.scalar.read_reg(self.src)[:src_w]
+            value = int.from_bytes(raw, byteorder='little', signed=_FT_SIGNED[self.src_type])
+
+        if dst_is_fp:
+            float_val = float(value)
+            packed = struct.pack(_fp_pack_char(self.dst_type is FType.F64), float_val)
+            if self.dst_type is FType.F32:
+                packed = packed + bytes(4)
+            s.scalar.write_freg(self.dst, packed, span_id)
+        else:
+            int_val = int(value)
+            dst_w = _FT_BYTES[self.dst_type]
+            signed = _FT_SIGNED[self.dst_type]
+            # Saturate to destination range per RISC-V spec.
+            if signed:
+                lo, hi = -(1 << (dst_w * 8 - 1)), (1 << (dst_w * 8 - 1)) - 1
+            else:
+                lo, hi = 0, (1 << (dst_w * 8)) - 1
+            if int_val < lo:
+                int_val = lo
+            elif int_val > hi:
+                int_val = hi
+            word_bytes = s.params.word_bytes
+            # Sign- or zero-extend to XLEN.
+            data = int_val.to_bytes(dst_w, byteorder='little', signed=signed)
+            if len(data) < word_bytes:
+                pad_byte = 0xff if (signed and int_val < 0) else 0x00
+                data = data + bytes([pad_byte] * (word_bytes - len(data)))
+            s.scalar.write_reg(self.dst, data, span_id)
+        s.pc += 4
+
+
+# ---------------------------------------------------------------------------
+# Fused multiply-add (FMA)
+# ---------------------------------------------------------------------------
+
+class FmaOp(Enum):
+    FMADD = 'fmadd'      # +(rs1*rs2) + rs3
+    FMSUB = 'fmsub'      # +(rs1*rs2) - rs3
+    FNMSUB = 'fnmsub'    # -(rs1*rs2) + rs3
+    FNMADD = 'fnmadd'    # -(rs1*rs2) - rs3
+
+
+@dataclass
+class FMA:
+    """Generic fused multiply-add.
+
+    Reference: riscv-isa-manual/src/f-st-ext.adoc and d-st-ext.adoc
     """
     fd: int
     rs1: int
     rs2: int
     rs3: int
+    op: FmaOp
+    is_double: bool
 
     def __str__(self):
-        return f'fmadd.d\t{freg_name(self.fd)},{freg_name(self.rs1)},{freg_name(self.rs2)},{freg_name(self.rs3)}'
+        mnem = f'{self.op.value}.{_fp_suffix(self.is_double)}'
+        return (f'{mnem}\t{freg_name(self.fd)},{freg_name(self.rs1)},'
+                f'{freg_name(self.rs2)},{freg_name(self.rs3)}')
 
-    async def update_state(self, s: 'Oamlet'):
-        await s.scalar.wait_all_regs_ready(None, self.fd, [], [self.rs1, self.rs2, self.rs3])
-        val1_bytes = s.scalar.read_freg(self.rs1)
-        val2_bytes = s.scalar.read_freg(self.rs2)
-        val3_bytes = s.scalar.read_freg(self.rs3)
-        val1 = struct.unpack('d', val1_bytes[:8])[0]
-        val2 = struct.unpack('d', val2_bytes[:8])[0]
-        val3 = struct.unpack('d', val3_bytes[:8])[0]
-        result = (val1 * val2) + val3
-        result_bytes = struct.pack('d', result)
-        s.scalar.write_freg(self.fd, result_bytes)
+    @riscv_instr
+    async def update_state(self, s: 'Oamlet', span_id: int):
+        await s.scalar.wait_all_regs_ready(
+            None, self.fd, [], [self.rs1, self.rs2, self.rs3])
+        v1 = _read_fp(s, self.rs1, self.is_double)
+        v2 = _read_fp(s, self.rs2, self.is_double)
+        v3 = _read_fp(s, self.rs3, self.is_double)
+        prod = v1 * v2
+        if self.op is FmaOp.FMADD:
+            result = prod + v3
+        elif self.op is FmaOp.FMSUB:
+            result = prod - v3
+        elif self.op is FmaOp.FNMSUB:
+            result = -prod + v3
+        elif self.op is FmaOp.FNMADD:
+            result = -prod - v3
+        else:
+            raise AssertionError(f'unhandled FmaOp {self.op}')
+        _write_fp(s, self.fd, result, self.is_double, span_id)
         s.pc += 4
+
+
+# ---------------------------------------------------------------------------
+# FClass (classify)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class FClass:
+    """FCLASS.{S,D} - classify FP value, write one-hot mask to integer reg.
+
+    Reference: riscv-isa-manual/src/f-st-ext.adoc and d-st-ext.adoc
+    """
+    rd: int
+    rs1: int
+    is_double: bool
+
+    def __str__(self):
+        return (f'fclass.{_fp_suffix(self.is_double)}\t'
+                f'{reg_name(self.rd)},{freg_name(self.rs1)}')
+
+    @riscv_instr
+    async def update_state(self, s: 'Oamlet', span_id: int):
+        await s.scalar.wait_all_regs_ready(self.rd, None, [], [self.rs1])
+        bits = _read_fp_bits(s, self.rs1, self.is_double)
+        if self.is_double:
+            exp_shift, exp_max, width = 52, 0x7ff, 64
+        else:
+            exp_shift, exp_max, width = 23, 0xff, 32
+        sign = (bits >> (width - 1)) & 1
+        exp = (bits >> exp_shift) & exp_max
+        mant = bits & ((1 << exp_shift) - 1)
+        if exp == 0:
+            if mant == 0:
+                cls = 3 if sign else 4          # ±0
+            else:
+                cls = 2 if sign else 5          # ±subnormal
+        elif exp == exp_max:
+            if mant == 0:
+                cls = 0 if sign else 7          # ±inf
+            elif mant & (1 << (exp_shift - 1)):
+                cls = 9                          # quiet NaN
+            else:
+                cls = 8                          # signaling NaN
+        else:
+            cls = 1 if sign else 6              # ±normal
+        result = 1 << cls
+        result_bytes = result.to_bytes(s.params.word_bytes, byteorder='little', signed=False)
+        s.scalar.write_reg(self.rd, result_bytes, span_id)
+        s.pc += 4
+

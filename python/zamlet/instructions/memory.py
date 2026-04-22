@@ -8,6 +8,7 @@ from dataclasses import dataclass
 
 from zamlet.addresses import Ordering
 from zamlet.register_names import reg_name
+from zamlet.instructions.riscv_instr import riscv_instr
 
 
 logger = logging.getLogger(__name__)
@@ -28,7 +29,8 @@ class Sb:
     def __str__(self):
         return f'sb\t{reg_name(self.rs2)},{self.imm}({reg_name(self.rs1)})'
 
-    async def update_state(self, s):
+    @riscv_instr
+    async def update_state(self, s, span_id: int):
         await s.scalar.wait_all_regs_ready(None, None, [self.rs1, self.rs2], [])
         rs1_bytes = s.scalar.read_reg(self.rs1)
         rs1_val = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
@@ -56,7 +58,8 @@ class Sh:
     def __str__(self):
         return f'sh\t{reg_name(self.rs2)},{self.imm}({reg_name(self.rs1)})'
 
-    async def update_state(self, s):
+    @riscv_instr
+    async def update_state(self, s, span_id: int):
         await s.scalar.wait_all_regs_ready(None, None, [self.rs1, self.rs2], [])
         rs1_bytes = s.scalar.read_reg(self.rs1)
         rs1_val = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
@@ -82,7 +85,8 @@ class Sw:
     def __str__(self):
         return f'sw\t{reg_name(self.rs2)},{self.imm}({reg_name(self.rs1)})'
 
-    async def update_state(self, s):
+    @riscv_instr
+    async def update_state(self, s, span_id: int):
         await s.scalar.wait_all_regs_ready(None, None, [self.rs1, self.rs2], [])
         rs1_bytes = s.scalar.read_reg(self.rs1)
         rs1_val = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
@@ -107,7 +111,8 @@ class Sd:
     def __str__(self):
         return f'sd\t{reg_name(self.rs2)},{self.imm}({reg_name(self.rs1)})'
 
-    async def update_state(self, s):
+    @riscv_instr
+    async def update_state(self, s, span_id: int):
         await s.scalar.wait_all_regs_ready(None, None, [self.rs1, self.rs2], [])
         rs1_bytes = s.scalar.read_reg(self.rs1)
         rs1_val = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
@@ -140,7 +145,8 @@ class Lb:
         result_bytes = value.to_bytes(s.params.word_bytes, byteorder='little', signed=True)
         result_future.set_result(result_bytes)
 
-    async def update_state(self, s):
+    @riscv_instr
+    async def update_state(self, s, span_id: int):
         await s.scalar.wait_all_regs_ready(self.rd, None, [self.rs1], [])
         rs1_bytes = s.scalar.read_reg(self.rs1)
         rs1_val = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
@@ -148,7 +154,7 @@ class Lb:
         data_future = await s.get_memory(address, 1)
         result_future = s.clock.create_future()
         s.clock.create_task(self.update_resolve(s, result_future, data_future))
-        s.scalar.write_reg_future(self.rd, result_future)
+        s.scalar.write_reg_future(self.rd, result_future, span_id)
         s.pc += 4
 
 
@@ -174,7 +180,8 @@ class Lbu:
         result_bytes = value.to_bytes(s.params.word_bytes, byteorder='little', signed=False)
         result_future.set_result(result_bytes)
 
-    async def update_state(self, s):
+    @riscv_instr
+    async def update_state(self, s, span_id: int):
         await s.scalar.wait_all_regs_ready(self.rd, None, [self.rs1], [])
         rs1_bytes = s.scalar.read_reg(self.rs1)
         rs1_val = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
@@ -182,7 +189,7 @@ class Lbu:
         data_future = await s.get_memory(address, 1)
         result_future = s.clock.create_future()
         s.clock.create_task(self.update_resolve(s, result_future, data_future))
-        s.scalar.write_reg_future(self.rd, result_future)
+        s.scalar.write_reg_future(self.rd, result_future, span_id)
         s.pc += 4
 
 @dataclass
@@ -209,7 +216,8 @@ class Lh:
         result_bytes = value.to_bytes(s.params.word_bytes, byteorder='little', signed=False)
         result_future.set_result(result_bytes)
 
-    async def update_state(self, s):
+    @riscv_instr
+    async def update_state(self, s, span_id: int):
         await s.scalar.wait_all_regs_ready(self.rd, None, [self.rs1], [])
         rs1_bytes = s.scalar.read_reg(self.rs1)
         rs1_val = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
@@ -217,7 +225,7 @@ class Lh:
         data_future = await s.get_memory(address, 2)
         result_future = s.clock.create_future()
         s.clock.create_task(self.update_resolve(s, result_future, data_future))
-        s.scalar.write_reg_future(self.rd, result_future)
+        s.scalar.write_reg_future(self.rd, result_future, span_id)
         s.pc += 4
 
 
@@ -243,7 +251,8 @@ class Lhu:
         result_bytes = value.to_bytes(s.params.word_bytes, byteorder='little', signed=False)
         result_future.set_result(result_bytes)
 
-    async def update_state(self, s):
+    @riscv_instr
+    async def update_state(self, s, span_id: int):
         await s.scalar.wait_all_regs_ready(self.rd, None, [self.rs1], [])
         rs1_bytes = s.scalar.read_reg(self.rs1)
         rs1_val = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
@@ -251,7 +260,7 @@ class Lhu:
         data_future = await s.get_memory(address, 2)
         result_future = s.clock.create_future()
         s.clock.create_task(self.update_resolve(s, result_future, data_future))
-        s.scalar.write_reg_future(self.rd, result_future)
+        s.scalar.write_reg_future(self.rd, result_future, span_id)
         s.pc += 4
 
 
@@ -279,7 +288,8 @@ class Lw:
         result_bytes = value.to_bytes(s.params.word_bytes, byteorder='little', signed=False)
         result_future.set_result(result_bytes)
 
-    async def update_state(self, s):
+    @riscv_instr
+    async def update_state(self, s, span_id: int):
         await s.scalar.wait_all_regs_ready(self.rd, None, [self.rs1], [])
         rs1_bytes = s.scalar.read_reg(self.rs1)
         rs1_val = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
@@ -287,7 +297,7 @@ class Lw:
         data_future = await s.get_memory(address, 4)
         result_future = s.clock.create_future()
         s.clock.create_task(self.update_resolve(s, result_future, data_future))
-        s.scalar.write_reg_future(self.rd, result_future)
+        s.scalar.write_reg_future(self.rd, result_future, span_id)
         s.pc += 4
 
 
@@ -313,7 +323,8 @@ class Lwu:
         result_bytes = value.to_bytes(s.params.word_bytes, byteorder='little', signed=False)
         result_future.set_result(result_bytes)
 
-    async def update_state(self, s):
+    @riscv_instr
+    async def update_state(self, s, span_id: int):
         await s.scalar.wait_all_regs_ready(self.rd, None, [self.rs1], [])
         rs1_bytes = s.scalar.read_reg(self.rs1)
         rs1_val = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
@@ -321,7 +332,7 @@ class Lwu:
         data_future = await s.get_memory(address, 4)
         result_future = s.clock.create_future()
         s.clock.create_task(self.update_resolve(s, result_future, data_future))
-        s.scalar.write_reg_future(self.rd, result_future)
+        s.scalar.write_reg_future(self.rd, result_future, span_id)
         s.pc += 4
 
 
@@ -340,11 +351,12 @@ class Ld:
     def __str__(self):
         return f'ld\t{reg_name(self.rd)},{self.imm}({reg_name(self.rs1)})'
 
-    async def update_state(self, s):
+    @riscv_instr
+    async def update_state(self, s, span_id: int):
         await s.scalar.wait_all_regs_ready(self.rd, None, [self.rs1], [])
         rs1_bytes = s.scalar.read_reg(self.rs1)
         rs1_val = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
         address = rs1_val + self.imm
         data_future = await s.get_memory(address, 8)
-        s.scalar.write_reg_future(self.rd, data_future)
+        s.scalar.write_reg_future(self.rd, data_future, span_id)
         s.pc += 4

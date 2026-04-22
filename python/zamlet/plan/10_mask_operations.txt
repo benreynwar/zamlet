@@ -24,95 +24,89 @@ vmsif, vmsof, viota, vid). See test_suite_reference.txt for complete list
 
 Implementation Summary
 ----------------------
-Currently implemented: 2 instructions (VMNAND.MM, VID.V)
+Currently implemented: 9 instructions (all 8 mask-mask logicals + VID.V)
 Total in spec: 16 mask instructions
-Coverage: ~12%
+Coverage: ~56%
 
-MASK-REGISTER LOGICAL OPERATIONS (Status: ⚠ Partial)
+All 8 mask-mask logicals are unified under a single VmLogicMm class
+(instructions/vector.py:865) parameterised by a VmLogicOp enum
+(kamlet/kinstructions.py:97). The kinstr is VmLogicMmOp
+(kinstructions.py:816) with the op evaluator at kinstructions.py:788
+(_vmlogic_eval). Decoding dispatch lives in decode.py:948-970.
+
+MASK-REGISTER LOGICAL OPERATIONS (Status: ✓)
 =====================================================
 
 Spec: v-st-ext.adoc lines 4043-4128
 
 These operate on mask registers with 1-bit elements. All 8 instructions together
-can generate any of the 16 possible binary logical functions.
+can generate any of the 16 possible binary logical functions. All 8 share the
+VmLogicMm instruction class and VmLogicMmOp kinstr; only the VmLogicOp enum
+value and decode dispatch differ between them.
 
-VMAND.MM (Status: ✗)
+VMAND.MM (Status: ✓)
   Spec: v-st-ext.adoc line 4060
   Encoding: funct6=0x19, funct3=OPMVV (0x2)
   Format: vmand.mm vd, vs2, vs1
-  Implementation: Not implemented
+  Implementation: VmLogicMm / VmLogicOp.AND
   Description: vd.mask[i] = vs2.mask[i] && vs1.mask[i]
-  Notes:
-    - Bitwise AND of masks
-    - Pseudoinstruction: vmmv.m vd,vs = vmand.mm vd,vs,vs (copy mask)
+  Notes: Pseudoinstruction: vmmv.m vd,vs = vmand.mm vd,vs,vs (copy mask).
 
 VMNAND.MM (Status: ✓)
   Spec: v-st-ext.adoc line 4061
   Encoding: funct6=0x1d, funct3=OPMVV
   Format: vmnand.mm vd, vs2, vs1
-  Implementation: class VmnandMm in instructions/vector.py line 260
-  Decoding: decode.py line 554
+  Implementation: VmLogicMm / VmLogicOp.NAND
   Description: vd.mask[i] = !(vs2.mask[i] && vs1.mask[i])
   Notes:
-    - Fully implemented
     - Pseudoinstruction: vmnot.m vd,vs = vmnand.mm vd,vs,vs (invert mask)
     - Used in conditional test
 
-VMANDN.MM (Status: ✗)
+VMANDN.MM (Status: ✓)
   Spec: v-st-ext.adoc line 4062
   Encoding: funct6=0x18, funct3=OPMVV
   Format: vmandn.mm vd, vs2, vs1
-  Implementation: Not implemented
+  Implementation: VmLogicMm / VmLogicOp.ANDN
   Description: vd.mask[i] = vs2.mask[i] && !vs1.mask[i]
-  Notes:
-    - AND-NOT operation
-    - Old mnemonic vmandnot can be retained as alias
+  Notes: Old mnemonic vmandnot can be retained as alias.
 
-VMXOR.MM (Status: ✗)
+VMXOR.MM (Status: ✓)
   Spec: v-st-ext.adoc line 4063
   Encoding: funct6=0x1b, funct3=OPMVV
   Format: vmxor.mm vd, vs2, vs1
-  Implementation: Not implemented
+  Implementation: VmLogicMm / VmLogicOp.XOR
   Description: vd.mask[i] = vs2.mask[i] ^^ vs1.mask[i]
-  Notes:
-    - Bitwise XOR of masks
-    - Pseudoinstruction: vmclr.m vd = vmxor.mm vd,vd,vd (clear mask)
+  Notes: Pseudoinstruction: vmclr.m vd = vmxor.mm vd,vd,vd (clear mask).
 
-VMOR.MM (Status: ✗)
+VMOR.MM (Status: ✓)
   Spec: v-st-ext.adoc line 4064
   Encoding: funct6=0x1a, funct3=OPMVV
   Format: vmor.mm vd, vs2, vs1
-  Implementation: Not implemented
+  Implementation: VmLogicMm / VmLogicOp.OR
   Description: vd.mask[i] = vs2.mask[i] || vs1.mask[i]
-  Notes: Bitwise OR of masks
 
-VMNOR.MM (Status: ✗)
+VMNOR.MM (Status: ✓)
   Spec: v-st-ext.adoc line 4065
   Encoding: funct6=0x1e, funct3=OPMVV
   Format: vmnor.mm vd, vs2, vs1
-  Implementation: Not implemented
+  Implementation: VmLogicMm / VmLogicOp.NOR
   Description: vd.mask[i] = !(vs2.mask[i] || vs1.mask[i])
-  Notes: Bitwise NOR of masks
 
-VMORN.MM (Status: ✗)
+VMORN.MM (Status: ✓)
   Spec: v-st-ext.adoc line 4066
   Encoding: funct6=0x1c, funct3=OPMVV
   Format: vmorn.mm vd, vs2, vs1
-  Implementation: Not implemented
+  Implementation: VmLogicMm / VmLogicOp.ORN
   Description: vd.mask[i] = vs2.mask[i] || !vs1.mask[i]
-  Notes:
-    - OR-NOT operation
-    - Old mnemonic vmornot can be retained as alias
+  Notes: Old mnemonic vmornot can be retained as alias.
 
-VMXNOR.MM (Status: ✗)
+VMXNOR.MM (Status: ✓)
   Spec: v-st-ext.adoc line 4067
   Encoding: funct6=0x1f, funct3=OPMVV
   Format: vmxnor.mm vd, vs2, vs1
-  Implementation: Not implemented
+  Implementation: VmLogicMm / VmLogicOp.XNOR
   Description: vd.mask[i] = !(vs2.mask[i] ^^ vs1.mask[i])
-  Notes:
-    - Bitwise XNOR of masks
-    - Pseudoinstruction: vmset.m vd = vmxnor.mm vd,vd,vd (set all bits)
+  Notes: Pseudoinstruction: vmset.m vd = vmxnor.mm vd,vd,vd (set all bits).
 
 MASK POPULATION COUNT (Status: ✗)
 ==================================
@@ -232,30 +226,40 @@ IMPLEMENTATION INFRASTRUCTURE
 ==============================
 
 Existing Support:
-- VmnandMm class in instructions/vector.py (single mask logical operation)
-- VmnandMmOp in kinstructions.py (kernel instruction)
-- Decoding for vmnand.mm in decode.py
+- VmLogicMm class in instructions/vector.py:865 — unified class covering all 8
+  mask-mask logical operations, parameterised by a VmLogicOp enum value
+- VmLogicMmOp kinstr in kinstructions.py:816 with _vmlogic_eval evaluator at
+  kinstructions.py:788
+- Decoding for all 8 mask logicals in decode.py:948-970
+- Vid class (instructions/vector.py:2009) and VidOp kinstr for vid.v
+- ew=1 mask-vline iteration pattern established in VmLogicMm (iterates
+  n_vlines = ceil(vl / (word_bytes * j_in_l * 8)) jamlet-wide vlines, asserting
+  vs1/vs2 ordering ew=1)
 
 What's Missing:
-- Classes for other 7 mask logical operations
-- Classes for vcpop, vfirst, vmsbf, vmsif, vmsof, viota, vid
-- Kernel operations for count/find/prefix operations
-- vstart==0 checking for most mask operations
-- Overlap checking (vd cannot overlap vs2/v0 for some operations)
-- Special handling for operations that write to x registers (vcpop, vfirst)
+- Classes for vcpop, vfirst, vmsbf, vmsif, vmsof, viota
+- Kernel operations for count/find/prefix operations (vcpop needs cross-jamlet
+  popcount reduction; vfirst needs cross-jamlet MIN of first-set index; viota
+  needs parallel prefix-sum)
+- vstart==0 checking (most mask operations require vstart==0 except the
+  logicals, which allow non-zero vstart via prestart preservation)
+- Overlap checking (vd cannot overlap vs2/v0 for vmsbf, vmsif, vmsof, viota)
+- Scalar-destination plumbing for vcpop, vfirst (write_reg_future pattern from
+  VmvXs at vector.py:1288)
 
 Test Coverage
 -------------
-- vmnand.mm tested in tests/conditional/ (mask manipulation)
-- No tests for: other mask logicals, vcpop, vfirst, vmsbf, vmsif, vmsof, viota, vid
+- vmnand.mm (and pseudo vmnot.m) exercised in tests/conditional/
+- vmor.mm exercised by FFT autovectorised verify loop (fftN8 passes)
+- No focused tests yet for vmand/vmandn/vmxor/vmorn/vmnor/vmxnor paths, though
+  most are reachable through the unified code path
+- No tests for: vcpop, vfirst, vmsbf, vmsif, vmsof, viota, vid
 
 TODO Items
 ----------
-1. Implement remaining mask logical operations
-   - Add vmand, vmandn, vmxor, vmor, vmnor, vmorn, vmxnor classes
-   - Similar structure to VmnandMm
-   - Add decoding entries
-   - Support pseudoinstructions (vmmv, vmclr, vmset, vmnot)
+1. ✓ Implement mask-mask logical operations (DONE)
+   - All 8 ops (vmand, vmandn, vmor, vmorn, vmxor, vmnand, vmnor, vmxnor)
+     unified under VmLogicMm / VmLogicMmOp / VmLogicOp
 
 2. Implement vcpop.m (population count)
    - Count 1s in mask register
@@ -307,12 +311,13 @@ TODO Items
 
 Summary
 -------
-Minimal mask operation support. 2 of 16 instructions implemented:
-- ✓ vmnand.mm (mask NAND and vmnot pseudoinstruction)
+9 of 16 instructions implemented:
+- ✓ All 8 mask-mask logicals (vmand/vmandn/vmor/vmorn/vmxor/vmnand/vmnor/vmxnor)
+  unified under VmLogicMm, including the standard pseudos (vmmv, vmclr, vmset,
+  vmnot)
 - ✓ vid.v (element index)
-- ✗ 7 other mask logical operations
-- ✗ vcpop.m (population count to x register)
-- ✗ vfirst.m (find-first-set to x register)
+- ✗ vcpop.m (population count to x register) — immediate FFT N=32 blocker
+- ✗ vfirst.m (find-first-set to x register) — sibling at vs1=0b10001
 - ✗ vmsbf.m, vmsif.m, vmsof.m (set-before/including/only-first)
 - ✗ viota.m (parallel prefix sum, used for compress)
 
@@ -324,8 +329,8 @@ Mask operations are critical for:
 - Efficient predicate computation
 
 Priority for implementation:
-1. Remaining mask logical operations - simple, similar to vmnand
-2. vcpop and vfirst - commonly used for control flow
-3. viota - essential for compress operations
-4. vid - useful for index generation
-5. vmsbf/vmsif/vmsof - specialized string/search operations
+1. vcpop.m — unblocks FFT N=32 (current focus)
+2. vfirst.m — likely next FFT blocker; shares funct6=0x10/OPMVV dispatch with
+   vcpop.m (just a different vs1 encoding)
+3. viota.m — essential for compress operations
+4. vmsbf/vmsif/vmsof — specialised scan-first ops

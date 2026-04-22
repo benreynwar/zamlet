@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 
 from zamlet.addresses import WordOrder
 from zamlet.transactions.reg_gather import RegGather
+from zamlet.transactions.reg_slide import RegSlide, SlideDirection
 from zamlet.lamlet import ident_query
 
 if TYPE_CHECKING:
@@ -56,6 +57,62 @@ async def vrgather(lamlet: 'Oamlet', vd: int, vs2: int, vs1: int,
         kinstr_span_id = lamlet.monitor.get_kinstr_span_id(instr_ident)
 
         # Create sync span at lamlet level (before KINSTR children are finalized)
+        completion_sync_ident = instr_ident
+        lamlet.monitor.create_sync_local_span(completion_sync_ident, 0, -1, kinstr_span_id)
+        lamlet.synchronizer.local_event(completion_sync_ident)
+
+    return completion_sync_ident
+
+
+async def vslide(lamlet: 'Oamlet', vd: int, vs2: int,
+                 offset: int, direction: SlideDirection,
+                 start_index: int, n_elements: int,
+                 data_ew: int,
+                 word_order: WordOrder, vlmax: int,
+                 mask_reg: int | None, parent_span_id: int) -> int:
+    """
+    Execute vslideup / vslidedown.
+
+    - slideup:   vd[i] = vs2[i - offset]   for max(vstart, offset) <= i < vl
+    - slidedown: vd[i] = vs2[i + offset]   for vstart <= i < vl
+                 (writes 0 when i + offset >= vlmax)
+
+    `start_index` / `n_elements` define the destination slice written by the
+    RVV instruction as a whole; this function chunks them into j_in_l-sized
+    RegSlide kinstrs. For slideup, the caller must already have clamped
+    start_index up to max(vstart, offset) — RegSlide assumes start_index >=
+    offset so the computed src index is non-negative.
+
+    Returns: completion_sync_ident of the last chunk (or None if no work).
+    """
+    if direction == SlideDirection.UP:
+        assert start_index >= offset, \
+            f"vslideup: start_index={start_index} must be >= offset={offset}"
+
+    j_in_l = lamlet.params.j_in_l
+    n_active = n_elements - start_index
+    completion_sync_ident = None
+
+    for chunk_offset in range(0, n_active, j_in_l):
+        chunk_n = min(j_in_l, n_active - chunk_offset)
+        instr_ident = await ident_query.get_instr_ident(lamlet)
+
+        kinstr = RegSlide(
+            vd=vd,
+            vs2=vs2,
+            offset=offset,
+            direction=direction,
+            start_index=start_index + chunk_offset,
+            n_elements=chunk_n,
+            data_ew=data_ew,
+            word_order=word_order,
+            vlmax=vlmax,
+            mask_reg=mask_reg,
+            instr_ident=instr_ident,
+        )
+        await lamlet.add_to_instruction_buffer(kinstr, parent_span_id)
+        kinstr_span_id = lamlet.monitor.get_kinstr_span_id(instr_ident)
+
         completion_sync_ident = instr_ident
         lamlet.monitor.create_sync_local_span(completion_sync_ident, 0, -1, kinstr_span_id)
         lamlet.synchronizer.local_event(completion_sync_ident)

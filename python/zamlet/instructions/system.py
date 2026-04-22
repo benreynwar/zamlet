@@ -10,6 +10,7 @@ if TYPE_CHECKING:
     from zamlet.oamlet.oamlet import Oamlet
 
 from zamlet.register_names import reg_name
+from zamlet.instructions.riscv_instr import riscv_instr
 
 # CSR names mapping
 CSR_NAMES = {
@@ -139,7 +140,8 @@ class Mret:
     def __str__(self):
         return 'mret'
 
-    async def update_state(self, s: 'Oamlet'):
+    @riscv_instr
+    async def update_state(self, s: 'Oamlet', span_id: int):
         s.pc += 4
 
 
@@ -155,7 +157,8 @@ class Sret:
     def __str__(self):
         return 'sret'
 
-    async def update_state(self, s: 'Oamlet'):
+    @riscv_instr
+    async def update_state(self, s: 'Oamlet', span_id: int):
         s.pc += 4
 
 
@@ -184,7 +187,8 @@ class Fence:
             return s if s else 'unknown'
         return f'fence\t{_bits(self.pred)},{_bits(self.succ)}'
 
-    async def update_state(self, s: 'Oamlet'):
+    @riscv_instr
+    async def update_state(self, s: 'Oamlet', span_id: int):
         s.pc += 4
 
 
@@ -227,11 +231,12 @@ class Csrrw:
         else:
             return f'csrrw\t{reg_name(self.rd)},{csr_name},{reg_name(self.rs1)}'
 
-    async def update_state(self, s: 'Oamlet'):
+    @riscv_instr
+    async def update_state(self, s: 'Oamlet', span_id: int):
         await s.scalar.wait_all_regs_ready(self.rd, None, [self.rs1], [])
         if self.rd != 0:
             csr_bytes = s.scalar.read_csr(self.csr)
-            s.scalar.write_reg(self.rd, csr_bytes)
+            s.scalar.write_reg(self.rd, csr_bytes, span_id)
         rs1_bytes = s.scalar.read_reg(self.rs1)
         s.scalar.write_csr(self.csr, rs1_bytes)
         s.pc += 4
@@ -263,11 +268,12 @@ class Csrrs:
         else:
             return f'csrrs\t{reg_name(self.rd)},{csr_name},{reg_name(self.rs1)}'
 
-    async def update_state(self, s: 'Oamlet'):
+    @riscv_instr
+    async def update_state(self, s: 'Oamlet', span_id: int):
         await s.scalar.wait_all_regs_ready(self.rd, None, [self.rs1], [])
         csr_bytes = s.scalar.read_csr(self.csr)
         csr_val = int.from_bytes(csr_bytes, byteorder='little', signed=False)
-        s.scalar.write_reg(self.rd, csr_bytes)
+        s.scalar.write_reg(self.rd, csr_bytes, span_id)
         if self.rs1 != 0:
             rs1_bytes = s.scalar.read_reg(self.rs1)
             rs1_val = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
@@ -299,11 +305,12 @@ class Csrrwi:
         else:
             return f'csrrwi\t{reg_name(self.rd)},{csr_name},{self.zimm}'
 
-    async def update_state(self, s: 'Oamlet'):
+    @riscv_instr
+    async def update_state(self, s: 'Oamlet', span_id: int):
         await s.scalar.wait_all_regs_ready(self.rd, None, [], [])
         if self.rd != 0:
             csr_bytes = s.scalar.read_csr(self.csr)
-            s.scalar.write_reg(self.rd, csr_bytes)
+            s.scalar.write_reg(self.rd, csr_bytes, span_id)
         imm_bytes = self.zimm.to_bytes(s.params.word_bytes, byteorder='little', signed=False)
         s.scalar.write_csr(self.csr, imm_bytes)
         s.pc += 4
@@ -331,11 +338,12 @@ class Csrrsi:
         else:
             return f'csrrsi\t{reg_name(self.rd)},{csr_name},{self.zimm}'
 
-    async def update_state(self, s: 'Oamlet'):
+    @riscv_instr
+    async def update_state(self, s: 'Oamlet', span_id: int):
         await s.scalar.wait_all_regs_ready(self.rd, None, [], [])
         csr_bytes = s.scalar.read_csr(self.csr)
         csr_val = int.from_bytes(csr_bytes, byteorder='little', signed=False)
-        s.scalar.write_reg(self.rd, csr_bytes)
+        s.scalar.write_reg(self.rd, csr_bytes, span_id)
         if self.zimm != 0:
             new_val = csr_val | self.zimm
             new_bytes = new_val.to_bytes(s.params.word_bytes, byteorder='little', signed=False)
@@ -365,11 +373,12 @@ class Csrrci:
         else:
             return f'csrrci\t{reg_name(self.rd)},{csr_name},{self.zimm}'
 
-    async def update_state(self, s: 'Oamlet'):
+    @riscv_instr
+    async def update_state(self, s: 'Oamlet', span_id: int):
         await s.scalar.wait_all_regs_ready(self.rd, None, [], [])
         csr_bytes = s.scalar.read_csr(self.csr)
         csr_val = int.from_bytes(csr_bytes, byteorder='little', signed=False)
-        s.scalar.write_reg(self.rd, csr_bytes)
+        s.scalar.write_reg(self.rd, csr_bytes, span_id)
         if self.zimm != 0:
             new_val = csr_val & ~self.zimm
             new_bytes = new_val.to_bytes(s.params.word_bytes, byteorder='little', signed=False)

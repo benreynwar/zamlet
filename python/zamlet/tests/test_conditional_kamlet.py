@@ -187,10 +187,14 @@ async def run_conditional_simple(clock: Clock, lamlet: Oamlet, vector_length: in
 
         # Step 4: Invert mask
         instr_ident = await lamlet.get_instr_ident()
-        vmnand_instr = kinstructions.VmnandMmOp(
+        vmnand_instr = kinstructions.VmLogicMmOp(
+            op=kinstructions.VmLogicOp.NAND,
             dst=0,
             src1=0,
             src2=0,
+            start_index=lamlet.vstart,
+            n_elements=iter_count,
+            word_order=lamlet.word_order,
             instr_ident=instr_ident,
         )
         await lamlet.add_to_instruction_buffer(vmnand_instr, span_id)

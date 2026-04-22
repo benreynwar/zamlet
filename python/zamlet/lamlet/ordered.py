@@ -473,9 +473,13 @@ async def vload_indexed_ordered(lamlet: 'Oamlet', vd: int, base_addr: int, index
     g_addr = GlobalAddress(bit_addr=base_addr * 8, params=lamlet.params)
     data_ordering = Ordering(word_order=lamlet.word_order, ew=data_ew)
 
-    # Set up register file ordering for destination registers
     vline_bits = lamlet.params.maxvl_bytes * 8
     n_vlines = (data_ew * n_elements + vline_bits - 1) // vline_bits
+    n_index_vlines = (index_ew * n_elements + vline_bits - 1) // vline_bits
+    await lamlet.await_vreg_write_pending(vd, n_vlines)
+    await lamlet.await_vreg_write_pending(index_reg, n_index_vlines)
+
+    # Set up register file ordering for destination registers
     for vline_reg in range(vd, vd + n_vlines):
         lamlet.vrf_ordering[vline_reg] = data_ordering
 
@@ -584,6 +588,12 @@ async def vstore_indexed_ordered(lamlet: 'Oamlet', vs: int, base_addr: int, inde
     Returns VectorOpResult with fault info if any element faulted.
     """
     g_addr = GlobalAddress(bit_addr=base_addr * 8, params=lamlet.params)
+
+    vline_bits = lamlet.params.maxvl_bytes * 8
+    n_data_vlines = (data_ew * n_elements + vline_bits - 1) // vline_bits
+    n_index_vlines = (index_ew * n_elements + vline_bits - 1) // vline_bits
+    await lamlet.await_vreg_write_pending(vs, n_data_vlines)
+    await lamlet.await_vreg_write_pending(index_reg, n_index_vlines)
 
     # Wait for an ordered buffer slot
     buffer_id = get_free_buffer_id(lamlet)

@@ -1169,6 +1169,44 @@ class Monitor:
                     oldest_key = key
         return oldest_key
 
+    def _dump_sync_local_history(self, sync_ident: int, kx: int, ky: int) -> str:
+        """Return a human-readable timeline of every SYNC_LOCAL span ever
+        created for ``(sync_ident, kx, ky)`` — both currently-mapped and
+        orphaned (overwritten) ones. Used in assertion messages so
+        post-mortem bookkeeping issues can be diagnosed from a single run.
+        """
+        lines = []
+        mapped_ids = set()
+        for key, span_id in self._sync_local_by_key.items():
+            if key[0] == sync_ident and key[1] == kx and key[2] == ky:
+                mapped_ids.add(span_id)
+        matches = []
+        for span_id, span in self.spans.items():
+            if span.span_type != SpanType.SYNC_LOCAL:
+                continue
+            if (span.details.get('sync_ident') == sync_ident
+                    and ',' in span.component):
+                c = span.component
+                try:
+                    coords = c[c.index('(') + 1:c.index(')')].split(',')
+                    sx, sy = int(coords[0]), int(coords[1])
+                except (ValueError, IndexError):
+                    continue
+                if sx == kx and sy == ky:
+                    matches.append((span_id, span))
+        matches.sort(key=lambda t: t[1].created_cycle)
+        for span_id, span in matches:
+            status = ("COMPLETE" if span.completed_cycle is not None
+                      else "incomplete")
+            mapped = "MAPPED" if span_id in mapped_ids else "orphaned"
+            details = {k: v for k, v in span.details.items()
+                       if k != 'sync_ident'}
+            lines.append(
+                f"  span={span_id} {status} {mapped} "
+                f"created={span.created_cycle} "
+                f"completed={span.completed_cycle} details={details}")
+        return "\n".join(lines) if lines else "  <no spans found>"
+
     def record_sync_local_event(self, sync_ident: int, kx: int, ky: int,
                                  value: int | None = None) -> None:
         """Record that a synchronizer has seen its local event."""
@@ -1176,7 +1214,12 @@ class Monitor:
             return
 
         key = self._find_oldest_sync_local(sync_ident, kx, ky, completed=False)
-        assert key is not None, f"No incomplete sync local span for ({sync_ident}, {kx}, {ky})"
+        if key is None:
+            history = self._dump_sync_local_history(sync_ident, kx, ky)
+            assert False, (
+                f"No incomplete sync local span for ({sync_ident}, {kx}, "
+                f"{ky}) at cycle {self.clock.cycle}. "
+                f"Span history for this key:\n{history}")
         span_id = self._sync_local_by_key[key]
         self.add_event(span_id, "local_event", value=value)
 
@@ -1187,7 +1230,12 @@ class Monitor:
             return
 
         key = self._find_oldest_sync_local(sync_ident, kx, ky, completed=False)
-        assert key is not None, f"No incomplete sync local span for ({sync_ident}, {kx}, {ky})"
+        if key is None:
+            history = self._dump_sync_local_history(sync_ident, kx, ky)
+            assert False, (
+                f"No incomplete sync local span for ({sync_ident}, {kx}, "
+                f"{ky}) at cycle {self.clock.cycle} (complete path). "
+                f"Span history for this key:\n{history}")
         span_id = self._sync_local_by_key[key]
         self.spans[span_id].details['min_value'] = min_value
         self.complete_span(span_id)
@@ -1619,10 +1667,27 @@ class Monitor:
                         details_str = " " + ", ".join(f"{k}={v}" for k, v in dep_span.details.items())
                     lines.append(f"{prefix}  waiting_for: {dep_span.span_type.value} @ {dep_span.component} [{timing}] ({dep_ref.reason}){details_str}")
 
-    def is_complete(self):
+    def _is_allowed_incomplete(self, span: Span) -> bool:
         allowed_incomplete = (SpanType.FLOW_CONTROL, SpanType.SETUP,
                               SpanType.SYNC_LOCAL)
+        if span.span_type in allowed_incomplete:
+            return True
+
+        # IdentQuery slot reuse is intentionally proven by a later query. At
+        # program shutdown there may be no later query, so the final consumed
+        # IdentQuery can have all of its work complete while its KINSTR span
+        # remains open. Treat only that tail shape as monitor-complete.
+        if (span.span_type == SpanType.KINSTR
+                and span.details.get("instr_type") == "IdentQuery"):
+            return all(
+                self.spans[child.span_id].is_complete()
+                for child in span.children
+            )
+
+        return False
+
+    def is_complete(self):
         return all(
-            span.is_complete() or span.span_type in allowed_incomplete
+            span.is_complete() or self._is_allowed_incomplete(span)
             for span in self.spans.values()
         )

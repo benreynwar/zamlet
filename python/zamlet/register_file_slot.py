@@ -1,7 +1,9 @@
 import logging
-from typing import List
+from typing import List, Optional
 
-from zamlet.runner import Future
+from zamlet.runner import Clock, Future
+from zamlet.params import ZamletParams
+from zamlet.monitor import Monitor
 
 
 logger = logging.getLogger(__name__)
@@ -9,53 +11,61 @@ logger = logging.getLogger(__name__)
 
 class RegisterFileSlot:
 
-    def __init__(self, clock, params, name):
-        self.clock = clock
-        self.params = params
-        self.name = name
-        self.value = bytes([0]*8)
-        self.next_value = None
-        self.has_next_value = False
+    def __init__(self, clock: Clock, params: ZamletParams, name: str, monitor: Monitor):
+        self.clock: Clock = clock
+        self.params: ZamletParams = params
+        self.name: str = name
+        self.monitor: Monitor = monitor
+        self.value: bytes = bytes([0]*8)
+        self.next_value: Optional[bytes] = None
+        self.has_next_value: bool = False
         # This is a future that when it is resolved will
         # update the contents of the register file.
-        self.future = None
-        self.next_future = None
-        self.has_next_future = False
+        self.future: Optional[Future] = None
+        self.next_future: Optional[Future] = None
+        self.has_next_future: bool = False
+        # Span to annotate on the next update() commit (set at staging time).
+        # None means no write is currently staged.
+        self.next_span_id: Optional[int] = None
+        # Span captured when set_future() was called, carried through
+        # apply_future into next_span_id when the future resolves.
+        self.pending_future_span_id: Optional[int] = None
 
         # Some messages don't need a response
         # We just give the header ident=0
         # And don't register them here.
 
-    def updating(self):
+    def updating(self) -> bool:
         return (self.future is not None) or ((self.has_next_future) and (self.next_future is not None)) or self.has_next_value
 
-    def can_write(self):
+    def can_write(self) -> bool:
         return (not self.has_next_future) and (not self.has_next_value)
 
-    def get_value(self):
+    def get_value(self) -> bytes:
         assert not self.updating()
         as_int = int.from_bytes(self.value, byteorder='little', signed=True)
         logger.debug(f'read_reg: {self.name} = 0x{as_int:016x}')
         return self.value
 
-    def set_value(self, value):
+    def set_value(self, value: bytes, span_id: int) -> None:
         assert not self.has_next_value
-        self.has_next_value = True
+        assert not self.has_next_future
+        assert self.future is None
         assert isinstance(value, bytes)
         assert len(value) == 8
+        self.has_next_value = True
         self.next_value = value
-        assert not self.has_next_future
-        self.has_next_future = False
-        self.next_future = None
+        self.next_span_id = span_id
         as_int = int.from_bytes(value, byteorder='little', signed=True)
         logger.debug(f'write_reg: {self.name} = 0x{as_int:016x}')
 
-    def set_future(self, future):
+    def set_future(self, future: Future, span_id: int) -> None:
         assert not self.has_next_future
         self.has_next_future = True
         self.next_future = future
+        self.pending_future_span_id = span_id
 
-    async def apply_future(self, future):
+    async def apply_future(self, future: Future) -> None:
         await future
         value = future.result()
         int_value = int.from_bytes(value, byteorder='little', signed=False)
@@ -68,13 +78,21 @@ class RegisterFileSlot:
             assert isinstance(value, bytes)
             assert len(value) == self.params.word_bytes
             self.next_value = value
+            self.next_span_id = self.pending_future_span_id
             logger.debug(f'write_reg: {self.name} = 0x{int_value:016x}')
         else:
             logger.debug(f'write_reg: {self.name} = 0x{int_value:016x} wont apply overwritten')
 
-    def update(self):
+    def update(self) -> None:
         if self.has_next_value:
+            old_value = self.value
             self.value = self.next_value
+            self.monitor.add_event(
+                self.next_span_id, 'scalar_write',
+                reg=self.name,
+                old=old_value.hex(), new=self.next_value.hex(),
+            )
+            self.next_span_id = None
         if self.has_next_future:
             self.future = self.next_future
             if self.future is not None:

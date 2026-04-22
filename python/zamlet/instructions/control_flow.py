@@ -10,6 +10,7 @@ if TYPE_CHECKING:
     from zamlet.oamlet.oamlet import Oamlet
 
 from zamlet.register_names import reg_name
+from zamlet.instructions.riscv_instr import riscv_instr
 
 
 def format_branch_target(pc, offset):
@@ -33,11 +34,12 @@ class Auipc:
     def __str__(self):
         return f'auipc\t{reg_name(self.rd)},0x{self.imm & 0xfffff:x}'
 
-    async def update_state(self, s: 'Oamlet'):
+    @riscv_instr
+    async def update_state(self, s: 'Oamlet', span_id: int):
         await s.scalar.wait_all_regs_ready(self.rd, None, [], [])
         result = s.pc + (self.imm << 12)
         result_bytes = result.to_bytes(s.params.word_bytes, byteorder='little', signed=False)
-        s.scalar.write_reg(self.rd, result_bytes)
+        s.scalar.write_reg(self.rd, result_bytes, span_id)
         s.pc += 4
 
 
@@ -70,11 +72,12 @@ class Jal:
         else:
             return f'jal\t{reg_name(self.rd)},{target}'
 
-    async def update_state(self, s: 'Oamlet'):
+    @riscv_instr
+    async def update_state(self, s: 'Oamlet', span_id: int):
         await s.scalar.wait_all_regs_ready(self.rd, None, [], [])
         result = s.pc + 4
         result_bytes = result.to_bytes(s.params.word_bytes, byteorder='little', signed=False)
-        s.scalar.write_reg(self.rd, result_bytes)
+        s.scalar.write_reg(self.rd, result_bytes, span_id)
         s.pc += self.imm
 
 
@@ -102,12 +105,13 @@ class Jalr:
         else:
             return f'jalr\t{reg_name(self.rd)},{self.imm}({reg_name(self.rs1)})'
 
-    async def update_state(self, s: 'Oamlet'):
+    @riscv_instr
+    async def update_state(self, s: 'Oamlet', span_id: int):
         await s.scalar.wait_all_regs_ready(self.rd, None, [self.rs1], [])
         rs1_val = int.from_bytes(s.scalar.read_reg(self.rs1), byteorder='little', signed=False)
         result = s.pc + 4
         result_bytes = result.to_bytes(s.params.word_bytes, byteorder='little', signed=False)
-        s.scalar.write_reg(self.rd, result_bytes)
+        s.scalar.write_reg(self.rd, result_bytes, span_id)
         s.pc = (rs1_val + self.imm) & ~1
 
 
