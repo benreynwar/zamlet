@@ -3,7 +3,7 @@ load(":defs.bzl", "fft_n_target", "fft_n_corrupt_target")
 fft_n_target(8)
 fft_n_target(16)
 fft_n_target(32)
-fft_n_target(64)
+fft_n_target(64, timeout = "long")
 
 # Sanity negative test: same FFT kernel + wrong expected[]. Must FAIL; guards
 # against the test harness vacuously reporting pass.

@@ -9,7 +9,8 @@ load("//bazel:defs.bzl", "riscv_kernel", "kernel_test")
 # corrupt_expected=True builds a sibling target whose expected[] array is
 # deliberately wrong, used as an expected-failure sanity check against a
 # vacuously-passing test harness.
-def _fft_n_kernel_and_test(n, k, max_vlmax, suffix, gen_flags, expected_failure):
+def _fft_n_kernel_and_test(n, k, max_vlmax, suffix, gen_flags, expected_failure,
+                           timeout):
     suffix_label = "{}{}".format(n, suffix)
     twiddles_name = "twiddles_N{}".format(suffix_label)
     kernel_name = "vec-fftN{}".format(suffix_label)
@@ -48,16 +49,17 @@ def _fft_n_kernel_and_test(n, k, max_vlmax, suffix, gen_flags, expected_failure)
         name = test_name,
         kernel = ":" + kernel_name,
         expected_failure = expected_failure,
+        timeout = timeout,
     )
 
 
-def fft_n_target(n, k = 128, max_vlmax = 64):
+def fft_n_target(n, k = 128, max_vlmax = 64, timeout = "moderate"):
     _fft_n_kernel_and_test(
         n, k, max_vlmax, suffix = "", gen_flags = "",
-        expected_failure = False)
+        expected_failure = False, timeout = timeout)
 
 
-def fft_n_corrupt_target(n, k = 128, max_vlmax = 64):
+def fft_n_corrupt_target(n, k = 128, max_vlmax = 64, timeout = "moderate"):
     """Sibling of fft_n_target with a deliberately wrong expected[] array.
 
     The test passes only if the on-device check reports FAIL, guarding against
@@ -66,4 +68,4 @@ def fft_n_corrupt_target(n, k = 128, max_vlmax = 64):
     _fft_n_kernel_and_test(
         n, k, max_vlmax, suffix = "_corrupt",
         gen_flags = "--corrupt-expected",
-        expected_failure = True)
+        expected_failure = True, timeout = timeout)
