@@ -24,9 +24,6 @@ from zamlet.monitor import Monitor, WitemSnapshot, KamletSnapshot
 logger = logging.getLogger(__name__)
 
 
-
-
-
 class Kamlet:
     """
     A collection of lanes.
@@ -454,6 +451,10 @@ class Kamlet:
         logger.debug(f'{self.clock.cycle}: kamlet ({self.min_x},{self.min_y}) RECEIVE INSTRUCTION {instr_name} ident={instr_ident}')
         self._instruction_queue.append(instr)
         self.monitor.record_kamlet_instr_added(self.min_x, self.min_y)
+        if instr_ident != '?':
+            exec_span_id = self.monitor.get_kinstr_exec_span_id(
+                instr_ident, self.min_x, self.min_y)
+            self.monitor.add_event(exec_span_id, "kamlet_received")
 
     def _snapshot_witems(self) -> list[WitemSnapshot]:
         """Snapshot current WITEM state for visualization."""
@@ -532,6 +533,7 @@ class Kamlet:
     async def _dispatch_from_reservation_station(self):
         while True:
             await self.clock.next_cycle
+            cycle = self.clock.cycle
             chosen_index = None
             chosen_order = None
             for i, instr in enumerate(self._reservation_station):
@@ -547,12 +549,21 @@ class Kamlet:
             instruction = self._reservation_station[chosen_index]
             instr_name = type(instruction).__name__
             instr_ident = getattr(instruction, 'instr_ident', '?')
+            self._emit_dispatched_from_rs(instruction, cycle)
             logger.debug(
                 f'{self.clock.cycle}: kamlet ({self.min_x},{self.min_y})'
                 f' DISPATCH {instr_name} ident={instr_ident}'
                 f' order={instruction.renamed.order}')
             await instruction.execute(self)
             self._reservation_station[chosen_index] = None
+
+    def _emit_dispatched_from_rs(self, instruction, cycle):
+        instr_ident = getattr(instruction, 'instr_ident', None)
+        if instr_ident is None:
+            return
+        span_id = self.monitor.get_kinstr_exec_span_id(
+            instr_ident, self.min_x, self.min_y)
+        self.monitor.add_event(span_id, "dispatched_from_rs")
 
     async def _monitor_cache_requests(self):
         while True:

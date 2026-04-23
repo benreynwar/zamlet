@@ -479,9 +479,13 @@ async def vload_indexed_ordered(lamlet: 'Oamlet', vd: int, base_addr: int, index
     await lamlet.await_vreg_write_pending(vd, n_vlines)
     await lamlet.await_vreg_write_pending(index_reg, n_index_vlines)
 
-    # Set up register file ordering for destination registers
-    for vline_reg in range(vd, vd + n_vlines):
-        lamlet.vrf_ordering[vline_reg] = data_ordering
+    # Set up register file ordering for destination registers. Partial /
+    # masked vlines get remapped from their current ew so masked-out lanes
+    # survive correctly.
+    await lamlet.set_vrf_ordering_for_write(
+        vd, data_ew, vstart=start_index, vl=n_elements,
+        masked=(mask_reg is not None), emul=lamlet.lmul,
+        span_id=parent_span_id)
 
     # Wait for an ordered buffer slot
     buffer_id = get_free_buffer_id(lamlet)

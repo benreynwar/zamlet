@@ -198,6 +198,10 @@ class Oamlet:
         self._oldest_active_ident_query_slot = None
         self._next_unconsumed_ident_query_slot = 0
         self._next_ident_query_slot = 0
+        # Cycle the last IdentQuery was issued. Used to rate-limit the
+        # ident-pressure path in should_send_ident_query so we don't flood
+        # the network with back-to-back queries while a response is in flight.
+        self._last_ident_query_cycle: int | None = None
         # Dedicated idents for ordered barrier instructions (after ident query idents)
         self._ordered_barrier_idents = [
             params.max_response_tags + n_iq + i
@@ -396,42 +400,53 @@ class Oamlet:
         while any(self.vrf_write_pending[vreg + i] > 0 for i in range(n_vlines)):
             await self.clock.next_cycle
 
-    def set_vrf_ordering(self, vd: int, eew: int):
-        """Unconditionally relabel vrf_ordering for every vline in ``vd``'s
-        EMUL group. Intended for full-overwrite destinations where the prior
-        data is being replaced — no read, no remap, no check. For partial
-        writes or reads, use ``ensure_vrf_ordering`` instead."""
-        ordering = Ordering(self.word_order, eew)
-        n_vlines = self.emul_for_eew(eew)
-        logger.info(f'set_vrf_ordering: vd=v{vd} eew={eew} '
-                    f'lmul={self.lmul} n_vlines={n_vlines} regs=v{vd}..v{vd + n_vlines - 1}')
-        for i in range(n_vlines):
-            self.vrf_ordering[vd + i] = ordering
-
     async def ensure_vrf_ordering(
             self, vreg: int, ew: int, span_id: int,
-            *, allow_uninitialized: bool = False) -> None:
-        """Make vreg's ordering match (self.word_order, ew) across its EMUL group.
+            *, vl: int, vstart: int = 0) -> None:
+        """Make vreg's ordering match (self.word_order, ew) across the vlines
+        of its EMUL group that overlap the caller's active element range
+        ``[vstart, vl)``.
 
-        Uninitialized entries (None): set the target ordering if
-        ``allow_uninitialized`` is True, else assert. word_order mismatch is
-        always a fatal assert — we never silently remap across word_orders.
-        ew mismatches are remapped via scratch memory, except that either side
-        at ew=1 (mask register) asserts because remap_reg_ew requires
-        ew % 8 == 0. After any required remap, the final ordering is set.
+        The active range is supplied by the caller (not read from CSR state)
+        because an instruction's read window is not always the architectural
+        ``[self.vstart, self.vl)`` — e.g. ``vmv.s.x`` only touches element 0.
+        Vlines entirely outside the active range are left untouched: they
+        are prestart or tail, not read or written by the caller, and may
+        legally be uninitialized or hold a different ew from a prior
+        partial write.
+
+        Uninitialized entries (None) within the active range are stamped
+        with the target ordering. Per RISC-V v-st-ext 'vector registers
+        can have arbitrary values at reset' — the physical bits exist,
+        we just pick a consistent striping for them (jamlet byte-arrays
+        are zero-initialized, which suffices as the 'arbitrary' value).
+        word_order mismatch is always a fatal assert — we never silently
+        remap across word_orders. ew mismatches are remapped via scratch
+        memory, except that either side at ew=1 (mask register) asserts
+        because remap_reg_ew requires ew % 8 == 0. After any required
+        remap, the final ordering is set on the in-range vlines only.
         """
+        if vstart >= vl:
+            return
         n_vlines = self.emul_for_eew(ew)
+        elements_per_vline = self.params.vline_bytes * 8 // ew
+        new_ordering = Ordering(self.word_order, ew)
         regs_to_remap = []
+        vlines_to_stamp = []
         for i in range(n_vlines):
+            vline_first_element = i * elements_per_vline
+            vline_last_element = vline_first_element + elements_per_vline
+            if vstart >= vline_last_element or vl <= vline_first_element:
+                continue
             reg = vreg + i
             cur = self.vrf_ordering[reg]
             if cur is None:
-                assert allow_uninitialized, (
-                    f'v{reg} has no ordering (expected ew={ew})')
+                vlines_to_stamp.append(reg)
                 continue
             assert cur.word_order == self.word_order, (
                 f'v{reg} word_order={cur.word_order} does not match current '
                 f'word_order={self.word_order}; refusing to silently remap')
+            vlines_to_stamp.append(reg)
             if cur.ew == ew:
                 continue
             assert cur.ew != 1 and ew != 1, (
@@ -439,12 +454,89 @@ class Oamlet:
                 f'target ew={ew}); mask regs cannot round-trip through memory')
             regs_to_remap.append(reg)
         if regs_to_remap:
-            dst_ordering = Ordering(self.word_order, ew)
             logger.warning(
                 f'ensure_vrf_ordering: remapping v{regs_to_remap} to ew={ew}')
             await unordered.remap_reg_ew(
-                self, regs_to_remap, regs_to_remap, dst_ordering, span_id)
-        self.set_vrf_ordering(vreg, ew)
+                self, regs_to_remap, regs_to_remap, new_ordering, span_id)
+        for reg in vlines_to_stamp:
+            self.vrf_ordering[reg] = new_ordering
+
+    async def set_vrf_ordering_for_write(
+            self, vd: int, ew: int, vstart: int, vl: int, masked: bool,
+            emul: int, span_id: int) -> None:
+        """Update vrf_ordering for a vector write at element width ``ew``
+        covering ``emul`` vlines starting at ``vd``.
+
+        Element indices are RISC-V semantics (all within the EMUL register
+        group): ``vstart`` is the first active element (inclusive), ``vl`` is
+        one past the last active element (exclusive). Active range is
+        ``[vstart, vl)``; ``[0, vstart)`` is prestart and ``[vl, VLMAX)`` is
+        tail — both retain old values under the model's fully-undisturbed
+        policy.
+
+        For each vline ``i`` in ``0..emul``, let
+        ``vline_first_element = i * elements_per_vline`` and
+        ``vline_last_element = vline_first_element + elements_per_vline``
+        (exclusive). Classification:
+
+        - entirely outside the active range
+          (``vstart >= vline_last_element`` or ``vl <= vline_first_element``):
+          tag unchanged, no data touched.
+        - fully overwritten (not ``masked`` and
+          ``vstart <= vline_first_element`` and ``vl >= vline_last_element``):
+          every byte written, stamp new ordering with no remap.
+        - partial otherwise: the unwritten bytes carry old data and must end
+          up in the new ew's jamlet striping. Remap this vline from its
+          current ew to ``ew`` first, then stamp new ordering.
+
+        Mask-register transitions (cur ew=1 or target ew=1 with the other
+        side not equal) cannot round-trip through scratch memory. Partial
+        writes into that shape log an error and skip the remap — tail bytes
+        remain in the old ew's striping. Subsequent reads of the tail at
+        the new ew will see incorrect data; `ensure_vrf_ordering` still
+        asserts in that case.
+        """
+        if vstart >= vl:
+            return
+        elements_per_vline = self.params.vline_bytes * 8 // ew
+        new_ordering = Ordering(self.word_order, ew)
+        vlines_to_remap: list[int] = []
+        vlines_to_stamp: list[int] = []
+        for i in range(emul):
+            vline_first_element = i * elements_per_vline
+            vline_last_element = vline_first_element + elements_per_vline
+            if vstart >= vline_last_element or vl <= vline_first_element:
+                continue
+            reg = vd + i
+            fully_overwritten = (
+                not masked
+                and vstart <= vline_first_element
+                and vl >= vline_last_element)
+            cur = self.vrf_ordering[reg]
+            if cur is not None:
+                assert cur.word_order == self.word_order, (
+                    f'v{reg} word_order={cur.word_order} does not match '
+                    f'current word_order={self.word_order}; '
+                    f'refusing to silently remap')
+                if not fully_overwritten and cur.ew != ew:
+                    if cur.ew == 1 or ew == 1:
+                        logger.error(
+                            f'set_vrf_ordering_for_write: v{reg} mask-register '
+                            f'ew mismatch (cur ew={cur.ew}, target ew={ew}); '
+                            f'skipping remap — tail bytes remain in the old '
+                            f'striping and may be garbage if later read at '
+                            f'ew={ew}')
+                    else:
+                        vlines_to_remap.append(reg)
+            vlines_to_stamp.append(reg)
+        if vlines_to_remap:
+            logger.warning(
+                f'set_vrf_ordering_for_write: remapping v{vlines_to_remap} '
+                f'to ew={ew}')
+            await unordered.remap_reg_ew(
+                self, vlines_to_remap, vlines_to_remap, new_ordering, span_id)
+        for reg in vlines_to_stamp:
+            self.vrf_ordering[reg] = new_ordering
 
     def mark_vreg_write_pending(self, vreg: int, eew: int) -> None:
         """Increment the pending-write counter for every vline in vreg's EMUL group."""
@@ -1517,8 +1609,9 @@ class Oamlet:
         if is_unit_stride and is_aligned:
             await self._remap_weak_vlines_for_load(
                 addr, ordering, emul, parent_span_id)
-        for i in range(emul):
-            self.vrf_ordering[vd + i] = ordering
+        await self.set_vrf_ordering_for_write(
+            vd, ordering.ew, vstart=start_index, vl=n_elements,
+            masked=mask_reg is not None, emul=emul, span_id=parent_span_id)
         return await unordered.vload(self, vd, addr, ordering, n_elements, mask_reg, start_index,
                                      parent_span_id, stride_bytes)
 

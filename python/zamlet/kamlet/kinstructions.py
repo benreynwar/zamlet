@@ -328,6 +328,25 @@ class SetIndexBound(KInstr):
 
 
 @dataclass
+class Marker(KInstr):
+    """Trace marker that flows through the pipeline and is discarded.
+
+    Emits a "marker" event on the kinstr-exec span when the kamlet admits
+    the instruction, then returns None so no further dispatch happens.
+    """
+    marker_id: int
+    instr_ident: int
+
+    async def admit(self, kamlet) -> 'Marker | None':
+        span_id = kamlet.monitor.get_kinstr_exec_span_id(
+            self.instr_ident, kamlet.min_x, kamlet.min_y)
+        kamlet.monitor.add_event(span_id, "marker", marker_id=self.marker_id)
+        kamlet.monitor.finalize_kinstr_exec(
+            self.instr_ident, kamlet.min_x, kamlet.min_y)
+        return None
+
+
+@dataclass
 class FreeRegister(KInstr):
     """Release the rename-table entry for an architectural register.
 

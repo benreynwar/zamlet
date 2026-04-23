@@ -172,6 +172,9 @@ async def run_conditional_simple(clock: Clock, lamlet: Oamlet, vector_length: in
             instr_ident=instr_ident,
         )
         await lamlet.add_to_instruction_buffer(vmsle_instr, span_id)
+        # Direct-kinstr path bypasses the dispatch class; stamp the ew=1
+        # mask ordering that VCmpVi.update_state would normally set.
+        lamlet.vrf_ordering[0] = Ordering(lamlet.word_order, 1)
 
         # Step 3: Load a into v1 (e16, unmasked)
         lamlet.set_vtype(16, lmul)

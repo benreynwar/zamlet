@@ -360,6 +360,7 @@ def decode_standard(instruction_bytes: bytes) -> Instruction:
     #   funct3=0: SetIndexBound — bound indexed load/store range to skip fault sync
     #   funct3=1: BeginWriteset — open shared writeset scope to skip completion sync
     #   funct3=2: EndWriteset — close writeset scope
+    #   funct3=3: Mark — broadcast a trace marker to every kamlet
     elif opcode == 0x0b:
         imm = decode_i_imm(inst)
         if funct3 == 0x0:
@@ -368,6 +369,8 @@ def decode_standard(instruction_bytes: bytes) -> Instruction:
             return CUSTOM.BeginWriteset()
         elif funct3 == 0x2:
             return CUSTOM.EndWriteset()
+        elif funct3 == 0x3:
+            return CUSTOM.Mark(rs1=rs1, imm=imm)
 
     elif opcode == 0x07:
         width = funct3
@@ -972,8 +975,7 @@ def decode_standard(instruction_bytes: bytes) -> Instruction:
             vs1 = rs1
             return V.VmergeVvm(vd=rd, vs1=vs1, vs2=vs2)
         elif funct6 == 0x17 and funct3 == 0x0 and vm == 1:
-            return V.VUnary(vd=rd, vs2=rs1, vm=1, op=kinstructions.VUnaryOp.COPY,
-                            factor=1, widening=True, mnemonic='vmv.v.v')
+            return V.Vmv(vd=rd, vs2=rs1, nreg=1, mnemonic='vmv.v.v')
         elif funct6 == 0x17 and funct3 == 0x3 and vm == 0:
             simm5 = rs1
             return V.VmergeVim(vd=rd, vs2=vs2, simm5=simm5)
@@ -1085,7 +1087,7 @@ def decode_standard(instruction_bytes: bytes) -> Instruction:
         elif funct6 == 0x27 and funct3 == 0x3:
             # vmvNr.v - whole register move, N = simm5 + 1
             nreg = rs1 + 1
-            return V.VmvNr(vd=rd, vs2=vs2, nreg=nreg)
+            return V.Vmv(vd=rd, vs2=vs2, nreg=nreg, mnemonic=f'vmv{nreg}r.v')
         # OPFVV (funct3 = 0x1) - floating-point vector-vector
         elif funct6 == 0x00 and funct3 == 0x1:
             vs1 = rs1

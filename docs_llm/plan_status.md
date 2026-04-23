@@ -4,6 +4,7 @@ One-line index of plans in `plans/`. See `ROADMAP.md` for the big picture.
 
 ## Active
 
+- [ordering_audit](plans/PLAN_ordering_audit.md) — vector ordering audit findings; B1-B3 bugs, M1/N1-N3 cleanup (current focus)
 - [mask_ops](plans/PLAN_mask_ops.md) — five mask ops to unblock FFT N=32 (current focus)
 - [fft_kernel](plans/PLAN_fft_kernel.md) — variable-R FFT kernel; init + Regime A/B in; Regime C partial
 - [per_vline_ew](plans/PLAN_per_vline_ew.md) — steps 1–3 done; 4–7 pending

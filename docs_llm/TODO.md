@@ -33,6 +33,16 @@
           `tests/test_utils.py:setup_mask_register` once ew=1 loads exist —
           the helper currently bulk-loads at ew=64 and then relabels the
           vreg as ew=1 because the byte layout already matches.
+      (e) `set_vrf_ordering_for_write` currently logs an error and skips
+          the remap when a partial write crosses the ew=1 boundary (see
+          `oamlet.py:519`). Tail bytes are left in the old striping; any
+          later read of the tail at the new ew gets garbage. `ensure_vrf_
+          ordering` still asserts for reads, so wrongness surfaces on use
+          rather than silently corrupting. Proper fix: (a) above gives the
+          reg-to-reg ew=1 remap, then add a tail policy — skip the remap
+          when the vline's tail will not be read at the new ew (tracked
+          dynamically, or signalled by the caller) so remaps only run when
+          semantically required.
 - [ ] vstart / start_index is ignored by almost all kinstrs (they hardcode
       start_index=0 in execute and in alloc_dst_pregs). Only vrgather and
       the new VmLogicMm thread `s.vstart` through. RVV spec requires

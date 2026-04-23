@@ -33,14 +33,18 @@ class ZamletParams:
     receive_buffer_depth: int = 16
     router_output_buffer_length: int = 2
     router_input_buffer_length: int = 2
-    instruction_queue_length: int = 16
+    instruction_queue_length: int = 64
     reservation_station_depth: int = 8
     n_ident_query_slots: int = 8
+    # Minimum cycles between IdentQueries issued due to ident pressure.
+    # Prevents flooding the network with back-to-back queries while a
+    # response is in flight.
+    ident_query_min_cycles: int = 64
     n_a_channels: int = 1
     n_b_channels: int = 1
 
 
-    instruction_buffer_length: int = 16
+    instruction_buffer_length: int = 64
     instructions_in_packet: int = 4
     n_response_idents: int = 32
     #n_waiting: int = 16
