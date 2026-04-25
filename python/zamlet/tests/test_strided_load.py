@@ -106,8 +106,7 @@ async def run_strided_load_test(
     lamlet.vl = vl
     lamlet.set_vtype(ew, lmul)
 
-    elements_per_vline = params.vline_bytes * 8 // ew
-    n_data_regs = (vl + elements_per_vline - 1) // elements_per_vline
+    data_emul = max(1, lmul)
     data_reg = 0
 
     span_id = lamlet.monitor.create_span(
@@ -117,7 +116,7 @@ async def run_strided_load_test(
     # Set up mask register if using masks
     mask_reg = None
     if use_mask:
-        mask_reg = n_data_regs
+        mask_reg = data_emul
         assert mask_reg < lamlet.params.n_vregs, \
             f'mask_reg {mask_reg} exceeds n_vregs {lamlet.params.n_vregs}'
         mask_mem_addr = src_base + 0x400000

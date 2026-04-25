@@ -328,6 +328,25 @@ class SetIndexBound(KInstr):
 
 
 @dataclass
+class Marker(KInstr):
+    """Trace marker that flows through the pipeline and is discarded.
+
+    Emits a "marker" event on the kinstr-exec span when the kamlet admits
+    the instruction, then returns None so no further dispatch happens.
+    """
+    marker_id: int
+    instr_ident: int
+
+    async def admit(self, kamlet) -> 'Marker | None':
+        span_id = kamlet.monitor.get_kinstr_exec_span_id(
+            self.instr_ident, kamlet.min_x, kamlet.min_y)
+        kamlet.monitor.add_event(span_id, "marker", marker_id=self.marker_id)
+        kamlet.monitor.finalize_kinstr_exec(
+            self.instr_ident, kamlet.min_x, kamlet.min_y)
+        return None
+
+
+@dataclass
 class FreeRegister(KInstr):
     """Release the rename-table entry for an architectural register.
 
@@ -543,6 +562,7 @@ class VCmpViOp(KInstr):
     element_width: int
     ordering: addresses.Ordering
     instr_ident: int
+    mask_reg: int | None = None
 
     async def admit(self, kamlet) -> 'VCmpViOp | None':
         vline_bytes = kamlet.params.vline_bytes
@@ -553,14 +573,20 @@ class VCmpViOp(KInstr):
 
         # Rename: lookup src physes before allocating dst physes.
         src_pregs = [kamlet.r(self.src + i) for i in range(n_src_vlines)]
+        mask_preg = kamlet.r(self.mask_reg) if self.mask_reg is not None else None
+        exclude = set(src_pregs)
+        if mask_preg is not None:
+            exclude.add(mask_preg)
         dst_pregs = await kamlet.alloc_dst_pregs(
             base_arch=self.dst, start_vline=0, end_vline=n_dst_vlines - 1,
             start_index=0, n_elements=self.n_elements,
-            elements_in_vline=dst_elements_in_vline, mask_present=False,
-            exclude_reuse=set(src_pregs))
+            elements_in_vline=dst_elements_in_vline,
+            mask_present=self.mask_reg is not None,
+            exclude_reuse=exclude)
         return self.rename(
             src_pregs={v: src_pregs[v] for v in range(n_src_vlines)},
             dst_pregs={v: dst_pregs[v] for v in range(n_dst_vlines)},
+            mask_preg=mask_preg,
         )
 
     async def execute(self, kamlet) -> None:
@@ -581,6 +607,12 @@ class VCmpViOp(KInstr):
             if k_index != kamlet.k_index:
                 continue
             jamlet = kamlet.jamlets[j_in_k_index]
+
+            if r.mask_preg is not None:
+                mask_bit_addr = r.mask_preg * wb * 8 + element_in_jamlet
+                mask_byte = jamlet.rf_slice[mask_bit_addr // 8]
+                if not ((mask_byte >> (mask_bit_addr % 8)) & 1):
+                    continue
 
             src_bit_in_jvec = element_in_jamlet * self.element_width
             src_vline_idx = src_bit_in_jvec // bits_per_jamlet_vline
@@ -626,6 +658,7 @@ class VCmpVxOp(KInstr):
     ordering: addresses.Ordering
     instr_ident: int
     is_float: bool = False
+    mask_reg: int | None = None
 
     async def admit(self, kamlet) -> 'VCmpVxOp | None':
         vline_bytes = kamlet.params.vline_bytes
@@ -636,14 +669,20 @@ class VCmpVxOp(KInstr):
 
         # Rename: lookup src physes before allocating dst physes.
         src_pregs = [kamlet.r(self.src + i) for i in range(n_src_vlines)]
+        mask_preg = kamlet.r(self.mask_reg) if self.mask_reg is not None else None
+        exclude = set(src_pregs)
+        if mask_preg is not None:
+            exclude.add(mask_preg)
         dst_pregs = await kamlet.alloc_dst_pregs(
             base_arch=self.dst, start_vline=0, end_vline=n_dst_vlines - 1,
             start_index=0, n_elements=self.n_elements,
-            elements_in_vline=dst_elements_in_vline, mask_present=False,
-            exclude_reuse=set(src_pregs))
+            elements_in_vline=dst_elements_in_vline,
+            mask_present=self.mask_reg is not None,
+            exclude_reuse=exclude)
         return self.rename(
             src_pregs={v: src_pregs[v] for v in range(n_src_vlines)},
             dst_pregs={v: dst_pregs[v] for v in range(n_dst_vlines)},
+            mask_preg=mask_preg,
         )
 
     async def execute(self, kamlet) -> None:
@@ -670,6 +709,12 @@ class VCmpVxOp(KInstr):
             if k_index != kamlet.k_index:
                 continue
             jamlet = kamlet.jamlets[j_in_k_index]
+
+            if r.mask_preg is not None:
+                mask_bit_addr = r.mask_preg * wb * 8 + element_in_jamlet
+                mask_byte = jamlet.rf_slice[mask_bit_addr // 8]
+                if not ((mask_byte >> (mask_bit_addr % 8)) & 1):
+                    continue
 
             src_bit_in_jvec = element_in_jamlet * self.element_width
             src_vline_idx = src_bit_in_jvec // bits_per_jamlet_vline
@@ -715,6 +760,7 @@ class VCmpVvOp(KInstr):
     ordering: addresses.Ordering
     instr_ident: int
     is_float: bool = False
+    mask_reg: int | None = None
 
     async def admit(self, kamlet) -> 'VCmpVvOp | None':
         vline_bytes = kamlet.params.vline_bytes
@@ -726,15 +772,21 @@ class VCmpVvOp(KInstr):
         # Rename: lookup src physes before allocating dst physes.
         src1_pregs = [kamlet.r(self.src1 + i) for i in range(n_src_vlines)]
         src2_pregs = [kamlet.r(self.src2 + i) for i in range(n_src_vlines)]
+        mask_preg = kamlet.r(self.mask_reg) if self.mask_reg is not None else None
+        exclude = set(src1_pregs) | set(src2_pregs)
+        if mask_preg is not None:
+            exclude.add(mask_preg)
         dst_pregs = await kamlet.alloc_dst_pregs(
             base_arch=self.dst, start_vline=0, end_vline=n_dst_vlines - 1,
             start_index=0, n_elements=self.n_elements,
-            elements_in_vline=dst_elements_in_vline, mask_present=False,
-            exclude_reuse=set(src1_pregs) | set(src2_pregs))
+            elements_in_vline=dst_elements_in_vline,
+            mask_present=self.mask_reg is not None,
+            exclude_reuse=exclude)
         return self.rename(
             src_pregs={v: src1_pregs[v] for v in range(n_src_vlines)},
             src2_pregs={v: src2_pregs[v] for v in range(n_src_vlines)},
             dst_pregs={v: dst_pregs[v] for v in range(n_dst_vlines)},
+            mask_preg=mask_preg,
         )
 
     async def execute(self, kamlet) -> None:
@@ -755,6 +807,12 @@ class VCmpVvOp(KInstr):
             if k_index != kamlet.k_index:
                 continue
             jamlet = kamlet.jamlets[j_in_k_index]
+
+            if r.mask_preg is not None:
+                mask_bit_addr = r.mask_preg * wb * 8 + element_in_jamlet
+                mask_byte = jamlet.rf_slice[mask_bit_addr // 8]
+                if not ((mask_byte >> (mask_bit_addr % 8)) & 1):
+                    continue
 
             src_bit_in_jvec = element_in_jamlet * self.element_width
             src_vline_idx = src_bit_in_jvec // bits_per_jamlet_vline
@@ -1021,7 +1079,7 @@ class SetMaskBits(KInstr):
             base_arch=self.dst, start_vline=0, end_vline=0,
             start_index=0, n_elements=self.n_elements,
             elements_in_vline=kamlet.params.vline_bytes * 8,
-            mask_present=False,
+            mask_present=self.mask_reg is not None,
             exclude_reuse=exclude)
         return self.rename(
             src_pregs={0: src_preg},

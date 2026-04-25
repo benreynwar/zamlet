@@ -46,6 +46,7 @@ class ResourceType(Enum):
     CACHE_REQUEST_TABLE = 'CACHE_REQUEST_TABLE'  # Cache request slots in a kamlet
     INSTR_IDENT = 'INSTR_IDENT'              # Instruction identifiers in lamlet
     INSTR_BUFFER_TOKENS = 'INSTR_BUFFER_TOKENS'  # Instruction buffer tokens per kamlet
+    IDENT_QUERY_SLOT = 'IDENT_QUERY_SLOT'    # Lamlet IdentQuery slot (all in use)
 
 
 class JamletActivity(Enum):

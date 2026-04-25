@@ -10,7 +10,7 @@ load("//bazel:defs.bzl", "riscv_kernel", "kernel_test")
 # deliberately wrong, used as an expected-failure sanity check against a
 # vacuously-passing test harness.
 def _fft_n_kernel_and_test(n, k, max_vlmax, suffix, gen_flags, expected_failure,
-                           timeout):
+                           timeout, n_ffts = 1, geometries = None):
     suffix_label = "{}{}".format(n, suffix)
     twiddles_name = "twiddles_N{}".format(suffix_label)
     kernel_name = "vec-fftN{}".format(suffix_label)
@@ -22,6 +22,16 @@ def _fft_n_kernel_and_test(n, k, max_vlmax, suffix, gen_flags, expected_failure,
         cmd = "python3 $(location gen_twiddles.py) {} --k {} {} > $@".format(
             n, k, gen_flags),
     )
+    copts = [
+        "-DPREALLOCATE=1",
+        "-ffast-math",
+        "-DFFT_N={}".format(n),
+        "-DMAX_VLMAX={}".format(max_vlmax),
+        "-DTWIDDLE_HEADER=\\\"{}.h\\\"".format(twiddles_name),
+        "-I$$(dirname $(location :{}))".format(twiddles_name),
+    ]
+    if n_ffts != 1:
+        copts.append("-DN_FFTS={}".format(n_ffts))
     riscv_kernel(
         name = kernel_name,
         srcs = [
@@ -36,27 +46,34 @@ def _fft_n_kernel_and_test(n, k, max_vlmax, suffix, gen_flags, expected_failure,
             ":" + twiddles_name,
         ],
         linker_script = "//python/zamlet/kernel_tests/common:test.ld",
-        copts = [
-            "-DPREALLOCATE=1",
-            "-ffast-math",
-            "-DFFT_N={}".format(n),
-            "-DMAX_VLMAX={}".format(max_vlmax),
-            "-DTWIDDLE_HEADER=\\\"{}.h\\\"".format(twiddles_name),
-            "-I$$(dirname $(location :{}))".format(twiddles_name),
-        ],
+        copts = copts,
     )
     kernel_test(
         name = test_name,
         kernel = ":" + kernel_name,
         expected_failure = expected_failure,
         timeout = timeout,
+        geometries = geometries,
     )
 
 
-def fft_n_target(n, k = 128, max_vlmax = 64, timeout = "moderate"):
+def fft_n_target(n, k = 128, max_vlmax = 64, timeout = "moderate", geometries = None):
     _fft_n_kernel_and_test(
         n, k, max_vlmax, suffix = "", gen_flags = "",
-        expected_failure = False, timeout = timeout)
+        expected_failure = False, timeout = timeout, geometries = geometries)
+
+
+def fft_n_repeat_target(n, repeats, k = 128, max_vlmax = 64, timeout = "long",
+                        geometries = None):
+    """Same FFT kernel as fft_n_target, repeated `repeats` times in main().
+
+    Each iteration emits an ITER(i) marker before its bitreverse so per-iter
+    span analysis is possible via zamlet.analysis.fft_markers.
+    """
+    _fft_n_kernel_and_test(
+        n, k, max_vlmax, suffix = "_repeat{}".format(repeats), gen_flags = "",
+        expected_failure = False, timeout = timeout, n_ffts = repeats,
+        geometries = geometries)
 
 
 def fft_n_corrupt_target(n, k = 128, max_vlmax = 64, timeout = "moderate"):

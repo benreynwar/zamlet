@@ -4,10 +4,10 @@ One-line index of plans in `plans/`. See `ROADMAP.md` for the big picture.
 
 ## Active
 
+- [ordering_audit](plans/PLAN_ordering_audit.md) — vector ordering audit findings; B1-B3 bugs, M1/N1-N3 cleanup (current focus)
 - [mask_ops](plans/PLAN_mask_ops.md) — five mask ops to unblock FFT N=32 (current focus)
 - [fft_kernel](plans/PLAN_fft_kernel.md) — variable-R FFT kernel; init + Regime A/B in; Regime C partial
 - [per_vline_ew](plans/PLAN_per_vline_ew.md) — steps 1–3 done; 4–7 pending
-- [widening_vector_arith](plans/PLAN_widening_vector_arith.md) — impl in; doc drift on `ensure_vrf_ordering`
 - [llvm_vpu_spills](plans/PLAN_llvm_vpu_spills.md) — phase 1–2 done; phase 3 (LLVM patch) partial
 
 ## Todo
@@ -34,6 +34,11 @@ One-line index of plans in `plans/`. See `ROADMAP.md` for the big picture.
 
 ## Recently deleted (content captured in code)
 
+- `PLAN_widening_vector_arith.md` — `VArithVvOv`/`VArithVxOv` (`instructions/vector.py`)
+  + `VArithVvOvOp`/`VArithVxOvOp` (`kamlet/kinstructions.py`); decoder entries
+  in `decode.py` cover the full int + float widening family and the migrated
+  NSRL/NSRA narrowing-shift family. Coverage: `tests/test_widening_arith.py`.
+  Out-of-scope `vnclip`/`vnclipu` tracked in RESTART.md's longer-term items.
 - `PLAN_lamlet_rename.md` — kamlet-side rename lives in `python/zamlet/kamlet/rename_table.py`
 - `PLAN_scalar_memory_ordering.md` — ordering logic in `python/zamlet/oamlet/scalar.py`
 - `PLAN_reductions.md` — `Vreduction` (vector.py) + `oamlet/reduction.py`. Ordered-float follow-up in `TODO.md`.

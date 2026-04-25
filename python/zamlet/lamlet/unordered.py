@@ -431,28 +431,24 @@ async def vloadstore(lamlet: 'Oamlet', reg_base: int, addr: int, ordering: addre
     Returns VectorOpResult with fault info if a TLB fault occurred.
     """
     g_addr = GlobalAddress(bit_addr=addr*8, params=lamlet.params)
-    temp_regs = None
 
     vline_bits = lamlet.params.maxvl_bytes * 8
     elements_per_vline = vline_bits // ordering.ew
     n_vlines = (n_elements + elements_per_vline - 1) // elements_per_vline
     await lamlet.await_vreg_write_pending(reg_base, n_vlines)
 
-    # For stores where the register ew doesn't match the instruction ew, remap
-    # via scratch memory first. See docs/TODO.md for replacing this workaround.
+    # For stores, ensure source striping matches instr ew in place. Loads
+    # don't need it here — the destination's ordering is set by the caller
+    # (Oamlet.vload -> set_vrf_ordering_for_write). Mask reg (ew=1)
+    # asserts on mismatch; remap for ew=1 is not yet supported.
     if is_store:
-        needs_remap = False
-        for i in range(n_vlines):
-            reg_ord = lamlet.vrf_ordering[reg_base + i]
-            assert reg_ord is not None
-            if reg_ord.ew != ordering.ew:
-                needs_remap = True
-                break
-        if needs_remap:
-            src_regs = list(range(reg_base, reg_base + n_vlines))
-            temp_regs = lamlet.alloc_temp_regs(n_vlines)
-            await remap_reg_ew(lamlet, src_regs, temp_regs, ordering, parent_span_id)
-            reg_base = temp_regs[0]
+        await lamlet.ensure_vrf_ordering(
+            reg_base, ordering.ew, parent_span_id,
+            vstart=start_index, vl=n_elements)
+    if mask_reg is not None:
+        await lamlet.ensure_vrf_ordering(
+            mask_reg, 1, parent_span_id,
+            vstart=start_index, vl=n_elements)
 
     # Check all pages for access before dispatching
     element_bytes = ordering.ew // 8
@@ -462,8 +458,6 @@ async def vloadstore(lamlet: 'Oamlet', reg_base: int, addr: int, ordering: addre
         n_elements = result.element_index
 
     if n_elements == 0:
-        if temp_regs is not None:
-            await lamlet.free_temp_regs(temp_regs, parent_span_id)
         return result
 
     # This is an identifier that groups a number of writes to a vector register together.
@@ -533,8 +527,6 @@ async def vloadstore(lamlet: 'Oamlet', reg_base: int, addr: int, ordering: addre
                 await vloadstore_scalar(lamlet, reg_base, section.start_address, ordering,
                                         section_elements, mask_reg, section.start_index,
                                         writeset_ident, is_store, parent_span_id)
-    if temp_regs is not None:
-        await lamlet.free_temp_regs(temp_regs, parent_span_id)
     return result
 
 
@@ -555,15 +547,13 @@ async def vloadstorestride(lamlet: 'Oamlet', reg_base: int, addr: int,
     and populates the temp register with offsets for that batch only.
     """
 
-    # Set up register file ordering for data registers
+    # Data register ordering: for loads, Oamlet.vload already called
+    # set_vrf_ordering_for_write upstream. For stores, the per-batch call
+    # into _vloadstore_indexed_unordered runs ensure_vrf_ordering on the
+    # data reg itself.
     vline_bits = lamlet.params.maxvl_bytes * 8
     n_data_vlines = (ordering.ew * n_elements + vline_bits - 1) // vline_bits
     await lamlet.await_vreg_write_pending(reg_base, n_data_vlines)
-    for vline_reg in range(reg_base, reg_base + n_data_vlines):
-        if is_store:
-            assert lamlet.vrf_ordering[vline_reg] == ordering
-        else:
-            lamlet.vrf_ordering[vline_reg] = ordering
 
     index_ew = 64
     elements_per_vline_64 = vline_bits // index_ew
@@ -682,6 +672,13 @@ async def vload_indexed_unordered(lamlet: 'Oamlet', vd: int, base_addr: int, ind
 
     Indexed (gather) load: element i is loaded from address (base_addr + index_reg[i]).
     """
+    # Set up register file ordering for the destination. Partial / masked
+    # vlines get remapped from their current ew so masked-out lanes keep
+    # their old values in the new ew layout.
+    await lamlet.set_vrf_ordering_for_write(
+        vd, data_ew, vstart=start_index, vl=n_elements,
+        masked=(mask_reg is not None), emul=lamlet.lmul,
+        span_id=parent_span_id)
     result = await _vloadstore_indexed_unordered(
         lamlet, reg=vd, base_addr=base_addr, index_reg=index_reg,
         index_ew=index_ew, data_ew=data_ew, n_elements=n_elements,
@@ -751,10 +748,25 @@ async def _vloadstore_indexed_unordered(
     n_index_vlines = (index_ew * n_index_positions + vline_bits - 1) // vline_bits
     await lamlet.await_vreg_write_pending(reg, n_vlines)
     await lamlet.await_vreg_write_pending(index_reg, n_index_vlines)
-    if not is_store:
-        # Set up register file ordering for destination registers
-        for vline_reg in range(reg, reg + n_vlines):
-            lamlet.vrf_ordering[vline_reg] = data_ordering
+    # Destination ordering is set up by the caller (vload_indexed_unordered
+    # for direct indexed loads; Oamlet.vload for strided loads that land
+    # here). Ensure source regs match instr ew in place: index reg for all
+    # callers, and the data reg for stores (for loads the data reg is the
+    # destination and the caller has already stamped it). Mask reg (ew=1)
+    # asserts on mismatch for now; ensure_vrf_ordering can't remap ew=1
+    # yet.
+    await lamlet.ensure_vrf_ordering(
+        index_reg, index_ew, parent_span_id,
+        vstart=start_index + index_offset,
+        vl=n_elements + index_offset)
+    if is_store:
+        await lamlet.ensure_vrf_ordering(
+            reg, data_ew, parent_span_id,
+            vstart=start_index, vl=n_elements)
+    if mask_reg is not None:
+        await lamlet.ensure_vrf_ordering(
+            mask_reg, 1, parent_span_id,
+            vstart=start_index, vl=n_elements)
 
     # If index bound active and all pages in the bounded range are accessible,
     # skip per-element fault detection. Otherwise fall back to normal fault sync

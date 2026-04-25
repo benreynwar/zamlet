@@ -1,10 +1,11 @@
 """Custom-0 opcode instructions (opcode 0x0B) for VPU optimization.
 
 All use I-type encoding (opcode=0x0B, with rd, rs1, imm fields).
-Three instructions distinguished by funct3:
+Instructions distinguished by funct3:
 - SetIndexBound (funct3=0): Bounds index register values to lower N bits
 - BeginWriteset (funct3=1): Opens a shared writeset scope
 - EndWriteset (funct3=2): Closes the writeset scope
+- Mark (funct3=3): Trace marker; broadcasts a Marker KInstr with id=imm
 """
 
 import logging
@@ -122,3 +123,46 @@ class EndWriteset:
 
     def __str__(self):
         return 'EndWriteset()'
+
+
+@dataclass
+class Mark:
+    """mark id - Emit a trace marker that flows through the pipeline.
+
+    Broadcasts a Marker KInstr (carrying marker_id) to every kamlet. Each
+    kamlet logs a "marker" event on admission and discards the instr
+    without further dispatch. Useful for delimiting kernel phases in the
+    span trace.
+
+    If rs1 != 0, marker_id = x[rs1]. If rs1 == 0, marker_id = imm.
+
+    Assembly:
+      .insn i 0x0b, 3, x0, x0, <id>    # immediate
+      .insn i 0x0b, 3, x0, t0, 0       # register
+    """
+    rs1: int
+    imm: int
+
+    @riscv_instr
+    async def update_state(self, s: 'Oamlet', span_id: int):
+        if self.rs1 != 0:
+            await s.scalar.wait_all_regs_ready(0, None, [self.rs1], [])
+            marker_id = int.from_bytes(
+                s.scalar.read_reg(self.rs1), byteorder='little', signed=False)
+        else:
+            marker_id = self.imm
+        instr_ident = await ident_query.get_instr_ident(s)
+        kinstr = kinstructions.Marker(
+            marker_id=marker_id, instr_ident=instr_ident)
+        await s.add_to_instruction_buffer(kinstr, span_id)
+        s.pc += 4
+
+    def disasm(self, pc: int) -> str:
+        if self.rs1 != 0:
+            return f'mark {reg_name(self.rs1)}'
+        return f'mark {self.imm}'
+
+    def __str__(self):
+        if self.rs1 != 0:
+            return f'Mark(rs1={reg_name(self.rs1)})'
+        return f'Mark(imm={self.imm})'

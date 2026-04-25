@@ -24,15 +24,21 @@ vmsif, vmsof, viota, vid). See test_suite_reference.txt for complete list
 
 Implementation Summary
 ----------------------
-Currently implemented: 9 instructions (all 8 mask-mask logicals + VID.V)
+Currently implemented: 14 instructions (all 8 mask-mask logicals + vcpop.m,
+vfirst.m, vmsbf.m, vmsif.m, vmsof.m, vid.v)
 Total in spec: 16 mask instructions
-Coverage: ~56%
+Coverage: 88% (viota.m deferred — see VECTOR IOTA section)
 
 All 8 mask-mask logicals are unified under a single VmLogicMm class
-(instructions/vector.py:865) parameterised by a VmLogicOp enum
-(kamlet/kinstructions.py:97). The kinstr is VmLogicMmOp
-(kinstructions.py:816) with the op evaluator at kinstructions.py:788
-(_vmlogic_eval). Decoding dispatch lives in decode.py:948-970.
+(instructions/vector.py:894) parameterised by a VmLogicOp enum
+(kamlet/kinstructions.py). The kinstr is VmLogicMmOp with the op evaluator
+_vmlogic_eval. Decoding dispatch lives in decode.py.
+
+vcpop.m / vfirst.m / vmsbf.m / vmsif.m / vmsof.m share infrastructure built
+on top of the cross-jamlet ReduceSync transaction
+(transactions/reduce_sync.py) and the per-jamlet MaskPopcountLocal /
+SetMaskBits kinstrs (kamlet/kinstructions.py). vcpop.m additionally uses
+the existing tree-reduction SUM path (oamlet/reduction.py).
 
 MASK-REGISTER LOGICAL OPERATIONS (Status: ✓)
 =====================================================
@@ -108,16 +114,19 @@ VMXNOR.MM (Status: ✓)
   Description: vd.mask[i] = !(vs2.mask[i] ^^ vs1.mask[i])
   Notes: Pseudoinstruction: vmset.m vd = vmxnor.mm vd,vd,vd (set all bits).
 
-MASK POPULATION COUNT (Status: ✗)
+MASK POPULATION COUNT (Status: ✓)
 ==================================
 
 Spec: v-st-ext.adoc lines 4131-4161
 
-VCPOP.M (Status: ✗)
+VCPOP.M (Status: ✓)
   Spec: v-st-ext.adoc lines 4134-4157
   Encoding: funct6=0x10, vs1=0x10, funct3=OPMVV, writes to x register
   Format: vcpop.m rd, vs2, vm
-  Implementation: Not implemented
+  Implementation: VcpopM class in instructions/vector.py:1331; uses
+    MaskPopcountLocal kinstr (kinstructions.py:990) for per-jamlet popcount
+    into a tmp32 vector, then the existing tree-reduction SUM path in
+    oamlet/reduction.py.
   Description: Count number of 1s in active mask elements
   Notes:
     - Writes count to scalar x register
@@ -126,16 +135,18 @@ VCPOP.M (Status: ✗)
     - vstart must be 0
     - Old mnemonic vpopc.m can be retained as alias
 
-FIND-FIRST-SET (Status: ✗)
+FIND-FIRST-SET (Status: ✓)
 ===========================
 
 Spec: v-st-ext.adoc lines 4163-4183
 
-VFIRST.M (Status: ✗)
+VFIRST.M (Status: ✓)
   Spec: v-st-ext.adoc lines 4166-4181
   Encoding: funct6=0x10, vs1=0x11, funct3=OPMVV, writes to x register
   Format: vfirst.m rd, vs2, vm
-  Implementation: Not implemented
+  Implementation: VfirstM class in instructions/vector.py:1437; uses the
+    cross-jamlet ReduceSync transaction (transactions/reduce_sync.py) with
+    MIN_EL_INDEX op. Sentinel 0xFFFFFFFF maps to -1 signed.
   Description: Find index of first set bit in active mask elements
   Notes:
     - Writes element index to x[rd], or -1 if none found
@@ -143,58 +154,73 @@ VFIRST.M (Status: ✗)
     - Writes x[rd] even if vl=0 (with value -1)
     - vstart must be 0
 
-SET-BEFORE/INCLUDING/ONLY-FIRST (Status: ✗)
+SET-BEFORE/INCLUDING/ONLY-FIRST (Status: ✓)
 ============================================
 
 Spec: v-st-ext.adoc lines 4185-4300
 
 These instructions scan for the first set bit and set/clear surrounding bits.
+All three are unified under VmsFirstMask (instructions/vector.py:1538),
+parameterised by a SetMaskBitsMode (kinstructions.py:113). The dispatch
+runs ReduceSync(MIN_EL_INDEX, ew=1) into a vector tmp word and then
+SetMaskBits (kinstructions.py:1057) with the appropriate mode.
 
-VMSBF.M (Status: ✗)
+VMSBF.M (Status: ✓)
   Spec: v-st-ext.adoc lines 4188-4227
   Encoding: funct6=0x14, vs1=0x01, funct3=OPMVV
   Format: vmsbf.m vd, vs2, vm
-  Implementation: Not implemented
+  Implementation: VmsFirstMask with SetMaskBitsMode.LT (decode.py:996)
   Description: Set all bits before first set bit
   Notes:
     - Writes 1 to elements before first 1, then 0 to that element and all following
-    - If no 1 found, all active elements written with 1
+    - If no 1 found, all active elements written with 1 (sentinel 0xFFFFFFFF
+      makes the unsigned LT compare true everywhere)
     - vstart must be 0
     - vd cannot overlap vs2 or v0 (if masked)
 
-VMSIF.M (Status: ✗)
+VMSIF.M (Status: ✓)
   Spec: v-st-ext.adoc lines 4232-4263
   Encoding: funct6=0x14, vs1=0x03, funct3=OPMVV
   Format: vmsif.m vd, vs2, vm
-  Implementation: Not implemented
+  Implementation: VmsFirstMask with SetMaskBitsMode.LE (decode.py:1006)
   Description: Set all bits before and including first set bit
   Notes:
     - Like vmsbf but also includes the first 1
     - vstart must be 0
     - vd cannot overlap vs2 or v0 (if masked)
 
-VMSOF.M (Status: ✗)
+VMSOF.M (Status: ✓)
   Spec: v-st-ext.adoc lines 4268-4300
   Encoding: funct6=0x14, vs1=0x02, funct3=OPMVV
   Format: vmsof.m vd, vs2, vm
-  Implementation: Not implemented
+  Implementation: VmsFirstMask with SetMaskBitsMode.EQ (decode.py:1001)
   Description: Set only the first set bit
   Notes:
     - Only sets the first 1, clears all other bits
+    - If no 1 found, all active destination bits cleared (sentinel
+      0xFFFFFFFF cannot equal any real element index)
     - vstart must be 0
     - vd cannot overlap vs2 or v0 (if masked)
 
-VECTOR IOTA (Status: ✗)
-========================
+VECTOR IOTA (Status: ✗ — deferred)
+===================================
 
 Spec: v-st-ext.adoc lines 4313-4399
 
-VIOTA.M (Status: ✗)
+VIOTA.M (Status: ✗ — deferred)
   Spec: v-st-ext.adoc lines 4315-4355
   Encoding: funct6=0x14, vs1=0x10, funct3=OPMVV
   Format: viota.m vd, vs2, vm
-  Implementation: Not implemented
+  Implementation: Not implemented (deferred)
   Description: Parallel prefix sum of mask values
+  Deferral rationale: viota.m is a parallel-prefix-sum primitive. Unlike the
+    other mask ops, it cannot be expressed via the existing ReduceSync /
+    MaskPopcountLocal / SetMaskBits primitives — it needs a true scan
+    (intra-jamlet local scan + cross-jamlet prefix-sum). Its only critical
+    consumer is vcompress.vm (a separate kinstr, also deferred) plus
+    compiler autovectorisation of compress-like patterns. Will be
+    revisited if/when vcompress is prioritised. See PLAN_mask_ops.md
+    "Deferred / future work".
   Notes:
     - For each element, writes sum of all bits with lower index
     - Result zero-extended if SEW > result width
@@ -226,26 +252,33 @@ IMPLEMENTATION INFRASTRUCTURE
 ==============================
 
 Existing Support:
-- VmLogicMm class in instructions/vector.py:865 — unified class covering all 8
+- VmLogicMm class in instructions/vector.py:894 — unified class covering all 8
   mask-mask logical operations, parameterised by a VmLogicOp enum value
-- VmLogicMmOp kinstr in kinstructions.py:816 with _vmlogic_eval evaluator at
-  kinstructions.py:788
-- Decoding for all 8 mask logicals in decode.py:948-970
-- Vid class (instructions/vector.py:2009) and VidOp kinstr for vid.v
+- VmLogicMmOp kinstr in kinstructions.py with _vmlogic_eval evaluator
+- Decoding for all 8 mask logicals in decode.py
+- Vid class (instructions/vector.py:2409) and VidOp kinstr for vid.v
 - ew=1 mask-vline iteration pattern established in VmLogicMm (iterates
   n_vlines = ceil(vl / (word_bytes * j_in_l * 8)) jamlet-wide vlines, asserting
   vs1/vs2 ordering ew=1)
+- ReduceSync transaction (transactions/reduce_sync.py:38) — cross-jamlet
+  idempotent reduction across the sync network. Supported ops include AND,
+  OR, MIN/MAX (signed/unsigned), MIN_EL_INDEX, MAX_EL_INDEX over
+  ew ∈ {1,8,16,32}. Result delivered to every jamlet and the lamlet.
+  MIN_EL_INDEX returns the global RVV element_index of the first set bit
+  (sentinel 0xFFFFFFFF when no bit is set).
+- MaskPopcountLocal kinstr (kinstructions.py:990) — per-jamlet popcount of
+  active mask bits, ew=1 → ew=32. Used by vcpop.m.
+- SetMaskBits kinstr (kinstructions.py:1057) — reads a vreg where every
+  word holds the same value (e.g. the MIN_EL_INDEX result) and writes a
+  destination mask register with bit i = (i CMP value) where CMP is one of
+  LT / LE / EQ (SetMaskBitsMode). Used by vmsbf/vmsif/vmsof.
 
 What's Missing:
-- Classes for vcpop, vfirst, vmsbf, vmsif, vmsof, viota
-- Kernel operations for count/find/prefix operations (vcpop needs cross-jamlet
-  popcount reduction; vfirst needs cross-jamlet MIN of first-set index; viota
-  needs parallel prefix-sum)
-- vstart==0 checking (most mask operations require vstart==0 except the
-  logicals, which allow non-zero vstart via prestart preservation)
-- Overlap checking (vd cannot overlap vs2/v0 for vmsbf, vmsif, vmsof, viota)
-- Scalar-destination plumbing for vcpop, vfirst (write_reg_future pattern from
-  VmvXs at vector.py:1288)
+- viota.m (parallel prefix sum) — deferred. Requires a true scan primitive
+  (intra-jamlet local scan + cross-jamlet prefix sum). Only critical for
+  vcompress.vm (also deferred) and compiler autovectorisation of
+  compress-like patterns. See PLAN_mask_ops.md "Deferred / future work".
+- vcompress.vm — separate from this plan; tracked elsewhere.
 
 Test Coverage
 -------------
@@ -253,7 +286,12 @@ Test Coverage
 - vmor.mm exercised by FFT autovectorised verify loop (fftN8 passes)
 - No focused tests yet for vmand/vmandn/vmxor/vmorn/vmnor/vmxnor paths, though
   most are reachable through the unified code path
-- No tests for: vcpop, vfirst, vmsbf, vmsif, vmsof, viota, vid
+- vcpop.m: tests/test_vcpop.py
+- vfirst.m: tests/test_vfirst.py
+- vmsbf.m / vmsif.m / vmsof.m: tests/test_vms_first_mask.py — covers all
+  three modes × {masked, unmasked} × patterns {random, all-zero, first-bit-0,
+  late-bit}; verifies mask-undisturbed semantics.
+- vid.v: kernel_tests/vid/ — kernel-level test for element-index write
 
 TODO Items
 ----------
@@ -261,52 +299,40 @@ TODO Items
    - All 8 ops (vmand, vmandn, vmor, vmorn, vmxor, vmnand, vmnor, vmxnor)
      unified under VmLogicMm / VmLogicMmOp / VmLogicOp
 
-2. Implement vcpop.m (population count)
-   - Count 1s in mask register
-   - Write result to x register (not vector register)
-   - Support masking
-   - Handle vl=0 case (write 0)
-   - Verify vstart == 0
+2. ✓ Implement vcpop.m (population count) (DONE)
+   - VcpopM (instructions/vector.py:1331) + MaskPopcountLocal kinstr +
+     existing tree-reduction SUM path
 
-3. Implement vfirst.m (find-first-set)
-   - Find index of first 1 in mask
-   - Write to x register (-1 if not found)
-   - Support masking
-   - Handle vl=0 case (write -1)
-   - Verify vstart == 0
+3. ✓ Implement vfirst.m (find-first-set) (DONE)
+   - VfirstM (instructions/vector.py:1437) + ReduceSync(MIN_EL_INDEX)
 
-4. Implement set-before/including/only-first
-   - vmsbf.m (set all before first)
-   - vmsif.m (set all up to and including first)
-   - vmsof.m (set only first)
-   - All scan for first 1 and manipulate surrounding bits
-   - Add overlap checking (vd vs vs2/v0)
-   - Verify vstart == 0
+4. ✓ Implement set-before/including/only-first (DONE)
+   - VmsFirstMask (instructions/vector.py:1538) parameterised by
+     SetMaskBitsMode {LT, LE, EQ} for vmsbf/vmsif/vmsof respectively
+   - Built on ReduceSync(MIN_EL_INDEX) + SetMaskBits kinstr
 
-5. Implement viota.m (parallel prefix sum)
-   - For each element, sum of all mask bits with lower index
-   - Handle overflow (retain LSBs)
-   - Support masking
-   - Add overlap checking
-   - Verify vstart == 0
+5. ✗ Implement viota.m (parallel prefix sum) — DEFERRED
+   - Requires a scan primitive (intra-jamlet local scan + cross-jamlet
+     prefix sum) not currently in the kinstr/transaction set.
+   - Only critical consumer is vcompress.vm (separate kinstr, also
+     deferred) plus compiler autovectorisation of compress-like patterns.
+   - Revisit when vcompress is prioritised. See PLAN_mask_ops.md
+     "Deferred / future work".
 
-6. Implement vid.v (element index)
-   - Write 0, 1, 2, ... vl-1 to elements
-   - Support masking (doesn't affect index values)
-   - Handle overflow (retain LSBs)
-   - Verify vs2 == v0
+6. ✓ Implement vid.v (element index) (DONE)
+   - Vid class (instructions/vector.py:2409) and VidOp kinstr
 
-7. Add comprehensive mask tests
-   - Test all 8 logical operations
-   - Verify truth table completeness (all 16 functions)
-   - Test pseudoinstructions
-   - Test vcpop with various mask patterns
-   - Test vfirst (found and not-found cases)
-   - Test vmsbf/vmsif/vmsof with examples from spec
-   - Test viota for compress operations
-   - Test vid with various vl values
-   - Test masking behavior
-   - Test vstart != 0 exceptions
+7. Add focused mask tests
+   - ✓ vcpop with various mask patterns (test_vcpop.py)
+   - ✓ vfirst (found and not-found cases) (test_vfirst.py)
+   - ✓ vmsbf/vmsif/vmsof with examples from spec (test_vms_first_mask.py)
+   - ✗ viota (deferred with the instruction)
+   - ✓ vid via kernel test (kernel_tests/vid/)
+   - Still nice-to-have: focused tests for the six logical paths not yet
+     covered (vmand/vmandn/vmxor/vmorn/vmnor/vmxnor); not blocking because
+     they share the unified VmLogicMm code path.
+   - Still nice-to-have: vstart != 0 exception tests for the ops that
+     require vstart == 0.
    - Test overlap restrictions
 
 Summary

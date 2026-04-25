@@ -211,6 +211,11 @@ def create_ident_query(lamlet: 'Oamlet') -> IdentQuery:
     for i in range(lamlet.params.k_in_l):
         lamlet._tokens_used_since_query[i] = 0
 
+    lamlet.monitor.add_event(kinstr_span_id, "tokens_to_refund",
+                              tokens=list(slot.tokens))
+
+    lamlet._last_ident_query_cycle = lamlet.clock.cycle
+
     # Advance newest pointer
     lamlet._next_ident_query_slot = (lamlet._next_ident_query_slot + 1) % n_iq
 
@@ -402,19 +407,47 @@ def poll_ident_query_response(lamlet: 'Oamlet') -> None:
 def should_send_ident_query(lamlet: 'Oamlet') -> bool:
     """Check if we should send an ident query (for tokens or idents).
 
-    Returns True if a slot is available and enough tokens have
-    accumulated since the last query to justify sending another.
+    Returns True if a slot is available and either enough tokens have
+    accumulated since the last query, or the ident pool is running low.
     With N slots we send every 2*depth/N instructions, spacing
     queries evenly across the token budget.
+
+    The ident-pressure path is load-bearing: without it, a caller
+    blocked in get_instr_ident would stall the instruction dispatch
+    loop, which would stop accumulating tokens, which would stop
+    issuing IdentQueries — livelocking the ident recycler. It is
+    rate-limited by min_cycles_since_last so we do not flood the
+    network with back-to-back queries while a response is in flight.
     """
-    if lamlet._iq_slots[lamlet._next_ident_query_slot] is not None:
-        return False
     n_iq = lamlet.params.n_ident_query_slots
-    # Token threshold: send after accumulating this many tokens
     token_threshold = (
         2 * lamlet.params.instruction_queue_length // n_iq)
-    return any(t >= token_threshold
-               for t in lamlet._tokens_used_since_query)
+    want_to_send = any(t >= token_threshold
+                       for t in lamlet._tokens_used_since_query)
+    ident_threshold = lamlet.params.max_response_tags // n_iq
+    min_cycles_since_last = lamlet.params.ident_query_min_cycles
+    cycles_since_last = (
+        lamlet.clock.cycle - lamlet._last_ident_query_cycle
+        if lamlet._last_ident_query_cycle is not None
+        else min_cycles_since_last)
+    if (get_available_idents(lamlet) < ident_threshold
+            and cycles_since_last >= min_cycles_since_last):
+        want_to_send = True
+    slot_busy = lamlet._iq_slots[lamlet._next_ident_query_slot] is not None
+    if want_to_send and slot_busy:
+        lamlet.monitor.record_resource_exhausted(
+            ResourceType.IDENT_QUERY_SLOT, None, None)
+        return False
+    lamlet.monitor.record_resource_available(
+        ResourceType.IDENT_QUERY_SLOT, None, None)
+    if slot_busy:
+        return False
+    # Broadcast requires >0 tokens on every kamlet. If some kamlet's
+    # queue is drained, we must wait for an in-flight IQ response to
+    # refund tokens before we can send another query.
+    if not lamlet._have_tokens(None, is_ident_query=True):
+        return False
+    return want_to_send
 
 
 async def get_instr_ident(lamlet: 'Oamlet', n_idents: int = 1) -> int:

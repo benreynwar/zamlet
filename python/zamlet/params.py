@@ -27,20 +27,24 @@ class ZamletParams:
     scalar_memory_bytes: int = 8 << 20
     kamlet_memory_bytes: int = 1 << 20
     #jamlet_sram_bytes: int = 1 << 10
-    sram_depth: int = 8
+    sram_depth: int = 128
     tohost_addr: int = 0x80001000
     fromhost_addr: int = 0x80001040
     receive_buffer_depth: int = 16
     router_output_buffer_length: int = 2
     router_input_buffer_length: int = 2
-    instruction_queue_length: int = 16
-    reservation_station_depth: int = 8
+    instruction_queue_length: int = 64
+    reservation_station_depth: int = 16
     n_ident_query_slots: int = 8
+    # Minimum cycles between IdentQueries issued due to ident pressure.
+    # Prevents flooding the network with back-to-back queries while a
+    # response is in flight.
+    ident_query_min_cycles: int = 64
     n_a_channels: int = 1
     n_b_channels: int = 1
 
 
-    instruction_buffer_length: int = 16
+    instruction_buffer_length: int = 64
     instructions_in_packet: int = 4
     n_response_idents: int = 32
     #n_waiting: int = 16
@@ -78,6 +82,13 @@ class ZamletParams:
     mem_beat_words: int = 1
     mem_axi_id_bits: int = 4
     lamlet_dispatch_queue_depth: int = 8
+
+    # Experiment: if True, lamlet skips the on-chip network for kinstr
+    # dispatch and enqueues kinstructions directly into the target
+    # kamlet instruction_queue, respecting its capacity as back-pressure.
+    # Used to measure whether network traffic from kinstr packets is
+    # bottlenecking kernels. Leaves packet-based dispatch code intact.
+    bypass_kinstr_network: bool = False
 
     def __post_init__(self):
         # Page must be bigger than a vector

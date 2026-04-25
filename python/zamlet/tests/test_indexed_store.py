@@ -96,13 +96,11 @@ async def run_indexed_store_test(
     lamlet.vl = vl
     lamlet.set_vtype(data_ew, lmul)
 
-    elements_per_vline = params.vline_bytes * 8 // data_ew
-    n_data_regs = (vl + elements_per_vline - 1) // elements_per_vline
-    index_elements_per_vline = params.vline_bytes * 8 // index_ew
-    n_index_regs = (vl + index_elements_per_vline - 1) // index_elements_per_vline
+    data_emul = max(1, lmul)
+    index_emul = max(1, lmul * index_ew // data_ew)
 
     data_reg = 0
-    index_reg = n_data_regs
+    index_reg = data_emul
 
     span_id = lamlet.monitor.create_span(
         span_type=SpanType.RISCV_INSTR, component="test",
@@ -125,7 +123,7 @@ async def run_indexed_store_test(
     # Set up mask register if using masks
     mask_reg = None
     if use_mask:
-        mask_reg = index_reg + n_index_regs
+        mask_reg = index_reg + index_emul
         assert mask_reg < lamlet.params.n_vregs, \
             f'mask_reg {mask_reg} exceeds n_vregs {lamlet.params.n_vregs}'
         mask_mem_addr = dst_base + 0x400000

@@ -1,5 +1,23 @@
 # TODO
 
+- [ ] JSON-driven test parameters. Tests currently inherit Python defaults
+      from `ZamletParams`, which mixes "good for testing" values (small RS,
+      small SRAM, fast iteration) with "good for performance" values
+      (`reservation_station_depth=16`, `sram_depth=128`). Add a mechanism for
+      tests to load a named JSON config and use those values instead of
+      Python defaults. Ship at least two configs: one for default testing
+      and one for performance runs (FFT timing, etc.). Bazel test targets
+      pick which config they consume.
+- [ ] Implement `bypass_kinstr_network` properly in hardware. The current Python
+      flag short-circuits the on-chip network for lamlet→kamlet kinstr dispatch
+      by enqueueing directly into `kamlet._instruction_queue` — a testing hack
+      to measure the network's contribution to FFT timings. The proper
+      implementation is a dedicated dispatch path with direct wires from the
+      lamlet to each kamlet's instruction buffer (or a higher-priority network
+      channel reserved for kinstr dispatch), preserving the existing
+      back-pressure / ident-throttling. Once the real path lands, drop the
+      `bypass_kinstr_network` flag and the `send_instructions` branch in
+      `oamlet.py`.
 - [ ] Switch kernel test C runtime from custom crt.S/syscalls.c to picolibc.
       The current runtime has custom printf/memcpy/etc that may diverge from
       standard behavior, and hand-written header shims. picolibc provides all
@@ -33,7 +51,17 @@
           `tests/test_utils.py:setup_mask_register` once ew=1 loads exist —
           the helper currently bulk-loads at ew=64 and then relabels the
           vreg as ew=1 because the byte layout already matches.
-      (e) Schedule the J2J traffic to avoid one-sided port congestion.
+      (e) `set_vrf_ordering_for_write` currently logs an error and skips
+          the remap when a partial write crosses the ew=1 boundary (see
+          `oamlet.py:519`). Tail bytes are left in the old striping; any
+          later read of the tail at the new ew gets garbage. `ensure_vrf_
+          ordering` still asserts for reads, so wrongness surfaces on use
+          rather than silently corrupting. Proper fix: (a) above gives the
+          reg-to-reg ew=1 remap, then add a tail policy — skip the remap
+          when the vline's tail will not be read at the new ew (tracked
+          dynamically, or signalled by the caller) so remaps only run when
+          semantically required.
+      (f) Schedule the J2J traffic to avoid one-sided port congestion.
           Naive element-order for small→large remap (e.g. ew=8 → ew=512)
           balances reads across all source jamlets but funnels every write
           into one target jamlet at a time, rotating which jamlet is the
@@ -56,16 +84,21 @@
       slides, and scalar moves that use it implicitly. See
       `docs/PLAN_vta_vma.md` (related tail/mask policy) and the `vrgather`
       implementation as a reference for correct plumbing.
-- [ ] Untangle conflicting vector memory range conventions. Use
-      `final_index` when specifying the exclusive element index to end on, so
-      active elements are `[start_index, final_index)`. Use `n_elements` only
-      when specifying how many elements to run, so active elements are
-      `[start_index, start_index + n_elements)`. Today top-level lamlet/Oamlet
-      vector APIs often use `n_elements` as the final index while lower
-      transaction/chunk helpers use it as a count; both conventions appear in
-      `lamlet/unordered.py`, making trap resume and vstart handling fragile.
-      Rename the top-level final-index parameters, keep `n_elements` for
-      counts, and add boundary assertions where values cross conventions.
+- [ ] Rename `n_elements` → `vl` and `start_index` → `vstart` across the
+      lamlet load/store helper family (`lamlet/unordered.py`,
+      `lamlet/ordered.py`, callers in `oamlet/oamlet.py`). The current name
+      `n_elements` reads as "count" but is consumed as RVV vl (exclusive
+      end) at the entry points; `vloadstore`'s body still treats it as a
+      count from 0 (`n_vlines = ceil(n_elements / elements_per_vline)`,
+      `range(start_index, start_index + n_elements)`), which is harmless
+      today only because every caller passes `start_index=0`. Both
+      conventions appear in `lamlet/unordered.py`, making trap resume and
+      vstart handling fragile. Adhere to RVV terminology end-to-end: rename
+      the helpers to `vl`/`vstart`, audit the body of `vloadstore` against
+      vl-semantics as part of the rename, and add boundary assertions where
+      values cross conventions. Cross-reference `_vline_is_partial` in
+      `oamlet.py` (RESTART §"Longer-term tracked items") which has the same
+      n_elements-as-vl vs. n_elements-as-count latent error.
 - [ ] Narrowing shifts (vnsrl, vnsra): currently only vnsrl.wi is implemented, and it's
       hacked into VUnaryOvOp which is the wrong place for it. Need to think about how
       narrowing ops should work properly, then implement all 6 forms

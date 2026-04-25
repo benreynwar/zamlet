@@ -80,8 +80,11 @@ async def run(clock: Clock, filename, params: ZamletParams = None,
         GlobalAddress(bit_addr=0x90000000*8, params=params),
         pool_size, memory_type=MemoryType.VPU)
 
-    # Allocate VPU stack (16KB at isolated address, s11 starts at top)
-    vpu_stack_size = 16 * 1024
+    # Allocate VPU stack (at least 256KB, rounded up to page boundary; s11 starts at top).
+    # Keep in sync with `li s11, 0xA0040000` in crt.S — stack region is
+    # [0xA0000000, 0xA0040000).
+    vpu_stack_size = (
+        (256 * 1024 + params.page_bytes - 1) // params.page_bytes) * params.page_bytes
     s.allocate_memory(
         GlobalAddress(bit_addr=0xA0000000*8, params=params),
         vpu_stack_size, memory_type=MemoryType.VPU)
