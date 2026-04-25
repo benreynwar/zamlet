@@ -14,6 +14,7 @@ Where:
 
 import logging
 import struct
+from dataclasses import dataclass
 from random import Random
 
 import pytest
@@ -23,11 +24,13 @@ from zamlet.params import ZamletParams
 from zamlet.geometries import SMALL_GEOMETRIES, scale_n_tests
 from zamlet.oamlet.oamlet import Oamlet
 from zamlet.addresses import GlobalAddress, MemoryType, Ordering, WordOrder, KMAddr, RegAddr
+from zamlet.instructions.vector import VCmpVi, VCmpVv, VCmpVx
 from zamlet.kamlet import kinstructions
 from zamlet.transactions.load import Load
 from zamlet.transactions.store import Store
 from zamlet.monitor import CompletionType, SpanType
 from zamlet.tests import test_utils
+from zamlet.tests.test_utils import pack_elements, setup_mask_register
 
 logger = logging.getLogger(__name__)
 
@@ -292,6 +295,264 @@ def generate_test_params(n_tests: int = 128, seed: int = 42):
 @pytest.mark.parametrize("params,vl,seed,lmul", generate_test_params(n_tests=scale_n_tests(32)))
 def test_conditional(params, vl, seed, lmul):
     run_test(vl, seed, lmul, params=params)
+
+
+# ---------------------------------------------------------------------------
+# Masked vector-compare coverage (VCmpVi / VCmpVv / VCmpVx).
+#
+# Verifies both unmasked (vm=1) and masked (vm=0) operation:
+#   - Unmasked: every element of vd is set to the comparison result.
+#   - Masked:   element i of vd is set to the result when v0[i]=1, otherwise
+#     the prior vd[i] is preserved (mask-undisturbed semantics under
+#     vma=False).
+# Reads vd back as a mask register via ew=64 vstore and decodes the bits.
+
+VCMP_TRIALS_PER_FORM = 4
+VCMP_FORMS = ('vi', 'vv', 'vx')
+VCMP_OPS = (
+    kinstructions.VCmpOp.EQ,
+    kinstructions.VCmpOp.NE,
+    kinstructions.VCmpOp.LT,
+    kinstructions.VCmpOp.LE,
+    kinstructions.VCmpOp.GT,
+    kinstructions.VCmpOp.GE,
+)
+
+
+@dataclass
+class _VCmpTrial:
+    idx: int
+    form: str
+    op: kinstructions.VCmpOp
+    vl: int
+    vm: int
+    vs2_vals: list
+    vs1_vals: list
+    scalar_val: int
+    simm5: int
+    v0_bits: list
+    init_vd_bits: list
+    expected: list
+
+
+def _vcmp_eval(op, a: int, b: int) -> bool:
+    if op == kinstructions.VCmpOp.EQ:
+        return a == b
+    if op == kinstructions.VCmpOp.NE:
+        return a != b
+    if op == kinstructions.VCmpOp.LT:
+        return a < b
+    if op == kinstructions.VCmpOp.LE:
+        return a <= b
+    if op == kinstructions.VCmpOp.GT:
+        return a > b
+    if op == kinstructions.VCmpOp.GE:
+        return a >= b
+    raise NotImplementedError(op)
+
+
+def _vcmp_trial_addrs(trial: _VCmpTrial, page_bytes: int) -> dict:
+    base = 0x90000000 + trial.idx * 16 * page_bytes
+    return {
+        'vs1': base,
+        'vs2': base + 2 * page_bytes,
+        'v0': base + 4 * page_bytes,
+        'vd_init': base + 6 * page_bytes,
+        'vd_out': base + 8 * page_bytes,
+    }
+
+
+def _bytes_to_mask_bits(params: ZamletParams, data: bytes) -> list:
+    bits = []
+    max_bits = params.word_bytes * 8 * params.j_in_l
+    for i in range(max_bits):
+        jamlet_idx = i % params.j_in_l
+        local_bit = i // params.j_in_l
+        byte_idx = jamlet_idx * params.word_bytes + local_bit // 8
+        bits.append(bool((data[byte_idx] >> (local_bit % 8)) & 1))
+    return bits
+
+
+def _vcmp_expected(trial: _VCmpTrial) -> list:
+    expected = list(trial.init_vd_bits)
+    for i in range(trial.vl):
+        if trial.vm == 0 and not trial.v0_bits[i]:
+            continue
+        if trial.form == 'vi':
+            b = trial.simm5
+        elif trial.form == 'vv':
+            b = trial.vs1_vals[i]
+        else:
+            b = trial.scalar_val
+        expected[i] = _vcmp_eval(trial.op, trial.vs2_vals[i], b)
+    return expected
+
+
+def _build_vcmp_trials(rnd: Random, params: ZamletParams) -> list:
+    max_vl_data = params.vline_bytes  # ew=8, lmul=1
+    max_bits = params.word_bytes * 8 * params.j_in_l
+    trials = []
+    idx = 0
+    for form in VCMP_FORMS:
+        for _ in range(VCMP_TRIALS_PER_FORM):
+            op = rnd.choice(VCMP_OPS)
+            vl = rnd.randint(1, max_vl_data)
+            vm = rnd.choice([0, 1])
+            vs2_vals = [rnd.randint(-128, 127) for _ in range(max_vl_data)]
+            vs1_vals = [rnd.randint(-128, 127) for _ in range(max_vl_data)]
+            scalar_val = rnd.randint(-128, 127)
+            simm5 = rnd.randint(-16, 15)
+            v0_bits = [rnd.random() < 0.5 for _ in range(max_bits)]
+            init_vd_bits = [rnd.random() < 0.5 for _ in range(max_bits)]
+            trial = _VCmpTrial(
+                idx=idx, form=form, op=op, vl=vl, vm=vm,
+                vs2_vals=vs2_vals, vs1_vals=vs1_vals, scalar_val=scalar_val,
+                simm5=simm5, v0_bits=v0_bits, init_vd_bits=init_vd_bits,
+                expected=[])
+            trial.expected = _vcmp_expected(trial)
+            trials.append(trial)
+            idx += 1
+    return trials
+
+
+async def _vcmp_alloc_and_write(lamlet, addr: int, vals: list):
+    page_bytes = lamlet.params.page_bytes
+    lamlet.allocate_memory(
+        GlobalAddress(bit_addr=addr * 8, params=lamlet.params),
+        page_bytes, memory_type=MemoryType.VPU)
+    ordering = Ordering(lamlet.word_order, 8)
+    data = pack_elements(vals, 8)
+    await lamlet.set_memory(addr, data, ordering=ordering)
+    return ordering
+
+
+async def _vcmp_read_mask(lamlet, reg: int, addr: int, span_id: int) -> list:
+    params = lamlet.params
+    ordering = Ordering(lamlet.word_order, 64)
+    lamlet.allocate_memory(
+        GlobalAddress(bit_addr=addr * 8, params=params),
+        params.page_bytes, memory_type=MemoryType.VPU)
+    lamlet.vrf_ordering[reg] = ordering
+    await lamlet.vstore(
+        vs=reg, addr=addr, ordering=ordering, n_elements=params.j_in_l,
+        start_index=0, mask_reg=None, parent_span_id=span_id, emul=1)
+    data = await lamlet.get_memory_blocking(addr, params.vline_bytes)
+    return _bytes_to_mask_bits(params, data)
+
+
+async def run_vcmp_masked(clock: Clock, lamlet: Oamlet, seed: int,
+                          params: ZamletParams):
+    rnd = Random(seed)
+    trials = _build_vcmp_trials(rnd, params)
+
+    vs1_reg = 2
+    vs2_reg = 4
+    vd_reg = 6
+    rs1 = 5
+
+    lamlet.vstart = 0
+    lamlet.pc = 0
+    lamlet.vtype = 0  # vsew=0 (ew=8), vlmul=0
+
+    for trial in trials:
+        addrs = _vcmp_trial_addrs(trial, params.page_bytes)
+        span_id = lamlet.monitor.create_span(
+            span_type=SpanType.RISCV_INSTR, component="test",
+            completion_type=CompletionType.FIRE_AND_FORGET,
+            mnemonic=f"vcmp_trial_{trial.idx}_{trial.form}_{trial.op.value}")
+
+        lamlet.vl = trial.vl
+
+        vs2_ord = await _vcmp_alloc_and_write(lamlet, addrs['vs2'], trial.vs2_vals)
+        await lamlet.vload(
+            vd=vs2_reg, addr=addrs['vs2'], ordering=vs2_ord,
+            n_elements=trial.vl, start_index=0, mask_reg=None,
+            parent_span_id=span_id, emul=1)
+
+        if trial.form == 'vv':
+            vs1_ord = await _vcmp_alloc_and_write(lamlet, addrs['vs1'], trial.vs1_vals)
+            await lamlet.vload(
+                vd=vs1_reg, addr=addrs['vs1'], ordering=vs1_ord,
+                n_elements=trial.vl, start_index=0, mask_reg=None,
+                parent_span_id=span_id, emul=1)
+        elif trial.form == 'vx':
+            scalar_bytes = trial.scalar_val.to_bytes(8, byteorder='little', signed=True)
+            lamlet.scalar.write_reg(rs1, scalar_bytes, span_id)
+
+        await setup_mask_register(
+            lamlet, mask_reg=vd_reg, mask_bits=trial.init_vd_bits,
+            page_bytes=params.page_bytes, mask_mem_addr=addrs['vd_init'])
+        if trial.vm == 0:
+            await setup_mask_register(
+                lamlet, mask_reg=0, mask_bits=trial.v0_bits,
+                page_bytes=params.page_bytes, mask_mem_addr=addrs['v0'])
+
+        if trial.form == 'vi':
+            instr = VCmpVi(
+                vd=vd_reg, vs2=vs2_reg, simm5=trial.simm5 & 0x1f,
+                vm=trial.vm, op=trial.op)
+        elif trial.form == 'vv':
+            instr = VCmpVv(
+                vd=vd_reg, vs2=vs2_reg, vs1=vs1_reg,
+                vm=trial.vm, op=trial.op)
+        else:
+            instr = VCmpVx(
+                vd=vd_reg, vs2=vs2_reg, rs1=rs1,
+                vm=trial.vm, op=trial.op)
+        await instr.update_state(lamlet)
+        await lamlet.await_vreg_write_pending(vd_reg, 1)
+
+        actual = await _vcmp_read_mask(lamlet, vd_reg, addrs['vd_out'], span_id)
+        lamlet.monitor.finalize_children(span_id)
+
+        errors = [
+            i for i in range(trial.vl)
+            if actual[i] != trial.expected[i]
+        ]
+        if errors:
+            logger.error(
+                f"FAIL trial={trial.idx} form={trial.form} op={trial.op.value} "
+                f"vm={trial.vm} vl={trial.vl}: {len(errors)} mismatches")
+            for i in errors[:16]:
+                if trial.form == 'vi':
+                    rhs = trial.simm5
+                elif trial.form == 'vv':
+                    rhs = trial.vs1_vals[i]
+                else:
+                    rhs = trial.scalar_val
+                logger.error(
+                    f"  [{i}] expected={trial.expected[i]} actual={actual[i]} "
+                    f"vs2={trial.vs2_vals[i]} rhs={rhs} "
+                    f"v0={trial.v0_bits[i]} init={trial.init_vd_bits[i]}")
+            return 1
+
+    logger.info(f"PASS: {len(trials)} trials")
+    return 0
+
+
+def _run_vcmp_masked_test(seed: int, params: ZamletParams, max_cycles: int = 200000):
+    async def test_fn(clock: Clock, lamlet: Oamlet):
+        return await run_vcmp_masked(clock, lamlet, seed, params)
+    test_utils.run_test(test_fn, params, max_cycles=max_cycles)
+
+
+def _generate_vcmp_test_params(n_tests: int = 8, seed: int = 42):
+    rnd = Random(seed)
+    test_params = []
+    geom_names = list(SMALL_GEOMETRIES.keys())
+    for i in range(n_tests):
+        geom_name = rnd.choice(geom_names)
+        geom_params = SMALL_GEOMETRIES[geom_name]
+        test_seed = rnd.randint(0, 10000)
+        id_str = f"{i}_{geom_name}_s{test_seed}"
+        test_params.append(pytest.param(geom_params, test_seed, id=id_str))
+    return test_params
+
+
+@pytest.mark.parametrize(
+    "params,seed", _generate_vcmp_test_params(n_tests=scale_n_tests(8)))
+def test_vcmp_masked(params, seed):
+    _run_vcmp_masked_test(seed=seed, params=params)
 
 
 if __name__ == '__main__':

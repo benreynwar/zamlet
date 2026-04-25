@@ -83,6 +83,13 @@ class ZamletParams:
     mem_axi_id_bits: int = 4
     lamlet_dispatch_queue_depth: int = 8
 
+    # Experiment: if True, lamlet skips the on-chip network for kinstr
+    # dispatch and enqueues kinstructions directly into the target
+    # kamlet instruction_queue, respecting its capacity as back-pressure.
+    # Used to measure whether network traffic from kinstr packets is
+    # bottlenecking kernels. Leaves packet-based dispatch code intact.
+    bypass_kinstr_network: bool = False
+
     def __post_init__(self):
         # Page must be bigger than a vector
         assert self.page_bytes > 0
