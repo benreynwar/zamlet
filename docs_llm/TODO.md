@@ -1,5 +1,23 @@
 # TODO
 
+- [ ] JSON-driven test parameters. Tests currently inherit Python defaults
+      from `ZamletParams`, which mixes "good for testing" values (small RS,
+      small SRAM, fast iteration) with "good for performance" values
+      (`reservation_station_depth=16`, `sram_depth=128`). Add a mechanism for
+      tests to load a named JSON config and use those values instead of
+      Python defaults. Ship at least two configs: one for default testing
+      and one for performance runs (FFT timing, etc.). Bazel test targets
+      pick which config they consume.
+- [ ] Implement `bypass_kinstr_network` properly in hardware. The current Python
+      flag short-circuits the on-chip network for lamlet→kamlet kinstr dispatch
+      by enqueueing directly into `kamlet._instruction_queue` — a testing hack
+      to measure the network's contribution to FFT timings. The proper
+      implementation is a dedicated dispatch path with direct wires from the
+      lamlet to each kamlet's instruction buffer (or a higher-priority network
+      channel reserved for kinstr dispatch), preserving the existing
+      back-pressure / ident-throttling. Once the real path lands, drop the
+      `bypass_kinstr_network` flag and the `send_instructions` branch in
+      `oamlet.py`.
 - [ ] Switch kernel test C runtime from custom crt.S/syscalls.c to picolibc.
       The current runtime has custom printf/memcpy/etc that may diverge from
       standard behavior, and hand-written header shims. picolibc provides all

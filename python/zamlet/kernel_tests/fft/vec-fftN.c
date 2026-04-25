@@ -51,7 +51,9 @@
 #endif
 
 #define N         FFT_N
+#ifndef N_FFTS
 #define N_FFTS    1
+#endif
 #define TOL       1e-9
 
 // Trace marker (custom-0 opcode 0x0b, funct3=3). Broadcasts a Marker KInstr
@@ -74,6 +76,10 @@
 #define FFT_MARK_RB_STAGE_START(s)  (300 + (s))
 #define FFT_MARK_CHUNK_STORE_START  10
 #define FFT_MARK_CHUNK_END          11
+// Iteration marker base: when FFT body is repeated N_FFTS times, the iter
+// marker (900 + iter) precedes each iteration's bitreverse so each FFT's
+// span analysis can be separated.
+#define FFT_MARK_ITER_START_BASE    900
 
 // Compile-time upper bound on VLMAX(e64,m1). Override via -DMAX_VLMAX=. The
 // actual vl is queried at runtime with vsetvli and capped to N/2.
@@ -703,32 +709,115 @@ static inline void run_chunk_R4(size_t chunk_base) {
         vfloat64m1_t tw_re, tw_im;
         ra_setup(s, vl, &d, &low_mask, &high_mask, &tw_re, &tw_im);
 
-        // Phase A for both pairs — slide-heavy, interleaved so the RS can
-        // overlap cross-jamlet slide traffic.
+        // Phase A, arith, and phase D are written as three opaque inline-asm
+        // blocks so LLVM cannot interleave arith with the slide-heavy phases.
+        // Within each block we control the instruction order exactly.
         vfloat64m1_t p0_H0_re, p0_H0_im, p0_H1_re, p0_H1_im;
         vfloat64m1_t p1_H0_re, p1_H0_im, p1_H1_re, p1_H1_im;
-        ra_phase_a(V0_re, V0_im, V1_re, V1_im,
-                   &p0_H0_re, &p0_H0_im, &p0_H1_re, &p0_H1_im,
-                   d, low_mask, high_mask, vl);
-        ra_phase_a(V2_re, V2_im, V3_re, V3_im,
-                   &p1_H0_re, &p1_H0_im, &p1_H1_re, &p1_H1_im,
-                   d, low_mask, high_mask, vl);
+        __asm__ volatile (
+            "vsetvli zero, %[vl], e64, m1, ta, mu\n\t"
+            "vmv1r.v v0, %[highm]\n\t"
+            "vmv.v.v %[p0H0re], %[V0re]\n\t"
+            "vslideup.vx %[p0H0re], %[V1re], %[d], v0.t\n\t"
+            "vmv.v.v %[p1H0re], %[V2re]\n\t"
+            "vslideup.vx %[p1H0re], %[V3re], %[d], v0.t\n\t"
+            "vmv.v.v %[p0H0im], %[V0im]\n\t"
+            "vslideup.vx %[p0H0im], %[V1im], %[d], v0.t\n\t"
+            "vmv.v.v %[p1H0im], %[V2im]\n\t"
+            "vslideup.vx %[p1H0im], %[V3im], %[d], v0.t\n\t"
+            "vmv1r.v v0, %[lowm]\n\t"
+            "vmv.v.v %[p0H1re], %[V1re]\n\t"
+            "vslidedown.vx %[p0H1re], %[V0re], %[d], v0.t\n\t"
+            "vmv.v.v %[p1H1re], %[V3re]\n\t"
+            "vslidedown.vx %[p1H1re], %[V2re], %[d], v0.t\n\t"
+            "vmv.v.v %[p0H1im], %[V1im]\n\t"
+            "vslidedown.vx %[p0H1im], %[V0im], %[d], v0.t\n\t"
+            "vmv.v.v %[p1H1im], %[V3im]\n\t"
+            "vslidedown.vx %[p1H1im], %[V2im], %[d], v0.t\n\t"
+            : [p0H0re] "=&vr"(p0_H0_re), [p0H0im] "=&vr"(p0_H0_im),
+              [p0H1re] "=&vr"(p0_H1_re), [p0H1im] "=&vr"(p0_H1_im),
+              [p1H0re] "=&vr"(p1_H0_re), [p1H0im] "=&vr"(p1_H0_im),
+              [p1H1re] "=&vr"(p1_H1_re), [p1H1im] "=&vr"(p1_H1_im)
+            : [V0re] "vr"(V0_re), [V0im] "vr"(V0_im),
+              [V1re] "vr"(V1_re), [V1im] "vr"(V1_im),
+              [V2re] "vr"(V2_re), [V2im] "vr"(V2_im),
+              [V3re] "vr"(V3_re), [V3im] "vr"(V3_im),
+              [lowm] "vr"(low_mask), [highm] "vr"(high_mask),
+              [d] "r"(d), [vl] "r"(vl)
+            : "v0"
+        );
 
-        // Arithmetic middle for both pairs.
         vfloat64m1_t p0_H0p_re, p0_H0p_im, p0_H1p_re, p0_H1p_im;
         vfloat64m1_t p1_H0p_re, p1_H0p_im, p1_H1p_re, p1_H1p_im;
-        ra_arith(tw_re, tw_im, p0_H0_re, p0_H0_im, p0_H1_re, p0_H1_im,
-                 &p0_H0p_re, &p0_H0p_im, &p0_H1p_re, &p0_H1p_im, vl);
-        ra_arith(tw_re, tw_im, p1_H0_re, p1_H0_im, p1_H1_re, p1_H1_im,
-                 &p1_H0p_re, &p1_H0p_im, &p1_H1p_re, &p1_H1p_im, vl);
+        vfloat64m1_t t_a, t_b, t_c;
+        __asm__ volatile (
+            "vsetvli zero, %[vl], e64, m1, ta, ma\n\t"
+            "vfmul.vv %[ta], %[twre], %[p0H1re]\n\t"
+            "vfmul.vv %[tb], %[twim], %[p0H1im]\n\t"
+            "vfsub.vv %[ta], %[ta], %[tb]\n\t"
+            "vfmul.vv %[tb], %[twre], %[p0H1im]\n\t"
+            "vfmul.vv %[tc], %[twim], %[p0H1re]\n\t"
+            "vfadd.vv %[tb], %[tb], %[tc]\n\t"
+            "vfadd.vv %[p0H0pre], %[p0H0re], %[ta]\n\t"
+            "vfsub.vv %[p0H1pre], %[p0H0re], %[ta]\n\t"
+            "vfadd.vv %[p0H0pim], %[p0H0im], %[tb]\n\t"
+            "vfsub.vv %[p0H1pim], %[p0H0im], %[tb]\n\t"
+            "vfmul.vv %[ta], %[twre], %[p1H1re]\n\t"
+            "vfmul.vv %[tb], %[twim], %[p1H1im]\n\t"
+            "vfsub.vv %[ta], %[ta], %[tb]\n\t"
+            "vfmul.vv %[tb], %[twre], %[p1H1im]\n\t"
+            "vfmul.vv %[tc], %[twim], %[p1H1re]\n\t"
+            "vfadd.vv %[tb], %[tb], %[tc]\n\t"
+            "vfadd.vv %[p1H0pre], %[p1H0re], %[ta]\n\t"
+            "vfsub.vv %[p1H1pre], %[p1H0re], %[ta]\n\t"
+            "vfadd.vv %[p1H0pim], %[p1H0im], %[tb]\n\t"
+            "vfsub.vv %[p1H1pim], %[p1H0im], %[tb]\n\t"
+            : [p0H0pre] "=&vr"(p0_H0p_re), [p0H0pim] "=&vr"(p0_H0p_im),
+              [p0H1pre] "=&vr"(p0_H1p_re), [p0H1pim] "=&vr"(p0_H1p_im),
+              [p1H0pre] "=&vr"(p1_H0p_re), [p1H0pim] "=&vr"(p1_H0p_im),
+              [p1H1pre] "=&vr"(p1_H1p_re), [p1H1pim] "=&vr"(p1_H1p_im),
+              [ta] "=&vr"(t_a), [tb] "=&vr"(t_b), [tc] "=&vr"(t_c)
+            : [twre] "vr"(tw_re), [twim] "vr"(tw_im),
+              [p0H0re] "vr"(p0_H0_re), [p0H0im] "vr"(p0_H0_im),
+              [p0H1re] "vr"(p0_H1_re), [p0H1im] "vr"(p0_H1_im),
+              [p1H0re] "vr"(p1_H0_re), [p1H0im] "vr"(p1_H0_im),
+              [p1H1re] "vr"(p1_H1_re), [p1H1im] "vr"(p1_H1_im),
+              [vl] "r"(vl)
+        );
+        (void)t_a; (void)t_b; (void)t_c;
 
-        // Phase D for both pairs — slide-heavy again, also interleaved.
-        ra_phase_d(p0_H0p_re, p0_H0p_im, p0_H1p_re, p0_H1p_im,
-                   &V0_re, &V0_im, &V1_re, &V1_im,
-                   d, low_mask, high_mask, vl);
-        ra_phase_d(p1_H0p_re, p1_H0p_im, p1_H1p_re, p1_H1p_im,
-                   &V2_re, &V2_im, &V3_re, &V3_im,
-                   d, low_mask, high_mask, vl);
+        __asm__ volatile (
+            "vsetvli zero, %[vl], e64, m1, ta, mu\n\t"
+            "vmv1r.v v0, %[highm]\n\t"
+            "vmv.v.v %[V0re], %[p0H0pre]\n\t"
+            "vslideup.vx %[V0re], %[p0H1pre], %[d], v0.t\n\t"
+            "vmv.v.v %[V2re], %[p1H0pre]\n\t"
+            "vslideup.vx %[V2re], %[p1H1pre], %[d], v0.t\n\t"
+            "vmv.v.v %[V0im], %[p0H0pim]\n\t"
+            "vslideup.vx %[V0im], %[p0H1pim], %[d], v0.t\n\t"
+            "vmv.v.v %[V2im], %[p1H0pim]\n\t"
+            "vslideup.vx %[V2im], %[p1H1pim], %[d], v0.t\n\t"
+            "vmv1r.v v0, %[lowm]\n\t"
+            "vmv.v.v %[V1re], %[p0H1pre]\n\t"
+            "vslidedown.vx %[V1re], %[p0H0pre], %[d], v0.t\n\t"
+            "vmv.v.v %[V3re], %[p1H1pre]\n\t"
+            "vslidedown.vx %[V3re], %[p1H0pre], %[d], v0.t\n\t"
+            "vmv.v.v %[V1im], %[p0H1pim]\n\t"
+            "vslidedown.vx %[V1im], %[p0H0pim], %[d], v0.t\n\t"
+            "vmv.v.v %[V3im], %[p1H1pim]\n\t"
+            "vslidedown.vx %[V3im], %[p1H0pim], %[d], v0.t\n\t"
+            : [V0re] "=&vr"(V0_re), [V0im] "=&vr"(V0_im),
+              [V1re] "=&vr"(V1_re), [V1im] "=&vr"(V1_im),
+              [V2re] "=&vr"(V2_re), [V2im] "=&vr"(V2_im),
+              [V3re] "=&vr"(V3_re), [V3im] "=&vr"(V3_im)
+            : [p0H0pre] "vr"(p0_H0p_re), [p0H0pim] "vr"(p0_H0p_im),
+              [p0H1pre] "vr"(p0_H1p_re), [p0H1pim] "vr"(p0_H1p_im),
+              [p1H0pre] "vr"(p1_H0p_re), [p1H0pim] "vr"(p1_H0p_im),
+              [p1H1pre] "vr"(p1_H1p_re), [p1H1pim] "vr"(p1_H1p_im),
+              [lowm] "vr"(low_mask), [highm] "vr"(high_mask),
+              [d] "r"(d), [vl] "r"(vl)
+            : "v0"
+        );
     }
 
     // Regime B s=0: pairs (V0,V1), (V2,V3); a=0 both.
@@ -774,6 +863,7 @@ static inline void run_chunk_R4(size_t chunk_base) {
 static inline void run_chunk_R8(size_t chunk_base) {
     size_t vl = vl_val;
 
+    FFT_MARK(FFT_MARK_CHUNK_LOAD_START);
     vfloat64m1_t V0_re = __riscv_vle64_v_f64m1(&data_re[chunk_base + 0 * vl], vl);
     vfloat64m1_t V0_im = __riscv_vle64_v_f64m1(&data_im[chunk_base + 0 * vl], vl);
     vfloat64m1_t V1_re = __riscv_vle64_v_f64m1(&data_re[chunk_base + 1 * vl], vl);
@@ -792,6 +882,7 @@ static inline void run_chunk_R8(size_t chunk_base) {
     vfloat64m1_t V7_im = __riscv_vle64_v_f64m1(&data_im[chunk_base + 7 * vl], vl);
 
     for (int s = 0; s < log2_vl; s++) {
+        FFT_MARK_V(FFT_MARK_RA_STAGE_START(0) + s);
         size_t d;
         vbool64_t low_mask, high_mask;
         vfloat64m1_t tw_re, tw_im;
@@ -846,6 +937,7 @@ static inline void run_chunk_R8(size_t chunk_base) {
     }
 
     // Regime B s=0: pairs (0,1),(2,3),(4,5),(6,7); a=0 all.
+    FFT_MARK(FFT_MARK_RB_STAGE_START(0));
     {
         vfloat64m1_t seed_re_v = __riscv_vle64_v_f64m1(&seed_re[0][0], vl);
         vfloat64m1_t seed_im_v = __riscv_vle64_v_f64m1(&seed_im[0][0], vl);
@@ -861,6 +953,7 @@ static inline void run_chunk_R8(size_t chunk_base) {
                 b0_re, b0_im, seed_re_v, seed_im_v, vl);
     }
     // Regime B s=1: pairs (0,2)a=0,(1,3)a=1,(4,6)a=0,(5,7)a=1.
+    FFT_MARK(FFT_MARK_RB_STAGE_START(1));
     {
         vfloat64m1_t seed_re_v = __riscv_vle64_v_f64m1(&seed_re[1][0], vl);
         vfloat64m1_t seed_im_v = __riscv_vle64_v_f64m1(&seed_im[1][0], vl);
@@ -878,6 +971,7 @@ static inline void run_chunk_R8(size_t chunk_base) {
                 b1_re, b1_im, seed_re_v, seed_im_v, vl);
     }
     // Regime B s=2: pairs (0,4)a=0,(1,5)a=1,(2,6)a=2,(3,7)a=3.
+    FFT_MARK(FFT_MARK_RB_STAGE_START(2));
     {
         vfloat64m1_t seed_re_v = __riscv_vle64_v_f64m1(&seed_re[2][0], vl);
         vfloat64m1_t seed_im_v = __riscv_vle64_v_f64m1(&seed_im[2][0], vl);
@@ -899,6 +993,7 @@ static inline void run_chunk_R8(size_t chunk_base) {
                 b3_re, b3_im, seed_re_v, seed_im_v, vl);
     }
 
+    FFT_MARK(FFT_MARK_CHUNK_STORE_START);
     __riscv_vse64_v_f64m1(&data_re[chunk_base + 0 * vl], V0_re, vl);
     __riscv_vse64_v_f64m1(&data_im[chunk_base + 0 * vl], V0_im, vl);
     __riscv_vse64_v_f64m1(&data_re[chunk_base + 1 * vl], V1_re, vl);
@@ -915,6 +1010,7 @@ static inline void run_chunk_R8(size_t chunk_base) {
     __riscv_vse64_v_f64m1(&data_im[chunk_base + 6 * vl], V6_im, vl);
     __riscv_vse64_v_f64m1(&data_re[chunk_base + 7 * vl], V7_re, vl);
     __riscv_vse64_v_f64m1(&data_im[chunk_base + 7 * vl], V7_im, vl);
+    FFT_MARK(FFT_MARK_CHUNK_END);
 }
 
 // Dispatching wrapper.
@@ -954,28 +1050,34 @@ int main(int argc, char* argv[]) {
 
     init_tables();
 
-    // Bit-reverse tmp → data. After this, data holds the reordered input;
-    // FFT runs in-place on data_re/im.
-    bitreverse_reorder64(N, (const int64_t*)tmp_re, (int64_t*)data_re,
-                         br_read_idx, br_write_idx);
-    bitreverse_reorder64(N, (const int64_t*)tmp_im, (int64_t*)data_im,
-                         br_read_idx, br_write_idx);
+    printf("Running FFT-%d (vl=%zu, R=%d) x%d\n", N, vl_val, r_val, N_FFTS);
 
-    printf("Running FFT-%d (vl=%zu, R=%d)\n", N, vl_val, r_val);
+    size_t chunk_size = (size_t)r_val * vl_val;
 
     unsigned long cycles1, cycles2;
     cycles1 = read_csr(mcycle);
 
-    size_t chunk_size = (size_t)r_val * vl_val;
-    for (size_t cb = 0; cb < (size_t)N; cb += chunk_size) {
-        run_chunk(cb);
-    }
+    for (int iter = 0; iter < N_FFTS; iter++) {
+        FFT_MARK_V(FFT_MARK_ITER_START_BASE + iter);
 
-    for (int P = 0; P < n_regime_c; P++) {
-        int remaining = log2_n - log2_vl - 3 - 3 * P;
-        int n_sub = (remaining < 3) ? remaining : 3;
-        int super_chunk = 1 << n_sub;
-        regime_c_pass(P, super_chunk, n_sub);
+        // Bit-reverse tmp → data. After this, data holds the reordered input;
+        // FFT runs in-place on data_re/im. Repeated each iter so every FFT
+        // runs on the same starting data.
+        bitreverse_reorder64(N, (const int64_t*)tmp_re, (int64_t*)data_re,
+                             br_read_idx, br_write_idx);
+        bitreverse_reorder64(N, (const int64_t*)tmp_im, (int64_t*)data_im,
+                             br_read_idx, br_write_idx);
+
+        for (size_t cb = 0; cb < (size_t)N; cb += chunk_size) {
+            run_chunk(cb);
+        }
+
+        for (int P = 0; P < n_regime_c; P++) {
+            int remaining = log2_n - log2_vl - 3 - 3 * P;
+            int n_sub = (remaining < 3) ? remaining : 3;
+            int super_chunk = 1 << n_sub;
+            regime_c_pass(P, super_chunk, n_sub);
+        }
     }
 
     asm volatile("fence");

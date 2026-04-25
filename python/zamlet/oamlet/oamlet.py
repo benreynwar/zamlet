@@ -1222,7 +1222,23 @@ class Oamlet:
                 kinstr_item = self.monitor.get_span(kinstr_span_id)
                 if kinstr_item.completion_type == CompletionType.FIRE_AND_FORGET:
                     self.monitor.finalize_children(kinstr_span_id)
-        await self.send_packet(packet, jamlet, Direction.N, port=0)
+        if self.params.bypass_kinstr_network:
+            if is_broadcast:
+                target_kamlets = list(self.kamlets)
+            else:
+                target_kamlets = [self.kamlets[k_index]]
+            for instr in instructions:
+                for kamlet in target_kamlets:
+                    while not kamlet._instruction_queue.can_append():
+                        await self.clock.next_cycle
+                    self.monitor.record_message_received(
+                        instr.instr_ident,
+                        self.instr_x, self.instr_y,
+                        kamlet.min_x, kamlet.min_y,
+                        message_type='INSTRUCTION')
+                    kamlet.add_to_instruction_queue(instr)
+        else:
+            await self.send_packet(packet, jamlet, Direction.N, port=0)
 
     async def send_packet(self, packet, jamlet, direction, port,
                           parent_span_id: int | None = None):

@@ -145,7 +145,7 @@ _start:
   add sp, sp, a2
 
   # VPU stack pointer (grows downward from top of dedicated region)
-  li s11, 0xA0004000
+  li s11, 0xA0040000
 
   j _init
 
