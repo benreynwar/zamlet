@@ -438,11 +438,11 @@ async def vloadstore(lamlet: 'Oamlet', reg_base: int, addr: int, ordering: addre
     if is_store:
         await lamlet.ensure_vrf_ordering(
             reg_base, ordering.ew, parent_span_id,
-            vstart=start_index, vl=start_index + n_elements)
+            vstart=start_index, vl=n_elements)
     if mask_reg is not None:
         await lamlet.ensure_vrf_ordering(
             mask_reg, 1, parent_span_id,
-            vstart=start_index, vl=start_index + n_elements)
+            vstart=start_index, vl=n_elements)
 
     # Check all pages for access before dispatching
     element_bytes = ordering.ew // 8

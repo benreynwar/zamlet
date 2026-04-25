@@ -74,6 +74,19 @@
       slides, and scalar moves that use it implicitly. See
       `docs/PLAN_vta_vma.md` (related tail/mask policy) and the `vrgather`
       implementation as a reference for correct plumbing.
+- [ ] Rename `n_elements` → `vl` and `start_index` → `vstart` across the
+      lamlet load/store helper family (`lamlet/unordered.py`,
+      `lamlet/ordered.py`, callers in `oamlet/oamlet.py`). The current name
+      `n_elements` reads as "count" but is consumed as RVV vl (exclusive
+      end) at the entry points; `vloadstore`'s body still treats it as a
+      count from 0 (`n_vlines = ceil(n_elements / elements_per_vline)`,
+      `range(start_index, start_index + n_elements)`), which is harmless
+      today only because every caller passes `start_index=0`. The rename
+      surfaces these mismatches so they can be fixed against vl-semantics.
+      Audit the body of `vloadstore` against vl-semantics as part of the
+      rename. Cross-reference `_vline_is_partial` in `oamlet.py` (RESTART
+      §"Longer-term tracked items") which has the same n_elements-as-vl
+      vs. n_elements-as-count latent error.
 - [ ] Narrowing shifts (vnsrl, vnsra): currently only vnsrl.wi is implemented, and it's
       hacked into VUnaryOvOp which is the wrong place for it. Need to think about how
       narrowing ops should work properly, then implement all 6 forms

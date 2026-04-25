@@ -487,6 +487,16 @@ async def vload_indexed_ordered(lamlet: 'Oamlet', vd: int, base_addr: int, index
         masked=(mask_reg is not None), emul=lamlet.lmul,
         span_id=parent_span_id)
 
+    # Ensure source regs match instr ew in place. Mirror unordered.py:749-760.
+    # Mask reg (ew=1) asserts on mismatch; remap for ew=1 is not yet supported.
+    await lamlet.ensure_vrf_ordering(
+        index_reg, index_ew, parent_span_id,
+        vstart=start_index, vl=n_elements)
+    if mask_reg is not None:
+        await lamlet.ensure_vrf_ordering(
+            mask_reg, 1, parent_span_id,
+            vstart=start_index, vl=n_elements)
+
     # Wait for an ordered buffer slot
     buffer_id = get_free_buffer_id(lamlet)
     while buffer_id is None:
@@ -598,6 +608,19 @@ async def vstore_indexed_ordered(lamlet: 'Oamlet', vs: int, base_addr: int, inde
     n_index_vlines = (index_ew * n_elements + vline_bits - 1) // vline_bits
     await lamlet.await_vreg_write_pending(vs, n_data_vlines)
     await lamlet.await_vreg_write_pending(index_reg, n_index_vlines)
+
+    # Ensure source regs match instr ew in place. Mirror unordered.py:749-760.
+    # Mask reg (ew=1) asserts on mismatch; remap for ew=1 is not yet supported.
+    await lamlet.ensure_vrf_ordering(
+        vs, data_ew, parent_span_id,
+        vstart=start_index, vl=n_elements)
+    await lamlet.ensure_vrf_ordering(
+        index_reg, index_ew, parent_span_id,
+        vstart=start_index, vl=n_elements)
+    if mask_reg is not None:
+        await lamlet.ensure_vrf_ordering(
+            mask_reg, 1, parent_span_id,
+            vstart=start_index, vl=n_elements)
 
     # Wait for an ordered buffer slot
     buffer_id = get_free_buffer_id(lamlet)
