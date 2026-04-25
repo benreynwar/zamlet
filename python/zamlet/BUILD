@@ -3,6 +3,14 @@
 load("@rules_python//python:defs.bzl", "py_library", "py_binary")
 
 test_suite(
+    name = "all_tests",
+    tests = [
+        "//python/zamlet/tests:all_tests",
+        "//python/zamlet/kernel_tests:all_tests",
+    ],
+)
+
+test_suite(
     name = "cocotb_tests",
     tests = [
         "//python/zamlet/maths_test:all_tests",

@@ -12,6 +12,9 @@ One-line index of plans in `plans/`. See `ROADMAP.md` for the big picture.
 
 ## Todo
 
+- [long_latency_alu](plans/PLAN_long_latency_alu.md) — per-jamlet ALU model
+  with 4 pipes + framework for fflags/vxsat/rm (unblocks vdiv/vfdiv/vfsqrt/
+  vfrec7/vfrsqrt7 and the fixed-point + FP-correctness follow-ups)
 - [picolibc](plans/PLAN_picolibc.md) — unstarted
 - [scalar_read_vpu_test](plans/PLAN_scalar_read_vpu_test.md) — test not written
 

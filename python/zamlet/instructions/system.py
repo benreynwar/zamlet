@@ -11,6 +11,9 @@ if TYPE_CHECKING:
 
 from zamlet.register_names import reg_name
 from zamlet.instructions.riscv_instr import riscv_instr
+from zamlet.trap import (
+    CSR_MSTATUS, CSR_MTVEC, CSR_MEPC, CSR_MCAUSE, CSR_MTVAL,
+    MSTATUS_MIE_BIT, MSTATUS_MPIE_BIT)
 
 # CSR names mapping
 CSR_NAMES = {
@@ -55,20 +58,20 @@ CSR_NAMES = {
     0x680: 'hgatp',
     0x6a8: 'hcontext',
     # Machine CSRs
-    0x300: 'mstatus',
+    CSR_MSTATUS: 'mstatus',
     0x301: 'misa',
     0x302: 'medeleg',
     0x303: 'mideleg',
     0x304: 'mie',
-    0x305: 'mtvec',
+    CSR_MTVEC: 'mtvec',
     0x306: 'mcounteren',
     0x30a: 'menvcfg',
     0x310: 'mstatush',
     0x320: 'mcountinhibit',
     0x340: 'mscratch',
-    0x341: 'mepc',
-    0x342: 'mcause',
-    0x343: 'mtval',
+    CSR_MEPC: 'mepc',
+    CSR_MCAUSE: 'mcause',
+    CSR_MTVAL: 'mtval',
     0x344: 'mip',
     0x34a: 'mtinst',
     0x34b: 'mtval2',
@@ -132,7 +135,8 @@ class Mret:
     """MRET - Machine-mode return.
 
     Returns from a machine-mode trap handler. Restores PC from mepc and
-    privilege mode from mstatus.MPP. In our emulator, we just increment PC.
+    mstatus.MIE from MPIE. MPP-based privilege restoration is deferred since
+    this model only runs machine mode.
 
     Reference: riscv-isa-manual/src/machine.adoc
     """
@@ -142,7 +146,17 @@ class Mret:
 
     @riscv_instr
     async def update_state(self, s: 'Oamlet', span_id: int):
-        s.pc += 4
+        word_bytes = s.params.word_bytes
+        mepc = int.from_bytes(
+            s.scalar.read_csr(CSR_MEPC), 'little', signed=False)
+        mstatus = int.from_bytes(
+            s.scalar.read_csr(CSR_MSTATUS), 'little', signed=False)
+        mpie = (mstatus >> MSTATUS_MPIE_BIT) & 1
+        mstatus = (mstatus & ~(1 << MSTATUS_MIE_BIT)) | (mpie << MSTATUS_MIE_BIT)
+        mstatus |= (1 << MSTATUS_MPIE_BIT)
+        s.scalar.write_csr(CSR_MSTATUS, mstatus.to_bytes(
+            word_bytes, 'little', signed=False))
+        s.pc = mepc
 
 
 @dataclass

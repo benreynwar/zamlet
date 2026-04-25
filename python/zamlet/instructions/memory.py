@@ -38,6 +38,8 @@ class Sb:
         rs2_bytes = s.scalar.read_reg(self.rs2)
         logger.debug(f'sb: address={hex(address)} pc={hex(s.pc)} '
                      f'rs1=x{self.rs1}={hex(rs1_val)} imm={self.imm}')
+        if s.check_scalar_access_or_trap(address, 1, is_write=True):
+            return
         await s.set_memory(address, rs2_bytes[:1],
                            weak_ordering=Ordering(s.word_order, 8))
         s.pc += 4
@@ -65,6 +67,8 @@ class Sh:
         rs1_val = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
         address = rs1_val + self.imm
         rs2_bytes = s.scalar.read_reg(self.rs2)
+        if s.check_scalar_access_or_trap(address, 2, is_write=True):
+            return
         await s.set_memory(address, rs2_bytes[:2],
                            weak_ordering=Ordering(s.word_order, 16))
         s.pc += 4
@@ -92,6 +96,8 @@ class Sw:
         rs1_val = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
         address = rs1_val + self.imm
         rs2_bytes = s.scalar.read_reg(self.rs2)
+        if s.check_scalar_access_or_trap(address, 4, is_write=True):
+            return
         await s.set_memory(address, rs2_bytes[:4],
                            weak_ordering=Ordering(s.word_order, 32))
         s.pc += 4
@@ -119,6 +125,8 @@ class Sd:
         address = rs1_val + self.imm
         rs2_bytes = s.scalar.read_reg(self.rs2)
         logger.debug(f'About to set memory {address} to {rs2_bytes[:8]}')
+        if s.check_scalar_access_or_trap(address, 8, is_write=True):
+            return
         await s.set_memory(address, rs2_bytes[:8],
                            weak_ordering=Ordering(s.word_order, 64))
         s.pc += 4
@@ -151,6 +159,8 @@ class Lb:
         rs1_bytes = s.scalar.read_reg(self.rs1)
         rs1_val = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
         address = rs1_val + self.imm
+        if s.check_scalar_access_or_trap(address, 1, is_write=False):
+            return
         data_future = await s.get_memory(address, 1)
         result_future = s.clock.create_future()
         s.clock.create_task(self.update_resolve(s, result_future, data_future))
@@ -186,6 +196,8 @@ class Lbu:
         rs1_bytes = s.scalar.read_reg(self.rs1)
         rs1_val = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
         address = rs1_val + self.imm
+        if s.check_scalar_access_or_trap(address, 1, is_write=False):
+            return
         data_future = await s.get_memory(address, 1)
         result_future = s.clock.create_future()
         s.clock.create_task(self.update_resolve(s, result_future, data_future))
@@ -222,6 +234,8 @@ class Lh:
         rs1_bytes = s.scalar.read_reg(self.rs1)
         rs1_val = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
         address = rs1_val + self.imm
+        if s.check_scalar_access_or_trap(address, 2, is_write=False):
+            return
         data_future = await s.get_memory(address, 2)
         result_future = s.clock.create_future()
         s.clock.create_task(self.update_resolve(s, result_future, data_future))
@@ -257,6 +271,8 @@ class Lhu:
         rs1_bytes = s.scalar.read_reg(self.rs1)
         rs1_val = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
         address = rs1_val + self.imm
+        if s.check_scalar_access_or_trap(address, 2, is_write=False):
+            return
         data_future = await s.get_memory(address, 2)
         result_future = s.clock.create_future()
         s.clock.create_task(self.update_resolve(s, result_future, data_future))
@@ -294,6 +310,8 @@ class Lw:
         rs1_bytes = s.scalar.read_reg(self.rs1)
         rs1_val = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
         address = rs1_val + self.imm
+        if s.check_scalar_access_or_trap(address, 4, is_write=False):
+            return
         data_future = await s.get_memory(address, 4)
         result_future = s.clock.create_future()
         s.clock.create_task(self.update_resolve(s, result_future, data_future))
@@ -329,6 +347,8 @@ class Lwu:
         rs1_bytes = s.scalar.read_reg(self.rs1)
         rs1_val = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
         address = rs1_val + self.imm
+        if s.check_scalar_access_or_trap(address, 4, is_write=False):
+            return
         data_future = await s.get_memory(address, 4)
         result_future = s.clock.create_future()
         s.clock.create_task(self.update_resolve(s, result_future, data_future))
@@ -357,6 +377,8 @@ class Ld:
         rs1_bytes = s.scalar.read_reg(self.rs1)
         rs1_val = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
         address = rs1_val + self.imm
+        if s.check_scalar_access_or_trap(address, 8, is_write=False):
+            return
         data_future = await s.get_memory(address, 8)
         s.scalar.write_reg_future(self.rd, data_future, span_id)
         s.pc += 4

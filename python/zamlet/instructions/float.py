@@ -189,6 +189,8 @@ class Flw:
         rs1_bytes = s.scalar.read_reg(self.rs1)
         rs1_val = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
         addr = rs1_val + self.imm
+        if s.check_scalar_access_or_trap(addr, 4, is_write=False):
+            return
         data_future = await s.get_memory(addr, 4)
         padded_future = s.clock.create_future()
         s.clock.create_task(self.update_resolve(s, padded_future, data_future))
@@ -216,6 +218,8 @@ class Fld:
         rs1_val = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
         addr = rs1_val + self.imm
         logger.debug(f'Fld: {freg_name(self.fd)} <- mem[0x{addr:x}]')
+        if s.check_scalar_access_or_trap(addr, 8, is_write=False):
+            return
         data_future = await s.get_memory(addr, 8)
         s.scalar.write_freg_future(self.fd, data_future, span_id)
         s.pc += 4
@@ -242,6 +246,8 @@ class Fsw:
         addr = rs1_val + self.imm
         freg_bytes = s.scalar.read_freg(self.rs2)
         data = freg_bytes[:4]
+        if s.check_scalar_access_or_trap(addr, 4, is_write=True):
+            return
         await s.set_memory(addr, data,
                            weak_ordering=Ordering(s.word_order, 32))
         s.pc += 4
@@ -267,6 +273,8 @@ class Fsd:
         rs1_val = int.from_bytes(rs1_bytes, byteorder='little', signed=False)
         addr = rs1_val + self.imm
         freg_bytes = s.scalar.read_freg(self.rs2)
+        if s.check_scalar_access_or_trap(addr, 8, is_write=True):
+            return
         await s.set_memory(addr, freg_bytes[:8],
                            weak_ordering=Ordering(s.word_order, 64))
         s.pc += 4
@@ -617,4 +625,3 @@ class FClass:
         result_bytes = result.to_bytes(s.params.word_bytes, byteorder='little', signed=False)
         s.scalar.write_reg(self.rd, result_bytes, span_id)
         s.pc += 4
-

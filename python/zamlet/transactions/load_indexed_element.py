@@ -15,11 +15,12 @@ import logging
 from dataclasses import dataclass
 
 from zamlet import addresses
-from zamlet.addresses import GlobalAddress, TLBFaultType
+from zamlet.addresses import GlobalAddress, TLBFaultType, VectorFaultInfo
 from zamlet.waiting_item import WaitingItem
 from zamlet.kamlet.kinstructions import TrackedKInstr, Renamed
 from zamlet.message import (
-    MessageType, SendType, ReadMemWordHeader, ElementIndexHeader, TaggedHeader
+    MessageType, SendType, ReadMemWordHeader, ElementIndexHeader, TaggedHeader,
+    pack_vector_fault_info_words
 )
 from zamlet.kamlet.cache_table import SendState
 from zamlet import utils
@@ -124,13 +125,16 @@ class LoadIndexedElement(TrackedKInstr):
             await _send_short_circuit_resp(kamlet, jamlet, self, masked=True)
             return
 
-        fault_type = _check_element_access(jamlet, self, index_preg)
-        if fault_type != TLBFaultType.NONE:
+        fault_info = _check_element_access(jamlet, self, index_preg)
+        if fault_info is not None:
             logger.debug(f'{kamlet.clock.cycle}: LoadIndexedElement fault: '
-                         f'element={self.element_index} fault_type={fault_type}')
+                         f'element={self.element_index} '
+                         f'fault_type={fault_info.fault_type} '
+                         f'fault_addr=0x{fault_info.fault_addr:x}')
             kamlet.rf_info.finish(
                 rf_write_ident, read_regs=r.read_pregs, write_regs=r.write_pregs)
-            await _send_short_circuit_resp(kamlet, jamlet, self, fault=True)
+            await _send_short_circuit_resp(
+                kamlet, jamlet, self, fault_info=fault_info)
             return
 
         witem = WaitingLoadIndexedElement(
@@ -159,8 +163,8 @@ def _get_mask_bit(jamlet: 'Jamlet', mask_preg: int, element_index: int) -> bool:
 
 
 def _check_element_access(jamlet: 'Jamlet', instr: 'LoadIndexedElement',
-                          index_preg: int) -> TLBFaultType:
-    """Check TLB access for all bytes of the element. Returns fault type or NONE."""
+                          index_preg: int) -> VectorFaultInfo | None:
+    """Check TLB access for all bytes of the element."""
     index_data = read_element(jamlet, index_preg, instr.element_index, instr.index_ew)
     byte_offset = int.from_bytes(index_data, byteorder='little', signed=False)
 
@@ -172,21 +176,26 @@ def _check_element_access(jamlet: 'Jamlet', instr: 'LoadIndexedElement',
         g_addr = instr.base_addr.bit_offset((byte_offset + current_byte) * 8)
         fault_type = jamlet.tlb.check_access(g_addr, is_write=False)
         if fault_type != TLBFaultType.NONE:
-            return fault_type
+            return VectorFaultInfo(
+                element_index=instr.element_index,
+                fault_type=fault_type,
+                fault_addr=g_addr.addr,
+            )
         # Skip to next page
         page_offset = g_addr.addr % page_bytes
         remaining_in_page = page_bytes - page_offset
         current_byte += remaining_in_page
 
-    return TLBFaultType.NONE
+    return None
 
 
 async def _send_short_circuit_resp(kamlet: 'Kamlet', jamlet: 'Jamlet',
                                    instr: 'LoadIndexedElement',
                                    masked: bool = False,
-                                   fault: bool = False) -> None:
+                                   fault_info: VectorFaultInfo | None = None) -> None:
     """Send LOAD_INDEXED_ELEMENT_RESP for a masked or faulted element
     (no witem) and finalize the kinstr_exec span."""
+    fault = fault_info is not None
     resp_header = ElementIndexHeader(
         target_x=jamlet.lamlet_x,
         target_y=jamlet.lamlet_y,
@@ -194,14 +203,17 @@ async def _send_short_circuit_resp(kamlet: 'Kamlet', jamlet: 'Jamlet',
         source_y=jamlet.y,
         message_type=MessageType.LOAD_INDEXED_ELEMENT_RESP,
         send_type=SendType.SINGLE,
-        length=0,
+        length=2 if fault else 0,
         ident=instr.instr_ident,
         element_index=instr.element_index,
         masked=masked,
         fault=fault,
     )
+    packet = [resp_header]
+    if fault_info is not None:
+        packet.extend(pack_vector_fault_info_words(kamlet.params, fault_info))
     kinstr_span_id = kamlet.monitor.get_kinstr_span_id(instr.instr_ident)
-    await jamlet.send_packet([resp_header], parent_span_id=kinstr_span_id)
+    await jamlet.send_packet(packet, parent_span_id=kinstr_span_id)
     kamlet.monitor.finalize_kinstr_exec(
         instr.instr_ident, kamlet.min_x, kamlet.min_y)
 

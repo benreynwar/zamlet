@@ -47,6 +47,7 @@ from typing import Optional, Dict, Set, List, TYPE_CHECKING
 
 from zamlet.params import ZamletParams
 from zamlet.utils import Queue, uint_to_list_of_uints, list_of_uints_to_uint
+from zamlet.addresses import TLBFaultType, VectorFaultInfo
 
 if TYPE_CHECKING:
     from zamlet.kamlet.cache_table import CacheTable
@@ -82,6 +83,7 @@ class SyncAggOp(Enum):
     AND = 4            # bitwise AND
     OR = 5             # bitwise OR
     MIN_PAIR = 6       # packed pair of unsigned mins (see below)
+    MIN_FAULT_INFO = 7 # packed fault metadata; min by element index
 
 
 # MIN_PAIR layout: two unsigned sub-fields packed into the low 12 bits of a
@@ -144,6 +146,36 @@ def unpack_min_pair(value: int) -> tuple:
     return (low if low != 0 else None, high)
 
 
+def fault_info_width(params: ZamletParams) -> int:
+    # MIN_FAULT_INFO value layout:
+    #   low params.word_bytes * 8 bits: fault_addr (mtval/XLEN-sized)
+    #   next 2 bits:                 TLBFaultType value
+    #   high element_index_width bits: element_index, used as the min key
+    return params.word_bytes * 8 + 2 + params.element_index_width
+
+
+def pack_fault_info(params: ZamletParams, fault_info: VectorFaultInfo) -> int:
+    addr_bits = params.word_bytes * 8
+    fault_type = fault_info.fault_type.value
+    assert 0 <= fault_info.element_index < (1 << params.element_index_width)
+    assert 0 <= fault_type < (1 << 2)
+    assert 0 <= fault_info.fault_addr < (1 << addr_bits)
+    return fault_info.fault_addr | (fault_type << addr_bits) | (
+        fault_info.element_index << (addr_bits + 2))
+
+
+def unpack_fault_info(params: ZamletParams, value: int) -> VectorFaultInfo:
+    addr_bits = params.word_bytes * 8
+    addr_mask = (1 << addr_bits) - 1
+    fault_addr = value & addr_mask
+    fault_type = (value >> addr_bits) & 0b11
+    element_index = value >> (addr_bits + 2)
+    return VectorFaultInfo(
+        element_index=element_index,
+        fault_type=TLBFaultType(fault_type),
+        fault_addr=fault_addr)
+
+
 def _sign_extend(value: int, width: int) -> int:
     """Interpret the low `width` bits of value as signed."""
     mask = (1 << width) - 1
@@ -155,7 +187,7 @@ def _sign_extend(value: int, width: int) -> int:
 
 
 def aggregate_sync_values(
-    op: SyncAggOp, values: List[int], width: int = 32,
+    params: ZamletParams, op: SyncAggOp, values: List[int], width: int = 32,
 ) -> Optional[int]:
     """Aggregate a list of per-region unsigned values with op.
 
@@ -196,6 +228,11 @@ def aggregate_sync_values(
         low_min = min(lows) if lows else 0
         high_min = min(highs) if highs else high_mask
         return low_min | (high_min << MIN_PAIR_LOW_WIDTH)
+    if op == SyncAggOp.MIN_FAULT_INFO:
+        return min(
+            filtered,
+            key=lambda value: unpack_fault_info(params, value).element_index,
+        )
     raise AssertionError(f"unknown SyncAggOp {op}")
 
 
@@ -306,7 +343,7 @@ class SyncPacket:
     - Length 2+ words: sync + value
     """
     sync_ident: int
-    value: Optional[int]     # 1-4 bytes if present, None if no value
+    value: Optional[int]     # value body if present, None if no value
 
     def to_words(
         self,
@@ -320,26 +357,20 @@ class SyncPacket:
         bytes packed little-endian. Total bit width is split into
         data_width-bit words using uint_to_list_of_uints.
 
-        If value_bytes is given, the value is serialized as exactly that
-        many bytes so all participants of a given sync_ident emit the
-        same packet length (needed whenever the op's value width is >
-        1 byte). Otherwise the value is auto-sized from bit_length.
+        If value_bytes is given, present values are serialized as exactly
+        that many bytes. Header-only packets with value=None still carry no
+        body. Otherwise the value is auto-sized from bit_length.
         """
         if self.value is not None:
             if value_bytes is not None:
                 n_value_bytes = value_bytes
-                assert 1 <= n_value_bytes <= 4, (
-                    f"value_bytes={n_value_bytes} out of range [1, 4]")
+                assert n_value_bytes >= 1
                 assert self.value.bit_length() <= n_value_bytes * 8, (
                     f"Value {self.value} exceeds {n_value_bytes}-byte width")
             elif self.value == 0:
                 n_value_bytes = 1
             else:
                 n_value_bytes = (self.value.bit_length() + 7) // 8
-            assert n_value_bytes <= 4, (
-                f"Value {self.value} requires {n_value_bytes} bytes,"
-                f" max is 4"
-            )
             total_bits = sync_ident_width + n_value_bytes * 8
             combined = self.sync_ident | (self.value << sync_ident_width)
         else:
@@ -620,7 +651,8 @@ class Synchronizer:
         assert state.op is not None, (
             f"sync_ident={sync_ident} has no op set; get_aggregated_value "
             f"called before local_event")
-        return aggregate_sync_values(state.op, values, width=state.width)
+        return aggregate_sync_values(
+            self.params, state.op, values, width=state.width)
 
     def clear_sync(self, sync_ident: int):
         """Clear a completed synchronization."""
@@ -629,16 +661,20 @@ class Synchronizer:
     def chain_fault_sync(self, trigger_ident: int, target_ident: int):
         """Chain fault syncs: when trigger completes, fire local_event for target.
 
-        If trigger's min_value is not None (fault detected), injects value=0
-        to suppress all non-idempotent accesses in the target chunk.
-        Otherwise injects value=None.
+        If trigger's aggregate value is not None (fault detected), forwards
+        that value to suppress all non-idempotent accesses in the target chunk.
+        Otherwise injects value=None. The target sync uses the same aggregation
+        op and width as the trigger because fault values may be wider than the
+        default 32-bit sync payload.
 
         If the trigger has already completed, fires immediately.
         """
         state = self._sync_states.get(trigger_ident)
         if state is not None and state.completed:
             min_value = self.get_aggregated_value(trigger_ident)
-            self.local_event(target_ident, value=min_value)
+            assert state.op is not None
+            self.local_event(
+                target_ident, value=min_value, op=state.op, width=state.width)
         else:
             self._fault_chains[trigger_ident] = target_ident
 
@@ -656,7 +692,9 @@ class Synchronizer:
             # Fire chained fault sync if any
             if sync_ident in self._fault_chains:
                 target = self._fault_chains.pop(sync_ident)
-                self.local_event(target, value=min_value)
+                assert state.op is not None
+                self.local_event(
+                    target, value=min_value, op=state.op, width=state.width)
 
     def _get_send_requirements(self, direction: SyncDirection) -> dict:
         """Get send requirements for a direction. Kamlet (0,0) has special requirements."""
@@ -717,7 +755,8 @@ class Synchronizer:
         assert state.op is not None, (
             f"sync_ident={state.sync_ident} has no op set; cannot send "
             f"(should_send should have gated on local_seen)")
-        return aggregate_sync_values(state.op, values, width=state.width)
+        return aggregate_sync_values(
+            self.params, state.op, values, width=state.width)
 
     def _process_received_packet(self, packet: SyncPacket, from_direction: SyncDirection):
         """Process a received sync packet from a neighbor."""
@@ -833,7 +872,8 @@ class Synchronizer:
                         # Fixed value width so all participants of a sync_ident
                         # emit same-length packets (required once we support
                         # widths > 8 bits like MIN_EL_INDEX's 32-bit values).
-                        value_bytes = (state.width + 7) // 8
+                        value_bytes = (
+                            None if value is None else (state.width + 7) // 8)
                         packet_words = packet.to_words(
                             data_width, sync_ident_width,
                             value_bytes=value_bytes,
