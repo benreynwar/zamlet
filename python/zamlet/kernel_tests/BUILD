@@ -32,10 +32,15 @@ test_suite(
         "//python/zamlet/kernel_tests/sgemv:test_sgemv",
         "//python/zamlet/kernel_tests/sgemv:test_sgemv_64x64",
         "//python/zamlet/kernel_tests/sgemv:test_sgemv_large",
+        "//python/zamlet/kernel_tests/trap_delivery:test_trap_delivery",
+        "//python/zamlet/kernel_tests/trap_delivery:test_trap_delivery_unhandled",
         "//python/zamlet/kernel_tests/unaligned:test_unaligned",
         "//python/zamlet/kernel_tests/vecadd:test_vecadd",
         "//python/zamlet/kernel_tests/vecadd:test_vecadd_evict",
         "//python/zamlet/kernel_tests/vid:test_vid",
+        "//python/zamlet/kernel_tests/bitreverse_reorder:test_bitreverse_repro",
+        "//python/zamlet/kernel_tests/bitreverse_reorder:test_bitreverse_reorder64_n8",
+        "//python/zamlet/kernel_tests/bitreverse_reorder:test_bitreverse_reorder64_n16",
     ],
 )
 

@@ -58,21 +58,24 @@ class LamletWaitingReadRegElement(LamletWaitingItem):
     """Waiting item for vmv.x.s (read element from vector register).
 
     Receives a raw word from the kamlet via READ_REG_WORD_RESP,
-    extracts the element from the low bytes, sign-extends to XLEN,
+    extracts the requested element, sign-extends to XLEN,
     and resolves the future with the scalar register value (bytes).
     """
 
     def __init__(self, future, instr_ident: int,
-                 element_width: int, word_bytes: int):
+                 element_width: int, word_bytes: int, element_byte_offset: int):
         super().__init__(instr_ident=instr_ident)
         self.future = future
         self.element_width = element_width
         self.word_bytes = word_bytes
+        self.element_byte_offset = element_byte_offset
 
     def resolve(self, word: int):
         eb = self.element_width // 8
         raw = word.to_bytes(self.word_bytes, byteorder='little', signed=False)
-        element_val = int.from_bytes(raw[:eb], byteorder='little', signed=True)
+        element_val = int.from_bytes(
+            raw[self.element_byte_offset:self.element_byte_offset + eb],
+            byteorder='little', signed=True)
         result = element_val.to_bytes(self.word_bytes, byteorder='little', signed=True)
         self.future.set_result(result)
 

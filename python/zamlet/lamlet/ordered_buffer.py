@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from enum import Enum
 
 
-from zamlet.addresses import GlobalAddress
+from zamlet.addresses import GlobalAddress, VectorFaultInfo
 
 
 class ElementState(str, Enum):
@@ -58,9 +58,18 @@ class OrderedBuffer:
         self.base_index = start_index
 
         # First element that faulted (None if no fault)
-        self.faulted_element: int | None = None
-
+        self.fault_info: VectorFaultInfo | None = None
         self.elements: list[ElementEntry | None] = [None] * capacity
+
+    @property
+    def faulted_element(self) -> int | None:
+        return None if self.fault_info is None else self.fault_info.element_index
+
+    def record_fault(self, fault_info: VectorFaultInfo) -> None:
+        if self.fault_info is None:
+            self.fault_info = fault_info
+        elif fault_info.element_index < self.fault_info.element_index:
+            self.fault_info = fault_info
 
     def _slot(self, element_index: int) -> int:
         return element_index % self.capacity

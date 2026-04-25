@@ -8,6 +8,7 @@ from zamlet.params import ZamletParams
 from zamlet.monitor import Monitor
 from zamlet.register_file_slot import RegisterFileSlot
 from zamlet.synchronization import Synchronizer
+from zamlet.trap import CSR_MSTATUS, CSR_MTVEC, CSR_MEPC, CSR_MCAUSE, CSR_MTVAL
 
 
 logger = logging.getLogger(__name__)
@@ -36,6 +37,9 @@ class ScalarState:
         # Initialize read-only vector CSRs
         # vlenb (0xc22) = VLEN/8 = vline_bytes
         self.csr[0xc22] = params.vline_bytes.to_bytes(params.word_bytes, 'little')
+        zero = bytes(params.word_bytes)
+        for trap_csr in (CSR_MSTATUS, CSR_MTVEC, CSR_MEPC, CSR_MCAUSE, CSR_MTVAL):
+            self.csr[trap_csr] = zero
 
         # Scalar memory ordering state
         self.pending_known_reads: dict[int, int] = defaultdict(int)

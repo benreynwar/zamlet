@@ -49,6 +49,10 @@ from zamlet.transactions.write_imm_bytes import WriteImmBytes
 from zamlet.transactions.read_byte import ReadByte
 from zamlet.oamlet.scalar import ScalarState
 from zamlet.oamlet import reduction
+from zamlet.trap import (
+    CSR_MSTATUS, CSR_MTVEC, CSR_MEPC, CSR_MCAUSE, CSR_MTVAL,
+    MSTATUS_MIE_BIT, MSTATUS_MPIE_BIT, MSTATUS_MPP_SHIFT, MSTATUS_MPP_MASK,
+    PRIV_MACHINE, cause_for_fault)
 from zamlet.lamlet.ordered_buffer import OrderedBuffer, ElementEntry, ElementState
 from zamlet import utils
 import zamlet.disasm_trace as dt
@@ -352,6 +356,67 @@ class Oamlet:
     def set_pc(self, pc):
         self.pc = pc
 
+    def deliver_trap(self, cause: int, mtval: int, faulting_pc: int) -> None:
+        """Redirect execution to the machine-mode trap handler."""
+        word_bytes = self.params.word_bytes
+        mtvec = int.from_bytes(
+            self.scalar.read_csr(CSR_MTVEC), 'little', signed=False)
+        assert mtvec != 0, (
+            f'trap at pc=0x{faulting_pc:x}, cause={cause}, mtval=0x{mtval:x}: '
+            f'no trap handler installed (mtvec=0). '
+            f'Tests must install a handler before triggering faults.')
+        trap_pc = mtvec & ~0b11
+
+        self.scalar.write_csr(CSR_MEPC, faulting_pc.to_bytes(
+            word_bytes, 'little', signed=False))
+        self.scalar.write_csr(CSR_MCAUSE, cause.to_bytes(
+            word_bytes, 'little', signed=False))
+        self.scalar.write_csr(CSR_MTVAL, mtval.to_bytes(
+            word_bytes, 'little', signed=False))
+
+        mstatus = int.from_bytes(
+            self.scalar.read_csr(CSR_MSTATUS), 'little', signed=False)
+        mie = (mstatus >> MSTATUS_MIE_BIT) & 1
+        mstatus = (mstatus & ~(1 << MSTATUS_MPIE_BIT)) | (mie << MSTATUS_MPIE_BIT)
+        mstatus &= ~(1 << MSTATUS_MIE_BIT)
+        mstatus = (mstatus & ~MSTATUS_MPP_MASK) | (PRIV_MACHINE << MSTATUS_MPP_SHIFT)
+        self.scalar.write_csr(CSR_MSTATUS, mstatus.to_bytes(
+            word_bytes, 'little', signed=False))
+
+        self.pc = trap_pc
+
+    def check_scalar_access_or_trap(self, address: int, size: int,
+                                    is_write: bool) -> bool:
+        """Return True after delivering a trap for any page in the access."""
+        page_bytes = self.params.page_bytes
+        end_addr = address + size
+        current = address
+        while current < end_addr:
+            g_addr = GlobalAddress(bit_addr=current * 8, params=self.params)
+            fault_type = self.tlb.check_access(g_addr, is_write)
+            if fault_type != addresses.TLBFaultType.NONE:
+                self.deliver_trap(
+                    cause_for_fault(fault_type, is_store=is_write),
+                    current,
+                    self.pc)
+                return True
+            current = ((current // page_bytes) + 1) * page_bytes
+        return False
+
+    def maybe_trap_vector(self, result: 'addresses.VectorOpResult',
+                          is_store: bool, fault_addr_fallback: int) -> bool:
+        """Return True after delivering a trap for a faulting vector op."""
+        if result.success:
+            return False
+        self.vstart = result.element_index
+        fault_addr = (result.fault_addr if result.fault_addr is not None
+                      else fault_addr_fallback)
+        self.deliver_trap(
+            cause_for_fault(result.fault_type, is_store=is_store),
+            fault_addr,
+            self.pc)
+        return True
+
     def get_kamlet(self, x, y):
         kamlet_column = (x - self.min_x)//self.params.j_cols
         kamlet_row = (y - self.min_y)//self.params.j_rows
@@ -525,6 +590,7 @@ class Oamlet:
         ordering = self.vrf_ordering[vreg]
         assert ordering.ew == element_width
         vw_index = element_index % self.params.j_in_l
+        element_byte_offset = (element_index // self.params.j_in_l) * (element_width // 8)
         k_index, j_in_k_index = addresses.vw_index_to_k_indices(
             self.params, ordering.word_order, vw_index)
         instr_ident = await ident_query.get_instr_ident(self)
@@ -532,6 +598,7 @@ class Oamlet:
         witem = LamletWaitingReadRegElement(
             future=future, instr_ident=instr_ident,
             element_width=element_width, word_bytes=self.params.word_bytes,
+            element_byte_offset=element_byte_offset,
         )
         await self.add_witem(witem)
         kinstr = kinstructions.ReadRegWord(
@@ -828,12 +895,20 @@ class Oamlet:
             self.monitor.complete_kinstr(header.ident)
             logger.debug(f'{self.clock.cycle}: lamlet: Got a READ_WORDS_RESP from ({header.source_x, header.source_y}) is {packet[1:]}')
         elif header.message_type == MessageType.LOAD_INDEXED_ELEMENT_RESP:
-            assert len(packet) == 1
             assert isinstance(header, ElementIndexHeader)
-            ordered.handle_load_indexed_element_resp(self, header)
+            if header.fault:
+                assert len(packet) == 3
+                ordered.handle_load_indexed_element_resp(self, header, packet[1:])
+            else:
+                assert len(packet) == 1
+                ordered.handle_load_indexed_element_resp(self, header, None)
         elif header.message_type == MessageType.STORE_INDEXED_ELEMENT_RESP:
             assert isinstance(header, ElementIndexHeader)
-            if header.masked or header.fault:
+            if header.fault:
+                assert len(packet) == 3
+                ordered.handle_store_indexed_element_resp(
+                    self, header, None, None, fault_info_words=packet[1:])
+            elif header.masked:
                 assert len(packet) == 1
                 ordered.handle_store_indexed_element_resp(self, header, None, None)
             else:

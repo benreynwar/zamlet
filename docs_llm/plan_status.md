@@ -12,6 +12,9 @@ One-line index of plans in `plans/`. See `ROADMAP.md` for the big picture.
 
 ## Todo
 
+- [long_latency_alu](plans/PLAN_long_latency_alu.md) — per-jamlet ALU model
+  with 4 pipes + framework for fflags/vxsat/rm (unblocks vdiv/vfdiv/vfsqrt/
+  vfrec7/vfrsqrt7 and the fixed-point + FP-correctness follow-ups)
 - [picolibc](plans/PLAN_picolibc.md) — unstarted
 - [scalar_read_vpu_test](plans/PLAN_scalar_read_vpu_test.md) — test not written
 
@@ -36,3 +39,4 @@ One-line index of plans in `plans/`. See `ROADMAP.md` for the big picture.
 - `PLAN_reductions.md` — `Vreduction` (vector.py) + `oamlet/reduction.py`. Ordered-float follow-up in `TODO.md`.
 - `PLAN_memlet.md` — Chisel impl under `src/main/scala/zamlet/memlet/`
 - `PLAN_slides_and_gathers.md` — `RegSlide` / `RegGather` in `python/zamlet/transactions/`; `Vslide` / `Vrgather*` / `Vslide1` in `instructions/vector.py`. Follow-ups in `TODO.md` and `PLAN_fp_nan_boxing.md`.
+- `PLAN_trap_delivery.md` — CSR/cause constants in `python/zamlet/trap.py`; trap entry/scalar+vector access checks in `oamlet/oamlet.py`; `Mret` in `instructions/system.py`; vector fault aggregation in `lamlet/unordered.py` + `lamlet/ordered.py` + `synchronization.py`; kernel tests in `kernel_tests/trap_delivery/`. Follow-ups (fault-only-first loads, `vstart` resume) in `TODO.md`.
