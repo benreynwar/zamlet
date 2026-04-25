@@ -111,7 +111,7 @@ class ReduceSync(KInstr):
             for j_in_k_index, jamlet in enumerate(kamlet.jamlets)
         ]
         kamlet_agg = aggregate_sync_values(
-            self.op, local_values, width=self.width)
+            kamlet.params, self.op, local_values, width=self.width)
 
         rf_write_ident = kamlet.rf_info.start(
             read_regs=r.read_pregs, write_regs=r.write_pregs)

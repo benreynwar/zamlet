@@ -16,13 +16,15 @@ from dataclasses import dataclass
 import logging
 
 from zamlet import addresses
-from zamlet.addresses import TLBFaultType, MemoryType
+from zamlet.addresses import TLBFaultType, MemoryType, VectorFaultInfo
 from zamlet.waiting_item import WaitingItem
 from zamlet.message import TaggedHeader, ReadMemWordHeader, MessageType, SendType
 from zamlet.kamlet.cache_table import SendState
 from zamlet.params import ZamletParams
 from zamlet import utils
-from zamlet.synchronization import WaitingItemSyncState as SyncState
+from zamlet.synchronization import (
+    SyncAggOp, WaitingItemSyncState as SyncState,
+    fault_info_width, pack_fault_info, unpack_fault_info)
 
 if TYPE_CHECKING:
     from zamlet.jamlet.jamlet import Jamlet
@@ -59,10 +61,10 @@ class WaitingLoadGatherBase(WaitingItem, ABC):
         self.transaction_states: List[SendState] = [SendState.INITIAL for _ in range(n_tags)]
         self.fault_sync_state = SyncState.NOT_STARTED
         self.completion_sync_state = SyncState.NOT_STARTED
-        # Track minimum faulting element (for TLB permission faults)
-        self.min_fault_element: int | None = None
-        # Global min fault element after fault sync completes
-        self.global_min_fault: int | None = None
+        # None is a header-only no-fault sync packet. Faulting regions carry
+        # packed VectorFaultInfo so the winning fault keeps precise mtval/cause.
+        self.min_fault_info: VectorFaultInfo | None = None
+        self.global_min_fault_info: VectorFaultInfo | None = None
 
     @abstractmethod
     def get_element_byte_offset(self, jamlet: 'Jamlet', element_index: int) -> int:
@@ -115,7 +117,8 @@ class WaitingLoadGatherBase(WaitingItem, ABC):
             elif state == SendState.WAITING_IN_CASE_FAULT:
                 if self.fault_sync_state == SyncState.COMPLETE:
                     _, dst_e, _, _ = self._compute_dst_element(jamlet, tag)
-                    if self.global_min_fault is not None and dst_e >= self.global_min_fault:
+                    if (self.global_min_fault_info is not None
+                            and dst_e >= self.global_min_fault_info.element_index):
                         self.transaction_states[state_idx] = SendState.COMPLETE
                     else:
                         self.transaction_states[state_idx] = SendState.NEED_TO_SEND
@@ -147,11 +150,21 @@ class WaitingLoadGatherBase(WaitingItem, ABC):
                 kamlet.monitor.create_sync_local_span(
                     fault_sync_ident, kamlet.synchronizer.kx, kamlet.synchronizer.ky,
                     kinstr_span_id)
-                kamlet.synchronizer.local_event(fault_sync_ident, value=self.min_fault_element)
+                packed_fault_info = (
+                    None if self.min_fault_info is None
+                    else pack_fault_info(kamlet.params, self.min_fault_info))
+                kamlet.synchronizer.local_event(
+                    fault_sync_ident, value=packed_fault_info,
+                    op=SyncAggOp.MIN_FAULT_INFO,
+                    width=fault_info_width(kamlet.params))
         elif self.fault_sync_state == SyncState.IN_PROGRESS:
             if kamlet.synchronizer.is_complete(fault_sync_ident):
                 self.fault_sync_state = SyncState.COMPLETE
-                self.global_min_fault = kamlet.synchronizer.get_aggregated_value(fault_sync_ident)
+                packed_fault_info = kamlet.synchronizer.get_aggregated_value(
+                    fault_sync_ident)
+                self.global_min_fault_info = (
+                    None if packed_fault_info is None
+                    else unpack_fault_info(kamlet.params, packed_fault_info))
 
         # Completion sync - after all transactions complete (independent of fault sync)
         if self.completion_sync_state == SyncState.NOT_STARTED:
@@ -300,9 +313,13 @@ class WaitingLoadGatherBase(WaitingItem, ABC):
         # Check TLB for read permission
         fault_type = jamlet.tlb.check_access(src_g_addr, is_write=False)
         if fault_type != TLBFaultType.NONE:
-            # Record minimum faulting element
-            if self.min_fault_element is None or dst_e < self.min_fault_element:
-                self.min_fault_element = dst_e
+            fault_info = VectorFaultInfo(
+                element_index=dst_e,
+                fault_type=fault_type,
+                fault_addr=src_g_addr.addr)
+            if (self.min_fault_info is None
+                    or dst_e < self.min_fault_info.element_index):
+                self.min_fault_info = fault_info
                 logger.debug(f'_get_request: jamlet ({jamlet.x},{jamlet.y}) '
                              f'ident={instr.instr_ident} tag={tag} '
                              f'TLB fault {fault_type.name} at element {dst_e}')

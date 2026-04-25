@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from zamlet import addresses
-from zamlet.addresses import GlobalAddress, Ordering, TLBFaultType, VectorOpResult
+from zamlet.addresses import GlobalAddress, Ordering, VectorOpResult
 from zamlet.kamlet.cache_table import SendState
 from zamlet.kamlet import kinstructions
 from zamlet.kamlet.kinstructions import Renamed
@@ -19,7 +19,7 @@ from zamlet.lamlet.lamlet_waiting_item import (
     LamletWaitingLoadIndexedElement, LamletWaitingStoreIndexedElement)
 from zamlet.message import (
     MessageType, SendType, Direction, ReadMemWordHeader, WriteMemWordHeader,
-    ElementIndexHeader, TaggedHeader)
+    ElementIndexHeader, TaggedHeader, unpack_vector_fault_info_words)
 from zamlet.synchronization import WaitingItemSyncState as SyncState
 from zamlet.transactions.load_indexed_element import LoadIndexedElement
 from zamlet.transactions.store_indexed_element import StoreIndexedElement
@@ -92,7 +92,8 @@ def get_free_buffer_id(lamlet: 'Oamlet') -> int | None:
     return None
 
 
-def handle_load_indexed_element_resp(lamlet: 'Oamlet', header: ElementIndexHeader):
+def handle_load_indexed_element_resp(lamlet: 'Oamlet', header: ElementIndexHeader,
+                                     fault_info_words: list[int] | None):
     """Handle LOAD_INDEXED_ELEMENT_RESP: complete element and release witem.
 
     For VPU loads: element is DISPATCHED (kamlet handled internally)
@@ -107,10 +108,14 @@ def handle_load_indexed_element_resp(lamlet: 'Oamlet', header: ElementIndexHeade
     assert buf is not None, f"No ordered buffer for buffer_id {witem.buffer_id}"
     assert buf.is_load
     if header.fault:
+        assert fault_info_words is not None
+        fault_info = unpack_vector_fault_info_words(lamlet.params, fault_info_words)
+        assert fault_info.element_index == header.element_index
         logger.debug(f'{lamlet.clock.cycle}: handle_load_indexed_element_resp: '
-                     f'fault element={header.element_index}')
-        if buf.faulted_element is None or header.element_index < buf.faulted_element:
-            buf.faulted_element = header.element_index
+                     f'fault element={header.element_index} '
+                     f'fault_type={fault_info.fault_type} '
+                     f'fault_addr=0x{fault_info.fault_addr:x}')
+        buf.record_fault(fault_info)
     elif header.masked:
         logger.debug(f'{lamlet.clock.cycle}: handle_load_indexed_element_resp: '
                      f'masked element={header.element_index}')
@@ -120,7 +125,8 @@ def handle_load_indexed_element_resp(lamlet: 'Oamlet', header: ElementIndexHeade
 
 
 def handle_store_indexed_element_resp(lamlet: 'Oamlet', header: ElementIndexHeader,
-                                      addr: int | None, data: bytes | None):
+                                      addr: int | None, data: bytes | None,
+                                      fault_info_words: list[int] | None = None):
     """Handle STORE_INDEXED_ELEMENT_RESP: buffer the write for in-order processing.
 
     For masked elements, addr and data are None - just complete the element.
@@ -134,10 +140,14 @@ def handle_store_indexed_element_resp(lamlet: 'Oamlet', header: ElementIndexHead
     assert not buf.is_load
 
     if header.fault:
+        assert fault_info_words is not None
+        fault_info = unpack_vector_fault_info_words(lamlet.params, fault_info_words)
+        assert fault_info.element_index == header.element_index
         logger.debug(f'{lamlet.clock.cycle}: handle_store_indexed_element_resp: '
-                     f'fault element={header.element_index}')
-        if buf.faulted_element is None or header.element_index < buf.faulted_element:
-            buf.faulted_element = header.element_index
+                     f'fault element={header.element_index} '
+                     f'fault_type={fault_info.fault_type} '
+                     f'fault_addr=0x{fault_info.fault_addr:x}')
+        buf.record_fault(fault_info)
         buf.complete_element(witem.element_index)
         lamlet.remove_witem_by_ident(header.ident)
         lamlet.monitor.complete_kinstr(header.ident)
@@ -586,9 +596,10 @@ async def vload_indexed_ordered(lamlet: 'Oamlet', vd: int, base_addr: int, index
     lamlet._ordered_buffers[buffer_id] = None
 
     # Return result with fault info if any element faulted
-    if buf.faulted_element is not None:
-        return VectorOpResult(fault_type=TLBFaultType.READ_FAULT,
-                              element_index=buf.faulted_element)
+    if buf.fault_info is not None:
+        return VectorOpResult(fault_type=buf.fault_info.fault_type,
+                              element_index=buf.fault_info.element_index,
+                              fault_addr=buf.fault_info.fault_addr)
     return VectorOpResult()
 
 
@@ -690,7 +701,8 @@ async def vstore_indexed_ordered(lamlet: 'Oamlet', vs: int, base_addr: int, inde
         await lamlet.clock.next_cycle
 
     # Return result with fault info if any element faulted
-    if buf.faulted_element is not None:
-        return VectorOpResult(fault_type=TLBFaultType.WRITE_FAULT,
-                              element_index=buf.faulted_element)
+    if buf.fault_info is not None:
+        return VectorOpResult(fault_type=buf.fault_info.fault_type,
+                              element_index=buf.fault_info.element_index,
+                              fault_addr=buf.fault_info.fault_addr)
     return VectorOpResult()

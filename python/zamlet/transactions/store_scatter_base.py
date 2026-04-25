@@ -23,12 +23,14 @@ from dataclasses import dataclass
 import logging
 
 from zamlet import addresses
-from zamlet.addresses import TLBFaultType, MemoryType
+from zamlet.addresses import TLBFaultType, MemoryType, VectorFaultInfo
 from zamlet.waiting_item import WaitingItem
 from zamlet.message import WriteMemWordHeader, TaggedHeader, MessageType, SendType
 from zamlet.kamlet.cache_table import SendState
 from zamlet.params import ZamletParams
-from zamlet.synchronization import WaitingItemSyncState as SyncState
+from zamlet.synchronization import (
+    SyncAggOp, WaitingItemSyncState as SyncState,
+    fault_info_width, pack_fault_info, unpack_fault_info)
 
 if TYPE_CHECKING:
     from zamlet.jamlet.jamlet import Jamlet
@@ -40,9 +42,10 @@ logger = logging.getLogger(__name__)
 @dataclass
 class RequiredBytes:
     is_vpu: bool
-    g_addr: addresses.GlobalAddress
+    g_addr: addresses.GlobalAddress | None
     n_bytes: int
     tag: int
+    fault_info: VectorFaultInfo | None = None
 
 
 class WaitingStoreScatterBase(WaitingItem, ABC):
@@ -65,10 +68,10 @@ class WaitingStoreScatterBase(WaitingItem, ABC):
         self.transaction_states: List[SendState] = [SendState.INITIAL for _ in range(n_tags)]
         self.fault_sync_state = SyncState.NOT_STARTED
         self.completion_sync_state = SyncState.NOT_STARTED
-        # Track minimum faulting element (for TLB permission faults)
-        self.min_fault_element: int | None = None
-        # Global min fault element after fault sync completes
-        self.global_min_fault: int | None = None
+        # None is a header-only no-fault sync packet. Faulting regions carry
+        # packed VectorFaultInfo so the winning fault keeps precise mtval/cause.
+        self.min_fault_info: VectorFaultInfo | None = None
+        self.global_min_fault_info: VectorFaultInfo | None = None
 
     @abstractmethod
     def get_element_byte_offset(self, jamlet: 'Jamlet', element_index: int) -> int:
@@ -108,10 +111,10 @@ class WaitingStoreScatterBase(WaitingItem, ABC):
                 if request is None:
                     self.transaction_states[state_idx] = SendState.COMPLETE
                 elif request.g_addr is None:
-                    # Unallocated page - record fault
-                    _, src_e, _, _ = self._compute_src_element(jamlet, tag)
-                    if self.min_fault_element is None or src_e < self.min_fault_element:
-                        self.min_fault_element = src_e
+                    assert request.fault_info is not None
+                    if (self.min_fault_info is None
+                            or request.fault_info.element_index < self.min_fault_info.element_index):
+                        self.min_fault_info = request.fault_info
                     self.transaction_states[state_idx] = SendState.COMPLETE
                 else:
                     page_info = jamlet.tlb.get_page_info(request.g_addr.get_page())
@@ -123,7 +126,8 @@ class WaitingStoreScatterBase(WaitingItem, ABC):
             elif state == SendState.WAITING_IN_CASE_FAULT:
                 if self.fault_sync_state == SyncState.COMPLETE:
                     _, src_e, _, _ = self._compute_src_element(jamlet, tag)
-                    if self.global_min_fault is not None and src_e >= self.global_min_fault:
+                    if (self.global_min_fault_info is not None
+                            and src_e >= self.global_min_fault_info.element_index):
                         self.transaction_states[state_idx] = SendState.COMPLETE
                     else:
                         self.transaction_states[state_idx] = SendState.NEED_TO_SEND
@@ -155,11 +159,21 @@ class WaitingStoreScatterBase(WaitingItem, ABC):
                 kamlet.monitor.create_sync_local_span(
                     fault_sync_ident, kamlet.synchronizer.kx, kamlet.synchronizer.ky,
                     kinstr_span_id)
-                kamlet.synchronizer.local_event(fault_sync_ident, value=self.min_fault_element)
+                packed_fault_info = (
+                    None if self.min_fault_info is None
+                    else pack_fault_info(kamlet.params, self.min_fault_info))
+                kamlet.synchronizer.local_event(
+                    fault_sync_ident, value=packed_fault_info,
+                    op=SyncAggOp.MIN_FAULT_INFO,
+                    width=fault_info_width(kamlet.params))
         elif self.fault_sync_state == SyncState.IN_PROGRESS:
             if kamlet.synchronizer.is_complete(fault_sync_ident):
                 self.fault_sync_state = SyncState.COMPLETE
-                self.global_min_fault = kamlet.synchronizer.get_aggregated_value(fault_sync_ident)
+                packed_fault_info = kamlet.synchronizer.get_aggregated_value(
+                    fault_sync_ident)
+                self.global_min_fault_info = (
+                    None if packed_fault_info is None
+                    else unpack_fault_info(kamlet.params, packed_fault_info))
 
         # Completion sync - after all transactions complete (independent of fault sync)
         if self.completion_sync_state == SyncState.NOT_STARTED:
@@ -275,8 +289,13 @@ class WaitingStoreScatterBase(WaitingItem, ABC):
         # Check TLB for write permission
         fault_type = jamlet.tlb.check_access(dst_g_addr, is_write=True)
         if fault_type != TLBFaultType.NONE:
-            # Page fault - return empty RequiredBytes to signal fault
-            return RequiredBytes(is_vpu=False, g_addr=None, n_bytes=0, tag=tag)
+            fault_info = VectorFaultInfo(
+                element_index=src_e,
+                fault_type=fault_type,
+                fault_addr=dst_g_addr.addr)
+            return RequiredBytes(
+                is_vpu=False, g_addr=None, n_bytes=0, tag=tag,
+                fault_info=fault_info)
 
         dst_page_addr = dst_g_addr.get_page()
         dst_page_info = jamlet.tlb.get_page_info(dst_page_addr)

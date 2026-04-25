@@ -2,6 +2,7 @@ from enum import Enum, IntEnum
 import dataclasses
 from dataclasses import dataclass
 
+from zamlet.addresses import TLBFaultType, VectorFaultInfo
 from zamlet.control_structures import pack_fields_to_int, unpack_int_to_fields
 
 
@@ -259,6 +260,38 @@ class ElementIndexHeader(IdentHeader):
     fault: bool = False  # TLB fault occurred for this element
 
 
+def pack_vector_fault_info_words(params, fault_info: VectorFaultInfo) -> list[int]:
+    """Encode vector fault metadata as two machine-width packet words.
+
+    Word 0 is the faulting byte address. Word 1 packs element_index in the
+    low bits and TLBFaultType in the next two bits.
+    """
+    word_bits = params.word_bytes * 8
+    assert 0 <= fault_info.fault_addr < (1 << word_bits)
+    assert 0 <= fault_info.element_index < (1 << params.element_index_width)
+    assert 0 <= fault_info.fault_type.value < (1 << 2)
+    meta = fault_info.element_index | (
+        fault_info.fault_type.value << params.element_index_width)
+    assert 0 <= meta < (1 << word_bits)
+    return [fault_info.fault_addr, meta]
+
+
+def unpack_vector_fault_info_words(params, words: list[int]) -> VectorFaultInfo:
+    assert len(words) == 2
+    word_bits = params.word_bytes * 8
+    fault_addr, meta = words
+    assert 0 <= fault_addr < (1 << word_bits)
+    assert 0 <= meta < (1 << word_bits)
+    element_mask = (1 << params.element_index_width) - 1
+    element_index = meta & element_mask
+    fault_type_value = (meta >> params.element_index_width) & 0b11
+    return VectorFaultInfo(
+        element_index=element_index,
+        fault_type=TLBFaultType(fault_type_value),
+        fault_addr=fault_addr,
+    )
+
+
 class Direction(Enum):
     N = 0
     S = 1
@@ -319,5 +352,4 @@ def header_to_int(header: Header, params) -> int:
     if isinstance(header, AddressHeader):
         return pack_fields_to_int(header, params.address_header_fields)
     return pack_fields_to_int(header, params.ident_header_fields)
-
 

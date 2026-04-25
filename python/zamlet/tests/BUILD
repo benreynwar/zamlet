@@ -16,7 +16,7 @@ FAST_TESTS = [
     "test_synchronization",
     "test_vcpop",
     "test_vfirst",
-    "test_vms_first_mask",
+    "test_trap_delivery",
     "test_vfmv_scalar",
     "test_widening_arith",
 ]
@@ -77,7 +77,7 @@ py_test(
 
 test_suite(
     name = "all_tests",
-    tests = [":tests_a", ":tests_b"],
+    tests = TEST_FILES + ["test_memlet_model"],
 )
 
 test_suite(
@@ -91,12 +91,6 @@ test_suite(
         "test_memlet_model",
         "test_reg_mem_mapping",
         "test_synchronization",
-    ],
-)
-
-test_suite(
-    name = "tests_b",
-    tests = [
         "test_conditional_kamlet",
         "test_reg_gather",
         "test_reg_gather_vx_vi",
@@ -106,7 +100,7 @@ test_suite(
         "test_reduction",
         "test_vcpop",
         "test_vfirst",
-        "test_vms_first_mask",
+        "test_trap_delivery",
         "test_vfmv_scalar",
         "test_widening_arith",
     ],

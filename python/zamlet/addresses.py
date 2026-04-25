@@ -194,6 +194,13 @@ class TLBFaultType(Enum):
     NOT_WAITED = 4
 
 
+@dataclass(frozen=True)
+class VectorFaultInfo:
+    element_index: int
+    fault_type: TLBFaultType
+    fault_addr: int
+
+
 @dataclass
 class VectorOpResult:
     """Result of a vector operation - either success or fault."""

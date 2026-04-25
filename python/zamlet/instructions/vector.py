@@ -192,8 +192,15 @@ class VleV:
         )
         ordering = addresses.Ordering(s.word_order, self.element_width)
         emul = max(1, (self.element_width * s.lmul) // s.sew)
-        await s.vload(self.vd, addr, ordering, s.vl, mask_reg, s.vstart,
-                       parent_span_id=span_id, emul=emul)
+        result = await s.vload(
+            self.vd, addr, ordering, s.vl, mask_reg, s.vstart,
+            parent_span_id=span_id, emul=emul)
+        if s.maybe_trap_vector(
+                result, is_store=False,
+                fault_addr_fallback=addr + (result.element_index or 0) * (self.element_width // 8)):
+            s.monitor.finalize_children(span_id)
+            return
+        s.vstart = 0
         s.monitor.finalize_children(span_id)
         s.pc += 4
 
@@ -233,8 +240,15 @@ class VlrV:
         ew = reg_ordering.ew
         n_elements = (s.params.vline_bytes * self.nreg * 8) // ew
         ordering = addresses.Ordering(reg_ordering.word_order, ew)
-        await s.vload(self.vd, addr, ordering, n_elements, None, 0,
-                       parent_span_id=span_id, emul=self.nreg)
+        result = await s.vload(
+            self.vd, addr, ordering, n_elements, None, 0,
+            parent_span_id=span_id, emul=self.nreg)
+        if s.maybe_trap_vector(
+                result, is_store=False,
+                fault_addr_fallback=addr + (result.element_index or 0) * (ew // 8)):
+            s.monitor.finalize_children(span_id)
+            return
+        s.vstart = 0
         s.monitor.finalize_children(span_id)
         s.pc += 4
 
@@ -270,9 +284,15 @@ class VseV:
         )
         ordering = addresses.Ordering(s.word_order, self.element_width)
         emul = max(1, (self.element_width * s.lmul) // s.sew)
-        await s.vstore(
+        result = await s.vstore(
             self.vs3, addr, ordering, s.vl, mask_reg, s.vstart,
             parent_span_id=span_id, emul=emul)
+        if s.maybe_trap_vector(
+                result, is_store=True,
+                fault_addr_fallback=addr + (result.element_index or 0) * (self.element_width // 8)):
+            s.monitor.finalize_children(span_id)
+            return
+        s.vstart = 0
         s.monitor.finalize_children(span_id)
         s.pc += 4
 
@@ -311,8 +331,15 @@ class VsrV:
         ew = reg_ordering.ew
         n_elements = (s.params.vline_bytes * self.nreg * 8) // ew
         ordering = addresses.Ordering(reg_ordering.word_order, ew)
-        await s.vstore(self.vs3, addr, ordering, n_elements, None, 0,
-                       parent_span_id=span_id, emul=self.nreg)
+        result = await s.vstore(
+            self.vs3, addr, ordering, n_elements, None, 0,
+            parent_span_id=span_id, emul=self.nreg)
+        if s.maybe_trap_vector(
+                result, is_store=True,
+                fault_addr_fallback=addr + (result.element_index or 0) * (ew // 8)):
+            s.monitor.finalize_children(span_id)
+            return
+        s.vstart = 0
         s.monitor.finalize_children(span_id)
         s.pc += 4
 
@@ -352,8 +379,15 @@ class VlseV:
         )
         ordering = addresses.Ordering(s.word_order, self.element_width)
         emul = max(1, (self.element_width * s.lmul) // s.sew)
-        await s.vload(self.vd, addr, ordering, s.vl, mask_reg, s.vstart,
-                       parent_span_id=span_id, emul=emul, stride_bytes=stride)
+        result = await s.vload(
+            self.vd, addr, ordering, s.vl, mask_reg, s.vstart,
+            parent_span_id=span_id, emul=emul, stride_bytes=stride)
+        if s.maybe_trap_vector(
+                result, is_store=False,
+                fault_addr_fallback=addr + (result.element_index or 0) * stride):
+            s.monitor.finalize_children(span_id)
+            return
+        s.vstart = 0
         s.monitor.finalize_children(span_id)
         s.pc += 4
 
@@ -393,8 +427,15 @@ class VsseV:
         )
         ordering = addresses.Ordering(s.word_order, self.element_width)
         emul = max(1, (self.element_width * s.lmul) // s.sew)
-        await s.vstore(self.vs3, addr, ordering, s.vl, mask_reg, s.vstart,
-                       parent_span_id=span_id, emul=emul, stride_bytes=stride)
+        result = await s.vstore(
+            self.vs3, addr, ordering, s.vl, mask_reg, s.vstart,
+            parent_span_id=span_id, emul=emul, stride_bytes=stride)
+        if s.maybe_trap_vector(
+                result, is_store=True,
+                fault_addr_fallback=addr + (result.element_index or 0) * stride):
+            s.monitor.finalize_children(span_id)
+            return
+        s.vstart = 0
         s.monitor.finalize_children(span_id)
         s.pc += 4
 
@@ -2336,12 +2377,12 @@ class VIndexedLoad:
             index_reg = scratch_regs[0]
 
         if self.ordered:
-            await s.vload_indexed_ordered(
+            result = await s.vload_indexed_ordered(
                 self.vd, base_addr, index_reg, self.index_width, data_ew,
                 s.vl, mask_reg, s.vstart, parent_span_id=span_id
             )
         else:
-            await s.vload_indexed_unordered(
+            result = await s.vload_indexed_unordered(
                 self.vd, base_addr, index_reg, self.index_width, data_ew,
                 s.vl, mask_reg, s.vstart, parent_span_id=span_id
             )
@@ -2349,6 +2390,10 @@ class VIndexedLoad:
         if scratch_regs is not None:
             await s.free_temp_regs(scratch_regs, span_id)
 
+        if s.maybe_trap_vector(result, is_store=False, fault_addr_fallback=base_addr):
+            s.monitor.finalize_children(span_id)
+            return
+        s.vstart = 0
         s.monitor.finalize_children(span_id)
         s.pc += 4
 
@@ -2392,15 +2437,19 @@ class VIndexedStore:
         vsew = (s.vtype >> 3) & 0x7
         data_ew = 8 << vsew
         if self.ordered:
-            await s.vstore_indexed_ordered(
+            result = await s.vstore_indexed_ordered(
                 self.vs3, base_addr, self.vs2, self.index_width, data_ew,
                 s.vl, mask_reg, s.vstart, parent_span_id=span_id
             )
         else:
-            await s.vstore_indexed_unordered(
+            result = await s.vstore_indexed_unordered(
                 self.vs3, base_addr, self.vs2, self.index_width, data_ew,
                 s.vl, mask_reg, s.vstart, parent_span_id=span_id
             )
+        if s.maybe_trap_vector(result, is_store=True, fault_addr_fallback=base_addr):
+            s.monitor.finalize_children(span_id)
+            return
+        s.vstart = 0
         s.monitor.finalize_children(span_id)
         s.pc += 4
 

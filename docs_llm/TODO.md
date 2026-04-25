@@ -61,6 +61,16 @@
           when the vline's tail will not be read at the new ew (tracked
           dynamically, or signalled by the caller) so remaps only run when
           semantically required.
+      (f) Schedule the J2J traffic to avoid one-sided port congestion.
+          Naive element-order for small→large remap (e.g. ew=8 → ew=512)
+          balances reads across all source jamlets but funnels every write
+          into one target jamlet at a time, rotating which jamlet is the
+          hot-spot each step. Same shape in reverse for large→small.
+          A staggered schedule (e.g. at step `s`, jamlet `j` handles target
+          element `s * n_j + j`) keeps every jamlet busy on both read and
+          write ports every cycle. Becomes especially important once the
+          segment fast path introduces ew=128/256/512, where the imbalance
+          ratio reaches 8×.
 - [ ] vstart / start_index is ignored by almost all kinstrs (they hardcode
       start_index=0 in execute and in alloc_dst_pregs). Only vrgather and
       the new VmLogicMm thread `s.vstart` through. RVV spec requires
@@ -81,12 +91,14 @@
       end) at the entry points; `vloadstore`'s body still treats it as a
       count from 0 (`n_vlines = ceil(n_elements / elements_per_vline)`,
       `range(start_index, start_index + n_elements)`), which is harmless
-      today only because every caller passes `start_index=0`. The rename
-      surfaces these mismatches so they can be fixed against vl-semantics.
-      Audit the body of `vloadstore` against vl-semantics as part of the
-      rename. Cross-reference `_vline_is_partial` in `oamlet.py` (RESTART
-      §"Longer-term tracked items") which has the same n_elements-as-vl
-      vs. n_elements-as-count latent error.
+      today only because every caller passes `start_index=0`. Both
+      conventions appear in `lamlet/unordered.py`, making trap resume and
+      vstart handling fragile. Adhere to RVV terminology end-to-end: rename
+      the helpers to `vl`/`vstart`, audit the body of `vloadstore` against
+      vl-semantics as part of the rename, and add boundary assertions where
+      values cross conventions. Cross-reference `_vline_is_partial` in
+      `oamlet.py` (RESTART §"Longer-term tracked items") which has the same
+      n_elements-as-vl vs. n_elements-as-count latent error.
 - [ ] Narrowing shifts (vnsrl, vnsra): currently only vnsrl.wi is implemented, and it's
       hacked into VUnaryOvOp which is the wrong place for it. Need to think about how
       narrowing ops should work properly, then implement all 6 forms
@@ -117,7 +129,12 @@
       `struct.pack`). No `fcsr` plumbing, no dynamic-rm lookup.
       (3) NaN payload propagation and exception flags: Python native float
       arithmetic produces implementation-defined NaN bits and does not set
-      RISC-V accrued flags (NV/DZ/OF/UF/NX) in `fcsr`.
+      RISC-V accrued flags (NV/DZ/OF/UF/NX) in `fcsr`. Per-element flag
+      computation needs a soft-float reference (e.g. SoftFloat-3 port or
+      mpmath with explicit rounding); the accumulation path
+      (per-jamlet sticky `fflags` + sync-network OR-reduce on CSR read)
+      lands via `docs_llm/plans/PLAN_long_latency_alu.md`, so only the
+      soft-float reference and per-op `fflags_out` population remain.
 - [ ] Ordered float reductions: `vfredosum.vs` and `vfwredosum.vs`. Out of scope
       for the original reductions work because they require strictly left-to-right
       accumulation and cannot use a tree. The unordered variants (FREDUSUM,
@@ -170,6 +187,39 @@
         - Mixed-ew access on a 512-tagged page requires the same remap
           machinery already planned for ew=1 (see ew-remap TODO above).
       Spec ref: `riscv-isa-manual/src/v-st-ext.adoc` lines 1758-1957.
+- [ ] Long-latency arithmetic ops (vdiv/vrem, vfdiv, vfsqrt, vfrec7,
+      vfrsqrt7). See `docs_llm/plans/PLAN_long_latency_alu.md` — per-jamlet
+      ALU model with int_alu / imul / idiv / fma pipes, Newton-Raphson on
+      the FMA pipe for vfdiv/vfsqrt seeded from the vfrec7/vfrsqrt7 ROMs,
+      radix-2 SRT for int divide. Plan also lands the framework (rm input
+      / flag outputs / sticky accumulators / OR-reduce primitive) for the
+      fixed-point and FP-correctness follow-ups below.
+- [ ] Fixed-point arithmetic chapter (vsadd/vssub/vaadd/vasub/vsmul/vssrl/
+      vssra/vnclip + vxrm/vxsat CSRs). Entire RVV fixed-point chapter is
+      absent today. Framework lands via
+      `docs_llm/plans/PLAN_long_latency_alu.md`: sync-network OR-reduce
+      primitive, per-jamlet sticky `vxsat`, `rm_in` plumbing on the ALU
+      waiting item. Remaining work once that plan lands:
+      (a) **vxrm / vxsat CSRs** — IDs are already declared as stubs in
+          `instructions/system.py:23-25`. Wire CSR reads to trigger the
+          OR-reduce of the per-jamlet sticky `vxsat`.
+      (b) **The arithmetic ops themselves** — saturating add/sub
+          (vsadd/vssub/vsaddu/vssubu), averaging add/sub (vaadd/vasub +
+          unsigned), saturating fractional multiply (vsmul), scaling
+          shifts (vssrl/vssra), narrowing clip (vnclip/vnclipu). All read
+          `rm_in` for rounding mode and OR-set the sticky `vxsat` on
+          saturation.
+      Spec ref: `riscv-isa-manual/src/v-st-ext.adoc` chapter 13.
+- [ ] Fence support. Today fences are unimplemented. Semantically a no-op
+      for a single-hart system with no DMA / no devices / no second hart
+      (RVWMO already requires the hart to observe its own ops in program
+      order, which the existing per-op `completion_sync_ident` machinery
+      ensures). Once there's any external memory agent (DMA engine, MMIO
+      device, second hart), fence needs to actually drain in-flight memory
+      ops before the successor side: requires a "wait for ALL outstanding
+      completion syncs to fire" primitive, which doesn't exist today. Until
+      then, just decode-and-no-op is sufficient. `fence.i` is a no-op as
+      long as there's no I-cache (or the I-cache snoops).
 - [ ] Kinstruction bit-budget cleanup. Give every python kinstruction a proper
       bit-packed encoding (`FIELD_SPECS` + `encode()`) matching Chisel-compatible
       64-bit layouts, and design Chisel bundles for the python-only vector ops

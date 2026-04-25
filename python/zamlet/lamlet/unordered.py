@@ -26,6 +26,8 @@ from zamlet.message import (
     MessageType, SendType, Direction, TaggedHeader,
     ReadMemWordHeader, WriteMemWordHeader,
 )
+from zamlet.synchronization import (
+    SyncAggOp, fault_info_width, unpack_fault_info)
 
 if TYPE_CHECKING:
     from zamlet.oamlet.oamlet import Oamlet
@@ -36,7 +38,8 @@ logger = logging.getLogger(__name__)
 async def wait_for_fault_sync(lamlet: 'Oamlet', fault_sync_ident: int) -> int | None:
     """Wait for fault sync to complete.
 
-    Returns the global minimum fault element, or None if no fault.
+    Returns packed VectorFaultInfo for the minimum fault element, or None if no
+    fault.
     """
     while not lamlet.synchronizer.is_complete(fault_sync_ident):
         await lamlet.clock.next_cycle
@@ -70,9 +73,12 @@ def check_pages_for_access(lamlet: 'Oamlet', start_addr: int, n_elements: int,
         g_addr = GlobalAddress(bit_addr=current_addr * 8, params=lamlet.params)
         fault_type = lamlet.tlb.check_access(g_addr, is_write)
         if fault_type != TLBFaultType.NONE:
-            # Calculate which element this fault corresponds to
+            # Report mtval as the effective address of the faulting element.
             element_index = (current_addr - start_addr) // element_bytes
-            return VectorOpResult(fault_type=fault_type, element_index=element_index)
+            fault_addr = start_addr + element_index * element_bytes
+            return VectorOpResult(
+                fault_type=fault_type, element_index=element_index,
+                fault_addr=fault_addr)
         # Move to next page
         current_addr = ((current_addr // page_bytes) + 1) * page_bytes
 
@@ -462,7 +468,7 @@ async def vloadstore(lamlet: 'Oamlet', reg_base: int, addr: int, ordering: addre
     # For loads, vload() sets ordering for the full lmul group before calling here.
     # For stores, the producing instruction set it.
     regs = []
-    for element_index in range(start_index, start_index + n_elements):
+    for element_index in range(start_index, n_elements):
         reg = reg_base + (element_index * ordering.ew) // vline_bits
         if reg not in regs:
             regs.append(reg)
@@ -625,14 +631,16 @@ async def vloadstorestride(lamlet: 'Oamlet', reg_base: int, addr: int,
     # already in the FIFO, and the kamlet handles register file blocking.
     await lamlet.free_temp_regs(temp_regs, parent_span_id)
     if prev_fault_sync is not None:
-        return await resolve_fault_sync(
+        result = await resolve_fault_sync(
             lamlet,
             VectorOpResult(
                 fault_type=TLBFaultType.NOT_WAITED,
                 completion_sync_idents=all_completion_syncs,
                 last_fault_sync_ident=prev_fault_sync),
             is_store=is_store)
-    return VectorOpResult(completion_sync_idents=all_completion_syncs)
+    else:
+        result = VectorOpResult(completion_sync_idents=all_completion_syncs)
+    return result
 
 
 async def resolve_fault_sync(lamlet: 'Oamlet', result: VectorOpResult,
@@ -640,13 +648,14 @@ async def resolve_fault_sync(lamlet: 'Oamlet', result: VectorOpResult,
     """Wait for a NOT_WAITED fault sync and return a resolved result."""
     assert result.fault_type == TLBFaultType.NOT_WAITED
     assert result.last_fault_sync_ident is not None
-    global_min_fault = await wait_for_fault_sync(
+    packed_fault_info = await wait_for_fault_sync(
         lamlet, result.last_fault_sync_ident)
-    if global_min_fault is not None:
-        fault_type = (TLBFaultType.WRITE_FAULT if is_store
-                      else TLBFaultType.READ_FAULT)
+    if packed_fault_info is not None:
+        fault_info = unpack_fault_info(lamlet.params, packed_fault_info)
         return VectorOpResult(
-            fault_type=fault_type, element_index=global_min_fault,
+            fault_type=fault_info.fault_type,
+            element_index=fault_info.element_index,
+            fault_addr=fault_info.fault_addr,
             completion_sync_idents=result.completion_sync_idents,
             last_fault_sync_ident=result.last_fault_sync_ident)
     return VectorOpResult(
@@ -835,13 +844,19 @@ async def _vloadstore_indexed_unordered(
         lamlet.monitor.create_sync_local_span(
             fault_sync_ident, 0, -1, kinstr_span_id)
         if skip_fault_wait:
-            lamlet.synchronizer.local_event(fault_sync_ident, value=None)
+            lamlet.synchronizer.local_event(
+                fault_sync_ident, value=None,
+                op=SyncAggOp.MIN_FAULT_INFO,
+                width=fault_info_width(lamlet.params))
         elif prev_fault_sync is not None:
             lamlet.synchronizer.chain_fault_sync(
                 prev_fault_sync, fault_sync_ident)
             prev_fault_sync = fault_sync_ident
         else:
-            lamlet.synchronizer.local_event(fault_sync_ident, value=None)
+            lamlet.synchronizer.local_event(
+                fault_sync_ident, value=None,
+                op=SyncAggOp.MIN_FAULT_INFO,
+                width=fault_info_width(lamlet.params))
             prev_fault_sync = fault_sync_ident
 
     fault_type = (TLBFaultType.NOT_WAITED if prev_fault_sync is not None
