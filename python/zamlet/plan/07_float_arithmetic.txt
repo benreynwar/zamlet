@@ -13,6 +13,13 @@ must not be Off. FP exceptions set flags in fflags register for active elements 
 Note: This file covers SINGLE-WIDTH FP arithmetic only. Widening FP operations and
 type conversions are in 08_float_widening_conversions.txt.
 
+Caveat: every FP op in this file currently uses host Python arithmetic. Dynamic
+rounding mode (`frm`), accrued exception flags (`fflags`) and NaN-payload propagation
+are NOT modelled. The framework for accumulating per-jamlet sticky `fflags` and
+plumbing rounding mode into ALU ops lands with PLAN_long_latency_alu.md; the
+soft-float reference + per-op `fflags_out` population lands as part of
+PLAN_fp_nan_boxing.md.
+
 External Test Suite
 -------------------
 Repository: riscv-vector-tests
@@ -55,10 +62,15 @@ VFRSUB.VF (Status: ✓)
   Description: Reverse subtract, vd[i] = f[rs1] - vs2[i]
   Notes: Only .vf form (no .vv)
 
-SINGLE-WIDTH FP MULTIPLY/DIVIDE (Status: ✓)
-============================================
+SINGLE-WIDTH FP MULTIPLY/DIVIDE (Status: ⚠ Partial)
+===================================================
 
 Spec: v-st-ext.adoc lines 3303-3316
+
+VFMUL is fully implemented. VFDIV and VFRDIV decode and produce results via
+host Python `/`, but do not honour `frm`, do not populate `fflags`, and have
+no latency model. Proper implementation lands with PLAN_long_latency_alu.md
+(Newton-Raphson on the FMA pipe + framework for rm/fflags).
 
 VFMUL.VV, VFMUL.VF (Status: ✓)
   Spec: v-st-ext.adoc lines 3307-3308
@@ -67,18 +79,20 @@ VFMUL.VV, VFMUL.VF (Status: ✓)
   Implementation: VArithVvFloat / VArithVxFloat in instructions/vector.py
   Description: Floating-point multiply
 
-VFDIV.VV, VFDIV.VF (Status: ✓)
+VFDIV.VV, VFDIV.VF (Status: ⚠)
   Spec: v-st-ext.adoc lines 3311-3312
   Encoding: funct6=0x20, funct3=OPFVV/OPFVF
   Format: vfdiv.vv vd, vs2, vs1, vm / vfdiv.vf vd, vs2, rs1, vm
-  Implementation: VArithVvFloat / VArithVxFloat in instructions/vector.py
+  Implementation: VArithVvFloat / VArithVxFloat (decode only — naive host `/`,
+    no rm / fflags / latency). Awaits PLAN_long_latency_alu.md.
   Description: Floating-point divide, vd[i] = vs2[i] / vs1[i]/f[rs1]
 
-VFRDIV.VF (Status: ✓)
+VFRDIV.VF (Status: ⚠)
   Spec: v-st-ext.adoc line 3315
   Encoding: funct6=0x21, funct3=OPFVF
   Format: vfrdiv.vf vd, vs2, rs1, vm
-  Implementation: VArithVxFloat in instructions/vector.py
+  Implementation: VArithVxFloat (decode only — naive host `/`,
+    no rm / fflags / latency). Awaits PLAN_long_latency_alu.md.
   Description: Reverse divide, vd[i] = f[rs1] / vs2[i]
   Notes: Only .vf form (no .vv)
 

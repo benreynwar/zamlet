@@ -24,9 +24,10 @@ vmsif, vmsof, viota, vid). See test_suite_reference.txt for complete list
 
 Implementation Summary
 ----------------------
-Currently implemented: 9 instructions (all 8 mask-mask logicals + VID.V)
+Currently implemented: 14 instructions (all 8 mask-mask logicals + VID.V +
+vcpop.m + vfirst.m + vmsbf.m + vmsif.m + vmsof.m). Only viota.m remains.
 Total in spec: 16 mask instructions
-Coverage: ~56%
+Coverage: ~88%
 
 All 8 mask-mask logicals are unified under a single VmLogicMm class
 (instructions/vector.py:865) parameterised by a VmLogicOp enum
@@ -108,16 +109,16 @@ VMXNOR.MM (Status: ✓)
   Description: vd.mask[i] = !(vs2.mask[i] ^^ vs1.mask[i])
   Notes: Pseudoinstruction: vmset.m vd = vmxnor.mm vd,vd,vd (set all bits).
 
-MASK POPULATION COUNT (Status: ✗)
+MASK POPULATION COUNT (Status: ✓)
 ==================================
 
 Spec: v-st-ext.adoc lines 4131-4161
 
-VCPOP.M (Status: ✗)
+VCPOP.M (Status: ✓)
   Spec: v-st-ext.adoc lines 4134-4157
   Encoding: funct6=0x10, vs1=0x10, funct3=OPMVV, writes to x register
   Format: vcpop.m rd, vs2, vm
-  Implementation: Not implemented
+  Implementation: VcpopM in instructions/vector.py; decode at decode.py:990
   Description: Count number of 1s in active mask elements
   Notes:
     - Writes count to scalar x register
@@ -126,16 +127,16 @@ VCPOP.M (Status: ✗)
     - vstart must be 0
     - Old mnemonic vpopc.m can be retained as alias
 
-FIND-FIRST-SET (Status: ✗)
+FIND-FIRST-SET (Status: ✓)
 ===========================
 
 Spec: v-st-ext.adoc lines 4163-4183
 
-VFIRST.M (Status: ✗)
+VFIRST.M (Status: ✓)
   Spec: v-st-ext.adoc lines 4166-4181
   Encoding: funct6=0x10, vs1=0x11, funct3=OPMVV, writes to x register
   Format: vfirst.m rd, vs2, vm
-  Implementation: Not implemented
+  Implementation: VfirstM in instructions/vector.py; decode at decode.py:992
   Description: Find index of first set bit in active mask elements
   Notes:
     - Writes element index to x[rd], or -1 if none found
@@ -143,41 +144,46 @@ VFIRST.M (Status: ✗)
     - Writes x[rd] even if vl=0 (with value -1)
     - vstart must be 0
 
-SET-BEFORE/INCLUDING/ONLY-FIRST (Status: ✗)
+SET-BEFORE/INCLUDING/ONLY-FIRST (Status: ✓)
 ============================================
 
 Spec: v-st-ext.adoc lines 4185-4300
 
 These instructions scan for the first set bit and set/clear surrounding bits.
 
-VMSBF.M (Status: ✗)
+VMSBF.M (Status: ✓)
   Spec: v-st-ext.adoc lines 4188-4227
   Encoding: funct6=0x14, vs1=0x01, funct3=OPMVV
   Format: vmsbf.m vd, vs2, vm
-  Implementation: Not implemented
+  Implementation: VmsFirstMask in instructions/vector.py:1540 (mode=BEFORE);
+    SetMaskBits / SetMaskBitsMode kinstr in kamlet/kinstructions.py;
+    decode at decode.py:994
   Description: Set all bits before first set bit
   Notes:
     - Writes 1 to elements before first 1, then 0 to that element and all following
     - If no 1 found, all active elements written with 1
     - vstart must be 0
     - vd cannot overlap vs2 or v0 (if masked)
+    - Test file `tests/test_vms_first_mask.py` is missing on disk despite the
+      implementation having landed in commit 4d28467; recreate before claiming
+      Step 6 of PLAN_mask_ops.md fully done.
 
-VMSIF.M (Status: ✗)
+VMSIF.M (Status: ✓)
   Spec: v-st-ext.adoc lines 4232-4263
   Encoding: funct6=0x14, vs1=0x03, funct3=OPMVV
   Format: vmsif.m vd, vs2, vm
-  Implementation: Not implemented
+  Implementation: VmsFirstMask (mode=INCLUDING); decode at decode.py:999
   Description: Set all bits before and including first set bit
   Notes:
     - Like vmsbf but also includes the first 1
     - vstart must be 0
     - vd cannot overlap vs2 or v0 (if masked)
 
-VMSOF.M (Status: ✗)
+VMSOF.M (Status: ✓)
   Spec: v-st-ext.adoc lines 4268-4300
   Encoding: funct6=0x14, vs1=0x02, funct3=OPMVV
   Format: vmsof.m vd, vs2, vm
-  Implementation: Not implemented
+  Implementation: VmsFirstMask (mode=ONLY); decode at decode.py:1004
   Description: Set only the first set bit
   Notes:
     - Only sets the first 1, clears all other bits
@@ -237,15 +243,14 @@ Existing Support:
   vs1/vs2 ordering ew=1)
 
 What's Missing:
-- Classes for vcpop, vfirst, vmsbf, vmsif, vmsof, viota
-- Kernel operations for count/find/prefix operations (vcpop needs cross-jamlet
-  popcount reduction; vfirst needs cross-jamlet MIN of first-set index; viota
-  needs parallel prefix-sum)
+- Class for viota (parallel prefix sum). vcpop / vfirst / vmsbf / vmsif /
+  vmsof are now in (commits 4d28467 + 65e1a59).
+- Cross-jamlet parallel prefix-sum primitive (PrefixSumRound kinstr +
+  WaitingPrefixSumRound transaction) — needed for viota and downstream
+  vcompress.
 - vstart==0 checking (most mask operations require vstart==0 except the
   logicals, which allow non-zero vstart via prestart preservation)
 - Overlap checking (vd cannot overlap vs2/v0 for vmsbf, vmsif, vmsof, viota)
-- Scalar-destination plumbing for vcpop, vfirst (write_reg_future pattern from
-  VmvXs at vector.py:1288)
 
 Test Coverage
 -------------
@@ -253,7 +258,12 @@ Test Coverage
 - vmor.mm exercised by FFT autovectorised verify loop (fftN8 passes)
 - No focused tests yet for vmand/vmandn/vmxor/vmorn/vmnor/vmxnor paths, though
   most are reachable through the unified code path
-- No tests for: vcpop, vfirst, vmsbf, vmsif, vmsof, viota, vid
+- vcpop covered by tests/test_vcpop.py
+- vfirst covered by tests/test_vfirst.py
+- vmsbf / vmsif / vmsof should be covered by tests/test_vms_first_mask.py
+  but the file is missing on disk; recreate from the test_vfirst.py / test_vcpop.py
+  pattern (PLAN_mask_ops.md Step 6)
+- No tests for: viota, vid
 
 TODO Items
 ----------
@@ -261,27 +271,15 @@ TODO Items
    - All 8 ops (vmand, vmandn, vmor, vmorn, vmxor, vmnand, vmnor, vmxnor)
      unified under VmLogicMm / VmLogicMmOp / VmLogicOp
 
-2. Implement vcpop.m (population count)
-   - Count 1s in mask register
-   - Write result to x register (not vector register)
-   - Support masking
-   - Handle vl=0 case (write 0)
-   - Verify vstart == 0
+2. ✓ Implement vcpop.m (population count) — landed
+   - VcpopM in instructions/vector.py + cross-jamlet J2J reduction tree
 
-3. Implement vfirst.m (find-first-set)
-   - Find index of first 1 in mask
-   - Write to x register (-1 if not found)
-   - Support masking
-   - Handle vl=0 case (write -1)
-   - Verify vstart == 0
+3. ✓ Implement vfirst.m (find-first-set) — landed
+   - VfirstM in instructions/vector.py + sync-network MIN aggregation
 
-4. Implement set-before/including/only-first
-   - vmsbf.m (set all before first)
-   - vmsif.m (set all up to and including first)
-   - vmsof.m (set only first)
-   - All scan for first 1 and manipulate surrounding bits
-   - Add overlap checking (vd vs vs2/v0)
-   - Verify vstart == 0
+4. ✓ Implement set-before/including/only-first — landed (commit 4d28467)
+   - VmsFirstMask wrapper covers vmsbf / vmsif / vmsof via SetMaskBitsMode
+   - Recreate tests/test_vms_first_mask.py (deleted; not in tests/BUILD)
 
 5. Implement viota.m (parallel prefix sum)
    - For each element, sum of all mask bits with lower index
@@ -311,15 +309,16 @@ TODO Items
 
 Summary
 -------
-9 of 16 instructions implemented:
+14 of 16 instructions implemented:
 - ✓ All 8 mask-mask logicals (vmand/vmandn/vmor/vmorn/vmxor/vmnand/vmnor/vmxnor)
   unified under VmLogicMm, including the standard pseudos (vmmv, vmclr, vmset,
   vmnot)
 - ✓ vid.v (element index)
-- ✗ vcpop.m (population count to x register) — immediate FFT N=32 blocker
-- ✗ vfirst.m (find-first-set to x register) — sibling at vs1=0b10001
-- ✗ vmsbf.m, vmsif.m, vmsof.m (set-before/including/only-first)
-- ✗ viota.m (parallel prefix sum, used for compress)
+- ✓ vcpop.m (population count to x register) — J2J reduction tree
+- ✓ vfirst.m (find-first-set to x register) — sync-network MIN
+- ✓ vmsbf.m, vmsif.m, vmsof.m (set-before/including/only-first) — share
+  VmsFirstMask + SetMaskBits kinstr
+- ✗ viota.m (parallel prefix sum, used for compress) — needs PrefixSumRound
 
 Mask operations are critical for:
 - Conditional execution and predication

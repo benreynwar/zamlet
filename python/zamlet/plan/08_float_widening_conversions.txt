@@ -25,11 +25,19 @@ test count (119 total FP tests). See test_suite_reference.txt for complete list
 
 Implementation Summary
 ----------------------
-Currently implemented: 16 widening FP arithmetic instructions
-  (vfwadd/vfwsub .vv/.vf and .wv/.wf, vfwmul .vv/.vf, vfwmacc/vfwnmacc/
-   vfwmsac/vfwnmsac .vv/.vf)
+Currently implemented: 22 instructions
+  - 16 widening FP arithmetic (vfwadd/vfwsub .vv/.vf and .wv/.wf, vfwmul .vv/.vf,
+    vfwmacc/vfwnmacc/vfwmsac/vfwnmsac .vv/.vf)
+  - 6 single-width FP/integer conversions (vfcvt.{xu,x}.f.v,
+    vfcvt.rtz.{xu,x}.f.v, vfcvt.f.{xu,x}.v) via VUnaryOp.FCVT_*
 Total in spec: ~36 widening/conversion instructions
-Coverage: ~44%
+Coverage: ~61%
+
+Caveat: arithmetic ops use host Python double-precision rounding; FCvt uses
+host `int()` (truncation) for FP→int and host RNE via `struct.pack` for
+int→FP regardless of the `frm` field. Dynamic rounding mode and `fflags`
+are not modelled. See PLAN_long_latency_alu.md (framework) and
+PLAN_fp_nan_boxing.md (FCvt rm + soft-float reference).
 
 Implementation: widening FP arithmetic shares the VArithVvOv / VArithVxOv
 classes used for the integer widening family (see
@@ -40,9 +48,10 @@ shape/width machinery applies. Float ops set src{1,2}_signed=False at the
 wrapper layer; signedness is irrelevant for float fmt selection. Accumulator
 ops (FMACC/FNMACC/FMSAC/FNMSAC) read vd as the addend at 2*SEW.
 
-Conversion ops (vf{c,wc,nc}vt*, including vfwcvt.f.f.v and vfncvt.f.f.w)
-are still unimplemented — these stay on the unary (Ov-unary) path and are
-tracked separately.
+Single-width FCVT goes through VUnaryOp.FCVT_* on the unary path
+(decode.py:1168, kinstructions.py:1302). Widening (vfwcvt.*) and
+narrowing (vfncvt.*) conversions, plus vfwcvt.f.f.v / vfncvt.f.f.w /
+vfncvt.rod.f.f.w, are still unimplemented.
 
 WIDENING FP ADD/SUBTRACT (Status: ✓)
 =====================================
@@ -133,58 +142,61 @@ VFWNMSAC.VV, VFWNMSAC.VF (Status: ✓)
   Implementation: op=FNMSAC.
   Description: vd[i] = -(vs1[i] * vs2[i]) + vd[i]
 
-SINGLE-WIDTH FP/INTEGER CONVERSIONS (Status: ✗)
-================================================
+SINGLE-WIDTH FP/INTEGER CONVERSIONS (Status: ⚠ Partial)
+========================================================
 
 Spec: v-st-ext.adoc lines 3738-3762
 
 Convert between floating-point and integer values where both source and
-destination are SEW wide.
+destination are SEW wide. All six are wired through VUnary / VUnaryOp.FCVT_*
+(decode.py:1168, kinstructions.py:1302). The `frm` field is ignored — FP→int
+uses host `int()` (truncation) and int→FP uses host RNE via `struct.pack`.
+Proper rm + fflags lands with PLAN_fp_nan_boxing.md / PLAN_long_latency_alu.md.
 
-VFCVT.XU.F.V (Status: ✗)
+VFCVT.XU.F.V (Status: ⚠)
   Spec: v-st-ext.adoc line 3745
   Encoding: funct6=0x12, vs1=0x00, funct3=OPFVV
   Format: vfcvt.xu.f.v vd, vs2, vm
-  Implementation: Not implemented
+  Implementation: VUnary + VUnaryOp.FCVT_XU_F (decode.py:1170). Ignores frm.
   Description: Convert float to unsigned integer
-  Notes: Uses dynamic rounding mode from frm
+  Notes: Spec uses dynamic rounding mode from frm; impl currently truncates.
 
-VFCVT.X.F.V (Status: ✗)
+VFCVT.X.F.V (Status: ⚠)
   Spec: v-st-ext.adoc line 3746
   Encoding: funct6=0x12, vs1=0x01, funct3=OPFVV
   Format: vfcvt.x.f.v vd, vs2, vm
-  Implementation: Not implemented
+  Implementation: VUnary + VUnaryOp.FCVT_X_F (decode.py:1171). Ignores frm.
   Description: Convert float to signed integer
 
-VFCVT.RTZ.XU.F.V (Status: ✗)
+VFCVT.RTZ.XU.F.V (Status: ⚠)
   Spec: v-st-ext.adoc line 3748
   Encoding: funct6=0x12, vs1=0x06, funct3=OPFVV
   Format: vfcvt.rtz.xu.f.v vd, vs2, vm
-  Implementation: Not implemented
+  Implementation: VUnary + VUnaryOp.FCVT_RTZ_XU_F (decode.py:1174).
   Description: Convert float to unsigned integer, truncating
   Notes:
-    - Round towards zero (RTZ)
+    - Round towards zero (RTZ); host `int()` matches RTZ for finite inputs
     - Accelerates C/Java-style truncating conversions
 
-VFCVT.RTZ.X.F.V (Status: ✗)
+VFCVT.RTZ.X.F.V (Status: ⚠)
   Spec: v-st-ext.adoc line 3749
   Encoding: funct6=0x12, vs1=0x07, funct3=OPFVV
   Format: vfcvt.rtz.x.f.v vd, vs2, vm
-  Implementation: Not implemented
+  Implementation: VUnary + VUnaryOp.FCVT_RTZ_X_F (decode.py:1175).
   Description: Convert float to signed integer, truncating
 
-VFCVT.F.XU.V (Status: ✗)
+VFCVT.F.XU.V (Status: ⚠)
   Spec: v-st-ext.adoc line 3751
   Encoding: funct6=0x12, vs1=0x02, funct3=OPFVV
   Format: vfcvt.f.xu.v vd, vs2, vm
-  Implementation: Not implemented
+  Implementation: VUnary + VUnaryOp.FCVT_F_XU (decode.py:1172). Host RNE.
   Description: Convert unsigned integer to float
 
-VFCVT.F.X.V (Status: ✗)
+VFCVT.F.X.V (Status: ⚠)
   Spec: v-st-ext.adoc line 3752
   Encoding: funct6=0x12, vs1=0x03, funct3=OPFVV
   Format: vfcvt.f.x.v vd, vs2, vm
-  Implementation: Not implemented
+  Implementation: VUnary + VUnaryOp.FCVT_F_X (decode.py:1173). Host RNE.
   Description: Convert signed integer to float
 
 WIDENING FP/INTEGER CONVERSIONS (Status: ✗)

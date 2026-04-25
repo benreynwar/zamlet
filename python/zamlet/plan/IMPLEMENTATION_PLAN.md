@@ -1,8 +1,10 @@
 # RISC-V Vector Extension Implementation Plan
 
-## Current Focus: Permutation Instructions (viota.m, vcompress)
+## Current Focus
 
-See `VCOMPRESS_PLAN.md` for detailed implementation plan.
+See `docs_llm/plans/PLAN_rvv_coverage.md` for the phase-ordered umbrella across
+all remaining RVV gaps. Per-category status lives in `0[1-9]_*.txt` and
+`1[0-2]_*.txt` in this directory.
 
 ---
 
@@ -15,26 +17,26 @@ implementation complexity driver.
 
 These operations need data or coordination across jamlet boundaries.
 
-#### 1. Permutation & Mask Instructions ← CURRENT
-See `VCOMPRESS_PLAN.md` for detailed implementation.
+#### 1. Permutation & Mask Instructions
 
 - [ ] viota.m - Prefix sum of mask bits. Uses `PrefixSumRound` kinstr with log2(j_in_l) rounds.
       Each round: sender broadcasts partial sum to next 2^k jamlets.
 - [ ] vcompress - Prefix sum (viota) + `RegScatter` to move enabled elements to computed positions.
-- [ ] vcpop.m - J2J reduction tree with SUM. Each jamlet counts local mask bits, tree combines.
+- [x] vcpop.m - J2J reduction tree with SUM. Each jamlet counts local mask bits, tree combines.
       Return scalar result to x register. (Can't use sync network - no SUM support.)
-- [ ] vfirst.m - Each jamlet finds local first set bit (or MAX if none). Sync network MIN
+- [x] vfirst.m - Each jamlet finds local first set bit (or MAX if none). Sync network MIN
       aggregation finds global minimum. If all MAX, return -1.
-- [ ] vmsbf.m, vmsif.m, vmsof.m - Use vfirst.m result. Each jamlet compares its element indices
+- [x] vmsbf.m, vmsif.m, vmsof.m - Use vfirst.m result. Each jamlet compares its element indices
       against the global first position. Pure local computation after vfirst.m completes.
-- [ ] vslideup/vslidedown - J2J data movement. For slidedown by N: element i receives from
+- [x] vslideup/vslidedown - J2J data movement. For slidedown by N: element i receives from
       element i+N. Elements crossing jamlet boundaries use J2J messaging (similar to
       unaligned load/store). Elements sliding out of range are zero-filled.
-- [ ] vslide1up/vslide1down - Same as above but N=1 and element 0 (or vl-1) comes from scalar.
+- [x] vslide1up/vslide1down - Same as above but N=1 and element 0 (or vl-1) comes from scalar.
+      Masked forms still gated (TODO: scalar inject under v0).
 - [x] vrgather.vv - Uses J2J load infrastructure. For each dst element i,
       read index[i], send request to jamlet holding src[index[i]], receive and write to dst[i].
-- [ ] vrgather.vx/vi
-- [ ] vrgatherei16.vv - Same as vrgather but index_ew fixed at 16 bits.
+- [x] vrgather.vx/vi
+- [x] vrgatherei16.vv - Same as vrgather but index_ew fixed at 16 bits.
 
 #### 2. Reductions
 See `09_reductions.txt` for detailed spec coverage.
@@ -83,7 +85,8 @@ Element 0 lives in a specific jamlet determined by word_order. Scalar registers 
 
 - [x] vmv.x.s - Uses ReadRegElement kinstr + READ_REG_WORD message.
 - [x] vmv.s.x - Uses VBroadcastOp with n_elements=1.
-- [ ] vfmv.f.s / vfmv.s.f - Same as above, just FP register instead of integer.
+- [x] vfmv.f.s / vfmv.s.f - Same as above, just FP register instead of integer.
+      NaN-boxing not applied; tracked in PLAN_fp_nan_boxing.md.
 
 ### Local Operations (No Cross-Jamlet Communication)
 
@@ -124,36 +127,48 @@ These operations work independently within each jamlet.
 - VI: add, rsub, and, or, xor, sll, srl, sra ✓
 
 ### Float Arithmetic
-- VV: fadd, fsub, fmul ✓
-- VF: fmadd, fmacc ✓
+- VV/VF: fadd, fsub, fmul, fdiv (⚠ no rm/fflags/latency), fmin, fmax,
+  fsgnj/fsgnjn/fsgnjx, fmacc/fnmacc/fmsac/fnmsac, fmadd/fnmadd/fmsub/fnmsub ✓
+- VF only: frsub, frdiv (⚠ same caveats as fdiv)
+- Widening: vfwadd/vfwsub .vv/.vf and .wv/.wf, vfwmul, vfwmacc/vfwnmacc/
+  vfwmsac/vfwnmsac ✓
 
 ### Comparisons
-- VI: msle, msleu, msgt, msgtu ✓
-- VV: msne ✓
+- VV/VX/VI integer compares (.vv/.vx/.vi where applicable): mseq, msne,
+  mslt[u], msle[u], msgt[u] ✓
 
 ### Reductions (via oamlet/reduction.py, decomposed into gather + arith kinstrs)
 - Integer: sum, max, maxu, min, minu, and, or, xor ✓
 - Widening integer: wsum, wsumu ✓
 - Float: fredusum, fredmax, fredmin ✓
 - Widening float: fwredusum ✓
+- Ordered FP (vfredosum, vfwredosum) — not yet implemented
 
 ### Unary / Conversion
 - vmv.v.v (copy) ✓
 - vzext.vf2/vf4/vf8, vsext.vf2/vf4/vf8 ✓
-- vnsrl.wi (narrow shift right) ✓
-- vfcvt.xu.f.v, vfcvt.x.f.v, vfcvt.f.xu.v, vfcvt.f.x.v ✓
-- vfcvt.rtz.xu.f.v, vfcvt.rtz.x.f.v ✓
+- vnsrl.wi (narrow shift right) ✓ — full vnsrl/vnsra .wv/.wx/.wi pending
+- vfcvt.xu.f.v, vfcvt.x.f.v, vfcvt.f.xu.v, vfcvt.f.x.v ⚠ (ignores frm)
+- vfcvt.rtz.xu.f.v, vfcvt.rtz.x.f.v ⚠
 
 ### Move / Merge / Permutation
 - vmv.v.i, vmv.v.x (broadcast) ✓
-- vmv.x.s, vmv.s.x (scalar-vector element access) ✓
+- vmv.x.s, vmv.s.x, vfmv.f.s, vfmv.s.f (scalar-vector element access) ✓
 - vmv1r-vmv8r (whole register move) ✓
-- vmerge.vxm ✓
+- vmerge.vxm, vmerge.vvm, vmerge.vim ✓
 - vid.v ✓
-- vrgather.vv ✓
+- vrgather.vv, vrgather.vx, vrgather.vi, vrgatherei16.vv ✓
+- vslideup.vx/.vi, vslidedown.vx/.vi ✓
+- vslide1up.vx, vslide1down.vx, vfslide1up.vf, vfslide1down.vf ✓ (unmasked only)
 
 ### Mask
-- vmnand.mm ✓
+- All 8 mask-mask logicals (vmand/vmandn/vmor/vmorn/vmxor/vmnand/vmnor/vmxnor) ✓
+- vcpop.m, vfirst.m ✓
+- vmsbf.m, vmsif.m, vmsof.m ✓ (test file missing on disk; see PLAN_mask_ops.md)
+
+### System / Trap
+- Trap delivery: scalar/vector page faults; mret; per-op fault metadata
+  aggregation through sync network ✓
 
 ### Infrastructure
 - ReadMemWord/WriteMemWord transactions ✓
