@@ -39,3 +39,4 @@ One-line index of plans in `plans/`. See `ROADMAP.md` for the big picture.
 - `PLAN_reductions.md` — `Vreduction` (vector.py) + `oamlet/reduction.py`. Ordered-float follow-up in `TODO.md`.
 - `PLAN_memlet.md` — Chisel impl under `src/main/scala/zamlet/memlet/`
 - `PLAN_slides_and_gathers.md` — `RegSlide` / `RegGather` in `python/zamlet/transactions/`; `Vslide` / `Vrgather*` / `Vslide1` in `instructions/vector.py`. Follow-ups in `TODO.md` and `PLAN_fp_nan_boxing.md`.
+- `PLAN_trap_delivery.md` — CSR/cause constants in `python/zamlet/trap.py`; trap entry/scalar+vector access checks in `oamlet/oamlet.py`; `Mret` in `instructions/system.py`; vector fault aggregation in `lamlet/unordered.py` + `lamlet/ordered.py` + `synchronization.py`; kernel tests in `kernel_tests/trap_delivery/`. Follow-ups (fault-only-first loads, `vstart` resume) in `TODO.md`.
