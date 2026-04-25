@@ -5,6 +5,18 @@
 - `docs_llm/plan_status.md` — one-line index of plans in `docs_llm/plans/`.
 - `docs_llm/TODO.md` — smaller known issues and follow-ups.
 
+## Worktree layout
+This checkout is one of several sibling worktrees under `~/Projects/zamlet/` (e.g.
+`main`, `fft`, `memlet`, `rvv_python`), backed by a shared bare repo at `.bare`. To
+inspect another branch's state without checking it out, read directly from the sibling
+path. `RESTART.md` is per-worktree.
+
+## Memory
+The `memory/` directory under `~/.claude/projects/` is symlinked across all zamlet
+worktrees, so memory is shared. Multiple sessions may run in parallel, so do not
+write branch-specific or transient state to memory — it bleeds across worktrees and
+can race with concurrent writes.
+
 ## Development Environment (Nix)
 This project uses Nix for dependency management. Enter the development shell with
 `nix-shell`. See `shell.nix` for what the environment provides.
