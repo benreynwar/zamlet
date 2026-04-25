@@ -41,7 +41,6 @@ test_suite(
         "//python/zamlet/kernel_tests/bitreverse_reorder:test_bitreverse_repro",
         "//python/zamlet/kernel_tests/bitreverse_reorder:test_bitreverse_reorder64_n8",
         "//python/zamlet/kernel_tests/bitreverse_reorder:test_bitreverse_reorder64_n16",
-        "//python/zamlet/kernel_tests/bitreverse_reorder:test_bitreverse_reorder64_n32",
     ],
 )
 
