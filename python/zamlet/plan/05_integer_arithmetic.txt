@@ -23,10 +23,11 @@ See test_suite_reference.txt for complete list
 
 Implementation Summary
 ----------------------
-Currently implemented: ~40 instructions (ADD, SUB, RSUB, AND, OR, XOR, SLL, SRL, SRA,
-MUL, MACC, MADD, NMSAC, NMSUB across VV/VX/VI forms; comparisons; moves; merge)
+Currently implemented: ~48 instructions (ADD, SUB, RSUB, AND, OR, XOR, SLL, SRL, SRA,
+MUL, MACC, MADD, NMSAC, NMSUB across VV/VX/VI forms; MIN, MINU, MAX, MAXU across
+VV/VX forms; comparisons; moves; merge)
 Total in spec: ~70 single-width integer arithmetic instructions
-Coverage: ~57%
+Coverage: ~68%
 
 ADDITION AND SUBTRACTION (Status: ✓)
 =====================================
@@ -139,25 +140,33 @@ Pseudoinstructions for Missing Compares:
   - vmslt{u}.vi: Decrement immediate and use vmsle{u}.vi
   - vmsge{u}.vi: Decrement immediate and use vmsgt{u}.vi
 
-MIN/MAX OPERATIONS (Status: ✗)
+MIN/MAX OPERATIONS (Status: ✓)
 ===============================
 
 Spec: v-st-ext.adoc lines 2818-2840
 
-VMINU.VV, VMINU.VX (Status: ✗)
+VMINU.VV, VMINU.VX (Status: ✓)
   Description: Unsigned minimum
+  Implementation: VArithVv/VArithVx with VArithOp.MINU in instructions/vector.py
+  Decoding: Search decode.py for "VArithOp.MINU"
 
-VMIN.VV, VMIN.VX (Status: ✗)
+VMIN.VV, VMIN.VX (Status: ✓)
   Description: Signed minimum
+  Implementation: VArithVv/VArithVx with VArithOp.MIN in instructions/vector.py
+  Decoding: Search decode.py for "VArithOp.MIN"
 
-VMAXU.VV, VMAXU.VX (Status: ✗)
+VMAXU.VV, VMAXU.VX (Status: ✓)
   Description: Unsigned maximum
+  Implementation: VArithVv/VArithVx with VArithOp.MAXU in instructions/vector.py
+  Decoding: Search decode.py for "VArithOp.MAXU"
 
-VMAX.VV, VMAX.VX (Status: ✗)
+VMAX.VV, VMAX.VX (Status: ✓)
   Description: Signed maximum
+  Implementation: VArithVv/VArithVx with VArithOp.MAX in instructions/vector.py
+  Decoding: Search decode.py for "VArithOp.MAX"
 
-MULTIPLY OPERATIONS (Status: ⚠ Partial)
-========================================
+MULTIPLY OPERATIONS (Status: ✓)
+================================
 
 Spec: v-st-ext.adoc lines 2841-2878
 
@@ -171,14 +180,28 @@ VMUL.VV, VMUL.VX (Status: ✓)
     - Returns low SEW bits of product
     - No .vi form in spec
 
-VMULH.VV, VMULH.VX (Status: ✗)
+VMULH.VV, VMULH.VX (Status: ✓)
   Description: Signed multiply, return high SEW bits of product
+  Implementation: VArithVv/VArithVx with VArithOp.MULH; high half computed
+    in _compute_arith via (src1*src2) >> (eb*8). Routed through the simple
+    same-width path (both sources signed).
+  Decoding: decode.py funct6=0x27 funct3=0x2 (.vv) / 0x6 (.vx)
 
-VMULHU.VV, VMULHU.VX (Status: ✗)
+VMULHU.VV, VMULHU.VX (Status: ✓)
   Description: Unsigned multiply, return high SEW bits
+  Implementation: VArithVv/VArithVx with VArithOp.MULHU. Same compute path
+    as MULH; SIGNED_INT_OPS / UNSIGNED_INT_OPS membership selects the
+    unpack format (unsigned for MULHU).
+  Decoding: decode.py funct6=0x24 funct3=0x2 (.vv) / 0x6 (.vx)
 
-VMULHSU.VV, VMULHSU.VX (Status: ✗)
-  Description: Signed-Unsigned multiply, return high bits
+VMULHSU.VV, VMULHSU.VX (Status: ✓)
+  Description: Signed-Unsigned multiply, return high bits (vs2 signed,
+    vs1/rs1 unsigned)
+  Implementation: VArithVvOv/VArithVxOv with VArithOp.MULHSU and
+    shape=OvShape.SAME (a new same-width shape added so the per-source
+    signedness path can carry src1_signed=False, src2_signed=True with
+    src/dst all at SEW). High half computed in _compute_arith.
+  Decoding: decode.py funct6=0x26 funct3=0x2 (.vv) / 0x6 (.vx)
 
 DIVIDE AND REMAINDER (Status: ✗)
 =================================
@@ -229,26 +252,59 @@ VNMSUB.VV, VNMSUB.VX (Status: ✓)
   Implementation: VArithVv/VArithVx with VArithOp.NMSUB in instructions/vector.py
   Decoding: Search decode.py for "VArithOp.NMSUB"
 
-ADD-WITH-CARRY / SUBTRACT-WITH-BORROW (Status: ✗)
-==================================================
+ADD-WITH-CARRY / SUBTRACT-WITH-BORROW (Status: ⚠ Partial)
+==========================================================
 
 Spec: v-st-ext.adoc lines 2463-2571
 Note: For multi-word integer arithmetic
 
-VADC.VVM, VADC.VXM, VADC.VIM (Status: ✗)
+VADC.VVM (Status: ✓)
   Description: Add with carry-in from v0
-  Notes: Encoded as masked but operates on all elements
-        vm=0 encoding used, vm=1 reserved
+  Implementation: VArithVv with VArithOp.ADC. Routed via CARRY_BORROW_OPS
+    in instructions/vector.py:VArithVv.update_state, which forces mask_reg=None
+    (full writes) and carry_in_reg=0 (v0 supplies the per-element carry-in).
+    VArithVvOp threads carry_in_preg through admit/execute and _compute_arith
+    returns src2_val + src1_val + carry_in.
+  Decoding: decode.py funct6=0x10 funct3=0x0 vm==0
+  Notes: vm=0 mandatory (vm=1 reserved). Every body element is written.
+
+VADC.VXM (Status: ✓)
+  Description: Add with carry-in from v0 (scalar)
+  Implementation: VArithVx with VArithOp.ADC. CARRY_BORROW_OPS membership
+    drives the wrapper to set carry_in_reg=0 / mask_reg=None. VArithVxOp
+    threads carry_in_preg through admit/execute the same way as VArithVvOp.
+  Decoding: decode.py funct6=0x10 funct3=0x4 vm==0
+  Notes: vm=0 mandatory (vm=1 reserved).
+
+VADC.VIM (Status: ✓)
+  Description: Add with carry-in from v0 (5-bit immediate)
+  Implementation: VArithVi with VArithOp.ADC. The immediate is sign-extended
+    to word_bytes by VArithVi.update_state and dispatched through the same
+    VArithVxOp path used by .vxm.
+  Decoding: decode.py funct6=0x10 funct3=0x3 vm==0
+  Notes: vm=0 mandatory (vm=1 reserved).
 
 VMADC.VVM, VMADC.VXM, VMADC.VIM (Status: ✗)
   Description: Add and generate carry-out mask
-  Notes: Can be masked or unmasked
+  Notes: Can be masked or unmasked. Phase D — VCmpOp surgery.
 
 VMADC.VV, VMADC.VX, VMADC.VI (Status: ✗)
   Description: Add and generate carry-out (no carry-in)
 
-VSBC.VVM, VSBC.VXM (Status: ✗)
+VSBC.VVM (Status: ✓)
   Description: Subtract with borrow-in from v0
+  Implementation: VArithVv with VArithOp.SBC. Same plumbing as VADC.VVM —
+    CARRY_BORROW_OPS membership in kinstructions.py drives the wrapper to
+    set carry_in_reg=0 and mask_reg=None. _compute_arith returns
+    src2_val - src1_val - carry_in.
+  Decoding: decode.py funct6=0x12 funct3=0x0 vm==0
+  Notes: vm=0 mandatory (vm=1 reserved). No .vim form (reserved).
+
+VSBC.VXM (Status: ✓)
+  Description: Subtract with borrow-in from v0 (scalar)
+  Implementation: VArithVx with VArithOp.SBC. Same dispatch as VADC.VXM.
+  Decoding: decode.py funct6=0x12 funct3=0x4 vm==0
+  Notes: vm=0 mandatory. No .vim form (reserved by spec).
 
 VMSBC.VVM, VMSBC.VXM (Status: ✗)
   Description: Subtract and generate borrow-out mask

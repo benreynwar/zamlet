@@ -807,6 +807,26 @@ def decode_standard(instruction_bytes: bytes) -> Instruction:
         elif funct6 == 0x29 and funct3 == 0x0:
             vs1 = rs1
             return V.VArithVv(vd=rd, vs1=vs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.SRA)
+        elif funct6 == 0x04 and funct3 == 0x0:
+            vs1 = rs1
+            return V.VArithVv(vd=rd, vs1=vs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.MINU)
+        elif funct6 == 0x05 and funct3 == 0x0:
+            vs1 = rs1
+            return V.VArithVv(vd=rd, vs1=vs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.MIN)
+        elif funct6 == 0x06 and funct3 == 0x0:
+            vs1 = rs1
+            return V.VArithVv(vd=rd, vs1=vs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.MAXU)
+        elif funct6 == 0x07 and funct3 == 0x0:
+            vs1 = rs1
+            return V.VArithVv(vd=rd, vs1=vs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.MAX)
+        # vadc.vvm — vm=0 mandatory (vm=1 reserved). v0 is carry-in.
+        elif funct6 == 0x10 and funct3 == 0x0 and vm == 0:
+            vs1 = rs1
+            return V.VArithVv(vd=rd, vs1=vs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.ADC)
+        # vsbc.vvm — vm=0 mandatory (vm=1 reserved). v0 is borrow-in.
+        elif funct6 == 0x12 and funct3 == 0x0 and vm == 0:
+            vs1 = rs1
+            return V.VArithVv(vd=rd, vs1=vs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.SBC)
         # OPIVX (funct3 = 0x4) - integer vector-scalar
         elif funct6 == 0x00 and funct3 == 0x4:
             return V.VArithVx(vd=rd, rs1=rs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.ADD)
@@ -829,6 +849,20 @@ def decode_standard(instruction_bytes: bytes) -> Instruction:
             return V.VArithVx(vd=rd, rs1=rs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.SRL)
         elif funct6 == 0x29 and funct3 == 0x4:
             return V.VArithVx(vd=rd, rs1=rs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.SRA)
+        elif funct6 == 0x04 and funct3 == 0x4:
+            return V.VArithVx(vd=rd, rs1=rs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.MINU)
+        elif funct6 == 0x05 and funct3 == 0x4:
+            return V.VArithVx(vd=rd, rs1=rs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.MIN)
+        elif funct6 == 0x06 and funct3 == 0x4:
+            return V.VArithVx(vd=rd, rs1=rs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.MAXU)
+        elif funct6 == 0x07 and funct3 == 0x4:
+            return V.VArithVx(vd=rd, rs1=rs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.MAX)
+        # vadc.vxm — vm=0 mandatory (vm=1 reserved). v0 is carry-in.
+        elif funct6 == 0x10 and funct3 == 0x4 and vm == 0:
+            return V.VArithVx(vd=rd, rs1=rs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.ADC)
+        # vsbc.vxm — vm=0 mandatory (vm=1 reserved). v0 is borrow-in.
+        elif funct6 == 0x12 and funct3 == 0x4 and vm == 0:
+            return V.VArithVx(vd=rd, rs1=rs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.SBC)
         # OPIVI (funct3 = 0x3) - integer vector-immediate
         elif funct6 == 0x00 and funct3 == 0x3:
             simm5 = rs1
@@ -851,6 +885,11 @@ def decode_standard(instruction_bytes: bytes) -> Instruction:
         elif funct6 == 0x29 and funct3 == 0x3:
             simm5 = rs1
             return V.VArithVi(vd=rd, vs2=vs2, simm5=simm5, vm=vm, op=kinstructions.VArithOp.SRA)
+        # vadc.vim — vm=0 mandatory (vm=1 reserved). v0 is carry-in.
+        # No vsbc.vim (reserved in spec).
+        elif funct6 == 0x10 and funct3 == 0x3 and vm == 0:
+            simm5 = rs1
+            return V.VArithVi(vd=rd, vs2=vs2, simm5=simm5, vm=vm, op=kinstructions.VArithOp.ADC)
         # Narrowing right shift family (vnsrl, vnsra). funct6 0x2c = vnsrl,
         # 0x2d = vnsra. funct3 0x0 = .wv, 0x3 = .wi (uimm), 0x4 = .wx.
         elif funct6 == 0x2c and funct3 == 0x0:
@@ -1016,6 +1055,32 @@ def decode_standard(instruction_bytes: bytes) -> Instruction:
             return V.VArithVv(vd=rd, vs1=vs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.MUL)
         elif funct6 == 0x25 and funct3 == 0x6:
             return V.VArithVx(vd=rd, rs1=rs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.MUL)
+        # High-half integer multiplies. MULH/MULHU are same-signedness so use
+        # the simple VArithVv/VArithVx path; MULHSU is mixed-signedness so it
+        # rides the Ov path with shape=SAME.
+        elif funct6 == 0x24 and funct3 == 0x2:
+            vs1 = rs1
+            return V.VArithVv(vd=rd, vs1=vs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.MULHU)
+        elif funct6 == 0x24 and funct3 == 0x6:
+            return V.VArithVx(vd=rd, rs1=rs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.MULHU)
+        elif funct6 == 0x26 and funct3 == 0x2:
+            # vmulhsu.vv: vs2 signed, vs1 unsigned
+            vs1 = rs1
+            return V.VArithVvOv(
+                vd=rd, vs1=vs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.MULHSU,
+                shape=V.OvShape.SAME, src1_signed=False, src2_signed=True,
+                mnemonic='vmulhsu.vv')
+        elif funct6 == 0x26 and funct3 == 0x6:
+            # vmulhsu.vx: vs2 signed, rs1 unsigned
+            return V.VArithVxOv(
+                vd=rd, rs1=rs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.MULHSU,
+                shape=V.OvShape.SAME, scalar_signed=False, src2_signed=True,
+                mnemonic='vmulhsu.vx')
+        elif funct6 == 0x27 and funct3 == 0x2:
+            vs1 = rs1
+            return V.VArithVv(vd=rd, vs1=vs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.MULH)
+        elif funct6 == 0x27 and funct3 == 0x6:
+            return V.VArithVx(vd=rd, rs1=rs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.MULH)
         elif funct6 == 0x2d and funct3 == 0x2:
             vs1 = rs1
             return V.VArithVv(vd=rd, vs1=vs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.MACC)

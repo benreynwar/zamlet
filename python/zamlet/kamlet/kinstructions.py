@@ -32,8 +32,13 @@ class VArithOp(Enum):
     # Integer
     ADD = "add"
     SUB = "sub"
+    ADC = "adc"
+    SBC = "sbc"
     RSUB = "rsub"
     MUL = "mul"
+    MULH = "mulh"
+    MULHU = "mulhu"
+    MULHSU = "mulhsu"
     MACC = "macc"
     MADD = "madd"
     NMSAC = "nmsac"
@@ -162,6 +167,7 @@ class Renamed:
     dst_pregs: dict[int, int] = field(default_factory=dict)
     src2_pregs: dict[int, int] = field(default_factory=dict)
     mask_preg: int | None = None
+    carry_in_preg: int | None = None
     index_bound_bits: int = 0
     ident_query_distance: int | None = None
 
@@ -171,6 +177,8 @@ class Renamed:
         result.extend(self.src2_pregs.values())
         if self.mask_preg is not None:
             result.append(self.mask_preg)
+        if self.carry_in_preg is not None:
+            result.append(self.carry_in_preg)
         return result
 
     @property
@@ -1439,21 +1447,27 @@ FLOAT_OPS = (
 )
 SGNJ_OPS = (VArithOp.FSGNJ, VArithOp.FSGNJN, VArithOp.FSGNJX)
 SIGNED_INT_OPS = (
-    VArithOp.ADD, VArithOp.SUB, VArithOp.RSUB, VArithOp.MUL,
+    VArithOp.ADD, VArithOp.SUB, VArithOp.RSUB, VArithOp.MUL, VArithOp.MULH,
     VArithOp.MACC, VArithOp.MADD, VArithOp.NMSAC, VArithOp.NMSUB,
     VArithOp.AND, VArithOp.OR, VArithOp.XOR,
     VArithOp.SLL, VArithOp.SRA, VArithOp.MIN, VArithOp.MAX,
 )
-UNSIGNED_INT_OPS = (VArithOp.MINU, VArithOp.MAXU, VArithOp.SRL)
+UNSIGNED_INT_OPS = (VArithOp.MINU, VArithOp.MAXU, VArithOp.SRL, VArithOp.MULHU,
+                    VArithOp.ADC, VArithOp.SBC)
 # Ops where vd is both source (accumulator) and destination.
 ACCUM_OPS = (
     VArithOp.MACC, VArithOp.MADD, VArithOp.NMSAC, VArithOp.NMSUB,
     VArithOp.FMACC, VArithOp.FNMACC, VArithOp.FMADD, VArithOp.FNMADD,
     VArithOp.FMSAC, VArithOp.FNMSAC, VArithOp.FMSUB, VArithOp.FNMSUB,
 )
+# Ops that consume v0 as a per-element carry-in / borrow-in (vadc/vsbc).
+# vm bit is repurposed: vm=0 means "use v0 as carry-in", vm=1 is reserved.
+# Every body element is written regardless of v0 (no write-gating).
+CARRY_BORROW_OPS = (VArithOp.ADC, VArithOp.SBC)
 
 
-def _compute_arith(op, src1_val, src2_val, acc_val, eb, shift_eb=None):
+def _compute_arith(op, src1_val, src2_val, acc_val, eb, shift_eb=None,
+                   carry_in=0):
     """Compute the result of a vector arithmetic operation.
 
     src1_val: first source (vs1 for VV, scalar for VX)
@@ -1464,17 +1478,30 @@ def _compute_arith(op, src1_val, src2_val, acc_val, eb, shift_eb=None):
         mask. Defaults to eb. For narrowing shifts (vnsrl, vnsra) this is
         the source (2*SEW) width; for widening shifts (vwsll) this is the
         destination width.
+    carry_in: per-element carry-in / borrow-in bit (0 or 1) for ADC/SBC.
+        Ignored by every other op.
     """
     if shift_eb is None:
         shift_eb = eb
     if op == VArithOp.ADD or op == VArithOp.FADD:
         return src2_val + src1_val
+    elif op == VArithOp.ADC:
+        return src2_val + src1_val + carry_in
+    elif op == VArithOp.SBC:
+        return src2_val - src1_val - carry_in
     elif op == VArithOp.SUB or op == VArithOp.FSUB:
         return src2_val - src1_val
     elif op == VArithOp.RSUB or op == VArithOp.FRSUB:
         return src1_val - src2_val
     elif op == VArithOp.MUL or op == VArithOp.FMUL:
         return src1_val * src2_val
+    elif op in (VArithOp.MULH, VArithOp.MULHU, VArithOp.MULHSU):
+        # Returns the high SEW bits of the 2*SEW product. Sources have already
+        # been unpacked with the correct signedness (signed/unsigned for
+        # MULH/MULHU; for MULHSU the Ov path unpacks vs1 unsigned, vs2 signed).
+        # Python's `>>` is arithmetic for negative ints, so the sign of the
+        # high half is preserved.
+        return (src1_val * src2_val) >> (eb * 8)
     elif op == VArithOp.FDIV:
         return src2_val / src1_val
     elif op == VArithOp.FRDIV:
@@ -1574,6 +1601,7 @@ class VArithVvOp(KInstr):
     element_width: int
     word_order: addresses.WordOrder
     instr_ident: int
+    carry_in_reg: int | None = None
 
     async def admit(self, kamlet) -> 'VArithVvOp | None':
         bits_in_vline = kamlet.params.vline_bytes * 8
@@ -1586,6 +1614,8 @@ class VArithVvOp(KInstr):
         src1_pregs = [kamlet.r(self.src1 + i) for i in range(n_vlines)]
         src2_pregs = [kamlet.r(self.src2 + i) for i in range(n_vlines)]
         mask_preg = kamlet.r(self.mask_reg) if self.mask_reg is not None else None
+        carry_in_preg = (kamlet.r(self.carry_in_reg)
+                         if self.carry_in_reg is not None else None)
         if is_accum:
             # Accumulator RMW: reuse existing phys (no rename rotation —
             # iter-to-iter RAW is inherent, rotation would just drain the
@@ -1597,6 +1627,8 @@ class VArithVvOp(KInstr):
             exclude = set(src1_pregs) | set(src2_pregs)
             if mask_preg is not None:
                 exclude.add(mask_preg)
+            if carry_in_preg is not None:
+                exclude.add(carry_in_preg)
             dst_pregs = await kamlet.alloc_dst_pregs(
                 base_arch=self.dst, start_vline=0, end_vline=n_vlines - 1,
                 start_index=0, n_elements=self.n_elements,
@@ -1608,6 +1640,7 @@ class VArithVvOp(KInstr):
             src2_pregs={v: src2_pregs[v] for v in range(n_vlines)},
             dst_pregs={v: dst_pregs[v] for v in range(n_vlines)},
             mask_preg=mask_preg,
+            carry_in_preg=carry_in_preg,
         )
 
     async def execute(self, kamlet) -> None:
@@ -1644,7 +1677,14 @@ class VArithVvOp(KInstr):
                         if is_accum:
                             acc_bytes = jamlet.rf_slice[dst_base + byte_offset:dst_base + byte_offset + eb]
                             acc_val = struct.unpack(fmt, acc_bytes)[0]
-                        result = _compute_arith(self.op, src1_val, src2_val, acc_val, eb)
+                        carry_in = 0
+                        if r.carry_in_preg is not None:
+                            _, carry_in = kamlet.get_is_active(
+                                start_index, self.n_elements, self.element_width,
+                                self.word_order, r.carry_in_preg, vline_index,
+                                j_in_k_index, index_in_j)
+                        result = _compute_arith(self.op, src1_val, src2_val, acc_val,
+                                                eb, carry_in=carry_in)
                         result = _arith_truncate_int(self.op, result, eb)
                         jamlet.write_vreg(dst_preg, byte_offset, struct.pack(fmt, result),
                                           span_id=span_id)
@@ -1663,6 +1703,7 @@ class VArithVxOp(KInstr):
     word_order: addresses.WordOrder
     instr_ident: int
     is_float: bool = False
+    carry_in_reg: int | None = None
 
     async def admit(self, kamlet) -> 'VArithVxOp | None':
         bits_in_vline = kamlet.params.vline_bytes * 8
@@ -1674,12 +1715,16 @@ class VArithVxOp(KInstr):
         # a src arch overlapping dst arch resolves to the old phys.
         src2_pregs = [kamlet.r(self.src2 + i) for i in range(n_vlines)]
         mask_preg = kamlet.r(self.mask_reg) if self.mask_reg is not None else None
+        carry_in_preg = (kamlet.r(self.carry_in_reg)
+                         if self.carry_in_reg is not None else None)
         if is_accum:
             dst_pregs = [kamlet.rw(self.dst + i) for i in range(n_vlines)]
         else:
             exclude = set(src2_pregs)
             if mask_preg is not None:
                 exclude.add(mask_preg)
+            if carry_in_preg is not None:
+                exclude.add(carry_in_preg)
             dst_pregs = await kamlet.alloc_dst_pregs(
                 base_arch=self.dst, start_vline=0, end_vline=n_vlines - 1,
                 start_index=0, n_elements=self.n_elements,
@@ -1690,6 +1735,7 @@ class VArithVxOp(KInstr):
             src2_pregs={v: src2_pregs[v] for v in range(n_vlines)},
             dst_pregs={v: dst_pregs[v] for v in range(n_vlines)},
             mask_preg=mask_preg,
+            carry_in_preg=carry_in_preg,
         )
 
     async def execute(self, kamlet) -> None:
@@ -1724,7 +1770,14 @@ class VArithVxOp(KInstr):
                         if is_accum:
                             acc_bytes = jamlet.rf_slice[dst_base + byte_offset:dst_base + byte_offset + eb]
                             acc_val = struct.unpack(fmt, acc_bytes)[0]
-                        result = _compute_arith(self.op, scalar_val, src2_val, acc_val, eb)
+                        carry_in = 0
+                        if r.carry_in_preg is not None:
+                            _, carry_in = kamlet.get_is_active(
+                                start_index, self.n_elements, self.element_width,
+                                self.word_order, r.carry_in_preg, vline_index,
+                                j_in_k_index, index_in_j)
+                        result = _compute_arith(self.op, scalar_val, src2_val, acc_val,
+                                                eb, carry_in=carry_in)
                         result = _arith_truncate_int(self.op, result, eb)
                         jamlet.write_vreg(dst_preg, byte_offset, struct.pack(fmt, result),
                                           span_id=span_id)

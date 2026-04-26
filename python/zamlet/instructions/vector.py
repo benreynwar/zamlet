@@ -2017,10 +2017,17 @@ class VArithVv:
             pc=s.pc,
         )
 
-        if self.vm:
+        # vadc/vsbc: vm bit is repurposed as "use v0 as carry-in"; every body
+        # element is written regardless of v0. Encoded with vm=0 (the .vvm
+        # form); vm=1 is reserved.
+        is_carry_op = self.op in kinstructions.CARRY_BORROW_OPS
+        if is_carry_op:
+            assert self.vm == 0, f'{self.op.value} requires vm=0 (vm=1 reserved)'
             mask_reg = None
+            carry_in_reg = 0
         else:
-            mask_reg = 0
+            mask_reg = None if self.vm else 0
+            carry_in_reg = None
 
         _ACCUM_OPS = kinstructions.ACCUM_OPS
         vsew = (s.vtype >> 3) & 0x7
@@ -2038,6 +2045,8 @@ class VArithVv:
         s.set_vrf_ordering(self.vd, element_width)
         if mask_reg is not None:
             await s.ensure_vrf_ordering(mask_reg, 1, span_id)
+        if carry_in_reg is not None:
+            await s.ensure_vrf_ordering(carry_in_reg, 1, span_id)
 
         instr_ident = await s.get_instr_ident()
         kinstr = kinstructions.VArithVvOp(
@@ -2050,6 +2059,7 @@ class VArithVv:
             element_width=element_width,
             word_order=word_order,
             instr_ident=instr_ident,
+            carry_in_reg=carry_in_reg,
         )
         await s.add_to_instruction_buffer(kinstr, span_id)
         s.monitor.finalize_children(span_id)
@@ -2154,10 +2164,20 @@ class VArithVx:
 
         await s.scalar.wait_all_regs_ready(None, None, [self.rs1], [])
 
-        if self.vm:
+        # vadc/vsbc.vxm: vm bit is repurposed as "use v0 as carry-in"; every
+        # body element is written regardless of v0. Encoded with vm=0; vm=1
+        # is reserved.
+        is_carry_op = self.op in kinstructions.CARRY_BORROW_OPS
+        if is_carry_op:
+            assert self.vm == 0, f'{self.op.value} requires vm=0 (vm=1 reserved)'
             mask_reg = None
+            carry_in_reg = 0
+        elif self.vm:
+            mask_reg = None
+            carry_in_reg = None
         else:
             mask_reg = 0
+            carry_in_reg = None
 
         vsew = (s.vtype >> 3) & 0x7
         element_width = 8 << vsew
@@ -2175,6 +2195,8 @@ class VArithVx:
         s.set_vrf_ordering(self.vd, element_width)
         if mask_reg is not None:
             await s.ensure_vrf_ordering(mask_reg, 1, span_id)
+        if carry_in_reg is not None:
+            await s.ensure_vrf_ordering(carry_in_reg, 1, span_id)
 
         instr_ident = await s.get_instr_ident()
         kinstr = kinstructions.VArithVxOp(
@@ -2187,6 +2209,7 @@ class VArithVx:
             element_width=element_width,
             word_order=word_order,
             instr_ident=instr_ident,
+            carry_in_reg=carry_in_reg,
         )
         await s.add_to_instruction_buffer(kinstr, span_id)
         s.monitor.finalize_children(span_id)
@@ -2218,10 +2241,20 @@ class VArithVi:
             pc=s.pc,
         )
 
-        if self.vm:
+        # vadc/vsbc.vim: vm bit is repurposed as "use v0 as carry-in"; every
+        # body element is written regardless of v0. Encoded with vm=0; vm=1
+        # is reserved.
+        is_carry_op = self.op in kinstructions.CARRY_BORROW_OPS
+        if is_carry_op:
+            assert self.vm == 0, f'{self.op.value} requires vm=0 (vm=1 reserved)'
             mask_reg = None
+            carry_in_reg = 0
+        elif self.vm:
+            mask_reg = None
+            carry_in_reg = None
         else:
             mask_reg = 0
+            carry_in_reg = None
 
         vsew = (s.vtype >> 3) & 0x7
         element_width = 8 << vsew
@@ -2240,6 +2273,8 @@ class VArithVi:
         s.set_vrf_ordering(self.vd, element_width)
         if mask_reg is not None:
             await s.ensure_vrf_ordering(mask_reg, 1, span_id)
+        if carry_in_reg is not None:
+            await s.ensure_vrf_ordering(carry_in_reg, 1, span_id)
 
         instr_ident = await s.get_instr_ident()
         kinstr = kinstructions.VArithVxOp(
@@ -2252,6 +2287,7 @@ class VArithVi:
             element_width=element_width,
             word_order=word_order,
             instr_ident=instr_ident,
+            carry_in_reg=carry_in_reg,
         )
         await s.add_to_instruction_buffer(kinstr, span_id)
         s.monitor.finalize_children(span_id)
@@ -2509,10 +2545,13 @@ class OvShape(Enum):
     WIDE   — widening with src2 already at 2*SEW (vw{add,sub}.wv/.wx,
              vfw{add,sub}.wv/.wf): dst_ew = 2*SEW.
     NARROW — narrowing with src2 at 2*SEW and dst at SEW (vnsrl, vnsra).
+    SAME   — same-width op routed through the Ov path because it needs
+             per-source signedness (vmulhsu).
     """
     BASE = 'base'
     WIDE = 'wide'
     NARROW = 'narrow'
+    SAME = 'same'
 
 
 def _ov_widths(shape: OvShape, sew: int) -> tuple[int, int, int]:
@@ -2523,6 +2562,8 @@ def _ov_widths(shape: OvShape, sew: int) -> tuple[int, int, int]:
         return sew, sew * 2, sew * 2
     if shape is OvShape.NARROW:
         return sew, sew * 2, sew
+    if shape is OvShape.SAME:
+        return sew, sew, sew
     raise ValueError(f"unknown Ov shape: {shape!r}")
 
 

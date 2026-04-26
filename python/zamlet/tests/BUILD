@@ -18,7 +18,7 @@ FAST_TESTS = [
     "test_vfirst",
     "test_trap_delivery",
     "test_vfmv_scalar",
-    "test_widening_arith",
+    "test_arith",
 ]
 
 SLOW_TESTS = [
@@ -102,6 +102,6 @@ test_suite(
         "test_vfirst",
         "test_trap_delivery",
         "test_vfmv_scalar",
-        "test_widening_arith",
+        "test_arith",
     ],
 )
