@@ -3,9 +3,14 @@
 ## Goal
 
 Model arithmetic execution as a per-jamlet collection of pipelined / iterative
-functional units, with multi-cycle completion tracked through the existing
-`WaitingItem` machinery. This lets us correctly model the long-latency ops the
-python model currently can't express at all:
+functional units, with multi-cycle completion tracked by one coroutine per
+in-flight kinstr on the kamlet (the existing async style — under
+uniform-broadcast dispatch the jamlets run in lockstep, so a single coroutine
+drives the per-jamlet fan-out at write time). This is **not** the
+`WaitingItem` / `cache_table.waiting_items` machinery, which is for
+memory/cache transactions; the existing `rf_info` register-file lock is
+sufficient as the in-flight scoreboard. This lets us correctly model the
+long-latency ops the python model currently can't express at all:
 
 - `vdiv.v{v,x}`, `vdivu.v{v,x}`, `vrem.v{v,x}`, `vremu.v{v,x}`
 - `vfdiv.v{v,f}`, `vfrdiv.vf`
@@ -23,7 +28,7 @@ arithmetic chapter (`vsadd`/`vssub`/`vaadd`/`vasub`/`vsmul`/`vssrl`/`vssra`/
 `vnclip`) and by FP correctness (rounding mode, fflags accumulation). The
 framework is:
 
-- rounding-mode input and flag outputs on the ALU waiting item,
+- rounding-mode input and flag outputs on the ALU coroutine,
 - per-jamlet sticky `fflags` and `vxsat` accumulators,
 - sync-network OR-reduce primitive (shared between fflags and vxsat),
 - CSR slots for `vxrm` / `vxsat` / `fcsr`.
@@ -93,84 +98,129 @@ existing path:
 
 ### Completion tracking
 
-One `JamletAluWaitingItem(WaitingItem)` per **(jamlet, instr_ident)** pair.
-A single long-latency kinstr produces `n_j` waiting items, one per jamlet,
-all keyed by the kinstr's `instr_ident`.
+ALU op completion uses the existing `rf_info` register-file lock as the
+in-flight scoreboard — no new table is needed. Today every kinstr does
+`rf_token = rf_info.start(read_pregs, write_pregs)` at dispatch and
+`rf_info.finish(rf_token, ...)` after its synchronous compute+write
+(`kinstructions.py:470-481`). For deferred ALU we keep `start` in
+`execute` but split `finish`: read-finish happens inside the spawned
+coroutine after the read step (leaving room for a future read-latency
+model); write-finish happens after the write step.
 
-Kamlet side: a counter keyed by `instr_ident`, initialised to `n_j` when
-the kinstr dispatches, decremented when a jamlet's item calls back. When
-the counter hits zero, the kamlet releases the RF lock and retires the
-kinstr from the scoreboard (`kamlet.py:138-165` pending-free path).
+`execute` stays synchronous — it allocates the RF token and spawns a
+single per-kinstr coroutine, then returns. The RS slot frees the same
+cycle, exactly as today. The jamlets run in lockstep under
+uniform-broadcast dispatch, so one coroutine drives the per-jamlet
+fan-out at write time; we don't need n_j coroutines.
 
-### `JamletAluWaitingItem` shape
+The framework lives as methods on the `AluKInstr` base class
+(`kinstructions.py`). `execute` claims the rf_info token (including any
+declared resources — see "Pipe occupancy" below) and spawns
+`_run_alu`, which calls the subclass's `alu_compute` to read operands +
+produce staged `AluResult`s, finishes reads immediately, awaits
+`latency` cycles, commits the staged writes (also OR-folding any
+`fflags` / `vxsat` outputs into the per-jamlet sticky regs), and
+finishes writes. Resource releases run on independent spawned
+coroutines, each releasing its resource after its declared occupancy
+(see "Pipe occupancy").
 
-Fields:
+The dependent-reader stall mechanism is unchanged: `_is_preg_idle`
+(`kamlet.py:328`) keys off `rf_info.write[preg]`, which now stays
+non-None for `latency` cycles instead of zero — exactly the desired
+behaviour. The existing `_drain_pending_pregs` loop (`kamlet.py:317`)
+picks up retired pregs as it does today.
 
-- `instr_ident`: propagated from the kinstr.
-- `pipe_tag`: one of {`int_alu`, `imul`, `idiv`, `fma`}. Drives which
-  jamlet-side queue the item lives in.
-- `cycles_remaining`: int, decremented once per cycle in `monitor_jamlet`.
-- `dst_preg`, `byte_offset`, `result_bytes`: what to write at retirement.
-- `span_id`: propagated through to the eventual `write_vreg` for RF lock
-  bookkeeping.
-- `rm_in`: rounding mode for this op (None for ops that don't use one).
-  Sourced either from a kinstr field or from the current `vxrm` / `fcsr.rm`
-  value snapshotted at dispatch — see "Rounding mode plumbing" below.
-- `fflags_out`: per-element OR of RISC-V accrued exception flags
-  (`NV|DZ|OF|UF|NX`) produced by this op on this jamlet. None for non-FP ops.
-- `vxsat_out`: bool, set by fixed-point ops that saturated on this jamlet.
-  None for non-fixed-point ops.
+This is **not** a `WaitingItem` and **not** an entry on
+`cache_table.waiting_items`. Those are for memory/cache transactions
+whose hazard machinery (read-set / write-set / cache-slot scans) doesn't
+apply to per-jamlet ALU ops; `rf_info` already handles read/write
+hazards per-preg. `instr_ident` is freed at dispatch — ALU ops have no
+inbound response packets, so they shouldn't keep a response-tag slot
+reserved past dispatch.
 
-Dispatch-time paths populate `fflags_out` / `vxsat_out` alongside the
-computed result. At retirement, the per-jamlet sticky accumulators
-(`jamlet.sticky_fflags`, `jamlet.sticky_vxsat`) are OR-updated. No
-cross-jamlet traffic per op.
+### Coroutine inputs
 
-Dispatch-time result computation:
+The coroutine closes over the kinstr (which provides `renamed`,
+`latency`, the per-element `compute`, `get_rm`, and any kinstr-level
+fields like `span_id`) and the `rf_token` from `rf_info.start`. That's
+all the dispatch path passes in.
 
-- When the kinstr fires at the jamlet, operands are read from the RF slice,
-  the result is computed immediately, and the bytes are stashed in the
-  waiting item.
-- `cycles_remaining` is set from the pipe latency.
-- On retirement (`cycles_remaining == 0`), the item writes `result_bytes`
-  into the destination preg and signals completion to the kamlet.
+`rm_in` is sourced inside the coroutine via `instruction.get_rm(kamlet)`
+— a kinstr field if the encoding has one, else a read of the kamlet-local
+`vxrm` / `fcsr.rm`. The existing scoreboard ordering guarantees any
+prior `csrw` to those CSRs has retired before this kinstr's coroutine
+runs, so no dispatch-time snapshot is needed.
 
-We pick dispatch-time compute (not retirement-time) because every long-
-latency op in scope has data-independent latency under the chosen
-algorithms. Retirement-time re-read would only matter for data-dependent
+Per-jamlet outputs are computed inside the coroutine (post-read):
+
+- Result bytes, written via `write_vreg(..., span_id)`.
+- `fflags` (5 bits, FP ops only) — OR-updated into
+  `jamlet.sticky_fflags`.
+- `vxsat` (1 bit, fixed-point ops only) — OR-updated into
+  `jamlet.sticky_vxsat`.
+
+Compute happens inside the coroutine immediately after the read step,
+not at dispatch. All long-latency ops in scope have data-independent
+latency under the chosen algorithms, so the fixed `latency` await is
+correct; retirement-time re-read would only matter for data-dependent
 paths (early-terminating SRT), which we defer.
+
+No cross-jamlet traffic per op; sticky accumulator updates are local.
 
 ### Pipe occupancy
 
-Each jamlet holds:
+Pipelined pipes (`int_alu`, `imul`, `fma`-single-op) need no occupancy
+datastructure. Coroutines stack — each one holds its `rf_info` write
+token for `latency` cycles via its `await` loop, which is structurally
+equivalent to "the unit accepts one op per cycle".
 
-- An `int_alu` pipeline register (or short shift register if we model
-  multi-cycle later) — pipelined, so a new op each cycle.
-- An `imul` pipeline shift register — pipelined.
-- A single-slot `idiv` resident register — busy flag blocks dispatch.
-- An `fma` pipeline shift register — pipelined for single ops. When a
-  multi-cycle op (`vfdiv` / `vfsqrt`) is iterating, subsequent FMA issues
-  block until its N-R chain clears.
+Non-pipelined pipes are tracked as named *resources* on `rf_info`,
+mirroring the read/write-register machinery already there. The
+`Resources` enum (in `register_file_slot.py`) currently lists `IDIV`
+and `FMA`; a kamlet's `rf_info` is constructed with `list(Resources)`,
+exposing one slot per resource that holds the current claimant's token
+or `None`.
 
-Dispatch from kamlet to jamlet stalls when the target pipe is not free.
-"Not free" for pipelined pipes means `no slot available this cycle`;
-for non-pipelined pipes means `busy flag set`.
+`AluKInstr` subclasses opt in by declaring a class-level dict
+`resources: dict[Resources, int]` mapping each resource to the number
+of cycles it is held. `execute` claims them by passing
+`resources=list(self.resources.keys())` to `rf_info.start`; `_run_alu`
+spawns one `_release_resource(...)` coroutine per resource, each
+releasing its resource via `rf_info.finish(token, resources=[r])`
+after its declared occupancy. `Kamlet.is_ready` defers dispatch when
+any of `instr.resources` is held.
+
+Concretely:
+
+- `vdiv` / `vrem` declare `{Resources.IDIV: <idiv_latency>}`.
+- Multi-cycle `vfdiv` / `vfsqrt` declare `{Resources.FMA: <nr_window>}`
+  to hold the FMA pipe across the Newton-Raphson iteration window;
+  single FMA ops leave `resources` empty.
+
+Resources live on the kamlet (one coroutine per kinstr drives them).
+Under uniform-broadcast dispatch and data-independent latency, all
+jamlets' pipes are aligned, so a single kamlet-side resource per pipe
+correctly gates dispatch. Decoupling resource release from
+write-finish lets a future op declare an occupancy shorter than its
+total latency (e.g. an iterative pipe that releases its critical unit
+before write-back), without changing the framework.
 
 ### Rounding mode plumbing
 
-CSR plumbing does **not** need a dispatch-time CSR read path. Rounding mode
-reaches the ALU via one of two routes:
+Rounding mode reaches the ALU via one of two routes, resolved inside
+`_run_alu` by `instruction.get_rm(kamlet)`:
 
 - **Kinstr field**: the kinstr carries `rm` directly. Used when the
   encoding already has it (e.g. FP arith ops with an explicit rm field,
   or fixed-point ops that inherit a compile-time-known vxrm).
-- **Param write beforehand**: a prior kinstr writes `vxrm` / `fcsr.rm`
-  into a kamlet-local register, and subsequent ALU ops snapshot that
-  value at dispatch. No cross-jamlet read.
+- **Kamlet-local CSR**: a prior `csrw` kinstr writes `vxrm` / `fcsr.rm`
+  into a kamlet-local register; the coroutine reads it at compute time.
+  The existing scoreboard ordering guarantees the prior `csrw` has
+  retired before this kinstr's coroutine runs, so no dispatch-time
+  snapshot is needed. No cross-jamlet read.
 
-Both variants resolve to a concrete `rm_in` value on the waiting item
-at dispatch time. The ALU model itself doesn't know which route was
-used.
+Both routes resolve to a concrete `rm_in` value the compute step
+consumes. The framework itself doesn't know which route was used.
 
 ### Sticky flag accumulation and OR-reduce
 
@@ -201,15 +251,17 @@ second pass.
 ### Hazard interaction
 
 Rename / scoreboard (`kamlet.py`) already tracks "preg is busy with a
-pending write" and defers dependent dispatch. The ALU model slots in
-cleanly: the preg is marked busy at dispatch, the waiting item clears it
-at retirement. No new hazard concept required.
+pending write" via `rf_info.write[preg]`. The ALU model slots in cleanly:
+`rf_info.start` at dispatch sets the write token, and the coroutine's
+deferred `rf_info.finish(write_regs=...)` clears it after the latency
+wait. No new hazard concept required.
 
 One subtlety: today the kamlet's execute path marks the preg busy and
 writes in the same step, so the `pending_write` window is zero cycles
 long. With the ALU model, that window stretches to the pipe latency. The
-existing `pending_free` draining (`kamlet.py:138-165`) should handle this
-without changes — it already tolerates in-flight references.
+existing `pending_free` draining (`kamlet.py:317-344`) handles this
+without changes — `_is_preg_idle` already keys off `rf_info.write[preg]`
+and tolerates the now-non-zero pending-write window.
 
 ## Integer divide semantics
 
@@ -219,63 +271,71 @@ RISC-V specifies exact result values for the two edge cases; no traps.
 - Signed overflow (`INT_MIN / -1`): `quotient = INT_MIN`, `remainder = 0`.
 
 Both are per-jamlet, per-element, purely local. Compute these in the
-dispatch-time path alongside the normal divide, before enqueuing the
-waiting item.
+coroutine's compute step alongside the normal divide.
 
 Spec ref: `riscv-isa-manual/src/v-st-ext.adoc`, vector integer divide
 section (verify exact lines before citing in code).
 
 ## Work order
 
-1. **Infra: `JamletAluWaitingItem`** — subclass of `WaitingItem` with the
-   full field set above (pipe_tag, cycles_remaining, dst_preg/byte_offset/
-   result_bytes/span_id, rm_in, fflags_out, vxsat_out). Per-jamlet
-   registration / monitor loop wiring. Focused unit test with a latency-1
-   stub op end-to-end (dispatch → retirement → preg visible to a dependent
-   reader).
-2. **Infra: per-jamlet pipes** — one pipelined shift-register abstraction,
-   one single-slot resident abstraction. Parametrised by latency. Occupancy
-   check + enqueue. Test in isolation.
-3. **Infra: sticky flag accumulators** — add `sticky_fflags` (5 bits) and
-   `sticky_vxsat` (1 bit) per jamlet. Retirement path OR-updates them when
-   the waiting item's `fflags_out` / `vxsat_out` is non-null. No consumers
-   yet; verify accumulation via a unit test that peeks at the jamlet state.
-4. **Infra: OR-reduce sync primitive** — extend
-   `synchronization.py:Synchronizer` with an OR combine op, parametric on
-   width. Unit test with a hand-crafted per-jamlet input and a checked
-   lamlet-delivered result. No CSR wiring yet.
-5. **Migrate `int_alu` ops** — route `VArithV{v,x,i}Op`, `VCmpV*Op`,
-   `VmergeV*`, `VBroadcastOp`, `VidOp`, `VmLogicMm`, `VUnaryOvOp` through
-   the ALU model with `latency=1`. `rm_in`/`fflags_out`/`vxsat_out` all
-   null. Correctness should be byte-identical with the pre-migration
-   model. Run existing vector tests.
-6. **Migrate FMA / imul ops** — route `vfadd/vfsub/vfmul/vfma*`,
+1. **Infra: AluKInstr framework + sticky regs** — add the `AluKInstr`
+   base class (`execute` allocates the rf_info token, spawns
+   `_run_alu`, which calls `alu_compute`, finishes reads, awaits
+   `latency`, commits staged writes, finishes writes). Split
+   `rf_info.finish` so reads finish post-`alu_compute` and writes
+   finish after the latency wait (the API at `register_file_slot.py`
+   already accepts `read_regs=` / `write_regs=` independently). Add
+   `sticky_fflags` (5 bits) and `sticky_vxsat` (1 bit) per jamlet,
+   OR-updated inside `_run_alu`. Unit test a latency-1 stub op
+   end-to-end (dispatch → write → preg visible to a dependent
+   reader); a second test that peeks at sticky-reg accumulation.
+2. **Infra: pipe-occupancy resources** — extend `KamletRegisterFile`
+   with a `Resources` enum and a `resources` dict tracking each
+   resource's current claimant token; `start`/`finish` accept a
+   `resources=` kwarg. `AluKInstr` declares `resources: dict[Resources,
+   int]` (resource → cycles held); `execute` claims them at dispatch,
+   `_run_alu` spawns one release coroutine per resource. `is_ready`
+   defers when any of the kinstr's resources is held. Unit test issues
+   back-to-back ops claiming the same resource and checks dispatch
+   defers correctly.
+3. **Infra: OR-reduce sync primitive** — extend
+   `synchronization.py:Synchronizer` with an OR combine op, parametric
+   on width. Unit test with a hand-crafted per-jamlet input and a
+   checked lamlet-delivered result. No CSR wiring yet.
+4. **Migrate `int_alu` ops** — route `VArithV{v,x,i}Op`, `VCmpV*Op`,
+   `VmergeV*`, `VBroadcastOp`, `VidOp`, `VmLogicMm`, `VUnaryOvOp`
+   through the ALU model with `latency=1`. `rm_in`/`fflags_out`/
+   `vxsat_out` all null. Correctness should be byte-identical with
+   the pre-migration model. Run existing vector tests.
+5. **Migrate FMA / imul ops** — route `vfadd/vfsub/vfmul/vfma*`,
    `vmul/vmulh*` through fma / imul pipes. Populate `rm_in` from the
-   kinstr field where it exists; leave `fflags_out` null (actual fflag
-   computation is deferred — see below). Calibrate latencies against
-   existing tests.
-7. **`vdiv` / `vrem` family** — new kinstrs + decode. Route through `idiv`
-   pipe. Implement divide-by-zero and signed-overflow edge cases.
-8. **`vfrec7` / `vfrsqrt7`** — new kinstrs + ROM tables. 1-cycle on `fma`.
-   Per-element, no inter-lane interaction.
-9. **`vfdiv` / `vfsqrt`** — new kinstrs. Internally: 3× or 4× FMA-pipe
-   occupancy implementing Newton-Raphson, seeded from the same ROMs used
-   by step 8. Correctness bit-pattern is *not* required to match the
-   final Chisel exactly at this stage.
-10. **Doc**: update `docs_llm/TODO.md` to reflect what landed (long-latency
-    entry removed or shortened; fixed-point entry's "(a) sync-network
-    OR-reduce primitive" prerequisite removed; FP correctness entry's
-    OR-reduce dependency removed). Add plan-status entry.
+   kinstr field where it exists; leave `fflags_out` null (actual
+   fflag computation is deferred — see below). Calibrate latencies
+   against existing tests.
+6. **`vdiv` / `vrem` family** — new kinstrs + decode. Route through
+   `idiv` pipe. Implement divide-by-zero and signed-overflow edge
+   cases.
+7. **`vfrec7` / `vfrsqrt7`** — new kinstrs + ROM tables. 1-cycle on
+   `fma`. Per-element, no inter-lane interaction.
+8. **`vfdiv` / `vfsqrt`** — new kinstrs. Internally: 3× or 4× FMA-pipe
+   occupancy implementing Newton-Raphson, seeded from the same ROMs
+   used by step 7. Correctness bit-pattern is *not* required to match
+   the final Chisel exactly at this stage.
+9. **Doc**: update `docs_llm/TODO.md` to reflect what landed
+   (long-latency entry removed or shortened; fixed-point entry's
+   "(a) sync-network OR-reduce primitive" prerequisite removed; FP
+   correctness entry's OR-reduce dependency removed). Add plan-status
+   entry.
 
-Step 5 is where the migration risk lives — every existing vector test has
-to pass after the code path changes. It's intentionally sequenced before
-the new ops so that the new code is only ever added to a working
-multi-cycle model, not a synchronous one.
+Step 4 is where the migration risk lives — every existing vector test
+has to pass after the code path changes. It's intentionally sequenced
+before the new ops so that the new code is only ever added to a
+working multi-cycle model, not a synchronous one.
 
-Steps 3 and 4 land the framework for fflags/vxsat without any consumer
-using it yet. That's deliberate: future plans (fixed-point ops, FP
-correctness) plug into a working, tested substrate rather than standing
-it up themselves.
+Step 1 lands the framework for fflags/vxsat alongside the coroutine
+itself; steps 2 and 3 add the rest of the substrate. Future plans
+(fixed-point ops, FP correctness) plug into a working, tested base
+rather than standing it up themselves.
 
 ## Risks / open questions
 
@@ -283,15 +343,9 @@ it up themselves.
   pipeline depth is settled. Keep them in `ZamletParams` so the eventual
   calibration is one place.
 - **Partial-vline ops** (vl < vlmax, masked writes): already pass through
-  `write_vreg(..., byte_offset, span_id)`. The ALU model must preserve
-  whatever byte-range invariant the caller expects; easiest is to stash
-  `byte_offset` + `result_bytes` slice in the waiting item and call the
-  same `write_vreg` at retirement.
-- **Reservation station interaction**: today, `kamlet.py`'s dispatch loop
-  calls `instruction.execute(kamlet)` synchronously and releases the
-  station slot. With deferred retirement, station-slot release needs to
-  happen at retirement, not dispatch. Double-check this doesn't collide
-  with `reservation_station_depth`-level backpressure.
+  `write_vreg(..., byte_offset, span_id)`. The coroutine's per-jamlet
+  result carries `byte_offset` and the bytes slice and calls the same
+  `write_vreg` at the write step — no new byte-range handling required.
 - **vfrec7 / vfrsqrt7 exact bit patterns**: RVV mandates specific ROM
   contents (spec table). Implementing the table verbatim is non-negotiable
   for conformance; flag if this is onerous.
@@ -320,8 +374,9 @@ it up themselves.
 - **`vfredosum.vs` / `vfwredosum.vs`** (ordered float reductions). Unrelated
   to the ALU model; tracked in TODO.md:94-97.
 - **Data-dependent int-divide latency** (early termination). Saves cycles
-  in the model but complicates the waiting item. Add later only if
-  profiling shows it matters.
+  in the model but complicates the coroutine (compute step would need
+  to also drive the wait length). Add later only if profiling shows it
+  matters.
 - **Reduction of single-cycle ops to `latency=0` fast path**. Premature;
   the uniform latency-1 path is simple and correct.
 - **Correct-rounded `vfdiv` / `vfsqrt`** matching an explicit N-R

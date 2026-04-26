@@ -58,7 +58,13 @@ class Kamlet:
         self.cache_table = CacheTable(clock, params, name, monitor,
                                       kamlet_x=self.min_x, kamlet_y=self.min_y)
         rf_name = f'kamlet({self.min_x},{self.min_y})'
-        self.rf_info = register_file_slot.KamletRegisterFile(self.params.n_vregs, name=rf_name)
+        # Non-pipelined per-kamlet ALU pipes. AluKInstr subclasses with a matching
+        # `pipe` claim/release these via rf_info; pipelined pipes (int_alu, imul,
+        # single-op fma) carry no entry here — stacked rf_info write tokens
+        # already model "one op per cycle".
+        self.rf_info = register_file_slot.KamletRegisterFile(
+            self.params.n_vregs, name=rf_name,
+            resources=list(register_file_slot.Resources))
         # Per-kamlet rename table. Arch indices in kinstructions are translated
         # to phys indices at dispatch; the scoreboard operates on phys.
         self.rename_table = RegisterRenameTable(params)
@@ -263,6 +269,9 @@ class Kamlet:
         if not self.rf_available(read_regs=renamed.read_pregs,
                                  write_regs=renamed.write_pregs):
             return False
+        for resource in getattr(instr, 'resources', ()):
+            if not self.rf_info.can_use_resource(resource):
+                return False
         for other_instr in station:
             if other_instr is None or other_instr is instr:
                 continue

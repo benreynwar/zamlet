@@ -16,6 +16,7 @@ from zamlet.kamlet.cache_table import CacheRequestType, WaitingItem, CacheState
 from zamlet.register_file_slot import KamletRegisterFile
 from zamlet.transactions import MESSAGE_HANDLERS
 from zamlet.monitor import Monitor
+from zamlet.kamlet.kinstructions import FFlags
 
 
 logger = logging.getLogger(__name__)
@@ -60,6 +61,12 @@ class Jamlet:
 
         # The jamlet contains some SRAM. Currently this is used as cache.
         self.sram = bytearray([0] * params.jamlet_sram_bytes)
+
+        # Sticky FP exception flags and fixed-point saturation flag.
+        # OR-accumulated by the ALU framework; cleared only by an explicit clear-flags
+        # kinstr. Software observes them via lamlet-side OR-reduces over the sync net.
+        self.sticky_fflags: FFlags = FFlags()
+        self.sticky_vxsat: bool = False
 
         # The receive buffer is used for receiving messages from SEND messages.
         # It's used to reorder the messages so that we get deterministic ordering.

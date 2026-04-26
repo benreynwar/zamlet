@@ -1,4 +1,5 @@
 import logging
+from enum import Enum
 from typing import List, Optional
 
 from zamlet.runner import Clock, Future
@@ -7,6 +8,14 @@ from zamlet.monitor import Monitor
 
 
 logger = logging.getLogger(__name__)
+
+
+class Resources(Enum):
+    """Named singleton resources tracked alongside register read/write tokens
+    on a kamlet's `rf_info`. Currently the non-pipelined ALU pipes; new
+    members can be added as more shared per-kamlet units appear."""
+    IDIV = 'idiv'
+    FMA = 'fma'
 
 
 class RegisterFileSlot:
@@ -104,10 +113,14 @@ class RegisterFileSlot:
 
 class KamletRegisterFile:
 
-    def __init__(self, n_regs: int, name: str = ""):
+    def __init__(self, n_regs: int, name: str = "",
+                 resources: List[Resources] | None = None):
         self.name = name
         self.reads: List[List[int]] = [[] for i in range(n_regs)]
         self.write: List[int|None] = [None for i in range(n_regs)]
+        # Named singleton resources (e.g. non-pipelined ALU pipes). Each
+        # holds the token of the current claimant or None when free.
+        self.resources: dict[Resources, int|None] = {r: None for r in (resources or [])}
         self._next_token = 0
 
     def get_token(self) -> int:
@@ -120,11 +133,18 @@ class KamletRegisterFile:
         #logger.info(f'Can read {self.name} is {value}')
         return value
 
-    def finish(self, token: int, write_regs: List[int]|None = None, read_regs: List[int]|None = None) -> None:
+    def can_use_resource(self, resource: Resources) -> bool:
+        return self.resources[resource] is None
+
+    def finish(self, token: int, write_regs: List[int]|None = None,
+               read_regs: List[int]|None = None,
+               resources: List[Resources]|None = None) -> None:
         if read_regs is None:
             read_regs = []
         if write_regs is None:
             write_regs = []
+        if resources is None:
+            resources = []
         for reg in read_regs:
             assert token in self.reads[reg], (
                 f"{self.name} RF FINISH failed: token={token} not in reads[{reg}]={self.reads[reg]}. "
@@ -137,14 +157,24 @@ class KamletRegisterFile:
                 f"Trying to finish read_regs={read_regs} write_regs={write_regs}"
             )
             self.write[reg] = None
-        logger.debug(f'{self.name} RF FINISH token={token} read_regs={read_regs} write_regs={write_regs}')
+        for resource in resources:
+            assert self.resources[resource] == token, (
+                f"{self.name} RF FINISH failed: resource[{resource}]={self.resources[resource]} "
+                f"!= token={token}"
+            )
+            self.resources[resource] = None
+        logger.debug(f'{self.name} RF FINISH token={token} read_regs={read_regs} '
+                     f'write_regs={write_regs} resources={resources}')
 
-    def start(self, read_regs: List[int]|None=None, write_regs: List[int]|None=None) -> int:
+    def start(self, read_regs: List[int]|None=None, write_regs: List[int]|None=None,
+              resources: List[Resources]|None=None) -> int:
         token = self.get_token()
         if read_regs is None:
             read_regs = []
         if write_regs is None:
             write_regs = []
+        if resources is None:
+            resources = []
         for reg in read_regs:
             assert self.can_read(reg), f"Cannot read reg {reg}, write lock held by {self.write[reg]}"
             self.reads[reg].append(token)
@@ -153,7 +183,12 @@ class KamletRegisterFile:
                 logger.error(f'LOCK VIOLATION: Cannot write reg {reg}, write={self.write[reg]}, reads={self.reads[reg]}')
             assert self.can_write(reg), f"Cannot write reg {reg}, write={self.write[reg]}, reads={self.reads[reg]}"
             self.write[reg] = token
-        logger.debug(f'{self.name} RF START token={token} read_regs={read_regs} write_regs={write_regs}')
+        for resource in resources:
+            assert self.can_use_resource(resource), (
+                f"Cannot claim resource {resource}, held by {self.resources[resource]}")
+            self.resources[resource] = token
+        logger.debug(f'{self.name} RF START token={token} read_regs={read_regs} '
+                     f'write_regs={write_regs} resources={resources}')
         return token
 
     def start_read(self, reg: int) -> int:

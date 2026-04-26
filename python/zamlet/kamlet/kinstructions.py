@@ -23,6 +23,7 @@ from zamlet.params import ZamletParams
 from zamlet.control_structures import pack_fields_to_int
 from zamlet.message import IdentHeader, MessageType, SendType, WriteMemWordHeader
 from zamlet.monitor import CompletionType, SpanType
+from zamlet.register_file_slot import Resources
 
 
 logger = logging.getLogger(__name__)
@@ -268,6 +269,104 @@ class TrackedKInstr(KInstr):
             instr_type=type(self).__name__,
             instr_ident=self.instr_ident,
         )
+
+
+@dataclass
+class FFlags:
+    """RISC-V FP exception flags. Bit positions match the fcsr.fflags layout."""
+    nx: bool = False  # inexact         (bit 0)
+    uf: bool = False  # underflow       (bit 1)
+    of: bool = False  # overflow        (bit 2)
+    dz: bool = False  # divide-by-zero  (bit 3)
+    nv: bool = False  # invalid op      (bit 4)
+
+    def __ior__(self, other: 'FFlags') -> 'FFlags':
+        self.nx |= other.nx
+        self.uf |= other.uf
+        self.of |= other.of
+        self.dz |= other.dz
+        self.nv |= other.nv
+        return self
+
+    def to_int(self) -> int:
+        return (int(self.nx)
+                | (int(self.uf) << 1)
+                | (int(self.of) << 2)
+                | (int(self.dz) << 3)
+                | (int(self.nv) << 4))
+
+
+@dataclass
+class AluResult:
+    """One staged write produced by an ALU op, applied after the latency wait."""
+    j_in_k: int
+    dst_preg: int
+    byte_offset: int
+    data: bytes
+    span_id: int
+    fflags: 'FFlags' = field(default_factory=FFlags)
+    vxsat: bool = False
+    event_details: dict | None = None
+
+
+class AluKInstr(KInstr):
+    """Base class for per-jamlet long-latency ALU kinstrs.
+
+    Subclasses provide:
+      - `latency: int`         pipe latency in cycles (>=1).
+      - `resources: dict[Resources, int]`
+                               named singleton resources held during the op,
+                               mapped to the number of cycles the resource is
+                               occupied. Pipelined ops leave empty.
+      - `alu_compute(kamlet)`  read operands + per-jamlet compute (synchronous);
+                               return list[AluResult] of staged writes.
+
+    Reads finish post-`alu_compute`. Each resource releases after its
+    declared cycles via a spawned coroutine. After `latency` cycles the
+    staged writes commit and sticky flag updates OR-accumulate into the
+    corresponding jamlet's accumulators. Writes finish after commit.
+    See `docs_llm/plans/PLAN_long_latency_alu.md`.
+    """
+    latency: int = 1
+    resources: dict[Resources, int] = {}
+
+    def alu_compute(self, kamlet) -> list[AluResult]:
+        raise NotImplementedError(f"{type(self).__name__}.alu_compute")
+
+    async def execute(self, kamlet) -> None:
+        rf_token = kamlet.rf_info.start(
+            read_regs=self.renamed.read_pregs,
+            write_regs=self.renamed.write_pregs,
+            resources=list(self.resources.keys()))
+        kamlet.clock.create_task(self._run_alu(kamlet, rf_token))
+
+    async def _run_alu(self, kamlet, rf_token: int) -> None:
+        results = self.alu_compute(kamlet)
+        kamlet.rf_info.finish(rf_token, read_regs=self.renamed.read_pregs)
+        for resource, cycles in self.resources.items():
+            kamlet.clock.create_task(
+                self._release_resource(kamlet, rf_token, resource, cycles))
+        assert self.latency >= 1, (
+            f"ALU latency must be >= 1, got {self.latency} on "
+            f"{type(self).__name__}")
+        for _ in range(self.latency):
+            await kamlet.clock.next_cycle
+        for r in results:
+            jamlet = kamlet.jamlets[r.j_in_k]
+            jamlet.write_vreg(r.dst_preg, r.byte_offset, r.data,
+                              span_id=r.span_id, event_details=r.event_details)
+            jamlet.sticky_fflags |= r.fflags
+            if r.vxsat:
+                jamlet.sticky_vxsat = True
+        kamlet.rf_info.finish(rf_token, write_regs=self.renamed.write_pregs)
+
+    @staticmethod
+    async def _release_resource(kamlet, rf_token: int,
+                                resource: Resources, cycles: int) -> None:
+        assert cycles >= 1, f"resource {resource} occupancy must be >= 1, got {cycles}"
+        for _ in range(cycles):
+            await kamlet.clock.next_cycle
+        kamlet.rf_info.finish(rf_token, resources=[resource])
 
 
 class KInstrOpcode(IntEnum):
