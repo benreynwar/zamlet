@@ -25,6 +25,7 @@ from zamlet import utils
 from zamlet.synchronization import (
     SyncAggOp, WaitingItemSyncState as SyncState,
     fault_info_width, pack_fault_info, unpack_fault_info)
+from zamlet.transactions.helpers import write_agnostic_element
 
 if TYPE_CHECKING:
     from zamlet.jamlet.jamlet import Jamlet
@@ -286,6 +287,15 @@ class WaitingLoadGatherBase(WaitingItem, ABC):
             logger.debug(f'_get_request: jamlet ({jamlet.x},{jamlet.y}) ident={instr.instr_ident} '
                          f'tag={tag} dst_e={dst_e} '
                          f'out of range [{instr.start_index}, {instr.start_index + instr.n_elements})')
+            # Tail+vta: write 0xFF for the whole element at the leading-byte
+            # tag (mirrors the active-body data path's per-element write).
+            # Follower-byte tags do nothing; the leading-byte write covers them.
+            if (dst_eb == 0 and instr.vta
+                    and dst_e >= instr.start_index + instr.n_elements):
+                write_agnostic_element(
+                    jamlet, instr_ident=instr.instr_ident,
+                    dst_preg=self.dst_pregs[dst_v], tag=tag,
+                    n_bytes=dst_ew // 8, dst_e=dst_e, reason='tail')
             return None
 
         if self.mask_preg is not None:
@@ -302,6 +312,11 @@ class WaitingLoadGatherBase(WaitingItem, ABC):
                     witem_span_id, 'mask_skip',
                     jamlet_x=jamlet.x, jamlet_y=jamlet.y, element=dst_e,
                     bit_index=bit_index, mask_word=hex(mask_word))
+                if dst_eb == 0 and instr.vma:
+                    write_agnostic_element(
+                        jamlet, instr_ident=instr.instr_ident,
+                        dst_preg=self.dst_pregs[dst_v], tag=tag,
+                        n_bytes=dst_ew // 8, dst_e=dst_e, reason='mask_off')
                 return None
 
         # Get byte offset for this element (subclass-specific)

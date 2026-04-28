@@ -98,6 +98,7 @@ async def _emit_lmul_setup(lamlet, op, src_vector, mask_reg, n_elements,
                 n_elements=elements_in_vline,
                 element_width=accum_ew, word_order=word_order,
                 instr_ident=instr_ident,
+                vta=lamlet.vta, vma=lamlet.vma,
             ), parent_span_id)
 
         if active_in_vline > 0:
@@ -115,6 +116,7 @@ async def _emit_lmul_setup(lamlet, op, src_vector, mask_reg, n_elements,
                         n_elements=active_in_vline, dst_ew=accum_ew,
                         src_ew=src_ew, word_order=word_order,
                         mask_reg=mask_reg, instr_ident=instr_ident,
+                        vta=lamlet.vta, vma=lamlet.vma,
                     ), parent_span_id)
                 src_for_copy = scratch
             else:
@@ -131,6 +133,7 @@ async def _emit_lmul_setup(lamlet, op, src_vector, mask_reg, n_elements,
                     mask_reg=mask_reg, n_elements=active_in_vline,
                     element_width=accum_ew, word_order=word_order,
                     instr_ident=instr_ident,
+                    vta=lamlet.vta, vma=lamlet.vma,
                 ), parent_span_id)
 
     return vline_regs
@@ -160,6 +163,7 @@ async def _emit_lmul_tree(lamlet, combine_op, accum_ew, word_order,
                         n_elements=elements_in_vline,
                         element_width=accum_ew, word_order=word_order,
                         instr_ident=instr_ident,
+                        vta=lamlet.vta, vma=lamlet.vma,
                     ), parent_span_id)
             next_active.append(active[i])
         active = next_active
@@ -183,6 +187,7 @@ async def _emit_cross_jamlet_tree(lamlet, combine_op, accum_ew, word_order,
             dst=temp_id, n_elements=elements_in_vline,
             element_width=accum_ew, word_order=word_order,
             mask_reg=None, instr_ident=instr_ident,
+            vta=lamlet.vta, vma=lamlet.vma,
         ), parent_span_id)
 
     # Copy src_reg into data_regs[0] if they differ
@@ -197,6 +202,7 @@ async def _emit_cross_jamlet_tree(lamlet, combine_op, accum_ew, word_order,
                 mask_reg=None, n_elements=elements_in_vline,
                 element_width=accum_ew, word_order=word_order,
                 instr_ident=instr_ident,
+                vta=lamlet.vta, vma=lamlet.vma,
             ), parent_span_id)
 
     n_rounds = max(1, math.ceil(math.log2(elements_in_vline)))
@@ -217,6 +223,7 @@ async def _emit_cross_jamlet_tree(lamlet, combine_op, accum_ew, word_order,
                 mask_reg=None, n_elements=elements_in_vline,
                 element_width=accum_ew, word_order=word_order,
                 instr_ident=instr_ident,
+                vta=lamlet.vta, vma=lamlet.vma,
             ), parent_span_id)
 
         # VCmpViOp EQ 0: temp_mask = (temp_idx == 0)
@@ -240,6 +247,7 @@ async def _emit_cross_jamlet_tree(lamlet, combine_op, accum_ew, word_order,
                 mask_reg=None, n_elements=elements_in_vline,
                 element_width=accum_ew, word_order=word_order,
                 instr_ident=instr_ident,
+                vta=lamlet.vta, vma=lamlet.vma,
             ), parent_span_id)
 
         # vrgather (masked): dst_reg = src_reg[temp_idx] where temp_mask
@@ -259,6 +267,7 @@ async def _emit_cross_jamlet_tree(lamlet, combine_op, accum_ew, word_order,
                 mask_reg=temp_mask, n_elements=elements_in_vline,
                 element_width=accum_ew, word_order=word_order,
                 instr_ident=instr_ident,
+                vta=lamlet.vta, vma=lamlet.vma,
             ), parent_span_id)
 
         stride *= 2
@@ -339,6 +348,7 @@ async def handle_vreduction_instr(lamlet, op, dst, src_vector, src_scalar_reg,
                 n_elements=elements_in_vline,
                 element_width=accum_ew, word_order=word_order,
                 instr_ident=instr_ident,
+                vta=lamlet.vta, vma=lamlet.vma,
             ), parent_span_id)
 
         widening = src_ew != accum_ew
@@ -351,6 +361,7 @@ async def handle_vreduction_instr(lamlet, op, dst, src_vector, src_scalar_reg,
                     n_elements=n_elements, dst_ew=accum_ew, src_ew=src_ew,
                     word_order=word_order, mask_reg=mask_reg,
                     instr_ident=instr_ident,
+                    vta=lamlet.vta, vma=lamlet.vma,
                 ), parent_span_id)
             src_for_copy = data_regs[1]
         else:
@@ -366,6 +377,7 @@ async def handle_vreduction_instr(lamlet, op, dst, src_vector, src_scalar_reg,
                 mask_reg=mask_reg, n_elements=n_elements,
                 element_width=accum_ew, word_order=word_order,
                 instr_ident=instr_ident,
+                vta=lamlet.vta, vma=lamlet.vma,
             ), parent_span_id)
 
         # Cross-jamlet tree
@@ -388,6 +400,7 @@ async def handle_vreduction_instr(lamlet, op, dst, src_vector, src_scalar_reg,
                 mask_reg=None, n_elements=1,
                 element_width=accum_ew, word_order=word_order,
                 instr_ident=instr_ident,
+                vta=lamlet.vta, vma=lamlet.vma,
             ), parent_span_id)
     else:
         await lamlet.add_to_instruction_buffer(
@@ -396,6 +409,7 @@ async def handle_vreduction_instr(lamlet, op, dst, src_vector, src_scalar_reg,
                 src2=src_scalar_reg, mask_reg=None, n_elements=1,
                 element_width=accum_ew, word_order=word_order,
                 instr_ident=instr_ident,
+                vta=lamlet.vta, vma=lamlet.vma,
             ), parent_span_id)
 
     await lamlet.free_temp_regs(temp_regs, parent_span_id)

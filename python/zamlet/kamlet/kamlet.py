@@ -184,10 +184,10 @@ class Kamlet:
 
     async def alloc_dst_pregs(self, base_arch: int, start_vline: int, end_vline: int,
                               start_index: int, n_elements: int, elements_in_vline: int,
-                              mask_present: bool,
+                              mask_present: bool, vta: bool, vma: bool,
                               exclude_reuse: set[int] | None = None) -> List[int]:
-        """Allocate dst phys regs for a multi-vline op under the current
-        fully-undisturbed policy (vta=vma=False).
+        """Allocate dst phys regs for a multi-vline op under the given
+        vta/vma policy.
 
         Per-vline rule:
           - Arch is unmapped (first write to a freshly allocated scratch
@@ -195,20 +195,17 @@ class Kamlet:
             preserve, so prestart/tail/inactive positions hold garbage but
             that is the caller's expectation when they allocated a fresh
             scratch reg.
-          - First vline with prestart (start_index unaligned): rw() — prestart
-            is always undisturbed per RVV spec.
-          - Mask present: rw() for every vline — masked-off elements are
-            undisturbed (vma=False).
-          - Last vline with tail (n_elements unaligned): rw() — tail is
-            undisturbed (vta=False).
-          - Otherwise: w() — fully written, safe to rotate.
+          - Otherwise classify the vline as having undisturbed positions
+            iff any of:
+              * has_prestart  (vline == start_vline AND start_index unaligned)
+              * has_inactive  (mask_present) AND vma=False
+              * has_tail      (vline == end_vline AND end_index unaligned) AND vta=False
+            If any are true: rw() (preserve old value at undisturbed
+            positions). Otherwise: w() (rotate; caller's data path must fill
+            agnostic positions with 1s).
 
         Returns a list of phys regs in vline order (one per vline in
         [start_vline, end_vline]).
-
-        Tracked: vta/vma support is planned in `docs/PLAN_vta_vma.md`. Once
-        agnostic policies are honored, fully-rotated allocation will be
-        possible for partial vlines under vta=True / vma=True.
         """
         n_vlines = end_vline - start_vline + 1
         head_unaligned = (start_index % elements_in_vline) != 0
@@ -222,15 +219,15 @@ class Kamlet:
             if not self.rename_table.is_mapped(arch):
                 pregs.append(await self.w(arch, exclude_reuse=exclude_reuse))
                 continue
-            # Under fully-undisturbed (vma=False), masked op needs rw() on
-            # every vline because mask-off positions could fall anywhere.
-            if mask_present:
-                pregs.append(self.rw(arch))
-                continue
-            is_first = (vline_idx == start_vline)
-            is_last = (vline_idx == end_vline)
-            partial = (is_first and head_unaligned) or (is_last and tail_unaligned)
-            if partial:
+            has_prestart = (vline_idx == start_vline) and head_unaligned
+            has_inactive = mask_present
+            has_tail = (vline_idx == end_vline) and tail_unaligned
+            needs_undisturbed = (
+                has_prestart or
+                (has_inactive and not vma) or
+                (has_tail and not vta)
+            )
+            if needs_undisturbed:
                 pregs.append(self.rw(arch))
             else:
                 pregs.append(await self.w(arch, exclude_reuse=exclude_reuse))

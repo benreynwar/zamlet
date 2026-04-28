@@ -19,6 +19,7 @@ from zamlet.message import TaggedHeader, MessageType, SendType
 from zamlet.kamlet.cache_table import SendState, ReceiveState, LoadProtocolState
 from zamlet.params import ZamletParams
 from zamlet.transactions import register_handler
+from zamlet.transactions.helpers import write_agnostic_element
 from zamlet.transactions.j2j_mapping import (
     RegMemMapping, get_mapping_from_reg, get_mapping_from_mem,
     mapping_element_index)
@@ -85,6 +86,35 @@ def init_dst_state(jamlet, witem: WaitingLoadJ2JWords, tag: int) -> None:
     response_tag = jamlet.j_in_k_index * jamlet.params.word_bytes + tag
     if len(mappings) == 0:
         witem.protocol_states[response_tag].dst_state = ReceiveState.COMPLETE
+
+
+def prefill_tail(jamlet, witem: WaitingLoadJ2JWords) -> None:
+    """Pre-fill tail elements in this jamlet's word for every dst vline
+    with 0xFF. j2j is src-push, so dst never sees a decision point for
+    tail bytes — the source simply doesn't send them. Mask-off bytes are
+    handled inline by handle_req.
+
+    Runs at witem-creation time.
+    """
+    instr = witem.item
+    if not instr.vta:
+        return
+    params = jamlet.params
+    ordering = instr.dst_ordering
+    eb = ordering.ew // 8
+    elements_in_word = params.word_bytes * 8 // ordering.ew
+    elements_in_vline = params.vline_bytes * 8 // ordering.ew
+    vw_index = addresses.j_coords_to_vw_index(
+        params, ordering.word_order, jamlet.jx, jamlet.jy)
+    for vline_index, dst_preg in witem.dst_pregs.items():
+        for we in range(elements_in_word):
+            element_index = (vline_index * elements_in_vline
+                             + we * params.j_in_l + vw_index)
+            if element_index >= instr.start_index + instr.n_elements:
+                write_agnostic_element(
+                    jamlet, instr_ident=instr.instr_ident,
+                    dst_preg=dst_preg, tag=we * eb,
+                    n_bytes=eb, dst_e=element_index, reason='tail')
 
 
 def init_src_state(jamlet, witem: WaitingLoadJ2JWords, tag: int) -> None:
@@ -218,7 +248,15 @@ async def handle_req(jamlet, packet: List[Any]) -> None:
         mask_bit = ei // jamlet.params.j_in_l
         masked = mask_word is not None and not ((mask_word >> mask_bit) & 1)
 
-        if not masked:
+        if masked:
+            if instr.vma:
+                assert mapping.reg_wb % 8 == 0 and mapping.n_bits % 8 == 0
+                write_agnostic_element(
+                    jamlet, instr_ident=instr.instr_ident,
+                    dst_preg=witem.dst_pregs[mapping.reg_v],
+                    tag=mapping.reg_wb // 8, n_bytes=mapping.n_bits // 8,
+                    dst_e=ei, reason='mask_off')
+        else:
             shift = mapping.mem_wb - mapping.reg_wb
             mask = ((1 << mapping.n_bits) - 1) << mapping.reg_wb
 

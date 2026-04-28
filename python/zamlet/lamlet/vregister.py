@@ -28,16 +28,17 @@ async def vrgather(lamlet: 'Oamlet', vd: int, vs2: int, vs1: int,
     Execute vrgather.vv: vd[i] = (vs1[i] >= VLMAX) ? 0 : vs2[vs1[i]]
 
     Gathers elements from vs2 using indices from vs1 into vd.
-    Processes in chunks of j_in_l elements when n_elements > j_in_l.
+    Processes in chunks of one vline so each kinstr's slice is vline-aligned;
+    the kinstr derives any vta tail-fill from rounding up to the next vline.
 
     Returns: completion_sync_ident of the last chunk
     """
-    j_in_l = lamlet.params.j_in_l
+    elements_in_vline = lamlet.params.vline_bytes * 8 // data_ew
     n_active = n_elements - start_index
     completion_sync_ident = None
 
-    for chunk_offset in range(0, n_active, j_in_l):
-        chunk_n = min(j_in_l, n_active - chunk_offset)
+    for chunk_offset in range(0, n_active, elements_in_vline):
+        chunk_n = min(elements_in_vline, n_active - chunk_offset)
         instr_ident = await ident_query.get_instr_ident(lamlet)
 
         kinstr = RegGather(
@@ -52,6 +53,8 @@ async def vrgather(lamlet: 'Oamlet', vd: int, vs2: int, vs1: int,
             vlmax=vlmax,
             mask_reg=mask_reg,
             instr_ident=instr_ident,
+            vta=lamlet.vta,
+            vma=lamlet.vma,
         )
         await lamlet.add_to_instruction_buffer(kinstr, parent_span_id)
         kinstr_span_id = lamlet.monitor.get_kinstr_span_id(instr_ident)
@@ -78,7 +81,7 @@ async def vslide(lamlet: 'Oamlet', vd: int, vs2: int,
                  (writes 0 when i + offset >= vlmax)
 
     `start_index` / `n_elements` define the destination slice written by the
-    RVV instruction as a whole; this function chunks them into j_in_l-sized
+    RVV instruction as a whole; this function chunks them into vline-aligned
     RegSlide kinstrs. For slideup, the caller must already have clamped
     start_index up to max(vstart, offset) — RegSlide assumes start_index >=
     offset so the computed src index is non-negative.
@@ -89,12 +92,12 @@ async def vslide(lamlet: 'Oamlet', vd: int, vs2: int,
         assert start_index >= offset, \
             f"vslideup: start_index={start_index} must be >= offset={offset}"
 
-    j_in_l = lamlet.params.j_in_l
+    elements_in_vline = lamlet.params.vline_bytes * 8 // data_ew
     n_active = n_elements - start_index
     completion_sync_ident = None
 
-    for chunk_offset in range(0, n_active, j_in_l):
-        chunk_n = min(j_in_l, n_active - chunk_offset)
+    for chunk_offset in range(0, n_active, elements_in_vline):
+        chunk_n = min(elements_in_vline, n_active - chunk_offset)
         instr_ident = await ident_query.get_instr_ident(lamlet)
 
         kinstr = RegSlide(
@@ -109,6 +112,8 @@ async def vslide(lamlet: 'Oamlet', vd: int, vs2: int,
             vlmax=vlmax,
             mask_reg=mask_reg,
             instr_ident=instr_ident,
+            vta=lamlet.vta,
+            vma=lamlet.vma,
         )
         await lamlet.add_to_instruction_buffer(kinstr, parent_span_id)
         kinstr_span_id = lamlet.monitor.get_kinstr_span_id(instr_ident)

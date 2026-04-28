@@ -80,8 +80,11 @@ def do_store_simple(jamlet: 'Jamlet', instr: 'Store',
     src_ordering = instr.src_ordering
     assert dst_ordering == src_ordering
 
+    # Stores ignore vta/vma — memory writes don't have undisturbed/agnostic
+    # semantics. Pass False/False so agnostic_mask is empty and we discard it.
     vline_offsets_and_masks = get_offsets_and_masks(
-        jamlet, instr.start_index, instr.n_elements, instr.src_ordering, mask_preg)
+        jamlet, instr.start_index, instr.n_elements, instr.src_ordering, mask_preg,
+        vta=False, vma=False)
 
     params = jamlet.params
     word_bytes = params.word_bytes
@@ -89,7 +92,7 @@ def do_store_simple(jamlet: 'Jamlet', instr: 'Store',
     base_vline = (instr.k_maddr.addr % params.cache_line_bytes) // vline_bytes_per_kamlet
     cache_line_bytes_per_jamlet = params.cache_line_bytes // params.j_in_k
 
-    for vline_offset, mask in vline_offsets_and_masks:
+    for vline_offset, mask, _ in vline_offsets_and_masks:
         rf_word_addr = src_pregs[vline_offset]
         sram_addr = slot * cache_line_bytes_per_jamlet + (base_vline + vline_offset) * word_bytes
         new_word = jamlet.rf_slice[rf_word_addr * word_bytes: (rf_word_addr + 1) * word_bytes]

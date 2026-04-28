@@ -440,6 +440,14 @@ class Oamlet:
         else:
             return 1
 
+    @property
+    def vta(self) -> bool:
+        return bool((self.vtype >> 6) & 0x1)
+
+    @property
+    def vma(self) -> bool:
+        return bool((self.vtype >> 7) & 0x1)
+
     def set_vtype(self, ew: int, lmul: int):
         vsew = {8: 0, 16: 1, 32: 2, 64: 3}[ew]
         vlmul = {1: 0, 2: 1, 4: 2, 8: 3}[lmul]

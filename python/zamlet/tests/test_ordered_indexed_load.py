@@ -26,7 +26,7 @@ from zamlet.monitor import CompletionType, SpanType
 from zamlet.tests import test_utils
 from zamlet.tests.test_utils import (
     pack_elements, unpack_elements,
-    setup_mask_register, zero_register, set_vline_random_ew,
+    setup_mask_register, fill_register, set_vline_random_ew,
     PageType, allocate_page, generate_page_types, generate_indices, setup_index_register,
     random_vl, max_vl_for_indexed, random_start_index, choose_mask_pattern, generate_mask_pattern,
 )
@@ -134,7 +134,8 @@ async def run_ordered_indexed_load_test(
 
         # Initialize data register to zeros so we can verify masked elements unchanged
         zero_mem_addr = src_base + 0x500000
-        await zero_register(lamlet, data_reg, vl, data_ew, page_bytes, zero_mem_addr)
+        await fill_register(lamlet, data_reg, vl, data_ew, page_bytes, zero_mem_addr,
+                            byte_pattern=0x00)
 
     # Clear non-idempotent access log before the load
     lamlet.scalar.non_idempotent_access_log.clear()

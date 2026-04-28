@@ -366,6 +366,8 @@ class LoadImmByte(KInstr):
     # Needed since we may be writing into the middle of a vector group.
     mask_index: int
     instr_ident: int
+    vta: bool
+    vma: bool
 
     async def admit(self, kamlet) -> 'LoadImmByte | None':
         if self.dst.k_index != kamlet.k_index:
@@ -409,6 +411,8 @@ class LoadImmWord(KInstr):
     mask_reg: int
     mask_index: int
     instr_ident: int
+    vta: bool
+    vma: bool
 
     async def admit(self, kamlet) -> 'LoadImmWord | None':
         if self.dst.k_index != kamlet.k_index:
@@ -557,6 +561,7 @@ class VCmpViOp(KInstr):
             base_arch=self.dst, start_vline=0, end_vline=n_dst_vlines - 1,
             start_index=0, n_elements=self.n_elements,
             elements_in_vline=dst_elements_in_vline, mask_present=False,
+            vta=False, vma=False,
             exclude_reuse=set(src_pregs))
         return self.rename(
             src_pregs={v: src_pregs[v] for v in range(n_src_vlines)},
@@ -640,6 +645,7 @@ class VCmpVxOp(KInstr):
             base_arch=self.dst, start_vline=0, end_vline=n_dst_vlines - 1,
             start_index=0, n_elements=self.n_elements,
             elements_in_vline=dst_elements_in_vline, mask_present=False,
+            vta=False, vma=False,
             exclude_reuse=set(src_pregs))
         return self.rename(
             src_pregs={v: src_pregs[v] for v in range(n_src_vlines)},
@@ -730,6 +736,7 @@ class VCmpVvOp(KInstr):
             base_arch=self.dst, start_vline=0, end_vline=n_dst_vlines - 1,
             start_index=0, n_elements=self.n_elements,
             elements_in_vline=dst_elements_in_vline, mask_present=False,
+            vta=False, vma=False,
             exclude_reuse=set(src1_pregs) | set(src2_pregs))
         return self.rename(
             src_pregs={v: src1_pregs[v] for v in range(n_src_vlines)},
@@ -867,6 +874,7 @@ class VmLogicMmOp(KInstr):
             base_arch=self.dst, start_vline=start_vline, end_vline=end_vline,
             start_index=self.start_index, n_elements=self.n_elements,
             elements_in_vline=elements_in_vline, mask_present=False,
+            vta=False, vma=False,
             exclude_reuse=set(src1_pregs.values()) | set(src2_pregs.values()))
         dst_pregs = {start_vline + i: dst_pregs_list[i]
                      for i in range(len(dst_pregs_list))}
@@ -955,6 +963,7 @@ class MaskPopcountLocal(KInstr):
             start_index=0, n_elements=dst_elements_in_vline,
             elements_in_vline=dst_elements_in_vline,
             mask_present=False,
+            vta=False, vma=False,
             exclude_reuse={src_preg})
         return self.rename(
             src_pregs={0: src_preg},
@@ -1022,6 +1031,7 @@ class SetMaskBits(KInstr):
             start_index=0, n_elements=self.n_elements,
             elements_in_vline=kamlet.params.vline_bytes * 8,
             mask_present=False,
+            vta=False, vma=False,
             exclude_reuse=exclude)
         return self.rename(
             src_pregs={0: src_preg},
@@ -1096,6 +1106,8 @@ class VBroadcastOp(KInstr):
     element_width: int
     word_order: addresses.WordOrder
     instr_ident: int
+    vta: bool
+    vma: bool
     mask_reg: int | None = None
 
     async def admit(self, kamlet) -> 'VBroadcastOp | None':
@@ -1111,6 +1123,7 @@ class VBroadcastOp(KInstr):
             start_index=0, n_elements=self.n_elements,
             elements_in_vline=elements_in_vline,
             mask_present=self.mask_reg is not None,
+            vta=self.vta, vma=self.vma,
             exclude_reuse=exclude)
         return self.rename(
             dst_pregs={v: dst_pregs[v] for v in range(n_vlines)},
@@ -1144,6 +1157,10 @@ class VBroadcastOp(KInstr):
                             eb, byteorder='little', signed=(self.scalar < 0))
                         jamlet.write_vreg(dst_preg, byte_offset, result_bytes,
                                           span_id=span_id)
+                    elif ((not valid_element and self.vta) or
+                          (valid_element and not mask_bit and self.vma)):
+                        jamlet.write_vreg(dst_preg, byte_offset, b'\xff' * eb,
+                                          span_id=span_id)
         kamlet.monitor.finalize_kinstr_exec(self.instr_ident, kamlet.min_x, kamlet.min_y)
 
 
@@ -1159,6 +1176,8 @@ class VidOp(KInstr):
     word_order: addresses.WordOrder
     mask_reg: int | None
     instr_ident: int
+    vta: bool
+    vma: bool
 
     async def admit(self, kamlet) -> 'VidOp | None':
         bits_in_vline = kamlet.params.vline_bytes * 8
@@ -1173,6 +1192,7 @@ class VidOp(KInstr):
             start_index=0, n_elements=self.n_elements,
             elements_in_vline=elements_in_vline,
             mask_present=self.mask_reg is not None,
+            vta=self.vta, vma=self.vma,
             exclude_reuse=exclude)
         return self.rename(
             dst_pregs={v: dst_pregs[v] for v in range(n_vlines)},
@@ -1209,6 +1229,10 @@ class VidOp(KInstr):
                         jamlet.write_vreg(dst_preg, byte_offset, result_bytes,
                                           span_id=span_id,
                                           event_details={'element_index': element_index})
+                    elif ((not valid_element and self.vta) or
+                          (valid_element and not mask_bit and self.vma)):
+                        jamlet.write_vreg(dst_preg, byte_offset, b'\xff' * eb,
+                                          span_id=span_id)
         kamlet.monitor.finalize_kinstr_exec(self.instr_ident, kamlet.min_x, kamlet.min_y)
 
 
@@ -1224,6 +1248,8 @@ class VUnaryOvOp(KInstr):
     word_order: addresses.WordOrder
     mask_reg: int | None
     instr_ident: int
+    vta: bool
+    vma: bool
     invert_mask: bool = False
 
     async def admit(self, kamlet) -> 'VUnaryOvOp | None':
@@ -1243,6 +1269,7 @@ class VUnaryOvOp(KInstr):
             start_index=0, n_elements=self.n_elements,
             elements_in_vline=dst_elements_in_vline,
             mask_present=self.mask_reg is not None,
+            vta=self.vta, vma=self.vma,
             exclude_reuse=exclude)
         return self.rename(
             src_pregs={v: src_pregs[v] for v in range(n_src_vlines)},
@@ -1274,6 +1301,10 @@ class VUnaryOvOp(KInstr):
                     if self.invert_mask:
                         mask_bit = 1 - mask_bit
                     if not (valid_element and mask_bit):
+                        if ((not valid_element and self.vta) or
+                                (valid_element and not mask_bit and self.vma)):
+                            jamlet.write_vreg(dst_preg, index_in_j * dst_eb,
+                                              b'\xff' * dst_eb, span_id=span_id)
                         continue
                     # Element index within this jamlet
                     dst_elem = vline_index * dst_elements_per_word + index_in_j
@@ -1574,6 +1605,8 @@ class VArithVvOp(KInstr):
     element_width: int
     word_order: addresses.WordOrder
     instr_ident: int
+    vta: bool
+    vma: bool
 
     async def admit(self, kamlet) -> 'VArithVvOp | None':
         bits_in_vline = kamlet.params.vline_bytes * 8
@@ -1602,6 +1635,7 @@ class VArithVvOp(KInstr):
                 start_index=0, n_elements=self.n_elements,
                 elements_in_vline=elements_in_vline,
                 mask_present=self.mask_reg is not None,
+                vta=self.vta, vma=self.vma,
                 exclude_reuse=exclude)
         return self.rename(
             src_pregs={v: src1_pregs[v] for v in range(n_vlines)},
@@ -1648,6 +1682,11 @@ class VArithVvOp(KInstr):
                         result = _arith_truncate_int(self.op, result, eb)
                         jamlet.write_vreg(dst_preg, byte_offset, struct.pack(fmt, result),
                                           span_id=span_id)
+                    elif not is_accum and (
+                            (not valid_element and self.vta) or
+                            (valid_element and not mask_bit and self.vma)):
+                        jamlet.write_vreg(dst_preg, byte_offset, b'\xff' * eb,
+                                          span_id=span_id)
         kamlet.monitor.finalize_kinstr_exec(self.instr_ident, kamlet.min_x, kamlet.min_y)
 
 
@@ -1662,6 +1701,8 @@ class VArithVxOp(KInstr):
     element_width: int
     word_order: addresses.WordOrder
     instr_ident: int
+    vta: bool
+    vma: bool
     is_float: bool = False
 
     async def admit(self, kamlet) -> 'VArithVxOp | None':
@@ -1685,6 +1726,7 @@ class VArithVxOp(KInstr):
                 start_index=0, n_elements=self.n_elements,
                 elements_in_vline=elements_in_vline,
                 mask_present=self.mask_reg is not None,
+                vta=self.vta, vma=self.vma,
                 exclude_reuse=exclude)
         return self.rename(
             src2_pregs={v: src2_pregs[v] for v in range(n_vlines)},
@@ -1727,6 +1769,11 @@ class VArithVxOp(KInstr):
                         result = _compute_arith(self.op, scalar_val, src2_val, acc_val, eb)
                         result = _arith_truncate_int(self.op, result, eb)
                         jamlet.write_vreg(dst_preg, byte_offset, struct.pack(fmt, result),
+                                          span_id=span_id)
+                    elif not is_accum and (
+                            (not valid_element and self.vta) or
+                            (valid_element and not mask_bit and self.vma)):
+                        jamlet.write_vreg(dst_preg, byte_offset, b'\xff' * eb,
                                           span_id=span_id)
         kamlet.monitor.finalize_kinstr_exec(self.instr_ident, kamlet.min_x, kamlet.min_y)
 
@@ -1792,6 +1839,8 @@ class VArithVvOvOp(KInstr):
     src2_signed: bool
     word_order: addresses.WordOrder
     instr_ident: int
+    vta: bool
+    vma: bool
     is_float: bool = False
 
     async def admit(self, kamlet) -> 'VArithVvOvOp | None':
@@ -1816,6 +1865,7 @@ class VArithVvOvOp(KInstr):
                 start_index=0, n_elements=self.n_elements,
                 elements_in_vline=dst_elements_in_vline,
                 mask_present=self.mask_reg is not None,
+                vta=self.vta, vma=self.vma,
                 exclude_reuse=exclude)
         return self.rename(
             src_pregs={v: src1_pregs[v] for v in range(n_src1_vlines)},
@@ -1857,6 +1907,11 @@ class VArithVvOvOp(KInstr):
                         0, self.n_elements, self.dst_ew, self.word_order,
                         r.mask_preg, vline_index, j_in_k_index, index_in_j)
                     if not (valid_element and mask_bit):
+                        if not is_accum and (
+                                (not valid_element and self.vta) or
+                                (valid_element and not mask_bit and self.vma)):
+                            jamlet.write_vreg(dst_preg, index_in_j * dst_eb,
+                                              b'\xff' * dst_eb, span_id=span_id)
                         continue
                     dst_elem = vline_index * dst_elements_per_word + index_in_j
                     src1_vline = dst_elem // src1_elements_per_word
@@ -1906,6 +1961,8 @@ class VArithVxOvOp(KInstr):
     src2_signed: bool
     word_order: addresses.WordOrder
     instr_ident: int
+    vta: bool
+    vma: bool
     is_float: bool = False
 
     async def admit(self, kamlet) -> 'VArithVxOvOp | None':
@@ -1928,6 +1985,7 @@ class VArithVxOvOp(KInstr):
                 start_index=0, n_elements=self.n_elements,
                 elements_in_vline=dst_elements_in_vline,
                 mask_present=self.mask_reg is not None,
+                vta=self.vta, vma=self.vma,
                 exclude_reuse=exclude)
         return self.rename(
             src2_pregs={v: src2_pregs[v] for v in range(n_src2_vlines)},
@@ -1967,6 +2025,11 @@ class VArithVxOvOp(KInstr):
                         0, self.n_elements, self.dst_ew, self.word_order,
                         r.mask_preg, vline_index, j_in_k_index, index_in_j)
                     if not (valid_element and mask_bit):
+                        if not is_accum and (
+                                (not valid_element and self.vta) or
+                                (valid_element and not mask_bit and self.vma)):
+                            jamlet.write_vreg(dst_preg, index_in_j * dst_eb,
+                                              b'\xff' * dst_eb, span_id=span_id)
                         continue
                     dst_elem = vline_index * dst_elements_per_word + index_in_j
                     src2_vline = dst_elem // src2_elements_per_word

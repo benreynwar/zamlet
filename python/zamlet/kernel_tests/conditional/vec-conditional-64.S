@@ -5,7 +5,7 @@
 # (int64) z[i] = ((int64) x[i] < 5) ? (int64) a[i] : (int64) b[i];
 #
 vec_conditional:
-  vsetvli t0, a0, e64, m1, ta, ma # Use 64b elements.
+  vsetvli t0, a0, e64, m1, ta, mu # Use 64b elements.
   vle64.v v0, (a1)         # Get x[i]
     sub a0, a0, t0        # Decrement element count
     slli t1, t0, 3        # Multiply by 8 bytes

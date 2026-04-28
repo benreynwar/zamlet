@@ -411,6 +411,8 @@ async def _handle_full_elements_vpu(
             mask_reg=mask_reg,
             writeset_ident=writeset_ident,
             instr_ident=instr_ident,
+            vta=lamlet.vta,
+            vma=lamlet.vma,
         )
     await lamlet.add_to_instruction_buffer(kinstr, parent_span_id)
 
@@ -604,6 +606,8 @@ async def vloadstorestride(lamlet: 'Oamlet', reg_base: int, addr: int,
             word_order=addresses.WordOrder.STANDARD,
             mask_reg=None,
             instr_ident=vid_ident,
+            vta=lamlet.vta,
+            vma=lamlet.vma,
         )
         await lamlet.add_to_instruction_buffer(vid_kinstr, parent_span_id)
 
@@ -620,6 +624,8 @@ async def vloadstorestride(lamlet: 'Oamlet', reg_base: int, addr: int,
             element_width=index_ew,
             word_order=addresses.WordOrder.STANDARD,
             instr_ident=mul_ident,
+            vta=lamlet.vta,
+            vma=lamlet.vma,
         )
         await lamlet.add_to_instruction_buffer(mul_kinstr, parent_span_id)
 
@@ -807,6 +813,8 @@ async def _vloadstore_indexed_unordered(
                 mask_reg=mask_reg,
                 writeset_ident=writeset_ident,
                 instr_ident=instr_ident,
+                vta=lamlet.vta,
+                vma=lamlet.vma,
                 index_offset=index_offset,
             )
         await lamlet.add_to_instruction_buffer(kinstr, parent_span_id)
@@ -920,6 +928,8 @@ async def vloadstore_scalar(
                 mask_index=mask_index,
                 writeset_ident=writeset_ident,
                 instr_ident=instr_ident,
+                vta=lamlet.vta,
+                vma=lamlet.vma,
             )
         else:
             lamlet.scalar.register_known_read(writeset_ident)
@@ -942,6 +952,8 @@ async def vloadstore_scalar(
                 mask_index=mask_index,
                 writeset_ident=writeset_ident,
                 instr_ident=instr_ident,
+                vta=lamlet.vta,
+                vma=lamlet.vma,
             )
         await lamlet.add_to_instruction_buffer(kinstr, parent_span_id, k_index=k_index)
 
@@ -982,6 +994,8 @@ async def vload_scalar_partial(lamlet: 'Oamlet', vd: int, addr: int, size: int,
             mask_index=mask_index,
             writeset_ident=writeset_ident,
             instr_ident=instr_ident,
+            vta=lamlet.vta,
+            vma=lamlet.vma,
         )
     else:
         lamlet.scalar.register_known_read(writeset_ident)
@@ -1001,6 +1015,8 @@ async def vload_scalar_partial(lamlet: 'Oamlet', vd: int, addr: int, size: int,
             mask_index=mask_index,
             writeset_ident=writeset_ident,
             instr_ident=instr_ident,
+            vta=lamlet.vta,
+            vma=lamlet.vma,
         )
     await lamlet.add_to_instruction_buffer(kinstr, parent_span_id, k_index=k_index)
 

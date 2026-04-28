@@ -18,6 +18,7 @@ FAST_TESTS = [
     "test_vfirst",
     "test_trap_delivery",
     "test_vfmv_scalar",
+    "test_vta_vma",
     "test_widening_arith",
 ]
 
@@ -102,6 +103,7 @@ test_suite(
         "test_vfirst",
         "test_trap_delivery",
         "test_vfmv_scalar",
+        "test_vta_vma",
         "test_widening_arith",
     ],
 )

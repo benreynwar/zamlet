@@ -602,6 +602,8 @@ class VArithVxFloat:
             word_order=word_order,
             is_float=True,
             instr_ident=instr_ident,
+            vta=s.vta,
+            vma=s.vma,
         )
         await s.add_to_instruction_buffer(kinstr, span_id)
         s.monitor.finalize_children(span_id)
@@ -1029,6 +1031,8 @@ class VmvVi:
             element_width=element_width,
             word_order=word_order,
             instr_ident=instr_ident,
+            vta=s.vta,
+            vma=s.vma,
         )
         await s.add_to_instruction_buffer(kinstr, span_id)
         s.monitor.finalize_children(span_id)
@@ -1078,6 +1082,8 @@ class VmvVx:
             element_width=element_width,
             word_order=word_order,
             instr_ident=instr_ident,
+            vta=s.vta,
+            vma=s.vma,
         )
         await s.add_to_instruction_buffer(kinstr, span_id)
         s.monitor.finalize_children(span_id)
@@ -1124,6 +1130,9 @@ class VmergeVx:
         scalar_val = int.from_bytes(rs1_bytes[:element_width // 8],
                                     byteorder='little', signed=True)
 
+        # vmerge is unmasked per RVV spec (v0 is a select control). Pass
+        # vma=False to the synthesized masked broadcast so the "not selected"
+        # path preserves the just-copied vs2 instead of writing 0xFF.
         # Step 1: copy vs2 to vd (unmasked)
         instr_ident = await s.get_instr_ident()
         kinstr = kinstructions.VUnaryOvOp(
@@ -1136,6 +1145,8 @@ class VmergeVx:
             word_order=word_order,
             mask_reg=None,
             instr_ident=instr_ident,
+            vta=s.vta,
+            vma=False,
         )
         await s.add_to_instruction_buffer(kinstr, span_id)
 
@@ -1149,6 +1160,8 @@ class VmergeVx:
             word_order=word_order,
             instr_ident=instr_ident,
             mask_reg=0,
+            vta=s.vta,
+            vma=False,
         )
         await s.add_to_instruction_buffer(kinstr, span_id)
 
@@ -1192,6 +1205,10 @@ class VmergeVvm:
         s.set_vrf_ordering(self.vd, element_width)
         await s.ensure_vrf_ordering(0, 1, span_id)
 
+        # vmerge is unmasked per RVV spec: v0 is a select control, not a mask,
+        # so vma does not apply to the synthesized masked COPY steps. Passing
+        # vma=True there would corrupt the "not selected" elements with 0xFF
+        # instead of preserving the just-copied source.
         if self.vd == self.vs1 and self.vd == self.vs2:
             # vd == vs1 == vs2: result is always vd, no-op.
             pass
@@ -1208,6 +1225,8 @@ class VmergeVvm:
                 word_order=word_order,
                 mask_reg=0,
                 instr_ident=instr_ident,
+                vta=s.vta,
+                vma=False,
             )
             await s.add_to_instruction_buffer(kinstr, span_id)
         elif self.vd == self.vs1:
@@ -1223,6 +1242,8 @@ class VmergeVvm:
                 word_order=word_order,
                 mask_reg=0,
                 instr_ident=instr_ident,
+                vta=s.vta,
+                vma=False,
                 invert_mask=True,
             )
             await s.add_to_instruction_buffer(kinstr, span_id)
@@ -1239,6 +1260,8 @@ class VmergeVvm:
                 word_order=word_order,
                 mask_reg=None,
                 instr_ident=instr_ident,
+                vta=s.vta,
+                vma=False,
             )
             await s.add_to_instruction_buffer(kinstr, span_id)
 
@@ -1253,6 +1276,8 @@ class VmergeVvm:
                 word_order=word_order,
                 mask_reg=0,
                 instr_ident=instr_ident,
+                vta=s.vta,
+                vma=False,
             )
             await s.add_to_instruction_buffer(kinstr, span_id)
 
@@ -1297,6 +1322,9 @@ class VmergeVim:
         # Sign-extend 5-bit immediate
         scalar_val = self.simm5 if self.simm5 < 16 else self.simm5 - 32
 
+        # vmerge is unmasked per RVV spec (v0 is a select control). Pass
+        # vma=False to the synthesized masked broadcast so the "not selected"
+        # path preserves the just-copied vs2 instead of writing 0xFF.
         # Step 1: copy vs2 to vd (unmasked)
         instr_ident = await s.get_instr_ident()
         kinstr = kinstructions.VUnaryOvOp(
@@ -1309,6 +1337,8 @@ class VmergeVim:
             word_order=word_order,
             mask_reg=None,
             instr_ident=instr_ident,
+            vta=s.vta,
+            vma=False,
         )
         await s.add_to_instruction_buffer(kinstr, span_id)
 
@@ -1322,6 +1352,8 @@ class VmergeVim:
             word_order=word_order,
             instr_ident=instr_ident,
             mask_reg=0,
+            vta=s.vta,
+            vma=False,
         )
         await s.add_to_instruction_buffer(kinstr, span_id)
 
@@ -1870,6 +1902,8 @@ class VmvNr:
                 word_order=word_order,
                 mask_reg=None,
                 instr_ident=instr_ident,
+                vta=s.vta,
+                vma=s.vma,
             )
             await s.add_to_instruction_buffer(kinstr, span_id)
 
@@ -2050,6 +2084,8 @@ class VArithVv:
             element_width=element_width,
             word_order=word_order,
             instr_ident=instr_ident,
+            vta=s.vta,
+            vma=s.vma,
         )
         await s.add_to_instruction_buffer(kinstr, span_id)
         s.monitor.finalize_children(span_id)
@@ -2115,6 +2151,8 @@ class VArithVvFloat:
             element_width=element_width,
             word_order=word_order,
             instr_ident=instr_ident,
+            vta=s.vta,
+            vma=s.vma,
         )
         await s.add_to_instruction_buffer(kinstr, span_id)
         s.monitor.finalize_children(span_id)
@@ -2187,6 +2225,8 @@ class VArithVx:
             element_width=element_width,
             word_order=word_order,
             instr_ident=instr_ident,
+            vta=s.vta,
+            vma=s.vma,
         )
         await s.add_to_instruction_buffer(kinstr, span_id)
         s.monitor.finalize_children(span_id)
@@ -2252,6 +2292,8 @@ class VArithVi:
             element_width=element_width,
             word_order=word_order,
             instr_ident=instr_ident,
+            vta=s.vta,
+            vma=s.vma,
         )
         await s.add_to_instruction_buffer(kinstr, span_id)
         s.monitor.finalize_children(span_id)
@@ -2426,6 +2468,8 @@ class Vid:
             word_order=s.word_order,
             mask_reg=mask_reg,
             instr_ident=instr_ident,
+            vta=s.vta,
+            vma=s.vma,
         )
         await s.add_to_instruction_buffer(kinstr, span_id)
         s.monitor.finalize_children(span_id)
@@ -2495,6 +2539,8 @@ class VUnary:
             word_order=word_order,
             mask_reg=mask_reg,
             instr_ident=instr_ident,
+            vta=s.vta,
+            vma=s.vma,
         )
         await s.add_to_instruction_buffer(kinstr, span_id)
         s.monitor.finalize_children(span_id)
@@ -2591,6 +2637,8 @@ class VArithVvOv:
             src2_signed=self.src2_signed,
             word_order=word_order,
             instr_ident=instr_ident,
+            vta=s.vta,
+            vma=s.vma,
             is_float=self.op in kinstructions.FLOAT_OPS,
         )
         await s.add_to_instruction_buffer(kinstr, span_id)
@@ -2679,6 +2727,8 @@ class VArithVxOv:
             src2_signed=self.src2_signed,
             word_order=word_order,
             instr_ident=instr_ident,
+            vta=s.vta,
+            vma=s.vma,
             is_float=self.op in kinstructions.FLOAT_OPS,
         )
         await s.add_to_instruction_buffer(kinstr, span_id)
@@ -2723,6 +2773,8 @@ async def _copy_vreg_to_scratch(s: 'Oamlet', src_reg: int, ew: int,
             word_order=s.word_order,
             mask_reg=None,
             instr_ident=copy_ident,
+            vta=s.vta,
+            vma=s.vma,
         ), span_id)
     return scratch_regs
 
@@ -3106,6 +3158,8 @@ class VrgatherVxVi:
                 word_order=word_order,
                 instr_ident=broadcast_ident,
                 mask_reg=mask_reg,
+                vta=s.vta,
+                vma=s.vma,
             )
             await s.add_to_instruction_buffer(kinstr, span_id)
             s.monitor.finalize_children(span_id)
@@ -3134,6 +3188,8 @@ class VrgatherVxVi:
             mask_reg=mask_reg,
             src_byte_offset=src_byte_offset,
             span_id=span_id,
+            vta=s.vta,
+            vma=s.vma,
         )
         await s.add_witem(witem)
         read_kinstr = kinstructions.ReadRegWord(

@@ -83,49 +83,76 @@ vta: bool  # tail-agnostic
 vma: bool  # mask-agnostic
 ```
 
-Affected kinstrs (non-exhaustive — audit during implementation):
+Affected kinstrs (verified against `kamlet/kinstructions.py` and
+`transactions/load.py`):
 
-- `VArithVvOp`, `VArithVxOp`
-- `VCmpViOp`, `VCmpVxOp`, `VCmpVvOp`
-- `VBroadcastOp`, `VidOp`
-- `VUnaryOvOp`
-- `VmnandMmOp` (mask result, vta-only — see below)
-- `Load`, `LoadImmByte`, `LoadImmWord`, `LoadWord`
-- `VreductionOp` (when revived)
+Vector-dst, partial vline possible:
+- `VArithVvOp`, `VArithVxOp` (`kinstructions.py:1567,1655`)
+- `VArithVvOvOp`, `VArithVxOvOp` — widening/narrowing variants
+  (`kinstructions.py:1775,1892`)
+- `VBroadcastOp` (`kinstructions.py:1088`)
+- `VidOp` (`kinstructions.py:1151`)
+- `VUnaryOvOp` (`kinstructions.py:1216`)
+- `LoadImmByte`, `LoadImmWord` (`kinstructions.py:354,399`)
+- `Load` (`transactions/load.py:26`)
 
-Read-only kinstrs (`Store`, `StoreWord`, `StoreScalar`, `ReadRegWord`) do
-not need vta/vma — they don't write a vector destination.
+Mask-result kinstrs (implicit `vta=True` per `v-st-ext.adoc:364-365` —
+"Mask destination tail elements are always treated as tail-agnostic"):
+- `VCmpViOp`, `VCmpVxOp`, `VCmpVvOp` (`kinstructions.py:537,619,708`)
+- `VmLogicMmOp` (`kinstructions.py:823`) — generic mask logic family
+  (replaced the original draft's `VmnandMmOp`)
+- `SetMaskBits` (`kinstructions.py:999`)
 
-`WriteRegElement` is a single-element patch and is inherently RMW; vta/vma
-do not apply.
+For mask-result kinstrs, the `vta` field can be omitted, or always-true.
 
-For mask-result instructions (`VCmpV*`, `VmnandMmOp`): the spec says
-"Mask destination tail elements are always treated as tail-agnostic"
-(`v-st-ext.adoc:364-365`). So mask results have an implicit `vta=True` and
-the field can be omitted, or always-true.
+`MaskPopcountLocal` (`kinstructions.py:932`) writes a fully-defined word
+per jamlet (other slots zeroed) — no partial vline, so vta/vma don't apply.
 
-### 2. Lamlet vtype tracking
+Reductions are decomposed in `oamlet/reduction.py` into ordinary kinstrs
+(no dedicated reduction kinstr class). They inherit vta/vma from whatever
+the underlying decomposed ops carry.
 
-The lamlet currently does not track vtype. Add:
+Read-only kinstrs (`StoreScalar`, `ReadRegWord`) do not need vta/vma —
+they don't write a vector destination.
 
-- `Lamlet.current_vta: bool` and `Lamlet.current_vma: bool`, set to `False`
-  by default.
-- An update path for when the program executes a `vsetvli` /
-  `vsetivli` / `vsetvl`. The lamlet already has logic for `vsetvl` (find
-  it); extend it to capture vta/vma from the immediate.
-- When the lamlet builds any vector kinstr, stamp `vta=self.current_vta`
-  and `vma=self.current_vma`.
+**Accumulator-style ops keep direct `rw()`.** Ops whose semantics include
+"read prior value of dst" (the accumulator branch in `VArithVvOp` /
+`VArithVxOp` at `kinstructions.py:1593`, plus `WriteRegElement`) cannot
+benefit from rotation regardless of vta/vma — there's no way to provide a
+fresh phys *and* preserve the active-body old value the kinstr needs to
+read. Keep their direct `rw()` calls; do not route them through the
+allocator helper.
 
-For compound ops in `lamlet/unordered.py` and `oamlet/reduction.py` etc.,
-the helper functions that build kinstrs need to accept (or read from
-`lamlet`) the current vta/vma.
+### 2. Reading vta/vma at kinstr-construction time
+
+The oamlet already stores `vtype` as the raw 8-bit immediate from
+`vsetvli` / `vsetivli` / `vsetvl` (`instructions/vector.py:65,137`,
+`oamlet.py:431-441` exposes `sew` / `lmul` as properties on the raw bits).
+Other vtype fields (`vl`, `vsew`, `vlmul`) are read directly from `s.vtype`
+at the moment a kinstr is constructed; the lamlet does not cache vtype.
+
+Mirror that pattern: at every kinstr-construction site that has the oamlet
+state `s` in scope, extract vta/vma inline:
+
+```python
+vta = bool((s.vtype >> 6) & 0x1)
+vma = bool((s.vtype >> 7) & 0x1)
+```
+
+and stamp the kinstr fields. No new lamlet state.
+
+For compound ops in `oamlet/reduction.py` and any builder in
+`lamlet/unordered.py` / `lamlet/lamlet_waiting_item.py` that doesn't
+already have `s` in scope: pass `vta` / `vma` through arguments to the
+builder, just like `vl` and `element_width` are passed today.
 
 ### 3. Kamlet allocator helper
 
-Add a `Kamlet` method that wraps the per-vline rename decision:
+Add a `Kamlet` method that wraps the per-vline rename decision and returns
+just the per-vline phys regs:
 
 ```python
-def alloc_dst_pregs(
+async def alloc_dst_pregs(
     self,
     base_arch: int,
     start_vline: int,
@@ -136,18 +163,26 @@ def alloc_dst_pregs(
     mask_present: bool,
     vta: bool,
     vma: bool,
-) -> dict[int, AllocedPreg]:
+) -> List[int]:
     ...
 ```
 
-where `AllocedPreg` carries:
-- `phys: int` — the allocated physical register.
-- `is_rotated: bool` — True if `w()` was used (fresh phys), False if `rw()`.
-- `agnostic_positions: AgnosticDescriptor` — describes which byte/element
-  positions in this vline are agnostic (need to be filled with 1s by the
-  data path). Empty if `is_rotated=False` or if no agnostic positions exist.
+The helper does not need to communicate "was this vline rotated?" back to
+the handler. The handler already has vta/vma + the per-element
+classification it computes anyway, and unconditionally writing 1s into
+agnostic positions is spec-legal regardless of whether the phys was
+rotated:
 
-Per-vline decision:
+- if rotated (`w()`): writing 1s into agnostic positions is required (no
+  old value available — the only legal option).
+- if not rotated (`rw()`): writing 1s into agnostic positions is also
+  legal — the spec says agnostic = old value *or* all-1s, implementation
+  chooses per element.
+
+Allocator and handler reach a consistent outcome from the same inputs
+without sharing state.
+
+Per-vline decision inside the helper:
 
 ```
 has_prestart = (vline_idx == start_vline) and (start_index % elements_in_vline != 0)
@@ -163,15 +198,21 @@ needs_undisturbed = (
 if needs_undisturbed:
     use rw()
 else:
-    use w() and the data path must fill agnostic positions with 1s
+    use w()      # data path will fill agnostic positions with 1s
 ```
 
 ### 4. Data-path fill behavior
 
-The user's directive: rather than running a separate "fill with 1s" pass
-before the active-write loop, the data path can write 1s inline whenever
-it would otherwise skip a position. The exact mechanism depends on the
-instruction:
+The data path writes 1s inline into agnostic positions, unconditionally
+(no per-vline "is_rotated" branch — see section 3). The "is the position
+agnostic" predicate combines:
+
+- prestart: never agnostic
+- inactive (mask-off, body): agnostic iff `vma`
+- tail: agnostic iff `vta`
+
+Each handler decides agnostic-or-not inline using the `vta`/`vma` from
+the kinstr and the per-element classification it already computes.
 
 **Pattern A: per-element loop (VArithV{v,x}Op, VBroadcastOp, VidOp, VUnaryOvOp)**
 
@@ -182,114 +223,116 @@ if valid_element and mask_bit:
     # compute and write active element
 ```
 
-Under agnostic-fill, the else branch writes all-1s (only when the dst phys
-was rotated and the position is agnostic). Roughly:
+Under agnostic-fill:
 
 ```python
 if valid_element and mask_bit:
     write computed value
-elif preg_was_rotated_and_position_is_agnostic(...):
+elif position_is_agnostic(...):
     write all-1s
-# else: position is undisturbed, leave the rf_slice byte alone
-#       (which is correct because the dst phys was NOT rotated, so the byte
-#       still holds the old arch's value)
+# else: position is undisturbed (prestart, or inactive-and-not-vma, or
+#       tail-and-not-vta) — leave the rf_slice byte alone
 ```
 
-The "is the position agnostic" predicate combines:
-- prestart: never agnostic
-- inactive (mask-off, body): agnostic iff `vma`
-- tail: agnostic iff `vta`
+When this leaves a byte alone, the allocator must have picked `rw()`
+(the helper's rotation rule guarantees no `w()` for vlines with any
+undisturbed positions), so the byte holds the correct old-arch value.
 
-Each instruction handler decides this inline using the `vta`/`vma` from
-the kinstr and the per-element classification it already computes.
+**Pattern B: bulk word/vline writes (LoadImmByte, LoadImmWord, Load)**
 
-**Pattern B: bulk word/vline writes (Load simple/notsimple, Store, LoadWord)**
-
-These compute a per-vline byte mask `mask` and do
-`update_bytes_word(old, new, mask)`. The "old" comes from the dst phys
-(rf_slice). Under agnostic-fill, when the dst phys is rotated, "old"
-should effectively be all-1s in the agnostic positions and undefined
-elsewhere (we don't care because those bytes will be overwritten by the
-active mask anyway). So the update becomes:
+These compute a per-vline byte mask and do
+`update_bytes_word(old, new, mask)`. The "old" today comes from the dst
+phys (rf_slice). Under agnostic-fill, build a synthesized "fill word"
+with 1s in agnostic byte positions and substitute it for `old` in those
+positions:
 
 ```python
-fill_mask = bitmask of agnostic byte positions
-old_word = (1s where fill_mask, 0 elsewhere)  # synthesized, not read from rf_slice
-updated_word = (old_word & ~active_mask) | (new_word & active_mask)
+fill_mask = byte mask of agnostic positions in this vline
+active_mask = byte mask of active positions in this vline
+synth_old = (rf_slice_old & ~fill_mask) | fill_mask  # 1s in agnostic, old elsewhere
+updated_word = (synth_old & ~active_mask) | (new_word & active_mask)
 write updated_word
 ```
 
-Equivalently: pre-compute `old_or_fill = active_mask ? new_word : (fill_mask ? 0xFF : 0)` and write that.
+Equivalently, in one step: at each byte position, write `new` if active,
+else `0xFF` if agnostic, else `rf_slice_old`.
 
-Each load/store handler audits its update logic and handles the rotated
-case explicitly. For the not-rotated case, the existing
-`update_bytes_word(rf_slice_old, new, mask)` path stays the same.
+For not-rotated vlines, mixing in `rf_slice_old` is correct (preserves
+old-arch value in undisturbed positions). For rotated vlines, all
+unwritten bytes are agnostic by construction, so `rf_slice_old` is never
+sampled in those positions.
 
 ### 5. Handler audit
 
 Every kinstr handler refactored under the rename plan needs an audit pass:
 
 - Pull `vta`/`vma` from `self`.
-- Replace the current `if mask_present: rw() else: w()` block with a
-  call to `alloc_dst_pregs`.
-- For each rotated vline (`is_rotated=True`), implement the agnostic-fill
-  pattern in the data path per the patterns above.
+- Replace the current `if mask_present: rw() else: w()` block (and any
+  inlined equivalent) with a call to `alloc_dst_pregs`. Skip this for
+  accumulator-style branches that need direct `rw()` (see section 1).
+- Implement the agnostic-fill pattern in the data path per section 4,
+  driven by `vta`/`vma` + the existing per-element classification. No
+  per-vline `is_rotated` flag needs to flow through the witem.
 - For witems that store `dst_pregs` for later use in finalize (e.g.
-  `WaitingLoadSimple`, `WaitingLoadJ2JWords`), also store the per-vline
-  `agnostic_positions` so that the late data path (running in jamlet
-  context, possibly cycles after the kinstr was dispatched) knows what to
-  fill.
+  `WaitingLoadSimple`, `WaitingLoadJ2JWords`), also propagate `vta` /
+  `vma` and the per-vline geometry needed for the agnostic predicate, so
+  the late data path (running in jamlet context, possibly cycles after
+  the kinstr was dispatched) can compute fill positions.
 
 ## Execution plan
 
-### Stage 1 — kinstr fields and lamlet stamping
+Three PRs, matching the umbrella `PLAN_rvv_coverage.md` F1 split. Each is
+self-contained and revertible.
 
-- Add `vta: bool` and `vma: bool` to all dst-writing kinstrs.
-- Default to `False, False` in every constructor in
-  `lamlet/unordered.py`, `oamlet/oamlet.py`, `oamlet/reduction.py`, etc.
-- Add `current_vta` / `current_vma` state to the lamlet and a code path
-  to update them on `vsetvli`. Stamp every emitted dst-writing kinstr.
+### PR1 — kinstr plumbing (no behavior change)
 
-Until subsequent stages land, vta/vma are always False everywhere and the
-behavior is identical to today.
+- Add `vta: bool` and `vma: bool` fields to all dst-writing kinstrs
+  listed in section 1. For mask-result kinstrs the field can be omitted
+  (implicit `vta=True`).
+- At every kinstr-construction site, stamp the real bits from `s.vtype`
+  (section 2). This includes the construction sites in
+  `instructions/vector.py`, `oamlet/reduction.py`, `lamlet/unordered.py`,
+  and `lamlet/lamlet_waiting_item.py` identified during recon. For
+  builders that don't have `s` in scope, plumb vta/vma through arguments.
+- Allocator unchanged. Handlers don't read the new fields yet.
 
-### Stage 2 — `Kamlet.alloc_dst_pregs` helper
+Behavior identical to today — the fields are dead. This PR can land
+independently.
 
-- Implement the helper as described above. Returns per-vline phys,
-  rotated flag, and agnostic descriptor.
-- Initially, callers can ignore the agnostic descriptor; the helper still
-  produces correct rw/w decisions.
+### PR2 — allocator + data-path fill (behavior change)
 
-### Stage 3 — wire helper into refactored handlers
+- Implement `Kamlet.alloc_dst_pregs` (section 3). Helper returns per-vline
+  `List[int]` of phys regs.
+- Wire the helper into all handlers listed in section 1 (non-accumulator
+  branches only). Replace each existing `if mask_present: rw() else: w()`
+  block with the helper call.
+- Implement the data-path agnostic-fill (section 4) in each handler /
+  witem. For witems, propagate vta/vma and per-vline geometry as needed.
+- Add tests using the existing sentinel pattern (e.g. `test_strided_load.py:126-128`
+  pre-fills the dest with zeros via `test_utils.zero_register` and verifies
+  masked positions stay zero after the op):
+  - **Positive test** (`vta=True, vma=True`, partial vl, mixed mask): pre-fill
+    dest with a non-`0xFF` non-active-value sentinel (e.g. `0x55`), run the op,
+    store dest to memory, assert active positions = computed value and agnostic
+    positions = `0xFF`. Generalize `zero_register` into a `fill_register(reg,
+    byte_pattern)` helper, or add one alongside.
+  - **Negative test** (`vta=False, vma=False`, same setup): assert agnostic
+    positions = sentinel (undisturbed semantics preserved). This is essentially
+    what the existing tests already do with zero as the sentinel.
+- Run the kernel test suite. Everything defaulted `tu, mu` must still
+  pass.
 
-- Replace the current `if mask_present: rw() else: w()` blocks in:
-  `VArithVvOp`, `VArithVxOp`, `VCmpV*` (no mask, but still partial-vline),
-  `VBroadcastOp`, `VidOp`, `VUnaryOvOp`, `handle_load_imm_byte_instr`,
-  `handle_load_imm_word_instr`, `handle_load_word_instr`,
-  `handle_load_instr_simple`, `handle_load_instr_notsimple`.
-- For witem-backed handlers, propagate the agnostic descriptor onto the
-  witem alongside `dst_pregs`.
+This is the largest PR. Splittable per kinstr family if it grows
+unwieldy: e.g. (2a) helper + per-element pattern A handlers, (2b) bulk
+pattern B handlers + load witems.
 
-After this stage the rename allocator is using vta/vma but the data path
-still doesn't fill 1s. That's safe because vta/vma are still always
-`False` from stage 1, so no vline is ever rotated in a partial state, so
-no fill is ever required.
+### PR3 — drop forced `rw()`
 
-### Stage 4 — data-path agnostic fill
-
-- Audit each kinstr handler / witem data path.
-- Implement the inline 1s-fill per the patterns in section 4.
-- Add a test that exercises rotation under `vta=True` and `vma=True` and
-  verifies the agnostic positions are all-1s after the operation.
-
-### Stage 5 — turn on vta/vma in the lamlet
-
-- Implement the actual `vsetvli` parsing in the lamlet so that
-  `current_vta` / `current_vma` reflect the program's intent.
-- Verify that the existing kernel test suite still passes (everything
-  defaulted `tu, mu` should be unaffected).
-- Add tests that explicitly use `ta, ma` and confirm pipelining improves
-  on rolled loops with `vl < VLMAX` tail iterations.
+- Audit any remaining sites that still force `rw()` for partial-vline
+  writes "just in case" and route them through the helper.
+- Add a test that confirms pipelining on rolled-loop tail iterations
+  with `vta=True, vma=True` (e.g. measure issue gap shrinks vs.
+  `vta=False`).
 
 ## Out of scope
 
@@ -304,12 +347,5 @@ no fill is ever required.
 
 ## Open questions
 
-- Does the lamlet currently parse `vsetvli` immediates at all, or does it
-  receive vtype updates through some higher-level path? Need to find the
-  current vsetvl handling and figure out where to inject vta/vma capture.
-- For instructions whose output is itself a mask register (`VCmpV*`,
-  `VmnandMmOp`), the spec mandates implicit `vta=True`. Confirm whether
-  these need a separate code path or whether the helper can detect them
-  via the destination element width.
-- Does the Chisel side need any preparatory hooks before this lands in
-  python, so the two stay close to the same shape?
+None outstanding. The Chisel side may diverge from this python work and
+will be planned separately.

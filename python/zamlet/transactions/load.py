@@ -39,6 +39,8 @@ class Load(KInstr):
     mask_reg: int | None
     writeset_ident: int
     instr_ident: int
+    vta: bool
+    vma: bool
     stride_bytes: int | None = None
 
     async def admit(self, kamlet: 'Kamlet') -> 'Load | None':
@@ -63,6 +65,7 @@ class Load(KInstr):
             start_index=self.start_index, n_elements=self.n_elements,
             elements_in_vline=elements_in_vline,
             mask_present=self.mask_reg is not None,
+            vta=self.vta, vma=self.vma,
             exclude_reuse=exclude)
         dst_pregs = {start_vline + i: dst_preg_list[i]
                      for i in range(len(dst_preg_list))}
@@ -108,6 +111,7 @@ class Load(KInstr):
             kamlet.cache_table.add_witem_immediately(
                 witem=witem, k_maddr=self.k_maddr)
             for jamlet in kamlet.jamlets:
+                load_j2j_words.prefill_tail(jamlet, witem)
                 for tag in range(kamlet.params.word_bytes):
                     load_j2j_words.init_dst_state(jamlet, witem, tag)
                     load_j2j_words.init_src_state(jamlet, witem, tag)

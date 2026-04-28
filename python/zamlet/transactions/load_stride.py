@@ -42,6 +42,8 @@ class LoadStride(KInstr):
     mask_reg: int | None
     writeset_ident: int
     instr_ident: int
+    vta: bool
+    vma: bool
     stride_bytes: int | None = None
 
     async def admit(self, kamlet) -> 'LoadStride | None':
@@ -59,6 +61,7 @@ class LoadStride(KInstr):
             start_index=self.start_index, n_elements=self.n_elements,
             elements_in_vline=elements_in_vline,
             mask_present=self.mask_reg is not None,
+            vta=self.vta, vma=self.vma,
             exclude_reuse=exclude)
         dst_pregs = {start_vline + i: dst_preg_list[i] for i in range(len(dst_preg_list))}
         return self.rename(

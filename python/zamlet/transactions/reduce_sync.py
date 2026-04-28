@@ -64,11 +64,16 @@ class ReduceSync(KInstr):
     async def admit(self, kamlet) -> 'ReduceSync | None':
         src_preg = kamlet.r(self.src)
         dst_elements_in_vline = kamlet.params.vline_bytes * 8 // 32
+        # ReduceSync writes every ew=32 slot of the dst vline (start_index=0,
+        # n_elements=dst_elements_in_vline, no mask). The whole vline is
+        # active body, so vta/vma have no effect — the allocator's
+        # needs_undisturbed is False either way.
         dst_pregs = await kamlet.alloc_dst_pregs(
             base_arch=self.dst, start_vline=0, end_vline=0,
             start_index=0, n_elements=dst_elements_in_vline,
             elements_in_vline=dst_elements_in_vline,
             mask_present=False,
+            vta=False, vma=False,
             exclude_reuse={src_preg})
         return self.rename(
             needs_witem=1,

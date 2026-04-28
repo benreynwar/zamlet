@@ -27,6 +27,7 @@ from zamlet.waiting_item import WaitingItem
 from zamlet.kamlet.cache_table import SendState
 from zamlet.message import RegElementHeader, MessageType, SendType
 from zamlet.synchronization import WaitingItemSyncState as SyncState
+from zamlet.transactions.helpers import write_agnostic_element
 
 if TYPE_CHECKING:
     from zamlet.jamlet.jamlet import Jamlet
@@ -53,6 +54,8 @@ class RegPermute(KInstr):
     vlmax: int
     mask_reg: int | None
     instr_ident: int
+    vta: bool
+    vma: bool
 
     def _compute_extra_src_pregs(self, kamlet, dst_elements_in_vline) -> dict[int, int]:
         """Hook: extra per-vline pregs to lock beyond vs2 (e.g. vs1 for gather).
@@ -93,6 +96,7 @@ class RegPermute(KInstr):
             start_index=self.start_index, n_elements=self.n_elements,
             elements_in_vline=dst_elements_in_vline,
             mask_present=self.mask_reg is not None,
+            vta=self.vta, vma=self.vma,
             exclude_reuse=exclude)
         dst_pregs = {
             dst_start_vline + i: dst_preg_list[i] for i in range(len(dst_preg_list))
@@ -230,6 +234,16 @@ class WaitingRegPermute(WaitingItem):
         wb = jamlet.params.word_bytes
         instr = self.item
         data_eb = instr.data_ew // 8
+        elements_in_vline = jamlet.params.vline_bytes * 8 // instr.data_ew
+        chunk_end = instr.start_index + instr.n_elements
+        # vta tail-fill spans [chunk_end, next_vline_boundary). Lamlet chunks
+        # vline-aligned, so this only fires on the partial-vl-vline of the
+        # last chunk; non-last chunks land on a boundary and fill_end == chunk_end.
+        if instr.vta:
+            fill_end = ((chunk_end + elements_in_vline - 1)
+                        // elements_in_vline) * elements_in_vline
+        else:
+            fill_end = chunk_end
         witem_span_id = jamlet.monitor.get_witem_span_id(
             instr.instr_ident, jamlet.k_min_x, jamlet.k_min_y)
 
@@ -240,13 +254,29 @@ class WaitingRegPermute(WaitingItem):
             if state == SendState.INITIAL:
                 dst_ve, dst_e, dst_eb, dst_v = self._compute_dst_element(jamlet, tag)
 
-                # Skip if not the start of an element or out of range
-                if (dst_eb != 0 or dst_e < instr.start_index
-                        or dst_e >= instr.start_index + instr.n_elements):
+                # Follower bytes covered by leading-byte data_eb write.
+                # Prestart is undisturbed regardless of vta/vma.
+                if dst_eb != 0 or dst_e < instr.start_index:
                     self.transaction_states[state_idx] = SendState.COMPLETE
                     continue
 
-                # Check mask
+                # Past the fill range: lane has no destination in this chunk
+                # (e.g. wrap-around to vd+1 for an unaligned outer vstart, which
+                # the next chunk owns). Skip without touching dst_pregs.
+                if dst_e >= fill_end:
+                    self.transaction_states[state_idx] = SendState.COMPLETE
+                    continue
+
+                # In fill range [chunk_end, fill_end): write 0xFF (vta tail).
+                if dst_e >= chunk_end:
+                    write_agnostic_element(
+                        jamlet, instr_ident=instr.instr_ident,
+                        dst_preg=self.dst_pregs[dst_v], tag=tag,
+                        n_bytes=data_eb, dst_e=dst_e, reason='tail')
+                    self.transaction_states[state_idx] = SendState.COMPLETE
+                    continue
+
+                # Check mask — mask-off body is agnostic if vma else undisturbed.
                 if self.mask_preg is not None:
                     mask_word = int.from_bytes(
                         jamlet.rf_slice[self.mask_preg * wb: (self.mask_preg + 1) * wb],
@@ -254,6 +284,11 @@ class WaitingRegPermute(WaitingItem):
                     bit_index = dst_e // jamlet.params.j_in_l
                     mask_bit = (mask_word >> bit_index) & 1
                     if not mask_bit:
+                        if instr.vma:
+                            write_agnostic_element(
+                                jamlet, instr_ident=instr.instr_ident,
+                                dst_preg=self.dst_pregs[dst_v], tag=tag,
+                                n_bytes=data_eb, dst_e=dst_e, reason='mask_off')
                         self.transaction_states[state_idx] = SendState.COMPLETE
                         continue
 

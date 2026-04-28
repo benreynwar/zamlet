@@ -95,7 +95,8 @@ class LamletWaitingVrgatherBroadcast(LamletWaitingItem):
 
     def __init__(self, instr_ident: int, vd: int, n_elements: int,
                  element_width: int, word_order: 'addresses.WordOrder',
-                 mask_reg: int | None, src_byte_offset: int, span_id: int):
+                 mask_reg: int | None, src_byte_offset: int, span_id: int,
+                 vta: bool, vma: bool):
         super().__init__(instr_ident=instr_ident)
         self.vd = vd
         self.n_elements = n_elements
@@ -104,6 +105,8 @@ class LamletWaitingVrgatherBroadcast(LamletWaitingItem):
         self.mask_reg = mask_reg
         self.src_byte_offset = src_byte_offset
         self.span_id = span_id
+        self.vta = vta
+        self.vma = vma
         self.word_received: bool = False
         self._word: int | None = None
         self._done: bool = False
@@ -132,6 +135,8 @@ class LamletWaitingVrgatherBroadcast(LamletWaitingItem):
             word_order=self.word_order,
             instr_ident=broadcast_ident,
             mask_reg=self.mask_reg,
+            vta=self.vta,
+            vma=self.vma,
         )
         await lamlet.add_to_instruction_buffer(kinstr, self.span_id)
         lamlet.monitor.finalize_children(self.span_id)

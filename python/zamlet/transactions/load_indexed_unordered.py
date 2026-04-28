@@ -42,6 +42,8 @@ class LoadIndexedUnordered(KInstr):
     mask_reg: int | None
     writeset_ident: int
     instr_ident: int
+    vta: bool
+    vma: bool
     index_offset: int = 0
 
     async def admit(self, kamlet) -> 'LoadIndexedUnordered | None':
@@ -74,6 +76,7 @@ class LoadIndexedUnordered(KInstr):
             start_index=self.start_index, n_elements=self.n_elements,
             elements_in_vline=dst_elements_in_vline,
             mask_present=self.mask_reg is not None,
+            vta=self.vta, vma=self.vma,
             exclude_reuse=exclude)
         dst_pregs = {dst_start_vline + i: p for i, p in enumerate(dst_preg_list)}
 

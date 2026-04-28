@@ -56,6 +56,8 @@ def create_load_instr(params: ZamletParams, mem_ew: int, reg_ew: int,
         mask_reg=None,
         writeset_ident=0,
         instr_ident=0,
+        vta=False,
+        vma=False,
     )
 
 

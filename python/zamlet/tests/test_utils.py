@@ -176,38 +176,43 @@ async def setup_mask_register(
     logger.info(f"Mask loaded into v{mask_reg}")
 
 
-async def zero_register(
+async def fill_register(
     lamlet: 'Oamlet',
     reg: int,
     n_elements: int,
     ew: int,
     page_bytes: int,
-    zero_mem_addr: int,
+    mem_addr: int,
+    byte_pattern: int,
 ) -> None:
-    """Initialize a vector register to zeros."""
+    """Initialize a vector register's bytes to a repeating byte pattern."""
+    assert 0 <= byte_pattern <= 0xff
     element_bytes = ew // 8
     n_pages = (n_elements * element_bytes + page_bytes - 1) // page_bytes
     lamlet.allocate_memory(
-        GlobalAddress(bit_addr=zero_mem_addr * 8, params=lamlet.params),
+        GlobalAddress(bit_addr=mem_addr * 8, params=lamlet.params),
         page_bytes * max(1, n_pages), memory_type=MemoryType.VPU,
     )
     ordering = Ordering(lamlet.word_order, ew)
-    await lamlet.set_memory(zero_mem_addr, bytes(n_elements * element_bytes), ordering=ordering)
+    payload = bytes([byte_pattern]) * (n_elements * element_bytes)
+    await lamlet.set_memory(mem_addr, payload, ordering=ordering)
 
-    zero_span_id = lamlet.monitor.create_span(
+    span_id = lamlet.monitor.create_span(
         span_type=SpanType.RISCV_INSTR, component="test",
-        completion_type=CompletionType.FIRE_AND_FORGET, mnemonic="zero_reg")
+        completion_type=CompletionType.FIRE_AND_FORGET, mnemonic="fill_reg")
     await lamlet.vload(
         vd=reg,
-        addr=zero_mem_addr,
+        addr=mem_addr,
         ordering=ordering,
         n_elements=n_elements,
         mask_reg=None,
         start_index=0,
-        parent_span_id=zero_span_id,
+        parent_span_id=span_id,
     )
-    lamlet.monitor.finalize_children(zero_span_id)
-    logger.info(f"Register v{reg} zeroed ({n_elements} elements)")
+    lamlet.monitor.finalize_children(span_id)
+    logger.info(f"Register v{reg} filled with 0x{byte_pattern:02x} ({n_elements} elements)")
+
+
 
 
 def set_vline_random_ew(lamlet: 'Oamlet', addr: int, n_bytes: int, rnd: Random):
