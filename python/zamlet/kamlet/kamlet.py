@@ -63,7 +63,7 @@ class Kamlet:
         # single-op fma) carry no entry here — stacked rf_info write tokens
         # already model "one op per cycle".
         self.rf_info = register_file_slot.KamletRegisterFile(
-            self.params.n_vregs, name=rf_name,
+            self.params.n_vregs, clock=self.clock, name=rf_name,
             resources=list(register_file_slot.Resources))
         # Per-kamlet rename table. Arch indices in kinstructions are translated
         # to phys indices at dispatch; the scoreboard operates on phys.

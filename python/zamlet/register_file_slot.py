@@ -113,8 +113,9 @@ class RegisterFileSlot:
 
 class KamletRegisterFile:
 
-    def __init__(self, n_regs: int, name: str = "",
+    def __init__(self, n_regs: int, clock: Clock, name: str = "",
                  resources: List[Resources] | None = None):
+        self.clock = clock
         self.name = name
         self.reads: List[List[int]] = [[] for i in range(n_regs)]
         self.write: List[int|None] = [None for i in range(n_regs)]
@@ -163,8 +164,8 @@ class KamletRegisterFile:
                 f"!= token={token}"
             )
             self.resources[resource] = None
-        logger.debug(f'{self.name} RF FINISH token={token} read_regs={read_regs} '
-                     f'write_regs={write_regs} resources={resources}')
+        logger.debug(f'cyc={self.clock.cycle} {self.name} RF FINISH token={token} '
+                     f'read_regs={read_regs} write_regs={write_regs} resources={resources}')
 
     def start(self, read_regs: List[int]|None=None, write_regs: List[int]|None=None,
               resources: List[Resources]|None=None) -> int:
@@ -180,15 +181,17 @@ class KamletRegisterFile:
             self.reads[reg].append(token)
         for reg in write_regs:
             if not self.can_write(reg):
-                logger.error(f'LOCK VIOLATION: Cannot write reg {reg}, write={self.write[reg]}, reads={self.reads[reg]}')
+                logger.error(f'cyc={self.clock.cycle} {self.name} LOCK VIOLATION: '
+                             f'Cannot write reg {reg}, write={self.write[reg]}, '
+                             f'reads={self.reads[reg]} (new token={token})')
             assert self.can_write(reg), f"Cannot write reg {reg}, write={self.write[reg]}, reads={self.reads[reg]}"
             self.write[reg] = token
         for resource in resources:
             assert self.can_use_resource(resource), (
                 f"Cannot claim resource {resource}, held by {self.resources[resource]}")
             self.resources[resource] = token
-        logger.debug(f'{self.name} RF START token={token} read_regs={read_regs} '
-                     f'write_regs={write_regs} resources={resources}')
+        logger.debug(f'cyc={self.clock.cycle} {self.name} RF START token={token} '
+                     f'read_regs={read_regs} write_regs={write_regs} resources={resources}')
         return token
 
     def start_read(self, reg: int) -> int:

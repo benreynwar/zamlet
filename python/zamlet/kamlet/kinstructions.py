@@ -168,9 +168,13 @@ class Renamed:
 
     @property
     def read_pregs(self) -> list[int]:
-        result = list(self.src_pregs.values())
-        result.extend(self.src2_pregs.values())
-        if self.mask_preg is not None:
+        # Honor the rw() convention (kamlet.w/rw): a preg that appears in both
+        # src and dst is read-modify-written and the write lock subsumes the
+        # read. Listing it under reads as well would trip can_write at start().
+        writes = set(self.dst_pregs.values())
+        result = [p for p in self.src_pregs.values() if p not in writes]
+        result.extend(p for p in self.src2_pregs.values() if p not in writes)
+        if self.mask_preg is not None and self.mask_preg not in writes:
             result.append(self.mask_preg)
         return result
 
@@ -341,7 +345,14 @@ class AluKInstr(KInstr):
         kamlet.clock.create_task(self._run_alu(kamlet, rf_token))
 
     async def _run_alu(self, kamlet, rf_token: int) -> None:
+        logger.debug(
+            f'cyc={kamlet.clock.cycle} {type(self).__name__} '
+            f'ident={getattr(self, "instr_ident", "?")} _run_alu ENTER token={rf_token}')
         results = self.alu_compute(kamlet)
+        logger.debug(
+            f'cyc={kamlet.clock.cycle} {type(self).__name__} '
+            f'ident={getattr(self, "instr_ident", "?")} _run_alu RELEASE_READS token={rf_token} '
+            f'read_pregs={self.renamed.read_pregs}')
         kamlet.rf_info.finish(rf_token, read_regs=self.renamed.read_pregs)
         for resource, cycles in self.resources.items():
             kamlet.clock.create_task(
@@ -358,6 +369,8 @@ class AluKInstr(KInstr):
             jamlet.sticky_fflags |= r.fflags
             if r.vxsat:
                 jamlet.sticky_vxsat = True
+        kamlet.monitor.finalize_kinstr_exec(
+            self.instr_ident, kamlet.min_x, kamlet.min_y)
         kamlet.rf_info.finish(rf_token, write_regs=self.renamed.write_pregs)
 
     @staticmethod
@@ -633,7 +646,7 @@ def _vcmp_evaluate(op: VCmpOp, a, b):
 
 
 @dataclass
-class VCmpViOp(KInstr):
+class VCmpViOp(AluKInstr):
     op: VCmpOp
     dst: int
     src: int
@@ -662,7 +675,7 @@ class VCmpViOp(KInstr):
             dst_pregs={v: dst_pregs[v] for v in range(n_dst_vlines)},
         )
 
-    async def execute(self, kamlet) -> None:
+    def alu_compute(self, kamlet) -> list[AluResult]:
         r = self.renamed
         wb = kamlet.params.word_bytes
         bits_per_jamlet_vline = wb * 8
@@ -671,6 +684,11 @@ class VCmpViOp(KInstr):
         eb = self.element_width // 8
         span_id = kamlet.monitor.get_kinstr_exec_span_id(
             self.instr_ident, kamlet.min_x, kamlet.min_y)
+
+        # Mask writes are bit-granular but the framework's commit step is byte-
+        # granular. Accumulate per (j_in_k, dst_preg, byte_offset) so each
+        # byte's final value reflects all element bits before being written.
+        byte_acc: dict[tuple[int, int, int], dict] = {}
 
         for element_index in range(self.n_elements):
             vw_index = element_index % kamlet.params.j_in_l
@@ -697,25 +715,38 @@ class VCmpViOp(KInstr):
             dst_byte_in_vline = dst_bit_in_vline // 8
             dst_bit_offset = dst_bit_in_vline % 8
             dst_preg = r.dst_pregs[dst_vline_idx]
-            old_byte = jamlet.rf_slice[dst_preg * wb + dst_byte_in_vline]
+            key = (j_in_k_index, dst_preg, dst_byte_in_vline)
+            entry = byte_acc.get(key)
+            if entry is None:
+                entry = {'byte': jamlet.rf_slice[dst_preg * wb + dst_byte_in_vline],
+                         'elements': []}
+                byte_acc[key] = entry
             if result_bit:
-                new_byte = old_byte | (1 << dst_bit_offset)
+                entry['byte'] |= (1 << dst_bit_offset)
             else:
-                new_byte = old_byte & ~(1 << dst_bit_offset)
-            jamlet.write_vreg(dst_preg, dst_byte_in_vline, bytes([new_byte]),
-                              span_id=span_id,
-                              event_details={'element_index': element_index,
-                                             'bit': dst_bit_offset,
-                                             'result': bool(result_bit)})
+                entry['byte'] &= ~(1 << dst_bit_offset) & 0xff
+            entry['elements'].append(
+                {'element_index': element_index, 'bit': dst_bit_offset,
+                 'result': bool(result_bit)})
 
-        kamlet.monitor.finalize_kinstr_exec(self.instr_ident, kamlet.min_x, kamlet.min_y)
+        results: list[AluResult] = []
+        for (j_in_k_index, dst_preg, byte_offset), entry in byte_acc.items():
+            results.append(AluResult(
+                j_in_k=j_in_k_index,
+                dst_preg=dst_preg,
+                byte_offset=byte_offset,
+                data=bytes([entry['byte']]),
+                span_id=span_id,
+                event_details={'elements': entry['elements']},
+            ))
+        return results
 
 
 _CMP_FLOAT_FMT = {8: '<d', 4: '<f', 2: '<e'}
 
 
 @dataclass
-class VCmpVxOp(KInstr):
+class VCmpVxOp(AluKInstr):
     op: VCmpOp
     dst: int
     src: int
@@ -745,7 +776,7 @@ class VCmpVxOp(KInstr):
             dst_pregs={v: dst_pregs[v] for v in range(n_dst_vlines)},
         )
 
-    async def execute(self, kamlet) -> None:
+    def alu_compute(self, kamlet) -> list[AluResult]:
         r = self.renamed
         wb = kamlet.params.word_bytes
         bits_per_jamlet_vline = wb * 8
@@ -760,6 +791,9 @@ class VCmpVxOp(KInstr):
             )
         span_id = kamlet.monitor.get_kinstr_exec_span_id(
             self.instr_ident, kamlet.min_x, kamlet.min_y)
+
+        # See VCmpViOp.alu_compute for why we accumulate per byte.
+        byte_acc: dict[tuple[int, int, int], dict] = {}
 
         for element_index in range(self.n_elements):
             vw_index = element_index % kamlet.params.j_in_l
@@ -789,22 +823,35 @@ class VCmpVxOp(KInstr):
             dst_byte_in_vline = dst_bit_in_vline // 8
             dst_bit_offset = dst_bit_in_vline % 8
             dst_preg = r.dst_pregs[dst_vline_idx]
-            old_byte = jamlet.rf_slice[dst_preg * wb + dst_byte_in_vline]
+            key = (j_in_k_index, dst_preg, dst_byte_in_vline)
+            entry = byte_acc.get(key)
+            if entry is None:
+                entry = {'byte': jamlet.rf_slice[dst_preg * wb + dst_byte_in_vline],
+                         'elements': []}
+                byte_acc[key] = entry
             if result_bit:
-                new_byte = old_byte | (1 << dst_bit_offset)
+                entry['byte'] |= (1 << dst_bit_offset)
             else:
-                new_byte = old_byte & ~(1 << dst_bit_offset)
-            jamlet.write_vreg(dst_preg, dst_byte_in_vline, bytes([new_byte]),
-                              span_id=span_id,
-                              event_details={'element_index': element_index,
-                                             'bit': dst_bit_offset,
-                                             'result': bool(result_bit)})
+                entry['byte'] &= ~(1 << dst_bit_offset) & 0xff
+            entry['elements'].append(
+                {'element_index': element_index, 'bit': dst_bit_offset,
+                 'result': bool(result_bit)})
 
-        kamlet.monitor.finalize_kinstr_exec(self.instr_ident, kamlet.min_x, kamlet.min_y)
+        results: list[AluResult] = []
+        for (j_in_k_index, dst_preg, byte_offset), entry in byte_acc.items():
+            results.append(AluResult(
+                j_in_k=j_in_k_index,
+                dst_preg=dst_preg,
+                byte_offset=byte_offset,
+                data=bytes([entry['byte']]),
+                span_id=span_id,
+                event_details={'elements': entry['elements']},
+            ))
+        return results
 
 
 @dataclass
-class VCmpVvOp(KInstr):
+class VCmpVvOp(AluKInstr):
     op: VCmpOp
     dst: int
     src1: int
@@ -836,7 +883,7 @@ class VCmpVvOp(KInstr):
             dst_pregs={v: dst_pregs[v] for v in range(n_dst_vlines)},
         )
 
-    async def execute(self, kamlet) -> None:
+    def alu_compute(self, kamlet) -> list[AluResult]:
         r = self.renamed
         wb = kamlet.params.word_bytes
         bits_per_jamlet_vline = wb * 8
@@ -845,6 +892,9 @@ class VCmpVvOp(KInstr):
         fmt = _CMP_FLOAT_FMT[eb] if self.is_float else None
         span_id = kamlet.monitor.get_kinstr_exec_span_id(
             self.instr_ident, kamlet.min_x, kamlet.min_y)
+
+        # See VCmpViOp.alu_compute for why we accumulate per byte.
+        byte_acc: dict[tuple[int, int, int], dict] = {}
 
         for element_index in range(self.n_elements):
             vw_index = element_index % kamlet.params.j_in_l
@@ -877,18 +927,31 @@ class VCmpVvOp(KInstr):
             dst_byte_in_vline = dst_bit_in_vline // 8
             dst_bit_offset = dst_bit_in_vline % 8
             dst_preg = r.dst_pregs[dst_vline_idx]
-            old_byte = jamlet.rf_slice[dst_preg * wb + dst_byte_in_vline]
+            key = (j_in_k_index, dst_preg, dst_byte_in_vline)
+            entry = byte_acc.get(key)
+            if entry is None:
+                entry = {'byte': jamlet.rf_slice[dst_preg * wb + dst_byte_in_vline],
+                         'elements': []}
+                byte_acc[key] = entry
             if result_bit:
-                new_byte = old_byte | (1 << dst_bit_offset)
+                entry['byte'] |= (1 << dst_bit_offset)
             else:
-                new_byte = old_byte & ~(1 << dst_bit_offset)
-            jamlet.write_vreg(dst_preg, dst_byte_in_vline, bytes([new_byte]),
-                              span_id=span_id,
-                              event_details={'element_index': element_index,
-                                             'bit': dst_bit_offset,
-                                             'result': bool(result_bit)})
+                entry['byte'] &= ~(1 << dst_bit_offset) & 0xff
+            entry['elements'].append(
+                {'element_index': element_index, 'bit': dst_bit_offset,
+                 'result': bool(result_bit)})
 
-        kamlet.monitor.finalize_kinstr_exec(self.instr_ident, kamlet.min_x, kamlet.min_y)
+        results: list[AluResult] = []
+        for (j_in_k_index, dst_preg, byte_offset), entry in byte_acc.items():
+            results.append(AluResult(
+                j_in_k=j_in_k_index,
+                dst_preg=dst_preg,
+                byte_offset=byte_offset,
+                data=bytes([entry['byte']]),
+                span_id=span_id,
+                event_details={'elements': entry['elements']},
+            ))
+        return results
 
 
 def _vmlogic_eval(op: VmLogicOp, a: int, b: int) -> int:
@@ -919,7 +982,7 @@ def _vmlogic_eval(op: VmLogicOp, a: int, b: int) -> int:
 
 
 @dataclass
-class VmLogicMmOp(KInstr):
+class VmLogicMmOp(AluKInstr):
     """Vector mask-mask logical op (vm{and,andn,or,orn,xor,nand,nor,xnor}.mm).
 
     dst.mask[i] = op(src1.mask[i], src2.mask[i]) for i in [start_index, n_elements).
@@ -976,11 +1039,17 @@ class VmLogicMmOp(KInstr):
         )
 
     async def execute(self, kamlet) -> None:
-        vrange = self._vline_range(kamlet)
-        if vrange is None:
+        # Empty active region: nothing to read or write, so skip the framework
+        # entirely (no rf_info.start, no latency wait). Renamed has no pregs.
+        if self._vline_range(kamlet) is None:
             kamlet.monitor.finalize_kinstr_exec(
                 self.instr_ident, kamlet.min_x, kamlet.min_y)
             return
+        await super().execute(kamlet)
+
+    def alu_compute(self, kamlet) -> list[AluResult]:
+        vrange = self._vline_range(kamlet)
+        assert vrange is not None  # execute() guards the empty case
         start_vline, end_vline = vrange
         r = self.renamed
         wb = kamlet.params.word_bytes
@@ -989,6 +1058,7 @@ class VmLogicMmOp(KInstr):
         span_id = kamlet.monitor.get_kinstr_exec_span_id(
             self.instr_ident, kamlet.min_x, kamlet.min_y)
 
+        results: list[AluResult] = []
         for j_in_k_index, jamlet in enumerate(kamlet.jamlets):
             # Per-vline wb-byte active mask: 1 for each bit whose element is in
             # [start_index, n_elements) and maps to this jamlet.
@@ -1022,9 +1092,14 @@ class VmLogicMmOp(KInstr):
                     op_byte = _vmlogic_eval(self.op, s1, s2)
                     old = jamlet.rf_slice[dst_base + byte_offset]
                     new_byte = (op_byte & active) | (old & (~active & 0xff))
-                    jamlet.write_vreg(dst_preg, byte_offset, bytes([new_byte]),
-                                      span_id=span_id)
-        kamlet.monitor.finalize_kinstr_exec(self.instr_ident, kamlet.min_x, kamlet.min_y)
+                    results.append(AluResult(
+                        j_in_k=j_in_k_index,
+                        dst_preg=dst_preg,
+                        byte_offset=byte_offset,
+                        data=bytes([new_byte]),
+                        span_id=span_id,
+                    ))
+        return results
 
 
 @dataclass
@@ -1184,7 +1259,7 @@ class SetMaskBits(KInstr):
 
 
 @dataclass
-class VBroadcastOp(KInstr):
+class VBroadcastOp(AluKInstr):
     """Broadcast a scalar value to all elements of a vector register.
 
     Used for vmv.v.i, vmv.v.x, vmerge instructions.
@@ -1216,7 +1291,7 @@ class VBroadcastOp(KInstr):
             mask_preg=mask_preg,
         )
 
-    async def execute(self, kamlet) -> None:
+    def alu_compute(self, kamlet) -> list[AluResult]:
         r = self.renamed
         bits_in_vline = kamlet.params.vline_bytes * 8
         n_vlines = (self.n_elements * self.element_width + bits_in_vline - 1) // bits_in_vline
@@ -1227,7 +1302,10 @@ class VBroadcastOp(KInstr):
         start_index = 0
         span_id = kamlet.monitor.get_kinstr_exec_span_id(
             self.instr_ident, kamlet.min_x, kamlet.min_y)
+        result_bytes = self.scalar.to_bytes(
+            eb, byteorder='little', signed=(self.scalar < 0))
 
+        results: list[AluResult] = []
         for j_in_k_index, jamlet in enumerate(kamlet.jamlets):
             for vline_index in range(n_vlines):
                 dst_preg = r.dst_pregs[vline_index]
@@ -1239,15 +1317,18 @@ class VBroadcastOp(KInstr):
                         vline_index, j_in_k_index, index_in_j
                     )
                     if valid_element and mask_bit:
-                        result_bytes = self.scalar.to_bytes(
-                            eb, byteorder='little', signed=(self.scalar < 0))
-                        jamlet.write_vreg(dst_preg, byte_offset, result_bytes,
-                                          span_id=span_id)
-        kamlet.monitor.finalize_kinstr_exec(self.instr_ident, kamlet.min_x, kamlet.min_y)
+                        results.append(AluResult(
+                            j_in_k=j_in_k_index,
+                            dst_preg=dst_preg,
+                            byte_offset=byte_offset,
+                            data=result_bytes,
+                            span_id=span_id,
+                        ))
+        return results
 
 
 @dataclass
-class VidOp(KInstr):
+class VidOp(AluKInstr):
     """Write element indices to a vector register.
 
     Used for vid.v instruction: vd[i] = i
@@ -1278,7 +1359,7 @@ class VidOp(KInstr):
             mask_preg=mask_preg,
         )
 
-    async def execute(self, kamlet) -> None:
+    def alu_compute(self, kamlet) -> list[AluResult]:
         r = self.renamed
         params = kamlet.params
         bits_in_vline = params.vline_bytes * 8
@@ -1290,6 +1371,7 @@ class VidOp(KInstr):
         span_id = kamlet.monitor.get_kinstr_exec_span_id(
             self.instr_ident, kamlet.min_x, kamlet.min_y)
 
+        results: list[AluResult] = []
         for j_in_k_index, jamlet in enumerate(kamlet.jamlets):
             vw_index = addresses.k_indices_to_vw_index(
                 params, self.word_order, kamlet.k_index, j_in_k_index)
@@ -1305,14 +1387,19 @@ class VidOp(KInstr):
                     )
                     if valid_element and mask_bit:
                         result_bytes = element_index.to_bytes(eb, byteorder='little', signed=False)
-                        jamlet.write_vreg(dst_preg, byte_offset, result_bytes,
-                                          span_id=span_id,
-                                          event_details={'element_index': element_index})
-        kamlet.monitor.finalize_kinstr_exec(self.instr_ident, kamlet.min_x, kamlet.min_y)
+                        results.append(AluResult(
+                            j_in_k=j_in_k_index,
+                            dst_preg=dst_preg,
+                            byte_offset=byte_offset,
+                            data=result_bytes,
+                            span_id=span_id,
+                            event_details={'element_index': element_index},
+                        ))
+        return results
 
 
 @dataclass
-class VUnaryOvOp(KInstr):
+class VUnaryOvOp(AluKInstr):
     """Unary vector operation. Source and destination may have different element widths."""
     op: VUnaryOp
     dst: int
@@ -1349,7 +1436,7 @@ class VUnaryOvOp(KInstr):
             mask_preg=mask_preg,
         )
 
-    async def execute(self, kamlet) -> None:
+    def alu_compute(self, kamlet) -> list[AluResult]:
         r = self.renamed
         bits_in_vline = kamlet.params.vline_bytes * 8
         n_dst_vlines = (self.n_elements * self.dst_ew + bits_in_vline - 1) // bits_in_vline
@@ -1363,6 +1450,7 @@ class VUnaryOvOp(KInstr):
 
         dst_elements_per_word = wb // dst_eb
         src_elements_per_word = wb // src_eb
+        results: list[AluResult] = []
         for j_in_k_index, jamlet in enumerate(kamlet.jamlets):
             for vline_index in range(n_dst_vlines):
                 dst_preg = r.dst_pregs[vline_index]
@@ -1384,9 +1472,14 @@ class VUnaryOvOp(KInstr):
                     src_byte = src_base + src_idx * src_eb
                     src_bytes = jamlet.rf_slice[src_byte:src_byte + src_eb]
                     result = self._convert(src_bytes, src_eb, dst_eb)
-                    jamlet.write_vreg(dst_preg, dst_byte_in_word, result,
-                                      span_id=span_id)
-        kamlet.monitor.finalize_kinstr_exec(self.instr_ident, kamlet.min_x, kamlet.min_y)
+                    results.append(AluResult(
+                        j_in_k=j_in_k_index,
+                        dst_preg=dst_preg,
+                        byte_offset=dst_byte_in_word,
+                        data=result,
+                        span_id=span_id,
+                    ))
+        return results
 
     def _convert(self, src_bytes: bytes, src_eb: int, dst_eb: int) -> bytes:
         if self.op == VUnaryOp.COPY:
@@ -1663,7 +1756,7 @@ def _arith_truncate_int(op, result, eb):
 
 
 @dataclass
-class VArithVvOp(KInstr):
+class VArithVvOp(AluKInstr):
     op: VArithOp
     dst: int
     src1: int
@@ -1709,7 +1802,7 @@ class VArithVvOp(KInstr):
             mask_preg=mask_preg,
         )
 
-    async def execute(self, kamlet) -> None:
+    def alu_compute(self, kamlet) -> list[AluResult]:
         r = self.renamed
         bits_in_vline = kamlet.params.vline_bytes * 8
         n_vlines = (self.n_elements * self.element_width + bits_in_vline - 1) // bits_in_vline
@@ -1721,6 +1814,7 @@ class VArithVvOp(KInstr):
         span_id = kamlet.monitor.get_kinstr_exec_span_id(
             self.instr_ident, kamlet.min_x, kamlet.min_y)
 
+        results: list[AluResult] = []
         for j_in_k_index, jamlet in enumerate(kamlet.jamlets):
             for vline_index in range(n_vlines):
                 src1_base = r.src_pregs[vline_index] * wb
@@ -1745,13 +1839,18 @@ class VArithVvOp(KInstr):
                             acc_val = struct.unpack(fmt, acc_bytes)[0]
                         result = _compute_arith(self.op, src1_val, src2_val, acc_val, eb)
                         result = _arith_truncate_int(self.op, result, eb)
-                        jamlet.write_vreg(dst_preg, byte_offset, struct.pack(fmt, result),
-                                          span_id=span_id)
-        kamlet.monitor.finalize_kinstr_exec(self.instr_ident, kamlet.min_x, kamlet.min_y)
+                        results.append(AluResult(
+                            j_in_k=j_in_k_index,
+                            dst_preg=dst_preg,
+                            byte_offset=byte_offset,
+                            data=struct.pack(fmt, result),
+                            span_id=span_id,
+                        ))
+        return results
 
 
 @dataclass
-class VArithVxOp(KInstr):
+class VArithVxOp(AluKInstr):
     op: VArithOp
     dst: int
     scalar_bytes: bytes
@@ -1791,7 +1890,7 @@ class VArithVxOp(KInstr):
             mask_preg=mask_preg,
         )
 
-    async def execute(self, kamlet) -> None:
+    def alu_compute(self, kamlet) -> list[AluResult]:
         r = self.renamed
         bits_in_vline = kamlet.params.vline_bytes * 8
         n_vlines = (self.n_elements * self.element_width + bits_in_vline - 1) // bits_in_vline
@@ -1806,6 +1905,7 @@ class VArithVxOp(KInstr):
         span_id = kamlet.monitor.get_kinstr_exec_span_id(
             self.instr_ident, kamlet.min_x, kamlet.min_y)
 
+        results: list[AluResult] = []
         for j_in_k_index, jamlet in enumerate(kamlet.jamlets):
             for vline_index in range(n_vlines):
                 src2_base = r.src2_pregs[vline_index] * wb
@@ -1825,9 +1925,14 @@ class VArithVxOp(KInstr):
                             acc_val = struct.unpack(fmt, acc_bytes)[0]
                         result = _compute_arith(self.op, scalar_val, src2_val, acc_val, eb)
                         result = _arith_truncate_int(self.op, result, eb)
-                        jamlet.write_vreg(dst_preg, byte_offset, struct.pack(fmt, result),
-                                          span_id=span_id)
-        kamlet.monitor.finalize_kinstr_exec(self.instr_ident, kamlet.min_x, kamlet.min_y)
+                        results.append(AluResult(
+                            j_in_k=j_in_k_index,
+                            dst_preg=dst_preg,
+                            byte_offset=byte_offset,
+                            data=struct.pack(fmt, result),
+                            span_id=span_id,
+                        ))
+        return results
 
 
 _SHIFT_OPS = (VArithOp.SLL, VArithOp.SRL, VArithOp.SRA)

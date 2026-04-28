@@ -12,7 +12,7 @@ import random
 
 import pytest
 
-from zamlet.synchronization import Synchronizer, SyncDirection
+from zamlet.synchronization import Synchronizer, SyncDirection, SyncAggOp
 from zamlet.runner import Clock
 
 
@@ -300,6 +300,92 @@ def generate_test_params():
 @pytest.mark.parametrize("cols,rows,n_events,seed", generate_test_params())
 def test_synchronization(cols, rows, n_events, seed):
     run_test(cols, rows, n_events, seed)
+
+
+async def run_or_reduce_test(clock, cols: int, rows: int, values_by_coord: dict,
+                             width: int, expected: int, max_cycles: int = 200):
+    """Trigger an OR sync with fixed per-kamlet values and verify all participants
+    (including the lamlet at (0,-1)) receive the bitwise-OR of all inputs."""
+    network = SyncNetwork(clock, cols, rows)
+    for sync in network.synchronizers.values():
+        clock.create_task(sync.run())
+    clock.create_task(network.run_network())
+    clock.create_task(network.run_updates())
+
+    SYNC_IDENT = 7
+    for coord, value in values_by_coord.items():
+        network.synchronizers[coord].local_event(
+            SYNC_IDENT, value=value, op=SyncAggOp.OR, width=width)
+
+    while clock.cycle < max_cycles:
+        await clock.next_cycle
+        if all((SYNC_IDENT, x, y) in network.monitor.completed
+               for (x, y) in network.synchronizers.keys()):
+            break
+    else:
+        missing = [c for c in network.synchronizers
+                   if (SYNC_IDENT, *c) not in network.monitor.completed]
+        raise AssertionError(f"OR sync did not complete; missing {missing}")
+
+    for coord in network.synchronizers.keys():
+        actual = network.monitor.completed[(SYNC_IDENT, *coord)]
+        assert actual == expected, (
+            f"sync at {coord}: got {actual:#b}, expected {expected:#b}")
+
+
+def test_or_reduce_fflags_5bit():
+    """5-bit FFlags-shaped OR-reduce across a 2x2 grid: 0b00001|0b00010|0b00100|0b01000|0b10000."""
+    cols, rows = 2, 2
+    coords = [(0, 0), (1, 0), (0, 1), (1, 1), (0, -1)]
+    values = [0b00001, 0b00010, 0b00100, 0b01000, 0b10000]
+    values_by_coord = dict(zip(coords, values))
+    expected = 0b11111
+
+    clock = Clock(max_cycles=200)
+
+    async def main():
+        clock.register_main()
+        clock.create_task(clock.clock_driver())
+        await run_or_reduce_test(clock, cols, rows, values_by_coord, width=5, expected=expected)
+        clock.running = False
+
+    asyncio.run(main())
+
+
+def test_or_reduce_vxsat_1bit():
+    """Single-bit OR-reduce models a vxsat sticky reduce: any set kamlet wins."""
+    cols, rows = 2, 2
+    # Only one kamlet saw a saturating op; everyone else reports 0.
+    coords = [(0, 0), (1, 0), (0, 1), (1, 1), (0, -1)]
+    values = [0, 0, 1, 0, 0]
+    values_by_coord = dict(zip(coords, values))
+
+    clock = Clock(max_cycles=200)
+
+    async def main():
+        clock.register_main()
+        clock.create_task(clock.clock_driver())
+        await run_or_reduce_test(clock, cols, rows, values_by_coord, width=1, expected=1)
+        clock.running = False
+
+    asyncio.run(main())
+
+
+def test_or_reduce_zero_when_all_zero():
+    """OR-reduce of all-zero inputs is zero (no participant raised any flag)."""
+    cols, rows = 2, 2
+    coords = [(0, 0), (1, 0), (0, 1), (1, 1), (0, -1)]
+    values_by_coord = {c: 0 for c in coords}
+
+    clock = Clock(max_cycles=200)
+
+    async def main():
+        clock.register_main()
+        clock.create_task(clock.clock_driver())
+        await run_or_reduce_test(clock, cols, rows, values_by_coord, width=5, expected=0)
+        clock.running = False
+
+    asyncio.run(main())
 
 
 if __name__ == '__main__':

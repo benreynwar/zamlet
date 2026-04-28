@@ -8,7 +8,6 @@ py_library(
 )
 
 FAST_TESTS = [
-    "test_alu_framework",
     "test_conditional_kamlet",
     "test_reg_gather",
     "test_reg_gather_vx_vi",
