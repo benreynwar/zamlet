@@ -21,9 +21,10 @@ import pytest
 from zamlet.runner import Clock
 from zamlet.addresses import GlobalAddress, MemoryType, Ordering
 from zamlet.geometries import get_geometry
-from zamlet.kamlet.kinstructions import VArithOp, CARRY_BORROW_OPS
+from zamlet.kamlet.kinstructions import VArithOp, VCmpOp, CARRY_BORROW_OPS
 from zamlet.instructions.vector import (
     VArithVv, VArithVx, VArithVi, VArithVvOv, VArithVxOv, OvShape,
+    VCmpVv, VCmpVx, VCmpVi,
 )
 from zamlet.monitor import CompletionType, SpanType
 from zamlet.tests.test_utils import (
@@ -543,3 +544,232 @@ def test_vadc_vim():
     _run(op=VArithOp.ADC, sew=32, vl=8, form=ArithForm.VI,
          src1_signed=False, src2_signed=False,
          mnemonic='vadc.vim', seed=15)
+
+
+# ----------------------------------------------------------------------------
+# Mask-output carry/borrow (vmadc/vmsbc). Output is one bit per element packed
+# into a mask register; vm=0 enables v0 as carry-in, vm=1 means no carry-in.
+# ----------------------------------------------------------------------------
+
+def _decode_mask_bytes(byts: bytes, j_in_l: int, wb: int, vl: int) -> list:
+    """Inverse of mask_bits_to_ew64_bytes for the first vline of mask data."""
+    bits = [False] * vl
+    for jamlet_idx in range(j_in_l):
+        chunk = byts[jamlet_idx * wb:(jamlet_idx + 1) * wb]
+        for byte_idx, b in enumerate(chunk):
+            for bit_idx in range(8):
+                element_idx = jamlet_idx + (byte_idx * 8 + bit_idx) * j_in_l
+                if element_idx < vl:
+                    bits[element_idx] = bool((b >> bit_idx) & 1)
+    return bits
+
+
+def _ref_mcmp(op: VCmpOp, vs2: int, other: int, sew: int, carry_in: int) -> int:
+    if op is VCmpOp.MADC:
+        return ((vs2 + other + carry_in) >> sew) & 1
+    if op is VCmpOp.MSBC:
+        return 1 if (vs2 - other - carry_in) < 0 else 0
+    raise NotImplementedError(op)
+
+
+async def _run_mcmp(
+    lamlet,
+    *,
+    op: VCmpOp,
+    sew: int,
+    vl: int,
+    mnemonic: str,
+    rnd: Random,
+    form: ArithForm = ArithForm.VV,
+    has_carry_in: bool = True,
+) -> int:
+    """Drive one vmadc/vmsbc test. Returns 0 on pass, 1 on fail."""
+    assert op in (VCmpOp.MADC, VCmpOp.MSBC)
+    assert not (op is VCmpOp.MSBC and form is ArithForm.VI), (
+        'vmsbc.vim is reserved')
+
+    is_scalar = form is not ArithForm.VV
+    vline_bits = lamlet.params.vline_bytes * 8
+    wb = lamlet.params.word_bytes
+    j_in_l = lamlet.params.j_in_l
+    page_bytes = lamlet.params.page_bytes
+    sew_mask = (1 << sew) - 1
+
+    s2 = _random_ints(sew, signed=False, vl=vl, rnd=rnd)
+    s2_bytes = pack_elements(s2, sew)
+    if form is ArithForm.VV:
+        s1_list = _random_ints(sew, signed=False, vl=vl, rnd=rnd)
+        s1_bytes = pack_elements(s1_list, sew)
+        others = list(s1_list)
+    elif form is ArithForm.VX:
+        s1_scalar = _random_int(sew, signed=False, rnd=rnd)
+        scalar_bytes8 = s1_scalar.to_bytes(8, byteorder='little', signed=False)
+        others = [s1_scalar] * vl
+    else:  # VI: simm5 is sign-extended to SEW, then taken unsigned for carry.
+        simm5_signed = rnd.randint(-16, 15)
+        others = [simm5_signed & sew_mask] * vl
+
+    if has_carry_in:
+        carry_in_bits = [rnd.randint(0, 1) for _ in range(vl)]
+    else:
+        carry_in_bits = [0] * vl
+
+    base_addr = 0x90000000
+    stride = max(page_bytes, 4096)
+    if is_scalar:
+        vs2_addr = base_addr
+    else:
+        vs1_addr = base_addr
+        vs2_addr = vs1_addr + stride
+        _alloc_vpu(lamlet, vs1_addr, len(s1_bytes))
+    _alloc_vpu(lamlet, vs2_addr, len(s2_bytes))
+    # Memory for reading the dst mask back via vstore-as-ew=64.
+    mask_out_addr = base_addr + 3 * stride
+    _alloc_vpu(lamlet, mask_out_addr, max(page_bytes, lamlet.params.vline_bytes))
+
+    vs2_ord = Ordering(lamlet.word_order, sew)
+    if not is_scalar:
+        vs1_ord = Ordering(lamlet.word_order, sew)
+        await lamlet.set_memory(vs1_addr, s1_bytes, ordering=vs1_ord)
+    await lamlet.set_memory(vs2_addr, s2_bytes, ordering=vs2_ord)
+
+    lamlet.vtype = _vtype_for(sew, vl, vline_bits)
+
+    span_id = lamlet.monitor.create_span(
+        span_type=SpanType.RISCV_INSTR, component="test",
+        completion_type=CompletionType.FIRE_AND_FORGET,
+        mnemonic=f'test_{mnemonic}')
+
+    lamlet.vl = vl
+    if form is ArithForm.VV:
+        await lamlet.vload(
+            vd=_VS1_REG, addr=vs1_addr, ordering=vs1_ord,
+            n_elements=vl, start_index=0, mask_reg=None,
+            parent_span_id=span_id, emul=_emul(vl, sew, vline_bits))
+    elif form is ArithForm.VX:
+        lamlet.scalar.write_reg(_RS1, scalar_bytes8, span_id)
+    await lamlet.vload(
+        vd=_VS2_REG, addr=vs2_addr, ordering=vs2_ord,
+        n_elements=vl, start_index=0, mask_reg=None,
+        parent_span_id=span_id, emul=_emul(vl, sew, vline_bits))
+
+    if has_carry_in:
+        await setup_mask_register(
+            lamlet, mask_reg=0, mask_bits=[bool(b) for b in carry_in_bits],
+            page_bytes=page_bytes, mask_mem_addr=0xa0000000)
+
+    lamlet.vl = vl
+    lamlet.pc = 0
+    vm_value = 0 if has_carry_in else 1
+    if form is ArithForm.VI:
+        instr = VCmpVi(vd=_VD_REG, vs2=_VS2_REG, simm5=simm5_signed & 0x1F,
+                       vm=vm_value, op=op)
+    elif form is ArithForm.VX:
+        instr = VCmpVx(vd=_VD_REG, vs2=_VS2_REG, rs1=_RS1, vm=vm_value, op=op)
+    else:
+        instr = VCmpVv(vd=_VD_REG, vs2=_VS2_REG, vs1=_VS1_REG,
+                       vm=vm_value, op=op)
+    await instr.update_state(lamlet)
+
+    # Read the dst mask back: retag to ew=64 and vstore one vline of bytes.
+    mask_out_ord = Ordering(lamlet.word_order, 64)
+    lamlet.vrf_ordering[_VD_REG] = mask_out_ord
+    await lamlet.vstore(
+        vs=_VD_REG, addr=mask_out_addr, ordering=mask_out_ord,
+        n_elements=j_in_l, start_index=0, mask_reg=None,
+        parent_span_id=span_id)
+
+    lamlet.monitor.finalize_children(span_id)
+
+    out_bytes = await lamlet.get_memory_blocking(mask_out_addr, j_in_l * wb)
+    actual = _decode_mask_bytes(out_bytes, j_in_l, wb, vl)
+
+    expected = [bool(_ref_mcmp(op, s2[i], others[i], sew, carry_in_bits[i]))
+                for i in range(vl)]
+
+    ok = actual == expected
+    if ok:
+        logger.warning(f"PASS {mnemonic} sew={sew} vl={vl}")
+        return 0
+    logger.error(f"FAIL {mnemonic} sew={sew} vl={vl}")
+    if is_scalar:
+        logger.error(f"  scalar/imm={others[0]}")
+    else:
+        logger.error(f"  s1={others}")
+    logger.error(f"  s2={s2}")
+    logger.error(f"  cin={carry_in_bits}")
+    logger.error(f"  actual  ={actual}")
+    logger.error(f"  expected={expected}")
+    return 1
+
+
+def _run_m(*, op, sew, vl, mnemonic, form=ArithForm.VV, has_carry_in=True,
+           seed=0, geometry='k2x1_j1x1'):
+    params = get_geometry(geometry)
+    clock = Clock(max_cycles=20000)
+
+    async def main():
+        clock.register_main()
+        clock.create_task(clock.clock_driver())
+        lamlet = await setup_lamlet(clock, params)
+        rnd = Random(seed)
+        try:
+            rc = await _run_mcmp(
+                lamlet, op=op, sew=sew, vl=vl, mnemonic=mnemonic,
+                rnd=rnd, form=form, has_carry_in=has_carry_in)
+        except Exception:
+            dump_span_trees(lamlet.monitor)
+            raise
+        clock.running = False
+        return rc
+
+    rc = asyncio.run(main())
+    assert rc == 0, f'{mnemonic} failed'
+
+
+def test_vmadc_vvm():
+    _run_m(op=VCmpOp.MADC, sew=32, vl=8, mnemonic='vmadc.vvm', seed=21)
+
+
+def test_vmadc_vv():
+    _run_m(op=VCmpOp.MADC, sew=32, vl=8, has_carry_in=False,
+           mnemonic='vmadc.vv', seed=22)
+
+
+def test_vmadc_vxm():
+    _run_m(op=VCmpOp.MADC, sew=32, vl=8, form=ArithForm.VX,
+           mnemonic='vmadc.vxm', seed=23)
+
+
+def test_vmadc_vx():
+    _run_m(op=VCmpOp.MADC, sew=32, vl=8, form=ArithForm.VX,
+           has_carry_in=False, mnemonic='vmadc.vx', seed=24)
+
+
+def test_vmadc_vim():
+    _run_m(op=VCmpOp.MADC, sew=32, vl=8, form=ArithForm.VI,
+           mnemonic='vmadc.vim', seed=25)
+
+
+def test_vmadc_vi():
+    _run_m(op=VCmpOp.MADC, sew=32, vl=8, form=ArithForm.VI,
+           has_carry_in=False, mnemonic='vmadc.vi', seed=26)
+
+
+def test_vmsbc_vvm():
+    _run_m(op=VCmpOp.MSBC, sew=32, vl=8, mnemonic='vmsbc.vvm', seed=31)
+
+
+def test_vmsbc_vv():
+    _run_m(op=VCmpOp.MSBC, sew=32, vl=8, has_carry_in=False,
+           mnemonic='vmsbc.vv', seed=32)
+
+
+def test_vmsbc_vxm():
+    _run_m(op=VCmpOp.MSBC, sew=32, vl=8, form=ArithForm.VX,
+           mnemonic='vmsbc.vxm', seed=33)
+
+
+def test_vmsbc_vx():
+    _run_m(op=VCmpOp.MSBC, sew=32, vl=8, form=ArithForm.VX,
+           has_carry_in=False, mnemonic='vmsbc.vx', seed=34)

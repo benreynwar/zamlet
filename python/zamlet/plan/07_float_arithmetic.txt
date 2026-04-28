@@ -29,10 +29,10 @@ narrowing operations. See test_suite_reference.txt for complete list
 
 Implementation Summary
 ----------------------
-Currently implemented: ~30 instructions (all basic arithmetic .vv/.vf, all 8 FMA .vv/.vf,
-min/max .vv/.vf)
+Currently implemented: ~41 instructions (all basic arithmetic .vv/.vf, all 8 FMA .vv/.vf,
+min/max .vv/.vf, sign-injection .vv/.vf, all FP compares .vv/.vf, vfclass.v)
 Total in spec: ~60 single-width FP arithmetic instructions
-Coverage: ~50%
+Coverage: ~68%
 
 SINGLE-WIDTH FP ADD/SUBTRACT (Status: ✓)
 =========================================
@@ -255,58 +255,60 @@ VFSGNJX.VV, VFSGNJX.VF (Status: ✓)
   Description: XOR sign bits
   Notes: Pseudoinstruction vfabs.v vd,vs = vfsgnjx.vv vd,vs,vs
 
-FP COMPARE (Status: ✗)
+FP COMPARE (Status: ✓)
 =======================
 
 Spec: v-st-ext.adoc lines 3610-3691
 
-All comparisons write 1-bit mask values to destination.
+All comparisons write 1-bit mask values to destination. NaN signaling (qNaN
+vs sNaN) and fflags accrual not yet modelled — see PLAN_long_latency_alu.md /
+PLAN_fp_nan_boxing.md.
 
-VMFEQ.VV, VMFEQ.VF (Status: ✗)
+VMFEQ.VV, VMFEQ.VF (Status: ✓)
   Spec: v-st-ext.adoc lines 3631-3632
   Encoding: funct6=0x18, funct3=OPFVV/OPFVF
   Format: vmfeq.vv vd, vs2, vs1, vm / vmfeq.vf vd, vs2, rs1, vm
-  Implementation: Not implemented
+  Implementation: VCmpVvFloat / VCmpVxFloat (op=VCmpOp.EQ, is_float=True)
   Description: Compare equal
   Notes: Only raises invalid on signaling NaN
 
-VMFNE.VV, VMFNE.VF (Status: ✗)
+VMFNE.VV, VMFNE.VF (Status: ✓)
   Spec: v-st-ext.adoc lines 3635-3636
   Encoding: funct6=0x1c, funct3=OPFVV/OPFVF
   Format: vmfne.vv vd, vs2, vs1, vm / vmfne.vf vd, vs2, rs1, vm
-  Implementation: Not implemented
+  Implementation: VCmpVvFloat / VCmpVxFloat (op=VCmpOp.NE, is_float=True)
   Description: Compare not equal
   Notes: Writes 1 when either operand is NaN
 
-VMFLT.VV, VMFLT.VF (Status: ✗)
+VMFLT.VV, VMFLT.VF (Status: ✓)
   Spec: v-st-ext.adoc lines 3639-3640
   Encoding: funct6=0x1b, funct3=OPFVV/OPFVF
   Format: vmflt.vv vd, vs2, vs1, vm / vmflt.vf vd, vs2, rs1, vm
-  Implementation: Not implemented
+  Implementation: VCmpVvFloat / VCmpVxFloat (op=VCmpOp.LT, is_float=True)
   Description: Compare less than
   Notes: Raises invalid on any NaN (quiet or signaling)
 
-VMFLE.VV, VMFLE.VF (Status: ✗)
+VMFLE.VV, VMFLE.VF (Status: ✓)
   Spec: v-st-ext.adoc lines 3643-3644
   Encoding: funct6=0x19, funct3=OPFVV/OPFVF
   Format: vmfle.vv vd, vs2, vs1, vm / vmfle.vf vd, vs2, rs1, vm
-  Implementation: Not implemented
+  Implementation: VCmpVvFloat / VCmpVxFloat (op=VCmpOp.LE, is_float=True)
   Description: Compare less than or equal
   Notes: Raises invalid on any NaN
 
-VMFGT.VF (Status: ✗)
+VMFGT.VF (Status: ✓)
   Spec: v-st-ext.adoc line 3647
   Encoding: funct6=0x1d, funct3=OPFVF
   Format: vmfgt.vf vd, vs2, rs1, vm
-  Implementation: Not implemented
+  Implementation: VCmpVxFloat (op=VCmpOp.GT, is_float=True)
   Description: Compare greater than
   Notes: Only .vf form (no .vv), vmfgt.vv is pseudoinstruction using vmflt.vv
 
-VMFGE.VF (Status: ✗)
+VMFGE.VF (Status: ✓)
   Spec: v-st-ext.adoc line 3650
   Encoding: funct6=0x1f, funct3=OPFVF
   Format: vmfge.vf vd, vs2, rs1, vm
-  Implementation: Not implemented
+  Implementation: VCmpVxFloat (op=VCmpOp.GE, is_float=True)
   Description: Compare greater than or equal
   Notes: Only .vf form (no .vv), vmfge.vv is pseudoinstruction using vmfle.vv
 
@@ -314,21 +316,25 @@ Pseudoinstructions for Missing Compares:
   - vmfgt.vv vd, va, vb, vm: Use vmflt.vv vd, vb, va, vm (swap operands)
   - vmfge.vv vd, va, vb, vm: Use vmfle.vv vd, vb, va, vm (swap operands)
 
-FP CLASSIFY (Status: ✗)
+FP CLASSIFY (Status: ✓)
 ========================
 
 Spec: v-st-ext.adoc lines 3692-3705
 
-VFCLASS.V (Status: ✗)
+VFCLASS.V (Status: ✓)
   Spec: v-st-ext.adoc lines 3698-3699
   Encoding: funct6=0x13, vs1=0x10, funct3=OPFVV
   Format: vfclass.v vd, vs2, vm
-  Implementation: Not implemented
+  Implementation: VUnary with VUnaryOp.FCLASS; _fclass_bits helper in
+    kinstructions.py builds the 10-bit mask from the IEEE fields.
   Description: Classify FP value, returns 10-bit mask
   Notes:
     - Unary operation
     - 10-bit mask in low bits, upper bits zeroed
     - Only defined for SEW >= 16
+    - sNaN/qNaN distinguished by frac MSB per IEEE 754-2008
+    - Sibling vfunary1 variants (vfsqrt/vfrsqrt7/vfrec7) raise a specific
+      NotImplementedError; their landing depends on PLAN_long_latency_alu.md.
 
 FP MERGE/MOVE (Status: ✗)
 ==========================
@@ -362,7 +368,9 @@ Test Coverage
 - vfmacc.vf tested in tests/daxpy/ (double-precision AXPY)
 - Dot product test in tests/dotprod/ may use FP operations
 - tests/sgemv/ has single-precision matrix-vector multiply
-- No tests for: add, sub, mul, div, sqrt, min/max, compare, classify
+- tests/test_farith.py: vmf{eq,ne,lt,le}.vv, vmf{eq,ne,lt,le,gt,ge}.vf,
+  vfclass.v (curated fp32 cases covering all 10 class bits)
+- No tests for: add, sub, mul, div, sqrt, min/max
 
 TODO Items
 ----------
@@ -386,13 +394,14 @@ TODO Items
    - vfneg.v and vfabs.v pseudoinstructions covered via FSGNJN/FSGNJX with
      rs1 == rs2.
 
-6. Implement FP comparisons
+6. ✓ Implement FP comparisons
    - vmfeq.vv/vf, vmfne.vv/vf (equality)
    - vmflt.vv/vf, vmfle.vv/vf (less than)
    - vmfgt.vf, vmfge.vf (greater than, .vf only)
-   - Handle NaN signaling correctly
+   - NaN signaling and fflags accrual deferred to PLAN_long_latency_alu.md /
+     PLAN_fp_nan_boxing.md
 
-7. Implement FP classify
+7. ✓ Implement FP classify
    - vfclass.v
    - Return proper 10-bit classification mask
 
@@ -420,16 +429,14 @@ Good FP arithmetic coverage:
 - ✓ All 8 FMA variants in both .vv and .vf forms (16 instructions)
 - ✓ Min/max: vfmin, vfmax (.vv and .vf)
 - ✓ Sign-injection: vfsgnj, vfsgnjn, vfsgnjx (.vv and .vf)
+- ✓ Compares: vmf{eq,ne,lt,le}.vv/.vf, vmf{gt,ge}.vf
+- ✓ Classify: vfclass.v
 
 Still missing:
 - Square root and reciprocal estimates (3 instructions)
-- All comparisons (10 instructions)
-- Classify (1 instruction)
 - Merge and move (2 instructions)
 - FP exception handling not implemented
 
 Priority for implementation:
-1. Comparisons - needed for conditional operations
-2. Merge/move - useful for data manipulation
-4. Square root and estimates - DSP and scientific computing
-5. Classify - less common utility operation
+1. Merge/move - useful for data manipulation (C5 in PLAN_rvv_coverage.md)
+2. Square root and estimates - DSP and scientific computing

@@ -1580,6 +1580,10 @@ class Oamlet:
         if emul is None:
             emul = self.lmul
         assert emul in (1, 2, 4, 8), f'vload: invalid emul={emul}'
+        assert vd % emul == 0, (
+            f'vload: vd={vd} not aligned to emul={emul} (RVV requires register '
+            f'groups to be aligned to LMUL — misalignment causes vs1/vs2/vd '
+            f'groups to overlap in the rename table)')
         elements_per_vline = self.params.vline_bytes * 8 // ordering.ew
         vlmax = elements_per_vline * emul
         assert n_elements <= vlmax, (
@@ -1605,6 +1609,11 @@ class Oamlet:
             return addresses.VectorOpResult()
         if emul is None:
             emul = self.lmul
+        assert emul in (1, 2, 4, 8), f'vstore: invalid emul={emul}'
+        assert vs % emul == 0, (
+            f'vstore: vs={vs} not aligned to emul={emul} (RVV requires register '
+            f'groups to be aligned to LMUL — misalignment causes vs1/vs2/vd '
+            f'groups to overlap in the rename table)')
         element_bytes = ordering.ew // 8
         is_unit_stride = stride_bytes is None or stride_bytes == element_bytes
         is_aligned = addr % self.params.vline_bytes == 0

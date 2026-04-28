@@ -252,7 +252,7 @@ VNMSUB.VV, VNMSUB.VX (Status: ✓)
   Implementation: VArithVv/VArithVx with VArithOp.NMSUB in instructions/vector.py
   Decoding: Search decode.py for "VArithOp.NMSUB"
 
-ADD-WITH-CARRY / SUBTRACT-WITH-BORROW (Status: ⚠ Partial)
+ADD-WITH-CARRY / SUBTRACT-WITH-BORROW (Status: ✓)
 ==========================================================
 
 Spec: v-st-ext.adoc lines 2463-2571
@@ -284,12 +284,21 @@ VADC.VIM (Status: ✓)
   Decoding: decode.py funct6=0x10 funct3=0x3 vm==0
   Notes: vm=0 mandatory (vm=1 reserved).
 
-VMADC.VVM, VMADC.VXM, VMADC.VIM (Status: ✗)
-  Description: Add and generate carry-out mask
-  Notes: Can be masked or unmasked. Phase D — VCmpOp surgery.
+VMADC.VVM, VMADC.VXM, VMADC.VIM (Status: ✓)
+  Description: Add and generate carry-out mask, with carry-in from v0
+  Implementation: VCmpVv / VCmpVx / VCmpVi with VCmpOp.MADC. CARRY_BORROW_CMP_OPS
+    membership in kinstructions.py drives the wrapper to set carry_in_reg=0 when
+    vm=0. VCmp{Vv,Vx,Vi}Op threads carry_in_preg through admit/execute; the
+    execute loop reads the v0 carry-in bit at position element_in_jamlet and
+    routes to _madc_msbc_evaluate, which returns ((vs2 + other + cin) >> SEW)&1.
+    Operands are unpacked unsigned.
+  Decoding: decode.py funct6=0x11 funct3 in {0x0,0x4,0x3} vm==0
 
-VMADC.VV, VMADC.VX, VMADC.VI (Status: ✗)
+VMADC.VV, VMADC.VX, VMADC.VI (Status: ✓)
   Description: Add and generate carry-out (no carry-in)
+  Implementation: Same VCmpOp.MADC path as the .vvm/.vxm/.vim forms; vm=1
+    leaves carry_in_reg=None so _madc_msbc_evaluate gets carry_in=0.
+  Decoding: decode.py funct6=0x11 funct3 in {0x0,0x4,0x3} vm==1
 
 VSBC.VVM (Status: ✓)
   Description: Subtract with borrow-in from v0
@@ -306,11 +315,19 @@ VSBC.VXM (Status: ✓)
   Decoding: decode.py funct6=0x12 funct3=0x4 vm==0
   Notes: vm=0 mandatory. No .vim form (reserved by spec).
 
-VMSBC.VVM, VMSBC.VXM (Status: ✗)
-  Description: Subtract and generate borrow-out mask
+VMSBC.VVM, VMSBC.VXM (Status: ✓)
+  Description: Subtract and generate borrow-out mask, with borrow-in from v0
+  Implementation: VCmpVv / VCmpVx with VCmpOp.MSBC. Same plumbing as VMADC;
+    _madc_msbc_evaluate returns 1 if (vs2 - other - cin) is negative prior to
+    truncation, else 0.
+  Decoding: decode.py funct6=0x13 funct3 in {0x0,0x4} vm==0
+  Notes: No .vim form (reserved by spec).
 
-VMSBC.VV, VMSBC.VX (Status: ✗)
+VMSBC.VV, VMSBC.VX (Status: ✓)
   Description: Subtract and generate borrow-out (no borrow-in)
+  Implementation: Same VCmpOp.MSBC path; vm=1 leaves carry_in_reg=None.
+  Decoding: decode.py funct6=0x13 funct3 in {0x0,0x4} vm==1
+  Notes: No .vi form (reserved by spec).
 
 MERGE AND MOVE OPERATIONS (Status: ⚠ Partial)
 ==============================================

@@ -823,10 +823,18 @@ def decode_standard(instruction_bytes: bytes) -> Instruction:
         elif funct6 == 0x10 and funct3 == 0x0 and vm == 0:
             vs1 = rs1
             return V.VArithVv(vd=rd, vs1=vs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.ADC)
+        # vmadc.vvm (vm=0, with carry-in) and vmadc.vv (vm=1, no carry-in).
+        elif funct6 == 0x11 and funct3 == 0x0:
+            vs1 = rs1
+            return V.VCmpVv(vd=rd, vs2=vs2, vs1=vs1, vm=vm, op=kinstructions.VCmpOp.MADC)
         # vsbc.vvm — vm=0 mandatory (vm=1 reserved). v0 is borrow-in.
         elif funct6 == 0x12 and funct3 == 0x0 and vm == 0:
             vs1 = rs1
             return V.VArithVv(vd=rd, vs1=vs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.SBC)
+        # vmsbc.vvm (vm=0, with borrow-in) and vmsbc.vv (vm=1, no borrow-in).
+        elif funct6 == 0x13 and funct3 == 0x0:
+            vs1 = rs1
+            return V.VCmpVv(vd=rd, vs2=vs2, vs1=vs1, vm=vm, op=kinstructions.VCmpOp.MSBC)
         # OPIVX (funct3 = 0x4) - integer vector-scalar
         elif funct6 == 0x00 and funct3 == 0x4:
             return V.VArithVx(vd=rd, rs1=rs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.ADD)
@@ -860,9 +868,15 @@ def decode_standard(instruction_bytes: bytes) -> Instruction:
         # vadc.vxm — vm=0 mandatory (vm=1 reserved). v0 is carry-in.
         elif funct6 == 0x10 and funct3 == 0x4 and vm == 0:
             return V.VArithVx(vd=rd, rs1=rs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.ADC)
+        # vmadc.vxm (vm=0, with carry-in) and vmadc.vx (vm=1, no carry-in).
+        elif funct6 == 0x11 and funct3 == 0x4:
+            return V.VCmpVx(vd=rd, vs2=vs2, rs1=rs1, vm=vm, op=kinstructions.VCmpOp.MADC)
         # vsbc.vxm — vm=0 mandatory (vm=1 reserved). v0 is borrow-in.
         elif funct6 == 0x12 and funct3 == 0x4 and vm == 0:
             return V.VArithVx(vd=rd, rs1=rs1, vs2=vs2, vm=vm, op=kinstructions.VArithOp.SBC)
+        # vmsbc.vxm (vm=0, with borrow-in) and vmsbc.vx (vm=1, no borrow-in).
+        elif funct6 == 0x13 and funct3 == 0x4:
+            return V.VCmpVx(vd=rd, vs2=vs2, rs1=rs1, vm=vm, op=kinstructions.VCmpOp.MSBC)
         # OPIVI (funct3 = 0x3) - integer vector-immediate
         elif funct6 == 0x00 and funct3 == 0x3:
             simm5 = rs1
@@ -890,6 +904,11 @@ def decode_standard(instruction_bytes: bytes) -> Instruction:
         elif funct6 == 0x10 and funct3 == 0x3 and vm == 0:
             simm5 = rs1
             return V.VArithVi(vd=rd, vs2=vs2, simm5=simm5, vm=vm, op=kinstructions.VArithOp.ADC)
+        # vmadc.vim (vm=0, with carry-in) and vmadc.vi (vm=1, no carry-in).
+        # No vmsbc.vim (reserved in spec).
+        elif funct6 == 0x11 and funct3 == 0x3:
+            simm5 = rs1
+            return V.VCmpVi(vd=rd, vs2=vs2, simm5=simm5, vm=vm, op=kinstructions.VCmpOp.MADC)
         # Narrowing right shift family (vnsrl, vnsra). funct6 0x2c = vnsrl,
         # 0x2d = vnsra. funct3 0x0 = .wv, 0x3 = .wi (uimm), 0x4 = .wx.
         elif funct6 == 0x2c and funct3 == 0x0:
@@ -1243,6 +1262,19 @@ def decode_standard(instruction_bytes: bytes) -> Instruction:
                 op, mnemonic = vfcvt_ops[rs1]
                 return V.VUnary(vd=rd, vs2=vs2, vm=vm, op=op,
                                 factor=1, widening=True, mnemonic=mnemonic)
+        elif funct6 == 0x13 and funct3 == 0x1:
+            # vfunary1: single-width float unary ops, vs1 selects variant.
+            if rs1 == 0x10:
+                return V.VUnary(vd=rd, vs2=vs2, vm=vm,
+                                op=kinstructions.VUnaryOp.FCLASS,
+                                factor=1, widening=True, mnemonic='vfclass.v')
+            # vfsqrt.v / vfrsqrt7.v / vfrec7.v are decoded but await
+            # PLAN_long_latency_alu.md.
+            vfunary1_pending = {0x00: 'vfsqrt.v', 0x04: 'vfrsqrt7.v', 0x05: 'vfrec7.v'}
+            if rs1 in vfunary1_pending:
+                raise NotImplementedError(
+                    f'{vfunary1_pending[rs1]} not yet implemented '
+                    '(awaits PLAN_long_latency_alu.md)')
         # Widening integer add/sub family (OPMVV funct3=0x2, OPMVX funct3=0x6).
         # Encoding: src2_signed reflects the .wv/.wx signedness of vs2; src1
         # is at SEW (BASE) or already-widened to 2*SEW (WIDE); dst always 2*SEW.

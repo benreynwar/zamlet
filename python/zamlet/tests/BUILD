@@ -19,6 +19,7 @@ FAST_TESTS = [
     "test_trap_delivery",
     "test_vfmv_scalar",
     "test_arith",
+    "test_farith",
 ]
 
 SLOW_TESTS = [

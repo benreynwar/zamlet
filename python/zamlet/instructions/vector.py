@@ -613,6 +613,8 @@ class VCmpVi:
     """Vector compare, vector-immediate form.
 
     vd.mask[i] = (vs2[i] <op> simm5) ? 1 : 0
+
+    Also hosts vmadc.vim / vmadc.vi (op=MADC). vmsbc.vim is reserved per spec.
     """
     vd: int
     vs2: int
@@ -621,6 +623,11 @@ class VCmpVi:
     op: kinstructions.VCmpOp
 
     def __str__(self):
+        if self.op in kinstructions.CARRY_BORROW_CMP_OPS:
+            suffix = 'm' if self.vm == 0 else ''
+            extra = ',v0' if self.vm == 0 else ''
+            return (f'v{self.op.value}.vi{suffix}\t'
+                    f'v{self.vd},v{self.vs2},{self.simm5}{extra}')
         vm_str = '' if self.vm else ',v0.t'
         return f'vm{self.op.value}.vi\tv{self.vd},v{self.vs2},{self.simm5}{vm_str}'
 
@@ -633,10 +640,18 @@ class VCmpVi:
             pc=s.pc,
         )
 
+        # vmadc.vim: vm=0 → v0 carry-in; vm=1 → no carry-in. vmsbc.vim is
+        # reserved (no decode entry; assert here in case constructed directly).
+        is_carry_op = self.op in kinstructions.CARRY_BORROW_CMP_OPS
+        assert self.op is not kinstructions.VCmpOp.MSBC, 'vmsbc.vim is reserved'
+        carry_in_reg = 0 if (is_carry_op and self.vm == 0) else None
+
         vsew = (s.vtype >> 3) & 0x7
         element_width = 8 << vsew
 
         await s.ensure_vrf_ordering(self.vs2, element_width, span_id)
+        if carry_in_reg is not None:
+            await s.ensure_vrf_ordering(carry_in_reg, 1, span_id)
 
         vline_bytes = s.params.word_bytes * s.params.j_in_l
         elements_in_dst_vline = vline_bytes * 8  # 1 bit per element
@@ -656,6 +671,7 @@ class VCmpVi:
             element_width=element_width,
             ordering=s.vrf_ordering[self.vs2],
             instr_ident=instr_ident,
+            carry_in_reg=carry_in_reg,
         )
         await s.add_to_instruction_buffer(kinstr, span_id)
         s.monitor.finalize_children(span_id)
@@ -667,6 +683,8 @@ class VCmpVv:
     """Vector compare, vector-vector form.
 
     vd.mask[i] = (vs2[i] <op> vs1[i]) ? 1 : 0
+
+    Also hosts vmadc.vvm / vmadc.vv / vmsbc.vvm / vmsbc.vv (op=MADC/MSBC).
     """
     vd: int
     vs2: int
@@ -675,6 +693,11 @@ class VCmpVv:
     op: kinstructions.VCmpOp
 
     def __str__(self):
+        if self.op in kinstructions.CARRY_BORROW_CMP_OPS:
+            suffix = 'm' if self.vm == 0 else ''
+            extra = ',v0' if self.vm == 0 else ''
+            return (f'v{self.op.value}.vv{suffix}\t'
+                    f'v{self.vd},v{self.vs2},v{self.vs1}{extra}')
         vm_str = '' if self.vm else ',v0.t'
         return f'vm{self.op.value}.vv\tv{self.vd},v{self.vs2},v{self.vs1}{vm_str}'
 
@@ -687,11 +710,17 @@ class VCmpVv:
             pc=s.pc,
         )
 
+        # vmadc/vmsbc.vv{m}: vm=0 → v0 carry-in; vm=1 → no carry-in.
+        is_carry_op = self.op in kinstructions.CARRY_BORROW_CMP_OPS
+        carry_in_reg = 0 if (is_carry_op and self.vm == 0) else None
+
         vsew = (s.vtype >> 3) & 0x7
         element_width = 8 << vsew
 
         await s.ensure_vrf_ordering(self.vs2, element_width, span_id)
         await s.ensure_vrf_ordering(self.vs1, element_width, span_id)
+        if carry_in_reg is not None:
+            await s.ensure_vrf_ordering(carry_in_reg, 1, span_id)
 
         vline_bytes = s.params.word_bytes * s.params.j_in_l
         elements_in_dst_vline = vline_bytes * 8  # 1 bit per element
@@ -711,6 +740,7 @@ class VCmpVv:
             element_width=element_width,
             ordering=s.vrf_ordering[self.vs2],
             instr_ident=instr_ident,
+            carry_in_reg=carry_in_reg,
         )
         await s.add_to_instruction_buffer(kinstr, span_id)
         s.monitor.finalize_children(span_id)
@@ -722,6 +752,8 @@ class VCmpVx:
     """Vector compare, vector-scalar form.
 
     vd.mask[i] = (vs2[i] <op> x[rs1]) ? 1 : 0
+
+    Also hosts vmadc.vxm / vmadc.vx / vmsbc.vxm / vmsbc.vx (op=MADC/MSBC).
     """
     vd: int
     vs2: int
@@ -730,6 +762,11 @@ class VCmpVx:
     op: kinstructions.VCmpOp
 
     def __str__(self):
+        if self.op in kinstructions.CARRY_BORROW_CMP_OPS:
+            suffix = 'm' if self.vm == 0 else ''
+            extra = ',v0' if self.vm == 0 else ''
+            return (f'v{self.op.value}.vx{suffix}\t'
+                    f'v{self.vd},v{self.vs2},{reg_name(self.rs1)}{extra}')
         vm_str = '' if self.vm else ',v0.t'
         return (f'vm{self.op.value}.vx\tv{self.vd},v{self.vs2},'
                 f'{reg_name(self.rs1)}{vm_str}')
@@ -745,10 +782,16 @@ class VCmpVx:
 
         await s.scalar.wait_all_regs_ready(None, None, [self.rs1], [])
 
+        # vmadc/vmsbc.vx{m}: vm=0 → v0 carry-in; vm=1 → no carry-in.
+        is_carry_op = self.op in kinstructions.CARRY_BORROW_CMP_OPS
+        carry_in_reg = 0 if (is_carry_op and self.vm == 0) else None
+
         vsew = (s.vtype >> 3) & 0x7
         element_width = 8 << vsew
 
         await s.ensure_vrf_ordering(self.vs2, element_width, span_id)
+        if carry_in_reg is not None:
+            await s.ensure_vrf_ordering(carry_in_reg, 1, span_id)
 
         vline_bytes = s.params.word_bytes * s.params.j_in_l
         elements_in_dst_vline = vline_bytes * 8  # 1 bit per element
@@ -770,6 +813,7 @@ class VCmpVx:
             element_width=element_width,
             ordering=s.vrf_ordering[self.vs2],
             instr_ident=instr_ident,
+            carry_in_reg=carry_in_reg,
         )
         await s.add_to_instruction_buffer(kinstr, span_id)
         s.monitor.finalize_children(span_id)

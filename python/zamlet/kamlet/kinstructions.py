@@ -85,6 +85,35 @@ class VUnaryOp(Enum):
     FCVT_F_X = "f.x"
     FCVT_RTZ_XU_F = "rtz.xu.f"
     FCVT_RTZ_X_F = "rtz.x.f"
+    FCLASS = "fclass"
+
+
+# (exp_bits, frac_bits) keyed by element width in bytes for IEEE-754 binary{16,32,64}.
+_IEEE_FIELDS = {2: (5, 10), 4: (8, 23), 8: (11, 52)}
+
+
+def _fclass_bits(src_bytes: bytes, eb: int) -> int:
+    """Return the 10-bit classification mask for vfclass / fclass.
+
+    Bit layout per the F extension (and reused for V): 0 -inf, 1 -normal,
+    2 -subnormal, 3 -0, 4 +0, 5 +subnormal, 6 +normal, 7 +inf, 8 sNaN,
+    9 qNaN. The qNaN bit is the MSB of the significand (IEEE 754-2008).
+    """
+    exp_bits, frac_bits = _IEEE_FIELDS[eb]
+    val = int.from_bytes(src_bytes, byteorder='little', signed=False)
+    sign = (val >> (eb * 8 - 1)) & 1
+    exp = (val >> frac_bits) & ((1 << exp_bits) - 1)
+    frac = val & ((1 << frac_bits) - 1)
+    exp_max = (1 << exp_bits) - 1
+    if exp == exp_max:
+        if frac == 0:
+            return 1 << (7 if sign == 0 else 0)
+        return 1 << (9 if (frac >> (frac_bits - 1)) else 8)
+    if exp == 0:
+        if frac == 0:
+            return 1 << (4 if sign == 0 else 3)
+        return 1 << (5 if sign == 0 else 2)
+    return 1 << (6 if sign == 0 else 1)
 
 
 class VCmpOp(Enum):
@@ -97,6 +126,10 @@ class VCmpOp(Enum):
     GTU = "sgtu"
     GT = "sgt"
     GE = "sge"
+    # Carry-out / borrow-out producing mask ops. Operands are interpreted
+    # unsigned; when carry-in is present (vm=0) it comes from v0.
+    MADC = "madc"
+    MSBC = "msbc"
 
 
 class VmLogicOp(Enum):
@@ -541,6 +574,23 @@ def _vcmp_evaluate(op: VCmpOp, a, b):
         raise NotImplementedError(f"Unknown comparison op: {op}")
 
 
+def _madc_msbc_evaluate(op: VCmpOp, vs2_val: int, other_val: int,
+                       element_width: int, carry_in: int) -> int:
+    """Compute the carry-out / borrow-out bit for vmadc / vmsbc.
+
+    vs2_val and other_val must already be unsigned (sign-extension is the
+    caller's job; for vmadc.vi the immediate is sign-extended then masked to
+    SEW bits per the spec carry-out convention).
+    """
+    if op is VCmpOp.MADC:
+        return ((vs2_val + other_val + carry_in) >> element_width) & 1
+    elif op is VCmpOp.MSBC:
+        # Borrow is 1 iff (vs2 - other - cin) is negative prior to truncation.
+        return 1 if (vs2_val - other_val - carry_in) < 0 else 0
+    else:
+        raise NotImplementedError(f"Not a carry/borrow op: {op}")
+
+
 @dataclass
 class VCmpViOp(KInstr):
     op: VCmpOp
@@ -551,6 +601,7 @@ class VCmpViOp(KInstr):
     element_width: int
     ordering: addresses.Ordering
     instr_ident: int
+    carry_in_reg: int | None = None
 
     async def admit(self, kamlet) -> 'VCmpViOp | None':
         vline_bytes = kamlet.params.vline_bytes
@@ -561,14 +612,20 @@ class VCmpViOp(KInstr):
 
         # Rename: lookup src physes before allocating dst physes.
         src_pregs = [kamlet.r(self.src + i) for i in range(n_src_vlines)]
+        carry_in_preg = (kamlet.r(self.carry_in_reg)
+                         if self.carry_in_reg is not None else None)
+        exclude = set(src_pregs)
+        if carry_in_preg is not None:
+            exclude.add(carry_in_preg)
         dst_pregs = await kamlet.alloc_dst_pregs(
             base_arch=self.dst, start_vline=0, end_vline=n_dst_vlines - 1,
             start_index=0, n_elements=self.n_elements,
             elements_in_vline=dst_elements_in_vline, mask_present=False,
-            exclude_reuse=set(src_pregs))
+            exclude_reuse=exclude)
         return self.rename(
             src_pregs={v: src_pregs[v] for v in range(n_src_vlines)},
             dst_pregs={v: dst_pregs[v] for v in range(n_dst_vlines)},
+            carry_in_preg=carry_in_preg,
         )
 
     async def execute(self, kamlet) -> None:
@@ -576,10 +633,18 @@ class VCmpViOp(KInstr):
         wb = kamlet.params.word_bytes
         bits_per_jamlet_vline = wb * 8
         sign_extended_imm = self.simm5 if self.simm5 < 16 else self.simm5 - 32
-        unsigned = self.op in (VCmpOp.LTU, VCmpOp.LEU, VCmpOp.GTU)
+        is_carry_op = self.op in CARRY_BORROW_CMP_OPS
+        # vmadc/vmsbc operate on unsigned operands per the carry-out convention.
+        unsigned = is_carry_op or self.op in UNSIGNED_VCMP_OPS
         eb = self.element_width // 8
         span_id = kamlet.monitor.get_kinstr_exec_span_id(
             self.instr_ident, kamlet.min_x, kamlet.min_y)
+        # For vmadc.vi, the immediate is sign-extended to SEW then reinterpreted
+        # unsigned for carry-out arithmetic.
+        if is_carry_op:
+            imm_for_op = sign_extended_imm & ((1 << (eb * 8)) - 1)
+        else:
+            imm_for_op = sign_extended_imm
 
         for element_index in range(self.n_elements):
             vw_index = element_index % kamlet.params.j_in_l
@@ -598,7 +663,16 @@ class VCmpViOp(KInstr):
             src_bytes = jamlet.rf_slice[src_base + src_byte_in_vline:
                                         src_base + src_byte_in_vline + eb]
             src_val = int.from_bytes(src_bytes, byteorder='little', signed=not unsigned)
-            result_bit = _vcmp_evaluate(self.op, src_val, sign_extended_imm)
+            if is_carry_op:
+                carry_in = 0
+                if r.carry_in_preg is not None:
+                    cin_byte = jamlet.rf_slice[r.carry_in_preg * wb
+                                               + (element_in_jamlet // 8)]
+                    carry_in = (cin_byte >> (element_in_jamlet % 8)) & 1
+                result_bit = _madc_msbc_evaluate(self.op, src_val, imm_for_op,
+                                                self.element_width, carry_in)
+            else:
+                result_bit = _vcmp_evaluate(self.op, src_val, sign_extended_imm)
 
             dst_bit_in_jvec = element_in_jamlet
             dst_vline_idx = dst_bit_in_jvec // bits_per_jamlet_vline
@@ -634,6 +708,7 @@ class VCmpVxOp(KInstr):
     ordering: addresses.Ordering
     instr_ident: int
     is_float: bool = False
+    carry_in_reg: int | None = None
 
     async def admit(self, kamlet) -> 'VCmpVxOp | None':
         vline_bytes = kamlet.params.vline_bytes
@@ -644,21 +719,29 @@ class VCmpVxOp(KInstr):
 
         # Rename: lookup src physes before allocating dst physes.
         src_pregs = [kamlet.r(self.src + i) for i in range(n_src_vlines)]
+        carry_in_preg = (kamlet.r(self.carry_in_reg)
+                         if self.carry_in_reg is not None else None)
+        exclude = set(src_pregs)
+        if carry_in_preg is not None:
+            exclude.add(carry_in_preg)
         dst_pregs = await kamlet.alloc_dst_pregs(
             base_arch=self.dst, start_vline=0, end_vline=n_dst_vlines - 1,
             start_index=0, n_elements=self.n_elements,
             elements_in_vline=dst_elements_in_vline, mask_present=False,
-            exclude_reuse=set(src_pregs))
+            exclude_reuse=exclude)
         return self.rename(
             src_pregs={v: src_pregs[v] for v in range(n_src_vlines)},
             dst_pregs={v: dst_pregs[v] for v in range(n_dst_vlines)},
+            carry_in_preg=carry_in_preg,
         )
 
     async def execute(self, kamlet) -> None:
         r = self.renamed
         wb = kamlet.params.word_bytes
         bits_per_jamlet_vline = wb * 8
-        unsigned = self.op in (VCmpOp.LTU, VCmpOp.LEU, VCmpOp.GTU)
+        is_carry_op = self.op in CARRY_BORROW_CMP_OPS
+        # vmadc/vmsbc operate on unsigned operands per the carry-out convention.
+        unsigned = is_carry_op or self.op in UNSIGNED_VCMP_OPS
         eb = self.element_width // 8
         if self.is_float:
             fmt = _CMP_FLOAT_FMT[eb]
@@ -690,7 +773,16 @@ class VCmpVxOp(KInstr):
                 src_val = struct.unpack(fmt, src_bytes)[0]
             else:
                 src_val = int.from_bytes(src_bytes, byteorder='little', signed=not unsigned)
-            result_bit = _vcmp_evaluate(self.op, src_val, scalar_val)
+            if is_carry_op:
+                carry_in = 0
+                if r.carry_in_preg is not None:
+                    cin_byte = jamlet.rf_slice[r.carry_in_preg * wb
+                                               + (element_in_jamlet // 8)]
+                    carry_in = (cin_byte >> (element_in_jamlet % 8)) & 1
+                result_bit = _madc_msbc_evaluate(self.op, src_val, scalar_val,
+                                                self.element_width, carry_in)
+            else:
+                result_bit = _vcmp_evaluate(self.op, src_val, scalar_val)
 
             dst_bit_in_jvec = element_in_jamlet
             dst_vline_idx = dst_bit_in_jvec // bits_per_jamlet_vline
@@ -723,6 +815,7 @@ class VCmpVvOp(KInstr):
     ordering: addresses.Ordering
     instr_ident: int
     is_float: bool = False
+    carry_in_reg: int | None = None
 
     async def admit(self, kamlet) -> 'VCmpVvOp | None':
         vline_bytes = kamlet.params.vline_bytes
@@ -734,22 +827,30 @@ class VCmpVvOp(KInstr):
         # Rename: lookup src physes before allocating dst physes.
         src1_pregs = [kamlet.r(self.src1 + i) for i in range(n_src_vlines)]
         src2_pregs = [kamlet.r(self.src2 + i) for i in range(n_src_vlines)]
+        carry_in_preg = (kamlet.r(self.carry_in_reg)
+                         if self.carry_in_reg is not None else None)
+        exclude = set(src1_pregs) | set(src2_pregs)
+        if carry_in_preg is not None:
+            exclude.add(carry_in_preg)
         dst_pregs = await kamlet.alloc_dst_pregs(
             base_arch=self.dst, start_vline=0, end_vline=n_dst_vlines - 1,
             start_index=0, n_elements=self.n_elements,
             elements_in_vline=dst_elements_in_vline, mask_present=False,
-            exclude_reuse=set(src1_pregs) | set(src2_pregs))
+            exclude_reuse=exclude)
         return self.rename(
             src_pregs={v: src1_pregs[v] for v in range(n_src_vlines)},
             src2_pregs={v: src2_pregs[v] for v in range(n_src_vlines)},
             dst_pregs={v: dst_pregs[v] for v in range(n_dst_vlines)},
+            carry_in_preg=carry_in_preg,
         )
 
     async def execute(self, kamlet) -> None:
         r = self.renamed
         wb = kamlet.params.word_bytes
         bits_per_jamlet_vline = wb * 8
-        unsigned = self.op in (VCmpOp.LTU, VCmpOp.LEU, VCmpOp.GTU)
+        is_carry_op = self.op in CARRY_BORROW_CMP_OPS
+        # vmadc/vmsbc operate on unsigned operands per the carry-out convention.
+        unsigned = is_carry_op or self.op in UNSIGNED_VCMP_OPS
         eb = self.element_width // 8
         fmt = _CMP_FLOAT_FMT[eb] if self.is_float else None
         span_id = kamlet.monitor.get_kinstr_exec_span_id(
@@ -778,7 +879,16 @@ class VCmpVvOp(KInstr):
             else:
                 src1_val = int.from_bytes(src1_bytes, byteorder='little', signed=not unsigned)
                 src2_val = int.from_bytes(src2_bytes, byteorder='little', signed=not unsigned)
-            result_bit = _vcmp_evaluate(self.op, src2_val, src1_val)
+            if is_carry_op:
+                carry_in = 0
+                if r.carry_in_preg is not None:
+                    cin_byte = jamlet.rf_slice[r.carry_in_preg * wb
+                                               + (element_in_jamlet // 8)]
+                    carry_in = (cin_byte >> (element_in_jamlet % 8)) & 1
+                result_bit = _madc_msbc_evaluate(self.op, src2_val, src1_val,
+                                                 self.element_width, carry_in)
+            else:
+                result_bit = _vcmp_evaluate(self.op, src2_val, src1_val)
 
             dst_bit_in_jvec = element_in_jamlet
             dst_vline_idx = dst_bit_in_jvec // bits_per_jamlet_vline
@@ -1336,6 +1446,9 @@ class VUnaryOvOp(KInstr):
             float_fmt = {8: 'd', 4: 'f'}[dst_eb]
             sint_val = struct.unpack(sint_fmt, src_bytes)[0]
             return struct.pack(float_fmt, float(sint_val))
+        elif self.op == VUnaryOp.FCLASS:
+            assert src_eb == dst_eb
+            return _fclass_bits(src_bytes, src_eb).to_bytes(dst_eb, byteorder='little')
         else:
             raise NotImplementedError(f"Unknown VUnaryOp: {self.op}")
 
@@ -1464,6 +1577,14 @@ ACCUM_OPS = (
 # vm bit is repurposed: vm=0 means "use v0 as carry-in", vm=1 is reserved.
 # Every body element is written regardless of v0 (no write-gating).
 CARRY_BORROW_OPS = (VArithOp.ADC, VArithOp.SBC)
+
+# Mask-output ops that produce the carry-out / borrow-out (vmadc/vmsbc). vm=0
+# pulls a per-element carry-in from v0; vm=1 means "no carry-in". Operands are
+# interpreted unsigned. Output is one mask bit per element; tail-agnostic.
+CARRY_BORROW_CMP_OPS = (VCmpOp.MADC, VCmpOp.MSBC)
+
+# VCmp ops whose operands are unpacked as unsigned (vmsltu/vmsleu/vmsgtu).
+UNSIGNED_VCMP_OPS = (VCmpOp.LTU, VCmpOp.LEU, VCmpOp.GTU)
 
 
 def _compute_arith(op, src1_val, src2_val, acc_val, eb, shift_eb=None,
