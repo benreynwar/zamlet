@@ -9,6 +9,7 @@ One-line index of plans in `plans/`. See `ROADMAP.md` for the big picture.
 - [fft_kernel](plans/PLAN_fft_kernel.md) — variable-R FFT kernel; init + Regime A/B in; Regime C partial
 - [per_vline_ew](plans/PLAN_per_vline_ew.md) — steps 1–3 done; 4–7 pending
 - [llvm_vpu_spills](plans/PLAN_llvm_vpu_spills.md) — phase 1–2 done; phase 3 (LLVM patch) partial
+- [docs_overhaul](plans/PLAN_docs_overhaul.md) — restructure docs around stripe-as-unit-of-locality; Ben writes prose, Claude advises only
 
 ## Todo
 

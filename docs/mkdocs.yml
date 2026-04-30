@@ -6,6 +6,11 @@ nav:
   - Examples:
     - Gather Example: gather_example.md
   - Architecture Details:
+    - Hierarchy: hierarchy.md
+    - Instruction Flow: instruction_flow.md
+    - Stripe: stripe.md
+    - Element Width: element_width.md
+    - Memory Model: memory_model.md
     - Memory: memory.md
   - Modelling:
     - Python Model: python.md
