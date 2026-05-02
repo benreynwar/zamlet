@@ -1,16 +1,26 @@
 site_name: Zamlet
 nav:
   - Home: index.md
-  - Setup: setup.md
-  - Current State: scope.md
+  - Overview and Concepts:
+    - Hierarchy: hierarchy.md
+    - Instruction Flow: instruction_flow.md
+    - Stripes, Lane Order and Element Width: stripe.md
+    - Memory Model: memory_model.md
+  - Architecture:
+    - Lamlet: lamlet.md
+    - Kamlet: kamlet.md
+    - Jamlet: kamlet.md
+    - Network: network.md
+    - Synchronization: synchronization.md
+    - IdentQuery: ident_query.md
   - Examples:
     - Gather Example: gather_example.md
-  - Architecture Details:
-    - Memory: memory.md
-  - Modelling:
+  - Use:
+    - Setup: setup.md
     - Python Model: python.md
-  - Tools:
+  - Misc:
     - LLM Usage: llm.md
+    - Current State: scope.md
 theme:
   name: readthedocs
   highlightjs: false
