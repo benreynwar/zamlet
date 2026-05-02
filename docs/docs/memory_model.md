@@ -8,54 +8,51 @@ The lamlet acts as a bridge between the processor and the rest of the zamlet VPU
 instructions accessing the scalar memory go via the lamlet, and all scalar instructions accessing
 the vector memory make their requests via the lamlet.  Additionally all external requests to read
 or write the vector memory go via the lamlet (for DMA the data itself does not pass through the
-lamlet but the transfer paramters do).
+lamlet but the transfer parameters do).
 
 For vector memory pages there is an additional page table that tracks the EW of every stripe in the
 page.
 
-## Lamlet to Kamlet Ordering
 
-The ordering of memory accesses is enforced via the order of kinstructions that are sent from the
-lamlet to the kamlets.  Vector instructions, scalar instructions accessing vector memory, and
-external reads and writes are all converted to kinstructions and placed in the ordered stream.
-External reads and writes are inserted such that they do not break up sequences of kinstructions
-representing atomic operations (the lamlet may break up one RISC-V instruction into several
-kinstructions which should be considered as an atomic group).
+## CPU Accessing Scalar Memory
 
-Each kamlet uses the kinstruction order to determine the order that memory accesses should occur
-and the reservation station enforces this ordering when considering any reordering of operations.
+The VPU keeps a table of all its in-flight reads or writes to the scalar memory.  The VPU
+also observes the read and write addresses of the CPU pipeline.  If it sees that the processor
+is accessing an address that is in-use by the vector processor, then it will stall the CPU pipeline.
 
-## Access Paths
+## CPU Accessing Vector Memory
 
-* Vector load/store to vector pages: independent of the lamlet unless the lamlet is required
-    to enforce ordering (e.g. ordered indexed stores).
-* Vector load/store to scalar pages: All requests from jamlets will access the scalar memory
-    via the lamlet.
-* Scalar load/store to vector page: the lamlet creates a kinstruction to read or write
-    the vector memory.
-* Scalar load/store to scalar memory: the lamlet lets the processor know if there are any
-    in-progress vector instruction that might modify that scalar address.
-* External load/store to vector memory: goes via lamlet which inserts it into the kinstruction
-stream.
-* External load/store to scalar memory: Does not involve zamlet.
-* DMA read/write to vector memory: the data goes directly to the kamlets, while the control
-    information goes to the lamlet where a kinstruction is created and inserted into the stream.
+The vector memory is treated as non-cacheable by the processor.  All processor memory accesses
+are visible to the VPU at commit. When the VPU sees an access to vector memory a kinstruction
+for the read or write is inserted into the stream of vector kinstructions.  When the actual
+request comes over the memory link that request is associated with the kinstruction.  If it was
+a read request then the response is returned over the memory link when the read kinstructions
+responds.
 
-## Consistency Model
+## VPU Accessing Scalar Memory 
 
-The zamlet supports RISC-V RVWMO ordering.
-The lamlet tracks which scalar addresses are being updated and enforces the ordering of
-scalar and vector accesses to scalar memory.
-This ensures we have ordering consistency.
+The VPU will always wait for the CPU Store buffer to flush before accessing the scalar memory
+(I don't really understand this aspect, and am just copying what the Saturn VPU does,
+presumably it will become clearer once I get to the implementation, and better understand
+how the saturn VPU and the shuttle CPU interact.
 
-## Fence
+## VPU Accessing the Vector Memory
+
+All other accesses go through the lamlet and ordering is controlled there.
+
+## External Request to the Vector Memory
+
+All external requests to the Vector Memory go through the lamlet which enforces a consistent
+ordering with respect to that seen by the CPU and VPU.
+
+## Atomic Operations
+
+Atomic operations are supported with the concept of an atomic sequence of
+kinstructions.  When the lamlet is interleaving vector kinstructions,
+kinstructions from CPU memory accesses, and kinstructions for external
+memory accesses it does not break up atomic sequences of kinstructions.
+
+## Fences
 
 Fence instructions are implemented by draining all active vector instructions.  The vector memory
 cache is not flushed.
-
-## Atomic Memory Operations
-
-Atomic operations accessing vector memory can split into multiple kinstructions in the lamlet. The
-lamlet prevents any memory access kinstructions (even those representing external memory
-accesses) from being inserted between kinstructions representing an atomic operation.
-Since the kinstruction ordering is preserved, the operations remain atomic.

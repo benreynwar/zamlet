@@ -1,69 +1,100 @@
-# Stripe
+# Stripes, Lane Order And Element Width
 
-The hardware is organized around chunks of data of size `n_lanes * word_width` which we refer to as 'stripes'.
-A vector register with LMUL=1 contains a stripe.
-If we have a 32x32 mesh of lanes, a stripe would then be 1024 * 8 B = 8 KiB.
+## Stripe
 
-## Vector Register File
+The hardware is organized around chunks of data of size `n_lanes * word_width`
+which we refer to as **stripes**.  A vector register with LMUL=1 contains a
+stripe.  If we have a 32x32 mesh of lanes, a stripe would then be `1024 * 8 B = 8 KiB`.
 
-A stripe of data in the cache is partitioned across the lanes in exactly the same way that a vector register is partioned across
-the vector register file slices in the lanes.  The exact byte ordering will depend on the element-width that the hardware uses for
-the stripe, but this effect will be identical in the cache, in memory and in the vector register.  Because of this, loading or storing a
-stripe-aligned, element-width matched vector moves no data between lanes, it only moves data between the local cache SRAM and the vector
-register file slice.
+A stripe of data in the cache is partioned across the lanes in exactly the same way
+that a stripe of data in a vector register is partioned across the lanes.
 
-## Stripe vs Cache Line vs Page
+Within a stripe how the bytes are ordered depends on two attributes of the
+stripe: the **lane order** and the **element width**.
 
-A stripe is an aligned chunk of memory as described above.  A page is either a sequence of consecutive stripes, or a fraction of a stripe depending on
-whether the page is smaller or larger than a stripe. If the page is smaller then it is required that pages are allocated in stripe-sized groups.
+## Lane Order
+The lane order specifies in what order the physical lanes are indexed.
 
-Each cache line contains a fraction of several stripes.  This is because the lanes (jamlets) are organized into lane-groups (kamlets)
-and each kamlet has an independent memory and cache table.  The physical memory addresses are
-striped across kamlets. If each kamlet has `j_in_k` jamlets, then we have `j_in_k` words from the first kamlet, followed by `j_in_k` words from the
-second kamlet and so on.
+![Ordering](images/ordering.png)
 
-[Insert diagram here showing a mesh with cache lines, pages, and stripes illustrated]
+A small number of lane orders will be supported (probably just row-major and
+Moore, but potentially others if they are useful).  The lane order is set with a
+custom instructions in the same way that vtype is set.  The default will be
+a Moore curve.
 
-## Cache Ownership
+Every additional lane order must be supported by the logic that maps lane
+indices to x-y coordinates and x-y coordinates to lane indices.
 
-Each word in the physical vector memory has a particular jamlet's SRAM that is used when it's cached.  If a different jamlet
-needs to access this data they will send a message requesting this data.  This means that when a load or a store is aligned with a stripe (and the element width
-matches) then the data movement between cache and register file is purely local, but when the access is not aligned it requires cross-mesh messaging.
+## Element Width
 
-[Diagram showing data in the memory, and how that maps to data in the caches]
-[Also show a diagram illustrating a jamlet requesting data from another jamlet, and then that kamlet retrieving the cache line from the memory]
+Within a stripe how the bytes are ordered depends on the element-width of the
+instruction that wrote the data to the stripe.  The first element is always
+written to lane 0 (either lane 0's cache or vector register file slice), the
+second element to lane 1 and so on.
 
+The diagram below shows how elements of size 64-bits, 32-bits, 16-bits and 8-bits
+would be laid out in a zamlet with 4 lanes.  Because the RISC-V vector spec
+requires that elements are laid out sequentially in the memory, our layout implies that
+the byte-ordering in the stripe depends on the element-width. The implied byte
+addresses are shown in the diagram below the elements.
 
-## Element Width Per Stripe
+![Ordering](images/element_width.png)
 
-The hardware tracks what element-width each stripe of data in the vector register file and in memory were written with.  The data is stored such that
-the first element is mapped to lane 0, the second element is mapped to lane 1 and so on.  This means that the ordering of logical bytes to physical bytes
-depends on the element-width with which the data was written.  For mask data (element width is 1 bit) the bit ordering is modified in the same way.
+The purpose of laying out the vector elements in this way is to maximize the
+amount of instructions that are purely local (i.e. they only move data between
+the local jamlet cache, local jamlet register slice, and local jamlet
+ALU).  For example if we want to add two vectors of 32-bit integers to
+produce a LMUL=2 vector of 64-bit integers, we can see that a0 and b0 are both
+in lane 0, and a1 and b1 are both in lane 1, despite having different elements
+widths.
 
-[A diagram showing how data is organized in the register file depending on ew]
+Masks are stripes an element of 1 bit. These are interleaved in the same way as
+the other examples (but with an element size of 1 bit) and are not treated any
+differently from other stripes.
 
-## Unaligned Or Mismatched Element Width Accesses
+## Effects of Element Width Ordering
 
-When loads or stores are aligned to the stripe, and the element width of the instruction matches the element width of the source stripe the data movement
-is entirely local.  Similarly when arithmetic instructions have an element width that matches the source operands in the vector register file, all
-operands are present in the local lane.  This is typically the case.
+Enforcing this ordering makes common operations purely local and very fast. However
+when operations are not purely local they are much slower.  Examples of operations
+that remove non-local data movement are:
 
-When the access is not aligned to the stripe with a matching element width, we need rearrangement of the data at the mesh level.  Jamlets will need to
-send messages to other jamlets requesting data.  This is a performance cliff.
-The common case has purely local data movement (performance increases linearly with the nubmer of lanes), while the rare case is catastrophic (performance only
-increases with the squareroot of the number of lanes).
+* 1) Reading a register where the element-width of the read does not match the
+   element-width with which the register was written.
+* 2) Any load/store of memory that is not aligned to the stripe.
+* 3) Any load/store of memory where the element-width of the access does not match
+   the element-width with which the memory was written.
+* 4) Indexed or strided loads or stores
+* 5) .. and lots more
 
-[Need actual data numbers here, rather than guessing]
+## Element Width Lifecycle
 
-We move abruptly from a regime where data movement is negligible, to where it will totally limit the performance of the system.
-This architecture is based on the assumption that we can find ways to avoid the performance cliff and keep data movement mostly local.
+When a fresh page is allocated the EW of the stripes is initially undefined.  The first read or
+write of the page sets the EW.  Note: It is possible that several indexed loads or stores could be
+operating in parallel if they are wrapped in a writesetident [see writesetident] custom instruction.
+In this case the writesetident instruction itself specifies the EW that should be used for a page
+with undefined EW.
 
-## Summary
+When a fresh page is first written to by a scalar instruction, the EW of that scalar instruction is
+used to set the EW of the stripe, however it is considered a 'weak EW'. A subsequent vector load or
+store with a different EW will cause the stripe to get remapped to the vector instruction's EW.
+This is because it's a fairly common pattern for scalar instructions to write a stripe with a
+different EW than the vector logic will be using, and we don't want to fix the EW to a
+non-optimum value.
 
-The riscv vector specification specifies that elements in a vector are organized in memory sequentially. This is necessary to make the ISA independent
-of the vector length and works well when the vector register file
-is centralized, however it makes it difficult to scale the vector processing unit to large sizes.  In this architecture we get around this by tracking
-the element-width of each stripe of data in the vector memory and the vector register file. The element-width determines the byte ordering of the data
-such that elements are local to the corresponding lane.  This results in high performance when accesses are aligned to the stripe, and when the required
-element width matches the used element width, but results in very poor performance when this is not the case.
+There are also other situations where we modify the EW of a stripe in memory.  Anytime we do an
+aligned unit-stride vector store to a stripe we update the EW of the stripe to match the vector
+operation.  If the store rewrites the entire contents of the stripe we don't need to remap the
+contents first, if it is only a partial write we need to remap the contents to the new EW first.
 
+Unaligned, strided or indexed stores don't modify the EW of the destination stripe, with the
+exception of if the stripe has EW=1.  If the stripe has EW=1 the access will fault.  The lamlet will
+then perform a remapping of the memory stripe into the desired EW, and then reattempt the store.
+
+Similarly if an unaligned, strided or indexed store hits a EW=1 stripe, the access will fault, and
+the lamlet lamlet will perform a remapping followed by a reattempt.
+
+Initially vector registers are set to all 0 with undefined EW. The first read or write sets the EW.
+All reads and writes of vector registers require that the EW expected by the kinstruction matches
+the EW of the register.  When the lamlet constructs kinstructions it makes sure that this is the
+case.  If the EW of the required register does not match then the lamlet will first do a remap onto
+a temporary vector register.
