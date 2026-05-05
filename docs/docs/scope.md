@@ -8,7 +8,7 @@ I'm aiming to support the risc-v vector spec.  We need workloads that exercise t
 correctly, and I need workloads for common applications to check that I implement it with good performance.
 Currently I just have a few small kernels here.
 
-**Next Step:** I have a FFT kernel that works in the python model.  I can to get some more quantitative
+**Next Step:** I have a FFT kernel that works in the python model.  I can get some more quantitative
   measurements of the performance and see how it scales with the number of lanes. I need to better understand
   what the current bottleneck is.
    
@@ -20,7 +20,7 @@ to add a separate vector memory stack to support vector register spilling. It wa
 was done by Claude Code.  I'll need to understand LLVM a lot better myself before I can start making changes
 I'm confident in.
 
-**Next Step:** Current LLVM never uses unordered indexed vector operations.  In would be cool to see if it
+**Next Step:** Current LLVM never uses unordered indexed vector operations.  It would be cool to see if it
 could do that for cases where the lack of memory conflicts is easily inferred.
 
 
@@ -34,7 +34,7 @@ lots of ideas for better ways to do things which I need to update the python mod
               
 
 ## RTL
-I'm slowing working on implementing the hardware design in Chisel.  There is still a lot of work to do here.
+I'm slowly working on implementing the hardware design in Chisel.  There is still a lot of work to do here.
 
 **Next Step:** Get enough implemented that I can do basic vector loads and stores from the scalar memory and
 from the vector memory.  This is mostly a case of implementing the Kamlet.

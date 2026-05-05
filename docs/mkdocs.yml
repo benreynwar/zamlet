@@ -1,4 +1,7 @@
 site_name: Zamlet
+repo_url: https://github.com/benreynwar/zamlet
+repo_name: benreynwar/zamlet
+edit_uri: ""
 nav:
   - Home: index.md
   - Overview and Concepts:
@@ -16,12 +19,38 @@ nav:
     - Transfer System: transfer_system.md
     - Synchronization: synchronization.md
     - Systolic Array: systolic_array.md
-  - Examples:
-    - Gather Example: gather_example.md
   - Misc:
+    - RISC-V Support: rvv.md
+    - Risks: risks.md
     - Setup: setup.md
     - LLM Usage: llm.md
     - Current State: scope.md
+  - Examples:
+    - Gather Example: gather_example.md
 theme:
-  name: readthedocs
-  highlightjs: false
+  name: material
+  features:
+    - navigation.expand
+    - navigation.sections
+  icon:
+    repo: fontawesome/brands/github
+  palette:
+    - media: "(prefers-color-scheme)"
+      toggle:
+        icon: material/brightness-auto
+        name: Switch to light mode
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      toggle:
+        icon: material/brightness-4
+        name: Switch to system preference
+markdown_extensions:
+  - toc:
+      title: On this page
+extra_css:
+  - extra/nav.css

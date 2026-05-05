@@ -28,11 +28,11 @@ The lamlet, kamlets, jamlets, memlets and nemlets are connected by several 2D me
 * Responses from the jamlet mesh to scalar instructions (e.g. load/store to vector memory)
 
 * NOTE: The communication between jamlets and memlets, and jamlets and nemlets will likely
-        cause to much network traffic.  Rather than adding additional channels it will make
+        cause too much network traffic.  Rather than adding additional channels it will make
         more sense to add direct connections between them.
 
 * NOTE: Synchronization is not handled over the mesh network. There is an additional
-        synchronization network between kamlets [link to sync network].
+        synchronization network between kamlets. See [Synchronization](synchronization.md).
 
 ## Kamlet Network Traffic
 
@@ -94,5 +94,5 @@ same time (i.e. they will be stored in the waiting item table while the kinstruc
 
 For large meshes these kind of permutation operations are slow. For local operations the aggregate
 performance of the hardware increases linearly with the number of lanes, but for permutation
-operations it is expected to only increase as the squareroot of the number of lanes.  Designing an
+operations it is expected to only increase as the square root of the number of lanes.  Designing an
 efficient program for this hardware requires minimizing this kind of data movement.

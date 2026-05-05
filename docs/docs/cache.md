@@ -2,12 +2,12 @@
 
 In the diagram below we show how a **stripe** of data is stored in the Zamlet cache.
 
-A **stripe** is contiguous series of bytes of size `n_lanes * word_width`.  How those bytes
+A **stripe** is a contiguous series of bytes of size `n_lanes * word_width`.  How those bytes
 are distributed across the jamlets will depend on the **lane order** and the **element width** of
 the stripe.  It will always be distributed across all the kamlets, and each of those kamlets has
 a separate memory and a separate cache system.
 
-The **lane order** and the **element width** of a stripe explictly specifies which jamlet is
+The **lane order** and the **element width** of a stripe explicitly specifies which jamlet is
 responsible for caching each of the bytes of the stripe.  It is not possible for another jamlet to
 cache that byte locally.  This means that when a jamlet accesses a non-local byte, it will never be
 cached locally, however often the jamlet accesses it.
@@ -40,10 +40,10 @@ Once the **Kamlet Cache Engine** sees that all jamlets have retrieved their shar
 line it will signal the **Kamlet Transfer Engine** so that any kinstructions that were waiting
 on this cache line can proceed.
 
-Memory access requests can also be a result of request messages send from non-local jamlets.  The
+Memory access requests can also be a result of request messages sent from non-local jamlets.  The
 jamlet's **Transfer Server** will send these access requests to the **Kamlet Cache Engine** to
-determine if it is a cache hit of miss.  For a cache miss the cache engine will retrieve the
-cache line is the manner discussed previously, however it will store the request message
+determine if it is a cache hit or miss.  For a cache miss the cache engine will retrieve the
+cache line in the manner discussed previously, however it will store the request message
 in a table inside the **Kamlet Cache Engine**.  Once the cache line is retrieved the engine
 will send the message back to the **Transfer Server** so that it can generate the response.
 

@@ -3,26 +3,26 @@
 Note: This page is a bit dated. For more up-to-date examples see [Transfer System link].
       I'm leaving this page here because it has pretty pictures and the newer examples don't.
 
-This document goes though what the VPU does to implement an unordered gather instruction.
+This document goes through what the VPU does to implement an unordered gather instruction.
 
 1. **Lamlet**: A gather instruction arrives at the lamlet.
 
 2. **Lamlet**: The lamlet splits the gather instruction into a sequence of gather kinstructions.
    Each kinstruction gathers one element to each lane.
-   The kinstructions are put in a network packet and broadcase to all the kamlets.
+   The kinstructions are put in a network packet and broadcast to all the kamlets.
 
-3. **Every Kamlet**: Each kamlet receives the kinstrucion packet and places them in the instruction buffer.
+3. **Every Kamlet**: Each kamlet receives the kinstruction packet and places them in the instruction buffer.
 
     ![Broadcasting kinstruction packet](images/gather_1.png)
 
 4. **Every Kamlet**: Each kamlet pops one of the kinstructions from the instruction buffer.  If the required
    registers are available it is placed in the pending instruction table on this kamlet
-   and on all it's jamlets.
+   and on all its jamlets.
 
     ![Broadcasting kinstruction packet](images/gather_2.png)
 
 5. **Every Jamlet**: Each jamlet sees the new kinstruction in the pending instruction table and reads the
-   gather index from it's local register slice. From this it work's out what address it
+   gather index from its local register slice. From this it works out what address it
    needs to gather data from, and works out which lane is responsible for caching that
    address.  The jamlet sends a message to that jamlet requesting the data.
 
@@ -32,11 +32,11 @@ This document goes though what the VPU does to implement an unordered gather ins
    in their pending instruction data they process the message. If it doesn't they send
    a response that they dropped the message.
 
-7. **Target Jamlets**: If the required memory address is in the cache they response with a message containing
+7. **Target Jamlets**: If the required memory address is in the cache they respond with a message containing
    the requested data.
 
 8. **Target Jamlets/Kamlets**: If the required memory address is not in the cache, they let the kamlet know that we
-   need to request that cache line.  The kamlet will send a message to it's corresponding
+   need to request that cache line.  The kamlet will send a message to its corresponding
    memlet requesting that cache line.
 
 9. **Target Memlets**: The memlet will respond with messages to all the jamlets in that kamlet 
@@ -48,7 +48,7 @@ This document goes though what the VPU does to implement an unordered gather ins
     ![Broadcasting kinstruction packet](images/gather_4.png)
 
 12. **Every Jamlet**: Every jamlet receives a response message.  It updates the register file slice with the
-    received data.  It let's the kamlet know that it has completed.
+    received data.  It lets the kamlet know that it has completed.
 
     ![Broadcasting kinstruction packet](images/gather_5.png)
 

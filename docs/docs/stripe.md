@@ -6,8 +6,8 @@ The hardware is organized around chunks of data of size `n_lanes * word_width`
 which we refer to as **stripes**.  A vector register with LMUL=1 contains a
 stripe.  If we have a 32x32 mesh of lanes, a stripe would then be `1024 * 8 B = 8 KiB`.
 
-A stripe of data in the cache is partioned across the lanes in exactly the same way
-that a stripe of data in a vector register is partioned across the lanes.
+A stripe of data in the cache is partitioned across the lanes in exactly the same way
+that a stripe of data in a vector register is partitioned across the lanes.
 
 Within a stripe how the bytes are ordered depends on two attributes of the
 stripe: the **lane order** and the **element width**.
@@ -19,7 +19,7 @@ The lane order specifies in what order the physical lanes are indexed.
 
 A small number of lane orders will be supported (probably just row-major and
 Moore, but potentially others if they are useful).  The lane order is set with a
-custom instructions in the same way that vtype is set.  The default will be
+custom instruction in the same way that vtype is set.  The default will be
 a Moore curve.
 
 Every additional lane order must be supported by the logic that maps lane
@@ -45,10 +45,10 @@ amount of instructions that are purely local (i.e. they only move data between
 the local jamlet cache, local jamlet register slice, and local jamlet
 ALU).  For example if we want to add two vectors of 32-bit integers to
 produce a LMUL=2 vector of 64-bit integers, we can see that a0 and b0 are both
-in lane 0, and a1 and b1 are both in lane 1, despite having different elements
+in lane 0, and a1 and b1 are both in lane 1, despite having different element
 widths.
 
-Masks are stripes an element of 1 bit. These are interleaved in the same way as
+Masks are stripes with an element width of 1 bit. These are interleaved in the same way as
 the other examples (but with an element size of 1 bit) and are not treated any
 differently from other stripes.
 
@@ -56,7 +56,7 @@ differently from other stripes.
 
 Enforcing this ordering makes common operations purely local and very fast. However
 when operations are not purely local they are much slower.  Examples of operations
-that remove non-local data movement are:
+that involve non-local data movement are:
 
 * 1) Reading a register where the element-width of the read does not match the
    element-width with which the register was written.
@@ -70,7 +70,7 @@ that remove non-local data movement are:
 
 When a fresh page is allocated the EW of the stripes is initially undefined.  The first read or
 write of the page sets the EW.  Note: It is possible that several indexed loads or stores could be
-operating in parallel if they are wrapped in a writesetident [see writesetident] custom instruction.
+operating in parallel if they are wrapped in a writesetident (see [Custom Instructions](custom_instructions.md#write-sets)) custom instruction.
 In this case the writesetident instruction itself specifies the EW that should be used for a page
 with undefined EW.
 
@@ -90,8 +90,8 @@ Unaligned, strided or indexed stores don't modify the EW of the destination stri
 exception of if the stripe has EW=1.  If the stripe has EW=1 the access will fault.  The lamlet will
 then perform a remapping of the memory stripe into the desired EW, and then reattempt the store.
 
-Similarly if an unaligned, strided or indexed store hits a EW=1 stripe, the access will fault, and
-the lamlet lamlet will perform a remapping followed by a reattempt.
+Similarly if an unaligned, strided or indexed store hits an EW=1 stripe, the access will fault, and
+the lamlet will perform a remapping followed by a reattempt.
 
 Initially vector registers are set to all 0 with undefined EW. The first read or write sets the EW.
 All reads and writes of vector registers require that the EW expected by the kinstruction matches
@@ -103,7 +103,7 @@ a temporary vector register.
 
 ![Unaligned Data Movement](images/unaligned.png)
 
-The diagram shows patterns of data movement for a load or store with an misaligned (relative to
+The diagram shows patterns of data movement for a load or store with a misalignment (relative to
 the stripe boundary) of 5 bytes, and an element width mismatch (the memory uses EW=16 bits while the
 register is using EW=8 bits).  We have highlighted a few segments of data and shown how they move
 between the register stripe and the memory stripes.  We will refer to the contiguous sequences of

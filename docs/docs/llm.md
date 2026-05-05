@@ -26,7 +26,7 @@ impressions so far.
   At some point I need to force myself to learn Bazel properly, so I can understand what I'm doing there.
 
 - Often I want to do something that is too difficult for the LLM, but I don't realize that for a while, and I waste a lot of time trying
-  to get the LLM to do it, when it would have take a fraction of the time just to do it myself. It's hard to remember that you can't teach
+  to get the LLM to do it, when it would have taken a fraction of the time just to do it myself. It's hard to remember that you can't teach
   the LLM anything, and any time spent teaching it will be wasted.
 
 - Because it's really good at quickly making adequate python tests, I end up writing fewer really good tests.
@@ -38,10 +38,10 @@ impressions so far.
 
 - I don't think it's useful for writing docs for humans.  One of the purposes of writing these kind of things is to help me organize my
   thoughts, and using an LLM somewhat defeats that purpose.
-  UPDATE: I tried to use Claude for getting feedback for the docs, and found that it's suggestions
-  tended to make thing worse.  But it was good for getting myself unblocked.
+  UPDATE: I tried to use Claude for getting feedback for the docs, and found that its suggestions
+  tended to make things worse.  But it was good for getting myself unblocked.
 
-- I'm using it to write Chisel code, but I don't think it's providing much value there.  I need to spend alot of time developing detailed
+- I'm using it to write Chisel code, but I don't think it's providing much value there.  I need to spend a lot of time developing detailed
   plans and reviewing code to get something halfway reasonable.  I don't think the LLM is hindering me, but it's not helping either.
 
 # Current Strategy

@@ -1,3 +1,0 @@
-# Write Identifier
-
-blah blah
