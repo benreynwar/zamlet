@@ -1,13 +1,15 @@
-I enjoy reading about how other people are using (or not using) LLMs for their projects, so thought I'd add a little section to these docs
-about how I've been using Claude Code for this project and my impressions so far.
+I enjoy reading about how other people are using (or not using) LLMs for their projects, so thought
+I'd add a little section to these docs about how I've been using Claude Code for this project and my
+impressions so far.
 
 # Things that It's Helped With
 
-- I've found Claude Code really useful for writing bazel files.  I probably wouldn't have spent the time to learn bazel well enough to use
-  it myself, and it's been a big improvement over build tools I've used in the past.  I expect the bazel files in this project are a 
-  vibe coded mess, but it seems to have been working well.
+- I've found Claude Code really useful for writing bazel files.  I probably wouldn't have spent the
+  time to learn bazel well enough to use it myself, and it's been a big improvement over build tools
+  I've used in the past.  I expect the bazel files in this project are a vibe coded mess, but it seems
+  to have been working well.
 
-- Simalarly it's been useful for learning Chisel.  It turns a short steep learning curve into a long shallow one
+- Similarly it's been useful for learning Chisel.  It turns a short steep learning curve into a long shallow one
   which is often what you want.
 
 - It's useful for when I have questions about the RISC-V spec, and I can ask the LLM rather than searching through the spec myself.
@@ -35,8 +37,9 @@ about how I've been using Claude Code for this project and my impressions so far
 # Places where it's not useful.
 
 - I don't think it's useful for writing docs for humans.  One of the purposes of writing these kind of things is to help me organize my
-  thoughts, and using an LLM somewhat defeats that purpose.  Secondly, I don't want to give up my written voice (even if my written 
-  voice is pretty crap).
+  thoughts, and using an LLM somewhat defeats that purpose.
+  UPDATE: I tried to use Claude for getting feedback for the docs, and found that it's suggestions
+  tended to make thing worse.  But it was good for getting myself unblocked.
 
 - I'm using it to write Chisel code, but I don't think it's providing much value there.  I need to spend alot of time developing detailed
   plans and reviewing code to get something halfway reasonable.  I don't think the LLM is hindering me, but it's not helping either.

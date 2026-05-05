@@ -1,5 +1,8 @@
 # Example of a Gather Instruction
 
+Note: This page is a bit dated. For more up-to-date examples see [Transfer System link].
+      I'm leaving this page here because it has pretty pictures and the newer examples don't.
+
 This document goes though what the VPU does to implement an unordered gather instruction.
 
 1. **Lamlet**: A gather instruction arrives at the lamlet.

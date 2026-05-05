@@ -17,7 +17,7 @@ I've made a start on some docs at [benreynwar.github.io/zamlet/](https://benreyn
 
 ## Approach
 
-![Top-Level Diagram](images/system.png)
+![Top-Level Diagram](docs/docs/images/system.png)
 
 **Lanes are arranged in a grid.** If we want the design to scale to large numbers of lanes, we don't really have any other choices.
 

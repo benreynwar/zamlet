@@ -1,12 +1,5 @@
 # Current Project State
 
-The scope of this project is fairly ambitious. That's the advantage/disadvantage of doing a project for fun is that
-fewer people tell you that you're trying to do something unreasonably hard.
-
-Here I'm just dividing the project into the 5 main areas where development needs to happen.  If you notice verification is
-suspicously absent, you'd be right. I'm a long long way from needing rigorous verification yet, and am happy with 
-basic unit tests, and running of kernels.
-
 ![Project Scope](images/project_areas.png)
 
 ## Workload
@@ -15,23 +8,30 @@ I'm aiming to support the risc-v vector spec.  We need workloads that exercise t
 correctly, and I need workloads for common applications to check that I implement it with good performance.
 Currently I just have a few small kernels here.
 
-**Next Step:** I'd like to get a generic FFT kernel implemented that performs well.
+**Next Step:** I have a FFT kernel that works in the python model.  I can to get some more quantitative
+  measurements of the performance and see how it scales with the number of lanes. I need to better understand
+  what the current bottleneck is.
    
 
 ## Compiler
-To get good performance I will need customizations to the compiler.  I've haven't done any work on this yet
-and have been putting custom assembly in the workloads as a workaround.
 
-**Next Step:** The lowest hanging fruit is supporting vector spilling into the VPU memory.  This is important for
-supporting a performant FFT kernel.
+To get good performance I will need customizations to the compiler.  I currently have a modification to LLVM
+to add a separate vector memory stack to support vector register spilling. It was a fairly small change and
+was done by Claude Code.  I'll need to understand LLVM a lot better myself before I can start making changes
+I'm confident in.
+
+**Next Step:** Current LLVM never uses unordered indexed vector operations.  In would be cool to see if it
+could do that for cases where the lack of memory conflicts is easily inferred.
 
 
 ## Architecture/Hardware Modelling  
 
 To be able to iterate a bit more quickly I have a python model of the hardware that captures the message passing
-approach.  This covers a decent chunk of the vector spec now, but is a long way from complete.
+approach.  This covers a decent chunk of the vector spec now.  Also, while updating the documentation I had
+lots of ideas for better ways to do things which I need to update the python model with.
 
-**Next Step:** Continue to increase our coverage of the risc-v vector spec.
+**Next Step:** Continue to increase our coverage of the risc-v vector spec.  Update to incorporate new approaches.
+              
 
 ## RTL
 I'm slowing working on implementing the hardware design in Chisel.  There is still a lot of work to do here.
