@@ -15,8 +15,6 @@ nav:
     - Cache System: cache.md
     - Transfer System: transfer_system.md
     - Synchronization: synchronization.md
-    - Ident Query: ident_query.md
-    - Write Ident: write_ident.md
     - Systolic Array: systolic_array.md
   - Examples:
     - Gather Example: gather_example.md
