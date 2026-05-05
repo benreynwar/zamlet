@@ -5,20 +5,23 @@ nav:
     - Hierarchy: hierarchy.md
     - Instruction Flow: instruction_flow.md
     - Stripes, Lane Order and Element Width: stripe.md
+    - Custom Instructions: custom_instructions.md
     - Memory Model: memory_model.md
   - Architecture:
     - Lamlet: lamlet.md
-    - Kamlet: kamlet.md
-    - Jamlet: kamlet.md
+    - Kamlet Core: kamlet.md
+    - Jamlet: jamlet.md
     - Network: network.md
+    - Cache System: cache.md
+    - Transfer System: transfer_system.md
     - Synchronization: synchronization.md
-    - IdentQuery: ident_query.md
+    - Ident Query: ident_query.md
+    - Write Ident: write_ident.md
+    - Systolic Array: systolic_array.md
   - Examples:
     - Gather Example: gather_example.md
-  - Use:
-    - Setup: setup.md
-    - Python Model: python.md
   - Misc:
+    - Setup: setup.md
     - LLM Usage: llm.md
     - Current State: scope.md
 theme:

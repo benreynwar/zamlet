@@ -1,35 +1,38 @@
+# Kamlet Core
 
+![Kamlet Core Diagram](images/kamlet_core.png)
 
+## Kamlet Router
 
-## Kamlet: Renaming and Reservation Station
+This router connection to the kamlet mesh connect and connects the kamlets, memlets, nemlets and
+lamlet.  The main purpose of this network is to allow the lamlet the broadcast kinstructions to the
+kamlet and to allow the kamlet to send addresses to the memlets.
 
-Each kamlet contains a reservation station (probably 16 kinstructions depth).  When a spot opens in
-the reservation station a kinstruction is popped from the buffer, the vector register references are
-renamed to physical vector register references and the kinstruction is placed in the reservation
-station.  This renaming increases the reordering that the reservation station is able to do.  Mask
-registers are treated identically to any other vector register. The renaming and reservation station
-live at the kamlet level rather than in the lamlet because freeing a physical register requires
-knowing when every jamlet slice of that register has completed its reads and writes.  The
-non-determinism of non-local operations makes this impractical above the kamlet level.
+## Instruction Buffer
 
-Although the number of logical and physical registers are the same (48), renaming is still possible
-since 16 of the 48 registers are used for temporary variables and are explicitly freed.  This means
-there are typically only slightly more than 32 live registers allowing effective reordering.
+This is a FIFO buffer to even out latency differences from the lamlet to the different
+kamlets. This is important for instruction that require synchronization between the kamlets.
 
-The reservation station tracks which physical vector registers, memory, and resources (e.g. FPU) are
-required by each kinstruction, and will emit the oldest kinstruction that is ready to be executed.
+## Renamer
 
-Memory accesses must be tracked in this manner since accessing non-local caches has
-non-deterministic ordering.  For the hardware to operate efficiently it must know which sets of
-kinstructions can be guaranteed not to have memory conflicts with one another, and this information
-is passed as extension instructions.  The reservation station considers this information when
-determining which kinstructions can be released.
+The renamer maps the 48 logical registers (32 architecture and 16 temporary) to the 48 physical
+registers.  It also tracks which of the 16 temporary registers are free, by processing the
+FreeRegister kinstructions.  
 
-When a kinstruction is released from the reservation station it is either directly executed by the
-jamlets or goes into the waiting item table (see below) depending on whether it is a local or non-local
-operation.
+The **Renamer** and **Reservation Station** live at the kamlet level rather than in the lamlet
+because freeing a physical register requires knowing when every jamlet slice of that register has
+completed its reads and writes.  The non-determinism of non-local operations makes this impractical
+above the kamlet level.
+ 
+## Reservation Station
 
-## Kamlet/Jamlet: Local and Non-Local Execution
+The **Reservation Station** holds 16 kinstructions that are waiting for their operands, cache lines
+and resources (e.g. division unit) to become available.  If there are any in-flight operations that
+access the same cache line (i.e. older kinstructions in the **Reservation Station** or kinstructions
+in the **Shared Waiting Table**) then that is considered as WR or WW conflicts and the
+kinstruction if not released from the RS.  The expection to this is if both kinstructions share a
+writeset identifier [ see writeset ident ], then is assumed that the two accesses do not conflict.
+The setting of writeset identifiers for instructions is supported by custom instructions.
 
 Kinstructions are divided into those that can be locally executed (i.e. they just move data between
 the local cache, local register slice and execution units), and those that involve data
@@ -37,21 +40,39 @@ movement beyond their jamlet such as register-register permutations, non-aligned
 or loads and stores that require access to cache-lines that are not already present in the
 cache.
 
-Local kinstructions are sent to all the jamlets where they are immediately executed.  The jamlets
-process the same kinstructions directly, and do not have a separate tier of instructions.  They just
-apply the kinstruction to their local piece of the vector register file slice and cache.
+When a kinstruction is released from the reservation station it is either directly executed by the
+jamlets or goes into the waiting table (see below) depending on whether it is a local or non-local
+operation.
 
-Non-local kinstructions are placed in the kamlet's **shared waiting item table** (likely 16
-kinstruction depth), as well as sent to all jamlets where entries are created in each
-jamlet's **waiting item table**.  In each jamlet there are several state machines that consider the
-contents of the table.  One state machine is used to send request messages to other jamlets and
-memlets, another state machine is used to process their responses and update the table's state.  A
-third state machine receives requests from other jamlets and generates responses to send to them.
-Items in the table also use the synchronization network [link to sync network] to ensure that a kinstruction is retired
-from all kamlets' **shared waiting item table**s at the same time when this is necessary, for
-example when a kinstruction needs to access other kamlet's cache or vector register file slices.
+## Kamlet Transfer Engine
 
-For cache misses the kamlet will request the relevant cache line from its memlet. The memlet will
-send response packets to all the jamlets which will update their local cache contents, and their
-**waiting item table** to indicate that the cache line is now available.  [link to distributed
-cache]
+Non-local kinstructions are sent to the **Kamlet Transfer Engine**, which can hold the state for 16
+non-local kinstructions.  This module drives the **Jamlet Transfer Engines** located in each jamlet
+and also uses the **Synchronizer** to make sure that kamlets are synchronized for non-local
+operations when necessary.
+
+The entry for each kinstruction in the **Kamlet Transfer Engine** consists of:
+
+| Field          | Width (bits) |
+|----------------|--------------|
+| Instr Ident    | 7            |
+| Writeset       | 5            |
+| Cache Slot     | 10           |
+| KInstr Details | 24           |
+
+[See Transfer section]
+
+## Synchronizer
+
+The synchronizer connects the kamlet to the synchronization network.  The **Shared Waiting Table**
+uses it so that kinstructions in the table can wait until synchonization points with the other
+kamlets and the lamlet. [see synchronization]
+
+## Kamlet Cache Engine
+
+Each kamlet is connected to a memory via a memlet.  All accesses to that memory go through the
+kamlet and the **Kamlet Cache Engine** keeps track of the cache meta data, and processes these
+requests.  It interacts closely with the **Jamlet Cache Engines** which are located in each 
+jamlet.
+
+[ See Cache system ]

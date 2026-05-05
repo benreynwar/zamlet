@@ -1,23 +1,23 @@
 # Zamlet - A RISC-V vector processing unit
 
-This is an exploratory project where I'm trying to create a vector processing unit for
-a RISC-V core that scales to very large numbers of lanes.
+This is an exploratory project where I'm trying to create a vector processing unit for a RISC-V core
+that scales to very large numbers of lanes.
 
-It's still very much a work in progress, and most of work has been creating a model of the microarchitecture in python to
-get of feel for whether the approach is practical and what the performance would be.
-I've also done some work on implementation in Chisel to get a rough estimate
+It's still very much a work in progress, and most of work has been creating a model of the
+microarchitecture in python to get of feel for whether the approach is practical and what the
+performance would be.  I've also done some work on implementation in Chisel to get a rough estimate
 of what the area would look like.
 
-This kind of microarchitecure is useful for  applications that operate on large vectors, where the control flow is
-relatively independent of the vector data.  Applications such as Fully Homomorphic Encryption and
-Machine Learning often fit into this category. 
+This kind of microarchitecure is useful for applications that operate on large vectors, where the
+control flow is relatively independent of the vector data.  Applications such as Fully Homomorphic
+Encryption and Machine Learning often fit into this category. 
 
 I've made a start on some docs at [benreynwar.github.io/zamlet/](https://benreynwar.github.io/zamlet/).
 
 
 ## Approach
 
-![Top-Level Diagram](docs/docs/images/oamlet.png)
+![Top-Level Diagram](images/system.png)
 
 **Lanes are arranged in a grid.** If we want the design to scale to large numbers of lanes, we don't really have any other choices.
 
@@ -31,7 +31,7 @@ I've made a start on some docs at [benreynwar.github.io/zamlet/](https://benreyn
 
 **Custom hardware to synchronize the lane groupings.** Because of the message passing approach, the lane groupings can often be out of sync with one another. Rather than building synchronization out of the network-based message passing we add specialized hardware for synchronizing between the lane groupings when this is required.
 
-![Lane Grouping Diagram](docs/docs/images/kamlet_jamlet.png)
+![Lane Grouping Diagram](docs/docs/images/kamlet.png)
 
 ## Setup
 

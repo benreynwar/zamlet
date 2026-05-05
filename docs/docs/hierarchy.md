@@ -29,7 +29,7 @@ are stalled until the backend has determined whether the instruction faults.
 instructions.  It has access to the processor's physical addresses for scalar loads and stores and
 will stall the processor if there is a conflict in access to scalar memory.
 
-![Top-Level Diagram](images/lamlet.png)
+![Lamlet Diagram](images/lamlet.png)
 
 ### Lamlet Backend
 
