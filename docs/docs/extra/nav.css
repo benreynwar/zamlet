@@ -1,0 +1,6 @@
+/* Add a small chevron marker before each page under a section heading */
+.md-nav__item--section > nav > .md-nav__list > .md-nav__item > .md-nav__link::before {
+  content: "›";
+  margin-right: 0.4em;
+  opacity: 0.5;
+}

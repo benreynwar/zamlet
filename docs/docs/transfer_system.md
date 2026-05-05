@@ -11,7 +11,7 @@ state of the transfer.
 The **Transfer Requester** uses the state from the kamlet and jamlet tables to generate request
 messages to other jamlets.  Depending on the type of transfer these messages are either received
 by the **Transfer Server** or the **Transfer Receiver**.  If the message is received by the
-**Transfer Server** then the server makes appropriate reads and write to that jamlet's register
+**Transfer Server** then the server makes appropriate reads and writes to that jamlet's register
 file and memory and then sends a response message back to the originating jamlet.  If a cache miss
 occurs then the message is stored in the **Kamlet Cache Engine** until the cache is available and
 a response can be generated.
@@ -147,7 +147,7 @@ and memory stripe then the operation is non-local.
         **Kamlet Transfer Engine** know that this element is waiting until we know the global page
         fault status, and moves on to the next element.
 
-      + If the requester sees that the page corresponds to idempotent memory then it uses the the
+      + If the requester sees that the page corresponds to idempotent memory then it uses the
         lane order and element width stored in the page information, the **Transfer Requester** can
         determine which jamlet is responsible for each memory byte, and sends a message to each
         jamlet with the data to write.  It lets the **Jamlet Transfer Engine** know that the

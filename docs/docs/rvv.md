@@ -46,7 +46,7 @@ min, max, minu, maxu, and, or: These operations can make use of the synchronizat
 
 sum: Must use an explicit reduction tree implemented with kinstructions.
 
-Note: I'm not sure if it will be worth support min and max for FP in the synchronizer.
+Note: I'm not sure if it will be worth supporting min and max for FP in the synchronizer.
       If that is not supported we'll need to use the synchronization network for that too.
 
 ### Cracking for Reduction Tree
@@ -114,7 +114,7 @@ registers `A`.
      from the previous loop and add that to the final vector too.
 
 * 5) Deduct the initial value of the bit for each element so that we have the sum of the
-     proceeding elements (not including this one).
+     preceding elements (not including this one).
 
 ## Cross-Lane Data Movement
 

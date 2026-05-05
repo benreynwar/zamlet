@@ -90,7 +90,7 @@ Unaligned, strided or indexed stores don't modify the EW of the destination stri
 exception of if the stripe has EW=1.  If the stripe has EW=1 the access will fault.  The lamlet will
 then perform a remapping of the memory stripe into the desired EW, and then reattempt the store.
 
-Similarly if an unaligned, strided or indexed store hits a EW=1 stripe, the access will fault, and
+Similarly if an unaligned, strided or indexed store hits an EW=1 stripe, the access will fault, and
 the lamlet will perform a remapping followed by a reattempt.
 
 Initially vector registers are set to all 0 with undefined EW. The first read or write sets the EW.

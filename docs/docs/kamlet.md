@@ -4,8 +4,8 @@
 
 ## Kamlet Router
 
-This router connects the kamle to the kamlet mesh network. It connects the kamlets, memlets, nemlets
-and lamlet.  The main purpose of this network is to allow the lamlet the broadcast kinstructions to
+This router connects the kamlet to the kamlet mesh network. It connects the kamlets, memlets, nemlets
+and lamlet.  The main purpose of this network is to allow the lamlet to broadcast kinstructions to
 the kamlet and to allow the kamlet to send addresses to the memlets.
 
 ## Instruction Buffer

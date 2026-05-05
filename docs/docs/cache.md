@@ -40,7 +40,7 @@ Once the **Kamlet Cache Engine** sees that all jamlets have retrieved their shar
 line it will signal the **Kamlet Transfer Engine** so that any kinstructions that were waiting
 on this cache line can proceed.
 
-Memory access requests can also be a result of request messages send from non-local jamlets.  The
+Memory access requests can also be a result of request messages sent from non-local jamlets.  The
 jamlet's **Transfer Server** will send these access requests to the **Kamlet Cache Engine** to
 determine if it is a cache hit or miss.  For a cache miss the cache engine will retrieve the
 cache line in the manner discussed previously, however it will store the request message

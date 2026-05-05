@@ -19,7 +19,7 @@ This setting also affects strided operations so that the offset is
 ## Write Sets
 
 Another factor that limits the throughput of vector loads and stores is that it is hard for the
-hardware to ensure read and writes don't conflict.  We use the term **Write Set** to mean
+hardware to ensure reads and writes don't conflict.  We use the term **Write Set** to mean
 a sequence of memory accesses that are guaranteed not to conflict.  Custom instructions are added
 to begin a **write set** and to end a **write set**.  This means that the vector processor
 can run these instructions in parallel without having to ensure that there are no conflicts.

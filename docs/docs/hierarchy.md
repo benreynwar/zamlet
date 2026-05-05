@@ -37,7 +37,7 @@ The lamlet backend contains the following modules:
 
 * A **Cracker** which converts the stream of RISC-V vector instructions into a stream of
 kinstructions.  It makes sure each kinstruction accesses at most one page (if the page can be known)
-and split complex instructions such as reductions, into a sequence of kinstructions.
+and splits complex instructions such as reductions, into a sequence of kinstructions.
 
 * A **Local Execution** module which determines whether the kinstruction should be broadcast to the
 kamlets, sent to the **Lamlet Waiting Table**, or handled by the **Ordered Window** hardware.

@@ -87,7 +87,7 @@ requests of scalar data in order to the processor, and then once it receives the
 the data on to the jamlets.  As elements are completed, the slots become available and the
 **Ordered Window** can begin working on the subsequent elements.
 
-Note: Currently all ordered loads use the Ordered Window, but it probably makes sense to do a
+Note: Currently all ordered loads use the Ordered Window, but it probably makes sense to do an
 unordered load first but fault on an access to non-idempotent memory and only attempt an ordered
 load after that.
 
@@ -119,7 +119,7 @@ any faults.  The lamlet will then send messages to write the memory in the corre
 | 46            |                | GETTING ADDRESS |
 | 47            |                | GETTING ADDRESS |
 
-The diagram above shows an example of a **Ordered Window** instruction state. The 16 in-flight
+The diagram above shows an example of an **Ordered Window** instruction state. The 16 in-flight
 elements are tracked.  The two oldest elements with indices of 34 and 35 have been completed.
 Elements 36 and 37 have submitted writes to memory, but no write completed response
 received yet.  Element 38 is still in the process of getting its addresses and

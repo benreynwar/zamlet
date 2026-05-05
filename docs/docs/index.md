@@ -1,23 +1,25 @@
-# Zamlet
+# Zamlet: A Scalable RISC-V VPU
 
-A scalable RISCV Vector Processing Unit
+[![CI](https://img.shields.io/github/actions/workflow/status/benreynwar/zamlet/ci.yml?branch=main&logo=github&label=CI)](https://github.com/benreynwar/zamlet/actions?query=event%3Apush+branch%3Amain+workflow%3ACI)
 
 ## Summary
 
-An exploratory RISC-V VPU scaling to large numbers of lanes (1024+).  A 2D mesh is used for
+An exploratory RISC-V VPU scaling to large numbers of lanes.  A 2D mesh is used for
 lane-lane communication, and the vector data is structured so that data remains local for most
 operations.
 
 The project is under development. There is a python model for performance simulations that is
 close to complete, and the beginnings of an RTL implementation.
 
-These docs are all human written.  Much of the code is LLM generated with manual revisions.
+These docs are all human written.  Much of the code is LLM generated with manual revisions, or
+manually generated with LLM revisions.
 
 ## Design Goals
 
 * 1) It should scale to large numbers of lanes (1024 or so).
 * 2) Should run riscv binaries using the vector extension.
-* 3) It should be possible to create extremely performant programs.
+* 3) LLVM should be able to target the hardware (modifications allowed).
+* 4) It should be possible to create extremely performant programs.
 
 These goals are often at cross purposes.  We require that arbitrary programs should run but do not
 require they are performant. To get high performance it will be necessary to use custom

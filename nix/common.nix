@@ -103,6 +103,7 @@ let
     ps.pytest-xdist
     ps.pyelftools
     ps.mkdocs
+    ps.mkdocs-material
     cocotb2
     cocotb-bus
     cocotbext-axi

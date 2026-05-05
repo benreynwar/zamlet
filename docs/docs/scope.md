@@ -8,7 +8,7 @@ I'm aiming to support the risc-v vector spec.  We need workloads that exercise t
 correctly, and I need workloads for common applications to check that I implement it with good performance.
 Currently I just have a few small kernels here.
 
-**Next Step:** I have a FFT kernel that works in the python model.  I can to get some more quantitative
+**Next Step:** I have a FFT kernel that works in the python model.  I can get some more quantitative
   measurements of the performance and see how it scales with the number of lanes. I need to better understand
   what the current bottleneck is.
    
