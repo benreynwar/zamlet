@@ -2,25 +2,30 @@
 
 ## Topology
 
-The lamlet, jamlets, memlets and nemlets are all connected by a 2D network mesh.
+The lamlet, kamlets, jamlets, memlets and nemlets are connected by several 2D mesh networks.
 
-[ diagram of the mesh ]
+* **Jamlet Network Channel 1:** Requests (black arrows in diagram).
+  
+* **Jamlet Network Channel 0:** Responses (black arrows in diagram).
 
-## Network Traffic
+* **Kamlet Network Channel 1:** Requests (red arrows in diagram).
+
+* **Kamlet Network Channel 0:** Responses (red arrows in diagram).
+
+![Network Diagram](images/network.png)
+
+## Jamlet Network Traffic
 
 * Any data movement between jamlets (i.e. unaligned load/store, EW-remap, vector permutations, etc)
 
 * Data between jamlets and memlets (cache line reads and writes).
 
 * Data between jamlets and nemlets (network reads and writes).  This would be the data-path for
-    DMA transactions. Control would go via the lamlet.
+    DMA transactions. Control would go via the lamlet and then kamlet network.
 
-* Responses from the kamlet mesh to vector instructions (e.g. ...).
+* Responses from the jamlet mesh to vector instructions (e.g. a scalar return value).
 
-* Responses from the kamlet mesh to scalar instructions (e.g. load/store to vector memory)
-
-* NOTE: kinstructions are broadcast from the lamlet to the kamlets through dedicated connections
-        and do not use the mesh network.
+* Responses from the jamlet mesh to scalar instructions (e.g. load/store to vector memory)
 
 * NOTE: The communication between jamlets and memlets, and jamlets and nemlets will likely
         cause to much network traffic.  Rather than adding additional channels it will make
@@ -29,20 +34,37 @@ The lamlet, jamlets, memlets and nemlets are all connected by a 2D network mesh.
 * NOTE: Synchronization is not handled over the mesh network. There is an additional
         synchronization network between kamlets [link to sync network].
 
+## Kamlet Network Traffic
+
+* Kinstructions broadcast from the lamlet.
+
+* Addresses to the memlets.
+
+* Non-data responses from the memlets.
+
 ## Structure
 
-The network consists of two independent channels of width 64 bits.  Each node
-contains a router for each channel.  Each router has 5 inputs and 5 outputs, one for each
+Both the jamlet network and the kamlet network consist of two independent channels of width 64 bits.
+Each node contains a router for each channel.  Each router has 5 inputs and 5 outputs, one for each
 cardinal direction, and one for the connecting node.
 
 We use XY routing and wormhole switching.  Packets are limited to 16 flits, but are
 typically 2 or 3 flits including header.
 
+| Bits Range | Use |
+|------------|-----|
+|0-15        | Target Coordinates | 
+|15-31       | Source Coordinates | 
+|32-35       | Packet Length | 
+|36-41       | Message Type | 
+|42          | Broadcast | 
+|43-63       | Message Type Specific |
+
 [Packet header format]
 
 ## Deadlock Avoidance
 
-The network has two independent channels Channel 0 and Channel 1. Channel 1 is used for request
+Each network has two independent channels Channel 0 and Channel 1. Channel 1 is used for request
 messages, whereas channel 0 is used for response messages.
 
 Nodes on the network are not permitted to block messages while waiting for other events to occur.
@@ -57,7 +79,7 @@ If a node is not ready to consume a Channel 1 request packet, then it is permitt
 happen if the receiver is further behind in the program execution and doesn't yet have the
 necessary context for the message.
 
-## Performance
+## Jamlet Network Performance
 
 We are targetting one clock cycle per hop in the network.  It will likely end up being 2 cycles.
 For a 32x32 grid we then expect a latency of roughly 2 * (32 + 32) cycles or 128 cycles for a

@@ -220,6 +220,42 @@
       completion syncs to fire" primitive, which doesn't exist today. Until
       then, just decode-and-no-op is sufficient. `fence.i` is a no-op as
       long as there's no I-cache (or the I-cache snoops).
+- [ ] Masked LMUL>1 reductions use wrong mask bits in `_emit_lmul_setup`
+      (`oamlet/reduction.py:76`). The setup loop emits one kamlet op per source
+      vline (`VUnaryOvOp` for the widen, `VArithVxOp` for the masked copy)
+      with `mask_reg=mask_reg, n_elements=active_in_vline`. Kamlet arith ops
+      have no per-call mask offset — `start_index` is hardcoded to 0 in their
+      `execute`, and `get_is_active` derives the mask bit address from the
+      op's local `vline_index` (`kamlet.py:696`). So every per-vline op reads
+      mask bits `[0..active_in_vline-1]` and reuses them for every vline,
+      instead of slicing `[vline_i*elements_in_vline ..]` for vline_i > 0.
+      Load/store ops carry a `mask_index` field for this (`load_word.py:48`,
+      `store_word.py:49`); arith ops do not.
+      Fix: follow the production pattern (`vector.py:2657` issues a single
+      `VArithVvOvOp` with `n_elements=s.vl`; the kamlet iterates vlines
+      internally with correct mask offsets). Replace the per-vline loop with
+      a single broadcast over the whole dst group plus a single
+      `VArithVxOp`/`VArithVxOvOp` covering all `n_elements` source elements.
+      Requires switching `vline_regs` from `alloc_temp_regs(8)` (deque pop,
+      not consecutive) to `alloc_temp_reg_group(lmul)` (`oamlet.py:304`,
+      aligned consecutive) so the kamlet's multi-vline preg allocation lands
+      on the right register group. Add a test for masked LMUL>1 widening
+      reduction first to confirm the bug. Once the structural fix is in, the
+      widen+masked-copy collapse via `VArithVxOvOp` (already applied to the
+      LMUL=1 branch) becomes a trivial follow-up for LMUL>1.
+- [ ] Make `vrgather.vx` / `vrgather.vi` use a deferred-input `VBroadcastOp`
+      kinstr (dispatched immediately, value injected later via a jamlet
+      packet keyed by ident) so `vd` ordering is tracked in the kamlet
+      renamer / shared waiting table. As part of this, delete the
+      lamlet-side pending-counter mechanism (`vrf_write_pending`,
+      `mark_/clear_/await_vreg_write_pending`) — it's an LLM addition that
+      only exists to serialize behind the current deferred broadcast and
+      doesn't fit the design.
+- [ ] Rework the Ordered Window so it dispatches a single broadcast kinstruction
+      per ordered indexed op (covering register dependencies / locking) and uses
+      direct lamlet↔jamlet messages for the per-element gather/issue, instead of
+      sending one per-element kinstruction (`LoadIndexedElement` /
+      `StoreIndexedElement`). Needs a design pass before implementation.
 - [ ] Kinstruction bit-budget cleanup. Give every python kinstruction a proper
       bit-packed encoding (`FIELD_SPECS` + `encode()`) matching Chisel-compatible
       64-bit layouts, and design Chisel bundles for the python-only vector ops

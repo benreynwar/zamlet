@@ -42,14 +42,17 @@ be kept to be 10 bits wide so it is relatively inexpensive.
 * Each Synchronizer is connected to its 8 adjacent and diagonal neighbors.
 
 * A synchronizer sends the following messages in each direction.
-     1) North: All nodes directly south of you have triggered.
-     2) South: All nodes directly north of you have triggered.
-     3) East: All nodes directly west of you have triggered.
-     4) West: All nodes directly east of you have triggered.
-     5) North-East: All nodes in your south-west quadrant have triggered.
-     6) North-West: All nodes in your south-east quadrant have triggered.
-     7) South-East: All nodes in your north-west quadrant have triggered.
-     8) South-West: All nodes in your north-east quadrant have triggered.
+
+     | Direction | Meaning |
+     |-------|------|
+     | North | All nodes directly south of you have triggered. |
+     | South | All nodes directly north of you have triggered. |
+     | East | All nodes directly west of you have triggered. |
+     | West | All nodes directly east of you have triggered. |
+     | North-East | All nodes in your south-west quadrant have triggered. |
+     | North-West | All nodes in your south-east quadrant have triggered. |
+     | South-East | All nodes in your north-west quadrant have triggered. |
+     | South-West | All nodes in your north-east quadrant have triggered. |
 
 * A synchronizer when complete when messages from all 8 of its neighbors have arrived.
 

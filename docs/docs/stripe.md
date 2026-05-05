@@ -98,3 +98,16 @@ All reads and writes of vector registers require that the EW expected by the kin
 the EW of the register.  When the lamlet constructs kinstructions it makes sure that this is the
 case.  If the EW of the required register does not match then the lamlet will first do a remap onto
 a temporary vector register.
+
+## Data Movement for Unaligned and EW Mismatch
+
+![Unaligned Data Movement](images/unaligned.png)
+
+The diagram shows patterns of data movement for a load or store with an misaligned (relative to
+the stripe boundary) of 5 bytes, and an element width mismatch (the memory uses EW=16 bits while the
+register is using EW=8 bits).  We have highlighted a few segments of data and shown how they move
+between the register stripe and the memory stripes.  We will refer to the contiguous sequences of
+bytes that move together as 'segments'.
+
+In the hardware each of these segment data movements is implemented as a message that is routed on
+the jamlet network mesh.
