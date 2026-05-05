@@ -26,15 +26,15 @@ The vector memory is treated as non-cacheable by the processor.  All processor m
 are visible to the VPU at commit. When the VPU sees an access to vector memory a kinstruction
 for the read or write is inserted into the stream of vector kinstructions.  When the actual
 request comes over the memory link that request is associated with the kinstruction.  If it was
-a read request then the response is returned over the memory link when the read kinstructions
+a read request then the response is returned over the memory link when the read kinstruction
 responds.
 
-## VPU Accessing Scalar Memory 
+## VPU Accessing Scalar Memory
 
 The VPU will always wait for the CPU Store buffer to flush before accessing the scalar memory
 (I don't really understand this aspect, and am just copying what the Saturn VPU does,
 presumably it will become clearer once I get to the implementation, and better understand
-how the saturn VPU and the shuttle CPU interact.
+how the saturn VPU and the shuttle CPU interact.)
 
 ## VPU Accessing the Vector Memory
 

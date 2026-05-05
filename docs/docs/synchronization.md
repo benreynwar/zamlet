@@ -17,7 +17,7 @@ be kept to be 10 bits wide so it is relatively inexpensive.
 * The local events are typically triggered, and the synchronization result waited for by
   a kinstruction located in the waiting item table.
 
-* The `sync_ident` refers to a specific synchronziation slot, so that multiple synchronization
+* The `sync_ident` refers to a specific synchronization slot, so that multiple synchronization
   operations can be in-flight at the same time (note that synchronization operations don't have
   to block, but some kinstructions will block on them).  The number of supported in-flight
   synchronizations will likely be 8.
@@ -34,7 +34,7 @@ be kept to be 10 bits wide so it is relatively inexpensive.
 * The maximum and minimum functionality of the synchronization network is used directly
   by some reduction operations.
 
-* IdentQuery [see IdentQuery] make use of the synchronization network to determine
+* IdentQuery makes use of the synchronization network to determine
   available instruction buffer space, available kinstruction idents, and available sync idents.
 
 ## Implementation
@@ -54,12 +54,12 @@ be kept to be 10 bits wide so it is relatively inexpensive.
      | South-East | All nodes in your north-west quadrant have triggered. |
      | South-West | All nodes in your north-east quadrant have triggered. |
 
-* A synchronizer when complete when messages from all 8 of its neighbors have arrived.
+* A synchronizer is complete when messages from all 8 of its neighbors have arrived.
 
 * An 8 neighbor design was chosen since diagonal movement is much faster, and since these are
   per kamlet, the area cost is less of a concern.
 
-# Performance
+## Performance
 
 * A synchronization packet is 2 or 3 flits.  5 cycles for each hop is realistic.
   For a 32x32 jamlet grid consisting of a 4x4 grid of kamlets, this would be a total latency

@@ -2,7 +2,7 @@
 
 ## Local Elementwise
 
-About 70% of the RVV ISA s ALU-type operations.
+About 70% of the RVV ISA is ALU-type operations.
 
 Max number of vector register reads is 4 (3 operands for MAC plus the mask).
 Max number of scalar register reads is 1.
@@ -16,7 +16,7 @@ insert an additional kinstruction to remap the register into a temporary registe
 register reads, but probably not.
 
 * For instructions that are using large scalar values that cannot fit in the kinstruction itself
-a 'WriteParam' kinstruction is inserted that write the scalar value to a parameter register first
+a 'WriteParam' kinstruction is inserted that writes the scalar value to a parameter register first
 that the following kinstruction can then reference.
 
 ### Execution
@@ -28,12 +28,12 @@ that the hardware needs to handle.
 
 * 2) the mask logical operations, vid, broadcast and whole register moves are all unmasked
 
-fflags and vxflags are stored locally in each lane.  Requests for fflags or vxflags result
-in a VPU wide reduction of the flags.  Currently the vector interface than saturn uses
+fflags and vxsat are stored locally in each lane.  Requests for fflags or vxsat result
+in a VPU wide reduction of the flags.  Currently the vector interface that saturn uses
 (and which we're planning to copy) only supports pushing fflags, rather than the pulling that
-we want.  Pushing would require using the sync network for every FP operations which seems
+we want.  Pushing would require using the sync network for every FP operation which seems
 like overkill.  It's likely worth adding to the vector interface to allow us visibility into
-reads to fflags and vxflags.
+reads to fflags and vxsat.
 
 ## Configuration Distribution
 
@@ -58,9 +58,9 @@ ALU kinstructions implementing a reduction tree.
 
 * 2) Do a slide operation to bring pairs of operands together.
 
-* 3) Do another operation.  Got back to (2) and repeat until we have a single result.
+* 3) Do another operation.  Go back to (2) and repeat until we have a single result.
 
-* 4) Write that value to a element 0.
+* 4) Write that value to element 0.
 
 ### Cracking for Synchronization Network Use
 
@@ -71,7 +71,7 @@ ALU kinstructions implementing a reduction tree.
 
 * 2) Use a synchronization event to reduce the values
 
-* 3) Write that value to a element 0.
+* 3) Write that value to element 0.
 
 ### Special Cases
 
@@ -84,7 +84,7 @@ the minimum active element index in a mask.
 
 Note: `vmsbf.m`, `vmsif.m`, `vmsof.m` are considered local element-wise operations.
 
-**vfredosum,vfwredosum** require that the sum is done in order.  This is implemented using
+**vfredosum, vfwredosum** require that the sum is done in order.  This is implemented using
 the **Ordered Window** in the lamlet, which gathers the values in order and then adds them
 using either a dedicated FP adder, or using one of the lanes.
 
@@ -96,7 +96,7 @@ using either a dedicated FP adder, or using one of the lanes.
 
 Similar to the reduction trees, the prefix is done in stages of moves followed by sums.
 
-I won't describe that actual ways in which the masks and indices are are calculated since
+I won't describe the actual ways in which the masks and indices are calculated since
 that's not really necessary here.
 
 * 1) First create X temporary registers, widen the bits to the SEW and place in the temporary
@@ -108,7 +108,7 @@ registers `A`.
      `element_index` and the stage index.
 
 * 3) Perform `A = A + B` with a mask (also a function of the `element_index` and stage).
-     Go back to 2 and repeat until each element is the sum of itself and all preceeding values.
+     Go back to 2 and repeat until each element is the sum of itself and all preceding values.
 
 * 4) Repeat 1 to 3 until we've covered all of LMUL.  We will need to extract the final value
      from the previous loop and add that to the final vector too.
@@ -130,7 +130,7 @@ Cracker will insert a kinstruction to remap the index register into a temporary 
 
 It is not necessary that the source vector registers have a matching EW.  The hardware can
 determine where to retrieve the bytes from a vector register with a different lane order or
-element width.  source vector registers with EW=1 (masks) are an exception to this.  The cracker
+element width.  Source vector registers with EW=1 (masks) are an exception to this.  The cracker
 will insert a kinstruction to remap these.
 
 Note: This operation is also used to remap registers from one lane-order or element-width to
@@ -147,7 +147,7 @@ Slide kinstruction.
      and determines where the bytes are located.  For each continuous segment a message
      is generated and sent to that jamlet.
 
-* 2) The request is processed by that jamlets Transfer Server which reads the requested
+* 2) The request is processed by that jamlet's Transfer Server which reads the requested
      bytes from the register file, and generates and sends a response message.  The 
      Server also checks whether the instruction identifier is active in the local kamlet.
      If it is not active it will send a 'drop and retry' response, since it cannot
@@ -178,9 +178,9 @@ writes a scalar register.
 
 ## Memory: Unit-Stride, Small Stride, Segment Unit-Stride, Segment Small Stride, Bounded Access
 
-[See Transfer System section for examples]
+See [Transfer System](transfer_system.md) for examples.
 
-[See Custom Instructions for bounded access]
+See [Custom Instructions](custom_instructions.md) for bounded access.
 
 ### Cracking
 
@@ -206,7 +206,7 @@ this will be skipped.
 
 * For kinstructions that are unit-stride stripe-aligned and have matching ordering the operations
 will be purely local and fast for cache hits.  For unaligned or mismatched operations the operation
-will be non-local and will involved the non-local Transfer System. 
+will be non-local and will involve the non-local Transfer System. 
 
 * There are cases where an EW change combined with a strided access means that the operation
 is local. The implementation does not take advantage of that.
@@ -214,7 +214,7 @@ is local. The implementation does not take advantage of that.
 * Transfers that are unit-stride use the direct Transfer Requester to Transfer Receiver, since
 the source can easily calculate who it needs to send data to.
 
-* Strided and Segment transfer use the Transfer Server approach so that the source does not
+* Strided and Segment transfers use the Transfer Server approach so that the source does not
 need to calculate what data to send itself.
 
 * These operations will all naturally be ordered since accesses to the scalar memory will be
@@ -245,7 +245,7 @@ introduce a kinstruction to remap the register EW.
 ### Implementation
 
 * Each kamlet gets the page information using its TLB.  Once a kamlet has completed all of
-it's non-idempotent accesses it will use the syncronization network to get the lowest element index
+its non-idempotent accesses it will use the synchronization network to get the lowest element index
 that causes a page fault.
 
 * Using this it will complete all of the non-idempotent accesses with element index lower than the
@@ -263,10 +263,10 @@ are released.
 Ordered operations are cracked in the same manner as unordered instructions, however rather than
 broadcasting them to the kamlet mesh, they are handled by the **Ordered Window** in the lamlet.
 
-This module explicitly serializes the accesses. This is necssary since two elements may write to
+This module explicitly serializes the accesses. This is necessary since two elements may write to
 the same address and we need to make sure that this happens in the correct order.
 
-The module contain a buffer with 16 (probably) slots. For each slot we:
+The module contains a buffer with 16 (probably) slots. For each slot we:
 
 * 1) Retrieve the index and data from the jamlet
 * 2) Use the TLB to get the page information.

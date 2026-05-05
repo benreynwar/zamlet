@@ -9,20 +9,20 @@ table also has an entry in each of the **Jamlet Transfer Engine** tables with th
 state of the transfer.
 
 The **Transfer Requester** uses the state from the kamlet and jamlet tables to generate request
-messages to other jamlets.  Depending on the type of transfer this messages are either received
+messages to other jamlets.  Depending on the type of transfer these messages are either received
 by the **Transfer Server** or the **Transfer Receiver**.  If the message is received by the
-**Transfer Server** then the server makes appropriate reads and write to that jamlets register
+**Transfer Server** then the server makes appropriate reads and write to that jamlet's register
 file and memory and then sends a response message back to the originating jamlet.  If a cache miss
-occurs that the message is stored in the **Kamlet Cache Engine** until the cache is available and
+occurs then the message is stored in the **Kamlet Cache Engine** until the cache is available and
 a response can be generated.
 
 This response is then received by the **Transfer Receiver** on the originating jamlet (or for
-some transfer types the original request is requived by the Receiver), and the receiver uses
-the content to update it's local register file or cache, and then let's the **Jamlet Transfer
-Engine** know that the response has been receiver.
+some transfer types the original request is received by the Receiver), and the receiver uses
+the content to update its local register file or cache, and then lets the **Jamlet Transfer
+Engine** know that the response has been received.
 
 Once all responses have been received the **Jamlet Transfer Engine** lets the **Kamlet Transfer
-Engine** know and the synchronizer to synchronizer all kamlets before removing this kinstruction.
+Engine** know and the synchronizer to synchronize all kamlets before removing this kinstruction.
 If the kinstruction is removed before other kamlets have completed the kinstruction then
 correct memory ordering is not guaranteed.
 
@@ -32,7 +32,7 @@ correct memory ordering is not guaranteed.
 
 16 entries.
 Used to track sending of requests and receiving of responses.
-Also used for kinstruction that would be local but have a cache miss.
+Also used for kinstructions that would be local but have a cache miss.
 
 | Field          | Width (bits) |
 |----------------|--------------|
@@ -76,7 +76,7 @@ Used to track sending of requests and receiving of responses.
 
 ### Aligned, EW-matching Load/Store with a Cache Miss
 
-Is it wasn't for the cache miss, this would be a Local KInstruction. However the cache miss means
+If it wasn't for the cache miss, this would be a Local KInstruction. However the cache miss means
 that it becomes non-local.
 
 * 1) As it leaves the **Reservation Station** the kinstruction is assigned a cache slot.  The
@@ -97,7 +97,7 @@ that it becomes non-local.
      **Kamlet Cache Engine** that the update has been done.
 
 * 6) Once the **Kamlet Cache Engine** confirms that all jamlets have updated the cache line then
-     it signal to the **Kamlet Transfer Engine** that the cache line has been retrieved.
+     it signals to the **Kamlet Transfer Engine** that the cache line has been retrieved.
 
 * 7) Now that the cache line has been retrieved this is a Local-Kinstruction.  The **Kamlet Transfer
      Engine** will insert it into the local execution flow from the Reservation Station when there is
@@ -105,7 +105,7 @@ that it becomes non-local.
 
 ### Unaligned or EW-mismatching Unit-Stride Load with Cache Hits
 
-If the load/store is unaligned with the stripe size, or there in an EW-mismatch between the register
+If the load/store is unaligned with the stripe size, or there is an EW-mismatch between the register
 and memory stripe then the operation is non-local.
 
 * 1) The kinstruction leaves the **Reservation Station** and is given a slot in the **Kamlet Transfer Engine**
@@ -117,9 +117,9 @@ and memory stripe then the operation is non-local.
      to those jamlets with the data.
 
 * 4) On each jamlet the **Transfer Receiver** receives the request, writes the data to the local
-     registe file, and updates the state in the **Jamlet Transfer Engine**.
+     register file, and updates the state in the **Jamlet Transfer Engine**.
 
-* 5) Once all required requests have been sent and all exprected requests and been received (there
+* 5) Once all required requests have been sent and all expected requests have been received (there
      may be a separate message for each of the 8 bytes in the word), the **Jamlet Transfer Engine**
      will let the **Kamlet Transfer Engine** know that it has completed.
 
@@ -128,7 +128,7 @@ and memory stripe then the operation is non-local.
 
 * 7) When the synchronization completed the kinstruction can be removed.  Note that the **Transfer
      Engines** can be working on many instructions in parallel, and the synchronization network can
-     have many synchronizations occuring in parallel so these kinstructions can be effectively
+     have many synchronizations occurring in parallel so these kinstructions can be effectively
      pipelined.
 
 ### An Indexed Store with Cache Misses, Page Faults and accesses to Non-Idempotent Scalar Memory
@@ -149,8 +149,8 @@ and memory stripe then the operation is non-local.
 
       + If the requester sees that the page corresponds to idempotent memory then it uses the the
         lane order and element width stored in the page information, the **Transfer Requester** can
-        determine which jamlet is responsible for each memory byte, and sends a message to the each
-        jamlets with the data to write.  It lets the **Jamlet Transfer Engine** know that the
+        determine which jamlet is responsible for each memory byte, and sends a message to each
+        jamlet with the data to write.  It lets the **Jamlet Transfer Engine** know that the
         messages have been sent.
 
 * 3) Once the **Jamlet Transfer Engine** sees that the entry has been initialized (all elements have
@@ -158,26 +158,26 @@ and memory stripe then the operation is non-local.
      index that faulted if any.
 
 * 4) The **Kamlet Transfer Engine** will use the synchronizer to determine what the minimum element
-     index that faulted was across the entire VPU.  It then passed this minimum back to all the
+     index that faulted was across the entire VPU.  It then passes this minimum back to all the
      **Jamlet Transfer Engines**.
 
-* 5) If the **Jamlet Transfer Engine** is tracking any elements that map to non-idempontent memory
-     then these elements can no either be marked as complete if their element index is larger than
-     the element index where the first page fault occured, or they can be marked as free to start
-     if their element index is smaller that that of the first page fault.
+* 5) If the **Jamlet Transfer Engine** is tracking any elements that map to non-idempotent memory
+     then these elements can now either be marked as complete if their element index is larger than
+     the element index where the first page fault occurred, or they can be marked as free to start
+     if their element index is smaller than that of the first page fault.
 
 * 6) In the meantime many of the send request messages will have arrived and their destination
      jamlets and been processed by their **Transfer Server**.  It receives these requests and checks with
      the **Kamlet Cache Engine** to see if they are a cache hit or miss.  We'll imagine that it is a
      cache miss.  The **Kamlet Cache Engine** stores the request in an internal table and begins the
-     processes of retreiving the cache line as discussed earlier.
+     process of retrieving the cache line as discussed earlier.
 
-* 7) One the cache line is retrieved the **Kamlet Cache Engine** send the request back to the
+* 7) Once the cache line is retrieved the **Kamlet Cache Engine** sends the request back to the
      **Transfer Server** which can now use the data to update the cache line. The server then
      generates and sends a response packet to let the original jamlet know that the bytes have been
      stored.
 
-* 8) The original jamlet's **Transfer Receiver** receives the response and let's the **Jamlet
+* 8) The original jamlet's **Transfer Receiver** receives the response and lets the **Jamlet
      Transfer Engine** know.  Once the **Jamlet Transfer Engine** sees that all elements have
      completed it lets the **Kamlet Transfer Engine** know.
 

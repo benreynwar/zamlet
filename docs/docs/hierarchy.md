@@ -14,7 +14,7 @@ sends to the mesh of kamlets.
 
 It can be divided into a frontend and a backend, where the frontend operates in lockstep with the
 processor pipeline, and the backend is independent (the design closely follows that of the saturn
-VPU from USB).
+VPU from UCB).
 
 ### Lamlet Frontend
 
@@ -22,7 +22,7 @@ The lamlet frontend contains the following modules:
  
 * A **Pipelined Fault Checker (PFC)** which processes the vector instructions, determines what pages
 they access and uses the TLB to check for page faults.  In cases where the PFC cannot determine
-which pages are accessed the instructions is still passed to the backend, but further instructions
+which pages are accessed the instruction is still passed to the backend, but further instructions
 are stalled until the backend has determined whether the instruction faults.
 
 * A **Scalar Checker** which keeps track of which scalar memory pages are in use by vector
@@ -35,12 +35,12 @@ will stall the processor if there is a conflict in access to scalar memory.
 
 The lamlet backend contains the following modules:
 
-* An **Cracker** which converts the stream of RISC-V vector instructions into a stream of
+* A **Cracker** which converts the stream of RISC-V vector instructions into a stream of
 kinstructions.  It makes sure each kinstruction accesses at most one page (if the page can be known)
 and split complex instructions such as reductions, into a sequence of kinstructions.
 
 * A **Local Execution** module which determines whether the kinstruction should be broadcast to the
-kamlets, send to the **Lamlet Waiting Table**, or handled by the **Ordered Window** hardware.
+kamlets, sent to the **Lamlet Waiting Table**, or handled by the **Ordered Window** hardware.
 
 * An **Ordered Window** module.  This is responsible for processing ordered loads and stores where
 it is not possible to do them in parallel across the jamlets.  This module is responsible for
@@ -55,7 +55,7 @@ those kinstructions is held, and updated.
 
 * A **KRouter** to connect to the kamlet mesh network.
 
-* A **Synchronizer** to particular in the synchronization network.
+* A **Synchronizer** to participate in the synchronization network.
 
 
 
@@ -91,6 +91,6 @@ Each kamlet has its own memory interface (memlet).  Memlets are organized in two
 and communicates with a dedicated memory.
 
 ## Nemlet
-Each kamlet has a network inteface (nemlet). Nemlets are organized in a row to the south of the mesh.  Each nemlet communicates independently
+Each kamlet has a network interface (nemlet). Nemlets are organized in a row to the south of the mesh.  Each nemlet communicates independently
 over the network with other chips.
 (The nemlet is a placeholder. No thought has been put into it yet).

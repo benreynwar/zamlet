@@ -1,3 +1,0 @@
-# Ident Query
-
-Blah blah
