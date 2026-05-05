@@ -16,12 +16,13 @@ nav:
     - Transfer System: transfer_system.md
     - Synchronization: synchronization.md
     - Systolic Array: systolic_array.md
-  - Examples:
-    - Gather Example: gather_example.md
   - Misc:
+    - RISC-V Support: rvv.md
     - Setup: setup.md
     - LLM Usage: llm.md
     - Current State: scope.md
+  - Examples:
+    - Gather Example: gather_example.md
 theme:
   name: readthedocs
   highlightjs: false

@@ -13,6 +13,9 @@ value of 0 means that the number of bits is not limited.  In this way the range 
 addresses is limited and the lamlet can check for page faults before broadcasting to the kamlet
 mesh.
 
+This setting also effects strided operations so that the offset is
+`stride*element_index % pow(2, index_bound_bits)`.
+
 ## Write Sets
 
 Another factor that limits the throughput of vector loads and stores is that it is hard for the
