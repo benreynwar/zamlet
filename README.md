@@ -25,7 +25,7 @@ These goals are often at cross purposes.  We require that arbitrary programs sho
 require they are performant. To get high performance it will be necessary to use custom
 instructions, specific memory layout and compiler modifications.
 
-![Top-Level Diagram](images/system.png)
+![Top-Level Diagram](docs/docs/images/system.png)
 
 ## Approach
 
@@ -42,7 +42,7 @@ operations work with lane-local data.
 *  A synchronization network allows for fast synchronization between the lane-groupings (kamlets) when
 required.
 
-![Lane Grouping Diagram](images/kamlet.png)
+![Lane Grouping Diagram](docs/docs/images/kamlet.png)
 
 ## Status
 
