@@ -10,8 +10,8 @@ the vector memory make their requests via the lamlet.  Additionally all external
 or write the vector memory go via the lamlet (for DMA the data itself does not pass through the
 lamlet but the transfer parameters do).
 
-For vector memory pages there is an additional page table that tracks the EW of every stripe in the
-page.
+For vector memory pages there is an additional array-like structure stored in the scalar memory that
+tracks the EW of every stripe in the vector memory.
 
 
 ## CPU Accessing Scalar Memory
@@ -23,7 +23,7 @@ is accessing an address that is in-use by the vector processor, then it will sta
 ## CPU Accessing Vector Memory
 
 The vector memory is treated as non-cacheable by the processor.  All processor memory accesses
-are visible to the VPU at commit. When the VPU sees an access to vector memory a kinstruction
+are visible to the VPU at commit. When the VPU sees an access to vector memory, a kinstruction
 for the read or write is inserted into the stream of vector kinstructions.  When the actual
 request comes over the memory link that request is associated with the kinstruction.  If it was
 a read request then the response is returned over the memory link when the read kinstruction

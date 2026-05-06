@@ -1,10 +1,10 @@
 # Lamlet
 
 The microarchitecture of the lamlet is less well thought through than the kamlet mesh.  Because it
-will be a small fraction of the area it's less critical it is well-optimized and just needs to be
-feasible.  Performance of the frontend is important since it works in lock-step with the processor,
-while performance of the backend is less important since latency will be dominated by the kamlet
-mesh.
+will be a small fraction of the area it's less critical that it is well-optimized and it just needs
+to be feasible.  Performance of the frontend is important since it works in lock-step with the
+processor, while performance of the backend is less important since latency will be dominated by the
+kamlet mesh.
 
 ## Lamlet Frontend
 
@@ -24,6 +24,12 @@ This module is responsible for keeping track of which scalar memory pages the ve
 in-flight reads or writes to.  If the scalar processor tried to make a conflicting read or write
 then the **Scalar Checker** will stall the processor until the VPU has finished accessing the scalar
 memory.
+
+### TLB
+
+The Translation Lookaside buffer keeps a cache of the page table, as well as a cache of lane orders
+and EW of memory stripes.  The kamlet TLBs will query it over the kamlet network when they have a
+miss.
 
 ![Lamlet Diagram](images/lamlet.png)
 
@@ -69,30 +75,13 @@ the processor.
 
 ### Ordered Window
 
-The **Ordered Window** module is responsible for handling ordered loads and stores where page
-faults, or memory conflicts cannot be calculated in advance.
+The **Ordered Window** module is responsible for handling ordered indexed stores and ordered float
+reductions.
 
 The ordered window can work on two ordered instructions in parallel, and have up to 16 elements
 in flight for each instruction at a time.
 
-#### Loads
-
-First the **Ordered Window** waits for a synchronization point to be reached.  This indicates that
-the ordered load kinstruction has arrived at all kamlets and is active.  This is necessary to ensure
-correct memory ordering.  The **Ordered Window** module kicks off 16 load element messages in
-parallel.  Accesses to the vector memory are handled directly by the jamlets, and the jamlets
-respond as soon as they have determined there is no page fault.  If access is required to scalar
-memory the jamlets will respond to the lamlet requesting the scalar data.  The lamlet submits these
-requests of scalar data in order to the processor, and then once it receives the response, forwards
-the data on to the jamlets.  As elements are completed, the slots become available and the
-**Ordered Window** can begin working on the subsequent elements.
-
-Note: Currently all ordered loads use the Ordered Window, but it probably makes sense to do an
-unordered load first but fault on an access to non-idempotent memory and only attempt an ordered
-load after that.
-
-
-### Stores
+### Ordered Indexed Stores
 
 For stores the ordering is more important since two elements can be written to conflicting
 addresses.  Similarly to loads the **Ordered Window** first waits for a synchronization point to be
@@ -129,6 +118,13 @@ or a conflicting address.  Element 42 has already received a Page Fault response
 from its jamlet. Elements 43 and 44 have terminated since we received the address, but don't
 want to do the write when an earlier element has a page fault.  Elements 45 to 48 are still
 getting addresses from the jamlets, and element 49 hasn't yet started.
+
+### Ordered Float Reductions
+
+Ordered float reductions are done in a similar way.  Elements are given slots in the table
+and messages are sent to the jamlets to retrieve the data.  Once the oldest slot has received the
+data it is summed into the total and the slot is freed for the next element.
+
 
 ## Scalar Memory Interface
 

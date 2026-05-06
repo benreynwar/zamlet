@@ -42,6 +42,8 @@ The lamlet, kamlets, jamlets, memlets and nemlets are connected by several 2D me
 
 * Non-data responses from the memlets.
 
+* Communication between Kamlet TLB and Lamlet TLB
+
 ## Structure
 
 Both the jamlet network and the kamlet network consist of two independent channels of width 64 bits.
@@ -59,8 +61,6 @@ typically 2 or 3 flits including header.
 |36-41       | Message Type | 
 |42          | Broadcast | 
 |43-63       | Message Type Specific |
-
-[Packet header format]
 
 ## Deadlock Avoidance
 

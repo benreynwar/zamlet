@@ -16,4 +16,8 @@ measurements with RTL that is tested and working.
 **4)** The minimum latency for small transfers between neighboring jamlets is likely fairly high due
 to having to traverse the Transfer System.  I'm not confident this latency will be hidden well.
 
+**5)** The systolic array design is half-baked. I'm worried it will not be routable, and I also
+don't know how practical the data layout is.
+
+
 There are probably lots more, but these are the ones that currently spring to mind.

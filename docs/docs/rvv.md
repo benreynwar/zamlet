@@ -2,8 +2,6 @@
 
 ## Local Elementwise
 
-About 70% of the RVV ISA is ALU-type operations.
-
 Max number of vector register reads is 4 (3 operands for MAC plus the mask).
 Max number of scalar register reads is 1.
 
@@ -47,7 +45,7 @@ min, max, minu, maxu, and, or: These operations can make use of the synchronizat
 sum: Must use an explicit reduction tree implemented with kinstructions.
 
 Note: I'm not sure if it will be worth supporting min and max for FP in the synchronizer.
-      If that is not supported we'll need to use the synchronization network for that too.
+      If that is not supported we'll need to use the a reduction tree for that too.
 
 ### Cracking for Reduction Tree
 

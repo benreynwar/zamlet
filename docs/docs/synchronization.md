@@ -10,9 +10,9 @@ be kept to be 10 bits wide so it is relatively inexpensive.
 
 * Each synchronizer is triggered locally with a `sync_ident`, a `value` and a `mode`.
 
-* A synchronization completes when a synchronizer knows that every synchronizer has been
-  triggered for a given `sync_ident`.  The synchronization network also computes either the
-  maximum or the minimum of all the values, where the operation is determined by `mode`.
+* A synchronization completes when a synchronizer knows that every synchronizer has been triggered
+  for a given `sync_ident`.  The synchronization network also computes the max, umax, min, umin, 'or'
+  or 'and' of all the values, where the operation is determined by `mode`.
 
 * The local events are typically triggered, and the synchronization result waited for by
   a kinstruction located in the waiting item table.
@@ -26,13 +26,15 @@ be kept to be 10 bits wide so it is relatively inexpensive.
 
 * Synchronization is used by kinstructions that involve non-local data movement between
   kamlets. This is so that they can wait until all kamlets have completed the instruction
-  before moving on.
+  before moving on releasing any locks.
 
 * The minimum functionality is used to determine which element index faulted during
   indexed load and store operations.
 
-* The maximum and minimum functionality of the synchronization network is used directly
+* The reduction functionality of the synchronization network is used directly
   by some reduction operations.
+
+* The 'or' reduction is used by the synchronization network to retrieve fxflags and vxsat.
 
 * IdentQuery makes use of the synchronization network to determine
   available instruction buffer space, available kinstruction idents, and available sync idents.

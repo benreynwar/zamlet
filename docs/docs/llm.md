@@ -1,8 +1,10 @@
+# LLM Usage
+
 I enjoy reading about how other people are using (or not using) LLMs for their projects, so thought
 I'd add a little section to these docs about how I've been using Claude Code for this project and my
 impressions so far.
 
-# Things that It's Helped With
+## Things that it's Helped With
 
 - I've found Claude Code really useful for writing bazel files.  I probably wouldn't have spent the
   time to learn bazel well enough to use it myself, and it's been a big improvement over build tools
@@ -20,7 +22,7 @@ impressions so far.
 
 - It does a great job of quickly finding simple bugs in my RTL code.
 
-# Things that it's Hindered
+## Things that it's Hindered
 
 - The obvious place where it is a detriment is that it prevents me from learning things that I otherwise would have been forced to learn.
   At some point I need to force myself to learn Bazel properly, so I can understand what I'm doing there.
@@ -34,7 +36,7 @@ impressions so far.
 - It's really easy to lose your mental model of the codebase if you're making edits via an LLM.  The codebase can become a big mess
   quickly.
 
-# Places where it's not useful.
+## Places where it's not useful.
 
 - I don't think it's useful for writing docs for humans.  One of the purposes of writing these kind of things is to help me organize my
   thoughts, and using an LLM somewhat defeats that purpose.
@@ -44,7 +46,7 @@ impressions so far.
 - I'm using it to write Chisel code, but I don't think it's providing much value there.  I need to spend a lot of time developing detailed
   plans and reviewing code to get something halfway reasonable.  I don't think the LLM is hindering me, but it's not helping either.
 
-# Current Strategy
+## Current Strategy
 
 I'm not at all confident that my current LLM usage approach is a good one.  I find using an LLM to write code fairly addictive, often
 not in a good way.  I'm trying to force myself to spend more time doing stuff manually so that I retain a good mental model of the

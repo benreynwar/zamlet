@@ -147,11 +147,11 @@ and memory stripe then the operation is non-local.
         **Kamlet Transfer Engine** know that this element is waiting until we know the global page
         fault status, and moves on to the next element.
 
-      + If the requester sees that the page corresponds to idempotent memory then it uses the
-        lane order and element width stored in the page information, the **Transfer Requester** can
-        determine which jamlet is responsible for each memory byte, and sends a message to each
-        jamlet with the data to write.  It lets the **Jamlet Transfer Engine** know that the
-        messages have been sent.
+      + If the requester sees that the page corresponds to idempotent memory then it uses the lane
+        order and element width stored in the stripe metadata in the kamlet TLB.  The **Transfer
+        Requester** can now determine which jamlet is responsible for each memory byte, and sends a
+        message to each jamlet with the data to write.  It lets the **Jamlet Transfer Engine** know
+        that the messages have been sent.
 
 * 3) Once the **Jamlet Transfer Engine** sees that the entry has been initialized (all elements have
      checked the TLB) it will respond to the **Kamlet Transfer Engine** with the minimum element
@@ -166,7 +166,7 @@ and memory stripe then the operation is non-local.
      the element index where the first page fault occurred, or they can be marked as free to start
      if their element index is smaller than that of the first page fault.
 
-* 6) In the meantime many of the send request messages will have arrived and their destination
+* 6) In the meantime many of the sent request messages will have arrived at their destination
      jamlets and been processed by their **Transfer Server**.  It receives these requests and checks with
      the **Kamlet Cache Engine** to see if they are a cache hit or miss.  We'll imagine that it is a
      cache miss.  The **Kamlet Cache Engine** stores the request in an internal table and begins the
