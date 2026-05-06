@@ -1,4 +1,4 @@
-# Zamlet: A scalable RISCV Vector Processing Unit
+# Zamlet: A Scalable RISC-V VPU
 
 ## Summary
 

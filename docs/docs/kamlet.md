@@ -41,7 +41,7 @@ or loads and stores that require access to cache-lines that are not already pres
 cache.
 
 When a kinstruction is released from the reservation station it is either directly executed by the
-jamlets or goes into the waiting table (see below) depending on whether it is a local or non-local
+jamlets or goes into the **Kamlet Transfer Engine** depending on whether it is a local or non-local
 operation.
 
 ## Kamlet Transfer Engine
@@ -64,7 +64,7 @@ See [Transfer System](transfer_system.md).
 
 ## Synchronizer
 
-The synchronizer connects the kamlet to the synchronization network.  The **Shared Waiting Table**
+The synchronizer connects the kamlet to the synchronization network.  The **Kamlet Transfer Engine**
 uses it so that kinstructions in the table can wait until synchronization points with the other
 kamlets and the lamlet. See [Synchronization](synchronization.md).
 
@@ -76,3 +76,9 @@ requests.  It interacts closely with the **Jamlet Cache Engines** which are loca
 jamlet.
 
 See [Cache System](cache.md).
+
+## Kamlet TLB
+
+Jamlets will query the kamlet TLB to map logical addresses to physical addresses and to get the lane
+order and EW of a stripe when that information did not arrive with the instruction.  The kamlet TLB
+will query the Lamlet TLB when it does not have the information in its cache.

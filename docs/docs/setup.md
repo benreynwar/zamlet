@@ -33,12 +33,6 @@ the synchronization network.
 
     bazel test //python/zamlet/kamlet_test:test_kamlet_default
 
-**Some interesting non-bazel targets to run would be:**
+Run an N=64 FFT kernel with the python model on a bunch of different mesh geometries.
 
-Runs a bunch of tests of strided loads using the python model of the architecture.
-
-    python -m pytest python/zamlet/tests/test_strided_load.py
-
-Runs a FFT kernel on the python model.
-
-    python python/zamlet/kernel_tests/fft/test_fft.py
+    bazel test //python/zamlet/kernel_tests/fft:test_fftN64

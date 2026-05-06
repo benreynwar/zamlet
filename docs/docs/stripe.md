@@ -2,8 +2,8 @@
 
 ## Stripe
 
-The hardware is organized around chunks of data of size `n_lanes * word_width`
-which we refer to as **stripes**.  A vector register with LMUL=1 contains a
+The hardware is organized around chunks of data of size `n_lanes * word_width` (`VLEN` in RVV
+terminology) which we refer to as **stripes**.  A vector register with LMUL=1 contains a
 stripe.  If we have a 32x32 mesh of lanes, a stripe would then be `1024 * 8 B = 8 KiB`.
 
 A stripe of data in the cache is partitioned across the lanes in exactly the same way

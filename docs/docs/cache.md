@@ -1,8 +1,6 @@
 # Cache System
 
-In the diagram below we show how a **stripe** of data is stored in the Zamlet cache.
-
-A **stripe** is a contiguous series of bytes of size `n_lanes * word_width`.  How those bytes
+A **stripe** is a contiguous series of bytes of size `n_lanes * word_width` (`VLEN`).  How those bytes
 are distributed across the jamlets will depend on the **lane order** and the **element width** of
 the stripe.  It will always be distributed across all the kamlets, and each of those kamlets has
 a separate memory and a separate cache system.
