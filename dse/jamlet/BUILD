@@ -32,18 +32,27 @@ JAMLET_SUB_MODULES = [
     ("RfSlice", "rfslice"),
     ("WitemMonitor", "witemmonitor"),
     ("LocalExec", "localexec"),
+    ("CoordsToIndexWithReg", "coordstoindexwithreg"),
+    ("IndexToCoordsWithReg", "indextocoordswithreg"),
+]
+
+# (config_name_suffix, config_label)
+ZAMLET_CONFIGS = [
+    ("default",   "//configs:zamlet_default.json"),
+    ("1024lanes", "//configs:zamlet_1024lanes.json"),
 ]
 
 [chisel_dse_module(
-    name = "{}_default".format(module),
+    name = "{}_{}".format(module, cfg_name),
     top = module,
     generator = JAMLET_PKG + ":{}".format(target),
-    config = ZAMLET_CONFIG,
+    config = cfg_path,
     pdk = ":sky130hd",
     clock_period = "10.0",
     core_utilization = "35",
     synth_config = ":synth_autoname",
-) for module, target in JAMLET_SUB_MODULES]
+) for module, target in JAMLET_SUB_MODULES
+  for cfg_name, cfg_path in ZAMLET_CONFIGS]
 
 # VectorRf - generic vector register file slice
 chisel_dse_module(

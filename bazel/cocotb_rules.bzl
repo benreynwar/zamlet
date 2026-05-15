@@ -3,6 +3,7 @@
 
 load("@bazel_tools//tools/cpp:toolchain_utils.bzl", "find_cpp_toolchain")
 load("@rules_cc//cc:defs.bzl", "cc_binary", "CcInfo")
+load("//bazel:verilog.bzl", "chisel_verilog")
 
 # -----------------------------------------------------------------------------
 # verilate rule - compiles Verilog to C++ library using verilator toolchain
@@ -344,3 +345,109 @@ def cocotb_test(name, binary, test_module, toplevel, py_deps = [], env = {}, dat
         env = merged_env,
         data = data,
     )
+
+
+_DEFAULT_CONFIG = "//configs:zamlet_default.json"
+
+_TAG_ALLOWED = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_"
+
+def _sanitize_tag(s):
+    out = ""
+    for i in range(len(s)):
+        c = s[i]
+        out += c if c in _TAG_ALLOWED else "_"
+    return out
+
+def _normalize_entry(entry):
+    """Return (module, filter, suffix) for a test_modules list entry.
+
+    Accepts either a Python module string or a (module, filter) 2-tuple.
+    """
+    if type(entry) == "string":
+        suffix = entry.split(".")[-1]
+        if suffix.startswith("test_"):
+            suffix = suffix[5:]
+        return entry, None, suffix
+    if type(entry) == "tuple" and len(entry) == 2:
+        mod, filt = entry
+        return mod, filt, _sanitize_tag(filt)
+    fail("test_modules entry must be a string or a (module, filter) tuple")
+
+def chisel_module_tests(
+        generator,
+        toplevel,
+        srcs,
+        test_modules,
+        configs = None,
+        py_deps = None):
+    """Emit Verilog generation + cocotb tests for one Chisel module.
+
+    For each (tag, label) in `configs`, emits a chisel_verilog genrule and a
+    cocotb_binary. For each (config, test_module) pair, emits a cocotb_test.
+    A shared py_library holds `srcs`. A test_suite `:{toplevel}_tests`
+    aggregates every generated cocotb_test. All target names are prefixed by
+    the lowercased toplevel.
+
+    Args:
+        generator: Chisel generator binary label.
+        toplevel: top-module name (used by Verilator and as DUT name).
+        srcs: shared Python sources for the test py_library.
+        test_modules: list of entries; each entry is either a Python module
+            string (e.g. "zamlet.foo_test.test_foo") or a
+            (module, filter) 2-tuple, where `filter` is set as
+            COCOTB_TEST_FILTER to select specific @cocotb.test functions.
+        configs: list of (tag, label) pairs; defaults to one entry tagged
+            "default" with //configs:zamlet_default.json.
+        py_deps: extra py_library deps beyond //python/zamlet:zamlet.
+    """
+    configs = configs or [("default", _DEFAULT_CONFIG)]
+    base = toplevel.lower()
+
+    native.py_library(
+        name = base + "_py",
+        srcs = srcs,
+        deps = ["//python/zamlet:zamlet"] + (py_deps or []),
+    )
+
+    entries = [_normalize_entry(e) for e in test_modules]
+    include_suffix = len(entries) > 1
+
+    test_targets = []
+
+    for cfg_tag, cfg_label in configs:
+        cfg_base = "{}_{}".format(base, cfg_tag)
+        chisel_verilog(
+            name = cfg_base,
+            generator = generator,
+            config = cfg_label,
+        )
+        cocotb_binary(
+            name = cfg_base + "_exe",
+            verilog_files = [":" + cfg_base + "_verilog"],
+            module_top = toplevel,
+        )
+
+        cfg_path = cfg_label[2:].replace(":", "/")
+
+        for mod, filt, sfx in entries:
+            if include_suffix:
+                test_name = "test_{}_{}".format(cfg_base, sfx)
+            else:
+                test_name = "test_" + cfg_base
+
+            env = {"ZAMLET_TEST_CONFIG_FILENAME": cfg_path}
+            if filt:
+                env["COCOTB_TEST_FILTER"] = filt
+
+            cocotb_test(
+                name = test_name,
+                binary = ":" + cfg_base + "_exe",
+                test_module = mod,
+                toplevel = toplevel,
+                py_deps = [":" + base + "_py"],
+                env = env,
+                data = [cfg_label],
+            )
+            test_targets.append(":" + test_name)
+
+    native.test_suite(name = base + "_tests", tests = test_targets)

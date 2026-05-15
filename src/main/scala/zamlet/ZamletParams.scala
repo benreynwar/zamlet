@@ -184,6 +184,7 @@ case class ZamletParams(
 
   // Instruction identifier
   identWidth: Int = 7,
+  writesetWidth: Int = 4,
 
   // Memlet configuration
   nMemletGatheringSlots: Int = 4, // Concurrent WRITE_LINE_READ_LINE operations
@@ -223,6 +224,7 @@ case class ZamletParams(
   def jInL: Int = jInK * kInL
   def jTotalCols: Int = jCols * kCols
   def jTotalRows: Int = jRows * kRows
+  def jTotal: Int = jTotalCols * jTotalRows
 
   // Grid dimensions must be powers of 2 for efficient bit-slice operations
   require((kCols & (kCols - 1)) == 0 && kCols > 0, s"kCols must be power of 2, got $kCols")
@@ -241,9 +243,11 @@ case class ZamletParams(
 
   def log2JInL: Int = Integer.numberOfTrailingZeros(jInL)
   def log2JTotalCols: Int = Integer.numberOfTrailingZeros(jTotalCols)
+  def log2JTotalRows: Int = Integer.numberOfTrailingZeros(jTotalRows)
   def log2KCols: Int = Integer.numberOfTrailingZeros(kCols)
   def log2JCols: Int = Integer.numberOfTrailingZeros(jCols)
   def log2JRows: Int = Integer.numberOfTrailingZeros(jRows)
+  def log2JTotal: Int = Integer.numberOfTrailingZeros(jTotal)
   def log2WordWidth: Int = Integer.numberOfTrailingZeros(wordWidth)
   def log2WordBytes: Int = Integer.numberOfTrailingZeros(wordBytes)
 
@@ -274,6 +278,11 @@ case class ZamletParams(
   def cacheSlotWidth: Int = log2Ceil(nCacheSlots)
   def kIndexWidth: Int = log2Ceil(kInL)
 
+  class JCoords extends Bundle {
+    val x = UInt(xPosWidth.W)
+    val y = UInt(yPosWidth.W)
+  }
+
   // Types
   def xPos(): UInt = UInt(xPosWidth.W)
   def yPos(): UInt = UInt(yPosWidth.W)
@@ -283,6 +292,7 @@ case class ZamletParams(
   def memAddr(): UInt = UInt(memAddrWidth.W)
   def elementIndex(): UInt = UInt(elementIndexWidth.W)
   def rfAddr(): UInt = UInt(rfAddrWidth.W)
+  def writeset(): UInt = UInt(writesetWidth.W)
 }
 
 object ZamletParams {

@@ -4,6 +4,7 @@ exports_files(
     [
         "KInstr.scala",
         "WitemEntry.scala",
+        "Moore.scala",
     ],
     visibility = ["//visibility:public"],
 )
@@ -66,6 +67,22 @@ chisel_binary(
     name = "vectorrf",
     srcs = [":jamlet_sources"] + JAMLET_COMMON_SRCS,
     main_class = "zamlet.jamlet.VectorRfMain",
+    deps = JAMLET_DEPS,
+    visibility = ["//visibility:public"],
+)
+
+chisel_binary(
+    name = "coordstoindexwithreg",
+    srcs = [":jamlet_sources"] + JAMLET_COMMON_SRCS,
+    main_class = "zamlet.jamlet.CoordsToIndexWithRegMain",
+    deps = JAMLET_DEPS,
+    visibility = ["//visibility:public"],
+)
+
+chisel_binary(
+    name = "indextocoordswithreg",
+    srcs = [":jamlet_sources"] + JAMLET_COMMON_SRCS,
+    main_class = "zamlet.jamlet.IndexToCoordsWithRegMain",
     deps = JAMLET_DEPS,
     visibility = ["//visibility:public"],
 )

@@ -142,6 +142,8 @@ in {
   # Developer tooling (editor, LSP, etc.)
   devTools = [
     pkgs.cachix
+    pkgs.ruff
+    pkgs.mypy
     ((pkgs.vim_configurable.override { guiSupport = "no"; }).customize {
       vimrcConfig.packages.zamlet = with pkgs.vimPlugins; {
         start = [ ale ];

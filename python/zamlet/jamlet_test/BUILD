@@ -1,46 +1,45 @@
 # Jamlet module tests
 
-load("//bazel:cocotb_rules.bzl", "cocotb_binary", "cocotb_test")
+load("//bazel:cocotb_rules.bzl", "chisel_module_tests")
 
-# WitemMonitor tests
-genrule(
-    name = "witem_monitor_default_verilog",
-    srcs = ["//configs:zamlet_default.json"],
-    outs = ["WitemMonitor_default.sv"],
-    cmd = """
-    TMPDIR=$$(mktemp -d)
-    $(location //src/main/scala/zamlet/jamlet:witemmonitor) $$TMPDIR $(location //configs:zamlet_default.json)
-    cat $$TMPDIR/*.sv > $@
-    rm -rf $$TMPDIR
-    """,
-    tools = ["//src/main/scala/zamlet/jamlet:witemmonitor"],
-)
-
-cocotb_binary(
-    name = "witem_monitor_default_exe",
-    verilog_files = [":witem_monitor_default_verilog"],
-    module_top = "WitemMonitor",
-)
-
-py_library(
-    name = "test_witem_monitor_py",
-    srcs = ["test_witem_monitor.py"],
-    deps = ["//python/zamlet:zamlet"],
-)
-
-cocotb_test(
-    name = "test_witem_monitor_default",
-    binary = ":witem_monitor_default_exe",
-    test_module = "zamlet.jamlet_test.test_witem_monitor",
+chisel_module_tests(
+    generator = "//src/main/scala/zamlet/jamlet:witemmonitor",
     toplevel = "WitemMonitor",
-    env = {
-        "ZAMLET_TEST_CONFIG_FILENAME": "configs/zamlet_default.json",
-    },
-    data = ["//configs:zamlet_default.json"],
-    py_deps = [":test_witem_monitor_py"],
+    srcs = ["test_witem_monitor.py"],
+    test_modules = ["zamlet.jamlet_test.test_witem_monitor"],
+)
+
+chisel_module_tests(
+    generator = "//src/main/scala/zamlet/jamlet:indextocoordswithreg",
+    toplevel = "IndexToCoordsWithReg",
+    srcs = ["test_moore.py"],
+    configs = [
+        ("default", "//configs:zamlet_default.json"),
+        ("16lanes", "//configs:zamlet_16lanes.json"),
+        ("64lanes", "//configs:zamlet_64lanes.json"),
+        ("1024lanes", "//configs:zamlet_1024lanes.json"),
+    ],
+    test_modules = [
+      ("zamlet.jamlet_test.test_moore", "indextocoordswithreg_test"),
+    ],
+)
+
+chisel_module_tests(
+    generator = "//src/main/scala/zamlet/jamlet:coordstoindexwithreg",
+    toplevel = "CoordsToIndexWithReg",
+    srcs = ["test_moore.py"],
+    configs = [
+        ("default", "//configs:zamlet_default.json"),
+        ("16lanes", "//configs:zamlet_16lanes.json"),
+        ("64lanes", "//configs:zamlet_64lanes.json"),
+        ("1024lanes", "//configs:zamlet_1024lanes.json"),
+    ],
+    test_modules = [
+      ("zamlet.jamlet_test.test_moore", "coordstoindexwithreg_test"),
+    ],
 )
 
 test_suite(
     name = "all_tests",
-    tests = [":test_witem_monitor_default"],
+    tests = [":witemmonitor_tests", ":indextocoordswithreg_tests"],
 )
