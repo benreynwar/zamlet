@@ -6,114 +6,10 @@ import zamlet.ZamletParams
 import zamlet.utils.DoubleBuffer
 
 
-//    n  m
-//  w      e
-//  x      f
-//    s  t
-//
-//    If we come in on e we can leave on t,  n or w
-//    So 24 possible shapes
-//
-//    <  et, mf, te, fm, mt, tm
-//    >  ws, nx, sw, xn, ns, sn
-//    ^  xt, fs, tx, sf, xf, fx,
-//    V  wm, ne, mw, en, sw, ew
-
-// direction 2, shape 3, orientation 4
-//
-// Shapes
-//  _   _  |  _  _  |
-//   |_|   |_|    |_|
-//    
-//    a     b      c
-//
-//  Direction
-//
-//  0 = left to right
-//  1 = right to left
-//
-//  Orientiation
-//
-//  n - as shown
-//  e - rotated 90o clockwise
-//  s - 180
-//  w - 270
-// 
-//  _   _   goes to  __    __    c1w  b1e
-//   |_|              _|  |_     b0n  c0n
-//                   |      |
-//    a0n            |  __  |
+//          goes to   _    _ 
+//   |_|              _|  |_ 
+//                         
 //                   |_|  |_|
-
-//  |  _    goes to  |_    __    a1w  b1e
-//  |_|               _|  |_     b0n  c0n
-//                   |      |
-//                   |  __  |
-//   b0n             |_|  |_|
-
-// _  |     goes to  __    _|    c1w  a1e
-//  |_|               _|  |_     b0n  c0n
-//                   |      |
-//                   |  __  |
-//   c0n             |_|  |_|
-//
-//
-// So let's say we have a 8 by 8 grid.
-// We have a coordinate (2, 3) and we want
-// to convert it to a lane index
-//
-// First get our initial quadrant (0, 0)
-//
-// Initial square is
-//
-//   b0e  c0w     lane 0    lane 48
-//   c0e  b0w     lane 16   lane 32
-//
-// So we are in a b0e  lane 0
-// Our position in the next quadrant is (1, 1)
-// Rotate our quadrant out of 'e' to give (1, 0)
-//   
-// b0n is a1w b1e  lane 0+0 0+12 So we are in b1s lane 12('s' becase we rotated back into 'e')
-//        b0n c0n  lane 0+4 0+8 
-//
-//
-//
-// Check this by not rotation
-//
-// b0e is b0e a1n
-//        c0e b1s  (which matches the (1, 1) quandrant
-//
-// The final quandarnt is (0, 1) which rotated out of 's' is (1, 0)
-// 
-// b1n becomes a0w b0e   so we are b1n rotated back into 's' is b1s
-//             b1n c1n
-//
-//             lane 12+3  12+0  (backwards because of the direction=1)
-//                  12+2  12+1
-//
-//                  So we are in lane 14
-//
-//
-// Get quadrant.
-// Get initial shape.  Get lane index contrib.
-// Repeat:
-//   Get quadrant. Rotate out of orientation.
-//   Get new shape.  Get lane index contrib.  Get new orientation.
-
-object MooreShape extends ChiselEnum {
-  //  _   _
-  //   |_| 
-  //
-  val Straight = Value(0.U)
-  //  |  _
-  //  |_| 
-  //
-  val DownRight = Value(1.U)
-  //  _  |
-  //   |_|
-  //
-  val RightUp = Value(2.U)
-}
 
 object MooreOrientation extends ChiselEnum {
   val N = Value(0.U)
@@ -131,7 +27,6 @@ object MooreQuadrant extends ChiselEnum {
 
 
 class MooreNode extends Bundle {
-  val shape = MooreShape()
   val orientation = MooreOrientation()
   val dir = Bool()
 }
@@ -214,31 +109,15 @@ object Helpers {
     when (quadrant === MooreQuadrant.NW) {
       oNode.dir := ! iNode.dir
       oNode.orientation := Helpers.oOutOfOrientation(iNode.orientation, MooreOrientation.W)
-      when (iNode.shape === MooreShape.Straight) {
-        oNode.shape := MooreShape.RightUp
-      } .elsewhen (iNode.shape === MooreShape.DownRight) {
-        oNode.shape := MooreShape.Straight
-      } .otherwise {
-        oNode.shape := MooreShape.RightUp
-      }
     } .elsewhen (quadrant === MooreQuadrant.SW) {
       oNode.dir := iNode.dir
       oNode.orientation := iNode.orientation
-      oNode.shape := MooreShape.DownRight
     } .elsewhen (quadrant === MooreQuadrant.SE) {
       oNode.dir := iNode.dir
       oNode.orientation := iNode.orientation
-      oNode.shape := MooreShape.RightUp
     } .otherwise {
       oNode.dir := ! iNode.dir
       oNode.orientation := Helpers.oOutOfOrientation(iNode.orientation, MooreOrientation.E)
-      when (iNode.shape === MooreShape.Straight) {
-        oNode.shape := MooreShape.DownRight
-      } .elsewhen (iNode.shape === MooreShape.DownRight) {
-        oNode.shape := MooreShape.DownRight
-      } .otherwise {
-        oNode.shape := MooreShape.Straight
-      }
     }
     oNode
   }
@@ -248,19 +127,15 @@ object Helpers {
     when (quadrant === MooreQuadrant.NW) {
       oNode.dir := false.B
       oNode.orientation := MooreOrientation.E
-      oNode.shape := MooreShape.DownRight
     } .elsewhen (quadrant === MooreQuadrant.SW) {
       oNode.dir := false.B
       oNode.orientation := MooreOrientation.E
-      oNode.shape := MooreShape.RightUp
     } .elsewhen (quadrant === MooreQuadrant.SE) {
       oNode.dir := false.B
       oNode.orientation := MooreOrientation.W
-      oNode.shape := MooreShape.DownRight
     } .otherwise {
       oNode.dir := false.B
       oNode.orientation := MooreOrientation.W
-      oNode.shape := MooreShape.RightUp
     }
     oNode
   }
