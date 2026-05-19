@@ -11,7 +11,7 @@
   "rfSliceWords": 48,
   "memAddrWidth": 48,
   "writesetWidth": 4,
-  "pageWordsPerJamlet": 8,
+  "log2PageWordsPerJamlet": 4,
   "elementIndexWidth": 22,
   "witemTableDepth": 8,
   "identWidth": 7,
@@ -24,6 +24,8 @@
   "lamletDispatchQueueDepth": 8,
   "identTrackerOutForwardBuffer": true,
   "identTrackerOutBackwardBuffer": true,
+  "messageLengthWidth": 4,
+  "messageTypeWidth": 6,
   "nAChannels": 1,
   "nBChannels": 1,
   "networkNodeParams": {

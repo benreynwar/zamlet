@@ -27,13 +27,22 @@ chisel_dse_module(
     pin_order_cfg = ":jamlet_pin_order.cfg",
 )
 
-# (ModuleName, bazel_target_name)
+# (ModuleName, bazel_target_name, extra_generator_args, core_utilization)
 JAMLET_SUB_MODULES = [
-    ("RfSlice", "rfslice"),
-    ("WitemMonitor", "witemmonitor"),
-    ("LocalExec", "localexec"),
-    ("CoordsToIndexWithReg", "coordstoindexwithreg"),
-    ("IndexToCoordsWithReg", "indextocoordswithreg"),
+    ("RfSlice", "rfslice", [], "35"),
+    ("WitemMonitor", "witemmonitor", [], "35"),
+    ("LocalExec", "localexec", [], "35"),
+    ("CoordsToIndexWithReg", "coordstoindexwithreg", [], "35"),
+    ("IndexToCoordsWithReg", "indextocoordswithreg", [], "35"),
+    ("JteInitiator", "jteinitiator", [], "30"),
+    ("JteInitiatorB", "jteinitiatorstage", ["B"], "5"),
+    ("JteInitiatorC", "jteinitiatorstage", ["C"], "35"),
+    ("JteInitiatorD", "jteinitiatorstage", ["D"], "35"),
+    ("JteInitiatorE", "jteinitiatorstage", ["E"], "35"),
+    ("JteInitiatorF", "jteinitiatorstage", ["F"], "35"),
+    ("JteInitiatorG", "jteinitiatorstage", ["G"], "35"),
+    ("JteInitiatorH", "jteinitiatorstage", ["H"], "35"),
+    ("JteInitiatorI", "jteinitiatorstage", ["I"], "35"),
 ]
 
 # (config_name_suffix, config_label)
@@ -48,10 +57,11 @@ ZAMLET_CONFIGS = [
     generator = JAMLET_PKG + ":{}".format(target),
     config = cfg_path,
     pdk = ":sky130hd",
+    extra_generator_args = extra_args,
     clock_period = "10.0",
-    core_utilization = "35",
+    core_utilization = core_util,
     synth_config = ":synth_autoname",
-) for module, target in JAMLET_SUB_MODULES
+) for module, target, extra_args, core_util in JAMLET_SUB_MODULES
   for cfg_name, cfg_path in ZAMLET_CONFIGS]
 
 # VectorRf - generic vector register file slice

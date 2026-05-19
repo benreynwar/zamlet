@@ -1,11 +1,132 @@
 package zamlet
 
 import chisel3._
-import chisel3.util.log2Ceil
+import chisel3.util._
 import io.circe._
 import io.circe.parser._
 import io.circe.generic.semiauto._
 import scala.io.Source
+
+import zamlet.SimpleElementWidth
+
+object WidthFormat extends ChiselEnum {
+  val wf1 = Value(0.U)
+  val wf8 = Value(3.U)
+  val wf16 = Value(4.U)
+  val wf32 = Value(5.U)
+  val wf64 = Value(6.U)
+  val wf128 = Value(7.U)
+  val wf256 = Value(8.U)
+  val wf512 = Value(9.U)
+}
+
+object ElementWidth extends ChiselEnum {
+  val ew1 = Value(0.U)
+  val ew8 = Value(3.U)
+  val ew16 = Value(4.U)
+  val ew32 = Value(5.U)
+  val ew64 = Value(6.U)
+  val ew128 = Value(7.U)
+  val ew256 = Value(8.U)
+  val ew512 = Value(9.U)
+}
+
+object WidthHelpers {
+
+  def wfBits(wf: WidthFormat.Type): UInt = {
+    val result = WireDefault(UInt(10.W), 0.U)
+    switch(wf) {
+      is(WidthFormat.wf1) { result := 1.U }
+      is(WidthFormat.wf8) { result := 8.U }
+      is(WidthFormat.wf16) { result := 16.U }
+      is(WidthFormat.wf32) { result := 32.U }
+      is(WidthFormat.wf64) { result := 64.U }
+      is(WidthFormat.wf128) { result := 128.U }
+      is(WidthFormat.wf256) { result := 256.U }
+      is(WidthFormat.wf512) { result := 512.U }
+    }
+    result
+  }
+
+  def wfLog2Bits(wf: WidthFormat.Type): UInt = {
+    val result = WireDefault(UInt(4.W), 0.U)
+    switch(wf) {
+      is(WidthFormat.wf1) { result := 0.U }
+      is(WidthFormat.wf8) { result := 3.U }
+      is(WidthFormat.wf16) { result := 4.U }
+      is(WidthFormat.wf32) { result := 5.U }
+      is(WidthFormat.wf64) { result := 6.U }
+      is(WidthFormat.wf128) { result := 7.U }
+      is(WidthFormat.wf256) { result := 8.U }
+      is(WidthFormat.wf512) { result := 9.U }
+    }
+    result
+  }
+
+  def ewBits(wf: ElementWidth.Type): UInt = {
+    val result = WireDefault(UInt(10.W), 0.U)
+    switch(wf) {
+      is(ElementWidth.ew1) { result := 1.U }
+      is(ElementWidth.ew8) { result := 8.U }
+      is(ElementWidth.ew16) { result := 16.U }
+      is(ElementWidth.ew32) { result := 32.U }
+      is(ElementWidth.ew64) { result := 64.U }
+      is(ElementWidth.ew128) { result := 128.U }
+      is(ElementWidth.ew256) { result := 256.U }
+      is(ElementWidth.ew512) { result := 512.U }
+    }
+    result
+  }
+
+  def ewLog2Bits(wf: ElementWidth.Type): UInt = {
+    val result = WireDefault(UInt(4.W), 0.U)
+    switch(wf) {
+      is(ElementWidth.ew1) { result := 0.U }
+      is(ElementWidth.ew8) { result := 3.U }
+      is(ElementWidth.ew16) { result := 4.U }
+      is(ElementWidth.ew32) { result := 5.U }
+      is(ElementWidth.ew64) { result := 6.U }
+      is(ElementWidth.ew128) { result := 7.U }
+      is(ElementWidth.ew256) { result := 8.U }
+      is(ElementWidth.ew512) { result := 9.U }
+    }
+    result
+  }
+
+  def ewToSimple(ew: ElementWidth.Type): SimpleElementWidth.Type = {
+    var result = WireDefault(SimpleElementWidth(), SimpleElementWidth.ew8)
+    assert(ew != ElementWidth.ew1 && ew != ElementWidth.ew128 && ew != ElementWidth.ew256 && ew != ElementWidth.ew512)
+    switch(ew) {
+      is(ElementWidth.ew8) { result := SimpleElementWidth.ew8 }
+      is(ElementWidth.ew16) { result := SimpleElementWidth.ew16 }
+      is(ElementWidth.ew32) { result := SimpleElementWidth.ew32 }
+      is(ElementWidth.ew64) { result := SimpleElementWidth.ew64 }
+    }
+    result
+  }
+
+  def compatible(ewA: ElementWidth.Type, ewB: ElementWidth.Type, wfA: WidthFormat.Type, wfB: WidthFormat.Type): Bool = {
+      // The ew must fit in the wf
+      (wfLog2Bits(wfA) >= ewLog2Bits(ewA)) &&
+      (wfLog2Bits(wfB) >= ewLog2Bits(ewB)) &&
+      // And the ratio must be the same for A and B
+      (wfLog2Bits(wfA) - ewLog2Bits(ewA) === wfLog2Bits(wfB) - ewLog2Bits(ewB))
+  }
+}
+
+object LaneOrder extends ChiselEnum {
+  val MOORE = Value(0.U)
+  val UNKNOWN1 = Value(1.U)
+  val ROW_MAJOR = Value(2.U)
+  val TOROIDAL_ROW_MAJOR = Value(3.U)
+  val COLUMN_MAJOR = Value(4.U)
+  val TOROIDAL_COLUMN_MAJOR = Value(5.U)
+}
+
+class Ordering extends Bundle {
+  val wf = WidthFormat()
+  val laneOrder = LaneOrder()
+}
 
 case class RfSliceParams(
   // Mask port
@@ -152,6 +273,41 @@ case class IssueUnitParams(
   killInputReg: Boolean = false
 )
 
+case class JteInitiatorParams(
+  dispatchForwardBuffer: Boolean = false,
+  dispatchBackwardBuffer: Boolean = false,
+
+  rfMaskReqForwardBuffer: Boolean = false,
+  rfMaskReqBackwardBuffer: Boolean = false,
+  rfMaskRespForwardBuffer: Boolean = false,
+  rfMaskRespBackwardBuffer: Boolean = false,
+  rfIndexReqForwardBuffer: Boolean = false,
+  rfIndexReqBackwardBuffer: Boolean = false,
+  rfIndexRespForwardBuffer: Boolean = false,
+  rfIndexRespBackwardBuffer: Boolean = false,
+  rfDataReqForwardBuffer: Boolean = false,
+  rfDataReqBackwardBuffer: Boolean = false,
+  rfDataRespForwardBuffer: Boolean = false,
+  rfDataRespBackwardBuffer: Boolean = false,
+
+  sramReqForwardBuffer: Boolean = false,
+  sramReqBackwardBuffer: Boolean = false,
+  sramRespForwardBuffer: Boolean = false,
+  sramRespBackwardBuffer: Boolean = false,
+
+  tlbReqForwardBuffer: Boolean = false,
+  tlbReqBackwardBuffer: Boolean = false,
+  tlbRespForwardBuffer: Boolean = false,
+  tlbRespBackwardBuffer: Boolean = false,
+  kceReqForwardBuffer: Boolean = false,
+  kceReqBackwardBuffer: Boolean = false,
+  kceRespForwardBuffer: Boolean = false,
+  kceRespBackwardBuffer: Boolean = false,
+
+  ch1OutForwardBuffer: Boolean = false,
+  ch1OutBackwardBuffer: Boolean = false
+)
+
 case class ZamletParams(
   // Position widths
   xPosWidth: Int = 8,
@@ -175,7 +331,7 @@ case class ZamletParams(
 
   // Address and index widths
   memAddrWidth: Int = 48,       // Global memory address width
-  pageWordsPerJamlet: Int = 4,  // Page size in words per jamlet
+  log2PageWordsPerJamlet: Int = 4,  // Page size in words per jamlet
   // Must hold j_in_l * word_bytes * max_lmul
   elementIndexWidth: Int = 22,
 
@@ -216,7 +372,14 @@ case class ZamletParams(
   synchronizerParams: SynchronizerParams = SynchronizerParams(),
 
   // RfSlice configuration
-  rfSliceParams: RfSliceParams = RfSliceParams()
+  rfSliceParams: RfSliceParams = RfSliceParams(),
+
+  messageLengthWidth: Int = 4,
+  messageTypeWidth: Int = 6
+
+  // JTE initiator configuration
+  //jteInitiatorParams: JteInitiatorParams = JteInitiatorParams()
+
 ) {
   // Grid derived
   def jInK: Int = jCols * jRows
@@ -251,6 +414,8 @@ case class ZamletParams(
   def log2WordWidth: Int = Integer.numberOfTrailingZeros(wordWidth)
   def log2WordBytes: Int = Integer.numberOfTrailingZeros(wordBytes)
 
+  def pageWordsPerJamlet: Int = 1 << log2PageWordsPerJamlet
+
   def cacheSlotWords: Int = cacheSlotWordsPerJamlet * jInK
   def memBeatsPerCacheLine: Int = cacheSlotWords / memBeatWords
 
@@ -270,6 +435,11 @@ case class ZamletParams(
   def pageBytesPerZamlet: Int = pageBytesPerKamlet * kInL
   def log2PageBytesPerZamlet: Int = Integer.numberOfTrailingZeros(pageBytesPerZamlet)
 
+  def log2StripeBytes: Int = log2JInL + log2WordBytes
+  def log2StripesInPage: Int = log2PageWordsPerJamlet
+
+  def pageAddrWidth: Int = memAddrWidth - log2PageWordsPerJamlet - log2JInL
+
   // Calculated parameters
   def wordWidth: Int = wordBytes * 8
   def sramAddrWidth: Int = log2Ceil(sramDepth)
@@ -277,6 +447,7 @@ case class ZamletParams(
   def nCacheSlots: Int = sramDepth / cacheSlotWords
   def cacheSlotWidth: Int = log2Ceil(nCacheSlots)
   def kIndexWidth: Int = log2Ceil(kInL)
+  def memStripeAddrWidth: Int = memAddrWidth - log2JInL
 
   class JCoords extends Bundle {
     val x = UInt(xPosWidth.W)
@@ -295,12 +466,14 @@ case class ZamletParams(
   def writeset(): UInt = UInt(writesetWidth.W)
 }
 
+
 object ZamletParams {
   implicit val rfSliceParamsDecoder: Decoder[RfSliceParams] = deriveDecoder[RfSliceParams]
   implicit val synchronizerParamsDecoder: Decoder[SynchronizerParams] = deriveDecoder[SynchronizerParams]
   implicit val witemMonitorParamsDecoder: Decoder[WitemMonitorParams] = deriveDecoder[WitemMonitorParams]
   implicit val networkNodeParamsDecoder: Decoder[NetworkNodeParams] = deriveDecoder[NetworkNodeParams]
   implicit val issueUnitParamsDecoder: Decoder[IssueUnitParams] = deriveDecoder[IssueUnitParams]
+  //implicit val jteInitiatorParamsDecoder: Decoder[JteInitiatorParams] = deriveDecoder[JteInitiatorParams]
   implicit val zamletParamsDecoder: Decoder[ZamletParams] = deriveDecoder[ZamletParams]
 
   def fromFile(fileName: String): ZamletParams = {

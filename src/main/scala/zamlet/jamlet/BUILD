@@ -27,6 +27,7 @@ JAMLET_DEPS = [
 JAMLET_COMMON_SRCS = [
     "//src/main/scala/zamlet:ModuleGenerator.scala",
     "//src/main/scala/zamlet:ZamletParams.scala",
+    "//src/main/scala/zamlet:Utils.scala",
     "//src/main/scala/zamlet/utils:utils_sources",
     "//src/main/scala/zamlet/network:network_sources",
 ]
@@ -83,6 +84,22 @@ chisel_binary(
     name = "indextocoordswithreg",
     srcs = [":jamlet_sources"] + JAMLET_COMMON_SRCS,
     main_class = "zamlet.jamlet.IndexToCoordsWithRegMain",
+    deps = JAMLET_DEPS,
+    visibility = ["//visibility:public"],
+)
+
+chisel_binary(
+    name = "jteinitiator",
+    srcs = [":jamlet_sources"] + JAMLET_COMMON_SRCS,
+    main_class = "zamlet.jamlet.JteInitiatorMain",
+    deps = JAMLET_DEPS,
+    visibility = ["//visibility:public"],
+)
+
+chisel_binary(
+    name = "jteinitiatorstage",
+    srcs = [":jamlet_sources"] + JAMLET_COMMON_SRCS,
+    main_class = "zamlet.jamlet.JteInitiatorStageMain",
     deps = JAMLET_DEPS,
     visibility = ["//visibility:public"],
 )
