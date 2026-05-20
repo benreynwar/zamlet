@@ -26,6 +26,7 @@ SHUTTLE_DEPS = [
 ZAMLET_COMMON_SRCS = [
     "//src/main/scala/zamlet:ModuleGenerator.scala",
     "//src/main/scala/zamlet:ZamletParams.scala",
+    "//src/main/scala/zamlet:Utils.scala",
     "//src/main/scala/zamlet/utils:utils_sources",
 ]
 

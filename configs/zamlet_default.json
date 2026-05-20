@@ -24,6 +24,7 @@
   "lamletDispatchQueueDepth": 8,
   "identTrackerOutForwardBuffer": true,
   "identTrackerOutBackwardBuffer": true,
+  "reservationStationDepth": 16,
   "messageLengthWidth": 4,
   "messageTypeWidth": 6,
   "nAChannels": 1,

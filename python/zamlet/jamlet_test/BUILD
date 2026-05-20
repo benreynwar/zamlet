@@ -39,7 +39,23 @@ chisel_module_tests(
     ],
 )
 
+chisel_module_tests(
+    generator = "//src/main/scala/zamlet/jamlet:jteinitiator",
+    toplevel = "JteInitiator",
+    srcs = [
+        "test_jteinitiator.py",
+        "test_jteinitiator_random.py",
+    ],
+    configs = [
+        ("default", "//configs:zamlet_default.json"),
+    ],
+    test_modules = [
+      "zamlet.jamlet_test.test_jteinitiator",
+      "zamlet.jamlet_test.test_jteinitiator_random",
+    ],
+)
+
 test_suite(
     name = "all_tests",
-    tests = [":witemmonitor_tests", ":indextocoordswithreg_tests"],
+    tests = [":witemmonitor_tests", ":indextocoordswithreg_tests", ":coordstoindexwithreg_tests", ":jteinitiator_tests"],
 )

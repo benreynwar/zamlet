@@ -23,7 +23,7 @@ class ZamletParams:
     n_vregs: int = 48
     cache_slot_words_per_jamlet: int = 2
     word_bytes: int = 8
-    page_words_per_jamlet: int = 64
+    log2_page_words_per_jamlet: int = 6
     scalar_memory_bytes: int = 8 << 20
     kamlet_memory_bytes: int = 1 << 20
     #jamlet_sram_bytes: int = 1 << 10
@@ -122,6 +122,10 @@ class ZamletParams:
         return 32
 
     @property
+    def page_words_per_jamlet(self) -> int:
+        return 1 << self.log2_page_words_per_jamlet
+
+    @property
     def cache_slot_words(self) -> int:
         return self.cache_slot_words_per_jamlet * self.j_in_k
 
@@ -175,6 +179,10 @@ class ZamletParams:
     @property
     def page_bytes(self):
         return self.page_words_per_jamlet * self.word_bytes * self.j_in_l
+
+    @property
+    def stripe_bytes(self):
+        return self.word_bytes * self.j_in_l
 
     @property
     def n_items(self):
@@ -303,7 +311,7 @@ class ZamletParams:
         'cacheSlotWordsPerJamlet': 'cache_slot_words_per_jamlet',
         'rfSliceWords': 'rf_slice_words',
         'memAddrWidth': 'mem_addr_width',
-        'pageWordsPerJamlet': 'page_words_per_jamlet',
+        'log2PageWordsPerJamlet': 'log2_page_words_per_jamlet',
         'elementIndexWidth': 'element_index_width',
         'witemTableDepth': 'witem_table_depth',
         'identWidth': 'ident_width',
@@ -323,6 +331,13 @@ class ZamletParams:
     def from_dict(cls, data: Dict[str, Any]) -> 'ZamletParams':
         """Create ZamletParams from dictionary with camelCase field names."""
         converted = {}
+        required = set(cls._FIELD_MAPPING.keys())
+        seen = set(data.keys())
+        missing = required - seen
+        extra = seen - required
+        if missing or extra:
+            logger.error(f'Missing fields {missing}. Extra fields {extra}')
+        assert not missing
         for camel_key, snake_key in cls._FIELD_MAPPING.items():
             if camel_key in data:
                 converted[snake_key] = data[camel_key]

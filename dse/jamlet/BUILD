@@ -35,6 +35,7 @@ JAMLET_SUB_MODULES = [
     ("CoordsToIndexWithReg", "coordstoindexwithreg", [], "35"),
     ("IndexToCoordsWithReg", "indextocoordswithreg", [], "35"),
     ("JteInitiator", "jteinitiator", [], "30"),
+    ("JteInitiatorA", "jteinitiatorstage", ["A"], "5"),
     ("JteInitiatorB", "jteinitiatorstage", ["B"], "5"),
     ("JteInitiatorC", "jteinitiatorstage", ["C"], "35"),
     ("JteInitiatorD", "jteinitiatorstage", ["D"], "35"),
