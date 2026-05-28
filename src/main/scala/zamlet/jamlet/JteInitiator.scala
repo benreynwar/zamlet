@@ -38,9 +38,17 @@ class WithHeader(params: ZamletParams) extends Bundle {
 object MessageTypes {
   val READ = 1
   val WRITE = 2
+  val READ_RESPONSE = 3
+  val WRITE_RESPONSE = 4
+  val READ_DROP = 5
+  val WRITE_DROP = 6
 }
 
 class Header(params: ZamletParams) extends Bundle {
+  private val otherWidth = 32 - params.messageTypeWidth - params.messageLengthWidth -
+    3*(params.log2WordWidth - 3) - params.identWidth - log2Ceil(params.witemTableDepth)
+  require(otherWidth >= 0, s"JTE header has no room for slot: otherWidth=$otherWidth")
+
   val dstIndex = UInt(16.W)
   val srcX = UInt(8.W)
   val srcY = UInt(8.W)
@@ -49,7 +57,9 @@ class Header(params: ZamletParams) extends Bundle {
   val nBytes = UInt((params.log2WordWidth - 3).W)
   val dstOffset = UInt((params.log2WordWidth - 3).W)
   val srcOffset = UInt((params.log2WordWidth - 3).W)
-  val other = UInt((32 - params.messageTypeWidth - params.messageLengthWidth - 3*(params.log2WordWidth - 3)).W)
+  val ident = params.ident()
+  val slot = UInt(log2Ceil(params.witemTableDepth).W)
+  val other = UInt(otherWidth.W)
 }
 
 // When the EW > 64 we send an instruction for each word and
@@ -175,9 +185,9 @@ class JteInitiatorA(params: ZamletParams) extends Module {
   val maskNotBlocking = io.rfMaskReq.ready || !maskUse
   val dataNotBlocking = io.rfDataReq.ready || !dataUse
 
-  io.rfMaskReq.valid := io.input.valid && maskUse
+  io.rfMaskReq.valid := io.input.valid && io.ab.ready && dataNotBlocking && maskUse
   io.rfMaskReq.bits := input.maskReg
-  io.rfDataReq.valid := io.input.valid && dataUse
+  io.rfDataReq.valid := io.input.valid && io.ab.ready && maskNotBlocking && dataUse
   io.rfDataReq.bits := input.dataReg
 
   io.ab.valid := io.input.valid && maskNotBlocking && dataNotBlocking
@@ -231,9 +241,7 @@ class JteInitiatorB(params: ZamletParams) extends Module {
   val firstInnerNext = Wire(Bool())
   val firstInner = RegEnable(firstInnerNext, true.B, fire)
   val countInner = Wire(UInt(6.W))
-  firstInnerNext := countInner === io.ab.bits.finalInner
   val countInnerPrevious = RegEnable(countInner, fire)
-  countInner := Mux(firstInner, io.ab.bits.startInner, countInnerPrevious + 1.U)
 
   // Increment the outer loop
   val firstOuterNext = Wire(Bool())
@@ -248,6 +256,13 @@ class JteInitiatorB(params: ZamletParams) extends Module {
   } .otherwise {
     countOuter := countOuterPrevious
   }
+  countInner := Mux(firstInner, Mux(firstOuter, io.ab.bits.startInner, 0.U), countInnerPrevious + 1.U)
+  val finalInnerForOuter = Mux(
+    countOuter === io.ab.bits.finalOuter,
+    io.ab.bits.finalInner,
+    (1.U << io.ab.bits.log2Ratio) - 1.U,
+  )
+  firstInnerNext := (countInner === finalInnerForOuter) || io.ab.bits.noLocalElements
 
   val last = ((countInner === io.ab.bits.finalInner) && (countOuter === io.ab.bits.finalOuter)) || io.ab.bits.noLocalElements
 
@@ -258,10 +273,9 @@ class JteInitiatorB(params: ZamletParams) extends Module {
   val count = countInner + (countOuter << io.ab.bits.log2Ratio)
   val indexRequires = ((count << io.ab.bits.log2RFIndexEB)(params.log2WordBytes-1, 0) === 0.U)
 
-  // An index register request made in stage a
-  val indexPreviouslyEnabled = io.ab.bits.indexUse && firstOuter
-  // An index register request made in this stage (b) 
-  val indexEnabled = indexRequires && io.ab.bits.indexUse
+  // The first local element needs the current index word even if it starts in
+  // the middle of that word. Later elements need a new word only at boundaries.
+  val indexEnabled = (firstOuter || indexRequires) && io.ab.bits.indexUse
   val indexNotBlocking = io.rfIndexReq.ready || !indexEnabled
 
   io.rfIndexReq.valid := indexEnabled && fire
@@ -279,7 +293,7 @@ class JteInitiatorB(params: ZamletParams) extends Module {
   io.bc.bits.indexUse := io.ab.bits.indexUse
   io.bc.bits.dataUse := io.ab.bits.dataUse
   io.bc.bits.maskUse := io.ab.bits.input.maskEnabled
-  io.bc.bits.indexEnabled := indexEnabled || indexPreviouslyEnabled
+  io.bc.bits.indexEnabled := indexEnabled
   io.bc.bits.dataEnabled := firstOuter && io.ab.bits.dataUse
   io.bc.bits.maskEnabled := firstOuter && io.ab.bits.maskUse
   io.bc.bits.elementIndex := elementIndex
@@ -305,13 +319,14 @@ class JteInitiatorC(params: ZamletParams) extends Module {
 
 class JteInitiatorDE(params: ZamletParams) extends Bundle {
   val input = new JteInitiatorInput(params)
-  val rfDataEB = UInt(params.log2WordBytes.W)
+  val rfDataEB = UInt((params.log2WordBytes + 1).W)
   val offset = UInt(params.memAddrWidth.W)
   //val offsetEnd = UInt(params.memAddrWidth.W)
   val srcData = params.word()
   val srcOffset = UInt((params.log2WordWidth-3).W)
   val isStore = Bool()
   val slot = UInt(log2Ceil(params.witemTableDepth).W)
+  val instrIdent = params.ident()
   val last = Bool()
   val active = Bool()
 }
@@ -397,6 +412,7 @@ class JteInitiatorD(params: ZamletParams) extends Module {
   io.de.bits.srcOffset := io.cd.bits.srcOffset
   io.de.bits.isStore := io.cd.bits.dataUse
   io.de.bits.slot := io.cd.bits.slot
+  io.de.bits.instrIdent := io.cd.bits.input.instrIdent
   io.de.bits.last := io.cd.bits.last
   io.de.bits.active := emitElement
 
@@ -409,9 +425,10 @@ class JteInitiatorEF(params: ZamletParams) extends Bundle {
   val srcOffset = UInt((params.log2WordWidth-3).W)
   val isStore = Bool()
   val slot = UInt(log2Ceil(params.witemTableDepth).W)
+  val instrIdent = params.ident()
   val last = Bool()
   val active = Bool()
-  val rfDataEB = UInt(params.log2WordBytes.W)
+  val rfDataEB = UInt((params.log2WordBytes + 1).W)
   // We only need the position within a page
   // This is to see if an element crosses a page boundary
   val lastByte = UInt(params.log2PageBytesPerZamlet.W)
@@ -432,6 +449,7 @@ class JteInitiatorE(params: ZamletParams) extends Module {
   io.ef.bits.srcOffset := io.de.bits.srcOffset
   io.ef.bits.isStore := io.de.bits.isStore
   io.ef.bits.slot := io.de.bits.slot
+  io.ef.bits.instrIdent := io.de.bits.instrIdent
   io.ef.bits.last := io.de.bits.last
   io.ef.bits.active := io.de.bits.active
   io.ef.bits.lastByte := io.de.bits.input.baseAddr + io.de.bits.offset + io.de.bits.rfDataEB
@@ -446,6 +464,7 @@ class JteInitiatorFG(params: ZamletParams) extends Bundle {
   val srcOffset = UInt((params.log2WordWidth-3).W)
   val isStore = Bool()
   val slot = UInt(log2Ceil(params.witemTableDepth).W)
+  val instrIdent = params.ident()
   val last = Bool()
   val active = Bool()
 }
@@ -478,12 +497,17 @@ class JteInitiatorF(params: ZamletParams) extends Module {
   val lastByte = io.ef.bits.lastByte
   //val lastByteStripe = lastByte(params.memAddrWidth-1, params.log2StripeBytes);
   //val lastBytePage = lastByte(params.memAddrWidth-1, params.log2PageBytesPerZamlet);
+  val firstByteStripeOffset = firstBytePageOffset(params.log2StripeBytes-1, 0)
   val lastByteStripeOffset = lastByte(params.log2StripeBytes-1, 0);
   val lastBytePageOffset = lastByte(params.log2PageBytesPerZamlet-1, 0);
-  val spansStripe = lastByteStripeOffset < dataEB
-  val spansPage = lastBytePageOffset < dataEB
+  val bytesToStripeEnd = (1 << params.log2StripeBytes).U - firstByteStripeOffset
+  val bytesToPageEnd = (1 << params.log2PageBytesPerZamlet).U - firstBytePageOffset
+  val spansStripe = dataEB > bytesToStripeEnd
+  val spansPage = dataEB > bytesToPageEnd
   val first = Wire(Bool())
-  val firstNext = !first || !spansStripe
+  // Inactive elements are markers for the commit state, not memory requests.
+  // They must not leave a pending second stripe section for the next active element.
+  val firstNext = !io.ef.bits.active || !first || !spansStripe
   first := RegEnable(firstNext, true.B, fire)
 
   val lastByteStripe = RegEnable(firstByteStripe + 1.U, fire)
@@ -504,11 +528,13 @@ class JteInitiatorF(params: ZamletParams) extends Module {
   )
 
   io.fg.bits.tlbUse := needsTLB
+  val firstSectionBytes = Mux(spansStripe, bytesToStripeEnd, dataEB)
+  val secondSectionBytes = dataEB - firstSectionBytes
   when (spansStripe) {
     when (first) {
-      io.fg.bits.nSectionBytes := dataEB - (lastByteStripeOffset + 1.U)
+      io.fg.bits.nSectionBytes := firstSectionBytes
     } .otherwise {
-      io.fg.bits.nSectionBytes := lastByteStripeOffset + 1.U
+      io.fg.bits.nSectionBytes := secondSectionBytes
     }
   } .otherwise {
     io.fg.bits.nSectionBytes := dataEB
@@ -517,13 +543,18 @@ class JteInitiatorF(params: ZamletParams) extends Module {
     io.fg.bits.pageOffset := firstBytePageOffset;
   } .otherwise {
     // What the page offset is for the second half of the element (which must begin at the start of a stripe).
-    io.fg.bits.pageOffset := lastByte(params.log2PageBytesPerZamlet-1, params.log2JInL) << params.log2JInL
+    io.fg.bits.pageOffset := firstBytePageOffset + firstSectionBytes
   }
 
-  io.fg.bits.srcOffset := io.ef.bits.srcOffset
+  io.fg.bits.srcOffset := Mux(
+    spansStripe && !first,
+    io.ef.bits.srcOffset + firstSectionBytes,
+    io.ef.bits.srcOffset,
+  )
   io.fg.bits.srcData := io.ef.bits.srcData
   io.fg.bits.isStore := io.ef.bits.isStore
   io.fg.bits.slot := io.ef.bits.slot
+  io.fg.bits.instrIdent := io.ef.bits.instrIdent
   io.fg.bits.last := io.ef.bits.last && (!io.ef.bits.active || !spansStripe || !first)
   io.fg.bits.active := io.ef.bits.active
 }
@@ -548,6 +579,7 @@ class JteInitiatorHI(params: ZamletParams) extends Bundle {
   val dstStripeAddr = UInt((params.memAddrWidth - params.log2StripeBytes).W)
   val isStore = Bool()
   val slot = UInt(log2Ceil(params.witemTableDepth).W)
+  val instrIdent = params.ident()
   val last = Bool()
 }
 
@@ -568,7 +600,10 @@ class JteInitiatorH(params: ZamletParams) extends Module {
 
   val completeSection = Wire(Bool())
   io.tlbResp.ready := io.gh.valid && io.gh.bits.active && io.gh.bits.tlbUse && io.orderingResp.valid && io.hi.ready && completeSection
-  val pageAddress = io.tlbResp.bits
+  val previousPageAddress = RegEnable(io.tlbResp.bits, io.tlbResp.ready && io.tlbResp.valid)
+  // A second stripe in the same page does not issue a new TLB request, but it
+  // still uses the page address from the previous stripe section.
+  val pageAddress = Mux(io.gh.bits.tlbUse, io.tlbResp.bits, previousPageAddress)
   io.orderingResp.ready := io.gh.valid && io.gh.bits.active && (io.tlbResp.valid || !io.gh.bits.tlbUse) && io.hi.ready && completeSection
   val ordering = io.orderingResp.bits
 
@@ -634,16 +669,19 @@ class JteInitiatorH(params: ZamletParams) extends Module {
     io.hi.bits.dstNBytes := maxSegmentBytes
     completeSection := false.B
   }
-  val last = io.gh.bits.last && completeSection
+  val last = io.gh.bits.last && (!io.gh.bits.active || completeSection)
+  val emittedBytes = io.gh.bits.nSectionBytes - remainingBytes
+  val srcOffset = (io.gh.bits.srcOffset + emittedBytes)(params.log2WordBytes-1, 0)
   // Shift the valid store bytes into the destination word lanes.
-  val shiftedSrcData = io.gh.bits.srcData >> (io.gh.bits.srcOffset << 3.U)
+  val shiftedSrcData = io.gh.bits.srcData >> (srcOffset << 3.U)
   val maskedSrcData = Utils.maskLow(shiftedSrcData, io.hi.bits.dstNBytes << 3.U)
   io.hi.bits.dstData := maskedSrcData << (io.hi.bits.dstOffset << 3.U)
-  io.hi.bits.srcOffset := io.gh.bits.srcOffset
+  io.hi.bits.srcOffset := srcOffset
   io.hi.bits.isStore := io.gh.bits.isStore
   val stripeAddress = byteAddress >> params.log2StripeBytes
   io.hi.bits.dstStripeAddr := stripeAddress
   io.hi.bits.slot := io.gh.bits.slot
+  io.hi.bits.instrIdent := io.gh.bits.instrIdent
   io.hi.bits.last := last
 
   // We want to build up the commit here.
@@ -662,14 +700,14 @@ class JteInitiatorH(params: ZamletParams) extends Module {
 
   val walkStateBaseNext = Wire(JteWalkState())
   val walkState = Wire(JteWalkState())
-  val walkStateBase = RegEnable(walkState, JteWalkState.Done, commitFire)
+  val walkStateBase = RegEnable(walkStateBaseNext, JteWalkState.Done, commitFire)
 
   initiator := initiatorBase
   when (io.gh.bits.active) {
-    initiator(io.gh.bits.srcOffset) := JteInitiatorState.RequestSent
+    initiator(srcOffset) := JteInitiatorState.RequestSent
   }
   initiatorBaseNext := initiator
-  when (io.gh.bits.last) {
+  when (last) {
     // Initialize the complete. We'll undo this later.
     initiatorBaseNext := initiatorInitial
   }
@@ -680,7 +718,7 @@ class JteInitiatorH(params: ZamletParams) extends Module {
     walkState := walkStateBase
   }
 
-  when (io.gh.bits.last) {
+  when (last) {
     walkStateBaseNext := JteWalkState.Done
   } .otherwise {
     walkStateBaseNext := walkState
@@ -721,6 +759,8 @@ class JteInitiatorI(params: ZamletParams) extends Module {
   header.nBytes := io.hi.bits.dstNBytes
   header.dstOffset := io.hi.bits.dstOffset
   header.srcOffset := io.hi.bits.srcOffset
+  header.ident := io.hi.bits.instrIdent
+  header.slot := io.hi.bits.slot
   header.other := 0.U
 
   io.packet.valid := io.hi.valid
@@ -764,48 +804,49 @@ class JteInitiatorIO(params: ZamletParams) extends Bundle {
 
 class JteInitiator(params: ZamletParams) extends Module {
   val io = IO(new JteInitiatorIO(params))
+  val ip = params.jteInitiatorParams
 
   val aStage = Module(new JteInitiatorA(params))
   aStage.io.laneIndex := RegNext(io.laneIndex)
-  aStage.io.input <> DoubleBuffer(io.input, true, true)
-  io.rfDataReq <> DoubleBuffer(aStage.io.rfDataReq, true, true)
-  io.rfMaskReq <> DoubleBuffer(aStage.io.rfMaskReq, true, true)
+  aStage.io.input <> DoubleBuffer(io.input, ip.inputFB, ip.inputBB)
+  io.rfDataReq <> DoubleBuffer(aStage.io.rfDataReq, ip.rfDataReqFB, ip.rfDataReqBB)
+  io.rfMaskReq <> DoubleBuffer(aStage.io.rfMaskReq, ip.rfMaskReqFB, ip.rfMaskReqBB)
 
   val bStage = Module(new JteInitiatorB(params))
-  io.rfIndexReq <> DoubleBuffer(bStage.io.rfIndexReq, true, true)
-  bStage.io.ab <> DoubleBuffer(aStage.io.ab, true, true)
+  io.rfIndexReq <> DoubleBuffer(bStage.io.rfIndexReq, ip.rfIndexReqFB, ip.rfIndexReqBB)
+  bStage.io.ab <> DoubleBuffer(aStage.io.ab, ip.abFB, ip.abBB)
 
   val cStage = Module(new JteInitiatorC(params))
-  cStage.io.bc <> DoubleBuffer(bStage.io.bc, true, true)
+  cStage.io.bc <> DoubleBuffer(bStage.io.bc, ip.bcFB, ip.bcBB)
 
   val dStage = Module(new JteInitiatorD(params))
-  dStage.io.rfMaskResp <> DoubleBuffer(io.rfMaskResp, true, true)
-  dStage.io.rfDataResp <> DoubleBuffer(io.rfDataResp, true, true)
-  dStage.io.rfIndexResp <> DoubleBuffer(io.rfIndexResp, true, true)
-  dStage.io.cd <> DoubleBuffer(cStage.io.cd, true, true)
+  dStage.io.rfMaskResp <> DoubleBuffer(io.rfMaskResp, ip.rfMaskRespFB, ip.rfMaskRespBB)
+  dStage.io.rfDataResp <> DoubleBuffer(io.rfDataResp, ip.rfDataRespFB, ip.rfDataRespBB)
+  dStage.io.rfIndexResp <> DoubleBuffer(io.rfIndexResp, ip.rfIndexRespFB, ip.rfIndexRespBB)
+  dStage.io.cd <> DoubleBuffer(cStage.io.cd, ip.cdFB, ip.cdBB)
 
   val eStage = Module(new JteInitiatorE(params))
-  eStage.io.de <> DoubleBuffer(dStage.io.de, true, true)
+  eStage.io.de <> DoubleBuffer(dStage.io.de, ip.deFB, ip.deBB)
 
   val fStage = Module(new JteInitiatorF(params))
-  io.tlbReq <> DoubleBuffer(fStage.io.tlbReq, true, true)
-  io.orderingReq <> DoubleBuffer(fStage.io.orderingReq, true, true)
-  fStage.io.ef <> DoubleBuffer(eStage.io.ef, true, true)
+  io.tlbReq <> DoubleBuffer(fStage.io.tlbReq, ip.tlbReqFB, ip.tlbReqBB)
+  io.orderingReq <> DoubleBuffer(fStage.io.orderingReq, ip.orderingReqFB, ip.orderingReqBB)
+  fStage.io.ef <> DoubleBuffer(eStage.io.ef, ip.efFB, ip.efBB)
 
   val gStage = Module(new JteInitiatorG(params))
-  gStage.io.fg <> DoubleBuffer(fStage.io.fg, true, true)
+  gStage.io.fg <> DoubleBuffer(fStage.io.fg, ip.fgFB, ip.fgBB)
 
   val hStage = Module(new JteInitiatorH(params))
-  hStage.io.gh <> DoubleBuffer(gStage.io.gh, true, true)
-  hStage.io.tlbResp <> DoubleBuffer(io.tlbResp, true, true)
-  hStage.io.orderingResp <> DoubleBuffer(io.orderingResp, true, true)
-  io.commit := ValidBuffer(hStage.io.commit, true)
+  hStage.io.gh <> DoubleBuffer(gStage.io.gh, ip.ghFB, ip.ghBB)
+  hStage.io.tlbResp <> DoubleBuffer(io.tlbResp, ip.tlbRespFB, ip.tlbRespBB)
+  hStage.io.orderingResp <> DoubleBuffer(io.orderingResp, ip.orderingRespFB, ip.orderingRespBB)
+  io.commit := ValidBuffer(hStage.io.commit, ip.commitBuffer)
 
   val iStage = Module(new JteInitiatorI(params))
-  iStage.io.hi <> DoubleBuffer(hStage.io.hi, true, true)
+  iStage.io.hi <> DoubleBuffer(hStage.io.hi, ip.hiFB, ip.hiBB)
   iStage.io.x := RegNext(io.x)
   iStage.io.y := RegNext(io.y)
-  io.packet <> DoubleBuffer(iStage.io.packet, true, true)
+  io.packet <> DoubleBuffer(iStage.io.packet, ip.packetFB, ip.packetBB)
 }
 
 

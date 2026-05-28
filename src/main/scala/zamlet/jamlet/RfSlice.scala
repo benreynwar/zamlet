@@ -12,15 +12,15 @@ import zamlet.utils.DoubleBuffer
  * Size: rfSliceWords * wordBytes (default 48 * 8 = 384 bytes)
  *
  * Provides multiple Decoupled ports for concurrent access by different consumers:
- * - WitemMonitor: mask, index, data ports
- * - LocalExec: read/write port (for Simple witems and ALU ops)
+ * - JTE: mask, index, data read ports and a byte-masked write port
+ * - LocalExec: read/write port
  *
  * Reads are combinational. All ports can read concurrently.
  * All ports can write. Two ports writing to the same address results in DontCare.
  */
 class RfSlice(params: ZamletParams) extends Module {
   val io = IO(new Bundle {
-    // WitemMonitor ports
+    // JTE read ports
     val maskReq = Flipped(Decoupled(new RfReq(params)))
     val maskResp = Decoupled(new RfResp(params))
 
@@ -29,6 +29,9 @@ class RfSlice(params: ZamletParams) extends Module {
 
     val dataReq = Flipped(Decoupled(new RfReq(params)))
     val dataResp = Decoupled(new RfResp(params))
+
+    val jteWriteReq = Flipped(Decoupled(new RFWriteReq(params)))
+    val jteWriteResp = Decoupled(Bool())
 
     // LocalExec port (read/write)
     val localExecReq = Flipped(Decoupled(new RfReq(params)))
@@ -76,6 +79,16 @@ class RfSlice(params: ZamletParams) extends Module {
 
   val dataWrite = dataReq.fire && dataReq.bits.isWrite
 
+  // === JTE write port ===
+  io.jteWriteReq.ready := io.jteWriteResp.ready
+  io.jteWriteResp.valid := io.jteWriteReq.valid
+  io.jteWriteResp.bits := true.B
+
+  val jteWrite = io.jteWriteReq.fire
+  val jteWriteMask = VecInit((0 until params.wordBytes).map { i =>
+    Fill(8, io.jteWriteReq.bits.byteMask(i))
+  }).asUInt
+
   // === LocalExec port ===
   val localExecReq = DoubleBuffer(io.localExecReq,
     rp.localExecReqForwardBuffer, rp.localExecReqBackwardBuffer)
@@ -94,22 +107,32 @@ class RfSlice(params: ZamletParams) extends Module {
   val maskCollision = maskWrite && (
     (indexWrite && maskReq.bits.addr === indexReq.bits.addr) ||
     (dataWrite && maskReq.bits.addr === dataReq.bits.addr) ||
-    (localExecWrite && maskReq.bits.addr === localExecReq.bits.addr))
+    (localExecWrite && maskReq.bits.addr === localExecReq.bits.addr) ||
+    (jteWrite && maskReq.bits.addr === io.jteWriteReq.bits.address))
 
   val indexCollision = indexWrite && (
     (maskWrite && indexReq.bits.addr === maskReq.bits.addr) ||
     (dataWrite && indexReq.bits.addr === dataReq.bits.addr) ||
-    (localExecWrite && indexReq.bits.addr === localExecReq.bits.addr))
+    (localExecWrite && indexReq.bits.addr === localExecReq.bits.addr) ||
+    (jteWrite && indexReq.bits.addr === io.jteWriteReq.bits.address))
 
   val dataCollision = dataWrite && (
     (maskWrite && dataReq.bits.addr === maskReq.bits.addr) ||
     (indexWrite && dataReq.bits.addr === indexReq.bits.addr) ||
-    (localExecWrite && dataReq.bits.addr === localExecReq.bits.addr))
+    (localExecWrite && dataReq.bits.addr === localExecReq.bits.addr) ||
+    (jteWrite && dataReq.bits.addr === io.jteWriteReq.bits.address))
 
   val localExecCollision = localExecWrite && (
     (maskWrite && localExecReq.bits.addr === maskReq.bits.addr) ||
     (indexWrite && localExecReq.bits.addr === indexReq.bits.addr) ||
-    (dataWrite && localExecReq.bits.addr === dataReq.bits.addr))
+    (dataWrite && localExecReq.bits.addr === dataReq.bits.addr) ||
+    (jteWrite && localExecReq.bits.addr === io.jteWriteReq.bits.address))
+
+  val jteCollision = jteWrite && (
+    (maskWrite && io.jteWriteReq.bits.address === maskReq.bits.addr) ||
+    (indexWrite && io.jteWriteReq.bits.address === indexReq.bits.addr) ||
+    (dataWrite && io.jteWriteReq.bits.address === dataReq.bits.addr) ||
+    (localExecWrite && io.jteWriteReq.bits.address === localExecReq.bits.addr))
 
   when(maskWrite) {
     mem(maskReq.bits.addr) := Mux(maskCollision, DontCare, maskReq.bits.writeData)
@@ -122,6 +145,11 @@ class RfSlice(params: ZamletParams) extends Module {
   }
   when(localExecWrite) {
     mem(localExecReq.bits.addr) := Mux(localExecCollision, DontCare, localExecReq.bits.writeData)
+  }
+  when(jteWrite) {
+    val oldData = mem(io.jteWriteReq.bits.address)
+    val newData = (oldData & ~jteWriteMask) | (io.jteWriteReq.bits.data & jteWriteMask)
+    mem(io.jteWriteReq.bits.address) := Mux(jteCollision, DontCare, newData)
   }
 }
 

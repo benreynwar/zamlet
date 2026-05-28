@@ -30,10 +30,12 @@ chisel_dse_module(
 # (ModuleName, bazel_target_name, extra_generator_args, core_utilization)
 JAMLET_SUB_MODULES = [
     ("RfSlice", "rfslice", [], "35"),
+    ("Sram", "sram", [], "35"),
     ("WitemMonitor", "witemmonitor", [], "35"),
     ("LocalExec", "localexec", [], "35"),
     ("CoordsToIndexWithReg", "coordstoindexwithreg", [], "35"),
     ("IndexToCoordsWithReg", "indextocoordswithreg", [], "35"),
+    ("Jte", "jte", [], "40"),
     ("JteInitiator", "jteinitiator", [], "30"),
     ("JteInitiatorA", "jteinitiatorstage", ["A"], "5"),
     ("JteInitiatorB", "jteinitiatorstage", ["B"], "5"),
@@ -44,6 +46,17 @@ JAMLET_SUB_MODULES = [
     ("JteInitiatorG", "jteinitiatorstage", ["G"], "35"),
     ("JteInitiatorH", "jteinitiatorstage", ["H"], "35"),
     ("JteInitiatorI", "jteinitiatorstage", ["I"], "35"),
+    ("JteHandler", "jtehandler", [], "30"),
+    ("JteHandlerA", "jtehandlerstage", ["A"], "5"),
+    ("JteHandlerB", "jtehandlerstage", ["B"], "5"),
+    ("JteHandlerC", "jtehandlerstage", ["C"], "35"),
+    ("JteHandlerD", "jtehandlerstage", ["D"], "35"),
+    ("JteHandlerE", "jtehandlerstage", ["E"], "35"),
+    ("JteHandlerF", "jtehandlerstage", ["F"], "35"),
+    ("JteHandlerG", "jtehandlerstage", ["G"], "35"),
+    ("JteHandlerH", "jtehandlerstage", ["H"], "35"),
+    ("JteReceiver", "jtereceiver", [], "30"),
+    ("JteState", "jtestate", [], "20"),
 ]
 
 # (config_name_suffix, config_label)

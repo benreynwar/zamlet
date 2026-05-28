@@ -8,7 +8,7 @@ import cocotb
 from cocotb import clock, triggers
 from cocotb.handle import HierarchyObject
 
-from zamlet import test_utils
+from zamlet import test_utils, utils
 from zamlet.params import ZamletParams
 
 
@@ -51,6 +51,15 @@ class RandomInstr:
     end_index: int
 
 
+@dataclass
+class RandomInstrExpectation:
+    instr: RandomInstr
+    packets: list[list[object]]
+    commit: dict[str, object]
+    index_requests: list[int]
+    tlb_requests: list[int]
+
+
 def log2_int(value: int) -> int:
     assert value > 0 and value & (value - 1) == 0
     return value.bit_length() - 1
@@ -83,13 +92,15 @@ def read_mask_bit(content: list[int], mask_reg: int, ordinal: int) -> int:
 
 
 def header_from_int(value: int) -> dict[str, int]:
+    n_bytes_encoded = (value >> 19) & 0x7
     return {
         'dst_index': (value >> 48) & 0xffff,
         'src_x': (value >> 40) & 0xff,
         'src_y': (value >> 32) & 0xff,
         'msg_type': (value >> 26) & 0x3f,
         'msg_length': (value >> 22) & 0xf,
-        'n_bytes': (value >> 19) & 0x7,
+        # The 3-bit wire encoding uses 0 to represent a full 8-byte word.
+        'n_bytes': n_bytes_encoded if n_bytes_encoded else 8,
         'dst_offset': (value >> 16) & 0x7,
         'src_offset': (value >> 13) & 0x7,
     }
@@ -113,26 +124,22 @@ def bytes_until_segment_boundary(
     )
 
 
-def memory_word_position(paddr: int, wf: int, params: ZamletParams) -> tuple[int, int]:
-    wf_bytes = bytes_from_ew(wf)
-    dst_index = (paddr >> log2_int(wf_bytes)) & (params.j_in_l - 1)
-    if wf_bytes >= params.word_bytes:
-        dst_offset = paddr % params.word_bytes
-    else:
-        wf_index = paddr >> log2_int(wf_bytes)
-        dst_offset = ((wf_index & (params.j_in_l - 1)) << log2_int(wf_bytes)) + (paddr % wf_bytes)
-    return dst_index, dst_offset
-
-
-def make_ordering(orderings: dict[int, dict[str, int]], stripe_addr: int, rnd: Random) -> dict[str, int]:
+def make_ordering(
+    orderings: dict[int, dict[str, int]],
+    stripe_addr: int,
+    params: ZamletParams,
+    rnd: Random,
+) -> dict[str, int]:
     if stripe_addr not in orderings:
-        orderings[stripe_addr] = {'wf': rnd.choice([WF8, WF16, WF32, WF64]), 'laneOrder': 0}
+        wfs = [wf for wf in [WF8, WF16, WF32, WF64] if bytes_from_ew(wf) <= params.word_bytes]
+        orderings[stripe_addr] = {'wf': rnd.choice(wfs), 'laneOrder': 0}
     return orderings[stripe_addr]
 
 
 def make_translation(page_table: dict[int, int], vpage: int, rnd: Random) -> int:
     if vpage not in page_table:
         page_table[vpage] = rnd.randrange(1, 1 << 16)
+        logger.info('expected TLB add vpage=%d ppage=%d', vpage, page_table[vpage])
     return page_table[vpage]
 
 
@@ -146,38 +153,54 @@ def expected_packets_for_instruction(
     this_x: int,
     this_y: int,
     rnd: Random,
-) -> list[list[object]]:
+) -> tuple[list[list[object]], list[int]]:
     data_bytes = bytes_from_ew(instr.data_ew)
     index_bytes = bytes_from_ew(instr.index_ew)
     log2_ratio = instr.reg_wf - instr.data_ew
     packets = []
+    index_requests = []
+    tlb_requests = []
+    last_index_req = None
 
     for element_index in range(instr.start_index, instr.end_index):
         ordinal = local_ordinal(element_index, lane_index, params.j_in_l, log2_ratio)
         if ordinal is None:
             continue
+        index_req = instr.index_reg + (ordinal * index_bytes) // params.word_bytes
+        if index_req != last_index_req:
+            index_requests.append(index_req)
+            last_index_req = index_req
         if instr.mask_enabled and not read_mask_bit(content, instr.mask_reg, ordinal):
             continue
 
         index_value = read_bytes(content, instr.index_reg, ordinal * index_bytes, index_bytes)
-        element_vaddr = instr.base_addr + index_value
+        element_vaddr = (instr.base_addr + index_value) & ((1 << params.mem_addr_width) - 1)
         element_reg_byte = ordinal * data_bytes
         remaining = data_bytes
         element_byte = 0
+        last_tlb_vpage = None
 
         while remaining:
             vaddr = element_vaddr + element_byte
             vpage = vaddr // params.page_bytes
+            if vpage != last_tlb_vpage:
+                logger.info(
+                    'expected TLB use instr=%s element_index=%d ordinal=%d element_byte=%d vaddr=%d vpage=%d',
+                    instr, element_index, ordinal, element_byte, vaddr, vpage)
+                tlb_requests.append(vpage)
+                last_tlb_vpage = vpage
             ppage = make_translation(page_table, vpage, rnd)
             paddr = ppage * params.page_bytes + (vaddr % params.page_bytes)
             vstripe = vaddr // params.stripe_bytes
             pstripe = paddr // params.stripe_bytes
-            ordering = make_ordering(orderings, vstripe, rnd)
+            ordering = make_ordering(orderings, vstripe, params, rnd)
             mem_wf_bytes = bytes_from_ew(ordering['wf'])
             reg_byte = element_reg_byte + element_byte
             n_bytes = bytes_until_segment_boundary(
                 vaddr, paddr, reg_byte, data_bytes, mem_wf_bytes, params)
-            dst_index, dst_offset = memory_word_position(paddr, ordering['wf'], params)
+            mem_wf_index = paddr >> log2_int(mem_wf_bytes)
+            dst_index = mem_wf_index & (params.j_in_l - 1)
+            dst_offset = ((dst_index * mem_wf_bytes) + (paddr % mem_wf_bytes)) % params.word_bytes
             src_offset = reg_byte % params.word_bytes
             is_store = instr.mode == MODE_INDEX_STORE
             header = {
@@ -198,7 +221,7 @@ def expected_packets_for_instruction(
             remaining -= n_bytes
             element_byte += n_bytes
 
-    return packets
+    return packets, index_requests, tlb_requests
 
 
 def expected_commit_for_packets(packets: list[list[object]], params: ZamletParams) -> dict[str, object]:
@@ -210,6 +233,25 @@ def expected_commit_for_packets(packets: list[list[object]], params: ZamletParam
         'initiator': initiator,
         'walkState': JTE_WALK_NEEDS_PROCESSING if packets else JTE_WALK_DONE,
     }
+
+
+def make_random_instr_expectation(
+    rnd: Random,
+    params: ZamletParams,
+    content: list[int],
+    page_table: dict[int, int],
+    orderings: dict[int, dict[str, int]],
+    lane_index: int,
+    this_x: int,
+    this_y: int,
+) -> RandomInstrExpectation:
+    instr = make_random_instruction(rnd, params, lane_index)
+    packets, index_requests, tlb_requests = expected_packets_for_instruction(
+        instr, content, page_table, orderings, params, lane_index, this_x, this_y, rnd)
+    commit = expected_commit_for_packets(packets, params)
+    return RandomInstrExpectation(
+        instr=instr, packets=packets, commit=commit,
+        index_requests=index_requests, tlb_requests=tlb_requests)
 
 
 def make_random_instruction(
@@ -255,15 +297,17 @@ def make_random_instruction(
     )
 
 
-async def send_dispatch(dut: HierarchyObject, dispatch_queue: deque[RandomInstr]) -> None:
-    dut.io_input_valid.value = 0
+async def send_dispatch(rnd: Random, dut: HierarchyObject, dispatch_queue: deque[RandomInstr], p_valid: float = 0.5) -> None:
+    instr = None
     await triggers.RisingEdge(dut.clock)
     while True:
-        await triggers.ReadOnly()
-        dispatch_ready = int(dut.io_input_ready.value)
-        await triggers.RisingEdge(dut.clock)
-        if dispatch_queue and dispatch_ready:
+        if instr is None and dispatch_queue:
             instr = dispatch_queue.popleft()
+        if instr is not None:
+            valid = rnd.random() < p_valid
+        else:
+            valid = False
+        if valid:
             dut.io_input_valid.value = 1
             dut.io_input_bits_slot.value = 0
             dut.io_input_bits_instrIdent.value = 0
@@ -280,11 +324,22 @@ async def send_dispatch(dut: HierarchyObject, dispatch_queue: deque[RandomInstr]
             dut.io_input_bits_rfDataWF.value = instr.reg_wf
             dut.io_input_bits_rfDataEW.value = instr.data_ew
             dut.io_input_bits_rfIndexEW.value = instr.index_ew
-        elif dispatch_ready:
+        else:
             dut.io_input_valid.value = 0
+        await triggers.ReadOnly()
+        dispatch_ready = int(dut.io_input_ready.value)
+        if dispatch_ready and valid:
+            instr = None
+        await triggers.RisingEdge(dut.clock)
 
 
-async def req_resp_handler(dut, req_prefix: str, resp_prefix: str, mapping):
+async def req_resp_handler(
+    dut,
+    req_prefix: str,
+    resp_prefix: str,
+    mapping,
+    expected_requests: deque[object] | None = None,
+):
     await triggers.RisingEdge(dut.clock)
     addr_queue = deque()
     popped_addr = None
@@ -303,6 +358,25 @@ async def req_resp_handler(dut, req_prefix: str, resp_prefix: str, mapping):
         getattr(dut, req_prefix + 'ready').value = int(len(addr_queue) < 2)
         if popped_addr is None and addr_queue:
             popped_addr = addr_queue.popleft()
+            logger.info('%s request address %d', req_prefix, popped_addr)
+            if expected_requests is not None:
+                assert expected_requests, f'{req_prefix} unexpected request address {popped_addr}'
+                expected_request = expected_requests.popleft()
+                if isinstance(expected_request, tuple):
+                    expected_instr_index, expected_instr, expected_addr = expected_request
+                    expected_context = (
+                        f'\nexpected instruction index: {expected_instr_index}'
+                        f'\nexpected instruction: {expected_instr}'
+                    )
+                else:
+                    expected_addr = expected_request
+                    expected_context = ''
+                assert popped_addr == expected_addr, (
+                    f'{req_prefix} request mismatch\n'
+                    f'actual:   {popped_addr}\n'
+                    f'expected: {expected_addr}'
+                    f'{expected_context}'
+                )
         getattr(dut, resp_prefix + 'valid').value = int(popped_addr is not None)
         if popped_addr is not None:
             if isinstance(mapping, list):
@@ -310,6 +384,7 @@ async def req_resp_handler(dut, req_prefix: str, resp_prefix: str, mapping):
                     f'{req_prefix} requested out-of-range RF address {popped_addr}'
                 )
             elif popped_addr not in mapping:
+                logger.info('expected mapping for %s: %s', req_prefix, mapping)
                 raise AssertionError(f'{req_prefix} requested unmapped address {popped_addr}')
             mapped = mapping[popped_addr]
             if isinstance(mapped, dict):
@@ -319,11 +394,20 @@ async def req_resp_handler(dut, req_prefix: str, resp_prefix: str, mapping):
                 getattr(dut, resp_prefix + 'bits').value = mapped
 
 
-async def consume_packets(dut: HierarchyObject, packets: deque[list[object]]) -> None:
-    dut.io_packet_ready.value = 1
+async def random_packet_ready(rnd: Random, dut: HierarchyObject):
+    while True:
+        await triggers.RisingEdge(dut.clock)
+        dut.io_packet_ready.value = rnd.randint(0, 1)
+
+async def consume_and_check_packets(
+    rnd: Random,
+    dut: HierarchyObject,
+    packets_received: deque[list[object]],
+    packets_expected: deque[tuple[RandomInstr, list[object]]],
+) -> None:
     await triggers.ReadOnly()
     while True:
-        while not int(dut.io_packet_valid.value):
+        while not (int(dut.io_packet_valid.value) and int(dut.io_packet_ready.value)):
             await triggers.RisingEdge(dut.clock)
             await triggers.ReadOnly()
         assert int(dut.io_packet_bits_isHeader.value) == 1
@@ -332,33 +416,55 @@ async def consume_packets(dut: HierarchyObject, packets: deque[list[object]]) ->
         await triggers.RisingEdge(dut.clock)
         await triggers.ReadOnly()
         for _ in range(header['msg_length']):
-            while not int(dut.io_packet_valid.value):
+            while not (int(dut.io_packet_valid.value) and int(dut.io_packet_ready.value)):
                 await triggers.RisingEdge(dut.clock)
                 await triggers.ReadOnly()
             packet.append(int(dut.io_packet_bits_bits.value))
             await triggers.RisingEdge(dut.clock)
             await triggers.ReadOnly()
-        packets.append(packet)
+
+        packets_received.append(packet)
+        assert packets_expected, f'unexpected packet received: {packet}'
+        instr, expected_packet = packets_expected.popleft()
+        assert packet == expected_packet, (
+            f'instruction {instr} packet mismatch\n'
+            f'actual:   {packet}\n'
+            f'expected: {expected_packet}'
+        )
 
 
-async def consume_commits(
+async def consume_and_check_commits(
     dut: HierarchyObject,
-    commits: deque[dict[str, object]],
+    commits_received: deque[dict[str, object]],
+    commits_expected: deque[tuple[RandomInstr, dict[str, object]]],
     params: ZamletParams,
 ) -> None:
+    commit_index = 0
     await triggers.ReadOnly()
     while True:
         while not int(dut.io_commit_valid.value):
             await triggers.RisingEdge(dut.clock)
             await triggers.ReadOnly()
-        commits.append({
+        commit = {
             'slot': int(dut.io_commit_bits_slot.value),
             'initiator': [
                 int(getattr(dut, f'io_commit_bits_initiator_{i}').value)
                 for i in range(params.word_bytes)
             ],
             'walkState': int(dut.io_commit_bits_walkState.value),
-        })
+        }
+        commits_received.append(commit)
+        assert commits_expected, f'unexpected commit received: {commit}'
+        instr, expected_commit = commits_expected.popleft()
+        logger.info(
+            'commit %d actual=%s expected_instr=%s expected=%s',
+            commit_index, commit, instr, expected_commit)
+        assert commit == expected_commit, (
+            f'instruction {instr} commit mismatch\n'
+            f'actual:   {commit}\n'
+            f'expected: {expected_commit}'
+        )
+        commit_index += 1
         await triggers.RisingEdge(dut.clock)
         await triggers.ReadOnly()
 
@@ -384,53 +490,26 @@ async def wait_for_commits(
     assert len(commits) >= n_commits, f'timed out waiting for {n_commits} commits, got {len(commits)}'
 
 
-async def do_random_instruction(
-    rnd: Random,
-    dut: HierarchyObject,
-    params: ZamletParams,
-    dispatch_queue: deque[RandomInstr],
-    packets: deque[list[object]],
-    commits: deque[dict[str, object]],
-    content: list[int],
-    page_table: dict[int, int],
-    orderings: dict[int, dict[str, int]],
-    lane_index: int,
-    this_x: int,
-    this_y: int,
-) -> None:
-    instr = make_random_instruction(rnd, params, lane_index)
-    expected = expected_packets_for_instruction(
-        instr, content, page_table, orderings, params, lane_index, this_x, this_y, rnd)
-    expected_commit = expected_commit_for_packets(expected, params)
-    dispatch_queue.append(instr)
-    await wait_for_packets(dut, packets, len(expected))
-    await wait_for_commits(dut, commits, 1)
-    actual = [packets.popleft() for _ in expected]
-    actual_commit = commits.popleft()
-    if actual != expected:
-        for i, (actual_packet, expected_packet) in enumerate(zip(actual, expected)):
-            if actual_packet != expected_packet:
-                raise AssertionError(
-                    f'instruction {instr} packet {i} mismatch\n'
-                    f'actual:   {actual_packet}\n'
-                    f'expected: {expected_packet}\n'
-                    f'n_actual={len(actual)} n_expected={len(expected)}'
-                )
-        raise AssertionError(
-            f'instruction {instr} packet count/order mismatch\n'
-            f'actual:   {actual}\n'
-            f'expected: {expected}'
-        )
-    assert actual_commit == expected_commit, (
-        f'instruction {instr} commit mismatch\n'
-        f'actual:   {actual_commit}\n'
-        f'expected: {expected_commit}'
-    )
+def summarize_expected_packets(packets_expected: deque[tuple[RandomInstr, list[object]]]) -> str:
+    summary = []
+    current_instr = None
+    current_count = 0
+    for instr, _ in packets_expected:
+        if instr != current_instr:
+            if current_instr is not None:
+                summary.append(f'{current_instr}: {current_count}')
+            current_instr = instr
+            current_count = 1
+        else:
+            current_count += 1
+    if current_instr is not None:
+        summary.append(f'{current_instr}: {current_count}')
+    return '\n'.join(summary[:10])
 
 
 @cocotb.test()
 async def jteinitiator_random_test(dut: HierarchyObject) -> None:
-    rnd = Random(1)
+    rnd = Random(100)
     test_utils.configure_logging_sim("DEBUG")
     test_params = test_utils.get_test_params()
     with open(test_params['params_file']) as f:
@@ -446,27 +525,80 @@ async def jteinitiator_random_test(dut: HierarchyObject) -> None:
     cocotb.start_soon(clock.Clock(dut.clock, 2, 'ns').start())
 
     dispatch_queue = deque()
-    packets = deque()
-    commits = deque()
+    packets_received = deque()
+    commits_received = deque()
     content = [rnd.randrange(0, 1 << params.word_width) for _ in range(params.rf_slice_words)]
     page_table = {}
     orderings = {}
+    n_instructions = 1000
+    expectations = [
+        make_random_instr_expectation(
+            rnd, params, content, page_table, orderings, lane_index, this_x, this_y)
+        for _ in range(n_instructions)
+    ]
+    for i, expectation in enumerate(expectations):
+        logger.info(
+            'expected packets instruction %d instr=%s n_packets=%d',
+            i, expectation.instr, len(expectation.packets))
+        logger.info(
+            'expected index requests instruction %d: %s',
+            i, expectation.index_requests)
+        for j, packet in enumerate(expectation.packets):
+            logger.info('expected packet instruction %d packet %d: %s', i, j, packet)
+    instrs_to_send = deque(expectation.instr for expectation in expectations)
+    packets_expected = deque(
+        (expectation.instr, packet)
+        for expectation in expectations
+        for packet in expectation.packets
+    )
+    commits_expected = deque(
+        (expectation.instr, expectation.commit)
+        for expectation in expectations
+    )
+    for i, (instr, commit) in enumerate(commits_expected):
+        logger.info('expected commit %d instr=%s commit=%s', i, instr, commit)
+    index_requests_expected = deque(
+        (i, expectation.instr, request)
+        for i, expectation in enumerate(expectations)
+        for request in expectation.index_requests
+    )
+    tlb_requests_expected = deque(
+        request
+        for expectation in expectations
+        for request in expectation.tlb_requests
+    )
+    n_expected_packets = len(packets_expected)
+    n_expected_commits = len(commits_expected)
 
-    cocotb.start_soon(send_dispatch(dut, dispatch_queue))
-    cocotb.start_soon(req_resp_handler(dut, 'io_rfIndexReq_', 'io_rfIndexResp_', content))
+    cocotb.start_soon(send_dispatch(utils.create_rng(rnd), dut, dispatch_queue))
+    cocotb.start_soon(req_resp_handler(
+        dut, 'io_rfIndexReq_', 'io_rfIndexResp_', content, index_requests_expected))
     cocotb.start_soon(req_resp_handler(dut, 'io_rfDataReq_', 'io_rfDataResp_', content))
     cocotb.start_soon(req_resp_handler(dut, 'io_rfMaskReq_', 'io_rfMaskResp_', content))
-    cocotb.start_soon(req_resp_handler(dut, 'io_tlbReq_', 'io_tlbResp_', page_table))
+    cocotb.start_soon(req_resp_handler(
+        dut, 'io_tlbReq_', 'io_tlbResp_', page_table, tlb_requests_expected))
     cocotb.start_soon(req_resp_handler(dut, 'io_orderingReq_', 'io_orderingResp_', orderings))
-    cocotb.start_soon(consume_packets(dut, packets))
-    cocotb.start_soon(consume_commits(dut, commits, params))
+    cocotb.start_soon(random_packet_ready(utils.create_rng(rnd), dut))
+    cocotb.start_soon(consume_and_check_packets(utils.create_rng(rnd), dut, packets_received, packets_expected))
+    cocotb.start_soon(consume_and_check_commits(dut, commits_received, commits_expected, params))
 
     dut.reset.value = 1
     await triggers.RisingEdge(dut.clock)
     dut.reset.value = 0
     await triggers.RisingEdge(dut.clock)
 
-    for _ in range(1):
-        await do_random_instruction(
-            rnd, dut, params, dispatch_queue, packets, commits, content, page_table,
-            orderings, lane_index, this_x, this_y)
+    dispatch_queue.extend(instrs_to_send)
+    try:
+        await wait_for_packets(
+            dut, packets_received, n_expected_packets,
+            timeout_cycles=100 + 20 * n_expected_packets)
+    except AssertionError as exc:
+        raise AssertionError(
+            f'{exc}\nremaining expected packets by instruction:\n'
+            f'{summarize_expected_packets(packets_expected)}'
+        ) from exc
+    await wait_for_commits(dut, commits_received, n_expected_commits)
+    assert not index_requests_expected, f'missing expected index requests: {list(index_requests_expected)}'
+    assert not tlb_requests_expected, f'missing expected TLB requests: {list(tlb_requests_expected)}'
+    assert not packets_expected, f'missing expected packets: {list(packets_expected)}'
+    assert not commits_expected, f'missing expected commits: {list(commits_expected)}'

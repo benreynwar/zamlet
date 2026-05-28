@@ -61,8 +61,11 @@ class Kamlet(
   val jamlets = Seq.tabulate(params.jRows, params.jCols) { (jY, jX) =>
     val j = Module(new Jamlet(params))
     // Set position: absolute position = kamlet position * jamlets per kamlet + local position
-    j.io.thisX := io.kX * params.jCols.U + jX.U
-    j.io.thisY := io.kY * params.jRows.U + jY.U
+    val absoluteX = io.kX * params.jCols.U + jX.U
+    val absoluteY = io.kY * params.jRows.U + jY.U
+    j.io.thisX := absoluteX
+    j.io.thisY := absoluteY
+    j.io.laneIndex := absoluteY * params.jTotalCols.U + absoluteX
     j
   }
 
@@ -151,12 +154,22 @@ class Kamlet(
       // Internal west connections handled by east connections of neighbor
 
       // Tie off kamlet-facing ports for now (except jamlet 0,0 which forwards to InstrQueue)
-      j.io.witemCreate.valid := false.B
-      j.io.witemCreate.bits := DontCare
-      j.io.witemCacheAvail.valid := false.B
-      j.io.witemCacheAvail.bits := DontCare
-      j.io.witemRemove.valid := false.B
-      j.io.witemRemove.bits := DontCare
+      j.io.jteCreate.valid := false.B
+      j.io.jteCreate.bits := DontCare
+      j.io.jteClear.valid := false.B
+      j.io.jteClear.bits := DontCare
+      j.io.jteInputReq.ready := false.B
+      j.io.jteInputResp.valid := false.B
+      j.io.jteInputResp.bits := DontCare
+      j.io.tlbReq.ready := false.B
+      j.io.tlbResp.valid := false.B
+      j.io.tlbResp.bits := DontCare
+      j.io.orderingReq.ready := false.B
+      j.io.orderingResp.valid := false.B
+      j.io.orderingResp.bits := DontCare
+      j.io.cacheLineReq.ready := false.B
+      j.io.cacheLineResp.valid := false.B
+      j.io.cacheLineResp.bits := DontCare
       j.io.cacheSlotResp.valid := false.B
       j.io.cacheSlotResp.bits := DontCare
       j.io.sendCacheLine.valid := false.B

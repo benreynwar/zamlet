@@ -273,39 +273,132 @@ case class IssueUnitParams(
   killInputReg: Boolean = false
 )
 
+case class JteStateParams(
+  inputReqFB: Boolean = true,
+  inputReqBB: Boolean = true,
+  inputRespFB: Boolean = true,
+  inputRespBB: Boolean = true,
+  initiatorDispatchFB: Boolean = false,
+  initiatorDispatchBB: Boolean = false,
+  receiverUpdateFB: Boolean = false,
+  receiverUpdateBB: Boolean = false,
+  slotToRegReqFB: Boolean = false,
+  slotToRegReqBB: Boolean = false,
+  slotToRegRespFB: Boolean = false,
+  slotToRegRespBB: Boolean = false,
+  createBuffer: Boolean = true,
+  clearBuffer: Boolean = true,
+  initiatorCommitBuffer: Boolean = false,
+  dispatchABFB: Boolean = true,
+  dispatchABBB: Boolean = true,
+  dispatchBCFB: Boolean = true,
+  dispatchBCBB: Boolean = true,
+)
+
 case class JteInitiatorParams(
-  dispatchForwardBuffer: Boolean = false,
-  dispatchBackwardBuffer: Boolean = false,
+  inputFB: Boolean = false,
+  inputBB: Boolean = false,
+  rfDataReqFB: Boolean = true,
+  rfDataReqBB: Boolean = true,
+  rfMaskReqFB: Boolean = true,
+  rfMaskReqBB: Boolean = true,
+  rfIndexReqFB: Boolean = true,
+  rfIndexReqBB: Boolean = true,
+  abFB: Boolean = true,
+  abBB: Boolean = true,
+  bcFB: Boolean = true,
+  bcBB: Boolean = true,
+  rfMaskRespFB: Boolean = true,
+  rfMaskRespBB: Boolean = true,
+  rfDataRespFB: Boolean = true,
+  rfDataRespBB: Boolean = true,
+  rfIndexRespFB: Boolean = true,
+  rfIndexRespBB: Boolean = true,
+  cdFB: Boolean = true,
+  cdBB: Boolean = true,
+  deFB: Boolean = true,
+  deBB: Boolean = true,
+  tlbReqFB: Boolean = true,
+  tlbReqBB: Boolean = true,
+  orderingReqFB: Boolean = true,
+  orderingReqBB: Boolean = true,
+  efFB: Boolean = true,
+  efBB: Boolean = true,
+  fgFB: Boolean = true,
+  fgBB: Boolean = true,
+  ghFB: Boolean = true,
+  ghBB: Boolean = true,
+  tlbRespFB: Boolean = true,
+  tlbRespBB: Boolean = true,
+  orderingRespFB: Boolean = true,
+  orderingRespBB: Boolean = true,
+  commitBuffer: Boolean = false,
+  hiFB: Boolean = true,
+  hiBB: Boolean = true,
+  packetFB: Boolean = true,
+  packetBB: Boolean = true,
+)
 
-  rfMaskReqForwardBuffer: Boolean = false,
-  rfMaskReqBackwardBuffer: Boolean = false,
-  rfMaskRespForwardBuffer: Boolean = false,
-  rfMaskRespBackwardBuffer: Boolean = false,
-  rfIndexReqForwardBuffer: Boolean = false,
-  rfIndexReqBackwardBuffer: Boolean = false,
-  rfIndexRespForwardBuffer: Boolean = false,
-  rfIndexRespBackwardBuffer: Boolean = false,
-  rfDataReqForwardBuffer: Boolean = false,
-  rfDataReqBackwardBuffer: Boolean = false,
-  rfDataRespForwardBuffer: Boolean = false,
-  rfDataRespBackwardBuffer: Boolean = false,
+case class JteReceiverParams(
+  packetFB: Boolean = true,
+  packetBB: Boolean = true,
+  slotToRegReqFB: Boolean = false,
+  slotToRegReqBB: Boolean = false,
+  abFB: Boolean = true,
+  abBB: Boolean = true,
+  slotToRegRespFB: Boolean = false,
+  slotToRegRespBB: Boolean = false,
+  rfWriteReqFB: Boolean = true,
+  rfWriteReqBB: Boolean = true,
+  bcFB: Boolean = true,
+  bcBB: Boolean = true,
+  rfWriteRespFB: Boolean = true,
+  rfWriteRespBB: Boolean = true,
+  cdFB: Boolean = true,
+  cdBB: Boolean = true,
+  updateMsgFB: Boolean = false,
+  updateMsgBB: Boolean = false,
+)
 
-  sramReqForwardBuffer: Boolean = false,
-  sramReqBackwardBuffer: Boolean = false,
-  sramRespForwardBuffer: Boolean = false,
-  sramRespBackwardBuffer: Boolean = false,
+case class JteHandlerParams(
+  packetInFB: Boolean = true,
+  packetInBB: Boolean = true,
+  abFB: Boolean = true,
+  abBB: Boolean = true,
+  cacheLineReqFB: Boolean = true,
+  cacheLineReqBB: Boolean = true,
+  bcFB: Boolean = true,
+  bcBB: Boolean = true,
+  cdFB: Boolean = true,
+  cdBB: Boolean = true,
+  cacheLineRespFB: Boolean = true,
+  cacheLineRespBB: Boolean = true,
+  deFB: Boolean = true,
+  deBB: Boolean = true,
+  sramReqFB: Boolean = true,
+  sramReqBB: Boolean = true,
+  efFB: Boolean = true,
+  efBB: Boolean = true,
+  fgFB: Boolean = true,
+  fgBB: Boolean = true,
+  sramRespFB: Boolean = true,
+  sramRespBB: Boolean = true,
+  ghFB: Boolean = true,
+  ghBB: Boolean = true,
+  packetOutFB: Boolean = true,
+  packetOutBB: Boolean = true,
+)
 
-  tlbReqForwardBuffer: Boolean = false,
-  tlbReqBackwardBuffer: Boolean = false,
-  tlbRespForwardBuffer: Boolean = false,
-  tlbRespBackwardBuffer: Boolean = false,
-  kceReqForwardBuffer: Boolean = false,
-  kceReqBackwardBuffer: Boolean = false,
-  kceRespForwardBuffer: Boolean = false,
-  kceRespBackwardBuffer: Boolean = false,
-
-  ch1OutForwardBuffer: Boolean = false,
-  ch1OutBackwardBuffer: Boolean = false
+case class SramParams(
+  localA: Boolean = true,
+  localB: Boolean = false,
+  localC: Boolean = true,
+  jteAFB: Boolean = true,
+  jteABB: Boolean = true,
+  jteBFB: Boolean = false,
+  jteBBB: Boolean = false,
+  jteCFB: Boolean = true,
+  jteCBB: Boolean = true,
 )
 
 case class ZamletParams(
@@ -324,7 +417,7 @@ case class ZamletParams(
 
   // SRAM configuration
   sramDepth: Int = 256,      // Number of words in SRAM
-  cacheSlotWordsPerJamlet: Int = 4,  // Words per jamlet per cache slot
+  log2CacheSlotWordsPerJamlet: Int = 2,  // Words per jamlet per cache slot
 
   // Register file slice
   rfSliceWords: Int = 48,    // Number of words in RF slice
@@ -374,11 +467,15 @@ case class ZamletParams(
   // RfSlice configuration
   rfSliceParams: RfSliceParams = RfSliceParams(),
 
+  // JTE configuration
+  jteStateParams: JteStateParams = JteStateParams(),
+  jteInitiatorParams: JteInitiatorParams = JteInitiatorParams(),
+  jteReceiverParams: JteReceiverParams = JteReceiverParams(),
+  jteHandlerParams: JteHandlerParams = JteHandlerParams(),
+  sramParams: SramParams = SramParams(),
+
   messageLengthWidth: Int = 4,
   messageTypeWidth: Int = 6
-
-  // JTE initiator configuration
-  //jteInitiatorParams: JteInitiatorParams = JteInitiatorParams()
 
 ) {
   // Grid derived
@@ -416,6 +513,7 @@ case class ZamletParams(
 
   def pageWordsPerJamlet: Int = 1 << log2PageWordsPerJamlet
 
+  def cacheSlotWordsPerJamlet: Int = 1 << log2CacheSlotWordsPerJamlet
   def cacheSlotWords: Int = cacheSlotWordsPerJamlet * jInK
   def memBeatsPerCacheLine: Int = cacheSlotWords / memBeatWords
 
@@ -473,7 +571,11 @@ object ZamletParams {
   implicit val witemMonitorParamsDecoder: Decoder[WitemMonitorParams] = deriveDecoder[WitemMonitorParams]
   implicit val networkNodeParamsDecoder: Decoder[NetworkNodeParams] = deriveDecoder[NetworkNodeParams]
   implicit val issueUnitParamsDecoder: Decoder[IssueUnitParams] = deriveDecoder[IssueUnitParams]
-  //implicit val jteInitiatorParamsDecoder: Decoder[JteInitiatorParams] = deriveDecoder[JteInitiatorParams]
+  implicit val jteStateParamsDecoder: Decoder[JteStateParams] = deriveDecoder[JteStateParams]
+  implicit val jteInitiatorParamsDecoder: Decoder[JteInitiatorParams] = deriveDecoder[JteInitiatorParams]
+  implicit val jteReceiverParamsDecoder: Decoder[JteReceiverParams] = deriveDecoder[JteReceiverParams]
+  implicit val jteHandlerParamsDecoder: Decoder[JteHandlerParams] = deriveDecoder[JteHandlerParams]
+  implicit val sramParamsDecoder: Decoder[SramParams] = deriveDecoder[SramParams]
   implicit val zamletParamsDecoder: Decoder[ZamletParams] = deriveDecoder[ZamletParams]
 
   def fromFile(fileName: String): ZamletParams = {
