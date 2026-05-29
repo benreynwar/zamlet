@@ -131,6 +131,32 @@ class IdentHeader(params: ZamletParams) extends AbstractIdentHeader(params) {
   val _padding = UInt((params.wordWidth - identHeaderWidth).W)
 }
 
+abstract class AbstractPacketIHeader(params: ZamletParams) extends Bundle {
+  val dstIndex = UInt(16.W)
+  val sourceX = UInt(params.xPosWidth.W)
+  val sourceY = UInt(params.yPosWidth.W)
+  val length = UInt(PacketConstants.lengthWidth)
+  val messageType = MessageType()
+  val sendType = SendType()
+
+  def baseWidth: Int = 16 + params.xPosWidth + params.yPosWidth +
+    PacketConstants.lengthWidth.get + MessageType.getWidth + SendType.getWidth
+}
+
+class PacketIHeader(params: ZamletParams) extends AbstractPacketIHeader(params) {
+  val _padding = UInt((params.wordWidth - baseWidth).W)
+}
+
+abstract class AbstractIdentIHeader(params: ZamletParams) extends AbstractPacketIHeader(params) {
+  val ident = UInt(params.identWidth.W)
+
+  def identHeaderWidth: Int = baseWidth + params.identWidth
+}
+
+class IdentIHeader(params: ZamletParams) extends AbstractIdentIHeader(params) {
+  val _padding = UInt((params.wordWidth - identHeaderWidth).W)
+}
+
 /**
  * Abstract header with ident and tag for multi-response protocols.
  */
@@ -172,6 +198,16 @@ class AddressHeader(params: ZamletParams) extends AbstractAddressHeader(params) 
   val _padding = UInt((params.wordWidth - addressHeaderWidth).W)
 }
 
+abstract class AbstractCacheLineHeader(params: ZamletParams) extends AbstractPacketHeader(params) {
+  val slot = params.cacheSlot()
+
+  def cacheLineHeaderWidth: Int = baseWidth + params.cacheSlotWidth
+}
+
+class CacheLineHeader(params: ZamletParams) extends AbstractCacheLineHeader(params) {
+  val _padding = UInt((params.wordWidth - cacheLineHeaderWidth).W)
+}
+
 /**
  * Header for WriteMemWord requests.
  */
@@ -187,6 +223,30 @@ class WriteMemWordHeader(params: ZamletParams) extends AbstractTaggedHeader(para
 class ReadMemWordHeader(params: ZamletParams) extends AbstractTaggedHeader(params) {
   val fault = Bool()
   val _padding = UInt((params.wordWidth - taggedHeaderWidth - 1).W)
+}
+
+abstract class AbstractJteIHeader(params: ZamletParams) extends AbstractIdentIHeader(params) {
+  val nBytes = UInt((params.log2WordWidth - 3).W)
+  val dstOffset = UInt((params.log2WordWidth - 3).W)
+  val srcOffset = UInt((params.log2WordWidth - 3).W)
+  val slot = UInt(log2Ceil(params.witemTableDepth).W)
+
+  def jteHeaderWidth: Int = identHeaderWidth + 3 * (params.log2WordWidth - 3) +
+    log2Ceil(params.witemTableDepth)
+}
+
+class JteIHeader(params: ZamletParams) extends AbstractJteIHeader(params) {
+  val _padding = UInt((params.wordWidth - jteHeaderWidth).W)
+}
+
+abstract class AbstractJceIHeader(params: ZamletParams) extends AbstractPacketIHeader(params) {
+  val slot = params.cacheSlot()
+
+  def jceHeaderWidth: Int = baseWidth + params.cacheSlotWidth
+}
+
+class JceIHeader(params: ZamletParams) extends AbstractJceIHeader(params) {
+  val _padding = UInt((params.wordWidth - jceHeaderWidth).W)
 }
 
 /**

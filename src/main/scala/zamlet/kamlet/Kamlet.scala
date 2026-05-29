@@ -65,6 +65,8 @@ class Kamlet(
     val absoluteY = io.kY * params.jRows.U + jY.U
     j.io.thisX := absoluteX
     j.io.thisY := absoluteY
+    j.io.memletX := 0.U
+    j.io.memletY := 0.U
     j.io.laneIndex := absoluteY * params.jTotalCols.U + absoluteX
     j
   }
@@ -170,12 +172,8 @@ class Kamlet(
       j.io.cacheLineReq.ready := false.B
       j.io.cacheLineResp.valid := false.B
       j.io.cacheLineResp.bits := DontCare
-      j.io.cacheSlotResp.valid := false.B
-      j.io.cacheSlotResp.bits := DontCare
       j.io.sendCacheLine.valid := false.B
       j.io.sendCacheLine.bits := DontCare
-      j.io.kamletInjectPacket.valid := false.B
-      j.io.kamletInjectPacket.bits := DontCare
     }
   }
 

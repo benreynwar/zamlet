@@ -4,6 +4,7 @@ import chisel3._
 import chisel3.util._
 import zamlet.ZamletParams
 import zamlet.utils.DoubleBuffer
+import zamlet.network.{JteIHeader, MessageType, NetworkWord}
 
   // Receives packets on channel 0
   //
@@ -64,7 +65,7 @@ class JteReceiverAErrors extends Bundle {
 }
 
 class JteReceiverAIO(params: ZamletParams) extends Bundle {
-  val packet = Flipped(Decoupled(new WithHeader(params)))
+  val packet = Flipped(Decoupled(new NetworkWord(params)))
   val ab = Decoupled(new JteReceiverAB(params))
   val slotToRegReq = Decoupled(UInt(log2Ceil(params.witemTableDepth).W))
   val errors = new JteReceiverAErrors()
@@ -83,10 +84,10 @@ class JteReceiverA(params: ZamletParams) extends Module {
   val state = RegEnable(stateNext, stateInitial, fire)
   stateNext := state
 
-  val header = Wire(new Header(params))
-  header := io.packet.bits.bits.asTypeOf(new Header(params))
+  val header = Wire(new JteIHeader(params))
+  header := io.packet.bits.data.asTypeOf(new JteIHeader(params))
   when (state.isHeader) {
-    stateNext.remainingBodyWords := header.msgLength
+    stateNext.remainingBodyWords := header.length
   } .otherwise {
     stateNext.remainingBodyWords:= state.remainingBodyWords - 1.U
   }
@@ -94,14 +95,14 @@ class JteReceiverA(params: ZamletParams) extends Module {
   stateNext.isHeader := stateNext.remainingBodyWords === 0.U
 
   when (state.isHeader) {
-    stateNext.msgType := header.msgType
+    stateNext.msgType := header.messageType.asUInt
     stateNext.nBytes := header.nBytes
     stateNext.dstOffset := header.dstOffset
     stateNext.srcOffset := header.srcOffset
     stateNext.slot := header.slot
     stateNext.ident := header.ident
   } .otherwise {
-    stateNext.data := io.packet.bits.bits
+    stateNext.data := io.packet.bits.data
   }
 
   io.slotToRegReq.valid := stateNext.isHeader && io.packet.valid && io.ab.ready
@@ -128,7 +129,7 @@ class JteReceiverBIO(params: ZamletParams) extends Bundle {
 class JteReceiverB(params: ZamletParams) extends Module {
   val io = IO(new JteReceiverBIO(params))
 
-  val writeRf = io.ab.bits.msgType === MessageTypes.READ_RESPONSE.U
+  val writeRf = io.ab.bits.msgType === MessageType.LoadWordResp.asUInt
   val byteCount = Mux(io.ab.bits.nBytes === 0.U, params.wordBytes.U, io.ab.bits.nBytes)
   val srcAfterDst = io.ab.bits.srcOffset >= io.ab.bits.dstOffset
   val offsetDiff = Mux(srcAfterDst, io.ab.bits.srcOffset - io.ab.bits.dstOffset, io.ab.bits.dstOffset - io.ab.bits.srcOffset)
@@ -152,7 +153,8 @@ class JteReceiverB(params: ZamletParams) extends Module {
   io.bc.bits.nBytes := io.ab.bits.nBytes
   io.bc.bits.srcOffset := io.ab.bits.srcOffset
   io.bc.bits.wroteRf := writeRf
-  io.bc.bits.drop := io.ab.bits.msgType === MessageTypes.READ_DROP.U || io.ab.bits.msgType === MessageTypes.WRITE_DROP.U
+  io.bc.bits.drop := io.ab.bits.msgType === MessageType.LoadWordDrop.asUInt ||
+    io.ab.bits.msgType === MessageType.StoreWordDrop.asUInt
   io.ab.ready := io.bc.ready && io.slotToRegResp.valid && (!writeRf || io.rfWriteReq.ready)
   io.slotToRegResp.ready := io.ab.valid && io.bc.ready && (!writeRf || io.rfWriteReq.ready)
 }
@@ -191,7 +193,7 @@ class JteReceiverD(params: ZamletParams) extends Module {
 }
 
 class JteReceiverIO(params: ZamletParams) extends Bundle {
-  val packet = Flipped(Decoupled(new WithHeader(params)))
+  val packet = Flipped(Decoupled(new NetworkWord(params)))
   val slotToRegReq = Decoupled(UInt(log2Ceil(params.witemTableDepth).W))
   val slotToRegResp = Flipped(Decoupled(params.rfAddr()))
   val rfWriteReq = Decoupled(new RFWriteReq(params))

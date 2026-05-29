@@ -19,29 +19,14 @@ class ChannelsIO(params: ZamletParams, nChannels: Int) extends Bundle {
 }
 
 
-/** Cache slot request from jamlet (for RX-initiated witems) */
-class CacheSlotReq(params: ZamletParams) extends Bundle {
-  val kMAddr = UInt(32.W)  // TODO: proper width
-  val isWrite = Bool()
-  val instrIdent = params.ident()
-  val sourceX = params.xPos()
-  val sourceY = params.yPos()
-}
-
-/** Cache slot response from kamlet */
-class CacheSlotResp(params: ZamletParams) extends Bundle {
-  val instrIdent = params.ident()
-  val sourceX = params.xPos()
-  val sourceY = params.yPos()
-  val slot = params.cacheSlot()
-  val cacheIsAvail = Bool()
-}
-
 /** Command to send cache line data */
 class SendCacheLineCmd(params: ZamletParams) extends Bundle {
   val slot = params.cacheSlot()
-  val ident = params.ident()
-  val isWriteRead = Bool()
+}
+
+class JamletErrors extends Bundle {
+  val jte = new JteStateErrors()
+  val jce = new JceErrors()
 }
 
 /**
@@ -54,6 +39,8 @@ class Jamlet(params: ZamletParams) extends Module {
     // Position
     val thisX = Input(params.xPos())
     val thisY = Input(params.yPos())
+    val memletX = Input(params.xPos())
+    val memletY = Input(params.yPos())
     val laneIndex = Input(UInt(params.log2JInL.W))
 
     // A channels (always-consumable responses)
@@ -68,7 +55,7 @@ class Jamlet(params: ZamletParams) extends Module {
     val jteInputReq = Decoupled(UInt(log2Ceil(params.witemTableDepth).W))
     val jteInputResp = Flipped(Decoupled(new JteInitiatorInput(params)))
     val transferComplete = Output(Vec(params.witemTableDepth, Bool()))
-    val jteErrors = Output(new JteStateErrors())
+    val errors = Output(new JamletErrors())
     val tlbReq = Decoupled(UInt(params.pageAddrWidth.W))
     val tlbResp = Flipped(Decoupled(UInt(params.pageAddrWidth.W)))
     val orderingReq = Decoupled(UInt(params.memStripeAddrWidth.W))
@@ -79,17 +66,11 @@ class Jamlet(params: ZamletParams) extends Module {
     // Immediate kinstr execution (from kamlet) - for LoadImm, ALU ops, etc.
     val immediateKinstr = Flipped(Valid(new KinstrWithParams(params)))
 
-    // Cache slot interface (to/from kamlet)
-    val cacheSlotReq = Valid(new CacheSlotReq(params))
-    val cacheSlotResp = Flipped(Valid(new CacheSlotResp(params)))
-    val cacheStateUpdate = Valid(params.cacheSlot())
-
     // Cache line interface (from kamlet)
     val sendCacheLine = Flipped(Valid(new SendCacheLineCmd(params)))
-    val cacheResponse = Valid(params.ident())
+    val cacheResponse = Valid(params.cacheSlot())
 
     // Kamlet packet interface
-    val kamletInjectPacket = Flipped(Decoupled(new NetworkWord(params)))
     val kamletReceivePacket = Decoupled(new NetworkWord(params))
   })
 
@@ -102,8 +83,9 @@ class Jamlet(params: ZamletParams) extends Module {
   val sram = Module(new Sram(params))
   val rfSlice = Module(new RfSlice(params))
   val jte = Module(new Jte(params))
+  val jce = Module(new Jce(params))
   val localExec = Module(new LocalExec(params))
-  val bArbiter = Module(new PacketArbiter(params, 2))  // LocalExec + JTE Ch1
+  val bArbiter = Module(new PacketArbiter(params, 3))  // LocalExec + JTE Ch1 + JCE
   // val alu = Module(new ALU(params))
 
   // ============================================================
@@ -143,36 +125,42 @@ class Jamlet(params: ZamletParams) extends Module {
   val aHoHeader = combinedNetworkNode.io.aHo.bits.data.asTypeOf(new PacketHeader(params))
   val aHoIsInstruction = combinedNetworkNode.io.aHo.bits.isHeader &&
                          aHoHeader.messageType === MessageType.Instructions
+  val aHoIsJce = combinedNetworkNode.io.aHo.bits.isHeader &&
+    (aHoHeader.messageType === MessageType.ReadLineResp ||
+      aHoHeader.messageType === MessageType.WriteLineReadLineResp)
 
-  val jteChannel0In = Wire(Decoupled(new WithHeader(params)))
+  val jteChannel0In = Wire(Decoupled(new NetworkWord(params)))
   jte.io.channel0In <> jteChannel0In
-  jteChannel0In.valid := combinedNetworkNode.io.aHo.valid && !aHoIsInstruction
-  jteChannel0In.bits.isHeader := combinedNetworkNode.io.aHo.bits.isHeader
-  jteChannel0In.bits.bits := combinedNetworkNode.io.aHo.bits.data
+  jteChannel0In.valid := combinedNetworkNode.io.aHo.valid && !aHoIsInstruction && !aHoIsJce
+  jteChannel0In.bits := combinedNetworkNode.io.aHo.bits
+
+  jce.io.packetIn.valid := combinedNetworkNode.io.aHo.valid && aHoIsJce
+  jce.io.packetIn.bits := combinedNetworkNode.io.aHo.bits
 
   // When we see an instruction packet, forward to kamlet.
   io.kamletReceivePacket.valid := combinedNetworkNode.io.aHo.valid && aHoIsInstruction
   io.kamletReceivePacket.bits := combinedNetworkNode.io.aHo.bits
-  combinedNetworkNode.io.aHo.ready := Mux(aHoIsInstruction, io.kamletReceivePacket.ready, jteChannel0In.ready)
+  combinedNetworkNode.io.aHo.ready := Mux(
+    aHoIsInstruction,
+    io.kamletReceivePacket.ready,
+    Mux(aHoIsJce, jce.io.packetIn.ready, jteChannel0In.ready))
 
   // Ch0 local input: JTE responses/acks.
-  combinedNetworkNode.io.aHi.valid := jte.io.channel0Out.valid
-  combinedNetworkNode.io.aHi.bits.isHeader := jte.io.channel0Out.bits.isHeader
-  combinedNetworkNode.io.aHi.bits.data := jte.io.channel0Out.bits.bits
-  jte.io.channel0Out.ready := combinedNetworkNode.io.aHi.ready
+  combinedNetworkNode.io.aHi <> jte.io.channel0Out
 
   // B channel local ports
   // hi: arbiter output -> network (for outgoing packets like WriteMemWord)
   combinedNetworkNode.io.bHi <> bArbiter.io.out
   // ho: network -> JTE request handler.
-  jte.io.channel1In.valid := combinedNetworkNode.io.bHo.valid
-  jte.io.channel1In.bits.isHeader := combinedNetworkNode.io.bHo.bits.isHeader
-  jte.io.channel1In.bits.bits := combinedNetworkNode.io.bHo.bits.data
-  combinedNetworkNode.io.bHo.ready := jte.io.channel1In.ready
+  jte.io.channel1In <> combinedNetworkNode.io.bHo
 
   // --- SRAM connections ---
   sram.io.jteReq <> jte.io.sramReq
   jte.io.sramResp <> sram.io.jteResp
+  sram.io.jceReadReq <> jce.io.sramReadReq
+  jce.io.sramReadResp <> sram.io.jceReadResp
+  sram.io.jceWriteReq <> jce.io.sramWriteReq
+  jce.io.sramWriteResp <> sram.io.jceWriteResp
   sram.io.localReq.valid := false.B
   sram.io.localReq.bits := DontCare
 
@@ -213,19 +201,19 @@ class Jamlet(params: ZamletParams) extends Module {
 
   // B channel arbiter inputs: LocalExec (0) + JTE Ch1 requests (1)
   bArbiter.io.in(0) <> localExec.io.packetOut
-  bArbiter.io.in(1).valid := jte.io.channel1Out.valid
-  bArbiter.io.in(1).bits.isHeader := jte.io.channel1Out.bits.isHeader
-  bArbiter.io.in(1).bits.data := jte.io.channel1Out.bits.bits
-  jte.io.channel1Out.ready := bArbiter.io.in(1).ready
+  bArbiter.io.in(1) <> jte.io.channel1Out
+  bArbiter.io.in(2) <> jce.io.packetOut
+
+  // JCE connections
+  jce.io.memletX := io.memletX
+  jce.io.memletY := io.memletY
+  jce.io.thisX := io.thisX
+  jce.io.thisY := io.thisY
+  jce.io.op.valid := io.sendCacheLine.valid
+  jce.io.op.bits.slot := io.sendCacheLine.bits.slot
 
   // --- ALU connections ---
   // alu.io.dispatch := io.dispatch  // for immediate ALU ops
-
-  // --- Cache state update (after SRAM write) ---
-  // io.cacheStateUpdate := sram.io.slotModified
-
-  // --- Cache line interface ---
-  // io.cacheResponse := sram.io.cacheLineReceived
 
   // ============================================================
   // JTE connections
@@ -239,7 +227,8 @@ class Jamlet(params: ZamletParams) extends Module {
   io.jteInputReq <> jte.io.inputReq
   jte.io.inputResp <> io.jteInputResp
   io.transferComplete := jte.io.transferComplete
-  io.jteErrors := jte.io.errors
+  io.errors.jte := jte.io.errors
+  io.errors.jce := jce.io.errors
   io.tlbReq <> jte.io.tlbReq
   jte.io.tlbResp <> io.tlbResp
   io.orderingReq <> jte.io.orderingReq
@@ -255,16 +244,7 @@ class Jamlet(params: ZamletParams) extends Module {
   // Temporary: tie off non-network outputs
   // ============================================================
 
-  io.cacheSlotReq.valid := false.B
-  io.cacheSlotReq.bits := DontCare
-
-  io.cacheStateUpdate.valid := false.B
-  io.cacheStateUpdate.bits := DontCare
-
-  io.cacheResponse.valid := false.B
-  io.cacheResponse.bits := DontCare
-
-  io.kamletInjectPacket.ready := false.B
+  io.cacheResponse := jce.io.rxDone
 }
 
 /** Generator for Jamlet module */

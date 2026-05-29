@@ -267,5 +267,32 @@
     "jteBBB": false,
     "jteCFB": true,
     "jteCBB": true
+  },
+  "jceParams": {
+    "opFB": true,
+    "opBB": true,
+    "sramReadReqFB": true,
+    "sramReadReqBB": true,
+    "abFB": true,
+    "abBB": true,
+    "bcFB": true,
+    "bcBB": true,
+    "sramReadRespFB": true,
+    "sramReadRespBB": true,
+    "cdFB": true,
+    "cdBB": true,
+    "packetOutFB": true,
+    "packetOutBB": true,
+    "packetInFB": true,
+    "packetInBB": true,
+    "sramWriteReqFB": true,
+    "sramWriteReqBB": true,
+    "sramWriteRespFB": true,
+    "sramWriteRespBB": true,
+    "rxABFB": true,
+    "rxABBB": true,
+    "rxBCFB": true,
+    "rxBCBB": true,
+    "rxDoneFB": true
   }
 }

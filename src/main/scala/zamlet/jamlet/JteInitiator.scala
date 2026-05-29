@@ -11,6 +11,7 @@ import zamlet.ElementWidth
 import zamlet.LaneOrder
 import zamlet.WidthHelpers
 import zamlet.Utils
+import zamlet.network.{JteIHeader, MessageType, NetworkWord, SendType}
 
 object TransferMode extends ChiselEnum {
   val StrideLoad, StrideStore, IndexLoad, IndexStore, RegGather = Value
@@ -28,38 +29,6 @@ object JteInitiatorState extends ChiselEnum {
   val WaitingForFault = Value(2.U)
   val RequestSent = Value(3.U)
   val Complete = Value(4.U)
-}
-
-class WithHeader(params: ZamletParams) extends Bundle {
-  val isHeader = Bool()
-  val bits = params.word()
-}
-
-object MessageTypes {
-  val READ = 1
-  val WRITE = 2
-  val READ_RESPONSE = 3
-  val WRITE_RESPONSE = 4
-  val READ_DROP = 5
-  val WRITE_DROP = 6
-}
-
-class Header(params: ZamletParams) extends Bundle {
-  private val otherWidth = 32 - params.messageTypeWidth - params.messageLengthWidth -
-    3*(params.log2WordWidth - 3) - params.identWidth - log2Ceil(params.witemTableDepth)
-  require(otherWidth >= 0, s"JTE header has no room for slot: otherWidth=$otherWidth")
-
-  val dstIndex = UInt(16.W)
-  val srcX = UInt(8.W)
-  val srcY = UInt(8.W)
-  val msgType = UInt(params.messageTypeWidth.W)
-  val msgLength = UInt(params.messageLengthWidth.W)
-  val nBytes = UInt((params.log2WordWidth - 3).W)
-  val dstOffset = UInt((params.log2WordWidth - 3).W)
-  val srcOffset = UInt((params.log2WordWidth - 3).W)
-  val ident = params.ident()
-  val slot = UInt(log2Ceil(params.witemTableDepth).W)
-  val other = UInt(otherWidth.W)
 }
 
 // When the EW > 64 we send an instruction for each word and
@@ -732,7 +701,7 @@ class JteInitiatorH(params: ZamletParams) extends Module {
 
 class JteInitiatorIIO(params: ZamletParams) extends Bundle {
   val hi = Flipped(Decoupled(new JteInitiatorHI(params)))
-  val packet = Decoupled(new WithHeader(params))
+  val packet = Decoupled(new NetworkWord(params))
   val x = Input(UInt(8.W))
   val y = Input(UInt(8.W))
 }
@@ -744,39 +713,39 @@ class JteInitiatorI(params: ZamletParams) extends Module {
   val msgIndexNext = Wire(UInt(2.W))
   val msgIndex = RegEnable(msgIndexNext, 0.U, fire)
 
-  val header = Wire(new Header(params))
-  val headerAsInt = header.asUInt
+  val header = Wire(new JteIHeader(params))
+  header := 0.U.asTypeOf(new JteIHeader(params))
   header.dstIndex := io.hi.bits.dstLaneIndex
-  header.srcX := io.x
-  header.srcY := io.y
+  header.sourceX := io.x
+  header.sourceY := io.y
+  header.sendType := SendType.Single
   when (io.hi.bits.isStore) {
-    header.msgType := MessageTypes.WRITE.U
-    header.msgLength := 2.U
+    header.messageType := MessageType.StoreWordReq
+    header.length := 2.U
   } .otherwise {
-    header.msgType := MessageTypes.READ.U
-    header.msgLength := 1.U
+    header.messageType := MessageType.LoadWordReq
+    header.length := 1.U
   }
   header.nBytes := io.hi.bits.dstNBytes
   header.dstOffset := io.hi.bits.dstOffset
   header.srcOffset := io.hi.bits.srcOffset
   header.ident := io.hi.bits.instrIdent
   header.slot := io.hi.bits.slot
-  header.other := 0.U
 
   io.packet.valid := io.hi.valid
   io.packet.bits.isHeader := false.B
   val completeMessage = Wire(Bool())
   completeMessage := false.B
   when (msgIndex === 0.U) {
-    io.packet.bits.bits := header.asUInt
+    io.packet.bits.data := header.asUInt
     io.packet.bits.isHeader := true.B
   } .elsewhen (msgIndex === 1.U) {
-    io.packet.bits.bits := io.hi.bits.dstStripeAddr
+    io.packet.bits.data := io.hi.bits.dstStripeAddr
     when (!io.hi.bits.isStore) {
       completeMessage := true.B
     }
   } .otherwise {
-    io.packet.bits.bits := io.hi.bits.dstData
+    io.packet.bits.data := io.hi.bits.dstData
     completeMessage := true.B
   }
   io.hi.ready := io.packet.ready && completeMessage
@@ -797,7 +766,7 @@ class JteInitiatorIO(params: ZamletParams) extends Bundle {
   val tlbResp = Flipped(Decoupled(UInt(params.pageAddrWidth.W)))
   val orderingResp = Flipped(Decoupled(new Ordering))
   val commit = Valid(new JteInitiatorCommit(params))
-  val packet = Decoupled(new WithHeader(params))
+  val packet = Decoupled(new NetworkWord(params))
   val x = Input(UInt(8.W))
   val y = Input(UInt(8.W))
 }

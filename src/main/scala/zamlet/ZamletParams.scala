@@ -401,6 +401,34 @@ case class SramParams(
   jteCBB: Boolean = true,
 )
 
+case class JceParams(
+  opFB: Boolean = true,
+  opBB: Boolean = true,
+  sramReadReqFB: Boolean = true,
+  sramReadReqBB: Boolean = true,
+  abFB: Boolean = true,
+  abBB: Boolean = true,
+  bcFB: Boolean = true,
+  bcBB: Boolean = true,
+  sramReadRespFB: Boolean = true,
+  sramReadRespBB: Boolean = true,
+  cdFB: Boolean = true,
+  cdBB: Boolean = true,
+  packetOutFB: Boolean = true,
+  packetOutBB: Boolean = true,
+  packetInFB: Boolean = true,
+  packetInBB: Boolean = true,
+  sramWriteReqFB: Boolean = true,
+  sramWriteReqBB: Boolean = true,
+  sramWriteRespFB: Boolean = true,
+  sramWriteRespBB: Boolean = true,
+  rxABFB: Boolean = true,
+  rxABBB: Boolean = true,
+  rxBCFB: Boolean = true,
+  rxBCBB: Boolean = true,
+  rxDoneFB: Boolean = true,
+)
+
 case class ZamletParams(
   // Position widths
   xPosWidth: Int = 8,
@@ -473,6 +501,7 @@ case class ZamletParams(
   jteReceiverParams: JteReceiverParams = JteReceiverParams(),
   jteHandlerParams: JteHandlerParams = JteHandlerParams(),
   sramParams: SramParams = SramParams(),
+  jceParams: JceParams = JceParams(),
 
   messageLengthWidth: Int = 4,
   messageTypeWidth: Int = 6
@@ -537,6 +566,7 @@ case class ZamletParams(
   def log2StripesInPage: Int = log2PageWordsPerJamlet
 
   def pageAddrWidth: Int = memAddrWidth - log2PageWordsPerJamlet - log2JInL
+  def cacheLineAddrWidth: Int = memAddrWidth - log2CacheSlotWordsPerJamlet - log2JInL
 
   // Calculated parameters
   def wordWidth: Int = wordBytes * 8
@@ -557,6 +587,7 @@ case class ZamletParams(
   def yPos(): UInt = UInt(yPosWidth.W)
   def ident(): UInt = UInt(identWidth.W)
   def cacheSlot(): UInt = UInt(cacheSlotWidth.W)
+  def cacheLineAddr(): UInt = UInt(cacheLineAddrWidth.W)
   def word(): UInt = UInt(wordWidth.W)
   def memAddr(): UInt = UInt(memAddrWidth.W)
   def elementIndex(): UInt = UInt(elementIndexWidth.W)
@@ -576,6 +607,7 @@ object ZamletParams {
   implicit val jteReceiverParamsDecoder: Decoder[JteReceiverParams] = deriveDecoder[JteReceiverParams]
   implicit val jteHandlerParamsDecoder: Decoder[JteHandlerParams] = deriveDecoder[JteHandlerParams]
   implicit val sramParamsDecoder: Decoder[SramParams] = deriveDecoder[SramParams]
+  implicit val jceParamsDecoder: Decoder[JceParams] = deriveDecoder[JceParams]
   implicit val zamletParamsDecoder: Decoder[ZamletParams] = deriveDecoder[ZamletParams]
 
   def fromFile(fileName: String): ZamletParams = {

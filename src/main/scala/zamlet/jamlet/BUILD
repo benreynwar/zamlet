@@ -57,6 +57,14 @@ chisel_binary(
 )
 
 chisel_binary(
+    name = "jce",
+    srcs = [":jamlet_sources"] + JAMLET_COMMON_SRCS,
+    main_class = "zamlet.jamlet.JceMain",
+    deps = JAMLET_DEPS,
+    visibility = ["//visibility:public"],
+)
+
+chisel_binary(
     name = "witemmonitor",
     srcs = [":jamlet_sources"] + JAMLET_COMMON_SRCS,
     main_class = "zamlet.jamlet.WitemMonitorMain",

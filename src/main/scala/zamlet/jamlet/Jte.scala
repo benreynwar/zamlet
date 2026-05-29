@@ -4,6 +4,7 @@ import chisel3._
 import chisel3.util._
 import zamlet.Ordering
 import zamlet.ZamletParams
+import zamlet.network.NetworkWord
 
 class JteIO(params: ZamletParams) extends Bundle {
   val laneIndex = Input(UInt(params.log2JInL.W))
@@ -17,10 +18,10 @@ class JteIO(params: ZamletParams) extends Bundle {
   val transferComplete = Output(Vec(params.witemTableDepth, Bool()))
   val errors = Output(new JteStateErrors())
 
-  val channel0In = Flipped(Decoupled(new WithHeader(params)))
-  val channel1In = Flipped(Decoupled(new WithHeader(params)))
-  val channel0Out = Decoupled(new WithHeader(params))
-  val channel1Out = Decoupled(new WithHeader(params))
+  val channel0In = Flipped(Decoupled(new NetworkWord(params)))
+  val channel1In = Flipped(Decoupled(new NetworkWord(params)))
+  val channel0Out = Decoupled(new NetworkWord(params))
+  val channel1Out = Decoupled(new NetworkWord(params))
 
   val rfMaskReq = Decoupled(params.rfAddr())
   val rfMaskResp = Flipped(Decoupled(params.word()))
