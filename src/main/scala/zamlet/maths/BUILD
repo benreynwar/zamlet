@@ -17,6 +17,7 @@ MATHS_DEPS = [
 
 MATHS_COMMON_SRCS = [
     "//src/main/scala/zamlet:ModuleGenerator.scala",
+    "//src/main/scala/zamlet/utils:utils_sources",
 ]
 
 chisel_binary(
@@ -31,6 +32,22 @@ chisel_binary(
     name = "wallace_mult",
     srcs = [":maths_sources"] + MATHS_COMMON_SRCS,
     main_class = "zamlet.maths.WallaceMultMain",
+    deps = MATHS_DEPS,
+    visibility = ["//visibility:public"],
+)
+
+chisel_binary(
+    name = "segmented_multiplier",
+    srcs = [":maths_sources"] + MATHS_COMMON_SRCS,
+    main_class = "zamlet.maths.SegmentedMultiplierMain",
+    deps = MATHS_DEPS,
+    visibility = ["//visibility:public"],
+)
+
+chisel_binary(
+    name = "segmented_prefix_adder",
+    srcs = [":maths_sources"] + MATHS_COMMON_SRCS,
+    main_class = "zamlet.maths.SegmentedPrefixAdderMain",
     deps = MATHS_DEPS,
     visibility = ["//visibility:public"],
 )
