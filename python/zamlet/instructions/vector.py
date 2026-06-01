@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 
 from zamlet.kamlet import kinstructions
 from zamlet import addresses
-from zamlet.addresses import Ordering, WordOrder
+from zamlet.addresses import Ordering
 from zamlet.register_names import reg_name, freg_name
 from zamlet.monitor import CompletionType, SpanType
 from zamlet.lamlet import ident_query

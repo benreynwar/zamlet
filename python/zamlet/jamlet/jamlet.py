@@ -55,7 +55,7 @@ class Jamlet:
         # The register file in this jamlet.  It's referred to as a register file
         # slice since it's part of a logically larger register file.
         rf_slice_bytes = (params.maxvl_bytes // params.k_cols // params.k_rows //
-                          params.j_cols // params.j_rows * params.n_vregs)
+                          params.j_cols // params.j_rows * params.rf_slice_words)
         self.rf_slice = bytearray([0] * rf_slice_bytes)
 
         # The jamlet contains some SRAM. Currently this is used as cache.

@@ -148,7 +148,7 @@ async def basic_sync_test(dut: HierarchyObject) -> None:
     2. All 8 neighbors send their sync packets
     3. All 8 outgoing packets are sent
     """
-    sync_ident = 42
+    sync_ident = 2
     local_value = 100
 
     # Send local event
@@ -238,7 +238,7 @@ async def outgoing_packets_test(dut: HierarchyObject) -> None:
     Send local event and verify that packets are sent to all directions
     once the send conditions are met.
     """
-    sync_ident = 7
+    sync_ident = 3
     local_value = 50
 
     # Start collector coroutine

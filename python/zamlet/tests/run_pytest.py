@@ -25,4 +25,11 @@ if total_shards > 0:
     if status_file:
         open(status_file, 'a').close()
 
-sys.exit(pytest.main(sys.argv[1:], plugins=plugins))
+exit_code = pytest.main(sys.argv[1:], plugins=plugins)
+if (
+    total_shards > 0
+    and shard_index > 0
+    and exit_code == pytest.ExitCode.NO_TESTS_COLLECTED
+):
+    exit_code = pytest.ExitCode.OK
+sys.exit(exit_code)

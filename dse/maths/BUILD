@@ -1,5 +1,6 @@
 load("//bazel:verilog.bzl", "chisel_dse_module")
 load("//bazel/flow:defs.bzl",
+    "librelane_classic_flow",
     "librelane_classic_bundled_flow",
     "librelane_compare_flows_test",
     "librelane_flow_inputs",
@@ -27,6 +28,35 @@ WALLACE_MULT_CONFIGS = [
     input_delay_constraint = "40",
     output_delay_constraint = "40",
 ) for name in WALLACE_MULT_CONFIGS]
+
+SEGMENTED_MULT_WIDTHS = [
+    16,
+    32,
+    64,
+]
+
+[genrule(
+    name = "SegmentedMultiplier{}x{}_verilog".format(width, width),
+    outs = ["SegmentedMultiplier{}x{}.sv".format(width, width)],
+    cmd = """
+    TMPDIR=$$(mktemp -d)
+    $(location //src/main/scala/zamlet/maths:segmented_multiplier) $$TMPDIR {width} 4
+    cat $$TMPDIR/*.sv > $@
+    rm -rf $$TMPDIR
+    """.format(width = width),
+    tools = ["//src/main/scala/zamlet/maths:segmented_multiplier"],
+) for width in SEGMENTED_MULT_WIDTHS]
+
+[librelane_classic_flow(
+    name = "SegmentedMultiplier{}x{}_sky130hd".format(width, width),
+    verilog_files = [":SegmentedMultiplier{}x{}.sv".format(width, width)],
+    top = "SegmentedMultiplier{}x{}".format(width, width),
+    pdk = ":sky130hd",
+    clock_period = "14.0",
+    core_utilization = "40",
+    input_delay_constraint = "40",
+    output_delay_constraint = "40",
+) for width in SEGMENTED_MULT_WIDTHS]
 
 # Bundled flow for validation (same attrs as classic_flow)
 librelane_classic_bundled_flow(

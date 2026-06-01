@@ -16,7 +16,8 @@ import pytest
 
 from zamlet.params import ZamletParams
 from zamlet.geometries import SMALL_GEOMETRIES, scale_n_tests
-from zamlet.addresses import Ordering, WordOrder, KMAddr
+from zamlet.addresses import Ordering, KMAddr
+from zamlet.lane_order import LaneOrder
 from zamlet.transactions.load import Load
 from zamlet.transactions.j2j_mapping import RegMemMapping, get_mapping_from_reg, get_mapping_from_mem
 
@@ -37,8 +38,8 @@ def create_test_params(k_cols: int = 2, k_rows: int = 1,
 def create_load_instr(params: ZamletParams, mem_ew: int, reg_ew: int,
                       start_index: int, n_elements: int,
                       mem_offset: int = 0) -> Load:
-    mem_ordering = Ordering(word_order=WordOrder.STANDARD, ew=mem_ew)
-    reg_ordering = Ordering(word_order=WordOrder.STANDARD, ew=reg_ew)
+    mem_ordering = Ordering(word_order=LaneOrder.ROW_MAJOR, ew=mem_ew)
+    reg_ordering = Ordering(word_order=LaneOrder.ROW_MAJOR, ew=reg_ew)
 
     k_maddr = KMAddr(
         k_index=0,

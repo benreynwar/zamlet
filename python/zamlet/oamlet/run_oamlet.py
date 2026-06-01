@@ -8,7 +8,8 @@ from zamlet import program_info
 from zamlet.oamlet import oamlet
 from zamlet.runner import Clock
 from zamlet.params import ZamletParams
-from zamlet.addresses import GlobalAddress, MemoryType, Ordering, WordOrder
+from zamlet.addresses import GlobalAddress, MemoryType, Ordering
+from zamlet.lane_order import LaneOrder
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +37,7 @@ def write_span_trees(lam):
 
 
 async def run(clock: Clock, filename, params: ZamletParams = None,
-              word_order: WordOrder = WordOrder.STANDARD,
+              word_order: LaneOrder = LaneOrder.ROW_MAJOR,
               symbol_values: dict = None):
     p_info = program_info.get_program_info(filename)
 
@@ -162,7 +163,7 @@ async def run(clock: Clock, filename, params: ZamletParams = None,
 
 
 async def main(clock, filename, params: ZamletParams = None,
-               word_order: WordOrder = WordOrder.STANDARD,
+               word_order: LaneOrder = LaneOrder.ROW_MAJOR,
                symbol_values: dict = None) -> int:
     clock.register_main()
     run_task = clock.create_task(

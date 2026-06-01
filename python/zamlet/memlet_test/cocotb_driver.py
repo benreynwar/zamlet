@@ -129,8 +129,15 @@ class CocotbDriver(MemletDriver):
                     header = int_to_header(data, self.params)
                     remaining = header.length
                     packet = [header]
-                    logger.debug(f"[{sig_name}] msg={header.message_type}"
-                                 f" ident={header.ident} len={header.length}")
+                    header_parts = [
+                        f"msg={header.message_type}",
+                        f"len={header.length}",
+                    ]
+                    if hasattr(header, 'ident'):
+                        header_parts.append(f"ident={header.ident}")
+                    if hasattr(header, 'slot'):
+                        header_parts.append(f"slot={header.slot}")
+                    logger.debug(f"[{sig_name}] {' '.join(header_parts)}")
                 else:
                     packet.append(data)
                     remaining -= 1

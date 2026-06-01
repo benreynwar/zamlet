@@ -2,8 +2,9 @@ package zamlet.jamlet
 
 import chisel3._
 import chisel3.util._
+import zamlet.{LaneOrder, Ordering}
 import zamlet.ZamletParams
-import zamlet.network.{CombinedNetworkNode, NetworkWord, PacketArbiter, PacketHeader, MessageType}
+import zamlet.network.{CombinedNetworkNode, NetworkWord, PacketArbiter, MessageType}
 
 /** Network channels IO - Vec of channels for each direction */
 class ChannelsIO(params: ZamletParams, nChannels: Int) extends Bundle {
@@ -18,29 +19,16 @@ class ChannelsIO(params: ZamletParams, nChannels: Int) extends Bundle {
 }
 
 
-/** Cache slot request from jamlet (for RX-initiated witems) */
-class CacheSlotReq(params: ZamletParams) extends Bundle {
-  val kMAddr = UInt(32.W)  // TODO: proper width
-  val isWrite = Bool()
-  val instrIdent = params.ident()
-  val sourceX = params.xPos()
-  val sourceY = params.yPos()
-}
-
-/** Cache slot response from kamlet */
-class CacheSlotResp(params: ZamletParams) extends Bundle {
-  val instrIdent = params.ident()
-  val sourceX = params.xPos()
-  val sourceY = params.yPos()
-  val slot = params.cacheSlot()
-  val cacheIsAvail = Bool()
-}
-
 /** Command to send cache line data */
 class SendCacheLineCmd(params: ZamletParams) extends Bundle {
   val slot = params.cacheSlot()
-  val ident = params.ident()
-  val isWriteRead = Bool()
+}
+
+class JamletErrors extends Bundle {
+  val jte = new JteStateErrors()
+  val jce = new JceErrors()
+  val localExec = new LocalExecErrors()
+  val aHoRouter = new PacketRouterErrors()
 }
 
 /**
@@ -53,6 +41,9 @@ class Jamlet(params: ZamletParams) extends Module {
     // Position
     val thisX = Input(params.xPos())
     val thisY = Input(params.yPos())
+    val memletX = Input(params.xPos())
+    val memletY = Input(params.yPos())
+    val laneIndices = Input(Vec(LaneOrder.count, UInt(params.log2JInL.W)))
 
     // A channels (always-consumable responses)
     val aChannels = new ChannelsIO(params, params.nAChannels)
@@ -60,26 +51,28 @@ class Jamlet(params: ZamletParams) extends Module {
     // B channels (requests)
     val bChannels = new ChannelsIO(params, params.nBChannels)
 
-    // Instruction interface (from kamlet)
-    val witemCreate = Flipped(Valid(new WitemCreate(params)))
-    val witemCacheAvail = Flipped(Valid(params.ident()))
-    val witemRemove = Flipped(Valid(params.ident()))
-    val witemComplete = Valid(params.ident())
+    // JTE interface (from/to KTE)
+    val jteCreate = Flipped(Valid(new JteCreate(params)))
+    val jteClear = Flipped(Valid(UInt(log2Ceil(params.witemTableDepth).W)))
+    val jteInputReq = Decoupled(UInt(log2Ceil(params.witemTableDepth).W))
+    val jteInputResp = Flipped(Decoupled(new JteInitiatorInput(params)))
+    val transferComplete = Output(Vec(params.witemTableDepth, Bool()))
+    val errors = Output(new JamletErrors())
+    val tlbReq = Decoupled(UInt(params.pageAddrWidth.W))
+    val tlbResp = Flipped(Decoupled(UInt(params.pageAddrWidth.W)))
+    val orderingReq = Decoupled(UInt(params.memStripeAddrWidth.W))
+    val orderingResp = Flipped(Decoupled(new Ordering))
+    val cacheLineReq = Decoupled(new CacheLineRequest(params))
+    val cacheLineResp = Flipped(Decoupled(new CacheLineResponse(params)))
 
     // Immediate kinstr execution (from kamlet) - for LoadImm, ALU ops, etc.
     val immediateKinstr = Flipped(Valid(new KinstrWithParams(params)))
 
-    // Cache slot interface (to/from kamlet)
-    val cacheSlotReq = Valid(new CacheSlotReq(params))
-    val cacheSlotResp = Flipped(Valid(new CacheSlotResp(params)))
-    val cacheStateUpdate = Valid(params.cacheSlot())
-
     // Cache line interface (from kamlet)
     val sendCacheLine = Flipped(Valid(new SendCacheLineCmd(params)))
-    val cacheResponse = Valid(params.ident())
+    val cacheResponse = Valid(params.cacheSlot())
 
     // Kamlet packet interface
-    val kamletInjectPacket = Flipped(Decoupled(new NetworkWord(params)))
     val kamletReceivePacket = Decoupled(new NetworkWord(params))
   })
 
@@ -89,16 +82,12 @@ class Jamlet(params: ZamletParams) extends Module {
 
   val combinedNetworkNode = Module(new CombinedNetworkNode(params))
 
-  // TODO: instantiate when ready
-  // val sram = Module(new Sram(params))
+  val sram = Module(new Sram(params))
   val rfSlice = Module(new RfSlice(params))
-  // val witemTable = Module(new WitemTable(params))
-  // val rxA = Module(new RxA(params))
-  // val rxB = Module(new RxB(params))
-  val witemMonitor = Module(new WitemMonitor(params))
+  val jte = Module(new Jte(params))
+  val jce = Module(new Jce(params))
   val localExec = Module(new LocalExec(params))
-  // val aArbiter = Module(new ChArbiter(params))
-  val bArbiter = Module(new PacketArbiter(params, 2))  // LocalExec + WitemMonitor
+  val bArbiter = Module(new PacketArbiter(params, 2))  // JTE Ch1 + JCE
   // val alu = Module(new ALU(params))
 
   // ============================================================
@@ -134,144 +123,154 @@ class Jamlet(params: ZamletParams) extends Module {
   // Forward instruction packets to kamlet
   // ============================================================
 
-  // A channel local output: forward instruction packets to kamlet
-  val aHoHeader = combinedNetworkNode.io.aHo.bits.data.asTypeOf(new PacketHeader(params))
-  val aHoIsInstruction = combinedNetworkNode.io.aHo.bits.isHeader &&
-                         aHoHeader.messageType === MessageType.Instructions
+  val aHoRouter = Module(new PacketRouter(params, Seq(
+    Seq(MessageType.Instructions),
+    Seq(MessageType.ReadLineResp, MessageType.WriteLineReadLineResp),
+    Seq(
+      MessageType.Send,
+      MessageType.WriteLineResp,
+      MessageType.LoadJ2JWordsResp,
+      MessageType.LoadJ2JWordsDrop,
+      MessageType.LoadJ2JWordsRetry,
+      MessageType.StoreJ2JWordsResp,
+      MessageType.StoreJ2JWordsDrop,
+      MessageType.StoreJ2JWordsRetry,
+      MessageType.LoadWordResp,
+      MessageType.LoadWordDrop,
+      MessageType.LoadWordRetry,
+      MessageType.StoreWordResp,
+      MessageType.StoreWordDrop,
+      MessageType.StoreWordRetry,
+      MessageType.ReadMemWordResp,
+      MessageType.ReadMemWordDrop,
+      MessageType.WriteMemWordResp,
+      MessageType.WriteMemWordDrop,
+      MessageType.WriteMemWordRetry,
+      MessageType.IdentQueryResp,
+      MessageType.LoadIndexedElementResp,
+      MessageType.StoreIndexedElementResp),
+  )))
+  aHoRouter.io.in <> combinedNetworkNode.io.aHo
 
-  // When we see an instruction packet, forward to kamlet
-  io.kamletReceivePacket.valid := combinedNetworkNode.io.aHo.valid
-  io.kamletReceivePacket.bits := combinedNetworkNode.io.aHo.bits
-  combinedNetworkNode.io.aHo.ready := io.kamletReceivePacket.ready
+  val jteChannel0In = Wire(Decoupled(new NetworkWord(params)))
+  jte.io.channel0In <> jteChannel0In
+  jteChannel0In <> aHoRouter.io.out(2)
 
-  // Tie off local input until TX arbiters exist
-  combinedNetworkNode.io.aHi.valid := false.B
-  combinedNetworkNode.io.aHi.bits := DontCare
+  jce.io.packetIn <> aHoRouter.io.out(1)
+
+  // When we see an instruction packet, forward to kamlet.
+  io.kamletReceivePacket <> aHoRouter.io.out(0)
+
+  // Ch0 local input: JTE responses/acks.
+  combinedNetworkNode.io.aHi <> jte.io.channel0Out
 
   // B channel local ports
-  // hi: arbiter output -> network (for outgoing packets like WriteMemWord)
+  // hi: arbiter output -> network
   combinedNetworkNode.io.bHi <> bArbiter.io.out
-  // ho: network -> local receivers (tie off until RxB exists)
-  combinedNetworkNode.io.bHo.ready := false.B
-
-  // --- Network node local ports to RX handlers ---
-  // rxA.io.packetIn <> combinedNetworkNode.io.aHo
-  // rxB.io.packetIn <> combinedNetworkNode.io.bHo
-
-  // --- Arbiters to network node local inputs ---
-  // combinedNetworkNode.io.aHi <> aArbiter.io.packetOut
-  // combinedNetworkNode.io.bHi <> bArbiter.io.packetOut
-
-  // --- A arbiter inputs (responses: RxA, RxB, WitemMonitor) ---
-  // aArbiter.io.rxA <> rxA.io.respOut
-  // aArbiter.io.rxB <> rxB.io.respOut
-  // aArbiter.io.witemMonitor <> witemMonitor.io.aOut
-
-  // --- B arbiter inputs (requests: RxB, WitemMonitor) ---
-  // bArbiter.io.rxB <> rxB.io.reqOut
-  // bArbiter.io.witemMonitor <> witemMonitor.io.bOut
-
-  // --- WitemTable connections ---
-  // witemTable.io.dispatch := io.dispatch
-  // witemTable.io.cacheAvail := io.witemCacheAvail
-  // witemTable.io.remove := io.witemRemove
-  // io.witemComplete := witemTable.io.complete
-
-  // --- WitemMonitor scans WitemTable ---
-  // witemMonitor.io.witemRead <> witemTable.io.monitorPort
-  // witemMonitor.io.witemUpdate <> witemTable.io.updatePort
+  // ho: network -> JTE request handler.
+  jte.io.channel1In <> combinedNetworkNode.io.bHo
 
   // --- SRAM connections ---
-  // sram.io.rxARead <> rxA.io.sramRead
-  // sram.io.rxAWrite <> rxA.io.sramWrite
-  // sram.io.rxBRead <> rxB.io.sramRead
-  // sram.io.rxBWrite <> rxB.io.sramWrite
-  // sram.io.witemMonitorRead <> witemMonitor.io.sramRead
-  // sram.io.sendCacheLine := io.sendCacheLine
+  sram.io.jteReq <> jte.io.sramReq
+  jte.io.sramResp <> sram.io.jteResp
+  sram.io.jceReadReq <> jce.io.sramReadReq
+  jce.io.sramReadResp <> sram.io.jceReadResp
+  sram.io.jceWriteReq <> jce.io.sramWriteReq
+  jce.io.sramWriteResp <> sram.io.jceWriteResp
+  sram.io.localReq <> localExec.io.sramReq
+  localExec.io.sramResp <> sram.io.localResp
 
   // --- RfSlice connections ---
-  // WitemMonitor RF ports
-  rfSlice.io.maskReq <> witemMonitor.io.maskRfReq
-  rfSlice.io.maskResp <> witemMonitor.io.maskRfResp
-  rfSlice.io.indexReq <> witemMonitor.io.indexRfReq
-  rfSlice.io.indexResp <> witemMonitor.io.indexRfResp
-  rfSlice.io.dataReq <> witemMonitor.io.dataRfReq
-  rfSlice.io.dataResp <> witemMonitor.io.dataRfResp
+  rfSlice.io.maskReq.valid := jte.io.rfMaskReq.valid
+  rfSlice.io.maskReq.bits.addr := jte.io.rfMaskReq.bits
+  rfSlice.io.maskReq.bits.isWrite := false.B
+  rfSlice.io.maskReq.bits.writeData := DontCare
+  rfSlice.io.maskReq.bits.writeMask := DontCare
+  jte.io.rfMaskReq.ready := rfSlice.io.maskReq.ready
+  jte.io.rfMaskResp.valid := rfSlice.io.maskResp.valid
+  jte.io.rfMaskResp.bits := rfSlice.io.maskResp.bits.readData
+  rfSlice.io.maskResp.ready := jte.io.rfMaskResp.ready
+
+  rfSlice.io.indexReq.valid := jte.io.rfIndexReq.valid
+  rfSlice.io.indexReq.bits.addr := jte.io.rfIndexReq.bits
+  rfSlice.io.indexReq.bits.isWrite := false.B
+  rfSlice.io.indexReq.bits.writeData := DontCare
+  rfSlice.io.indexReq.bits.writeMask := DontCare
+  jte.io.rfIndexReq.ready := rfSlice.io.indexReq.ready
+  jte.io.rfIndexResp.valid := rfSlice.io.indexResp.valid
+  jte.io.rfIndexResp.bits := rfSlice.io.indexResp.bits.readData
+  rfSlice.io.indexResp.ready := jte.io.rfIndexResp.ready
+
+  rfSlice.io.dataReq.valid := jte.io.rfDataReq.valid
+  rfSlice.io.dataReq.bits.addr := jte.io.rfDataReq.bits
+  rfSlice.io.dataReq.bits.isWrite := false.B
+  rfSlice.io.dataReq.bits.writeData := DontCare
+  rfSlice.io.dataReq.bits.writeMask := DontCare
+  jte.io.rfDataReq.ready := rfSlice.io.dataReq.ready
+  jte.io.rfDataResp.valid := rfSlice.io.dataResp.valid
+  jte.io.rfDataResp.bits := rfSlice.io.dataResp.bits.readData
+  rfSlice.io.dataResp.ready := jte.io.rfDataResp.ready
 
   // LocalExec connections
-  localExec.io.thisX := io.thisX
-  localExec.io.thisY := io.thisY
+  localExec.io.laneIndex := io.laneIndices(io.immediateKinstr.bits.ordering.laneOrder.asUInt)
   localExec.io.kinstrIn := io.immediateKinstr
-  rfSlice.io.localExecReq <> localExec.io.rfReq
-  rfSlice.io.localExecResp <> localExec.io.rfResp
+  rfSlice.io.localExecReadAReq <> localExec.io.rfReadAReq
+  localExec.io.rfReadAResp <> rfSlice.io.localExecReadAResp
+  rfSlice.io.localExecReadBReq <> localExec.io.rfReadBReq
+  localExec.io.rfReadBResp <> rfSlice.io.localExecReadBResp
+  rfSlice.io.localExecReadMaskReq <> localExec.io.rfReadMaskReq
+  localExec.io.rfReadMaskResp <> rfSlice.io.localExecReadMaskResp
+  rfSlice.io.localExecWriteReq <> localExec.io.rfWriteReq
 
-  // B channel arbiter inputs: LocalExec (0) + WitemMonitor (1)
-  bArbiter.io.in(0) <> localExec.io.packetOut
-  bArbiter.io.in(1) <> witemMonitor.io.packetOut
+  // B channel arbiter inputs: JTE Ch1 requests + JCE
+  val jteChannel1Out = Module(new INetworkWordToNetworkWord(params))
+  jteChannel1Out.io.in <> jte.io.channel1Out
+  bArbiter.io.in(0) <> jteChannel1Out.io.out
+  bArbiter.io.in(1) <> jce.io.packetOut
+
+  // JCE connections
+  jce.io.memletX := io.memletX
+  jce.io.memletY := io.memletY
+  jce.io.thisX := io.thisX
+  jce.io.thisY := io.thisY
+  jce.io.op.valid := io.sendCacheLine.valid
+  jce.io.op.bits.slot := io.sendCacheLine.bits.slot
 
   // --- ALU connections ---
   // alu.io.dispatch := io.dispatch  // for immediate ALU ops
 
-  // --- Cache slot interface (RX-initiated witems) ---
-  // io.cacheSlotReq <> rxB.io.cacheSlotReq
-  // rxB.io.cacheSlotResp := io.cacheSlotResp
-
-  // --- Cache state update (after SRAM write) ---
-  // io.cacheStateUpdate := sram.io.slotModified
-
-  // --- Cache line interface ---
-  // io.cacheResponse := sram.io.cacheLineReceived
-
-  // --- Kamlet packet interface ---
-  // bArbiter.io.kamletInject <> io.kamletInjectPacket
-  // io.kamletReceivePacket <> rxB.io.kamletForward  // instructions forwarded to kamlet
-
   // ============================================================
-  // WitemMonitor connections
+  // JTE connections
   // ============================================================
 
-  witemMonitor.io.thisX := io.thisX
-  witemMonitor.io.thisY := io.thisY
-  witemMonitor.io.witemCreate := io.witemCreate
-  witemMonitor.io.witemCacheAvail := io.witemCacheAvail
-  witemMonitor.io.witemRemove := io.witemRemove
-  io.witemComplete := witemMonitor.io.witemComplete
+  jte.io.laneIndex := io.laneIndices(LaneOrder.ROW_MAJOR.asUInt)
+  jte.io.x := io.thisX
+  jte.io.y := io.thisY
+  jte.io.create := io.jteCreate
+  jte.io.clear := io.jteClear
+  io.jteInputReq <> jte.io.inputReq
+  jte.io.inputResp <> io.jteInputResp
+  io.transferComplete := jte.io.transferComplete
+  io.errors.jte := jte.io.errors
+  io.errors.jce := jce.io.errors
+  io.errors.localExec := localExec.io.errors
+  io.errors.aHoRouter := aHoRouter.io.errors
+  io.tlbReq <> jte.io.tlbReq
+  jte.io.tlbResp <> io.tlbResp
+  io.orderingReq <> jte.io.orderingReq
+  jte.io.orderingResp <> io.orderingResp
+  io.cacheLineReq <> jte.io.cacheLineReq
+  jte.io.cacheLineResp <> io.cacheLineResp
 
-  // Tie off unconnected WitemMonitor ports
-  witemMonitor.io.witemInfoReq.ready := true.B
-  witemMonitor.io.witemInfoResp.valid := false.B
-  witemMonitor.io.witemInfoResp.bits := DontCare
-  witemMonitor.io.witemSrcUpdate.valid := false.B
-  witemMonitor.io.witemSrcUpdate.bits := DontCare
-  witemMonitor.io.witemDstUpdate.valid := false.B
-  witemMonitor.io.witemDstUpdate.bits := DontCare
-  witemMonitor.io.witemFaultSync.valid := false.B
-  witemMonitor.io.witemFaultSync.bits := DontCare
-  witemMonitor.io.witemCompletionSync.valid := false.B
-  witemMonitor.io.witemCompletionSync.bits := DontCare
-  witemMonitor.io.tlbReq.ready := true.B
-  witemMonitor.io.tlbResp.valid := false.B
-  witemMonitor.io.tlbResp.bits := DontCare
-  witemMonitor.io.sramResp.valid := false.B
-  witemMonitor.io.sramResp.bits := DontCare
-  witemMonitor.io.sramReq.ready := false.B
-  // RF ports connected to RfSlice above
-  // packetOut connected to bArbiter above
+  // Resource interfaces still need top-level arbiters.
+  rfSlice.io.jteWriteReq <> jte.io.rfWriteReq
+  jte.io.rfWriteResp <> rfSlice.io.jteWriteResp
 
   // ============================================================
   // Temporary: tie off non-network outputs
   // ============================================================
 
-  io.cacheSlotReq.valid := false.B
-  io.cacheSlotReq.bits := DontCare
-
-  io.cacheStateUpdate.valid := false.B
-  io.cacheStateUpdate.bits := DontCare
-
-  io.cacheResponse.valid := false.B
-  io.cacheResponse.bits := DontCare
-
-  io.kamletInjectPacket.ready := false.B
+  io.cacheResponse := jce.io.rxDone
 }
 
 /** Generator for Jamlet module */

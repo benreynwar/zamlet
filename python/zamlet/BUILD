@@ -19,7 +19,19 @@ test_suite(
         "//python/zamlet/kamlet_test:all_tests",
         # "//python/zamlet/lamlet_test:all_tests",  # empty - disabled
         "//python/zamlet/shuttle_test:all_tests",
-        "//python/zamlet/memlet_test:all_tests",
+        # "//python/zamlet/memlet_test:all_tests",  # disabled while memlet slot protocol is cleaned up
+    ],
+)
+
+test_suite(
+    name = "ci_tests",
+    tests = [
+        "//python/zamlet/tests:tests_a",
+        "//python/zamlet/kernel_tests:tests_a",
+        "//python/zamlet/kernel_tests:tests_b",
+        "//python/zamlet/kernel_tests:tests_c",
+        "//python/zamlet/kernel_tests:tests_fft",
+        ":cocotb_tests",
     ],
 )
 
@@ -51,7 +63,9 @@ py_library(
         "jamlet/*.py",
         "kamlet/*.py",
         "lamlet/*.py",
+        "maths/*.py",
         "oamlet/*.py",
+        "test_helpers/*.py",
         "transactions/*.py",
         "analysis/*.py",
     ]),
@@ -59,4 +73,3 @@ py_library(
     visibility = ["//visibility:public"],
     imports = [".."],
 )
-

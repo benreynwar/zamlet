@@ -6,7 +6,7 @@ from random import Random
 from typing import List
 
 from zamlet import utils
-from zamlet.addresses import GlobalAddress, MemoryType, Ordering, WordOrder
+from zamlet.addresses import GlobalAddress, MemoryType, Ordering
 from zamlet.oamlet.oamlet import Oamlet
 from zamlet.monitor import CompletionType, SpanType
 from zamlet.params import ZamletParams
@@ -403,19 +403,19 @@ def random_stride(rnd: Random, element_bytes: int, page_bytes: int) -> int:
 def max_vl_for_indexed(params: 'ZamletParams', data_ew: int, index_ew: int) -> int:
     """Calculate max vl that fits in available registers for indexed ops.
 
-    Indexed ops need: ceil(vl/d) + ceil(vl/i) + 1 <= n_vregs
+    Indexed ops need: ceil(vl/d) + ceil(vl/i) + 1 <= rf_slice_words
     where d = data elements per reg, i = index elements per reg,
     and ceil(vl/d) = (vl + d - 1) // d.
 
     Since (vl + d - 1) // d <= vl/d + 1:
-        vl/d + vl/i + 2 + 1 <= n_vregs
-        vl * (d + i) / (d * i) <= n_vregs - 3
-        vl <= (n_vregs - 3) * d * i / (d + i)
+        vl/d + vl/i + 2 + 1 <= rf_slice_words
+        vl * (d + i) / (d * i) <= rf_slice_words - 3
+        vl <= (rf_slice_words - 3) * d * i / (d + i)
     """
     vline_bits = params.vline_bytes * 8
     d = vline_bits // data_ew
     i = vline_bits // index_ew
-    available = params.n_vregs - 3
+    available = params.rf_slice_words - 3
     return available * d * i // (d + i)
 
 
@@ -488,6 +488,4 @@ def generate_mask_pattern(vl: int, pattern_type: str, rnd: Random) -> list[bool]
         return [(i < vl // 2) for i in range(vl)]
     else:
         raise ValueError(f"Unknown mask pattern type: {pattern_type}")
-
-
 

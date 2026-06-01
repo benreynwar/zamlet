@@ -260,7 +260,7 @@ class WaitingLoadGatherBase(WaitingItem, ABC):
         """
         instr = self.item
         dst_vw = addresses.j_coords_to_vw_index(
-            jamlet.params, word_order=instr.dst_ordering.word_order, jx=jamlet.jx, jy=jamlet.jy)
+            jamlet.params, instr.dst_ordering.word_order, jx=jamlet.jx, jy=jamlet.jy)
         dst_ew = instr.dst_ordering.ew
         dst_wb = tag * 8
         assert (dst_ew % 8) == 0

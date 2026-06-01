@@ -1,6 +1,7 @@
 from enum import Enum, IntEnum
 import dataclasses
 from dataclasses import dataclass
+from types import SimpleNamespace
 
 from zamlet.addresses import TLBFaultType, VectorFaultInfo
 from zamlet.control_structures import pack_fields_to_int, unpack_int_to_fields
@@ -209,6 +210,121 @@ class RegElementHeader(TaggedHeader):
     n_bytes: int = 0           # 3 bits - number of bytes to read
 
 
+def _jte_slot_width(params) -> int:
+    return (params.witem_table_depth - 1).bit_length()
+
+
+def _indexed_dst_width(params) -> int:
+    return params.x_pos_width + params.y_pos_width
+
+
+def _jte_tail_width(params) -> int:
+    return 3 * params.log2_word_bytes + _jte_slot_width(params)
+
+
+def _jte_tail_fields(params) -> list[tuple[str, int]]:
+    return [
+        ('n_bytes_encoded', params.log2_word_bytes),
+        ('dst_offset', params.log2_word_bytes),
+        ('src_offset', params.log2_word_bytes),
+        ('slot', _jte_slot_width(params)),
+    ]
+
+
+def _encode_jte_n_bytes(n_bytes: int, params) -> int:
+    assert 1 <= n_bytes <= params.word_bytes
+    return 0 if n_bytes == params.word_bytes else n_bytes
+
+
+def _decode_jte_n_bytes(n_bytes_encoded: int, params) -> int:
+    return params.word_bytes if n_bytes_encoded == 0 else n_bytes_encoded
+
+
+def _decode_header_enums(fields: dict[str, int]) -> None:
+    fields['message_type'] = MessageType(fields['message_type'])
+    fields['send_type'] = SendType(fields['send_type'])
+
+
+@dataclass
+class JteHeader(IdentHeader):
+    n_bytes: int
+    dst_offset: int
+    src_offset: int
+    slot: int
+
+    @staticmethod
+    def fields(params):
+        used = params._ident_header_width + _jte_tail_width(params)
+        return params.abstract_ident_header_fields + _jte_tail_fields(params) + [
+            ('_padding', params.word_width - used),
+        ]
+
+    def encode(self, params) -> int:
+        values = dataclasses.asdict(self)
+        values['n_bytes_encoded'] = _encode_jte_n_bytes(self.n_bytes, params)
+        return pack_fields_to_int(SimpleNamespace(**values), self.fields(params))
+
+    @classmethod
+    def decode(cls, value: int, params) -> 'JteHeader':
+        fields = unpack_int_to_fields(value, cls.fields(params))
+        fields.pop('_padding', None)
+        fields['n_bytes'] = _decode_jte_n_bytes(fields.pop('n_bytes_encoded'), params)
+        _decode_header_enums(fields)
+        return cls(**fields)
+
+
+@dataclass
+class JteIHeader:
+    dst_index: int
+    source_x: int
+    source_y: int
+    length: int
+    message_type: MessageType
+    send_type: SendType
+    ident: int
+    n_bytes: int
+    dst_offset: int
+    src_offset: int
+    slot: int
+
+    @staticmethod
+    def fields(params):
+        used = (
+            _indexed_dst_width(params)
+            + params.x_pos_width
+            + params.y_pos_width
+            + params.message_length_width
+            + params.message_type_width
+            + 1
+            + params.ident_width
+            + _jte_tail_width(params)
+        )
+        return [
+            ('dst_index', _indexed_dst_width(params)),
+            ('source_x', params.x_pos_width),
+            ('source_y', params.y_pos_width),
+            ('length', params.message_length_width),
+            ('message_type', params.message_type_width),
+            ('send_type', 1),
+            ('ident', params.ident_width),
+            *_jte_tail_fields(params),
+            ('_padding', params.word_width - used),
+        ]
+
+    def encode(self, params) -> int:
+        values = dataclasses.asdict(self)
+        values['n_bytes_encoded'] = _encode_jte_n_bytes(self.n_bytes, params)
+        return pack_fields_to_int(SimpleNamespace(**values), self.fields(params))
+
+    @classmethod
+    def decode(cls, value: int, params) -> 'JteIHeader':
+        fields = unpack_int_to_fields(value, cls.fields(params))
+        fields.pop('_padding', None)
+        fields['n_bytes'] = _decode_jte_n_bytes(fields.pop('n_bytes_encoded'), params)
+        _decode_header_enums(fields)
+        return cls(**fields)
+
+
 @dataclass
 class AddressHeader(IdentHeader):
     address: int   # 16 bits
@@ -219,6 +335,30 @@ class AddressHeader(IdentHeader):
     @classmethod
     def decode(cls, value: int, params) -> 'AddressHeader':
         return cls(**unpack_int_to_fields(value, params.address_header_fields))
+
+
+@dataclass
+class CacheLineHeader(Header):
+    slot: int
+
+    @staticmethod
+    def fields(params):
+        used = params._base_header_width + params.cache_slot_width
+        return params.abstract_base_header_fields + [
+            ('slot', params.cache_slot_width),
+            ('_padding', params.word_bytes * 8 - used),
+        ]
+
+    def encode(self, params) -> int:
+        return pack_fields_to_int(self, self.fields(params))
+
+    @classmethod
+    def decode(cls, value: int, params) -> 'CacheLineHeader':
+        fields = unpack_int_to_fields(value, cls.fields(params))
+        fields.pop('_padding', None)
+        fields['message_type'] = MessageType(fields['message_type'])
+        fields['send_type'] = SendType(fields['send_type'])
+        return cls(**fields)
 
 
 @dataclass
@@ -321,6 +461,23 @@ CACHE_LINE_MESSAGE_TYPES = {
     MessageType.WRITE_LINE_READ_LINE_ADDR,
 }
 
+CACHE_LINE_HEADER_MESSAGE_TYPES = {
+    MessageType.READ_LINE_RESP,
+    MessageType.WRITE_LINE_READ_LINE_RESP,
+    MessageType.WRITE_LINE_DATA,
+}
+
+JTE_HEADER_MESSAGE_TYPES = {
+    MessageType.LOAD_WORD_REQ,
+    MessageType.LOAD_WORD_RESP,
+    MessageType.LOAD_WORD_DROP,
+    MessageType.LOAD_WORD_RETRY,
+    MessageType.STORE_WORD_REQ,
+    MessageType.STORE_WORD_RESP,
+    MessageType.STORE_WORD_DROP,
+    MessageType.STORE_WORD_RETRY,
+}
+
 
 def is_request_message(msg_type: MessageType) -> bool:
     """Return True if this message type expects a response."""
@@ -330,17 +487,20 @@ def is_request_message(msg_type: MessageType) -> bool:
 # Message types that use AddressHeader (have an address field)
 ADDRESS_HEADER_MESSAGE_TYPES = {
     MessageType.WRITE_LINE_ADDR, MessageType.WRITE_LINE_RESP,
-    MessageType.READ_LINE_ADDR, MessageType.READ_LINE_RESP,
+    MessageType.READ_LINE_ADDR,
     MessageType.WRITE_LINE_READ_LINE_ADDR,
-    MessageType.WRITE_LINE_READ_LINE_RESP,
-    MessageType.WRITE_LINE_DATA,
 }
 
 
 def int_to_header(value: int, params) -> Header:
     """Decode an integer into the appropriate Header subclass."""
-    fields = unpack_int_to_fields(value, params.address_header_fields)
+    fields = unpack_int_to_fields(value, params.base_header_fields)
     msg_type = MessageType(fields['message_type'])
+    if msg_type in CACHE_LINE_HEADER_MESSAGE_TYPES:
+        return CacheLineHeader.decode(value, params)
+    if msg_type in JTE_HEADER_MESSAGE_TYPES:
+        return JteHeader.decode(value, params)
+    fields = unpack_int_to_fields(value, params.address_header_fields)
     if msg_type in ADDRESS_HEADER_MESSAGE_TYPES:
         return AddressHeader(**fields)
     ident_fields = unpack_int_to_fields(value, params.ident_header_fields)
@@ -349,7 +509,10 @@ def int_to_header(value: int, params) -> Header:
 
 def header_to_int(header: Header, params) -> int:
     """Encode a Header to an integer."""
+    if isinstance(header, CacheLineHeader):
+        return header.encode(params)
+    if isinstance(header, JteHeader):
+        return header.encode(params)
     if isinstance(header, AddressHeader):
         return pack_fields_to_int(header, params.address_header_fields)
     return pack_fields_to_int(header, params.ident_header_fields)
-

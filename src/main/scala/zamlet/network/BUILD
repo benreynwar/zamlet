@@ -16,8 +16,7 @@ NETWORK_DEPS = [
 ]
 
 NETWORK_COMMON_SRCS = [
-    "//src/main/scala/zamlet:ModuleGenerator.scala",
-    "//src/main/scala/zamlet:ZamletParams.scala",
+    "//src/main/scala/zamlet:zamlet_common_sources",
     "//src/main/scala/zamlet/utils:utils_sources",
 ]
 

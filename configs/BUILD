@@ -8,6 +8,9 @@ KAMLET_CONFIG_FILES = [
 # List of Zamlet config JSON files
 ZAMLET_CONFIG_FILES = [
     "zamlet_default.json",
+    "zamlet_16lanes.json",
+    "zamlet_64lanes.json",
+    "zamlet_1024lanes.json",
 ]
 
 # List of Maths config JSON files

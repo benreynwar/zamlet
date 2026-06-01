@@ -22,7 +22,7 @@ from zamlet.runner import Clock
 from zamlet.params import ZamletParams
 from zamlet.geometries import SMALL_GEOMETRIES, scale_n_tests
 from zamlet.oamlet.oamlet import Oamlet
-from zamlet.addresses import GlobalAddress, MemoryType, Ordering, WordOrder
+from zamlet.addresses import GlobalAddress, MemoryType, Ordering
 from zamlet.monitor import CompletionType, SpanType
 from zamlet.tests import test_utils
 from zamlet.tests.test_utils import pack_elements, unpack_elements

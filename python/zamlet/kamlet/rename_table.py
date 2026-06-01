@@ -9,7 +9,7 @@ up the current phys for each source. The scoreboard sees phys indices.
 Arch names are split in two bands:
 
   - Names 0..N_ARCH_VREGS-1 are ISA arch regs (always mapped on init).
-  - Names N_ARCH_VREGS..n_vregs-1 are scratch names used by compound lamlet
+  - Names N_ARCH_VREGS..rf_slice_words-1 are scratch names used by compound lamlet
     ops. They start unmapped; their phys slots sit in the free queue. A
     kinstr writing a scratch arch calls `allocate_write` which maps it; a
     `FreeRegister(arch)` kinstr calls `free_register` which unmaps it and
@@ -42,9 +42,9 @@ class RegisterRenameTable:
     N_ARCH_VREGS = 32
 
     def __init__(self, params: ZamletParams):
-        n_phys = params.n_vregs
+        n_phys = params.rf_slice_words
         assert n_phys > self.N_ARCH_VREGS, \
-            f"params.n_vregs={n_phys} must be > {self.N_ARCH_VREGS}"
+            f"params.rf_slice_words={n_phys} must be > {self.N_ARCH_VREGS}"
         self.n_phys = n_phys
         # arch[i] is the phys currently mapped to arch index i. Only
         # meaningful where valid[i] is True.

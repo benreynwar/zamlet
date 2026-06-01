@@ -227,6 +227,9 @@ class Memlet(params: ZamletParams) extends Module {
   // ============================================================
 
   for (r <- 1 until nRouters) {
+    slices(r).io.completeEnq.ready := false.B
+    slices(r).io.gatheringFree.valid := false.B
+    slices(r).io.gatheringFree.bits := DontCare
     slices(r).io.writeLineRespEnq.valid := false.B
     slices(r).io.writeLineRespEnq.bits := DontCare
   }

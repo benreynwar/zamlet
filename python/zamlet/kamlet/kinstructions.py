@@ -19,6 +19,7 @@ from enum import Enum, IntEnum
 
 from zamlet import addresses
 from zamlet.addresses import KMAddr, GlobalAddress
+from zamlet.lane_order import LaneOrder
 from zamlet.params import ZamletParams
 from zamlet.control_structures import pack_fields_to_int
 from zamlet.message import IdentHeader, MessageType, SendType, WriteMemWordHeader
@@ -280,6 +281,10 @@ class KInstrOpcode(IntEnum):
     LOAD_IMM = 6
     WRITE_PARAM = 7
     STORE_SCALAR = 8
+    ADD = 9
+    SUB = 10
+    MUL = 11
+    MUL_HIGH = 12
 
 
 KINSTR_WIDTH = 64
@@ -308,6 +313,134 @@ class SyncTrigger(KInstr):
 
     def encode(self) -> int:
         return pack_fields_to_int(self, self.FIELD_SPECS)
+
+
+@dataclass
+class PackedLoadImm(KInstr):
+    rf_addr: int
+    section: int
+    byte_mask: int
+    data: int
+    j_in_k_index: int = 0
+    opcode: int = KInstrOpcode.LOAD_IMM
+
+    @staticmethod
+    def field_specs(params) -> list[tuple[str, int]]:
+        section_width = params.log2_word_bytes - 2
+        used_width = (
+            OPCODE_WIDTH
+            + params.log2_j_in_k
+            + params.rf_addr_width
+            + section_width
+            + 4
+            + 32
+        )
+        return [
+            ('opcode', OPCODE_WIDTH),
+            ('j_in_k_index', params.log2_j_in_k),
+            ('rf_addr', params.rf_addr_width),
+            ('section', section_width),
+            ('byte_mask', 4),
+            ('data', 32),
+            ('_padding', KINSTR_WIDTH - used_width),
+        ]
+
+    def encode(self, params) -> int:
+        return pack_fields_to_int(self, self.field_specs(params))
+
+
+@dataclass
+class PackedLoadStoreSimple(KInstr):
+    rf_addr: int
+    end_index: int
+    opcode: int
+    base_addr_param_idx: int = 0
+    mask_reg: int = 0
+    ew: int = 6
+    start_index_param_idx: int = 0
+    mask_enabled: bool = False
+
+    @staticmethod
+    def field_specs(params) -> list[tuple[str, int]]:
+        used_width = (
+            OPCODE_WIDTH
+            + params.rf_addr_width
+            + params.log2_n_params
+            + params.rf_addr_width
+            + 4
+            + params.log2_n_params
+            + params.end_element_index_width
+            + 1
+        )
+        return [
+            ('opcode', OPCODE_WIDTH),
+            ('rf_addr', params.rf_addr_width),
+            ('base_addr_param_idx', params.log2_n_params),
+            ('mask_reg', params.rf_addr_width),
+            ('ew', 4),
+            ('start_index_param_idx', params.log2_n_params),
+            ('end_index', params.end_element_index_width),
+            ('mask_enabled', 1),
+            ('_padding', KINSTR_WIDTH - used_width),
+        ]
+
+    def encode(self, params) -> int:
+        return pack_fields_to_int(self, self.field_specs(params))
+
+
+@dataclass
+class PackedLoadSimple(PackedLoadStoreSimple):
+    opcode: int = KInstrOpcode.LOAD_SIMPLE
+
+
+@dataclass
+class PackedStoreSimple(PackedLoadStoreSimple):
+    opcode: int = KInstrOpcode.STORE_SIMPLE
+
+
+@dataclass
+class PackedBinaryOp(KInstr):
+    opcode: int
+    dst_reg: int
+    src_a_reg: int
+    src_b_reg: int
+    end_index: int
+    mask_reg: int = 0
+    ew: int = 6
+    start_index_param_idx: int = 0
+    is_signed_a: bool = False
+    is_signed_b: bool = False
+    mask_enabled: bool = False
+    use_upper: bool = False
+
+    @staticmethod
+    def field_specs(params) -> list[tuple[str, int]]:
+        used_width = (
+            OPCODE_WIDTH
+            + 4 * params.rf_addr_width
+            + 4
+            + params.log2_n_params
+            + params.end_element_index_width
+            + 4
+        )
+        return [
+            ('opcode', OPCODE_WIDTH),
+            ('dst_reg', params.rf_addr_width),
+            ('src_a_reg', params.rf_addr_width),
+            ('src_b_reg', params.rf_addr_width),
+            ('mask_reg', params.rf_addr_width),
+            ('ew', 4),
+            ('start_index_param_idx', params.log2_n_params),
+            ('end_index', params.end_element_index_width),
+            ('is_signed_a', 1),
+            ('is_signed_b', 1),
+            ('mask_enabled', 1),
+            ('use_upper', 1),
+            ('_padding', KINSTR_WIDTH - used_width),
+        ]
+
+    def encode(self, params) -> int:
+        return pack_fields_to_int(self, self.field_specs(params))
 
 
 @dataclass
@@ -894,7 +1027,7 @@ class VmLogicMmOp(KInstr):
     src2: int
     start_index: int
     n_elements: int
-    word_order: addresses.WordOrder
+    word_order: LaneOrder
     instr_ident: int
 
     def _vline_range(self, kamlet) -> tuple[int, int] | None:
@@ -1002,7 +1135,7 @@ class MaskPopcountLocal(KInstr):
     dst: int
     src: int
     n_elements: int
-    word_order: addresses.WordOrder
+    word_order: LaneOrder
     instr_ident: int
 
     async def admit(self, kamlet) -> 'MaskPopcountLocal | None':
@@ -1065,7 +1198,7 @@ class SetMaskBits(KInstr):
     dst: int
     src: int
     n_elements: int
-    word_order: addresses.WordOrder
+    word_order: LaneOrder
     instr_ident: int
     mask_reg: int | None = None
 
@@ -1152,7 +1285,7 @@ class VBroadcastOp(KInstr):
     scalar: int
     n_elements: int
     element_width: int
-    word_order: addresses.WordOrder
+    word_order: LaneOrder
     instr_ident: int
     mask_reg: int | None = None
 
@@ -1214,7 +1347,7 @@ class VidOp(KInstr):
     dst: int
     n_elements: int
     element_width: int
-    word_order: addresses.WordOrder
+    word_order: LaneOrder
     mask_reg: int | None
     instr_ident: int
 
@@ -1279,7 +1412,7 @@ class VUnaryOvOp(KInstr):
     n_elements: int
     dst_ew: int
     src_ew: int
-    word_order: addresses.WordOrder
+    word_order: LaneOrder
     mask_reg: int | None
     instr_ident: int
     invert_mask: bool = False
@@ -1630,7 +1763,7 @@ class VArithVvOp(KInstr):
     mask_reg: int
     n_elements: int
     element_width: int
-    word_order: addresses.WordOrder
+    word_order: LaneOrder
     instr_ident: int
 
     async def admit(self, kamlet) -> 'VArithVvOp | None':
@@ -1718,7 +1851,7 @@ class VArithVxOp(KInstr):
     mask_reg: int
     n_elements: int
     element_width: int
-    word_order: addresses.WordOrder
+    word_order: LaneOrder
     instr_ident: int
     is_float: bool = False
 
@@ -1848,7 +1981,7 @@ class VArithVvOvOp(KInstr):
     dst_ew: int
     src1_signed: bool
     src2_signed: bool
-    word_order: addresses.WordOrder
+    word_order: LaneOrder
     instr_ident: int
     is_float: bool = False
 
@@ -1962,7 +2095,7 @@ class VArithVxOvOp(KInstr):
     dst_ew: int
     scalar_signed: bool
     src2_signed: bool
-    word_order: addresses.WordOrder
+    word_order: LaneOrder
     instr_ident: int
     is_float: bool = False
 

@@ -23,7 +23,7 @@ from zamlet.runner import Clock
 from zamlet.params import ZamletParams
 from zamlet.geometries import SMALL_GEOMETRIES, scale_n_tests
 from zamlet.oamlet.oamlet import Oamlet
-from zamlet.addresses import GlobalAddress, MemoryType, Ordering, WordOrder, KMAddr, RegAddr
+from zamlet.addresses import GlobalAddress, MemoryType, Ordering, KMAddr, RegAddr
 from zamlet.instructions.vector import VCmpVi, VCmpVv, VCmpVx
 from zamlet.kamlet import kinstructions
 from zamlet.transactions.load import Load

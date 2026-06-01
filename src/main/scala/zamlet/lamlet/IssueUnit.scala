@@ -2,8 +2,8 @@ package zamlet.lamlet
 
 import chisel3._
 import chisel3.util._
-import zamlet.ZamletParams
-import zamlet.jamlet.{J2JInstr, EwCode, WordOrder, KInstr, KInstrOpcode, WriteParamInstr,
+import zamlet.{ElementWidth, LaneOrder, ZamletParams}
+import zamlet.jamlet.{J2JInstr, KInstr, KInstrOpcode, WriteParamInstr,
                        StoreScalarInstr}
 import zamlet.utils.{DoubleBuffer, ValidBuffer}
 
@@ -183,42 +183,38 @@ class IssueUnit(params: ZamletParams) extends Module {
     7.U -> 64.U
   ))
 
-  // Convert SEW to EwCode
-  def sewToEwCode(sew: UInt): EwCode.Type = {
-    MuxLookup(sew, EwCode.Ew8)(Seq(
-      0.U -> EwCode.Ew8,
-      1.U -> EwCode.Ew16,
-      2.U -> EwCode.Ew32,
-      3.U -> EwCode.Ew64
+  def sewToElementWidth(sew: UInt): ElementWidth.Type = {
+    MuxLookup(sew, ElementWidth.ew8)(Seq(
+      0.U -> ElementWidth.ew8,
+      1.U -> ElementWidth.ew16,
+      2.U -> ElementWidth.ew32,
+      3.U -> ElementWidth.ew64
     ))
   }
 
-  // Convert bits to EwCode
-  def bitsToEwCode(bits: UInt): EwCode.Type = {
-    MuxLookup(bits, EwCode.Ew8)(Seq(
-      8.U -> EwCode.Ew8,
-      16.U -> EwCode.Ew16,
-      32.U -> EwCode.Ew32,
-      64.U -> EwCode.Ew64
+  def bitsToElementWidth(bits: UInt): ElementWidth.Type = {
+    MuxLookup(bits, ElementWidth.ew8)(Seq(
+      8.U -> ElementWidth.ew8,
+      16.U -> ElementWidth.ew16,
+      32.U -> ElementWidth.ew32,
+      64.U -> ElementWidth.ew64
     ))
   }
 
-  // Generate kinstr (J2JInstr format)
-  // Layout: opcode(6), cacheSlot, memWordOrder, rfWordOrder, memEw, rfEw, baseBitAddr,
-  //         startIndex, nElementsIdx, reg
   val kinstr = Wire(new J2JInstr(params))
   kinstr.opcode := Mux(isVectorLoad, KInstrOpcode.LoadJ2J, KInstrOpcode.StoreJ2J)
   kinstr.cacheSlot := (tlbPaddr >> log2Ceil(params.cacheSlotWords * params.wordBytes).U)(
     params.cacheSlotWidth - 1, 0)
-  kinstr.memWordOrder := WordOrder.Standard
-  kinstr.rfWordOrder := WordOrder.Standard
-  kinstr.memEw := bitsToEwCode(eewBits)
-  kinstr.rfEw := sewToEwCode(vsew)
+  kinstr.memLaneOrder := LaneOrder.ROW_MAJOR
+  kinstr.rfLaneOrder := LaneOrder.ROW_MAJOR
+  kinstr.memEw := bitsToElementWidth(eewBits)
+  kinstr.rfEw := sewToElementWidth(vsew)
   // baseBitAddr: byte address within zamlet (page-aligned portion)
   kinstr.baseBitAddr := (tlbPaddr << 3.U)(log2Ceil(params.wordWidth * params.jInL) - 1, 0)
   kinstr.startIndex := vstart.pad(params.elementIndexWidth)
-  kinstr.nElementsIdx := 0.U
+  kinstr.nElementsParamIdx := 0.U
   kinstr.reg := vd.pad(params.rfAddrWidth)
+  kinstr._padding := 0.U
 
   // Default outputs
   exBuffered.ready := false.B
@@ -321,7 +317,7 @@ class IssueUnit(params: ZamletParams) extends Module {
 
     is(DispatchStoreWriteParam) {
       // Send WriteParam kinstr with paddr to param entry 0
-      val writeParamKinstr = Wire(new WriteParamInstr)
+      val writeParamKinstr = Wire(new WriteParamInstr(params))
       writeParamKinstr.opcode := KInstrOpcode.WriteParam
       writeParamKinstr.paramIdx := 0.U
       writeParamKinstr.data := tlbPaddr(params.memAddrWidth - 1, 0)
@@ -341,9 +337,10 @@ class IssueUnit(params: ZamletParams) extends Module {
       val storeScalarKinstr = Wire(new StoreScalarInstr(params))
       storeScalarKinstr.opcode := KInstrOpcode.StoreScalar
       storeScalarKinstr.dataReg := vd.pad(params.rfAddrWidth)
-      storeScalarKinstr.baseAddrIdx := 0.U
+      storeScalarKinstr.baseAddrParamIdx := 0.U
       storeScalarKinstr.startIndex := vstart
-      storeScalarKinstr.nElements := vl
+      storeScalarKinstr.endIndex := vstart + vl
+      storeScalarKinstr.ew := bitsToElementWidth(eewBits)
       storeScalarKinstr.reserved := 0.U
 
       toIdentTrackerInternal.valid := true.B

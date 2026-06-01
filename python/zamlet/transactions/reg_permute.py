@@ -23,6 +23,7 @@ import logging
 
 from zamlet import addresses
 from zamlet.kamlet.kinstructions import KInstr
+from zamlet.lane_order import LaneOrder
 from zamlet.waiting_item import WaitingItem
 from zamlet.kamlet.cache_table import SendState
 from zamlet.message import RegElementHeader, MessageType, SendType
@@ -49,7 +50,7 @@ class RegPermute(KInstr):
     start_index: int
     n_elements: int
     data_ew: int
-    word_order: addresses.WordOrder
+    word_order: LaneOrder
     vlmax: int
     mask_reg: int | None
     instr_ident: int
@@ -181,7 +182,7 @@ class WaitingRegPermute(WaitingItem):
         instr = self.item
         ew = instr.data_ew
         dst_vw = addresses.j_coords_to_vw_index(
-            jamlet.params, word_order=instr.word_order, jx=jamlet.jx, jy=jamlet.jy)
+            jamlet.params, instr.word_order, jx=jamlet.jx, jy=jamlet.jy)
         dst_wb = tag * 8
         assert (ew % 8) == 0
         dst_eb = dst_wb % ew

@@ -3,7 +3,7 @@ load("//bazel:chisel.bzl", "chisel_binary")
 exports_files(
     [
         "KInstr.scala",
-        "WitemEntry.scala",
+        "Moore.scala",
     ],
     visibility = ["//visibility:public"],
 )
@@ -24,9 +24,9 @@ JAMLET_DEPS = [
 ]
 
 JAMLET_COMMON_SRCS = [
-    "//src/main/scala/zamlet:ModuleGenerator.scala",
-    "//src/main/scala/zamlet:ZamletParams.scala",
+    "//src/main/scala/zamlet:zamlet_common_sources",
     "//src/main/scala/zamlet/utils:utils_sources",
+    "//src/main/scala/zamlet/maths:maths_sources",
     "//src/main/scala/zamlet/network:network_sources",
 ]
 
@@ -47,9 +47,17 @@ chisel_binary(
 )
 
 chisel_binary(
-    name = "witemmonitor",
+    name = "sram",
     srcs = [":jamlet_sources"] + JAMLET_COMMON_SRCS,
-    main_class = "zamlet.jamlet.WitemMonitorMain",
+    main_class = "zamlet.jamlet.SramMain",
+    deps = JAMLET_DEPS,
+    visibility = ["//visibility:public"],
+)
+
+chisel_binary(
+    name = "jce",
+    srcs = [":jamlet_sources"] + JAMLET_COMMON_SRCS,
+    main_class = "zamlet.jamlet.JceMain",
     deps = JAMLET_DEPS,
     visibility = ["//visibility:public"],
 )
@@ -63,9 +71,89 @@ chisel_binary(
 )
 
 chisel_binary(
+    name = "jamletalu",
+    srcs = ["JamletALU.scala"] + JAMLET_COMMON_SRCS,
+    main_class = "zamlet.jamlet.JamletAluMain",
+    deps = JAMLET_DEPS,
+    visibility = ["//visibility:public"],
+)
+
+chisel_binary(
     name = "vectorrf",
     srcs = [":jamlet_sources"] + JAMLET_COMMON_SRCS,
     main_class = "zamlet.jamlet.VectorRfMain",
+    deps = JAMLET_DEPS,
+    visibility = ["//visibility:public"],
+)
+
+chisel_binary(
+    name = "coordstoindexwithreg",
+    srcs = [":jamlet_sources"] + JAMLET_COMMON_SRCS,
+    main_class = "zamlet.jamlet.CoordsToIndexWithRegMain",
+    deps = JAMLET_DEPS,
+    visibility = ["//visibility:public"],
+)
+
+chisel_binary(
+    name = "indextocoordswithreg",
+    srcs = [":jamlet_sources"] + JAMLET_COMMON_SRCS,
+    main_class = "zamlet.jamlet.IndexToCoordsWithRegMain",
+    deps = JAMLET_DEPS,
+    visibility = ["//visibility:public"],
+)
+
+chisel_binary(
+    name = "jte",
+    srcs = [":jamlet_sources"] + JAMLET_COMMON_SRCS,
+    main_class = "zamlet.jamlet.JteMain",
+    deps = JAMLET_DEPS,
+    visibility = ["//visibility:public"],
+)
+
+chisel_binary(
+    name = "jteinitiator",
+    srcs = [":jamlet_sources"] + JAMLET_COMMON_SRCS,
+    main_class = "zamlet.jamlet.JteInitiatorMain",
+    deps = JAMLET_DEPS,
+    visibility = ["//visibility:public"],
+)
+
+chisel_binary(
+    name = "jteinitiatorstage",
+    srcs = [":jamlet_sources"] + JAMLET_COMMON_SRCS,
+    main_class = "zamlet.jamlet.JteInitiatorStageMain",
+    deps = JAMLET_DEPS,
+    visibility = ["//visibility:public"],
+)
+
+chisel_binary(
+    name = "jtehandler",
+    srcs = [":jamlet_sources"] + JAMLET_COMMON_SRCS,
+    main_class = "zamlet.jamlet.JteHandlerMain",
+    deps = JAMLET_DEPS,
+    visibility = ["//visibility:public"],
+)
+
+chisel_binary(
+    name = "jtehandlerstage",
+    srcs = [":jamlet_sources"] + JAMLET_COMMON_SRCS,
+    main_class = "zamlet.jamlet.JteHandlerStageMain",
+    deps = JAMLET_DEPS,
+    visibility = ["//visibility:public"],
+)
+
+chisel_binary(
+    name = "jtereceiver",
+    srcs = [":jamlet_sources"] + JAMLET_COMMON_SRCS,
+    main_class = "zamlet.jamlet.JteReceiverMain",
+    deps = JAMLET_DEPS,
+    visibility = ["//visibility:public"],
+)
+
+chisel_binary(
+    name = "jtestate",
+    srcs = [":jamlet_sources"] + JAMLET_COMMON_SRCS,
+    main_class = "zamlet.jamlet.JteStateMain",
     deps = JAMLET_DEPS,
     visibility = ["//visibility:public"],
 )

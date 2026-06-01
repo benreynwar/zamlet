@@ -24,3 +24,7 @@ dev = [
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["zamlet*"]
+
+[[tool.mypy.overrides]]
+module = "cocotb.*"
+follow_imports = "skip"

@@ -21,7 +21,7 @@ from typing import List, Deque, Any
 
 from zamlet import decode
 from zamlet import addresses
-from zamlet.addresses import SizeBytes, SizeBits, TLB, WordOrder, MemoryType
+from zamlet.addresses import SizeBytes, SizeBits, TLB, MemoryType
 from zamlet.addresses import AddressConverter, Ordering, GlobalAddress, KMAddr, VPUAddress
 from zamlet.kamlet.cache_table import (
     CacheTable, CacheState, ProtocolState, SendState)
@@ -38,6 +38,7 @@ from zamlet.kamlet.kamlet import Kamlet
 from zamlet.memlet import Memlet, memlet_coords
 from zamlet.runner import Future
 from zamlet.kamlet import kinstructions
+from zamlet.lane_order import LaneOrder
 from zamlet.transactions.load_stride import LoadStride
 from zamlet.transactions.store_stride import StoreStride
 from zamlet.transactions.load_indexed_unordered import LoadIndexedUnordered
@@ -71,7 +72,7 @@ logger = logging.getLogger(__name__)
 class Oamlet:
 
     def __init__(self, clock, params: ZamletParams,
-                 word_order: WordOrder = WordOrder.STANDARD):
+                 word_order: LaneOrder = LaneOrder.ROW_MAJOR):
         self.clock = clock
         self.params = params
         self.monitor = Monitor(clock, params)
@@ -100,7 +101,7 @@ class Oamlet:
         self.scalar = ScalarState(clock, params, self.monitor,
                                   synchronizer=self.synchronizer)
         self.tlb = TLB(params)
-        self.vrf_ordering: List[Ordering|None] = [None for _ in range(params.n_vregs)]
+        self.vrf_ordering: List[Ordering|None] = [None for _ in range(params.rf_slice_words)]
         # Per-vline pending-write counter. Incremented when the lamlet has
         # dispatched an async operation that will eventually emit a kinstr
         # writing this vreg (e.g. vrgather.vx waiting on a remote element
@@ -108,7 +109,7 @@ class Oamlet:
         # buffer. Dispatch sites must ``await_vreg_write_pending`` before
         # emitting kinstrs that read or write the vreg, so later instructions
         # can't slip a kinstr past the pending write.
-        self.vrf_write_pending: List[int] = [0 for _ in range(params.n_vregs)]
+        self.vrf_write_pending: List[int] = [0 for _ in range(params.rf_slice_words)]
         self.vl = 0
         self.vtype = 0
         self.vstart = 0
@@ -116,7 +117,7 @@ class Oamlet:
 
         self.word_order = word_order
         # Scratch arch index tracker. Compound lamlet ops (e.g. reductions,
-        # strided/indexed batches) use arch indices in [N_ARCH_VREGS, n_vregs)
+        # strided/indexed batches) use arch indices in [N_ARCH_VREGS, rf_slice_words)
         # for internal temporaries. The kamlet rename table treats these the
         # same as ISA arch indices: w() allocates a fresh phys on first
         # write, and a FreeRegister kinstr at the release point unmaps the
@@ -124,7 +125,7 @@ class Oamlet:
         # tracker below just remembers which scratch arch indices are
         # currently in use so we don't double-allocate.
         self._scratch_arch_free: deque[int] = deque(
-            range(params.n_arch_vregs, params.n_vregs))
+            range(params.n_arch_vregs, params.rf_slice_words))
 
         # Scratch VPU pages for ew remap workaround, one per (phys, ew).
         # Uses address range 0xF0000000+. See TODO.md for replacing with a
@@ -279,10 +280,12 @@ class Oamlet:
         return await ident_query.get_instr_ident(self, n_idents)
 
     def _scratch_active_count(self) -> int:
-        return self.params.n_vregs - self.params.n_arch_vregs - len(self._scratch_arch_free)
+        return (
+            self.params.rf_slice_words - self.params.n_arch_vregs -
+            len(self._scratch_arch_free))
 
     def alloc_temp_regs(self, n: int) -> list[int]:
-        """Reserve n scratch arch indices in [n_arch_vregs, n_vregs).
+        """Reserve n scratch arch indices in [n_arch_vregs, rf_slice_words).
 
         These get embedded directly in kinstructions; the kamlet's rename
         table allocates a phys for each on first write. The caller must
@@ -295,7 +298,7 @@ class Oamlet:
             f"only {len(self._scratch_arch_free)} scratch arches free, need {n}"
         regs = [self._scratch_arch_free.popleft() for _ in range(n)]
         active = self._scratch_active_count()
-        capacity = self.params.n_vregs - self.params.n_arch_vregs
+        capacity = self.params.rf_slice_words - self.params.n_arch_vregs
         logger.debug(
             f'{self.clock.cycle}: lamlet alloc_temp_regs n={n} regs={regs} '
             f'active={active}/{capacity}')
@@ -306,13 +309,16 @@ class Oamlet:
         assert n >= 1 and (n & (n - 1)) == 0, \
             f"scratch register group size must be a power of two, got {n}"
         free = set(self._scratch_arch_free)
-        for start in range(self.params.n_arch_vregs, self.params.n_vregs - n + 1, n):
+        for start in range(
+                self.params.n_arch_vregs,
+                self.params.rf_slice_words - n + 1,
+                n):
             regs = list(range(start, start + n))
             if all(reg in free for reg in regs):
                 for reg in regs:
                     self._scratch_arch_free.remove(reg)
                 active = self._scratch_active_count()
-                capacity = self.params.n_vregs - self.params.n_arch_vregs
+                capacity = self.params.rf_slice_words - self.params.n_arch_vregs
                 logger.debug(
                     f'{self.clock.cycle}: lamlet alloc_temp_reg_group '
                     f'n={n} regs={regs} active={active}/{capacity}')
@@ -330,12 +336,12 @@ class Oamlet:
         instruction that used the arch, so the kamlet handles ordering;
         callers do not need to wait for the prior uses to drain.
         """
-        capacity = self.params.n_vregs - self.params.n_arch_vregs
+        capacity = self.params.rf_slice_words - self.params.n_arch_vregs
         logger.debug(
             f'{self.clock.cycle}: lamlet free_temp_regs n={len(regs)} regs={regs} '
             f'active_before={self._scratch_active_count()}/{capacity}')
         for reg in regs:
-            assert self.params.n_arch_vregs <= reg < self.params.n_vregs, \
+            assert self.params.n_arch_vregs <= reg < self.params.rf_slice_words, \
                 f"reg={reg} is not a scratch arch index"
             assert reg not in self._scratch_arch_free, \
                 f"reg={reg} already in scratch free queue"
@@ -1761,7 +1767,7 @@ class Oamlet:
     async def vrgather(self, vd: int, vs2: int, vs1: int,
                        start_index: int, n_elements: int,
                        index_ew: int, data_ew: int,
-                       word_order: addresses.WordOrder, vlmax: int,
+                       word_order: LaneOrder, vlmax: int,
                        mask_reg: int | None, parent_span_id: int) -> int:
         """Execute vrgather. Returns sync_ident that can be awaited if needed."""
         return await vregister.vrgather(self, vd, vs2, vs1, start_index, n_elements,
@@ -1772,7 +1778,7 @@ class Oamlet:
                      offset: int, direction: 'vregister.SlideDirection',
                      start_index: int, n_elements: int,
                      data_ew: int,
-                     word_order: addresses.WordOrder, vlmax: int,
+                     word_order: LaneOrder, vlmax: int,
                      mask_reg: int | None, parent_span_id: int) -> int:
         """Execute vslideup / vslidedown. Returns sync_ident."""
         return await vregister.vslide(self, vd, vs2, offset, direction,

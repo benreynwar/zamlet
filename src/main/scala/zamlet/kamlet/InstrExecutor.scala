@@ -3,7 +3,7 @@ package zamlet.kamlet
 import chisel3._
 import chisel3.util._
 import zamlet.ZamletParams
-import zamlet.jamlet.{KInstr, KInstrOpcode, KInstrBase, KInstrParamIdx, SyncTriggerInstr,
+import zamlet.jamlet.{KInstr, KInstrOpcode, KInstrBase, SyncTriggerInstr,
                        IdentQueryInstr, LoadImmInstr, WriteParamInstr, KinstrWithParams,
                        StoreScalarInstr}
 
@@ -25,9 +25,8 @@ class InstrExecutor(params: ZamletParams) extends Module {
     val immediateKinstr = Vec(params.jInK, Valid(new KinstrWithParams(params)))
   })
 
-  // Parameter memory: 16 entries x memAddrWidth bits
-  // Stores addresses, strides, nElements referenced by 4-bit indices in kinstrs
-  val paramMemNumEntries = 1 << KInstrParamIdx.width  // 16
+  // Stores addresses, strides, nElements referenced by param indices in kinstrs.
+  val paramMemNumEntries = 1 << params.log2NParams
   val paramMem = RegInit(VecInit(Seq.fill(paramMemNumEntries)(0.U(params.memAddrWidth.W))))
 
   // Default outputs
@@ -66,6 +65,8 @@ class InstrExecutor(params: ZamletParams) extends Module {
           when (instr.jInKIndex === j.U) {
             io.immediateKinstr(j).valid := true.B
             io.immediateKinstr(j).bits.kinstr := io.kinstrIn.bits
+            io.immediateKinstr(j).bits.cacheSlot := 0.U
+            io.immediateKinstr(j).bits.sramWordOffset := 0.U
             io.immediateKinstr(j).bits.param0 := 0.U
             io.immediateKinstr(j).bits.param1 := 0.U
             io.immediateKinstr(j).bits.param2 := 0.U
@@ -73,18 +74,20 @@ class InstrExecutor(params: ZamletParams) extends Module {
         }
       }
       is (KInstrOpcode.WriteParam) {
-        val instr = io.kinstrIn.bits.asTypeOf(new WriteParamInstr)
+        val instr = io.kinstrIn.bits.asTypeOf(new WriteParamInstr(params))
         paramMem(instr.paramIdx) := instr.data
       }
       is (KInstrOpcode.StoreScalar) {
         val instr = io.kinstrIn.bits.asTypeOf(new StoreScalarInstr(params))
-        val basePaddr = paramMem(instr.baseAddrIdx)
+        val basePaddr = paramMem(instr.baseAddrParamIdx)
 
         // Broadcast to all jamlets - each jamlet determines if it has an active element
         // and computes its own paddr from basePaddr + element_index * 8
         for (j <- 0 until params.jInK) {
           io.immediateKinstr(j).valid := true.B
           io.immediateKinstr(j).bits.kinstr := io.kinstrIn.bits
+          io.immediateKinstr(j).bits.cacheSlot := 0.U
+          io.immediateKinstr(j).bits.sramWordOffset := 0.U
           io.immediateKinstr(j).bits.param0 := basePaddr
           io.immediateKinstr(j).bits.param1 := 0.U
           io.immediateKinstr(j).bits.param2 := 0.U

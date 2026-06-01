@@ -1,46 +1,90 @@
-# Jamlet module tests
+load("//bazel:cocotb_rules.bzl", "chisel_module_tests")
 
-load("//bazel:cocotb_rules.bzl", "cocotb_binary", "cocotb_test")
-
-# WitemMonitor tests
-genrule(
-    name = "witem_monitor_default_verilog",
-    srcs = ["//configs:zamlet_default.json"],
-    outs = ["WitemMonitor_default.sv"],
-    cmd = """
-    TMPDIR=$$(mktemp -d)
-    $(location //src/main/scala/zamlet/jamlet:witemmonitor) $$TMPDIR $(location //configs:zamlet_default.json)
-    cat $$TMPDIR/*.sv > $@
-    rm -rf $$TMPDIR
-    """,
-    tools = ["//src/main/scala/zamlet/jamlet:witemmonitor"],
+chisel_module_tests(
+    generator = "//src/main/scala/zamlet/jamlet:indextocoordswithreg",
+    toplevel = "IndexToCoordsWithReg",
+    srcs = ["test_moore.py"],
+    configs = [
+        ("default", "//configs:zamlet_default.json"),
+        ("16lanes", "//configs:zamlet_16lanes.json"),
+        ("64lanes", "//configs:zamlet_64lanes.json"),
+        ("1024lanes", "//configs:zamlet_1024lanes.json"),
+    ],
+    test_modules = [
+      ("zamlet.jamlet_test.test_moore", "indextocoordswithreg_test"),
+    ],
 )
 
-cocotb_binary(
-    name = "witem_monitor_default_exe",
-    verilog_files = [":witem_monitor_default_verilog"],
-    module_top = "WitemMonitor",
+chisel_module_tests(
+    generator = "//src/main/scala/zamlet/jamlet:coordstoindexwithreg",
+    toplevel = "CoordsToIndexWithReg",
+    srcs = ["test_moore.py"],
+    configs = [
+        ("default", "//configs:zamlet_default.json"),
+        ("16lanes", "//configs:zamlet_16lanes.json"),
+        ("64lanes", "//configs:zamlet_64lanes.json"),
+        ("1024lanes", "//configs:zamlet_1024lanes.json"),
+    ],
+    test_modules = [
+      ("zamlet.jamlet_test.test_moore", "coordstoindexwithreg_test"),
+    ],
 )
 
-py_library(
-    name = "test_witem_monitor_py",
-    srcs = ["test_witem_monitor.py"],
-    deps = ["//python/zamlet:zamlet"],
+chisel_module_tests(
+    generator = "//src/main/scala/zamlet/jamlet:jteinitiator",
+    toplevel = "JteInitiator",
+    srcs = [
+        "test_jteinitiator.py",
+    ],
+    configs = [
+        ("default", "//configs:zamlet_default.json"),
+    ],
+    test_modules = [
+      "zamlet.jamlet_test.test_jteinitiator",
+    ],
 )
 
-cocotb_test(
-    name = "test_witem_monitor_default",
-    binary = ":witem_monitor_default_exe",
-    test_module = "zamlet.jamlet_test.test_witem_monitor",
-    toplevel = "WitemMonitor",
-    env = {
-        "ZAMLET_TEST_CONFIG_FILENAME": "configs/zamlet_default.json",
-    },
-    data = ["//configs:zamlet_default.json"],
-    py_deps = [":test_witem_monitor_py"],
+chisel_module_tests(
+    generator = "//src/main/scala/zamlet/jamlet:jamletalu",
+    toplevel = "JamletAlu",
+    srcs = ["test_jamlet_alu.py"],
+    configs = [
+        ("default", "//configs:zamlet_default.json"),
+    ],
+    test_modules = ["zamlet.jamlet_test.test_jamlet_alu"],
+)
+
+chisel_module_tests(
+    generator = "//src/main/scala/zamlet/jamlet:jamlet",
+    toplevel = "Jamlet",
+    srcs = [
+        "jamlet_driver.py",
+        "test_jamlet.py",
+    ],
+    configs = [
+        ("default", "//configs:zamlet_default.json"),
+    ],
+    test_modules = ["zamlet.jamlet_test.test_jamlet"],
+)
+
+chisel_module_tests(
+    generator = "//src/main/scala/zamlet/jamlet:localexec",
+    toplevel = "LocalExec",
+    srcs = ["test_localexec.py"],
+    configs = [
+        ("default", "//configs:zamlet_default.json"),
+    ],
+    test_modules = ["zamlet.jamlet_test.test_localexec"],
 )
 
 test_suite(
     name = "all_tests",
-    tests = [":test_witem_monitor_default"],
+    tests = [
+        ":indextocoordswithreg_tests",
+        ":coordstoindexwithreg_tests",
+        ":jteinitiator_tests",
+        ":jamletalu_tests",
+        ":jamlet_tests",
+        ":localexec_tests",
+    ],
 )
