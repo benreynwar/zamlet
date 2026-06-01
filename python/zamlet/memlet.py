@@ -106,7 +106,7 @@ def j_in_k_to_m_router(j_in_k_index: int, n_routers: int, j_in_k: int) -> int:
 class Memlet:
 
     def __init__(self, clock: Clock, params: ZamletParams, coords: List[Tuple[int, int]],
-                 kamlet_coords, monitor: Monitor,
+                 knet_x: int, knet_y: int, kamlet_coords, monitor: Monitor,
                  write_latency: int = 32, read_latency: int = 32,
                  max_pending: int = 2):
         """
@@ -118,9 +118,15 @@ class Memlet:
         self.params = params
         self.monitor = monitor
         self.coords = coords
+        self.knet_x = knet_x
+        self.knet_y = knet_y
         self.routers = [[Router(clock, params, x, y, channel=channel)
                          for channel in range(params.n_channels)]
                         for x, y in coords]
+        self.kamlet_network_routers = [
+            Router(clock, params, knet_x, knet_y, channel=channel)
+            for channel in range(params.n_channels)
+        ]
 
         self.lines: Dict[int, bytes] = {}
         self.n_lines = params.kamlet_memory_bytes // params.cache_line_bytes
@@ -178,6 +184,8 @@ class Memlet:
         self.gathering_slots[slot_index] = None
 
     def update(self):
+        for router in self.kamlet_network_routers:
+            router.update()
         for router_channels in self.routers:
             for router in router_channels:
                 router.update()
@@ -533,6 +541,8 @@ class Memlet:
                 await self.clock.next_cycle
 
     async def run(self):
+        for router in self.kamlet_network_routers:
+            self.clock.create_task(router.run())
         for router_channels in self.routers:
             for router in router_channels:
                 self.clock.create_task(router.run())

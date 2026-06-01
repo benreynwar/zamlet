@@ -20,6 +20,7 @@ from collections import deque
 from typing import List, Deque, Any
 
 from zamlet import decode
+from zamlet import kamlet_network
 from zamlet import addresses
 from zamlet.addresses import SizeBytes, SizeBits, TLB, MemoryType
 from zamlet.addresses import AddressConverter, Ordering, GlobalAddress, KMAddr, VPUAddress
@@ -150,12 +151,17 @@ class Oamlet:
         for kamlet_index in range(params.k_in_l):
             kamlet_x = params.west_offset + params.j_cols * (kamlet_index % params.k_cols)
             kamlet_y = params.north_offset + params.j_rows * (kamlet_index // params.k_cols)
+            knet_x, knet_y = kamlet_network.kamlet_kcoord(params, kamlet_index)
+            memlet_knet_x, memlet_knet_y = (
+                kamlet_network.kamlet_memlet_kcoord(params, kamlet_index))
             mem_coords = memlet_coords(params, kamlet_index)
             kamlet = Kamlet(
                 clock=clock,
                 params=params,
                 min_x=kamlet_x,
                 min_y=kamlet_y,
+                knet_x=knet_x,
+                knet_y=knet_y,
                 tlb=self.tlb,
                 monitor=self.monitor,
                 lamlet_x=self.instr_x,
@@ -167,6 +173,8 @@ class Oamlet:
                 clock=clock,
                 params=params,
                 coords=mem_coords,
+                knet_x=memlet_knet_x,
+                knet_y=memlet_knet_y,
                 kamlet_coords=(kamlet_x, kamlet_y),
                 monitor=self.monitor,
                 ))
@@ -228,7 +236,6 @@ class Oamlet:
         # Separate queue per message type for deterministic ordering
         self._send_queues = {
             # Channel 0 (responses)
-            MessageType.INSTRUCTIONS: utils.Queue(length=2),
             MessageType.READ_MEM_WORD_RESP: utils.Queue(length=2),
             MessageType.WRITE_MEM_WORD_RESP: utils.Queue(length=2),
             # Channel 1 (requests)
@@ -242,6 +249,14 @@ class Oamlet:
             for _ in range(params.n_channels)
         ]
         self._send_word_buffers = [
+            utils.Queue(length=params.router_output_buffer_length)
+            for _ in range(params.n_channels)
+        ]
+        self._kamlet_network_receive_buffers = [
+            utils.Queue(length=params.router_output_buffer_length)
+            for _ in range(params.n_channels)
+        ]
+        self._kamlet_network_send_word_buffers = [
             utils.Queue(length=params.router_output_buffer_length)
             for _ in range(params.n_channels)
         ]
@@ -835,6 +850,132 @@ class Oamlet:
                 self.instr_x, 0, channel, Direction.S,
                 lamlet_s_present, lamlet_s_moving)
 
+    async def kamlet_router_connections(self, channel):
+        '''
+        Move words between router buffers on the coarse Kamlet network.
+        '''
+        routers = {}
+        grid_width, grid_height = kamlet_network.kamlet_network_dims(self.params)
+        lamlet_x, lamlet_y = kamlet_network.lamlet_kcoord(self.params)
+        for memlet in self.memlets:
+            r = memlet.kamlet_network_routers[channel]
+            coords = (r.x, r.y)
+            assert coords not in routers
+            routers[coords] = r
+        for kamlet in self.kamlets:
+            r = kamlet.kamlet_network_routers[channel]
+            coords = (r.x, r.y)
+            assert coords not in routers
+            routers[coords] = r
+        for x in range(grid_width):
+            for y in range(lamlet_y + 1, grid_height):
+                assert (x, y) in routers
+
+        # Now start the logic to move the messages between the routers
+        while True:
+            await self.clock.next_cycle
+            for x in range(grid_width):
+                for y in range(lamlet_y + 1, grid_height):
+                    router = routers[(x, y)]
+                    for conn in router._input_connections.values():
+                        if conn.age > 500 and conn.age % 50 == 0:
+                            logger.warning(
+                                f"Kamlet router ({x}, {y}) connection stuck for {conn.age} cycles")
+                    north = (x, y-1)
+                    south = (x, y+1)
+                    east = (x+1, y)
+                    west = (x-1, y)
+                    # Track present/moving for each direction
+                    north_present = bool(router._output_buffers[Direction.N])
+                    south_present = bool(router._output_buffers[Direction.S])
+                    east_present = bool(router._output_buffers[Direction.E])
+                    west_present = bool(router._output_buffers[Direction.W])
+                    h_present = bool(router._output_buffers[Direction.H])
+                    north_moving = False
+                    south_moving = False
+                    east_moving = False
+                    west_moving = False
+                    h_moving = False
+
+                    # Send to the north
+                    if north in routers:
+                        north_buffer = router._output_buffers[Direction.N]
+                        if north_buffer:
+                            north_router = routers[north]
+                            if north_router.has_input_room(Direction.S):
+                                word = north_buffer.popleft()
+                                north_router.receive(Direction.S, word)
+                                north_moving = True
+                                logger.debug(f'{self.clock.cycle}: Moving kamlet-network word north ({x}, {y}) -> ({x}, {y-1}) {word}')
+                    elif x == lamlet_x and y == lamlet_y + 1:
+                        # Send to the lamlet
+                        north_buffer = router._output_buffers[Direction.N]
+                        if north_buffer:
+                            recv_buf = self._kamlet_network_receive_buffers[channel]
+                            if recv_buf.can_append():
+                                word = north_buffer.popleft()
+                                recv_buf.append(word)
+                                north_moving = True
+
+                    # Send to the south
+                    if south in routers:
+                        south_buffer = router._output_buffers[Direction.S]
+                        if south_buffer:
+                            south_router = routers[south]
+                            if south_router.has_input_room(Direction.N):
+                                word = south_buffer.popleft()
+                                south_router.receive(Direction.N, word)
+                                south_moving = True
+                                logger.debug(f'{self.clock.cycle}: Moving kamlet-network word south, ({x}, {y}) -> ({x}, {y+1}) {word}')
+
+                    # Send to the east
+                    if east in routers:
+                        east_buffer = router._output_buffers[Direction.E]
+                        if east_buffer:
+                            east_router = routers[east]
+                            if east_router.has_input_room(Direction.W):
+                                word = east_buffer.popleft()
+                                east_router.receive(Direction.W, word)
+                                east_moving = True
+                                logger.debug(f'{self.clock.cycle}: Moving kamlet-network word east, ({x}, {y}) -> ({x+1}, {y}) {word}')
+
+                    # Send to the west
+                    if west in routers:
+                        west_buffer = router._output_buffers[Direction.W]
+                        if west_buffer:
+                            west_router = routers[west]
+                            if west_router.has_input_room(Direction.E):
+                                word = west_buffer.popleft()
+                                west_router.receive(Direction.E, word)
+                                west_moving = True
+                                logger.debug(f'{self.clock.cycle}: Moving kamlet-network word west, ({x}, {y}) -> ({x-1}, {y}) {word}')
+
+                    # Report router output state for all directions
+                    self.monitor.report_kamlet_router_output(
+                        x, y, channel, Direction.N, north_present, north_moving)
+                    self.monitor.report_kamlet_router_output(
+                        x, y, channel, Direction.S, south_present, south_moving)
+                    self.monitor.report_kamlet_router_output(
+                        x, y, channel, Direction.E, east_present, east_moving)
+                    self.monitor.report_kamlet_router_output(
+                        x, y, channel, Direction.W, west_present, west_moving)
+                    self.monitor.report_kamlet_router_output(
+                        x, y, channel, Direction.H, h_present, h_moving)
+
+            send_buf = self._kamlet_network_send_word_buffers[channel]
+            lamlet_s_present = bool(send_buf)
+            lamlet_s_moving = False
+            if send_buf:
+                lamlet_target = (lamlet_x, lamlet_y + 1)
+                target_input = routers[lamlet_target]._input_buffers[Direction.N]
+                if target_input.can_append():
+                    word = send_buf.popleft()
+                    target_input.append(word)
+                    lamlet_s_moving = True
+            self.monitor.report_kamlet_router_output(
+                lamlet_x, lamlet_y, channel, Direction.S,
+                lamlet_s_present, lamlet_s_moving)
+
     async def sync_network_connections(self):
         """
         Move bytes between synchronizers in adjacent kamlets (and the lamlet).
@@ -1249,27 +1390,24 @@ class Oamlet:
             if instr.instr_ident is not None and instr.instr_ident < self.params.max_response_tags:
                 self._last_sent_instr_ident = instr.instr_ident
         is_broadcast = k_index is None
+        source_x, source_y = kamlet_network.lamlet_kcoord(self.params)
         if is_broadcast:
             send_type = SendType.BROADCAST
-            x = self.params.west_offset + self.params.k_cols * self.params.j_cols - 1
-            y = self.params.north_offset + self.params.k_rows * self.params.j_rows - 1
+            x, y = kamlet_network.kamlet_kcoord(
+                self.params, self.params.k_in_l - 1)
         else:
             send_type = SendType.SINGLE
-            kx = k_index % self.params.k_cols
-            ky = k_index // self.params.k_cols
-            x = self.min_x + kx * self.params.j_cols
-            y = self.min_y + ky * self.params.j_rows
+            x, y = kamlet_network.kamlet_kcoord(self.params, k_index)
         header = Header(
             target_x=x,
             target_y=y,
-            source_x=self.instr_x,
-            source_y=self.instr_y,
+            source_x=source_x,
+            source_y=source_y,
             length=len(instructions),
             message_type=MessageType.INSTRUCTIONS,
             send_type=send_type,
             )
         packet = [header] + instructions
-        jamlet = self.kamlets[0].jamlets[0]
         logger.debug(f'Sending instructions to {k_index} ({send_type.name}), -> ({x}, {y})')
         # Create kinstr_exec items for each kamlet that receives the instruction
         for instr in instructions:
@@ -1284,8 +1422,8 @@ class Oamlet:
                     self.monitor.record_message_sent(
                         kinstr_exec_span_id, 'INSTRUCTION',
                         instr.instr_ident, None,
-                        self.instr_x, self.instr_y,
-                        kamlet.min_x, kamlet.min_y)
+                        source_x, source_y,
+                        kamlet.knet_x, kamlet.knet_y)
             else:
                 kamlet = self.kamlets[k_index]
                 self.monitor.record_kinstr_exec_created(
@@ -1295,8 +1433,8 @@ class Oamlet:
                 self.monitor.record_message_sent(
                     kinstr_exec_span_id, 'INSTRUCTION',
                     instr.instr_ident, None,
-                    self.instr_x, self.instr_y,
-                    kamlet.min_x, kamlet.min_y)
+                    source_x, source_y,
+                    kamlet.knet_x, kamlet.knet_y)
             # Finalize kinstr children if FIRE_AND_FORGET and finalize_after_send
             if instr.finalize_after_send:
                 kinstr_span_id = self.monitor.get_kinstr_span_id(instr.instr_ident)
@@ -1314,36 +1452,33 @@ class Oamlet:
                         await self.clock.next_cycle
                     self.monitor.record_message_received(
                         instr.instr_ident,
-                        self.instr_x, self.instr_y,
-                        kamlet.min_x, kamlet.min_y,
+                        source_x, source_y,
+                        kamlet.knet_x, kamlet.knet_y,
                         message_type='INSTRUCTION')
                     kamlet.add_to_instruction_queue(instr)
         else:
-            await self.send_packet(packet, jamlet, Direction.N, port=0)
+            await self._send_kamlet_packet_words(
+                packet, self._kamlet_network_send_word_buffers[0])
 
     async def send_packet(self, packet, jamlet, direction, port,
                           parent_span_id: int | None = None):
         """Queue a packet for sending.
 
-        parent_span_id is required for non-INSTRUCTION messages. For INSTRUCTIONS,
-        message recording is handled separately due to broadcast complexity.
+        parent_span_id is required for message recording.
         """
         header = packet[0]
         message_type = header.message_type
         assert port == 0
         assert direction == Direction.N
-
-        if message_type == MessageType.INSTRUCTIONS:
-            assert parent_span_id is None
-        else:
-            assert parent_span_id is not None
-            tag = header.tag if hasattr(header, 'tag') else None
-            self.monitor.record_message_sent(
-                parent_span_id, message_type.name,
-                ident=header.ident, tag=tag,
-                src_x=self.instr_x, src_y=self.instr_y,
-                dst_x=header.target_x, dst_y=header.target_y,
-            )
+        assert message_type != MessageType.INSTRUCTIONS
+        assert parent_span_id is not None
+        tag = header.tag if hasattr(header, 'tag') else None
+        self.monitor.record_message_sent(
+            parent_span_id, message_type.name,
+            ident=header.ident, tag=tag,
+            src_x=self.instr_x, src_y=self.instr_y,
+            dst_x=header.target_x, dst_y=header.target_y,
+        )
 
         send_queue = self._send_queues[message_type]
         while not send_queue.can_append():
@@ -1386,6 +1521,16 @@ class Oamlet:
                 word_buf.append(word)
             else:
                 pass  # Wait for router_connections to drain the buffer
+
+    async def _send_kamlet_packet_words(self, packet, word_buf):
+        """Send all words of a packet into a Kamlet-network word buffer."""
+        while packet:
+            await self.clock.next_cycle
+            if word_buf.can_append():
+                word = packet.pop(0)
+                word_buf.append(word)
+            else:
+                pass  # Wait for kamlet_router_connections to drain the buffer
 
     async def set_memory(self, address: int, data: bytes,
                          ordering: 'addresses.Ordering | None' = None,
@@ -1798,6 +1943,10 @@ class Oamlet:
             buf.update()
         for buf in self._send_word_buffers:
             buf.update()
+        for buf in self._kamlet_network_receive_buffers:
+            buf.update()
+        for buf in self._kamlet_network_send_word_buffers:
+            buf.update()
 
     async def run(self):
         for kamlet in self.kamlets:
@@ -1806,6 +1955,7 @@ class Oamlet:
             self.clock.create_task(memlet.run())
         for channel in range(self.params.n_channels):
             self.clock.create_task(self.router_connections(channel))
+            self.clock.create_task(self.kamlet_router_connections(channel))
         self.clock.create_task(self.sync_network_connections())
         self.clock.create_task(self.synchronizer.run())
         self.clock.create_task(self.monitor_channel0())

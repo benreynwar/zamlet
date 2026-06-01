@@ -87,6 +87,12 @@ class CycleMetrics:
         default_factory=dict
     )
 
+    # Kamlet-network router output state:
+    # (x, y, channel, Direction) -> (present, moving)
+    kamlet_router_outputs: Dict[Tuple[int, int, int, Direction], Tuple[bool, bool]] = field(
+        default_factory=dict
+    )
+
     # Lamlet instruction buffer
     lamlet_instr_buf_len: int | None = None
     lamlet_free_idents: int | None = None
@@ -273,6 +279,19 @@ class Monitor:
             f"Router output ({x}, {y}) ch{channel} {direction.name} already reported " \
             f"this cycle {self.clock.cycle}"
         metrics.router_outputs[key] = (present, moving)
+
+    def report_kamlet_router_output(self, x: int, y: int, channel: int,
+                                    direction: Direction, present: bool,
+                                    moving: bool) -> None:
+        """Report Kamlet-network router output state for this direction."""
+        if not self.enabled:
+            return
+        metrics = self._get_cycle_metrics()
+        key = (x, y, channel, direction)
+        assert key not in metrics.kamlet_router_outputs, \
+            f"Kamlet router output ({x}, {y}) ch{channel} {direction.name} already reported " \
+            f"this cycle {self.clock.cycle}"
+        metrics.kamlet_router_outputs[key] = (present, moving)
 
     def record_lamlet_cycle_state(self, buf_len: int, free_idents: int,
                                    free_tokens: Dict[int, int]) -> None:

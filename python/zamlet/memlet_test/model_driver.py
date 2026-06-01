@@ -10,6 +10,7 @@ import logging
 
 from zamlet.future import Future
 from zamlet.memlet import Memlet, memlet_coords
+from zamlet import kamlet_network
 from zamlet.memlet_test.memlet_driver import MemletDriver
 from zamlet.message import Direction, Header
 from zamlet.monitor import Monitor
@@ -27,6 +28,8 @@ class ModelDriver(MemletDriver):
                  write_latency: int = 32, read_latency: int = 32,
                  max_pending: int = 2):
         coords = memlet_coords(params, kamlet_index)
+        knet_x, knet_y = kamlet_network.kamlet_memlet_kcoord(
+            params, kamlet_index)
         kx = (kamlet_index % params.k_cols) * params.j_cols
         ky = (kamlet_index // params.k_cols) * params.j_rows
         kamlet_x = kx + params.west_offset
@@ -36,6 +39,8 @@ class ModelDriver(MemletDriver):
         self.monitor = Monitor(self.clock, params, enabled=False)
         self.memlet = Memlet(
             self.clock, params, coords,
+            knet_x=knet_x,
+            knet_y=knet_y,
             kamlet_coords=(kamlet_x, kamlet_y),
             monitor=self.monitor,
             write_latency=write_latency,

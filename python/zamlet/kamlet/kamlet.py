@@ -4,8 +4,10 @@ from typing import List, Tuple
 from zamlet import addresses
 from zamlet.addresses import KMAddr
 from zamlet.params import ZamletParams
+from zamlet.router import Router
 from zamlet.jamlet.jamlet import Jamlet
-from zamlet.message import Header, MessageType, SendType, AddressHeader, WriteMemWordHeader
+from zamlet.message import (
+    Direction, Header, MessageType, SendType, AddressHeader, WriteMemWordHeader)
 from zamlet.utils import Queue
 from zamlet.kamlet import kinstructions
 from zamlet.kamlet.kinstructions import has_reg_ordering_conflict
@@ -30,7 +32,8 @@ class Kamlet:
     They share an instruction buffer, and cache tracking logic.
     """
 
-    def __init__(self, clock, params: ZamletParams, min_x: int, min_y: int, tlb: addresses.TLB,
+    def __init__(self, clock, params: ZamletParams, min_x: int, min_y: int,
+                 knet_x: int, knet_y: int, tlb: addresses.TLB,
                  monitor: Monitor, lamlet_x: int, lamlet_y: int,
                  mem_coords: List[Tuple[int, int]]):
         self.clock = clock
@@ -42,6 +45,12 @@ class Kamlet:
         # A kamlet covers several (x,y) coordinate positions (one for each lane (jamlet))
         self.min_x = min_x
         self.min_y = min_y
+        self.knet_x = knet_x
+        self.knet_y = knet_y
+        self.kamlet_network_routers = [
+            Router(clock=clock, params=params, x=knet_x, y=knet_y, channel=channel)
+            for channel in range(params.n_channels)
+        ]
         self.n_columns = params.j_cols
         self.n_rows = params.j_rows
         self.n_jamlets = self.n_columns * self.n_rows
@@ -305,6 +314,8 @@ class Kamlet:
             await self.clock.next_cycle
 
     def update(self):
+        for router in self.kamlet_network_routers:
+            router.update()
         self._instruction_queue.update()
         self._instr_send_queue.update()
         self.cache_table.update()
@@ -611,20 +622,35 @@ class Kamlet:
                                 self.cache_table.report_data_sent(
                                     request, j_in_k_index)
 
-    async def _get_instructions_from_jamlets(self):
+    async def _receive_kamlet_network_instructions(self):
+        queue = self.kamlet_network_routers[0]._output_buffers[Direction.H]
         while True:
             await self.clock.next_cycle
-            # Get received instructions from jamlets
-            for index, jamlet in enumerate(self.jamlets):
-                if jamlet._instruction_buffer:
-                    if index == 0:
-                        if self._instruction_queue.can_append():
-                            instr = jamlet._instruction_buffer.popleft()
-                            self.add_to_instruction_queue(instr)
-                    else:
-                        instr = jamlet._instruction_buffer.popleft()
+            if not queue:
+                continue
+
+            header = queue.popleft()
+            assert isinstance(header, Header)
+            assert header.message_type == MessageType.INSTRUCTIONS
+
+            remaining = header.length
+            while remaining:
+                await self.clock.next_cycle
+                if queue:
+                    while not self._instruction_queue.can_append():
+                        await self.clock.next_cycle
+                    instr = queue.popleft()
+                    self.monitor.record_message_received(
+                        instr.instr_ident,
+                        header.source_x, header.source_y,
+                        self.knet_x, self.knet_y,
+                        message_type='INSTRUCTION')
+                    self.add_to_instruction_queue(instr)
+                    remaining -= 1
 
     async def run(self):
+        for router in self.kamlet_network_routers:
+            self.clock.create_task(router.run())
         for jamlet in self.jamlets:
             self.clock.create_task(jamlet.run())
         self.clock.create_task(self._admit_instructions())
@@ -632,7 +658,7 @@ class Kamlet:
         self.clock.create_task(self._drain_pending_pregs())
         self.clock.create_task(self._monitor_instruction_queue())
         self.clock.create_task(self._send_packets())
-        self.clock.create_task(self._get_instructions_from_jamlets())
+        self.clock.create_task(self._receive_kamlet_network_instructions())
         self.clock.create_task(self._monitor_cache_requests())
         self.clock.create_task(self._monitor_witems())
         self.clock.create_task(self.cache_table.run())
