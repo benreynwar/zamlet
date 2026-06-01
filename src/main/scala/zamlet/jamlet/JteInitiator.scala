@@ -11,7 +11,7 @@ import zamlet.ElementWidth
 import zamlet.LaneOrder
 import zamlet.WidthHelpers
 import zamlet.Utils
-import zamlet.network.{JteIHeader, MessageType, NetworkWord, SendType}
+import zamlet.network.{INetworkWord, JteIHeader, MessageType, NetworkWord, SendType}
 
 object TransferMode extends ChiselEnum {
   val StrideLoad, StrideStore, IndexLoad, IndexStore, RegGather = Value
@@ -542,6 +542,7 @@ class JteInitiatorG(params: ZamletParams) extends Module {
 class JteInitiatorHI(params: ZamletParams) extends Bundle {
   val dstNBytes = UInt(params.log2WordWidth.W)
   val dstLaneIndex = UInt(params.log2JInL.W)
+  val laneOrder = LaneOrder()
   val dstOffset = UInt((params.log2WordWidth-3).W)
   val srcOffset = UInt((params.log2WordWidth-3).W)
   val dstData = params.word()
@@ -617,6 +618,7 @@ class JteInitiatorH(params: ZamletParams) extends Module {
   val destWFBytes = WidthHelpers.wfBits(ordering.wf) >> 3
 
   io.hi.bits.dstLaneIndex := (byteAddress >> destWFLog2Bytes)(params.log2JInL-1, 0)
+  io.hi.bits.laneOrder := ordering.laneOrder
 
   when (destWFLog2Bytes >= (params.log2WordWidth.U - 3.U)) {
     // The destination WF is larger than or equal to a word.
@@ -701,7 +703,7 @@ class JteInitiatorH(params: ZamletParams) extends Module {
 
 class JteInitiatorIIO(params: ZamletParams) extends Bundle {
   val hi = Flipped(Decoupled(new JteInitiatorHI(params)))
-  val packet = Decoupled(new NetworkWord(params))
+  val packet = Decoupled(new INetworkWord(params))
   val x = Input(UInt(8.W))
   val y = Input(UInt(8.W))
 }
@@ -734,10 +736,11 @@ class JteInitiatorI(params: ZamletParams) extends Module {
 
   io.packet.valid := io.hi.valid
   io.packet.bits.isHeader := false.B
+  io.packet.bits.data := header.asUInt
   val completeMessage = Wire(Bool())
   completeMessage := false.B
+  io.packet.bits.laneOrder := io.hi.bits.laneOrder
   when (msgIndex === 0.U) {
-    io.packet.bits.data := header.asUInt
     io.packet.bits.isHeader := true.B
   } .elsewhen (msgIndex === 1.U) {
     io.packet.bits.data := io.hi.bits.dstStripeAddr
@@ -766,7 +769,7 @@ class JteInitiatorIO(params: ZamletParams) extends Bundle {
   val tlbResp = Flipped(Decoupled(UInt(params.pageAddrWidth.W)))
   val orderingResp = Flipped(Decoupled(new Ordering))
   val commit = Valid(new JteInitiatorCommit(params))
-  val packet = Decoupled(new NetworkWord(params))
+  val packet = Decoupled(new INetworkWord(params))
   val x = Input(UInt(8.W))
   val y = Input(UInt(8.W))
 }

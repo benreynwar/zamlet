@@ -2,6 +2,7 @@ package zamlet.network
 
 import chisel3._
 import chisel3.util._
+import zamlet.LaneOrder
 import zamlet.ZamletParams
 
 /**
@@ -132,14 +133,16 @@ class IdentHeader(params: ZamletParams) extends AbstractIdentHeader(params) {
 }
 
 abstract class AbstractPacketIHeader(params: ZamletParams) extends Bundle {
-  val dstIndex = UInt(16.W)
+  val dstIndex = UInt((params.xPosWidth + params.yPosWidth).W)
   val sourceX = UInt(params.xPosWidth.W)
   val sourceY = UInt(params.yPosWidth.W)
   val length = UInt(PacketConstants.lengthWidth)
   val messageType = MessageType()
   val sendType = SendType()
 
-  def baseWidth: Int = 16 + params.xPosWidth + params.yPosWidth +
+  def dstIndexWidth: Int = params.xPosWidth + params.yPosWidth
+
+  def baseWidth: Int = dstIndexWidth + params.xPosWidth + params.yPosWidth +
     PacketConstants.lengthWidth.get + MessageType.getWidth + SendType.getWidth
 }
 
@@ -225,14 +228,40 @@ class ReadMemWordHeader(params: ZamletParams) extends AbstractTaggedHeader(param
   val _padding = UInt((params.wordWidth - taggedHeaderWidth - 1).W)
 }
 
-abstract class AbstractJteIHeader(params: ZamletParams) extends AbstractIdentIHeader(params) {
-  val nBytes = UInt((params.log2WordWidth - 3).W)
-  val dstOffset = UInt((params.log2WordWidth - 3).W)
-  val srcOffset = UInt((params.log2WordWidth - 3).W)
-  val slot = UInt(log2Ceil(params.witemTableDepth).W)
+object JteHeaderFields {
+  def byteCountWidth(params: ZamletParams): Int = params.log2WordWidth - 3
+  def offsetWidth(params: ZamletParams): Int = params.log2WordWidth - 3
+  def slotWidth(params: ZamletParams): Int = log2Ceil(params.witemTableDepth)
 
-  def jteHeaderWidth: Int = identHeaderWidth + 3 * (params.log2WordWidth - 3) +
-    log2Ceil(params.witemTableDepth)
+  def width(params: ZamletParams): Int =
+    byteCountWidth(params) + 2 * offsetWidth(params) + slotWidth(params)
+}
+
+trait HasJteFields { this: Bundle =>
+  protected def jteParams: ZamletParams
+
+  val nBytes = UInt(JteHeaderFields.byteCountWidth(jteParams).W)
+  val dstOffset = UInt(JteHeaderFields.offsetWidth(jteParams).W)
+  val srcOffset = UInt(JteHeaderFields.offsetWidth(jteParams).W)
+  val slot = UInt(JteHeaderFields.slotWidth(jteParams).W)
+}
+
+abstract class AbstractJteHeader(params: ZamletParams)
+    extends AbstractIdentHeader(params) with HasJteFields {
+  override protected def jteParams: ZamletParams = params
+
+  def jteHeaderWidth: Int = identHeaderWidth + JteHeaderFields.width(params)
+}
+
+class JteHeader(params: ZamletParams) extends AbstractJteHeader(params) {
+  val _padding = UInt((params.wordWidth - jteHeaderWidth).W)
+}
+
+abstract class AbstractJteIHeader(params: ZamletParams)
+    extends AbstractIdentIHeader(params) with HasJteFields {
+  override protected def jteParams: ZamletParams = params
+
+  def jteHeaderWidth: Int = identHeaderWidth + JteHeaderFields.width(params)
 }
 
 class JteIHeader(params: ZamletParams) extends AbstractJteIHeader(params) {
@@ -254,6 +283,12 @@ class JceIHeader(params: ZamletParams) extends AbstractJceIHeader(params) {
  */
 class NetworkWord(params: ZamletParams) extends Bundle {
   val data = UInt(params.wordWidth.W)
+  val isHeader = Bool()
+}
+
+class INetworkWord(params: ZamletParams) extends Bundle {
+  val data = UInt(params.wordWidth.W)
+  val laneOrder = LaneOrder()
   val isHeader = Bool()
 }
 

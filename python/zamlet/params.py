@@ -418,7 +418,7 @@ class ZamletParams:
     @property
     def n_arch_vregs(self) -> int:
         """Number of architectural vector registers exposed by the ISA.
-        Fixed by RVV at 32. Arch indices in [n_arch_vregs, n_vregs) are
+        Fixed by RVV at 32. Arch indices in [n_arch_vregs, rf_slice_words) are
         scratch names used by compound lamlet ops."""
         return 32
 

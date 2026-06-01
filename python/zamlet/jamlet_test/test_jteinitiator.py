@@ -10,6 +10,7 @@ from cocotb.handle import HierarchyObject
 
 from zamlet import test_utils, utils
 from zamlet.lane_order import LaneOrder
+from zamlet.message import JteIHeader, MessageType, SendType
 from zamlet.params import ZamletParams
 from zamlet.width_codes import ElementWidthCode, WidthFormatCode
 
@@ -18,9 +19,6 @@ logger = logging.getLogger(__name__)
 
 MODE_INDEX_LOAD = 2
 MODE_INDEX_STORE = 3
-
-MSG_READ = 1
-MSG_WRITE = 2
 
 JTE_STATE_REQUEST_SENT = 3
 JTE_STATE_COMPLETE = 4
@@ -81,21 +79,6 @@ def read_bytes(content: list[int], reg: int, byte_offset: int, n_bytes: int) -> 
 
 def read_mask_bit(content: list[int], mask_reg: int, ordinal: int) -> int:
     return (content[mask_reg + ordinal // 64] >> (ordinal % 64)) & 1
-
-
-def header_from_int(value: int) -> dict[str, int]:
-    n_bytes_encoded = (value >> 19) & 0x7
-    return {
-        'dst_index': (value >> 48) & 0xffff,
-        'src_x': (value >> 40) & 0xff,
-        'src_y': (value >> 32) & 0xff,
-        'msg_type': (value >> 26) & 0x3f,
-        'msg_length': (value >> 22) & 0xf,
-        # The 3-bit wire encoding uses 0 to represent a full 8-byte word.
-        'n_bytes': n_bytes_encoded if n_bytes_encoded else 8,
-        'dst_offset': (value >> 16) & 0x7,
-        'src_offset': (value >> 13) & 0x7,
-    }
 
 
 def bytes_until_segment_boundary(
@@ -202,16 +185,23 @@ def expected_packets_for_instruction(
             dst_offset = ((dst_index * mem_wf_bytes) + (paddr % mem_wf_bytes)) % params.word_bytes
             src_offset = reg_byte % params.word_bytes
             is_store = instr.mode == MODE_INDEX_STORE
-            header = {
-                'dst_index': dst_index,
-                'src_x': this_x,
-                'src_y': this_y,
-                'msg_type': MSG_WRITE if is_store else MSG_READ,
-                'msg_length': 2 if is_store else 1,
-                'n_bytes': n_bytes,
-                'dst_offset': dst_offset,
-                'src_offset': src_offset,
-            }
+            header = JteIHeader(
+                dst_index=dst_index,
+                source_x=this_x,
+                source_y=this_y,
+                length=2 if is_store else 1,
+                message_type=(
+                    MessageType.STORE_WORD_REQ
+                    if is_store
+                    else MessageType.LOAD_WORD_REQ
+                ),
+                send_type=SendType.SINGLE,
+                ident=0,
+                n_bytes=n_bytes,
+                dst_offset=dst_offset,
+                src_offset=src_offset,
+                slot=0,
+            )
             packet = [header, pstripe]
             if is_store:
                 body = read_bytes(content, instr.data_reg, reg_byte, n_bytes) << (8 * dst_offset)
@@ -226,7 +216,7 @@ def expected_packets_for_instruction(
 def expected_commit_for_packets(packets: list[list[object]], params: ZamletParams) -> dict[str, object]:
     initiator = [JTE_STATE_COMPLETE] * params.word_bytes
     for packet in packets:
-        initiator[packet[0]['src_offset']] = JTE_STATE_REQUEST_SENT
+        initiator[packet[0].src_offset] = JTE_STATE_REQUEST_SENT
     return {
         'slot': 0,
         'initiator': initiator,
@@ -413,6 +403,7 @@ async def random_packet_ready(rnd: Random, dut: HierarchyObject):
 async def consume_and_check_packets(
     rnd: Random,
     dut: HierarchyObject,
+    params: ZamletParams,
     packets_received: deque[list[object]],
     packets_expected: deque[tuple[RandomInstr, list[object]]],
 ) -> None:
@@ -422,15 +413,15 @@ async def consume_and_check_packets(
             await triggers.RisingEdge(dut.clock)
             await triggers.ReadOnly()
         assert int(dut.io_packet_bits_isHeader.value) == 1
-        header = header_from_int(int(dut.io_packet_bits_bits.value))
+        header = JteIHeader.decode(int(dut.io_packet_bits_data.value), params)
         packet = [header]
         await triggers.RisingEdge(dut.clock)
         await triggers.ReadOnly()
-        for _ in range(header['msg_length']):
+        for _ in range(header.length):
             while not (int(dut.io_packet_valid.value) and int(dut.io_packet_ready.value)):
                 await triggers.RisingEdge(dut.clock)
                 await triggers.ReadOnly()
-            packet.append(int(dut.io_packet_bits_bits.value))
+            packet.append(int(dut.io_packet_bits_data.value))
             await triggers.RisingEdge(dut.clock)
             await triggers.ReadOnly()
 
@@ -590,7 +581,8 @@ async def jteinitiator_random_test(dut: HierarchyObject) -> None:
         dut, 'io_tlbReq_', 'io_tlbResp_', page_table, tlb_requests_expected))
     cocotb.start_soon(req_resp_handler(dut, 'io_orderingReq_', 'io_orderingResp_', orderings))
     cocotb.start_soon(random_packet_ready(utils.create_rng(rnd), dut))
-    cocotb.start_soon(consume_and_check_packets(utils.create_rng(rnd), dut, packets_received, packets_expected))
+    cocotb.start_soon(consume_and_check_packets(
+        utils.create_rng(rnd), dut, params, packets_received, packets_expected))
     cocotb.start_soon(consume_and_check_commits(dut, commits_received, commits_expected, params))
 
     dut.reset.value = 1

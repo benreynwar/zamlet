@@ -4,7 +4,7 @@ import chisel3._
 import chisel3.util._
 import zamlet.ZamletParams
 import zamlet.utils.DoubleBuffer
-import zamlet.network.{JteIHeader, MessageType, NetworkWord}
+import zamlet.network.{JteHeader, MessageType, NetworkWord}
 
   // Receives packets on channel 0
   //
@@ -84,8 +84,8 @@ class JteReceiverA(params: ZamletParams) extends Module {
   val state = RegEnable(stateNext, stateInitial, fire)
   stateNext := state
 
-  val header = Wire(new JteIHeader(params))
-  header := io.packet.bits.data.asTypeOf(new JteIHeader(params))
+  val header = Wire(new JteHeader(params))
+  header := io.packet.bits.data.asTypeOf(new JteHeader(params))
   when (state.isHeader) {
     stateNext.remainingBodyWords := header.length
   } .otherwise {

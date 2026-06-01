@@ -232,7 +232,7 @@ class WaitingStoreScatterBase(WaitingItem, ABC):
         """
         instr = self.item
         src_vw = addresses.j_coords_to_vw_index(
-            jamlet.params, word_order=instr.src_ordering.word_order, jx=jamlet.jx, jy=jamlet.jy)
+            jamlet.params, instr.src_ordering.word_order, jx=jamlet.jx, jy=jamlet.jy)
         src_ew = instr.src_ordering.ew
         src_wb = tag * 8
         assert (src_ew % 8) == 0

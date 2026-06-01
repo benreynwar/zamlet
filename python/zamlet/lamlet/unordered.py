@@ -561,7 +561,7 @@ async def vloadstorestride(lamlet: 'Oamlet', reg_base: int, addr: int,
     # Use at most half the scratch arch pool so the kamlet has spare pregs
     # to rotate through for vid -> vmul -> indexed pipelining within and
     # across batches. Floor of 1 in case the pool is tiny.
-    n_scratch = lamlet.params.n_vregs - lamlet.params.n_arch_vregs
+    n_scratch = lamlet.params.rf_slice_words - lamlet.params.n_arch_vregs
     n_temp_regs = max(1, n_scratch // 2)
     batch_capacity = n_temp_regs * elements_per_vline_64
 

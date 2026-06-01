@@ -23,8 +23,11 @@
   "maxResponseTags": 128,
   "instructionQueueLength": 8,
   "lamletDispatchQueueDepth": 8,
+  "reservationStationDepth": 16,
   "identTrackerOutForwardBuffer": true,
   "identTrackerOutBackwardBuffer": true,
+  "messageLengthWidth": 4,
+  "messageTypeWidth": 6,
   "nAChannels": 1,
   "nBChannels": 1,
   "networkNodeParams": {

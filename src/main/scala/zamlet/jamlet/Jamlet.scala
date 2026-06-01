@@ -223,7 +223,9 @@ class Jamlet(params: ZamletParams) extends Module {
   rfSlice.io.localExecWriteReq <> localExec.io.rfWriteReq
 
   // B channel arbiter inputs: JTE Ch1 requests + JCE
-  bArbiter.io.in(0) <> jte.io.channel1Out
+  val jteChannel1Out = Module(new INetworkWordToNetworkWord(params))
+  jteChannel1Out.io.in <> jte.io.channel1Out
+  bArbiter.io.in(0) <> jteChannel1Out.io.out
   bArbiter.io.in(1) <> jce.io.packetOut
 
   // JCE connections

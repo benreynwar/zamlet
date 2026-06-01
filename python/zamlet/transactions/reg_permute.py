@@ -182,7 +182,7 @@ class WaitingRegPermute(WaitingItem):
         instr = self.item
         ew = instr.data_ew
         dst_vw = addresses.j_coords_to_vw_index(
-            jamlet.params, word_order=instr.word_order, jx=jamlet.jx, jy=jamlet.jy)
+            jamlet.params, instr.word_order, jx=jamlet.jx, jy=jamlet.jy)
         dst_wb = tag * 8
         assert (ew % 8) == 0
         dst_eb = dst_wb % ew

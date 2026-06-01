@@ -55,7 +55,8 @@ class Kamlet:
         self.cache_table = CacheTable(clock, params, name, monitor,
                                       kamlet_x=self.min_x, kamlet_y=self.min_y)
         rf_name = f'kamlet({self.min_x},{self.min_y})'
-        self.rf_info = register_file_slot.KamletRegisterFile(self.params.n_vregs, name=rf_name)
+        self.rf_info = register_file_slot.KamletRegisterFile(
+            self.params.rf_slice_words, name=rf_name)
         # Per-kamlet rename table. Arch indices in kinstructions are translated
         # to phys indices at dispatch; the scoreboard operates on phys.
         self.rename_table = RegisterRenameTable(params)

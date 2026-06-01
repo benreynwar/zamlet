@@ -816,7 +816,7 @@ class RegAddr:
 
     def valid(self):
         valid = 0 <= self.addr < self.params.vline_bytes
-        valid &= 0 <= self.reg < self.params.n_vregs
+        valid &= 0 <= self.reg < self.params.rf_slice_words
         valid &= self.ordering.ew % 8 == 0
         return valid
 

@@ -72,7 +72,7 @@ chisel_binary(
 
 chisel_binary(
     name = "jamletalu",
-    srcs = ["JamletWordAlu.scala"] + JAMLET_COMMON_SRCS,
+    srcs = ["JamletALU.scala"] + JAMLET_COMMON_SRCS,
     main_class = "zamlet.jamlet.JamletAluMain",
     deps = JAMLET_DEPS,
     visibility = ["//visibility:public"],

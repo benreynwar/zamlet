@@ -11,7 +11,7 @@ import zamlet.ElementWidth
 import zamlet.LaneOrder
 import zamlet.WidthHelpers
 import zamlet.Utils
-import zamlet.network.{JteIHeader, MessageType, NetworkWord, SendType}
+import zamlet.network.{JteHeader, MessageType, NetworkWord, SendType}
 
   // Receives packets on channel 0 and channel 1
   // Sends packets on channel 0
@@ -120,8 +120,8 @@ class JteHandlerA(params: ZamletParams) extends Module {
   val state = RegEnable(stateNext, stateInitial, fire)
   stateNext := state
 
-  val header = Wire(new JteIHeader(params))
-  header := io.packet.bits.data.asTypeOf(new JteIHeader(params))
+  val header = Wire(new JteHeader(params))
+  header := io.packet.bits.data.asTypeOf(new JteHeader(params))
   when (state.isHeader) {
     stateNext.remainingBodyWords := header.length
   } .otherwise {
@@ -334,6 +334,8 @@ class JteHandlerG(params: ZamletParams) extends Module {
 class JteHandlerHIO(params: ZamletParams) extends Bundle {
   val gh = Flipped(Decoupled(new JteHandlerGH(params)))
   val packet = Decoupled(new NetworkWord(params))
+  val x = Input(UInt(params.xPosWidth.W))
+  val y = Input(UInt(params.yPosWidth.W))
 }
 
 class JteHandlerH(params: ZamletParams) extends Module {
@@ -343,11 +345,12 @@ class JteHandlerH(params: ZamletParams) extends Module {
   val msgIndex = RegInit(0.U(1.W))
   val completeMessage = !sendData || msgIndex === 1.U
 
-  val header = Wire(new JteIHeader(params))
-  header := 0.U.asTypeOf(new JteIHeader(params))
-  header.dstIndex := 0.U
-  header.sourceX := io.gh.bits.srcX
-  header.sourceY := io.gh.bits.srcY
+  val header = Wire(new JteHeader(params))
+  header := 0.U.asTypeOf(new JteHeader(params))
+  header.targetX := io.gh.bits.srcX
+  header.targetY := io.gh.bits.srcY
+  header.sourceX := io.x
+  header.sourceY := io.y
   header.sendType := SendType.Single
   when (io.gh.bits.msgType === MessageType.LoadWordReq.asUInt) {
     header.messageType := Mux(io.gh.bits.drop, MessageType.LoadWordDrop, MessageType.LoadWordResp)
@@ -374,6 +377,8 @@ class JteHandlerH(params: ZamletParams) extends Module {
 class JteHandlerIO(params: ZamletParams) extends Bundle {
   val packetIn = Flipped(Decoupled(new NetworkWord(params)))
   val packetOut = Decoupled(new NetworkWord(params))
+  val x = Input(UInt(params.xPosWidth.W))
+  val y = Input(UInt(params.yPosWidth.W))
   val cacheLineReq = Decoupled(new CacheLineRequest(params))
   val cacheLineResp = Flipped(Decoupled(new CacheLineResponse(params)))
   val sramReq = Decoupled(new SramRequest(params))
@@ -411,6 +416,8 @@ class JteHandler(params: ZamletParams) extends Module {
 
   val hStage = Module(new JteHandlerH(params))
   hStage.io.gh <> DoubleBuffer(gStage.io.gh, hp.ghFB, hp.ghBB)
+  hStage.io.x := RegNext(io.x)
+  hStage.io.y := RegNext(io.y)
   io.packetOut <> DoubleBuffer(hStage.io.packet, hp.packetOutFB, hp.packetOutBB)
 }
 

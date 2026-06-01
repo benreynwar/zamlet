@@ -175,6 +175,9 @@ class Kamlet(
       j.io.cacheLineResp.bits := DontCare
       j.io.sendCacheLine.valid := false.B
       j.io.sendCacheLine.bits := DontCare
+      if (jY != 0 || jX != 0) {
+        j.io.kamletReceivePacket.ready := false.B
+      }
     }
   }
 

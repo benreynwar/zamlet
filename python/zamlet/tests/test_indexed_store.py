@@ -124,8 +124,8 @@ async def run_indexed_store_test(
     mask_reg = None
     if use_mask:
         mask_reg = index_reg + index_emul
-        assert mask_reg < lamlet.params.n_vregs, \
-            f'mask_reg {mask_reg} exceeds n_vregs {lamlet.params.n_vregs}'
+        assert mask_reg < lamlet.params.rf_slice_words, \
+            f'mask_reg {mask_reg} exceeds rf_slice_words {lamlet.params.rf_slice_words}'
         mask_mem_addr = dst_base + 0x400000
         await setup_mask_register(lamlet, mask_reg, mask_bits, page_bytes, mask_mem_addr)
 
