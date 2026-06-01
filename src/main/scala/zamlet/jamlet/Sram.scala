@@ -59,15 +59,18 @@ class Sram(params: ZamletParams) extends Module {
     portReq.address := jceWriteAReq.bits.address
     portReq.isWrite := true.B
     portReq.data := jceWriteAReq.bits.data
+    portReq.writeMask := Fill(params.wordWidth, true.B)
   }.elsewhen(jceReadSelected) {
     portReq.address := jceReadAReq.bits
     portReq.isWrite := false.B
     portReq.data := DontCare
+    portReq.writeMask := DontCare
   }
   val portReadData = Mux(portReq.isWrite, 0.U, mem(portReq.address))
 
   when(portValid && portReq.isWrite) {
-    memNext(portReq.address) := portReq.data
+    val oldData = mem(portReq.address)
+    memNext(portReq.address) := (oldData & ~portReq.writeMask) | (portReq.data & portReq.writeMask)
   }
 
   localAResp.valid := localAReq.valid

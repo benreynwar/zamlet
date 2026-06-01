@@ -16,6 +16,7 @@ from dataclasses import dataclass
 
 from zamlet import addresses
 from zamlet.addresses import GlobalAddress, TLBFaultType, VectorFaultInfo
+from zamlet.lane_order import LaneOrder
 from zamlet.waiting_item import WaitingItem
 from zamlet.kamlet.kinstructions import TrackedKInstr, Renamed
 from zamlet.message import (
@@ -65,7 +66,7 @@ class LoadIndexedElement(TrackedKInstr):
     data_ew: int
     element_index: int
     base_addr: GlobalAddress
-    word_order: addresses.WordOrder
+    word_order: LaneOrder
     instr_ident: int
     parent_ident: int  # Barrier instruction ident for ordering
     mask_reg: int | None = None

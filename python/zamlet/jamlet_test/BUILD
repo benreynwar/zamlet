@@ -1,13 +1,4 @@
-# Jamlet module tests
-
 load("//bazel:cocotb_rules.bzl", "chisel_module_tests")
-
-chisel_module_tests(
-    generator = "//src/main/scala/zamlet/jamlet:witemmonitor",
-    toplevel = "WitemMonitor",
-    srcs = ["test_witem_monitor.py"],
-    test_modules = ["zamlet.jamlet_test.test_witem_monitor"],
-)
 
 chisel_module_tests(
     generator = "//src/main/scala/zamlet/jamlet:indextocoordswithreg",
@@ -44,18 +35,56 @@ chisel_module_tests(
     toplevel = "JteInitiator",
     srcs = [
         "test_jteinitiator.py",
-        "test_jteinitiator_random.py",
     ],
     configs = [
         ("default", "//configs:zamlet_default.json"),
     ],
     test_modules = [
       "zamlet.jamlet_test.test_jteinitiator",
-      "zamlet.jamlet_test.test_jteinitiator_random",
     ],
+)
+
+chisel_module_tests(
+    generator = "//src/main/scala/zamlet/jamlet:jamletalu",
+    toplevel = "JamletAlu",
+    srcs = ["test_jamlet_alu.py"],
+    configs = [
+        ("default", "//configs:zamlet_default.json"),
+    ],
+    test_modules = ["zamlet.jamlet_test.test_jamlet_alu"],
+)
+
+chisel_module_tests(
+    generator = "//src/main/scala/zamlet/jamlet:jamlet",
+    toplevel = "Jamlet",
+    srcs = [
+        "jamlet_driver.py",
+        "test_jamlet.py",
+    ],
+    configs = [
+        ("default", "//configs:zamlet_default.json"),
+    ],
+    test_modules = ["zamlet.jamlet_test.test_jamlet"],
+)
+
+chisel_module_tests(
+    generator = "//src/main/scala/zamlet/jamlet:localexec",
+    toplevel = "LocalExec",
+    srcs = ["test_localexec.py"],
+    configs = [
+        ("default", "//configs:zamlet_default.json"),
+    ],
+    test_modules = ["zamlet.jamlet_test.test_localexec"],
 )
 
 test_suite(
     name = "all_tests",
-    tests = [":witemmonitor_tests", ":indextocoordswithreg_tests", ":coordstoindexwithreg_tests", ":jteinitiator_tests"],
+    tests = [
+        ":indextocoordswithreg_tests",
+        ":coordstoindexwithreg_tests",
+        ":jteinitiator_tests",
+        ":jamletalu_tests",
+        ":jamlet_tests",
+        ":localexec_tests",
+    ],
 )

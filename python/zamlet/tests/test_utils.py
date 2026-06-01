@@ -6,7 +6,7 @@ from random import Random
 from typing import List
 
 from zamlet import utils
-from zamlet.addresses import GlobalAddress, MemoryType, Ordering, WordOrder
+from zamlet.addresses import GlobalAddress, MemoryType, Ordering
 from zamlet.oamlet.oamlet import Oamlet
 from zamlet.monitor import CompletionType, SpanType
 from zamlet.params import ZamletParams
@@ -488,6 +488,5 @@ def generate_mask_pattern(vl: int, pattern_type: str, rnd: Random) -> list[bool]
         return [(i < vl // 2) for i in range(vl)]
     else:
         raise ValueError(f"Unknown mask pattern type: {pattern_type}")
-
 
 

@@ -26,12 +26,10 @@ ZAMLET_DEPS = [
 ]
 
 ZAMLET_COMMON_SRCS = [
-    "//src/main/scala/zamlet:ModuleGenerator.scala",
-    "//src/main/scala/zamlet:ZamletParams.scala",
+    "//src/main/scala/zamlet:zamlet_common_sources",
     "//src/main/scala/zamlet/kamlet:Synchronizer.scala",
     "//src/main/scala/zamlet/utils:utils_sources",
     "//src/main/scala/zamlet/jamlet:KInstr.scala",
-    "//src/main/scala/zamlet/jamlet:WitemEntry.scala",
     "//src/main/scala/zamlet/network:network_sources",
 ]
 
@@ -85,7 +83,6 @@ chisel_binary(
         "VpuToScalarMem.scala",
         "//src/main/scala/zamlet/kamlet:kamlet_sources",
         "//src/main/scala/zamlet/jamlet:jamlet_sources",
-        "//src/main/scala/zamlet/network:network_sources",
     ] + ZAMLET_COMMON_SRCS,
     main_class = "zamlet.lamlet.ZamletMain",
     deps = ZAMLET_DEPS,

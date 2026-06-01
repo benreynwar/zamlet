@@ -14,13 +14,13 @@ Key Types:
     - KMAddr: Kamlet memory address
     - JSAddr: Jamlet SRAM address
 
-Word Ordering (Ordering.word_order)
+Lane Ordering (Ordering.word_order)
 -----------------------------------
 The `word_order` field in `Ordering` determines how jamlet coordinates (x, y) map
 to the vector word index (vw_index). This controls which jamlet holds which word
 of a vector line.
 
-WordOrder.STANDARD:
+LaneOrder.ROW_MAJOR:
     vw_index = jy * (j_cols * k_cols) + jx
 
     For a 2x1 grid of kamlets (k_cols=2, k_rows=1) with 1x1 jamlets each:
@@ -29,7 +29,7 @@ WordOrder.STANDARD:
 
     Words are laid out row-major across the jamlet grid.
 
-WordOrder.MOORE:
+LaneOrder.MOORE:
     Words are laid out following a Moore curve (closed space-filling curve)
     across the jamlet grid. Requires a square power-of-2 grid. Adjacent
     vw_indices map to spatially adjacent jamlets.
@@ -72,7 +72,16 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import List, Dict
 
-from zamlet.moore import moore_d2xy, moore_xy2d
+from zamlet.lane_order import (
+    LaneOrder,
+    j_coords_to_vw_index,
+    k_indices_to_j_coords,
+    k_indices_to_routing_coords,
+    k_indices_to_vw_index,
+    vw_index_to_j_coords,
+    vw_index_to_k_indices,
+    vw_index_to_routing_coords,
+)
 from zamlet.params import ZamletParams
 
 
@@ -82,12 +91,6 @@ SizeBytes = int
 SizeBits = int
 
 
-class WordOrder(Enum):
-
-    STANDARD = 0
-    MOORE = 1
-
-
 class MemoryType(Enum):
     """Type of memory region determining access behavior."""
     VPU = 'vpu'                          # VPU DRAM, always idempotent
@@ -95,94 +98,10 @@ class MemoryType(Enum):
     SCALAR_NON_IDEMPOTENT = 'scalar_non_idem'  # Scalar I/O, no speculative access, tracks accesses
 
 
-def vw_index_to_j_coords(params: ZamletParams, word_order: WordOrder,
-                          vw_index: int):
-    if word_order == WordOrder.STANDARD:
-        jx = vw_index % (params.j_cols * params.k_cols)
-        jy = vw_index // (params.j_cols * params.k_cols)
-        return jx, jy
-    elif word_order == WordOrder.MOORE:
-        total_cols = params.j_cols * params.k_cols
-        total_rows = params.j_rows * params.k_rows
-        # Could extend to rectangles by appending square Moore curves.
-        assert total_cols == total_rows, (
-            f"MOORE requires square grid, got {total_cols}x{total_rows}"
-        )
-        assert total_cols & (total_cols - 1) == 0, (
-            f"MOORE requires power-of-2 grid, got {total_cols}"
-        )
-        return moore_d2xy(total_cols, vw_index)
-    else:
-        raise NotImplementedError(f"Word order {word_order}")
-
-
-def vw_index_to_routing_coords(params: ZamletParams, word_order: WordOrder,
-                               vw_index: int):
-    """Convert a vector word index to routing coordinates (x, y)."""
-    jx, jy = vw_index_to_j_coords(params, word_order, vw_index)
-    return jx + params.west_offset, jy + params.north_offset
-
-
-def j_coords_to_vw_index(params: ZamletParams, word_order: WordOrder,
-                          jx: int, jy: int):
-    if word_order == WordOrder.STANDARD:
-        vw_index = jy * (params.j_cols * params.k_cols) + jx
-        return vw_index
-    elif word_order == WordOrder.MOORE:
-        total_cols = params.j_cols * params.k_cols
-        total_rows = params.j_rows * params.k_rows
-        assert total_cols == total_rows, (
-            f"MOORE requires square grid, got {total_cols}x{total_rows}"
-        )
-        assert total_cols & (total_cols - 1) == 0, (
-            f"MOORE requires power-of-2 grid, got {total_cols}"
-        )
-        return moore_xy2d(total_cols, jx, jy)
-    else:
-        raise NotImplementedError(f"Word order {word_order}")
-
-
-def vw_index_to_k_indices(params: ZamletParams, word_order: WordOrder, vw_index: int):
-    """
-    Convert the word index in a vector line into a jamlet index.
-    """
-    jx, jy = vw_index_to_j_coords(params, word_order, vw_index)
-    kx = jx // params.j_cols
-    ky = jy // params.j_rows
-    k_index = ky * params.k_cols + kx
-    j_in_k_x = jx % params.j_cols
-    j_in_k_y = jy % params.j_rows
-    j_in_k_index = j_in_k_y * params.j_cols + j_in_k_x
-    return k_index, j_in_k_index
-
-
-def k_indices_to_j_coords(params: ZamletParams, k_index: int, j_in_k_index: int):
-    """Convert (k_index, j_in_k_index) to absolute jamlet coordinates (jx, jy)."""
-    kx = k_index % params.k_cols
-    ky = k_index // params.k_cols
-    j_in_k_x = j_in_k_index % params.j_cols
-    j_in_k_y = j_in_k_index // params.j_cols
-    jx = kx * params.j_cols + j_in_k_x
-    jy = ky * params.j_rows + j_in_k_y
-    return jx, jy
-
-
-def k_indices_to_routing_coords(params: ZamletParams, k_index: int, j_in_k_index: int):
-    """Convert (k_index, j_in_k_index) to routing coordinates (x, y)."""
-    jx, jy = k_indices_to_j_coords(params, k_index, j_in_k_index)
-    return jx + params.west_offset, jy + params.north_offset
-
-
-def k_indices_to_vw_index(params: ZamletParams, word_order, k_index: int, j_in_k_index: int):
-    jx, jy = k_indices_to_j_coords(params, k_index, j_in_k_index)
-    vw_index = j_coords_to_vw_index(params, word_order, jx, jy)
-    return vw_index
-
-
 @dataclass(frozen=True)
 class Ordering:
 
-    word_order: WordOrder
+    word_order: LaneOrder
     ew: SizeBits
 
 

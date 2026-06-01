@@ -1,9 +1,295 @@
 import logging
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, fields, field
 from typing import Any, Dict
 
 logger = logging.getLogger(__name__)
+
+
+def _from_dict(cls, data: Dict[str, Any], mapping: Dict[str, str]):
+    required = set(mapping.keys())
+    seen = set(data.keys())
+    missing = required - seen
+    extra = seen - required
+    if missing or extra:
+        logger.error(f'{cls.__name__}: missing fields {missing}. Extra fields {extra}')
+    assert not missing
+    assert not extra
+
+    kwargs = {}
+    field_types = {f.name: f.type for f in fields(cls)}
+    for camel_key, snake_key in mapping.items():
+        value = data[camel_key]
+        field_type = field_types[snake_key]
+        if isinstance(value, dict) and hasattr(field_type, "from_dict"):
+            value = field_type.from_dict(value)
+        kwargs[snake_key] = value
+    return cls(**kwargs)
+
+
+def _identity_mapping(cls) -> Dict[str, str]:
+    return {f.name: f.name for f in fields(cls)}
+
+
+@dataclass
+class RfSliceParams:
+    maskReqForwardBuffer: bool = False
+    maskReqBackwardBuffer: bool = False
+    maskRespForwardBuffer: bool = False
+    maskRespBackwardBuffer: bool = False
+    indexReqForwardBuffer: bool = False
+    indexReqBackwardBuffer: bool = False
+    indexRespForwardBuffer: bool = False
+    indexRespBackwardBuffer: bool = False
+    dataReqForwardBuffer: bool = False
+    dataReqBackwardBuffer: bool = False
+    dataRespForwardBuffer: bool = False
+    dataRespBackwardBuffer: bool = False
+    localExecReqForwardBuffer: bool = False
+    localExecReqBackwardBuffer: bool = False
+    localExecRespForwardBuffer: bool = False
+    localExecRespBackwardBuffer: bool = False
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'RfSliceParams':
+        return _from_dict(cls, data, _identity_mapping(cls))
+
+
+@dataclass
+class SynchronizerParams:
+    maxConcurrentSyncs: int = 4
+    resultOutputReg: bool = False
+    portOutOutputReg: bool = False
+    minPipelineReg: bool = False
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'SynchronizerParams':
+        return _from_dict(cls, data, _identity_mapping(cls))
+
+
+@dataclass
+class NetworkNodeParams:
+    iaForwardBuffer: bool = False
+    iaBackwardBuffer: bool = True
+    abForwardBuffer: bool = True
+    abBackwardBuffer: bool = True
+    boForwardBuffer: bool = False
+    boBackwardBuffer: bool = True
+    hiForwardBuffer: bool = True
+    hiBackwardBuffer: bool = True
+    hoForwardBuffer: bool = True
+    hoBackwardBuffer: bool = True
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'NetworkNodeParams':
+        return _from_dict(cls, data, _identity_mapping(cls))
+
+
+@dataclass
+class IssueUnitParams:
+    exForwardBuffer: bool = False
+    exBackwardBuffer: bool = False
+    tlbReqForwardBuffer: bool = False
+    tlbReqBackwardBuffer: bool = False
+    tlbRespInputReg: bool = False
+    toIdentTrackerForwardBuffer: bool = False
+    toIdentTrackerBackwardBuffer: bool = False
+    comOutputReg: bool = False
+    killInputReg: bool = False
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'IssueUnitParams':
+        return _from_dict(cls, data, _identity_mapping(cls))
+
+
+@dataclass
+class JteStateParams:
+    inputReqFB: bool = True
+    inputReqBB: bool = True
+    inputRespFB: bool = True
+    inputRespBB: bool = True
+    initiatorDispatchFB: bool = False
+    initiatorDispatchBB: bool = False
+    receiverUpdateFB: bool = False
+    receiverUpdateBB: bool = False
+    slotToRegReqFB: bool = False
+    slotToRegReqBB: bool = False
+    slotToRegRespFB: bool = False
+    slotToRegRespBB: bool = False
+    createBuffer: bool = True
+    clearBuffer: bool = True
+    initiatorCommitBuffer: bool = False
+    dispatchABFB: bool = True
+    dispatchABBB: bool = True
+    dispatchBCFB: bool = True
+    dispatchBCBB: bool = True
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'JteStateParams':
+        return _from_dict(cls, data, _identity_mapping(cls))
+
+
+@dataclass
+class JteInitiatorParams:
+    inputFB: bool = False
+    inputBB: bool = False
+    rfDataReqFB: bool = True
+    rfDataReqBB: bool = True
+    rfMaskReqFB: bool = True
+    rfMaskReqBB: bool = True
+    rfIndexReqFB: bool = True
+    rfIndexReqBB: bool = True
+    abFB: bool = True
+    abBB: bool = True
+    bcFB: bool = True
+    bcBB: bool = True
+    rfMaskRespFB: bool = True
+    rfMaskRespBB: bool = True
+    rfDataRespFB: bool = True
+    rfDataRespBB: bool = True
+    rfIndexRespFB: bool = True
+    rfIndexRespBB: bool = True
+    cdFB: bool = True
+    cdBB: bool = True
+    deFB: bool = True
+    deBB: bool = True
+    tlbReqFB: bool = True
+    tlbReqBB: bool = True
+    orderingReqFB: bool = True
+    orderingReqBB: bool = True
+    efFB: bool = True
+    efBB: bool = True
+    fgFB: bool = True
+    fgBB: bool = True
+    ghFB: bool = True
+    ghBB: bool = True
+    tlbRespFB: bool = True
+    tlbRespBB: bool = True
+    orderingRespFB: bool = True
+    orderingRespBB: bool = True
+    commitBuffer: bool = False
+    hiFB: bool = True
+    hiBB: bool = True
+    packetFB: bool = True
+    packetBB: bool = True
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'JteInitiatorParams':
+        return _from_dict(cls, data, _identity_mapping(cls))
+
+
+@dataclass
+class JteReceiverParams:
+    packetFB: bool = True
+    packetBB: bool = True
+    slotToRegReqFB: bool = False
+    slotToRegReqBB: bool = False
+    abFB: bool = True
+    abBB: bool = True
+    slotToRegRespFB: bool = False
+    slotToRegRespBB: bool = False
+    rfWriteReqFB: bool = True
+    rfWriteReqBB: bool = True
+    bcFB: bool = True
+    bcBB: bool = True
+    rfWriteRespFB: bool = True
+    rfWriteRespBB: bool = True
+    cdFB: bool = True
+    cdBB: bool = True
+    updateMsgFB: bool = False
+    updateMsgBB: bool = False
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'JteReceiverParams':
+        return _from_dict(cls, data, _identity_mapping(cls))
+
+
+@dataclass
+class JteHandlerParams:
+    packetInFB: bool = True
+    packetInBB: bool = True
+    abFB: bool = True
+    abBB: bool = True
+    cacheLineReqFB: bool = True
+    cacheLineReqBB: bool = True
+    bcFB: bool = True
+    bcBB: bool = True
+    cdFB: bool = True
+    cdBB: bool = True
+    cacheLineRespFB: bool = True
+    cacheLineRespBB: bool = True
+    deFB: bool = True
+    deBB: bool = True
+    sramReqFB: bool = True
+    sramReqBB: bool = True
+    efFB: bool = True
+    efBB: bool = True
+    fgFB: bool = True
+    fgBB: bool = True
+    sramRespFB: bool = True
+    sramRespBB: bool = True
+    ghFB: bool = True
+    ghBB: bool = True
+    packetOutFB: bool = True
+    packetOutBB: bool = True
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'JteHandlerParams':
+        return _from_dict(cls, data, _identity_mapping(cls))
+
+
+@dataclass
+class SramParams:
+    localA: bool = True
+    localB: bool = False
+    localC: bool = True
+    jteAFB: bool = True
+    jteABB: bool = True
+    jteBFB: bool = False
+    jteBBB: bool = False
+    jteCFB: bool = True
+    jteCBB: bool = True
+
+    @property
+    def local_response_latency(self) -> int:
+        return sum((self.localA, self.localB, self.localC))
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'SramParams':
+        return _from_dict(cls, data, _identity_mapping(cls))
+
+
+@dataclass
+class JceParams:
+    opFB: bool = True
+    opBB: bool = True
+    sramReadReqFB: bool = True
+    sramReadReqBB: bool = True
+    abFB: bool = True
+    abBB: bool = True
+    bcFB: bool = True
+    bcBB: bool = True
+    sramReadRespFB: bool = True
+    sramReadRespBB: bool = True
+    cdFB: bool = True
+    cdBB: bool = True
+    packetOutFB: bool = True
+    packetOutBB: bool = True
+    packetInFB: bool = True
+    packetInBB: bool = True
+    sramWriteReqFB: bool = True
+    sramWriteReqBB: bool = True
+    sramWriteRespFB: bool = True
+    sramWriteRespBB: bool = True
+    rxABFB: bool = True
+    rxABBB: bool = True
+    rxBCFB: bool = True
+    rxBCBB: bool = True
+    rxDoneFB: bool = True
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'JceParams':
+        return _from_dict(cls, data, _identity_mapping(cls))
 
 
 @dataclass
@@ -20,9 +306,8 @@ class ZamletParams:
     j_cols: int = 1
     j_rows: int = 1
 
-    n_vregs: int = 48
-    cache_slot_words_per_jamlet: int = 2
     word_bytes: int = 8
+    log2_cache_slot_words_per_jamlet: int = 2
     log2_page_words_per_jamlet: int = 6
     scalar_memory_bytes: int = 8 << 20
     kamlet_memory_bytes: int = 1 << 20
@@ -75,13 +360,29 @@ class ZamletParams:
     x_pos_width: int = 8
     y_pos_width: int = 8
     ident_width: int = 7
+    writeset_width: int = 4
     rf_slice_words: int = 48
     mem_addr_width: int = 48
     element_index_width: int = 22
+    log2_n_params: int = 4
     n_response_buffer_slots: int = 4
     mem_beat_words: int = 1
     mem_axi_id_bits: int = 4
     lamlet_dispatch_queue_depth: int = 8
+    ident_tracker_out_forward_buffer: bool = True
+    ident_tracker_out_backward_buffer: bool = True
+    network_node_params: NetworkNodeParams = field(default_factory=NetworkNodeParams)
+    issue_unit_params: IssueUnitParams = field(default_factory=IssueUnitParams)
+    synchronizer_params: SynchronizerParams = field(default_factory=SynchronizerParams)
+    rf_slice_params: RfSliceParams = field(default_factory=RfSliceParams)
+    jte_state_params: JteStateParams = field(default_factory=JteStateParams)
+    jte_initiator_params: JteInitiatorParams = field(default_factory=JteInitiatorParams)
+    jte_receiver_params: JteReceiverParams = field(default_factory=JteReceiverParams)
+    jte_handler_params: JteHandlerParams = field(default_factory=JteHandlerParams)
+    sram_params: SramParams = field(default_factory=SramParams)
+    jce_params: JceParams = field(default_factory=JceParams)
+    message_length_width: int = 4
+    message_type_width: int = 6
 
     # Experiment: if True, lamlet skips the on-chip network for kinstr
     # dispatch and enqueues kinstructions directly into the target
@@ -126,6 +427,10 @@ class ZamletParams:
         return 1 << self.log2_page_words_per_jamlet
 
     @property
+    def cache_slot_words_per_jamlet(self) -> int:
+        return 1 << self.log2_cache_slot_words_per_jamlet
+
+    @property
     def cache_slot_words(self) -> int:
         return self.cache_slot_words_per_jamlet * self.j_in_k
 
@@ -152,6 +457,26 @@ class ZamletParams:
     @property
     def j_in_l(self):
         return self.j_in_k * self.k_in_l
+
+    @property
+    def log2_j_in_k(self) -> int:
+        return int(math.log2(self.j_in_k))
+
+    @property
+    def log2_j_in_l(self) -> int:
+        return int(math.log2(self.j_in_l))
+
+    @property
+    def log2_word_bytes(self) -> int:
+        return int(math.log2(self.word_bytes))
+
+    @property
+    def log2_cache_slot_words_per_kamlet(self) -> int:
+        return self.log2_cache_slot_words_per_jamlet + self.log2_j_in_k
+
+    @property
+    def end_element_index_width(self) -> int:
+        return self.log2_j_in_l + self.log2_word_bytes + 1
 
     @property
     def vline_bytes(self):
@@ -308,13 +633,15 @@ class ZamletParams:
         'jRows': 'j_rows',
         'wordBytes': 'word_bytes',
         'sramDepth': 'sram_depth',
-        'cacheSlotWordsPerJamlet': 'cache_slot_words_per_jamlet',
+        'log2CacheSlotWordsPerJamlet': 'log2_cache_slot_words_per_jamlet',
         'rfSliceWords': 'rf_slice_words',
         'memAddrWidth': 'mem_addr_width',
         'log2PageWordsPerJamlet': 'log2_page_words_per_jamlet',
         'elementIndexWidth': 'element_index_width',
+        'log2NParams': 'log2_n_params',
         'witemTableDepth': 'witem_table_depth',
         'identWidth': 'ident_width',
+        'writesetWidth': 'writeset_width',
         'nMemletGatheringSlots': 'n_memlet_gathering_slots',
         'nResponseBufferSlots': 'n_response_buffer_slots',
         'memBeatWords': 'mem_beat_words',
@@ -323,22 +650,25 @@ class ZamletParams:
         'instructionQueueLength': 'instruction_queue_length',
         'reservationStationDepth': 'reservation_station_depth',
         'lamletDispatchQueueDepth': 'lamlet_dispatch_queue_depth',
+        'identTrackerOutForwardBuffer': 'ident_tracker_out_forward_buffer',
+        'identTrackerOutBackwardBuffer': 'ident_tracker_out_backward_buffer',
         'nAChannels': 'n_a_channels',
         'nBChannels': 'n_b_channels',
+        'networkNodeParams': 'network_node_params',
+        'issueUnitParams': 'issue_unit_params',
+        'synchronizerParams': 'synchronizer_params',
+        'rfSliceParams': 'rf_slice_params',
+        'jteStateParams': 'jte_state_params',
+        'jteInitiatorParams': 'jte_initiator_params',
+        'jteReceiverParams': 'jte_receiver_params',
+        'jteHandlerParams': 'jte_handler_params',
+        'sramParams': 'sram_params',
+        'jceParams': 'jce_params',
+        'messageLengthWidth': 'message_length_width',
+        'messageTypeWidth': 'message_type_width',
     }
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'ZamletParams':
         """Create ZamletParams from dictionary with camelCase field names."""
-        converted = {}
-        required = set(cls._FIELD_MAPPING.keys())
-        seen = set(data.keys())
-        missing = required - seen
-        extra = seen - required
-        if missing or extra:
-            logger.error(f'Missing fields {missing}. Extra fields {extra}')
-        assert not missing
-        for camel_key, snake_key in cls._FIELD_MAPPING.items():
-            if camel_key in data:
-                converted[snake_key] = data[camel_key]
-        return cls(**converted)
+        return _from_dict(cls, data, cls._FIELD_MAPPING)

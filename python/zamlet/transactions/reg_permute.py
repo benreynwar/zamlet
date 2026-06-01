@@ -23,6 +23,7 @@ import logging
 
 from zamlet import addresses
 from zamlet.kamlet.kinstructions import KInstr
+from zamlet.lane_order import LaneOrder
 from zamlet.waiting_item import WaitingItem
 from zamlet.kamlet.cache_table import SendState
 from zamlet.message import RegElementHeader, MessageType, SendType
@@ -49,7 +50,7 @@ class RegPermute(KInstr):
     start_index: int
     n_elements: int
     data_ew: int
-    word_order: addresses.WordOrder
+    word_order: LaneOrder
     vlmax: int
     mask_reg: int | None
     instr_ident: int

@@ -32,7 +32,6 @@ JAMLET_SUB_MODULES = [
     ("RfSlice", "rfslice", [], "35"),
     ("Sram", "sram", [], "35"),
     ("Jce", "jce", [], "35"),
-    ("WitemMonitor", "witemmonitor", [], "35"),
     ("LocalExec", "localexec", [], "35"),
     ("CoordsToIndexWithReg", "coordstoindexwithreg", [], "35"),
     ("IndexToCoordsWithReg", "indextocoordswithreg", [], "35"),

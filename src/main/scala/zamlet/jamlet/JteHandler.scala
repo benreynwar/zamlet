@@ -53,6 +53,7 @@ class SramRequest(params: ZamletParams) extends Bundle {
   val address = UInt(params.sramAddrWidth.W)
   val isWrite = Bool()
   val data = params.word()
+  val writeMask = params.word()
 }
 
 class JteHandlerAB(params: ZamletParams) extends Bundle {
@@ -264,6 +265,7 @@ class JteHandlerE(params: ZamletParams) extends Module {
   io.sramReq.bits.address := io.de.bits.sramAddr
   io.sramReq.bits.isWrite := io.de.bits.msgType === MessageType.StoreWordReq.asUInt
   io.sramReq.bits.data := io.de.bits.data
+  io.sramReq.bits.writeMask := Fill(params.wordWidth, true.B)
 
   io.ef.valid := io.de.valid && (!useSram || io.sramReq.ready)
   io.ef.bits.srcX := io.de.bits.srcX

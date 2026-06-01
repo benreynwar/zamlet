@@ -16,7 +16,7 @@ import pytest
 from zamlet.runner import Clock
 from zamlet.params import ZamletParams
 from zamlet.oamlet.oamlet import Oamlet
-from zamlet.addresses import GlobalAddress, MemoryType, Ordering, WordOrder
+from zamlet.addresses import GlobalAddress, MemoryType, Ordering
 from zamlet.geometries import SMALL_GEOMETRIES, scale_n_tests
 from zamlet.monitor import CompletionType, SpanType
 from zamlet.tests import test_utils

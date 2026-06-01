@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, List, Tuple
 from zamlet import addresses
 from zamlet.addresses import GlobalAddress, Ordering, TLBFaultType, VectorOpResult
 from zamlet.kamlet import kinstructions
+from zamlet.lane_order import LaneOrder
 from zamlet.transactions.load import Load
 from zamlet.transactions.store import Store
 from zamlet.transactions.load_stride import LoadStride
@@ -569,7 +570,7 @@ async def vloadstorestride(lamlet: 'Oamlet', reg_base: int, addr: int,
     for reg in temp_regs:
         await lamlet.await_vreg_write_pending(reg, 1)
         lamlet.vrf_ordering[reg] = Ordering(
-            word_order=addresses.WordOrder.STANDARD, ew=index_ew)
+            word_order=LaneOrder.ROW_MAJOR, ew=index_ew)
 
     # Align batch_start to j_in_l so that index element (d - batch_start) lands
     # on the same jamlet as data element d (both have the same % j_in_l).
@@ -591,7 +592,7 @@ async def vloadstorestride(lamlet: 'Oamlet', reg_base: int, addr: int,
             dst=temp_base,
             n_elements=batch_n,
             element_width=index_ew,
-            word_order=addresses.WordOrder.STANDARD,
+            word_order=LaneOrder.ROW_MAJOR,
             mask_reg=None,
             instr_ident=vid_ident,
         )
@@ -608,7 +609,7 @@ async def vloadstorestride(lamlet: 'Oamlet', reg_base: int, addr: int,
             mask_reg=None,
             n_elements=batch_n,
             element_width=index_ew,
-            word_order=addresses.WordOrder.STANDARD,
+            word_order=LaneOrder.ROW_MAJOR,
             instr_ident=mul_ident,
         )
         await lamlet.add_to_instruction_buffer(mul_kinstr, parent_span_id)

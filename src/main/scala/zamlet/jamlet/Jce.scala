@@ -151,7 +151,7 @@ class Jce(params: ZamletParams) extends Module {
 
   val rxAPacket = DoubleBuffer(io.packetIn, jp.packetInFB, jp.packetInBB)
   val rxAFull = Wire(Decoupled(new JceRxA(params)))
-  val rxAOut = Wire(Decoupled(params.cacheSlot()))
+  val rxAOut = Wire(Decoupled(new JceRxA(params)))
 
   val rxAStateNext = Wire(new JceRxAState(params))
   val rxAStateInitial = Wire(new JceRxAState(params))
@@ -195,8 +195,8 @@ class Jce(params: ZamletParams) extends Module {
   rxASramReq.bits.data := rxAFull.bits.data
   io.sramWriteReq <> DoubleBuffer(rxASramReq, jp.sramWriteReqFB, jp.sramWriteReqBB)
 
-  rxAOut.valid := rxAFull.valid && rxASramReq.ready && rxAFull.bits.last
-  rxAOut.bits := rxAFull.bits.slot
+  rxAOut.valid := rxAFull.valid && rxASramReq.ready
+  rxAOut.bits := rxAFull.bits
 
   val rxB = DoubleBuffer(rxAOut, jp.rxABFB, jp.rxABBB)
 
@@ -207,8 +207,8 @@ class Jce(params: ZamletParams) extends Module {
   rxCSramResp.ready := rxC.valid
 
   val rxCOpDone = Wire(Valid(params.cacheSlot()))
-  rxCOpDone.valid := rxC.fire
-  rxCOpDone.bits := rxC.bits
+  rxCOpDone.valid := rxC.fire && rxC.bits.last
+  rxCOpDone.bits := rxC.bits.slot
 
   io.rxDone := ValidBuffer(rxCOpDone)
 }

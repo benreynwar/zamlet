@@ -4,6 +4,7 @@ import chisel3._
 import chisel3.util._
 import zamlet.ZamletParams
 import zamlet.SynchronizerParams
+import zamlet.LaneOrderMapping
 import zamlet.jamlet.Jamlet
 import zamlet.network.NetworkWord
 
@@ -67,7 +68,7 @@ class Kamlet(
     j.io.thisY := absoluteY
     j.io.memletX := 0.U
     j.io.memletY := 0.U
-    j.io.laneIndex := absoluteY * params.jTotalCols.U + absoluteX
+    j.io.laneIndices := LaneOrderMapping.indices(params, absoluteX, absoluteY)
     j
   }
 

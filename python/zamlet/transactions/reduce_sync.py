@@ -20,6 +20,7 @@ import logging
 
 from zamlet import addresses
 from zamlet.kamlet.kinstructions import KInstr
+from zamlet.lane_order import LaneOrder
 from zamlet.synchronization import (
     SyncAggOp, WaitingItemSyncState, aggregate_sync_values,
 )
@@ -57,7 +58,7 @@ class ReduceSync(KInstr):
     width: int
     n_elements: int
     sync_ident: int
-    word_order: addresses.WordOrder
+    word_order: LaneOrder
     instr_ident: int
     src_is_mask: bool = False
 

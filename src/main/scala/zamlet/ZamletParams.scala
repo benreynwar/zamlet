@@ -7,122 +7,6 @@ import io.circe.parser._
 import io.circe.generic.semiauto._
 import scala.io.Source
 
-import zamlet.SimpleElementWidth
-
-object WidthFormat extends ChiselEnum {
-  val wf1 = Value(0.U)
-  val wf8 = Value(3.U)
-  val wf16 = Value(4.U)
-  val wf32 = Value(5.U)
-  val wf64 = Value(6.U)
-  val wf128 = Value(7.U)
-  val wf256 = Value(8.U)
-  val wf512 = Value(9.U)
-}
-
-object ElementWidth extends ChiselEnum {
-  val ew1 = Value(0.U)
-  val ew8 = Value(3.U)
-  val ew16 = Value(4.U)
-  val ew32 = Value(5.U)
-  val ew64 = Value(6.U)
-  val ew128 = Value(7.U)
-  val ew256 = Value(8.U)
-  val ew512 = Value(9.U)
-}
-
-object WidthHelpers {
-
-  def wfBits(wf: WidthFormat.Type): UInt = {
-    val result = WireDefault(UInt(10.W), 0.U)
-    switch(wf) {
-      is(WidthFormat.wf1) { result := 1.U }
-      is(WidthFormat.wf8) { result := 8.U }
-      is(WidthFormat.wf16) { result := 16.U }
-      is(WidthFormat.wf32) { result := 32.U }
-      is(WidthFormat.wf64) { result := 64.U }
-      is(WidthFormat.wf128) { result := 128.U }
-      is(WidthFormat.wf256) { result := 256.U }
-      is(WidthFormat.wf512) { result := 512.U }
-    }
-    result
-  }
-
-  def wfLog2Bits(wf: WidthFormat.Type): UInt = {
-    val result = WireDefault(UInt(4.W), 0.U)
-    switch(wf) {
-      is(WidthFormat.wf1) { result := 0.U }
-      is(WidthFormat.wf8) { result := 3.U }
-      is(WidthFormat.wf16) { result := 4.U }
-      is(WidthFormat.wf32) { result := 5.U }
-      is(WidthFormat.wf64) { result := 6.U }
-      is(WidthFormat.wf128) { result := 7.U }
-      is(WidthFormat.wf256) { result := 8.U }
-      is(WidthFormat.wf512) { result := 9.U }
-    }
-    result
-  }
-
-  def ewBits(wf: ElementWidth.Type): UInt = {
-    val result = WireDefault(UInt(10.W), 0.U)
-    switch(wf) {
-      is(ElementWidth.ew1) { result := 1.U }
-      is(ElementWidth.ew8) { result := 8.U }
-      is(ElementWidth.ew16) { result := 16.U }
-      is(ElementWidth.ew32) { result := 32.U }
-      is(ElementWidth.ew64) { result := 64.U }
-      is(ElementWidth.ew128) { result := 128.U }
-      is(ElementWidth.ew256) { result := 256.U }
-      is(ElementWidth.ew512) { result := 512.U }
-    }
-    result
-  }
-
-  def ewLog2Bits(wf: ElementWidth.Type): UInt = {
-    val result = WireDefault(UInt(4.W), 0.U)
-    switch(wf) {
-      is(ElementWidth.ew1) { result := 0.U }
-      is(ElementWidth.ew8) { result := 3.U }
-      is(ElementWidth.ew16) { result := 4.U }
-      is(ElementWidth.ew32) { result := 5.U }
-      is(ElementWidth.ew64) { result := 6.U }
-      is(ElementWidth.ew128) { result := 7.U }
-      is(ElementWidth.ew256) { result := 8.U }
-      is(ElementWidth.ew512) { result := 9.U }
-    }
-    result
-  }
-
-  def ewToSimple(ew: ElementWidth.Type): SimpleElementWidth.Type = {
-    var result = WireDefault(SimpleElementWidth(), SimpleElementWidth.ew8)
-    assert(ew != ElementWidth.ew1 && ew != ElementWidth.ew128 && ew != ElementWidth.ew256 && ew != ElementWidth.ew512)
-    switch(ew) {
-      is(ElementWidth.ew8) { result := SimpleElementWidth.ew8 }
-      is(ElementWidth.ew16) { result := SimpleElementWidth.ew16 }
-      is(ElementWidth.ew32) { result := SimpleElementWidth.ew32 }
-      is(ElementWidth.ew64) { result := SimpleElementWidth.ew64 }
-    }
-    result
-  }
-
-  def compatible(ewA: ElementWidth.Type, ewB: ElementWidth.Type, wfA: WidthFormat.Type, wfB: WidthFormat.Type): Bool = {
-      // The ew must fit in the wf
-      (wfLog2Bits(wfA) >= ewLog2Bits(ewA)) &&
-      (wfLog2Bits(wfB) >= ewLog2Bits(ewB)) &&
-      // And the ratio must be the same for A and B
-      (wfLog2Bits(wfA) - ewLog2Bits(ewA) === wfLog2Bits(wfB) - ewLog2Bits(ewB))
-  }
-}
-
-object LaneOrder extends ChiselEnum {
-  val MOORE = Value(0.U)
-  val UNKNOWN1 = Value(1.U)
-  val ROW_MAJOR = Value(2.U)
-  val TOROIDAL_ROW_MAJOR = Value(3.U)
-  val COLUMN_MAJOR = Value(4.U)
-  val TOROIDAL_COLUMN_MAJOR = Value(5.U)
-}
-
 class Ordering extends Bundle {
   val wf = WidthFormat()
   val laneOrder = LaneOrder()
@@ -159,93 +43,6 @@ case class SynchronizerParams(
   resultOutputReg: Boolean = false,
   portOutOutputReg: Boolean = false,
   minPipelineReg: Boolean = false
-)
-
-case class WitemMonitorParams(
-  // Kamlet lifecycle interfaces (Valid)
-  witemCreateInputReg: Boolean = false,
-  witemCacheAvailInputReg: Boolean = false,
-  witemRemoveInputReg: Boolean = false,
-  witemCompleteOutputReg: Boolean = false,
-  witemSrcUpdateInputReg: Boolean = false,
-  witemDstUpdateInputReg: Boolean = false,
-
-  // Sync interfaces (Valid)
-  witemFaultReadyOutputReg: Boolean = false,
-  witemCompleteReadyOutputReg: Boolean = false,
-  witemFaultSyncInputReg: Boolean = false,
-  witemCompletionSyncInputReg: Boolean = false,
-
-  // Witem info lookup (Decoupled)
-  witemInfoReqForwardBuffer: Boolean = false,
-  witemInfoReqBackwardBuffer: Boolean = false,
-  witemInfoRespForwardBuffer: Boolean = false,
-  witemInfoRespBackwardBuffer: Boolean = false,
-
-  // TLB interface (Decoupled)
-  tlbReqForwardBuffer: Boolean = false,
-  tlbReqBackwardBuffer: Boolean = false,
-  tlbRespForwardBuffer: Boolean = false,
-  tlbRespBackwardBuffer: Boolean = false,
-
-  // SRAM interface (Decoupled)
-  sramReqForwardBuffer: Boolean = false,
-  sramReqBackwardBuffer: Boolean = false,
-  sramRespForwardBuffer: Boolean = false,
-  sramRespBackwardBuffer: Boolean = false,
-
-  // RF interfaces (Decoupled)
-  maskRfReqForwardBuffer: Boolean = false,
-  maskRfReqBackwardBuffer: Boolean = false,
-  maskRfRespForwardBuffer: Boolean = false,
-  maskRfRespBackwardBuffer: Boolean = false,
-  indexRfReqForwardBuffer: Boolean = false,
-  indexRfReqBackwardBuffer: Boolean = false,
-  indexRfRespForwardBuffer: Boolean = false,
-  indexRfRespBackwardBuffer: Boolean = false,
-  dataRfReqForwardBuffer: Boolean = false,
-  dataRfReqBackwardBuffer: Boolean = false,
-  dataRfRespForwardBuffer: Boolean = false,
-  dataRfRespBackwardBuffer: Boolean = false,
-
-  // Packet output (Decoupled)
-  packetOutForwardBuffer: Boolean = false,
-  packetOutBackwardBuffer: Boolean = false,
-
-  // Error output
-  errOutputReg: Boolean = false,
-
-  // Pipeline stage buffers (S1→S2 through S14→S15)
-  s1s2ForwardBuffer: Boolean = false,
-  s1s2BackwardBuffer: Boolean = false,
-  s2s3ForwardBuffer: Boolean = false,
-  s2s3BackwardBuffer: Boolean = false,
-  s3s4ForwardBuffer: Boolean = false,
-  s3s4BackwardBuffer: Boolean = false,
-  s4s5ForwardBuffer: Boolean = false,
-  s4s5BackwardBuffer: Boolean = false,
-  s5s6ForwardBuffer: Boolean = false,
-  s5s6BackwardBuffer: Boolean = false,
-  s6s7ForwardBuffer: Boolean = false,
-  s6s7BackwardBuffer: Boolean = false,
-  s7s8ForwardBuffer: Boolean = false,
-  s7s8BackwardBuffer: Boolean = false,
-  s8s9ForwardBuffer: Boolean = false,
-  s8s9BackwardBuffer: Boolean = false,
-  s9s10ForwardBuffer: Boolean = false,
-  s9s10BackwardBuffer: Boolean = false,
-  s10s11ForwardBuffer: Boolean = false,
-  s10s11BackwardBuffer: Boolean = false,
-  s11s12ForwardBuffer: Boolean = false,
-  s11s12BackwardBuffer: Boolean = false,
-  s12s13ForwardBuffer: Boolean = false,
-  s12s13BackwardBuffer: Boolean = false,
-  s13s14ForwardBuffer: Boolean = false,
-  s13s14BackwardBuffer: Boolean = false,
-  s14s15ForwardBuffer: Boolean = false,
-  s14s15BackwardBuffer: Boolean = false,
-  s15s16ForwardBuffer: Boolean = false,
-  s15s16BackwardBuffer: Boolean = false
 )
 
 case class NetworkNodeParams(
@@ -399,7 +196,9 @@ case class SramParams(
   jteBBB: Boolean = false,
   jteCFB: Boolean = true,
   jteCBB: Boolean = true,
-)
+) {
+  def localResponseLatency: Int = Seq(localA, localB, localC).count(identity)
+}
 
 case class JceParams(
   opFB: Boolean = true,
@@ -455,6 +254,7 @@ case class ZamletParams(
   log2PageWordsPerJamlet: Int = 4,  // Page size in words per jamlet
   // Must hold j_in_l * word_bytes * max_lmul
   elementIndexWidth: Int = 22,
+  log2NParams: Int = 4,
 
   // WitemTable configuration
   witemTableDepth: Int = 16,
@@ -482,9 +282,6 @@ case class ZamletParams(
   nAChannels: Int = 1,
   nBChannels: Int = 1,
   networkNodeParams: NetworkNodeParams = NetworkNodeParams(),
-
-  // WitemMonitor configuration
-  witemMonitorParams: WitemMonitorParams = WitemMonitorParams(),
 
   // IssueUnit configuration
   issueUnitParams: IssueUnitParams = IssueUnitParams(),
@@ -539,6 +336,7 @@ case class ZamletParams(
   def log2JTotal: Int = Integer.numberOfTrailingZeros(jTotal)
   def log2WordWidth: Int = Integer.numberOfTrailingZeros(wordWidth)
   def log2WordBytes: Int = Integer.numberOfTrailingZeros(wordBytes)
+  def endElementIndexWidth: Int = log2JInL + log2WordBytes + 1
 
   def pageWordsPerJamlet: Int = 1 << log2PageWordsPerJamlet
 
@@ -599,7 +397,6 @@ case class ZamletParams(
 object ZamletParams {
   implicit val rfSliceParamsDecoder: Decoder[RfSliceParams] = deriveDecoder[RfSliceParams]
   implicit val synchronizerParamsDecoder: Decoder[SynchronizerParams] = deriveDecoder[SynchronizerParams]
-  implicit val witemMonitorParamsDecoder: Decoder[WitemMonitorParams] = deriveDecoder[WitemMonitorParams]
   implicit val networkNodeParamsDecoder: Decoder[NetworkNodeParams] = deriveDecoder[NetworkNodeParams]
   implicit val issueUnitParamsDecoder: Decoder[IssueUnitParams] = deriveDecoder[IssueUnitParams]
   implicit val jteStateParamsDecoder: Decoder[JteStateParams] = deriveDecoder[JteStateParams]

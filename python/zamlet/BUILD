@@ -51,7 +51,9 @@ py_library(
         "jamlet/*.py",
         "kamlet/*.py",
         "lamlet/*.py",
+        "maths/*.py",
         "oamlet/*.py",
+        "test_helpers/*.py",
         "transactions/*.py",
         "analysis/*.py",
     ]),
@@ -59,4 +61,3 @@ py_library(
     visibility = ["//visibility:public"],
     imports = [".."],
 )
-

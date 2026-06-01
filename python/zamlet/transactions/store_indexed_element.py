@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from zamlet import addresses
 from zamlet.addresses import GlobalAddress, TLBFaultType, VectorFaultInfo
 from zamlet.kamlet.kinstructions import TrackedKInstr, Renamed
+from zamlet.lane_order import LaneOrder
 from zamlet.message import (
     MessageType, SendType, ElementIndexHeader, pack_vector_fault_info_words)
 from zamlet.transactions.helpers import read_element
@@ -46,7 +47,7 @@ class StoreIndexedElement(TrackedKInstr):
     data_ew: int
     element_index: int
     base_addr: GlobalAddress
-    word_order: addresses.WordOrder
+    word_order: LaneOrder
     instr_ident: int
     mask_reg: int | None = None
 

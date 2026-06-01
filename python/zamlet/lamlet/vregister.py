@@ -8,7 +8,7 @@ cross-jamlet communication and synchronization.
 import logging
 from typing import TYPE_CHECKING
 
-from zamlet.addresses import WordOrder
+from zamlet.lane_order import LaneOrder
 from zamlet.transactions.reg_gather import RegGather
 from zamlet.transactions.reg_slide import RegSlide, SlideDirection
 from zamlet.lamlet import ident_query
@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 async def vrgather(lamlet: 'Oamlet', vd: int, vs2: int, vs1: int,
                    start_index: int, n_elements: int,
                    index_ew: int, data_ew: int,
-                   word_order: WordOrder, vlmax: int,
+                   word_order: LaneOrder, vlmax: int,
                    mask_reg: int | None, parent_span_id: int) -> int:
     """
     Execute vrgather.vv: vd[i] = (vs1[i] >= VLMAX) ? 0 : vs2[vs1[i]]
@@ -68,7 +68,7 @@ async def vslide(lamlet: 'Oamlet', vd: int, vs2: int,
                  offset: int, direction: SlideDirection,
                  start_index: int, n_elements: int,
                  data_ew: int,
-                 word_order: WordOrder, vlmax: int,
+                 word_order: LaneOrder, vlmax: int,
                  mask_reg: int | None, parent_span_id: int) -> int:
     """
     Execute vslideup / vslidedown.

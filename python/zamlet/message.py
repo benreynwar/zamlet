@@ -222,6 +222,30 @@ class AddressHeader(IdentHeader):
 
 
 @dataclass
+class CacheLineHeader(Header):
+    slot: int
+
+    @staticmethod
+    def fields(params):
+        used = params._base_header_width + params.cache_slot_width
+        return params.abstract_base_header_fields + [
+            ('slot', params.cache_slot_width),
+            ('_padding', params.word_bytes * 8 - used),
+        ]
+
+    def encode(self, params) -> int:
+        return pack_fields_to_int(self, self.fields(params))
+
+    @classmethod
+    def decode(cls, value: int, params) -> 'CacheLineHeader':
+        fields = unpack_int_to_fields(value, cls.fields(params))
+        fields.pop('_padding', None)
+        fields['message_type'] = MessageType(fields['message_type'])
+        fields['send_type'] = SendType(fields['send_type'])
+        return cls(**fields)
+
+
+@dataclass
 class ValueHeader(IdentHeader):
     value: bytes   # 16 bits
 
@@ -321,6 +345,12 @@ CACHE_LINE_MESSAGE_TYPES = {
     MessageType.WRITE_LINE_READ_LINE_ADDR,
 }
 
+CACHE_LINE_HEADER_MESSAGE_TYPES = {
+    MessageType.READ_LINE_RESP,
+    MessageType.WRITE_LINE_READ_LINE_RESP,
+    MessageType.WRITE_LINE_DATA,
+}
+
 
 def is_request_message(msg_type: MessageType) -> bool:
     """Return True if this message type expects a response."""
@@ -330,17 +360,18 @@ def is_request_message(msg_type: MessageType) -> bool:
 # Message types that use AddressHeader (have an address field)
 ADDRESS_HEADER_MESSAGE_TYPES = {
     MessageType.WRITE_LINE_ADDR, MessageType.WRITE_LINE_RESP,
-    MessageType.READ_LINE_ADDR, MessageType.READ_LINE_RESP,
+    MessageType.READ_LINE_ADDR,
     MessageType.WRITE_LINE_READ_LINE_ADDR,
-    MessageType.WRITE_LINE_READ_LINE_RESP,
-    MessageType.WRITE_LINE_DATA,
 }
 
 
 def int_to_header(value: int, params) -> Header:
     """Decode an integer into the appropriate Header subclass."""
-    fields = unpack_int_to_fields(value, params.address_header_fields)
+    fields = unpack_int_to_fields(value, params.base_header_fields)
     msg_type = MessageType(fields['message_type'])
+    if msg_type in CACHE_LINE_HEADER_MESSAGE_TYPES:
+        return CacheLineHeader.decode(value, params)
+    fields = unpack_int_to_fields(value, params.address_header_fields)
     if msg_type in ADDRESS_HEADER_MESSAGE_TYPES:
         return AddressHeader(**fields)
     ident_fields = unpack_int_to_fields(value, params.ident_header_fields)
@@ -349,7 +380,8 @@ def int_to_header(value: int, params) -> Header:
 
 def header_to_int(header: Header, params) -> int:
     """Encode a Header to an integer."""
+    if isinstance(header, CacheLineHeader):
+        return header.encode(params)
     if isinstance(header, AddressHeader):
         return pack_fields_to_int(header, params.address_header_fields)
     return pack_fields_to_int(header, params.ident_header_fields)
-

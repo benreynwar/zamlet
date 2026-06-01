@@ -9,6 +9,7 @@ from asyncio import Future
 from zamlet import addresses
 from zamlet.kamlet import kinstructions
 from zamlet.kamlet.cache_table import SendState
+from zamlet.lane_order import LaneOrder
 from zamlet.lamlet import ident_query
 
 
@@ -94,7 +95,7 @@ class LamletWaitingVrgatherBroadcast(LamletWaitingItem):
     """
 
     def __init__(self, instr_ident: int, vd: int, n_elements: int,
-                 element_width: int, word_order: 'addresses.WordOrder',
+                 element_width: int, word_order: LaneOrder,
                  mask_reg: int | None, src_byte_offset: int, span_id: int):
         super().__init__(instr_ident=instr_ident)
         self.vd = vd

@@ -21,7 +21,7 @@ from typing import List, Deque, Any
 
 from zamlet import decode
 from zamlet import addresses
-from zamlet.addresses import SizeBytes, SizeBits, TLB, WordOrder, MemoryType
+from zamlet.addresses import SizeBytes, SizeBits, TLB, MemoryType
 from zamlet.addresses import AddressConverter, Ordering, GlobalAddress, KMAddr, VPUAddress
 from zamlet.kamlet.cache_table import (
     CacheTable, CacheState, ProtocolState, SendState)
@@ -38,6 +38,7 @@ from zamlet.kamlet.kamlet import Kamlet
 from zamlet.memlet import Memlet, memlet_coords
 from zamlet.runner import Future
 from zamlet.kamlet import kinstructions
+from zamlet.lane_order import LaneOrder
 from zamlet.transactions.load_stride import LoadStride
 from zamlet.transactions.store_stride import StoreStride
 from zamlet.transactions.load_indexed_unordered import LoadIndexedUnordered
@@ -71,7 +72,7 @@ logger = logging.getLogger(__name__)
 class Oamlet:
 
     def __init__(self, clock, params: ZamletParams,
-                 word_order: WordOrder = WordOrder.STANDARD):
+                 word_order: LaneOrder = LaneOrder.ROW_MAJOR):
         self.clock = clock
         self.params = params
         self.monitor = Monitor(clock, params)
@@ -1761,7 +1762,7 @@ class Oamlet:
     async def vrgather(self, vd: int, vs2: int, vs1: int,
                        start_index: int, n_elements: int,
                        index_ew: int, data_ew: int,
-                       word_order: addresses.WordOrder, vlmax: int,
+                       word_order: LaneOrder, vlmax: int,
                        mask_reg: int | None, parent_span_id: int) -> int:
         """Execute vrgather. Returns sync_ident that can be awaited if needed."""
         return await vregister.vrgather(self, vd, vs2, vs1, start_index, n_elements,
@@ -1772,7 +1773,7 @@ class Oamlet:
                      offset: int, direction: 'vregister.SlideDirection',
                      start_index: int, n_elements: int,
                      data_ew: int,
-                     word_order: addresses.WordOrder, vlmax: int,
+                     word_order: LaneOrder, vlmax: int,
                      mask_reg: int | None, parent_span_id: int) -> int:
         """Execute vslideup / vslidedown. Returns sync_ident."""
         return await vregister.vslide(self, vd, vs2, offset, direction,
