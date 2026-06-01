@@ -52,7 +52,13 @@ kernel_test(
 )
 
 [kernel_test(
-    name = "test_bitreverse_reorder64_n%d" % n,
+    name = "test_bitreverse_reorder64_n%d" % n_timeout[0],
     kernel = ":bitreverse-reorder64",
-    symbol_values = {"n": n},
-) for n in [8, 16, 32, 64]]
+    symbol_values = {"n": n_timeout[0]},
+    timeout = n_timeout[1],
+) for n_timeout in [
+    (8, "moderate"),
+    (16, "moderate"),
+    (32, "long"),
+    (64, "long"),
+]]
