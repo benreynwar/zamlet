@@ -140,8 +140,9 @@ class JamletDriver:
         self.dut.io_jteInputResp_valid.value = 0
         self.dut.io_tlbReq_ready.value = 1
         self.dut.io_tlbResp_valid.value = 0
-        self.dut.io_orderingReq_ready.value = 1
-        self.dut.io_orderingResp_valid.value = 0
+        self.dut.io_tlbResp_bits_stripeAddr.value = 0
+        self.dut.io_tlbResp_bits_ordering_wf.value = WidthFormatCode.WF64
+        self.dut.io_tlbResp_bits_ordering_laneOrder.value = LaneOrder.ROW_MAJOR
         self.dut.io_cacheLineReq_ready.value = 1
         self.dut.io_cacheLineResp_valid.value = 0
         self.dut.io_immediateKinstr_valid.value = 0

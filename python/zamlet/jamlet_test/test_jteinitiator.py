@@ -99,13 +99,13 @@ def bytes_until_segment_boundary(
     )
 
 
-def make_ordering(
-    orderings: dict[int, dict[str, int]],
+def get_tlb_entry(
+    tlb_table: dict[int, dict[str, int]],
     stripe_addr: int,
     params: ZamletParams,
     rnd: Random,
 ) -> dict[str, int]:
-    if stripe_addr not in orderings:
+    if stripe_addr not in tlb_table:
         wfs = [
             wf for wf in [
                 WidthFormatCode.WF8,
@@ -114,22 +114,20 @@ def make_ordering(
                 WidthFormatCode.WF64,
             ] if bytes_from_ew(wf) <= params.word_bytes
         ]
-        orderings[stripe_addr] = {'wf': rnd.choice(wfs), 'laneOrder': 0}
-    return orderings[stripe_addr]
-
-
-def make_translation(page_table: dict[int, int], vpage: int, rnd: Random) -> int:
-    if vpage not in page_table:
-        page_table[vpage] = rnd.randrange(1, 1 << 16)
-        logger.info('expected TLB add vpage=%d ppage=%d', vpage, page_table[vpage])
-    return page_table[vpage]
+        pstripe = rnd.randrange(1, 1 << 16)
+        tlb_table[stripe_addr] = {
+            'stripeAddr': pstripe,
+            'ordering_wf': rnd.choice(wfs),
+            'ordering_laneOrder': rnd.randrange(LaneOrder.count()),
+        }
+        logger.info('expected TLB add vstripe=%d pstripe=%d', stripe_addr, pstripe)
+    return tlb_table[stripe_addr]
 
 
 def expected_packets_for_instruction(
     instr: RandomInstr,
     content: list[int],
-    page_table: dict[int, int],
-    orderings: dict[int, dict[str, int]],
+    tlb_table: dict[int, dict[str, int]],
     params: ZamletParams,
     lane_index: int,
     this_x: int,
@@ -160,23 +158,21 @@ def expected_packets_for_instruction(
         element_reg_byte = ordinal * data_bytes
         remaining = data_bytes
         element_byte = 0
-        last_tlb_vpage = None
+        last_tlb_vstripe = None
 
         while remaining:
             vaddr = element_vaddr + element_byte
-            vpage = vaddr // params.page_bytes
-            if vpage != last_tlb_vpage:
-                logger.info(
-                    'expected TLB use instr=%s element_index=%d ordinal=%d element_byte=%d vaddr=%d vpage=%d',
-                    instr, element_index, ordinal, element_byte, vaddr, vpage)
-                tlb_requests.append(vpage)
-                last_tlb_vpage = vpage
-            ppage = make_translation(page_table, vpage, rnd)
-            paddr = ppage * params.page_bytes + (vaddr % params.page_bytes)
             vstripe = vaddr // params.stripe_bytes
-            pstripe = paddr // params.stripe_bytes
-            ordering = make_ordering(orderings, vstripe, params, rnd)
-            mem_wf_bytes = bytes_from_ew(ordering['wf'])
+            if vstripe != last_tlb_vstripe:
+                logger.info(
+                    'expected TLB use instr=%s element_index=%d ordinal=%d element_byte=%d vaddr=%d vstripe=%d',
+                    instr, element_index, ordinal, element_byte, vaddr, vstripe)
+                tlb_requests.append(vstripe)
+                last_tlb_vstripe = vstripe
+            tlb_entry = get_tlb_entry(tlb_table, vstripe, params, rnd)
+            paddr = tlb_entry['stripeAddr'] * params.stripe_bytes + (vaddr % params.stripe_bytes)
+            pstripe = tlb_entry['stripeAddr']
+            mem_wf_bytes = bytes_from_ew(tlb_entry['ordering_wf'])
             reg_byte = element_reg_byte + element_byte
             n_bytes = bytes_until_segment_boundary(
                 vaddr, paddr, reg_byte, data_bytes, mem_wf_bytes, params)
@@ -228,15 +224,14 @@ def make_random_instr_expectation(
     rnd: Random,
     params: ZamletParams,
     content: list[int],
-    page_table: dict[int, int],
-    orderings: dict[int, dict[str, int]],
+    tlb_table: dict[int, dict[str, int]],
     lane_index: int,
     this_x: int,
     this_y: int,
 ) -> RandomInstrExpectation:
     instr = make_random_instruction(rnd, params, lane_index)
     packets, index_requests, tlb_requests = expected_packets_for_instruction(
-        instr, content, page_table, orderings, params, lane_index, this_x, this_y, rnd)
+        instr, content, tlb_table, params, lane_index, this_x, this_y, rnd)
     commit = expected_commit_for_packets(packets, params)
     return RandomInstrExpectation(
         instr=instr, packets=packets, commit=commit,
@@ -530,12 +525,11 @@ async def jteinitiator_random_test(dut: HierarchyObject) -> None:
     packets_received = deque()
     commits_received = deque()
     content = [rnd.randrange(0, 1 << params.word_width) for _ in range(params.rf_slice_words)]
-    page_table = {}
-    orderings = {}
+    tlb_table = {}
     n_instructions = 1000
     expectations = [
         make_random_instr_expectation(
-            rnd, params, content, page_table, orderings, lane_index, this_x, this_y)
+            rnd, params, content, tlb_table, lane_index, this_x, this_y)
         for _ in range(n_instructions)
     ]
     for i, expectation in enumerate(expectations):
@@ -578,8 +572,7 @@ async def jteinitiator_random_test(dut: HierarchyObject) -> None:
     cocotb.start_soon(req_resp_handler(dut, 'io_rfDataReq_', 'io_rfDataResp_', content))
     cocotb.start_soon(req_resp_handler(dut, 'io_rfMaskReq_', 'io_rfMaskResp_', content))
     cocotb.start_soon(req_resp_handler(
-        dut, 'io_tlbReq_', 'io_tlbResp_', page_table, tlb_requests_expected))
-    cocotb.start_soon(req_resp_handler(dut, 'io_orderingReq_', 'io_orderingResp_', orderings))
+        dut, 'io_tlbReq_', 'io_tlbResp_', tlb_table, tlb_requests_expected))
     cocotb.start_soon(random_packet_ready(utils.create_rng(rnd), dut))
     cocotb.start_soon(consume_and_check_packets(
         utils.create_rng(rnd), dut, params, packets_received, packets_expected))

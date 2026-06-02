@@ -2,7 +2,6 @@ package zamlet.jamlet
 
 import chisel3._
 import chisel3.util._
-import zamlet.Ordering
 import zamlet.ZamletParams
 import zamlet.network.{INetworkWord, NetworkWord}
 
@@ -32,10 +31,8 @@ class JteIO(params: ZamletParams) extends Bundle {
   val rfWriteReq = Decoupled(new RFWriteReq(params))
   val rfWriteResp = Flipped(Decoupled(Bool()))
 
-  val tlbReq = Decoupled(UInt(params.pageAddrWidth.W))
-  val tlbResp = Flipped(Decoupled(UInt(params.pageAddrWidth.W)))
-  val orderingReq = Decoupled(UInt(params.memStripeAddrWidth.W))
-  val orderingResp = Flipped(Decoupled(new Ordering))
+  val tlbReq = Decoupled(UInt(params.memStripeAddrWidth.W))
+  val tlbResp = Flipped(Decoupled(new JamletTlbResp(params)))
 
   val cacheLineReq = Decoupled(new CacheLineRequest(params))
   val cacheLineResp = Flipped(Decoupled(new CacheLineResponse(params)))
@@ -72,8 +69,6 @@ class Jte(params: ZamletParams) extends Module {
   initiator.io.rfDataResp <> io.rfDataResp
   io.tlbReq <> initiator.io.tlbReq
   initiator.io.tlbResp <> io.tlbResp
-  io.orderingReq <> initiator.io.orderingReq
-  initiator.io.orderingResp <> io.orderingResp
 
   receiver.io.packet <> io.channel0In
   receiver.io.slotToRegReq <> state.io.slotToRegReq
