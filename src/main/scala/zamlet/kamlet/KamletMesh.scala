@@ -89,6 +89,25 @@ class KamletMesh(params: ZamletParams, edgeNeighbors: MeshEdgeNeighbors) extends
     val wChannelsOut = Vec(params.kRows, Vec(params.jRows,
       Vec(params.nAChannels + params.nBChannels, Decoupled(new NetworkWord(params)))))
 
+    // Kamlet-level packet network edge ports.
+    val nKamletAIn = Vec(params.kCols, Vec(params.nAChannels, Flipped(Decoupled(new NetworkWord(params)))))
+    val nKamletAOut = Vec(params.kCols, Vec(params.nAChannels, Decoupled(new NetworkWord(params))))
+    val sKamletAIn = Vec(params.kCols, Vec(params.nAChannels, Flipped(Decoupled(new NetworkWord(params)))))
+    val sKamletAOut = Vec(params.kCols, Vec(params.nAChannels, Decoupled(new NetworkWord(params))))
+    val eKamletAIn = Vec(params.kRows, Vec(params.nAChannels, Flipped(Decoupled(new NetworkWord(params)))))
+    val eKamletAOut = Vec(params.kRows, Vec(params.nAChannels, Decoupled(new NetworkWord(params))))
+    val wKamletAIn = Vec(params.kRows, Vec(params.nAChannels, Flipped(Decoupled(new NetworkWord(params)))))
+    val wKamletAOut = Vec(params.kRows, Vec(params.nAChannels, Decoupled(new NetworkWord(params))))
+
+    val nKamletBIn = Vec(params.kCols, Vec(params.nBChannels, Flipped(Decoupled(new NetworkWord(params)))))
+    val nKamletBOut = Vec(params.kCols, Vec(params.nBChannels, Decoupled(new NetworkWord(params))))
+    val sKamletBIn = Vec(params.kCols, Vec(params.nBChannels, Flipped(Decoupled(new NetworkWord(params)))))
+    val sKamletBOut = Vec(params.kCols, Vec(params.nBChannels, Decoupled(new NetworkWord(params))))
+    val eKamletBIn = Vec(params.kRows, Vec(params.nBChannels, Flipped(Decoupled(new NetworkWord(params)))))
+    val eKamletBOut = Vec(params.kRows, Vec(params.nBChannels, Decoupled(new NetworkWord(params))))
+    val wKamletBIn = Vec(params.kRows, Vec(params.nBChannels, Flipped(Decoupled(new NetworkWord(params)))))
+    val wKamletBOut = Vec(params.kRows, Vec(params.nBChannels, Decoupled(new NetworkWord(params))))
+
     // Sync network external ports - organized by edge and direction
     // North edge: N, NE, NW directions for all kCols positions
     val nSyncN = Vec(params.kCols, new SyncIO)
@@ -326,6 +345,55 @@ class KamletMesh(params: ZamletParams, edgeNeighbors: MeshEdgeNeighbors) extends
         }
       }
       // Internal west connections handled by east connections of neighbor to the left
+    }
+  }
+
+  // ============================================================
+  // Connect Kamlet-level packet network between kamlets
+  // ============================================================
+  for (kX <- 0 until params.kCols) {
+    for (kY <- 0 until params.kRows) {
+      val k = kamlets(kX)(kY)
+
+      if (kY == 0) {
+        k.io.kamletAChannels.ni <> io.nKamletAIn(kX)
+        k.io.kamletAChannels.no <> io.nKamletAOut(kX)
+        k.io.kamletBChannels.ni <> io.nKamletBIn(kX)
+        k.io.kamletBChannels.no <> io.nKamletBOut(kX)
+      } else {
+        val neighbor = kamlets(kX)(kY - 1)
+        k.io.kamletAChannels.ni <> neighbor.io.kamletAChannels.so
+        k.io.kamletAChannels.no <> neighbor.io.kamletAChannels.si
+        k.io.kamletBChannels.ni <> neighbor.io.kamletBChannels.so
+        k.io.kamletBChannels.no <> neighbor.io.kamletBChannels.si
+      }
+
+      if (kY == params.kRows - 1) {
+        k.io.kamletAChannels.si <> io.sKamletAIn(kX)
+        k.io.kamletAChannels.so <> io.sKamletAOut(kX)
+        k.io.kamletBChannels.si <> io.sKamletBIn(kX)
+        k.io.kamletBChannels.so <> io.sKamletBOut(kX)
+      }
+
+      if (kX == params.kCols - 1) {
+        k.io.kamletAChannels.ei <> io.eKamletAIn(kY)
+        k.io.kamletAChannels.eo <> io.eKamletAOut(kY)
+        k.io.kamletBChannels.ei <> io.eKamletBIn(kY)
+        k.io.kamletBChannels.eo <> io.eKamletBOut(kY)
+      } else {
+        val neighbor = kamlets(kX + 1)(kY)
+        k.io.kamletAChannels.ei <> neighbor.io.kamletAChannels.wo
+        k.io.kamletAChannels.eo <> neighbor.io.kamletAChannels.wi
+        k.io.kamletBChannels.ei <> neighbor.io.kamletBChannels.wo
+        k.io.kamletBChannels.eo <> neighbor.io.kamletBChannels.wi
+      }
+
+      if (kX == 0) {
+        k.io.kamletAChannels.wi <> io.wKamletAIn(kY)
+        k.io.kamletAChannels.wo <> io.wKamletAOut(kY)
+        k.io.kamletBChannels.wi <> io.wKamletBIn(kY)
+        k.io.kamletBChannels.wo <> io.wKamletBOut(kY)
+      }
     }
   }
 

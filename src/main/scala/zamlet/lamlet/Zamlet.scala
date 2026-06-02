@@ -177,18 +177,56 @@ class ZamletImpl(outer: Zamlet)
   lamlet.io.tlPutResp.bits := DontCare
 
   // ============================================================
-  // Lamlet mesh output → KamletMesh north edge
+  // Lamlet instruction output → Kamlet-level packet network north edge
   // ============================================================
-  mesh.io.nChannelsIn(0)(0)(0) <> lamlet.io.mesh
+  mesh.io.nKamletAIn(0)(0) <> lamlet.io.mesh
+
+  for (kX <- 0 until zParams.kCols) {
+    for (ch <- 0 until zParams.nAChannels) {
+      if (!(kX == 0 && ch == 0)) {
+        mesh.io.nKamletAIn(kX)(ch).valid := false.B
+        mesh.io.nKamletAIn(kX)(ch).bits := DontCare
+      }
+      mesh.io.nKamletAOut(kX)(ch).ready := false.B
+      mesh.io.sKamletAIn(kX)(ch).valid := false.B
+      mesh.io.sKamletAIn(kX)(ch).bits := DontCare
+      mesh.io.sKamletAOut(kX)(ch).ready := false.B
+    }
+    for (ch <- 0 until zParams.nBChannels) {
+      mesh.io.nKamletBIn(kX)(ch).valid := false.B
+      mesh.io.nKamletBIn(kX)(ch).bits := DontCare
+      mesh.io.nKamletBOut(kX)(ch).ready := false.B
+      mesh.io.sKamletBIn(kX)(ch).valid := false.B
+      mesh.io.sKamletBIn(kX)(ch).bits := DontCare
+      mesh.io.sKamletBOut(kX)(ch).ready := false.B
+    }
+  }
+
+  for (kY <- 0 until zParams.kRows) {
+    for (ch <- 0 until zParams.nAChannels) {
+      mesh.io.eKamletAIn(kY)(ch).valid := false.B
+      mesh.io.eKamletAIn(kY)(ch).bits := DontCare
+      mesh.io.eKamletAOut(kY)(ch).ready := false.B
+      mesh.io.wKamletAIn(kY)(ch).valid := false.B
+      mesh.io.wKamletAIn(kY)(ch).bits := DontCare
+      mesh.io.wKamletAOut(kY)(ch).ready := false.B
+    }
+    for (ch <- 0 until zParams.nBChannels) {
+      mesh.io.eKamletBIn(kY)(ch).valid := false.B
+      mesh.io.eKamletBIn(kY)(ch).bits := DontCare
+      mesh.io.eKamletBOut(kY)(ch).ready := false.B
+      mesh.io.wKamletBIn(kY)(ch).valid := false.B
+      mesh.io.wKamletBIn(kY)(ch).bits := DontCare
+      mesh.io.wKamletBOut(kY)(ch).ready := false.B
+    }
+  }
 
   // Tie off other north edge inputs
   for (kX <- 0 until zParams.kCols) {
     for (jX <- 0 until zParams.jCols) {
       for (ch <- 0 until zParams.nAChannels + zParams.nBChannels) {
-        if (!(kX == 0 && jX == 0 && ch == 0)) {
-          mesh.io.nChannelsIn(kX)(jX)(ch).valid := false.B
-          mesh.io.nChannelsIn(kX)(jX)(ch).bits := DontCare
-        }
+        mesh.io.nChannelsIn(kX)(jX)(ch).valid := false.B
+        mesh.io.nChannelsIn(kX)(jX)(ch).bits := DontCare
       }
     }
   }
