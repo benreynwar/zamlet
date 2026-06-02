@@ -29,7 +29,7 @@ def initialize_inputs(dut: HierarchyObject, params: ZamletParams) -> None:
     """Set all KamletMesh inputs to safe defaults."""
     n_channels = params.n_a_channels + params.n_b_channels
 
-    # Network channel inputs: (prefix, outer_dim, inner_dim)
+    # Jamlet-level network edge ports: (prefix, outer_dim, inner_dim)
     edge_specs = [
         ('n', params.k_cols, params.j_cols),
         ('s', params.k_cols, params.j_cols),
@@ -44,6 +44,30 @@ def initialize_inputs(dut: HierarchyObject, params: ZamletParams) -> None:
                     getattr(dut, f'io_{prefix}ChannelsIn_{i}_{j}_{ch}_bits_data').value = 0
                     sig = f'io_{prefix}ChannelsIn_{i}_{j}_{ch}_bits_isHeader'
                     getattr(dut, sig).value = 0
+                    getattr(dut, f'io_{prefix}ChannelsOut_{i}_{j}_{ch}_ready').value = 1
+
+    # Kamlet-level packet network edge ports.
+    kamlet_edge_specs = [
+        ('n', params.k_cols),
+        ('s', params.k_cols),
+        ('e', params.k_rows),
+        ('w', params.k_rows),
+    ]
+    for prefix, outer in kamlet_edge_specs:
+        for i in range(outer):
+            for network, n_network_channels in (
+                ('A', params.n_a_channels),
+                ('B', params.n_b_channels),
+            ):
+                for ch in range(n_network_channels):
+                    base = f'io_{prefix}Kamlet{network}In_{i}_{ch}'
+                    getattr(dut, f'{base}_valid').value = 0
+                    getattr(dut, f'{base}_bits_data').value = 0
+                    getattr(dut, f'{base}_bits_isHeader').value = 0
+                    getattr(
+                        dut,
+                        f'io_{prefix}Kamlet{network}Out_{i}_{ch}_ready',
+                    ).value = 1
 
     # Sync network inputs
     sync_specs = [
@@ -98,10 +122,10 @@ async def reset(dut: HierarchyObject) -> None:
 
 
 async def send_word_to_kamlet(dut: HierarchyObject, kx: int, word: int, is_header: bool) -> None:
-    valid_sig = getattr(dut, f'io_nChannelsIn_{kx}_0_0_valid')
-    data_sig = getattr(dut, f'io_nChannelsIn_{kx}_0_0_bits_data')
-    header_sig = getattr(dut, f'io_nChannelsIn_{kx}_0_0_bits_isHeader')
-    ready_sig = getattr(dut, f'io_nChannelsIn_{kx}_0_0_ready')
+    valid_sig = getattr(dut, f'io_nKamletAIn_{kx}_0_valid')
+    data_sig = getattr(dut, f'io_nKamletAIn_{kx}_0_bits_data')
+    header_sig = getattr(dut, f'io_nKamletAIn_{kx}_0_bits_isHeader')
+    ready_sig = getattr(dut, f'io_nKamletAIn_{kx}_0_ready')
     valid_sig.value = 1
     data_sig.value = word
     header_sig.value = 1 if is_header else 0
@@ -114,7 +138,7 @@ async def send_word_to_kamlet(dut: HierarchyObject, kx: int, word: int, is_heade
 
 
 async def send_packet_to_kamlet(params: ZamletParams, dut: HierarchyObject, kx: int, packet) -> None:
-    """Send a full packet (header + payload words) to a kamlet via its north port."""
+    """Send a full packet (header + payload words) via the north Kamlet A port."""
 
     header = packet[0]
     assert isinstance(header, Header)

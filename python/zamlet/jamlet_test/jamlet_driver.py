@@ -155,7 +155,6 @@ class JamletDriver:
         self.dut.io_immediateKinstr_bits_param2.value = 0
         self.dut.io_sendCacheLine_valid.value = 0
         self.dut.io_sendCacheLine_bits_slot.value = 0
-        self.dut.io_kamletReceivePacket_ready.value = 1
 
         self.dut.reset.value = 0
         self.dut.io_thisX.value = self.this_x
