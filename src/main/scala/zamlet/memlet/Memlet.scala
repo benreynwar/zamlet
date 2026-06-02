@@ -6,6 +6,7 @@ import zamlet.ZamletParams
 import zamlet.network.NetworkWord
 
 class MemletErrors(params: ZamletParams) extends Bundle {
+  val controlErrors = new ControlSideErrors(params)
   val gatherErrors = Vec(params.nMemletRouters, new GatherSideErrors(params))
   val responseErrors = Vec(params.nMemletRouters, new ResponseSideErrors(params))
 }
@@ -22,6 +23,10 @@ class MemletIO(params: ZamletParams) extends Bundle {
   }))
 
   val errors = new MemletErrors(params)
+
+  // Single Kamlet-network control connection
+  val controlBHo = Flipped(Decoupled(new NetworkWord(params)))
+  val controlAHi = Decoupled(new NetworkWord(params))
 
   // AXI4 master port (single, from MemoryEngine)
   val axi = new AXI4MasterIO(
@@ -73,13 +78,16 @@ class Memlet(params: ZamletParams) extends Module {
   val nRSlots = params.nResponseBufferSlots
 
   // ============================================================
-  // Instantiate slices and MemoryEngine
+  // Instantiate control side, slices, and MemoryEngine
   // ============================================================
 
+  val controlSide = Module(new ControlSide(params))
   val slices = Seq.tabulate(nRouters)(i => Module(new MemletSlice(params)))
   val engine = Module(new MemoryEngine(params))
 
   io.axi <> engine.io.axi
+  controlSide.io.controlBHo <> io.controlBHo
+  io.controlAHi <> controlSide.io.controlAHi
 
   // ============================================================
   // Slice configuration and mesh ports
@@ -117,11 +125,10 @@ class Memlet(params: ZamletParams) extends Module {
   // Inter-slice propagation chains
   // ============================================================
 
-  // Ident allocation: outward from slice 0
-  slices(0).io.identAllocIn.valid := false.B
-  slices(0).io.identAllocIn.bits := DontCare
+  // Cache slot allocation: ControlSide outward through all slices
+  slices(0).io.cacheSlotAllocIn := controlSide.io.cacheSlotAllocOut
   for (r <- 1 until nRouters) {
-    slices(r).io.identAllocIn := slices(r - 1).io.identAllocOut
+    slices(r).io.cacheSlotAllocIn := slices(r - 1).io.cacheSlotAllocOut
   }
 
   // Arrived: inward toward slice 0
@@ -139,15 +146,25 @@ class Memlet(params: ZamletParams) extends Module {
   }
 
   // ============================================================
-  // Slice 0 ↔ MemoryEngine
+  // ControlSide ↔ MemoryEngine
   // ============================================================
 
   engine.io.routerX := io.routerCoords(0).x
   engine.io.routerY := io.routerCoords(0).y
-  engine.io.completeDeq <> slices(0).io.completeEnq
+  engine.io.completeDeq <> controlSide.io.completeEnq
+  controlSide.io.gatherComplete := slices(0).io.gatherComplete
+  controlSide.io.gatheringFree := engine.io.gatheringFree
+  controlSide.io.writeLineRespEnq <> engine.io.writeLineRespEnq
+
+  // ============================================================
+  // Slice 0 ↔ MemoryEngine
+  // ============================================================
+
   slices(0).io.gatheringFree := engine.io.gatheringFree
   engine.io.responseFree := slices(0).io.responseFree
-  slices(0).io.writeLineRespEnq <> engine.io.writeLineRespEnq
+  for (r <- 1 until nRouters) {
+    slices(r).io.gatheringFree := engine.io.gatheringFree
+  }
 
   // ============================================================
   // Response data write: MemoryEngine → slices (demux by routerSel)
@@ -226,18 +243,11 @@ class Memlet(params: ZamletParams) extends Module {
   // Non-slice-0 defaults for ports only used by slice 0
   // ============================================================
 
-  for (r <- 1 until nRouters) {
-    slices(r).io.completeEnq.ready := false.B
-    slices(r).io.gatheringFree.valid := false.B
-    slices(r).io.gatheringFree.bits := DontCare
-    slices(r).io.writeLineRespEnq.valid := false.B
-    slices(r).io.writeLineRespEnq.bits := DontCare
-  }
-
   // ============================================================
   // Errors
   // ============================================================
 
+  io.errors.controlErrors := controlSide.io.errors
   for (r <- 0 until nRouters) {
     io.errors.gatherErrors(r) := slices(r).io.gatherErrors
     io.errors.responseErrors(r) := slices(r).io.responseErrors

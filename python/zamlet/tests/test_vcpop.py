@@ -9,20 +9,17 @@ and rd registers are distinct, so the hardware can execute them in parallel.
 vm=0 trials share v0 and naturally serialize on that register.
 """
 
-import asyncio
 import logging
 from dataclasses import dataclass
 from random import Random
 
 import pytest
 
-from zamlet.runner import Clock
 from zamlet.params import ZamletParams
 from zamlet.geometries import SMALL_GEOMETRIES, scale_n_tests
 from zamlet.instructions.vector import VcpopM
-from zamlet.tests.test_utils import (
-    setup_lamlet, setup_mask_register, dump_span_trees,
-)
+from zamlet.tests import test_utils
+from zamlet.tests.test_utils import setup_mask_register
 
 logger = logging.getLogger(__name__)
 
@@ -149,29 +146,15 @@ async def _run_inner(lamlet, seed: int, params: ZamletParams):
     return 0
 
 
-async def run_vcpop_test(clock: Clock, seed: int, params: ZamletParams,
-                         dump_spans: bool = False):
-    lamlet = await setup_lamlet(clock, params)
-    try:
+def run_test(seed: int, params: ZamletParams, dump_spans: bool | None = None,
+             max_cycles: int = 100000,
+             monitor_detailed: bool | None = None):
+    async def test_fn(clock, lamlet):
         return await _run_inner(lamlet, seed, params)
-    finally:
-        if dump_spans:
-            dump_span_trees(lamlet.monitor)
 
-
-async def main(clock, seed, params, dump_spans=False):
-    clock.register_main()
-    clock.create_task(clock.clock_driver())
-    exit_code = await run_vcpop_test(clock, seed, params, dump_spans)
-    clock.running = False
-    return exit_code
-
-
-def run_test(seed: int, params: ZamletParams, dump_spans: bool = False,
-             max_cycles: int = 100000):
-    clock = Clock(max_cycles=max_cycles)
-    exit_code = asyncio.run(main(clock, seed, params, dump_spans))
-    assert exit_code == 0, f"Test failed with exit_code={exit_code}"
+    test_utils.run_test(
+        test_fn, params, max_cycles=max_cycles, dump_spans=dump_spans,
+        monitor_detailed=monitor_detailed)
 
 
 def generate_test_params(n_tests: int = 8, seed: int = 42):
@@ -203,7 +186,7 @@ if __name__ == '__main__':
     parser.add_argument('--seed', '-s', type=int, default=0)
     parser.add_argument('--geometry', '-g', default='k2x1_j1x1')
     parser.add_argument('--list-geometries', action='store_true')
-    parser.add_argument('--dump-spans', action='store_true')
+    test_utils.add_monitor_args(parser)
     parser.add_argument('--max-cycles', type=int, default=100000)
     args = parser.parse_args()
 
@@ -217,4 +200,5 @@ if __name__ == '__main__':
 
     params = get_geometry(args.geometry)
     run_test(seed=args.seed, params=params, dump_spans=args.dump_spans,
-             max_cycles=args.max_cycles)
+             max_cycles=args.max_cycles,
+             monitor_detailed=args.monitor_detailed)

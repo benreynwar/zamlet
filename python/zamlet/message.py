@@ -166,6 +166,9 @@ class Header:
     def encode(self, params) -> int:
         return pack_fields_to_int(self, params.base_header_fields)
 
+    def message_id(self) -> int:
+        raise NotImplementedError(f'{type(self).__name__} has no message id')
+
     def copy(self):
         return dataclasses.replace(self)
 
@@ -177,6 +180,9 @@ class IdentHeader(Header):
 
     def encode(self, params) -> int:
         return pack_fields_to_int(self, params.ident_header_fields)
+
+    def message_id(self) -> int:
+        return self.ident
 
     @classmethod
     def decode(cls, value: int, params) -> 'IdentHeader':
@@ -326,24 +332,14 @@ class JteIHeader:
 
 
 @dataclass
-class AddressHeader(IdentHeader):
-    address: int   # 16 bits
-
-    def encode(self, params) -> int:
-        return pack_fields_to_int(self, params.address_header_fields)
-
-    @classmethod
-    def decode(cls, value: int, params) -> 'AddressHeader':
-        return cls(**unpack_int_to_fields(value, params.address_header_fields))
-
-
-@dataclass
 class CacheLineHeader(Header):
     slot: int
 
     @staticmethod
     def fields(params):
-        used = params._base_header_width + params.cache_slot_width
+        used = (
+            params._base_header_width
+            + params.cache_slot_width)
         return params.abstract_base_header_fields + [
             ('slot', params.cache_slot_width),
             ('_padding', params.word_bytes * 8 - used),
@@ -351,6 +347,9 @@ class CacheLineHeader(Header):
 
     def encode(self, params) -> int:
         return pack_fields_to_int(self, self.fields(params))
+
+    def message_id(self) -> int:
+        return self.slot
 
     @classmethod
     def decode(cls, value: int, params) -> 'CacheLineHeader':
@@ -462,9 +461,17 @@ CACHE_LINE_MESSAGE_TYPES = {
 }
 
 CACHE_LINE_HEADER_MESSAGE_TYPES = {
+    MessageType.READ_LINE_ADDR,
+    MessageType.WRITE_LINE_ADDR,
+    MessageType.WRITE_LINE_RESP,
+    MessageType.WRITE_LINE_READ_LINE_ADDR,
+    MessageType.WRITE_LINE_READ_LINE_ADDR_DROP,
+    MessageType.READ_LINE_ADDR_DROP,
+    MessageType.WRITE_LINE_ADDR_DROP,
     MessageType.READ_LINE_RESP,
     MessageType.WRITE_LINE_READ_LINE_RESP,
     MessageType.WRITE_LINE_DATA,
+    MessageType.WRITE_LINE_DATA_DROP,
 }
 
 JTE_HEADER_MESSAGE_TYPES = {
@@ -483,15 +490,6 @@ def is_request_message(msg_type: MessageType) -> bool:
     """Return True if this message type expects a response."""
     return msg_type in REQUEST_MESSAGE_TYPES
 
-
-# Message types that use AddressHeader (have an address field)
-ADDRESS_HEADER_MESSAGE_TYPES = {
-    MessageType.WRITE_LINE_ADDR, MessageType.WRITE_LINE_RESP,
-    MessageType.READ_LINE_ADDR,
-    MessageType.WRITE_LINE_READ_LINE_ADDR,
-}
-
-
 def int_to_header(value: int, params) -> Header:
     """Decode an integer into the appropriate Header subclass."""
     fields = unpack_int_to_fields(value, params.base_header_fields)
@@ -500,9 +498,6 @@ def int_to_header(value: int, params) -> Header:
         return CacheLineHeader.decode(value, params)
     if msg_type in JTE_HEADER_MESSAGE_TYPES:
         return JteHeader.decode(value, params)
-    fields = unpack_int_to_fields(value, params.address_header_fields)
-    if msg_type in ADDRESS_HEADER_MESSAGE_TYPES:
-        return AddressHeader(**fields)
     ident_fields = unpack_int_to_fields(value, params.ident_header_fields)
     return IdentHeader(**ident_fields)
 
@@ -513,6 +508,4 @@ def header_to_int(header: Header, params) -> int:
         return header.encode(params)
     if isinstance(header, JteHeader):
         return header.encode(params)
-    if isinstance(header, AddressHeader):
-        return pack_fields_to_int(header, params.address_header_fields)
     return pack_fields_to_int(header, params.ident_header_fields)

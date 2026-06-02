@@ -3,7 +3,7 @@ package zamlet.memlet
 import chisel3._
 import chisel3.util._
 import zamlet.ZamletParams
-import zamlet.network.{MessageType, NetworkWord, AddressHeader, PacketConstants, IdentHeader, SendType}
+import zamlet.network.{MessageType, NetworkWord, CacheLineHeader, PacketConstants, SendType}
 
 
 class ResponseSideErrors(params: ZamletParams) extends Bundle {
@@ -14,9 +14,6 @@ class ResponseSideErrors(params: ZamletParams) extends Bundle {
 
 class ResponseSideIO(params: ZamletParams) extends Bundle {
 
-  // The inner slice handles address packets (ReadLine,
-  // WriteLineAddr, WriteLineReadLineAddr) and owns the authoritative
-  // gathering slot metadata. Other instances only handle CacheLineData.
   val isInnerSlice = Input(Bool())
   val isOuterSlice = Input(Bool())
   val sliceIdx = Input(UInt(log2Ceil(params.nMemletRouters).W))
@@ -32,9 +29,6 @@ class ResponseSideIO(params: ZamletParams) extends Bundle {
 
   // Drop response enqueue (from GatherSide).
   val dropEnq = Flipped(Decoupled(new NetworkWord(params)))
-
-  // WriteLineResp enqueue (from MemoryEngine, inner slice only).
-  val writeLineRespEnq = Flipped(Decoupled(new NetworkWord(params)))
 
   // MemoryEngine writes response data to each slice's local storage.
   val responseDataWrite = Flipped(Valid(new ResponseDataWrite(params)))
@@ -62,8 +56,7 @@ class ResponseSideIO(params: ZamletParams) extends Bundle {
 }
 
 class ResponseSlotLocal(params: ZamletParams) extends Bundle {
-  val ident = UInt(params.identWidth.W)
-  val sramAddr = UInt(params.sramAddrWidth.W)
+  val cacheSlot = params.cacheSlot()
   val responseType = MemletResponseType()
   val sendable = Bool()
   val sent = Bool()
@@ -85,8 +78,7 @@ class ResponseSide(params: ZamletParams) extends Module {
   val responseSlots = RegInit(VecInit(Seq.fill(nRSlots) {
     val init = Wire(Valid(new ResponseSlotLocal(params)))
     init.valid := false.B
-    init.bits.ident := DontCare
-    init.bits.sramAddr := DontCare
+    init.bits.cacheSlot := DontCare
     init.bits.responseType := DontCare
     init.bits.sendable := false.B
     init.bits.sent := false.B
@@ -110,8 +102,7 @@ class ResponseSide(params: ZamletParams) extends Module {
     }.otherwise {
       errResponseAllocOverwrite := responseSlots(idx).valid
       responseSlots(idx).valid := true.B
-      responseSlots(idx).bits.ident := io.responseMetaEvent.bits.ident
-      responseSlots(idx).bits.sramAddr := io.responseMetaEvent.bits.sramAddr
+      responseSlots(idx).bits.cacheSlot := io.responseMetaEvent.bits.cacheSlot
       responseSlots(idx).bits.responseType := io.responseMetaEvent.bits.responseType
       responseSlots(idx).bits.sendable := false.B
       responseSlots(idx).bits.sent := false.B
@@ -135,9 +126,6 @@ class ResponseSide(params: ZamletParams) extends Module {
 
   val dropQueue = Module(new Queue(new NetworkWord(params), entries = 4))
   dropQueue.io.enq <> io.dropEnq
-
-  val writeLineRespQueue = Module(new Queue(new NetworkWord(params), entries = 4))
-  writeLineRespQueue.io.enq <> io.writeLineRespEnq
 
   val responseQueue = Module(new Queue(new NetworkWord(params), entries = 4))
 
@@ -170,12 +158,12 @@ class ResponseSide(params: ZamletParams) extends Module {
   sendableSlot.bits := PriorityEncoder(sendableVec)
 
   // Header builder. Reads slot metadata and jamlet index, produces
-  // a packed AddressHeader. Used in Idle and on last data word.
+  // a packed CacheLineHeader. Used in Idle and on last data word.
   def buildHeader(slotIdx: UInt, jamletIdx: UInt): UInt = {
     val globalJamletIdx =
       io.sliceIdx * localJamlets.U +& jamletIdx
     val slot = responseSlots(slotIdx).bits
-    val header = Wire(new AddressHeader(params))
+    val header = Wire(new CacheLineHeader(params))
     header.targetX := io.kBaseX +
       globalJamletIdx(log2Ceil(params.jCols) - 1, 0)
     header.targetY := io.kBaseY +
@@ -184,8 +172,7 @@ class ResponseSide(params: ZamletParams) extends Module {
     header.sourceX := io.routerX
     header.sourceY := io.routerY
     header.length := params.cacheSlotWordsPerJamlet.U
-    header.ident := slot.ident
-    header.address := slot.sramAddr
+    header.slot := slot.cacheSlot
     header.sendType := SendType.Single
     header.messageType := Mux(
       slot.responseType === MemletResponseType.ReadLine,
@@ -252,14 +239,13 @@ class ResponseSide(params: ZamletParams) extends Module {
 
   // ============================================================
   // 5. Priority merge → aHi
-  //    (1) drops, (2) writeLineResp, (3) response buffer
+  //    (1) drops, (2) response buffer
   //    Once a multi-word packet starts, stay on that source.
   // ============================================================
 
   val mergeWordsRemaining = RegInit(0.U(PacketConstants.lengthWidth))
 
   dropQueue.io.deq.ready := false.B
-  writeLineRespQueue.io.deq.ready := false.B
   responseQueue.io.deq.ready := false.B
   io.aHi.valid := false.B
   io.aHi.bits := DontCare
@@ -277,17 +263,13 @@ class ResponseSide(params: ZamletParams) extends Module {
       io.aHi.valid := true.B
       io.aHi.bits := dropQueue.io.deq.bits
       dropQueue.io.deq.ready := io.aHi.ready
-    }.elsewhen(io.isInnerSlice && writeLineRespQueue.io.deq.valid) {
-      io.aHi.valid := true.B
-      io.aHi.bits := writeLineRespQueue.io.deq.bits
-      writeLineRespQueue.io.deq.ready := io.aHi.ready
     }.elsewhen(responseQueue.io.deq.valid) {
       io.aHi.valid := true.B
       io.aHi.bits := responseQueue.io.deq.bits
       responseQueue.io.deq.ready := io.aHi.ready
       when(io.aHi.fire) {
         val hdr = responseQueue.io.deq.bits.data.asTypeOf(
-          new AddressHeader(params))
+          new CacheLineHeader(params))
         mergeWordsRemaining := hdr.length
       }
     }
@@ -336,4 +318,3 @@ class ResponseSide(params: ZamletParams) extends Module {
     }
   }
 }
-

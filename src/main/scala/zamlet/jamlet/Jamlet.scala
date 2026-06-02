@@ -72,8 +72,6 @@ class Jamlet(params: ZamletParams) extends Module {
     val sendCacheLine = Flipped(Valid(new SendCacheLineCmd(params)))
     val cacheResponse = Valid(params.cacheSlot())
 
-    // Kamlet packet interface
-    val kamletReceivePacket = Decoupled(new NetworkWord(params))
   })
 
   // ============================================================
@@ -119,12 +117,10 @@ class Jamlet(params: ZamletParams) extends Module {
   combinedNetworkNode.io.bWo <> io.bChannels.wo
 
   // ============================================================
-  // Local port handling (simplified for Test 0)
-  // Forward instruction packets to kamlet
+  // Local port handling
   // ============================================================
 
   val aHoRouter = Module(new PacketRouter(params, Seq(
-    Seq(MessageType.Instructions),
     Seq(MessageType.ReadLineResp, MessageType.WriteLineReadLineResp),
     Seq(
       MessageType.Send,
@@ -154,12 +150,9 @@ class Jamlet(params: ZamletParams) extends Module {
 
   val jteChannel0In = Wire(Decoupled(new NetworkWord(params)))
   jte.io.channel0In <> jteChannel0In
-  jteChannel0In <> aHoRouter.io.out(2)
+  jteChannel0In <> aHoRouter.io.out(1)
 
-  jce.io.packetIn <> aHoRouter.io.out(1)
-
-  // When we see an instruction packet, forward to kamlet.
-  io.kamletReceivePacket <> aHoRouter.io.out(0)
+  jce.io.packetIn <> aHoRouter.io.out(0)
 
   // Ch0 local input: JTE responses/acks.
   combinedNetworkNode.io.aHi <> jte.io.channel0Out

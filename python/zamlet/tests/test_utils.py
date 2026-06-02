@@ -1,6 +1,8 @@
 import asyncio
 import logging
+import os
 import struct
+import tracemalloc
 from enum import Enum
 from random import Random
 from typing import List
@@ -15,6 +17,19 @@ from zamlet.runner import Clock
 logger = logging.getLogger(__name__)
 
 
+def _env_flag(name: str) -> bool:
+    return os.environ.get(name, '0') not in ('', '0', 'false', 'False')
+
+
+def _print_tracemalloc_report(limit: int = 30) -> None:
+    current, peak = tracemalloc.get_traced_memory()
+    print(f"tracemalloc current={current / 1024 / 1024:.1f} MiB "
+          f"peak={peak / 1024 / 1024:.1f} MiB")
+    snapshot = tracemalloc.take_snapshot()
+    for stat in snapshot.statistics('lineno')[:limit]:
+        print(stat)
+
+
 async def update(clock: Clock, lamlet: Oamlet):
     """Update loop for the lamlet."""
     while True:
@@ -22,13 +37,23 @@ async def update(clock: Clock, lamlet: Oamlet):
         lamlet.update()
 
 
-async def setup_lamlet(clock: Clock, params: ZamletParams) -> Oamlet:
+async def setup_lamlet(clock: Clock, params: ZamletParams,
+                       monitor_detailed: bool | None = None) -> Oamlet:
     """Create and initialize a lamlet with update loop."""
-    lamlet = Oamlet(clock, params)
+    if monitor_detailed is None:
+        monitor_detailed = _env_flag('ZAMLET_MONITOR_DETAILED')
+    lamlet = Oamlet(clock, params, detailed=monitor_detailed)
     clock.create_task(update(clock, lamlet))
     clock.create_task(lamlet.run())
     await clock.next_cycle
     return lamlet
+
+
+def add_monitor_args(parser) -> None:
+    parser.add_argument('--dump-spans', action='store_true',
+                        help='Dump span trees to span_trees.txt')
+    parser.add_argument('--monitor-detailed', action='store_true',
+                        help='Keep completed monitor spans and per-cycle state')
 
 
 def pack_elements(values: list[int], element_width: int) -> bytes:
@@ -71,18 +96,27 @@ def dump_span_trees(monitor, filename='span_trees.txt'):
 
 
 def run_test(test_coro_fn, params: ZamletParams, max_cycles: int = 50000,
-             dump_spans: bool = False):
+             dump_spans: bool | None = None,
+             monitor_detailed: bool | None = None):
     """Run a test with standard clock/lamlet setup, span dump on failure or timeout.
 
     test_coro_fn: async function(clock, lamlet) -> int (exit code)
     """
     clock = Clock(max_cycles=max_cycles)
     lamlet_holder = []
+    if dump_spans is None:
+        dump_spans = _env_flag('ZAMLET_DUMP_SPANS')
+    if monitor_detailed is None:
+        monitor_detailed = _env_flag('ZAMLET_MONITOR_DETAILED')
+    trace_memory = _env_flag('ZAMLET_TRACEMALLOC')
+    if trace_memory:
+        tracemalloc.start(25)
 
     async def main():
         clock.register_main()
         clock.create_task(clock.clock_driver())
-        lamlet = await setup_lamlet(clock, params)
+        lamlet = await setup_lamlet(
+            clock, params, monitor_detailed=monitor_detailed)
         lamlet_holder.append(lamlet)
 
         def on_timeout():
@@ -92,6 +126,8 @@ def run_test(test_coro_fn, params: ZamletParams, max_cycles: int = 50000,
         try:
             exit_code = await test_coro_fn(clock, lamlet)
         finally:
+            if trace_memory:
+                _print_tracemalloc_report()
             if dump_spans:
                 dump_span_trees(lamlet.monitor)
         clock.running = False
@@ -488,4 +524,3 @@ def generate_mask_pattern(vl: int, pattern_type: str, rnd: Random) -> list[bool]
         return [(i < vl // 2) for i in range(vl)]
     else:
         raise ValueError(f"Unknown mask pattern type: {pattern_type}")
-

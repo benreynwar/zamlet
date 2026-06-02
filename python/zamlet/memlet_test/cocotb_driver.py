@@ -10,17 +10,16 @@ Ready and valid signals are randomized to exercise backpressure.
 
 import logging
 from random import Random
-from typing import List
 
 import cocotb
 from cocotb.handle import HierarchyObject
-from cocotb.triggers import Event, RisingEdge, ReadOnly
+from cocotb.triggers import Event, ReadOnly, RisingEdge
 
-from zamlet import utils
 from zamlet.future import Future
 from zamlet.memlet_test.memlet_driver import MemletDriver
-from zamlet.message import Direction, Header, int_to_header
+from zamlet.message import Header, MessageType
 from zamlet.params import ZamletParams
+from zamlet.test_helpers.packets import NetworkPacketSink, NetworkPacketSource
 from zamlet.router import xy_direction
 
 logger = logging.getLogger(__name__)
@@ -42,18 +41,35 @@ class CocotbDriver(MemletDriver):
         self.p_valid = p_valid
         self.p_ready = p_ready
         self.rng = Random(seed)
-
-    def _b_sig(self, r: int, d: str, suffix: str):
-        return getattr(self.dut, f'io_b{d}i_{r}_0_{suffix}')
-
-    def _a_sig(self, r: int, d: str, suffix: str):
-        return getattr(self.dut, f'io_a{d}o_{r}_0_{suffix}')
+        self.b_sources = {
+            (r, d): NetworkPacketSource(dut, dut.clock, f'io_b{d}i_{r}_0')
+            for r in range(self.n_routers)
+            for d in 'NSEW'
+        }
+        self.a_sinks = {
+            (r, d): NetworkPacketSink(
+                dut, dut.clock, f'io_a{d}o_{r}_0', params,
+                max_packet_queue_depth=self.a_queue_depth)
+            for r in range(self.n_routers)
+            for d in 'NSEW'
+        }
+        self.control_source = NetworkPacketSource(
+            dut, dut.clock, 'io_controlBHo')
+        self.control_sink = NetworkPacketSink(
+            dut, dut.clock, 'io_controlAHi', params,
+            max_packet_queue_depth=self.a_queue_depth)
 
     async def reset(self) -> None:
+        self.dut.io_controlBHo_valid.value = 0
+        self.dut.io_controlBHo_bits_data.value = 0
+        self.dut.io_controlBHo_bits_isHeader.value = 0
+        self.dut.io_controlAHi_ready.value = 0
         for r in range(self.n_routers):
             for d in 'NSEW':
-                self._b_sig(r, d, 'valid').value = 0
-                self._a_sig(r, d, 'ready').value = 0
+                getattr(self.dut, f'io_b{d}i_{r}_0_valid').value = 0
+                getattr(self.dut, f'io_b{d}i_{r}_0_bits_data').value = 0
+                getattr(self.dut, f'io_b{d}i_{r}_0_bits_isHeader').value = 0
+                getattr(self.dut, f'io_a{d}o_{r}_0_ready').value = 0
 
         self.dut.reset.value = 1
         await RisingEdge(self.dut.clock)
@@ -65,98 +81,71 @@ class CocotbDriver(MemletDriver):
 
     def start(self) -> None:
         super().start()
+        self.control_source.start(
+            seed=self._next_seed(), p_valid=self.p_valid)
+        self.control_sink.start(
+            seed=self._next_seed(), p_ready=self.p_ready)
+        cocotb.start_soon(self._drain_sink(0, self.control_sink))
         for r in range(self.n_routers):
-            send_rng = utils.create_rng(self.rng)
-            cocotb.start_soon(self._send_loop(r, send_rng))
+            cocotb.start_soon(self._send_loop(r))
             for d in 'NSEW':
-                recv_rng = utils.create_rng(self.rng)
-                cocotb.start_soon(self._recv_loop(r, d, recv_rng))
+                self.b_sources[(r, d)].start(
+                    seed=self._next_seed(), p_valid=self.p_valid)
+                sink = self.a_sinks[(r, d)]
+                sink.start(seed=self._next_seed(), p_ready=self.p_ready)
+                cocotb.start_soon(self._drain_sink(r, sink))
         cocotb.start_soon(self._error_monitor())
 
-    async def _send_loop(self, r: int, rng: Random) -> None:
-        """Background: drain b_queues[r] with randomized valid."""
+    def _next_seed(self) -> int:
+        return self.rng.randrange(1 << 63)
+
+    async def _send_loop(self, r: int) -> None:
+        """Background: route queued packets to the right packet source."""
         rx, ry = self.router_coords[r]
         while True:
             if self.b_queues[r]:
                 packet = self.b_queues[r].popleft()
                 header = packet[0]
                 assert isinstance(header, Header)
-                d = xy_direction(rx, ry, header.source_x, header.source_y).name
-                await self._send_b_word(
-                    r, d, header.encode(self.params), rng=rng, is_header=True)
-                for word in packet[1:]:
-                    assert isinstance(word, int)
-                    await self._send_b_word(r, d, word, rng=rng, is_header=False)
-            else:
-                await RisingEdge(self.dut.clock)
-
-    async def _send_b_word(self, r: int, d: str, data: int,
-                           rng: Random, is_header: bool) -> None:
-        sig_name = f'b{d}i_{r}_0'
-        while True:
-            if rng.random() < self.p_valid:
-                self._b_sig(r, d, 'valid').value = 1
-                self._b_sig(r, d, 'bits_data').value = data
-                self._b_sig(r, d, 'bits_isHeader').value = 1 if is_header else 0
-                await ReadOnly()
-                ready = int(self._b_sig(r, d, 'ready').value)
-                if ready:
-                    logger.debug(f"[{sig_name}] sent 0x{data:x} hdr={is_header}")
-                    await RisingEdge(self.dut.clock)
-                    self._b_sig(r, d, 'valid').value = 0
-                    return
-                logger.debug(f"[{sig_name}] valid but not ready")
-                await RisingEdge(self.dut.clock)
-            else:
-                self._b_sig(r, d, 'valid').value = 0
-                await RisingEdge(self.dut.clock)
-
-    async def _recv_loop(self, r: int, d: str, rng: Random) -> None:
-        """Background: capture packets from direction d into a_queues[r]."""
-        sig_name = f'a{d}o_{r}_0'
-        packet = []
-        remaining = 0
-        await RisingEdge(self.dut.clock)
-        while True:
-            self._a_sig(r, d, 'ready').value = 1 if rng.random() < self.p_ready else 0
-            await ReadOnly()
-            if (int(self._a_sig(r, d, 'valid').value)
-                    and int(self._a_sig(r, d, 'ready').value)):
-                data = int(self._a_sig(r, d, 'bits_data').value)
-                is_header = int(self._a_sig(r, d, 'bits_isHeader').value)
-                logger.debug(f"[{sig_name}] recv 0x{data:x} hdr={is_header}")
-                if is_header:
-                    header = int_to_header(data, self.params)
-                    remaining = header.length
-                    packet = [header]
-                    header_parts = [
-                        f"msg={header.message_type}",
-                        f"len={header.length}",
-                    ]
-                    if hasattr(header, 'ident'):
-                        header_parts.append(f"ident={header.ident}")
-                    if hasattr(header, 'slot'):
-                        header_parts.append(f"slot={header.slot}")
-                    logger.debug(f"[{sig_name}] {' '.join(header_parts)}")
+                if self._is_control_packet(header):
+                    self._enqueue_packet(self.control_source, packet)
                 else:
-                    packet.append(data)
-                    remaining -= 1
-                if remaining == 0 and packet:
-                    logger.info(f"[{sig_name}] complete packet: {len(packet)} words")
-                    # Deassert ready before waiting for queue space so
-                    # backpressure propagates into the network.
-                    await RisingEdge(self.dut.clock)
-                    self._a_sig(r, d, 'ready').value = 0
-                    await self.a_queue_append(r, packet)
-                    packet = []
-                    remaining = 0
-                    continue
+                    d = xy_direction(rx, ry, header.source_x, header.source_y).name
+                    self._enqueue_packet(self.b_sources[(r, d)], packet)
+            else:
+                await RisingEdge(self.dut.clock)
+
+    def _is_control_packet(self, header: Header) -> bool:
+        return header.message_type in (
+            MessageType.WRITE_LINE_ADDR,
+            MessageType.READ_LINE_ADDR,
+            MessageType.WRITE_LINE_READ_LINE_ADDR,
+        )
+
+    def _enqueue_packet(self, source: NetworkPacketSource, packet: list) -> None:
+        header = packet[0]
+        assert isinstance(header, Header)
+        words = [(header.encode(self.params), True)]
+        for word in packet[1:]:
+            assert isinstance(word, int)
+            words.append((word, False))
+        source.enqueue_packet(words)
+
+    async def _drain_sink(self, r: int, sink: NetworkPacketSink) -> None:
+        """Background: move completed helper packets into MemletDriver queues."""
+        while True:
+            while sink.packet_queue:
+                await self.a_queue_append(r, sink.packet_queue.popleft())
             await RisingEdge(self.dut.clock)
 
     async def _error_monitor(self) -> None:
         """Background: assert all error signals stay zero every cycle."""
+        control_fields = [
+            'allocOverwrite', 'duplicateComplete', 'missingHeader',
+            'unexpectedHeader', 'badMessageType', 'badPacketLength',
+        ]
         gather_fields = [
-            'identAllocOverwrite', 'missingHeader', 'unexpectedHeader',
+            'cacheSlotAllocOverwrite', 'missingHeader', 'unexpectedHeader',
             'duplicateArrived', 'badMessageType', 'badPacketLength',
             'unexpectedData',
         ]
@@ -165,6 +154,9 @@ class CocotbDriver(MemletDriver):
         ]
         # Resolve signal handles once up front.
         signals = []
+        for field in control_fields:
+            sig = getattr(self.dut, f'io_errors_controlErrors_{field}')
+            signals.append((f'controlErrors.{field}', sig))
         for r in range(self.n_routers):
             for field in gather_fields:
                 sig = getattr(self.dut, f'io_errors_gatherErrors_{r}_{field}')

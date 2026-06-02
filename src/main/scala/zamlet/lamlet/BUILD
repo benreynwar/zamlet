@@ -72,24 +72,6 @@ chisel_binary(
 )
 
 chisel_binary(
-    name = "zamlet",
-    srcs = [
-        "Zamlet.scala",
-        "Lamlet.scala",
-        "IssueUnit.scala",
-        "IdentTracker.scala",
-        "DispatchQueue.scala",
-        "ScalarLoadQueue.scala",
-        "VpuToScalarMem.scala",
-        "//src/main/scala/zamlet/kamlet:kamlet_sources",
-        "//src/main/scala/zamlet/jamlet:jamlet_sources",
-    ] + ZAMLET_COMMON_SRCS,
-    main_class = "zamlet.lamlet.ZamletMain",
-    deps = ZAMLET_DEPS,
-    visibility = ["//visibility:public"],
-)
-
-chisel_binary(
     name = "scalar_load_queue",
     srcs = [
         "ScalarLoadQueue.scala",

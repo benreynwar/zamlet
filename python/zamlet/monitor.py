@@ -87,6 +87,12 @@ class CycleMetrics:
         default_factory=dict
     )
 
+    # Kamlet-network router output state:
+    # (x, y, channel, Direction) -> (present, moving)
+    kamlet_router_outputs: Dict[Tuple[int, int, int, Direction], Tuple[bool, bool]] = field(
+        default_factory=dict
+    )
+
     # Lamlet instruction buffer
     lamlet_instr_buf_len: int | None = None
     lamlet_free_idents: int | None = None
@@ -162,10 +168,10 @@ class Monitor:
     parent/child and depends_on relationships.
     """
 
-    def __init__(self, clock, params, enabled: bool = True):
+    def __init__(self, clock, params, detailed: bool = True):
         self.clock = clock
         self.params = params
-        self.enabled = enabled
+        self.detailed = detailed
 
         # Span storage
         self.spans: Dict[int, Span] = {}
@@ -183,6 +189,10 @@ class Monitor:
         # message key: (ident, tag, src_x, src_y, dst_x, dst_y) -> span_id
         # All coords are routing coords.
         self._message_by_key: Dict[tuple, int] = {}
+        # Kamlet-network message key:
+        # (ident, tag, src_x, src_y, dst_x, dst_y, message_type) -> span_id.
+        # All coords are Kamlet-network coords.
+        self._kamlet_message_by_key: Dict[tuple, int] = {}
         # cache_request key: (kamlet.min_x, kamlet.min_y, slot) -> span_id
         self._cache_request_by_key: Dict[tuple, int] = {}
         # resource_exhausted key: (ResourceType, kamlet.min_x, kamlet.min_y) -> span_id
@@ -202,12 +212,68 @@ class Monitor:
         # Per-cycle metrics: cycle -> CycleMetrics
         self.cycle_metrics: Dict[int, CycleMetrics] = {}
 
+    def _drop_lookup_ids(self, span_ids: set[int]) -> None:
+        """Remove any lookup-table entries that point into a pruned span tree."""
+        lookups = [
+            self._kinstr_by_ident,
+            self._kinstr_exec_by_key,
+            self._witem_by_key,
+            self._transaction_by_key,
+            self._message_by_key,
+            self._kamlet_message_by_key,
+            self._cache_request_by_key,
+            self._resource_exhausted_by_key,
+            self._sync_by_key,
+            self._sync_local_by_key,
+        ]
+        for lookup in lookups:
+            for key, value in list(lookup.items()):
+                if value in span_ids:
+                    del lookup[key]
+
+    def _collect_span_tree_ids(self, span_id: int) -> set[int]:
+        span = self.spans.get(span_id)
+        if span is None:
+            return set()
+        ids = {span_id}
+        for child_ref in span.children:
+            ids.update(self._collect_span_tree_ids(child_ref.span_id))
+        return ids
+
+    def _prune_completed_root(self, span_id: int) -> None:
+        """Drop completed root span trees when detailed history is disabled."""
+        if self.detailed:
+            return
+        span = self.spans.get(span_id)
+        if span is None or span.parent is not None or not span.is_complete():
+            return
+        span_ids = self._collect_span_tree_ids(span_id)
+        for other_id, other_span in self.spans.items():
+            if other_id in span_ids:
+                continue
+            for dep_ref in other_span.depends_on:
+                if dep_ref.span_id in span_ids:
+                    logger.debug(
+                        "Not pruning completed root span %s (%s): "
+                        "span %s (%s) still depends on span %s",
+                        span_id, span.span_type.value,
+                        other_id, other_span.span_type.value,
+                        dep_ref.span_id)
+                    return
+        self._drop_lookup_ids(span_ids)
+        for sid in span_ids:
+            self.spans.pop(sid, None)
+        logger.debug(
+            "Pruned completed root span %s (%s), removed %d spans",
+            span_id, span.span_type.value, len(span_ids))
+
     # -------------------------------------------------------------------------
     # Per-cycle performance metrics
     # -------------------------------------------------------------------------
 
     def _get_cycle_metrics(self, cycle: int = None) -> CycleMetrics:
         """Get or create CycleMetrics for the given cycle (defaults to current)."""
+        assert self.detailed
         if cycle is None:
             cycle = self.clock.cycle
         if cycle not in self.cycle_metrics:
@@ -216,7 +282,7 @@ class Monitor:
 
     def report_alu_active(self, x: int, y: int) -> None:
         """Report that the ALU is active for this jamlet this cycle."""
-        if not self.enabled:
+        if not self.detailed:
             return
         metrics = self._get_cycle_metrics()
         key = (x, y)
@@ -227,6 +293,8 @@ class Monitor:
     def _report_jamlet_activity(self, x: int, y: int, channel: int,
                                 activity: JamletActivity) -> None:
         """Internal: report jamlet channel activity this cycle."""
+        if not self.detailed:
+            return
         metrics = self._get_cycle_metrics()
         key = (x, y, channel)
         if key not in metrics.jamlet_activity:
@@ -238,19 +306,19 @@ class Monitor:
 
     def report_jamlet_sending(self, x: int, y: int, channel: int) -> None:
         """Report that this jamlet is sending on this channel this cycle."""
-        if not self.enabled:
+        if not self.detailed:
             return
         self._report_jamlet_activity(x, y, channel, JamletActivity.SENDING)
 
     def report_jamlet_receiving(self, x: int, y: int, channel: int) -> None:
         """Report that this jamlet is receiving on this channel this cycle."""
-        if not self.enabled:
+        if not self.detailed:
             return
         self._report_jamlet_activity(x, y, channel, JamletActivity.RECEIVING)
 
     def report_jamlet_dropping(self, x: int, y: int, channel: int) -> None:
         """Report that this jamlet is dropping a message on this channel this cycle."""
-        if not self.enabled:
+        if not self.detailed:
             return
         self._report_jamlet_activity(x, y, channel, JamletActivity.DROPPING)
 
@@ -265,7 +333,7 @@ class Monitor:
             present: True if there's data waiting for this output
             moving: True if data moved through this output this cycle
         """
-        if not self.enabled:
+        if not self.detailed:
             return
         metrics = self._get_cycle_metrics()
         key = (x, y, channel, direction)
@@ -274,9 +342,22 @@ class Monitor:
             f"this cycle {self.clock.cycle}"
         metrics.router_outputs[key] = (present, moving)
 
+    def report_kamlet_router_output(self, x: int, y: int, channel: int,
+                                    direction: Direction, present: bool,
+                                    moving: bool) -> None:
+        """Report Kamlet-network router output state for this direction."""
+        if not self.detailed:
+            return
+        metrics = self._get_cycle_metrics()
+        key = (x, y, channel, direction)
+        assert key not in metrics.kamlet_router_outputs, \
+            f"Kamlet router output ({x}, {y}) ch{channel} {direction.name} already reported " \
+            f"this cycle {self.clock.cycle}"
+        metrics.kamlet_router_outputs[key] = (present, moving)
+
     def record_lamlet_cycle_state(self, buf_len: int, free_idents: int,
                                    free_tokens: Dict[int, int]) -> None:
-        if not self.enabled:
+        if not self.detailed:
             return
         metrics = self._get_cycle_metrics()
         metrics.lamlet_instr_buf_len = buf_len
@@ -284,47 +365,47 @@ class Monitor:
         metrics.lamlet_free_tokens = free_tokens
 
     def record_lamlet_instr_added(self, count: int = 1) -> None:
-        if not self.enabled:
+        if not self.detailed:
             return
         metrics = self._get_cycle_metrics()
         metrics.lamlet_instr_added += count
 
     def record_lamlet_instr_removed(self, count: int = 1) -> None:
-        if not self.enabled:
+        if not self.detailed:
             return
         metrics = self._get_cycle_metrics()
         metrics.lamlet_instr_removed += count
 
     def record_instr_net_sent(self) -> None:
-        if not self.enabled:
+        if not self.detailed:
             return
         self._get_cycle_metrics().instr_net_sent = True
 
     def record_instr_net_blocked(self) -> None:
-        if not self.enabled:
+        if not self.detailed:
             return
         self._get_cycle_metrics().instr_net_blocked = True
 
     def record_ident_query_sent(self) -> None:
-        if not self.enabled:
+        if not self.detailed:
             return
         self._get_cycle_metrics().ident_query_sent = True
 
     def record_ident_query_response(self) -> None:
-        if not self.enabled:
+        if not self.detailed:
             return
         self._get_cycle_metrics().ident_query_response = True
 
     def record_kamlet_cycle_state(self, x: int, y: int,
                                    queue_len: int) -> None:
-        if not self.enabled:
+        if not self.detailed:
             return
         metrics = self._get_cycle_metrics()
         metrics.kamlet_instr_queue_len[(x, y)] = queue_len
 
     def record_kamlet_instr_added(self, x: int, y: int,
                                    count: int = 1) -> None:
-        if not self.enabled:
+        if not self.detailed:
             return
         metrics = self._get_cycle_metrics()
         key = (x, y)
@@ -332,7 +413,7 @@ class Monitor:
 
     def record_kamlet_instr_removed(self, x: int, y: int,
                                      count: int = 1) -> None:
-        if not self.enabled:
+        if not self.detailed:
             return
         metrics = self._get_cycle_metrics()
         key = (x, y)
@@ -342,7 +423,7 @@ class Monitor:
 
     def record_kamlet_snapshot(self, x: int, y: int,
                                snapshot: 'KamletSnapshot') -> None:
-        if not self.enabled:
+        if not self.detailed:
             return
         metrics = self._get_cycle_metrics()
         metrics.kamlet_snapshots[(x, y)] = snapshot
@@ -355,9 +436,6 @@ class Monitor:
                     parent_span_id: int | None = None, parent_reason: str = '',
                     **details) -> int | None:
         """Create a new span. Returns the span_id."""
-        if not self.enabled:
-            return None
-
         span_id = self._next_span_id
         self._next_span_id += 1
 
@@ -399,8 +477,6 @@ class Monitor:
                 kinstr when it receives the response, even though kinstr_exec spans
                 may still be running.
         """
-        if not self.enabled:
-            return
         assert span_id is not None
         span = self.spans.get(span_id)
         assert span is not None, f"Span {span_id} not found"
@@ -461,14 +537,14 @@ class Monitor:
                     if all_children_complete:
                         self.complete_span(parent.span_id)  # Recursive
 
+        self._prune_completed_root(span_id)
+
     def finalize_children(self, span_id: int) -> None:
         """Mark that all children have been created for a FIRE_AND_FORGET span.
 
         This must be called before auto-completion can trigger.
         If all children are already complete, this will trigger auto-completion.
         """
-        if not self.enabled:
-            return
         span = self.spans.get(span_id)
         assert span is not None, f"Span {span_id} not found"
         assert span.completion_type == CompletionType.FIRE_AND_FORGET, \
@@ -487,7 +563,7 @@ class Monitor:
 
     def add_event(self, span_id: int, event: str, **kwargs) -> None:
         """Add a timestamped event to a span."""
-        if not self.enabled or span_id is None:
+        if span_id is None:
             return
         span = self.spans.get(span_id)
         if span is None:
@@ -496,8 +572,6 @@ class Monitor:
 
     def add_dependency(self, span_id: int, depends_on_span_id: int, reason: str) -> None:
         """Add a dependency from one span to another."""
-        if not self.enabled:
-            return
         assert span_id is not None
         assert depends_on_span_id is not None
         span = self.spans.get(span_id)
@@ -547,24 +621,18 @@ class Monitor:
         Used for fire-and-forget instructions where the kamlet frees the ident
         before the span completes.
         """
-        if not self.enabled:
-            return
         span_id = self._kinstr_by_ident.get(instr_ident)
         if span_id is not None:
             self.spans[span_id].details["ident_released"] = True
 
     def complete_kinstr(self, instr_ident: int) -> None:
         """Complete a kinstr span by its instr_ident."""
-        if not self.enabled:
-            return
         span_id = self._kinstr_by_ident.get(instr_ident)
         assert span_id is not None, f"No kinstr span for instr_ident {instr_ident}"
         self.complete_span(span_id)
 
     def record_kinstr_exec_created(self, instr, kamlet_x: int, kamlet_y: int) -> int | None:
         """Record a kinstr_exec creation (kinstr executing on a specific kamlet)."""
-        if not self.enabled:
-            return None
         instr_ident = instr.instr_ident
         instr_type = type(instr).__name__
         key = (instr_ident, kamlet_x, kamlet_y)
@@ -602,7 +670,6 @@ class Monitor:
         Returns None if no active kinstr have instr_idents.
         Only considers regular idents (< max_response_tags), not special idents.
         """
-        assert self.enabled
         # Filter to regular idents only
         max_tags = self.params.max_response_tags
         regular_idents = {
@@ -667,10 +734,8 @@ class Monitor:
 
         read_regs, write_regs: RF registers being read/written by this witem.
 
-        Returns the span_id of the created witem span, or None if monitoring disabled.
+        Returns the span_id of the created witem span.
         """
-        if not self.enabled:
-            return None
         key = self._witem_key(instr_ident, kamlet_x, kamlet_y, source_x, source_y)
         if key in self._witem_by_key:
             existing_span_id = self._witem_by_key[key]
@@ -715,8 +780,6 @@ class Monitor:
                           source_x: int | None = None,
                           source_y: int | None = None) -> int | None:
         """Look up the span_id for a witem by its key."""
-        if not self.enabled:
-            return None
         key = self._witem_key(instr_ident, kamlet_x, kamlet_y, source_x, source_y)
         return self._witem_by_key.get(key)
 
@@ -724,8 +787,6 @@ class Monitor:
                        source_x: int | None = None,
                        source_y: int | None = None) -> None:
         """Complete a witem and remove from lookup table."""
-        if not self.enabled:
-            return
         key = self._witem_key(instr_ident, kamlet_x, kamlet_y, source_x, source_y)
         span_id = self._witem_by_key.pop(key, None)
         if span_id is not None:
@@ -733,8 +794,6 @@ class Monitor:
 
     def finalize_kinstr_exec(self, instr_ident: int, kamlet_x: int, kamlet_y: int) -> None:
         """Mark that all children have been created for a kinstr_exec."""
-        if not self.enabled:
-            return
         span_id = self._kinstr_exec_by_key[(instr_ident, kamlet_x, kamlet_y)]
         self.finalize_children(span_id)
 
@@ -751,8 +810,6 @@ class Monitor:
                                 src_x: int, src_y: int,
                                 dst_x: int, dst_y: int) -> int | None:
         """Look up the span_id for a transaction by its key."""
-        if not self.enabled:
-            return None
         key = self._transaction_key(ident, tag, src_x, src_y, dst_x, dst_y)
         return self._transaction_by_key.get(key)
 
@@ -772,9 +829,6 @@ class Monitor:
 
         Returns the transaction span_id.
         """
-        if not self.enabled:
-            return None
-
         # Check if transaction already exists (for resends after RETRY)
         key = self._transaction_key(ident, tag, src_x, src_y, dst_x, dst_y)
         if key in self._transaction_by_key:
@@ -810,9 +864,6 @@ class Monitor:
                             src_x: int, src_y: int, dst_x: int, dst_y: int,
                             drop_reason: str | None = None) -> int | None:
         """Record a message being sent. Span stays open until received."""
-        if not self.enabled:
-            return None
-
         details = {'message_type': message_type}
         if drop_reason is not None:
             details['drop_reason'] = drop_reason
@@ -829,11 +880,31 @@ class Monitor:
         self._message_by_key[key] = span_id
         return span_id
 
+    def record_kamlet_message_sent(self, parent_span_id: int, message_type: str,
+                                   ident: int, tag: int | None,
+                                   src_x: int, src_y: int, dst_x: int,
+                                   dst_y: int,
+                                   drop_reason: str | None = None) -> int | None:
+        """Record a Kamlet-network message being sent."""
+        details = {'message_type': message_type}
+        if drop_reason is not None:
+            details['drop_reason'] = drop_reason
+
+        span_id = self.create_span(
+            span_type=SpanType.MESSAGE,
+            component=f"kamlet_network({src_x},{src_y})",
+            completion_type=CompletionType.TRACKED,
+            parent_span_id=parent_span_id,
+            **details,
+        )
+
+        key = self._message_key(ident, tag, src_x, src_y, dst_x, dst_y, message_type)
+        self._kamlet_message_by_key[key] = span_id
+        return span_id
+
     def _tag_from_header(self, header: 'IdentHeader') -> int | None:
         """Extract tag from header."""
-        if hasattr(header, 'address'):
-            return header.address * self.params.j_in_k // self.params.cache_line_bytes
-        elif hasattr(header, 'tag'):
+        if hasattr(header, 'tag'):
             return header.tag
         else:
             return None
@@ -859,7 +930,7 @@ class Monitor:
             dst_y = header.target_y
         tag = self._tag_from_header(header)
         return self._message_key(
-            header.ident, tag,
+            header.message_id(), tag,
             header.source_x, header.source_y,
             dst_x, dst_y,
             header.message_type.name)
@@ -872,8 +943,6 @@ class Monitor:
         For broadcast messages, dst_x and dst_y must be passed explicitly.
         For non-broadcast messages, uses header.target_x/y (and asserts they match if passed).
         """
-        if not self.enabled:
-            return None
         key = self._message_key_from_header(header, dst_x, dst_y)
         return self._message_by_key.get(key)
 
@@ -881,10 +950,15 @@ class Monitor:
                                  dst_x: int, dst_y: int,
                                  message_type: str = None) -> None:
         """Record a simple message (no tag) being received. Completes the MESSAGE span."""
-        if not self.enabled:
-            return
         key = self._message_key(ident, None, src_x, src_y, dst_x, dst_y, message_type)
         self._complete_message(key)
+
+    def record_kamlet_message_received(self, ident: int, src_x: int, src_y: int,
+                                       dst_x: int, dst_y: int,
+                                       message_type: str = None) -> None:
+        """Record a Kamlet-network simple message receive."""
+        key = self._message_key(ident, None, src_x, src_y, dst_x, dst_y, message_type)
+        self._complete_kamlet_message(key)
 
     def record_message_received_by_header(self, header,
                                           dst_x: int | None = None,
@@ -894,10 +968,15 @@ class Monitor:
         For broadcast messages, dst_x and dst_y must be passed explicitly.
         For non-broadcast messages, uses header.target_x/y (and asserts they match if passed).
         """
-        if not self.enabled:
-            return
         key = self._message_key_from_header(header, dst_x, dst_y)
         self._complete_message(key)
+
+    def record_kamlet_message_received_by_header(self, header,
+                                                 dst_x: int | None = None,
+                                                 dst_y: int | None = None) -> None:
+        """Record a Kamlet-network message being received."""
+        key = self._message_key_from_header(header, dst_x, dst_y)
+        self._complete_kamlet_message(key)
 
     def _complete_message(self, key: tuple) -> None:
         """Complete a message span by key."""
@@ -908,12 +987,18 @@ class Monitor:
             f"Available keys: {list(self._message_by_key.keys())}"
         self.complete_span(span_id)
 
+    def _complete_kamlet_message(self, key: tuple) -> None:
+        """Complete a Kamlet-network message span by key."""
+        logger.debug(f"{self.clock.cycle}: _complete_kamlet_message: key={key}")
+        span_id = self._kamlet_message_by_key.pop(key, None)
+        assert span_id is not None, \
+            f"Kamlet message received but no span found for key={key}. " \
+            f"Available keys: {list(self._kamlet_message_by_key.keys())}"
+        self.complete_span(span_id)
+
     def complete_transaction(self, ident: int, tag: int | None,
                               src_x: int, src_y: int, dst_x: int, dst_y: int) -> None:
         """Complete a transaction and remove from lookup table."""
-        if not self.enabled:
-            return
-
         key = self._transaction_key(ident, tag, src_x, src_y, dst_x, dst_y)
         span_id = self._transaction_by_key.pop(key, None)
         assert span_id is not None, f"Transaction not found: {key}"
@@ -922,7 +1007,7 @@ class Monitor:
     def record_cache_write(self, span_id: int | None, sram_addr: int,
                            old_value: str, new_value: str) -> None:
         """Record data written to cache on a transaction span."""
-        if not self.enabled or span_id is None:
+        if span_id is None:
             return
         span = self.spans[span_id]
         span.details['sram_addr'] = sram_addr
@@ -939,8 +1024,6 @@ class Monitor:
 
     def get_cache_request_span_id(self, kamlet_x: int, kamlet_y: int, slot: int) -> int | None:
         """Look up the span_id for a cache request by its key."""
-        if not self.enabled:
-            return None
         key = self._cache_request_key(kamlet_x, kamlet_y, slot)
         return self._cache_request_by_key.get(key)
 
@@ -951,9 +1034,6 @@ class Monitor:
 
         parent_span_id: The witem span that triggered this cache request.
         """
-        if not self.enabled:
-            return None
-
         key = self._cache_request_key(kamlet_x, kamlet_y, slot)
         assert key not in self._cache_request_by_key, \
             f"Cache request key {key} already in lookup table"
@@ -971,17 +1051,15 @@ class Monitor:
 
         self._cache_request_by_key[key] = span_id
 
-        metrics = self._get_cycle_metrics()
-        k_key = (kamlet_x, kamlet_y)
-        metrics.cache_misses[k_key] = metrics.cache_misses.get(k_key, 0) + 1
+        if self.detailed:
+            metrics = self._get_cycle_metrics()
+            k_key = (kamlet_x, kamlet_y)
+            metrics.cache_misses[k_key] = metrics.cache_misses.get(k_key, 0) + 1
 
         return span_id
 
     def record_cache_request_completed(self, kamlet_x: int, kamlet_y: int, slot: int) -> None:
         """Record a cache request completing."""
-        if not self.enabled:
-            return
-
         key = self._cache_request_key(kamlet_x, kamlet_y, slot)
         span_id = self._cache_request_by_key.pop(key, None)
         assert span_id is not None, \
@@ -1003,11 +1081,8 @@ class Monitor:
 
         Creates a RESOURCE_EXHAUSTED span if one doesn't already exist.
         For lamlet-level resources, use kamlet_x=None, kamlet_y=None.
-        Returns the span_id, or None if monitoring disabled or span already exists.
+        Returns the span_id, or the existing span_id if already exhausted.
         """
-        if not self.enabled:
-            return None
-
         key = self._resource_exhausted_key(resource_type, kamlet_x, kamlet_y)
         if key in self._resource_exhausted_by_key:
             return self._resource_exhausted_by_key[key]
@@ -1029,8 +1104,6 @@ class Monitor:
     def get_resource_exhausted_span_id(self, resource_type: ResourceType,
                                         kamlet_x: int | None, kamlet_y: int | None) -> int | None:
         """Get the span_id for an active resource exhaustion, or None if not exhausted."""
-        if not self.enabled:
-            return None
         key = self._resource_exhausted_key(resource_type, kamlet_x, kamlet_y)
         return self._resource_exhausted_by_key.get(key)
 
@@ -1040,9 +1113,6 @@ class Monitor:
 
         Completes the RESOURCE_EXHAUSTED span if one exists.
         """
-        if not self.enabled:
-            return
-
         key = self._resource_exhausted_key(resource_type, kamlet_x, kamlet_y)
         span_id = self._resource_exhausted_by_key.pop(key, None)
         if span_id is not None:
@@ -1055,9 +1125,6 @@ class Monitor:
 
         Adds a dependency from the witem span to the resource exhaustion span.
         """
-        if not self.enabled:
-            return
-
         witem_span_id = self.get_witem_span_id(witem_instr_ident, kamlet_x, kamlet_y)
         assert witem_span_id is not None, (
             f"witem span not found for instr_ident={witem_instr_ident} "
@@ -1082,9 +1149,6 @@ class Monitor:
         Creates a SYNC span as a child of the kinstr. Caller should create SYNC_LOCAL children.
         Returns the global span_id.
         """
-        if not self.enabled:
-            return None
-
         global_span_id = self.create_span(
             span_type=SpanType.SYNC,
             component="lamlet",
@@ -1101,9 +1165,6 @@ class Monitor:
                                    parent_span_id: int,
                                    name: str | None = None) -> int | None:
         """Record a local sync span for a synchronizer."""
-        if not self.enabled:
-            return None
-
         key = (sync_ident, kx, ky, name)
         local_span_id = self.create_span(
             span_type=SpanType.SYNC_LOCAL,
@@ -1122,8 +1183,6 @@ class Monitor:
 
         Auto-finalizes the parent when all expected children have been added.
         """
-        if not self.enabled:
-            return
         if (sync_ident, name) not in self._sync_by_key:
             self.record_sync_created(sync_ident, parent_span_id, name)
         global_span_id = self._sync_by_key[(sync_ident, name)]
@@ -1138,8 +1197,6 @@ class Monitor:
     def create_sync_spans(self, sync_ident: int, parent_span_id: int, params,
                           name: str | None = None) -> None:
         """Create global SYNC span and SYNC_LOCAL children for all synchronizers."""
-        if not self.enabled:
-            return
         assert (sync_ident, name) not in self._sync_by_key, \
             f"Sync spans already exist for ({sync_ident}, {name})"
         global_span_id = self.record_sync_created(sync_ident, parent_span_id, name)
@@ -1211,9 +1268,6 @@ class Monitor:
     def record_sync_local_event(self, sync_ident: int, kx: int, ky: int,
                                  value: int | None = None) -> None:
         """Record that a synchronizer has seen its local event."""
-        if not self.enabled:
-            return
-
         key = self._find_oldest_sync_local(sync_ident, kx, ky, completed=False)
         if key is None:
             history = self._dump_sync_local_history(sync_ident, kx, ky)
@@ -1227,9 +1281,6 @@ class Monitor:
     def record_sync_local_complete(self, sync_ident: int, kx: int, ky: int,
                                      min_value: int | None) -> None:
         """Record that sync completed at a synchronizer."""
-        if not self.enabled:
-            return
-
         key = self._find_oldest_sync_local(sync_ident, kx, ky, completed=False)
         if key is None:
             history = self._dump_sync_local_history(sync_ident, kx, ky)
@@ -1248,8 +1299,6 @@ class Monitor:
         Finds which rf_ident tokens are blocking the requested registers, then records
         dependencies from the kinstr_exec span to the witems holding those tokens.
         """
-        if not self.enabled:
-            return
         if read_regs is None:
             read_regs = []
         if write_regs is None:
@@ -1286,7 +1335,7 @@ class Monitor:
 
     def record_input_queue_ready(self, x: int, y: int, is_ch0: bool) -> None:
         """Record that input queue has data ready this cycle."""
-        if not self.enabled:
+        if not self.detailed:
             return
         stats = self._get_input_queue_stats(x, y)
         if is_ch0:
@@ -1296,7 +1345,7 @@ class Monitor:
 
     def record_input_queue_consumed(self, x: int, y: int, is_ch0: bool) -> None:
         """Record that data was consumed from input queue this cycle."""
-        if not self.enabled:
+        if not self.detailed:
             return
         stats = self._get_input_queue_stats(x, y)
         if is_ch0:
@@ -1314,7 +1363,7 @@ class Monitor:
     def record_send_queue_attempt(self, x: int, y: int, message_type_name: str,
                                    blocked_cycles: int) -> None:
         """Record a send queue attempt with how many cycles it was blocked."""
-        if not self.enabled:
+        if not self.detailed:
             return
         stats = self._get_send_queue_stats(x, y, message_type_name)
         stats['total_cycles'] += blocked_cycles + 1

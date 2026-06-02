@@ -37,13 +37,13 @@ class MemletSliceIO(params: ZamletParams) extends Bundle {
   val bWo = Vec(params.nBChannels, Decoupled(new NetworkWord(params)))
 
   // Gather side: propagation chains
-  val identAllocIn = Flipped(Valid(new IdentAllocEvent(params)))
-  val identAllocOut = Valid(new IdentAllocEvent(params))
+  val cacheSlotAllocIn = Flipped(Valid(new CacheSlotAllocEvent(params)))
+  val cacheSlotAllocOut = Valid(new CacheSlotAllocEvent(params))
   val arrivedIn = Flipped(Valid(UInt(log2Ceil(params.nMemletGatheringSlots).W)))
   val arrivedOut = Valid(UInt(log2Ceil(params.nMemletGatheringSlots).W))
 
-  // Gather side: MemoryEngine interface
-  val completeEnq = Decoupled(new GatheringSlotMeta(params))
+  // Gather side: completion event to ControlSide.
+  val gatherComplete = Valid(new GatheringCompleteEvent(params))
   val gatheringDataReq = Flipped(Decoupled(new GatheringDataReadSliceReq(params)))
   val gatheringDataResp = Decoupled(UInt(params.wordWidth.W))
   val gatheringFree = Flipped(Valid(UInt(log2Ceil(params.nMemletGatheringSlots).W)))
@@ -51,7 +51,6 @@ class MemletSliceIO(params: ZamletParams) extends Bundle {
   // Response side: MemoryEngine interface
   val responseDataWrite = Flipped(Valid(new ResponseDataWrite(params)))
   val responseMetaEvent = Flipped(Valid(new ResponseMetaEvent(params)))
-  val writeLineRespEnq = Flipped(Decoupled(new NetworkWord(params)))
   val responseFree = Valid(UInt(log2Ceil(params.nResponseBufferSlots).W))
 
   // Response side: propagation chains
@@ -106,11 +105,11 @@ class MemletSlice(params: ZamletParams) extends Module {
   gatherSide.io.kBaseX := io.kBaseX
   gatherSide.io.kBaseY := io.kBaseY
   gatherSide.io.bHo <> router.io.bHo
-  gatherSide.io.identAllocIn := io.identAllocIn
-  io.identAllocOut := gatherSide.io.identAllocOut
+  gatherSide.io.cacheSlotAllocIn := io.cacheSlotAllocIn
+  io.cacheSlotAllocOut := gatherSide.io.cacheSlotAllocOut
   gatherSide.io.arrivedIn := io.arrivedIn
   io.arrivedOut := gatherSide.io.arrivedOut
-  io.completeEnq <> gatherSide.io.completeEnq
+  io.gatherComplete := gatherSide.io.complete
   gatherSide.io.gatheringDataReq <> io.gatheringDataReq
   io.gatheringDataResp <> gatherSide.io.gatheringDataResp
   gatherSide.io.gatheringFree := io.gatheringFree
@@ -131,7 +130,6 @@ class MemletSlice(params: ZamletParams) extends Module {
   responseSide.io.routerY := io.routerY
   router.io.aHi <> responseSide.io.aHi
   responseSide.io.dropEnq <> gatherSide.io.dropEnq
-  responseSide.io.writeLineRespEnq <> io.writeLineRespEnq
   responseSide.io.responseDataWrite := io.responseDataWrite
   responseSide.io.responseMetaEvent := io.responseMetaEvent
   io.responseFree := responseSide.io.responseFree

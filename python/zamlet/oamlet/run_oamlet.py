@@ -38,13 +38,18 @@ def write_span_trees(lam):
 
 async def run(clock: Clock, filename, params: ZamletParams = None,
               word_order: LaneOrder = LaneOrder.ROW_MAJOR,
-              symbol_values: dict = None):
+              symbol_values: dict = None, monitor_detailed: bool = False,
+              dump_spans: bool = False):
     p_info = program_info.get_program_info(filename)
 
     if params is None:
         params = ZamletParams()
 
-    s = oamlet.Oamlet(clock, params, word_order=word_order)
+    logger.debug(
+        "run_oamlet monitor settings: detailed=%s dump_spans=%s",
+        monitor_detailed, dump_spans)
+    s = oamlet.Oamlet(
+        clock, params, word_order=word_order, detailed=monitor_detailed)
     clock.create_task(update(clock, s))
     clock.create_task(s.run())
     await clock.next_cycle
@@ -157,17 +162,20 @@ async def run(clock: Clock, filename, params: ZamletParams = None,
         else:
             logger.info(f"run() exiting with clock.running=False, exit_code={s.exit_code}")
     finally:
-        write_span_trees(s)
+        if dump_spans:
+            write_span_trees(s)
     return exit_code, s.monitor
 
 
 
 async def main(clock, filename, params: ZamletParams = None,
                word_order: LaneOrder = LaneOrder.ROW_MAJOR,
-               symbol_values: dict = None) -> int:
+               symbol_values: dict = None, monitor_detailed: bool = False,
+               dump_spans: bool = False) -> int:
     clock.register_main()
     run_task = clock.create_task(
-        run(clock, filename, params, word_order, symbol_values))
+        run(clock, filename, params, word_order, symbol_values,
+            monitor_detailed=monitor_detailed, dump_spans=dump_spans))
     clock_driver_task = clock.create_task(clock.clock_driver())
 
     # Wait for run_task to complete - it will set clock.running = False
@@ -198,6 +206,10 @@ if __name__ == '__main__':
                         help='Run with all geometries')
     parser.add_argument('--max-cycles', type=int, default=50000,
                         help='Maximum simulation cycles (default: 50000)')
+    parser.add_argument('--dump-spans', action='store_true',
+                        help='Dump span trees to span_trees.txt')
+    parser.add_argument('--monitor-detailed', action='store_true',
+                        help='Keep completed monitor spans and per-cycle state')
     parser.add_argument('--log-level', default='WARNING',
                         help='Logging level (DEBUG, INFO, WARNING, ERROR)')
     args = parser.parse_args()
@@ -246,7 +258,11 @@ if __name__ == '__main__':
             clock = Clock(max_cycles=args.max_cycles)
             exit_code = None
             try:
-                exit_code, _monitor = asyncio.run(main(clock, filename, params))
+                exit_code, _monitor = asyncio.run(
+                    main(
+                        clock, filename, params,
+                        monitor_detailed=args.monitor_detailed,
+                        dump_spans=args.dump_spans))
             except KeyboardInterrupt:
                 root_logger.warning(f'========== Test interrupted by user ==========')
                 sys.exit(1)

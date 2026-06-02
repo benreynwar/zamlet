@@ -5,7 +5,7 @@ from zamlet import addresses
 from zamlet.params import ZamletParams
 from zamlet.kamlet.cache_table import CacheTable
 from zamlet.message import Direction, SendType, MessageType, CHANNEL_MAPPING, is_request_message
-from zamlet.message import Header, IdentHeader, AddressHeader, ValueHeader, TaggedHeader, WriteSetIdentHeader
+from zamlet.message import Header, IdentHeader, CacheLineHeader, ValueHeader, TaggedHeader, WriteSetIdentHeader
 from zamlet.utils import Queue
 from zamlet.router import Router
 from zamlet.kamlet import kinstructions
@@ -78,10 +78,7 @@ class Jamlet:
         self.send_queues = {
             MessageType.LOAD_BYTE_RESP: Queue(2),
             MessageType.READ_BYTE_RESP: Queue(2),
-            MessageType.WRITE_LINE_ADDR: Queue(2),
             MessageType.WRITE_LINE_DATA: Queue(2),
-            MessageType.READ_LINE_ADDR: Queue(2),
-            MessageType.WRITE_LINE_READ_LINE_ADDR: Queue(2),
             MessageType.LOAD_J2J_WORDS_REQ: Queue(2),
             MessageType.LOAD_J2J_WORDS_RESP: Queue(2),
             MessageType.LOAD_J2J_WORDS_DROP: Queue(2),
@@ -144,7 +141,7 @@ class Jamlet:
     async def send_packet(self, packet, parent_span_id: int,
                           drop_reason: str | None = None):
         header = packet[0]
-        assert isinstance(header, IdentHeader)
+        assert isinstance(header, Header)
         assert len(packet) == header.length + 1, (
             f"Packet length mismatch: len(packet)={len(packet)},"
             f" header.length={header.length}")
@@ -169,7 +166,7 @@ class Jamlet:
         tag = self.monitor._tag_from_header(header)
         self.monitor.record_message_sent(
             parent_span_id, message_type.name,
-            ident=header.ident, tag=tag,
+            ident=header.message_id(), tag=tag,
             src_x=self.x, src_y=self.y,
             dst_x=header.target_x, dst_y=header.target_y,
             drop_reason=drop_reason,
@@ -250,51 +247,11 @@ class Jamlet:
     def has_instruction(self):
         return bool(self._instruction_buffer)
 
-    async def send_write_line_addr(self, cache_slot: int, write_address: int, ident: int):
-        """Send WRITE_LINE_ADDR packet (addresses only, no data). Sent by jamlet 0."""
-        address_in_sram = cache_slot * self.params.cache_line_bytes // self.params.j_in_k
-        header = AddressHeader(
-            message_type=MessageType.WRITE_LINE_ADDR,
-            send_type=SendType.SINGLE,
-            target_x=self.mem_x,
-            target_y=self.mem_y,
-            source_x=self.x,
-            source_y=self.y,
-            length=1,
-            ident=ident,
-            address=address_in_sram,
-            )
-        packet = [header, write_address]
-        cache_request_span_id = self.monitor.get_cache_request_span_id(
-            self.k_min_x, self.k_min_y, cache_slot)
-        await self.send_packet(packet, cache_request_span_id)
-
-    async def send_write_line_read_line_addr(
-        self, cache_slot: int, write_address: int, read_address: int, ident: int,
-    ):
-        """Send WRITE_LINE_READ_LINE_ADDR packet (addresses only). Sent by jamlet 0."""
-        address_in_sram = cache_slot * self.params.cache_line_bytes // self.params.j_in_k
-        header = AddressHeader(
-            message_type=MessageType.WRITE_LINE_READ_LINE_ADDR,
-            send_type=SendType.SINGLE,
-            target_x=self.mem_x,
-            target_y=self.mem_y,
-            source_x=self.x,
-            source_y=self.y,
-            length=2,
-            ident=ident,
-            address=address_in_sram,
-            )
-        packet = [header, write_address, read_address]
-        cache_request_span_id = self.monitor.get_cache_request_span_id(
-            self.k_min_x, self.k_min_y, cache_slot)
-        await self.send_packet(packet, cache_request_span_id)
-
-    async def send_write_line_data(self, cache_slot: int, ident: int):
+    async def send_write_line_data(self, cache_slot: int):
         """Send WRITE_LINE_DATA packet (data words from SRAM). Sent by every jamlet."""
         address_in_sram = cache_slot * self.params.cache_line_bytes // self.params.j_in_k
         n_words = self.params.cache_line_bytes // self.params.j_in_k // self.params.word_bytes
-        header = AddressHeader(
+        header = CacheLineHeader(
             message_type=MessageType.WRITE_LINE_DATA,
             send_type=SendType.SINGLE,
             target_x=self.mem_x,
@@ -302,8 +259,7 @@ class Jamlet:
             source_x=self.x,
             source_y=self.y,
             length=n_words,
-            ident=ident,
-            address=address_in_sram,
+            slot=cache_slot,
             )
         packet = [header]
         wb = self.params.word_bytes
@@ -348,7 +304,7 @@ class Jamlet:
         # It only needs the 'slot' which should fit fine in the packet.
         remaining = header.length
         wb = self.params.word_bytes
-        s_address = header.address
+        s_address = header.slot * self.params.cache_line_bytes // self.params.j_in_k
 
         # Some some debug checking
         cache_line_bytes_per_jamlet = self.params.cache_line_bytes // self.params.j_in_k
@@ -409,21 +365,11 @@ class Jamlet:
             await self._receive_write_line_resp_packet(header, queue)
         elif header.message_type == MessageType.WRITE_LINE_READ_LINE_RESP:
             await self._receive_read_line_resp_packet(header, queue)
-        elif header.message_type == MessageType.WRITE_LINE_ADDR_DROP:
-            assert isinstance(header, IdentHeader)
-            request = self.cache_table.cache_requests[header.ident]
-            assert request.addr_sent
-            self.cache_table.clear_addr_sent(header.ident)
-        elif header.message_type == MessageType.WRITE_LINE_READ_LINE_ADDR_DROP:
-            assert isinstance(header, IdentHeader)
-            request = self.cache_table.cache_requests[header.ident]
-            assert request.addr_sent
-            self.cache_table.clear_addr_sent(header.ident)
         elif header.message_type == MessageType.WRITE_LINE_DATA_DROP:
-            assert isinstance(header, IdentHeader)
-            request = self.cache_table.cache_requests[header.ident]
+            assert isinstance(header, CacheLineHeader)
+            request = self.cache_table.get_cache_request_by_slot(header.slot)
             assert request.data_sent[self.j_in_k_index]
-            self.cache_table.clear_data_sent(header.ident, self.j_in_k_index)
+            self.cache_table.clear_data_sent(header.slot, self.j_in_k_index)
         else:
             # All other channel 0 messages are responses tracked via MESSAGE_HANDLERS
             assert isinstance(header, IdentHeader)

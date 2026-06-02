@@ -18,6 +18,10 @@ from zamlet.runner import Clock
 from zamlet.oamlet.run_oamlet import main as run_lamlet_main
 
 
+def _env_flag(name: str) -> bool:
+    return os.environ.get(name, "0") not in ("", "0", "false", "False")
+
+
 def main():
     log_level = os.environ.get("LOG_LEVEL", "WARNING")
     logging.basicConfig(level=getattr(logging, log_level), stream=sys.stderr)
@@ -27,10 +31,17 @@ def main():
     expected_failure = os.environ.get("EXPECTED_FAILURE", "0") == "1"
     symbol_values_str = os.environ.get("SYMBOL_VALUES")
     symbol_values = json.loads(symbol_values_str) if symbol_values_str else None
+    monitor_detailed = _env_flag("ZAMLET_MONITOR_DETAILED")
+    dump_spans = _env_flag("ZAMLET_DUMP_SPANS")
+    logging.debug(
+        "Kernel test monitor settings: detailed=%s dump_spans=%s",
+        monitor_detailed, dump_spans)
 
     clock = Clock(max_cycles=max_cycles)
     exit_code, _monitor = asyncio.run(
-        run_lamlet_main(clock, binary, geometry, symbol_values=symbol_values))
+        run_lamlet_main(
+            clock, binary, geometry, symbol_values=symbol_values,
+            monitor_detailed=monitor_detailed, dump_spans=dump_spans))
 
     if expected_failure:
         assert exit_code != 0, f"Kernel {binary} should have failed but returned 0"

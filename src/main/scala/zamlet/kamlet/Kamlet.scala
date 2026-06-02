@@ -5,8 +5,8 @@ import chisel3.util._
 import zamlet.ZamletParams
 import zamlet.SynchronizerParams
 import zamlet.LaneOrderMapping
-import zamlet.jamlet.Jamlet
-import zamlet.network.NetworkWord
+import zamlet.jamlet.{ChannelsIO, Jamlet}
+import zamlet.network.{CombinedNetworkNode, NetworkWord}
 
 /**
  * Kamlet is a cluster of jamlets that share an instruction queue, cache tracking,
@@ -45,6 +45,10 @@ class Kamlet(
                           Flipped(Decoupled(new NetworkWord(params)))))
     val wChannelsOut = Vec(params.jRows, Vec(params.nAChannels + params.nBChannels,
                            Decoupled(new NetworkWord(params))))
+
+    // Kamlet-level packet network ports.
+    val kamletAChannels = new ChannelsIO(params, params.nAChannels)
+    val kamletBChannels = new ChannelsIO(params, params.nBChannels)
 
     // Sync network ports
     val syncPortOut = Output(Vec(SyncDirection.count, new SyncPort))
@@ -156,7 +160,7 @@ class Kamlet(
       }
       // Internal west connections handled by east connections of neighbor
 
-      // Tie off kamlet-facing ports for now (except jamlet 0,0 which forwards to InstrQueue)
+      // Tie off kamlet-facing ports for now.
       j.io.jteCreate.valid := false.B
       j.io.jteCreate.bits := DontCare
       j.io.jteClear.valid := false.B
@@ -175,9 +179,6 @@ class Kamlet(
       j.io.cacheLineResp.bits := DontCare
       j.io.sendCacheLine.valid := false.B
       j.io.sendCacheLine.bits := DontCare
-      if (jY != 0 || jX != 0) {
-        j.io.kamletReceivePacket.ready := false.B
-      }
     }
   }
 
@@ -188,13 +189,39 @@ class Kamlet(
   val instrQueue = Module(new InstrQueue(params))
   val instrExecutor = Module(new InstrExecutor(params))
   val synchronizer = Module(new Synchronizer(neighbors, params.synchronizerParams))
+  val kamletNetworkNode = Module(new CombinedNetworkNode(params))
+
+  kamletNetworkNode.io.thisX := io.kX
+  kamletNetworkNode.io.thisY := io.kY
+
+  kamletNetworkNode.io.aNi <> io.kamletAChannels.ni
+  kamletNetworkNode.io.aNo <> io.kamletAChannels.no
+  kamletNetworkNode.io.aSi <> io.kamletAChannels.si
+  kamletNetworkNode.io.aSo <> io.kamletAChannels.so
+  kamletNetworkNode.io.aEi <> io.kamletAChannels.ei
+  kamletNetworkNode.io.aEo <> io.kamletAChannels.eo
+  kamletNetworkNode.io.aWi <> io.kamletAChannels.wi
+  kamletNetworkNode.io.aWo <> io.kamletAChannels.wo
+
+  kamletNetworkNode.io.bNi <> io.kamletBChannels.ni
+  kamletNetworkNode.io.bNo <> io.kamletBChannels.no
+  kamletNetworkNode.io.bSi <> io.kamletBChannels.si
+  kamletNetworkNode.io.bSo <> io.kamletBChannels.so
+  kamletNetworkNode.io.bEi <> io.kamletBChannels.ei
+  kamletNetworkNode.io.bEo <> io.kamletBChannels.eo
+  kamletNetworkNode.io.bWi <> io.kamletBChannels.wi
+  kamletNetworkNode.io.bWo <> io.kamletBChannels.wo
 
   // ============================================================
-  // Wiring: Jamlet(0,0).kamletReceivePacket → InstrQueue → InstrExecutor → Synchronizer
+  // Wiring: Kamlet network → InstrQueue → InstrExecutor → Synchronizer
   // ============================================================
 
-  // Connect jamlet 0,0's kamletReceivePacket to InstrQueue
-  instrQueue.io.packetIn <> jamlets(0)(0).io.kamletReceivePacket
+  instrQueue.io.packetIn <> kamletNetworkNode.io.aHo
+  kamletNetworkNode.io.aHi.valid := false.B
+  kamletNetworkNode.io.aHi.bits := DontCare
+  kamletNetworkNode.io.bHi.valid := false.B
+  kamletNetworkNode.io.bHi.bits := DontCare
+  kamletNetworkNode.io.bHo.ready := false.B
 
   // InstrQueue → InstrExecutor
   instrExecutor.io.kinstrIn <> instrQueue.io.kinstrOut

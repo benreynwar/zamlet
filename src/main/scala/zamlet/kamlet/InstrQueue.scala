@@ -18,7 +18,8 @@ class KamletErrors extends Bundle {
 }
 
 /**
- * InstrQueue receives instruction packets from jamlets and extracts kinstrs.
+ * InstrQueue receives instruction packets from the Kamlet-level packet network
+ * and extracts kinstrs.
  *
  * Packet format:
  * - Word 0 (isHeader=true): PacketHeader with length field

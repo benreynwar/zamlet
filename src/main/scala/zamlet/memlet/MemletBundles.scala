@@ -10,10 +10,10 @@ object MemletResponseType extends ChiselEnum {
   val WlrlRead = Value(1.U)
 }
 
-// Inter-slice propagation: ident allocation (outward from slice 0)
-class IdentAllocEvent(params: ZamletParams) extends Bundle {
+// Inter-slice propagation: cache slot allocation (outward from slice 0)
+class CacheSlotAllocEvent(params: ZamletParams) extends Bundle {
   val slotIdx = UInt(log2Ceil(params.nMemletGatheringSlots).W)
-  val ident = UInt(params.identWidth.W)
+  val cacheSlot = params.cacheSlot()
 }
 
 // Inter-slice propagation: all local jamlets arrived (inward toward slice 0)
@@ -22,33 +22,34 @@ class IdentAllocEvent(params: ZamletParams) extends Bundle {
 
 // Inter-slice propagation: response buffer metadata (outward from slice 0)
 // Shared wires: isSendable=false for Allocate, isSendable=true for Sendable.
-// ident/sramAddr/responseType are don't-care when isSendable=true.
+// cacheSlot/responseType are don't-care when isSendable=true.
 class ResponseMetaEvent(params: ZamletParams) extends Bundle {
   val isSendable = Bool()
   val slotIdx = UInt(log2Ceil(params.nResponseBufferSlots).W)
-  val ident = UInt(params.identWidth.W)
-  val sramAddr = UInt(params.sramAddrWidth.W)
+  val cacheSlot = params.cacheSlot()
   val responseType = MemletResponseType()
 }
 
 // Read line queue entry (slice 0 → MemoryEngine)
 class ReadLineEntry(params: ZamletParams) extends Bundle {
-  val ident = UInt(params.identWidth.W)
-  val sramAddr = UInt(params.sramAddrWidth.W)
+  val cacheSlot = params.cacheSlot()
   val memAddr = UInt(params.wordWidth.W)
 }
 
 // Gathering slot metadata (authoritative, at slice 0)
 class GatheringSlotMeta(params: ZamletParams) extends Bundle {
   val slotIdx = UInt(log2Ceil(params.nMemletGatheringSlots).W)
-  val ident = UInt(params.identWidth.W)
-  val sramAddr = UInt(params.sramAddrWidth.W)
+  val cacheSlot = params.cacheSlot()
   val sourceX = UInt(params.xPosWidth.W)
   val sourceY = UInt(params.yPosWidth.W)
   val writeAddr = UInt(params.wordWidth.W)
   val readAddr = UInt(params.wordWidth.W)
   val writes = Bool()
   val reads = Bool()
+}
+
+class GatheringCompleteEvent(params: ZamletParams) extends Bundle {
+  val slotIdx = UInt(log2Ceil(params.nMemletGatheringSlots).W)
 }
 
 // Per-slice gathering data read (Decoupled req in, Decoupled resp out)

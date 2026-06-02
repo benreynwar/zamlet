@@ -8,7 +8,7 @@ from typing import Coroutine, List, Any
 from zamlet.runner import Clock
 from zamlet.params import ZamletParams
 from zamlet.utils import SettableBool
-from zamlet.message import Header, IdentHeader, TaggedHeader, WriteSetIdentHeader
+from zamlet.message import Header, IdentHeader, CacheLineHeader, TaggedHeader, WriteSetIdentHeader
 from zamlet.kamlet import kinstructions
 from zamlet import addresses
 from zamlet.addresses import KMAddr
@@ -81,7 +81,6 @@ class CacheRequestType(Enum):
 
 @dataclass
 class CacheRequestState:
-    ident: int
     slot: int
     addr: int
     addr_sent: SettableBool
@@ -229,35 +228,50 @@ class CacheTable:
 
         self.acquiring_slot = False
 
-    def receive_cache_data_response(self, header: IdentHeader) -> None:
+    def get_cache_request_by_slot(self, slot: int) -> CacheRequestState:
+        matches = [request for _, request in self._cache_request_entries_for_slot(slot)]
+        assert len(matches) == 1, (
+            f'Expected one cache request for slot={slot}, got {len(matches)}')
+        return matches[0]
+
+    def _cache_request_entry_for_slot(self, slot: int) -> tuple[int, CacheRequestState]:
+        matches = self._cache_request_entries_for_slot(slot)
+        assert len(matches) == 1, (
+            f'Expected one cache request for slot={slot}, got {len(matches)}')
+        return matches[0]
+
+    def _cache_request_entries_for_slot(self, slot: int) -> list[tuple[int, CacheRequestState]]:
+        return [
+            (index, request)
+            for index, request in enumerate(self.cache_requests)
+            if request is not None and request.slot == slot
+        ]
+
+    def receive_cache_data_response(self, header: CacheLineHeader) -> None:
         """Per-jamlet response (READ_LINE_RESP, WRITE_LINE_READ_LINE_RESP)."""
-        ident = header.ident
         tag = ((header.target_y % self.params.j_rows) * self.params.j_cols +
                (header.target_x % self.params.j_cols))
-        state = self.cache_requests[ident]
-        assert state is not None
-        assert state.ident == ident
+        state = self.get_cache_request_by_slot(header.slot)
+        assert state.slot == header.slot
         assert not state.received_data[tag]
         state.received_data[tag].set(True)
         n_received = sum(1 for r in state.received_data if r.peek())
         logger.debug(
             f'{self.clock.cycle}: {self.name}: receive_cache_data_response '
-            f'req={ident} tag={tag} slot={state.slot} '
+            f'tag={tag} slot={state.slot} '
             f'received={n_received}/{len(state.received_data)}'
         )
 
-    def receive_cache_write_response(self, header: IdentHeader) -> None:
+    def receive_cache_write_response(self, header: CacheLineHeader) -> None:
         """Single write acknowledgement (WRITE_LINE_RESP)."""
-        ident = header.ident
-        state = self.cache_requests[ident]
-        assert state is not None
-        assert state.ident == ident
+        state = self.get_cache_request_by_slot(header.slot)
+        assert state.slot == header.slot
         assert state.request_type == CacheRequestType.WRITE_LINE
         assert not state.received_write_resp
         state.received_write_resp.set(True)
         logger.debug(
             f'{self.clock.cycle}: {self.name}: receive_cache_write_response '
-            f'req={ident} slot={state.slot}'
+            f'slot={state.slot}'
         )
 
     def has_free_witem_slot(self, use_reserved: bool = False, n: int = 1) -> bool:
@@ -532,7 +546,6 @@ class CacheTable:
             assert False
         assert self.cache_requests[cache_request_index] is None
         cache_request = CacheRequestState(
-                ident=cache_request_index,
                 addr=request_addr,
                 slot=slot,
                 addr_sent=SettableBool(False),
@@ -774,7 +787,7 @@ class CacheTable:
             return None
 
     def report_addr_sent(self, request: CacheRequestState):
-        assert self.cache_requests[request.ident] == request
+        assert self.get_cache_request_by_slot(request.slot) == request
         request.addr_sent.set(True)
         if request.request_type == CacheRequestType.READ_LINE:
             assert self.slot_states[request.slot].state == CacheState.READING
@@ -784,7 +797,7 @@ class CacheTable:
             assert self.slot_states[request.slot].state == CacheState.WRITING_READING
 
     def report_data_sent(self, request: CacheRequestState, j_in_k_index: int):
-        assert self.cache_requests[request.ident] == request
+        assert self.get_cache_request_by_slot(request.slot) == request
         assert request.request_type in (
             CacheRequestType.WRITE_LINE, CacheRequestType.WRITE_LINE_READ_LINE,
         )
@@ -794,31 +807,31 @@ class CacheTable:
             assert self.slot_states[request.slot].state == CacheState.WRITING_READING
         request.data_sent[j_in_k_index].set(True)
 
-    def clear_addr_sent(self, ident: int):
+    def clear_addr_sent(self, cache_slot: int):
         """Clear addr_sent after receiving an ADDR DROP."""
-        request = self.cache_requests[ident]
-        assert request is not None, f'No cache request for ident={ident}'
+        request = self.get_cache_request_by_slot(cache_slot)
         request.addr_sent.set(False)
         logger.debug(
-            f'{self.clock.cycle}: [CACHE_TABLE] clear_addr_sent ident={ident}'
+            f'{self.clock.cycle}: [CACHE_TABLE] clear_addr_sent '
+            f'cache_slot={cache_slot}'
         )
 
-    def clear_data_sent(self, ident: int, j_in_k_index: int):
+    def clear_data_sent(self, cache_slot: int, j_in_k_index: int):
         """Clear data_sent for a jamlet after receiving a DATA DROP."""
-        request = self.cache_requests[ident]
-        assert request is not None, f'No cache request for ident={ident}'
+        request = self.get_cache_request_by_slot(cache_slot)
         assert request.request_type in (
             CacheRequestType.WRITE_LINE, CacheRequestType.WRITE_LINE_READ_LINE,
         )
         request.data_sent[j_in_k_index].set(False)
         logger.debug(
-            f'{self.clock.cycle}: [CACHE_TABLE] clear_data_sent ident={ident} '
-            f'j_in_k_index={j_in_k_index}'
+            f'{self.clock.cycle}: [CACHE_TABLE] clear_data_sent '
+            f'cache_slot={cache_slot} j_in_k_index={j_in_k_index}'
         )
 
     def resolve_read_line(self, request: CacheRequestState):
-        assert self.cache_requests[request.ident] == request
-        self.cache_requests[request.ident] = None
+        index, stored_request = self._cache_request_entry_for_slot(request.slot)
+        assert stored_request == request
+        self.cache_requests[index] = None
         state = self.slot_states[request.slot]
         assert state.state == CacheState.READING
         state.state = CacheState.SHARED
@@ -830,8 +843,9 @@ class CacheTable:
             self.kamlet_x, self.kamlet_y, request.slot)
 
     def resolve_write_line(self, request: CacheRequestState):
-        assert self.cache_requests[request.ident] == request
-        self.cache_requests[request.ident] = None
+        index, stored_request = self._cache_request_entry_for_slot(request.slot)
+        assert stored_request == request
+        self.cache_requests[index] = None
         state = self.slot_states[request.slot]
         assert state.state == CacheState.WRITING
         state.state = CacheState.INVALID
@@ -839,8 +853,9 @@ class CacheTable:
             self.kamlet_x, self.kamlet_y, request.slot)
 
     def resolve_write_line_read_line(self, request: CacheRequestState):
-        assert self.cache_requests[request.ident] == request
-        self.cache_requests[request.ident] = None
+        index, stored_request = self._cache_request_entry_for_slot(request.slot)
+        assert stored_request == request
+        self.cache_requests[index] = None
         state = self.slot_states[request.slot]
         assert state.state == CacheState.WRITING_READING
         state.state = CacheState.SHARED
@@ -880,14 +895,13 @@ class CacheTable:
         """
         while True:
             await self.clock.next_cycle
-            for request_index, request in enumerate(self.cache_requests):
+            for index, request in enumerate(self.cache_requests):
                 if request is None:
                     continue
-                assert request.ident == request_index
                 if request.is_fully_received():
                     logger.debug(
                         f'{self.clock.cycle}: {self.name}: _monitor_cache_responses '
-                        f'req={request_index} type={request.request_type} complete, resolving'
+                        f'table_index={index} type={request.request_type} complete, resolving'
                     )
                     if request.request_type == CacheRequestType.READ_LINE:
                         self.resolve_read_line(request)
@@ -903,8 +917,7 @@ class CacheTable:
         self.clock.create_task(self._monitor_items())
 
     def update(self):
-        for index, state in enumerate(self.cache_requests):
+        for state in self.cache_requests:
             if state is None:
                 continue
-            assert state.ident == index
             state.update()

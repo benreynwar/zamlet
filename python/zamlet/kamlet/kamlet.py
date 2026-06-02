@@ -4,8 +4,11 @@ from typing import List, Tuple
 from zamlet import addresses
 from zamlet.addresses import KMAddr
 from zamlet.params import ZamletParams
+from zamlet.router import Router
 from zamlet.jamlet.jamlet import Jamlet
-from zamlet.message import Header, MessageType, SendType, AddressHeader, WriteMemWordHeader
+from zamlet.message import (
+    CHANNEL_MAPPING, Direction, Header, MessageType, SendType, CacheLineHeader,
+    WriteMemWordHeader)
 from zamlet.utils import Queue
 from zamlet.kamlet import kinstructions
 from zamlet.kamlet.kinstructions import has_reg_ordering_conflict
@@ -30,9 +33,11 @@ class Kamlet:
     They share an instruction buffer, and cache tracking logic.
     """
 
-    def __init__(self, clock, params: ZamletParams, min_x: int, min_y: int, tlb: addresses.TLB,
+    def __init__(self, clock, params: ZamletParams, min_x: int, min_y: int,
+                 knet_x: int, knet_y: int, tlb: addresses.TLB,
                  monitor: Monitor, lamlet_x: int, lamlet_y: int,
-                 mem_coords: List[Tuple[int, int]]):
+                 mem_coords: List[Tuple[int, int]],
+                 memlet_knet_coords: Tuple[int, int]):
         self.clock = clock
         self.params = params
         self.monitor = monitor
@@ -42,6 +47,13 @@ class Kamlet:
         # A kamlet covers several (x,y) coordinate positions (one for each lane (jamlet))
         self.min_x = min_x
         self.min_y = min_y
+        self.knet_x = knet_x
+        self.knet_y = knet_y
+        self.memlet_knet_x, self.memlet_knet_y = memlet_knet_coords
+        self.kamlet_network_routers = [
+            Router(clock=clock, params=params, x=knet_x, y=knet_y, channel=channel)
+            for channel in range(params.n_channels)
+        ]
         self.n_columns = params.j_cols
         self.n_rows = params.j_rows
         self.n_jamlets = self.n_columns * self.n_rows
@@ -305,6 +317,8 @@ class Kamlet:
             await self.clock.next_cycle
 
     def update(self):
+        for router in self.kamlet_network_routers:
+            router.update()
         self._instruction_queue.update()
         self._instr_send_queue.update()
         self.cache_table.update()
@@ -578,8 +592,7 @@ class Kamlet:
                     if not request.addr_sent:
                         await self.read_cache_line(
                             cache_slot=request.slot,
-                            address_in_memory=request.addr,
-                            ident=request.ident)
+                            address_in_memory=request.addr)
                         self.cache_table.report_addr_sent(request)
                 elif request.request_type in (
                     CacheRequestType.WRITE_LINE,
@@ -589,42 +602,89 @@ class Kamlet:
                     write_address = request.addr
                     if not request.addr_sent:
                         if request.request_type == CacheRequestType.WRITE_LINE:
-                            await self.jamlets[0].send_write_line_addr(
+                            await self.write_cache_line_addr(
                                 cache_slot=request.slot,
-                                write_address=write_address,
-                                ident=request.ident)
+                                write_address=write_address)
                         else:
                             read_address = (
                                 slot_state.memory_loc * self.params.cache_line_bytes)
-                            await self.jamlets[0].send_write_line_read_line_addr(
+                            await self.write_read_cache_line_addr(
                                 cache_slot=request.slot,
                                 write_address=write_address,
-                                read_address=read_address,
-                                ident=request.ident)
+                                read_address=read_address)
                         self.cache_table.report_addr_sent(request)
                     else:
                         for j_in_k_index, jamlet in enumerate(self.jamlets):
                             if not request.data_sent[j_in_k_index]:
                                 await jamlet.send_write_line_data(
-                                    cache_slot=request.slot,
-                                    ident=request.ident)
+                                    cache_slot=request.slot)
                                 self.cache_table.report_data_sent(
                                     request, j_in_k_index)
 
-    async def _get_instructions_from_jamlets(self):
+    async def _receive_kamlet_network_instructions_packet(self, header, queue):
+        remaining = header.length
+        while remaining:
+            await self.clock.next_cycle
+            if queue:
+                while not self._instruction_queue.can_append():
+                    await self.clock.next_cycle
+                instr = queue.popleft()
+                self.monitor.record_kamlet_message_received(
+                    instr.instr_ident,
+                    header.source_x, header.source_y,
+                    self.knet_x, self.knet_y,
+                    message_type='INSTRUCTION')
+                self.add_to_instruction_queue(instr)
+                remaining -= 1
+
+    async def _receive_kamlet_network_packet_channel0(self, queue):
+        """
+        Handle channel 0 packets on the Kamlet network.
+        This function should return on the same cycle that the last word was consumed.
+        """
+        while not queue:
+            await self.clock.next_cycle
+        header = queue.popleft()
+        assert isinstance(header, Header)
+        logger.debug(
+            f'{self.clock.cycle}: kamlet ({self.min_x}, {self.min_y}): '
+            f'_receive_kamlet_network_packet_channel0 got header '
+            f'{header.message_type.name} from ({header.source_x}, {header.source_y})')
+
+        if header.message_type == MessageType.INSTRUCTIONS:
+            await self._receive_kamlet_network_instructions_packet(header, queue)
+        elif header.message_type == MessageType.WRITE_LINE_RESP:
+            self.monitor.record_kamlet_message_received_by_header(
+                header, self.knet_x, self.knet_y)
+            assert header.length == 0
+            self.cache_table.receive_cache_write_response(header)
+        elif header.message_type in (
+            MessageType.READ_LINE_ADDR_DROP,
+            MessageType.WRITE_LINE_ADDR_DROP,
+            MessageType.WRITE_LINE_READ_LINE_ADDR_DROP,
+        ):
+            self.monitor.record_kamlet_message_received_by_header(
+                header, self.knet_x, self.knet_y)
+            assert header.length == 0
+            request = self.cache_table.get_cache_request_by_slot(header.slot)
+            assert request.slot == header.slot
+            assert request.addr_sent
+            self.cache_table.clear_addr_sent(header.slot)
+        else:
+            raise NotImplementedError(
+                f"No handler for Kamlet-network channel 0 message "
+                f"{header.message_type}")
+
+    async def _receive_kamlet_network_packets_channel0(self):
+        queue = self.kamlet_network_routers[0]._output_buffers[Direction.H]
         while True:
             await self.clock.next_cycle
-            # Get received instructions from jamlets
-            for index, jamlet in enumerate(self.jamlets):
-                if jamlet._instruction_buffer:
-                    if index == 0:
-                        if self._instruction_queue.can_append():
-                            instr = jamlet._instruction_buffer.popleft()
-                            self.add_to_instruction_queue(instr)
-                    else:
-                        instr = jamlet._instruction_buffer.popleft()
+            if queue:
+                await self._receive_kamlet_network_packet_channel0(queue)
 
     async def run(self):
+        for router in self.kamlet_network_routers:
+            self.clock.create_task(router.run())
         for jamlet in self.jamlets:
             self.clock.create_task(jamlet.run())
         self.clock.create_task(self._admit_instructions())
@@ -632,14 +692,14 @@ class Kamlet:
         self.clock.create_task(self._drain_pending_pregs())
         self.clock.create_task(self._monitor_instruction_queue())
         self.clock.create_task(self._send_packets())
-        self.clock.create_task(self._get_instructions_from_jamlets())
+        self.clock.create_task(self._receive_kamlet_network_packets_channel0())
         self.clock.create_task(self._monitor_cache_requests())
         self.clock.create_task(self._monitor_witems())
         self.clock.create_task(self.cache_table.run())
         self.clock.create_task(self.synchronizer.run())
 
-    async def _queue_cache_request(self, packet, slot: int):
-        """Queue a cache request packet and record the message sent."""
+    async def _queue_cache_control_packet(self, packet, slot: int):
+        """Queue a Memlet control packet on the Kamlet network."""
         header = packet[0]
         while not self._instr_send_queue.can_append():
             await self.clock.next_cycle
@@ -647,37 +707,65 @@ class Kamlet:
 
         cache_request_span_id = self.monitor.get_cache_request_span_id(
             self.min_x, self.min_y, slot)
-        self.monitor.record_message_sent(
+        self.monitor.record_kamlet_message_sent(
             cache_request_span_id, header.message_type.name,
-            ident=header.ident, tag=slot,
+            ident=slot, tag=None,
             src_x=header.source_x, src_y=header.source_y,
             dst_x=header.target_x, dst_y=header.target_y)
 
-    async def read_cache_line(self, cache_slot: int, address_in_memory: int, ident: int):
+    async def read_cache_line(
+            self, cache_slot: int, address_in_memory: int):
         """
         Reads from memory into the cache line.
         This function should only be called by our CacheTable.
         We pass it to the cache table's constructor.
         """
         logger.debug('{self.clock.cycle}: kamlet {(self.min_x, self.min_y)}: read_cache_line')
-        address_in_sram = cache_slot * self.params.cache_line_bytes // self.params.j_in_k
-        send_jamlet = self.jamlets[self.params.send_read_line_j_index]
-
-        header = AddressHeader(
+        header = CacheLineHeader(
             message_type=MessageType.READ_LINE_ADDR, #4
             send_type=SendType.SINGLE,          #1
-            target_x=self.mem_x,                #8
-            target_y=self.mem_y,                #8
-            source_x=send_jamlet.x,             #8
-            source_y=send_jamlet.y,             #8
-            address=address_in_sram,            #12
+            target_x=self.memlet_knet_x,        #8
+            target_y=self.memlet_knet_y,        #8
+            source_x=self.knet_x,               #8
+            source_y=self.knet_y,               #8
+            slot=cache_slot,
             length=1,                           #5
-            ident=ident,               #5 bits
             )
         assert address_in_memory % self.params.cache_line_bytes == 0
         packet = [header, address_in_memory]
 
-        await self._queue_cache_request(packet, cache_slot)
+        await self._queue_cache_control_packet(packet, cache_slot)
+
+    async def write_cache_line_addr(
+            self, cache_slot: int, write_address: int):
+        """Send WRITE_LINE_ADDR on the Kamlet network."""
+        header = CacheLineHeader(
+            message_type=MessageType.WRITE_LINE_ADDR,
+            send_type=SendType.SINGLE,
+            target_x=self.memlet_knet_x,
+            target_y=self.memlet_knet_y,
+            source_x=self.knet_x,
+            source_y=self.knet_y,
+            length=1,
+            slot=cache_slot,
+        )
+        await self._queue_cache_control_packet([header, write_address], cache_slot)
+
+    async def write_read_cache_line_addr(
+            self, cache_slot: int, write_address: int, read_address: int):
+        """Send WRITE_LINE_READ_LINE_ADDR on the Kamlet network."""
+        header = CacheLineHeader(
+            message_type=MessageType.WRITE_LINE_READ_LINE_ADDR,
+            send_type=SendType.SINGLE,
+            target_x=self.memlet_knet_x,
+            target_y=self.memlet_knet_y,
+            source_x=self.knet_x,
+            source_y=self.knet_y,
+            length=2,
+            slot=cache_slot,
+        )
+        await self._queue_cache_control_packet(
+            [header, write_address, read_address], cache_slot)
 
     def get_is_active(self, start_index, n_elements, element_width, word_order, mask_reg, vline_index, j_in_k_index, index_in_j):
         '''
@@ -749,8 +837,10 @@ class Kamlet:
             await self.clock.next_cycle
             if self._instr_send_queue:
                 packet = self._instr_send_queue.popleft()
-                send_index = self.params.send_read_line_j_index
-                buffer = self.jamlets[send_index].send_queues[packet[0].message_type]
-                while not buffer.can_append():
+                channel = CHANNEL_MAPPING[packet[0].message_type]
+                buffer = self.kamlet_network_routers[channel]._input_buffers[Direction.H]
+                while packet:
+                    while not buffer.can_append():
+                        await self.clock.next_cycle
+                    buffer.append(packet.pop(0))
                     await self.clock.next_cycle
-                buffer.append(packet)

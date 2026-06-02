@@ -4,6 +4,7 @@ Tests run against both cocotb (RTL) and the Python model via the MemletDriver ab
 """
 
 import logging
+from collections import deque
 from random import Random
 
 from zamlet.memlet_test.memlet_driver import MemletDriver
@@ -30,8 +31,8 @@ async def run_write_read(driver: MemletDriver, timeout: int = 1000) -> None:
 
     wd = driver.start_soon(watchdog())
 
-    await driver.write_cache_line(ident=1, mem_addr=0x1000, data=data)
-    read_data = await driver.read_cache_line(ident=2, mem_addr=0x1000, sram_addr=0)
+    await driver.write_cache_line(slot=0, mem_addr=0x1000, data=data)
+    read_data = await driver.read_cache_line(slot=0, mem_addr=0x1000)
     assert read_data == data
 
     wd.cancel()
@@ -50,15 +51,12 @@ async def run_multi_address(driver: MemletDriver, timeout: int = 3000) -> None:
 
     wd = driver.start_soon(watchdog())
 
-    ident = 1
     for i in range(4):
         mem_addr = spacing * i
         data = random_cache_line(driver, rng)
-        await driver.write_cache_line(ident=ident, mem_addr=mem_addr, data=data)
-        ident += 1
-        read_data = await driver.read_cache_line(ident=ident, mem_addr=mem_addr, sram_addr=i)
+        await driver.write_cache_line(slot=i, mem_addr=mem_addr, data=data)
+        read_data = await driver.read_cache_line(slot=i, mem_addr=mem_addr)
         assert read_data == data
-        ident += 1
 
     wd.cancel()
     logger.info("run_multi_address passed")
@@ -78,11 +76,11 @@ async def run_write_write_read_read(driver: MemletDriver, timeout: int = 3000) -
 
     wd = driver.start_soon(watchdog())
 
-    await driver.write_cache_line(ident=1, mem_addr=0, data=data_a)
-    await driver.write_cache_line(ident=2, mem_addr=spacing, data=data_b)
+    await driver.write_cache_line(slot=0, mem_addr=0, data=data_a)
+    await driver.write_cache_line(slot=1, mem_addr=spacing, data=data_b)
 
-    assert await driver.read_cache_line(ident=3, mem_addr=0, sram_addr=0) == data_a
-    assert await driver.read_cache_line(ident=4, mem_addr=spacing, sram_addr=1) == data_b
+    assert await driver.read_cache_line(slot=0, mem_addr=0) == data_a
+    assert await driver.read_cache_line(slot=1, mem_addr=spacing) == data_b
 
     wd.cancel()
     logger.info("run_write_write_read_read passed")
@@ -100,15 +98,13 @@ async def run_pipelined(driver: MemletDriver, timeout: int = 5000) -> None:
 
     wd = driver.start_soon(watchdog())
 
-    ident = 1
     write_tasks = []
     for i in range(4):
         mem_addr = spacing * i
         data = random_cache_line(driver, rng)
         task = driver.start_soon(
-            driver.write_cache_line(ident=ident, mem_addr=mem_addr, data=data))
+            driver.write_cache_line(slot=i, mem_addr=mem_addr, data=data))
         write_tasks.append((task, mem_addr, i, data))
-        ident += 1
 
     read_tasks = []
     pending_writes = list(write_tasks)
@@ -116,15 +112,13 @@ async def run_pipelined(driver: MemletDriver, timeout: int = 5000) -> None:
         await driver.tick()
 
         still_pending = []
-        for task, mem_addr, sram_addr, data in pending_writes:
+        for task, mem_addr, slot, data in pending_writes:
             if task.done():
                 rt = driver.start_soon(
-                    driver.read_cache_line(ident=ident, mem_addr=mem_addr,
-                                           sram_addr=sram_addr))
+                    driver.read_cache_line(slot=slot, mem_addr=mem_addr))
                 read_tasks.append((rt, data))
-                ident += 1
             else:
-                still_pending.append((task, mem_addr, sram_addr, data))
+                still_pending.append((task, mem_addr, slot, data))
         pending_writes = still_pending
 
         still_reading = []
@@ -144,6 +138,29 @@ async def run_slot_exhaustion(driver: MemletDriver, timeout: int = 10000) -> Non
     rng = Random(4)
     spacing = driver.params.cache_line_bytes
     n_writes = driver.params.n_memlet_gathering_slots * 3
+    write_specs = [
+        (
+            i % driver.params.n_cache_slots,
+            spacing * i,
+            random_cache_line(driver, rng),
+        )
+        for i in range(n_writes)
+    ]
+
+    def make_action(is_write: bool, slot: int, mem_addr: int, data: bytes):
+        return {
+            "is_write": is_write,
+            "addr": mem_addr,
+            "data": data,
+            "slot": slot,
+            "task": None,
+        }
+
+    actions = deque()
+    for slot, mem_addr, data in write_specs:
+        actions.append(make_action(True, slot, mem_addr, data))
+    for slot, mem_addr, data in write_specs:
+        actions.append(make_action(False, slot, mem_addr, data))
 
     async def watchdog():
         for _ in range(timeout):
@@ -153,28 +170,40 @@ async def run_slot_exhaustion(driver: MemletDriver, timeout: int = 10000) -> Non
     wd = driver.start_soon(watchdog())
     driver.reset_drop_count()
 
-    ident = 1
-    write_tasks = []
-    for i in range(n_writes):
-        mem_addr = spacing * i
-        data = random_cache_line(driver, rng)
-        task = driver.start_soon(
-            driver.write_cache_line(ident=ident, mem_addr=mem_addr, data=data))
-        write_tasks.append((task, mem_addr, i, data))
-        ident += 1
+    active = []
+    while actions or active:
+        while actions:
+            action = actions[0]
+            if any(a["slot"] == action["slot"] for a in active):
+                break
 
-    for task, mem_addr, sram_addr, data in write_tasks:
-        while not task.done():
-            await driver.tick()
+            action = actions.popleft()
+            if action["is_write"]:
+                action["task"] = driver.start_soon(
+                    driver.write_cache_line(
+                        slot=action["slot"],
+                        mem_addr=action["addr"],
+                        data=action["data"],
+                    )
+                )
+            else:
+                action["task"] = driver.start_soon(
+                    driver.read_cache_line(
+                        slot=action["slot"],
+                        mem_addr=action["addr"],
+                    )
+                )
+            active.append(action)
 
-    read_rng = Random(4)
-    for i in range(n_writes):
-        mem_addr = spacing * i
-        data = random_cache_line(driver, read_rng)
-        read_data = await driver.read_cache_line(
-            ident=ident, mem_addr=mem_addr, sram_addr=i)
-        assert read_data == data
-        ident += 1
+        await driver.tick()
+
+        still_active = []
+        for action in active:
+            if not action["task"].done():
+                still_active.append(action)
+            elif not action["is_write"]:
+                assert action["task"].result() == action["data"]
+        active = still_active
 
     drops = driver.reset_drop_count()
     assert drops > 0, "Expected drops from slot exhaustion but got none"
@@ -202,17 +231,15 @@ async def run_backpressure(driver: MemletDriver, timeout: int = 10000) -> None:
 
     driver.consume_responses = False
 
-    ident = 1
     write_data = []
     write_tasks = []
     for i in range(n_writes):
         mem_addr = spacing * i
         data = random_cache_line(driver, rng)
         task = driver.start_soon(
-            driver.write_cache_line(ident=ident, mem_addr=mem_addr, data=data))
+            driver.write_cache_line(slot=i, mem_addr=mem_addr, data=data))
         write_tasks.append(task)
         write_data.append((mem_addr, i, data))
-        ident += 1
 
     # Let writes proceed with backpressure for a while.
     await driver.tick(200)
@@ -223,11 +250,10 @@ async def run_backpressure(driver: MemletDriver, timeout: int = 10000) -> None:
         while not task.done():
             await driver.tick()
 
-    for mem_addr, sram_addr, data in write_data:
+    for mem_addr, slot, data in write_data:
         read_data = await driver.read_cache_line(
-            ident=ident, mem_addr=mem_addr, sram_addr=sram_addr)
+            slot=slot, mem_addr=mem_addr)
         assert read_data == data
-        ident += 1
 
     wd.cancel()
     logger.info("run_backpressure passed")
@@ -249,26 +275,20 @@ async def run_write_read_line(driver: MemletDriver, timeout: int = 5000) -> None
 
     wd = driver.start_soon(watchdog())
 
-    ident = 1
-
     # Write initial data to two addresses.
     data_a = random_cache_line(driver, rng)
     data_b = random_cache_line(driver, rng)
-    await driver.write_cache_line(ident=ident, mem_addr=0, data=data_a)
-    ident += 1
-    await driver.write_cache_line(ident=ident, mem_addr=spacing, data=data_b)
-    ident += 1
+    await driver.write_cache_line(slot=0, mem_addr=0, data=data_a)
+    await driver.write_cache_line(slot=1, mem_addr=spacing, data=data_b)
 
     # WLRL: write new data to addr 0, read back from addr 1.
     data_c = random_cache_line(driver, rng)
     read_back = await driver.write_read_cache_line(
-        ident=ident, write_mem_addr=0, read_mem_addr=spacing,
-        sram_addr=0, data=data_c)
+        slot=0, write_mem_addr=0, read_mem_addr=spacing, data=data_c)
     assert read_back == data_b
-    ident += 1
 
     # Verify the write landed by reading addr 0 back.
-    read_back = await driver.read_cache_line(ident=ident, mem_addr=0, sram_addr=0)
+    read_back = await driver.read_cache_line(slot=0, mem_addr=0)
     assert read_back == data_c
 
     wd.cancel()

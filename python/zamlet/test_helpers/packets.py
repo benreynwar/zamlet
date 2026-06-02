@@ -56,11 +56,13 @@ class NetworkPacketSource:
 
 
 class NetworkPacketSink:
-    def __init__(self, dut, clock, prefix: str, params):
+    def __init__(self, dut, clock, prefix: str, params,
+                 max_packet_queue_depth: int | None = None):
         self.dut = dut
         self.clock = clock
         self.prefix = prefix
         self.params = params
+        self.max_packet_queue_depth = max_packet_queue_depth
         self.future_queue = deque()
         self.packet_queue = deque()
 
@@ -90,7 +92,10 @@ class NetworkPacketSink:
 
         ready.value = 0
         while True:
-            ready.value = int(rng.random() < p_ready)
+            queue_has_room = (
+                self.max_packet_queue_depth is None
+                or len(self.packet_queue) < self.max_packet_queue_depth)
+            ready.value = int(queue_has_room and rng.random() < p_ready)
             await ReadOnly()
             if int(valid.value) and int(ready.value):
                 data = int(data_sig.value)
