@@ -613,17 +613,6 @@ class ZamletParams:
             ('_padding', self.word_bytes * 8 - self._ident_header_width),
         ]
 
-    @property
-    def _address_header_width(self) -> int:
-        return self._ident_header_width + self.sram_addr_width
-
-    @property
-    def address_header_fields(self):
-        return self.abstract_ident_header_fields + [
-            ('address', self.sram_addr_width),
-            ('_padding', self.word_bytes * 8 - self._address_header_width),
-        ]
-
     _FIELD_MAPPING = {
         'xPosWidth': 'x_pos_width',
         'yPosWidth': 'y_pos_width',

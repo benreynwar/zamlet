@@ -7,7 +7,7 @@ import random
 from zamlet.params import ZamletParams
 from zamlet.runner import Clock
 from zamlet.router import Router, Direction
-from zamlet.message import Header, IdentHeader, AddressHeader
+from zamlet.message import Header, CacheLineHeader
 from zamlet.utils import Queue
 from zamlet.message import MessageType, SendType, CHANNEL_MAPPING
 from zamlet.monitor import Monitor
@@ -19,9 +19,11 @@ logger = logging.getLogger(__name__)
 @dataclass
 class _Pending:
     """Tracks an in-flight memory operation. See docs/PLAN_memlet_memory_model.md."""
-    sram_address: int
+    cache_slot: int
     has_write: bool
     has_read: bool
+    request_x: int
+    request_y: int
     write_done: bool = False
     read_done: bool = False
     cache_line: Optional[bytes] = None
@@ -38,7 +40,7 @@ class GatheringSlot:
     and WRITE_LINE_READ_LINE. The ADDR packet allocates the slot, then each
     jamlet sends a WRITE_LINE_DATA packet to fill its portion.
     """
-    ident: int
+    cache_slot: int
     addr_packet: Optional[list] = None
     data_packets: List[Optional[list]] = field(default_factory=list)
 
@@ -48,16 +50,13 @@ class GatheringSlot:
 
     def set_addr(self, packet: list) -> None:
         assert self.addr_packet is None, \
-            f'Duplicate addr packet for ident={self.ident}'
+            f'Duplicate addr packet for cache_slot={self.cache_slot}'
         self.addr_packet = packet
 
     def add_data(self, j_index: int, words: list) -> None:
         assert self.data_packets[j_index] is None, \
-            f'Duplicate data for ident={self.ident} j_index={j_index}'
+            f'Duplicate data for cache_slot={self.cache_slot} j_index={j_index}'
         self.data_packets[j_index] = words
-
-
-WRITE_LINE_RESPONSE_R_INDEX = 0
 
 
 def memlet_coords(params: ZamletParams, kamlet_index: int):
@@ -148,7 +147,7 @@ class Memlet:
         self.complete_gathering_queue: deque = deque()
         # Queue for DROP responses to send
         self.send_drop_queues = [deque() for _ in range(self.n_routers)]
-        self.send_write_line_response_queue = Queue(2)
+        self.send_kamlet_network_queue = Queue(2)
         self.send_read_line_response_queues = [Queue(2) for _ in coords]
         self.send_write_line_read_line_response_queues = [Queue(2) for _ in coords]
 
@@ -158,21 +157,21 @@ class Memlet:
             for j_in_k_x in range(self.params.j_cols):
                 self.jamlet_coords.append((self.kamlet_coords[0] + j_in_k_x, self.kamlet_coords[1] + j_in_k_y))
 
-    def find_gathering_slot(self, ident: int) -> Optional[int]:
-        """Find a gathering slot for this ident, or return None if not found."""
+    def find_gathering_slot(self, cache_slot: int) -> Optional[int]:
+        """Find a gathering slot for this cache slot, or return None if not found."""
         for i, slot in enumerate(self.gathering_slots):
-            if slot is not None and slot.ident == ident:
+            if slot is not None and slot.cache_slot == cache_slot:
                 return i
         return None
 
-    def allocate_gathering_slot(self, ident: int) -> Optional[int]:
-        """Allocate a new gathering slot for this ident, or return None if all slots full."""
-        assert self.find_gathering_slot(ident) is None, \
-            f'Gathering slot already exists for ident={ident}'
+    def allocate_gathering_slot(self, cache_slot: int) -> Optional[int]:
+        """Allocate a new gathering slot for this cache slot, or return None if all slots full."""
+        assert self.find_gathering_slot(cache_slot) is None, \
+            f'Gathering slot already exists for cache_slot={cache_slot}'
         for i, slot in enumerate(self.gathering_slots):
             if slot is None:
                 self.gathering_slots[i] = GatheringSlot(
-                    ident=ident,
+                    cache_slot=cache_slot,
                     data_packets=[None] * self.params.j_in_k,
                 )
                 return i
@@ -190,9 +189,9 @@ class Memlet:
             for router in router_channels:
                 router.update()
         self.receive_read_line_queue.update()
+        self.send_kamlet_network_queue.update()
         for queue in self.send_read_line_response_queues:
             queue.update()
-        self.send_write_line_response_queue.update()
         for queue in self.send_write_line_read_line_response_queues:
             queue.update()
 
@@ -219,19 +218,44 @@ class Memlet:
                     packet.append(word)
                     if remaining == 0:
                         packet_header = packet[0]
+                        self.monitor.record_kamlet_message_received_by_header(
+                            packet_header, self.knet_x, self.knet_y)
+                        await self._handle_control_packet(packet)
                         header = None
                         packet = []
-                        if packet_header.message_type in (
-                            MessageType.READ_LINE_ADDR,
-                            MessageType.WRITE_LINE_ADDR,
-                            MessageType.WRITE_LINE_READ_LINE_ADDR,
-                        ):
-                            raise NotImplementedError(
-                                f"Kamlet-network Memlet control packet not handled yet: "
-                                f"{packet_header.message_type.name}")
-                        raise NotImplementedError(
-                            f"Unexpected Kamlet-network Memlet packet: "
-                            f"{packet_header.message_type.name}")
+
+    async def _handle_control_packet(self, packet: list) -> None:
+        packet_header = packet[0]
+        if packet_header.message_type == MessageType.READ_LINE_ADDR:
+            while not self.receive_read_line_queue.can_append():
+                await self.clock.next_cycle
+            self.receive_read_line_queue.append(packet)
+        elif packet_header.message_type in (
+            MessageType.WRITE_LINE_ADDR,
+            MessageType.WRITE_LINE_READ_LINE_ADDR,
+        ):
+            msg_type = packet_header.message_type
+            cache_slot = packet_header.slot
+            src_x = packet_header.source_x
+            src_y = packet_header.source_y
+            slot_index = self.allocate_gathering_slot(cache_slot)
+            if slot_index is None:
+                if msg_type == MessageType.WRITE_LINE_ADDR:
+                    drop_type = MessageType.WRITE_LINE_ADDR_DROP
+                else:
+                    drop_type = MessageType.WRITE_LINE_READ_LINE_ADDR_DROP
+                logger.debug(
+                    f'{self.clock.cycle}: [MEMLET] DROP {msg_type.name} '
+                    f'cache_slot={cache_slot} - no gathering slots'
+                )
+                await self._queue_kamlet_network_response(
+                    drop_type, cache_slot, src_x, src_y)
+            else:
+                self.gathering_slots[slot_index].set_addr(packet)
+        else:
+            raise NotImplementedError(
+                f"Unexpected Kamlet-network Memlet packet: "
+                f"{packet_header.message_type.name}")
 
     async def receive_packets(self, index):
         """
@@ -263,65 +287,25 @@ class Memlet:
                         dst_x, dst_y = self.coords[index]
                         self.monitor.record_message_received_by_header(packet[0], dst_x, dst_y)
 
-                        if packet[0].message_type == MessageType.READ_LINE_ADDR:
-                            while not self.receive_read_line_queue.can_append():
-                                await self.clock.next_cycle
-                            self.receive_read_line_queue.append(packet)
-                        elif packet[0].message_type in (
-                            MessageType.WRITE_LINE_ADDR,
-                            MessageType.WRITE_LINE_READ_LINE_ADDR,
-                        ):
-                            msg_type = packet[0].message_type
-                            ident = packet[0].ident
-                            src_x = packet[0].source_x
-                            src_y = packet[0].source_y
-                            slot_index = self.allocate_gathering_slot(ident)
-                            if slot_index is None:
-                                if msg_type == MessageType.WRITE_LINE_ADDR:
-                                    drop_type = MessageType.WRITE_LINE_ADDR_DROP
-                                else:
-                                    drop_type = MessageType.WRITE_LINE_READ_LINE_ADDR_DROP
-                                logger.debug(
-                                    f'{self.clock.cycle}: [MEMLET] DROP {msg_type.name} '
-                                    f'ident={ident} - no gathering slots'
-                                )
-                                self.monitor.record_message_sent(
-                                    None, drop_type.name,
-                                    ident=ident, tag=None,
-                                    src_x=dst_x, src_y=dst_y,
-                                    dst_x=src_x, dst_y=src_y)
-                                drop_header = IdentHeader(
-                                    target_x=src_x,
-                                    target_y=src_y,
-                                    source_x=dst_x,
-                                    source_y=dst_y,
-                                    message_type=drop_type,
-                                    length=0,
-                                    send_type=SendType.SINGLE,
-                                    ident=ident,
-                                )
-                                self.send_drop_queues[index].append([drop_header])
-                            else:
-                                self.gathering_slots[slot_index].set_addr(packet)
-                        elif packet[0].message_type == MessageType.WRITE_LINE_DATA:
+                        if packet[0].message_type == MessageType.WRITE_LINE_DATA:
                             j_in_k_x = (packet[0].source_x - self.params.west_offset) % self.params.j_cols
                             j_in_k_y = (packet[0].source_y - self.params.north_offset) % self.params.j_rows
                             j_index = j_in_k_y * self.params.j_cols + j_in_k_x
-                            ident = packet[0].ident
+                            cache_slot = packet[0].slot
                             src_x = packet[0].source_x
                             src_y = packet[0].source_y
-                            slot_index = self.find_gathering_slot(ident)
+                            slot_index = self.find_gathering_slot(cache_slot)
                             if slot_index is None:
                                 logger.debug(
                                     f'{self.clock.cycle}: [MEMLET] DROP WRITE_LINE_DATA '
-                                    f'ident={ident} j_index={j_index} - no slot'
+                                    f'cache_slot={cache_slot} j_index={j_index} - no slot'
                                 )
                                 self.monitor.record_message_sent(
                                     None, MessageType.WRITE_LINE_DATA_DROP.name,
-                                    ident=ident, tag=None,
+                                    ident=cache_slot, tag=None,
                                     src_x=dst_x, src_y=dst_y,
                                     dst_x=src_x, dst_y=src_y)
-                                drop_header = IdentHeader(
+                                drop_header = CacheLineHeader(
                                     target_x=src_x,
                                     target_y=src_y,
                                     source_x=dst_x,
@@ -329,7 +313,7 @@ class Memlet:
                                     message_type=MessageType.WRITE_LINE_DATA_DROP,
                                     length=0,
                                     send_type=SendType.SINGLE,
-                                    ident=ident,
+                                    slot=cache_slot,
                                 )
                                 self.send_drop_queues[index].append([drop_header])
                             else:
@@ -337,8 +321,56 @@ class Memlet:
                                 slot.add_data(j_index, packet[1:])
                                 if slot.is_complete(self.params.j_in_k):
                                     self.complete_gathering_queue.append(slot_index)
+                        else:
+                            raise NotImplementedError(
+                                f"Unexpected Jamlet-network Memlet packet: "
+                                f"{packet[0].message_type.name}")
                         header = None
                         packet = []
+
+    async def _queue_kamlet_network_response(
+            self, message_type: MessageType, cache_slot: int,
+            target_x: int, target_y: int) -> None:
+        header = CacheLineHeader(
+            target_x=target_x,
+            target_y=target_y,
+            source_x=self.knet_x,
+            source_y=self.knet_y,
+            message_type=message_type,
+            length=0,
+            send_type=SendType.SINGLE,
+            slot=cache_slot,
+        )
+        cache_request_span_id = None
+        if message_type == MessageType.WRITE_LINE_RESP:
+            pending = self._pending.get(cache_slot)
+            if pending is not None:
+                cache_request_span_id = self.monitor.get_cache_request_span_id(
+                    self.kamlet_coords[0], self.kamlet_coords[1], cache_slot)
+        self.monitor.record_kamlet_message_sent(
+            cache_request_span_id, message_type.name,
+            ident=cache_slot, tag=None,
+            src_x=self.knet_x, src_y=self.knet_y,
+            dst_x=target_x, dst_y=target_y)
+        while not self.send_kamlet_network_queue.can_append():
+            await self.clock.next_cycle
+        self.send_kamlet_network_queue.append([header])
+
+    async def send_kamlet_network_packets(self):
+        """Send Memlet control responses on the Kamlet network."""
+        await self.clock.next_cycle
+        while True:
+            if self.send_kamlet_network_queue:
+                packet = self.send_kamlet_network_queue.popleft()
+                channel = CHANNEL_MAPPING[packet[0].message_type]
+                queue = self.kamlet_network_routers[channel]._input_buffers[Direction.H]
+                for word in packet:
+                    while not queue.can_append():
+                        await self.clock.next_cycle
+                    queue.append(word)
+                    await self.clock.next_cycle
+            else:
+                await self.clock.next_cycle
 
     async def send_packet(self, index, channel, packet):
         queue = self.routers[index][channel]._input_buffers[Direction.H]
@@ -366,8 +398,6 @@ class Memlet:
                 packets.append(self.send_drop_queues[index].popleft())
             if self.send_read_line_response_queues[index]:
                 packets.append(self.send_read_line_response_queues[index].popleft())
-            if index == WRITE_LINE_RESPONSE_R_INDEX and self.send_write_line_response_queue:
-                packets.append(self.send_write_line_response_queue.popleft())
             if self.send_write_line_read_line_response_queues[index]:
                 packets.append(self.send_write_line_read_line_response_queues[index].popleft())
             for packet in packets:
@@ -377,12 +407,11 @@ class Memlet:
                 await self.clock.next_cycle
 
 
-    async def _send_read_responses(self, cache_line: bytes, ident: int,
-                                   sram_address: int, resp_type: MessageType,
+    async def _send_read_responses(self, cache_line: bytes, cache_slot: int,
+                                   resp_type: MessageType,
                                    send_queues: list) -> None:
         """Build and send read response packets to each jamlet."""
         wb = self.params.word_bytes
-        cache_slot = sram_address * self.params.j_in_k // self.params.cache_line_bytes
         cache_request_span_id = self.monitor.get_cache_request_span_id(
             self.kamlet_coords[0], self.kamlet_coords[1], cache_slot)
         packet_payloads = [[] for _ in range(self.params.j_in_k)]
@@ -396,7 +425,7 @@ class Memlet:
                 j_in_k_index, self.n_routers, self.params.j_in_k)
             target_x, target_y = self.jamlet_coords[j_in_k_index]
             channel = CHANNEL_MAPPING[resp_type]
-            resp_header = AddressHeader(
+            resp_header = CacheLineHeader(
                 target_x=target_x,
                 target_y=target_y,
                 source_x=self.routers[router_index][channel].x,
@@ -404,8 +433,7 @@ class Memlet:
                 message_type=resp_type,
                 length=len(payload),
                 send_type=SendType.SINGLE,
-                address=sram_address,
-                ident=ident,
+                slot=cache_slot,
             )
             resp_packets[router_index].append([resp_header] + payload)
         while True:
@@ -419,7 +447,7 @@ class Memlet:
                     h = resp_packet[0]
                     self.monitor.record_message_sent(
                         cache_request_span_id, resp_type.name,
-                        ident=ident, tag=cache_slot,
+                        ident=cache_slot, tag=None,
                         src_x=h.source_x, src_y=h.source_y,
                         dst_x=h.target_x, dst_y=h.target_y)
             if all(len(p) == 0 for p in resp_packets):
@@ -430,16 +458,16 @@ class Memlet:
             if self.receive_read_line_queue:
                 packet = self.receive_read_line_queue.popleft()
                 address = packet[1]
-                ident = packet[0].ident
-                sram_address = packet[0].address
+                cache_slot = packet[0].slot
                 assert address % self.params.cache_line_bytes == 0
                 index = address // self.params.cache_line_bytes
                 logger.debug(
-                    f'handle_read_line_packet: ident={ident} '
+                    f'handle_read_line_packet: cache_slot={cache_slot} '
                     f'address={hex(address)}')
                 await self._submit_pending(
-                    ident, sram_address, has_write=False, has_read=True)
-                self.clock.create_task(self._do_read(ident, index))
+                    cache_slot, has_write=False, has_read=True,
+                    request_x=packet[0].source_x, request_y=packet[0].source_y)
+                self.clock.create_task(self._do_read(cache_slot, index))
             await self.clock.next_cycle
 
     def _assemble_gathered_line(self, slot: GatheringSlot) -> Tuple[int, bytes]:
@@ -465,16 +493,17 @@ class Memlet:
             f'data={data.hex()}')
         return write_index, data
 
-    async def _submit_pending(self, ident: int, sram_address: int,
-                              has_write: bool, has_read: bool) -> None:
+    async def _submit_pending(self, cache_slot: int, has_write: bool, has_read: bool,
+                              request_x: int, request_y: int) -> None:
         """Register a pending operation. Blocks if at capacity."""
         while len(self._pending) >= self.max_pending:
             await self.clock.next_cycle
-        self._pending[ident] = _Pending(
-            sram_address=sram_address, has_write=has_write, has_read=has_read)
-        self._pending_order.append(ident)
+        self._pending[cache_slot] = _Pending(
+            cache_slot=cache_slot, has_write=has_write, has_read=has_read,
+            request_x=request_x, request_y=request_y)
+        self._pending_order.append(cache_slot)
 
-    async def _do_write(self, ident: int, index: int, data: bytes) -> None:
+    async def _do_write(self, cache_slot: int, index: int, data: bytes) -> None:
         """Memory write task: latency, store, mark done."""
         for _ in range(self.write_latency):
             await self.clock.next_cycle
@@ -483,9 +512,9 @@ class Memlet:
             f'{self.clock.cycle}: MEM_WRITE: addr=0x{address:08x} '
             f'index=0x{index:x} data={data.hex()}')
         self.lines[index] = data
-        self._pending[ident].write_done = True
+        self._pending[cache_slot].write_done = True
 
-    async def _do_read(self, ident: int, index: int) -> None:
+    async def _do_read(self, cache_slot: int, index: int) -> None:
         """Memory read task: latency, read, mark done."""
         for _ in range(self.read_latency):
             await self.clock.next_cycle
@@ -502,7 +531,7 @@ class Memlet:
             logger.debug(
                 f'{self.clock.cycle}: MEM_READ: addr=0x{address:08x} '
                 f'index={index} data={data.hex()}')
-        p = self._pending[ident]
+        p = self._pending[cache_slot]
         p.cache_line = data
         p.read_done = True
 
@@ -510,10 +539,10 @@ class Memlet:
         """Consumer: scan pending list for first complete, send response."""
         while True:
             sent = False
-            for ident in self._pending_order:
-                if self._pending[ident].is_complete():
-                    p = self._pending.pop(ident)
-                    self._pending_order.remove(ident)
+            for cache_slot in self._pending_order:
+                if self._pending[cache_slot].is_complete():
+                    p = self._pending.pop(cache_slot)
+                    self._pending_order.remove(cache_slot)
                     if p.has_read:
                         resp_type = (MessageType.WRITE_LINE_READ_LINE_RESP
                                      if p.has_write
@@ -523,25 +552,13 @@ class Memlet:
                             if p.has_write
                             else self.send_read_line_response_queues)
                         await self._send_read_responses(
-                            p.cache_line, ident, p.sram_address,
+                            p.cache_line, p.cache_slot,
                             resp_type, send_queues)
                     else:
-                        channel = CHANNEL_MAPPING[MessageType.WRITE_LINE_RESP]
-                        resp_header = IdentHeader(
-                            target_x=self.kamlet_coords[0],
-                            target_y=self.kamlet_coords[1],
-                            source_x=self.routers[
-                                WRITE_LINE_RESPONSE_R_INDEX][channel].x,
-                            source_y=self.routers[
-                                WRITE_LINE_RESPONSE_R_INDEX][channel].y,
-                            message_type=MessageType.WRITE_LINE_RESP,
-                            length=0,
-                            send_type=SendType.SINGLE,
-                            ident=ident,
-                        )
-                        while not self.send_write_line_response_queue.can_append():
-                            await self.clock.next_cycle
-                        self.send_write_line_response_queue.append([resp_header])
+                        await self._queue_kamlet_network_response(
+                            MessageType.WRITE_LINE_RESP,
+                            p.cache_slot,
+                            p.request_x, p.request_y)
                     sent = True
                     break
             if not sent:
@@ -555,24 +572,27 @@ class Memlet:
                 slot_index = self.complete_gathering_queue.popleft()
                 slot = self.gathering_slots[slot_index]
                 msg_type = slot.addr_packet[0].message_type
-                ident = slot.addr_packet[0].ident
-                sram_address = slot.addr_packet[0].address
+                cache_slot = slot.addr_packet[0].slot
                 write_index, data = self._assemble_gathered_line(slot)
                 if msg_type == MessageType.WRITE_LINE_ADDR:
                     await self._submit_pending(
-                        ident, sram_address, has_write=True, has_read=False)
+                        cache_slot, has_write=True, has_read=False,
+                        request_x=slot.addr_packet[0].source_x,
+                        request_y=slot.addr_packet[0].source_y)
                     self.clock.create_task(
-                        self._do_write(ident, write_index, data))
+                        self._do_write(cache_slot, write_index, data))
                 elif msg_type == MessageType.WRITE_LINE_READ_LINE_ADDR:
                     read_address = slot.addr_packet[2]
                     assert read_address % self.params.cache_line_bytes == 0
                     read_index = read_address // self.params.cache_line_bytes
                     await self._submit_pending(
-                        ident, sram_address, has_write=True, has_read=True)
+                        cache_slot, has_write=True, has_read=True,
+                        request_x=slot.addr_packet[0].source_x,
+                        request_y=slot.addr_packet[0].source_y)
                     self.clock.create_task(
-                        self._do_write(ident, write_index, data))
+                        self._do_write(cache_slot, write_index, data))
                     self.clock.create_task(
-                        self._do_read(ident, read_index))
+                        self._do_read(cache_slot, read_index))
                 self.free_gathering_slot(slot_index)
             else:
                 await self.clock.next_cycle
@@ -581,6 +601,7 @@ class Memlet:
         for router in self.kamlet_network_routers:
             self.clock.create_task(router.run())
         self.clock.create_task(self.receive_kamlet_network_packets())
+        self.clock.create_task(self.send_kamlet_network_packets())
         for router_channels in self.routers:
             for router in router_channels:
                 self.clock.create_task(router.run())

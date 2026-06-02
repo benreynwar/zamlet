@@ -15,7 +15,7 @@ from collections import deque
 import logging
 
 from zamlet.memlet import j_in_k_to_m_router
-from zamlet.message import AddressHeader, MessageType, SendType
+from zamlet.message import CacheLineHeader, MessageType, SendType
 from zamlet.params import ZamletParams
 
 logger = logging.getLogger(__name__)
@@ -55,9 +55,9 @@ class MemletDriver(ABC):
         self.a_queue_depth = a_queue_depth
         self.b_queues = [deque() for _ in range(self.n_routers)]
         self.a_queues = [deque() for _ in range(self.n_routers)]
-        self._pending_writes = {}      # ident -> _PendingWrite
-        self._pending_reads = {}       # ident -> _PendingRead
-        self._pending_write_reads = {} # ident -> _PendingWriteRead
+        self._pending_writes = {}      # slot -> _PendingWrite
+        self._pending_reads = {}       # slot -> _PendingRead
+        self._pending_write_reads = {} # slot -> _PendingWriteRead
         self.drop_count = 0
         # Set to False to stop draining a_queues, causing network backpressure.
         self.consume_responses = True
@@ -80,12 +80,12 @@ class MemletDriver(ABC):
         """Submit a packet for sending. Tracks data packets for resend."""
         header = pkt[0]
         if header.message_type == MessageType.WRITE_LINE_DATA:
-            ident = header.ident
+            slot = header.slot
             key = (header.source_x, header.source_y)
-            if ident in self._pending_writes:
-                self._pending_writes[ident].data_pkts[key] = pkt
+            if slot in self._pending_writes:
+                self._pending_writes[slot].data_pkts[key] = pkt
             else:
-                self._pending_write_reads[ident].data_pkts[key] = pkt
+                self._pending_write_reads[slot].data_pkts[key] = pkt
         elif header.message_type in (MessageType.WRITE_LINE_ADDR,
                                      MessageType.READ_LINE_ADDR,
                                      MessageType.WRITE_LINE_READ_LINE_ADDR):
@@ -108,61 +108,61 @@ class MemletDriver(ABC):
                     pkt = self.a_queues[r].popleft()
                     header = pkt[0]
                     msg = header.message_type
-                    ident = header.ident
+                    slot = header.slot
 
                     if msg == MessageType.WRITE_LINE_RESP:
-                        pw = self._pending_writes.pop(ident)
+                        pw = self._pending_writes.pop(slot)
                         pw.fut.set_result(None)
-                        logger.info(f"write ident={ident} complete")
+                        logger.info(f"write slot={slot} complete")
 
                     elif msg == MessageType.WRITE_LINE_ADDR_DROP:
                         self.drop_count += 1
-                        pw = self._pending_writes[ident]
-                        logger.info(f"write addr drop ident={ident}, resending")
+                        pw = self._pending_writes[slot]
+                        logger.info(f"write addr drop slot={slot}, resending")
                         self.submit_packet(0, pw.addr_pkt)
 
                     elif msg == MessageType.WRITE_LINE_DATA_DROP:
                         self.drop_count += 1
-                        pw = self._pending_writes[ident]
+                        pw = self._pending_writes[slot]
                         sender = (header.target_x, header.target_y)
                         resend_pkt = pw.data_pkts[sender]
                         target_r = self._router_idx_for_target(
                             resend_pkt[0].target_x, resend_pkt[0].target_y)
-                        logger.info(f"write data drop ident={ident}, resending")
+                        logger.info(f"write data drop slot={slot}, resending")
                         self.submit_packet(target_r, resend_pkt)
 
                     elif msg == MessageType.READ_LINE_RESP:
-                        pr = self._pending_reads[ident]
+                        pr = self._pending_reads[slot]
                         target = (header.target_x, header.target_y)
                         assert target not in pr.received_data
                         pr.received_data[target] = pkt[1:]
-                        logger.info(f"read ident={ident} resp for {target}")
+                        logger.info(f"read slot={slot} resp for {target}")
                         if len(pr.received_data) == self.params.j_in_k:
-                            self._pending_reads.pop(ident)
+                            self._pending_reads.pop(slot)
                             pr.fut.set_result(pr.received_data)
-                            logger.info(f"read ident={ident} complete")
+                            logger.info(f"read slot={slot} complete")
 
                     elif msg == MessageType.READ_LINE_ADDR_DROP:
                         self.drop_count += 1
-                        pr = self._pending_reads[ident]
-                        logger.info(f"read drop ident={ident}, resending")
+                        pr = self._pending_reads[slot]
+                        logger.info(f"read drop slot={slot}, resending")
                         self.submit_packet(0, pr.addr_pkt)
 
                     elif msg == MessageType.WRITE_LINE_READ_LINE_RESP:
-                        pwr = self._pending_write_reads[ident]
+                        pwr = self._pending_write_reads[slot]
                         target = (header.target_x, header.target_y)
                         assert target not in pwr.received_data
                         pwr.received_data[target] = pkt[1:]
-                        logger.info(f"write_read ident={ident} resp for {target}")
+                        logger.info(f"write_read slot={slot} resp for {target}")
                         if len(pwr.received_data) == self.params.j_in_k:
-                            self._pending_write_reads.pop(ident)
+                            self._pending_write_reads.pop(slot)
                             pwr.fut.set_result(pwr.received_data)
-                            logger.info(f"write_read ident={ident} complete")
+                            logger.info(f"write_read slot={slot} complete")
 
                     elif msg == MessageType.WRITE_LINE_READ_LINE_ADDR_DROP:
                         self.drop_count += 1
-                        pwr = self._pending_write_reads[ident]
-                        logger.info(f"write_read addr drop ident={ident}, resending")
+                        pwr = self._pending_write_reads[slot]
+                        logger.info(f"write_read addr drop slot={slot}, resending")
                         self.submit_packet(0, pwr.addr_pkt)
 
                     else:
@@ -201,7 +201,7 @@ class MemletDriver(ABC):
                 result.extend(words[(j_x, j_y)][w].to_bytes(wb, 'little'))
         return bytes(result)
 
-    async def write_cache_line(self, ident: int, mem_addr: int, data: bytes) -> None:
+    async def write_cache_line(self, slot: int, mem_addr: int, data: bytes) -> None:
         """Write a cache line. Queues all packets and awaits completion future."""
         params = self.params
         fut = self._make_future()
@@ -209,14 +209,14 @@ class MemletDriver(ABC):
         per_jamlet = self._bytes_to_words(data)
 
         r0_x, r0_y = self.router_coords[0]
-        addr_hdr = AddressHeader(
+        addr_hdr = CacheLineHeader(
             target_x=r0_x, target_y=r0_y,
             source_x=self.k_base_x, source_y=self.k_base_y,
             length=1, message_type=MessageType.WRITE_LINE_ADDR,
-            send_type=SendType.SINGLE, ident=ident, address=0,
+            send_type=SendType.SINGLE, slot=slot,
         )
         addr_pkt = [addr_hdr, mem_addr]
-        self._pending_writes[ident] = _PendingWrite(fut, addr_pkt)
+        self._pending_writes[slot] = _PendingWrite(fut, addr_pkt)
         self.submit_packet(0, addr_pkt)
 
         for j in range(params.j_in_k):
@@ -224,37 +224,37 @@ class MemletDriver(ABC):
             r_x, r_y = self.router_coords[r]
             j_x = self.k_base_x + j % params.j_cols
             j_y = self.k_base_y + j // params.j_cols
-            data_hdr = AddressHeader(
+            data_hdr = CacheLineHeader(
                 target_x=r_x, target_y=r_y, source_x=j_x, source_y=j_y,
                 length=params.cache_slot_words_per_jamlet,
                 message_type=MessageType.WRITE_LINE_DATA,
-                send_type=SendType.SINGLE, ident=ident, address=0,
+                send_type=SendType.SINGLE, slot=slot,
             )
             self.submit_packet(r, [data_hdr] + per_jamlet[j])
 
-        logger.debug(f"write_cache_line ident={ident} awaiting future")
+        logger.debug(f"write_cache_line slot={slot} awaiting future")
         return await fut
 
-    async def read_cache_line(self, ident: int, mem_addr: int, sram_addr: int) -> bytes:
+    async def read_cache_line(self, slot: int, mem_addr: int) -> bytes:
         """Read a cache line. Returns cache line as bytes."""
         r0_x, r0_y = self.router_coords[0]
 
-        addr_hdr = AddressHeader(
+        addr_hdr = CacheLineHeader(
             target_x=r0_x, target_y=r0_y,
             source_x=self.k_base_x, source_y=self.k_base_y,
             length=1, message_type=MessageType.READ_LINE_ADDR,
-            send_type=SendType.SINGLE, ident=ident, address=sram_addr,
+            send_type=SendType.SINGLE, slot=slot,
         )
         self.submit_packet(0, [addr_hdr, mem_addr])
 
         fut = self._make_future()
         pr = _PendingRead(fut, [addr_hdr, mem_addr])
-        self._pending_reads[ident] = pr
+        self._pending_reads[slot] = pr
         words = await fut
         return self._words_to_bytes(words)
 
-    async def write_read_cache_line(self, ident: int, write_mem_addr: int,
-                                    read_mem_addr: int, sram_addr: int,
+    async def write_read_cache_line(self, slot: int, write_mem_addr: int,
+                                    read_mem_addr: int,
                                     data: bytes) -> bytes:
         """Atomic write + read. Returns read-back cache line as bytes."""
         params = self.params
@@ -263,14 +263,14 @@ class MemletDriver(ABC):
         per_jamlet = self._bytes_to_words(data)
 
         r0_x, r0_y = self.router_coords[0]
-        addr_hdr = AddressHeader(
+        addr_hdr = CacheLineHeader(
             target_x=r0_x, target_y=r0_y,
             source_x=self.k_base_x, source_y=self.k_base_y,
             length=2, message_type=MessageType.WRITE_LINE_READ_LINE_ADDR,
-            send_type=SendType.SINGLE, ident=ident, address=sram_addr,
+            send_type=SendType.SINGLE, slot=slot,
         )
         addr_pkt = [addr_hdr, write_mem_addr, read_mem_addr]
-        self._pending_write_reads[ident] = _PendingWriteRead(fut, addr_pkt)
+        self._pending_write_reads[slot] = _PendingWriteRead(fut, addr_pkt)
         self.submit_packet(0, addr_pkt)
 
         for j in range(params.j_in_k):
@@ -278,11 +278,11 @@ class MemletDriver(ABC):
             r_x, r_y = self.router_coords[r]
             j_x = self.k_base_x + j % params.j_cols
             j_y = self.k_base_y + j // params.j_cols
-            data_hdr = AddressHeader(
+            data_hdr = CacheLineHeader(
                 target_x=r_x, target_y=r_y, source_x=j_x, source_y=j_y,
                 length=params.cache_slot_words_per_jamlet,
                 message_type=MessageType.WRITE_LINE_DATA,
-                send_type=SendType.SINGLE, ident=ident, address=0,
+                send_type=SendType.SINGLE, slot=slot,
             )
             self.submit_packet(r, [data_hdr] + per_jamlet[j])
 

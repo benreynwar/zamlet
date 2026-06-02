@@ -904,9 +904,7 @@ class Monitor:
 
     def _tag_from_header(self, header: 'IdentHeader') -> int | None:
         """Extract tag from header."""
-        if hasattr(header, 'address'):
-            return header.address * self.params.j_in_k // self.params.cache_line_bytes
-        elif hasattr(header, 'tag'):
+        if hasattr(header, 'tag'):
             return header.tag
         else:
             return None
@@ -932,7 +930,7 @@ class Monitor:
             dst_y = header.target_y
         tag = self._tag_from_header(header)
         return self._message_key(
-            header.ident, tag,
+            header.message_id(), tag,
             header.source_x, header.source_y,
             dst_x, dst_y,
             header.message_type.name)
@@ -972,6 +970,13 @@ class Monitor:
         """
         key = self._message_key_from_header(header, dst_x, dst_y)
         self._complete_message(key)
+
+    def record_kamlet_message_received_by_header(self, header,
+                                                 dst_x: int | None = None,
+                                                 dst_y: int | None = None) -> None:
+        """Record a Kamlet-network message being received."""
+        key = self._message_key_from_header(header, dst_x, dst_y)
+        self._complete_kamlet_message(key)
 
     def _complete_message(self, key: tuple) -> None:
         """Complete a message span by key."""

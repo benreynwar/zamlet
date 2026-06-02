@@ -168,6 +168,7 @@ class Oamlet:
                 lamlet_x=self.instr_x,
                 lamlet_y=self.instr_y,
                 mem_coords=mem_coords,
+                memlet_knet_coords=(memlet_knet_x, memlet_knet_y),
                 )
             self.kamlets.append(kamlet)
             self.memlets.append(Memlet(
