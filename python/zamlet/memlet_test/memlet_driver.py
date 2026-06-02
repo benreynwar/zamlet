@@ -117,13 +117,13 @@ class MemletDriver(ABC):
 
                     elif msg == MessageType.WRITE_LINE_ADDR_DROP:
                         self.drop_count += 1
-                        pw = self._pending_writes[slot]
+                        pw = self._pending_write(slot, msg)
                         logger.info(f"write addr drop slot={slot}, resending")
                         self.submit_packet(0, pw.addr_pkt)
 
                     elif msg == MessageType.WRITE_LINE_DATA_DROP:
                         self.drop_count += 1
-                        pw = self._pending_writes[slot]
+                        pw = self._pending_write_data(slot, msg)
                         sender = (header.target_x, header.target_y)
                         resend_pkt = pw.data_pkts[sender]
                         target_r = self._router_idx_for_target(
@@ -168,6 +168,27 @@ class MemletDriver(ABC):
                     else:
                         raise ValueError(f"Unexpected response type: {msg}")
             await self.tick()
+
+    def _pending_write(self, slot: int, msg: MessageType) -> _PendingWrite:
+        if slot not in self._pending_writes:
+            logger.error(
+                f"{msg.name} for slot={slot} has no pending write. "
+                f"pending_writes={list(self._pending_writes.keys())} "
+                f"pending_reads={list(self._pending_reads.keys())} "
+                f"pending_write_reads={list(self._pending_write_reads.keys())}")
+        return self._pending_writes[slot]
+
+    def _pending_write_data(self, slot: int, msg: MessageType):
+        if slot in self._pending_writes:
+            return self._pending_writes[slot]
+        if slot in self._pending_write_reads:
+            return self._pending_write_reads[slot]
+        logger.error(
+            f"{msg.name} for slot={slot} has no pending write data. "
+            f"pending_writes={list(self._pending_writes.keys())} "
+            f"pending_reads={list(self._pending_reads.keys())} "
+            f"pending_write_reads={list(self._pending_write_reads.keys())}")
+        return self._pending_writes[slot]
 
     def _bytes_to_words(self, data: bytes) -> dict:
         """Split cache line bytes into per-jamlet word lists.

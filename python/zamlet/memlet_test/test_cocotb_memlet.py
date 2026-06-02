@@ -28,6 +28,10 @@ def initialize_inputs(dut: HierarchyObject, n_routers: int,
     """Set all Memlet inputs to safe defaults."""
     dut.io_kBaseX.value = k_base_x
     dut.io_kBaseY.value = k_base_y
+    dut.io_controlBHo_valid.value = 0
+    dut.io_controlBHo_bits_data.value = 0
+    dut.io_controlBHo_bits_isHeader.value = 0
+    dut.io_controlAHi_ready.value = 1
     for r, (rx, ry) in enumerate(router_coords):
         getattr(dut, f'io_routerCoords_{r}_x').value = rx
         getattr(dut, f'io_routerCoords_{r}_y').value = ry

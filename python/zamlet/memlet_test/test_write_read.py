@@ -4,6 +4,7 @@ Tests run against both cocotb (RTL) and the Python model via the MemletDriver ab
 """
 
 import logging
+from collections import deque
 from random import Random
 
 from zamlet.memlet_test.memlet_driver import MemletDriver
@@ -137,6 +138,29 @@ async def run_slot_exhaustion(driver: MemletDriver, timeout: int = 10000) -> Non
     rng = Random(4)
     spacing = driver.params.cache_line_bytes
     n_writes = driver.params.n_memlet_gathering_slots * 3
+    write_specs = [
+        (
+            i % driver.params.n_cache_slots,
+            spacing * i,
+            random_cache_line(driver, rng),
+        )
+        for i in range(n_writes)
+    ]
+
+    def make_action(is_write: bool, slot: int, mem_addr: int, data: bytes):
+        return {
+            "is_write": is_write,
+            "addr": mem_addr,
+            "data": data,
+            "slot": slot,
+            "task": None,
+        }
+
+    actions = deque()
+    for slot, mem_addr, data in write_specs:
+        actions.append(make_action(True, slot, mem_addr, data))
+    for slot, mem_addr, data in write_specs:
+        actions.append(make_action(False, slot, mem_addr, data))
 
     async def watchdog():
         for _ in range(timeout):
@@ -146,25 +170,40 @@ async def run_slot_exhaustion(driver: MemletDriver, timeout: int = 10000) -> Non
     wd = driver.start_soon(watchdog())
     driver.reset_drop_count()
 
-    write_tasks = []
-    for i in range(n_writes):
-        mem_addr = spacing * i
-        data = random_cache_line(driver, rng)
-        task = driver.start_soon(
-            driver.write_cache_line(slot=i, mem_addr=mem_addr, data=data))
-        write_tasks.append((task, mem_addr, i, data))
+    active = []
+    while actions or active:
+        while actions:
+            action = actions[0]
+            if any(a["slot"] == action["slot"] for a in active):
+                break
 
-    for task, mem_addr, slot, data in write_tasks:
-        while not task.done():
-            await driver.tick()
+            action = actions.popleft()
+            if action["is_write"]:
+                action["task"] = driver.start_soon(
+                    driver.write_cache_line(
+                        slot=action["slot"],
+                        mem_addr=action["addr"],
+                        data=action["data"],
+                    )
+                )
+            else:
+                action["task"] = driver.start_soon(
+                    driver.read_cache_line(
+                        slot=action["slot"],
+                        mem_addr=action["addr"],
+                    )
+                )
+            active.append(action)
 
-    read_rng = Random(4)
-    for i in range(n_writes):
-        mem_addr = spacing * i
-        data = random_cache_line(driver, read_rng)
-        read_data = await driver.read_cache_line(
-            slot=i, mem_addr=mem_addr)
-        assert read_data == data
+        await driver.tick()
+
+        still_active = []
+        for action in active:
+            if not action["task"].done():
+                still_active.append(action)
+            elif not action["is_write"]:
+                assert action["task"].result() == action["data"]
+        active = still_active
 
     drops = driver.reset_drop_count()
     assert drops > 0, "Expected drops from slot exhaustion but got none"

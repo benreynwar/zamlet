@@ -3,7 +3,7 @@ package zamlet.memlet
 import chisel3._
 import chisel3.util._
 import zamlet.ZamletParams
-import zamlet.network.{IdentHeader, MessageType, NetworkWord, SendType}
+import zamlet.network.{CacheLineHeader, MessageType, NetworkWord, SendType}
 
 class MemoryEngineIO(params: ZamletParams) extends Bundle {
   val nRouters = params.nMemletRouters
@@ -51,8 +51,7 @@ object TrackerType extends ChiselEnum {
 
 class TrackerEntry(params: ZamletParams) extends Bundle {
   val ttype = TrackerType()
-  val ident = UInt(params.identWidth.W)
-  val sramAddr = UInt(params.sramAddrWidth.W)
+  val cacheSlot = params.cacheSlot()
   val sourceX = UInt(params.xPosWidth.W)
   val sourceY = UInt(params.yPosWidth.W)
   val partnerId = UInt(params.memAxiIdBits.W)
@@ -232,8 +231,7 @@ class MemoryEngine(params: ZamletParams) extends Module {
 
   when(dqCanFire) {
     tracker(dqId0).valid := true.B
-    tracker(dqId0).bits.ident := dqMeta.ident
-    tracker(dqId0).bits.sramAddr := dqMeta.sramAddr
+    tracker(dqId0).bits.cacheSlot := dqMeta.cacheSlot
     tracker(dqId0).bits.sourceX := dqMeta.sourceX
     tracker(dqId0).bits.sourceY := dqMeta.sourceY
     tracker(dqId0).bits.complete := false.B
@@ -250,8 +248,7 @@ class MemoryEngine(params: ZamletParams) extends Module {
 
       tracker(dqId1).valid := true.B
       tracker(dqId1).bits.ttype := TrackerType.WLRL_R
-      tracker(dqId1).bits.ident := dqMeta.ident
-      tracker(dqId1).bits.sramAddr := dqMeta.sramAddr
+      tracker(dqId1).bits.cacheSlot := dqMeta.cacheSlot
       tracker(dqId1).bits.sourceX := dqMeta.sourceX
       tracker(dqId1).bits.sourceY := dqMeta.sourceY
       tracker(dqId1).bits.partnerId := dqId0
@@ -350,7 +347,7 @@ class MemoryEngine(params: ZamletParams) extends Module {
   when(io.axi.b.fire) {
     when(tracker(io.axi.b.bits.id).bits.ttype === TrackerType.WL) {
       val trkB = tracker(io.axi.b.bits.id).bits
-      val hdr = Wire(new IdentHeader(params))
+      val hdr = Wire(new CacheLineHeader(params))
       hdr.targetX := trkB.sourceX
       hdr.targetY := trkB.sourceY
       hdr.sourceX := io.routerX
@@ -358,7 +355,7 @@ class MemoryEngine(params: ZamletParams) extends Module {
       hdr.length := 0.U
       hdr.messageType := MessageType.WriteLineResp
       hdr.sendType := SendType.Single
-      hdr.ident := trkB.ident
+      hdr.slot := trkB.cacheSlot
       hdr._padding := 0.U
       io.writeLineRespEnq.valid := true.B
       io.writeLineRespEnq.bits.data := hdr.asUInt
@@ -456,8 +453,7 @@ class MemoryEngine(params: ZamletParams) extends Module {
       io.responseMetaEvent.valid := true.B
       io.responseMetaEvent.bits.isSendable := false.B
       io.responseMetaEvent.bits.slotIdx := rbSlotIdx
-      io.responseMetaEvent.bits.ident := trkEntry.ident
-      io.responseMetaEvent.bits.sramAddr := trkEntry.sramAddr
+      io.responseMetaEvent.bits.cacheSlot := trkEntry.cacheSlot
       io.responseMetaEvent.bits.responseType := Mux(
         trkEntry.ttype === TrackerType.RL,
         MemletResponseType.ReadLine,
@@ -498,8 +494,7 @@ class MemoryEngine(params: ZamletParams) extends Module {
     io.responseMetaEvent.valid := true.B
     io.responseMetaEvent.bits.isSendable := true.B
     io.responseMetaEvent.bits.slotIdx := scanEntry.bits.respSlotIdx
-    io.responseMetaEvent.bits.ident := DontCare
-    io.responseMetaEvent.bits.sramAddr := DontCare
+    io.responseMetaEvent.bits.cacheSlot := DontCare
     io.responseMetaEvent.bits.responseType := DontCare
 
     tracker(scanIdx).valid := false.B
