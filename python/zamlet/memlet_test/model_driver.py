@@ -36,7 +36,7 @@ class ModelDriver(MemletDriver):
         kamlet_y = ky + params.north_offset
         super().__init__(params, coords, kamlet_x, kamlet_y)
         self.clock = Clock()
-        self.monitor = Monitor(self.clock, params, enabled=False)
+        self.monitor = Monitor(self.clock, params, detailed=False)
         self.memlet = Memlet(
             self.clock, params, coords,
             knet_x=knet_x,
@@ -71,6 +71,7 @@ class ModelDriver(MemletDriver):
             if self.b_queues[r]:
                 packet = self.b_queues[r].popleft()
                 header = packet[0]
+                self._record_injected_packet_sent(header, r)
                 in_dir = xy_direction(
                     router.x, router.y, header.source_x, header.source_y)
                 buf = router._input_buffers[in_dir]
@@ -81,6 +82,20 @@ class ModelDriver(MemletDriver):
                     buf.append(word)
             else:
                 await self.clock.next_cycle
+
+    def _record_injected_packet_sent(self, header: Header, router_idx: int) -> None:
+        """Record packets injected by the standalone test driver."""
+        dst_x, dst_y = self.router_coords[router_idx]
+        self.monitor.record_message_sent(
+            None,
+            header.message_type.name,
+            ident=header.ident,
+            tag=self.monitor._tag_from_header(header),
+            src_x=header.source_x,
+            src_y=header.source_y,
+            dst_x=dst_x,
+            dst_y=dst_y,
+        )
 
     async def _recv_loop(self, r: int) -> None:
         """Read packets from the memlet's router output buffers into a_queues[r]."""

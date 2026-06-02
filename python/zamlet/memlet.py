@@ -196,6 +196,43 @@ class Memlet:
         for queue in self.send_write_line_read_line_response_queues:
             queue.update()
 
+    async def receive_kamlet_network_packets(self):
+        """Receive packets from this Memlet's Kamlet-network local port."""
+        header = None
+        remaining = 0
+        packet = []
+        while True:
+            await self.clock.next_cycle
+            for channel in range(self.params.n_channels):
+                queue = self.kamlet_network_routers[channel]._output_buffers[Direction.H]
+                if queue:
+                    word = queue.popleft()
+                    if not header:
+                        assert isinstance(word, Header)
+                        header = word.copy()
+                        remaining = header.length
+                    else:
+                        assert not isinstance(word, Header)
+                        assert header
+                        remaining -= 1
+
+                    packet.append(word)
+                    if remaining == 0:
+                        packet_header = packet[0]
+                        header = None
+                        packet = []
+                        if packet_header.message_type in (
+                            MessageType.READ_LINE_ADDR,
+                            MessageType.WRITE_LINE_ADDR,
+                            MessageType.WRITE_LINE_READ_LINE_ADDR,
+                        ):
+                            raise NotImplementedError(
+                                f"Kamlet-network Memlet control packet not handled yet: "
+                                f"{packet_header.message_type.name}")
+                        raise NotImplementedError(
+                            f"Unexpected Kamlet-network Memlet packet: "
+                            f"{packet_header.message_type.name}")
+
     async def receive_packets(self, index):
         """
         This takes care of receiving packets from a router
@@ -543,6 +580,7 @@ class Memlet:
     async def run(self):
         for router in self.kamlet_network_routers:
             self.clock.create_task(router.run())
+        self.clock.create_task(self.receive_kamlet_network_packets())
         for router_channels in self.routers:
             for router in router_channels:
                 self.clock.create_task(router.run())

@@ -6,22 +6,19 @@ invoking the reduction, storing the result, and comparing against Python-compute
 expected values.
 """
 
-import asyncio
 import logging
 from random import Random
 
 import pytest
 
-from zamlet.runner import Clock
 from zamlet.params import ZamletParams
 from zamlet.addresses import GlobalAddress, MemoryType, Ordering
 from zamlet.geometries import SMALL_GEOMETRIES, scale_n_tests
 from zamlet.kamlet.kinstructions import VRedOp
 from zamlet.instructions.vector import Vreduction
 from zamlet.monitor import CompletionType, SpanType
-from zamlet.tests.test_utils import (
-    setup_lamlet, pack_elements, unpack_elements, dump_span_trees,
-)
+from zamlet.tests import test_utils
+from zamlet.tests.test_utils import pack_elements, unpack_elements
 
 logger = logging.getLogger(__name__)
 
@@ -77,21 +74,6 @@ def _reduce_ref(op, vs1_scalar, vs2_elements, ew):
         return result
     else:
         raise ValueError(f"Unsupported op: {op}")
-
-
-async def run_reduction_test(
-    clock: Clock, op: VRedOp, vl: int, ew: int,
-    seed: int, lmul: int, params: ZamletParams,
-    dump_spans: bool = False,
-):
-    lamlet = await setup_lamlet(clock, params)
-
-    try:
-        return await _run_reduction_test_inner(
-            lamlet, clock, op, vl, ew, seed, lmul, params)
-    finally:
-        if dump_spans:
-            dump_span_trees(lamlet.monitor)
 
 
 async def _run_reduction_test_inner(lamlet, clock, op, vl, ew, seed, lmul, params):
@@ -184,23 +166,19 @@ async def _run_reduction_test_inner(lamlet, clock, op, vl, ew, seed, lmul, param
         return 1
 
 
-async def main_async(clock, op, vl, ew, seed, lmul, params, dump_spans=False):
-    clock.register_main()
-    clock.create_task(clock.clock_driver())
-    exit_code = await run_reduction_test(
-        clock, op, vl, ew, seed, lmul, params, dump_spans)
-    logger.warning(f"Test completed with exit_code: {exit_code}")
-    clock.running = False
-    return exit_code
-
-
-def run_test(op, vl, ew, seed=0, lmul=1, params=None):
+def run_test(op, vl, ew, seed=0, lmul=1, params=None,
+             dump_spans: bool | None = None,
+             monitor_detailed: bool | None = None):
     if params is None:
         params = ZamletParams()
-    clock = Clock(max_cycles=10000)
-    exit_code = asyncio.run(
-        main_async(clock, op, vl, ew, seed, lmul, params))
-    assert exit_code == 0, f"Test failed: {op.value} vl={vl} ew={ew}"
+
+    async def test_fn(clock, lamlet):
+        return await _run_reduction_test_inner(
+            lamlet, clock, op, vl, ew, seed, lmul, params)
+
+    test_utils.run_test(
+        test_fn, params, max_cycles=10000, dump_spans=dump_spans,
+        monitor_detailed=monitor_detailed)
 
 
 INTEGER_OPS = [
@@ -255,7 +233,7 @@ if __name__ == '__main__':
     parser.add_argument('--lmul', type=int, default=1, choices=[1, 2, 4, 8])
     parser.add_argument('--geometry', '-g', default='k2x1_j1x1')
     parser.add_argument('--list-geometries', action='store_true')
-    parser.add_argument('--dump-spans', action='store_true')
+    test_utils.add_monitor_args(parser)
     args = parser.parse_args()
 
     if args.list_geometries:
@@ -276,4 +254,6 @@ if __name__ == '__main__':
     handler.setFormatter(formatter)
     root_logger.addHandler(handler)
 
-    run_test(op, args.vl, args.ew, args.seed, args.lmul, params=params)
+    run_test(op, args.vl, args.ew, args.seed, args.lmul, params=params,
+             dump_spans=args.dump_spans,
+             monitor_detailed=args.monitor_detailed)

@@ -266,36 +266,35 @@ def consume_ident_query_response(
             f"[1, {max_tags})")
         lamlet._oldest_active_ident = (baseline + low_dist) % max_tags
 
-    if lamlet.monitor.enabled:
-        # Only check kinstrs dispatched before the query
-        query_dispatch_cycle = lamlet.monitor.get_kinstr_dispatch_cycle(
-            ident)
-        monitor_oldest = lamlet.monitor.get_oldest_active_instr_ident()
-        if monitor_oldest is None:
+    # Only check kinstrs dispatched before the query
+    query_dispatch_cycle = lamlet.monitor.get_kinstr_dispatch_cycle(
+        ident)
+    monitor_oldest = lamlet.monitor.get_oldest_active_instr_ident()
+    if monitor_oldest is None:
+        monitor_distance = max_tags
+    else:
+        oldest_dispatch_cycle = \
+            lamlet.monitor.get_kinstr_dispatch_cycle(monitor_oldest)
+        if (oldest_dispatch_cycle is None
+                or oldest_dispatch_cycle >= query_dispatch_cycle):
             monitor_distance = max_tags
         else:
-            oldest_dispatch_cycle = \
-                lamlet.monitor.get_kinstr_dispatch_cycle(monitor_oldest)
-            if (oldest_dispatch_cycle is None
-                    or oldest_dispatch_cycle >= query_dispatch_cycle):
+            monitor_distance = (monitor_oldest - baseline) % max_tags
+            if monitor_distance == 0:
                 monitor_distance = max_tags
-            else:
-                monitor_distance = (monitor_oldest - baseline) % max_tags
-                if monitor_distance == 0:
-                    monitor_distance = max_tags
-        effective_low = max_tags if low_dist is None else low_dist
-        if monitor_distance < effective_low:
-            span_id = lamlet.monitor.get_kinstr_span_id(monitor_oldest)
-            dump = lamlet.monitor.format_span_tree(span_id)
-            iq_span_id = lamlet.monitor.get_kinstr_span_id(ident)
-            iq_dump = lamlet.monitor.format_span_tree(iq_span_id)
-            assert False, \
-                f"Monitor older than lamlet: " \
-                f"monitor={monitor_oldest} " \
-                f"(dist={monitor_distance}) " \
-                f"lamlet={lamlet._oldest_active_ident} " \
-                f"(dist={effective_low})\n\n" \
-                f"Oldest kinstr:\n{dump}\n\nIdentQuery:\n{iq_dump}"
+    effective_low = max_tags if low_dist is None else low_dist
+    if monitor_distance < effective_low:
+        span_id = lamlet.monitor.get_kinstr_span_id(monitor_oldest)
+        dump = lamlet.monitor.format_span_tree(span_id)
+        iq_span_id = lamlet.monitor.get_kinstr_span_id(ident)
+        iq_dump = lamlet.monitor.format_span_tree(iq_span_id)
+        assert False, \
+            f"Monitor older than lamlet: " \
+            f"monitor={monitor_oldest} " \
+            f"(dist={monitor_distance}) " \
+            f"lamlet={lamlet._oldest_active_ident} " \
+            f"(dist={effective_low})\n\n" \
+            f"Oldest kinstr:\n{dump}\n\nIdentQuery:\n{iq_dump}"
 
     # Return instruction queue tokens captured by this slot.
     # The slot's tokens include the IdentQuery broadcast token itself

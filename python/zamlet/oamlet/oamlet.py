@@ -73,10 +73,11 @@ logger = logging.getLogger(__name__)
 class Oamlet:
 
     def __init__(self, clock, params: ZamletParams,
-                 word_order: LaneOrder = LaneOrder.ROW_MAJOR):
+                 word_order: LaneOrder = LaneOrder.ROW_MAJOR,
+                 detailed: bool = True):
         self.clock = clock
         self.params = params
-        self.monitor = Monitor(clock, params)
+        self.monitor = Monitor(clock, params, detailed=detailed)
         # Create a span for setup/initialization phase
         self._setup_span_id = self.monitor.create_span(
             span_type=SpanType.SETUP,
@@ -240,6 +241,9 @@ class Oamlet:
             MessageType.WRITE_MEM_WORD_RESP: utils.Queue(length=2),
             # Channel 1 (requests)
             MessageType.WRITE_MEM_WORD_REQ: utils.Queue(length=2),
+        }
+        self._kamlet_network_send_queues = {
+            MessageType.INSTRUCTIONS: utils.Queue(length=2),
         }
 
         # Lamlet network buffers. router_connections moves words between these
@@ -1419,7 +1423,7 @@ class Oamlet:
                     kinstr_exec_span_id = self.monitor.get_kinstr_exec_span_id(
                         instr.instr_ident, kamlet.min_x, kamlet.min_y)
                     # Record message only for kamlet's origin jamlet
-                    self.monitor.record_message_sent(
+                    self.monitor.record_kamlet_message_sent(
                         kinstr_exec_span_id, 'INSTRUCTION',
                         instr.instr_ident, None,
                         source_x, source_y,
@@ -1430,7 +1434,7 @@ class Oamlet:
                     instr, kamlet.min_x, kamlet.min_y)
                 kinstr_exec_span_id = self.monitor.get_kinstr_exec_span_id(
                     instr.instr_ident, kamlet.min_x, kamlet.min_y)
-                self.monitor.record_message_sent(
+                self.monitor.record_kamlet_message_sent(
                     kinstr_exec_span_id, 'INSTRUCTION',
                     instr.instr_ident, None,
                     source_x, source_y,
@@ -1450,15 +1454,17 @@ class Oamlet:
                 for kamlet in target_kamlets:
                     while not kamlet._instruction_queue.can_append():
                         await self.clock.next_cycle
-                    self.monitor.record_message_received(
+                    self.monitor.record_kamlet_message_received(
                         instr.instr_ident,
                         source_x, source_y,
                         kamlet.knet_x, kamlet.knet_y,
                         message_type='INSTRUCTION')
                     kamlet.add_to_instruction_queue(instr)
         else:
-            await self._send_kamlet_packet_words(
-                packet, self._kamlet_network_send_word_buffers[0])
+            send_queue = self._kamlet_network_send_queues[MessageType.INSTRUCTIONS]
+            while not send_queue.can_append():
+                await self.clock.next_cycle
+            send_queue.append(packet)
 
     async def send_packet(self, packet, jamlet, direction, port,
                           parent_span_id: int | None = None):
@@ -1494,6 +1500,19 @@ class Oamlet:
                 if CHANNEL_MAPPING.get(msg_type, 0) == 0 and send_queue:
                     packet = send_queue.popleft()
                     await self._send_packet_words(packet, word_buf)
+                    sent_something = True
+            if not sent_something:
+                await self.clock.next_cycle
+
+    async def _send_kamlet_packets_ch0(self):
+        """Drain channel 0 Kamlet-network send queues into the Lamlet word buffer."""
+        word_buf = self._kamlet_network_send_word_buffers[0]
+        while True:
+            sent_something = False
+            for msg_type, send_queue in self._kamlet_network_send_queues.items():
+                if CHANNEL_MAPPING.get(msg_type, 0) == 0 and send_queue:
+                    packet = send_queue.popleft()
+                    await self._send_kamlet_packet_words(packet, word_buf)
                     sent_something = True
             if not sent_something:
                 await self.clock.next_cycle
@@ -1939,6 +1958,8 @@ class Oamlet:
         self.scalar.update()
         for queue in self._send_queues.values():
             queue.update()
+        for queue in self._kamlet_network_send_queues.values():
+            queue.update()
         for buf in self._receive_buffers:
             buf.update()
         for buf in self._send_word_buffers:
@@ -1965,6 +1986,7 @@ class Oamlet:
         self.clock.create_task(self.monitor_instruction_buffer())
         self.clock.create_task(self._monitor_instruction_buffer_state())
         self.clock.create_task(self._send_packets_ch0())
+        self.clock.create_task(self._send_kamlet_packets_ch0())
         self.clock.create_task(self._send_packets_ch1andup())
         self.clock.create_task(ordered.ordered_buffer_process(self))
         self.clock.create_task(self.scalar.cleanup_might_touch())

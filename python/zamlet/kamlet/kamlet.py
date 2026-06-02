@@ -622,31 +622,49 @@ class Kamlet:
                                 self.cache_table.report_data_sent(
                                     request, j_in_k_index)
 
-    async def _receive_kamlet_network_instructions(self):
+    async def _receive_kamlet_network_instructions_packet(self, header, queue):
+        remaining = header.length
+        while remaining:
+            await self.clock.next_cycle
+            if queue:
+                while not self._instruction_queue.can_append():
+                    await self.clock.next_cycle
+                instr = queue.popleft()
+                self.monitor.record_kamlet_message_received(
+                    instr.instr_ident,
+                    header.source_x, header.source_y,
+                    self.knet_x, self.knet_y,
+                    message_type='INSTRUCTION')
+                self.add_to_instruction_queue(instr)
+                remaining -= 1
+
+    async def _receive_kamlet_network_packet_channel0(self, queue):
+        """
+        Handle channel 0 packets on the Kamlet network.
+        This function should return on the same cycle that the last word was consumed.
+        """
+        while not queue:
+            await self.clock.next_cycle
+        header = queue.popleft()
+        assert isinstance(header, Header)
+        logger.debug(
+            f'{self.clock.cycle}: kamlet ({self.min_x}, {self.min_y}): '
+            f'_receive_kamlet_network_packet_channel0 got header '
+            f'{header.message_type.name} from ({header.source_x}, {header.source_y})')
+
+        if header.message_type == MessageType.INSTRUCTIONS:
+            await self._receive_kamlet_network_instructions_packet(header, queue)
+        else:
+            raise NotImplementedError(
+                f"No handler for Kamlet-network channel 0 message "
+                f"{header.message_type}")
+
+    async def _receive_kamlet_network_packets_channel0(self):
         queue = self.kamlet_network_routers[0]._output_buffers[Direction.H]
         while True:
             await self.clock.next_cycle
-            if not queue:
-                continue
-
-            header = queue.popleft()
-            assert isinstance(header, Header)
-            assert header.message_type == MessageType.INSTRUCTIONS
-
-            remaining = header.length
-            while remaining:
-                await self.clock.next_cycle
-                if queue:
-                    while not self._instruction_queue.can_append():
-                        await self.clock.next_cycle
-                    instr = queue.popleft()
-                    self.monitor.record_message_received(
-                        instr.instr_ident,
-                        header.source_x, header.source_y,
-                        self.knet_x, self.knet_y,
-                        message_type='INSTRUCTION')
-                    self.add_to_instruction_queue(instr)
-                    remaining -= 1
+            if queue:
+                await self._receive_kamlet_network_packet_channel0(queue)
 
     async def run(self):
         for router in self.kamlet_network_routers:
@@ -658,7 +676,7 @@ class Kamlet:
         self.clock.create_task(self._drain_pending_pregs())
         self.clock.create_task(self._monitor_instruction_queue())
         self.clock.create_task(self._send_packets())
-        self.clock.create_task(self._receive_kamlet_network_instructions())
+        self.clock.create_task(self._receive_kamlet_network_packets_channel0())
         self.clock.create_task(self._monitor_cache_requests())
         self.clock.create_task(self._monitor_witems())
         self.clock.create_task(self.cache_table.run())
