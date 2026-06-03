@@ -15,6 +15,7 @@ class InstrQueueErrors extends Bundle {
 
 class KamletErrors extends Bundle {
   val instrQueue = new InstrQueueErrors
+  val cacheEngine = new KceCacheTableErrors
 }
 
 /**

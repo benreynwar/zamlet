@@ -11,6 +11,10 @@ class ElementWidthCode(IntEnum):
     EW256 = 8
     EW512 = 9
 
+    @classmethod
+    def width(cls) -> int:
+        return max(cls).bit_length()
+
 
 class WidthFormatCode(IntEnum):
     WF1 = 0
@@ -23,6 +27,10 @@ class WidthFormatCode(IntEnum):
     WF128 = 7
     WF256 = 8
     WF512 = 9
+
+    @classmethod
+    def width(cls) -> int:
+        return max(cls).bit_length()
 
 
 _EW_BY_WIDTH = {

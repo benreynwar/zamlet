@@ -155,8 +155,6 @@ class JteInitiatorParams:
     deBB: bool = True
     tlbReqFB: bool = True
     tlbReqBB: bool = True
-    orderingReqFB: bool = True
-    orderingReqBB: bool = True
     efFB: bool = True
     efBB: bool = True
     fgFB: bool = True
@@ -165,8 +163,6 @@ class JteInitiatorParams:
     ghBB: bool = True
     tlbRespFB: bool = True
     tlbRespBB: bool = True
-    orderingRespFB: bool = True
-    orderingRespBB: bool = True
     commitBuffer: bool = False
     hiFB: bool = True
     hiBB: bool = True
@@ -293,6 +289,97 @@ class JceParams:
 
 
 @dataclass
+class KceCacheTableParams:
+    hasSlotReqFB: bool = True
+    hasSlotReqBB: bool = True
+    hasSlotRespFB: bool = True
+    hasSlotRespBB: bool = True
+    allocSlotReqFB: bool = True
+    allocSlotReqBB: bool = True
+    allocSlotRespFB: bool = True
+    allocSlotRespBB: bool = True
+    rsHasSlotReqBuffer: bool = True
+    rsHasSlotRespBuffer: bool = True
+    slotIsAvailableBuffer: bool = True
+    memletPacketInFB: bool = True
+    memletPacketInBB: bool = True
+    memletPacketOutFB: bool = True
+    memletPacketOutBB: bool = True
+    maxActiveUsesPerCacheSlot: int = 7
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'KceCacheTableParams':
+        return _from_dict(cls, data, _identity_mapping(cls))
+
+
+@dataclass
+class KceScannerParams:
+    emptyQueueDepth: int = 16
+    emptyQueueScanBackpressureDepth: int = 8
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'KceScannerParams':
+        return _from_dict(cls, data, _identity_mapping(cls))
+
+
+@dataclass
+class KcePendingTableParams:
+    cacheLineReqFB: bool = True
+    cacheLineReqBB: bool = True
+    cacheLineRespFB: bool = True
+    cacheLineRespBB: bool = True
+    replayFB: bool = True
+    replayBB: bool = True
+    cacheLineReleaseBuffer: bool = True
+    claimSlotReqFB: bool = True
+    claimSlotReqBB: bool = True
+    claimSlotRespFB: bool = True
+    claimSlotRespBB: bool = True
+    allocSlotReqFB: bool = True
+    allocSlotReqBB: bool = True
+    allocSlotRespFB: bool = True
+    allocSlotRespBB: bool = True
+    releaseSlotBuffer: bool = True
+    slotIsAvailableBuffer: bool = True
+    req01FB: bool = True
+    req01BB: bool = True
+    req12FB: bool = True
+    req12BB: bool = True
+    alloc01FB: bool = True
+    alloc01BB: bool = True
+    alloc12FB: bool = True
+    alloc12BB: bool = True
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'KcePendingTableParams':
+        return _from_dict(cls, data, _identity_mapping(cls))
+
+
+@dataclass
+class KceMemletInterfaceParams:
+    fetchSlotReqFB: bool = True
+    fetchSlotReqBB: bool = True
+    fetchSlotCompleteBuffer: bool = True
+    jceWritebackReqBuffer: bool = True
+    jceFetchDoneBuffer: bool = True
+    writebackSlotReqFB: bool = True
+    writebackSlotReqBB: bool = True
+    writebackSlotCompleteBuffer: bool = True
+    packetInFB: bool = True
+    packetInBB: bool = True
+    packetOutFB: bool = True
+    packetOutBB: bool = True
+    fetch01FB: bool = True
+    fetch01BB: bool = True
+    fetchTx01FB: bool = True
+    fetchTx01BB: bool = True
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'KceMemletInterfaceParams':
+        return _from_dict(cls, data, _identity_mapping(cls))
+
+
+@dataclass
 class ZamletParams:
     #k_cols: int = 2
     #k_rows: int = 2
@@ -340,6 +427,8 @@ class ZamletParams:
 
     # The number of outstanding instructions or responses waiting
     witem_table_depth: int = 16
+    # Number of Jamlet/JTE-originated requests the KCE can hold while waiting.
+    kce_pending_table_depth: int = 16
     # Number of witem slots reserved for message handlers (not used by kinstructions)
     n_items_reserved: int = 8
     # The number of outstanding cache read_line and write_line allowed
@@ -381,6 +470,10 @@ class ZamletParams:
     jte_handler_params: JteHandlerParams = field(default_factory=JteHandlerParams)
     sram_params: SramParams = field(default_factory=SramParams)
     jce_params: JceParams = field(default_factory=JceParams)
+    kce_cache_table_params: KceCacheTableParams = field(default_factory=KceCacheTableParams)
+    kce_scanner_params: KceScannerParams = field(default_factory=KceScannerParams)
+    kce_pending_table_params: KcePendingTableParams = field(default_factory=KcePendingTableParams)
+    kce_memlet_interface_params: KceMemletInterfaceParams = field(default_factory=KceMemletInterfaceParams)
     message_length_width: int = 4
     message_type_width: int = 6
 
@@ -629,6 +722,7 @@ class ZamletParams:
         'elementIndexWidth': 'element_index_width',
         'log2NParams': 'log2_n_params',
         'witemTableDepth': 'witem_table_depth',
+        'kcePendingTableDepth': 'kce_pending_table_depth',
         'identWidth': 'ident_width',
         'writesetWidth': 'writeset_width',
         'nMemletGatheringSlots': 'n_memlet_gathering_slots',
@@ -653,6 +747,10 @@ class ZamletParams:
         'jteHandlerParams': 'jte_handler_params',
         'sramParams': 'sram_params',
         'jceParams': 'jce_params',
+        'kceCacheTableParams': 'kce_cache_table_params',
+        'kceScannerParams': 'kce_scanner_params',
+        'kcePendingTableParams': 'kce_pending_table_params',
+        'kceMemletInterfaceParams': 'kce_memlet_interface_params',
         'messageLengthWidth': 'message_length_width',
         'messageTypeWidth': 'message_type_width',
     }

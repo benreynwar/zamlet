@@ -5,6 +5,8 @@ from types import SimpleNamespace
 
 from zamlet.addresses import TLBFaultType, VectorFaultInfo
 from zamlet.control_structures import pack_fields_to_int, unpack_int_to_fields
+from zamlet.lane_order import LaneOrder
+from zamlet.width_codes import WidthFormatCode
 
 
 class SendType(IntEnum):
@@ -76,6 +78,8 @@ class MessageType(IntEnum):
     READ_LINE_ADDR_DROP = 43
     WRITE_LINE_ADDR_DROP = 44
     WRITE_LINE_DATA_DROP = 45
+    TLB_REQ = 46
+    TLB_RESP = 47
 
     # Ordered indexed load/store responses (jamlet -> lamlet)
     LOAD_INDEXED_ELEMENT_RESP = 51
@@ -114,6 +118,7 @@ CHANNEL_MAPPING = {
     MessageType.READ_LINE_ADDR_DROP: 0,
     MessageType.WRITE_LINE_ADDR_DROP: 0,
     MessageType.WRITE_LINE_DATA_DROP: 0,
+    MessageType.TLB_RESP: 0,
 
     MessageType.READ_LINE_ADDR: 1,
     MessageType.WRITE_LINE_ADDR: 1,
@@ -124,6 +129,7 @@ CHANNEL_MAPPING = {
     MessageType.LOAD_WORD_REQ: 1,
     MessageType.STORE_WORD_REQ: 1,
     MessageType.READ_MEM_WORD_REQ: 1,
+    MessageType.TLB_REQ: 1,
 
     MessageType.READ_MEM_WORD_RESP: 0,
     MessageType.READ_MEM_WORD_DROP: 0,
@@ -143,8 +149,8 @@ CHANNEL_MAPPING = {
     MessageType.LOAD_INDEXED_ELEMENT_RESP: 0,
     MessageType.STORE_INDEXED_ELEMENT_RESP: 0,
 
-    # This is always consumable because we will explicitly track how much buffer room there is.
-    MessageType.INSTRUCTIONS: 0,
+    # Instructions are not responses, but are consumed by explicit buffering.
+    MessageType.INSTRUCTIONS: 1,
 
     # Send is always consumable becaue we track how many slots are available.
     MessageType.SEND: 0,
@@ -357,6 +363,63 @@ class CacheLineHeader(Header):
         fields.pop('_padding', None)
         fields['message_type'] = MessageType(fields['message_type'])
         fields['send_type'] = SendType(fields['send_type'])
+        return cls(**fields)
+
+
+def _tlb_pending_index_width(params) -> int:
+    return (params.kce_pending_table_depth - 1).bit_length()
+
+
+@dataclass
+class KamletTlbReqHeader(Header):
+    pending_index: int
+
+    @staticmethod
+    def fields(params):
+        pending_index_width = _tlb_pending_index_width(params)
+        used = params._base_header_width + pending_index_width
+        return params.abstract_base_header_fields + [
+            ('pending_index', pending_index_width),
+            ('_padding', params.word_width - used),
+        ]
+
+    def encode(self, params) -> int:
+        return pack_fields_to_int(self, self.fields(params))
+
+    def message_id(self) -> int:
+        return self.pending_index
+
+    @classmethod
+    def decode(cls, value: int, params) -> 'KamletTlbReqHeader':
+        fields = unpack_int_to_fields(value, cls.fields(params))
+        fields.pop('_padding', None)
+        _decode_header_enums(fields)
+        return cls(**fields)
+
+
+@dataclass
+class KamletTlbRespHeader(KamletTlbReqHeader):
+    ordering_wf: int
+    ordering_lane_order: int
+
+    @staticmethod
+    def fields(params):
+        pending_index_width = _tlb_pending_index_width(params)
+        wf_width = WidthFormatCode.width()
+        lane_order_width = LaneOrder.width()
+        used = params._base_header_width + pending_index_width + wf_width + lane_order_width
+        return params.abstract_base_header_fields + [
+            ('pending_index', pending_index_width),
+            ('ordering_wf', wf_width),
+            ('ordering_lane_order', lane_order_width),
+            ('_padding', params.word_width - used),
+        ]
+
+    @classmethod
+    def decode(cls, value: int, params) -> 'KamletTlbRespHeader':
+        fields = unpack_int_to_fields(value, cls.fields(params))
+        fields.pop('_padding', None)
+        _decode_header_enums(fields)
         return cls(**fields)
 
 

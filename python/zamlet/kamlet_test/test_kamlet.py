@@ -28,6 +28,8 @@ logger = logging.getLogger(__name__)
 def initialize_inputs(dut: HierarchyObject, params: ZamletParams) -> None:
     """Set all KamletMesh inputs to safe defaults."""
     n_channels = params.n_a_channels + params.n_b_channels
+    dut.io_knetOffsetX.value = params.k_cols // 2
+    dut.io_knetOffsetY.value = 1
 
     # Jamlet-level network edge ports: (prefix, outer_dim, inner_dim)
     edge_specs = [
@@ -122,10 +124,10 @@ async def reset(dut: HierarchyObject) -> None:
 
 
 async def send_word_to_kamlet(dut: HierarchyObject, kx: int, word: int, is_header: bool) -> None:
-    valid_sig = getattr(dut, f'io_nKamletAIn_{kx}_0_valid')
-    data_sig = getattr(dut, f'io_nKamletAIn_{kx}_0_bits_data')
-    header_sig = getattr(dut, f'io_nKamletAIn_{kx}_0_bits_isHeader')
-    ready_sig = getattr(dut, f'io_nKamletAIn_{kx}_0_ready')
+    valid_sig = getattr(dut, f'io_nKamletBIn_{kx}_0_valid')
+    data_sig = getattr(dut, f'io_nKamletBIn_{kx}_0_bits_data')
+    header_sig = getattr(dut, f'io_nKamletBIn_{kx}_0_bits_isHeader')
+    ready_sig = getattr(dut, f'io_nKamletBIn_{kx}_0_ready')
     valid_sig.value = 1
     data_sig.value = word
     header_sig.value = 1 if is_header else 0
@@ -138,7 +140,7 @@ async def send_word_to_kamlet(dut: HierarchyObject, kx: int, word: int, is_heade
 
 
 async def send_packet_to_kamlet(params: ZamletParams, dut: HierarchyObject, kx: int, packet) -> None:
-    """Send a full packet (header + payload words) via the north Kamlet A port."""
+    """Send a full packet (header + payload words) via the north Kamlet B port."""
 
     header = packet[0]
     assert isinstance(header, Header)
@@ -153,12 +155,15 @@ async def send_packet_to_kamlet(params: ZamletParams, dut: HierarchyObject, kx: 
 async def send_sync_trigger_to_kamlet(dut: HierarchyObject, params: ZamletParams,
                                       kx: int, sync_ident: int, value: int) -> None:
     """Send a SyncTrigger instruction packet to a kamlet."""
-    j_x = kx * params.j_cols
+    lamlet_x = params.k_cols // 2
+    lamlet_y = 0
+    target_x = lamlet_x + kx
+    target_y = 1
     header = Header(
-        target_x=j_x,
-        target_y=0,
-        source_x=j_x,
-        source_y=255,
+        target_x=target_x,
+        target_y=target_y,
+        source_x=lamlet_x,
+        source_y=lamlet_y,
         length=1,
         message_type=MessageType.INSTRUCTIONS,
         send_type=SendType.SINGLE
@@ -243,12 +248,15 @@ async def send_ident_query_to_kamlet(dut: HierarchyObject, params: ZamletParams,
                                      kx: int, sync_ident: int,
                                      baseline: int) -> None:
     """Send an IdentQuery instruction packet to a kamlet."""
-    j_x = kx * params.j_cols
+    lamlet_x = params.k_cols // 2
+    lamlet_y = 0
+    target_x = lamlet_x + kx
+    target_y = 1
     header = Header(
-        target_x=j_x,
-        target_y=0,
-        source_x=j_x,
-        source_y=255,
+        target_x=target_x,
+        target_y=target_y,
+        source_x=lamlet_x,
+        source_y=lamlet_y,
         length=1,
         message_type=MessageType.INSTRUCTIONS,
         send_type=SendType.SINGLE

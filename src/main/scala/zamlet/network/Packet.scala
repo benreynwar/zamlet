@@ -2,7 +2,7 @@ package zamlet.network
 
 import chisel3._
 import chisel3.util._
-import zamlet.LaneOrder
+import zamlet.{LaneOrder, WidthFormat}
 import zamlet.ZamletParams
 
 /**
@@ -63,8 +63,8 @@ object MessageType extends ChiselEnum {
   val ReadLineAddrDrop = Value(43.U)
   val WriteLineAddrDrop = Value(44.U)
   val WriteLineDataDrop = Value(45.U)
-  val Reserved46 = Value(46.U)
-  val Reserved47 = Value(47.U)
+  val TlbReq = Value(46.U)
+  val TlbResp = Value(47.U)
   val Reserved48 = Value(48.U)
   val Reserved49 = Value(49.U)
   val Reserved50 = Value(50.U)
@@ -209,6 +209,32 @@ abstract class AbstractCacheLineHeader(params: ZamletParams) extends AbstractPac
 
 class CacheLineHeader(params: ZamletParams) extends AbstractCacheLineHeader(params) {
   val _padding = UInt((params.wordWidth - cacheLineHeaderWidth).W)
+}
+
+object TlbHeaderFields {
+  def pendingIndexWidth(params: ZamletParams): Int = log2Ceil(params.kcePendingTableDepth)
+}
+
+abstract class AbstractKamletTlbHeader(params: ZamletParams) extends AbstractPacketHeader(params) {
+  val pendingIndex = UInt(TlbHeaderFields.pendingIndexWidth(params).W)
+
+  def kamletTlbHeaderWidth: Int = baseWidth + TlbHeaderFields.pendingIndexWidth(params)
+}
+
+class KamletTlbReqHeader(params: ZamletParams) extends AbstractKamletTlbHeader(params) {
+  require(kamletTlbHeaderWidth <= params.wordWidth)
+  val _padding = UInt((params.wordWidth - kamletTlbHeaderWidth).W)
+}
+
+class KamletTlbRespHeader(params: ZamletParams) extends AbstractKamletTlbHeader(params) {
+  val wf = WidthFormat()
+  val laneOrder = LaneOrder()
+
+  def kamletTlbRespHeaderWidth: Int =
+    kamletTlbHeaderWidth + WidthFormat.getWidth + LaneOrder.getWidth
+
+  require(kamletTlbRespHeaderWidth <= params.wordWidth)
+  val _padding = UInt((params.wordWidth - kamletTlbRespHeaderWidth).W)
 }
 
 /**

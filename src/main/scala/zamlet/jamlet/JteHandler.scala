@@ -34,19 +34,19 @@ import zamlet.network.{JteHeader, MessageType, NetworkWord, SendType}
 // 1) Is this ident active here?
 // 2) Where is this cache line in the sram?
 class CacheLineRequest(params: ZamletParams) extends Bundle {
-  val ident = params.ident()
   val address = UInt((params.memAddrWidth - params.log2CacheSlotWordsPerJamlet - params.log2JInL).W)
+  val payload = new JteHandlerBC(params)
 }
 
 object CacheLineState extends ChiselEnum {
-  val Inactive = Value
-  val GettingCacheLine = Value
+  val Dropped = Value
+  val StoredInPendingTable = Value
   val Ready = Value
 }
 
 class CacheLineResponse(params: ZamletParams) extends Bundle {
   val state = CacheLineState()
-  val sramAddr = params.cacheSlot()
+  val slot = params.cacheSlot()
 }
 
 class SramRequest(params: ZamletParams) extends Bundle {
@@ -168,21 +168,24 @@ class JteHandlerBIO(params: ZamletParams) extends Bundle {
 class JteHandlerB(params: ZamletParams) extends Module {
   val io = IO(new JteHandlerBIO(params))
 
+  val payload = Wire(new JteHandlerBC(params))
+  payload.srcX := io.ab.bits.srcX
+  payload.srcY := io.ab.bits.srcY
+  payload.msgType := io.ab.bits.msgType
+  payload.nBytes := io.ab.bits.nBytes
+  payload.dstOffset := io.ab.bits.dstOffset
+  payload.srcOffset := io.ab.bits.srcOffset
+  payload.ident := io.ab.bits.ident
+  payload.slot := io.ab.bits.slot
+  payload.data := io.ab.bits.data
+  payload.cacheLineOffset := io.ab.bits.stripeAddr(params.log2PageWordsPerJamlet - 1, 0)
+
   io.cacheLineReq.valid := io.ab.valid && io.bc.ready
   io.cacheLineReq.bits.address := io.ab.bits.stripeAddr >> params.log2PageWordsPerJamlet
-  io.cacheLineReq.bits.ident := io.ab.bits.ident
+  io.cacheLineReq.bits.payload := payload
 
   io.bc.valid := io.ab.valid && io.cacheLineReq.ready
-  io.bc.bits.srcX := io.ab.bits.srcX
-  io.bc.bits.srcY := io.ab.bits.srcY
-  io.bc.bits.msgType := io.ab.bits.msgType
-  io.bc.bits.nBytes := io.ab.bits.nBytes
-  io.bc.bits.dstOffset := io.ab.bits.dstOffset
-  io.bc.bits.srcOffset := io.ab.bits.srcOffset
-  io.bc.bits.ident := io.ab.bits.ident
-  io.bc.bits.slot := io.ab.bits.slot
-  io.bc.bits.data := io.ab.bits.data
-  io.bc.bits.cacheLineOffset := io.ab.bits.stripeAddr(params.log2PageWordsPerJamlet - 1, 0)
+  io.bc.bits := payload
   io.ab.ready := io.bc.ready && io.cacheLineReq.ready
 
 }
@@ -220,9 +223,9 @@ class JteHandlerDIO(params: ZamletParams) extends Bundle {
 class JteHandlerD(params: ZamletParams) extends Module {
   val io = IO(new JteHandlerDIO(params))
 
-  val stateIsGetting = io.cacheLineResp.bits.state === CacheLineState.GettingCacheLine
+  val stateIsStored = io.cacheLineResp.bits.state === CacheLineState.StoredInPendingTable
 
-  io.de.valid := io.cd.valid && io.cacheLineResp.valid && !stateIsGetting
+  io.de.valid := io.cd.valid && io.cacheLineResp.valid && !stateIsStored
   io.de.bits.srcX := io.cd.bits.srcX
   io.de.bits.srcY := io.cd.bits.srcY
   io.de.bits.msgType := io.cd.bits.msgType
@@ -232,10 +235,10 @@ class JteHandlerD(params: ZamletParams) extends Module {
   io.de.bits.ident := io.cd.bits.ident
   io.de.bits.slot := io.cd.bits.slot
   io.de.bits.data := io.cd.bits.data
-  io.de.bits.drop := (io.cacheLineResp.bits.state === CacheLineState.Inactive)
-  io.de.bits.sramAddr := Cat(io.cacheLineResp.bits.sramAddr, io.cd.bits.cacheLineOffset)
+  io.de.bits.drop := (io.cacheLineResp.bits.state === CacheLineState.Dropped)
+  io.de.bits.sramAddr := Cat(io.cacheLineResp.bits.slot, io.cd.bits.cacheLineOffset)
   io.cd.ready := io.de.ready && io.cacheLineResp.valid
-  io.cacheLineResp.ready := io.cd.valid && (io.de.ready || stateIsGetting)
+  io.cacheLineResp.ready := io.cd.valid && (io.de.ready || stateIsStored)
 }
 
 class JteHandlerEF(params: ZamletParams) extends Bundle {

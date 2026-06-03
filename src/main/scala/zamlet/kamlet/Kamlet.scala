@@ -20,9 +20,15 @@ class Kamlet(
   neighbors: SyncNeighbors
 ) extends Module {
   val io = IO(new Bundle {
-    // Position of this kamlet in the zamlet
+    // Position of this kamlet in the compute grid.
     val kX = Input(UInt(log2Ceil(params.kCols).W))
     val kY = Input(UInt(log2Ceil(params.kRows).W))
+
+    // Position of this kamlet on the kamlet-level packet network.
+    val knetX = Input(params.xPos())
+    val knetY = Input(params.yPos())
+    val memletKnetX = Input(params.xPos())
+    val memletKnetY = Input(params.yPos())
 
     // Network ports (exposed from edge jamlets)
     // North edge
@@ -168,17 +174,6 @@ class Kamlet(
       j.io.jteInputReq.ready := false.B
       j.io.jteInputResp.valid := false.B
       j.io.jteInputResp.bits := DontCare
-      j.io.tlbReq.ready := false.B
-      j.io.tlbResp.valid := false.B
-      j.io.tlbResp.bits := DontCare
-      j.io.orderingReq.ready := false.B
-      j.io.orderingResp.valid := false.B
-      j.io.orderingResp.bits := DontCare
-      j.io.cacheLineReq.ready := false.B
-      j.io.cacheLineResp.valid := false.B
-      j.io.cacheLineResp.bits := DontCare
-      j.io.sendCacheLine.valid := false.B
-      j.io.sendCacheLine.bits := DontCare
     }
   }
 
@@ -189,10 +184,19 @@ class Kamlet(
   val instrQueue = Module(new InstrQueue(params))
   val instrExecutor = Module(new InstrExecutor(params))
   val synchronizer = Module(new Synchronizer(neighbors, params.synchronizerParams))
+  val cacheEngine = Module(new KamletCacheEngine(params))
+  val kamletTlb = Module(new KamletTlb(params))
+  val kamletNetworkIngress = Module(new KamletNetworkIngress(params))
+  val kamletNetworkEgress = Module(new KamletNetworkEgress(params))
   val kamletNetworkNode = Module(new CombinedNetworkNode(params))
 
-  kamletNetworkNode.io.thisX := io.kX
-  kamletNetworkNode.io.thisY := io.kY
+  cacheEngine.io.knetX := io.knetX
+  cacheEngine.io.knetY := io.knetY
+  cacheEngine.io.memletKnetX := io.memletKnetX
+  cacheEngine.io.memletKnetY := io.memletKnetY
+
+  kamletNetworkNode.io.thisX := io.knetX
+  kamletNetworkNode.io.thisY := io.knetY
 
   kamletNetworkNode.io.aNi <> io.kamletAChannels.ni
   kamletNetworkNode.io.aNo <> io.kamletAChannels.no
@@ -216,12 +220,16 @@ class Kamlet(
   // Wiring: Kamlet network → InstrQueue → InstrExecutor → Synchronizer
   // ============================================================
 
-  instrQueue.io.packetIn <> kamletNetworkNode.io.aHo
+  kamletNetworkIngress.io.packetIn <> kamletNetworkNode.io.aHo
   kamletNetworkNode.io.aHi.valid := false.B
   kamletNetworkNode.io.aHi.bits := DontCare
-  kamletNetworkNode.io.bHi.valid := false.B
-  kamletNetworkNode.io.bHi.bits := DontCare
-  kamletNetworkNode.io.bHo.ready := false.B
+  cacheEngine.io.packetIn <> kamletNetworkIngress.io.memletPacketOut
+  kamletNetworkEgress.io.memletPacketIn <> cacheEngine.io.packetOut
+  kamletNetworkNode.io.bHi <> kamletNetworkEgress.io.packetOut
+  instrQueue.io.packetIn <> kamletNetworkNode.io.bHo
+  kamletTlb.io.packetIn.valid := false.B
+  kamletTlb.io.packetIn.bits := DontCare
+  kamletTlb.io.packetOut.ready := false.B
 
   // InstrQueue → InstrExecutor
   instrExecutor.io.kinstrIn <> instrQueue.io.kinstrOut
@@ -234,6 +242,12 @@ class Kamlet(
   for (jY <- 0 until params.jRows; jX <- 0 until params.jCols) {
     val jInKIndex = jY * params.jCols + jX
     jamlets(jY)(jX).io.immediateKinstr := instrExecutor.io.immediateKinstr(jInKIndex)
+    kamletTlb.io.tlbReq(jInKIndex) <> jamlets(jY)(jX).io.tlbReq
+    jamlets(jY)(jX).io.tlbResp <> kamletTlb.io.tlbResp(jInKIndex)
+    cacheEngine.io.jteCacheLineReq(jInKIndex) <> jamlets(jY)(jX).io.cacheLineReq
+    jamlets(jY)(jX).io.cacheLineResp <> cacheEngine.io.jteCacheLineResp(jInKIndex)
+    jamlets(jY)(jX).io.sendCacheLine := cacheEngine.io.jceWritebackReq(jInKIndex)
+    cacheEngine.io.jceFetchDone(jInKIndex) := jamlets(jY)(jX).io.cacheResponse
   }
 
   // ============================================================
@@ -248,6 +262,7 @@ class Kamlet(
   // ============================================================
 
   io.errors.instrQueue := instrQueue.io.errors
+  io.errors.cacheEngine := cacheEngine.io.errors
 }
 
 object KamletGenerator extends zamlet.ModuleGenerator {

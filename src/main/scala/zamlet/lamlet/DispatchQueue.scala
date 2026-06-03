@@ -58,19 +58,20 @@ class DispatchQueue(params: ZamletParams) extends Module {
   // Generate packet header
   def makeHeader(kIndex: UInt, isBroadcast: Bool, count: UInt): UInt = {
     val header = Wire(new PacketHeader(params))
-    // Lamlet is at position (0, -1), sending south into mesh
-    // For broadcast, target is bottom-right corner (kCols-1, kRows-1)
-    // For single, target is the specific kamlet
+    val kamletNetworkBaseX = (params.kCols / 2).U(params.xPosWidth.W)
+    val kamletNetworkBaseY = 1.U(params.yPosWidth.W)
+    val targetKX = kIndex % params.kCols.U
+    val targetKY = kIndex / params.kCols.U
+
     when (isBroadcast) {
-      header.targetX := (params.kCols - 1).U
-      header.targetY := (params.kRows - 1).U
+      header.targetX := kamletNetworkBaseX + (params.kCols - 1).U
+      header.targetY := kamletNetworkBaseY + (params.kRows - 1).U
     } .otherwise {
-      // Convert k_index to (x, y) coordinates
-      header.targetX := kIndex % params.kCols.U
-      header.targetY := kIndex / params.kCols.U
+      header.targetX := kamletNetworkBaseX + targetKX
+      header.targetY := kamletNetworkBaseY + targetKY
     }
-    header.sourceX := 0.U
-    header.sourceY := 0.U  // Will be interpreted as -1 by receivers
+    header.sourceX := kamletNetworkBaseX
+    header.sourceY := 0.U
     header.length := count  // number of data words following header
     header.messageType := MessageType.Instructions
     header.sendType := Mux(isBroadcast, SendType.Broadcast, SendType.Single)

@@ -17,11 +17,19 @@ chisel_module_tests(
     test_modules = ["zamlet.kamlet_test.test_kamlet"],
 )
 
+chisel_module_tests(
+    generator = "//src/main/scala/zamlet/kamlet:kamletcacheengine",
+    toplevel = "KamletCacheEngine",
+    srcs = ["test_kamlet_cache_engine.py"],
+    test_modules = ["zamlet.kamlet_test.test_kamlet_cache_engine"],
+)
+
 test_suite(
     name = "all_tests",
     tests = [
         # TODO: Re-enable when fixed
         # ":synchronizer_tests",
+        ":kamletcacheengine_tests",
         ":kamletmesh_tests",
     ],
 )

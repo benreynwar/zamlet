@@ -15,6 +15,10 @@ class LaneOrder(IntEnum):
     def count(cls) -> int:
         return len(cls)
 
+    @classmethod
+    def width(cls) -> int:
+        return (cls.count() - 1).bit_length()
+
 
 def vw_index_to_j_coords(params, lane_order: LaneOrder, vw_index: int):
     if lane_order == LaneOrder.ROW_MAJOR:
