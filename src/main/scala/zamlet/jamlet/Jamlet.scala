@@ -62,6 +62,8 @@ class Jamlet(params: ZamletParams) extends Module {
     val tlbResp = Flipped(Decoupled(new JamletTlbResp(params)))
     val cacheLineReq = Decoupled(new CacheLineRequest(params))
     val cacheLineResp = Flipped(Decoupled(new CacheLineResponse(params)))
+    val cacheLineReplay = Flipped(Decoupled(new JteHandlerReplay(params)))
+    val cacheLineRelease = Valid(params.cacheSlot())
 
     // Immediate kinstr execution (from kamlet) - for LoadImm, ALU ops, etc.
     val immediateKinstr = Flipped(Valid(new KinstrWithParams(params)))
@@ -250,6 +252,8 @@ class Jamlet(params: ZamletParams) extends Module {
   jte.io.tlbResp <> io.tlbResp
   io.cacheLineReq <> jte.io.cacheLineReq
   jte.io.cacheLineResp <> io.cacheLineResp
+  jte.io.cacheLineReplay <> io.cacheLineReplay
+  io.cacheLineRelease := jte.io.cacheLineRelease
 
   // Resource interfaces still need top-level arbiters.
   rfSlice.io.jteWriteReq <> jte.io.rfWriteReq

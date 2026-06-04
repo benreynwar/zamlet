@@ -173,8 +173,9 @@ async def send_sync_trigger_to_kamlet(dut: HierarchyObject, params: ZamletParams
     logger.info(
         f"Sending SyncTrigger to kamlet {kx}: sync_ident={sync_ident}, value={value}"
     )
-    logger.info(f"  header={hex(header.encode(params))}, kinstr={hex(kinstr.encode())}")
-    await send_packet_to_kamlet(params, dut, kx, [header, kinstr.encode()])
+    encoded_kinstr = kinstr.encode(params)
+    logger.info(f"  header={hex(header.encode(params))}, kinstr={hex(encoded_kinstr)}")
+    await send_packet_to_kamlet(params, dut, kx, [header, encoded_kinstr])
 
 
 async def wait_for_sync_results(dut: HierarchyObject, params: ZamletParams,
@@ -267,8 +268,9 @@ async def send_ident_query_to_kamlet(dut: HierarchyObject, params: ZamletParams,
         f"Sending IdentQuery to kamlet {kx}: "
         f"sync_ident={sync_ident}, baseline={baseline}"
     )
-    logger.info(f"  header={hex(header.encode(params))}, kinstr={hex(kinstr.encode())}")
-    await send_packet_to_kamlet(params, dut, kx, [header, kinstr.encode()])
+    encoded_kinstr = kinstr.encode(params)
+    logger.info(f"  header={hex(header.encode(params))}, kinstr={hex(encoded_kinstr)}")
+    await send_packet_to_kamlet(params, dut, kx, [header, encoded_kinstr])
 
 
 async def test_ident_query(dut: HierarchyObject, params: ZamletParams) -> None:
@@ -295,17 +297,25 @@ async def test_ident_query(dut: HierarchyObject, params: ZamletParams) -> None:
         f"Expected results from {n_kamlets} kamlets, got {len(results)}"
     )
 
-    expected_value = 128  # params.maxResponseTags
+    expected_distance = params.max_response_tags
+    expected_active_mask = 1 << sync_ident
     for k_idx, (ident, value) in results.items():
         assert ident == sync_ident, (
             f"Kamlet {k_idx}: expected ident {sync_ident}, got {ident}"
         )
-        assert value == expected_value, (
-            f"Kamlet {k_idx}: expected value {expected_value}, got {value}"
+        distance = value >> params.max_concurrent_syncs
+        active_mask = value & ((1 << params.max_concurrent_syncs) - 1)
+        assert distance == expected_distance, (
+            f"Kamlet {k_idx}: expected distance {expected_distance}, got {distance}"
+        )
+        assert active_mask == expected_active_mask, (
+            f"Kamlet {k_idx}: expected active mask {expected_active_mask:#x}, "
+            f"got {active_mask:#x}"
         )
 
     logger.info(
-        f"test_ident_query passed: all kamlets returned value={expected_value}"
+        "test_ident_query passed: all kamlets returned "
+        f"distance={expected_distance}, active_mask={expected_active_mask:#x}"
     )
 
 

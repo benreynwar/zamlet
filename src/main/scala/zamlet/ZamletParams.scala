@@ -39,7 +39,6 @@ case class RfSliceParams(
 )
 
 case class SynchronizerParams(
-  maxConcurrentSyncs: Int = 4,
   resultOutputReg: Boolean = false,
   portOutOutputReg: Boolean = false,
   minPipelineReg: Boolean = false
@@ -317,18 +316,22 @@ case class ZamletParams(
   rfSliceWords: Int = 48,    // Number of words in RF slice
 
   // Address and index widths
-  memAddrWidth: Int = 48,       // Global memory address width
+  memAddrWidth: Int = 44,       // Global memory address width
   log2PageWordsPerJamlet: Int = 4,  // Page size in words per jamlet
   // Must hold j_in_l * word_bytes * max_lmul
   elementIndexWidth: Int = 22,
-  log2NParams: Int = 4,
+  log2NParams: Int = 6,
+  paramRefIdxWidth: Int = 3,
 
   // WitemTable configuration
   witemTableDepth: Int = 16,
   kcePendingTableDepth: Int = 16,
+  kteCacheWaitTableDepth: Int = 16,
 
   // Instruction identifier
-  identWidth: Int = 7,
+  identWidth: Int = 8,
+  syncIdentWidth: Int = 3,
+  syncValueWidth: Int = 16,
   writesetWidth: Int = 4,
 
   // Memlet configuration
@@ -401,6 +404,8 @@ case class ZamletParams(
   require(cacheSlotWordsPerJamlet <= 12,
     s"cacheSlotWordsPerJamlet ($cacheSlotWordsPerJamlet) must be <= 12 to fit in 4-bit " +
     s"packet length field (WRITE_LINE_READ_LINE needs 3 + wordsPerJamlet words)")
+  require((1 << identWidth) > maxResponseTags,
+    s"identWidth ($identWidth) must be able to represent maxResponseTags ($maxResponseTags)")
 
   def log2JInL: Int = Integer.numberOfTrailingZeros(jInL)
   def log2JTotalCols: Int = Integer.numberOfTrailingZeros(jTotalCols)
@@ -449,6 +454,10 @@ case class ZamletParams(
   def cacheSlotWidth: Int = log2Ceil(nCacheSlots)
   def kIndexWidth: Int = log2Ceil(kInL)
   def memStripeAddrWidth: Int = memAddrWidth - log2JInL
+  def maxConcurrentSyncs: Int = 1 << syncIdentWidth
+  // FIXME: Derive this from LocalExec once its pipeline latency is exposed
+  // through parameters instead of an instantiated ALU.
+  def localExecLatency: Int = 5
 
   class JCoords extends Bundle {
     val x = UInt(xPosWidth.W)
@@ -459,6 +468,8 @@ case class ZamletParams(
   def xPos(): UInt = UInt(xPosWidth.W)
   def yPos(): UInt = UInt(yPosWidth.W)
   def ident(): UInt = UInt(identWidth.W)
+  def syncIdent(): UInt = UInt(syncIdentWidth.W)
+  def syncValue(): UInt = UInt(syncValueWidth.W)
   def cacheSlot(): UInt = UInt(cacheSlotWidth.W)
   def cacheLineAddr(): UInt = UInt(cacheLineAddrWidth.W)
   def word(): UInt = UInt(wordWidth.W)

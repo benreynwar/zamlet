@@ -61,7 +61,7 @@ class Lamlet(params: ZamletParams) extends Module {
     hasN = false, hasS = true, hasE = false, hasW = false,
     hasNE = false, hasNW = false, hasSE = false, hasSW = false
   )
-  val synchronizer = Module(new Synchronizer(syncNeighbors, params.synchronizerParams))
+  val synchronizer = Module(new Synchronizer(syncNeighbors, params))
 
   // External interface → IssueUnit
   issueUnit.io.ex <> io.ex

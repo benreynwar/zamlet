@@ -9,6 +9,8 @@ object LaneOrder extends ChiselEnum {
   val TOROIDAL_ROW_MAJOR = Value(3.U)
   val COLUMN_MAJOR = Value(4.U)
   val TOROIDAL_COLUMN_MAJOR = Value(5.U)
+  val INVALID6 = Value(6.U)
+  val INVALID7 = Value(7.U)
 
   def count: Int = all.length
 }

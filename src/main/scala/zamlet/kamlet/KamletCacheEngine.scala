@@ -3,7 +3,7 @@ package zamlet.kamlet
 import chisel3._
 import chisel3.util._
 import zamlet.ZamletParams
-import zamlet.jamlet.{CacheLineRequest, CacheLineResponse, JteHandlerBC, SendCacheLineCmd}
+import zamlet.jamlet.{CacheLineRequest, CacheLineResponse, JteHandlerReplay, SendCacheLineCmd}
 import zamlet.network.NetworkWord
 
 object KceCacheSlotState extends ChiselEnum {
@@ -35,11 +35,6 @@ class KceSlotRelease(params: ZamletParams) extends Bundle {
   val slot = params.cacheSlot()
 }
 
-class KceJteReplay(params: ZamletParams) extends Bundle {
-  val payload = new JteHandlerBC(params)
-  val slot = params.cacheSlot()
-}
-
 class KceCacheEngineErrors extends Bundle {
   val cacheTable = new KceCacheTableErrors
   val memletInterface = new KceMemletInterfaceErrors
@@ -55,7 +50,7 @@ class KamletCacheEngineIO(params: ZamletParams) extends Bundle {
   // JTE cache-line request path. These requests are mediated by KcePendingTable.
   val jteCacheLineReq = Vec(params.jInK, Flipped(Decoupled(new CacheLineRequest(params))))
   val jteCacheLineResp = Vec(params.jInK, Decoupled(new CacheLineResponse(params)))
-  val jteReplay = Vec(params.jInK, Decoupled(new KceJteReplay(params)))
+  val jteReplay = Vec(params.jInK, Decoupled(new JteHandlerReplay(params)))
   val jteCacheLineRelease = Vec(params.jInK, Flipped(Valid(new KceSlotRelease(params))))
 
   // JCE cache-line path. Fetch fills report done; dirty writebacks are triggered here.

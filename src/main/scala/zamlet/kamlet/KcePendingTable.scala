@@ -3,7 +3,7 @@ package zamlet.kamlet
 import chisel3._
 import chisel3.util._
 import zamlet.ZamletParams
-import zamlet.jamlet.{CacheLineRequest, CacheLineResponse, CacheLineState}
+import zamlet.jamlet.{CacheLineRequest, CacheLineResponse, CacheLineState, JteHandlerReplay}
 import zamlet.network.MessageType
 import zamlet.utils.{DoubleBuffer, ValidBuffer}
 
@@ -12,7 +12,7 @@ class KcePendingTableIO(params: ZamletParams) extends Bundle {
   // later; this stub only defines the contract.
   val cacheLineReq = Vec(params.jInK, Flipped(Decoupled(new CacheLineRequest(params))))
   val cacheLineResp = Vec(params.jInK, Decoupled(new CacheLineResponse(params)))
-  val replay = Vec(params.jInK, Decoupled(new KceJteReplay(params)))
+  val replay = Vec(params.jInK, Decoupled(new JteHandlerReplay(params)))
   val cacheLineRelease = Vec(params.jInK, Flipped(Valid(new KceSlotRelease(params))))
 
   // Metadata table access. JTE-originated releases are aggregated into the
@@ -70,7 +70,7 @@ class KcePendingTable(params: ZamletParams) extends Module {
   }
 
   val replay = (0 until params.jInK).map { jInK =>
-    val replayOut = Wire(Decoupled(new KceJteReplay(params)))
+    val replayOut = Wire(Decoupled(new JteHandlerReplay(params)))
     io.replay(jInK) <> DoubleBuffer(replayOut, ptp.replayFB, ptp.replayBB)
     replayOut
   }

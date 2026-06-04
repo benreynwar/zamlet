@@ -203,16 +203,16 @@ class IssueUnit(params: ZamletParams) extends Module {
 
   val kinstr = Wire(new J2JInstr(params))
   kinstr.opcode := Mux(isVectorLoad, KInstrOpcode.LoadJ2J, KInstrOpcode.StoreJ2J)
+  kinstr.instrIdent := 0.U
   kinstr.cacheSlot := (tlbPaddr >> log2Ceil(params.cacheSlotWords * params.wordBytes).U)(
     params.cacheSlotWidth - 1, 0)
   kinstr.memLaneOrder := LaneOrder.ROW_MAJOR
   kinstr.rfLaneOrder := LaneOrder.ROW_MAJOR
   kinstr.memEw := bitsToElementWidth(eewBits)
   kinstr.rfEw := sewToElementWidth(vsew)
-  // baseBitAddr: byte address within zamlet (page-aligned portion)
-  kinstr.baseBitAddr := (tlbPaddr << 3.U)(log2Ceil(params.wordWidth * params.jInL) - 1, 0)
-  kinstr.startIndex := vstart.pad(params.elementIndexWidth)
-  kinstr.nElementsParamIdx := 0.U
+  kinstr.baseAddr := tlbPaddr(log2Ceil(params.wordBytes * params.jInL) - 1, 0)
+  kinstr.startIndexParamIdx := 1.U
+  kinstr.endIndexParamIdx := 0.U
   kinstr.reg := vd.pad(params.rfAddrWidth)
   kinstr._padding := 0.U
 
@@ -319,6 +319,7 @@ class IssueUnit(params: ZamletParams) extends Module {
       // Send WriteParam kinstr with paddr to param entry 0
       val writeParamKinstr = Wire(new WriteParamInstr(params))
       writeParamKinstr.opcode := KInstrOpcode.WriteParam
+      writeParamKinstr.instrIdent := 0.U
       writeParamKinstr.paramIdx := 0.U
       writeParamKinstr.data := tlbPaddr(params.memAddrWidth - 1, 0)
       writeParamKinstr.reserved := 0.U
@@ -333,13 +334,11 @@ class IssueUnit(params: ZamletParams) extends Module {
     }
 
     is(DispatchStoreScalar) {
-      // Send StoreScalar kinstr referencing param entry 0
       val storeScalarKinstr = Wire(new StoreScalarInstr(params))
       storeScalarKinstr.opcode := KInstrOpcode.StoreScalar
+      storeScalarKinstr.instrIdent := 0.U
       storeScalarKinstr.dataReg := vd.pad(params.rfAddrWidth)
-      storeScalarKinstr.baseAddrParamIdx := 0.U
-      storeScalarKinstr.startIndex := vstart
-      storeScalarKinstr.endIndex := vstart + vl
+      storeScalarKinstr.scalarAddrParamIdx := 0.U
       storeScalarKinstr.ew := bitsToElementWidth(eewBits)
       storeScalarKinstr.reserved := 0.U
 

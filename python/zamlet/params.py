@@ -57,7 +57,6 @@ class RfSliceParams:
 
 @dataclass
 class SynchronizerParams:
-    maxConcurrentSyncs: int = 4
     resultOutputReg: bool = False
     portOutOutputReg: bool = False
     minPipelineReg: bool = False
@@ -155,6 +154,8 @@ class JteInitiatorParams:
     deBB: bool = True
     tlbReqFB: bool = True
     tlbReqBB: bool = True
+    orderingReqFB: bool = True
+    orderingReqBB: bool = True
     efFB: bool = True
     efBB: bool = True
     fgFB: bool = True
@@ -163,6 +164,8 @@ class JteInitiatorParams:
     ghBB: bool = True
     tlbRespFB: bool = True
     tlbRespBB: bool = True
+    orderingRespFB: bool = True
+    orderingRespBB: bool = True
     commitBuffer: bool = False
     hiFB: bool = True
     hiBB: bool = True
@@ -421,14 +424,17 @@ class ZamletParams:
     n_response_idents: int = 32
     #n_waiting: int = 16
     n_response_tags: int = 8
-    max_response_tags: int = 512
-    sync_ident_width: int = 10
+    max_response_tags: int = 128
+    sync_ident_width: int = 3
+    sync_value_width: int = 16
     sync_bus_width: int = 11
 
     # The number of outstanding instructions or responses waiting
     witem_table_depth: int = 16
     # Number of Jamlet/JTE-originated requests the KCE can hold while waiting.
     kce_pending_table_depth: int = 16
+    # Number of KTE cache-wait local operations that can wait for cache lines.
+    kte_cache_wait_table_depth: int = 16
     # Number of witem slots reserved for message handlers (not used by kinstructions)
     n_items_reserved: int = 8
     # The number of outstanding cache read_line and write_line allowed
@@ -448,12 +454,13 @@ class ZamletParams:
     # Bit widths for RTL header encoding/decoding
     x_pos_width: int = 8
     y_pos_width: int = 8
-    ident_width: int = 7
+    ident_width: int = 8
     writeset_width: int = 4
     rf_slice_words: int = 48
-    mem_addr_width: int = 48
+    mem_addr_width: int = 44
     element_index_width: int = 22
-    log2_n_params: int = 4
+    log2_n_params: int = 6
+    param_ref_idx_width: int = 3
     n_response_buffer_slots: int = 4
     mem_beat_words: int = 1
     mem_axi_id_bits: int = 4
@@ -500,13 +507,17 @@ class ZamletParams:
         # Sync ident must fit in one bus cycle (data_width = sync_bus_width - 1)
         assert self.sync_ident_width + 1 <= self.sync_bus_width
         # Ident space must cover all response tags + ident query
-        assert (1 << self.sync_ident_width) > self.max_response_tags
+        assert (1 << self.ident_width) > self.max_response_tags
         # Sane scalar memory
         assert self.scalar_memory_bytes > self.cache_line_bytes
         assert self.scalar_memory_bytes % self.cache_line_bytes == 0
         # Sane kamlet memory
         assert self.kamlet_memory_bytes > self.cache_line_bytes
         assert self.kamlet_memory_bytes % self.cache_line_bytes == 0
+
+    @property
+    def max_concurrent_syncs(self) -> int:
+        return 1 << self.sync_ident_width
 
     @property
     def n_arch_vregs(self) -> int:
@@ -721,11 +732,16 @@ class ZamletParams:
         'log2PageWordsPerJamlet': 'log2_page_words_per_jamlet',
         'elementIndexWidth': 'element_index_width',
         'log2NParams': 'log2_n_params',
+        'paramRefIdxWidth': 'param_ref_idx_width',
         'witemTableDepth': 'witem_table_depth',
         'kcePendingTableDepth': 'kce_pending_table_depth',
+        'kteCacheWaitTableDepth': 'kte_cache_wait_table_depth',
         'identWidth': 'ident_width',
+        'syncIdentWidth': 'sync_ident_width',
+        'syncValueWidth': 'sync_value_width',
         'writesetWidth': 'writeset_width',
         'nMemletGatheringSlots': 'n_memlet_gathering_slots',
+        'nCacheRequests': 'n_cache_requests',
         'nResponseBufferSlots': 'n_response_buffer_slots',
         'memBeatWords': 'mem_beat_words',
         'memAxiIdBits': 'mem_axi_id_bits',

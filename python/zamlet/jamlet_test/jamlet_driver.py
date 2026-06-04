@@ -37,8 +37,8 @@ def _check_error_wire(dut: HierarchyObject, prefix: str, name: str, description:
 
 
 def check_jte_error_wires(dut: HierarchyObject, prefix: str) -> None:
-    _check_error_wire(dut, prefix, "createSlotInUse", "JTE create slot already in use")
-    _check_error_wire(dut, prefix, "slotToRegInvalid", "JTE slot-to-reg request for invalid slot")
+    _check_error_wire(dut, prefix, "createTeIndexInUse", "JTE create teIndex already in use")
+    _check_error_wire(dut, prefix, "teIndexToRegInvalid", "JTE teIndex-to-reg request for invalid entry")
     _check_error_wire(dut, prefix, "receiverUpdateInvalid", "JTE receiver update for invalid slot")
     _check_error_wire(
         dut,
@@ -131,7 +131,7 @@ class JamletDriver:
                 getattr(self.dut, f"{self._prefix(kind, direction)}_ready").value = 1
 
         self.dut.io_jteCreate_valid.value = 0
-        self.dut.io_jteCreate_bits_slot.value = 0
+        self.dut.io_jteCreate_bits_teIndex.value = 0
         self.dut.io_jteCreate_bits_instrIdent.value = 0
         self.dut.io_jteCreate_bits_dataReg.value = 0
         self.dut.io_jteClear_valid.value = 0
@@ -145,6 +145,7 @@ class JamletDriver:
         self.dut.io_tlbResp_bits_ordering_laneOrder.value = LaneOrder.ROW_MAJOR
         self.dut.io_cacheLineReq_ready.value = 1
         self.dut.io_cacheLineResp_valid.value = 0
+        self.dut.io_cacheLineReplay_valid.value = 0
         self.dut.io_immediateKinstr_valid.value = 0
         self.dut.io_immediateKinstr_bits_kinstr.value = 0
         self.dut.io_immediateKinstr_bits_ordering_wf.value = WidthFormatCode.WF64

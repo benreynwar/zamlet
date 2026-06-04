@@ -36,6 +36,8 @@ class JteIO(params: ZamletParams) extends Bundle {
 
   val cacheLineReq = Decoupled(new CacheLineRequest(params))
   val cacheLineResp = Flipped(Decoupled(new CacheLineResponse(params)))
+  val cacheLineReplay = Flipped(Decoupled(new JteHandlerReplay(params)))
+  val cacheLineRelease = Valid(params.cacheSlot())
   val sramReq = Decoupled(new SramRequest(params))
   val sramResp = Flipped(Decoupled(params.word()))
 }
@@ -71,8 +73,8 @@ class Jte(params: ZamletParams) extends Module {
   initiator.io.tlbResp <> io.tlbResp
 
   receiver.io.packet <> io.channel0In
-  receiver.io.slotToRegReq <> state.io.slotToRegReq
-  state.io.slotToRegResp <> receiver.io.slotToRegResp
+  receiver.io.teIndexToRegReq <> state.io.teIndexToRegReq
+  state.io.teIndexToRegResp <> receiver.io.teIndexToRegResp
   io.rfWriteReq <> receiver.io.rfWriteReq
   receiver.io.rfWriteResp <> io.rfWriteResp
   state.io.receiverUpdate <> receiver.io.updateMsg
@@ -83,6 +85,8 @@ class Jte(params: ZamletParams) extends Module {
   io.channel0Out <> handler.io.packetOut
   io.cacheLineReq <> handler.io.cacheLineReq
   handler.io.cacheLineResp <> io.cacheLineResp
+  handler.io.cacheLineReplay <> io.cacheLineReplay
+  io.cacheLineRelease := handler.io.cacheLineRelease
   io.sramReq <> handler.io.sramReq
   handler.io.sramResp <> io.sramResp
 }

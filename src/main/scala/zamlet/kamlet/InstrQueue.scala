@@ -13,11 +13,6 @@ class InstrQueueErrors extends Bundle {
   val unexpectedData = Bool()
 }
 
-class KamletErrors extends Bundle {
-  val instrQueue = new InstrQueueErrors
-  val cacheEngine = new KceCacheTableErrors
-}
-
 /**
  * InstrQueue receives instruction packets from the Kamlet-level packet network
  * and extracts kinstrs.
@@ -33,7 +28,7 @@ class InstrQueue(params: ZamletParams, depth: Int = 8) extends Module {
     // Packet input (from jamlet)
     val packetIn = Flipped(Decoupled(new NetworkWord(params)))
 
-    // Kinstr output (to InstrExecutor)
+    // Kinstr output (to Renamer)
     val kinstrOut = Decoupled(UInt(64.W))
 
     // Error signals

@@ -21,7 +21,7 @@ class RFWriteReq(params: ZamletParams) extends Bundle {
 
 
 class JteReceiverUpdateMsg(params: ZamletParams) extends Bundle {
-  val slot = UInt(log2Ceil(params.witemTableDepth).W)
+  val teIndex = UInt(log2Ceil(params.witemTableDepth).W)
   val ident = params.ident()
   val msgType = UInt(params.messageTypeWidth.W)
   val offset = UInt(params.log2WordBytes.W)
@@ -29,7 +29,7 @@ class JteReceiverUpdateMsg(params: ZamletParams) extends Bundle {
 }
 
 class JteReceiverAB(params: ZamletParams) extends Bundle {
-  val slot = UInt(log2Ceil(params.witemTableDepth).W)
+  val teIndex = UInt(log2Ceil(params.witemTableDepth).W)
   val ident = params.ident()
   val msgType = UInt(params.messageTypeWidth.W)
   val nBytes = UInt((params.log2WordWidth - 3).W)
@@ -39,7 +39,7 @@ class JteReceiverAB(params: ZamletParams) extends Bundle {
 }
 
 class JteReceiverBC(params: ZamletParams) extends Bundle {
-  val slot = UInt(log2Ceil(params.witemTableDepth).W)
+  val teIndex = UInt(log2Ceil(params.witemTableDepth).W)
   val ident = params.ident()
   val msgType = UInt(params.messageTypeWidth.W)
   val nBytes = UInt((params.log2WordWidth - 3).W)
@@ -53,7 +53,7 @@ class JteReceiverAState(params: ZamletParams) extends Bundle {
   val nBytes = UInt((params.log2WordWidth - 3).W)
   val dstOffset = UInt(params.log2WordBytes.W)
   val srcOffset = UInt(params.log2WordBytes.W)
-  val slot = UInt(log2Ceil(params.witemTableDepth).W)
+  val teIndex = UInt(log2Ceil(params.witemTableDepth).W)
   val ident = params.ident()
   val data = params.word()
   val remainingBodyWords = UInt(params.messageLengthWidth.W)
@@ -67,7 +67,7 @@ class JteReceiverAErrors extends Bundle {
 class JteReceiverAIO(params: ZamletParams) extends Bundle {
   val packet = Flipped(Decoupled(new NetworkWord(params)))
   val ab = Decoupled(new JteReceiverAB(params))
-  val slotToRegReq = Decoupled(UInt(log2Ceil(params.witemTableDepth).W))
+  val teIndexToRegReq = Decoupled(UInt(log2Ceil(params.witemTableDepth).W))
   val errors = new JteReceiverAErrors()
 }
 
@@ -99,30 +99,30 @@ class JteReceiverA(params: ZamletParams) extends Module {
     stateNext.nBytes := header.nBytes
     stateNext.dstOffset := header.dstOffset
     stateNext.srcOffset := header.srcOffset
-    stateNext.slot := header.slot
+    stateNext.teIndex := header.slot
     stateNext.ident := header.ident
   } .otherwise {
     stateNext.data := io.packet.bits.data
   }
 
-  io.slotToRegReq.valid := stateNext.isHeader && io.packet.valid && io.ab.ready
-  io.slotToRegReq.bits := stateNext.slot
+  io.teIndexToRegReq.valid := stateNext.isHeader && io.packet.valid && io.ab.ready
+  io.teIndexToRegReq.bits := stateNext.teIndex
 
-  io.ab.valid := stateNext.isHeader && io.packet.valid && io.slotToRegReq.ready
-  io.ab.bits.slot := stateNext.slot
+  io.ab.valid := stateNext.isHeader && io.packet.valid && io.teIndexToRegReq.ready
+  io.ab.bits.teIndex := stateNext.teIndex
   io.ab.bits.msgType := stateNext.msgType
   io.ab.bits.nBytes := stateNext.nBytes
   io.ab.bits.dstOffset := stateNext.dstOffset
   io.ab.bits.srcOffset := stateNext.srcOffset
   io.ab.bits.ident := stateNext.ident
   io.ab.bits.data := stateNext.data
-  io.packet.ready := (io.ab.ready && io.slotToRegReq.ready) || !stateNext.isHeader
+  io.packet.ready := (io.ab.ready && io.teIndexToRegReq.ready) || !stateNext.isHeader
 }
 
 class JteReceiverBIO(params: ZamletParams) extends Bundle {
   val ab = Flipped(Decoupled(new JteReceiverAB(params)))
   val bc = Decoupled(new JteReceiverBC(params))
-  val slotToRegResp = Flipped(Decoupled(params.rfAddr()))
+  val teIndexToRegResp = Flipped(Decoupled(params.rfAddr()))
   val rfWriteReq = Decoupled(new RFWriteReq(params))
 }
 
@@ -141,13 +141,13 @@ class JteReceiverB(params: ZamletParams) extends Module {
   val writeMask = (((1.U((params.wordBytes + 1).W) << byteCount) - 1.U)(params.wordBytes - 1, 0) <<
     io.ab.bits.srcOffset)(params.wordBytes - 1, 0)
 
-  io.rfWriteReq.valid := io.ab.valid && io.bc.ready && io.slotToRegResp.valid && writeRf
-  io.rfWriteReq.bits.address := io.slotToRegResp.bits
+  io.rfWriteReq.valid := io.ab.valid && io.bc.ready && io.teIndexToRegResp.valid && writeRf
+  io.rfWriteReq.bits.address := io.teIndexToRegResp.bits
   io.rfWriteReq.bits.data := writeData
   io.rfWriteReq.bits.byteMask := writeMask
 
-  io.bc.valid := io.ab.valid && io.slotToRegResp.valid && (!writeRf || io.rfWriteReq.ready)
-  io.bc.bits.slot := io.ab.bits.slot
+  io.bc.valid := io.ab.valid && io.teIndexToRegResp.valid && (!writeRf || io.rfWriteReq.ready)
+  io.bc.bits.teIndex := io.ab.bits.teIndex
   io.bc.bits.ident := io.ab.bits.ident
   io.bc.bits.msgType := io.ab.bits.msgType
   io.bc.bits.nBytes := io.ab.bits.nBytes
@@ -155,8 +155,8 @@ class JteReceiverB(params: ZamletParams) extends Module {
   io.bc.bits.wroteRf := writeRf
   io.bc.bits.drop := io.ab.bits.msgType === MessageType.LoadWordDrop.asUInt ||
     io.ab.bits.msgType === MessageType.StoreWordDrop.asUInt
-  io.ab.ready := io.bc.ready && io.slotToRegResp.valid && (!writeRf || io.rfWriteReq.ready)
-  io.slotToRegResp.ready := io.ab.valid && io.bc.ready && (!writeRf || io.rfWriteReq.ready)
+  io.ab.ready := io.bc.ready && io.teIndexToRegResp.valid && (!writeRf || io.rfWriteReq.ready)
+  io.teIndexToRegResp.ready := io.ab.valid && io.bc.ready && (!writeRf || io.rfWriteReq.ready)
 }
 
 class JteReceiverCIO(params: ZamletParams) extends Bundle {
@@ -184,7 +184,7 @@ class JteReceiverD(params: ZamletParams) extends Module {
   val io = IO(new JteReceiverDIO(params))
 
   io.updateMsg.valid := io.cd.valid
-  io.updateMsg.bits.slot := io.cd.bits.slot
+  io.updateMsg.bits.teIndex := io.cd.bits.teIndex
   io.updateMsg.bits.ident := io.cd.bits.ident
   io.updateMsg.bits.msgType := io.cd.bits.msgType
   io.updateMsg.bits.offset := io.cd.bits.srcOffset
@@ -194,8 +194,8 @@ class JteReceiverD(params: ZamletParams) extends Module {
 
 class JteReceiverIO(params: ZamletParams) extends Bundle {
   val packet = Flipped(Decoupled(new NetworkWord(params)))
-  val slotToRegReq = Decoupled(UInt(log2Ceil(params.witemTableDepth).W))
-  val slotToRegResp = Flipped(Decoupled(params.rfAddr()))
+  val teIndexToRegReq = Decoupled(UInt(log2Ceil(params.witemTableDepth).W))
+  val teIndexToRegResp = Flipped(Decoupled(params.rfAddr()))
   val rfWriteReq = Decoupled(new RFWriteReq(params))
   val rfWriteResp = Flipped(Decoupled(Bool()))
   val updateMsg = Decoupled(new JteReceiverUpdateMsg(params))
@@ -207,11 +207,11 @@ class JteReceiver(params: ZamletParams) extends Module {
 
   val aStage = Module(new JteReceiverA(params))
   aStage.io.packet <> DoubleBuffer(io.packet, rp.packetFB, rp.packetBB)
-  io.slotToRegReq <> DoubleBuffer(aStage.io.slotToRegReq, rp.slotToRegReqFB, rp.slotToRegReqBB)
+  io.teIndexToRegReq <> DoubleBuffer(aStage.io.teIndexToRegReq, rp.slotToRegReqFB, rp.slotToRegReqBB)
 
   val bStage = Module(new JteReceiverB(params))
   bStage.io.ab <> DoubleBuffer(aStage.io.ab, rp.abFB, rp.abBB)
-  bStage.io.slotToRegResp <> DoubleBuffer(io.slotToRegResp, rp.slotToRegRespFB, rp.slotToRegRespBB)
+  bStage.io.teIndexToRegResp <> DoubleBuffer(io.teIndexToRegResp, rp.slotToRegRespFB, rp.slotToRegRespBB)
   io.rfWriteReq <> DoubleBuffer(bStage.io.rfWriteReq, rp.rfWriteReqFB, rp.rfWriteReqBB)
 
   val cStage = Module(new JteReceiverC(params))

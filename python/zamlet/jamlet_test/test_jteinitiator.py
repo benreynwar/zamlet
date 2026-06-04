@@ -305,7 +305,7 @@ async def send_dispatch(rnd: Random, dut: HierarchyObject, dispatch_queue: deque
             valid = False
         if valid:
             dut.io_input_valid.value = 1
-            dut.io_input_bits_slot.value = 0
+            dut.io_input_bits_teIndex.value = 0
             dut.io_input_bits_instrIdent.value = 0
             dut.io_input_bits_mode.value = instr.mode
             dut.io_input_bits_baseAddr.value = instr.base_addr
@@ -443,7 +443,7 @@ async def consume_and_check_commits(
             await triggers.RisingEdge(dut.clock)
             await triggers.ReadOnly()
         commit = {
-            'slot': int(dut.io_commit_bits_slot.value),
+            'slot': int(dut.io_commit_bits_teIndex.value),
             'initiator': [
                 int(getattr(dut, f'io_commit_bits_initiator_{i}').value)
                 for i in range(params.word_bytes)

@@ -24,6 +24,16 @@ chisel_module_tests(
     test_modules = ["zamlet.kamlet_test.test_kamlet_cache_engine"],
 )
 
+chisel_module_tests(
+    generator = "//src/main/scala/zamlet/kamlet:kamlettransferengine",
+    toplevel = "KamletTransferEngine",
+    srcs = [
+        "kte_driver.py",
+        "test_kamlet_transfer_engine.py",
+    ],
+    test_modules = ["zamlet.kamlet_test.test_kamlet_transfer_engine"],
+)
+
 test_suite(
     name = "all_tests",
     tests = [
@@ -31,5 +41,6 @@ test_suite(
         # ":synchronizer_tests",
         ":kamletcacheengine_tests",
         ":kamletmesh_tests",
+        ":kamlettransferengine_tests",
     ],
 )

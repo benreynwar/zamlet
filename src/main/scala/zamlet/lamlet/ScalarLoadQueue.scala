@@ -138,6 +138,10 @@ class ScalarLoadQueue(params: ZamletParams) extends Module {
   def makeLoadImmKinstr(jInK: UInt, rfAddr: UInt, section: UInt, data: UInt): UInt = {
     val instr = Wire(new LoadImmInstr(params))
     instr.opcode := KInstrOpcode.LoadImm
+    // FIXME: ScalarLoadQueue emits LoadImm after IdentTracker. Confirm that
+    // reusing the parent scalar-load ident is the right completion/tracking
+    // behavior for both generated LoadImm kinstrs.
+    instr.instrIdent := instrIdent
     instr.jInKIndex := jInK
     instr.rfAddr := rfAddr
     instr.section := section

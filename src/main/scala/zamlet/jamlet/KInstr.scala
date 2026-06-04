@@ -8,8 +8,9 @@ import zamlet.{ElementWidth, LaneOrder, Ordering, ZamletParams}
  * Kamlet instruction format definitions.
  *
  * KInstr is a 64-bit packed instruction format used for network communication.
- * Large values (addresses, nElements) are stored in a parameter memory
- * and referenced by 4-bit indices.
+ * Large values are stored in parameter memory. Most packed instruction
+ * parameter references carry only the low bits; decode supplies bank bits
+ * based on whether the reference is a base address, start index, or end index.
  *
  * Python reference: python/zamlet/kamlet/kinstructions.py
  * Address types: python/zamlet/addresses.py (KMAddr, RegAddr)
@@ -19,8 +20,32 @@ import zamlet.{ElementWidth, LaneOrder, Ordering, ZamletParams}
 object KInstr {
   val width = 64           // Total kinstr width in bits
   val opcodeWidth = 6      // Opcode field width
-  val syncIdentWidth = 8   // Sync ident field width
   val syncValueWidth = 8   // Sync value field width
+
+  private def paramRefBankWidth(params: ZamletParams): Int = {
+    require(params.log2NParams >= params.paramRefIdxWidth,
+      s"log2NParams (${params.log2NParams}) must be >= paramRefIdxWidth (${params.paramRefIdxWidth})")
+    params.log2NParams - params.paramRefIdxWidth
+  }
+
+  private def paramRefToIndex(params: ZamletParams, bank: Int, ref: UInt): UInt = {
+    val bankWidth = paramRefBankWidth(params)
+    require(bank < (1 << bankWidth),
+      s"parameter reference bank $bank does not fit in $bankWidth bits")
+    Cat(bank.U(bankWidth.W), ref)
+  }
+
+  def baseAddrParamIdx(params: ZamletParams, ref: UInt): UInt = {
+    paramRefToIndex(params, 0, ref)
+  }
+
+  def startIndexParamIdx(params: ZamletParams, ref: UInt): UInt = {
+    paramRefToIndex(params, 1, ref)
+  }
+
+  def endIndexParamIdx(params: ZamletParams, ref: UInt): UInt = {
+    paramRefToIndex(params, 2, ref)
+  }
 
   /** Cast kinstr to J2JInstr */
   def asJ2J(params: ZamletParams, kinstr: UInt): J2JInstr = {
@@ -58,8 +83,8 @@ object KInstrOpcode extends ChiselEnum {
   val Sub = Value(10.U)
   val Mul = Value(11.U)
   val MulHigh = Value(12.U)
-  val Reserved13 = Value(13.U)
-  val Reserved14 = Value(14.U)
+  val LoadIdxUnord = Value(13.U)
+  val StoreIdxUnord = Value(14.U)
   val Reserved15 = Value(15.U)
   val Reserved16 = Value(16.U)
   val Reserved17 = Value(17.U)
@@ -126,19 +151,20 @@ class KinstrWithParams(params: ZamletParams) extends Bundle {
 }
 
 /**
- * Base instruction with opcode. Cast to specific type based on opcode.
- * Includes padding so opcode extracts from correct MSB position [63:58].
+ * Base instruction shared by all kamlet instructions.
+ * Bundle fields are packed MSB first, so opcode remains at bits [63:58].
  */
-abstract class AbstractKInstr extends Bundle {
+abstract class AbstractKInstr(params: ZamletParams) extends Bundle {
   val opcode = KInstrOpcode()
+  val instrIdent = params.ident()
 
-  def baseWidth: Int = KInstr.opcodeWidth
+  def baseWidth: Int = KInstr.opcodeWidth + params.identWidth
 }
 
-abstract class AbstractLocalKInstr(params: ZamletParams) extends AbstractKInstr
+abstract class AbstractLocalKInstr(params: ZamletParams) extends AbstractKInstr(params)
 
-class KInstrBase extends AbstractKInstr {
-  val reserved = UInt((KInstr.width - KInstr.opcodeWidth).W)
+class KInstrBase(params: ZamletParams) extends AbstractKInstr(params) {
+  val reserved = UInt((KInstr.width - baseWidth).W)
 }
 
 /**
@@ -146,16 +172,17 @@ class KInstrBase extends AbstractKInstr {
  * Used for testing the instruction receive path and sync network.
  *
  * Layout (LSB first):
- *   [5:0]   opcode (= SyncTrigger)
- *   [13:6]  syncIdent
- *   [21:14] value
- *   [63:22] reserved
+ *   opcode:     opcodeWidth bits - KInstrOpcode.SyncTrigger
+ *   instrIdent: identWidth bits - instruction tracking identifier
+ *   syncIdent:  syncIdentWidth bits - sync network identifier
+ *   value:      syncValueWidth bits - sync value
+ *   reserved:   remaining bits
  */
-class SyncTriggerInstr extends AbstractKInstr {
-  val syncIdent = UInt(KInstr.syncIdentWidth.W)
+class SyncTriggerInstr(params: ZamletParams) extends AbstractKInstr(params) {
+  val syncIdent = params.syncIdent()
   val value = UInt(KInstr.syncValueWidth.W)
-  val reserved = UInt((KInstr.width - KInstr.opcodeWidth -
-                       KInstr.syncIdentWidth - KInstr.syncValueWidth).W)
+  val reserved = UInt((KInstr.width - baseWidth -
+                       params.syncIdentWidth - KInstr.syncValueWidth).W)
 }
 
 /**
@@ -163,16 +190,17 @@ class SyncTriggerInstr extends AbstractKInstr {
  * Used by Lamlet to query kamlets for their oldest active ident.
  *
  * Layout (Bundle order = MSB first):
- *   opcode:     bits [63:58]  (6 bits)
- *   baseline:   bits [57:50]  (8 bits) - ident to measure distance from
- *   syncIdent:  bits [49:42]  (8 bits) - sync network identifier
- *   reserved:   bits [41:0]   (42 bits)
+ *   opcode:     opcodeWidth bits - KInstrOpcode.IdentQuery
+ *   instrIdent: identWidth bits - instruction tracking identifier
+ *   syncIdent:  syncIdentWidth bits - sync network identifier
+ *   baseline:   identWidth bits - instruction ident to measure distance from
+ *   reserved:   remaining bits
  */
-class IdentQueryInstr extends AbstractKInstr {
-  val baseline = UInt(KInstr.syncIdentWidth.W)
-  val syncIdent = UInt(KInstr.syncIdentWidth.W)
-  val reserved = UInt((KInstr.width - KInstr.opcodeWidth -
-                       KInstr.syncIdentWidth - KInstr.syncIdentWidth).W)
+class IdentQueryInstr(params: ZamletParams) extends AbstractKInstr(params) {
+  val syncIdent = params.syncIdent()
+  val baseline = params.ident()
+  val reserved = UInt((KInstr.width - baseWidth -
+                       params.identWidth - params.syncIdentWidth).W)
 }
 
 /**
@@ -192,9 +220,9 @@ class JamletLoc(params: ZamletParams) extends Bundle {
  * - memLoc: jamlet with the memory/cache side
  * Data flows mem→reg for load, reg→mem for store.
  */
-class WordInstr(params: ZamletParams) extends AbstractKInstr {
+class WordInstr(params: ZamletParams) extends AbstractKInstr(params) {
   private val jamletLocWidth = log2Ceil(params.kInL) + log2Ceil(params.jInK)
-  private val usedBits = KInstr.opcodeWidth + 2 * jamletLocWidth +
+  private val usedBits = baseWidth + 2 * jamletLocWidth +
                          params.rfAddrWidth + 2 * log2Ceil(params.wordBytes) +
                          params.wordBytes
   require(usedBits <= KInstr.width, s"WordInstr uses $usedBits bits but KInstr.width is ${KInstr.width}")
@@ -214,11 +242,11 @@ class WordInstr(params: ZamletParams) extends AbstractKInstr {
  * Python reference: Load/Store with k_maddr in kinstructions.py
  * - reg: the RF register (dst for load, src for store)
  */
-class J2JInstr(params: ZamletParams) extends AbstractKInstr {
-  private val usedBits = KInstr.opcodeWidth + params.cacheSlotWidth +
+class J2JInstr(params: ZamletParams) extends AbstractKInstr(params) {
+  private val usedBits = baseWidth + params.cacheSlotWidth +
                          2 * LaneOrder.getWidth + 2 * ElementWidth.getWidth +
-                         log2Ceil(params.wordWidth * params.jInL) +
-                         params.elementIndexWidth + params.log2NParams +
+                         log2Ceil(params.wordBytes * params.jInL) +
+                         2 * params.paramRefIdxWidth +
                          params.rfAddrWidth
   require(usedBits <= KInstr.width, s"J2JInstr uses $usedBits bits but KInstr.width is ${KInstr.width}")
 
@@ -227,9 +255,9 @@ class J2JInstr(params: ZamletParams) extends AbstractKInstr {
   val rfLaneOrder = LaneOrder()
   val memEw = ElementWidth()
   val rfEw = ElementWidth()
-  val baseBitAddr = UInt(log2Ceil(params.wordWidth * params.jInL).W)
-  val startIndex = params.elementIndex()
-  val nElementsParamIdx = UInt(params.log2NParams.W)
+  val baseAddr = UInt(log2Ceil(params.wordBytes * params.jInL).W)
+  val startIndexParamIdx = UInt(params.paramRefIdxWidth.W)
+  val endIndexParamIdx = UInt(params.paramRefIdxWidth.W)
   val reg = params.rfAddr()
   val _padding = UInt((KInstr.width - usedBits).W)
 }
@@ -238,21 +266,23 @@ class J2JInstr(params: ZamletParams) extends AbstractKInstr {
  * Instruction format for indexed operations (LoadIdxUnord / StoreIdxUnord / LoadIdxElement).
  * - reg: the RF data register (dst for load, src for store)
  */
-class IndexedInstr(params: ZamletParams) extends AbstractKInstr {
-  private val usedBits = KInstr.opcodeWidth + params.elementIndexWidth +
+class IndexedInstr(params: ZamletParams) extends AbstractKInstr(params) {
+  private val usedBits = baseWidth + params.syncIdentWidth +
+                         params.paramRefIdxWidth +
                          2 * ElementWidth.getWidth + LaneOrder.getWidth +
                          3 * params.rfAddrWidth + 1 +
-                         2 * params.log2NParams
+                         2 * params.paramRefIdxWidth
   require(usedBits <= KInstr.width, s"IndexedInstr uses $usedBits bits but KInstr.width is ${KInstr.width}")
 
-  val startIndex = params.elementIndex()
+  val syncIdent = params.syncIdent()
+  val startIndexParamIdx = UInt(params.paramRefIdxWidth.W)
   val rfEw = ElementWidth()
   val rfLaneOrder = LaneOrder()
   val reg = params.rfAddr()
   val maskReg = params.rfAddr()
   val maskEnabled = Bool()
-  val baseAddrParamIdx = UInt(params.log2NParams.W)
-  val nElementsParamIdx = UInt(params.log2NParams.W)
+  val baseAddrParamIdx = UInt(params.paramRefIdxWidth.W)
+  val endIndexParamIdx = UInt(params.paramRefIdxWidth.W)
   // Indexed-specific fields
   val indexEw = ElementWidth()
   val indexReg = params.rfAddr()
@@ -276,7 +306,7 @@ class IndexedInstr(params: ZamletParams) extends AbstractKInstr {
  *   reserved:  remaining bits
  */
 class LoadImmInstr(params: ZamletParams) extends AbstractLocalKInstr(params) {
-  private val usedBits = KInstr.opcodeWidth + log2Ceil(params.jInK) +
+  private val usedBits = baseWidth + log2Ceil(params.jInK) +
                          params.rfAddrWidth + log2Ceil(params.wordBytes / 4) + 4 + 32
   require(usedBits <= KInstr.width, s"LoadImmInstr uses $usedBits bits but KInstr.width is ${KInstr.width}")
 
@@ -289,21 +319,20 @@ class LoadImmInstr(params: ZamletParams) extends AbstractLocalKInstr(params) {
 }
 
 /**
- * WriteParam instruction format - write 48 bits to parameter memory.
+ * WriteParam instruction format - write a compact parameter value.
  * Used to set up addresses/strides/nElements before load/store instructions.
  *
  * Layout (64 bits total):
  *   opcode:    6 bits  - KInstrOpcode.WriteParam
- *   paramIdx:  4 bits  - which param memory entry to write
- *   data:      48 bits - data to write (fits memAddrWidth)
- *   reserved:  6 bits
+ *   paramIdx:  log2NParams bits - which param memory entry to write
+ *   data:      remaining bits after the shared base and param index
  */
-class WriteParamInstr(params: ZamletParams) extends AbstractKInstr {
-  private val usedBits = KInstr.opcodeWidth + params.log2NParams + 48
+class WriteParamInstr(params: ZamletParams) extends AbstractKInstr(params) {
+  private val usedBits = baseWidth + params.log2NParams + params.memAddrWidth
   require(usedBits <= KInstr.width, s"WriteParamInstr uses $usedBits bits but KInstr.width is ${KInstr.width}")
 
   val paramIdx = UInt(params.log2NParams.W)
-  val data = UInt(48.W)
+  val data = UInt(params.memAddrWidth.W)
   val reserved = UInt((KInstr.width - usedBits).W)
 }
 
@@ -316,21 +345,17 @@ class WriteParamInstr(params: ZamletParams) extends AbstractKInstr {
  * Layout (64 bits total):
  *   opcode:      6 bits  - KInstrOpcode.StoreScalar
  *   dataReg:     6 bits  - source RF register (vs)
- *   baseAddrParamIdx: 4 bits  - param memory index for base paddr
- *   startIndex:  elementIndexWidth bits - starting element index
- *   endIndex:    elementIndexWidth bits - exclusive ending element index
+ *   scalarAddrParamIdx: paramRefIdxWidth bits - low bits of scalar paddr param index
  *   ew:          4 bits  - element width for mask generation
  *   reserved:    remaining bits
  */
 class StoreScalarInstr(params: ZamletParams) extends AbstractLocalKInstr(params) {
-  private val usedBits = KInstr.opcodeWidth + params.rfAddrWidth + params.log2NParams +
-    params.elementIndexWidth + params.elementIndexWidth + ElementWidth.getWidth
+  private val usedBits = baseWidth + params.rfAddrWidth + params.paramRefIdxWidth +
+    ElementWidth.getWidth
   require(usedBits <= KInstr.width, s"StoreScalarInstr uses $usedBits bits but KInstr.width is ${KInstr.width}")
 
   val dataReg = params.rfAddr()
-  val baseAddrParamIdx = UInt(params.log2NParams.W)
-  val startIndex = params.elementIndex()
-  val endIndex = params.elementIndex()
+  val scalarAddrParamIdx = UInt(params.paramRefIdxWidth.W)
   val ew = ElementWidth()
   val reserved = UInt((KInstr.width - usedBits).W)
 }
@@ -341,17 +366,16 @@ class LocalKInstrBase(params: ZamletParams) extends AbstractLocalKInstr(params) 
 
 abstract class AbstractLoadStoreSimpleInstr(params: ZamletParams) extends AbstractLocalKInstr(params) {
   val rfAddr = params.rfAddr()
-  val baseAddrParamIdx = UInt(params.log2NParams.W)
+  val baseAddrParamIdx = UInt(params.paramRefIdxWidth.W)
   val maskReg = params.rfAddr()
   val ew = ElementWidth()
-  val startIndexParamIdx = UInt(params.log2NParams.W)
-  val endIndex = UInt(params.endElementIndexWidth.W)
+  val startIndexParamIdx = UInt(params.paramRefIdxWidth.W)
+  val endIndexParamIdx = UInt(params.paramRefIdxWidth.W)
   val maskEnabled = Bool()
 
   def loadStoreSimpleWidth: Int = baseWidth + params.rfAddrWidth +
-    params.log2NParams + params.rfAddrWidth + ElementWidth.getWidth +
-    params.log2NParams +
-    params.endElementIndexWidth + 1
+    params.paramRefIdxWidth + params.rfAddrWidth + ElementWidth.getWidth +
+    2 * params.paramRefIdxWidth + 1
 }
 
 class LoadSimpleInstr(params: ZamletParams) extends AbstractLoadStoreSimpleInstr(params) {
@@ -368,15 +392,15 @@ abstract class AbstractBinaryOpInstr(params: ZamletParams) extends AbstractLocal
   val srcBReg = params.rfAddr()
   val maskReg = params.rfAddr()
   val ew = ElementWidth()
-  val startIndexParamIdx = UInt(params.log2NParams.W)
-  val endIndex = UInt(params.endElementIndexWidth.W)
+  val startIndexParamIdx = UInt(params.paramRefIdxWidth.W)
+  val endIndexParamIdx = UInt(params.paramRefIdxWidth.W)
   val isSignedA = Bool()
   val isSignedB = Bool()
   val maskEnabled = Bool()
   val useUpper = Bool()
 
   def binaryOpWidth: Int = baseWidth + (4 * params.rfAddrWidth) + ElementWidth.getWidth +
-    params.log2NParams + params.endElementIndexWidth + 4
+    2 * params.paramRefIdxWidth + 4
 }
 
 class BinaryOpInstr(params: ZamletParams) extends AbstractBinaryOpInstr(params) {

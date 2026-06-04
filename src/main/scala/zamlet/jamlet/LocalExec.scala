@@ -94,11 +94,11 @@ class LocalExec(params: ZamletParams) extends Module {
   val s1SimpleRfAddr = RegNext(Mux(s0IsLoadSimple, s0LoadSimpleInstr.rfAddr, s0StoreSimpleInstr.rfAddr))
   val s1SimpleSramWordOffset = RegNext(io.kinstrIn.bits.sramWordOffset)
   val s1SimpleEw = RegNext(Mux(s0IsLoadSimple, s0LoadSimpleInstr.ew, s0StoreSimpleInstr.ew))
-  val s1SimpleEndIndex = RegNext(Mux(s0IsLoadSimple, s0LoadSimpleInstr.endIndex, s0StoreSimpleInstr.endIndex))
+  val s1SimpleEndIndex = RegNext(io.kinstrIn.bits.param1(params.endElementIndexWidth - 1, 0))
   val s1SimpleMaskEnabled = RegNext(Mux(s0IsLoadSimple, s0LoadSimpleInstr.maskEnabled, s0StoreSimpleInstr.maskEnabled))
 
   val s1AluEw = RegNext(s0BinaryInstr.ew)
-  val s1AluEndIndex = RegNext(s0BinaryInstr.endIndex)
+  val s1AluEndIndex = RegNext(io.kinstrIn.bits.param1(params.endElementIndexWidth - 1, 0))
   val s1AluSignedA = RegNext(s0BinaryInstr.isSignedA)
   val s1AluSignedB = RegNext(s0BinaryInstr.isSignedB)
   val s1AluUseUpper = RegNext(s0BinaryInstr.useUpper)

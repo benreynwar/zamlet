@@ -24,6 +24,7 @@ from zamlet.params import ZamletParams
 from zamlet.control_structures import pack_fields_to_int
 from zamlet.message import IdentHeader, MessageType, SendType, WriteMemWordHeader
 from zamlet.monitor import CompletionType, SpanType
+from zamlet.width_codes import ElementWidthCode
 
 
 logger = logging.getLogger(__name__)
@@ -285,12 +286,33 @@ class KInstrOpcode(IntEnum):
     SUB = 10
     MUL = 11
     MUL_HIGH = 12
+    LOAD_IDX_UNORD = 13
+    STORE_IDX_UNORD = 14
 
 
 KINSTR_WIDTH = 64
 OPCODE_WIDTH = 6
-SYNC_IDENT_WIDTH = 8
 SYNC_VALUE_WIDTH = 8
+
+
+def _param_ref_to_index(params, bank: int, ref: int) -> int:
+    bank_width = params.log2_n_params - params.param_ref_idx_width
+    assert bank_width >= 0
+    assert 0 <= bank < (1 << bank_width)
+    assert 0 <= ref < (1 << params.param_ref_idx_width)
+    return (bank << params.param_ref_idx_width) | ref
+
+
+def base_addr_param_idx(params, ref: int) -> int:
+    return _param_ref_to_index(params, 0, ref)
+
+
+def start_index_param_idx(params, ref: int) -> int:
+    return _param_ref_to_index(params, 1, ref)
+
+
+def end_index_param_idx(params, ref: int) -> int:
+    return _param_ref_to_index(params, 2, ref)
 
 
 @dataclass
@@ -298,21 +320,28 @@ class SyncTrigger(KInstr):
     """Trigger a sync event on the sync network.
 
     Matches Chisel SyncTriggerInstr layout:
-      opcode(6), syncIdent(8), value(8), reserved(42)
+      opcode, instr_ident, sync_ident, value, padding
     """
     opcode: int = KInstrOpcode.SYNC_TRIGGER
+    instr_ident: int = 0
     sync_ident: int = 0
     value: int = 0
 
-    FIELD_SPECS = [
-        ('opcode', OPCODE_WIDTH),
-        ('sync_ident', SYNC_IDENT_WIDTH),
-        ('value', SYNC_VALUE_WIDTH),
-        ('_padding', KINSTR_WIDTH - OPCODE_WIDTH - SYNC_IDENT_WIDTH - SYNC_VALUE_WIDTH),
-    ]
+    @staticmethod
+    def field_specs(params) -> list[tuple[str, int]]:
+        specs = [
+            ('opcode', OPCODE_WIDTH),
+            ('instr_ident', params.ident_width),
+            ('sync_ident', params.sync_ident_width),
+            ('value', SYNC_VALUE_WIDTH),
+            ('_padding', KINSTR_WIDTH - OPCODE_WIDTH - params.ident_width -
+             params.sync_ident_width - SYNC_VALUE_WIDTH),
+        ]
+        assert specs[-1][1] >= 0
+        return specs
 
-    def encode(self) -> int:
-        return pack_fields_to_int(self, self.FIELD_SPECS)
+    def encode(self, params) -> int:
+        return pack_fields_to_int(self, self.field_specs(params))
 
 
 @dataclass
@@ -323,20 +352,23 @@ class PackedLoadImm(KInstr):
     data: int
     j_in_k_index: int = 0
     opcode: int = KInstrOpcode.LOAD_IMM
+    instr_ident: int = 0
 
     @staticmethod
     def field_specs(params) -> list[tuple[str, int]]:
         section_width = params.log2_word_bytes - 2
         used_width = (
             OPCODE_WIDTH
+            + params.ident_width
             + params.log2_j_in_k
             + params.rf_addr_width
             + section_width
             + 4
             + 32
         )
-        return [
+        specs = [
             ('opcode', OPCODE_WIDTH),
+            ('instr_ident', params.ident_width),
             ('j_in_k_index', params.log2_j_in_k),
             ('rf_addr', params.rf_addr_width),
             ('section', section_width),
@@ -344,6 +376,8 @@ class PackedLoadImm(KInstr):
             ('data', 32),
             ('_padding', KINSTR_WIDTH - used_width),
         ]
+        assert specs[-1][1] >= 0
+        return specs
 
     def encode(self, params) -> int:
         return pack_fields_to_int(self, self.field_specs(params))
@@ -352,37 +386,42 @@ class PackedLoadImm(KInstr):
 @dataclass
 class PackedLoadStoreSimple(KInstr):
     rf_addr: int
-    end_index: int
+    end_index_param_idx: int
     opcode: int
     base_addr_param_idx: int = 0
     mask_reg: int = 0
     ew: int = 6
     start_index_param_idx: int = 0
     mask_enabled: bool = False
+    instr_ident: int = 0
 
     @staticmethod
     def field_specs(params) -> list[tuple[str, int]]:
         used_width = (
             OPCODE_WIDTH
+            + params.ident_width
             + params.rf_addr_width
-            + params.log2_n_params
+            + params.param_ref_idx_width
             + params.rf_addr_width
             + 4
-            + params.log2_n_params
-            + params.end_element_index_width
+            + params.param_ref_idx_width
+            + params.param_ref_idx_width
             + 1
         )
-        return [
+        specs = [
             ('opcode', OPCODE_WIDTH),
+            ('instr_ident', params.ident_width),
             ('rf_addr', params.rf_addr_width),
-            ('base_addr_param_idx', params.log2_n_params),
+            ('base_addr_param_idx', params.param_ref_idx_width),
             ('mask_reg', params.rf_addr_width),
             ('ew', 4),
-            ('start_index_param_idx', params.log2_n_params),
-            ('end_index', params.end_element_index_width),
+            ('start_index_param_idx', params.param_ref_idx_width),
+            ('end_index_param_idx', params.param_ref_idx_width),
             ('mask_enabled', 1),
             ('_padding', KINSTR_WIDTH - used_width),
         ]
+        assert specs[-1][1] >= 0
+        return specs
 
     def encode(self, params) -> int:
         return pack_fields_to_int(self, self.field_specs(params))
@@ -399,12 +438,74 @@ class PackedStoreSimple(PackedLoadStoreSimple):
 
 
 @dataclass
+class PackedIndexed(KInstr):
+    reg: int
+    index_reg: int
+    sync_ident: int
+    opcode: int
+    start_index_param_idx: int = 0
+    rf_ew: int = ElementWidthCode.EW64
+    rf_lane_order: int = LaneOrder.ROW_MAJOR
+    mask_reg: int = 0
+    mask_enabled: bool = False
+    base_addr_param_idx: int = 0
+    end_index_param_idx: int = 0
+    index_ew: int = ElementWidthCode.EW64
+    instr_ident: int = 0
+
+    @staticmethod
+    def field_specs(params) -> list[tuple[str, int]]:
+        used_width = (
+            OPCODE_WIDTH
+            + params.ident_width
+            + params.sync_ident_width
+            + params.param_ref_idx_width
+            + 2 * ElementWidthCode.width()
+            + LaneOrder.width()
+            + 3 * params.rf_addr_width
+            + 1
+            + 2 * params.param_ref_idx_width
+        )
+        specs = [
+            ('opcode', OPCODE_WIDTH),
+            ('instr_ident', params.ident_width),
+            ('sync_ident', params.sync_ident_width),
+            ('start_index_param_idx', params.param_ref_idx_width),
+            ('rf_ew', ElementWidthCode.width()),
+            ('rf_lane_order', LaneOrder.width()),
+            ('reg', params.rf_addr_width),
+            ('mask_reg', params.rf_addr_width),
+            ('mask_enabled', 1),
+            ('base_addr_param_idx', params.param_ref_idx_width),
+            ('end_index_param_idx', params.param_ref_idx_width),
+            ('index_ew', ElementWidthCode.width()),
+            ('index_reg', params.rf_addr_width),
+            ('_padding', KINSTR_WIDTH - used_width),
+        ]
+        assert specs[-1][1] >= 0
+        return specs
+
+    def encode(self, params) -> int:
+        return pack_fields_to_int(self, self.field_specs(params))
+
+
+@dataclass
+class PackedLoadIndexedUnordered(PackedIndexed):
+    opcode: int = KInstrOpcode.LOAD_IDX_UNORD
+
+
+@dataclass
+class PackedStoreIndexedUnordered(PackedIndexed):
+    opcode: int = KInstrOpcode.STORE_IDX_UNORD
+
+
+@dataclass
 class PackedBinaryOp(KInstr):
     opcode: int
     dst_reg: int
     src_a_reg: int
     src_b_reg: int
-    end_index: int
+    end_index_param_idx: int
     mask_reg: int = 0
     ew: int = 6
     start_index_param_idx: int = 0
@@ -412,32 +513,37 @@ class PackedBinaryOp(KInstr):
     is_signed_b: bool = False
     mask_enabled: bool = False
     use_upper: bool = False
+    instr_ident: int = 0
 
     @staticmethod
     def field_specs(params) -> list[tuple[str, int]]:
         used_width = (
             OPCODE_WIDTH
+            + params.ident_width
             + 4 * params.rf_addr_width
             + 4
-            + params.log2_n_params
-            + params.end_element_index_width
+            + params.param_ref_idx_width
+            + params.param_ref_idx_width
             + 4
         )
-        return [
+        specs = [
             ('opcode', OPCODE_WIDTH),
+            ('instr_ident', params.ident_width),
             ('dst_reg', params.rf_addr_width),
             ('src_a_reg', params.rf_addr_width),
             ('src_b_reg', params.rf_addr_width),
             ('mask_reg', params.rf_addr_width),
             ('ew', 4),
-            ('start_index_param_idx', params.log2_n_params),
-            ('end_index', params.end_element_index_width),
+            ('start_index_param_idx', params.param_ref_idx_width),
+            ('end_index_param_idx', params.param_ref_idx_width),
             ('is_signed_a', 1),
             ('is_signed_b', 1),
             ('mask_enabled', 1),
             ('use_upper', 1),
             ('_padding', KINSTR_WIDTH - used_width),
         ]
+        assert specs[-1][1] >= 0
+        return specs
 
     def encode(self, params) -> int:
         return pack_fields_to_int(self, self.field_specs(params))

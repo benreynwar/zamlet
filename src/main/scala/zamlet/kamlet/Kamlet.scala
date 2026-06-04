@@ -8,12 +8,17 @@ import zamlet.LaneOrderMapping
 import zamlet.jamlet.{ChannelsIO, Jamlet}
 import zamlet.network.{CombinedNetworkNode, NetworkWord}
 
+class KamletErrors extends Bundle {
+  val instrQueue = new InstrQueueErrors
+  val cacheEngine = new KceCacheEngineErrors
+}
+
 /**
  * Kamlet is a cluster of jamlets that share an instruction queue, cache tracking,
  * and register file coordination.
  *
- * For Test 0 (minimal): Only InstrQueue + InstrExecutor + Synchronizer.
- * Later phases add: CacheTable, WitemController, dispatch to jamlets, etc.
+ * Current skeleton: InstrQueue feeds a pass-through Renamer and first-pass
+ * ReservationStation, which handles the first-pass simple decode behavior.
  */
 class Kamlet(
   params: ZamletParams,
@@ -166,14 +171,6 @@ class Kamlet(
       }
       // Internal west connections handled by east connections of neighbor
 
-      // Tie off kamlet-facing ports for now.
-      j.io.jteCreate.valid := false.B
-      j.io.jteCreate.bits := DontCare
-      j.io.jteClear.valid := false.B
-      j.io.jteClear.bits := DontCare
-      j.io.jteInputReq.ready := false.B
-      j.io.jteInputResp.valid := false.B
-      j.io.jteInputResp.bits := DontCare
     }
   }
 
@@ -182,9 +179,11 @@ class Kamlet(
   // ============================================================
 
   val instrQueue = Module(new InstrQueue(params))
-  val instrExecutor = Module(new InstrExecutor(params))
-  val synchronizer = Module(new Synchronizer(neighbors, params.synchronizerParams))
+  val renamer = Module(new Renamer(params))
+  val reservationStation = Module(new ReservationStation(params))
+  val synchronizer = Module(new Synchronizer(neighbors, params))
   val cacheEngine = Module(new KamletCacheEngine(params))
+  val transferEngine = Module(new KamletTransferEngine(params))
   val kamletTlb = Module(new KamletTlb(params))
   val kamletNetworkIngress = Module(new KamletNetworkIngress(params))
   val kamletNetworkEgress = Module(new KamletNetworkEgress(params))
@@ -194,6 +193,26 @@ class Kamlet(
   cacheEngine.io.knetY := io.knetY
   cacheEngine.io.memletKnetX := io.memletKnetX
   cacheEngine.io.memletKnetY := io.memletKnetY
+
+  renamer.io.kinstrIn <> instrQueue.io.kinstrOut
+  reservationStation.io.renamedIn <> renamer.io.renamedOut
+
+  renamer.io.rsRelease <> reservationStation.io.rfRelease
+  renamer.io.kteRelease <> transferEngine.io.rfRelease
+
+  transferEngine.io.rsIssue <> reservationStation.io.kteIssue
+  transferEngine.io.conflictCacheLineAddr := reservationStation.io.kteConflictCacheLineAddr
+  reservationStation.io.kteConflict := transferEngine.io.conflict
+
+  cacheEngine.io.rsClaimSlotReq := reservationStation.io.kceClaimSlotReq
+  reservationStation.io.kceClaimSlotResp := cacheEngine.io.rsClaimSlotResp
+
+  transferEngine.io.kceClaimSlotReq <> cacheEngine.io.kteClaimSlotReq
+  cacheEngine.io.kteClaimSlotResp <> transferEngine.io.kceClaimSlotResp
+  cacheEngine.io.kteReleaseSlot := transferEngine.io.kceReleaseSlot
+  transferEngine.io.kceAllocSlotReq <> cacheEngine.io.kteAllocSlotReq
+  cacheEngine.io.kteAllocSlotResp <> transferEngine.io.kceAllocSlotResp
+  transferEngine.io.kceSlotIsAvailable := cacheEngine.io.kteSlotIsAvailable
 
   kamletNetworkNode.io.thisX := io.knetX
   kamletNetworkNode.io.thisY := io.knetY
@@ -217,7 +236,7 @@ class Kamlet(
   kamletNetworkNode.io.bWo <> io.kamletBChannels.wo
 
   // ============================================================
-  // Wiring: Kamlet network → InstrQueue → InstrExecutor → Synchronizer
+  // Wiring: Kamlet network → InstrQueue → Renamer → ReservationStation
   // ============================================================
 
   kamletNetworkIngress.io.packetIn <> kamletNetworkNode.io.aHo
@@ -231,21 +250,39 @@ class Kamlet(
   kamletTlb.io.packetIn.bits := DontCare
   kamletTlb.io.packetOut.ready := false.B
 
-  // InstrQueue → InstrExecutor
-  instrExecutor.io.kinstrIn <> instrQueue.io.kinstrOut
+  // KTE owns synchronizer use for explicit sync instructions and transfer
+  // completion barriers.
+  synchronizer.io.localEvent := transferEngine.io.syncLocalEvent
+  transferEngine.io.syncResult := synchronizer.io.result
 
-  // InstrExecutor → Synchronizer
-  synchronizer.io.localEvent := instrExecutor.io.syncLocalEvent
-
-  // InstrExecutor → Jamlets (immediate kinstrs)
+  // ReservationStation / KTE replay → Jamlets (immediate kinstrs)
   // Flatten jamlets to 1D index: jInKIndex = jY * jCols + jX
+  val kteLocalReplayReady = Wire(Vec(params.jInK, Bool()))
+  val kteLocalReplayCanBroadcast = kteLocalReplayReady.asUInt.andR
+  transferEngine.io.localReplay.ready := kteLocalReplayCanBroadcast
+
   for (jY <- 0 until params.jRows; jX <- 0 until params.jCols) {
     val jInKIndex = jY * params.jCols + jX
-    jamlets(jY)(jX).io.immediateKinstr := instrExecutor.io.immediateKinstr(jInKIndex)
+    val rsImmediate = reservationStation.io.immediateKinstr(jInKIndex)
+
+    kteLocalReplayReady(jInKIndex) := !rsImmediate.valid
+    jamlets(jY)(jX).io.immediateKinstr.valid :=
+      rsImmediate.valid || (transferEngine.io.localReplay.valid && kteLocalReplayCanBroadcast)
+    jamlets(jY)(jX).io.immediateKinstr.bits :=
+      Mux(rsImmediate.valid, rsImmediate.bits, transferEngine.io.localReplay.bits)
+
+    jamlets(jY)(jX).io.jteCreate := transferEngine.io.jteCreate(jInKIndex)
+    jamlets(jY)(jX).io.jteClear := transferEngine.io.jteClear(jInKIndex)
+    transferEngine.io.jteInputReq(jInKIndex) <> jamlets(jY)(jX).io.jteInputReq
+    jamlets(jY)(jX).io.jteInputResp <> transferEngine.io.jteInputResp(jInKIndex)
+    transferEngine.io.transferComplete(jInKIndex) := jamlets(jY)(jX).io.transferComplete
     kamletTlb.io.tlbReq(jInKIndex) <> jamlets(jY)(jX).io.tlbReq
     jamlets(jY)(jX).io.tlbResp <> kamletTlb.io.tlbResp(jInKIndex)
     cacheEngine.io.jteCacheLineReq(jInKIndex) <> jamlets(jY)(jX).io.cacheLineReq
     jamlets(jY)(jX).io.cacheLineResp <> cacheEngine.io.jteCacheLineResp(jInKIndex)
+    jamlets(jY)(jX).io.cacheLineReplay <> cacheEngine.io.jteReplay(jInKIndex)
+    cacheEngine.io.jteCacheLineRelease(jInKIndex).valid := jamlets(jY)(jX).io.cacheLineRelease.valid
+    cacheEngine.io.jteCacheLineRelease(jInKIndex).bits.slot := jamlets(jY)(jX).io.cacheLineRelease.bits
     jamlets(jY)(jX).io.sendCacheLine := cacheEngine.io.jceWritebackReq(jInKIndex)
     cacheEngine.io.jceFetchDone(jInKIndex) := jamlets(jY)(jX).io.cacheResponse
   }

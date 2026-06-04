@@ -64,7 +64,7 @@ class JteHandlerAB(params: ZamletParams) extends Bundle {
   val dstOffset = UInt(params.log2WordBytes.W)
   val srcOffset = UInt(params.log2WordBytes.W)
   val ident = params.ident()
-  val slot = UInt(log2Ceil(params.witemTableDepth).W)
+  val teIndex = UInt(log2Ceil(params.witemTableDepth).W)
   val data = params.word()
   val stripeAddr = UInt((params.memAddrWidth - params.log2JInL).W)
 }
@@ -77,9 +77,14 @@ class JteHandlerBC(params: ZamletParams) extends Bundle {
   val dstOffset = UInt(params.log2WordBytes.W)
   val srcOffset = UInt(params.log2WordBytes.W)
   val ident = params.ident()
-  val slot = UInt(log2Ceil(params.witemTableDepth).W)
+  val teIndex = UInt(log2Ceil(params.witemTableDepth).W)
   val data = params.word()
   val cacheLineOffset = UInt(params.log2PageWordsPerJamlet.W)
+}
+
+class JteHandlerReplay(params: ZamletParams) extends Bundle {
+  val payload = new JteHandlerBC(params)
+  val slot = params.cacheSlot()
 }
 
 class JteHandlerAState(params: ZamletParams) extends Bundle {
@@ -90,7 +95,7 @@ class JteHandlerAState(params: ZamletParams) extends Bundle {
   val dstOffset = UInt(params.log2WordBytes.W)
   val srcOffset = UInt(params.log2WordBytes.W)
   val ident = params.ident()
-  val slot = UInt(log2Ceil(params.witemTableDepth).W)
+  val teIndex = UInt(log2Ceil(params.witemTableDepth).W)
   val data = params.word()
   val stripeAddr = UInt((params.memAddrWidth - params.log2JInL).W)
   val remainingBodyWords = UInt(params.messageLengthWidth.W)
@@ -138,7 +143,7 @@ class JteHandlerA(params: ZamletParams) extends Module {
     stateNext.dstOffset := header.dstOffset
     stateNext.srcOffset := header.srcOffset
     stateNext.ident := header.ident
-    stateNext.slot := header.slot
+    stateNext.teIndex := header.slot
   } .elsewhen(stateNext.msgType === MessageType.StoreWordReq.asUInt && stateNext.isHeader) {
     stateNext.data := io.packet.bits.data
   } .otherwise {
@@ -153,7 +158,7 @@ class JteHandlerA(params: ZamletParams) extends Module {
   io.ab.bits.dstOffset := stateNext.dstOffset
   io.ab.bits.srcOffset := stateNext.srcOffset
   io.ab.bits.ident := stateNext.ident
-  io.ab.bits.slot := stateNext.slot
+  io.ab.bits.teIndex := stateNext.teIndex
   io.ab.bits.data := stateNext.data
   io.ab.bits.stripeAddr := stateNext.stripeAddr
   io.packet.ready := io.ab.ready || !stateNext.isHeader
@@ -176,7 +181,7 @@ class JteHandlerB(params: ZamletParams) extends Module {
   payload.dstOffset := io.ab.bits.dstOffset
   payload.srcOffset := io.ab.bits.srcOffset
   payload.ident := io.ab.bits.ident
-  payload.slot := io.ab.bits.slot
+  payload.teIndex := io.ab.bits.teIndex
   payload.data := io.ab.bits.data
   payload.cacheLineOffset := io.ab.bits.stripeAddr(params.log2PageWordsPerJamlet - 1, 0)
 
@@ -208,7 +213,7 @@ class JteHandlerDE(params: ZamletParams) extends Bundle {
   val dstOffset = UInt(params.log2WordBytes.W)
   val srcOffset = UInt(params.log2WordBytes.W)
   val ident = params.ident()
-  val slot = UInt(log2Ceil(params.witemTableDepth).W)
+  val teIndex = UInt(log2Ceil(params.witemTableDepth).W)
   val data = params.word()
   val drop = Bool()
   val sramAddr = UInt(params.sramAddrWidth.W)
@@ -218,27 +223,34 @@ class JteHandlerDIO(params: ZamletParams) extends Bundle {
   val cd = Flipped(Decoupled(new JteHandlerBC(params)))
   val de = Decoupled(new JteHandlerDE(params))
   val cacheLineResp = Flipped(Decoupled(new CacheLineResponse(params)))
+  val replay = Flipped(Decoupled(new JteHandlerReplay(params)))
 }
 
 class JteHandlerD(params: ZamletParams) extends Module {
   val io = IO(new JteHandlerDIO(params))
 
   val stateIsStored = io.cacheLineResp.bits.state === CacheLineState.StoredInPendingTable
+  val d0UseReplay = io.replay.valid
+  val d0ResponseCanProduce = io.cd.valid && io.cacheLineResp.valid && !stateIsStored
+  val d0Payload = Mux(d0UseReplay, io.replay.bits.payload, io.cd.bits)
+  val d0Slot = Mux(d0UseReplay, io.replay.bits.slot, io.cacheLineResp.bits.slot)
 
-  io.de.valid := io.cd.valid && io.cacheLineResp.valid && !stateIsStored
-  io.de.bits.srcX := io.cd.bits.srcX
-  io.de.bits.srcY := io.cd.bits.srcY
-  io.de.bits.msgType := io.cd.bits.msgType
-  io.de.bits.nBytes := io.cd.bits.nBytes
-  io.de.bits.dstOffset := io.cd.bits.dstOffset
-  io.de.bits.srcOffset := io.cd.bits.srcOffset
-  io.de.bits.ident := io.cd.bits.ident
-  io.de.bits.slot := io.cd.bits.slot
-  io.de.bits.data := io.cd.bits.data
-  io.de.bits.drop := (io.cacheLineResp.bits.state === CacheLineState.Dropped)
-  io.de.bits.sramAddr := Cat(io.cacheLineResp.bits.slot, io.cd.bits.cacheLineOffset)
-  io.cd.ready := io.de.ready && io.cacheLineResp.valid
-  io.cacheLineResp.ready := io.cd.valid && (io.de.ready || stateIsStored)
+  io.de.valid := d0UseReplay || d0ResponseCanProduce
+  io.de.bits.srcX := d0Payload.srcX
+  io.de.bits.srcY := d0Payload.srcY
+  io.de.bits.msgType := d0Payload.msgType
+  io.de.bits.nBytes := d0Payload.nBytes
+  io.de.bits.dstOffset := d0Payload.dstOffset
+  io.de.bits.srcOffset := d0Payload.srcOffset
+  io.de.bits.ident := d0Payload.ident
+  io.de.bits.teIndex := d0Payload.teIndex
+  io.de.bits.data := d0Payload.data
+  io.de.bits.drop := !d0UseReplay && (io.cacheLineResp.bits.state === CacheLineState.Dropped)
+  io.de.bits.sramAddr := Cat(d0Slot, d0Payload.cacheLineOffset)
+
+  io.replay.ready := io.de.ready
+  io.cd.ready := !d0UseReplay && io.cacheLineResp.valid && (io.de.ready || stateIsStored)
+  io.cacheLineResp.ready := !d0UseReplay && io.cd.valid && (io.de.ready || stateIsStored)
 }
 
 class JteHandlerEF(params: ZamletParams) extends Bundle {
@@ -249,7 +261,7 @@ class JteHandlerEF(params: ZamletParams) extends Bundle {
   val dstOffset = UInt(params.log2WordBytes.W)
   val srcOffset = UInt(params.log2WordBytes.W)
   val ident = params.ident()
-  val slot = UInt(log2Ceil(params.witemTableDepth).W)
+  val teIndex = UInt(log2Ceil(params.witemTableDepth).W)
   val drop = Bool()
 }
 
@@ -257,6 +269,7 @@ class JteHandlerEIO(params: ZamletParams) extends Bundle {
   val de = Flipped(Decoupled(new JteHandlerDE(params)))
   val ef = Decoupled(new JteHandlerEF(params))
   val sramReq = Decoupled(new SramRequest(params))
+  val cacheLineRelease = Valid(params.cacheSlot())
 }
 
 class JteHandlerE(params: ZamletParams) extends Module {
@@ -278,10 +291,13 @@ class JteHandlerE(params: ZamletParams) extends Module {
   io.ef.bits.dstOffset := io.de.bits.dstOffset
   io.ef.bits.srcOffset := io.de.bits.srcOffset
   io.ef.bits.ident := io.de.bits.ident
-  io.ef.bits.slot := io.de.bits.slot
+  io.ef.bits.teIndex := io.de.bits.teIndex
   io.ef.bits.drop := io.de.bits.drop
 
   io.de.ready := io.ef.ready && (!useSram || io.sramReq.ready)
+
+  io.cacheLineRelease.valid := io.de.fire && useSram
+  io.cacheLineRelease.bits := io.de.bits.sramAddr(params.sramAddrWidth - 1, params.log2PageWordsPerJamlet)
 }
 
 class JteHandlerFIO(params: ZamletParams) extends Bundle {
@@ -302,7 +318,7 @@ class JteHandlerGH(params: ZamletParams) extends Bundle {
   val dstOffset = UInt(params.log2WordBytes.W)
   val srcOffset = UInt(params.log2WordBytes.W)
   val ident = params.ident()
-  val slot = UInt(log2Ceil(params.witemTableDepth).W)
+  val teIndex = UInt(log2Ceil(params.witemTableDepth).W)
   val drop = Bool()
   val data = params.word()
 }
@@ -326,7 +342,7 @@ class JteHandlerG(params: ZamletParams) extends Module {
   io.gh.bits.dstOffset := io.fg.bits.dstOffset
   io.gh.bits.srcOffset := io.fg.bits.srcOffset
   io.gh.bits.ident := io.fg.bits.ident
-  io.gh.bits.slot := io.fg.bits.slot
+  io.gh.bits.teIndex := io.fg.bits.teIndex
   io.gh.bits.drop := io.fg.bits.drop
   io.gh.bits.data := io.sramResp.bits
 
@@ -365,7 +381,7 @@ class JteHandlerH(params: ZamletParams) extends Module {
   header.dstOffset := io.gh.bits.dstOffset
   header.srcOffset := io.gh.bits.srcOffset
   header.ident := io.gh.bits.ident
-  header.slot := io.gh.bits.slot
+  header.slot := io.gh.bits.teIndex
 
   io.packet.valid := io.gh.valid
   io.packet.bits.isHeader := msgIndex === 0.U
@@ -384,6 +400,8 @@ class JteHandlerIO(params: ZamletParams) extends Bundle {
   val y = Input(UInt(params.yPosWidth.W))
   val cacheLineReq = Decoupled(new CacheLineRequest(params))
   val cacheLineResp = Flipped(Decoupled(new CacheLineResponse(params)))
+  val cacheLineReplay = Flipped(Decoupled(new JteHandlerReplay(params)))
+  val cacheLineRelease = Valid(params.cacheSlot())
   val sramReq = Decoupled(new SramRequest(params))
   val sramResp = Flipped(Decoupled(params.word()))
 }
@@ -405,10 +423,12 @@ class JteHandler(params: ZamletParams) extends Module {
   val dStage = Module(new JteHandlerD(params))
   dStage.io.cd <> DoubleBuffer(cStage.io.cd, hp.cdFB, hp.cdBB)
   dStage.io.cacheLineResp <> DoubleBuffer(io.cacheLineResp, hp.cacheLineRespFB, hp.cacheLineRespBB)
+  dStage.io.replay <> io.cacheLineReplay
 
   val eStage = Module(new JteHandlerE(params))
   eStage.io.de <> DoubleBuffer(dStage.io.de, hp.deFB, hp.deBB)
   io.sramReq <> DoubleBuffer(eStage.io.sramReq, hp.sramReqFB, hp.sramReqBB)
+  io.cacheLineRelease := eStage.io.cacheLineRelease
 
   val fStage = Module(new JteHandlerF(params))
   fStage.io.ef <> DoubleBuffer(eStage.io.ef, hp.efFB, hp.efBB)

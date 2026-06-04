@@ -35,7 +35,7 @@ object JteInitiatorState extends ChiselEnum {
 // offset the baseAddr and dataReg to put the word in the right place.
 
 class JteInitiatorInput(params: ZamletParams) extends Bundle {
-  val slot = UInt(log2Ceil(params.witemTableDepth).W)
+  val teIndex = UInt(log2Ceil(params.witemTableDepth).W)
   val instrIdent = params.ident()
   val mode = TransferMode()
   val baseAddr = params.memAddr()
@@ -57,7 +57,7 @@ class JteInitiatorInput(params: ZamletParams) extends Bundle {
 }
 
 class JteInitiatorCommit(params: ZamletParams) extends Bundle {
-  val slot = UInt(log2Ceil(params.witemTableDepth).W)
+  val teIndex = UInt(log2Ceil(params.witemTableDepth).W)
   val initiator = Vec(params.wordBytes, JteInitiatorState())
   val walkState = JteWalkState()
 }
@@ -67,7 +67,7 @@ class JteInitiatorAB(params: ZamletParams) extends Bundle {
   val indexUse = Bool()
   val dataUse = Bool()
   val maskUse = Bool()
-  val slot = UInt(log2Ceil(params.witemTableDepth).W)
+  val teIndex = UInt(log2Ceil(params.witemTableDepth).W)
   val startInner = UInt(3.W)
   val finalInner = UInt(3.W)
   val startOuter = UInt(3.W)
@@ -176,7 +176,7 @@ class JteInitiatorA(params: ZamletParams) extends Module {
   io.ab.bits.passOffset := passOffset
   io.ab.bits.noLocalElements := noLocalElements
 
-  io.ab.bits.slot := io.input.bits.slot
+  io.ab.bits.teIndex := io.input.bits.teIndex
 }
 
 class JteInitiatorBC(params: ZamletParams) extends Bundle {
@@ -191,7 +191,7 @@ class JteInitiatorBC(params: ZamletParams) extends Bundle {
   val active = Bool()
   val count = UInt(6.W)
   val srcOffset = UInt((params.log2WordWidth - 3).W)
-  val slot = UInt(log2Ceil(params.witemTableDepth).W)
+  val teIndex = UInt(log2Ceil(params.witemTableDepth).W)
   val last = Bool()
 }
 
@@ -270,7 +270,7 @@ class JteInitiatorB(params: ZamletParams) extends Module {
   io.bc.bits.count := count
   io.bc.bits.srcOffset := srcOffset
 
-  io.bc.bits.slot := io.ab.bits.slot
+  io.bc.bits.teIndex := io.ab.bits.teIndex
   io.bc.bits.last := last
 }
 
@@ -294,7 +294,7 @@ class JteInitiatorDE(params: ZamletParams) extends Bundle {
   val srcData = params.word()
   val srcOffset = UInt((params.log2WordWidth-3).W)
   val isStore = Bool()
-  val slot = UInt(log2Ceil(params.witemTableDepth).W)
+  val teIndex = UInt(log2Ceil(params.witemTableDepth).W)
   val instrIdent = params.ident()
   val last = Bool()
   val active = Bool()
@@ -380,7 +380,7 @@ class JteInitiatorD(params: ZamletParams) extends Module {
   io.de.bits.srcData := dataWord
   io.de.bits.srcOffset := io.cd.bits.srcOffset
   io.de.bits.isStore := io.cd.bits.dataUse
-  io.de.bits.slot := io.cd.bits.slot
+  io.de.bits.teIndex := io.cd.bits.teIndex
   io.de.bits.instrIdent := io.cd.bits.input.instrIdent
   io.de.bits.last := io.cd.bits.last
   io.de.bits.active := emitElement
@@ -393,7 +393,7 @@ class JteInitiatorEF(params: ZamletParams) extends Bundle {
   val srcData = params.word()
   val srcOffset = UInt((params.log2WordWidth-3).W)
   val isStore = Bool()
-  val slot = UInt(log2Ceil(params.witemTableDepth).W)
+  val teIndex = UInt(log2Ceil(params.witemTableDepth).W)
   val instrIdent = params.ident()
   val last = Bool()
   val active = Bool()
@@ -417,7 +417,7 @@ class JteInitiatorE(params: ZamletParams) extends Module {
   io.ef.bits.srcData := io.de.bits.srcData
   io.ef.bits.srcOffset := io.de.bits.srcOffset
   io.ef.bits.isStore := io.de.bits.isStore
-  io.ef.bits.slot := io.de.bits.slot
+  io.ef.bits.teIndex := io.de.bits.teIndex
   io.ef.bits.instrIdent := io.de.bits.instrIdent
   io.ef.bits.last := io.de.bits.last
   io.ef.bits.active := io.de.bits.active
@@ -431,7 +431,7 @@ class JteInitiatorFG(params: ZamletParams) extends Bundle {
   val srcData = params.word()
   val srcOffset = UInt((params.log2WordWidth-3).W)
   val isStore = Bool()
-  val slot = UInt(log2Ceil(params.witemTableDepth).W)
+  val teIndex = UInt(log2Ceil(params.witemTableDepth).W)
   val instrIdent = params.ident()
   val last = Bool()
   val active = Bool()
@@ -512,7 +512,7 @@ class JteInitiatorF(params: ZamletParams) extends Module {
   )
   io.fg.bits.srcData := io.ef.bits.srcData
   io.fg.bits.isStore := io.ef.bits.isStore
-  io.fg.bits.slot := io.ef.bits.slot
+  io.fg.bits.teIndex := io.ef.bits.teIndex
   io.fg.bits.instrIdent := io.ef.bits.instrIdent
   io.fg.bits.last := io.ef.bits.last && (!io.ef.bits.active || !spansStripe || !first)
   io.fg.bits.active := io.ef.bits.active
@@ -538,7 +538,7 @@ class JteInitiatorHI(params: ZamletParams) extends Bundle {
   val dstData = params.word()
   val dstStripeAddr = UInt((params.memAddrWidth - params.log2StripeBytes).W)
   val isStore = Bool()
-  val slot = UInt(log2Ceil(params.witemTableDepth).W)
+  val teIndex = UInt(log2Ceil(params.witemTableDepth).W)
   val instrIdent = params.ident()
   val last = Bool()
 }
@@ -635,12 +635,12 @@ class JteInitiatorH(params: ZamletParams) extends Module {
   io.hi.bits.srcOffset := srcOffset
   io.hi.bits.isStore := io.gh.bits.isStore
   io.hi.bits.dstStripeAddr := stripeAddress
-  io.hi.bits.slot := io.gh.bits.slot
+  io.hi.bits.teIndex := io.gh.bits.teIndex
   io.hi.bits.instrIdent := io.gh.bits.instrIdent
   io.hi.bits.last := last
 
   // We want to build up the commit here.
-  // When we start a new slot create a fresh one.  Set everything to complete.
+  // When we start a new transfer-engine entry create a fresh one. Set everything to complete.
   // Then set the ones that we emit packets for to WAITING FOR RESPONSE
   // On the final one send out the commit.
 
@@ -681,7 +681,7 @@ class JteInitiatorH(params: ZamletParams) extends Module {
 
   io.commit.valid := commitFire && last
   io.commit.bits.initiator := initiator
-  io.commit.bits.slot := io.gh.bits.slot
+  io.commit.bits.teIndex := io.gh.bits.teIndex
   io.commit.bits.walkState := walkState
 }
 
@@ -716,7 +716,7 @@ class JteInitiatorI(params: ZamletParams) extends Module {
   header.dstOffset := io.hi.bits.dstOffset
   header.srcOffset := io.hi.bits.srcOffset
   header.ident := io.hi.bits.instrIdent
-  header.slot := io.hi.bits.slot
+  header.slot := io.hi.bits.teIndex
 
   io.packet.valid := io.hi.valid
   io.packet.bits.isHeader := false.B
