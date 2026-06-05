@@ -1549,11 +1549,12 @@ class VfirstM:
         s.vrf_ordering[result_vreg] = accum_ordering
 
         reduce_ident = await s.get_instr_ident()
+        reduce_sync_ident = await ident_query.wait_for_sync_ident(s)
         reduce_kinstr = ReduceSync(
             dst=result_vreg, src=src_mask,
             op=SyncAggOp.MINU, width=32,
             n_elements=s.vl,
-            sync_ident=reduce_ident,
+            sync_ident=reduce_sync_ident,
             word_order=word_order,
             instr_ident=reduce_ident,
             src_is_mask=True,
@@ -1561,9 +1562,9 @@ class VfirstM:
         await s.add_to_instruction_buffer(reduce_kinstr, span_id)
         kinstr_span_id = s.monitor.get_kinstr_span_id(reduce_ident)
         s.monitor.create_sync_local_span(
-            reduce_ident, 0, -1, kinstr_span_id)
+            reduce_sync_ident, 0, -1, kinstr_span_id)
         s.synchronizer.local_event(
-            reduce_ident, value=None,
+            reduce_sync_ident, value=None,
             op=SyncAggOp.MINU, width=32)
 
         value_future = await s.read_register_element(
@@ -1646,11 +1647,12 @@ class VmsFirstMask:
             s.vrf_ordering[result_vreg] = accum_ordering
 
             reduce_ident = await s.get_instr_ident()
+            reduce_sync_ident = await ident_query.wait_for_sync_ident(s)
             reduce_kinstr = ReduceSync(
                 dst=result_vreg, src=src_mask,
                 op=SyncAggOp.MINU, width=32,
                 n_elements=s.vl,
-                sync_ident=reduce_ident,
+                sync_ident=reduce_sync_ident,
                 word_order=word_order,
                 instr_ident=reduce_ident,
                 src_is_mask=True,
@@ -1658,9 +1660,9 @@ class VmsFirstMask:
             await s.add_to_instruction_buffer(reduce_kinstr, span_id)
             kinstr_span_id = s.monitor.get_kinstr_span_id(reduce_ident)
             s.monitor.create_sync_local_span(
-                reduce_ident, 0, -1, kinstr_span_id)
+                reduce_sync_ident, 0, -1, kinstr_span_id)
             s.synchronizer.local_event(
-                reduce_ident, value=None,
+                reduce_sync_ident, value=None,
                 op=SyncAggOp.MINU, width=32)
 
             set_ident = await s.get_instr_ident()

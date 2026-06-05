@@ -66,7 +66,9 @@ class WaitingStoreScatterBase(WaitingItem, ABC):
         self.mask_preg = mask_preg
         n_tags = params.j_in_k * params.word_bytes
         self.transaction_states: List[SendState] = [SendState.INITIAL for _ in range(n_tags)]
-        self.fault_sync_state = SyncState.NOT_STARTED
+        self.fault_sync_state = (
+            SyncState.COMPLETE if instr.skip_fault_sync
+            else SyncState.NOT_STARTED)
         self.completion_sync_state = SyncState.NOT_STARTED
         # None is a header-only no-fault sync packet. Faulting regions carry
         # packed VectorFaultInfo so the winning fault keeps precise mtval/cause.
@@ -147,9 +149,8 @@ class WaitingStoreScatterBase(WaitingItem, ABC):
                     self.transaction_states[state_idx] = SendState.COMPLETE
 
     async def monitor_kamlet(self, kamlet) -> None:
-        # Use instr_ident for fault sync, instr_ident + 1 for completion sync
-        fault_sync_ident = self.instr_ident
-        completion_sync_ident = (self.instr_ident + 1) % self.params.max_response_tags
+        fault_sync_ident = self.item.fault_sync_ident
+        completion_sync_ident = self.item.completion_sync_ident
         kinstr_span_id = kamlet.monitor.get_kinstr_span_id(self.instr_ident)
 
         # Fault sync - after all INITIAL checks done

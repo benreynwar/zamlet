@@ -124,6 +124,8 @@ class IdentTracker(params: ZamletParams) extends Module {
     identQueryInstr.instrIdent := identQueryIdent
     identQueryInstr.baseline := iqBaseline
     identQueryInstr.syncIdent := identQueryIdent
+    identQueryInstr.mustDrainValid := false.B
+    identQueryInstr.mustDrainSyncIdent := 0.U
     identQueryInstr.reserved := 0.U
     outInternal.bits.kinstr := identQueryInstr.asUInt
     outInternal.bits.kIndex := 0.U
@@ -182,6 +184,8 @@ class IdentTracker(params: ZamletParams) extends Module {
   io.syncLocalEvent.bits.syncIdent := identQueryIdent
   io.syncLocalEvent.bits.value := iqLamletDist
   io.syncLocalEvent.bits.includeActiveMask := false.B
+  io.syncLocalEvent.bits.mustDrainValid := false.B
+  io.syncLocalEvent.bits.mustDrainSyncIdent := 0.U
 
   // Handle IdentQuery response from sync network
   when (io.syncResult.valid && io.syncResult.bits.syncIdent === identQueryIdent) {

@@ -42,7 +42,10 @@ class StoreIndexedUnordered(KInstr):
     mask_reg: int | None
     writeset_ident: int
     instr_ident: int
+    fault_sync_ident: int
+    completion_sync_ident: int
     index_offset: int = 0
+    skip_fault_sync: bool = False
 
     async def admit(self, kamlet) -> 'StoreIndexedUnordered | None':
         src_ew = self.src_ordering.ew

@@ -39,6 +39,7 @@ async def vrgather(lamlet: 'Oamlet', vd: int, vs2: int, vs1: int,
     for chunk_offset in range(0, n_active, j_in_l):
         chunk_n = min(j_in_l, n_active - chunk_offset)
         instr_ident = await ident_query.get_instr_ident(lamlet)
+        completion_sync_ident = await ident_query.wait_for_sync_ident(lamlet)
 
         kinstr = RegGather(
             vd=vd,
@@ -52,12 +53,12 @@ async def vrgather(lamlet: 'Oamlet', vd: int, vs2: int, vs1: int,
             vlmax=vlmax,
             mask_reg=mask_reg,
             instr_ident=instr_ident,
+            completion_sync_ident=completion_sync_ident,
         )
         await lamlet.add_to_instruction_buffer(kinstr, parent_span_id)
         kinstr_span_id = lamlet.monitor.get_kinstr_span_id(instr_ident)
 
         # Create sync span at lamlet level (before KINSTR children are finalized)
-        completion_sync_ident = instr_ident
         lamlet.monitor.create_sync_local_span(completion_sync_ident, 0, -1, kinstr_span_id)
         lamlet.synchronizer.local_event(completion_sync_ident)
 
@@ -96,6 +97,7 @@ async def vslide(lamlet: 'Oamlet', vd: int, vs2: int,
     for chunk_offset in range(0, n_active, j_in_l):
         chunk_n = min(j_in_l, n_active - chunk_offset)
         instr_ident = await ident_query.get_instr_ident(lamlet)
+        completion_sync_ident = await ident_query.wait_for_sync_ident(lamlet)
 
         kinstr = RegSlide(
             vd=vd,
@@ -109,11 +111,11 @@ async def vslide(lamlet: 'Oamlet', vd: int, vs2: int,
             vlmax=vlmax,
             mask_reg=mask_reg,
             instr_ident=instr_ident,
+            completion_sync_ident=completion_sync_ident,
         )
         await lamlet.add_to_instruction_buffer(kinstr, parent_span_id)
         kinstr_span_id = lamlet.monitor.get_kinstr_span_id(instr_ident)
 
-        completion_sync_ident = instr_ident
         lamlet.monitor.create_sync_local_span(completion_sync_ident, 0, -1, kinstr_span_id)
         lamlet.synchronizer.local_event(completion_sync_ident)
 

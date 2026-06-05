@@ -25,7 +25,15 @@ if total_shards > 0:
     if status_file:
         open(status_file, 'a').close()
 
-exit_code = pytest.main(sys.argv[1:], plugins=plugins)
+pytest_args = list(sys.argv[1:])
+log_level = os.environ.get("LOG_LEVEL")
+if log_level:
+    pytest_args.extend([
+        "-o", "log_cli=true",
+        "--log-cli-level", log_level.upper(),
+    ])
+
+exit_code = pytest.main(pytest_args, plugins=plugins)
 if (
     total_shards > 0
     and shard_index > 0

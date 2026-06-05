@@ -201,6 +201,8 @@ class KamletTransferEngine(params: ZamletParams) extends Module {
   io.syncLocalEvent.bits.syncIdent := 0.U
   io.syncLocalEvent.bits.value := 0.U
   io.syncLocalEvent.bits.includeActiveMask := false.B
+  io.syncLocalEvent.bits.mustDrainValid := false.B
+  io.syncLocalEvent.bits.mustDrainSyncIdent := 0.U
 
   // ============================================================
   // Issue admission
@@ -411,6 +413,17 @@ class KamletTransferEngine(params: ZamletParams) extends Module {
     base.opcode === KInstrOpcode.IdentQuery
   }
 
+  def entrySyncMustDrainValid(entry: KteEntry): Bool = {
+    val base = entry.kinstr.kinstr.asTypeOf(new KInstrBase(params))
+    val identQuery = entry.kinstr.kinstr.asTypeOf(new IdentQueryInstr(params))
+    base.opcode === KInstrOpcode.IdentQuery && identQuery.mustDrainValid
+  }
+
+  def entrySyncMustDrainIdent(entry: KteEntry): UInt = {
+    val identQuery = entry.kinstr.kinstr.asTypeOf(new IdentQueryInstr(params))
+    identQuery.mustDrainSyncIdent
+  }
+
   def entrySyncValue(entry: KteEntry): UInt = {
     val base = entry.kinstr.kinstr.asTypeOf(new KInstrBase(params))
     val syncTrigger = entry.kinstr.kinstr.asTypeOf(new SyncTriggerInstr(params))
@@ -429,6 +442,8 @@ class KamletTransferEngine(params: ZamletParams) extends Module {
   io.syncLocalEvent.bits.syncIdent := entrySyncIdent(kteEntries(sync0TeIndex))
   io.syncLocalEvent.bits.value := entrySyncValue(kteEntries(sync0TeIndex))
   io.syncLocalEvent.bits.includeActiveMask := entrySyncIncludesActiveMask(kteEntries(sync0TeIndex))
+  io.syncLocalEvent.bits.mustDrainValid := entrySyncMustDrainValid(kteEntries(sync0TeIndex))
+  io.syncLocalEvent.bits.mustDrainSyncIdent := entrySyncMustDrainIdent(kteEntries(sync0TeIndex))
 
   when (sync0Valid) {
     kteEntriesNext(sync0TeIndex).state := KteState.WaitingForSync

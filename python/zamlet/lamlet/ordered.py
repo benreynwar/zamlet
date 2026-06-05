@@ -41,12 +41,13 @@ class OrderedIndexedLoad(kinstructions.KInstr):
     Creates a waiting item that serves as the "parent" for READ_MEM_WORD ordering checks.
     """
     instr_ident: int
+    sync_ident: int
 
     async def admit(self, kamlet: 'Kamlet') -> 'OrderedIndexedLoad | None':
         return self.rename(reads_all_memory=True, needs_witem=1)
 
     async def execute(self, kamlet: 'Kamlet') -> None:
-        witem = WaitingOrderedIndexedLoad(self.instr_ident)
+        witem = WaitingOrderedIndexedLoad(self.instr_ident, self.sync_ident)
         kamlet.monitor.record_witem_created(
             self.instr_ident, kamlet.min_x, kamlet.min_y, 'WaitingOrderedIndexedLoad')
         kamlet.cache_table.add_witem_immediately(witem=witem)
@@ -60,15 +61,16 @@ class WaitingOrderedIndexedLoad(WaitingItem):
     """
     reads_all_memory = True
 
-    def __init__(self, instr_ident: int):
+    def __init__(self, instr_ident: int, sync_ident: int):
         super().__init__(item=None, instr_ident=instr_ident)
+        self.sync_ident = sync_ident
         self.sync_state = SyncState.NOT_STARTED
 
     def ready(self) -> bool:
         return self.sync_state == SyncState.COMPLETE
 
     async def monitor_kamlet(self, kamlet: 'Kamlet') -> None:
-        sync_ident = self.instr_ident
+        sync_ident = self.sync_ident
         kinstr_span_id = kamlet.monitor.get_kinstr_span_id(self.instr_ident)
 
         if self.sync_state == SyncState.NOT_STARTED:
@@ -526,13 +528,17 @@ async def vload_indexed_ordered(lamlet: 'Oamlet', vd: int, base_addr: int, index
     # Send barrier instruction to all kamlets - serves as "parent" for READ_MEM_WORD ordering
     # Use dedicated barrier ident (outside normal pool) to avoid deadlock
     barrier_ident = lamlet._ordered_barrier_idents[buffer_id]
-    barrier_instr = OrderedIndexedLoad(instr_ident=barrier_ident)
+    barrier_sync_ident = await ident_query.wait_for_sync_ident(lamlet)
+    barrier_instr = OrderedIndexedLoad(
+        instr_ident=barrier_ident,
+        sync_ident=barrier_sync_ident)
     await lamlet.add_to_instruction_buffer(barrier_instr, parent_span_id=parent_span_id,
                                            k_index=None)  # None = broadcast to all
 
     # Create sync span now (before children finalized), local_event called later
     barrier_kinstr_span_id = lamlet.monitor.get_kinstr_span_id(barrier_ident)
-    lamlet.monitor.create_sync_local_span(barrier_ident, 0, -1, barrier_kinstr_span_id)
+    lamlet.monitor.create_sync_local_span(
+        barrier_sync_ident, 0, -1, barrier_kinstr_span_id)
 
     # Dispatch all active elements
     for element_index in range(start_index, n_elements):
@@ -586,10 +592,10 @@ async def vload_indexed_ordered(lamlet: 'Oamlet', vd: int, base_addr: int, index
         await lamlet.clock.next_cycle
 
     # Signal barrier completion via sync network
-    lamlet.synchronizer.local_event(barrier_ident)
+    lamlet.synchronizer.local_event(barrier_sync_ident)
 
     # Wait for barrier sync to complete (all kamlets done with barrier)
-    while not lamlet.synchronizer.is_complete(barrier_ident):
+    while not lamlet.synchronizer.is_complete(barrier_sync_ident):
         await lamlet.clock.next_cycle
 
     # Clean up ordered buffer

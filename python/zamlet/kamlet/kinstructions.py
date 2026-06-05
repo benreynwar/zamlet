@@ -764,7 +764,8 @@ class StoreScalar(KInstr):
 
         kamlet.monitor.finalize_kinstr_exec(
             self.instr_ident, kamlet.min_x, kamlet.min_y)
-        kamlet.monitor.release_kinstr_ident(self.instr_ident)
+        kamlet.monitor.release_kinstr_ident(
+            self.instr_ident, kamlet.min_x, kamlet.min_y)
 
 
 def _vcmp_evaluate(op: VCmpOp, a, b):

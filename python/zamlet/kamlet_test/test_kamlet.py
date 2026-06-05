@@ -262,7 +262,10 @@ async def send_ident_query_to_kamlet(dut: HierarchyObject, params: ZamletParams,
         message_type=MessageType.INSTRUCTIONS,
         send_type=SendType.SINGLE
     )
-    kinstr = IdentQuery(instr_ident=sync_ident, baseline=baseline)
+    kinstr = IdentQuery(
+        instr_ident=params.max_response_tags + sync_ident,
+        sync_ident=sync_ident,
+        baseline=baseline)
 
     logger.info(
         f"Sending IdentQuery to kamlet {kx}: "

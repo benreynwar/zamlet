@@ -193,14 +193,18 @@ class SyncTriggerInstr(params: ZamletParams) extends AbstractKInstr(params) {
  *   opcode:     opcodeWidth bits - KInstrOpcode.IdentQuery
  *   instrIdent: identWidth bits - instruction tracking identifier
  *   syncIdent:  syncIdentWidth bits - sync network identifier
+ *   mustDrainValid: 1 bit - delay local sync participation until mustDrainSyncIdent is drained
+ *   mustDrainSyncIdent: syncIdentWidth bits - sync id that must be locally inactive
  *   baseline:   identWidth bits - instruction ident to measure distance from
  *   reserved:   remaining bits
  */
 class IdentQueryInstr(params: ZamletParams) extends AbstractKInstr(params) {
   val syncIdent = params.syncIdent()
+  val mustDrainValid = Bool()
+  val mustDrainSyncIdent = params.syncIdent()
   val baseline = params.ident()
   val reserved = UInt((KInstr.width - baseWidth -
-                       params.identWidth - params.syncIdentWidth).W)
+                       params.identWidth - (2 * params.syncIdentWidth) - 1).W)
 }
 
 /**

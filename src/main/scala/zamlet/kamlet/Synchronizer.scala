@@ -69,6 +69,8 @@ class SyncEvent(params: ZamletParams) extends Bundle {
   val syncIdent = params.syncIdent()
   val value = params.syncValue()
   val includeActiveMask = Bool()
+  val mustDrainValid = Bool()
+  val mustDrainSyncIdent = params.syncIdent()
 }
 
 class SyncEntry(params: ZamletParams) extends Bundle {
@@ -77,6 +79,8 @@ class SyncEntry(params: ZamletParams) extends Bundle {
   val includeActiveMask = Bool()
   val localSeen = Bool()
   val localValue = params.syncValue()
+  val pendingLocal = Bool()
+  val pendingMustDrainSyncIdent = params.syncIdent()
 
   val quadrantSynced = Vec(4, Bool())  // NE, NW, SE, SW (indices 0-3)
   val columnSynced = Vec(2, Bool())    // N, S (indices 0-1)
@@ -155,6 +159,8 @@ class Synchronizer(
     e.includeActiveMask := false.B
     e.localSeen := false.B
     e.localValue := 0.U
+    e.pendingLocal := false.B
+    e.pendingMustDrainSyncIdent := 0.U
     e.quadrantSynced := VecInit(Seq(
       (!neighbors.hasNE).B, (!neighbors.hasNW).B, (!neighbors.hasSE).B, (!neighbors.hasSW).B
     ))
@@ -245,12 +251,19 @@ class Synchronizer(
       stages(dir + 1) := next
     }
 
-    // Process local event (last stage, so it has priority)
+    // Process local event and delayed local trigger (last stage, so local
+    // events have priority over received packets for the target entry).
     val afterDirs = stages(SyncDirection.count)
     val afterLocal = Wire(new SyncEntry(params))
 
     val thisLocalActive = Wire(Bool())
     thisLocalActive := localActive && localIdx === entryIdxU
+    val localDrainBlocked = io.localEvent.bits.mustDrainValid &&
+      entries(io.localEvent.bits.mustDrainSyncIdent).valid
+    val pendingDrainBlocked = afterDirs.pendingLocal &&
+      entries(afterDirs.pendingMustDrainSyncIdent).valid
+    val activeMaskAtTrigger = VecInit(entries.map(_.valid)).asUInt |
+      Mux(thisLocalActive, UIntToOH(localIdx, maxConcurrentSyncs), 0.U(maxConcurrentSyncs.W))
 
     when (thisLocalActive) {
       when (!afterDirs.valid) {
@@ -258,15 +271,24 @@ class Synchronizer(
       }.otherwise {
         afterLocal := afterDirs
       }
-      afterLocal.localSeen := true.B
       afterLocal.includeActiveMask := io.localEvent.bits.includeActiveMask
-      val localActiveMask = VecInit(entries.map(_.valid)).asUInt | UIntToOH(localIdx, maxConcurrentSyncs)
-      when (io.localEvent.bits.includeActiveMask) {
+      afterLocal.localValue := io.localEvent.bits.value
+      afterLocal.pendingLocal := localDrainBlocked
+      afterLocal.pendingMustDrainSyncIdent := io.localEvent.bits.mustDrainSyncIdent
+      afterLocal.localSeen := !localDrainBlocked
+      when (!localDrainBlocked && io.localEvent.bits.includeActiveMask) {
         afterLocal.localValue := Cat(
           io.localEvent.bits.value(params.syncValueWidth - 1, maxConcurrentSyncs),
-          localActiveMask)
-      } .otherwise {
-        afterLocal.localValue := io.localEvent.bits.value
+          activeMaskAtTrigger)
+      }
+    }.elsewhen (afterDirs.pendingLocal && !pendingDrainBlocked) {
+      afterLocal := afterDirs
+      afterLocal.localSeen := true.B
+      afterLocal.pendingLocal := false.B
+      when (afterDirs.includeActiveMask) {
+        afterLocal.localValue := Cat(
+          afterDirs.localValue(params.syncValueWidth - 1, maxConcurrentSyncs),
+          activeMaskAtTrigger)
       }
     }.otherwise {
       afterLocal := afterDirs
@@ -444,6 +466,8 @@ class Synchronizer(
   resultInternal.valid := preMinBuffered.valid
   resultInternal.bits.syncIdent := preMinBuffered.bits.syncIdent
   resultInternal.bits.includeActiveMask := preMinBuffered.bits.includeActiveMask
+  resultInternal.bits.mustDrainValid := false.B
+  resultInternal.bits.mustDrainSyncIdent := 0.U
   val preMinEntry = Wire(new SyncEntry(params))
   preMinEntry := 0.U.asTypeOf(new SyncEntry(params))
   preMinEntry.includeActiveMask := preMinBuffered.bits.includeActiveMask

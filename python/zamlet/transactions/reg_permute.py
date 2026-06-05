@@ -54,6 +54,7 @@ class RegPermute(KInstr):
     vlmax: int
     mask_reg: int | None
     instr_ident: int
+    completion_sync_ident: int
 
     def _compute_extra_src_pregs(self, kamlet, dst_elements_in_vline) -> dict[int, int]:
         """Hook: extra per-vline pregs to lock beyond vs2 (e.g. vs1 for gather).
@@ -339,7 +340,7 @@ class WaitingRegPermute(WaitingItem):
     async def monitor_kamlet(self, kamlet: 'Kamlet') -> None:
         # Completion sync: wait for every kamlet to finish its local
         # transactions before allowing the witem to be removed.
-        completion_sync_ident = self.instr_ident
+        completion_sync_ident = self.item.completion_sync_ident
         kinstr_span_id = kamlet.monitor.get_kinstr_span_id(self.instr_ident)
 
         if self.completion_sync_state == SyncState.NOT_STARTED:
