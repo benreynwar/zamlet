@@ -85,6 +85,30 @@ class NetworkNodeParams:
 
 
 @dataclass
+class PacketMergeParams:
+    inputFB: bool = True
+    inputBB: bool = True
+    outputFB: bool = True
+    outputBB: bool = True
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'PacketMergeParams':
+        return _from_dict(cls, data, _identity_mapping(cls))
+
+
+@dataclass
+class MessageTypePacketRouterParams:
+    inputFB: bool = True
+    inputBB: bool = True
+    outputFB: bool = True
+    outputBB: bool = True
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'MessageTypePacketRouterParams':
+        return _from_dict(cls, data, _identity_mapping(cls))
+
+
+@dataclass
 class IssueUnitParams:
     exForwardBuffer: bool = False
     exBackwardBuffer: bool = False
@@ -523,6 +547,13 @@ class ZamletParams:
     ident_tracker_out_forward_buffer: bool = True
     ident_tracker_out_backward_buffer: bool = True
     network_node_params: NetworkNodeParams = field(default_factory=NetworkNodeParams)
+    kamlet_packet_merge_params: PacketMergeParams = field(default_factory=PacketMergeParams)
+    kamlet_a_ingress_packet_router_params: MessageTypePacketRouterParams = field(
+        default_factory=MessageTypePacketRouterParams
+    )
+    kamlet_b_ingress_packet_router_params: MessageTypePacketRouterParams = field(
+        default_factory=MessageTypePacketRouterParams
+    )
     issue_unit_params: IssueUnitParams = field(default_factory=IssueUnitParams)
     synchronizer_params: SynchronizerParams = field(default_factory=SynchronizerParams)
     rf_slice_params: RfSliceParams = field(default_factory=RfSliceParams)
@@ -814,6 +845,9 @@ class ZamletParams:
         'nAChannels': 'n_a_channels',
         'nBChannels': 'n_b_channels',
         'networkNodeParams': 'network_node_params',
+        'kamletPacketMergeParams': 'kamlet_packet_merge_params',
+        'kamletAIngressPacketRouterParams': 'kamlet_a_ingress_packet_router_params',
+        'kamletBIngressPacketRouterParams': 'kamlet_b_ingress_packet_router_params',
         'issueUnitParams': 'issue_unit_params',
         'synchronizerParams': 'synchronizer_params',
         'rfSliceParams': 'rf_slice_params',

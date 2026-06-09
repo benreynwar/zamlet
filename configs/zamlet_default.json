@@ -50,6 +50,24 @@
     "hoForwardBuffer": true,
     "hoBackwardBuffer": true
   },
+  "kamletPacketMergeParams": {
+    "inputFB": false,
+    "inputBB": false,
+    "outputFB": false,
+    "outputBB": false
+  },
+  "kamletAIngressPacketRouterParams": {
+    "inputFB": false,
+    "inputBB": false,
+    "outputFB": false,
+    "outputBB": false
+  },
+  "kamletBIngressPacketRouterParams": {
+    "inputFB": false,
+    "inputBB": false,
+    "outputFB": false,
+    "outputBB": false
+  },
   "issueUnitParams": {
     "exForwardBuffer": false,
     "exBackwardBuffer": false,

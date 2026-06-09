@@ -57,6 +57,20 @@ case class NetworkNodeParams(
   hoBackwardBuffer: Boolean = true
 )
 
+case class PacketMergeParams(
+  inputFB: Boolean = true,
+  inputBB: Boolean = true,
+  outputFB: Boolean = true,
+  outputBB: Boolean = true,
+)
+
+case class MessageTypePacketRouterParams(
+  inputFB: Boolean = true,
+  inputBB: Boolean = true,
+  outputFB: Boolean = true,
+  outputBB: Boolean = true,
+)
+
 case class IssueUnitParams(
   exForwardBuffer: Boolean = false,
   exBackwardBuffer: Boolean = false,
@@ -400,6 +414,9 @@ case class ZamletParams(
   nAChannels: Int = 1,
   nBChannels: Int = 1,
   networkNodeParams: NetworkNodeParams = NetworkNodeParams(),
+  kamletPacketMergeParams: PacketMergeParams = PacketMergeParams(),
+  kamletAIngressPacketRouterParams: MessageTypePacketRouterParams = MessageTypePacketRouterParams(),
+  kamletBIngressPacketRouterParams: MessageTypePacketRouterParams = MessageTypePacketRouterParams(),
 
   // IssueUnit configuration
   issueUnitParams: IssueUnitParams = IssueUnitParams(),
@@ -533,6 +550,9 @@ object ZamletParams {
   implicit val rfSliceParamsDecoder: Decoder[RfSliceParams] = deriveDecoder[RfSliceParams]
   implicit val synchronizerParamsDecoder: Decoder[SynchronizerParams] = deriveDecoder[SynchronizerParams]
   implicit val networkNodeParamsDecoder: Decoder[NetworkNodeParams] = deriveDecoder[NetworkNodeParams]
+  implicit val packetMergeParamsDecoder: Decoder[PacketMergeParams] = deriveDecoder[PacketMergeParams]
+  implicit val messageTypePacketRouterParamsDecoder: Decoder[MessageTypePacketRouterParams] =
+    deriveDecoder[MessageTypePacketRouterParams]
   implicit val issueUnitParamsDecoder: Decoder[IssueUnitParams] = deriveDecoder[IssueUnitParams]
   implicit val jteStateParamsDecoder: Decoder[JteStateParams] = deriveDecoder[JteStateParams]
   implicit val jteInitiatorParamsDecoder: Decoder[JteInitiatorParams] = deriveDecoder[JteInitiatorParams]

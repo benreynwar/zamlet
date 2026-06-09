@@ -6,12 +6,17 @@ import zamlet.ZamletParams
 import zamlet.SynchronizerParams
 import zamlet.LaneOrderMapping
 import zamlet.jamlet.{ChannelsIO, Jamlet}
-import zamlet.network.{CombinedNetworkNode, NetworkWord}
+import zamlet.network.{CombinedNetworkNode, MessageType, MessageTypePacketRouter,
+                       MessageTypePacketRouterErrors, NetworkWord, PacketMerge,
+                       PacketMergeErrors}
 
 class KamletErrors extends Bundle {
   val instrQueue = new InstrQueueErrors
   val cacheEngine = new KceCacheEngineErrors
   val tlb = new KamletTlbErrors
+  val packetMerge = new PacketMergeErrors
+  val aPacketRouter = new MessageTypePacketRouterErrors
+  val bPacketRouter = new MessageTypePacketRouterErrors
 }
 
 /**
@@ -186,8 +191,22 @@ class Kamlet(
   val cacheEngine = Module(new KamletCacheEngine(params))
   val transferEngine = Module(new KamletTransferEngine(params))
   val kamletTlb = Module(new KamletTlb(params))
-  val kamletNetworkIngress = Module(new KamletNetworkIngress(params))
-  val kamletNetworkEgress = Module(new KamletNetworkEgress(params))
+  val aPacketRouter = Module(new MessageTypePacketRouter(
+    params,
+    Seq(
+      Seq(
+        MessageType.ReadLineAddrDrop,
+        MessageType.WriteLineAddrDrop,
+        MessageType.WriteLineReadLineAddrDrop,
+        MessageType.WriteLineDataDrop,
+        MessageType.WriteLineResp),
+      Seq(MessageType.TlbResp)),
+    params.kamletAIngressPacketRouterParams))
+  val bPacketRouter = Module(new MessageTypePacketRouter(
+    params,
+    Seq(Seq(MessageType.Instructions)),
+    params.kamletBIngressPacketRouterParams))
+  val packetMerge = Module(new PacketMerge(params, 2, params.kamletPacketMergeParams))
   val kamletNetworkNode = Module(new CombinedNetworkNode(params))
 
   cacheEngine.io.knetX := io.knetX
@@ -244,16 +263,16 @@ class Kamlet(
   // Wiring: Kamlet network → InstrQueue → Renamer → ReservationStation
   // ============================================================
 
-  kamletNetworkIngress.io.packetIn <> kamletNetworkNode.io.aHo
+  aPacketRouter.io.in <> kamletNetworkNode.io.aHo
   kamletNetworkNode.io.aHi.valid := false.B
   kamletNetworkNode.io.aHi.bits := DontCare
-  cacheEngine.io.packetIn <> kamletNetworkIngress.io.memletPacketOut
-  kamletNetworkEgress.io.memletPacketIn <> cacheEngine.io.packetOut
-  kamletNetworkNode.io.bHi <> kamletNetworkEgress.io.packetOut
-  instrQueue.io.packetIn <> kamletNetworkNode.io.bHo
-  kamletTlb.io.packetIn.valid := false.B
-  kamletTlb.io.packetIn.bits := DontCare
-  kamletTlb.io.packetOut.ready := false.B
+  cacheEngine.io.packetIn <> aPacketRouter.io.out(0)
+  kamletTlb.io.packetIn <> aPacketRouter.io.out(1)
+  packetMerge.io.in(0) <> cacheEngine.io.packetOut
+  packetMerge.io.in(1) <> kamletTlb.io.packetOut
+  kamletNetworkNode.io.bHi <> packetMerge.io.out
+  bPacketRouter.io.in <> kamletNetworkNode.io.bHo
+  instrQueue.io.packetIn <> bPacketRouter.io.out(0)
 
   // KTE owns synchronizer use for explicit sync instructions and transfer
   // completion barriers.
@@ -310,6 +329,9 @@ class Kamlet(
   io.errors.instrQueue := instrQueue.io.errors
   io.errors.cacheEngine := cacheEngine.io.errors
   io.errors.tlb := kamletTlb.io.errors
+  io.errors.packetMerge := packetMerge.io.errors
+  io.errors.aPacketRouter := aPacketRouter.io.errors
+  io.errors.bPacketRouter := bPacketRouter.io.errors
 }
 
 object KamletGenerator extends zamlet.ModuleGenerator {
