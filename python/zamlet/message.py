@@ -366,20 +366,20 @@ class CacheLineHeader(Header):
         return cls(**fields)
 
 
-def _tlb_pending_index_width(params) -> int:
-    return (params.kce_pending_table_depth - 1).bit_length()
+def _tlb_req_slot_width(params) -> int:
+    return (params.tlb_req_table_depth - 1).bit_length()
 
 
 @dataclass
 class KamletTlbReqHeader(Header):
-    pending_index: int
+    tlb_req_slot: int
 
     @staticmethod
     def fields(params):
-        pending_index_width = _tlb_pending_index_width(params)
-        used = params._base_header_width + pending_index_width
+        tlb_req_slot_width = _tlb_req_slot_width(params)
+        used = params._base_header_width + tlb_req_slot_width
         return params.abstract_base_header_fields + [
-            ('pending_index', pending_index_width),
+            ('tlb_req_slot', tlb_req_slot_width),
             ('_padding', params.word_width - used),
         ]
 
@@ -387,7 +387,7 @@ class KamletTlbReqHeader(Header):
         return pack_fields_to_int(self, self.fields(params))
 
     def message_id(self) -> int:
-        return self.pending_index
+        return self.tlb_req_slot
 
     @classmethod
     def decode(cls, value: int, params) -> 'KamletTlbReqHeader':
@@ -404,12 +404,12 @@ class KamletTlbRespHeader(KamletTlbReqHeader):
 
     @staticmethod
     def fields(params):
-        pending_index_width = _tlb_pending_index_width(params)
+        tlb_req_slot_width = _tlb_req_slot_width(params)
         wf_width = WidthFormatCode.width()
         lane_order_width = LaneOrder.width()
-        used = params._base_header_width + pending_index_width + wf_width + lane_order_width
+        used = params._base_header_width + tlb_req_slot_width + wf_width + lane_order_width
         return params.abstract_base_header_fields + [
-            ('pending_index', pending_index_width),
+            ('tlb_req_slot', tlb_req_slot_width),
             ('ordering_wf', wf_width),
             ('ordering_lane_order', lane_order_width),
             ('_padding', params.word_width - used),

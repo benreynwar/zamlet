@@ -212,13 +212,13 @@ class CacheLineHeader(params: ZamletParams) extends AbstractCacheLineHeader(para
 }
 
 object TlbHeaderFields {
-  def pendingIndexWidth(params: ZamletParams): Int = log2Ceil(params.kcePendingTableDepth)
+  def tlbReqSlotWidth(params: ZamletParams): Int = log2Ceil(params.tlbReqTableDepth)
 }
 
 abstract class AbstractKamletTlbHeader(params: ZamletParams) extends AbstractPacketHeader(params) {
-  val pendingIndex = UInt(TlbHeaderFields.pendingIndexWidth(params).W)
+  val tlbReqSlot = UInt(TlbHeaderFields.tlbReqSlotWidth(params).W)
 
-  def kamletTlbHeaderWidth: Int = baseWidth + TlbHeaderFields.pendingIndexWidth(params)
+  def kamletTlbHeaderWidth: Int = baseWidth + TlbHeaderFields.tlbReqSlotWidth(params)
 }
 
 class KamletTlbReqHeader(params: ZamletParams) extends AbstractKamletTlbHeader(params) {

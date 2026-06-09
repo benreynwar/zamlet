@@ -28,12 +28,12 @@ class KceMemletInterfaceIO(params: ZamletParams) extends Bundle {
   val memletKnetX = Input(params.xPos())
   val memletKnetY = Input(params.yPos())
 
-  // Fetch requests from KceCacheTable and per-Jamlet fetch completion from JCE.
+  // Fetch requests from the cache tag table and per-Jamlet fetch completion from JCE.
   val fetchSlotReq = Flipped(Decoupled(new KceFetchSlotReq(params)))
   val fetchSlotComplete = Valid(params.cacheSlot())
   val jceFetchDone = Vec(params.jInK, Flipped(Valid(params.cacheSlot())))
 
-  // Dirty writeback requests from KceScanner and per-Jamlet writeback triggers.
+  // Dirty writeback requests from the cache tag table and per-Jamlet writeback triggers.
   val writebackSlotReq = Flipped(Decoupled(new KceWritebackSlotReq(params)))
   val writebackSlotComplete = Valid(params.cacheSlot())
   val jceWritebackReq = Vec(params.jInK, Valid(new SendCacheLineCmd(params)))

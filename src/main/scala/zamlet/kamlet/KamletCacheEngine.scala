@@ -10,6 +10,10 @@ object KceCacheSlotState extends ChiselEnum {
   val Empty, EmptyInQueue, Fetching, FetchingWillWrite, PresentClean, PresentDirty, Evicting = Value
 }
 
+object KceTagTableClient extends ChiselEnum {
+  val Pending, Kte, Rs = Value
+}
+
 class KceClaimSlotReq(params: ZamletParams) extends Bundle {
   val cacheLineAddr = params.cacheLineAddr()
   val willWrite = Bool()
@@ -20,6 +24,7 @@ class KceClaimSlotResp(params: ZamletParams) extends Bundle {
   val hasSlot = Bool()
   val slot = params.cacheSlot()
   val state = KceCacheSlotState()
+  val didClaim = Bool()
 }
 
 class KceAllocSlotReq(params: ZamletParams) extends Bundle {
@@ -35,10 +40,22 @@ class KceSlotRelease(params: ZamletParams) extends Bundle {
   val slot = params.cacheSlot()
 }
 
+class KceFetchSlotReq(params: ZamletParams) extends Bundle {
+  val slot = params.cacheSlot()
+  val addr = params.cacheLineAddr()
+}
+
+class KceWritebackSlotReq(params: ZamletParams) extends Bundle {
+  val slot = params.cacheSlot()
+  val addr = params.cacheLineAddr()
+}
+
 class KceCacheEngineErrors extends Bundle {
-  val cacheTable = new KceCacheTableErrors
   val memletInterface = new KceMemletInterfaceErrors
   val pendingTable = new KcePendingTableErrors
+  val tagTable = new TagTableErrors
+  val pendingClaimRespQueueOverflow = Bool()
+  val kteClaimRespQueueOverflow = Bool()
 }
 
 class KamletCacheEngineIO(params: ZamletParams) extends Bundle {
@@ -79,14 +96,35 @@ class KamletCacheEngineIO(params: ZamletParams) extends Bundle {
 class KamletCacheEngine(params: ZamletParams) extends Module {
   val io = IO(new KamletCacheEngineIO(params))
 
+  def tagStateToKce(state: TagState.Type): KceCacheSlotState.Type = {
+    MuxCase(KceCacheSlotState.Empty, Seq(
+      (state === TagState.Empty) -> KceCacheSlotState.Empty,
+      (state === TagState.EmptyInQueue) -> KceCacheSlotState.EmptyInQueue,
+      (state === TagState.ReservedClean) -> KceCacheSlotState.Fetching,
+      (state === TagState.ReservedDirty) -> KceCacheSlotState.FetchingWillWrite,
+      (state === TagState.FillingClean) -> KceCacheSlotState.Fetching,
+      (state === TagState.FillingDirty) -> KceCacheSlotState.FetchingWillWrite,
+      (state === TagState.PresentClean) -> KceCacheSlotState.PresentClean,
+      (state === TagState.PresentDirty) -> KceCacheSlotState.PresentDirty,
+      (state === TagState.Evicting) -> KceCacheSlotState.Evicting))
+  }
+
   // ============================================================
   // Submodules
   // ============================================================
 
-  val cacheTable = Module(new KceCacheTable(params))
-  val scanner = Module(new KceScanner(params))
   val memletInterface = Module(new KceMemletInterface(params))
   val pendingTable = Module(new KcePendingTable(params))
+  val ttp = params.kceTagTableParams
+  val tagTable = Module(new TagTable(
+    tagWidth = params.cacheLineAddrWidth,
+    slotWidth = params.cacheSlotWidth,
+    params = ttp,
+    respMetaType = KceTagTableClient(),
+    fillMetaType = UInt(0.W),
+    payloadType = UInt(0.W),
+  ))
+
 
   // ============================================================
   // Position / network configuration
@@ -112,56 +150,128 @@ class KamletCacheEngine(params: ZamletParams) extends Module {
   }
 
   // ============================================================
-  // PendingTable <-> CacheTable
+  // PendingTable / KTE <-> TagTable
   // ============================================================
 
-  cacheTable.io.pendingClaimSlotReq <> pendingTable.io.claimSlotReq
-  pendingTable.io.claimSlotResp <> cacheTable.io.pendingClaimSlotResp
+  val claimRespQueueDepth = 4
+  val claimRespQueueAlmostFullThreshold = (claimRespQueueDepth - 2).U
+  val pendingClaimRespQueue = Module(new Queue(new KceClaimSlotResp(params), claimRespQueueDepth))
+  val kteClaimRespQueue = Module(new Queue(new KceClaimSlotResp(params), claimRespQueueDepth))
+  val pendingClaimRespBelowThreshold =
+    pendingClaimRespQueue.io.count < claimRespQueueAlmostFullThreshold
+  val kteClaimRespBelowThreshold =
+    kteClaimRespQueue.io.count < claimRespQueueAlmostFullThreshold
 
-  cacheTable.io.pendingAllocSlotReq <> pendingTable.io.allocSlotReq
-  pendingTable.io.allocSlotResp <> cacheTable.io.pendingAllocSlotResp
-  cacheTable.io.pendingReleaseSlot := pendingTable.io.releaseSlot
+  val rsClaimSelected = io.rsClaimSlotReq.valid
+  val pendingClaimSelected =
+    !rsClaimSelected && pendingTable.io.claimSlotReq.valid && pendingClaimRespBelowThreshold
+  val kteClaimSelected =
+    !rsClaimSelected && !pendingClaimSelected && io.kteClaimSlotReq.valid && kteClaimRespBelowThreshold
+  val selectedClaimReq = Wire(new KceClaimSlotReq(params))
+  selectedClaimReq := io.kteClaimSlotReq.bits
+  when (pendingClaimSelected) {
+    selectedClaimReq := pendingTable.io.claimSlotReq.bits
+  }
+  when (rsClaimSelected) {
+    selectedClaimReq := io.rsClaimSlotReq.bits
+  }
+  tagTable.io.claimReq.valid := rsClaimSelected || pendingClaimSelected || kteClaimSelected
+  tagTable.io.claimReq.bits.tag := selectedClaimReq.cacheLineAddr
+  tagTable.io.claimReq.bits.willWrite := selectedClaimReq.willWrite
+  tagTable.io.claimReq.bits.doClaim := true.B
+  tagTable.io.claimReq.bits.claimIfPendingFill := selectedClaimReq.claimIfFetching
+  tagTable.io.claimReq.bits.meta := Mux(
+    rsClaimSelected,
+    KceTagTableClient.Rs,
+    Mux(pendingClaimSelected,
+    KceTagTableClient.Pending,
+    KceTagTableClient.Kte))
+  pendingTable.io.claimSlotReq.ready := pendingClaimSelected
+  io.kteClaimSlotReq.ready := kteClaimSelected
 
-  pendingTable.io.slotIsAvailable := cacheTable.io.slotIsAvailable
+  val tagClaimRespAsKce = Wire(new KceClaimSlotResp(params))
+  tagClaimRespAsKce.hasSlot := tagTable.io.claimResp.bits.hasSlot
+  tagClaimRespAsKce.slot := tagTable.io.claimResp.bits.slot
+  tagClaimRespAsKce.state := tagStateToKce(tagTable.io.claimResp.bits.state)
+  tagClaimRespAsKce.didClaim := tagTable.io.claimResp.bits.didClaim
+
+  pendingClaimRespQueue.io.enq.valid :=
+    tagTable.io.claimResp.valid && tagTable.io.claimResp.bits.meta === KceTagTableClient.Pending
+  pendingClaimRespQueue.io.enq.bits := tagClaimRespAsKce
+  pendingTable.io.claimSlotResp <> pendingClaimRespQueue.io.deq
+  val pendingClaimRespQueueOverflow =
+    pendingClaimRespQueue.io.enq.valid && !pendingClaimRespQueue.io.enq.ready
+
+  kteClaimRespQueue.io.enq.valid :=
+    tagTable.io.claimResp.valid && tagTable.io.claimResp.bits.meta === KceTagTableClient.Kte
+  kteClaimRespQueue.io.enq.bits := tagClaimRespAsKce
+  io.kteClaimSlotResp <> kteClaimRespQueue.io.deq
+  val kteClaimRespQueueOverflow =
+    kteClaimRespQueue.io.enq.valid && !kteClaimRespQueue.io.enq.ready
+
+  io.rsClaimSlotResp.valid :=
+    tagTable.io.claimResp.valid && tagTable.io.claimResp.bits.meta === KceTagTableClient.Rs
+  io.rsClaimSlotResp.bits := tagClaimRespAsKce
+
+  val pendingAllocSelected = pendingTable.io.allocSlotReq.valid
+  tagTable.io.allocReq.valid := pendingTable.io.allocSlotReq.valid || io.kteAllocSlotReq.valid
+  tagTable.io.allocReq.bits.tag := Mux(
+    pendingAllocSelected,
+    pendingTable.io.allocSlotReq.bits.cacheLineAddr,
+    io.kteAllocSlotReq.bits.cacheLineAddr)
+  tagTable.io.allocReq.bits.willWrite := Mux(
+    pendingAllocSelected,
+    pendingTable.io.allocSlotReq.bits.willWrite,
+    io.kteAllocSlotReq.bits.willWrite)
+  tagTable.io.allocReq.bits.meta := Mux(
+    pendingAllocSelected,
+    KceTagTableClient.Pending,
+    KceTagTableClient.Kte)
+  tagTable.io.allocReq.bits.fillMeta := 0.U(0.W)
+  pendingTable.io.allocSlotReq.ready := pendingAllocSelected && tagTable.io.allocReq.ready
+  io.kteAllocSlotReq.ready := !pendingAllocSelected && tagTable.io.allocReq.ready
+
+  pendingTable.io.allocSlotResp.valid :=
+    tagTable.io.allocResp.valid && tagTable.io.allocResp.bits.meta === KceTagTableClient.Pending
+  pendingTable.io.allocSlotResp.bits.slot := tagTable.io.allocResp.bits.slot
+  io.kteAllocSlotResp.valid :=
+    tagTable.io.allocResp.valid && tagTable.io.allocResp.bits.meta === KceTagTableClient.Kte
+  io.kteAllocSlotResp.bits.slot := tagTable.io.allocResp.bits.slot
+  tagTable.io.allocResp.ready := Mux(
+    tagTable.io.allocResp.bits.meta === KceTagTableClient.Pending,
+    pendingTable.io.allocSlotResp.ready,
+    io.kteAllocSlotResp.ready)
+
+  tagTable.io.release.valid := pendingTable.io.releaseSlot.valid || io.kteReleaseSlot.valid
+  tagTable.io.release.bits := Mux(
+    pendingTable.io.releaseSlot.valid,
+    pendingTable.io.releaseSlot.bits.slot,
+    io.kteReleaseSlot.bits.slot)
+
+  pendingTable.io.slotIsAvailable := memletInterface.io.fetchSlotComplete
 
   // ============================================================
-  // KTE <-> CacheTable
+  // TagTable <-> MemletInterface
   // ============================================================
 
-  cacheTable.io.kteClaimSlotReq <> io.kteClaimSlotReq
-  io.kteClaimSlotResp <> cacheTable.io.kteClaimSlotResp
-  cacheTable.io.kteReleaseSlot := io.kteReleaseSlot
+  memletInterface.io.fetchSlotReq.valid := tagTable.io.fillReq.valid
+  memletInterface.io.fetchSlotReq.bits.slot := tagTable.io.fillReq.bits.slot
+  memletInterface.io.fetchSlotReq.bits.addr := tagTable.io.fillReq.bits.tag
+  tagTable.io.fillReq.ready := memletInterface.io.fetchSlotReq.ready
 
-  cacheTable.io.kteAllocSlotReq <> io.kteAllocSlotReq
-  io.kteAllocSlotResp <> cacheTable.io.kteAllocSlotResp
+  tagTable.io.fillComplete.valid := memletInterface.io.fetchSlotComplete.valid
+  tagTable.io.fillComplete.bits.slot := memletInterface.io.fetchSlotComplete.bits
+  tagTable.io.fillComplete.bits.payload := 0.U(0.W)
 
-  io.kteSlotIsAvailable := cacheTable.io.slotIsAvailable
+  memletInterface.io.writebackSlotReq.valid := tagTable.io.writebackReq.valid
+  memletInterface.io.writebackSlotReq.bits.slot := tagTable.io.writebackReq.bits.slot
+  memletInterface.io.writebackSlotReq.bits.addr := tagTable.io.writebackReq.bits.tag
+  tagTable.io.writebackReq.ready := memletInterface.io.writebackSlotReq.ready
 
-  // ============================================================
-  // RS <-> CacheTable
-  // ============================================================
+  tagTable.io.writebackComplete.valid := memletInterface.io.writebackSlotComplete.valid
+  tagTable.io.writebackComplete.bits := memletInterface.io.writebackSlotComplete.bits
 
-  cacheTable.io.rsClaimSlotReq := io.rsClaimSlotReq
-  io.rsClaimSlotResp := cacheTable.io.rsClaimSlotResp
-
-  // ============================================================
-  // CacheTable <-> Scanner / MemletInterface
-  // ============================================================
-
-  cacheTable.io.emptySlot <> scanner.io.emptySlot
-  cacheTable.io.memletFetchReq <> memletInterface.io.fetchSlotReq
-  memletInterface.io.fetchSlotComplete <> cacheTable.io.memletFetchComplete
-
-  // ============================================================
-  // Scanner <-> CacheTable / MemletInterface
-  // ============================================================
-
-  cacheTable.io.scannerSlotReq <> scanner.io.slotReq
-  scanner.io.slotResp <> cacheTable.io.scannerSlotResp
-  scanner.io.slotUpdate <> cacheTable.io.scannerSlotUpdate
-  memletInterface.io.writebackSlotReq <> scanner.io.writebackSlot
-  scanner.io.writebackSlotComplete := memletInterface.io.writebackSlotComplete
-  cacheTable.io.scannerWritebackComplete := scanner.io.scannerWritebackComplete
+  io.kteSlotIsAvailable := memletInterface.io.fetchSlotComplete
 
   // ============================================================
   // Memlet control network
@@ -174,9 +284,11 @@ class KamletCacheEngine(params: ZamletParams) extends Module {
   // Errors
   // ============================================================
 
-  io.errors.cacheTable := cacheTable.io.errors
   io.errors.memletInterface := memletInterface.io.errors
   io.errors.pendingTable := pendingTable.io.errors
+  io.errors.tagTable := tagTable.io.errors
+  io.errors.pendingClaimRespQueueOverflow := RegNext(pendingClaimRespQueueOverflow)
+  io.errors.kteClaimRespQueueOverflow := RegNext(kteClaimRespQueueOverflow)
 }
 
 object KamletCacheEngineGenerator extends zamlet.ModuleGenerator {

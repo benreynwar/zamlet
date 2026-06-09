@@ -10,7 +10,6 @@ from zamlet.message import CacheLineHeader, MessageType, SendType
 from zamlet.params import ZamletParams
 from zamlet.future import Future
 from zamlet.test_helpers.packets import NetworkPacketSink, NetworkPacketSource
-from zamlet.utils import make_seed
 from zamlet.width_codes import WidthFormatCode
 
 
@@ -140,9 +139,9 @@ class JamletDriver:
         self.dut.io_jteInputResp_valid.value = 0
         self.dut.io_tlbReq_ready.value = 1
         self.dut.io_tlbResp_valid.value = 0
-        self.dut.io_tlbResp_bits_stripeAddr.value = 0
-        self.dut.io_tlbResp_bits_ordering_wf.value = WidthFormatCode.WF64
-        self.dut.io_tlbResp_bits_ordering_laneOrder.value = LaneOrder.ROW_MAJOR
+        self.dut.io_tlbResp_bits_translation_stripeAddr.value = 0
+        self.dut.io_tlbResp_bits_translation_ordering_wf.value = WidthFormatCode.WF64
+        self.dut.io_tlbResp_bits_translation_ordering_laneOrder.value = LaneOrder.ROW_MAJOR
         self.dut.io_cacheLineReq_ready.value = 1
         self.dut.io_cacheLineResp_valid.value = 0
         self.dut.io_cacheLineReplay_valid.value = 0
@@ -167,8 +166,8 @@ class JamletDriver:
             getattr(self.dut, f"io_laneIndices_{i}").value = 0
 
     def start(self, p_valid: float = 1.0, p_ready: float = 1.0) -> None:
-        self.a_west_in.start(seed=make_seed(self.rng), p_valid=p_valid)
-        self.b_out.start(seed=make_seed(self.rng), p_ready=p_ready)
+        self.a_west_in.start(rng=self.rng, p_valid=p_valid)
+        self.b_out.start(rng=self.rng, p_ready=p_ready)
         cocotb.start_soon(self._cache_response_monitor())
         cocotb.start_soon(monitor_error_wires(self.dut, "io_errors"))
 

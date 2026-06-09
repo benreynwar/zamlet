@@ -247,6 +247,29 @@ case class KceScannerParams(
   emptyQueueScanBackpressureDepth: Int = 8,
 )
 
+case class TagTableParams(
+  nUsesWidth: Int = 3,
+  freeQueueDepth: Int = 16,
+  fillReqQueueDepth: Int = 16,
+  scanBackpressureDepth: Int = 8,
+  allocReqFB: Boolean = true,
+  allocReqBB: Boolean = true,
+  alloc01FB: Boolean = true,
+  alloc01BB: Boolean = true,
+  allocRespFB: Boolean = true,
+  allocRespBB: Boolean = true,
+  claimReqFB: Boolean = true,
+  claimReqBB: Boolean = true,
+  claimRespFB: Boolean = true,
+  claimRespBB: Boolean = true,
+  fillBuffer: Boolean = true,
+  releaseBuffer: Boolean = true,
+  scan01FB: Boolean = true,
+  scan01BB: Boolean = true,
+) {
+  def nUses(): UInt = UInt(nUsesWidth.W)
+}
+
 case class KcePendingTableParams(
   cacheLineReqFB: Boolean = true,
   cacheLineReqBB: Boolean = true,
@@ -294,6 +317,27 @@ case class KceMemletInterfaceParams(
   fetchTx01BB: Boolean = true,
 )
 
+case class KamletTlbParams(
+  tlbReqFB: Boolean = true,
+  tlbReqBB: Boolean = true,
+  tlbRespFB: Boolean = true,
+  tlbRespBB: Boolean = true,
+  tlbAvailableBuffer: Boolean = true,
+  localOrderingUpdateBuffer: Boolean = true,
+  packetInFB: Boolean = true,
+  packetInBB: Boolean = true,
+  packetOutFB: Boolean = true,
+  packetOutBB: Boolean = true,
+  lookup01FB: Boolean = true,
+  lookup01BB: Boolean = true,
+  lookup12FB: Boolean = true,
+  lookup12BB: Boolean = true,
+  reqTx01FB: Boolean = true,
+  reqTx01BB: Boolean = true,
+  resp01FB: Boolean = true,
+  resp01BB: Boolean = true,
+)
+
 case class ZamletParams(
   // Position widths
   xPosWidth: Int = 8,
@@ -327,6 +371,8 @@ case class ZamletParams(
   witemTableDepth: Int = 16,
   kcePendingTableDepth: Int = 16,
   kteCacheWaitTableDepth: Int = 16,
+  tlbReqTableDepth: Int = 16,
+  tlbCacheTableDepth: Int = 64,
 
   // Instruction identifier
   identWidth: Int = 8,
@@ -375,8 +421,11 @@ case class ZamletParams(
   // KCE cache table configuration
   kceCacheTableParams: KceCacheTableParams = KceCacheTableParams(),
   kceScannerParams: KceScannerParams = KceScannerParams(),
+  kceTagTableParams: TagTableParams = TagTableParams(),
   kcePendingTableParams: KcePendingTableParams = KcePendingTableParams(),
   kceMemletInterfaceParams: KceMemletInterfaceParams = KceMemletInterfaceParams(),
+  kamletTlbParams: KamletTlbParams = KamletTlbParams(),
+  tlbTagTableParams: TagTableParams = TagTableParams(),
 
   messageLengthWidth: Int = 4,
   messageTypeWidth: Int = 6
@@ -493,8 +542,10 @@ object ZamletParams {
   implicit val jceParamsDecoder: Decoder[JceParams] = deriveDecoder[JceParams]
   implicit val kceCacheTableParamsDecoder: Decoder[KceCacheTableParams] = deriveDecoder[KceCacheTableParams]
   implicit val kceScannerParamsDecoder: Decoder[KceScannerParams] = deriveDecoder[KceScannerParams]
+  implicit val tagTableParamsDecoder: Decoder[TagTableParams] = deriveDecoder[TagTableParams]
   implicit val kcePendingTableParamsDecoder: Decoder[KcePendingTableParams] = deriveDecoder[KcePendingTableParams]
   implicit val kceMemletInterfaceParamsDecoder: Decoder[KceMemletInterfaceParams] = deriveDecoder[KceMemletInterfaceParams]
+  implicit val kamletTlbParamsDecoder: Decoder[KamletTlbParams] = deriveDecoder[KamletTlbParams]
   implicit val zamletParamsDecoder: Decoder[ZamletParams] = deriveDecoder[ZamletParams]
 
   def fromFile(fileName: String): ZamletParams = {

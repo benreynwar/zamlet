@@ -326,6 +326,32 @@ class KceScannerParams:
 
 
 @dataclass
+class TagTableParams:
+    nUsesWidth: int = 3
+    freeQueueDepth: int = 16
+    fillReqQueueDepth: int = 16
+    scanBackpressureDepth: int = 8
+    allocReqFB: bool = True
+    allocReqBB: bool = True
+    alloc01FB: bool = True
+    alloc01BB: bool = True
+    allocRespFB: bool = True
+    allocRespBB: bool = True
+    claimReqFB: bool = True
+    claimReqBB: bool = True
+    claimRespFB: bool = True
+    claimRespBB: bool = True
+    fillBuffer: bool = True
+    releaseBuffer: bool = True
+    scan01FB: bool = True
+    scan01BB: bool = True
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'TagTableParams':
+        return _from_dict(cls, data, _identity_mapping(cls))
+
+
+@dataclass
 class KcePendingTableParams:
     cacheLineReqFB: bool = True
     cacheLineReqBB: bool = True
@@ -383,6 +409,32 @@ class KceMemletInterfaceParams:
 
 
 @dataclass
+class KamletTlbParams:
+    tlbReqFB: bool = True
+    tlbReqBB: bool = True
+    tlbRespFB: bool = True
+    tlbRespBB: bool = True
+    tlbAvailableBuffer: bool = True
+    localOrderingUpdateBuffer: bool = True
+    packetInFB: bool = True
+    packetInBB: bool = True
+    packetOutFB: bool = True
+    packetOutBB: bool = True
+    lookup01FB: bool = True
+    lookup01BB: bool = True
+    lookup12FB: bool = True
+    lookup12BB: bool = True
+    reqTx01FB: bool = True
+    reqTx01BB: bool = True
+    resp01FB: bool = True
+    resp01BB: bool = True
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'KamletTlbParams':
+        return _from_dict(cls, data, _identity_mapping(cls))
+
+
+@dataclass
 class ZamletParams:
     #k_cols: int = 2
     #k_rows: int = 2
@@ -434,6 +486,10 @@ class ZamletParams:
     kce_pending_table_depth: int = 16
     # Number of KTE cache-wait local operations that can wait for cache lines.
     kte_cache_wait_table_depth: int = 16
+    # Number of in-flight Kamlet TLB network requests.
+    tlb_req_table_depth: int = 16
+    # Number of cached Kamlet TLB translations.
+    tlb_cache_table_depth: int = 64
     # Number of witem slots reserved for message handlers (not used by kinstructions)
     n_items_reserved: int = 8
     # The number of outstanding cache read_line and write_line allowed
@@ -478,8 +534,11 @@ class ZamletParams:
     jce_params: JceParams = field(default_factory=JceParams)
     kce_cache_table_params: KceCacheTableParams = field(default_factory=KceCacheTableParams)
     kce_scanner_params: KceScannerParams = field(default_factory=KceScannerParams)
+    kce_tag_table_params: TagTableParams = field(default_factory=TagTableParams)
     kce_pending_table_params: KcePendingTableParams = field(default_factory=KcePendingTableParams)
     kce_memlet_interface_params: KceMemletInterfaceParams = field(default_factory=KceMemletInterfaceParams)
+    kamlet_tlb_params: KamletTlbParams = field(default_factory=KamletTlbParams)
+    tlb_tag_table_params: TagTableParams = field(default_factory=TagTableParams)
     message_length_width: int = 4
     message_type_width: int = 6
 
@@ -735,6 +794,8 @@ class ZamletParams:
         'witemTableDepth': 'witem_table_depth',
         'kcePendingTableDepth': 'kce_pending_table_depth',
         'kteCacheWaitTableDepth': 'kte_cache_wait_table_depth',
+        'tlbReqTableDepth': 'tlb_req_table_depth',
+        'tlbCacheTableDepth': 'tlb_cache_table_depth',
         'identWidth': 'ident_width',
         'syncIdentWidth': 'sync_ident_width',
         'syncValueWidth': 'sync_value_width',
@@ -764,8 +825,11 @@ class ZamletParams:
         'jceParams': 'jce_params',
         'kceCacheTableParams': 'kce_cache_table_params',
         'kceScannerParams': 'kce_scanner_params',
+        'kceTagTableParams': 'kce_tag_table_params',
         'kcePendingTableParams': 'kce_pending_table_params',
         'kceMemletInterfaceParams': 'kce_memlet_interface_params',
+        'kamletTlbParams': 'kamlet_tlb_params',
+        'tlbTagTableParams': 'tlb_tag_table_params',
         'messageLengthWidth': 'message_length_width',
         'messageTypeWidth': 'message_type_width',
     }

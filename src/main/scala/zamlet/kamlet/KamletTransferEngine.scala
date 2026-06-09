@@ -504,24 +504,30 @@ class KamletTransferEngine(params: ZamletParams) extends Module {
   val getSlot1In = DoubleBuffer(getSlot0Out, true, true)
 
   val getSlot1Out = Wire(Decoupled(new KteGetSlot12(params)))
+  val getSlot1Claimed = kceClaimSlotResp.bits.didClaim
+  val getSlot1NeedsAlloc = !kceClaimSlotResp.bits.hasSlot
+  val getSlot1RetryLater = kceClaimSlotResp.bits.hasSlot && !kceClaimSlotResp.bits.didClaim
 
   getSlot1In.ready :=
-    kceClaimSlotResp.valid && (kceClaimSlotResp.bits.hasSlot || getSlot1Out.ready)
+    kceClaimSlotResp.valid && (getSlot1Claimed || getSlot1RetryLater || getSlot1Out.ready)
   kceClaimSlotResp.ready :=
-    getSlot1In.valid && (kceClaimSlotResp.bits.hasSlot || getSlot1Out.ready)
+    getSlot1In.valid && (getSlot1Claimed || getSlot1RetryLater || getSlot1Out.ready)
 
   getSlot1Out.valid :=
-    getSlot1In.valid && kceClaimSlotResp.valid && !kceClaimSlotResp.bits.hasSlot
+    getSlot1In.valid && kceClaimSlotResp.valid && getSlot1NeedsAlloc
   getSlot1Out.bits.entry := getSlot1In.bits.entry
   getSlot1Out.bits.cacheLineAddr := getSlot1In.bits.cacheLineAddr
   getSlot1Out.bits.willWrite := getSlot1In.bits.willWrite
 
-  when (getSlot1In.valid && kceClaimSlotResp.fire && kceClaimSlotResp.bits.hasSlot) {
+  when (getSlot1In.valid && kceClaimSlotResp.fire && getSlot1Claimed) {
     cacheWaitEntriesNext(getSlot1In.bits.entry).bits.slot := kceClaimSlotResp.bits.slot
     cacheWaitEntriesNext(getSlot1In.bits.entry).bits.gettingSlot := false.B
     cacheWaitEntriesNext(getSlot1In.bits.entry).bits.hasSlot := true.B
     cacheWaitEntriesNext(getSlot1In.bits.entry).bits.slotAvailable :=
       getSlotStateIsPresent(kceClaimSlotResp.bits.state)
+  }
+  when (getSlot1In.valid && kceClaimSlotResp.fire && getSlot1RetryLater) {
+    cacheWaitEntriesNext(getSlot1In.bits.entry).bits.gettingSlot := false.B
   }
 
   val getSlot2In = DoubleBuffer(getSlot1Out, true, true)

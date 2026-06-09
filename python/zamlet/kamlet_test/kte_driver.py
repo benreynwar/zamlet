@@ -16,6 +16,9 @@ from zamlet.width_codes import WidthFormatCode
 
 
 KTE_OP_JTE_TRANSFER = 1
+KTE_OP_CACHE_WAIT_LOCAL = 0
+KCE_CACHE_SLOT_FETCHING = 2
+KCE_CACHE_SLOT_PRESENT_CLEAN = 4
 
 
 @dataclass
@@ -44,6 +47,7 @@ class KteJamletState:
     requested_inputs: set[int] = field(default_factory=set)
     completed_inputs: set[int] = field(default_factory=set)
     cleared_entries: set[int] = field(default_factory=set)
+    clear_counts: dict[int, int] = field(default_factory=dict)
 
 
 class KteJamletModel:
@@ -68,8 +72,8 @@ class KteJamletModel:
         self._transfer_complete_queue = deque()
 
     def start(self, rng: Random) -> None:
-        self.input_req.start(seed=make_seed(rng))
-        self.input_resp.start(seed=make_seed(rng))
+        self.input_req.start(rng=rng)
+        self.input_resp.start(rng=rng)
         cocotb.start_soon(self._monitor_create())
         cocotb.start_soon(self._monitor_clear())
         cocotb.start_soon(self._queue_input_req(make_seed(rng)))
@@ -100,6 +104,8 @@ class KteJamletModel:
                 te_index = int(getattr(
                     self.dut, f"io_jteClear_{self.index}_bits").value)
                 self.state.cleared_entries.add(te_index)
+                self.state.clear_counts[te_index] = (
+                    self.state.clear_counts.get(te_index, 0) + 1)
                 self.state.jte_entries.pop(te_index, None)
                 self.state.jte_inputs.pop(te_index, None)
                 self.state.requested_inputs.discard(te_index)
@@ -163,23 +169,40 @@ class KteJamletModel:
 class KteDriver:
     """Small strict driver for KTE pipeline-cleaner tests."""
 
-    def __init__(self, dut: HierarchyObject, j_in_k: int = 2, te_depth: int = 8):
+    def __init__(
+        self,
+        dut: HierarchyObject,
+        j_in_k: int = 2,
+        te_depth: int = 8,
+        sync_result_probability: float = 0.5,
+    ):
         self.dut = dut
         self.j_in_k = j_in_k
         self.te_depth = te_depth
+        self.sync_result_probability = sync_result_probability
         self.issue = ValidReadySource(dut, dut.clock, "io_rsIssue")
         self.sync_results = deque()
+        self.claim_reqs = deque()
+        self.local_replays = deque()
+        self.cache_slot_releases = deque()
+        self._claim_resp_queue = deque()
+        self._slot_available_queue = deque()
         self.jamlets = [
             KteJamletModel(dut, j, te_depth=te_depth)
             for j in range(j_in_k)
         ]
 
     def start(self, rng: Random) -> None:
-        self.issue.start(seed=make_seed(rng))
+        self.issue.start(rng=rng)
         for jamlet in self.jamlets:
             jamlet.start(rng)
         cocotb.start_soon(self._monitor_sync_local_event())
         cocotb.start_soon(self._drive_sync_result(make_seed(rng)))
+        cocotb.start_soon(self._monitor_claim_req())
+        cocotb.start_soon(self._drive_claim_resp())
+        cocotb.start_soon(self._monitor_local_replay())
+        cocotb.start_soon(self._monitor_cache_slot_release())
+        cocotb.start_soon(self._drive_slot_available())
 
     def append_issue(self, issue: dict[str, int]) -> None:
         self.issue.append(issue)
@@ -224,6 +247,45 @@ class KteDriver:
             "willWrite": int(is_store),
         })
 
+    def append_cache_wait_local(
+        self,
+        kinstr: int,
+        cache_line_addr: int,
+        will_write: bool = False,
+        ordering_wf: int = WidthFormatCode.WF64,
+        ordering_lane_order: LaneOrder = LaneOrder.ROW_MAJOR,
+    ) -> None:
+        self.append_issue({
+            "opType": KTE_OP_CACHE_WAIT_LOCAL,
+            "kinstr_kinstr": kinstr,
+            "kinstr_ordering_wf": ordering_wf,
+            "kinstr_ordering_laneOrder": ordering_lane_order,
+            "kinstr_cacheSlot": 0,
+            "kinstr_sramWordOffset": 0,
+            "kinstr_param0": 0,
+            "kinstr_param1": 0,
+            "kinstr_param2": 0,
+            "cacheLineAddr": cache_line_addr,
+            "willWrite": int(will_write),
+        })
+
+    def append_claim_resp(
+        self,
+        has_slot: bool,
+        slot: int,
+        state: int,
+        did_claim: bool | None = None,
+    ) -> None:
+        self._claim_resp_queue.append({
+            "hasSlot": int(has_slot),
+            "slot": slot,
+            "state": state,
+            "didClaim": int(has_slot if did_claim is None else did_claim),
+        })
+
+    def pulse_slot_available(self, slot: int) -> None:
+        self._slot_available_queue.append(slot)
+
     def set_defaults(self) -> None:
         """Drive all KTE inputs to idle values."""
         self.dut.io_conflictCacheLineAddr.value = 0
@@ -263,6 +325,56 @@ class KteDriver:
             await RisingEdge(self.dut.clock)
         raise AssertionError(f"timed out waiting for JTE clear teIndex={te_index}")
 
+    async def wait_for_total_jte_clears(
+        self, expected_clears: int, timeout_cycles: int
+    ) -> None:
+        for _ in range(timeout_cycles):
+            if all(
+                sum(jamlet.state.clear_counts.values()) >= expected_clears
+                for jamlet in self.jamlets
+            ):
+                return
+            await RisingEdge(self.dut.clock)
+        counts = [jamlet.state.clear_counts for jamlet in self.jamlets]
+        raise AssertionError(
+            f"timed out waiting for {expected_clears} JTE clears; counts={counts}")
+
+    async def wait_for_sync_local_event(
+        self, sync_ident: int, timeout_cycles: int
+    ) -> None:
+        for _ in range(timeout_cycles):
+            for event in self.sync_results:
+                if event["syncIdent"] == sync_ident:
+                    return
+            await RisingEdge(self.dut.clock)
+        raise AssertionError(
+            f"timed out waiting for syncLocalEvent sync_ident={sync_ident}")
+
+    async def wait_for_claim_req(self, timeout_cycles: int) -> dict[str, int]:
+        for _ in range(timeout_cycles):
+            if self.claim_reqs:
+                return self.claim_reqs.popleft()
+            await RisingEdge(self.dut.clock)
+        raise AssertionError("timed out waiting for kceClaimSlotReq")
+
+    async def wait_for_local_replay(self, timeout_cycles: int) -> dict[str, int]:
+        for _ in range(timeout_cycles):
+            if self.local_replays:
+                return self.local_replays.popleft()
+            await RisingEdge(self.dut.clock)
+        raise AssertionError("timed out waiting for localReplay")
+
+    async def wait_for_cache_slot_release(
+        self, slot: int, timeout_cycles: int
+    ) -> None:
+        for _ in range(timeout_cycles):
+            while self.cache_slot_releases:
+                released_slot = self.cache_slot_releases.popleft()
+                if released_slot == slot:
+                    return
+            await RisingEdge(self.dut.clock)
+        raise AssertionError(f"timed out waiting for cache slot release slot={slot}")
+
     async def _monitor_sync_local_event(self) -> None:
         while True:
             await RisingEdge(self.dut.clock)
@@ -280,7 +392,7 @@ class KteDriver:
         self.dut.io_syncResult_valid.value = 0
 
         while True:
-            if self.sync_results and rng.random() < 0.5:
+            if self.sync_results and rng.random() < self.sync_result_probability:
                 result = self.sync_results.popleft()
                 self.dut.io_syncResult_valid.value = 1
                 self.dut.io_syncResult_bits_syncIdent.value = result["syncIdent"]
@@ -290,4 +402,72 @@ class KteDriver:
             else:
                 self.dut.io_syncResult_valid.value = 0
 
+            await RisingEdge(self.dut.clock)
+
+    async def _monitor_claim_req(self) -> None:
+        self.dut.io_kceClaimSlotReq_ready.value = 1
+        while True:
+            await RisingEdge(self.dut.clock)
+            await ReadOnly()
+            if (
+                int(self.dut.io_kceClaimSlotReq_valid.value)
+                and int(self.dut.io_kceClaimSlotReq_ready.value)
+            ):
+                self.claim_reqs.append({
+                    "cacheLineAddr": int(
+                        self.dut.io_kceClaimSlotReq_bits_cacheLineAddr.value),
+                    "willWrite": int(
+                        self.dut.io_kceClaimSlotReq_bits_willWrite.value),
+                    "claimIfFetching": int(
+                        self.dut.io_kceClaimSlotReq_bits_claimIfFetching.value),
+                })
+
+    async def _drive_claim_resp(self) -> None:
+        self.dut.io_kceClaimSlotResp_valid.value = 0
+        while True:
+            if self._claim_resp_queue:
+                resp = self._claim_resp_queue[0]
+                self.dut.io_kceClaimSlotResp_valid.value = 1
+                self.dut.io_kceClaimSlotResp_bits_hasSlot.value = resp["hasSlot"]
+                self.dut.io_kceClaimSlotResp_bits_slot.value = resp["slot"]
+                self.dut.io_kceClaimSlotResp_bits_state.value = resp["state"]
+                self.dut.io_kceClaimSlotResp_bits_didClaim.value = resp["didClaim"]
+                await RisingEdge(self.dut.clock)
+                if int(self.dut.io_kceClaimSlotResp_ready.value):
+                    self._claim_resp_queue.popleft()
+            else:
+                self.dut.io_kceClaimSlotResp_valid.value = 0
+                await RisingEdge(self.dut.clock)
+
+    async def _monitor_local_replay(self) -> None:
+        self.dut.io_localReplay_ready.value = 1
+        while True:
+            await RisingEdge(self.dut.clock)
+            await ReadOnly()
+            if (
+                int(self.dut.io_localReplay_valid.value)
+                and int(self.dut.io_localReplay_ready.value)
+            ):
+                self.local_replays.append({
+                    "kinstr": int(self.dut.io_localReplay_bits_kinstr.value),
+                    "cacheSlot": int(self.dut.io_localReplay_bits_cacheSlot.value),
+                })
+
+    async def _monitor_cache_slot_release(self) -> None:
+        while True:
+            await RisingEdge(self.dut.clock)
+            await ReadOnly()
+            if int(self.dut.io_kceReleaseSlot_valid.value):
+                self.cache_slot_releases.append(
+                    int(self.dut.io_kceReleaseSlot_bits_slot.value))
+
+    async def _drive_slot_available(self) -> None:
+        self.dut.io_kceSlotIsAvailable_valid.value = 0
+        while True:
+            if self._slot_available_queue:
+                self.dut.io_kceSlotIsAvailable_valid.value = 1
+                self.dut.io_kceSlotIsAvailable_bits.value = (
+                    self._slot_available_queue.popleft())
+            else:
+                self.dut.io_kceSlotIsAvailable_valid.value = 0
             await RisingEdge(self.dut.clock)

@@ -58,8 +58,9 @@ class Jamlet(params: ZamletParams) extends Module {
     val jteInputResp = Flipped(Decoupled(new JteInitiatorInput(params)))
     val transferComplete = Output(Vec(params.witemTableDepth, Bool()))
     val errors = Output(new JamletErrors())
-    val tlbReq = Decoupled(UInt(params.memStripeAddrWidth.W))
+    val tlbReq = Decoupled(new JamletTlbReq(params))
     val tlbResp = Flipped(Decoupled(new JamletTlbResp(params)))
+    val tlbAvailable = Flipped(Valid(new JamletTlbAvailable(params)))
     val cacheLineReq = Decoupled(new CacheLineRequest(params))
     val cacheLineResp = Flipped(Decoupled(new CacheLineResponse(params)))
     val cacheLineReplay = Flipped(Decoupled(new JteHandlerReplay(params)))
@@ -250,6 +251,7 @@ class Jamlet(params: ZamletParams) extends Module {
   io.errors.aHoRouter := aHoRouter.io.errors
   io.tlbReq <> jte.io.tlbReq
   jte.io.tlbResp <> io.tlbResp
+  jte.io.tlbAvailable <> io.tlbAvailable
   io.cacheLineReq <> jte.io.cacheLineReq
   jte.io.cacheLineResp <> io.cacheLineResp
   jte.io.cacheLineReplay <> io.cacheLineReplay

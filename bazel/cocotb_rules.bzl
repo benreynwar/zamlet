@@ -3,7 +3,7 @@
 
 load("@bazel_tools//tools/cpp:toolchain_utils.bzl", "find_cpp_toolchain")
 load("@rules_cc//cc:defs.bzl", "cc_binary", "CcInfo")
-load("//bazel:verilog.bzl", "chisel_verilog")
+load("//bazel:verilog.bzl", "chisel_verilog", "chisel_verilog_no_config")
 
 # -----------------------------------------------------------------------------
 # verilate rule - compiles Verilog to C++ library using verilator toolchain
@@ -192,6 +192,7 @@ export PYGPI_PYTHON_BIN="{python_bin}"
 
 # Cocotb environment
 export COCOTB_RESOLVE_X=VALUE_ERROR
+export ZAMLET_TEST_SEED="${{ZAMLET_TEST_SEED:-0}}"
 
 # Run simulation
 if [ "$VERILATOR_TRACE" = "1" ]; then
@@ -449,5 +450,59 @@ def chisel_module_tests(
                 data = [cfg_label],
             )
             test_targets.append(":" + test_name)
+
+    native.test_suite(name = base + "_tests", tests = test_targets)
+
+def chisel_module_tests_no_config(
+        generator,
+        toplevel,
+        srcs,
+        test_modules,
+        generator_args = None,
+        py_deps = None):
+    """Emit Verilog generation + cocotb tests for a configless Chisel module."""
+    base = toplevel.lower()
+    generator_args = generator_args or []
+
+    native.py_library(
+        name = base + "_py",
+        srcs = srcs,
+        deps = ["//python/zamlet:zamlet"] + (py_deps or []),
+    )
+
+    chisel_verilog_no_config(
+        name = base,
+        generator = generator,
+        extra_args = generator_args,
+    )
+    cocotb_binary(
+        name = base + "_exe",
+        verilog_files = [":" + base + "_verilog"],
+        module_top = toplevel,
+    )
+
+    entries = [_normalize_entry(e) for e in test_modules]
+    include_suffix = len(entries) > 1
+    test_targets = []
+
+    for mod, filt, sfx in entries:
+        if include_suffix:
+            test_name = "test_{}_{}".format(base, sfx)
+        else:
+            test_name = "test_" + base
+
+        env = {}
+        if filt:
+            env["COCOTB_TEST_FILTER"] = filt
+
+        cocotb_test(
+            name = test_name,
+            binary = ":" + base + "_exe",
+            test_module = mod,
+            toplevel = toplevel,
+            py_deps = [":" + base + "_py"],
+            env = env,
+        )
+        test_targets.append(":" + test_name)
 
     native.test_suite(name = base + "_tests", tests = test_targets)

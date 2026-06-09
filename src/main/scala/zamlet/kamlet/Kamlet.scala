@@ -11,6 +11,7 @@ import zamlet.network.{CombinedNetworkNode, NetworkWord}
 class KamletErrors extends Bundle {
   val instrQueue = new InstrQueueErrors
   val cacheEngine = new KceCacheEngineErrors
+  val tlb = new KamletTlbErrors
 }
 
 /**
@@ -193,6 +194,10 @@ class Kamlet(
   cacheEngine.io.knetY := io.knetY
   cacheEngine.io.memletKnetX := io.memletKnetX
   cacheEngine.io.memletKnetY := io.memletKnetY
+  kamletTlb.io.knetX := io.knetX
+  kamletTlb.io.knetY := io.knetY
+  kamletTlb.io.memletKnetX := io.memletKnetX
+  kamletTlb.io.memletKnetY := io.memletKnetY
 
   renamer.io.kinstrIn <> instrQueue.io.kinstrOut
   reservationStation.io.renamedIn <> renamer.io.renamedOut
@@ -278,6 +283,7 @@ class Kamlet(
     transferEngine.io.transferComplete(jInKIndex) := jamlets(jY)(jX).io.transferComplete
     kamletTlb.io.tlbReq(jInKIndex) <> jamlets(jY)(jX).io.tlbReq
     jamlets(jY)(jX).io.tlbResp <> kamletTlb.io.tlbResp(jInKIndex)
+    jamlets(jY)(jX).io.tlbAvailable <> kamletTlb.io.tlbAvailable(jInKIndex)
     cacheEngine.io.jteCacheLineReq(jInKIndex) <> jamlets(jY)(jX).io.cacheLineReq
     jamlets(jY)(jX).io.cacheLineResp <> cacheEngine.io.jteCacheLineResp(jInKIndex)
     jamlets(jY)(jX).io.cacheLineReplay <> cacheEngine.io.jteReplay(jInKIndex)
@@ -286,6 +292,9 @@ class Kamlet(
     jamlets(jY)(jX).io.sendCacheLine := cacheEngine.io.jceWritebackReq(jInKIndex)
     cacheEngine.io.jceFetchDone(jInKIndex) := jamlets(jY)(jX).io.cacheResponse
   }
+
+  kamletTlb.io.localOrderingUpdate.valid := false.B
+  kamletTlb.io.localOrderingUpdate.bits := DontCare
 
   // ============================================================
   // Sync network
@@ -300,6 +309,7 @@ class Kamlet(
 
   io.errors.instrQueue := instrQueue.io.errors
   io.errors.cacheEngine := cacheEngine.io.errors
+  io.errors.tlb := kamletTlb.io.errors
 }
 
 object KamletGenerator extends zamlet.ModuleGenerator {

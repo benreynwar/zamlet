@@ -31,8 +31,9 @@ class JteIO(params: ZamletParams) extends Bundle {
   val rfWriteReq = Decoupled(new RFWriteReq(params))
   val rfWriteResp = Flipped(Decoupled(Bool()))
 
-  val tlbReq = Decoupled(UInt(params.memStripeAddrWidth.W))
+  val tlbReq = Decoupled(new JamletTlbReq(params))
   val tlbResp = Flipped(Decoupled(new JamletTlbResp(params)))
+  val tlbAvailable = Flipped(Valid(new JamletTlbAvailable(params)))
 
   val cacheLineReq = Decoupled(new CacheLineRequest(params))
   val cacheLineResp = Flipped(Decoupled(new CacheLineResponse(params)))
@@ -71,6 +72,7 @@ class Jte(params: ZamletParams) extends Module {
   initiator.io.rfDataResp <> io.rfDataResp
   io.tlbReq <> initiator.io.tlbReq
   initiator.io.tlbResp <> io.tlbResp
+  state.io.tlbAvailable <> io.tlbAvailable
 
   receiver.io.packet <> io.channel0In
   receiver.io.teIndexToRegReq <> state.io.teIndexToRegReq

@@ -1,6 +1,6 @@
 # Kamlet module tests
 
-load("//bazel:cocotb_rules.bzl", "chisel_module_tests")
+load("//bazel:cocotb_rules.bzl", "chisel_module_tests", "chisel_module_tests_no_config")
 
 chisel_module_tests(
     generator = "//src/main/scala/zamlet/kamlet:synchronizer",
@@ -34,13 +34,33 @@ chisel_module_tests(
     test_modules = ["zamlet.kamlet_test.test_kamlet_transfer_engine"],
 )
 
+chisel_module_tests(
+    generator = "//src/main/scala/zamlet/kamlet:kamlettlb",
+    toplevel = "KamletTlb",
+    srcs = ["test_kamlet_tlb.py"],
+    test_modules = ["zamlet.kamlet_test.test_kamlet_tlb"],
+)
+
+chisel_module_tests_no_config(
+    generator = "//src/main/scala/zamlet/kamlet:tagtable",
+    toplevel = "TagTable",
+    srcs = [
+        "tag_table_driver.py",
+        "test_tag_table.py",
+    ],
+    test_modules = ["zamlet.kamlet_test.test_tag_table"],
+    generator_args = ["16", "3", "4", "8", "8", "2"],
+)
+
 test_suite(
     name = "all_tests",
     tests = [
         # TODO: Re-enable when fixed
         # ":synchronizer_tests",
+        ":tagtable_tests",
         ":kamletcacheengine_tests",
         ":kamletmesh_tests",
         ":kamlettransferengine_tests",
+        ":kamlettlb_tests",
     ],
 )

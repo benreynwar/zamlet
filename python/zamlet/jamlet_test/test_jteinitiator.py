@@ -8,7 +8,8 @@ import cocotb
 from cocotb import clock, triggers
 from cocotb.handle import HierarchyObject
 
-from zamlet import test_utils, utils
+from zamlet import test_utils
+from zamlet.jamlet_test.jteinitiator_driver import JteInitiatorDriver
 from zamlet.lane_order import LaneOrder
 from zamlet.message import JteIHeader, MessageType, SendType
 from zamlet.params import ZamletParams
@@ -293,132 +294,23 @@ def make_random_instruction(
     )
 
 
-async def send_dispatch(rnd: Random, dut: HierarchyObject, dispatch_queue: deque[RandomInstr], p_valid: float = 0.5) -> None:
-    instr = None
-    await triggers.RisingEdge(dut.clock)
-    while True:
-        if instr is None and dispatch_queue:
-            instr = dispatch_queue.popleft()
-        if instr is not None:
-            valid = rnd.random() < p_valid
-        else:
-            valid = False
-        if valid:
-            dut.io_input_valid.value = 1
-            dut.io_input_bits_teIndex.value = 0
-            dut.io_input_bits_instrIdent.value = 0
-            dut.io_input_bits_mode.value = instr.mode
-            dut.io_input_bits_baseAddr.value = instr.base_addr
-            dut.io_input_bits_stride.value = 0
-            dut.io_input_bits_startIndex.value = instr.start_index
-            dut.io_input_bits_endIndex.value = instr.end_index
-            dut.io_input_bits_dataReg.value = instr.data_reg
-            dut.io_input_bits_indexReg.value = instr.index_reg
-            dut.io_input_bits_maskReg.value = instr.mask_reg
-            dut.io_input_bits_maskEnabled.value = int(instr.mask_enabled)
-            dut.io_input_bits_rfLaneOrder.value = LaneOrder.MOORE
-            dut.io_input_bits_rfDataWF.value = instr.reg_wf
-            dut.io_input_bits_rfDataEW.value = instr.data_ew
-            dut.io_input_bits_rfIndexEW.value = instr.index_ew
-        else:
-            dut.io_input_valid.value = 0
-        await triggers.ReadOnly()
-        dispatch_ready = int(dut.io_input_ready.value)
-        if dispatch_ready and valid:
-            instr = None
-        await triggers.RisingEdge(dut.clock)
-
-
-async def req_resp_handler(
-    dut,
-    req_prefix: str,
-    resp_prefix: str,
-    mapping,
-    expected_requests: deque[object] | None = None,
-):
-    await triggers.RisingEdge(dut.clock)
-    addr_queue = deque()
-    popped_addr = None
-    getattr(dut, req_prefix + 'ready').value = 1
-    getattr(dut, resp_prefix + 'valid').value = 0
-    while True:
-        await triggers.ReadOnly()
-        req_fire = int(getattr(dut, req_prefix + 'valid').value) and int(getattr(dut, req_prefix + 'ready').value)
-        req_addr = int(getattr(dut, req_prefix + 'bits').value)
-        resp_fire = popped_addr is not None and int(getattr(dut, resp_prefix + 'ready').value)
-        if req_fire:
-            addr_queue.append(req_addr)
-        if resp_fire:
-            popped_addr = None
-        await triggers.RisingEdge(dut.clock)
-        getattr(dut, req_prefix + 'ready').value = int(len(addr_queue) < 2)
-        if popped_addr is None and addr_queue:
-            popped_addr = addr_queue.popleft()
-            logger.info('%s request address %d', req_prefix, popped_addr)
-            if expected_requests is not None:
-                assert expected_requests, f'{req_prefix} unexpected request address {popped_addr}'
-                expected_request = expected_requests.popleft()
-                if isinstance(expected_request, tuple):
-                    expected_instr_index, expected_instr, expected_addr = expected_request
-                    expected_context = (
-                        f'\nexpected instruction index: {expected_instr_index}'
-                        f'\nexpected instruction: {expected_instr}'
-                    )
-                else:
-                    expected_addr = expected_request
-                    expected_context = ''
-                assert popped_addr == expected_addr, (
-                    f'{req_prefix} request mismatch\n'
-                    f'actual:   {popped_addr}\n'
-                    f'expected: {expected_addr}'
-                    f'{expected_context}'
-                )
-        getattr(dut, resp_prefix + 'valid').value = int(popped_addr is not None)
-        if popped_addr is not None:
-            if isinstance(mapping, list):
-                assert 0 <= popped_addr < len(mapping), (
-                    f'{req_prefix} requested out-of-range RF address {popped_addr}'
-                )
-            elif popped_addr not in mapping:
-                logger.info('expected mapping for %s: %s', req_prefix, mapping)
-                raise AssertionError(f'{req_prefix} requested unmapped address {popped_addr}')
-            mapped = mapping[popped_addr]
-            if isinstance(mapped, dict):
-                for key, value in mapped.items():
-                    getattr(dut, resp_prefix + 'bits_' + key).value = value
-            else:
-                getattr(dut, resp_prefix + 'bits').value = mapped
-
-
-async def random_packet_ready(rnd: Random, dut: HierarchyObject):
-    while True:
-        await triggers.RisingEdge(dut.clock)
-        dut.io_packet_ready.value = rnd.randint(0, 1)
-
 async def consume_and_check_packets(
-    rnd: Random,
-    dut: HierarchyObject,
+    driver: JteInitiatorDriver,
     params: ZamletParams,
     packets_received: deque[list[object]],
     packets_expected: deque[tuple[RandomInstr, list[object]]],
 ) -> None:
-    await triggers.ReadOnly()
     while True:
-        while not (int(dut.io_packet_valid.value) and int(dut.io_packet_ready.value)):
-            await triggers.RisingEdge(dut.clock)
-            await triggers.ReadOnly()
-        assert int(dut.io_packet_bits_isHeader.value) == 1
-        header = JteIHeader.decode(int(dut.io_packet_bits_data.value), params)
+        while not driver.packet.queue:
+            await triggers.RisingEdge(driver.clock)
+        word = driver.packet.pop()
+        assert word["isHeader"] == 1
+        header = JteIHeader.decode(word["data"], params)
         packet = [header]
-        await triggers.RisingEdge(dut.clock)
-        await triggers.ReadOnly()
         for _ in range(header.length):
-            while not (int(dut.io_packet_valid.value) and int(dut.io_packet_ready.value)):
-                await triggers.RisingEdge(dut.clock)
-                await triggers.ReadOnly()
-            packet.append(int(dut.io_packet_bits_data.value))
-            await triggers.RisingEdge(dut.clock)
-            await triggers.ReadOnly()
+            while not driver.packet.queue:
+                await triggers.RisingEdge(driver.clock)
+            packet.append(driver.packet.pop()["data"])
 
         packets_received.append(packet)
         assert packets_expected, f'unexpected packet received: {packet}'
@@ -431,24 +323,23 @@ async def consume_and_check_packets(
 
 
 async def consume_and_check_commits(
-    dut: HierarchyObject,
+    driver: JteInitiatorDriver,
     commits_received: deque[dict[str, object]],
     commits_expected: deque[tuple[RandomInstr, dict[str, object]]],
     params: ZamletParams,
 ) -> None:
     commit_index = 0
-    await triggers.ReadOnly()
     while True:
-        while not int(dut.io_commit_valid.value):
-            await triggers.RisingEdge(dut.clock)
-            await triggers.ReadOnly()
+        while not driver.commit.queue:
+            await triggers.RisingEdge(driver.clock)
+        item = driver.commit.pop()
         commit = {
-            'slot': int(dut.io_commit_bits_teIndex.value),
+            'slot': item['teIndex'],
             'initiator': [
-                int(getattr(dut, f'io_commit_bits_initiator_{i}').value)
+                item[f'initiator_{i}']
                 for i in range(params.word_bytes)
             ],
-            'walkState': int(dut.io_commit_bits_walkState.value),
+            'walkState': item['walkState'],
         }
         commits_received.append(commit)
         assert commits_expected, f'unexpected commit received: {commit}'
@@ -462,8 +353,6 @@ async def consume_and_check_commits(
             f'expected: {expected_commit}'
         )
         commit_index += 1
-        await triggers.RisingEdge(dut.clock)
-        await triggers.ReadOnly()
 
 
 async def wait_for_packets(dut: HierarchyObject, packets: deque[list[object]], n_packets: int, timeout_cycles=500):
@@ -515,13 +404,10 @@ async def jteinitiator_random_test(dut: HierarchyObject) -> None:
     this_x = 2
     this_y = 3
     lane_index = 0
-    dut.io_x.value = this_x
-    dut.io_y.value = this_y
-    dut.io_laneIndex.value = lane_index
+    driver = JteInitiatorDriver(dut, params, this_x, this_y, lane_index)
 
     cocotb.start_soon(clock.Clock(dut.clock, 2, 'ns').start())
 
-    dispatch_queue = deque()
     packets_received = deque()
     commits_received = deque()
     content = [rnd.randrange(0, 1 << params.word_width) for _ in range(params.rf_slice_words)]
@@ -566,24 +452,17 @@ async def jteinitiator_random_test(dut: HierarchyObject) -> None:
     n_expected_packets = len(packets_expected)
     n_expected_commits = len(commits_expected)
 
-    cocotb.start_soon(send_dispatch(utils.create_rng(rnd), dut, dispatch_queue))
-    cocotb.start_soon(req_resp_handler(
-        dut, 'io_rfIndexReq_', 'io_rfIndexResp_', content, index_requests_expected))
-    cocotb.start_soon(req_resp_handler(dut, 'io_rfDataReq_', 'io_rfDataResp_', content))
-    cocotb.start_soon(req_resp_handler(dut, 'io_rfMaskReq_', 'io_rfMaskResp_', content))
-    cocotb.start_soon(req_resp_handler(
-        dut, 'io_tlbReq_', 'io_tlbResp_', tlb_table, tlb_requests_expected))
-    cocotb.start_soon(random_packet_ready(utils.create_rng(rnd), dut))
+    driver.start(rnd, content, tlb_table, index_requests_expected, tlb_requests_expected)
     cocotb.start_soon(consume_and_check_packets(
-        utils.create_rng(rnd), dut, params, packets_received, packets_expected))
-    cocotb.start_soon(consume_and_check_commits(dut, commits_received, commits_expected, params))
+        driver, params, packets_received, packets_expected))
+    cocotb.start_soon(consume_and_check_commits(driver, commits_received, commits_expected, params))
 
     dut.reset.value = 1
     await triggers.RisingEdge(dut.clock)
     dut.reset.value = 0
     await triggers.RisingEdge(dut.clock)
 
-    dispatch_queue.extend(instrs_to_send)
+    driver.enqueue_instructions(instrs_to_send)
     try:
         await wait_for_packets(
             dut, packets_received, n_expected_packets,

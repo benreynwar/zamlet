@@ -204,11 +204,11 @@ class KcePendingTable(params: ZamletParams) extends Module {
     cacheLineResp(jInK).ready
   })(req2In.bits.jInK)
   val req2Present =
-    claimSlotResp.bits.hasSlot &&
+    claimSlotResp.bits.didClaim &&
     (claimSlotResp.bits.state === KceCacheSlotState.PresentClean ||
       claimSlotResp.bits.state === KceCacheSlotState.PresentDirty)
   val req2Fetching =
-    claimSlotResp.bits.hasSlot &&
+    claimSlotResp.bits.didClaim &&
     (claimSlotResp.bits.state === KceCacheSlotState.Fetching ||
       claimSlotResp.bits.state === KceCacheSlotState.FetchingWillWrite)
   val req2NeedsAlloc =

@@ -29,6 +29,8 @@ object JteInitiatorState extends ChiselEnum {
   val WaitingForFault = Value(2.U)
   val RequestSent = Value(3.U)
   val Complete = Value(4.U)
+  val WaitingForTlb = Value(5.U)
+  val EarlyTlbAvailable = Value(6.U)
 }
 
 // When the EW > 64 we send an instruction for each word and
@@ -437,15 +439,39 @@ class JteInitiatorFG(params: ZamletParams) extends Bundle {
   val active = Bool()
 }
 
-class JamletTlbResp(params: ZamletParams) extends Bundle {
+object JamletTlbStatus extends ChiselEnum {
+  val Hit = Value(0.U)
+  val SoftDrop = Value(1.U)
+  val HardDrop = Value(2.U)
+}
+
+class JamletTlbReq(params: ZamletParams) extends Bundle {
+  val virtualStripeAddr = UInt(params.memStripeAddrWidth.W)
+  val teIndex = UInt(log2Ceil(params.witemTableDepth).W)
+  val byteIndex = UInt(log2Ceil(params.wordBytes).W)
+}
+
+class JamletTlbTranslation(params: ZamletParams) extends Bundle {
   val stripeAddr = UInt(params.memStripeAddrWidth.W)
   val ordering = new Ordering()
+}
+
+class JamletTlbResp(params: ZamletParams) extends Bundle {
+  val status = JamletTlbStatus()
+  val teIndex = UInt(log2Ceil(params.witemTableDepth).W)
+  val byteIndex = UInt(log2Ceil(params.wordBytes).W)
+  val translation = new JamletTlbTranslation(params)
+}
+
+class JamletTlbAvailable(params: ZamletParams) extends Bundle {
+  val teIndex = UInt(log2Ceil(params.witemTableDepth).W)
+  val byteIndex = UInt(log2Ceil(params.wordBytes).W)
 }
 
 class JteInitiatorFIO(params: ZamletParams) extends Bundle {
   val ef = Flipped(Decoupled(new JteInitiatorEF(params)))
   val fg = Decoupled(new JteInitiatorFG(params))
-  val tlbReq = Decoupled(UInt(params.memStripeAddrWidth.W))
+  val tlbReq = Decoupled(new JamletTlbReq(params))
 }
 
 class JteInitiatorF(params: ZamletParams) extends Module {
@@ -478,7 +504,9 @@ class JteInitiatorF(params: ZamletParams) extends Module {
   val lastByteStripe = RegEnable(firstByteStripe + 1.U, fire)
 
   io.tlbReq.valid := io.ef.valid && io.ef.bits.active && io.fg.ready
-  io.tlbReq.bits := Mux(first, firstByteStripe, lastByteStripe)
+  io.tlbReq.bits.virtualStripeAddr := Mux(first, firstByteStripe, lastByteStripe)
+  io.tlbReq.bits.teIndex := io.ef.bits.teIndex
+  io.tlbReq.bits.byteIndex := io.ef.bits.srcOffset(params.log2WordBytes-1, 0)
 
   io.fg.valid := io.ef.valid && (
     !io.ef.bits.active || io.tlbReq.ready
@@ -553,19 +581,26 @@ class JteInitiatorHIO(params: ZamletParams) extends Bundle {
 class JteInitiatorH(params: ZamletParams) extends Module {
   val io = IO(new JteInitiatorHIO(params))
 
+  val completeSection = Wire(Bool())
+  val tlbHit = io.tlbResp.bits.status === JamletTlbStatus.Hit
+  val tlbSoftDrop = io.tlbResp.bits.status === JamletTlbStatus.SoftDrop
+  val tlbHardDrop = io.tlbResp.bits.status === JamletTlbStatus.HardDrop
+  val tlbDrop = tlbSoftDrop || tlbHardDrop
+  io.tlbResp.ready := io.gh.valid && io.gh.bits.active && (
+    (tlbHit && io.hi.ready && completeSection) || tlbDrop
+  )
+  val stripeAddress = io.tlbResp.bits.translation.stripeAddr
+  val ordering = io.tlbResp.bits.translation.ordering
+
+  io.hi.valid := io.gh.valid && io.gh.bits.active && io.tlbResp.valid && tlbHit
+  io.gh.ready := !io.gh.bits.active || (
+    io.tlbResp.valid && ((tlbHit && io.hi.ready && completeSection) || tlbDrop)
+  )
+
   val packetFire = io.hi.valid && io.hi.ready
   val markerFire = io.gh.valid && io.gh.ready && !io.gh.bits.active
-  val commitFire = packetFire || markerFire
-
-  val completeSection = Wire(Bool())
-  io.tlbResp.ready := io.gh.valid && io.gh.bits.active && io.hi.ready && completeSection
-  val stripeAddress = io.tlbResp.bits.stripeAddr
-  val ordering = io.tlbResp.bits.ordering
-
-  io.hi.valid := io.gh.valid && io.gh.bits.active && io.tlbResp.valid
-  io.gh.ready := !io.gh.bits.active || (
-    io.hi.ready && io.tlbResp.valid && completeSection
-  )
+  val dropFire = io.gh.valid && io.gh.ready && io.gh.bits.active && io.tlbResp.valid && tlbDrop
+  val commitFire = packetFire || markerFire || dropFire
 
   // We have a section.
   // We know:
@@ -578,7 +613,7 @@ class JteInitiatorH(params: ZamletParams) extends Module {
   // We need to work out from this byte how far until we get to the end of an element in memory.
 
 
-  val first = RegEnable(completeSection, true.B, packetFire)
+  val first = RegEnable(completeSection || dropFire, true.B, packetFire || dropFire)
   val stripeOffset = Wire(UInt(params.log2StripeBytes.W))
   val stripeOffsetIncrNext = Wire(UInt(params.log2StripeBytes.W))
   val stripeOffsetIncr = RegEnable(stripeOffsetIncrNext, packetFire)
@@ -625,7 +660,7 @@ class JteInitiatorH(params: ZamletParams) extends Module {
     io.hi.bits.dstNBytes := maxSegmentBytes
     completeSection := false.B
   }
-  val last = io.gh.bits.last && (!io.gh.bits.active || completeSection)
+  val last = io.gh.bits.last && (!io.gh.bits.active || completeSection || tlbDrop)
   val emittedBytes = io.gh.bits.nSectionBytes - remainingBytes
   val srcOffset = (io.gh.bits.srcOffset + emittedBytes)(params.log2WordBytes-1, 0)
   // Shift the valid store bytes into the destination word lanes.
@@ -659,7 +694,13 @@ class JteInitiatorH(params: ZamletParams) extends Module {
 
   initiator := initiatorBase
   when (io.gh.bits.active) {
-    initiator(srcOffset) := JteInitiatorState.RequestSent
+    when (tlbSoftDrop) {
+      initiator(srcOffset) := JteInitiatorState.WaitingForTlb
+    } .elsewhen (tlbHardDrop) {
+      initiator(srcOffset) := JteInitiatorState.Dropped
+    } .otherwise {
+      initiator(srcOffset) := JteInitiatorState.RequestSent
+    }
   }
   initiatorBaseNext := initiator
   when (last) {
@@ -667,7 +708,7 @@ class JteInitiatorH(params: ZamletParams) extends Module {
     initiatorBaseNext := initiatorInitial
   }
 
-  when (io.gh.bits.active) {
+  when (io.gh.bits.active && !tlbSoftDrop) {
     walkState := JteWalkState.NeedsProcessing
   } .otherwise {
     walkState := walkStateBase
@@ -748,7 +789,7 @@ class JteInitiatorIO(params: ZamletParams) extends Bundle {
   val rfIndexResp = Flipped(Decoupled(params.word()))
   val rfDataReq = Decoupled(params.rfAddr())
   val rfDataResp = Flipped(Decoupled(params.word()))
-  val tlbReq = Decoupled(UInt(params.memStripeAddrWidth.W))
+  val tlbReq = Decoupled(new JamletTlbReq(params))
   val tlbResp = Flipped(Decoupled(new JamletTlbResp(params)))
   val commit = Valid(new JteInitiatorCommit(params))
   val packet = Decoupled(new INetworkWord(params))

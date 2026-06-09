@@ -7,6 +7,7 @@ from cocotb.triggers import ReadOnly, RisingEdge
 
 from zamlet.future import Future
 from zamlet.message import Header, int_to_header
+from zamlet.utils import make_seed
 
 
 class NetworkPacketSource:
@@ -22,8 +23,8 @@ class NetworkPacketSource:
     def enqueue_packet(self, words: list[tuple[int, bool]]) -> None:
         self.queue.extend(words)
 
-    def start(self, seed: int, p_valid: float = 1.0) -> None:
-        cocotb.start_soon(self.run(seed=seed, p_valid=p_valid))
+    def start(self, rng: Random, p_valid: float = 1.0) -> None:
+        cocotb.start_soon(self.run(seed=make_seed(rng), p_valid=p_valid))
 
     async def run(self, seed: int, p_valid: float = 1.0) -> None:
         valid = getattr(self.dut, f"{self.prefix}_valid")
@@ -71,8 +72,8 @@ class NetworkPacketSink:
         self.future_queue.append(future)
         return future
 
-    def start(self, seed: int, p_ready: float = 1.0) -> None:
-        cocotb.start_soon(self.run(seed=seed, p_ready=p_ready))
+    def start(self, rng: Random, p_ready: float = 1.0) -> None:
+        cocotb.start_soon(self.run(seed=make_seed(rng), p_ready=p_ready))
         cocotb.start_soon(self.resolve())
 
     async def resolve(self) -> None:
