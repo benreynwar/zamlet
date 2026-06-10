@@ -142,12 +142,14 @@ class ScalarLoadQueue(params: ZamletParams) extends Module {
     // reusing the parent scalar-load ident is the right completion/tracking
     // behavior for both generated LoadImm kinstrs.
     instr.instrIdent := instrIdent
-    instr.jInKIndex := jInK
-    instr.rfAddr := rfAddr
-    instr.section := section
-    instr.byteMask := 0xF.U  // All 4 bytes of section
-    instr.data := data
-    instr.reserved := 0.U
+    instr.f1 := rfAddr.pad(6)
+    instr.f2 := jInK.pad(6)
+    instr.f3 := Cat(section, 0xF.U(4.W)).pad(6)
+    instr.f4 := data(31, 26)
+    instr.f5 := data(25, 20)
+    instr.f6 := data(19, 14)
+    instr.f7 := data(13, 8)
+    instr.misc := data(7, 0)
     instr.asUInt
   }
 

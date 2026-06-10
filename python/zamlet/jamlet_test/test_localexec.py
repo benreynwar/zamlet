@@ -418,9 +418,9 @@ def drive_instruction(dut: HierarchyObject, case: LocalExecCase | None) -> None:
         dut.io_kinstrIn_bits_ordering_laneOrder.value = LaneOrder.ROW_MAJOR
         dut.io_kinstrIn_bits_cacheSlot.value = case.cache_slot
         dut.io_kinstrIn_bits_sramWordOffset.value = case.sram_word_offset
-        dut.io_kinstrIn_bits_param0.value = case.start_index
-        dut.io_kinstrIn_bits_param1.value = case.end_index
-        dut.io_kinstrIn_bits_param2.value = 0
+        dut.io_kinstrIn_bits_param0.value = 0
+        dut.io_kinstrIn_bits_param1.value = case.start_index
+        dut.io_kinstrIn_bits_param2.value = case.end_index
 
 
 def drive_rf_response(dut: HierarchyObject, port: str, item: RfRead | None) -> None:

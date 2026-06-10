@@ -204,19 +204,14 @@ class IssueUnit(params: ZamletParams) extends Module {
   val kinstr = Wire(new J2JInstr(params))
   kinstr.opcode := Mux(isVectorLoad, KInstrOpcode.LoadJ2J, KInstrOpcode.StoreJ2J)
   kinstr.instrIdent := 0.U
-  kinstr.writeset.valid := false.B
-  kinstr.writeset.bits := 0.U
-  kinstr.cacheSlot := (tlbPaddr >> log2Ceil(params.cacheSlotWords * params.wordBytes).U)(
-    params.cacheSlotWidth - 1, 0)
-  kinstr.memLaneOrder := LaneOrder.ROW_MAJOR
-  kinstr.rfLaneOrder := LaneOrder.ROW_MAJOR
-  kinstr.memEw := bitsToElementWidth(eewBits)
-  kinstr.rfEw := sewToElementWidth(vsew)
-  kinstr.baseAddr := tlbPaddr(log2Ceil(params.wordBytes * params.jInL) - 1, 0)
-  kinstr.startIndexParamIdx := 1.U
-  kinstr.endIndexParamIdx := 0.U
-  kinstr.reg := vd.pad(params.rfAddrWidth)
-  kinstr._padding := 0.U
+  kinstr.f1 := vd.pad(6)
+  kinstr.f2 := 0.U
+  kinstr.f3 := Cat(LaneOrder.ROW_MAJOR.asUInt, LaneOrder.ROW_MAJOR.asUInt)
+  kinstr.f4 := 0.U
+  kinstr.f5 := Cat(bitsToElementWidth(eewBits).asUInt, sewToElementWidth(vsew).asUInt)
+  kinstr.f6 := Cat(1.U(params.paramRefIdxWidth.W), 0.U(params.paramRefIdxWidth.W))
+  kinstr.f7 := 0.U
+  kinstr.misc := 0.U
 
   // Default outputs
   exBuffered.ready := false.B
@@ -320,11 +315,18 @@ class IssueUnit(params: ZamletParams) extends Module {
     is(DispatchStoreWriteParam) {
       // Send WriteParam kinstr with paddr to param entry 0
       val writeParamKinstr = Wire(new WriteParamInstr(params))
+      val writeParamDataWidth = 42 + 8 - params.log2NParams
+      val writeParamData = tlbPaddr(params.memAddrWidth - 1, 0).pad(writeParamDataWidth)
       writeParamKinstr.opcode := KInstrOpcode.WriteParam
       writeParamKinstr.instrIdent := 0.U
-      writeParamKinstr.paramIdx := 0.U
-      writeParamKinstr.data := tlbPaddr(params.memAddrWidth - 1, 0)
-      writeParamKinstr.reserved := 0.U
+      writeParamKinstr.f1 := writeParamData(writeParamDataWidth - 1, writeParamDataWidth - 6)
+      writeParamKinstr.f2 := writeParamData(writeParamDataWidth - 7, writeParamDataWidth - 12)
+      writeParamKinstr.f3 := writeParamData(writeParamDataWidth - 13, writeParamDataWidth - 18)
+      writeParamKinstr.f4 := writeParamData(writeParamDataWidth - 19, writeParamDataWidth - 24)
+      writeParamKinstr.f5 := writeParamData(writeParamDataWidth - 25, writeParamDataWidth - 30)
+      writeParamKinstr.f6 := writeParamData(writeParamDataWidth - 31, writeParamDataWidth - 36)
+      writeParamKinstr.f7 := writeParamData(writeParamDataWidth - 37, writeParamDataWidth - 42)
+      writeParamKinstr.misc := Cat(writeParamData(writeParamDataWidth - 43, 0), 0.U(params.log2NParams.W))
 
       toIdentTrackerInternal.valid := true.B
       toIdentTrackerInternal.bits.kinstr := writeParamKinstr.asUInt
@@ -339,12 +341,14 @@ class IssueUnit(params: ZamletParams) extends Module {
       val storeScalarKinstr = Wire(new StoreScalarInstr(params))
       storeScalarKinstr.opcode := KInstrOpcode.StoreScalar
       storeScalarKinstr.instrIdent := 0.U
-      storeScalarKinstr.writeset.valid := false.B
-      storeScalarKinstr.writeset.bits := 0.U
-      storeScalarKinstr.dataReg := vd.pad(params.rfAddrWidth)
-      storeScalarKinstr.scalarAddrParamIdx := 0.U
-      storeScalarKinstr.ew := bitsToElementWidth(eewBits)
-      storeScalarKinstr.reserved := 0.U
+      storeScalarKinstr.f1 := vd.pad(6)
+      storeScalarKinstr.f2 := 0.U
+      storeScalarKinstr.f3 := 0.U
+      storeScalarKinstr.f4 := 0.U
+      storeScalarKinstr.f5 := bitsToElementWidth(eewBits).asUInt.pad(6)
+      storeScalarKinstr.f6 := 0.U
+      storeScalarKinstr.f7 := 0.U
+      storeScalarKinstr.misc := 0.U
 
       toIdentTrackerInternal.valid := true.B
       toIdentTrackerInternal.bits.kinstr := storeScalarKinstr.asUInt

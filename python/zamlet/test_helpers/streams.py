@@ -4,8 +4,9 @@ from collections import deque
 from random import Random
 
 import cocotb
-from cocotb.triggers import ReadOnly, RisingEdge
+from cocotb.triggers import Event, ReadOnly, RisingEdge
 
+from zamlet.future import Future
 from zamlet.utils import make_seed
 
 
@@ -73,11 +74,14 @@ class ValidReadySource:
         self.bits, self.scalar_bits = get_stream_signals(dut, prefix)
         self.queue = deque()
 
-    def append(self, item) -> None:
-        self.queue.append(item)
+    def append(self, item) -> Future:
+        future = Future(Event())
+        self.queue.append((item, future))
+        return future
 
     def extend(self, items) -> None:
-        self.queue.extend(items)
+        for item in items:
+            self.append(item)
 
     def start(self, rng: Random, p_valid: float = 1.0) -> list:
         return [cocotb.start_soon(self.run(seed=make_seed(rng), p_valid=p_valid))]
@@ -98,7 +102,8 @@ class ValidReadySource:
                 self.valid.value = 0
                 fired = False
             else:
-                self._drive_bits(current)
+                item, _ = current
+                self._drive_bits(item)
                 self.valid.value = 1
                 await ReadOnly()
                 fired = bool(int(self.ready.value))
@@ -106,6 +111,8 @@ class ValidReadySource:
             await RisingEdge(self.clock)
 
             if fired:
+                _, future = current
+                future.set_result(None)
                 current = None
 
 

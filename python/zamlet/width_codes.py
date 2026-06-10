@@ -8,8 +8,6 @@ class ElementWidthCode(IntEnum):
     EW32 = 5
     EW64 = 6
     EW128 = 7
-    EW256 = 8
-    EW512 = 9
 
     @classmethod
     def width(cls) -> int:
@@ -40,8 +38,6 @@ _EW_BY_WIDTH = {
     32: ElementWidthCode.EW32,
     64: ElementWidthCode.EW64,
     128: ElementWidthCode.EW128,
-    256: ElementWidthCode.EW256,
-    512: ElementWidthCode.EW512,
 }
 
 _WF_BY_WIDTH = {

@@ -5,8 +5,7 @@ import chisel3.util._
 import zamlet.ZamletParams
 import zamlet.jamlet.{IdentQueryInstr, IndexedInstr, JteCreate, JteInitiatorInput,
                        KInstr, KInstrBase, KInstrOpcode, KinstrWithParams,
-                       LoadSimpleInstr, MemoryKInstrBase, StoreSimpleInstr, SyncTriggerInstr,
-                       TransferMode}
+                       LoadSimpleInstr, StoreSimpleInstr, SyncTriggerInstr, TransferMode}
 import zamlet.utils.{DoubleBuffer, ValidBuffer}
 
 object KteOpType extends ChiselEnum {
@@ -71,7 +70,6 @@ object KteIssueReq {
   def memFootprint(params: ZamletParams, valid: Bool, issue: KteIssueReq): Valid[KteMemFootprint] = {
     val footprint = Wire(Valid(new KteMemFootprint(params)))
     val base = issue.kinstr.kinstr.asTypeOf(new KInstrBase(params))
-    val memory = issue.kinstr.kinstr.asTypeOf(new MemoryKInstrBase(params))
     val hasMemoryWriteset =
       issue.opType === KteOpType.CacheWaitLocal || issue.opType === KteOpType.JteTransfer
     footprint.valid := valid && (issue.opType === KteOpType.CacheWaitLocal || issue.opType === KteOpType.JteTransfer)
@@ -79,8 +77,8 @@ object KteIssueReq {
     footprint.bits.willWrite :=
       base.opcode === KInstrOpcode.StoreSimple || base.opcode === KInstrOpcode.StoreIdxUnord
     footprint.bits.cacheSlot := issue.cacheSlot
-    footprint.bits.writeset.valid := hasMemoryWriteset && memory.writeset.valid
-    footprint.bits.writeset.bits := memory.writeset.bits
+    footprint.bits.writeset.valid := hasMemoryWriteset && base.writeset.valid
+    footprint.bits.writeset.bits := base.writeset.bits
     footprint
   }
 }
@@ -325,7 +323,7 @@ class KamletTransferEngine(params: ZamletParams) extends Module {
     input0Resp.indexReg := input0Indexed.indexReg
     input0Resp.maskReg := input0Indexed.maskReg
     input0Resp.maskEnabled := input0Indexed.maskEnabled
-    input0Resp.rfLaneOrder := input0Indexed.rfLaneOrder
+    input0Resp.rfLaneOrder := input0Entry.kinstr.ordering.laneOrder
     input0Resp.rfDataWF := input0Entry.kinstr.ordering.wf
     input0Resp.rfDataEW := input0Indexed.rfEw
     input0Resp.rfIndexEW := input0Indexed.indexEw
@@ -382,8 +380,8 @@ class KamletTransferEngine(params: ZamletParams) extends Module {
     val identQuery = entry.kinstr.kinstr.asTypeOf(new IdentQueryInstr(params))
 
     MuxCase(0.U(params.syncIdentWidth.W), Seq(
-      (base.opcode === KInstrOpcode.LoadIdxUnord) -> indexed.syncIdent,
-      (base.opcode === KInstrOpcode.StoreIdxUnord) -> indexed.syncIdent,
+      (base.opcode === KInstrOpcode.LoadIdxUnord) -> indexed.completionSyncIdent,
+      (base.opcode === KInstrOpcode.StoreIdxUnord) -> indexed.completionSyncIdent,
       (base.opcode === KInstrOpcode.SyncTrigger) -> syncTrigger.syncIdent,
       (base.opcode === KInstrOpcode.IdentQuery) -> identQuery.syncIdent
     ))
@@ -494,26 +492,24 @@ class KamletTransferEngine(params: ZamletParams) extends Module {
   def footprintFromCacheWait(entry: Valid[KteCacheWaitEntry]): Valid[KteMemFootprint] = {
     val footprint = Wire(Valid(new KteMemFootprint(params)))
     val base = entry.bits.kinstr.kinstr.asTypeOf(new KInstrBase(params))
-    val memory = entry.bits.kinstr.kinstr.asTypeOf(new MemoryKInstrBase(params))
     footprint.valid := entry.valid
     footprint.bits.unknown := false.B
     footprint.bits.willWrite := base.opcode === KInstrOpcode.StoreSimple
     footprint.bits.cacheSlot := entry.bits.slot
-    footprint.bits.writeset := memory.writeset
+    footprint.bits.writeset := base.writeset
     footprint
   }
 
   def footprintFromKteEntry(entry: KteEntry): Valid[KteMemFootprint] = {
     val footprint = Wire(Valid(new KteMemFootprint(params)))
     val base = entry.kinstr.kinstr.asTypeOf(new KInstrBase(params))
-    val memory = entry.kinstr.kinstr.asTypeOf(new MemoryKInstrBase(params))
     footprint.valid :=
       entry.state =/= KteState.Free &&
         (base.opcode === KInstrOpcode.LoadIdxUnord || base.opcode === KInstrOpcode.StoreIdxUnord)
     footprint.bits.unknown := true.B
     footprint.bits.willWrite := base.opcode === KInstrOpcode.StoreIdxUnord
     footprint.bits.cacheSlot := 0.U
-    footprint.bits.writeset := memory.writeset
+    footprint.bits.writeset := base.writeset
     footprint
   }
 

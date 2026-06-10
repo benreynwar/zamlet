@@ -5,11 +5,7 @@ import cocotb
 from cocotb.clock import Clock
 from cocotb.handle import HierarchyObject
 from zamlet import test_utils
-from zamlet.kamlet_test.kte_driver import (
-    KCE_CACHE_SLOT_FETCHING,
-    KCE_CACHE_SLOT_PRESENT_CLEAN,
-    KteDriver,
-)
+from zamlet.kamlet_test.kte_driver import KteDriver
 from zamlet.params import ZamletParams
 
 
@@ -204,7 +200,7 @@ async def transfer_waits_for_sync_result(dut: HierarchyObject) -> None:
 
 @cocotb.test()
 async def cache_wait_replays_after_slot_available(dut: HierarchyObject) -> None:
-    """Cache-wait local ops must not replay until the claimed slot is available."""
+    """Cache-wait local ops must not replay until the allocated slot is available."""
     test_params = test_utils.get_test_params()
     params = load_params(test_params)
     rng = Random(test_params["seed"])
@@ -218,24 +214,13 @@ async def cache_wait_replays_after_slot_available(dut: HierarchyObject) -> None:
 
     await driver.reset()
     kinstr = 0x12345
-    cache_line_addr = 0x55
     cache_slot = 3
-    driver.append_cache_wait_local(
+    submitted = driver.append_cache_wait_local(
         kinstr=kinstr,
-        cache_line_addr=cache_line_addr,
+        cache_slot=cache_slot,
         will_write=True,
     )
-
-    claim_req = await driver.wait_for_claim_req(timeout_cycles=100)
-    assert claim_req["cacheLineAddr"] == cache_line_addr
-    assert claim_req["willWrite"] == 1
-    assert claim_req["claimIfFetching"] == 1
-
-    driver.append_claim_resp(
-        has_slot=True,
-        slot=cache_slot,
-        state=KCE_CACHE_SLOT_FETCHING,
-    )
+    await submitted
     await driver.idle(20)
     assert not driver.local_replays
     assert not driver.cache_slot_releases
@@ -252,7 +237,7 @@ async def cache_wait_replays_after_slot_available(dut: HierarchyObject) -> None:
 
 @cocotb.test()
 async def cache_wait_replays_immediately_when_slot_present(dut: HierarchyObject) -> None:
-    """Cache-wait local ops replay as soon as the claimed slot is already present."""
+    """Cache-wait local ops replay when the allocated slot is reported present."""
     test_params = test_utils.get_test_params()
     params = load_params(test_params)
     rng = Random(test_params["seed"])
@@ -266,24 +251,14 @@ async def cache_wait_replays_immediately_when_slot_present(dut: HierarchyObject)
 
     await driver.reset()
     kinstr = 0x6789a
-    cache_line_addr = 0x66
     cache_slot = 5
-    driver.append_cache_wait_local(
+    submitted = driver.append_cache_wait_local(
         kinstr=kinstr,
-        cache_line_addr=cache_line_addr,
+        cache_slot=cache_slot,
         will_write=False,
     )
-
-    claim_req = await driver.wait_for_claim_req(timeout_cycles=100)
-    assert claim_req["cacheLineAddr"] == cache_line_addr
-    assert claim_req["willWrite"] == 0
-    assert claim_req["claimIfFetching"] == 1
-
-    driver.append_claim_resp(
-        has_slot=True,
-        slot=cache_slot,
-        state=KCE_CACHE_SLOT_PRESENT_CLEAN,
-    )
+    await submitted
+    driver.pulse_slot_available(cache_slot)
     replay = await driver.wait_for_local_replay(timeout_cycles=100)
     assert replay["kinstr"] == kinstr
     assert replay["cacheSlot"] == cache_slot

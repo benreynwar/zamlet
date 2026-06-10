@@ -15,9 +15,8 @@ from typing import TYPE_CHECKING
 
 from zamlet.waiting_item import WaitingItem
 from zamlet.kamlet.kinstructions import (
-    KInstr, KInstrOpcode, KINSTR_WIDTH, OPCODE_WIDTH,
+    KInstr, KInstrOpcode, _pack_slotted_kinstr,
 )
-from zamlet.control_structures import pack_fields_to_int
 from zamlet.synchronization import (
     SyncAggOp,
 )
@@ -51,33 +50,21 @@ class IdentQuery(KInstr):
     must_drain_sync_ident: int = 0
     opcode: int = KInstrOpcode.IDENT_QUERY
 
-    @staticmethod
-    def field_specs(params) -> list[tuple[str, int]]:
-        used_width = (
-            OPCODE_WIDTH
-            + params.ident_width
-            + params.ident_width
-            + params.sync_ident_width
-            + 1
-            + params.sync_ident_width
-        )
-        specs = [
-            ('opcode', OPCODE_WIDTH),
-            ('instr_ident', params.ident_width),
-            ('sync_ident', params.sync_ident_width),
-            ('must_drain_valid', 1),
-            ('must_drain_sync_ident', params.sync_ident_width),
-            ('baseline', params.ident_width),
-            ('_padding', KINSTR_WIDTH - used_width),
-        ]
-        assert specs[-1][1] >= 0
-        return specs
-
     def encode(self, params) -> int:
         assert self.sync_ident is not None
         assert 0 <= self.sync_ident < params.max_concurrent_syncs
         assert 0 <= self.must_drain_sync_ident < params.max_concurrent_syncs
-        return pack_fields_to_int(self, self.field_specs(params))
+        assert params.ident_width <= 12
+        baseline_slots = int(self.baseline)
+        return _pack_slotted_kinstr(
+            opcode=self.opcode,
+            instr_ident=self.instr_ident,
+            f1=int(self.must_drain_sync_ident),
+            f2=(baseline_slots >> 6) & 0x3f,
+            f3=baseline_slots & 0x3f,
+            f4=int(self.sync_ident) << params.sync_ident_width,
+            misc=int(self.must_drain_valid) << 7,
+        )
 
     async def admit(self, kamlet: 'Kamlet') -> 'IdentQuery | None':
         # Snapshot the oldest-active distance at admit time: later-admitted

@@ -3,9 +3,7 @@ package zamlet.kamlet
 import chisel3._
 import chisel3.util._
 import zamlet.{LaneOrder, Ordering, WidthFormat, ZamletParams}
-import zamlet.jamlet.{BinaryOpInstr, IndexedInstr, KInstr, KInstrBase,
-                       KInstrOpcode, KinstrWithParams, LoadImmInstr, MemoryKInstrBase,
-                       LoadSimpleInstr, StoreScalarInstr, StoreSimpleInstr,
+import zamlet.jamlet.{KInstr, KInstrBase, KinstrWithParams, LoadImmInstr,
                        WriteParamInstr}
 import zamlet.utils.{DoubleBuffer, ValidBuffer}
 
@@ -112,7 +110,7 @@ class ReservationStation(params: ZamletParams) extends Module {
 
   def memFootprint(valid: Bool, payload: RsIssuePayload): Valid[KteMemFootprint] = {
     val footprint = Wire(Valid(new KteMemFootprint(params)))
-    val memory = payload.kinstr.kinstr.asTypeOf(new MemoryKInstrBase(params))
+    val slotted = payload.kinstr.kinstr.asTypeOf(new KInstrBase(params))
     val isKteTransfer = payload.kind === RsIssueKind.KteTransfer
     val isCacheLocal = payload.kind === RsIssueKind.CacheLocal
     val hasMemoryWriteset = payload.kind === RsIssueKind.CacheLocal || isKteTransfer
@@ -120,146 +118,74 @@ class ReservationStation(params: ZamletParams) extends Module {
     footprint.bits.unknown := isKteTransfer
     footprint.bits.willWrite := payload.willWrite
     footprint.bits.cacheSlot := payload.cacheSlot
-    footprint.bits.writeset.valid := hasMemoryWriteset && memory.writeset.valid
-    footprint.bits.writeset.bits := memory.writeset.bits
+    footprint.bits.writeset.valid := hasMemoryWriteset && slotted.writeset.valid
+    footprint.bits.writeset.bits := slotted.writeset.bits
     footprint
   }
 
   // issue0: decode, resolve parameter memory, and form resource metadata for
   // the in-order head instruction.
-  val issue0Base = renamedIn.bits.asTypeOf(new KInstrBase(params))
-  val issue0Binary = renamedIn.bits.asTypeOf(new BinaryOpInstr(params))
-  val issue0Indexed = renamedIn.bits.asTypeOf(new IndexedInstr(params))
+  val issue0Slotted = renamedIn.bits.asTypeOf(new KInstrBase(params))
+  val issue0F1Reg = issue0Slotted.rfSlotAddr(0)
+  val issue0F3Reg = issue0Slotted.rfSlotAddr(2)
+  val issue0F4Reg = issue0Slotted.rfSlotAddr(3)
   val issue0LoadImm = renamedIn.bits.asTypeOf(new LoadImmInstr(params))
-  val issue0LoadSimple = renamedIn.bits.asTypeOf(new LoadSimpleInstr(params))
-  val issue0StoreScalar = renamedIn.bits.asTypeOf(new StoreScalarInstr(params))
-  val issue0StoreSimple = renamedIn.bits.asTypeOf(new StoreSimpleInstr(params))
   val issue0WriteParam = renamedIn.bits.asTypeOf(new WriteParamInstr(params))
 
-  val issue0IsSyncTrigger = issue0Base.opcode === KInstrOpcode.SyncTrigger
-  val issue0IsIdentQuery = issue0Base.opcode === KInstrOpcode.IdentQuery
-  val issue0IsLoadSimple = issue0Base.opcode === KInstrOpcode.LoadSimple
-  val issue0IsStoreSimple = issue0Base.opcode === KInstrOpcode.StoreSimple
-  val issue0IsLoadImm = issue0Base.opcode === KInstrOpcode.LoadImm
-  val issue0IsWriteParam = issue0Base.opcode === KInstrOpcode.WriteParam
-  val issue0IsStoreScalar = issue0Base.opcode === KInstrOpcode.StoreScalar
-  val issue0IsAlu =
-    issue0Base.opcode === KInstrOpcode.Add ||
-      issue0Base.opcode === KInstrOpcode.Sub ||
-      issue0Base.opcode === KInstrOpcode.Mul ||
-      issue0Base.opcode === KInstrOpcode.MulHigh
-  val issue0IsIndexed =
-    issue0Base.opcode === KInstrOpcode.LoadIdxUnord ||
-      issue0Base.opcode === KInstrOpcode.StoreIdxUnord
-  val issue0SimpleBaseAddr = paramMem(KInstr.baseAddrParamIdx(params,
-    Mux(issue0IsLoadSimple, issue0LoadSimple.baseAddrParamIdx, issue0StoreSimple.baseAddrParamIdx)))
+  val issue0BaseAddr =
+    paramMem(KInstr.baseAddrParamIdx(params, issue0Slotted.miscParamRef))
+  val issue0StartIndex =
+    paramMem(KInstr.startIndexParamIdx(params, issue0Slotted.startIndexParamIdx))
+  val issue0EndIndex =
+    paramMem(KInstr.endIndexParamIdx(params, issue0Slotted.endIndexParamIdx))
   val issue0SimpleCacheLineAddr =
-    (issue0SimpleBaseAddr >> (params.log2CacheSlotWordsPerJamlet + params.log2JInL).U)(
+    (issue0BaseAddr >> (params.log2CacheSlotWordsPerJamlet + params.log2JInL).U)(
       params.cacheLineAddrWidth - 1, 0)
   val issue0SimpleSramWordOffset =
-    issue0SimpleBaseAddr(
+    issue0BaseAddr(
       params.log2CacheSlotWordsPerJamlet + params.log2JInK - 1,
       params.log2JInK)
 
   val issue0Out = Wire(Decoupled(new RsIssuePayload(params)))
-  val issue0SrcAOrdering = rfOrdering(issue0Binary.srcAReg)
-  val issue0SrcBOrdering = rfOrdering(issue0Binary.srcBReg)
-  issue0Out.bits.kind := RsIssueKind.Unsupported
+  val issue0SrcAOrdering = rfOrdering(issue0F3Reg)
+  val issue0SrcBOrdering = rfOrdering(issue0F4Reg)
+  issue0Out.bits.kind := MuxCase(RsIssueKind.Unsupported, Seq(
+    issue0Slotted.isKteSync -> RsIssueKind.KteSync,
+    issue0Slotted.isLoadImm -> RsIssueKind.LocalOne,
+    issue0Slotted.isWriteParam -> RsIssueKind.SideEffect,
+    issue0Slotted.isLocalBroadcast -> RsIssueKind.LocalBroadcast,
+    issue0Slotted.isCacheLocal -> RsIssueKind.CacheLocal,
+    issue0Slotted.isKteTransfer -> RsIssueKind.KteTransfer))
   issue0Out.bits.kinstr.kinstr := renamedIn.bits
-  issue0Out.bits.kinstr.ordering := rfOrdering(0)
+  issue0Out.bits.kinstr.ordering := MuxCase(rfOrdering(0), Seq(
+    issue0Slotted.isStoreScalar -> rfOrdering(issue0F1Reg),
+    issue0Slotted.isAlu -> issue0SrcAOrdering,
+    issue0Slotted.isCacheLocal -> rfOrdering(issue0F1Reg),
+    issue0Slotted.isIndexed -> rfOrdering(issue0F3Reg)))
+  when (issue0Slotted.isLoadSimple || issue0Slotted.isIndexedLoad) {
+    issue0Out.bits.kinstr.ordering.wf := ewAsWf(issue0Slotted.ew)
+  }
   issue0Out.bits.kinstr.cacheSlot := 0.U
-  issue0Out.bits.kinstr.sramWordOffset := 0.U
-  issue0Out.bits.kinstr.param0 := 0.U
-  issue0Out.bits.kinstr.param1 := 0.U
-  issue0Out.bits.kinstr.param2 := 0.U
-  issue0Out.bits.targetValid := false.B
-  issue0Out.bits.targetJInK := 0.U
-  issue0Out.bits.cacheLineAddr := 0.U
+  issue0Out.bits.kinstr.sramWordOffset :=
+    Mux(issue0Slotted.isCacheLocal, issue0SimpleSramWordOffset, 0.U)
+  // IdentQuery only needs an RS-local distance once the RS can issue out of
+  // order. For now the RS contributes the sentinel distance, meaning no older
+  // instruction is hidden here.
+  issue0Out.bits.kinstr.param0 := MuxCase(issue0BaseAddr, Seq(
+    issue0Slotted.isIdentQuery -> params.maxResponseTags.U))
+  issue0Out.bits.kinstr.param1 := issue0StartIndex
+  issue0Out.bits.kinstr.param2 := issue0EndIndex
+  issue0Out.bits.targetValid := issue0Slotted.isLoadImm
+  issue0Out.bits.targetJInK := Mux(issue0Slotted.isLoadImm, issue0LoadImm.jInKIndex, 0.U)
+  issue0Out.bits.cacheLineAddr :=
+    Mux(issue0Slotted.isCacheLocal, issue0SimpleCacheLineAddr, 0.U)
   issue0Out.bits.cacheSlot := 0.U
   issue0Out.bits.cacheSlotPresent := false.B
-  issue0Out.bits.willWrite := false.B
-  for (rfUse <- issue0Out.bits.rfUses) {
-    rfUse.valid := false.B
-    rfUse.addr := 0.U
-  }
-
-  when (issue0IsSyncTrigger || issue0IsIdentQuery) {
-    issue0Out.bits.kind := RsIssueKind.KteSync
-    issue0Out.bits.kinstr.param0 := Mux(issue0IsIdentQuery, params.maxResponseTags.U, 0.U)
-  } .elsewhen (issue0IsLoadImm) {
-    issue0Out.bits.kind := RsIssueKind.LocalOne
-    issue0Out.bits.targetValid := true.B
-    issue0Out.bits.targetJInK := issue0LoadImm.jInKIndex
-    issue0Out.bits.rfUses(0).valid := true.B
-    issue0Out.bits.rfUses(0).addr := issue0LoadImm.rfAddr
-  } .elsewhen (issue0IsWriteParam) {
-    issue0Out.bits.kind := RsIssueKind.SideEffect
-    issue0Out.bits.kinstr.param0 := issue0WriteParam.paramIdx
-    issue0Out.bits.kinstr.param1 := issue0WriteParam.data
-  } .elsewhen (issue0IsStoreScalar) {
-    issue0Out.bits.kind := RsIssueKind.LocalBroadcast
-    issue0Out.bits.kinstr.ordering := rfOrdering(issue0StoreScalar.dataReg)
-    issue0Out.bits.kinstr.param0 :=
-      paramMem(KInstr.baseAddrParamIdx(params, issue0StoreScalar.scalarAddrParamIdx))
-    issue0Out.bits.rfUses(0).valid := true.B
-    issue0Out.bits.rfUses(0).addr := issue0StoreScalar.dataReg
-  } .elsewhen (issue0IsAlu) {
-    issue0Out.bits.kind := RsIssueKind.LocalBroadcast
-    issue0Out.bits.kinstr.ordering := issue0SrcAOrdering
-    issue0Out.bits.kinstr.param0 :=
-      paramMem(KInstr.startIndexParamIdx(params, issue0Binary.startIndexParamIdx))
-    issue0Out.bits.kinstr.param1 :=
-      paramMem(KInstr.endIndexParamIdx(params, issue0Binary.endIndexParamIdx))
-    issue0Out.bits.rfUses(0).valid := true.B
-    issue0Out.bits.rfUses(0).addr := issue0Binary.dstReg
-    issue0Out.bits.rfUses(1).valid := true.B
-    issue0Out.bits.rfUses(1).addr := issue0Binary.srcAReg
-    issue0Out.bits.rfUses(2).valid := true.B
-    issue0Out.bits.rfUses(2).addr := issue0Binary.srcBReg
-    issue0Out.bits.rfUses(3).valid := issue0Binary.maskEnabled
-    issue0Out.bits.rfUses(3).addr := issue0Binary.maskReg
-  } .elsewhen (issue0IsLoadSimple || issue0IsStoreSimple) {
-    issue0Out.bits.kind := RsIssueKind.CacheLocal
-    issue0Out.bits.kinstr.ordering := rfOrdering(issue0LoadSimple.rfAddr)
-    when (issue0IsLoadSimple) {
-      issue0Out.bits.kinstr.ordering.wf := ewAsWf(issue0LoadSimple.ew)
-    }
-    issue0Out.bits.kinstr.param0 := paramMem(KInstr.startIndexParamIdx(params,
-      Mux(issue0IsLoadSimple, issue0LoadSimple.startIndexParamIdx,
-        issue0StoreSimple.startIndexParamIdx)))
-    issue0Out.bits.kinstr.param1 := paramMem(KInstr.endIndexParamIdx(params,
-      Mux(issue0IsLoadSimple, issue0LoadSimple.endIndexParamIdx,
-        issue0StoreSimple.endIndexParamIdx)))
-    issue0Out.bits.kinstr.sramWordOffset := issue0SimpleSramWordOffset
-    issue0Out.bits.cacheLineAddr := issue0SimpleCacheLineAddr
-    issue0Out.bits.willWrite := issue0IsStoreSimple
-    issue0Out.bits.rfUses(0).valid := true.B
-    issue0Out.bits.rfUses(0).addr := Mux(issue0IsLoadSimple, issue0LoadSimple.rfAddr,
-      issue0StoreSimple.rfAddr)
-    issue0Out.bits.rfUses(1).valid := Mux(issue0IsLoadSimple,
-      issue0LoadSimple.maskEnabled, issue0StoreSimple.maskEnabled)
-    issue0Out.bits.rfUses(1).addr := Mux(issue0IsLoadSimple, issue0LoadSimple.maskReg,
-      issue0StoreSimple.maskReg)
-  } .elsewhen (issue0IsIndexed) {
-    issue0Out.bits.kind := RsIssueKind.KteTransfer
-    issue0Out.bits.kinstr.ordering := rfOrdering(issue0Indexed.reg)
-    when (issue0Base.opcode === KInstrOpcode.LoadIdxUnord) {
-      issue0Out.bits.kinstr.ordering.wf := ewAsWf(issue0Indexed.rfEw)
-      issue0Out.bits.kinstr.ordering.laneOrder := issue0Indexed.rfLaneOrder
-    }
-    issue0Out.bits.kinstr.param0 :=
-      paramMem(KInstr.baseAddrParamIdx(params, issue0Indexed.baseAddrParamIdx))
-    issue0Out.bits.kinstr.param1 :=
-      paramMem(KInstr.startIndexParamIdx(params, issue0Indexed.startIndexParamIdx))
-    issue0Out.bits.kinstr.param2 :=
-      paramMem(KInstr.endIndexParamIdx(params, issue0Indexed.endIndexParamIdx))
-    issue0Out.bits.willWrite := issue0Base.opcode === KInstrOpcode.StoreIdxUnord
-    issue0Out.bits.rfUses(0).valid := true.B
-    issue0Out.bits.rfUses(0).addr := issue0Indexed.reg
-    issue0Out.bits.rfUses(1).valid := true.B
-    issue0Out.bits.rfUses(1).addr := issue0Indexed.indexReg
-    issue0Out.bits.rfUses(2).valid := issue0Indexed.maskEnabled
-    issue0Out.bits.rfUses(2).addr := issue0Indexed.maskReg
+  issue0Out.bits.willWrite := issue0Slotted.isStoreSimple || issue0Slotted.isIndexedStore
+  for (slot <- 0 until 4) {
+    issue0Out.bits.rfUses(slot).valid :=
+      issue0Slotted.rfSlotReads(slot) || issue0Slotted.rfSlotWrites(slot)
+    issue0Out.bits.rfUses(slot).addr := issue0Slotted.rfSlotAddr(slot)
   }
   val issue01Buffer =
     Module(new DoubleBuffer(new RsIssuePayload(params), rsp.issue01FB, rsp.issue01BB))
@@ -284,22 +210,27 @@ class ReservationStation(params: ZamletParams) extends Module {
   kceAllocSlotReq.bits.cacheLineAddr := issue0Out.bits.cacheLineAddr
   kceAllocSlotReq.bits.willWrite := issue0Out.bits.willWrite
 
+  when (renamedIn.fire && issue0Slotted.isWriteParam) {
+    paramMemNext(issue0WriteParam.paramIdx(params.log2NParams - 1, 0)) :=
+      issue0WriteParam.data
+  }
+
   when (renamedIn.fire) {
-    when (issue0IsAlu) {
-      rfOrderingNext(issue0Binary.dstReg) := issue0SrcAOrdering
+    when (issue0Slotted.isAlu) {
+      rfOrderingNext(issue0F1Reg) := issue0SrcAOrdering
       // TODO: widening and narrowing ops should adjust wf to preserve the
       // source ew/wf ratio. Same-width ops keep the source wf unchanged.
-    } .elsewhen (issue0IsLoadSimple) {
-      rfOrderingNext(issue0LoadSimple.rfAddr) := issue0Out.bits.kinstr.ordering
-    } .elsewhen (issue0IsIndexed && issue0Base.opcode === KInstrOpcode.LoadIdxUnord) {
-      rfOrderingNext(issue0Indexed.reg) := issue0Out.bits.kinstr.ordering
+    } .elsewhen (issue0Slotted.isLoadSimple) {
+      rfOrderingNext(issue0F1Reg) := issue0Out.bits.kinstr.ordering
+    } .elsewhen (issue0Slotted.isIndexedLoad) {
+      rfOrderingNext(issue0F1Reg) := issue0Out.bits.kinstr.ordering
     }
   }
 
   val errors = Wire(new ReservationStationErrors)
   errors := 0.U.asTypeOf(new ReservationStationErrors)
   errors.binarySrcLaneOrderMismatch :=
-    renamedIn.fire && issue0IsAlu &&
+    renamedIn.fire && issue0Slotted.isAlu &&
       issue0SrcAOrdering.laneOrder =/= issue0SrcBOrdering.laneOrder
   io.errors := RegNext(errors)
 
@@ -367,11 +298,6 @@ class ReservationStation(params: ZamletParams) extends Module {
     (issue2CanCommit && issue2GoesLocal) ||
       (issue2CanCommit && issue2GoesKte && kteIssue.ready) ||
       issue2In.bits.kind === RsIssueKind.Unsupported
-
-  when (issue2In.fire && issue2IsSideEffect) {
-    paramMemNext(issue2In.bits.kinstr.param0(params.log2NParams - 1, 0)) :=
-      issue2In.bits.kinstr.param1
-  }
 
   val issue2IsLocalRfOp = issue2IsLocalOne || issue2IsLocalBroadcast || issue2CacheLocalToLocal
   val issue2IsKteRfOp = issue2IsKteTransfer || issue2CacheLocalToKte
