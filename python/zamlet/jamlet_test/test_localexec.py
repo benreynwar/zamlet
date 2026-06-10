@@ -221,7 +221,7 @@ def make_load_simple(params: ZamletParams, rnd: random.Random) -> LocalExecCase:
     start_index = rnd.randrange(one_past_end_index(params, ew))
     end_index = rnd.randrange(start_index + 1, one_past_end_index(params, ew) + 1)
     cache_slot = rnd.randrange(params.n_cache_slots)
-    sram_word_offset = rnd.randrange(params.cache_slot_words)
+    sram_word_offset = rnd.randrange(params.cache_slot_words_per_jamlet)
     sram_data = rnd.getrandbits(params.word_width)
     mask = expected_bit_mask(
         params,
@@ -251,7 +251,7 @@ def make_load_simple(params: ZamletParams, rnd: random.Random) -> LocalExecCase:
         rf_mask=RfRead(mask_enabled, mask_reg, mask_word),
         sram=SramReq(
             True,
-            address=cache_slot * params.cache_slot_words + sram_word_offset,
+            address=cache_slot * params.cache_slot_words_per_jamlet + sram_word_offset,
             is_write=False,
             response_data=sram_data,
         ),
@@ -276,7 +276,7 @@ def make_store_simple(params: ZamletParams, rnd: random.Random) -> LocalExecCase
     start_index = rnd.randrange(one_past_end_index(params, ew))
     end_index = rnd.randrange(start_index + 1, one_past_end_index(params, ew) + 1)
     cache_slot = rnd.randrange(params.n_cache_slots)
-    sram_word_offset = rnd.randrange(params.cache_slot_words)
+    sram_word_offset = rnd.randrange(params.cache_slot_words_per_jamlet)
     mask = expected_bit_mask(
         params,
         ew,
@@ -305,7 +305,7 @@ def make_store_simple(params: ZamletParams, rnd: random.Random) -> LocalExecCase
         rf_mask=RfRead(mask_enabled, mask_reg, mask_word),
         sram=SramReq(
             True,
-            address=cache_slot * params.cache_slot_words + sram_word_offset,
+            address=cache_slot * params.cache_slot_words_per_jamlet + sram_word_offset,
             is_write=True,
             data=rf_data,
             write_mask=mask,

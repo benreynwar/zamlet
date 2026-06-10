@@ -63,6 +63,10 @@ class KamletTlbDriver:
         self.tlb_resp_waiters = defaultdict(deque)
 
     def start(self, rng: Random) -> list:
+        self.dut.io_knetX.value = self.params.k_cols // 2
+        self.dut.io_knetY.value = 1
+        self.dut.io_lamletKnetX.value = self.params.k_cols // 2
+        self.dut.io_lamletKnetY.value = 0
         self.dut.io_localOrderingUpdate_valid.value = 0
         tasks = []
         for source in self.tlb_req:

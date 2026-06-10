@@ -71,6 +71,24 @@ case class MessageTypePacketRouterParams(
   outputBB: Boolean = true,
 )
 
+case class ReservationStationParams(
+  renamedInFB: Boolean = false,
+  renamedInBB: Boolean = false,
+  issue01FB: Boolean = true,
+  issue01BB: Boolean = true,
+  issue12FB: Boolean = true,
+  issue12BB: Boolean = true,
+  immediateKinstrBuffer: Boolean = false,
+  kteIssueFB: Boolean = false,
+  kteIssueBB: Boolean = false,
+  kceClaimSlotReqFB: Boolean = false,
+  kceClaimSlotReqBB: Boolean = false,
+  kceClaimSlotRespFB: Boolean = false,
+  kceClaimSlotRespBB: Boolean = false,
+  rfReleaseFB: Boolean = false,
+  rfReleaseBB: Boolean = false,
+)
+
 case class IssueUnitParams(
   exForwardBuffer: Boolean = false,
   exBackwardBuffer: Boolean = false,
@@ -417,6 +435,7 @@ case class ZamletParams(
   kamletPacketMergeParams: PacketMergeParams = PacketMergeParams(),
   kamletAIngressPacketRouterParams: MessageTypePacketRouterParams = MessageTypePacketRouterParams(),
   kamletBIngressPacketRouterParams: MessageTypePacketRouterParams = MessageTypePacketRouterParams(),
+  reservationStationParams: ReservationStationParams = ReservationStationParams(),
 
   // IssueUnit configuration
   issueUnitParams: IssueUnitParams = IssueUnitParams(),
@@ -479,6 +498,7 @@ case class ZamletParams(
   def log2KCols: Int = Integer.numberOfTrailingZeros(kCols)
   def log2JCols: Int = Integer.numberOfTrailingZeros(jCols)
   def log2JRows: Int = Integer.numberOfTrailingZeros(jRows)
+  def log2JInK: Int = Integer.numberOfTrailingZeros(jInK)
   def log2JTotal: Int = Integer.numberOfTrailingZeros(jTotal)
   def log2WordWidth: Int = Integer.numberOfTrailingZeros(wordWidth)
   def log2WordBytes: Int = Integer.numberOfTrailingZeros(wordBytes)
@@ -553,6 +573,8 @@ object ZamletParams {
   implicit val packetMergeParamsDecoder: Decoder[PacketMergeParams] = deriveDecoder[PacketMergeParams]
   implicit val messageTypePacketRouterParamsDecoder: Decoder[MessageTypePacketRouterParams] =
     deriveDecoder[MessageTypePacketRouterParams]
+  implicit val reservationStationParamsDecoder: Decoder[ReservationStationParams] =
+    deriveDecoder[ReservationStationParams]
   implicit val issueUnitParamsDecoder: Decoder[IssueUnitParams] = deriveDecoder[IssueUnitParams]
   implicit val jteStateParamsDecoder: Decoder[JteStateParams] = deriveDecoder[JteStateParams]
   implicit val jteInitiatorParamsDecoder: Decoder[JteInitiatorParams] = deriveDecoder[JteInitiatorParams]

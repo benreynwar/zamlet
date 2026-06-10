@@ -69,6 +69,8 @@ class ZamletImpl(outer: Zamlet)
   val mesh = Module(new KamletMesh(zParams, MeshEdgeNeighbors.isolated(zParams.kCols, zParams.kRows)))
   mesh.io.knetOffsetX := (zParams.kCols / 2).U
   mesh.io.knetOffsetY := 1.U
+  mesh.io.lamletKnetX := (zParams.kCols / 2).U
+  mesh.io.lamletKnetY := 0.U
 
   // ============================================================
   // Bridge ShuttleVectorCoreIO (io) to IssueUnit interface

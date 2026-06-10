@@ -68,6 +68,23 @@
     "outputFB": false,
     "outputBB": false
   },
+  "reservationStationParams": {
+    "renamedInFB": false,
+    "renamedInBB": false,
+    "issue01FB": true,
+    "issue01BB": true,
+    "issue12FB": true,
+    "issue12BB": true,
+    "immediateKinstrBuffer": false,
+    "kteIssueFB": false,
+    "kteIssueBB": false,
+    "kceClaimSlotReqFB": false,
+    "kceClaimSlotReqBB": false,
+    "kceClaimSlotRespFB": false,
+    "kceClaimSlotRespBB": false,
+    "rfReleaseFB": false,
+    "rfReleaseBB": false
+  },
   "issueUnitParams": {
     "exForwardBuffer": false,
     "exBackwardBuffer": false,

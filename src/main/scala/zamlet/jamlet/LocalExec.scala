@@ -152,7 +152,8 @@ class LocalExec(params: ZamletParams) extends Module {
   }
 
   val s1SimpleMask = elementBitMask(s1SimpleEw, s1Wf, s1Param0, s1SimpleEndIndex, s1MaskWord, s1LaneIndex)
-  val s1SramAddress = (s1CacheSlot * params.cacheSlotWords.U) + s1SimpleSramWordOffset
+  val s1SramAddress =
+    (s1CacheSlot * params.cacheSlotWordsPerJamlet.U) + s1SimpleSramWordOffset
 
   io.sramReq.valid := s1Valid && (s1IsLoadSimple || s1IsStoreSimple)
   io.sramReq.bits.address := s1SramAddress

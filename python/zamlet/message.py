@@ -561,6 +561,10 @@ def int_to_header(value: int, params) -> Header:
         return CacheLineHeader.decode(value, params)
     if msg_type in JTE_HEADER_MESSAGE_TYPES:
         return JteHeader.decode(value, params)
+    if msg_type == MessageType.TLB_REQ:
+        return KamletTlbReqHeader.decode(value, params)
+    if msg_type == MessageType.TLB_RESP:
+        return KamletTlbRespHeader.decode(value, params)
     ident_fields = unpack_int_to_fields(value, params.ident_header_fields)
     return IdentHeader(**ident_fields)
 
@@ -570,5 +574,9 @@ def header_to_int(header: Header, params) -> int:
     if isinstance(header, CacheLineHeader):
         return header.encode(params)
     if isinstance(header, JteHeader):
+        return header.encode(params)
+    if isinstance(header, KamletTlbRespHeader):
+        return header.encode(params)
+    if isinstance(header, KamletTlbReqHeader):
         return header.encode(params)
     return pack_fields_to_int(header, params.ident_header_fields)

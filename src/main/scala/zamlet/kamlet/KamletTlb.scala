@@ -85,8 +85,8 @@ class KamletTlbErrors extends Bundle {
 class KamletTlbIO(params: ZamletParams) extends Bundle {
   val knetX = Input(params.xPos())
   val knetY = Input(params.yPos())
-  val memletKnetX = Input(params.xPos())
-  val memletKnetY = Input(params.yPos())
+  val lamletKnetX = Input(params.xPos())
+  val lamletKnetY = Input(params.yPos())
 
   val tlbReq = Vec(params.jInK, Flipped(Decoupled(new JamletTlbReq(params))))
   val tlbResp = Vec(params.jInK, Decoupled(new JamletTlbResp(params)))
@@ -331,8 +331,8 @@ class KamletTlb(params: ZamletParams) extends Module {
 
   val reqTx1Header = Wire(new KamletTlbReqHeader(params))
   reqTx1Header := 0.U.asTypeOf(reqTx1Header)
-  reqTx1Header.targetX := io.memletKnetX
-  reqTx1Header.targetY := io.memletKnetY
+  reqTx1Header.targetX := io.lamletKnetX
+  reqTx1Header.targetY := io.lamletKnetY
   reqTx1Header.sourceX := io.knetX
   reqTx1Header.sourceY := io.knetY
   reqTx1Header.length := 1.U

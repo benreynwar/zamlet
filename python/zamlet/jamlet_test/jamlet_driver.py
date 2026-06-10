@@ -193,7 +193,7 @@ class JamletDriver:
             send_type=SendType.SINGLE,
             slot=slot,
         ).encode(self.params)
-        self.a_west_in.enqueue_packet([(header, True)] + [(word, False) for word in words])
+        self.a_west_in.enqueue_packet(header, words)
 
         actual_slot = await response
         assert actual_slot == slot

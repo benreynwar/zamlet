@@ -1,11 +1,24 @@
 from collections import deque
 from dataclasses import dataclass
+from enum import IntEnum
 from random import Random
 
 import cocotb
 from cocotb.handle import HierarchyObject
 from cocotb.triggers import Event, ReadOnly, RisingEdge
 from zamlet.utils import make_seed
+
+
+class TagState(IntEnum):
+    EMPTY = 0
+    EMPTY_IN_QUEUE = 1
+    RESERVED_CLEAN = 2
+    RESERVED_DIRTY = 3
+    FILLING_CLEAN = 4
+    FILLING_DIRTY = 5
+    PRESENT_CLEAN = 6
+    PRESENT_DIRTY = 7
+    EVICTING = 8
 
 
 @dataclass(frozen=True)

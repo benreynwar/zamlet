@@ -384,6 +384,35 @@ class PackedLoadImm(KInstr):
 
 
 @dataclass
+class PackedWriteParam(KInstr):
+    instr_ident: int
+    param_idx: int
+    data: int
+    opcode: int = field(default=KInstrOpcode.WRITE_PARAM, init=False)
+
+    @staticmethod
+    def field_specs(params) -> list[tuple[str, int]]:
+        used_width = (
+            OPCODE_WIDTH
+            + params.ident_width
+            + params.log2_n_params
+            + params.mem_addr_width
+        )
+        specs = [
+            ('opcode', OPCODE_WIDTH),
+            ('instr_ident', params.ident_width),
+            ('param_idx', params.log2_n_params),
+            ('data', params.mem_addr_width),
+            ('_padding', KINSTR_WIDTH - used_width),
+        ]
+        assert specs[-1][1] >= 0
+        return specs
+
+    def encode(self, params) -> int:
+        return pack_fields_to_int(self, self.field_specs(params))
+
+
+@dataclass
 class PackedLoadStoreSimple(KInstr):
     rf_addr: int
     end_index_param_idx: int
@@ -394,12 +423,16 @@ class PackedLoadStoreSimple(KInstr):
     start_index_param_idx: int = 0
     mask_enabled: bool = False
     instr_ident: int = 0
+    writeset_valid: bool = False
+    writeset: int = 0
 
     @staticmethod
     def field_specs(params) -> list[tuple[str, int]]:
         used_width = (
             OPCODE_WIDTH
             + params.ident_width
+            + 1
+            + params.writeset_width
             + params.rf_addr_width
             + params.param_ref_idx_width
             + params.rf_addr_width
@@ -411,6 +444,8 @@ class PackedLoadStoreSimple(KInstr):
         specs = [
             ('opcode', OPCODE_WIDTH),
             ('instr_ident', params.ident_width),
+            ('writeset_valid', 1),
+            ('writeset', params.writeset_width),
             ('rf_addr', params.rf_addr_width),
             ('base_addr_param_idx', params.param_ref_idx_width),
             ('mask_reg', params.rf_addr_width),
@@ -452,12 +487,16 @@ class PackedIndexed(KInstr):
     end_index_param_idx: int = 0
     index_ew: int = ElementWidthCode.EW64
     instr_ident: int = 0
+    writeset_valid: bool = False
+    writeset: int = 0
 
     @staticmethod
     def field_specs(params) -> list[tuple[str, int]]:
         used_width = (
             OPCODE_WIDTH
             + params.ident_width
+            + 1
+            + params.writeset_width
             + params.sync_ident_width
             + params.param_ref_idx_width
             + 2 * ElementWidthCode.width()
@@ -469,6 +508,8 @@ class PackedIndexed(KInstr):
         specs = [
             ('opcode', OPCODE_WIDTH),
             ('instr_ident', params.ident_width),
+            ('writeset_valid', 1),
+            ('writeset', params.writeset_width),
             ('sync_ident', params.sync_ident_width),
             ('start_index_param_idx', params.param_ref_idx_width),
             ('rf_ew', ElementWidthCode.width()),

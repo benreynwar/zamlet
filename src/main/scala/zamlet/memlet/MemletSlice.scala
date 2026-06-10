@@ -11,10 +11,12 @@ class MemletSliceIO(params: ZamletParams) extends Bundle {
   val isInnerSlice = Input(Bool())
   val isOuterSlice = Input(Bool())
   val sliceIdx = Input(UInt(log2Ceil(params.nMemletRouters).W))
-  val kBaseX = Input(UInt(params.xPosWidth.W))
-  val kBaseY = Input(UInt(params.yPosWidth.W))
   val routerX = Input(UInt(params.xPosWidth.W))
   val routerY = Input(UInt(params.yPosWidth.W))
+  val jamletCoords = Input(Vec(params.memletLocalJamlets, new Bundle {
+    val x = UInt(params.xPosWidth.W)
+    val y = UInt(params.yPosWidth.W)
+  }))
 
   // Mesh ports — A channels
   val aNi = Vec(params.nAChannels, Flipped(Decoupled(new NetworkWord(params))))
@@ -102,8 +104,7 @@ class MemletSlice(params: ZamletParams) extends Module {
 
   gatherSide.io.isInnerSlice := io.isInnerSlice
   gatherSide.io.isOuterSlice := io.isOuterSlice
-  gatherSide.io.kBaseX := io.kBaseX
-  gatherSide.io.kBaseY := io.kBaseY
+  gatherSide.io.jamletCoords := io.jamletCoords
   gatherSide.io.bHo <> router.io.bHo
   gatherSide.io.cacheSlotAllocIn := io.cacheSlotAllocIn
   io.cacheSlotAllocOut := gatherSide.io.cacheSlotAllocOut
@@ -124,8 +125,7 @@ class MemletSlice(params: ZamletParams) extends Module {
   responseSide.io.isInnerSlice := io.isInnerSlice
   responseSide.io.isOuterSlice := io.isOuterSlice
   responseSide.io.sliceIdx := io.sliceIdx
-  responseSide.io.kBaseX := io.kBaseX
-  responseSide.io.kBaseY := io.kBaseY
+  responseSide.io.jamletCoords := io.jamletCoords
   responseSide.io.routerX := io.routerX
   responseSide.io.routerY := io.routerY
   router.io.aHi <> responseSide.io.aHi

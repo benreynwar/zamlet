@@ -15,12 +15,14 @@ class MemletIO(params: ZamletParams) extends Bundle {
   val nRouters = params.nMemletRouters
 
   // Configuration
-  val kBaseX = Input(UInt(params.xPosWidth.W))
-  val kBaseY = Input(UInt(params.yPosWidth.W))
   val routerCoords = Input(Vec(nRouters, new Bundle {
     val x = UInt(params.xPosWidth.W)
     val y = UInt(params.yPosWidth.W)
   }))
+  val jamletCoords = Input(Vec(nRouters, Vec(params.memletLocalJamlets, new Bundle {
+    val x = UInt(params.xPosWidth.W)
+    val y = UInt(params.yPosWidth.W)
+  })))
 
   val errors = new MemletErrors(params)
 
@@ -98,10 +100,9 @@ class Memlet(params: ZamletParams) extends Module {
     s.io.isInnerSlice := (r == 0).B
     s.io.isOuterSlice := (r == nRouters - 1).B
     s.io.sliceIdx := r.U
-    s.io.kBaseX := io.kBaseX
-    s.io.kBaseY := io.kBaseY
     s.io.routerX := io.routerCoords(r).x
     s.io.routerY := io.routerCoords(r).y
+    s.io.jamletCoords := io.jamletCoords(r)
 
     s.io.aNi <> io.aNi(r)
     s.io.aNo <> io.aNo(r)

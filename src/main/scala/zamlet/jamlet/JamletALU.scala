@@ -67,8 +67,8 @@ class JamletAlu(params: ZamletParams) extends Module {
   val wfSupported = input.wf >= WidthFormat.wf8
   val layoutSupported = wfLogBits >= ewLogBits
   val ewLogBytes = ewLogBits - 3.U
-  val elementsPerWfLog2 = Mux(wfLogBits >= ewLogBits, wfLogBits - ewLogBits, 0.U)
   val indexWidth = input.endIndex.getWidth
+  val elementsPerWfLog2 = Mux(wfLogBits >= ewLogBits, wfLogBits - ewLogBits, 0.U)
   val elementsPerWf = (1.U(indexWidth.W) << elementsPerWfLog2)(indexWidth - 1, 0)
   val wfElementStride = elementsPerWf * params.jInL.U(indexWidth.W)
 

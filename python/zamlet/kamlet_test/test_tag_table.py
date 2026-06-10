@@ -7,10 +7,8 @@ from cocotb.triggers import RisingEdge
 from zamlet import test_utils
 from zamlet.kamlet_test.tag_table_driver import (
     TagTableDriver,
+    TagState,
 )
-
-
-STATE_PRESENT_CLEAN = 6
 
 
 async def reservation_worker(
@@ -49,7 +47,7 @@ async def alloc_fill_happy_path(dut: HierarchyObject) -> None:
     resp = await driver.claim(tag)
     assert resp.has_slot == 1
     assert resp.slot == slot
-    assert resp.state == STATE_PRESENT_CLEAN
+    assert resp.state == TagState.PRESENT_CLEAN
     assert resp.did_claim == 1
     await driver.release(slot)
 

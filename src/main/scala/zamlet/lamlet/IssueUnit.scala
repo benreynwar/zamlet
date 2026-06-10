@@ -204,6 +204,8 @@ class IssueUnit(params: ZamletParams) extends Module {
   val kinstr = Wire(new J2JInstr(params))
   kinstr.opcode := Mux(isVectorLoad, KInstrOpcode.LoadJ2J, KInstrOpcode.StoreJ2J)
   kinstr.instrIdent := 0.U
+  kinstr.writeset.valid := false.B
+  kinstr.writeset.bits := 0.U
   kinstr.cacheSlot := (tlbPaddr >> log2Ceil(params.cacheSlotWords * params.wordBytes).U)(
     params.cacheSlotWidth - 1, 0)
   kinstr.memLaneOrder := LaneOrder.ROW_MAJOR
@@ -337,6 +339,8 @@ class IssueUnit(params: ZamletParams) extends Module {
       val storeScalarKinstr = Wire(new StoreScalarInstr(params))
       storeScalarKinstr.opcode := KInstrOpcode.StoreScalar
       storeScalarKinstr.instrIdent := 0.U
+      storeScalarKinstr.writeset.valid := false.B
+      storeScalarKinstr.writeset.bits := 0.U
       storeScalarKinstr.dataReg := vd.pad(params.rfAddrWidth)
       storeScalarKinstr.scalarAddrParamIdx := 0.U
       storeScalarKinstr.ew := bitsToElementWidth(eewBits)

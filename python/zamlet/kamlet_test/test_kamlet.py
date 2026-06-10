@@ -30,6 +30,8 @@ def initialize_inputs(dut: HierarchyObject, params: ZamletParams) -> None:
     n_channels = params.n_a_channels + params.n_b_channels
     dut.io_knetOffsetX.value = params.k_cols // 2
     dut.io_knetOffsetY.value = 1
+    dut.io_lamletKnetX.value = params.k_cols // 2
+    dut.io_lamletKnetY.value = 0
 
     # Jamlet-level network edge ports: (prefix, outer_dim, inner_dim)
     edge_specs = [

@@ -8,9 +8,6 @@ import zamlet.jamlet.KInstr
 class RenamerIO(params: ZamletParams) extends Bundle {
   val kinstrIn = Flipped(Decoupled(UInt(KInstr.width.W)))
   val renamedOut = Decoupled(UInt(KInstr.width.W))
-
-  val rsRelease = Flipped(Decoupled(params.rfAddr()))
-  val kteRelease = Flipped(Decoupled(params.rfAddr()))
 }
 
 class Renamer(params: ZamletParams) extends Module {
@@ -21,7 +18,4 @@ class Renamer(params: ZamletParams) extends Module {
   io.renamedOut.valid := io.kinstrIn.valid
   io.renamedOut.bits := io.kinstrIn.bits
   io.kinstrIn.ready := io.renamedOut.ready
-
-  io.rsRelease.ready := true.B
-  io.kteRelease.ready := true.B
 }

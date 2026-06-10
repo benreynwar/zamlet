@@ -5,7 +5,8 @@ import chisel3.util._
 import zamlet.ZamletParams
 import zamlet.jamlet.{IdentQueryInstr, IndexedInstr, JteCreate, JteInitiatorInput,
                        KInstr, KInstrBase, KInstrOpcode, KinstrWithParams,
-                       SyncTriggerInstr, TransferMode}
+                       LoadSimpleInstr, MemoryKInstrBase, StoreSimpleInstr, SyncTriggerInstr,
+                       TransferMode}
 import zamlet.utils.{DoubleBuffer, ValidBuffer}
 
 object KteOpType extends ChiselEnum {
@@ -16,6 +17,41 @@ object KteState extends ChiselEnum {
   val Free, WaitingForJamlets, NeedsSync, WaitingForSync, Cleanup = Value
 }
 
+class KteMemFootprint(params: ZamletParams) extends Bundle {
+  // True when the operation may touch memory that cannot be represented as one
+  // cache line. Unknown footprints conflict conservatively with any write-like
+  // memory footprint outside the same writeset.
+  val unknown = Bool()
+
+  // True for write-like memory effects. Reads may overlap reads, but writes
+  // conflict with other accesses unless the writeset bypass applies.
+  val willWrite = Bool()
+
+  // Meaningful only when unknown is false. This is the exact Kamlet cache slot
+  // owned by the operation.
+  val cacheSlot = params.cacheSlot()
+
+  // Optional write-set identifier. Two valid equal write sets are treated as
+  // non-conflicting by the KTE memory conflict checker.
+  val writeset = Valid(params.writeset())
+}
+
+object KteMemFootprint {
+  def conflicts(a: Valid[KteMemFootprint], b: Valid[KteMemFootprint]): Bool = {
+    val sameWriteset =
+      a.bits.writeset.valid &&
+        b.bits.writeset.valid &&
+        a.bits.writeset.bits === b.bits.writeset.bits
+    val unknownConflict = (a.bits.unknown || b.bits.unknown) && (a.bits.willWrite || b.bits.willWrite)
+    val cacheSlotConflict =
+      !a.bits.unknown &&
+        !b.bits.unknown &&
+        a.bits.cacheSlot === b.bits.cacheSlot &&
+        (a.bits.willWrite || b.bits.willWrite)
+    a.valid && b.valid && !sameWriteset && (unknownConflict || cacheSlotConflict)
+  }
+}
+
 class KteIssueReq(params: ZamletParams) extends Bundle {
   val opType = KteOpType()
 
@@ -24,18 +60,34 @@ class KteIssueReq(params: ZamletParams) extends Bundle {
   // identity and register lifetime metadata until the final KTE bundle settles.
   val kinstr = new KinstrWithParams(params)
 
-  // Cache metadata for entries that need a Kamlet cache line before replay.
-  val cacheLineAddr = params.cacheLineAddr()
-  val willWrite = Bool()
+  // Meaningful for CacheWaitLocal. RS allocates this slot before handing the
+  // waiting local instruction to KTE.
+  val cacheSlot = params.cacheSlot()
+}
+
+object KteIssueReq {
+  // Convert a KTE issue request into the same memory-footprint shape used by
+  // the conflict checker. Sync requests have no memory footprint.
+  def memFootprint(params: ZamletParams, valid: Bool, issue: KteIssueReq): Valid[KteMemFootprint] = {
+    val footprint = Wire(Valid(new KteMemFootprint(params)))
+    val base = issue.kinstr.kinstr.asTypeOf(new KInstrBase(params))
+    val memory = issue.kinstr.kinstr.asTypeOf(new MemoryKInstrBase(params))
+    val hasMemoryWriteset =
+      issue.opType === KteOpType.CacheWaitLocal || issue.opType === KteOpType.JteTransfer
+    footprint.valid := valid && (issue.opType === KteOpType.CacheWaitLocal || issue.opType === KteOpType.JteTransfer)
+    footprint.bits.unknown := issue.opType === KteOpType.JteTransfer
+    footprint.bits.willWrite :=
+      base.opcode === KInstrOpcode.StoreSimple || base.opcode === KInstrOpcode.StoreIdxUnord
+    footprint.bits.cacheSlot := issue.cacheSlot
+    footprint.bits.writeset.valid := hasMemoryWriteset && memory.writeset.valid
+    footprint.bits.writeset.bits := memory.writeset.bits
+    footprint
+  }
 }
 
 class KteCacheWaitEntry(params: ZamletParams) extends Bundle {
   val kinstr = new KinstrWithParams(params)
-  val cacheLineAddr = params.cacheLineAddr()
-  val willWrite = Bool()
   val slot = params.cacheSlot()
-  val gettingSlot = Bool()
-  val hasSlot = Bool()
   val slotAvailable = Bool()
 }
 
@@ -43,24 +95,6 @@ class KteEntry(params: ZamletParams) extends Bundle {
   val state = KteState()
   val kinstr = new KinstrWithParams(params)
   val complete = Vec(params.jInK, Bool())
-}
-
-class KteGetSlot01(params: ZamletParams) extends Bundle {
-  val entry = UInt(log2Ceil(params.kteCacheWaitTableDepth).W)
-  val cacheLineAddr = params.cacheLineAddr()
-  val willWrite = Bool()
-}
-
-class KteGetSlot12(params: ZamletParams) extends Bundle {
-  val entry = UInt(log2Ceil(params.kteCacheWaitTableDepth).W)
-  val cacheLineAddr = params.cacheLineAddr()
-  val willWrite = Bool()
-}
-
-class KteGetSlot23(params: ZamletParams) extends Bundle {
-  val entry = UInt(log2Ceil(params.kteCacheWaitTableDepth).W)
-  val cacheLineAddr = params.cacheLineAddr()
-  val willWrite = Bool()
 }
 
 class KteErrors extends Bundle {
@@ -73,8 +107,7 @@ class KteErrors extends Bundle {
 }
 
 class KteReleaseEntry(params: ZamletParams) extends Bundle {
-  val releaseRf = Bool()
-  val rfAddr = params.rfAddr()
+  val rfRelease = new RfRelease(params)
   val releaseCacheSlot = Bool()
   val cacheSlot = params.cacheSlot()
 }
@@ -84,7 +117,7 @@ class KamletTransferEngineIO(params: ZamletParams) extends Bundle {
   val rsIssue = Flipped(Decoupled(new KteIssueReq(params)))
 
   // Combinational conflict check used by RS issue selection.
-  val conflictCacheLineAddr = Input(params.cacheLineAddr())
+  val conflictMem = Input(Valid(new KteMemFootprint(params)))
   val conflict = Output(Bool())
 
   // Cache-ready aligned operation replayed into the Jamlet local-exec issue mux.
@@ -92,7 +125,7 @@ class KamletTransferEngineIO(params: ZamletParams) extends Bundle {
   val localReplay = Decoupled(new KinstrWithParams(params))
 
   // Physical registers whose KTE-owned lifetimes have ended.
-  val rfRelease = Decoupled(params.rfAddr())
+  val rfRelease = Decoupled(new RfRelease(params))
 
   // KTE owns use of the Kamlet synchronizer. Sync instructions enter KTE from
   // RS, and transfer cleanup starts sync after all local Jamlet work completes.
@@ -106,12 +139,9 @@ class KamletTransferEngineIO(params: ZamletParams) extends Bundle {
   val jteInputResp = Vec(params.jInK, Decoupled(new JteInitiatorInput(params)))
   val transferComplete = Input(Vec(params.jInK, Vec(params.witemTableDepth, Bool())))
 
-  // KTE owns Decoupled cache claims/allocation for long-latency operations.
-  val kceClaimSlotReq = Decoupled(new KceClaimSlotReq(params))
-  val kceClaimSlotResp = Flipped(Decoupled(new KceClaimSlotResp(params)))
+  // CacheWaitLocal entries own a slot allocated by RS. KTE waits for that slot
+  // to become available, replays the local instruction, then releases it.
   val kceReleaseSlot = Valid(new KceSlotRelease(params))
-  val kceAllocSlotReq = Decoupled(new KceAllocSlotReq(params))
-  val kceAllocSlotResp = Flipped(Decoupled(new KceAllocSlotResp(params)))
   val kceSlotIsAvailable = Flipped(Valid(params.cacheSlot()))
 
   val errors = Output(new KteErrors)
@@ -150,7 +180,9 @@ class KamletTransferEngine(params: ZamletParams) extends Module {
   // IO buffering
   // ============================================================
 
-  val rsIssue = DoubleBuffer(io.rsIssue, true, true)
+  val rsIssueBuffer = Module(new DoubleBuffer(new KteIssueReq(params), true, true))
+  rsIssueBuffer.io.i <> io.rsIssue
+  val rsIssue = rsIssueBuffer.io.o
 
   val jteCreate = Wire(Vec(params.jInK, Valid(new JteCreate(params))))
   val jteClear = Wire(Vec(params.jInK, Valid(UInt(log2Ceil(params.witemTableDepth).W))))
@@ -164,19 +196,12 @@ class KamletTransferEngine(params: ZamletParams) extends Module {
     io.jteInputResp(jInK) <> DoubleBuffer(jteInputResp(jInK), true, true)
   }
 
-  val rfRelease = Wire(Decoupled(params.rfAddr()))
+  val rfRelease = Wire(Decoupled(new RfRelease(params)))
   io.rfRelease <> DoubleBuffer(rfRelease, true, true)
-
-  val kceClaimSlotReq = Wire(Decoupled(new KceClaimSlotReq(params)))
-  io.kceClaimSlotReq <> DoubleBuffer(kceClaimSlotReq, true, true)
-  val kceClaimSlotResp = DoubleBuffer(io.kceClaimSlotResp, true, true)
 
   val kceReleaseSlot = Wire(Valid(new KceSlotRelease(params)))
   io.kceReleaseSlot := ValidBuffer(kceReleaseSlot, true)
 
-  val kceAllocSlotReq = Wire(Decoupled(new KceAllocSlotReq(params)))
-  io.kceAllocSlotReq <> DoubleBuffer(kceAllocSlotReq, true, true)
-  val kceAllocSlotResp = DoubleBuffer(io.kceAllocSlotResp, true, true)
   val kceSlotIsAvailable = ValidBuffer(io.kceSlotIsAvailable, true)
 
   val releaseFifo = Module(new Queue(new KteReleaseEntry(params), params.kteCacheWaitTableDepth))
@@ -246,11 +271,7 @@ class KamletTransferEngine(params: ZamletParams) extends Module {
   when (rsIssue.fire && issue0IsCacheWait) {
     cacheWaitEntriesNext(issue0CacheWaitFreeIndex).valid := true.B
     cacheWaitEntriesNext(issue0CacheWaitFreeIndex).bits.kinstr := rsIssue.bits.kinstr
-    cacheWaitEntriesNext(issue0CacheWaitFreeIndex).bits.cacheLineAddr := rsIssue.bits.cacheLineAddr
-    cacheWaitEntriesNext(issue0CacheWaitFreeIndex).bits.willWrite := rsIssue.bits.willWrite
-    cacheWaitEntriesNext(issue0CacheWaitFreeIndex).bits.slot := 0.U
-    cacheWaitEntriesNext(issue0CacheWaitFreeIndex).bits.gettingSlot := false.B
-    cacheWaitEntriesNext(issue0CacheWaitFreeIndex).bits.hasSlot := false.B
+    cacheWaitEntriesNext(issue0CacheWaitFreeIndex).bits.slot := rsIssue.bits.cacheSlot
     cacheWaitEntriesNext(issue0CacheWaitFreeIndex).bits.slotAvailable := false.B
   }
   errorsNext.unsupportedIssueOpcode :=
@@ -470,89 +491,46 @@ class KamletTransferEngine(params: ZamletParams) extends Module {
   // Conflict query
   // ============================================================
 
-  io.conflict := cacheWaitEntries.map(entry =>
-    entry.valid && entry.bits.cacheLineAddr === io.conflictCacheLineAddr).reduce(_ || _)
-
-  // ============================================================
-  // Cache wait get slot
-  // ============================================================
-
-  def getSlotStateIsPresent(state: KceCacheSlotState.Type): Bool = {
-    state === KceCacheSlotState.PresentClean || state === KceCacheSlotState.PresentDirty
+  def footprintFromCacheWait(entry: Valid[KteCacheWaitEntry]): Valid[KteMemFootprint] = {
+    val footprint = Wire(Valid(new KteMemFootprint(params)))
+    val base = entry.bits.kinstr.kinstr.asTypeOf(new KInstrBase(params))
+    val memory = entry.bits.kinstr.kinstr.asTypeOf(new MemoryKInstrBase(params))
+    footprint.valid := entry.valid
+    footprint.bits.unknown := false.B
+    footprint.bits.willWrite := base.opcode === KInstrOpcode.StoreSimple
+    footprint.bits.cacheSlot := entry.bits.slot
+    footprint.bits.writeset := memory.writeset
+    footprint
   }
 
-  val getSlot0NeedsSlotVec = cacheWaitEntries.map(entry =>
-    entry.valid && !entry.bits.gettingSlot && !entry.bits.hasSlot)
-  val getSlot0Valid = VecInit(getSlot0NeedsSlotVec).asUInt.orR
-  val getSlot0Entry = PriorityEncoder(getSlot0NeedsSlotVec)
-  val getSlot0Out = Wire(Decoupled(new KteGetSlot01(params)))
-
-  getSlot0Out.bits.entry := getSlot0Entry
-  getSlot0Out.bits.cacheLineAddr := cacheWaitEntries(getSlot0Entry).bits.cacheLineAddr
-  getSlot0Out.bits.willWrite := cacheWaitEntries(getSlot0Entry).bits.willWrite
-
-  kceClaimSlotReq.valid := getSlot0Valid && getSlot0Out.ready
-  kceClaimSlotReq.bits.cacheLineAddr := getSlot0Out.bits.cacheLineAddr
-  kceClaimSlotReq.bits.willWrite := getSlot0Out.bits.willWrite
-  kceClaimSlotReq.bits.claimIfFetching := true.B
-  getSlot0Out.valid := getSlot0Valid && kceClaimSlotReq.ready
-
-  when (getSlot0Out.fire) {
-    cacheWaitEntriesNext(getSlot0Out.bits.entry).bits.gettingSlot := true.B
+  def footprintFromKteEntry(entry: KteEntry): Valid[KteMemFootprint] = {
+    val footprint = Wire(Valid(new KteMemFootprint(params)))
+    val base = entry.kinstr.kinstr.asTypeOf(new KInstrBase(params))
+    val memory = entry.kinstr.kinstr.asTypeOf(new MemoryKInstrBase(params))
+    footprint.valid :=
+      entry.state =/= KteState.Free &&
+        (base.opcode === KInstrOpcode.LoadIdxUnord || base.opcode === KInstrOpcode.StoreIdxUnord)
+    footprint.bits.unknown := true.B
+    footprint.bits.willWrite := base.opcode === KInstrOpcode.StoreIdxUnord
+    footprint.bits.cacheSlot := 0.U
+    footprint.bits.writeset := memory.writeset
+    footprint
   }
 
-  val getSlot1In = DoubleBuffer(getSlot0Out, true, true)
-
-  val getSlot1Out = Wire(Decoupled(new KteGetSlot12(params)))
-  val getSlot1Claimed = kceClaimSlotResp.bits.didClaim
-  val getSlot1NeedsAlloc = !kceClaimSlotResp.bits.hasSlot
-  val getSlot1RetryLater = kceClaimSlotResp.bits.hasSlot && !kceClaimSlotResp.bits.didClaim
-
-  getSlot1In.ready :=
-    kceClaimSlotResp.valid && (getSlot1Claimed || getSlot1RetryLater || getSlot1Out.ready)
-  kceClaimSlotResp.ready :=
-    getSlot1In.valid && (getSlot1Claimed || getSlot1RetryLater || getSlot1Out.ready)
-
-  getSlot1Out.valid :=
-    getSlot1In.valid && kceClaimSlotResp.valid && getSlot1NeedsAlloc
-  getSlot1Out.bits.entry := getSlot1In.bits.entry
-  getSlot1Out.bits.cacheLineAddr := getSlot1In.bits.cacheLineAddr
-  getSlot1Out.bits.willWrite := getSlot1In.bits.willWrite
-
-  when (getSlot1In.valid && kceClaimSlotResp.fire && getSlot1Claimed) {
-    cacheWaitEntriesNext(getSlot1In.bits.entry).bits.slot := kceClaimSlotResp.bits.slot
-    cacheWaitEntriesNext(getSlot1In.bits.entry).bits.gettingSlot := false.B
-    cacheWaitEntriesNext(getSlot1In.bits.entry).bits.hasSlot := true.B
-    cacheWaitEntriesNext(getSlot1In.bits.entry).bits.slotAvailable :=
-      getSlotStateIsPresent(kceClaimSlotResp.bits.state)
-  }
-  when (getSlot1In.valid && kceClaimSlotResp.fire && getSlot1RetryLater) {
-    cacheWaitEntriesNext(getSlot1In.bits.entry).bits.gettingSlot := false.B
-  }
-
-  val getSlot2In = DoubleBuffer(getSlot1Out, true, true)
-  val getSlot2Out = Wire(Decoupled(new KteGetSlot23(params)))
-
-  getSlot2Out.valid := getSlot2In.valid && kceAllocSlotReq.ready
-  getSlot2Out.bits.entry := getSlot2In.bits.entry
-  getSlot2Out.bits.cacheLineAddr := getSlot2In.bits.cacheLineAddr
-  getSlot2Out.bits.willWrite := getSlot2In.bits.willWrite
-  getSlot2In.ready := kceAllocSlotReq.ready && getSlot2Out.ready
-
-  kceAllocSlotReq.valid := getSlot2In.valid && getSlot2Out.ready
-  kceAllocSlotReq.bits.cacheLineAddr := getSlot2In.bits.cacheLineAddr
-  kceAllocSlotReq.bits.willWrite := getSlot2In.bits.willWrite
-
-  val getSlot3In = DoubleBuffer(getSlot2Out, true, true)
-
-  getSlot3In.ready := kceAllocSlotResp.valid
-  kceAllocSlotResp.ready := getSlot3In.valid
-  when (getSlot3In.valid && kceAllocSlotResp.fire) {
-    cacheWaitEntriesNext(getSlot3In.bits.entry).bits.slot := kceAllocSlotResp.bits.slot
-    cacheWaitEntriesNext(getSlot3In.bits.entry).bits.gettingSlot := false.B
-    cacheWaitEntriesNext(getSlot3In.bits.entry).bits.hasSlot := true.B
-    cacheWaitEntriesNext(getSlot3In.bits.entry).bits.slotAvailable := false.B
-  }
+  // KTE owns work once it is inside the rsIssue buffer or the operation tables.
+  // The visible rsIssue item writes the tables on fire, so it is still absent
+  // from table state during this combinational conflict query. The external
+  // io.rsIssue item is producer-owned and is intentionally not checked here.
+  val rsIssueHidden = rsIssueBuffer.io.hidden
+  val kteMemConflict = Wire(Bool()).suggestName("kteMemConflict")
+  kteMemConflict :=
+    KteMemFootprint.conflicts(io.conflictMem,
+      KteIssueReq.memFootprint(params, rsIssueBuffer.io.fromState, rsIssue.bits)) ||
+      KteMemFootprint.conflicts(io.conflictMem,
+        KteIssueReq.memFootprint(params, rsIssueHidden.valid, rsIssueHidden.bits)) ||
+      cacheWaitEntries.map(entry => KteMemFootprint.conflicts(io.conflictMem, footprintFromCacheWait(entry))).reduce(_ || _) ||
+      kteEntries.map(entry => KteMemFootprint.conflicts(io.conflictMem, footprintFromKteEntry(entry))).reduce(_ || _)
+  io.conflict := kteMemConflict
 
   // ============================================================
   // Cache wait wake
@@ -561,14 +539,12 @@ class KamletTransferEngine(params: ZamletParams) extends Module {
   errorsNext.wakeAlreadyAvailable := cacheWaitEntries.map(entry =>
     kceSlotIsAvailable.valid &&
       entry.valid &&
-      entry.bits.hasSlot &&
       entry.bits.slotAvailable &&
       entry.bits.slot === kceSlotIsAvailable.bits).reduce(_ || _)
 
   when (kceSlotIsAvailable.valid) {
     for (entry <- 0 until cacheWaitDepth) {
       when (cacheWaitEntries(entry).valid &&
-        cacheWaitEntries(entry).bits.hasSlot &&
         !cacheWaitEntries(entry).bits.slotAvailable &&
         cacheWaitEntries(entry).bits.slot === kceSlotIsAvailable.bits) {
         cacheWaitEntriesNext(entry).bits.slotAvailable := true.B
@@ -581,12 +557,21 @@ class KamletTransferEngine(params: ZamletParams) extends Module {
   // ============================================================
 
   val replay0CandidateVec = cacheWaitEntries.map(entry =>
-    entry.valid && entry.bits.hasSlot && entry.bits.slotAvailable)
+    entry.valid && entry.bits.slotAvailable)
   val replay0Valid = VecInit(replay0CandidateVec).asUInt.orR
   val replay0Entry = PriorityEncoder(replay0CandidateVec)
   val replay0Kinstr = Wire(new KinstrWithParams(params))
   replay0Kinstr := cacheWaitEntries(replay0Entry).bits.kinstr
   replay0Kinstr.cacheSlot := cacheWaitEntries(replay0Entry).bits.slot
+  val replay0Base = replay0Kinstr.kinstr.asTypeOf(new KInstrBase(params))
+  val replay0LoadSimple = replay0Kinstr.kinstr.asTypeOf(new LoadSimpleInstr(params))
+  val replay0StoreSimple = replay0Kinstr.kinstr.asTypeOf(new StoreSimpleInstr(params))
+  val replay0IsLoadSimple = replay0Base.opcode === KInstrOpcode.LoadSimple
+  val replay0IsStoreSimple = replay0Base.opcode === KInstrOpcode.StoreSimple
+  val replay0MaskEnabled = Mux(replay0IsLoadSimple,
+    replay0LoadSimple.maskEnabled, replay0StoreSimple.maskEnabled)
+  val replay0MaskReg = Mux(replay0IsLoadSimple,
+    replay0LoadSimple.maskReg, replay0StoreSimple.maskReg)
 
   val replay0ReleaseFifoSpace = releaseFifoDepth.U - releaseFifoCount
   val replay0CanStartReleaseDelay = replay0ReleaseFifoSpace >= params.localExecLatency.U
@@ -595,8 +580,15 @@ class KamletTransferEngine(params: ZamletParams) extends Module {
   io.localReplay.bits := replay0Kinstr
 
   val replay0ReleaseEntry = Wire(new KteReleaseEntry(params))
-  replay0ReleaseEntry.releaseRf := false.B
-  replay0ReleaseEntry.rfAddr := 0.U
+  for (rfUse <- replay0ReleaseEntry.rfRelease.uses) {
+    rfUse.valid := false.B
+    rfUse.addr := 0.U
+  }
+  replay0ReleaseEntry.rfRelease.uses(0).valid := replay0IsLoadSimple || replay0IsStoreSimple
+  replay0ReleaseEntry.rfRelease.uses(0).addr := Mux(replay0IsLoadSimple, replay0LoadSimple.rfAddr,
+    replay0StoreSimple.rfAddr)
+  replay0ReleaseEntry.rfRelease.uses(1).valid := replay0MaskEnabled
+  replay0ReleaseEntry.rfRelease.uses(1).addr := replay0MaskReg
   replay0ReleaseEntry.releaseCacheSlot := true.B
   replay0ReleaseEntry.cacheSlot := cacheWaitEntries(replay0Entry).bits.slot
 
@@ -626,8 +618,16 @@ class KamletTransferEngine(params: ZamletParams) extends Module {
     !cleanup0NeedsRelease || (!replay0ReleaseDelayValid && releaseFifo.io.enq.ready)
 
   val cleanup0ReleaseEntry = Wire(new KteReleaseEntry(params))
-  cleanup0ReleaseEntry.releaseRf := true.B
-  cleanup0ReleaseEntry.rfAddr := cleanup0Indexed.reg
+  for (rfUse <- cleanup0ReleaseEntry.rfRelease.uses) {
+    rfUse.valid := false.B
+    rfUse.addr := 0.U
+  }
+  cleanup0ReleaseEntry.rfRelease.uses(0).valid := cleanup0IsJte
+  cleanup0ReleaseEntry.rfRelease.uses(0).addr := cleanup0Indexed.reg
+  cleanup0ReleaseEntry.rfRelease.uses(1).valid := cleanup0IsJte
+  cleanup0ReleaseEntry.rfRelease.uses(1).addr := cleanup0Indexed.indexReg
+  cleanup0ReleaseEntry.rfRelease.uses(2).valid := cleanup0IsJte && cleanup0Indexed.maskEnabled
+  cleanup0ReleaseEntry.rfRelease.uses(2).addr := cleanup0Indexed.maskReg
   cleanup0ReleaseEntry.releaseCacheSlot := false.B
   cleanup0ReleaseEntry.cacheSlot := 0.U
 
@@ -649,11 +649,11 @@ class KamletTransferEngine(params: ZamletParams) extends Module {
   // Release drain
   // ============================================================
 
-  val release0NeedsRf = releaseFifo.io.deq.bits.releaseRf
+  val release0NeedsRf = releaseFifo.io.deq.bits.rfRelease.uses.map(_.valid).reduce(_ || _)
   val release0RfReady = !release0NeedsRf || rfRelease.ready
 
   rfRelease.valid := releaseFifo.io.deq.valid && release0NeedsRf
-  rfRelease.bits := releaseFifo.io.deq.bits.rfAddr
+  rfRelease.bits := releaseFifo.io.deq.bits.rfRelease
 
   kceReleaseSlot.valid :=
     releaseFifo.io.deq.valid &&

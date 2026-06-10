@@ -12,6 +12,7 @@ import zamlet.network.{CombinedNetworkNode, MessageType, MessageTypePacketRouter
 
 class KamletErrors extends Bundle {
   val instrQueue = new InstrQueueErrors
+  val reservationStation = new ReservationStationErrors
   val cacheEngine = new KceCacheEngineErrors
   val tlb = new KamletTlbErrors
   val packetMerge = new PacketMergeErrors
@@ -38,8 +39,16 @@ class Kamlet(
     // Position of this kamlet on the kamlet-level packet network.
     val knetX = Input(params.xPos())
     val knetY = Input(params.yPos())
+    val lamletKnetX = Input(params.xPos())
+    val lamletKnetY = Input(params.yPos())
     val memletKnetX = Input(params.xPos())
     val memletKnetY = Input(params.yPos())
+    val jnetBaseX = Input(params.xPos())
+    val jnetBaseY = Input(params.yPos())
+    val memletJnetCoords = Input(Vec(params.jInK, new Bundle {
+      val x = params.xPos()
+      val y = params.yPos()
+    }))
 
     // Network ports (exposed from edge jamlets)
     // North edge
@@ -80,16 +89,16 @@ class Kamlet(
   // Instantiate jamlets in a grid
   // ============================================================
 
-  val jamlets = Seq.tabulate(params.jRows, params.jCols) { (jY, jX) =>
+  val jamlets = Seq.tabulate(params.jRows, params.jCols) { (localJY, localJX) =>
     val j = Module(new Jamlet(params))
-    // Set position: absolute position = kamlet position * jamlets per kamlet + local position
-    val absoluteX = io.kX * params.jCols.U + jX.U
-    val absoluteY = io.kY * params.jRows.U + jY.U
-    j.io.thisX := absoluteX
-    j.io.thisY := absoluteY
-    j.io.memletX := 0.U
-    j.io.memletY := 0.U
-    j.io.laneIndices := LaneOrderMapping.indices(params, absoluteX, absoluteY)
+    val jInKIndex = localJY * params.jCols + localJX
+    val jX = io.kX * params.jCols.U + localJX.U
+    val jY = io.kY * params.jRows.U + localJY.U
+    j.io.thisX := io.jnetBaseX + localJX.U
+    j.io.thisY := io.jnetBaseY + localJY.U
+    j.io.memletX := io.memletJnetCoords(jInKIndex).x
+    j.io.memletY := io.memletJnetCoords(jInKIndex).y
+    j.io.laneIndices := LaneOrderMapping.indices(params, jX, jY)
     j
   }
 
@@ -215,27 +224,22 @@ class Kamlet(
   cacheEngine.io.memletKnetY := io.memletKnetY
   kamletTlb.io.knetX := io.knetX
   kamletTlb.io.knetY := io.knetY
-  kamletTlb.io.memletKnetX := io.memletKnetX
-  kamletTlb.io.memletKnetY := io.memletKnetY
+  kamletTlb.io.lamletKnetX := io.lamletKnetX
+  kamletTlb.io.lamletKnetY := io.lamletKnetY
 
   renamer.io.kinstrIn <> instrQueue.io.kinstrOut
   reservationStation.io.renamedIn <> renamer.io.renamedOut
 
-  renamer.io.rsRelease <> reservationStation.io.rfRelease
-  renamer.io.kteRelease <> transferEngine.io.rfRelease
+  reservationStation.io.kteRfRelease <> transferEngine.io.rfRelease
 
   transferEngine.io.rsIssue <> reservationStation.io.kteIssue
-  transferEngine.io.conflictCacheLineAddr := reservationStation.io.kteConflictCacheLineAddr
+  transferEngine.io.conflictMem := reservationStation.io.kteConflictMem
   reservationStation.io.kteConflict := transferEngine.io.conflict
 
-  cacheEngine.io.rsClaimSlotReq := reservationStation.io.kceClaimSlotReq
-  reservationStation.io.kceClaimSlotResp := cacheEngine.io.rsClaimSlotResp
+  cacheEngine.io.rsAllocSlotReq <> reservationStation.io.kceAllocSlotReq
+  reservationStation.io.kceAllocSlotResp <> cacheEngine.io.rsAllocSlotResp
 
-  transferEngine.io.kceClaimSlotReq <> cacheEngine.io.kteClaimSlotReq
-  cacheEngine.io.kteClaimSlotResp <> transferEngine.io.kceClaimSlotResp
   cacheEngine.io.kteReleaseSlot := transferEngine.io.kceReleaseSlot
-  transferEngine.io.kceAllocSlotReq <> cacheEngine.io.kteAllocSlotReq
-  cacheEngine.io.kteAllocSlotResp <> transferEngine.io.kceAllocSlotResp
   transferEngine.io.kceSlotIsAvailable := cacheEngine.io.kteSlotIsAvailable
 
   kamletNetworkNode.io.thisX := io.knetX
@@ -327,6 +331,7 @@ class Kamlet(
   // ============================================================
 
   io.errors.instrQueue := instrQueue.io.errors
+  io.errors.reservationStation := reservationStation.io.errors
   io.errors.cacheEngine := cacheEngine.io.errors
   io.errors.tlb := kamletTlb.io.errors
   io.errors.packetMerge := packetMerge.io.errors

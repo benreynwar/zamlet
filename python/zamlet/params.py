@@ -109,6 +109,29 @@ class MessageTypePacketRouterParams:
 
 
 @dataclass
+class ReservationStationParams:
+    renamedInFB: bool = False
+    renamedInBB: bool = False
+    issue01FB: bool = True
+    issue01BB: bool = True
+    issue12FB: bool = True
+    issue12BB: bool = True
+    immediateKinstrBuffer: bool = False
+    kteIssueFB: bool = False
+    kteIssueBB: bool = False
+    kceClaimSlotReqFB: bool = False
+    kceClaimSlotReqBB: bool = False
+    kceClaimSlotRespFB: bool = False
+    kceClaimSlotRespBB: bool = False
+    rfReleaseFB: bool = False
+    rfReleaseBB: bool = False
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'ReservationStationParams':
+        return _from_dict(cls, data, _identity_mapping(cls))
+
+
+@dataclass
 class IssueUnitParams:
     exForwardBuffer: bool = False
     exBackwardBuffer: bool = False
@@ -554,6 +577,9 @@ class ZamletParams:
     kamlet_b_ingress_packet_router_params: MessageTypePacketRouterParams = field(
         default_factory=MessageTypePacketRouterParams
     )
+    reservation_station_params: ReservationStationParams = field(
+        default_factory=ReservationStationParams
+    )
     issue_unit_params: IssueUnitParams = field(default_factory=IssueUnitParams)
     synchronizer_params: SynchronizerParams = field(default_factory=SynchronizerParams)
     rf_slice_params: RfSliceParams = field(default_factory=RfSliceParams)
@@ -848,6 +874,7 @@ class ZamletParams:
         'kamletPacketMergeParams': 'kamlet_packet_merge_params',
         'kamletAIngressPacketRouterParams': 'kamlet_a_ingress_packet_router_params',
         'kamletBIngressPacketRouterParams': 'kamlet_b_ingress_packet_router_params',
+        'reservationStationParams': 'reservation_station_params',
         'issueUnitParams': 'issue_unit_params',
         'synchronizerParams': 'synchronizer_params',
         'rfSliceParams': 'rf_slice_params',

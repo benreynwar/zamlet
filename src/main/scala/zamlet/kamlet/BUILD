@@ -10,10 +10,12 @@ filegroup(
     name = "kamlet_sources",
     srcs = [
         "InstrQueue.scala",
+        "KamletTypes.scala",
         "TagTable.scala",
         "Kamlet.scala",
         "KamletCacheEngine.scala",
         "KamletMesh.scala",
+        "KamletMeshCoords.scala",
         "KamletNetworkEgress.scala",
         "KamletNetworkIngress.scala",
         "KamletTransferEngine.scala",
@@ -78,6 +80,30 @@ chisel_binary(
         "//src/main/scala/zamlet/utils:utils_sources",
     ],
     main_class = "zamlet.kamlet.KamletMain",
+    deps = [
+        "@maven//:org_typelevel_cats_core_2_13",
+        "@maven//:org_typelevel_cats_kernel_2_13",
+        "@maven//:io_circe_circe_core_2_13",
+        "@maven//:io_circe_circe_generic_2_13",
+        "@maven//:io_circe_circe_parser_2_13",
+        "@maven//:com_chuusai_shapeless_2_13",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+chisel_binary(
+    name = "kamletmeshwithmemlets",
+    srcs = [
+        "KamletMeshWithMemlets.scala",
+        ":kamlet_sources",
+        "//src/main/scala/zamlet:zamlet_common_sources",
+        "//src/main/scala/zamlet/jamlet:jamlet_sources",
+        "//src/main/scala/zamlet/maths:maths_sources",
+        "//src/main/scala/zamlet/memlet:memlet_sources",
+        "//src/main/scala/zamlet/network:network_sources",
+        "//src/main/scala/zamlet/utils:utils_sources",
+    ],
+    main_class = "zamlet.kamlet.KamletMeshWithMemletsMain",
     deps = [
         "@maven//:org_typelevel_cats_core_2_13",
         "@maven//:org_typelevel_cats_kernel_2_13",

@@ -18,10 +18,11 @@ class ResponseSideIO(params: ZamletParams) extends Bundle {
   val isOuterSlice = Input(Bool())
   val sliceIdx = Input(UInt(log2Ceil(params.nMemletRouters).W))
 
-  // Kamlet base coordinates, used to compute the sender's jamlet
-  // index from the packet's source coordinates.
-  val kBaseX = Input(UInt(params.xPosWidth.W))
-  val kBaseY = Input(UInt(params.yPosWidth.W))
+  // Jamlet coordinates served by this memlet router.
+  val jamletCoords = Input(Vec(params.memletLocalJamlets, new Bundle {
+    val x = UInt(params.xPosWidth.W)
+    val y = UInt(params.yPosWidth.W)
+  }))
 
   // Packet stream to the router's local A-channel output.
   // Carries request packets (header + body words) from kamlet jamlets.
@@ -160,15 +161,10 @@ class ResponseSide(params: ZamletParams) extends Module {
   // Header builder. Reads slot metadata and jamlet index, produces
   // a packed CacheLineHeader. Used in Idle and on last data word.
   def buildHeader(slotIdx: UInt, jamletIdx: UInt): UInt = {
-    val globalJamletIdx =
-      io.sliceIdx * localJamlets.U +& jamletIdx
     val slot = responseSlots(slotIdx).bits
     val header = Wire(new CacheLineHeader(params))
-    header.targetX := io.kBaseX +
-      globalJamletIdx(log2Ceil(params.jCols) - 1, 0)
-    header.targetY := io.kBaseY +
-      (globalJamletIdx >> log2Ceil(params.jCols))(
-        log2Ceil(params.jRows) - 1, 0)
+    header.targetX := io.jamletCoords(jamletIdx).x
+    header.targetY := io.jamletCoords(jamletIdx).y
     header.sourceX := io.routerX
     header.sourceY := io.routerY
     header.length := params.cacheSlotWordsPerJamlet.U

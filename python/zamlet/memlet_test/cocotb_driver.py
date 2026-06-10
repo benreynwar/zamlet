@@ -122,11 +122,9 @@ class CocotbDriver(MemletDriver):
     def _enqueue_packet(self, source: NetworkPacketSource, packet: list) -> None:
         header = packet[0]
         assert isinstance(header, Header)
-        words = [(header.encode(self.params), True)]
-        for word in packet[1:]:
-            assert isinstance(word, int)
-            words.append((word, False))
-        source.enqueue_packet(words)
+        body_words = packet[1:]
+        assert all(isinstance(word, int) for word in body_words)
+        source.enqueue_packet(header.encode(self.params), body_words)
 
     async def _drain_sink(self, r: int, sink: NetworkPacketSink) -> None:
         """Background: move completed helper packets into MemletDriver queues."""
@@ -144,7 +142,7 @@ class CocotbDriver(MemletDriver):
         gather_fields = [
             'cacheSlotAllocOverwrite', 'missingHeader', 'unexpectedHeader',
             'duplicateArrived', 'badMessageType', 'badPacketLength',
-            'unexpectedData',
+            'badSourceCoord', 'unexpectedData',
         ]
         response_fields = [
             'responseAllocOverwrite', 'sentInInvalid', 'sentInDuplicate',

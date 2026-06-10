@@ -70,6 +70,8 @@ class KamletMesh(params: ZamletParams, edgeNeighbors: MeshEdgeNeighbors) extends
     // Offset from compute-grid coordinates to kamlet-network coordinates.
     val knetOffsetX = Input(params.xPos())
     val knetOffsetY = Input(params.yPos())
+    val lamletKnetX = Input(params.xPos())
+    val lamletKnetY = Input(params.yPos())
 
     // North edge network ports (to lamlet/external)
     val nChannelsIn = Vec(params.kCols, Vec(params.jCols,
@@ -274,20 +276,22 @@ class KamletMesh(params: ZamletParams, edgeNeighbors: MeshEdgeNeighbors) extends
   val kamlets = Seq.tabulate(params.kCols, params.kRows) { (kX, kY) =>
     val neighbors = getNeighbors(kX, kY)
     val k = Module(new Kamlet(params, neighbors))
-    val knetX = io.knetOffsetX + kX.U(params.xPosWidth.W)
-    val knetY = io.knetOffsetY + kY.U(params.yPosWidth.W)
-    val memletKnetX = if (kX < params.kCols / 2) {
-      io.knetOffsetX - (params.kCols / 2 - kX).U(params.xPosWidth.W)
-    } else {
-      io.knetOffsetX + (params.kCols + kX - params.kCols / 2).U(params.xPosWidth.W)
-    }
-    val memletKnetY = io.knetOffsetY + kY.U(params.yPosWidth.W)
+    val jnetBaseX = KamletMeshCoords.kamletJnetBaseX(params, kX)
+    val jnetBaseY = KamletMeshCoords.kamletJnetBaseY(params, kY)
     k.io.kX := kX.U
     k.io.kY := kY.U
-    k.io.knetX := knetX
-    k.io.knetY := knetY
-    k.io.memletKnetX := memletKnetX
-    k.io.memletKnetY := memletKnetY
+    k.io.knetX := KamletMeshCoords.kamletKnetX(params, io.knetOffsetX, kX)
+    k.io.knetY := KamletMeshCoords.kamletKnetY(params, io.knetOffsetY, kY)
+    k.io.lamletKnetX := io.lamletKnetX
+    k.io.lamletKnetY := io.lamletKnetY
+    k.io.memletKnetX := KamletMeshCoords.memletKnetX(params, io.knetOffsetX, kX)
+    k.io.memletKnetY := KamletMeshCoords.memletKnetY(params, io.knetOffsetY, kY)
+    k.io.jnetBaseX := jnetBaseX
+    k.io.jnetBaseY := jnetBaseY
+    for (jInK <- 0 until params.jInK) {
+      k.io.memletJnetCoords(jInK).x := KamletMeshCoords.memletJnetX(params, kX, jInK)
+      k.io.memletJnetCoords(jInK).y := KamletMeshCoords.memletJnetY(params, kX, kY, jInK)
+    }
     k
   }
 

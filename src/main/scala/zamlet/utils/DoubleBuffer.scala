@@ -8,6 +8,8 @@ class DoubleBuffer[T <: Data](t: T, enableForward: Boolean = true, enableBackwar
   val io = IO(new Bundle {
     val i = Flipped(DecoupledIO(t))
     val o = DecoupledIO(t)
+    val fromState = Output(Bool())
+    val hidden = Output(Valid(t))
   })
 
   val skidBuffer = Module(new SkidBuffer(t, enableBackward))
@@ -16,6 +18,29 @@ class DoubleBuffer[T <: Data](t: T, enableForward: Boolean = true, enableBackwar
   skidBuffer.io.i <> io.i
   decoupledBuffer.io.i <> skidBuffer.io.o
   io.o <> decoupledBuffer.io.o
+
+  // True when io.o is driven from internal buffer state instead of directly
+  // from io.i. Clients use this to avoid counting passthrough data as older
+  // work in resource conflict checks.
+  if (enableForward) {
+    io.fromState := decoupledBuffer.io.o.valid
+  } else if (enableBackward) {
+    io.fromState := !skidBuffer.io.i.ready && skidBuffer.io.o.valid
+  } else {
+    io.fromState := false.B
+  }
+
+  // Hidden is the backward/skid entry parked behind a visible forward-buffer
+  // entry. It is not part of io.o, but it is older than new input and must be
+  // included by clients that do resource conflict checks across buffered work.
+  if (enableForward && enableBackward) {
+    io.hidden.valid := !skidBuffer.io.i.ready && decoupledBuffer.io.o.valid
+    io.hidden.bits := skidBuffer.io.o.bits
+  } else {
+    io.hidden.valid := false.B
+    io.hidden.bits := DontCare
+  }
+
 }
 
 object DoubleBuffer {
