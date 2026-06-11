@@ -42,9 +42,21 @@ async def wait_for_fault_sync(lamlet: 'Oamlet', fault_sync_ident: int) -> int | 
     Returns packed VectorFaultInfo for the minimum fault element, or None if no
     fault.
     """
+    wait_start = lamlet.clock.cycle
+    last_log_cycle = wait_start
     while not lamlet.synchronizer.is_complete(fault_sync_ident):
         await lamlet.clock.next_cycle
+        if lamlet.clock.cycle - last_log_cycle >= 1000:
+            logger.warning(
+                f'{lamlet.clock.cycle}: wait_for_fault_sync still waiting '
+                f'fault_sync_ident={fault_sync_ident} '
+                f'wait_cycles={lamlet.clock.cycle - wait_start} '
+                f'allocated_syncs={sorted(lamlet.sync_ident_allocator.allocated)} '
+                f'needs_finish_syncs={sorted(lamlet.sync_ident_allocator.needs_finish)} '
+                f'free_syncs={lamlet.sync_ident_allocator.free_idents()}')
+            last_log_cycle = lamlet.clock.cycle
     global_min_fault = lamlet.synchronizer.get_aggregated_value(fault_sync_ident)
+    lamlet.sync_ident_allocator.finish(fault_sync_ident)
     logger.debug(f'{lamlet.clock.cycle}: wait_for_fault_sync: '
                  f'fault_sync {fault_sync_ident} complete, min_fault={global_min_fault}')
     return global_min_fault
@@ -791,8 +803,19 @@ async def _vloadstore_indexed_unordered(
 
     for chunk_offset in range(0, n_active, elements_in_vline):
         chunk_n = min(elements_in_vline, n_active - chunk_offset)
+        # The indexed load/store waiting item uses instr_ident as the parent
+        # tag and child memory transactions use instr_ident + tag + 1, where
+        # tag is a byte position in the target word. Reserve the whole byte-tag
+        # range so child response tags cannot collide with later kinstructions.
         instr_ident = await ident_query.get_instr_ident(
-            lamlet, n_idents=lamlet.params.word_bytes + 1)
+            lamlet, lamlet.params.word_bytes + 1)
+        if skip_fault_wait:
+            fault_sync_ident = 0
+            completion_sync_ident = await ident_query.wait_for_sync_ident(lamlet)
+        else:
+            fault_sync_ident, completion_sync_ident = (
+                await ident_query.wait_for_sync_idents(
+                    lamlet, 2, needs_finish=[True, False]))
 
         if is_store:
             kinstr = StoreIndexedUnordered(
@@ -806,7 +829,10 @@ async def _vloadstore_indexed_unordered(
                 mask_reg=mask_reg,
                 writeset_ident=writeset_ident,
                 instr_ident=instr_ident,
+                fault_sync_ident=fault_sync_ident,
+                completion_sync_ident=completion_sync_ident,
                 index_offset=index_offset,
+                skip_fault_sync=skip_fault_wait,
             )
         else:
             kinstr = LoadIndexedUnordered(
@@ -820,14 +846,13 @@ async def _vloadstore_indexed_unordered(
                 mask_reg=mask_reg,
                 writeset_ident=writeset_ident,
                 instr_ident=instr_ident,
+                fault_sync_ident=fault_sync_ident,
+                completion_sync_ident=completion_sync_ident,
                 index_offset=index_offset,
+                skip_fault_sync=skip_fault_wait,
             )
         await lamlet.add_to_instruction_buffer(kinstr, parent_span_id)
         kinstr_span_id = lamlet.monitor.get_kinstr_span_id(instr_ident)
-
-        fault_sync_ident = instr_ident
-        completion_sync_ident = (
-            (instr_ident + 1) % lamlet.params.max_response_tags)
 
         lamlet.monitor.create_sync_local_span(
             completion_sync_ident, 0, -1, kinstr_span_id)
@@ -842,22 +867,18 @@ async def _vloadstore_indexed_unordered(
                 lamlet.scalar.register_might_touch_read(
                     completion_sync_ident, writeset_ident)
 
-        lamlet.monitor.create_sync_local_span(
-            fault_sync_ident, 0, -1, kinstr_span_id)
-        if skip_fault_wait:
-            lamlet.synchronizer.local_event(
-                fault_sync_ident, value=None,
-                op=SyncAggOp.MIN_FAULT_INFO,
-                width=fault_info_width(lamlet.params))
-        elif prev_fault_sync is not None:
-            lamlet.synchronizer.chain_fault_sync(
-                prev_fault_sync, fault_sync_ident)
-            prev_fault_sync = fault_sync_ident
-        else:
-            lamlet.synchronizer.local_event(
-                fault_sync_ident, value=None,
-                op=SyncAggOp.MIN_FAULT_INFO,
-                width=fault_info_width(lamlet.params))
+        if not skip_fault_wait:
+            lamlet.monitor.create_sync_local_span(
+                fault_sync_ident, 0, -1, kinstr_span_id)
+            if prev_fault_sync is not None:
+                lamlet.synchronizer.chain_fault_sync(
+                    prev_fault_sync, fault_sync_ident)
+                lamlet.sync_ident_allocator.finish(prev_fault_sync)
+            else:
+                lamlet.synchronizer.local_event(
+                    fault_sync_ident, value=None,
+                    op=SyncAggOp.MIN_FAULT_INFO,
+                    width=fault_info_width(lamlet.params))
             prev_fault_sync = fault_sync_ident
 
     fault_type = (TLBFaultType.NOT_WAITED if prev_fault_sync is not None

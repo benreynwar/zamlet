@@ -7,7 +7,7 @@ import zamlet.utils.DoubleBuffer
 import zamlet.utils.ValidBuffer
 
 class JteCreate(params: ZamletParams) extends Bundle {
-  val slot = UInt(log2Ceil(params.witemTableDepth).W)
+  val teIndex = UInt(log2Ceil(params.witemTableDepth).W)
   val instrIdent = params.ident()
   val dataReg = params.rfAddr()
 }
@@ -22,19 +22,22 @@ class JteStateSlot(params: ZamletParams) extends Bundle {
 }
 
 class JteStateErrors extends Bundle {
-  val createSlotInUse = Bool()
-  val slotToRegInvalid = Bool()
+  val createTeIndexInUse = Bool()
+  val teIndexToRegInvalid = Bool()
   val receiverUpdateInvalid = Bool()
   val receiverUpdateIdentMismatch = Bool()
   val initiatorCommitInvalid = Bool()
+  val tlbAvailableInvalid = Bool()
+  val tlbAvailableUnexpectedState = Bool()
+  val tlbAvailableReceiverConflict = Bool()
 }
 
 class JteStateDispatchAB(params: ZamletParams) extends Bundle {
-  val slot = UInt(log2Ceil(params.witemTableDepth).W)
+  val teIndex = UInt(log2Ceil(params.witemTableDepth).W)
 }
 
 class JteStateDispatchBC(params: ZamletParams) extends Bundle {
-  val slot = UInt(log2Ceil(params.witemTableDepth).W)
+  val teIndex = UInt(log2Ceil(params.witemTableDepth).W)
 }
 
 class JteStateIO(params: ZamletParams) extends Bundle {
@@ -45,10 +48,11 @@ class JteStateIO(params: ZamletParams) extends Bundle {
   val inputResp = Flipped(Decoupled(new JteInitiatorInput(params)))
   val initiatorDispatch = Decoupled(new JteInitiatorInput(params))
   val initiatorCommit = Flipped(Valid(new JteInitiatorCommit(params)))
+  val tlbAvailable = Flipped(Valid(new JamletTlbAvailable(params)))
 
   val receiverUpdate = Flipped(Decoupled(new JteReceiverUpdateMsg(params)))
-  val slotToRegReq = Flipped(Decoupled(UInt(log2Ceil(params.witemTableDepth).W)))
-  val slotToRegResp = Decoupled(params.rfAddr())
+  val teIndexToRegReq = Flipped(Decoupled(UInt(log2Ceil(params.witemTableDepth).W)))
+  val teIndexToRegResp = Decoupled(params.rfAddr())
 
   val transferComplete = Output(Vec(params.witemTableDepth, Bool()))
   val errors = Output(new JteStateErrors())
@@ -58,47 +62,58 @@ class JteState(params: ZamletParams) extends Module {
   val io = IO(new JteStateIO(params))
   val sp = params.jteStateParams
 
+  // Slot state is updated through a combinational pipeline so same-cycle
+  // events have explicit ordering.
   val slotsInitial = VecInit(Seq.fill(params.witemTableDepth)(0.U.asTypeOf(new JteStateSlot(params))))
   val slotsNext = Wire(Vec(params.witemTableDepth, new JteStateSlot(params)))
   val slots = RegEnable(slotsNext, slotsInitial, true.B)
-  slotsNext := slots
+  val slotsPostDispatch = Wire(Vec(params.witemTableDepth, new JteStateSlot(params)))
+  val slotsPostReceiver = Wire(Vec(params.witemTableDepth, new JteStateSlot(params)))
+  val slotsPostCommit = Wire(Vec(params.witemTableDepth, new JteStateSlot(params)))
+  val slotsPostAvailable = Wire(Vec(params.witemTableDepth, new JteStateSlot(params)))
+  slotsNext := slotsPostAvailable
 
+  val errors = Wire(new JteStateErrors())
+  errors := 0.U.asTypeOf(new JteStateErrors())
+
+  // Buffered external interfaces.
   val inputReq = Wire(Decoupled(UInt(log2Ceil(params.witemTableDepth).W)))
   io.inputReq <> DoubleBuffer(inputReq, sp.inputReqFB, sp.inputReqBB)
   val inputResp = DoubleBuffer(io.inputResp, sp.inputRespFB, sp.inputRespBB)
   val initiatorDispatch = Wire(Decoupled(new JteInitiatorInput(params)))
   io.initiatorDispatch <> DoubleBuffer(initiatorDispatch, sp.initiatorDispatchFB, sp.initiatorDispatchBB)
   val receiverUpdate = DoubleBuffer(io.receiverUpdate, sp.receiverUpdateFB, sp.receiverUpdateBB)
-  val slotToRegReq = DoubleBuffer(io.slotToRegReq, sp.slotToRegReqFB, sp.slotToRegReqBB)
-  val slotToRegResp = Wire(Decoupled(params.rfAddr()))
-  io.slotToRegResp <> DoubleBuffer(slotToRegResp, sp.slotToRegRespFB, sp.slotToRegRespBB)
+  val teIndexToRegReq = DoubleBuffer(io.teIndexToRegReq, sp.slotToRegReqFB, sp.slotToRegReqBB)
+  val teIndexToRegResp = Wire(Decoupled(params.rfAddr()))
+  io.teIndexToRegResp <> DoubleBuffer(teIndexToRegResp, sp.slotToRegRespFB, sp.slotToRegRespBB)
   val create = ValidBuffer(io.create, sp.createBuffer)
   val clear = ValidBuffer(io.clear, sp.clearBuffer)
   val initiatorCommit = ValidBuffer(io.initiatorCommit, sp.initiatorCommitBuffer)
+  val tlbAvailable = io.tlbAvailable
 
+  // Interface defaults.
   inputReq.valid := false.B
   inputReq.bits := 0.U
   inputResp.ready := false.B
   initiatorDispatch.valid := false.B
   initiatorDispatch.bits := 0.U.asTypeOf(new JteInitiatorInput(params))
   receiverUpdate.ready := false.B
-  slotToRegReq.ready := false.B
-  slotToRegResp.valid := false.B
-  slotToRegResp.bits := 0.U
-  io.errors.createSlotInUse := create.valid && slots(create.bits.slot).valid
-  io.errors.slotToRegInvalid := slotToRegReq.valid && !slots(slotToRegReq.bits).valid
-  io.errors.receiverUpdateInvalid := receiverUpdate.valid && !slots(receiverUpdate.bits.slot).valid
-  io.errors.receiverUpdateIdentMismatch := receiverUpdate.valid &&
-    slots(receiverUpdate.bits.slot).valid &&
-    slots(receiverUpdate.bits.slot).instrIdent =/= receiverUpdate.bits.ident
-  io.errors.initiatorCommitInvalid := initiatorCommit.valid && !slots(initiatorCommit.bits.slot).valid
+  teIndexToRegReq.ready := false.B
+  teIndexToRegResp.valid := false.B
+  teIndexToRegResp.bits := 0.U
 
-  slotToRegReq.ready := slotToRegResp.ready
-  slotToRegResp.valid := slotToRegReq.valid
-  slotToRegResp.bits := slots(slotToRegReq.bits).dataReg
+  // Error wires describe input events that do not match the currently tracked
+  // slot state. They are reported but do not add backpressure.
+  errors.createTeIndexInUse := create.valid && slots(create.bits.teIndex).valid
+  errors.teIndexToRegInvalid := teIndexToRegReq.valid && !slots(teIndexToRegReq.bits).valid
+
+  // Always-consumable update/status ports.
+  teIndexToRegReq.ready := teIndexToRegResp.ready
+  teIndexToRegResp.valid := teIndexToRegReq.valid
+  teIndexToRegResp.bits := slots(teIndexToRegReq.bits).dataReg
   receiverUpdate.ready := true.B
 
-  // Dispatch A: select a slot that needs another initiator walk.
+  // Dispatch A: select a transfer-engine entry that needs another initiator walk.
   val dispatchACandidates = VecInit((0 until params.witemTableDepth).map { i =>
     slots(i).valid && slots(i).walkState === JteWalkState.NeedsProcessing
   })
@@ -106,18 +121,19 @@ class JteState(params: ZamletParams) extends Module {
   val dispatchASlot = PriorityEncoder(dispatchACandidates)
   val dispatchAB = Wire(Decoupled(new JteStateDispatchAB(params)))
   dispatchAB.valid := dispatchAValid
-  dispatchAB.bits.slot := dispatchASlot
+  dispatchAB.bits.teIndex := dispatchASlot
+  slotsPostDispatch := slots
   when (dispatchAB.fire) {
-    slotsNext(dispatchASlot).walkState := JteWalkState.InProgress
+    slotsPostDispatch(dispatchASlot).walkState := JteWalkState.InProgress
   }
 
-  // Dispatch B: request the full initiator input from the kamlet core.
+  // Dispatch B: request the full initiator input from the Kamlet core.
   val dispatchABBuffered = DoubleBuffer(dispatchAB, sp.dispatchABFB, sp.dispatchABBB)
   val dispatchBC = Wire(Decoupled(new JteStateDispatchBC(params)))
   inputReq.valid := dispatchABBuffered.valid && dispatchBC.ready
-  inputReq.bits := dispatchABBuffered.bits.slot
+  inputReq.bits := dispatchABBuffered.bits.teIndex
   dispatchBC.valid := dispatchABBuffered.valid && inputReq.ready
-  dispatchBC.bits.slot := dispatchABBuffered.bits.slot
+  dispatchBC.bits.teIndex := dispatchABBuffered.bits.teIndex
   dispatchABBuffered.ready := inputReq.ready && dispatchBC.ready
 
   // Dispatch C: wait for the full input and dispatch it to the initiator.
@@ -125,44 +141,109 @@ class JteState(params: ZamletParams) extends Module {
   inputResp.ready := dispatchBCBuffered.valid && initiatorDispatch.ready
   initiatorDispatch.valid := dispatchBCBuffered.valid && inputResp.valid
   initiatorDispatch.bits := inputResp.bits
-  initiatorDispatch.bits.slot := dispatchBCBuffered.bits.slot
+  initiatorDispatch.bits.teIndex := dispatchBCBuffered.bits.teIndex
   dispatchBCBuffered.ready := inputResp.valid && initiatorDispatch.ready
 
-  when (receiverUpdate.fire) {
-    val slot = receiverUpdate.bits.slot
-    val offset = receiverUpdate.bits.offset
-    when (receiverUpdate.bits.drop) {
-      slotsNext(slot).initiator(offset) := JteInitiatorState.Dropped
-      slotsNext(slot).walkState := JteWalkState.NeedsProcessing
+  // State update A: receiver responses complete or retry individual bytes.
+  slotsPostReceiver := slotsPostDispatch
+  when (receiverUpdate.valid) {
+    when (!slots(receiverUpdate.bits.teIndex).valid) {
+      errors.receiverUpdateInvalid := true.B
     } .otherwise {
-      slotsNext(slot).initiator(offset) := JteInitiatorState.Complete
-    }
-  }
-
-  when (initiatorCommit.valid) {
-    val slot = initiatorCommit.bits.slot
-    for (i <- 0 until params.wordBytes) {
-      val current = slots(slot).initiator(i)
-      when (current === JteInitiatorState.Complete || current === JteInitiatorState.Dropped) {
-        slotsNext(slot).initiator(i) := current
-      } .otherwise {
-        slotsNext(slot).initiator(i) := initiatorCommit.bits.initiator(i)
+      errors.receiverUpdateIdentMismatch := slots(receiverUpdate.bits.teIndex).instrIdent =/= receiverUpdate.bits.ident
+      when (receiverUpdate.fire) {
+        when (receiverUpdate.bits.drop) {
+          slotsPostReceiver(receiverUpdate.bits.teIndex).initiator(receiverUpdate.bits.offset) := JteInitiatorState.Dropped
+          slotsPostReceiver(receiverUpdate.bits.teIndex).walkState := JteWalkState.NeedsProcessing
+        } .otherwise {
+          slotsPostReceiver(receiverUpdate.bits.teIndex).initiator(receiverUpdate.bits.offset) := JteInitiatorState.Complete
+        }
       }
     }
-    when (slots(slot).walkState =/= JteWalkState.NeedsProcessing) {
-      slotsNext(slot).walkState := initiatorCommit.bits.walkState
+  }
+
+  // State update B: initiator commits the result of one address-walk pass.
+  // Existing complete/retry/waiting bytes are preserved over new commit data.
+  slotsPostCommit := slotsPostReceiver
+  when (initiatorCommit.valid) {
+    when (!slots(initiatorCommit.bits.teIndex).valid) {
+      errors.initiatorCommitInvalid := true.B
+    } .otherwise {
+      val commitHasWaitingForTlb = initiatorCommit.bits.initiator
+        .map(_ === JteInitiatorState.WaitingForTlb)
+        .reduce(_ || _)
+      for (i <- 0 until params.wordBytes) {
+        when (
+          slotsPostReceiver(initiatorCommit.bits.teIndex).initiator(i) === JteInitiatorState.Complete ||
+          slotsPostReceiver(initiatorCommit.bits.teIndex).initiator(i) === JteInitiatorState.Dropped ||
+          slotsPostReceiver(initiatorCommit.bits.teIndex).initiator(i) === JteInitiatorState.WaitingForTlb
+        ) {
+          slotsPostCommit(initiatorCommit.bits.teIndex).initiator(i) :=
+            slotsPostReceiver(initiatorCommit.bits.teIndex).initiator(i)
+        } .elsewhen (
+          slotsPostReceiver(initiatorCommit.bits.teIndex).initiator(i) === JteInitiatorState.EarlyTlbAvailable &&
+          initiatorCommit.bits.initiator(i) === JteInitiatorState.WaitingForTlb
+        ) {
+          slotsPostCommit(initiatorCommit.bits.teIndex).initiator(i) := JteInitiatorState.Dropped
+        } .otherwise {
+          slotsPostCommit(initiatorCommit.bits.teIndex).initiator(i) := initiatorCommit.bits.initiator(i)
+        }
+      }
+      when (slotsPostReceiver(initiatorCommit.bits.teIndex).walkState =/= JteWalkState.NeedsProcessing) {
+        slotsPostCommit(initiatorCommit.bits.teIndex).walkState := initiatorCommit.bits.walkState
+      }
+      when (
+        commitHasWaitingForTlb &&
+        !slotsPostCommit(initiatorCommit.bits.teIndex).initiator.map(_ === JteInitiatorState.WaitingForTlb).reduce(_ || _)
+      ) {
+        slotsPostCommit(initiatorCommit.bits.teIndex).walkState := JteWalkState.NeedsProcessing
+      }
     }
   }
 
+  // State update C: TLB availability wakes a soft-dropped byte. If the wake
+  // beats the soft-drop commit, remember that with EarlyTlbAvailable.
+  slotsPostAvailable := slotsPostCommit
+  when (tlbAvailable.valid) {
+    when (!slots(tlbAvailable.bits.teIndex).valid) {
+      errors.tlbAvailableInvalid := true.B
+    } .otherwise {
+      val expectedState =
+        slots(tlbAvailable.bits.teIndex).initiator(tlbAvailable.bits.byteIndex) === JteInitiatorState.WaitingForTlb ||
+        slots(tlbAvailable.bits.teIndex).initiator(tlbAvailable.bits.byteIndex) === JteInitiatorState.Initial ||
+        slots(tlbAvailable.bits.teIndex).initiator(tlbAvailable.bits.byteIndex) === JteInitiatorState.Dropped
+      errors.tlbAvailableUnexpectedState := !expectedState
+      errors.tlbAvailableReceiverConflict := receiverUpdate.valid &&
+        tlbAvailable.bits.teIndex === receiverUpdate.bits.teIndex &&
+        tlbAvailable.bits.byteIndex === receiverUpdate.bits.offset
+      when (
+        slotsPostCommit(tlbAvailable.bits.teIndex).valid &&
+        slotsPostCommit(tlbAvailable.bits.teIndex).initiator(tlbAvailable.bits.byteIndex) === JteInitiatorState.WaitingForTlb
+      ) {
+        val otherWaitingForTlb = (0 until params.wordBytes).map { i =>
+          i.U =/= tlbAvailable.bits.byteIndex &&
+          slotsPostCommit(tlbAvailable.bits.teIndex).initiator(i) === JteInitiatorState.WaitingForTlb
+        }.reduce(_ || _)
+        slotsPostAvailable(tlbAvailable.bits.teIndex).initiator(tlbAvailable.bits.byteIndex) := JteInitiatorState.Dropped
+        when (!otherWaitingForTlb) {
+          slotsPostAvailable(tlbAvailable.bits.teIndex).walkState := JteWalkState.NeedsProcessing
+        }
+      } .elsewhen (slotsPostCommit(tlbAvailable.bits.teIndex).valid) {
+        slotsPostAvailable(tlbAvailable.bits.teIndex).initiator(tlbAvailable.bits.byteIndex) := JteInitiatorState.EarlyTlbAvailable
+      }
+    }
+  }
+
+  // Allocation and release of table slots.
   when (create.valid) {
-    val slot = create.bits.slot
-    slotsNext(slot).valid := true.B
-    slotsNext(slot).completeSent := false.B
-    slotsNext(slot).instrIdent := create.bits.instrIdent
-    slotsNext(slot).dataReg := create.bits.dataReg
-    slotsNext(slot).walkState := JteWalkState.NeedsProcessing
+    val teIndex = create.bits.teIndex
+    slotsNext(teIndex).valid := true.B
+    slotsNext(teIndex).completeSent := false.B
+    slotsNext(teIndex).instrIdent := create.bits.instrIdent
+    slotsNext(teIndex).dataReg := create.bits.dataReg
+    slotsNext(teIndex).walkState := JteWalkState.NeedsProcessing
     for (i <- 0 until params.wordBytes) {
-      slotsNext(slot).initiator(i) := JteInitiatorState.Initial
+      slotsNext(teIndex).initiator(i) := JteInitiatorState.Initial
     }
   }
 
@@ -170,6 +251,7 @@ class JteState(params: ZamletParams) extends Module {
     slotsNext(clear.bits).valid := false.B
   }
 
+  // Report each completed transfer-engine entry once.
   for (i <- 0 until params.witemTableDepth) {
     val complete = slots(i).valid &&
       slots(i).walkState === JteWalkState.Done &&
@@ -179,6 +261,8 @@ class JteState(params: ZamletParams) extends Module {
       slotsNext(i).completeSent := true.B
     }
   }
+
+  io.errors := RegNext(errors)
 }
 
 object JteStateGenerator extends zamlet.ModuleGenerator {

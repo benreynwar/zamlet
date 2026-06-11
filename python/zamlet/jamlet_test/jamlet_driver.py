@@ -10,7 +10,6 @@ from zamlet.message import CacheLineHeader, MessageType, SendType
 from zamlet.params import ZamletParams
 from zamlet.future import Future
 from zamlet.test_helpers.packets import NetworkPacketSink, NetworkPacketSource
-from zamlet.utils import make_seed
 from zamlet.width_codes import WidthFormatCode
 
 
@@ -37,8 +36,8 @@ def _check_error_wire(dut: HierarchyObject, prefix: str, name: str, description:
 
 
 def check_jte_error_wires(dut: HierarchyObject, prefix: str) -> None:
-    _check_error_wire(dut, prefix, "createSlotInUse", "JTE create slot already in use")
-    _check_error_wire(dut, prefix, "slotToRegInvalid", "JTE slot-to-reg request for invalid slot")
+    _check_error_wire(dut, prefix, "createTeIndexInUse", "JTE create teIndex already in use")
+    _check_error_wire(dut, prefix, "teIndexToRegInvalid", "JTE teIndex-to-reg request for invalid entry")
     _check_error_wire(dut, prefix, "receiverUpdateInvalid", "JTE receiver update for invalid slot")
     _check_error_wire(
         dut,
@@ -131,7 +130,7 @@ class JamletDriver:
                 getattr(self.dut, f"{self._prefix(kind, direction)}_ready").value = 1
 
         self.dut.io_jteCreate_valid.value = 0
-        self.dut.io_jteCreate_bits_slot.value = 0
+        self.dut.io_jteCreate_bits_teIndex.value = 0
         self.dut.io_jteCreate_bits_instrIdent.value = 0
         self.dut.io_jteCreate_bits_dataReg.value = 0
         self.dut.io_jteClear_valid.value = 0
@@ -140,10 +139,12 @@ class JamletDriver:
         self.dut.io_jteInputResp_valid.value = 0
         self.dut.io_tlbReq_ready.value = 1
         self.dut.io_tlbResp_valid.value = 0
-        self.dut.io_orderingReq_ready.value = 1
-        self.dut.io_orderingResp_valid.value = 0
+        self.dut.io_tlbResp_bits_translation_stripeAddr.value = 0
+        self.dut.io_tlbResp_bits_translation_ordering_wf.value = WidthFormatCode.WF64
+        self.dut.io_tlbResp_bits_translation_ordering_laneOrder.value = LaneOrder.ROW_MAJOR
         self.dut.io_cacheLineReq_ready.value = 1
         self.dut.io_cacheLineResp_valid.value = 0
+        self.dut.io_cacheLineReplay_valid.value = 0
         self.dut.io_immediateKinstr_valid.value = 0
         self.dut.io_immediateKinstr_bits_kinstr.value = 0
         self.dut.io_immediateKinstr_bits_ordering_wf.value = WidthFormatCode.WF64
@@ -165,8 +166,8 @@ class JamletDriver:
             getattr(self.dut, f"io_laneIndices_{i}").value = 0
 
     def start(self, p_valid: float = 1.0, p_ready: float = 1.0) -> None:
-        self.a_west_in.start(seed=make_seed(self.rng), p_valid=p_valid)
-        self.b_out.start(seed=make_seed(self.rng), p_ready=p_ready)
+        self.a_west_in.start(rng=self.rng, p_valid=p_valid)
+        self.b_out.start(rng=self.rng, p_ready=p_ready)
         cocotb.start_soon(self._cache_response_monitor())
         cocotb.start_soon(monitor_error_wires(self.dut, "io_errors"))
 
@@ -192,7 +193,7 @@ class JamletDriver:
             send_type=SendType.SINGLE,
             slot=slot,
         ).encode(self.params)
-        self.a_west_in.enqueue_packet([(header, True)] + [(word, False) for word in words])
+        self.a_west_in.enqueue_packet(header, words)
 
         actual_slot = await response
         assert actual_slot == slot

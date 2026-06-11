@@ -9,8 +9,8 @@
     "hasSE": true,
     "hasSW": true
   },
+  "syncIdentWidth": 3,
   "sync": {
-    "maxConcurrentSyncs": 4,
     "resultOutputReg": true,
     "portOutOutputReg": true,
     "minPipelineReg": true

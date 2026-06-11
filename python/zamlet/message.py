@@ -5,6 +5,8 @@ from types import SimpleNamespace
 
 from zamlet.addresses import TLBFaultType, VectorFaultInfo
 from zamlet.control_structures import pack_fields_to_int, unpack_int_to_fields
+from zamlet.lane_order import LaneOrder
+from zamlet.width_codes import WidthFormatCode
 
 
 class SendType(IntEnum):
@@ -76,6 +78,8 @@ class MessageType(IntEnum):
     READ_LINE_ADDR_DROP = 43
     WRITE_LINE_ADDR_DROP = 44
     WRITE_LINE_DATA_DROP = 45
+    TLB_REQ = 46
+    TLB_RESP = 47
 
     # Ordered indexed load/store responses (jamlet -> lamlet)
     LOAD_INDEXED_ELEMENT_RESP = 51
@@ -114,6 +118,7 @@ CHANNEL_MAPPING = {
     MessageType.READ_LINE_ADDR_DROP: 0,
     MessageType.WRITE_LINE_ADDR_DROP: 0,
     MessageType.WRITE_LINE_DATA_DROP: 0,
+    MessageType.TLB_RESP: 0,
 
     MessageType.READ_LINE_ADDR: 1,
     MessageType.WRITE_LINE_ADDR: 1,
@@ -124,6 +129,7 @@ CHANNEL_MAPPING = {
     MessageType.LOAD_WORD_REQ: 1,
     MessageType.STORE_WORD_REQ: 1,
     MessageType.READ_MEM_WORD_REQ: 1,
+    MessageType.TLB_REQ: 1,
 
     MessageType.READ_MEM_WORD_RESP: 0,
     MessageType.READ_MEM_WORD_DROP: 0,
@@ -143,8 +149,8 @@ CHANNEL_MAPPING = {
     MessageType.LOAD_INDEXED_ELEMENT_RESP: 0,
     MessageType.STORE_INDEXED_ELEMENT_RESP: 0,
 
-    # This is always consumable because we will explicitly track how much buffer room there is.
-    MessageType.INSTRUCTIONS: 0,
+    # Instructions are not responses, but are consumed by explicit buffering.
+    MessageType.INSTRUCTIONS: 1,
 
     # Send is always consumable becaue we track how many slots are available.
     MessageType.SEND: 0,
@@ -360,6 +366,63 @@ class CacheLineHeader(Header):
         return cls(**fields)
 
 
+def _tlb_req_slot_width(params) -> int:
+    return (params.tlb_req_table_depth - 1).bit_length()
+
+
+@dataclass
+class KamletTlbReqHeader(Header):
+    tlb_req_slot: int
+
+    @staticmethod
+    def fields(params):
+        tlb_req_slot_width = _tlb_req_slot_width(params)
+        used = params._base_header_width + tlb_req_slot_width
+        return params.abstract_base_header_fields + [
+            ('tlb_req_slot', tlb_req_slot_width),
+            ('_padding', params.word_width - used),
+        ]
+
+    def encode(self, params) -> int:
+        return pack_fields_to_int(self, self.fields(params))
+
+    def message_id(self) -> int:
+        return self.tlb_req_slot
+
+    @classmethod
+    def decode(cls, value: int, params) -> 'KamletTlbReqHeader':
+        fields = unpack_int_to_fields(value, cls.fields(params))
+        fields.pop('_padding', None)
+        _decode_header_enums(fields)
+        return cls(**fields)
+
+
+@dataclass
+class KamletTlbRespHeader(KamletTlbReqHeader):
+    ordering_wf: int
+    ordering_lane_order: int
+
+    @staticmethod
+    def fields(params):
+        tlb_req_slot_width = _tlb_req_slot_width(params)
+        wf_width = WidthFormatCode.width()
+        lane_order_width = LaneOrder.width()
+        used = params._base_header_width + tlb_req_slot_width + wf_width + lane_order_width
+        return params.abstract_base_header_fields + [
+            ('tlb_req_slot', tlb_req_slot_width),
+            ('ordering_wf', wf_width),
+            ('ordering_lane_order', lane_order_width),
+            ('_padding', params.word_width - used),
+        ]
+
+    @classmethod
+    def decode(cls, value: int, params) -> 'KamletTlbRespHeader':
+        fields = unpack_int_to_fields(value, cls.fields(params))
+        fields.pop('_padding', None)
+        _decode_header_enums(fields)
+        return cls(**fields)
+
+
 @dataclass
 class ValueHeader(IdentHeader):
     value: bytes   # 16 bits
@@ -498,6 +561,10 @@ def int_to_header(value: int, params) -> Header:
         return CacheLineHeader.decode(value, params)
     if msg_type in JTE_HEADER_MESSAGE_TYPES:
         return JteHeader.decode(value, params)
+    if msg_type == MessageType.TLB_REQ:
+        return KamletTlbReqHeader.decode(value, params)
+    if msg_type == MessageType.TLB_RESP:
+        return KamletTlbRespHeader.decode(value, params)
     ident_fields = unpack_int_to_fields(value, params.ident_header_fields)
     return IdentHeader(**ident_fields)
 
@@ -507,5 +574,9 @@ def header_to_int(header: Header, params) -> int:
     if isinstance(header, CacheLineHeader):
         return header.encode(params)
     if isinstance(header, JteHeader):
+        return header.encode(params)
+    if isinstance(header, KamletTlbRespHeader):
+        return header.encode(params)
+    if isinstance(header, KamletTlbReqHeader):
         return header.encode(params)
     return pack_fields_to_int(header, params.ident_header_fields)

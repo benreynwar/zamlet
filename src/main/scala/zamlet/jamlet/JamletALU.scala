@@ -67,8 +67,8 @@ class JamletAlu(params: ZamletParams) extends Module {
   val wfSupported = input.wf >= WidthFormat.wf8
   val layoutSupported = wfLogBits >= ewLogBits
   val ewLogBytes = ewLogBits - 3.U
-  val elementsPerWfLog2 = Mux(wfLogBits >= ewLogBits, wfLogBits - ewLogBits, 0.U)
   val indexWidth = input.endIndex.getWidth
+  val elementsPerWfLog2 = Mux(wfLogBits >= ewLogBits, wfLogBits - ewLogBits, 0.U)
   val elementsPerWf = (1.U(indexWidth.W) << elementsPerWfLog2)(indexWidth - 1, 0)
   val wfElementStride = elementsPerWf * params.jInL.U(indexWidth.W)
 
@@ -79,7 +79,7 @@ class JamletAlu(params: ZamletParams) extends Module {
     params.wordWidth,
     registerInput = false,
     registerOutput = true))
-  val outputLatency = mul.latency
+  val outputLatency = JamletAlu.outputLatency(params)
   require(outputLatency >= add.latency, "JamletAlu assumes multiplier latency is at least adder latency")
 
   mul.io.input.valid := io.input.valid
@@ -142,6 +142,18 @@ class JamletAlu(params: ZamletParams) extends Module {
   errors.unsupportedWf := io.input.valid && !wfSupported
   errors.unsupportedEwWfRatio := io.input.valid && !layoutSupported
   io.errors := RegNext(errors)
+}
+
+object JamletAlu {
+  def outputLatency(params: ZamletParams): Int = {
+    SegmentedMultiplier.latency(
+      params.wordWidth,
+      minWidth = 8,
+      registerInput = true,
+      registerLeafInput = true,
+      recombineBufferMinWidth = 32,
+      registerOutput = true)
+  }
 }
 
 object JamletAluGenerator extends zamlet.ModuleGenerator {

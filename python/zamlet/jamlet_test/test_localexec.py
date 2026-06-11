@@ -59,6 +59,7 @@ class LocalExecCase:
     lane_index: int
     wf: int
     start_index: int
+    end_index: int
     rf_a: RfRead
     rf_b: RfRead
     rf_mask: RfRead
@@ -190,6 +191,7 @@ def make_load_imm(params: ZamletParams, rnd: random.Random) -> LocalExecCase:
         lane_index=rnd.randrange(params.j_in_l),
         wf=WidthFormatCode.WF64,
         start_index=0,
+        end_index=0,
         rf_a=no_rf_read(),
         rf_b=no_rf_read(),
         rf_mask=no_rf_read(),
@@ -219,7 +221,7 @@ def make_load_simple(params: ZamletParams, rnd: random.Random) -> LocalExecCase:
     start_index = rnd.randrange(one_past_end_index(params, ew))
     end_index = rnd.randrange(start_index + 1, one_past_end_index(params, ew) + 1)
     cache_slot = rnd.randrange(params.n_cache_slots)
-    sram_word_offset = rnd.randrange(params.cache_slot_words)
+    sram_word_offset = rnd.randrange(params.cache_slot_words_per_jamlet)
     sram_data = rnd.getrandbits(params.word_width)
     mask = expected_bit_mask(
         params,
@@ -233,7 +235,7 @@ def make_load_simple(params: ZamletParams, rnd: random.Random) -> LocalExecCase:
     return LocalExecCase(
         kinstr=PackedLoadSimple(
             rf_addr=rf_addr,
-            end_index=end_index,
+            end_index_param_idx=1,
             mask_reg=mask_reg,
             ew=ew,
             mask_enabled=mask_enabled,
@@ -243,12 +245,13 @@ def make_load_simple(params: ZamletParams, rnd: random.Random) -> LocalExecCase:
         lane_index=lane_index,
         wf=wf,
         start_index=start_index,
+        end_index=end_index,
         rf_a=no_rf_read(),
         rf_b=no_rf_read(),
         rf_mask=RfRead(mask_enabled, mask_reg, mask_word),
         sram=SramReq(
             True,
-            address=cache_slot * params.cache_slot_words + sram_word_offset,
+            address=cache_slot * params.cache_slot_words_per_jamlet + sram_word_offset,
             is_write=False,
             response_data=sram_data,
         ),
@@ -273,7 +276,7 @@ def make_store_simple(params: ZamletParams, rnd: random.Random) -> LocalExecCase
     start_index = rnd.randrange(one_past_end_index(params, ew))
     end_index = rnd.randrange(start_index + 1, one_past_end_index(params, ew) + 1)
     cache_slot = rnd.randrange(params.n_cache_slots)
-    sram_word_offset = rnd.randrange(params.cache_slot_words)
+    sram_word_offset = rnd.randrange(params.cache_slot_words_per_jamlet)
     mask = expected_bit_mask(
         params,
         ew,
@@ -286,7 +289,7 @@ def make_store_simple(params: ZamletParams, rnd: random.Random) -> LocalExecCase
     return LocalExecCase(
         kinstr=PackedStoreSimple(
             rf_addr=rf_addr,
-            end_index=end_index,
+            end_index_param_idx=1,
             mask_reg=mask_reg,
             ew=ew,
             mask_enabled=mask_enabled,
@@ -296,12 +299,13 @@ def make_store_simple(params: ZamletParams, rnd: random.Random) -> LocalExecCase
         lane_index=lane_index,
         wf=wf,
         start_index=start_index,
+        end_index=end_index,
         rf_a=RfRead(True, rf_addr, rf_data),
         rf_b=no_rf_read(),
         rf_mask=RfRead(mask_enabled, mask_reg, mask_word),
         sram=SramReq(
             True,
-            address=cache_slot * params.cache_slot_words + sram_word_offset,
+            address=cache_slot * params.cache_slot_words_per_jamlet + sram_word_offset,
             is_write=True,
             data=rf_data,
             write_mask=mask,
@@ -346,7 +350,7 @@ def make_binary(params: ZamletParams, rnd: random.Random, opcode: KInstrOpcode) 
             dst_reg=dst_reg,
             src_a_reg=src_a_reg,
             src_b_reg=src_b_reg,
-            end_index=end_index,
+            end_index_param_idx=1,
             mask_reg=mask_reg,
             ew=ew,
             is_signed_a=signed_a,
@@ -358,6 +362,7 @@ def make_binary(params: ZamletParams, rnd: random.Random, opcode: KInstrOpcode) 
         lane_index=lane_index,
         wf=wf,
         start_index=start_index,
+        end_index=end_index,
         rf_a=RfRead(True, src_a_reg, a),
         rf_b=RfRead(True, src_b_reg, b),
         rf_mask=RfRead(mask_enabled, mask_reg, mask_word),
@@ -413,9 +418,9 @@ def drive_instruction(dut: HierarchyObject, case: LocalExecCase | None) -> None:
         dut.io_kinstrIn_bits_ordering_laneOrder.value = LaneOrder.ROW_MAJOR
         dut.io_kinstrIn_bits_cacheSlot.value = case.cache_slot
         dut.io_kinstrIn_bits_sramWordOffset.value = case.sram_word_offset
-        dut.io_kinstrIn_bits_param0.value = case.start_index
-        dut.io_kinstrIn_bits_param1.value = 0
-        dut.io_kinstrIn_bits_param2.value = 0
+        dut.io_kinstrIn_bits_param0.value = 0
+        dut.io_kinstrIn_bits_param1.value = case.start_index
+        dut.io_kinstrIn_bits_param2.value = case.end_index
 
 
 def drive_rf_response(dut: HierarchyObject, port: str, item: RfRead | None) -> None:

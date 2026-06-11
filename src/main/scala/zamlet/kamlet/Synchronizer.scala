@@ -4,7 +4,7 @@ import chisel3._
 import chisel3.util._
 import _root_.circt.stage.ChiselStage
 import zamlet.utils.ValidBuffer
-import zamlet.SynchronizerParams
+import zamlet.{SynchronizerParams, ZamletParams}
 import io.circe._
 import io.circe.generic.semiauto._
 import io.circe.parser._
@@ -12,6 +12,7 @@ import scala.io.Source
 
 case class SynchronizerTestParams(
   neighbors: SyncNeighbors = SyncNeighbors(),
+  syncIdentWidth: Int = 3,
   sync: SynchronizerParams = SynchronizerParams()
 )
 
@@ -43,7 +44,8 @@ object SynchronizerTestParams {
  * via 9-bit buses. The lamlet sits at position (0, -1) and only connects S to kamlet (0, 0).
  *
  * Bus format: [8] = last_byte, [7:0] = data byte
- * Packet format: Byte 0 = sync_ident, Byte 1 = value (for MIN aggregation)
+ * Packet format: Byte 0 = sync_ident, Byte 1 = value[7:0],
+ * Byte 2 = value[15:8].
  */
 
 object SyncDirection {
@@ -63,31 +65,37 @@ class SyncPort extends Bundle {
   val bits = UInt(9.W)
 }
 
-class SyncEvent extends Bundle {
-  val syncIdent = UInt(8.W)
-  val value = UInt(8.W)
+class SyncEvent(params: ZamletParams) extends Bundle {
+  val syncIdent = params.syncIdent()
+  val value = params.syncValue()
+  val includeActiveMask = Bool()
+  val mustDrainValid = Bool()
+  val mustDrainSyncIdent = params.syncIdent()
 }
 
-class SyncEntry extends Bundle {
+class SyncEntry(params: ZamletParams) extends Bundle {
   val valid = Bool()
   // Note: syncIdent is NOT stored - it equals the entry index
+  val includeActiveMask = Bool()
   val localSeen = Bool()
-  val localValue = UInt(8.W)
+  val localValue = params.syncValue()
+  val pendingLocal = Bool()
+  val pendingMustDrainSyncIdent = params.syncIdent()
 
   val quadrantSynced = Vec(4, Bool())  // NE, NW, SE, SW (indices 0-3)
   val columnSynced = Vec(2, Bool())    // N, S (indices 0-1)
   val rowSynced = Vec(2, Bool())       // E, W (indices 0-1)
 
-  val quadrantValues = Vec(4, UInt(8.W))
-  val columnValues = Vec(2, UInt(8.W))
-  val rowValues = Vec(2, UInt(8.W))
+  val quadrantValues = Vec(4, params.syncValue())
+  val columnValues = Vec(2, params.syncValue())
+  val rowValues = Vec(2, params.syncValue())
 
   val sent = Vec(SyncDirection.count, Bool())
 }
 
-class SynchronizerIO(maxConcurrentSyncs: Int) extends Bundle {
-  val localEvent = Flipped(Valid(new SyncEvent))
-  val result = Valid(new SyncEvent)
+class SynchronizerIO(params: ZamletParams) extends Bundle {
+  val localEvent = Flipped(Valid(new SyncEvent(params)))
+  val result = Valid(new SyncEvent(params))
 
   val portOut = Output(Vec(SyncDirection.count, new SyncPort))
   val portIn = Input(Vec(SyncDirection.count, new SyncPort))
@@ -106,11 +114,21 @@ case class SyncNeighbors(
 
 class Synchronizer(
   neighbors: SyncNeighbors,
-  params: SynchronizerParams = SynchronizerParams()
+  params: ZamletParams = ZamletParams()
 ) extends Module {
 
-  val io = IO(new SynchronizerIO(params.maxConcurrentSyncs))
+  require(params.syncValueWidth == 16,
+    s"Synchronizer packet format currently carries 16-bit values, got ${params.syncValueWidth}")
+  require(params.syncIdentWidth == 3,
+    s"Synchronizer packet header currently carries 3-bit sync idents, got ${params.syncIdentWidth}")
+
+  val syncParams = params.synchronizerParams
   val maxConcurrentSyncs = params.maxConcurrentSyncs
+  private val syncHeaderModeBit = 3
+  private val syncHeaderIdentMsb = 2
+  private val syncHeaderIdentLsb = 0
+
+  val io = IO(new SynchronizerIO(params))
 
   import SyncDirection._
 
@@ -120,56 +138,68 @@ class Synchronizer(
   ))
 
   // Entry state - syncIdent IS the index, so no need for syncIdent field
-  val entries = RegInit(VecInit(Seq.fill(maxConcurrentSyncs)(0.U.asTypeOf(new SyncEntry))))
+  val entries = RegInit(VecInit(Seq.fill(maxConcurrentSyncs)(0.U.asTypeOf(new SyncEntry(params)))))
 
   val rxHasByte0 = RegInit(VecInit(Seq.fill(SyncDirection.count)(false.B)))
+  val rxHasByte1 = RegInit(VecInit(Seq.fill(SyncDirection.count)(false.B)))
   val rxByte0 = Reg(Vec(SyncDirection.count, UInt(8.W)))
+  val rxByte1 = Reg(Vec(SyncDirection.count, UInt(8.W)))
+  val rxIncludeActiveMask = Reg(Vec(SyncDirection.count, Bool()))
 
   val txActive = RegInit(VecInit(Seq.fill(SyncDirection.count)(false.B)))
   val txSyncIdx = Reg(Vec(SyncDirection.count, UInt(log2Ceil(maxConcurrentSyncs).W)))
-  val txByteIdx = Reg(Vec(SyncDirection.count, UInt(1.W)))
+  val txByteIdx = Reg(Vec(SyncDirection.count, UInt(2.W)))
 
   val idxWidth = log2Ceil(maxConcurrentSyncs).W
 
   // Create a fresh initialized entry
   def freshEntry(): SyncEntry = {
-    val e = Wire(new SyncEntry)
+    val e = Wire(new SyncEntry(params))
     e.valid := true.B
+    e.includeActiveMask := false.B
     e.localSeen := false.B
     e.localValue := 0.U
+    e.pendingLocal := false.B
+    e.pendingMustDrainSyncIdent := 0.U
     e.quadrantSynced := VecInit(Seq(
       (!neighbors.hasNE).B, (!neighbors.hasNW).B, (!neighbors.hasSE).B, (!neighbors.hasSW).B
     ))
     e.columnSynced := VecInit(Seq((!neighbors.hasN).B, (!neighbors.hasS).B))
     e.rowSynced := VecInit(Seq((!neighbors.hasE).B, (!neighbors.hasW).B))
-    e.quadrantValues := VecInit(Seq.fill(4)(255.U(8.W)))
-    e.columnValues := VecInit(Seq.fill(2)(255.U(8.W)))
-    e.rowValues := VecInit(Seq.fill(2)(255.U(8.W)))
+    e.quadrantValues := VecInit(Seq.fill(4)(((BigInt(1) << params.syncValueWidth) - 1).U(params.syncValueWidth.W)))
+    e.columnValues := VecInit(Seq.fill(2)(((BigInt(1) << params.syncValueWidth) - 1).U(params.syncValueWidth.W)))
+    e.rowValues := VecInit(Seq.fill(2)(((BigInt(1) << params.syncValueWidth) - 1).U(params.syncValueWidth.W)))
     e.sent := VecInit(hasNeighbor.map(!_))
     e
   }
 
-  // Handle RX state machine (byte0 buffering) - separate from entry updates
+  // Handle RX state machine. A packet has sync id, low value byte, high value
+  // byte. Entry update happens when the high byte arrives.
   for (dir <- 0 until SyncDirection.count) {
     when (io.portIn(dir).valid && hasNeighbor(dir)) {
       when (!rxHasByte0(dir)) {
         rxByte0(dir) := io.portIn(dir).bits(7, 0)
+        rxIncludeActiveMask(dir) := io.portIn(dir).bits(syncHeaderModeBit)
         rxHasByte0(dir) := true.B
+      }.elsewhen (!rxHasByte1(dir)) {
+        rxByte1(dir) := io.portIn(dir).bits(7, 0)
+        rxHasByte1(dir) := true.B
       }.otherwise {
         rxHasByte0(dir) := false.B
+        rxHasByte1(dir) := false.B
       }
     }
   }
 
   // Compute RX active signals and indices
   val rxIdx = Wire(Vec(SyncDirection.count, UInt(idxWidth)))
-  val rxValue = Wire(Vec(SyncDirection.count, UInt(8.W)))
+  val rxValue = Wire(Vec(SyncDirection.count, params.syncValue()))
   val rxActive = Wire(Vec(SyncDirection.count, Bool()))
 
   for (dir <- 0 until SyncDirection.count) {
-    rxIdx(dir) := rxByte0(dir)(idxWidth.get - 1, 0)
-    rxValue(dir) := io.portIn(dir).bits(7, 0)
-    rxActive(dir) := io.portIn(dir).valid && hasNeighbor(dir) && rxHasByte0(dir)
+    rxIdx(dir) := rxByte0(dir)(syncHeaderIdentMsb, syncHeaderIdentLsb)
+    rxValue(dir) := Cat(io.portIn(dir).bits(7, 0), rxByte1(dir))
+    rxActive(dir) := io.portIn(dir).valid && hasNeighbor(dir) && rxHasByte0(dir) && rxHasByte1(dir)
   }
 
   // Local event signals
@@ -184,13 +214,13 @@ class Synchronizer(
     val entryIdxU = entryIdx.U(idxWidth)
 
     // Start with current register value
-    val stages = Wire(Vec(SyncDirection.count + 2, new SyncEntry))  // +2 for initial and after-local
+    val stages = Wire(Vec(SyncDirection.count + 2, new SyncEntry(params)))  // +2 for initial and after-local
     stages(0) := entries(entryIdx)
 
     // Process each direction
     for (dir <- 0 until SyncDirection.count) {
       val prev = stages(dir)
-      val next = Wire(new SyncEntry)
+      val next = Wire(new SyncEntry(params))
 
       val thisRxActive = Wire(Bool())
       thisRxActive := rxActive(dir) && rxIdx(dir) === entryIdxU
@@ -203,6 +233,7 @@ class Synchronizer(
         }.otherwise {
           next := prev
         }
+        next.includeActiveMask := rxIncludeActiveMask(dir)
         // Update direction-specific synced flag and value
         dir match {
           case N  => next.columnSynced(0) := true.B; next.columnValues(0) := rxValue(dir)
@@ -220,12 +251,19 @@ class Synchronizer(
       stages(dir + 1) := next
     }
 
-    // Process local event (last stage, so it has priority)
+    // Process local event and delayed local trigger (last stage, so local
+    // events have priority over received packets for the target entry).
     val afterDirs = stages(SyncDirection.count)
-    val afterLocal = Wire(new SyncEntry)
+    val afterLocal = Wire(new SyncEntry(params))
 
     val thisLocalActive = Wire(Bool())
     thisLocalActive := localActive && localIdx === entryIdxU
+    val localDrainBlocked = io.localEvent.bits.mustDrainValid &&
+      entries(io.localEvent.bits.mustDrainSyncIdent).valid
+    val pendingDrainBlocked = afterDirs.pendingLocal &&
+      entries(afterDirs.pendingMustDrainSyncIdent).valid
+    val activeMaskAtTrigger = VecInit(entries.map(_.valid)).asUInt |
+      Mux(thisLocalActive, UIntToOH(localIdx, maxConcurrentSyncs), 0.U(maxConcurrentSyncs.W))
 
     when (thisLocalActive) {
       when (!afterDirs.valid) {
@@ -233,8 +271,25 @@ class Synchronizer(
       }.otherwise {
         afterLocal := afterDirs
       }
-      afterLocal.localSeen := true.B
+      afterLocal.includeActiveMask := io.localEvent.bits.includeActiveMask
       afterLocal.localValue := io.localEvent.bits.value
+      afterLocal.pendingLocal := localDrainBlocked
+      afterLocal.pendingMustDrainSyncIdent := io.localEvent.bits.mustDrainSyncIdent
+      afterLocal.localSeen := !localDrainBlocked
+      when (!localDrainBlocked && io.localEvent.bits.includeActiveMask) {
+        afterLocal.localValue := Cat(
+          io.localEvent.bits.value(params.syncValueWidth - 1, maxConcurrentSyncs),
+          activeMaskAtTrigger)
+      }
+    }.elsewhen (afterDirs.pendingLocal && !pendingDrainBlocked) {
+      afterLocal := afterDirs
+      afterLocal.localSeen := true.B
+      afterLocal.pendingLocal := false.B
+      when (afterDirs.includeActiveMask) {
+        afterLocal.localValue := Cat(
+          afterDirs.localValue(params.syncValueWidth - 1, maxConcurrentSyncs),
+          activeMaskAtTrigger)
+      }
     }.otherwise {
       afterLocal := afterDirs
     }
@@ -259,27 +314,47 @@ class Synchronizer(
     }
   }
 
+  def aggregateValues(e: SyncEntry, values: Vec[UInt]): UInt = {
+    val maskWidth = params.maxConcurrentSyncs
+    val minDistance = values.map(_(params.syncValueWidth - 1, maskWidth)).reduce(_ min _)
+    val neutralValue = ((BigInt(1) << params.syncValueWidth) - 1).U(params.syncValueWidth.W)
+    val activeMask = values.map { value =>
+      Mux(value === neutralValue, 0.U(maskWidth.W), value(maskWidth - 1, 0))
+    }.reduce(_ | _)
+    Mux(e.includeActiveMask, Cat(minDistance, activeMask), values.reduceTree(_ min _))
+  }
+
+  def neutralSyncValue(e: SyncEntry): UInt = {
+    val maskWidth = params.maxConcurrentSyncs
+    val maxDistance = ((BigInt(1) << (params.syncValueWidth - maskWidth)) - 1)
+      .U((params.syncValueWidth - maskWidth).W)
+    Mux(e.includeActiveMask,
+      Cat(maxDistance, 0.U(maskWidth.W)),
+      ((BigInt(1) << params.syncValueWidth) - 1).U(params.syncValueWidth.W))
+  }
+
   def valueForDirection(e: SyncEntry, dir: Int): UInt = {
-    val values = Wire(Vec(4, UInt(8.W)))
+    val values = Wire(Vec(4, params.syncValue()))
     values(0) := e.localValue
+    val neutral = neutralSyncValue(e)
 
     dir match {
       case N =>
         values(1) := e.columnValues(1)
-        values(2) := 255.U
-        values(3) := 255.U
+        values(2) := neutral
+        values(3) := neutral
       case S =>
         values(1) := e.columnValues(0)
-        values(2) := 255.U
-        values(3) := 255.U
+        values(2) := neutral
+        values(3) := neutral
       case E =>
         values(1) := e.rowValues(1)
-        values(2) := 255.U
-        values(3) := 255.U
+        values(2) := neutral
+        values(3) := neutral
       case W =>
         values(1) := e.rowValues(0)
-        values(2) := 255.U
-        values(3) := 255.U
+        values(2) := neutral
+        values(3) := neutral
       case NE =>
         values(1) := e.quadrantValues(3)
         values(2) := e.columnValues(1)
@@ -298,7 +373,7 @@ class Synchronizer(
         values(3) := e.rowValues(0)
     }
 
-    values.reduceTree(_ min _)
+    aggregateValues(e, values)
   }
 
   val portOutInternal = Wire(Vec(SyncDirection.count, new SyncPort))
@@ -313,12 +388,18 @@ class Synchronizer(
       portOutInternal(dir).valid := true.B
 
       when (txByteIdx(dir) === 0.U) {
-        // Byte 0: syncIdent (which equals the index)
-        portOutInternal(dir).bits := Cat(0.U(1.W), idx)
+        // Byte 0: syncIdent (which equals the index) plus aggregation mode.
+        val txHeader = Wire(UInt(8.W))
+        txHeader := Cat(0.U(4.W), e.includeActiveMask, idx)
+        portOutInternal(dir).bits := Cat(0.U(1.W), txHeader)
         txByteIdx(dir) := 1.U
+      }.elsewhen (txByteIdx(dir) === 1.U) {
+        val minVal = valueForDirection(e, dir)
+        portOutInternal(dir).bits := Cat(0.U(1.W), minVal(7, 0))
+        txByteIdx(dir) := 2.U
       }.otherwise {
         val minVal = valueForDirection(e, dir)
-        portOutInternal(dir).bits := Cat(1.U(1.W), minVal)
+        portOutInternal(dir).bits := Cat(1.U(1.W), minVal(15, 8))
         txActive(dir) := false.B
         entries(idx).sent(dir) := true.B
       }
@@ -334,7 +415,7 @@ class Synchronizer(
     }
   }
 
-  if (params.portOutOutputReg) {
+  if (syncParams.portOutOutputReg) {
     io.portOut := RegNext(portOutInternal)
   } else {
     io.portOut := portOutInternal
@@ -356,14 +437,16 @@ class Synchronizer(
 
   // Stage before MIN: bundle the values needed for MIN computation
   class PreMinBundle extends Bundle {
-    val syncIdent = UInt(8.W)
-    val values = Vec(9, UInt(8.W))
+    val syncIdent = UInt(params.syncIdentWidth.W)
+    val includeActiveMask = Bool()
+    val values = Vec(9, params.syncValue())
   }
 
   val preMin = Wire(Valid(new PreMinBundle))
   preMin.valid := anyComplete
   preMin.bits.syncIdent := completeIdx  // syncIdent equals the index
   val e = entries(completeIdx)
+  preMin.bits.includeActiveMask := e.includeActiveMask
   preMin.bits.values := VecInit(Seq(
     e.localValue,
     e.quadrantValues(0), e.quadrantValues(1), e.quadrantValues(2), e.quadrantValues(3),
@@ -376,15 +459,21 @@ class Synchronizer(
   }
 
   // Optional pipeline stage before MIN computation
-  val preMinBuffered = ValidBuffer(preMin, params.minPipelineReg)
+  val preMinBuffered = ValidBuffer(preMin, syncParams.minPipelineReg)
 
   // Compute MIN and produce result
-  val resultInternal = Wire(Valid(new SyncEvent))
+  val resultInternal = Wire(Valid(new SyncEvent(params)))
   resultInternal.valid := preMinBuffered.valid
   resultInternal.bits.syncIdent := preMinBuffered.bits.syncIdent
-  resultInternal.bits.value := preMinBuffered.bits.values.reduceTree(_ min _)
+  resultInternal.bits.includeActiveMask := preMinBuffered.bits.includeActiveMask
+  resultInternal.bits.mustDrainValid := false.B
+  resultInternal.bits.mustDrainSyncIdent := 0.U
+  val preMinEntry = Wire(new SyncEntry(params))
+  preMinEntry := 0.U.asTypeOf(new SyncEntry(params))
+  preMinEntry.includeActiveMask := preMinBuffered.bits.includeActiveMask
+  resultInternal.bits.value := aggregateValues(preMinEntry, preMinBuffered.bits.values)
 
-  io.result := ValidBuffer(resultInternal, params.resultOutputReg)
+  io.result := ValidBuffer(resultInternal, syncParams.resultOutputReg)
 }
 
 object SynchronizerGenerator extends zamlet.ModuleGenerator {
@@ -394,7 +483,9 @@ object SynchronizerGenerator extends zamlet.ModuleGenerator {
       System.exit(1)
     }
     val testParams = SynchronizerTestParams.fromFile(args(0))
-    new Synchronizer(testParams.neighbors, testParams.sync)
+    new Synchronizer(testParams.neighbors,
+      ZamletParams(syncIdentWidth = testParams.syncIdentWidth,
+                   synchronizerParams = testParams.sync))
   }
 }
 

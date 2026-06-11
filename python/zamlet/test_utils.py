@@ -40,7 +40,7 @@ def configure_logging_pre_sim(level: str = 'INFO') -> None:
     )
 
 
-def configure_logging_sim(level: str = 'INFO') -> None:
+def configure_logging_sim(level: str | None = None) -> None:
     """Configure logging for tests during simulation using cocotb's format."""
     # Version-compatible logging configuration
     try:
@@ -57,6 +57,8 @@ def configure_logging_sim(level: str = 'INFO') -> None:
             pass
 
     # Set the desired log level
+    if level is None:
+        level = os.environ.get('COCOTB_LOG_LEVEL', 'INFO')
     numeric_level = getattr(logging, level.upper(), None)
     if not isinstance(numeric_level, int):
         raise ValueError(f'Invalid log level: {level}')
@@ -65,12 +67,12 @@ def configure_logging_sim(level: str = 'INFO') -> None:
 
 def get_test_params() -> Dict[str, Any]:
     """Get test parameters from bazel environment variables."""
-    config_filename = os.environ['ZAMLET_TEST_CONFIG_FILENAME']
-    seed = int(os.environ.get('ZAMLET_TEST_SEED', '0'))
-    return {
-        "seed": seed,
-        "params_file": config_filename,
-    }
+    params = {}
+    if 'ZAMLET_TEST_SEED' in os.environ:
+        params["seed"] = int(os.environ['ZAMLET_TEST_SEED'])
+    if 'ZAMLET_TEST_CONFIG_FILENAME' in os.environ:
+        params["params_file"] = os.environ['ZAMLET_TEST_CONFIG_FILENAME']
+    return params
 
 
 def run_test(working_dir: str, filenames: List[str], params: Dict[str, Any], toplevel: str, module: str) -> None:

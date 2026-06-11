@@ -34,6 +34,7 @@ chisel_module_tests(
     generator = "//src/main/scala/zamlet/jamlet:jteinitiator",
     toplevel = "JteInitiator",
     srcs = [
+        "jteinitiator_driver.py",
         "test_jteinitiator.py",
     ],
     configs = [

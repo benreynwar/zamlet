@@ -31,14 +31,6 @@ object ElementWidth extends ChiselEnum {
   val ew32 = Value(5.U)
   val ew64 = Value(6.U)
   val ew128 = Value(7.U)
-  val ew256 = Value(8.U)
-  val ew512 = Value(9.U)
-  val ew1024Invalid = Value(10.U)
-  val ew2048Invalid = Value(11.U)
-  val ew4096Invalid = Value(12.U)
-  val ew8192Invalid = Value(13.U)
-  val ew16384Invalid = Value(14.U)
-  val ew32768Invalid = Value(15.U)
 }
 
 object WidthHelpers {
@@ -82,8 +74,6 @@ object WidthHelpers {
       is(ElementWidth.ew32) { result := 32.U }
       is(ElementWidth.ew64) { result := 64.U }
       is(ElementWidth.ew128) { result := 128.U }
-      is(ElementWidth.ew256) { result := 256.U }
-      is(ElementWidth.ew512) { result := 512.U }
     }
     result
   }
@@ -97,8 +87,6 @@ object WidthHelpers {
       is(ElementWidth.ew32) { result := 5.U }
       is(ElementWidth.ew64) { result := 6.U }
       is(ElementWidth.ew128) { result := 7.U }
-      is(ElementWidth.ew256) { result := 8.U }
-      is(ElementWidth.ew512) { result := 9.U }
     }
     result
   }

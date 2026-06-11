@@ -28,6 +28,10 @@ logger = logging.getLogger(__name__)
 def initialize_inputs(dut: HierarchyObject, params: ZamletParams) -> None:
     """Set all KamletMesh inputs to safe defaults."""
     n_channels = params.n_a_channels + params.n_b_channels
+    dut.io_knetOffsetX.value = params.k_cols // 2
+    dut.io_knetOffsetY.value = 1
+    dut.io_lamletKnetX.value = params.k_cols // 2
+    dut.io_lamletKnetY.value = 0
 
     # Jamlet-level network edge ports: (prefix, outer_dim, inner_dim)
     edge_specs = [
@@ -122,10 +126,10 @@ async def reset(dut: HierarchyObject) -> None:
 
 
 async def send_word_to_kamlet(dut: HierarchyObject, kx: int, word: int, is_header: bool) -> None:
-    valid_sig = getattr(dut, f'io_nKamletAIn_{kx}_0_valid')
-    data_sig = getattr(dut, f'io_nKamletAIn_{kx}_0_bits_data')
-    header_sig = getattr(dut, f'io_nKamletAIn_{kx}_0_bits_isHeader')
-    ready_sig = getattr(dut, f'io_nKamletAIn_{kx}_0_ready')
+    valid_sig = getattr(dut, f'io_nKamletBIn_{kx}_0_valid')
+    data_sig = getattr(dut, f'io_nKamletBIn_{kx}_0_bits_data')
+    header_sig = getattr(dut, f'io_nKamletBIn_{kx}_0_bits_isHeader')
+    ready_sig = getattr(dut, f'io_nKamletBIn_{kx}_0_ready')
     valid_sig.value = 1
     data_sig.value = word
     header_sig.value = 1 if is_header else 0
@@ -138,7 +142,7 @@ async def send_word_to_kamlet(dut: HierarchyObject, kx: int, word: int, is_heade
 
 
 async def send_packet_to_kamlet(params: ZamletParams, dut: HierarchyObject, kx: int, packet) -> None:
-    """Send a full packet (header + payload words) via the north Kamlet A port."""
+    """Send a full packet (header + payload words) via the north Kamlet B port."""
 
     header = packet[0]
     assert isinstance(header, Header)
@@ -153,12 +157,15 @@ async def send_packet_to_kamlet(params: ZamletParams, dut: HierarchyObject, kx: 
 async def send_sync_trigger_to_kamlet(dut: HierarchyObject, params: ZamletParams,
                                       kx: int, sync_ident: int, value: int) -> None:
     """Send a SyncTrigger instruction packet to a kamlet."""
-    j_x = kx * params.j_cols
+    lamlet_x = params.k_cols // 2
+    lamlet_y = 0
+    target_x = lamlet_x + kx
+    target_y = 1
     header = Header(
-        target_x=j_x,
-        target_y=0,
-        source_x=j_x,
-        source_y=255,
+        target_x=target_x,
+        target_y=target_y,
+        source_x=lamlet_x,
+        source_y=lamlet_y,
         length=1,
         message_type=MessageType.INSTRUCTIONS,
         send_type=SendType.SINGLE
@@ -168,8 +175,9 @@ async def send_sync_trigger_to_kamlet(dut: HierarchyObject, params: ZamletParams
     logger.info(
         f"Sending SyncTrigger to kamlet {kx}: sync_ident={sync_ident}, value={value}"
     )
-    logger.info(f"  header={hex(header.encode(params))}, kinstr={hex(kinstr.encode())}")
-    await send_packet_to_kamlet(params, dut, kx, [header, kinstr.encode()])
+    encoded_kinstr = kinstr.encode(params)
+    logger.info(f"  header={hex(header.encode(params))}, kinstr={hex(encoded_kinstr)}")
+    await send_packet_to_kamlet(params, dut, kx, [header, encoded_kinstr])
 
 
 async def wait_for_sync_results(dut: HierarchyObject, params: ZamletParams,
@@ -243,24 +251,31 @@ async def send_ident_query_to_kamlet(dut: HierarchyObject, params: ZamletParams,
                                      kx: int, sync_ident: int,
                                      baseline: int) -> None:
     """Send an IdentQuery instruction packet to a kamlet."""
-    j_x = kx * params.j_cols
+    lamlet_x = params.k_cols // 2
+    lamlet_y = 0
+    target_x = lamlet_x + kx
+    target_y = 1
     header = Header(
-        target_x=j_x,
-        target_y=0,
-        source_x=j_x,
-        source_y=255,
+        target_x=target_x,
+        target_y=target_y,
+        source_x=lamlet_x,
+        source_y=lamlet_y,
         length=1,
         message_type=MessageType.INSTRUCTIONS,
         send_type=SendType.SINGLE
     )
-    kinstr = IdentQuery(instr_ident=sync_ident, baseline=baseline)
+    kinstr = IdentQuery(
+        instr_ident=params.max_response_tags + sync_ident,
+        sync_ident=sync_ident,
+        baseline=baseline)
 
     logger.info(
         f"Sending IdentQuery to kamlet {kx}: "
         f"sync_ident={sync_ident}, baseline={baseline}"
     )
-    logger.info(f"  header={hex(header.encode(params))}, kinstr={hex(kinstr.encode())}")
-    await send_packet_to_kamlet(params, dut, kx, [header, kinstr.encode()])
+    encoded_kinstr = kinstr.encode(params)
+    logger.info(f"  header={hex(header.encode(params))}, kinstr={hex(encoded_kinstr)}")
+    await send_packet_to_kamlet(params, dut, kx, [header, encoded_kinstr])
 
 
 async def test_ident_query(dut: HierarchyObject, params: ZamletParams) -> None:
@@ -287,17 +302,25 @@ async def test_ident_query(dut: HierarchyObject, params: ZamletParams) -> None:
         f"Expected results from {n_kamlets} kamlets, got {len(results)}"
     )
 
-    expected_value = 128  # params.maxResponseTags
+    expected_distance = params.max_response_tags
+    expected_active_mask = 1 << sync_ident
     for k_idx, (ident, value) in results.items():
         assert ident == sync_ident, (
             f"Kamlet {k_idx}: expected ident {sync_ident}, got {ident}"
         )
-        assert value == expected_value, (
-            f"Kamlet {k_idx}: expected value {expected_value}, got {value}"
+        distance = value >> params.max_concurrent_syncs
+        active_mask = value & ((1 << params.max_concurrent_syncs) - 1)
+        assert distance == expected_distance, (
+            f"Kamlet {k_idx}: expected distance {expected_distance}, got {distance}"
+        )
+        assert active_mask == expected_active_mask, (
+            f"Kamlet {k_idx}: expected active mask {expected_active_mask:#x}, "
+            f"got {active_mask:#x}"
         )
 
     logger.info(
-        f"test_ident_query passed: all kamlets returned value={expected_value}"
+        "test_ident_query passed: all kamlets returned "
+        f"distance={expected_distance}, active_mask={expected_active_mask:#x}"
     )
 
 

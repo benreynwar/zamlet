@@ -82,22 +82,19 @@ class CocotbDriver(MemletDriver):
     def start(self) -> None:
         super().start()
         self.control_source.start(
-            seed=self._next_seed(), p_valid=self.p_valid)
+            rng=self.rng, p_valid=self.p_valid)
         self.control_sink.start(
-            seed=self._next_seed(), p_ready=self.p_ready)
+            rng=self.rng, p_ready=self.p_ready)
         cocotb.start_soon(self._drain_sink(0, self.control_sink))
         for r in range(self.n_routers):
             cocotb.start_soon(self._send_loop(r))
             for d in 'NSEW':
                 self.b_sources[(r, d)].start(
-                    seed=self._next_seed(), p_valid=self.p_valid)
+                    rng=self.rng, p_valid=self.p_valid)
                 sink = self.a_sinks[(r, d)]
-                sink.start(seed=self._next_seed(), p_ready=self.p_ready)
+                sink.start(rng=self.rng, p_ready=self.p_ready)
                 cocotb.start_soon(self._drain_sink(r, sink))
         cocotb.start_soon(self._error_monitor())
-
-    def _next_seed(self) -> int:
-        return self.rng.randrange(1 << 63)
 
     async def _send_loop(self, r: int) -> None:
         """Background: route queued packets to the right packet source."""
@@ -125,11 +122,9 @@ class CocotbDriver(MemletDriver):
     def _enqueue_packet(self, source: NetworkPacketSource, packet: list) -> None:
         header = packet[0]
         assert isinstance(header, Header)
-        words = [(header.encode(self.params), True)]
-        for word in packet[1:]:
-            assert isinstance(word, int)
-            words.append((word, False))
-        source.enqueue_packet(words)
+        body_words = packet[1:]
+        assert all(isinstance(word, int) for word in body_words)
+        source.enqueue_packet(header.encode(self.params), body_words)
 
     async def _drain_sink(self, r: int, sink: NetworkPacketSink) -> None:
         """Background: move completed helper packets into MemletDriver queues."""
@@ -147,7 +142,7 @@ class CocotbDriver(MemletDriver):
         gather_fields = [
             'cacheSlotAllocOverwrite', 'missingHeader', 'unexpectedHeader',
             'duplicateArrived', 'badMessageType', 'badPacketLength',
-            'unexpectedData',
+            'badSourceCoord', 'unexpectedData',
         ]
         response_fields = [
             'responseAllocOverwrite', 'sentInInvalid', 'sentInDuplicate',

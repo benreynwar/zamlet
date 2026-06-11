@@ -12,6 +12,7 @@ class GatherSideErrors(params: ZamletParams) extends Bundle {
   val duplicateArrived = Output(Bool())
   val badMessageType = Output(Bool())
   val badPacketLength = Output(Bool())
+  val badSourceCoord = Output(Bool())
   val unexpectedData = Output(Bool())
 }
 
@@ -20,10 +21,11 @@ class GatherSideIO(params: ZamletParams) extends Bundle {
   val isInnerSlice = Input(Bool())
   val isOuterSlice = Input(Bool())
 
-  // Kamlet base coordinates, used to compute the sender's jamlet
-  // index from the packet's source coordinates.
-  val kBaseX = Input(UInt(params.xPosWidth.W))
-  val kBaseY = Input(UInt(params.yPosWidth.W))
+  // Jamlet coordinates expected to send data to this memlet router.
+  val jamletCoords = Input(Vec(params.memletLocalJamlets, new Bundle {
+    val x = UInt(params.xPosWidth.W)
+    val y = UInt(params.yPosWidth.W)
+  }))
 
   // Packet stream from the Jamlet-network router's local B-channel output.
   // Carries WriteLineData packets from kamlet jamlets.
@@ -252,11 +254,13 @@ class GatherSide(params: ZamletParams) extends Module {
   val errUnexpectedHeader = Wire(Bool())
   val errBadMessageType = Wire(Bool())
   val errBadPacketLength = Wire(Bool())
+  val errBadSourceCoord = Wire(Bool())
   val errUnexpectedData = Wire(Bool())
   errMissingHeader := false.B
   errUnexpectedHeader := false.B
   errBadMessageType := false.B
   errBadPacketLength := false.B
+  errBadSourceCoord := false.B
   errUnexpectedData := false.B
 
   // Drop header is sent when we're working on the first body word.
@@ -290,12 +294,17 @@ class GatherSide(params: ZamletParams) extends Module {
         paWordsRemainingNext := paHeader.length
         paLastHeaderNext := paHeader
         paSlotNext := paCacheSlotMatchSlot
-        paJamletIdxNext := {
-          val jX = paHeader.sourceX - io.kBaseX
-          val jY = paHeader.sourceY - io.kBaseY
-          val jIdx = jY * params.jCols.U + jX
-          (jIdx & (localJamlets - 1).U)(log2Ceil(localJamlets) - 1, 0)
-        }
+        val sourceMatches = VecInit((0 until localJamlets).map { j =>
+          paHeader.sourceX === io.jamletCoords(j).x &&
+            paHeader.sourceY === io.jamletCoords(j).y
+        })
+        val sourceMatchCount = PopCount(sourceMatches)
+        val sourceMatchValid = sourceMatchCount === 1.U
+        paSlotNext.valid := paCacheSlotMatchSlot.valid && sourceMatchValid
+        paJamletIdxNext := PriorityEncoder(sourceMatches)
+        errBadSourceCoord := paFromNetwork.bits.isHeader &&
+          paHeader.messageType === MessageType.WriteLineData &&
+          !sourceMatchValid
       }
       errBadPacketLength := false.B
       errBadMessageType := paHeader.messageType =/= MessageType.WriteLineData
@@ -336,6 +345,7 @@ class GatherSide(params: ZamletParams) extends Module {
 
   io.errors.badMessageType := errBadMessageType
   io.errors.badPacketLength := errBadPacketLength
+  io.errors.badSourceCoord := errBadSourceCoord
   io.errors.missingHeader := errMissingHeader
   io.errors.unexpectedHeader := errUnexpectedHeader
   io.errors.unexpectedData := errUnexpectedData

@@ -36,6 +36,32 @@ def chisel_verilog(name, generator, config, extra_args = []):
         tools = [generator],
     )
 
+def chisel_verilog_no_config(name, generator, extra_args = []):
+    """Generate SystemVerilog from a Chisel generator that takes no config file.
+
+    Creates a genrule named {name}_verilog producing {name}.sv.
+
+    Args:
+        name: Base name (e.g. "DoubleBuffer")
+        generator: Chisel binary label
+        extra_args: Arguments passed after outputDir
+    """
+    extra = " ".join(extra_args)
+    native.genrule(
+        name = name + "_verilog",
+        outs = [name + ".sv"],
+        cmd = """
+    TMPDIR=$$(mktemp -d)
+    $(location {generator}) $$TMPDIR {extra}
+    cat $$TMPDIR/*.sv > $@
+    rm -rf $$TMPDIR
+    """.format(
+            generator = generator,
+            extra = extra,
+        ),
+        tools = [generator],
+    )
+
 def chisel_dse_module(
         name,
         top,

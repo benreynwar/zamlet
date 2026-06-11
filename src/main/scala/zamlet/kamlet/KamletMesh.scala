@@ -64,7 +64,15 @@ class SyncIO extends Bundle {
  * Edge kamlets connect to external neighbors based on edgeNeighbors config.
  */
 class KamletMesh(params: ZamletParams, edgeNeighbors: MeshEdgeNeighbors) extends Module {
+  require(params.kCols % 2 == 0, "Kamlet/Memlet network placement requires even kCols")
+
   val io = IO(new Bundle {
+    // Offset from compute-grid coordinates to kamlet-network coordinates.
+    val knetOffsetX = Input(params.xPos())
+    val knetOffsetY = Input(params.yPos())
+    val lamletKnetX = Input(params.xPos())
+    val lamletKnetY = Input(params.yPos())
+
     // North edge network ports (to lamlet/external)
     val nChannelsIn = Vec(params.kCols, Vec(params.jCols,
       Vec(params.nAChannels + params.nBChannels, Flipped(Decoupled(new NetworkWord(params))))))
@@ -268,8 +276,22 @@ class KamletMesh(params: ZamletParams, edgeNeighbors: MeshEdgeNeighbors) extends
   val kamlets = Seq.tabulate(params.kCols, params.kRows) { (kX, kY) =>
     val neighbors = getNeighbors(kX, kY)
     val k = Module(new Kamlet(params, neighbors))
+    val jnetBaseX = KamletMeshCoords.kamletJnetBaseX(params, kX)
+    val jnetBaseY = KamletMeshCoords.kamletJnetBaseY(params, kY)
     k.io.kX := kX.U
     k.io.kY := kY.U
+    k.io.knetX := KamletMeshCoords.kamletKnetX(params, io.knetOffsetX, kX)
+    k.io.knetY := KamletMeshCoords.kamletKnetY(params, io.knetOffsetY, kY)
+    k.io.lamletKnetX := io.lamletKnetX
+    k.io.lamletKnetY := io.lamletKnetY
+    k.io.memletKnetX := KamletMeshCoords.memletKnetX(params, io.knetOffsetX, kX)
+    k.io.memletKnetY := KamletMeshCoords.memletKnetY(params, io.knetOffsetY, kY)
+    k.io.jnetBaseX := jnetBaseX
+    k.io.jnetBaseY := jnetBaseY
+    for (jInK <- 0 until params.jInK) {
+      k.io.memletJnetCoords(jInK).x := KamletMeshCoords.memletJnetX(params, kX, jInK)
+      k.io.memletJnetCoords(jInK).y := KamletMeshCoords.memletJnetY(params, kX, kY, jInK)
+    }
     k
   }
 

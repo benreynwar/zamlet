@@ -4,7 +4,7 @@ import chisel3._
 import chisel3.util._
 import zamlet.ZamletParams
 import zamlet.kamlet.SyncEvent
-import zamlet.jamlet.{KInstrOpcode, IdentQueryInstr}
+import zamlet.jamlet.{KInstrBase, KInstrOpcode, IdentQueryInstr}
 import zamlet.utils.DoubleBuffer
 
 /**
@@ -41,8 +41,8 @@ class IdentTracker(params: ZamletParams) extends Module {
     val out = Decoupled(new KinstrWithTarget(params))
 
     // Sync network interface
-    val syncLocalEvent = Valid(new SyncEvent)
-    val syncResult = Flipped(Valid(new SyncEvent))
+    val syncLocalEvent = Valid(new SyncEvent(params))
+    val syncResult = Flipped(Valid(new SyncEvent(params)))
 
     // Status
     val backendBusy = Output(Bool())
@@ -76,7 +76,7 @@ class IdentTracker(params: ZamletParams) extends Module {
   val iqLamletDist = Reg(UInt(8.W))
 
   // IdentQuery uses a dedicated ident (max_response_tags, outside normal range)
-  val identQueryIdent = params.maxResponseTags.U(8.W)
+  val identQueryIdent = params.maxResponseTags.U(params.identWidth.W)
 
   // Available idents calculation (modular arithmetic)
   val availableIdents = Wire(UInt(params.identWidth.W))
@@ -119,19 +119,27 @@ class IdentTracker(params: ZamletParams) extends Module {
   // Construct output kinstr
   when (sendingIdentQuery) {
     // Inject IdentQuery using proper Bundle format
-    val identQueryInstr = Wire(new IdentQueryInstr)
+    val identQueryInstr = Wire(new IdentQueryInstr(params))
     identQueryInstr.opcode := KInstrOpcode.IdentQuery
-    identQueryInstr.baseline := iqBaseline
-    identQueryInstr.syncIdent := identQueryIdent
-    identQueryInstr.reserved := 0.U
+    identQueryInstr.instrIdent := identQueryIdent
+    val baselineSlots = iqBaseline.pad(12)
+    identQueryInstr.f1 := 0.U
+    identQueryInstr.f2 := baselineSlots(11, 6)
+    identQueryInstr.f3 := baselineSlots(5, 0)
+    identQueryInstr.f4 := identQueryIdent << params.syncIdentWidth.U
+    identQueryInstr.f5 := 0.U
+    identQueryInstr.f6 := 0.U
+    identQueryInstr.f7 := 0.U
+    identQueryInstr.misc := 0.U
     outInternal.bits.kinstr := identQueryInstr.asUInt
     outInternal.bits.kIndex := 0.U
     outInternal.bits.isBroadcast := true.B
   } .otherwise {
-    // Pass through with ident filled in
-    // Ident goes in bits [7:0] of kinstr
-    val kinstrWithIdent = Cat(io.in.bits.kinstr(63, 8), nextInstrIdent)
-    outInternal.bits.kinstr := kinstrWithIdent
+    // Pass through with the shared kinstr ident field filled in.
+    val kinstrWithIdent = Wire(new KInstrBase(params))
+    kinstrWithIdent := io.in.bits.kinstr.asTypeOf(new KInstrBase(params))
+    kinstrWithIdent.instrIdent := nextInstrIdent
+    outInternal.bits.kinstr := kinstrWithIdent.asUInt
     outInternal.bits.kIndex := io.in.bits.kIndex
     outInternal.bits.isBroadcast := io.in.bits.isBroadcast
   }
@@ -179,6 +187,9 @@ class IdentTracker(params: ZamletParams) extends Module {
   io.syncLocalEvent.valid := sendingIdentQuery
   io.syncLocalEvent.bits.syncIdent := identQueryIdent
   io.syncLocalEvent.bits.value := iqLamletDist
+  io.syncLocalEvent.bits.includeActiveMask := false.B
+  io.syncLocalEvent.bits.mustDrainValid := false.B
+  io.syncLocalEvent.bits.mustDrainSyncIdent := 0.U
 
   // Handle IdentQuery response from sync network
   when (io.syncResult.valid && io.syncResult.bits.syncIdent === identQueryIdent) {

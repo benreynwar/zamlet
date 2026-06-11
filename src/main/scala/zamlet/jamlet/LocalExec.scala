@@ -31,7 +31,7 @@ class LocalExec(params: ZamletParams) extends Module {
 
   val alu = Module(new JamletAlu(params))
 
-  val s0Base = io.kinstrIn.bits.kinstr.asTypeOf(new LocalKInstrBase(params))
+  val s0Base = io.kinstrIn.bits.kinstr.asTypeOf(new KInstrBase(params))
   val s0BinaryInstr = io.kinstrIn.bits.kinstr.asTypeOf(new BinaryOpInstr(params))
   val s0LoadImmInstr = io.kinstrIn.bits.kinstr.asTypeOf(new LoadImmInstr(params))
   val s0LoadSimpleInstr = io.kinstrIn.bits.kinstr.asTypeOf(new LoadSimpleInstr(params))
@@ -80,7 +80,8 @@ class LocalExec(params: ZamletParams) extends Module {
   val s1IsLoadSimple = RegNext(s0IsLoadSimple, false.B)
   val s1IsStoreSimple = RegNext(s0IsStoreSimple, false.B)
   val s1Opcode = RegNext(s0Base.opcode)
-  val s1Param0 = RegNext(io.kinstrIn.bits.param0)
+  val s1StartIndex = RegNext(io.kinstrIn.bits.param1(params.elementIndexWidth - 1, 0))
+  val s1EndIndex = RegNext(io.kinstrIn.bits.param2(params.endElementIndexWidth - 1, 0))
   val s1CacheSlot = RegNext(io.kinstrIn.bits.cacheSlot)
   val s1LaneIndex = RegNext(io.laneIndex)
   val s1Wf = RegNext(io.kinstrIn.bits.ordering.wf)
@@ -94,11 +95,9 @@ class LocalExec(params: ZamletParams) extends Module {
   val s1SimpleRfAddr = RegNext(Mux(s0IsLoadSimple, s0LoadSimpleInstr.rfAddr, s0StoreSimpleInstr.rfAddr))
   val s1SimpleSramWordOffset = RegNext(io.kinstrIn.bits.sramWordOffset)
   val s1SimpleEw = RegNext(Mux(s0IsLoadSimple, s0LoadSimpleInstr.ew, s0StoreSimpleInstr.ew))
-  val s1SimpleEndIndex = RegNext(Mux(s0IsLoadSimple, s0LoadSimpleInstr.endIndex, s0StoreSimpleInstr.endIndex))
   val s1SimpleMaskEnabled = RegNext(Mux(s0IsLoadSimple, s0LoadSimpleInstr.maskEnabled, s0StoreSimpleInstr.maskEnabled))
 
   val s1AluEw = RegNext(s0BinaryInstr.ew)
-  val s1AluEndIndex = RegNext(s0BinaryInstr.endIndex)
   val s1AluSignedA = RegNext(s0BinaryInstr.isSignedA)
   val s1AluSignedB = RegNext(s0BinaryInstr.isSignedB)
   val s1AluUseUpper = RegNext(s0BinaryInstr.useUpper)
@@ -151,8 +150,9 @@ class LocalExec(params: ZamletParams) extends Module {
     VecInit(byteMask.map(Fill(8, _))).asUInt
   }
 
-  val s1SimpleMask = elementBitMask(s1SimpleEw, s1Wf, s1Param0, s1SimpleEndIndex, s1MaskWord, s1LaneIndex)
-  val s1SramAddress = (s1CacheSlot * params.cacheSlotWords.U) + s1SimpleSramWordOffset
+  val s1SimpleMask = elementBitMask(s1SimpleEw, s1Wf, s1StartIndex, s1EndIndex, s1MaskWord, s1LaneIndex)
+  val s1SramAddress =
+    (s1CacheSlot * params.cacheSlotWordsPerJamlet.U) + s1SimpleSramWordOffset
 
   io.sramReq.valid := s1Valid && (s1IsLoadSimple || s1IsStoreSimple)
   io.sramReq.bits.address := s1SramAddress
@@ -176,8 +176,8 @@ class LocalExec(params: ZamletParams) extends Module {
   alu.io.input.bits.inM := s1MaskWord
   alu.io.input.bits.ew := s1AluEw
   alu.io.input.bits.wf := s1Wf
-  alu.io.input.bits.startIndex := s1Param0(alu.io.input.bits.startIndex.getWidth - 1, 0)
-  alu.io.input.bits.endIndex := s1AluEndIndex
+  alu.io.input.bits.startIndex := s1StartIndex(alu.io.input.bits.startIndex.getWidth - 1, 0)
+  alu.io.input.bits.endIndex := s1EndIndex
   alu.io.input.bits.laneIndex := s1LaneIndex
   alu.io.input.bits.isSignedA := s1AluSignedA
   alu.io.input.bits.isSignedB := s1AluSignedB
@@ -215,6 +215,30 @@ class LocalExec(params: ZamletParams) extends Module {
 
   io.errors.unsupportedOpcode := RegNext(s0Valid && !s0SupportedOpcode, false.B)
   io.errors.alu := alu.io.errors
+}
+
+object LocalExec {
+  // Cycles from kinstrIn.valid to the LocalExec RF read request ports.
+  // Reads are currently driven directly from the input/s0 stage.
+  def inputToReadPortLatency(params: ZamletParams): Int = {
+    0
+  }
+
+  // Cycles from kinstrIn.valid to rfWriteReq.valid for LocalExec operations
+  // that write the register file.
+  def inputToWritePortLatency(params: ZamletParams): Int = {
+    // kinstrIn is the s0 stage; RF/SRAM responses are consumed in s1.
+    val s0ToS1Latency = 1
+    s0ToS1Latency + JamletAlu.outputLatency(params)
+  }
+
+  // Minimum cycle separation from a producer kinstrIn.valid to a dependent
+  // consumer kinstrIn.valid so the consumer RF read observes the producer write.
+  def inputToDependentInputMinSeparation(params: ZamletParams): Int = {
+    inputToWritePortLatency(params) +
+      RfSlice.writeToReadSameAddressMinSeparation(params) -
+      inputToReadPortLatency(params)
+  }
 }
 
 /** Generator for LocalExec module */

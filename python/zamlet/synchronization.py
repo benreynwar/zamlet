@@ -82,68 +82,8 @@ class SyncAggOp(Enum):
     MAXU = 3           # unsigned max
     AND = 4            # bitwise AND
     OR = 5             # bitwise OR
-    MIN_PAIR = 6       # packed pair of unsigned mins (see below)
     MIN_FAULT_INFO = 7 # packed fault metadata; min by element index
-
-
-# MIN_PAIR layout: two unsigned sub-fields packed into the low 12 bits of a
-# 16-bit value (2 sync-bus bytes). Low field = MIN_PAIR_LOW_WIDTH bits,
-# high field = MIN_PAIR_HIGH_WIDTH bits starting at bit MIN_PAIR_LOW_WIDTH.
-#
-# The low field uses 0 as the "absent" sentinel (its valid range is
-# [1, max_response_tags-1], so 0 is unused).
-#
-# The high field carries an IQ-slot distance in [1, n_iq-1] — d=0 (the
-# current slot) is always excluded from participants' contributions. We
-# store d-1 so stored values occupy [0, n_iq-2] and all-1's remains
-# unused as the absent sentinel. Using a max-value sentinel lets MIN
-# naturally ignore absent participants: real contributions are strictly
-# smaller than the sentinel. With n_iq up to 8, stored range is [0, 6]
-# and sentinel is 7 — all within 3 bits.
-#
-# The IdentQuery flow uses this to carry both the regular-ident distance
-# (low, 9 bits for max_response_tags up to 512) and the IQ-slot distance
-# (high, 3 bits for up to n_ident_query_slots = 8).
-MIN_PAIR_LOW_WIDTH = 9
-MIN_PAIR_HIGH_WIDTH = 3
-MIN_PAIR_TOTAL_WIDTH = MIN_PAIR_LOW_WIDTH + MIN_PAIR_HIGH_WIDTH
-
-
-def pack_min_pair(low: Optional[int], high: Optional[int]) -> int:
-    """Pack two sub-field values into a MIN_PAIR word.
-
-    Low field: None → 0 (absent sentinel); non-None must be > 0.
-    High field: stored as d-1 for real distances
-    """
-    low_mask = (1 << MIN_PAIR_LOW_WIDTH) - 1
-    high_mask = (1 << MIN_PAIR_HIGH_WIDTH) - 1
-    if low is None:
-        low_val = 0
-    else:
-        low_val = low
-        assert low != 0
-    assert 2 <= high <= high_mask+1, f'high must be in range 2 to {high_mask+1} but it is {high}'
-    high_val = high - 1
-    assert 0 <= low_val <= low_mask
-    return low_val | (high_val << MIN_PAIR_LOW_WIDTH)
-
-
-def unpack_min_pair(value: int) -> tuple:
-    """Decode a MIN_PAIR word into (low, high).
-
-    Low field: 0 returns None (absent sentinel). High field is always
-    returned as stored+1, an integer in [1, 2**MIN_PAIR_HIGH_WIDTH].
-    The sentinel (stored=all-1's) decodes to 2**MIN_PAIR_HIGH_WIDTH,
-    a value callers can use uniformly: e.g. (slot_idx + high) % n_iq
-    equals slot_idx for the sentinel (when n_iq divides
-    2**MIN_PAIR_HIGH_WIDTH).
-    """
-    low_mask = (1 << MIN_PAIR_LOW_WIDTH) - 1
-    high_mask = (1 << MIN_PAIR_HIGH_WIDTH) - 1
-    low = value & low_mask
-    high_stored = (value >> MIN_PAIR_LOW_WIDTH) & high_mask
-    high = high_stored + 1
-    return (low if low != 0 else None, high)
+    MIN_WITH_ACTIVE_MASK = 8 # high=min distance, low=OR active sync-id mask
 
 
 def fault_info_width(params: ZamletParams) -> int:
@@ -152,6 +92,21 @@ def fault_info_width(params: ZamletParams) -> int:
     #   next 2 bits:                 TLBFaultType value
     #   high element_index_width bits: element_index, used as the min key
     return params.word_bytes * 8 + 2 + params.element_index_width
+
+
+def pack_min_with_active_mask(params: ZamletParams, distance: int, active_mask: int) -> int:
+    mask_width = params.max_concurrent_syncs
+    distance_width = params.sync_value_width - mask_width
+    assert 0 <= distance < (1 << distance_width)
+    assert 0 <= active_mask < (1 << mask_width)
+    return (distance << mask_width) | active_mask
+
+
+def unpack_min_with_active_mask(params: ZamletParams, value: int) -> tuple[int, int]:
+    mask_width = params.max_concurrent_syncs
+    active_mask = value & ((1 << mask_width) - 1)
+    distance = value >> mask_width
+    return distance, active_mask
 
 
 def pack_fault_info(params: ZamletParams, fault_info: VectorFaultInfo) -> int:
@@ -216,18 +171,23 @@ def aggregate_sync_values(
         for v in filtered:
             result |= v
         return result
-    if op == SyncAggOp.MIN_PAIR:
-        low_mask = (1 << MIN_PAIR_LOW_WIDTH) - 1
-        high_mask = (1 << MIN_PAIR_HIGH_WIDTH) - 1
-        lows = [v & low_mask for v in filtered if (v & low_mask) != 0]
-        # High field uses all-1's as the absent sentinel, so we take a
-        # plain min — real contributions (stored as d-1) are strictly
-        # less than the sentinel and naturally win. When every
-        # participant is absent the min equals the sentinel.
-        highs = [(v >> MIN_PAIR_LOW_WIDTH) & high_mask for v in filtered]
-        low_min = min(lows) if lows else 0
-        high_min = min(highs) if highs else high_mask
-        return low_min | (high_min << MIN_PAIR_LOW_WIDTH)
+    if op == SyncAggOp.MIN_WITH_ACTIVE_MASK:
+        mask_width = params.max_concurrent_syncs
+        distance_mask = (1 << (width - mask_width)) - 1
+        neutral = (1 << width) - 1
+        distances = [
+            (v >> mask_width) & distance_mask
+            for v in filtered if v != neutral
+        ]
+        masks = [
+            v & ((1 << mask_width) - 1)
+            for v in filtered if v != neutral
+        ]
+        min_distance = min(distances) if distances else distance_mask
+        active_mask = 0
+        for mask in masks:
+            active_mask |= mask
+        return (min_distance << mask_width) | active_mask
     if op == SyncAggOp.MIN_FAULT_INFO:
         return min(
             filtered,
@@ -293,6 +253,8 @@ class SyncState:
     local_seen: bool = False
     # None means no value provided, otherwise the local value for aggregation
     local_value: Optional[int] = None
+    pending_local: bool = False
+    pending_must_drain_sync_ident: int = 0
 
     # Quadrant sync status (NE, NW, SE, SW)
     quadrant_synced: Dict[str, bool] = field(default_factory=lambda: {
@@ -553,6 +515,7 @@ class Synchronizer:
         value: Optional[int] = None,
         op: SyncAggOp = SyncAggOp.MIN,
         width: int = 32,
+        must_drain_sync_ident: Optional[int] = None,
     ):
         """Report that this kamlet has seen the event.
 
@@ -578,12 +541,38 @@ class Synchronizer:
             assert state.width == width, (
                 f"sync_ident={sync_ident} already has width={state.width}, "
                 f"caller supplied {width}")
-        state.local_seen = True
         state.local_value = value
+        if (must_drain_sync_ident is not None
+                and must_drain_sync_ident in self._sync_states
+                and not self._sync_states[must_drain_sync_ident].completed):
+            state.pending_local = True
+            state.pending_must_drain_sync_ident = must_drain_sync_ident
+            logger.debug(
+                f'{self.clock.cycle}: SYNC_LOCAL_PENDING: synchronizer '
+                f'({self.kx},{self.ky}) sync_ident={sync_ident} '
+                f'must_drain={must_drain_sync_ident} value={value} op={op.name}')
+        else:
+            self._mark_local_seen(state)
+
+    def _active_sync_mask(self) -> int:
+        mask = 0
+        for sync_ident, state in self._sync_states.items():
+            if sync_ident < self.params.max_concurrent_syncs and not state.completed:
+                mask |= 1 << sync_ident
+        return mask
+
+    def _mark_local_seen(self, state: SyncState):
+        state.local_seen = True
+        state.pending_local = False
+        if state.op == SyncAggOp.MIN_WITH_ACTIVE_MASK:
+            distance = 0 if state.local_value is None else state.local_value
+            state.local_value = pack_min_with_active_mask(
+                self.params, distance, self._active_sync_mask())
         logger.debug(f'{self.clock.cycle}: SYNC_LOCAL: synchronizer ({self.kx},{self.ky}) '
-                     f'sync_ident={sync_ident} value={value} op={op.name}')
-        self.monitor.record_sync_local_event(sync_ident, self.kx, self.ky, value)
-        self._update_completed(sync_ident)
+                     f'sync_ident={state.sync_ident} value={state.local_value} op={state.op.name}')
+        self.monitor.record_sync_local_event(
+            state.sync_ident, self.kx, self.ky, state.local_value)
+        self._update_completed(state.sync_ident)
 
     def _all_sends_complete(self, state: SyncState) -> bool:
         """Check if we've sent to all neighbors that exist."""
@@ -859,6 +848,13 @@ class Synchronizer:
                         out_buf.append(bus_val)
                         if not self._outgoing_packets[direction]:
                             del self._outgoing_packets[direction]
+
+            # Start new packets if we should send and no packet in progress for that direction
+            for state in list(self._sync_states.values()):
+                if (state.pending_local
+                        and (state.pending_must_drain_sync_ident not in self._sync_states
+                             or self._sync_states[state.pending_must_drain_sync_ident].completed)):
+                    self._mark_local_seen(state)
 
             # Start new packets if we should send and no packet in progress for that direction
             for state in list(self._sync_states.values()):

@@ -29,13 +29,15 @@ object JteInitiatorState extends ChiselEnum {
   val WaitingForFault = Value(2.U)
   val RequestSent = Value(3.U)
   val Complete = Value(4.U)
+  val WaitingForTlb = Value(5.U)
+  val EarlyTlbAvailable = Value(6.U)
 }
 
 // When the EW > 64 we send an instruction for each word and
 // offset the baseAddr and dataReg to put the word in the right place.
 
 class JteInitiatorInput(params: ZamletParams) extends Bundle {
-  val slot = UInt(log2Ceil(params.witemTableDepth).W)
+  val teIndex = UInt(log2Ceil(params.witemTableDepth).W)
   val instrIdent = params.ident()
   val mode = TransferMode()
   val baseAddr = params.memAddr()
@@ -57,7 +59,7 @@ class JteInitiatorInput(params: ZamletParams) extends Bundle {
 }
 
 class JteInitiatorCommit(params: ZamletParams) extends Bundle {
-  val slot = UInt(log2Ceil(params.witemTableDepth).W)
+  val teIndex = UInt(log2Ceil(params.witemTableDepth).W)
   val initiator = Vec(params.wordBytes, JteInitiatorState())
   val walkState = JteWalkState()
 }
@@ -67,7 +69,7 @@ class JteInitiatorAB(params: ZamletParams) extends Bundle {
   val indexUse = Bool()
   val dataUse = Bool()
   val maskUse = Bool()
-  val slot = UInt(log2Ceil(params.witemTableDepth).W)
+  val teIndex = UInt(log2Ceil(params.witemTableDepth).W)
   val startInner = UInt(3.W)
   val finalInner = UInt(3.W)
   val startOuter = UInt(3.W)
@@ -176,7 +178,7 @@ class JteInitiatorA(params: ZamletParams) extends Module {
   io.ab.bits.passOffset := passOffset
   io.ab.bits.noLocalElements := noLocalElements
 
-  io.ab.bits.slot := io.input.bits.slot
+  io.ab.bits.teIndex := io.input.bits.teIndex
 }
 
 class JteInitiatorBC(params: ZamletParams) extends Bundle {
@@ -191,7 +193,7 @@ class JteInitiatorBC(params: ZamletParams) extends Bundle {
   val active = Bool()
   val count = UInt(6.W)
   val srcOffset = UInt((params.log2WordWidth - 3).W)
-  val slot = UInt(log2Ceil(params.witemTableDepth).W)
+  val teIndex = UInt(log2Ceil(params.witemTableDepth).W)
   val last = Bool()
 }
 
@@ -270,7 +272,7 @@ class JteInitiatorB(params: ZamletParams) extends Module {
   io.bc.bits.count := count
   io.bc.bits.srcOffset := srcOffset
 
-  io.bc.bits.slot := io.ab.bits.slot
+  io.bc.bits.teIndex := io.ab.bits.teIndex
   io.bc.bits.last := last
 }
 
@@ -294,7 +296,7 @@ class JteInitiatorDE(params: ZamletParams) extends Bundle {
   val srcData = params.word()
   val srcOffset = UInt((params.log2WordWidth-3).W)
   val isStore = Bool()
-  val slot = UInt(log2Ceil(params.witemTableDepth).W)
+  val teIndex = UInt(log2Ceil(params.witemTableDepth).W)
   val instrIdent = params.ident()
   val last = Bool()
   val active = Bool()
@@ -380,7 +382,7 @@ class JteInitiatorD(params: ZamletParams) extends Module {
   io.de.bits.srcData := dataWord
   io.de.bits.srcOffset := io.cd.bits.srcOffset
   io.de.bits.isStore := io.cd.bits.dataUse
-  io.de.bits.slot := io.cd.bits.slot
+  io.de.bits.teIndex := io.cd.bits.teIndex
   io.de.bits.instrIdent := io.cd.bits.input.instrIdent
   io.de.bits.last := io.cd.bits.last
   io.de.bits.active := emitElement
@@ -393,7 +395,7 @@ class JteInitiatorEF(params: ZamletParams) extends Bundle {
   val srcData = params.word()
   val srcOffset = UInt((params.log2WordWidth-3).W)
   val isStore = Bool()
-  val slot = UInt(log2Ceil(params.witemTableDepth).W)
+  val teIndex = UInt(log2Ceil(params.witemTableDepth).W)
   val instrIdent = params.ident()
   val last = Bool()
   val active = Bool()
@@ -417,7 +419,7 @@ class JteInitiatorE(params: ZamletParams) extends Module {
   io.ef.bits.srcData := io.de.bits.srcData
   io.ef.bits.srcOffset := io.de.bits.srcOffset
   io.ef.bits.isStore := io.de.bits.isStore
-  io.ef.bits.slot := io.de.bits.slot
+  io.ef.bits.teIndex := io.de.bits.teIndex
   io.ef.bits.instrIdent := io.de.bits.instrIdent
   io.ef.bits.last := io.de.bits.last
   io.ef.bits.active := io.de.bits.active
@@ -427,22 +429,49 @@ class JteInitiatorE(params: ZamletParams) extends Module {
 
 class JteInitiatorFG(params: ZamletParams) extends Bundle {
   val nSectionBytes = UInt(params.log2WordWidth.W)
-  val pageOffset = UInt(params.log2PageBytesPerZamlet.W)
-  val tlbUse = Bool()
+  val stripeOffset = UInt(params.log2StripeBytes.W)
   val srcData = params.word()
   val srcOffset = UInt((params.log2WordWidth-3).W)
   val isStore = Bool()
-  val slot = UInt(log2Ceil(params.witemTableDepth).W)
+  val teIndex = UInt(log2Ceil(params.witemTableDepth).W)
   val instrIdent = params.ident()
   val last = Bool()
   val active = Bool()
 }
 
+object JamletTlbStatus extends ChiselEnum {
+  val Hit = Value(0.U)
+  val SoftDrop = Value(1.U)
+  val HardDrop = Value(2.U)
+}
+
+class JamletTlbReq(params: ZamletParams) extends Bundle {
+  val virtualStripeAddr = UInt(params.memStripeAddrWidth.W)
+  val teIndex = UInt(log2Ceil(params.witemTableDepth).W)
+  val byteIndex = UInt(log2Ceil(params.wordBytes).W)
+}
+
+class JamletTlbTranslation(params: ZamletParams) extends Bundle {
+  val stripeAddr = UInt(params.memStripeAddrWidth.W)
+  val ordering = new Ordering()
+}
+
+class JamletTlbResp(params: ZamletParams) extends Bundle {
+  val status = JamletTlbStatus()
+  val teIndex = UInt(log2Ceil(params.witemTableDepth).W)
+  val byteIndex = UInt(log2Ceil(params.wordBytes).W)
+  val translation = new JamletTlbTranslation(params)
+}
+
+class JamletTlbAvailable(params: ZamletParams) extends Bundle {
+  val teIndex = UInt(log2Ceil(params.witemTableDepth).W)
+  val byteIndex = UInt(log2Ceil(params.wordBytes).W)
+}
+
 class JteInitiatorFIO(params: ZamletParams) extends Bundle {
   val ef = Flipped(Decoupled(new JteInitiatorEF(params)))
   val fg = Decoupled(new JteInitiatorFG(params))
-  val tlbReq = Decoupled(UInt(params.pageAddrWidth.W))
-  val orderingReq = Decoupled(UInt(params.memStripeAddrWidth.W))
+  val tlbReq = Decoupled(new JamletTlbReq(params))
 }
 
 class JteInitiatorF(params: ZamletParams) extends Module {
@@ -459,20 +488,13 @@ class JteInitiatorF(params: ZamletParams) extends Module {
 
   // What stripe the first byte of the element is on.
   val firstByteStripe = io.ef.bits.address(params.memAddrWidth-1, params.log2StripeBytes);
-  val firstBytePage = io.ef.bits.address(params.memAddrWidth-1, params.log2PageBytesPerZamlet);
-  // The offset of the first of the element in the page.
-  val firstBytePageOffset = io.ef.bits.address(params.log2PageBytesPerZamlet-1, 0);
+  val firstByteStripeOffset = io.ef.bits.address(params.log2StripeBytes-1, 0)
   val dataEB = io.ef.bits.rfDataEB
   val lastByte = io.ef.bits.lastByte
   //val lastByteStripe = lastByte(params.memAddrWidth-1, params.log2StripeBytes);
-  //val lastBytePage = lastByte(params.memAddrWidth-1, params.log2PageBytesPerZamlet);
-  val firstByteStripeOffset = firstBytePageOffset(params.log2StripeBytes-1, 0)
   val lastByteStripeOffset = lastByte(params.log2StripeBytes-1, 0);
-  val lastBytePageOffset = lastByte(params.log2PageBytesPerZamlet-1, 0);
   val bytesToStripeEnd = (1 << params.log2StripeBytes).U - firstByteStripeOffset
-  val bytesToPageEnd = (1 << params.log2PageBytesPerZamlet).U - firstBytePageOffset
   val spansStripe = dataEB > bytesToStripeEnd
-  val spansPage = dataEB > bytesToPageEnd
   val first = Wire(Bool())
   // Inactive elements are markers for the commit state, not memory requests.
   // They must not leave a pending second stripe section for the next active element.
@@ -480,23 +502,19 @@ class JteInitiatorF(params: ZamletParams) extends Module {
   first := RegEnable(firstNext, true.B, fire)
 
   val lastByteStripe = RegEnable(firstByteStripe + 1.U, fire)
-  val lastBytePage = RegEnable(firstBytePage + 1.U, fire)
 
-  val needsTLB = io.ef.bits.active && (first || spansPage)
-  io.tlbReq.valid := io.ef.valid && io.ef.bits.active && io.orderingReq.ready && io.fg.ready && needsTLB
-  io.tlbReq.bits := Mux(first, firstBytePage, lastBytePage)
-
-  io.orderingReq.valid := io.ef.valid && io.ef.bits.active && (io.tlbReq.ready || !needsTLB) && io.fg.ready
-  io.orderingReq.bits := Mux(first, firstByteStripe, lastByteStripe)
+  io.tlbReq.valid := io.ef.valid && io.ef.bits.active && io.fg.ready
+  io.tlbReq.bits.virtualStripeAddr := Mux(first, firstByteStripe, lastByteStripe)
+  io.tlbReq.bits.teIndex := io.ef.bits.teIndex
+  io.tlbReq.bits.byteIndex := io.ef.bits.srcOffset(params.log2WordBytes-1, 0)
 
   io.fg.valid := io.ef.valid && (
-    !io.ef.bits.active || ((io.tlbReq.ready || !needsTLB) && io.orderingReq.ready)
+    !io.ef.bits.active || io.tlbReq.ready
   )
   io.ef.ready := io.fg.ready && (
-    !io.ef.bits.active || ((io.tlbReq.ready || !needsTLB) && io.orderingReq.ready && (!first || !spansStripe))
+    !io.ef.bits.active || (io.tlbReq.ready && (!first || !spansStripe))
   )
 
-  io.fg.bits.tlbUse := needsTLB
   val firstSectionBytes = Mux(spansStripe, bytesToStripeEnd, dataEB)
   val secondSectionBytes = dataEB - firstSectionBytes
   when (spansStripe) {
@@ -509,10 +527,10 @@ class JteInitiatorF(params: ZamletParams) extends Module {
     io.fg.bits.nSectionBytes := dataEB
   }
   when (first) {
-    io.fg.bits.pageOffset := firstBytePageOffset;
+    io.fg.bits.stripeOffset := firstByteStripeOffset;
   } .otherwise {
-    // What the page offset is for the second half of the element (which must begin at the start of a stripe).
-    io.fg.bits.pageOffset := firstBytePageOffset + firstSectionBytes
+    // The second half of a stripe-spanning element starts at the beginning of the next stripe.
+    io.fg.bits.stripeOffset := 0.U
   }
 
   io.fg.bits.srcOffset := Mux(
@@ -522,7 +540,7 @@ class JteInitiatorF(params: ZamletParams) extends Module {
   )
   io.fg.bits.srcData := io.ef.bits.srcData
   io.fg.bits.isStore := io.ef.bits.isStore
-  io.fg.bits.slot := io.ef.bits.slot
+  io.fg.bits.teIndex := io.ef.bits.teIndex
   io.fg.bits.instrIdent := io.ef.bits.instrIdent
   io.fg.bits.last := io.ef.bits.last && (!io.ef.bits.active || !spansStripe || !first)
   io.fg.bits.active := io.ef.bits.active
@@ -548,7 +566,7 @@ class JteInitiatorHI(params: ZamletParams) extends Bundle {
   val dstData = params.word()
   val dstStripeAddr = UInt((params.memAddrWidth - params.log2StripeBytes).W)
   val isStore = Bool()
-  val slot = UInt(log2Ceil(params.witemTableDepth).W)
+  val teIndex = UInt(log2Ceil(params.witemTableDepth).W)
   val instrIdent = params.ident()
   val last = Bool()
 }
@@ -556,31 +574,33 @@ class JteInitiatorHI(params: ZamletParams) extends Bundle {
 class JteInitiatorHIO(params: ZamletParams) extends Bundle {
   val gh = Flipped(Decoupled(new JteInitiatorFG(params)))
   val hi = Decoupled(new JteInitiatorHI(params))
-  val tlbResp = Flipped(Decoupled(UInt(params.pageAddrWidth.W)))
-  val orderingResp = Flipped(Decoupled(new Ordering))
+  val tlbResp = Flipped(Decoupled(new JamletTlbResp(params)))
   val commit = Valid(new JteInitiatorCommit(params))
 }
 
 class JteInitiatorH(params: ZamletParams) extends Module {
   val io = IO(new JteInitiatorHIO(params))
 
+  val completeSection = Wire(Bool())
+  val tlbHit = io.tlbResp.bits.status === JamletTlbStatus.Hit
+  val tlbSoftDrop = io.tlbResp.bits.status === JamletTlbStatus.SoftDrop
+  val tlbHardDrop = io.tlbResp.bits.status === JamletTlbStatus.HardDrop
+  val tlbDrop = tlbSoftDrop || tlbHardDrop
+  io.tlbResp.ready := io.gh.valid && io.gh.bits.active && (
+    (tlbHit && io.hi.ready && completeSection) || tlbDrop
+  )
+  val stripeAddress = io.tlbResp.bits.translation.stripeAddr
+  val ordering = io.tlbResp.bits.translation.ordering
+
+  io.hi.valid := io.gh.valid && io.gh.bits.active && io.tlbResp.valid && tlbHit
+  io.gh.ready := !io.gh.bits.active || (
+    io.tlbResp.valid && ((tlbHit && io.hi.ready && completeSection) || tlbDrop)
+  )
+
   val packetFire = io.hi.valid && io.hi.ready
   val markerFire = io.gh.valid && io.gh.ready && !io.gh.bits.active
-  val commitFire = packetFire || markerFire
-
-  val completeSection = Wire(Bool())
-  io.tlbResp.ready := io.gh.valid && io.gh.bits.active && io.gh.bits.tlbUse && io.orderingResp.valid && io.hi.ready && completeSection
-  val previousPageAddress = RegEnable(io.tlbResp.bits, io.tlbResp.ready && io.tlbResp.valid)
-  // A second stripe in the same page does not issue a new TLB request, but it
-  // still uses the page address from the previous stripe section.
-  val pageAddress = Mux(io.gh.bits.tlbUse, io.tlbResp.bits, previousPageAddress)
-  io.orderingResp.ready := io.gh.valid && io.gh.bits.active && (io.tlbResp.valid || !io.gh.bits.tlbUse) && io.hi.ready && completeSection
-  val ordering = io.orderingResp.bits
-
-  io.hi.valid := io.gh.valid && io.gh.bits.active && (io.tlbResp.valid || !io.gh.bits.tlbUse) && io.orderingResp.valid
-  io.gh.ready := !io.gh.bits.active || (
-    io.hi.ready && (io.tlbResp.valid || !io.gh.bits.tlbUse) && io.orderingResp.valid && completeSection
-  )
+  val dropFire = io.gh.valid && io.gh.ready && io.gh.bits.active && io.tlbResp.valid && tlbDrop
+  val commitFire = packetFire || markerFire || dropFire
 
   // We have a section.
   // We know:
@@ -593,22 +613,22 @@ class JteInitiatorH(params: ZamletParams) extends Module {
   // We need to work out from this byte how far until we get to the end of an element in memory.
 
 
-  val first = RegEnable(completeSection, true.B, packetFire)
-  val pageOffset = Wire(UInt(params.log2PageBytesPerZamlet.W))
-  val pageOffsetIncrNext = Wire(UInt(params.log2PageBytesPerZamlet.W))
-  val pageOffsetIncr = RegEnable(pageOffsetIncrNext, packetFire)
+  val first = RegEnable(completeSection || dropFire, true.B, packetFire || dropFire)
+  val stripeOffset = Wire(UInt(params.log2StripeBytes.W))
+  val stripeOffsetIncrNext = Wire(UInt(params.log2StripeBytes.W))
+  val stripeOffsetIncr = RegEnable(stripeOffsetIncrNext, packetFire)
 
-  val remainingBytes = Wire(UInt(params.log2PageBytesPerZamlet.W))
-  val remainingBytesDecrNext = Wire(UInt(params.log2PageBytesPerZamlet.W))
+  val remainingBytes = Wire(UInt(params.log2StripeBytes.W))
+  val remainingBytesDecrNext = Wire(UInt(params.log2StripeBytes.W))
   val remainingBytesDecr = RegEnable(remainingBytesDecrNext, packetFire)
   when (first) {
-    pageOffset := io.gh.bits.pageOffset
+    stripeOffset := io.gh.bits.stripeOffset
     remainingBytes := io.gh.bits.nSectionBytes
   } .otherwise {
-    pageOffset := pageOffsetIncr
+    stripeOffset := stripeOffsetIncr
     remainingBytes := remainingBytesDecr
   }
-  val byteAddress = (pageAddress << params.log2PageBytesPerZamlet) + pageOffset
+  val byteAddress = (stripeAddress << params.log2StripeBytes) + stripeOffset
 
   // We need to work out the destination
   //  - lane
@@ -631,7 +651,7 @@ class JteInitiatorH(params: ZamletParams) extends Module {
   }
   // The number of bytes remaining in the WF element.
   val maxSegmentBytes = destWFBytes - Utils.maskLow(byteAddress, destWFLog2Bytes)
-  pageOffsetIncrNext := pageOffset + maxSegmentBytes
+  stripeOffsetIncrNext := stripeOffset + maxSegmentBytes
   remainingBytesDecrNext := remainingBytes - maxSegmentBytes
   when (maxSegmentBytes >= remainingBytes) {
     io.hi.bits.dstNBytes := remainingBytes
@@ -640,7 +660,7 @@ class JteInitiatorH(params: ZamletParams) extends Module {
     io.hi.bits.dstNBytes := maxSegmentBytes
     completeSection := false.B
   }
-  val last = io.gh.bits.last && (!io.gh.bits.active || completeSection)
+  val last = io.gh.bits.last && (!io.gh.bits.active || completeSection || tlbDrop)
   val emittedBytes = io.gh.bits.nSectionBytes - remainingBytes
   val srcOffset = (io.gh.bits.srcOffset + emittedBytes)(params.log2WordBytes-1, 0)
   // Shift the valid store bytes into the destination word lanes.
@@ -649,14 +669,13 @@ class JteInitiatorH(params: ZamletParams) extends Module {
   io.hi.bits.dstData := maskedSrcData << (io.hi.bits.dstOffset << 3.U)
   io.hi.bits.srcOffset := srcOffset
   io.hi.bits.isStore := io.gh.bits.isStore
-  val stripeAddress = byteAddress >> params.log2StripeBytes
   io.hi.bits.dstStripeAddr := stripeAddress
-  io.hi.bits.slot := io.gh.bits.slot
+  io.hi.bits.teIndex := io.gh.bits.teIndex
   io.hi.bits.instrIdent := io.gh.bits.instrIdent
   io.hi.bits.last := last
 
   // We want to build up the commit here.
-  // When we start a new slot create a fresh one.  Set everything to complete.
+  // When we start a new transfer-engine entry create a fresh one. Set everything to complete.
   // Then set the ones that we emit packets for to WAITING FOR RESPONSE
   // On the final one send out the commit.
 
@@ -675,7 +694,13 @@ class JteInitiatorH(params: ZamletParams) extends Module {
 
   initiator := initiatorBase
   when (io.gh.bits.active) {
-    initiator(srcOffset) := JteInitiatorState.RequestSent
+    when (tlbSoftDrop) {
+      initiator(srcOffset) := JteInitiatorState.WaitingForTlb
+    } .elsewhen (tlbHardDrop) {
+      initiator(srcOffset) := JteInitiatorState.Dropped
+    } .otherwise {
+      initiator(srcOffset) := JteInitiatorState.RequestSent
+    }
   }
   initiatorBaseNext := initiator
   when (last) {
@@ -683,7 +708,7 @@ class JteInitiatorH(params: ZamletParams) extends Module {
     initiatorBaseNext := initiatorInitial
   }
 
-  when (io.gh.bits.active) {
+  when (io.gh.bits.active && !tlbSoftDrop) {
     walkState := JteWalkState.NeedsProcessing
   } .otherwise {
     walkState := walkStateBase
@@ -697,7 +722,7 @@ class JteInitiatorH(params: ZamletParams) extends Module {
 
   io.commit.valid := commitFire && last
   io.commit.bits.initiator := initiator
-  io.commit.bits.slot := io.gh.bits.slot
+  io.commit.bits.teIndex := io.gh.bits.teIndex
   io.commit.bits.walkState := walkState
 }
 
@@ -732,7 +757,7 @@ class JteInitiatorI(params: ZamletParams) extends Module {
   header.dstOffset := io.hi.bits.dstOffset
   header.srcOffset := io.hi.bits.srcOffset
   header.ident := io.hi.bits.instrIdent
-  header.slot := io.hi.bits.slot
+  header.slot := io.hi.bits.teIndex
 
   io.packet.valid := io.hi.valid
   io.packet.bits.isHeader := false.B
@@ -764,10 +789,8 @@ class JteInitiatorIO(params: ZamletParams) extends Bundle {
   val rfIndexResp = Flipped(Decoupled(params.word()))
   val rfDataReq = Decoupled(params.rfAddr())
   val rfDataResp = Flipped(Decoupled(params.word()))
-  val tlbReq = Decoupled(UInt(params.pageAddrWidth.W))
-  val orderingReq = Decoupled(UInt(params.memStripeAddrWidth.W))
-  val tlbResp = Flipped(Decoupled(UInt(params.pageAddrWidth.W)))
-  val orderingResp = Flipped(Decoupled(new Ordering))
+  val tlbReq = Decoupled(new JamletTlbReq(params))
+  val tlbResp = Flipped(Decoupled(new JamletTlbResp(params)))
   val commit = Valid(new JteInitiatorCommit(params))
   val packet = Decoupled(new INetworkWord(params))
   val x = Input(UInt(8.W))
@@ -802,7 +825,6 @@ class JteInitiator(params: ZamletParams) extends Module {
 
   val fStage = Module(new JteInitiatorF(params))
   io.tlbReq <> DoubleBuffer(fStage.io.tlbReq, ip.tlbReqFB, ip.tlbReqBB)
-  io.orderingReq <> DoubleBuffer(fStage.io.orderingReq, ip.orderingReqFB, ip.orderingReqBB)
   fStage.io.ef <> DoubleBuffer(eStage.io.ef, ip.efFB, ip.efBB)
 
   val gStage = Module(new JteInitiatorG(params))
@@ -811,7 +833,6 @@ class JteInitiator(params: ZamletParams) extends Module {
   val hStage = Module(new JteInitiatorH(params))
   hStage.io.gh <> DoubleBuffer(gStage.io.gh, ip.ghFB, ip.ghBB)
   hStage.io.tlbResp <> DoubleBuffer(io.tlbResp, ip.tlbRespFB, ip.tlbRespBB)
-  hStage.io.orderingResp <> DoubleBuffer(io.orderingResp, ip.orderingRespFB, ip.orderingRespBB)
   io.commit := ValidBuffer(hStage.io.commit, ip.commitBuffer)
 
   val iStage = Module(new JteInitiatorI(params))

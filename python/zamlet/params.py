@@ -57,7 +57,6 @@ class RfSliceParams:
 
 @dataclass
 class SynchronizerParams:
-    maxConcurrentSyncs: int = 4
     resultOutputReg: bool = False
     portOutOutputReg: bool = False
     minPipelineReg: bool = False
@@ -82,6 +81,53 @@ class NetworkNodeParams:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'NetworkNodeParams':
+        return _from_dict(cls, data, _identity_mapping(cls))
+
+
+@dataclass
+class PacketMergeParams:
+    inputFB: bool = True
+    inputBB: bool = True
+    outputFB: bool = True
+    outputBB: bool = True
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'PacketMergeParams':
+        return _from_dict(cls, data, _identity_mapping(cls))
+
+
+@dataclass
+class MessageTypePacketRouterParams:
+    inputFB: bool = True
+    inputBB: bool = True
+    outputFB: bool = True
+    outputBB: bool = True
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'MessageTypePacketRouterParams':
+        return _from_dict(cls, data, _identity_mapping(cls))
+
+
+@dataclass
+class ReservationStationParams:
+    renamedInFB: bool = False
+    renamedInBB: bool = False
+    issue01FB: bool = True
+    issue01BB: bool = True
+    issue12FB: bool = True
+    issue12BB: bool = True
+    immediateKinstrBuffer: bool = False
+    kteIssueFB: bool = False
+    kteIssueBB: bool = False
+    kceClaimSlotReqFB: bool = False
+    kceClaimSlotReqBB: bool = False
+    kceClaimSlotRespFB: bool = False
+    kceClaimSlotRespBB: bool = False
+    rfReleaseFB: bool = False
+    rfReleaseBB: bool = False
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'ReservationStationParams':
         return _from_dict(cls, data, _identity_mapping(cls))
 
 
@@ -293,6 +339,153 @@ class JceParams:
 
 
 @dataclass
+class KceCacheTableParams:
+    hasSlotReqFB: bool = True
+    hasSlotReqBB: bool = True
+    hasSlotRespFB: bool = True
+    hasSlotRespBB: bool = True
+    allocSlotReqFB: bool = True
+    allocSlotReqBB: bool = True
+    allocSlotRespFB: bool = True
+    allocSlotRespBB: bool = True
+    rsHasSlotReqBuffer: bool = True
+    rsHasSlotRespBuffer: bool = True
+    slotIsAvailableBuffer: bool = True
+    memletPacketInFB: bool = True
+    memletPacketInBB: bool = True
+    memletPacketOutFB: bool = True
+    memletPacketOutBB: bool = True
+    maxActiveUsesPerCacheSlot: int = 7
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'KceCacheTableParams':
+        return _from_dict(cls, data, _identity_mapping(cls))
+
+
+@dataclass
+class KceScannerParams:
+    emptyQueueDepth: int = 16
+    emptyQueueScanBackpressureDepth: int = 8
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'KceScannerParams':
+        return _from_dict(cls, data, _identity_mapping(cls))
+
+
+@dataclass
+class TagTableParams:
+    nUsesWidth: int = 3
+    freeQueueDepth: int = 16
+    fillReqQueueDepth: int = 16
+    scanBackpressureDepth: int = 8
+    allocReqFB: bool = True
+    allocReqBB: bool = True
+    alloc01FB: bool = True
+    alloc01BB: bool = True
+    allocRespFB: bool = True
+    allocRespBB: bool = True
+    claimReqFB: bool = True
+    claimReqBB: bool = True
+    claimRespFB: bool = True
+    claimRespBB: bool = True
+    fillBuffer: bool = True
+    releaseBuffer: bool = True
+    scan01FB: bool = True
+    scan01BB: bool = True
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'TagTableParams':
+        return _from_dict(cls, data, _identity_mapping(cls))
+
+
+@dataclass
+class KcePendingTableParams:
+    cacheLineReqFB: bool = True
+    cacheLineReqBB: bool = True
+    cacheLineRespFB: bool = True
+    cacheLineRespBB: bool = True
+    replayFB: bool = True
+    replayBB: bool = True
+    cacheLineReleaseBuffer: bool = True
+    claimSlotReqFB: bool = True
+    claimSlotReqBB: bool = True
+    claimSlotRespFB: bool = True
+    claimSlotRespBB: bool = True
+    allocSlotReqFB: bool = True
+    allocSlotReqBB: bool = True
+    allocSlotRespFB: bool = True
+    allocSlotRespBB: bool = True
+    releaseSlotBuffer: bool = True
+    slotIsAvailableBuffer: bool = True
+    req01FB: bool = True
+    req01BB: bool = True
+    req23FB: bool = True
+    req23BB: bool = True
+    req34FB: bool = True
+    req34BB: bool = True
+    req45FB: bool = True
+    req45BB: bool = True
+    alloc01FB: bool = True
+    alloc01BB: bool = True
+    alloc12FB: bool = True
+    alloc12BB: bool = True
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'KcePendingTableParams':
+        return _from_dict(cls, data, _identity_mapping(cls))
+
+
+@dataclass
+class KceMemletInterfaceParams:
+    fetchSlotReqFB: bool = True
+    fetchSlotReqBB: bool = True
+    fetchSlotCompleteBuffer: bool = True
+    jceWritebackReqBuffer: bool = True
+    jceFetchDoneBuffer: bool = True
+    writebackSlotReqFB: bool = True
+    writebackSlotReqBB: bool = True
+    writebackSlotCompleteBuffer: bool = True
+    packetInFB: bool = True
+    packetInBB: bool = True
+    packetOutFB: bool = True
+    packetOutBB: bool = True
+    fetch01FB: bool = True
+    fetch01BB: bool = True
+    fetchTx01FB: bool = True
+    fetchTx01BB: bool = True
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'KceMemletInterfaceParams':
+        return _from_dict(cls, data, _identity_mapping(cls))
+
+
+@dataclass
+class KamletTlbParams:
+    tlbReqFB: bool = True
+    tlbReqBB: bool = True
+    tlbRespFB: bool = True
+    tlbRespBB: bool = True
+    tlbAvailableBuffer: bool = True
+    localOrderingUpdateBuffer: bool = True
+    packetInFB: bool = True
+    packetInBB: bool = True
+    packetOutFB: bool = True
+    packetOutBB: bool = True
+    lookup01FB: bool = True
+    lookup01BB: bool = True
+    lookup12FB: bool = True
+    lookup12BB: bool = True
+    reqTx01FB: bool = True
+    reqTx01BB: bool = True
+    resp01FB: bool = True
+    resp01BB: bool = True
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'KamletTlbParams':
+        return _from_dict(cls, data, _identity_mapping(cls))
+
+
+@dataclass
 class ZamletParams:
     #k_cols: int = 2
     #k_rows: int = 2
@@ -320,7 +513,6 @@ class ZamletParams:
     router_input_buffer_length: int = 2
     instruction_queue_length: int = 64
     reservation_station_depth: int = 16
-    n_ident_query_slots: int = 8
     # Minimum cycles between IdentQueries issued due to ident pressure.
     # Prevents flooding the network with back-to-back queries while a
     # response is in flight.
@@ -334,12 +526,21 @@ class ZamletParams:
     n_response_idents: int = 32
     #n_waiting: int = 16
     n_response_tags: int = 8
-    max_response_tags: int = 512
-    sync_ident_width: int = 10
+    max_response_tags: int = 128
+    sync_ident_width: int = 3
+    sync_value_width: int = 16
     sync_bus_width: int = 11
 
     # The number of outstanding instructions or responses waiting
     witem_table_depth: int = 16
+    # Number of Jamlet/JTE-originated requests the KCE can hold while waiting.
+    kce_pending_table_depth: int = 16
+    # Number of KTE cache-wait local operations that can wait for cache lines.
+    kte_cache_wait_table_depth: int = 16
+    # Number of in-flight Kamlet TLB network requests.
+    tlb_req_table_depth: int = 16
+    # Number of cached Kamlet TLB translations.
+    tlb_cache_table_depth: int = 64
     # Number of witem slots reserved for message handlers (not used by kinstructions)
     n_items_reserved: int = 8
     # The number of outstanding cache read_line and write_line allowed
@@ -359,12 +560,13 @@ class ZamletParams:
     # Bit widths for RTL header encoding/decoding
     x_pos_width: int = 8
     y_pos_width: int = 8
-    ident_width: int = 7
+    ident_width: int = 8
     writeset_width: int = 4
     rf_slice_words: int = 48
-    mem_addr_width: int = 48
+    mem_addr_width: int = 44
     element_index_width: int = 22
-    log2_n_params: int = 4
+    log2_n_params: int = 6
+    param_ref_idx_width: int = 3
     n_response_buffer_slots: int = 4
     mem_beat_words: int = 1
     mem_axi_id_bits: int = 4
@@ -372,6 +574,16 @@ class ZamletParams:
     ident_tracker_out_forward_buffer: bool = True
     ident_tracker_out_backward_buffer: bool = True
     network_node_params: NetworkNodeParams = field(default_factory=NetworkNodeParams)
+    kamlet_packet_merge_params: PacketMergeParams = field(default_factory=PacketMergeParams)
+    kamlet_a_ingress_packet_router_params: MessageTypePacketRouterParams = field(
+        default_factory=MessageTypePacketRouterParams
+    )
+    kamlet_b_ingress_packet_router_params: MessageTypePacketRouterParams = field(
+        default_factory=MessageTypePacketRouterParams
+    )
+    reservation_station_params: ReservationStationParams = field(
+        default_factory=ReservationStationParams
+    )
     issue_unit_params: IssueUnitParams = field(default_factory=IssueUnitParams)
     synchronizer_params: SynchronizerParams = field(default_factory=SynchronizerParams)
     rf_slice_params: RfSliceParams = field(default_factory=RfSliceParams)
@@ -381,6 +593,13 @@ class ZamletParams:
     jte_handler_params: JteHandlerParams = field(default_factory=JteHandlerParams)
     sram_params: SramParams = field(default_factory=SramParams)
     jce_params: JceParams = field(default_factory=JceParams)
+    kce_cache_table_params: KceCacheTableParams = field(default_factory=KceCacheTableParams)
+    kce_scanner_params: KceScannerParams = field(default_factory=KceScannerParams)
+    kce_tag_table_params: TagTableParams = field(default_factory=TagTableParams)
+    kce_pending_table_params: KcePendingTableParams = field(default_factory=KcePendingTableParams)
+    kce_memlet_interface_params: KceMemletInterfaceParams = field(default_factory=KceMemletInterfaceParams)
+    kamlet_tlb_params: KamletTlbParams = field(default_factory=KamletTlbParams)
+    tlb_tag_table_params: TagTableParams = field(default_factory=TagTableParams)
     message_length_width: int = 4
     message_type_width: int = 6
 
@@ -407,13 +626,17 @@ class ZamletParams:
         # Sync ident must fit in one bus cycle (data_width = sync_bus_width - 1)
         assert self.sync_ident_width + 1 <= self.sync_bus_width
         # Ident space must cover all response tags + ident query
-        assert (1 << self.sync_ident_width) > self.max_response_tags
+        assert (1 << self.ident_width) > self.max_response_tags
         # Sane scalar memory
         assert self.scalar_memory_bytes > self.cache_line_bytes
         assert self.scalar_memory_bytes % self.cache_line_bytes == 0
         # Sane kamlet memory
         assert self.kamlet_memory_bytes > self.cache_line_bytes
         assert self.kamlet_memory_bytes % self.cache_line_bytes == 0
+
+    @property
+    def max_concurrent_syncs(self) -> int:
+        return 1 << self.sync_ident_width
 
     @property
     def n_arch_vregs(self) -> int:
@@ -628,10 +851,18 @@ class ZamletParams:
         'log2PageWordsPerJamlet': 'log2_page_words_per_jamlet',
         'elementIndexWidth': 'element_index_width',
         'log2NParams': 'log2_n_params',
+        'paramRefIdxWidth': 'param_ref_idx_width',
         'witemTableDepth': 'witem_table_depth',
+        'kcePendingTableDepth': 'kce_pending_table_depth',
+        'kteCacheWaitTableDepth': 'kte_cache_wait_table_depth',
+        'tlbReqTableDepth': 'tlb_req_table_depth',
+        'tlbCacheTableDepth': 'tlb_cache_table_depth',
         'identWidth': 'ident_width',
+        'syncIdentWidth': 'sync_ident_width',
+        'syncValueWidth': 'sync_value_width',
         'writesetWidth': 'writeset_width',
         'nMemletGatheringSlots': 'n_memlet_gathering_slots',
+        'nCacheRequests': 'n_cache_requests',
         'nResponseBufferSlots': 'n_response_buffer_slots',
         'memBeatWords': 'mem_beat_words',
         'memAxiIdBits': 'mem_axi_id_bits',
@@ -644,6 +875,10 @@ class ZamletParams:
         'nAChannels': 'n_a_channels',
         'nBChannels': 'n_b_channels',
         'networkNodeParams': 'network_node_params',
+        'kamletPacketMergeParams': 'kamlet_packet_merge_params',
+        'kamletAIngressPacketRouterParams': 'kamlet_a_ingress_packet_router_params',
+        'kamletBIngressPacketRouterParams': 'kamlet_b_ingress_packet_router_params',
+        'reservationStationParams': 'reservation_station_params',
         'issueUnitParams': 'issue_unit_params',
         'synchronizerParams': 'synchronizer_params',
         'rfSliceParams': 'rf_slice_params',
@@ -653,6 +888,13 @@ class ZamletParams:
         'jteHandlerParams': 'jte_handler_params',
         'sramParams': 'sram_params',
         'jceParams': 'jce_params',
+        'kceCacheTableParams': 'kce_cache_table_params',
+        'kceScannerParams': 'kce_scanner_params',
+        'kceTagTableParams': 'kce_tag_table_params',
+        'kcePendingTableParams': 'kce_pending_table_params',
+        'kceMemletInterfaceParams': 'kce_memlet_interface_params',
+        'kamletTlbParams': 'kamlet_tlb_params',
+        'tlbTagTableParams': 'tlb_tag_table_params',
         'messageLengthWidth': 'message_length_width',
         'messageTypeWidth': 'message_type_width',
     }

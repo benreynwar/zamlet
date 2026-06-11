@@ -197,22 +197,23 @@ class Oamlet:
         self.next_instr_ident = 0
         # Track oldest active instr_ident for flow control (None = unknown/all free)
         self._oldest_active_ident: int | None = None
-        # Ident query circular buffer.
-        # Each slot has a dedicated sync ident. _next_ident_query_slot is the next
+        # Ident query circular buffer. _next_ident_query_slot is the next
         # slot to use for sending. A slot is free iff _iq_slots[idx] is None.
-        # Pointers wrap at n_ident_query_slots.
-        # _oldest_active_ident_query_slot: oldest slot still allocated (hasn't been freed).
-        # _next_unconsumed_ident_query_slot: next slot whose response the poller expects.
-        # A slot is freed when some later query's MIN_PAIR.high confirms
-        # every participant has drained sync state for it; at that point
-        # _oldest_active_ident_query_slot advances past the slot.
-        n_iq = params.n_ident_query_slots
+        # _submitted_ident_query_slots is the FIFO of live slots in submit
+        # order; the response monitor consumes only from the head.
+        n_iq = params.max_concurrent_syncs
         self._iq_slots = [None for _ in range(n_iq)]
         self._iq_idents = [
             params.max_response_tags + i for i in range(n_iq)]
         self._oldest_active_ident_query_slot = None
-        self._next_unconsumed_ident_query_slot = 0
+        self._submitted_ident_query_slots = deque()
+        self._allocated_ident_query_syncs = deque()
         self._next_ident_query_slot = 0
+        self.sync_ident_allocator = ident_query.SyncIdentAllocator(
+            params=self.params,
+            synchronizer=self.synchronizer,
+            monitor=self.monitor,
+        )
         # Cycle the last IdentQuery was issued. Used to rate-limit the
         # ident-pressure path in should_send_ident_query so we don't flood
         # the network with back-to-back queries while a response is in flight.
@@ -689,6 +690,19 @@ class Oamlet:
         instr_ident = await ident_query.get_instr_ident(self)
         future = self.clock.create_future()
         witem = LamletWaitingFuture(future=future, instr_ident=instr_ident)
+        wait_start = self.clock.cycle
+        last_log_cycle = wait_start
+        while not self.has_free_witem_slot():
+            await self.clock.next_cycle
+            if self.clock.cycle - last_log_cycle >= 1000:
+                logger.warning(
+                    f'{self.clock.cycle}: read_byte still waiting for witem slot '
+                    f'addr=0x{address.addr:x} k_maddr={k_maddr} '
+                    f'instr_ident={instr_ident} '
+                    f'wait_cycles={self.clock.cycle - wait_start} '
+                    f'waiting_items={len(self.waiting_items)} '
+                    f'witem_depth={self.params.witem_table_depth}')
+                last_log_cycle = self.clock.cycle
         await self.add_witem(witem)
         kinstr = ReadByte(
             k_maddr=k_maddr,
@@ -1067,8 +1081,8 @@ class Oamlet:
         """Poll the lamlet synchronizer for completed IdentQuery syncs.
 
         The lamlet is a participant in each IdentQuery's sync network;
-        when its own sync for a slot's ident becomes complete, the
-        aggregated MIN_PAIR value is available directly from
+        when the slot's sync completes, the aggregated oldest-ident
+        distance and active sync-id set are available directly from
         ``self.synchronizer``. No mesh response is needed.
         """
         while True:
@@ -1231,8 +1245,19 @@ class Oamlet:
     async def add_to_instruction_buffer(self, instruction, parent_span_id: int, k_index=None):
         logger.debug(f'{self.clock.cycle}: lamlet: Adding {type(instruction)} to buffer')
         self.monitor.record_kinstr_created(instruction, parent_span_id)
+        wait_start = self.clock.cycle
+        last_log_cycle = wait_start
         while len(self.instruction_buffer) >= self.params.instruction_buffer_length:
             await self.clock.next_cycle
+            if self.clock.cycle - last_log_cycle >= 1000:
+                logger.warning(
+                    f'{self.clock.cycle}: add_to_instruction_buffer still waiting '
+                    f'instr_type={type(instruction).__name__} '
+                    f'instr_ident={getattr(instruction, "instr_ident", None)} '
+                    f'k_index={k_index} wait_cycles={self.clock.cycle - wait_start} '
+                    f'instruction_buffer_len={len(self.instruction_buffer)} '
+                    f'instruction_buffer_depth={self.params.instruction_buffer_length}')
+                last_log_cycle = self.clock.cycle
         self.instruction_buffer.append((instruction, k_index))
         self.monitor.record_lamlet_instr_added()
 
@@ -1312,6 +1337,7 @@ class Oamlet:
         self._use_token(None)
         iq_kinstr = ident_query.create_ident_query(self)
         self._dispatch_instr(iq_kinstr)
+        ident_query.record_ident_query_dispatch(self, iq_kinstr)
         packet.append(iq_kinstr)
         packet_dest = None
         return packet, packet_dest
@@ -1320,6 +1346,7 @@ class Oamlet:
         packet = []
         packet_dest = None
         inactive_count = 0
+        last_token_block_log = None
         while True:
             added_any = False
 
@@ -1330,6 +1357,18 @@ class Oamlet:
                 if not self._have_tokens(k_index):
                     self.monitor.record_resource_exhausted(
                         ResourceType.INSTR_BUFFER_TOKENS, None, None)
+                    if (last_token_block_log is None
+                            or self.clock.cycle - last_token_block_log >= 100):
+                        logger.warning(
+                            f'{self.clock.cycle}: waiting for instr-buffer '
+                            f'tokens next_ident={instr.instr_ident} '
+                            f'next_instr={type(instr).__name__} '
+                            f'k_index={k_index} '
+                            f'available_tokens={self._available_tokens} '
+                            f'tokens_since_query={self._tokens_used_since_query} '
+                            f'instr_buffer_len={len(self.instruction_buffer)} '
+                            f'packet_len={len(packet)} packet_dest={packet_dest}')
+                        last_token_block_log = self.clock.cycle
                     packet, packet_dest = await self._flush_packet(
                         packet, packet_dest)
                     break
@@ -1341,7 +1380,6 @@ class Oamlet:
 
                 # Pop and add to packet
                 self.instruction_buffer.popleft()
-                logger.info('popping from instr buffer')
                 packet.append(instr)
                 packet_dest = k_index
                 self._use_token(k_index)
@@ -1350,26 +1388,19 @@ class Oamlet:
 
                 # Ident query threshold reached
                 if ident_query.should_send_ident_query(self):
-                    logger.info('trying to add ident query')
                     packet, packet_dest = \
                         await self._add_ident_query(packet, packet_dest)
-                    logger.info('added ident query')
 
                 # Max packet length
                 if len(packet) >= self.params.instructions_in_packet:
-                    logger.info('flush packet: start')
                     packet, packet_dest = await self._flush_packet(
                         packet, packet_dest)
-                    logger.info('flush packet: end')
-            logger.info('instr buffer empty')
 
             # Buffer empty but ident query needed
             if not added_any and ident_query.should_send_ident_query(self):
-                logger.info('add_ident_query: start')
                 packet, packet_dest = \
                     await self._add_ident_query(packet, packet_dest)
                 added_any = True
-                logger.info('add_ident_query: end')
 
             # Idle timeout: flush packet if no new instructions for a while
             if added_any:
@@ -1413,7 +1444,13 @@ class Oamlet:
             send_type=send_type,
             )
         packet = [header] + instructions
-        logger.debug(f'Sending instructions to {k_index} ({send_type.name}), -> ({x}, {y})')
+        instr_ids = [instr.instr_ident for instr in instructions]
+        instr_names = [type(instr).__name__ for instr in instructions]
+        logger.debug(
+            f'{self.clock.cycle}: send_instructions '
+            f'{send_type.name} source=({source_x},{source_y}) '
+            f'target=({x},{y}) k_index={k_index} '
+            f'idents={instr_ids} instrs={instr_names}')
         # Create kinstr_exec items for each kamlet that receives the instruction
         for instr in instructions:
             assert instr.instr_ident is not None
@@ -1463,9 +1500,19 @@ class Oamlet:
                     kamlet.add_to_instruction_queue(instr)
         else:
             send_queue = self._kamlet_network_send_queues[MessageType.INSTRUCTIONS]
+            wait_cycles = 0
             while not send_queue.can_append():
+                wait_cycles += 1
+                if wait_cycles % 100 == 0:
+                    logger.warning(
+                        f'{self.clock.cycle}: waiting to enqueue '
+                        f'Kamlet-network instruction packet '
+                        f'idents={instr_ids} send_queue_len={len(send_queue)}')
                 await self.clock.next_cycle
             send_queue.append(packet)
+            logger.debug(
+                f'{self.clock.cycle}: enqueued Kamlet-network instruction '
+                f'packet idents={instr_ids} queue_len={len(send_queue)}')
 
     async def send_packet(self, packet, jamlet, direction, port,
                           parent_span_id: int | None = None):
@@ -1513,6 +1560,44 @@ class Oamlet:
             for msg_type, send_queue in self._kamlet_network_send_queues.items():
                 if CHANNEL_MAPPING.get(msg_type, 0) == 0 and send_queue:
                     packet = send_queue.popleft()
+                    header = packet[0]
+                    instr_ids = [
+                        word.instr_ident for word in packet[1:]
+                        if hasattr(word, 'instr_ident')
+                    ]
+                    logger.debug(
+                        f'{self.clock.cycle}: drain Kamlet-network packet '
+                        f'type={header.message_type.name} '
+                        f'send_type={header.send_type.name} '
+                        f'source=({header.source_x},{header.source_y}) '
+                        f'target=({header.target_x},{header.target_y}) '
+                        f'length={header.length} idents={instr_ids}')
+                    await self._send_kamlet_packet_words(packet, word_buf)
+                    sent_something = True
+            if not sent_something:
+                await self.clock.next_cycle
+
+    async def _send_kamlet_packets_ch1andup(self):
+        """Drain channel 1+ Kamlet-network send queues into Lamlet word buffers."""
+        while True:
+            sent_something = False
+            for msg_type, send_queue in self._kamlet_network_send_queues.items():
+                channel = CHANNEL_MAPPING.get(msg_type, 0)
+                if channel >= 1 and send_queue:
+                    packet = send_queue.popleft()
+                    word_buf = self._kamlet_network_send_word_buffers[channel]
+                    header = packet[0]
+                    instr_ids = [
+                        word.instr_ident for word in packet[1:]
+                        if hasattr(word, 'instr_ident')
+                    ]
+                    logger.debug(
+                        f'{self.clock.cycle}: drain Kamlet-network ch{channel} packet '
+                        f'type={header.message_type.name} '
+                        f'send_type={header.send_type.name} '
+                        f'source=({header.source_x},{header.source_y}) '
+                        f'target=({header.target_x},{header.target_y}) '
+                        f'length={header.length} idents={instr_ids}')
                     await self._send_kamlet_packet_words(packet, word_buf)
                     sent_something = True
             if not sent_something:
@@ -1544,13 +1629,29 @@ class Oamlet:
 
     async def _send_kamlet_packet_words(self, packet, word_buf):
         """Send all words of a packet into a Kamlet-network word buffer."""
+        blocked_cycles = 0
         while packet:
             await self.clock.next_cycle
             if word_buf.can_append():
                 word = packet.pop(0)
                 word_buf.append(word)
+                blocked_cycles = 0
             else:
-                pass  # Wait for kamlet_router_connections to drain the buffer
+                blocked_cycles += 1
+                if blocked_cycles % 100 == 0:
+                    head = packet[0]
+                    if isinstance(head, Header):
+                        head_desc = (
+                            f'header type={head.message_type.name} '
+                            f'target=({head.target_x},{head.target_y})')
+                    else:
+                        head_desc = (
+                            f'instr ident={getattr(head, "instr_ident", None)} '
+                            f'instr={type(head).__name__}')
+                    logger.warning(
+                        f'{self.clock.cycle}: Kamlet-network word buffer '
+                        f'blocked for {blocked_cycles} cycles waiting to send '
+                        f'{head_desc}')
 
     async def set_memory(self, address: int, data: bytes,
                          ordering: 'addresses.Ordering | None' = None,
@@ -1988,6 +2089,7 @@ class Oamlet:
         self.clock.create_task(self._monitor_instruction_buffer_state())
         self.clock.create_task(self._send_packets_ch0())
         self.clock.create_task(self._send_kamlet_packets_ch0())
+        self.clock.create_task(self._send_kamlet_packets_ch1andup())
         self.clock.create_task(self._send_packets_ch1andup())
         self.clock.create_task(ordered.ordered_buffer_process(self))
         self.clock.create_task(self.scalar.cleanup_might_touch())

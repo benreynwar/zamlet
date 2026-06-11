@@ -380,45 +380,6 @@ class Kamlet:
         assert jamlet.y == y
         return jamlet
 
-    def get_oldest_pending_iq_slot_distance(
-            self, query_ident: int) -> int:
-        """Distance to the oldest IdentQuery slot with pending sync state.
-
-        Scans the synchronizer for IQ-slot sync_idents (those in
-        [max_response_tags, max_response_tags + n_ident_query_slots)).
-        Distance is (sync_ident - query_ident) mod n_iq. The query ident
-        itself maps to distance 0; d=0 means "the current slot is itself
-        the oldest active at this participant" — there is no older slot to
-        protect. For other pending slots, distance wraps around the ring
-        so the oldest active slot gets the smallest non-zero distance and
-        MIN picks it.
-
-        Returns n_iq when no older IQ slot is pending at this participant
-        (so MIN aggregation with d-1 packing makes this participant a
-        no-op — stored value n_iq-1 loses to any real d in [1, n_iq-1]
-        which store as [0, n_iq-2]). Real older-pending distances are
-        returned in [1, n_iq-1].
-        """
-        max_tags = self.params.max_response_tags
-        n_iq = self.params.n_ident_query_slots
-        distances: list[int] = []
-        for sync_ident in self.synchronizer._sync_states:
-            # We check has_local_seen because it's possible that the synchronizer has state for this
-            # ident because the sync messages beat this instruction here and it's actually a sync
-            # state that comes after this one. If that is the case the local seen won't be set yet.
-
-            # local seen isn't set if we're waiting for the next instr to become free. I don't think that
-            # is a concern here since if we're waiting for the next ident to get free we shoudln't have
-            # to worry about the next ident query arriving.
-            if max_tags <= sync_ident < max_tags + n_iq and self.synchronizer.has_local_seen(sync_ident):
-                d = (sync_ident - query_ident) % n_iq
-                assert d != 0 # We shouldn't be 'local_seen' yet.
-                distances.append(d)
-        if not distances:
-            return n_iq
-        else:
-            return min(distances)
-
     def get_oldest_active_instr_ident_distance(self, baseline: int) -> int | None:
         """Distance to the oldest active instr_ident from baseline across the
         kamlet's live state — reservation-station entries (admitted but not yet
@@ -623,10 +584,23 @@ class Kamlet:
 
     async def _receive_kamlet_network_instructions_packet(self, header, queue):
         remaining = header.length
+        logger.debug(
+            f'{self.clock.cycle}: kamlet ({self.min_x},{self.min_y}) '
+            f'receiving instruction packet from '
+            f'({header.source_x},{header.source_y}) length={header.length} '
+            f'knet=({self.knet_x},{self.knet_y})')
         while remaining:
             await self.clock.next_cycle
             if queue:
+                wait_cycles = 0
                 while not self._instruction_queue.can_append():
+                    wait_cycles += 1
+                    if wait_cycles % 100 == 0:
+                        logger.warning(
+                            f'{self.clock.cycle}: kamlet '
+                            f'({self.min_x},{self.min_y}) instruction queue '
+                            f'blocked while receiving packet from '
+                            f'({header.source_x},{header.source_y})')
                     await self.clock.next_cycle
                 instr = queue.popleft()
                 self.monitor.record_kamlet_message_received(
@@ -634,6 +608,11 @@ class Kamlet:
                     header.source_x, header.source_y,
                     self.knet_x, self.knet_y,
                     message_type='INSTRUCTION')
+                logger.debug(
+                    f'{self.clock.cycle}: kamlet ({self.min_x},{self.min_y}) '
+                    f'received instruction ident={instr.instr_ident} '
+                    f'instr={type(instr).__name__} '
+                    f'remaining={remaining - 1}')
                 self.add_to_instruction_queue(instr)
                 remaining -= 1
 
@@ -649,7 +628,9 @@ class Kamlet:
         logger.debug(
             f'{self.clock.cycle}: kamlet ({self.min_x}, {self.min_y}): '
             f'_receive_kamlet_network_packet_channel0 got header '
-            f'{header.message_type.name} from ({header.source_x}, {header.source_y})')
+            f'{header.message_type.name} from ({header.source_x}, {header.source_y}) '
+            f'target=({header.target_x},{header.target_y}) '
+            f'send_type={header.send_type.name} length={header.length}')
 
         if header.message_type == MessageType.INSTRUCTIONS:
             await self._receive_kamlet_network_instructions_packet(header, queue)
@@ -682,6 +663,41 @@ class Kamlet:
             if queue:
                 await self._receive_kamlet_network_packet_channel0(queue)
 
+    async def _receive_kamlet_network_packet(self, channel, queue):
+        """
+        Handle channel 1+ packets on the Kamlet network.
+        Instruction packets use the global INSTRUCTIONS channel and are
+        consumed into the Kamlet instruction queue.
+        """
+        while not queue:
+            await self.clock.next_cycle
+        header = queue.popleft()
+        assert isinstance(header, Header)
+        logger.debug(
+            f'{self.clock.cycle}: kamlet ({self.min_x}, {self.min_y}): '
+            f'_receive_kamlet_network_packet_channel{channel} got header '
+            f'{header.message_type.name} from ({header.source_x}, {header.source_y}) '
+            f'target=({header.target_x},{header.target_y}) '
+            f'send_type={header.send_type.name} length={header.length}')
+
+        if header.message_type == MessageType.INSTRUCTIONS:
+            await self._receive_kamlet_network_instructions_packet(header, queue)
+        else:
+            raise NotImplementedError(
+                f"No handler for Kamlet-network channel {channel} message "
+                f"{header.message_type}")
+
+    async def _receive_kamlet_network_packets(self):
+        queues = [
+            self.kamlet_network_routers[channel]._output_buffers[Direction.H]
+            for channel in range(1, self.params.n_channels)
+        ]
+        while True:
+            await self.clock.next_cycle
+            for channel, queue in enumerate(queues, start=1):
+                if queue:
+                    await self._receive_kamlet_network_packet(channel, queue)
+
     async def run(self):
         for router in self.kamlet_network_routers:
             self.clock.create_task(router.run())
@@ -693,6 +709,7 @@ class Kamlet:
         self.clock.create_task(self._monitor_instruction_queue())
         self.clock.create_task(self._send_packets())
         self.clock.create_task(self._receive_kamlet_network_packets_channel0())
+        self.clock.create_task(self._receive_kamlet_network_packets())
         self.clock.create_task(self._monitor_cache_requests())
         self.clock.create_task(self._monitor_witems())
         self.clock.create_task(self.cache_table.run())

@@ -33,6 +33,7 @@ def initialize_inputs(dut: HierarchyObject) -> None:
     dut.io_localEvent_valid.value = 0
     dut.io_localEvent_bits_syncIdent.value = 0
     dut.io_localEvent_bits_value.value = 0
+    dut.io_localEvent_bits_includeActiveMask.value = 0
 
     for i in range(Dir.COUNT):
         getattr(dut, f'io_portIn_{i}_valid').value = 0
@@ -53,15 +54,17 @@ async def send_local_event(dut: HierarchyObject, sync_ident: int, value: int) ->
     dut.io_localEvent_valid.value = 1
     dut.io_localEvent_bits_syncIdent.value = sync_ident
     dut.io_localEvent_bits_value.value = value
+    dut.io_localEvent_bits_includeActiveMask.value = 0
     await RisingEdge(dut.clock)
     dut.io_localEvent_valid.value = 0
 
 
 async def send_sync_packet(dut: HierarchyObject, direction: int, sync_ident: int, value: int):
-    """Send a 2-byte sync packet from a neighbor direction.
+    """Send a 3-byte sync packet from a neighbor direction.
 
-    Byte 0: sync_ident (last_byte=0)
-    Byte 1: value (last_byte=1)
+    Byte 0: sync_ident header (last_byte=0)
+    Byte 1: value[7:0] (last_byte=0)
+    Byte 2: value[15:8] (last_byte=1)
     """
     port_valid = getattr(dut, f'io_portIn_{direction}_valid')
     port_bits = getattr(dut, f'io_portIn_{direction}_bits')
@@ -71,8 +74,12 @@ async def send_sync_packet(dut: HierarchyObject, direction: int, sync_ident: int
     port_bits.value = (0 << 8) | (sync_ident & 0xFF)
     await RisingEdge(dut.clock)
 
-    # Byte 1: value, last_byte=1
-    port_bits.value = (1 << 8) | (value & 0xFF)
+    # Byte 1: low value byte, last_byte=0
+    port_bits.value = (0 << 8) | (value & 0xFF)
+    await RisingEdge(dut.clock)
+
+    # Byte 2: high value byte, last_byte=1
+    port_bits.value = (1 << 8) | ((value >> 8) & 0xFF)
     await RisingEdge(dut.clock)
 
     port_valid.value = 0
@@ -114,7 +121,7 @@ async def collect_all_port_outputs(dut: HierarchyObject, cycles: int = 50):
     Returns dict: direction -> list of (sync_ident, value) tuples
     """
     outputs = {d: [] for d in range(Dir.COUNT)}
-    pending = {d: None for d in range(Dir.COUNT)}  # pending byte0 per direction
+    pending = {d: [] for d in range(Dir.COUNT)}
 
     for _ in range(cycles):
         await RisingEdge(dut.clock)
@@ -129,12 +136,14 @@ async def collect_all_port_outputs(dut: HierarchyObject, cycles: int = 50):
                 last_byte = (bits >> 8) & 1
                 data = bits & 0xFF
 
-                if last_byte == 0:
-                    pending[d] = data  # byte0 = sync_ident
-                else:
-                    if pending[d] is not None:
-                        outputs[d].append((pending[d], data))  # (sync_ident, value)
-                        pending[d] = None
+                pending[d].append(data)
+                if last_byte == 1:
+                    assert len(pending[d]) == 3, \
+                        f"Expected 3-byte sync packet on {Dir.NAMES[d]}, got {len(pending[d])}"
+                    sync_ident = pending[d][0] & 0x7
+                    value = pending[d][1] | (pending[d][2] << 8)
+                    outputs[d].append((sync_ident, value))
+                    pending[d] = []
 
     return outputs
 
@@ -204,7 +213,7 @@ class OutputCollector:
     def __init__(self, dut):
         self.dut = dut
         self.outputs = {d: [] for d in range(Dir.COUNT)}
-        self._pending = {d: None for d in range(Dir.COUNT)}
+        self._pending = {d: [] for d in range(Dir.COUNT)}
         self._running = False
 
     async def run(self):
@@ -221,12 +230,14 @@ class OutputCollector:
                     last_byte = (bits >> 8) & 1
                     data = bits & 0xFF
 
-                    if last_byte == 0:
-                        self._pending[d] = data
-                    else:
-                        if self._pending[d] is not None:
-                            self.outputs[d].append((self._pending[d], data))
-                            self._pending[d] = None
+                    self._pending[d].append(data)
+                    if last_byte == 1:
+                        assert len(self._pending[d]) == 3, \
+                            f"Expected 3-byte sync packet on {Dir.NAMES[d]}, got {len(self._pending[d])}"
+                        sync_ident = self._pending[d][0] & 0x7
+                        value = self._pending[d][1] | (self._pending[d][2] << 8)
+                        self.outputs[d].append((sync_ident, value))
+                        self._pending[d] = []
 
     def stop(self):
         self._running = False

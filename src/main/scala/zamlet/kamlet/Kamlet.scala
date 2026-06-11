@@ -6,23 +6,49 @@ import zamlet.ZamletParams
 import zamlet.SynchronizerParams
 import zamlet.LaneOrderMapping
 import zamlet.jamlet.{ChannelsIO, Jamlet}
-import zamlet.network.{CombinedNetworkNode, NetworkWord}
+import zamlet.network.{CombinedNetworkNode, MessageType, MessageTypePacketRouter,
+                       MessageTypePacketRouterErrors, NetworkWord, PacketMerge,
+                       PacketMergeErrors}
+
+class KamletErrors extends Bundle {
+  val instrQueue = new InstrQueueErrors
+  val reservationStation = new ReservationStationErrors
+  val cacheEngine = new KceCacheEngineErrors
+  val tlb = new KamletTlbErrors
+  val packetMerge = new PacketMergeErrors
+  val aPacketRouter = new MessageTypePacketRouterErrors
+  val bPacketRouter = new MessageTypePacketRouterErrors
+}
 
 /**
  * Kamlet is a cluster of jamlets that share an instruction queue, cache tracking,
  * and register file coordination.
  *
- * For Test 0 (minimal): Only InstrQueue + InstrExecutor + Synchronizer.
- * Later phases add: CacheTable, WitemController, dispatch to jamlets, etc.
+ * Current skeleton: InstrQueue feeds a pass-through Renamer and first-pass
+ * ReservationStation, which handles the first-pass simple decode behavior.
  */
 class Kamlet(
   params: ZamletParams,
   neighbors: SyncNeighbors
 ) extends Module {
   val io = IO(new Bundle {
-    // Position of this kamlet in the zamlet
+    // Position of this kamlet in the compute grid.
     val kX = Input(UInt(log2Ceil(params.kCols).W))
     val kY = Input(UInt(log2Ceil(params.kRows).W))
+
+    // Position of this kamlet on the kamlet-level packet network.
+    val knetX = Input(params.xPos())
+    val knetY = Input(params.yPos())
+    val lamletKnetX = Input(params.xPos())
+    val lamletKnetY = Input(params.yPos())
+    val memletKnetX = Input(params.xPos())
+    val memletKnetY = Input(params.yPos())
+    val jnetBaseX = Input(params.xPos())
+    val jnetBaseY = Input(params.yPos())
+    val memletJnetCoords = Input(Vec(params.jInK, new Bundle {
+      val x = params.xPos()
+      val y = params.yPos()
+    }))
 
     // Network ports (exposed from edge jamlets)
     // North edge
@@ -63,16 +89,16 @@ class Kamlet(
   // Instantiate jamlets in a grid
   // ============================================================
 
-  val jamlets = Seq.tabulate(params.jRows, params.jCols) { (jY, jX) =>
+  val jamlets = Seq.tabulate(params.jRows, params.jCols) { (localJY, localJX) =>
     val j = Module(new Jamlet(params))
-    // Set position: absolute position = kamlet position * jamlets per kamlet + local position
-    val absoluteX = io.kX * params.jCols.U + jX.U
-    val absoluteY = io.kY * params.jRows.U + jY.U
-    j.io.thisX := absoluteX
-    j.io.thisY := absoluteY
-    j.io.memletX := 0.U
-    j.io.memletY := 0.U
-    j.io.laneIndices := LaneOrderMapping.indices(params, absoluteX, absoluteY)
+    val jInKIndex = localJY * params.jCols + localJX
+    val jX = io.kX * params.jCols.U + localJX.U
+    val jY = io.kY * params.jRows.U + localJY.U
+    j.io.thisX := io.jnetBaseX + localJX.U
+    j.io.thisY := io.jnetBaseY + localJY.U
+    j.io.memletX := io.memletJnetCoords(jInKIndex).x
+    j.io.memletY := io.memletJnetCoords(jInKIndex).y
+    j.io.laneIndices := LaneOrderMapping.indices(params, jX, jY)
     j
   }
 
@@ -160,25 +186,6 @@ class Kamlet(
       }
       // Internal west connections handled by east connections of neighbor
 
-      // Tie off kamlet-facing ports for now.
-      j.io.jteCreate.valid := false.B
-      j.io.jteCreate.bits := DontCare
-      j.io.jteClear.valid := false.B
-      j.io.jteClear.bits := DontCare
-      j.io.jteInputReq.ready := false.B
-      j.io.jteInputResp.valid := false.B
-      j.io.jteInputResp.bits := DontCare
-      j.io.tlbReq.ready := false.B
-      j.io.tlbResp.valid := false.B
-      j.io.tlbResp.bits := DontCare
-      j.io.orderingReq.ready := false.B
-      j.io.orderingResp.valid := false.B
-      j.io.orderingResp.bits := DontCare
-      j.io.cacheLineReq.ready := false.B
-      j.io.cacheLineResp.valid := false.B
-      j.io.cacheLineResp.bits := DontCare
-      j.io.sendCacheLine.valid := false.B
-      j.io.sendCacheLine.bits := DontCare
     }
   }
 
@@ -187,12 +194,61 @@ class Kamlet(
   // ============================================================
 
   val instrQueue = Module(new InstrQueue(params))
-  val instrExecutor = Module(new InstrExecutor(params))
-  val synchronizer = Module(new Synchronizer(neighbors, params.synchronizerParams))
+  val renamer = Module(new Renamer(params))
+  val reservationStation = Module(new ReservationStation(params))
+  val synchronizer = Module(new Synchronizer(neighbors, params))
+  val cacheEngine = Module(new KamletCacheEngine(params))
+  val transferEngine = Module(new KamletTransferEngine(params))
+  val kamletTlb = Module(new KamletTlb(params))
+  val aPacketRouter = Module(new MessageTypePacketRouter(
+    params,
+    Seq(
+      Seq(
+        MessageType.ReadLineAddrDrop,
+        MessageType.WriteLineAddrDrop,
+        MessageType.WriteLineReadLineAddrDrop,
+        MessageType.WriteLineDataDrop,
+        MessageType.WriteLineResp),
+      Seq(MessageType.TlbResp)),
+    params.kamletAIngressPacketRouterParams))
+  val bPacketRouter = Module(new MessageTypePacketRouter(
+    params,
+    Seq(Seq(MessageType.Instructions)),
+    params.kamletBIngressPacketRouterParams))
+  val packetMerge = Module(new PacketMerge(params, 2, params.kamletPacketMergeParams))
   val kamletNetworkNode = Module(new CombinedNetworkNode(params))
 
-  kamletNetworkNode.io.thisX := io.kX
-  kamletNetworkNode.io.thisY := io.kY
+  cacheEngine.io.knetX := io.knetX
+  cacheEngine.io.knetY := io.knetY
+  cacheEngine.io.memletKnetX := io.memletKnetX
+  cacheEngine.io.memletKnetY := io.memletKnetY
+  kamletTlb.io.knetX := io.knetX
+  kamletTlb.io.knetY := io.knetY
+  kamletTlb.io.lamletKnetX := io.lamletKnetX
+  kamletTlb.io.lamletKnetY := io.lamletKnetY
+
+  renamer.io.kinstrIn <> instrQueue.io.kinstrOut
+  reservationStation.io.renamedIn <> renamer.io.renamedOut
+
+  reservationStation.io.kteRfRelease <> transferEngine.io.rfRelease
+
+  transferEngine.io.rsIssue <> reservationStation.io.kteIssue
+  transferEngine.io.conflictMem := reservationStation.io.kteConflictMem
+  reservationStation.io.kteConflict := transferEngine.io.conflict
+
+  cacheEngine.io.rsAllocSlotReq <> reservationStation.io.kceAllocSlotReq
+  reservationStation.io.kceAllocSlotResp <> cacheEngine.io.rsAllocSlotResp
+
+  cacheEngine.io.kteReleaseSlot := transferEngine.io.kceReleaseSlot
+  transferEngine.io.kceSlotIsAvailable := cacheEngine.io.kteSlotIsAvailable
+  cacheEngine.io.kteSlotStatusReq := transferEngine.io.kceSlotStatusReq
+  transferEngine.io.kceSlotStatusResp := cacheEngine.io.kteSlotStatusResp
+  cacheEngine.io.kteInstrStartedResp := transferEngine.io.kceInstrStartedResp
+  transferEngine.io.kceInstrStartedReq := cacheEngine.io.kteInstrStartedReq
+  cacheEngine.io.kteInstrStartedNotify := transferEngine.io.kceInstrStartedNotify
+
+  kamletNetworkNode.io.thisX := io.knetX
+  kamletNetworkNode.io.thisY := io.knetY
 
   kamletNetworkNode.io.aNi <> io.kamletAChannels.ni
   kamletNetworkNode.io.aNo <> io.kamletAChannels.no
@@ -213,28 +269,60 @@ class Kamlet(
   kamletNetworkNode.io.bWo <> io.kamletBChannels.wo
 
   // ============================================================
-  // Wiring: Kamlet network → InstrQueue → InstrExecutor → Synchronizer
+  // Wiring: Kamlet network → InstrQueue → Renamer → ReservationStation
   // ============================================================
 
-  instrQueue.io.packetIn <> kamletNetworkNode.io.aHo
+  aPacketRouter.io.in <> kamletNetworkNode.io.aHo
   kamletNetworkNode.io.aHi.valid := false.B
   kamletNetworkNode.io.aHi.bits := DontCare
-  kamletNetworkNode.io.bHi.valid := false.B
-  kamletNetworkNode.io.bHi.bits := DontCare
-  kamletNetworkNode.io.bHo.ready := false.B
+  cacheEngine.io.packetIn <> aPacketRouter.io.out(0)
+  kamletTlb.io.packetIn <> aPacketRouter.io.out(1)
+  packetMerge.io.in(0) <> cacheEngine.io.packetOut
+  packetMerge.io.in(1) <> kamletTlb.io.packetOut
+  kamletNetworkNode.io.bHi <> packetMerge.io.out
+  bPacketRouter.io.in <> kamletNetworkNode.io.bHo
+  instrQueue.io.packetIn <> bPacketRouter.io.out(0)
 
-  // InstrQueue → InstrExecutor
-  instrExecutor.io.kinstrIn <> instrQueue.io.kinstrOut
+  // KTE owns synchronizer use for explicit sync instructions and transfer
+  // completion barriers.
+  synchronizer.io.localEvent := transferEngine.io.syncLocalEvent
+  transferEngine.io.syncResult := synchronizer.io.result
 
-  // InstrExecutor → Synchronizer
-  synchronizer.io.localEvent := instrExecutor.io.syncLocalEvent
-
-  // InstrExecutor → Jamlets (immediate kinstrs)
+  // ReservationStation / KTE replay → Jamlets (immediate kinstrs)
   // Flatten jamlets to 1D index: jInKIndex = jY * jCols + jX
+  val kteLocalReplayReady = Wire(Vec(params.jInK, Bool()))
+  val kteLocalReplayCanBroadcast = kteLocalReplayReady.asUInt.andR
+  transferEngine.io.localReplay.ready := kteLocalReplayCanBroadcast
+
   for (jY <- 0 until params.jRows; jX <- 0 until params.jCols) {
     val jInKIndex = jY * params.jCols + jX
-    jamlets(jY)(jX).io.immediateKinstr := instrExecutor.io.immediateKinstr(jInKIndex)
+    val rsImmediate = reservationStation.io.immediateKinstr(jInKIndex)
+
+    kteLocalReplayReady(jInKIndex) := !rsImmediate.valid
+    jamlets(jY)(jX).io.immediateKinstr.valid :=
+      rsImmediate.valid || (transferEngine.io.localReplay.valid && kteLocalReplayCanBroadcast)
+    jamlets(jY)(jX).io.immediateKinstr.bits :=
+      Mux(rsImmediate.valid, rsImmediate.bits, transferEngine.io.localReplay.bits)
+
+    jamlets(jY)(jX).io.jteCreate := transferEngine.io.jteCreate(jInKIndex)
+    jamlets(jY)(jX).io.jteClear := transferEngine.io.jteClear(jInKIndex)
+    transferEngine.io.jteInputReq(jInKIndex) <> jamlets(jY)(jX).io.jteInputReq
+    jamlets(jY)(jX).io.jteInputResp <> transferEngine.io.jteInputResp(jInKIndex)
+    transferEngine.io.transferComplete(jInKIndex) := jamlets(jY)(jX).io.transferComplete
+    kamletTlb.io.tlbReq(jInKIndex) <> jamlets(jY)(jX).io.tlbReq
+    jamlets(jY)(jX).io.tlbResp <> kamletTlb.io.tlbResp(jInKIndex)
+    jamlets(jY)(jX).io.tlbAvailable <> kamletTlb.io.tlbAvailable(jInKIndex)
+    cacheEngine.io.jteCacheLineReq(jInKIndex) <> jamlets(jY)(jX).io.cacheLineReq
+    jamlets(jY)(jX).io.cacheLineResp <> cacheEngine.io.jteCacheLineResp(jInKIndex)
+    jamlets(jY)(jX).io.cacheLineReplay <> cacheEngine.io.jteReplay(jInKIndex)
+    cacheEngine.io.jteCacheLineRelease(jInKIndex).valid := jamlets(jY)(jX).io.cacheLineRelease.valid
+    cacheEngine.io.jteCacheLineRelease(jInKIndex).bits.slot := jamlets(jY)(jX).io.cacheLineRelease.bits
+    jamlets(jY)(jX).io.sendCacheLine := cacheEngine.io.jceWritebackReq(jInKIndex)
+    cacheEngine.io.jceFetchDone(jInKIndex) := jamlets(jY)(jX).io.cacheResponse
   }
+
+  kamletTlb.io.localOrderingUpdate.valid := false.B
+  kamletTlb.io.localOrderingUpdate.bits := DontCare
 
   // ============================================================
   // Sync network
@@ -248,6 +336,12 @@ class Kamlet(
   // ============================================================
 
   io.errors.instrQueue := instrQueue.io.errors
+  io.errors.reservationStation := reservationStation.io.errors
+  io.errors.cacheEngine := cacheEngine.io.errors
+  io.errors.tlb := kamletTlb.io.errors
+  io.errors.packetMerge := packetMerge.io.errors
+  io.errors.aPacketRouter := aPacketRouter.io.errors
+  io.errors.bPacketRouter := bPacketRouter.io.errors
 }
 
 object KamletGenerator extends zamlet.ModuleGenerator {

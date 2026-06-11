@@ -7,6 +7,7 @@ from cocotb.triggers import ReadOnly, RisingEdge
 
 from zamlet.future import Future
 from zamlet.message import Header, int_to_header
+from zamlet.utils import make_seed
 
 
 class NetworkPacketSource:
@@ -15,39 +16,41 @@ class NetworkPacketSource:
         self.clock = clock
         self.prefix = prefix
         self.queue = deque()
+        self.valid = getattr(dut, f"{prefix}_valid")
+        self.ready = getattr(dut, f"{prefix}_ready")
+        self.data = getattr(dut, f"{prefix}_bits_data")
+        self.is_header = getattr(dut, f"{prefix}_bits_isHeader")
 
     def enqueue_word(self, data: int, is_header: bool) -> None:
         self.queue.append((data, is_header))
 
-    def enqueue_packet(self, words: list[tuple[int, bool]]) -> None:
-        self.queue.extend(words)
+    def enqueue_packet(self, header_word: int, body_words: list[int]) -> None:
+        self.enqueue_word(header_word, True)
+        for word in body_words:
+            self.enqueue_word(word, False)
 
-    def start(self, seed: int, p_valid: float = 1.0) -> None:
-        cocotb.start_soon(self.run(seed=seed, p_valid=p_valid))
+    def start(self, rng: Random, p_valid: float = 1.0) -> None:
+        cocotb.start_soon(self.run(seed=make_seed(rng), p_valid=p_valid))
 
     async def run(self, seed: int, p_valid: float = 1.0) -> None:
-        valid = getattr(self.dut, f"{self.prefix}_valid")
-        ready = getattr(self.dut, f"{self.prefix}_ready")
-        data_sig = getattr(self.dut, f"{self.prefix}_bits_data")
-        header_sig = getattr(self.dut, f"{self.prefix}_bits_isHeader")
         rng = Random(seed)
 
-        valid.value = 0
+        self.valid.value = 0
         current = None
         while True:
             if current is None and self.queue and rng.random() < p_valid:
                 current = self.queue.popleft()
 
             if current is None:
-                valid.value = 0
+                self.valid.value = 0
                 fired = False
             else:
                 data, is_header = current
-                valid.value = 1
-                data_sig.value = data
-                header_sig.value = int(is_header)
+                self.valid.value = 1
+                self.data.value = data
+                self.is_header.value = int(is_header)
                 await ReadOnly()
-                fired = bool(int(ready.value))
+                fired = bool(int(self.ready.value))
 
             await RisingEdge(self.clock)
 
@@ -65,14 +68,18 @@ class NetworkPacketSink:
         self.max_packet_queue_depth = max_packet_queue_depth
         self.future_queue = deque()
         self.packet_queue = deque()
+        self.valid = getattr(dut, f"{prefix}_valid")
+        self.ready = getattr(dut, f"{prefix}_ready")
+        self.data = getattr(dut, f"{prefix}_bits_data")
+        self.is_header = getattr(dut, f"{prefix}_bits_isHeader")
 
     def get_packet_future(self) -> Future:
         future = Future(Event())
         self.future_queue.append(future)
         return future
 
-    def start(self, seed: int, p_ready: float = 1.0) -> None:
-        cocotb.start_soon(self.run(seed=seed, p_ready=p_ready))
+    def start(self, rng: Random, p_ready: float = 1.0) -> None:
+        cocotb.start_soon(self.run(seed=make_seed(rng), p_ready=p_ready))
         cocotb.start_soon(self.resolve())
 
     async def resolve(self) -> None:
@@ -82,24 +89,20 @@ class NetworkPacketSink:
             await RisingEdge(self.clock)
 
     async def run(self, seed: int, p_ready: float = 1.0) -> None:
-        valid = getattr(self.dut, f"{self.prefix}_valid")
-        ready = getattr(self.dut, f"{self.prefix}_ready")
-        data_sig = getattr(self.dut, f"{self.prefix}_bits_data")
-        header_sig = getattr(self.dut, f"{self.prefix}_bits_isHeader")
         rng = Random(seed)
         packet = []
         remaining = 0
 
-        ready.value = 0
+        self.ready.value = 0
         while True:
             queue_has_room = (
                 self.max_packet_queue_depth is None
                 or len(self.packet_queue) < self.max_packet_queue_depth)
-            ready.value = int(queue_has_room and rng.random() < p_ready)
+            self.ready.value = int(queue_has_room and rng.random() < p_ready)
             await ReadOnly()
-            if int(valid.value) and int(ready.value):
-                data = int(data_sig.value)
-                if int(header_sig.value):
+            if int(self.valid.value) and int(self.ready.value):
+                data = int(self.data.value)
+                if int(self.is_header.value):
                     assert remaining == 0, "received new header before packet payload completed"
                     header = int_to_header(data, self.params)
                     assert isinstance(header, Header)

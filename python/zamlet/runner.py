@@ -2,7 +2,6 @@ import asyncio
 import logging
 import os
 import pdb
-import traceback
 import signal
 import threading
 
@@ -40,6 +39,9 @@ class Future:
 
     def result(self):
         return self.future.result()
+
+    def done(self):
+        return self.future.done()
 
 
 class Event:

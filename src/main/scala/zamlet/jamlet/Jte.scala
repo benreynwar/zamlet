@@ -2,7 +2,6 @@ package zamlet.jamlet
 
 import chisel3._
 import chisel3.util._
-import zamlet.Ordering
 import zamlet.ZamletParams
 import zamlet.network.{INetworkWord, NetworkWord}
 
@@ -32,13 +31,14 @@ class JteIO(params: ZamletParams) extends Bundle {
   val rfWriteReq = Decoupled(new RFWriteReq(params))
   val rfWriteResp = Flipped(Decoupled(Bool()))
 
-  val tlbReq = Decoupled(UInt(params.pageAddrWidth.W))
-  val tlbResp = Flipped(Decoupled(UInt(params.pageAddrWidth.W)))
-  val orderingReq = Decoupled(UInt(params.memStripeAddrWidth.W))
-  val orderingResp = Flipped(Decoupled(new Ordering))
+  val tlbReq = Decoupled(new JamletTlbReq(params))
+  val tlbResp = Flipped(Decoupled(new JamletTlbResp(params)))
+  val tlbAvailable = Flipped(Valid(new JamletTlbAvailable(params)))
 
   val cacheLineReq = Decoupled(new CacheLineRequest(params))
   val cacheLineResp = Flipped(Decoupled(new CacheLineResponse(params)))
+  val cacheLineReplay = Flipped(Decoupled(new JteHandlerReplay(params)))
+  val cacheLineRelease = Valid(params.cacheSlot())
   val sramReq = Decoupled(new SramRequest(params))
   val sramResp = Flipped(Decoupled(params.word()))
 }
@@ -72,12 +72,11 @@ class Jte(params: ZamletParams) extends Module {
   initiator.io.rfDataResp <> io.rfDataResp
   io.tlbReq <> initiator.io.tlbReq
   initiator.io.tlbResp <> io.tlbResp
-  io.orderingReq <> initiator.io.orderingReq
-  initiator.io.orderingResp <> io.orderingResp
+  state.io.tlbAvailable <> io.tlbAvailable
 
   receiver.io.packet <> io.channel0In
-  receiver.io.slotToRegReq <> state.io.slotToRegReq
-  state.io.slotToRegResp <> receiver.io.slotToRegResp
+  receiver.io.teIndexToRegReq <> state.io.teIndexToRegReq
+  state.io.teIndexToRegResp <> receiver.io.teIndexToRegResp
   io.rfWriteReq <> receiver.io.rfWriteReq
   receiver.io.rfWriteResp <> io.rfWriteResp
   state.io.receiverUpdate <> receiver.io.updateMsg
@@ -88,6 +87,8 @@ class Jte(params: ZamletParams) extends Module {
   io.channel0Out <> handler.io.packetOut
   io.cacheLineReq <> handler.io.cacheLineReq
   handler.io.cacheLineResp <> io.cacheLineResp
+  handler.io.cacheLineReplay <> io.cacheLineReplay
+  io.cacheLineRelease := handler.io.cacheLineRelease
   io.sramReq <> handler.io.sramReq
   handler.io.sramResp <> io.sramResp
 }

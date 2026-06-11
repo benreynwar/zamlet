@@ -39,7 +39,6 @@ case class RfSliceParams(
 )
 
 case class SynchronizerParams(
-  maxConcurrentSyncs: Int = 4,
   resultOutputReg: Boolean = false,
   portOutOutputReg: Boolean = false,
   minPipelineReg: Boolean = false
@@ -56,6 +55,38 @@ case class NetworkNodeParams(
   hiBackwardBuffer: Boolean = true,
   hoForwardBuffer: Boolean = true,
   hoBackwardBuffer: Boolean = true
+)
+
+case class PacketMergeParams(
+  inputFB: Boolean = true,
+  inputBB: Boolean = true,
+  outputFB: Boolean = true,
+  outputBB: Boolean = true,
+)
+
+case class MessageTypePacketRouterParams(
+  inputFB: Boolean = true,
+  inputBB: Boolean = true,
+  outputFB: Boolean = true,
+  outputBB: Boolean = true,
+)
+
+case class ReservationStationParams(
+  renamedInFB: Boolean = false,
+  renamedInBB: Boolean = false,
+  issue01FB: Boolean = true,
+  issue01BB: Boolean = true,
+  issue12FB: Boolean = true,
+  issue12BB: Boolean = true,
+  immediateKinstrBuffer: Boolean = false,
+  kteIssueFB: Boolean = false,
+  kteIssueBB: Boolean = false,
+  kceClaimSlotReqFB: Boolean = false,
+  kceClaimSlotReqBB: Boolean = false,
+  kceClaimSlotRespFB: Boolean = false,
+  kceClaimSlotRespBB: Boolean = false,
+  rfReleaseFB: Boolean = false,
+  rfReleaseBB: Boolean = false,
 )
 
 case class IssueUnitParams(
@@ -117,8 +148,6 @@ case class JteInitiatorParams(
   deBB: Boolean = true,
   tlbReqFB: Boolean = true,
   tlbReqBB: Boolean = true,
-  orderingReqFB: Boolean = true,
-  orderingReqBB: Boolean = true,
   efFB: Boolean = true,
   efBB: Boolean = true,
   fgFB: Boolean = true,
@@ -127,8 +156,6 @@ case class JteInitiatorParams(
   ghBB: Boolean = true,
   tlbRespFB: Boolean = true,
   tlbRespBB: Boolean = true,
-  orderingRespFB: Boolean = true,
-  orderingRespBB: Boolean = true,
   commitBuffer: Boolean = false,
   hiFB: Boolean = true,
   hiBB: Boolean = true,
@@ -228,6 +255,125 @@ case class JceParams(
   rxDoneFB: Boolean = true,
 )
 
+case class KceCacheTableParams(
+  hasSlotReqFB: Boolean = true,
+  hasSlotReqBB: Boolean = true,
+  hasSlotRespFB: Boolean = true,
+  hasSlotRespBB: Boolean = true,
+  allocSlotReqFB: Boolean = true,
+  allocSlotReqBB: Boolean = true,
+  allocSlotRespFB: Boolean = true,
+  allocSlotRespBB: Boolean = true,
+  rsHasSlotReqBuffer: Boolean = true,
+  rsHasSlotRespBuffer: Boolean = true,
+  slotIsAvailableBuffer: Boolean = true,
+  memletPacketInFB: Boolean = true,
+  memletPacketInBB: Boolean = true,
+  memletPacketOutFB: Boolean = true,
+  memletPacketOutBB: Boolean = true,
+  maxActiveUsesPerCacheSlot: Int = 7,
+)
+
+case class KceScannerParams(
+  emptyQueueDepth: Int = 16,
+  emptyQueueScanBackpressureDepth: Int = 8,
+)
+
+case class TagTableParams(
+  nUsesWidth: Int = 3,
+  freeQueueDepth: Int = 16,
+  fillReqQueueDepth: Int = 16,
+  scanBackpressureDepth: Int = 8,
+  allocReqFB: Boolean = true,
+  allocReqBB: Boolean = true,
+  alloc01FB: Boolean = true,
+  alloc01BB: Boolean = true,
+  allocRespFB: Boolean = true,
+  allocRespBB: Boolean = true,
+  claimReqFB: Boolean = true,
+  claimReqBB: Boolean = true,
+  claimRespFB: Boolean = true,
+  claimRespBB: Boolean = true,
+  fillBuffer: Boolean = true,
+  releaseBuffer: Boolean = true,
+  scan01FB: Boolean = true,
+  scan01BB: Boolean = true,
+) {
+  def nUses(): UInt = UInt(nUsesWidth.W)
+}
+
+case class KcePendingTableParams(
+  cacheLineReqFB: Boolean = true,
+  cacheLineReqBB: Boolean = true,
+  cacheLineRespFB: Boolean = true,
+  cacheLineRespBB: Boolean = true,
+  replayFB: Boolean = true,
+  replayBB: Boolean = true,
+  cacheLineReleaseBuffer: Boolean = true,
+  claimSlotReqFB: Boolean = true,
+  claimSlotReqBB: Boolean = true,
+  claimSlotRespFB: Boolean = true,
+  claimSlotRespBB: Boolean = true,
+  allocSlotReqFB: Boolean = true,
+  allocSlotReqBB: Boolean = true,
+  allocSlotRespFB: Boolean = true,
+  allocSlotRespBB: Boolean = true,
+  releaseSlotBuffer: Boolean = true,
+  slotIsAvailableBuffer: Boolean = true,
+  req01FB: Boolean = true,
+  req01BB: Boolean = true,
+  req23FB: Boolean = true,
+  req23BB: Boolean = true,
+  req34FB: Boolean = true,
+  req34BB: Boolean = true,
+  req45FB: Boolean = true,
+  req45BB: Boolean = true,
+  alloc01FB: Boolean = true,
+  alloc01BB: Boolean = true,
+  alloc12FB: Boolean = true,
+  alloc12BB: Boolean = true,
+)
+
+case class KceMemletInterfaceParams(
+  fetchSlotReqFB: Boolean = true,
+  fetchSlotReqBB: Boolean = true,
+  fetchSlotCompleteBuffer: Boolean = true,
+  jceWritebackReqBuffer: Boolean = true,
+  jceFetchDoneBuffer: Boolean = true,
+  writebackSlotReqFB: Boolean = true,
+  writebackSlotReqBB: Boolean = true,
+  writebackSlotCompleteBuffer: Boolean = true,
+  packetInFB: Boolean = true,
+  packetInBB: Boolean = true,
+  packetOutFB: Boolean = true,
+  packetOutBB: Boolean = true,
+  fetch01FB: Boolean = true,
+  fetch01BB: Boolean = true,
+  fetchTx01FB: Boolean = true,
+  fetchTx01BB: Boolean = true,
+)
+
+case class KamletTlbParams(
+  tlbReqFB: Boolean = true,
+  tlbReqBB: Boolean = true,
+  tlbRespFB: Boolean = true,
+  tlbRespBB: Boolean = true,
+  tlbAvailableBuffer: Boolean = true,
+  localOrderingUpdateBuffer: Boolean = true,
+  packetInFB: Boolean = true,
+  packetInBB: Boolean = true,
+  packetOutFB: Boolean = true,
+  packetOutBB: Boolean = true,
+  lookup01FB: Boolean = true,
+  lookup01BB: Boolean = true,
+  lookup12FB: Boolean = true,
+  lookup12BB: Boolean = true,
+  reqTx01FB: Boolean = true,
+  reqTx01BB: Boolean = true,
+  resp01FB: Boolean = true,
+  resp01BB: Boolean = true,
+)
+
 case class ZamletParams(
   // Position widths
   xPosWidth: Int = 8,
@@ -250,21 +396,29 @@ case class ZamletParams(
   rfSliceWords: Int = 48,    // Number of words in RF slice
 
   // Address and index widths
-  memAddrWidth: Int = 48,       // Global memory address width
+  memAddrWidth: Int = 44,       // Global memory address width
   log2PageWordsPerJamlet: Int = 4,  // Page size in words per jamlet
   // Must hold j_in_l * word_bytes * max_lmul
   elementIndexWidth: Int = 22,
-  log2NParams: Int = 4,
+  log2NParams: Int = 6,
+  paramRefIdxWidth: Int = 3,
 
   // WitemTable configuration
   witemTableDepth: Int = 16,
+  kcePendingTableDepth: Int = 16,
+  kteCacheWaitTableDepth: Int = 16,
+  tlbReqTableDepth: Int = 16,
+  tlbCacheTableDepth: Int = 64,
 
   // Instruction identifier
-  identWidth: Int = 7,
+  identWidth: Int = 8,
+  syncIdentWidth: Int = 3,
+  syncValueWidth: Int = 16,
   writesetWidth: Int = 4,
 
   // Memlet configuration
   nMemletGatheringSlots: Int = 4, // Concurrent WRITE_LINE_READ_LINE operations
+  nCacheRequests: Int = 16,       // Concurrent cache line requests from KCE
   nResponseBufferSlots: Int = 4,  // Concurrent read responses in flight
   memBeatWords: Int = 1,          // Words per external memory beat
   memAxiIdBits: Int = 4,          // AXI4 transaction ID width
@@ -282,6 +436,10 @@ case class ZamletParams(
   nAChannels: Int = 1,
   nBChannels: Int = 1,
   networkNodeParams: NetworkNodeParams = NetworkNodeParams(),
+  kamletPacketMergeParams: PacketMergeParams = PacketMergeParams(),
+  kamletAIngressPacketRouterParams: MessageTypePacketRouterParams = MessageTypePacketRouterParams(),
+  kamletBIngressPacketRouterParams: MessageTypePacketRouterParams = MessageTypePacketRouterParams(),
+  reservationStationParams: ReservationStationParams = ReservationStationParams(),
 
   // IssueUnit configuration
   issueUnitParams: IssueUnitParams = IssueUnitParams(),
@@ -299,6 +457,15 @@ case class ZamletParams(
   jteHandlerParams: JteHandlerParams = JteHandlerParams(),
   sramParams: SramParams = SramParams(),
   jceParams: JceParams = JceParams(),
+
+  // KCE cache table configuration
+  kceCacheTableParams: KceCacheTableParams = KceCacheTableParams(),
+  kceScannerParams: KceScannerParams = KceScannerParams(),
+  kceTagTableParams: TagTableParams = TagTableParams(),
+  kcePendingTableParams: KcePendingTableParams = KcePendingTableParams(),
+  kceMemletInterfaceParams: KceMemletInterfaceParams = KceMemletInterfaceParams(),
+  kamletTlbParams: KamletTlbParams = KamletTlbParams(),
+  tlbTagTableParams: TagTableParams = TagTableParams(),
 
   messageLengthWidth: Int = 4,
   messageTypeWidth: Int = 6
@@ -326,6 +493,8 @@ case class ZamletParams(
   require(cacheSlotWordsPerJamlet <= 12,
     s"cacheSlotWordsPerJamlet ($cacheSlotWordsPerJamlet) must be <= 12 to fit in 4-bit " +
     s"packet length field (WRITE_LINE_READ_LINE needs 3 + wordsPerJamlet words)")
+  require((1 << identWidth) > maxResponseTags,
+    s"identWidth ($identWidth) must be able to represent maxResponseTags ($maxResponseTags)")
 
   def log2JInL: Int = Integer.numberOfTrailingZeros(jInL)
   def log2JTotalCols: Int = Integer.numberOfTrailingZeros(jTotalCols)
@@ -333,6 +502,7 @@ case class ZamletParams(
   def log2KCols: Int = Integer.numberOfTrailingZeros(kCols)
   def log2JCols: Int = Integer.numberOfTrailingZeros(jCols)
   def log2JRows: Int = Integer.numberOfTrailingZeros(jRows)
+  def log2JInK: Int = Integer.numberOfTrailingZeros(jInK)
   def log2JTotal: Int = Integer.numberOfTrailingZeros(jTotal)
   def log2WordWidth: Int = Integer.numberOfTrailingZeros(wordWidth)
   def log2WordBytes: Int = Integer.numberOfTrailingZeros(wordBytes)
@@ -374,7 +544,7 @@ case class ZamletParams(
   def cacheSlotWidth: Int = log2Ceil(nCacheSlots)
   def kIndexWidth: Int = log2Ceil(kInL)
   def memStripeAddrWidth: Int = memAddrWidth - log2JInL
-
+  def maxConcurrentSyncs: Int = 1 << syncIdentWidth
   class JCoords extends Bundle {
     val x = UInt(xPosWidth.W)
     val y = UInt(yPosWidth.W)
@@ -384,6 +554,8 @@ case class ZamletParams(
   def xPos(): UInt = UInt(xPosWidth.W)
   def yPos(): UInt = UInt(yPosWidth.W)
   def ident(): UInt = UInt(identWidth.W)
+  def syncIdent(): UInt = UInt(syncIdentWidth.W)
+  def syncValue(): UInt = UInt(syncValueWidth.W)
   def cacheSlot(): UInt = UInt(cacheSlotWidth.W)
   def cacheLineAddr(): UInt = UInt(cacheLineAddrWidth.W)
   def word(): UInt = UInt(wordWidth.W)
@@ -398,6 +570,11 @@ object ZamletParams {
   implicit val rfSliceParamsDecoder: Decoder[RfSliceParams] = deriveDecoder[RfSliceParams]
   implicit val synchronizerParamsDecoder: Decoder[SynchronizerParams] = deriveDecoder[SynchronizerParams]
   implicit val networkNodeParamsDecoder: Decoder[NetworkNodeParams] = deriveDecoder[NetworkNodeParams]
+  implicit val packetMergeParamsDecoder: Decoder[PacketMergeParams] = deriveDecoder[PacketMergeParams]
+  implicit val messageTypePacketRouterParamsDecoder: Decoder[MessageTypePacketRouterParams] =
+    deriveDecoder[MessageTypePacketRouterParams]
+  implicit val reservationStationParamsDecoder: Decoder[ReservationStationParams] =
+    deriveDecoder[ReservationStationParams]
   implicit val issueUnitParamsDecoder: Decoder[IssueUnitParams] = deriveDecoder[IssueUnitParams]
   implicit val jteStateParamsDecoder: Decoder[JteStateParams] = deriveDecoder[JteStateParams]
   implicit val jteInitiatorParamsDecoder: Decoder[JteInitiatorParams] = deriveDecoder[JteInitiatorParams]
@@ -405,6 +582,12 @@ object ZamletParams {
   implicit val jteHandlerParamsDecoder: Decoder[JteHandlerParams] = deriveDecoder[JteHandlerParams]
   implicit val sramParamsDecoder: Decoder[SramParams] = deriveDecoder[SramParams]
   implicit val jceParamsDecoder: Decoder[JceParams] = deriveDecoder[JceParams]
+  implicit val kceCacheTableParamsDecoder: Decoder[KceCacheTableParams] = deriveDecoder[KceCacheTableParams]
+  implicit val kceScannerParamsDecoder: Decoder[KceScannerParams] = deriveDecoder[KceScannerParams]
+  implicit val tagTableParamsDecoder: Decoder[TagTableParams] = deriveDecoder[TagTableParams]
+  implicit val kcePendingTableParamsDecoder: Decoder[KcePendingTableParams] = deriveDecoder[KcePendingTableParams]
+  implicit val kceMemletInterfaceParamsDecoder: Decoder[KceMemletInterfaceParams] = deriveDecoder[KceMemletInterfaceParams]
+  implicit val kamletTlbParamsDecoder: Decoder[KamletTlbParams] = deriveDecoder[KamletTlbParams]
   implicit val zamletParamsDecoder: Decoder[ZamletParams] = deriveDecoder[ZamletParams]
 
   def fromFile(fileName: String): ZamletParams = {

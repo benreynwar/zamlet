@@ -45,6 +45,7 @@ class ResourceType(Enum):
     WITEM_TABLE = 'WITEM_TABLE'              # Witem slots in a kamlet
     CACHE_REQUEST_TABLE = 'CACHE_REQUEST_TABLE'  # Cache request slots in a kamlet
     INSTR_IDENT = 'INSTR_IDENT'              # Instruction identifiers in lamlet
+    SYNC_IDENT = 'SYNC_IDENT'                # Synchronization identifiers in lamlet
     INSTR_BUFFER_TOKENS = 'INSTR_BUFFER_TOKENS'  # Instruction buffer tokens per kamlet
     IDENT_QUERY_SLOT = 'IDENT_QUERY_SLOT'    # Lamlet IdentQuery slot (all in use)
 
@@ -511,13 +512,19 @@ class Monitor:
         if span.span_type == SpanType.KINSTR:
             instr_ident = span.details.get("instr_ident")
             if instr_ident is not None:
-                self._kinstr_by_ident.pop(instr_ident, None)
+                # Idents can be reused before old fire-and-forget spans complete.
+                # Only clear the lookup if it still points at this span.
+                if self._kinstr_by_ident.get(instr_ident) == span_id:
+                    self._kinstr_by_ident.pop(instr_ident, None)
         elif span.span_type == SpanType.KINSTR_EXEC:
             instr_ident = span.details.get("instr_ident")
             kamlet_x = span.details.get("kamlet_x")
             kamlet_y = span.details.get("kamlet_y")
             key = (instr_ident, kamlet_x, kamlet_y)
-            self._kinstr_exec_by_key.pop(key, None)
+            # Exec keys can also be reused while an old message child is still open.
+            # Only clear the lookup if it still points at this span.
+            if self._kinstr_exec_by_key.get(key) == span_id:
+                self._kinstr_exec_by_key.pop(key, None)
         elif span.span_type == SpanType.SYNC:
             sync_ident = span.details.get("sync_ident")
             for k, v in list(self._sync_by_key.items()):
@@ -613,17 +620,30 @@ class Monitor:
             return dispatch_events[0].cycle
         return None
 
-    def release_kinstr_ident(self, instr_ident: int) -> None:
-        """Mark a kinstr's ident as released from ident tracking.
-
-        The span stays open (it still has in-flight child spans like messages),
-        but the ident is no longer considered active for ident query purposes.
-        Used for fire-and-forget instructions where the kamlet frees the ident
-        before the span completes.
-        """
+    def release_kinstr_ident(self, instr_ident: int, kamlet_x: int, kamlet_y: int) -> None:
+        """Mark one kamlet's execution as done with a kinstr ident."""
         span_id = self._kinstr_by_ident.get(instr_ident)
-        if span_id is not None:
-            self.spans[span_id].details["ident_released"] = True
+        assert span_id is not None, f"No kinstr span for instr_ident {instr_ident}"
+        span = self.spans[span_id]
+
+        key = (instr_ident, kamlet_x, kamlet_y)
+        exec_span_id = self._kinstr_exec_by_key.get(key)
+        assert exec_span_id is not None, f"No kinstr_exec span for key {key}"
+        self.spans[exec_span_id].details["ident_released"] = True
+        self._kinstr_exec_by_key.pop(key, None)
+
+        if all(
+            self.spans[child.span_id].is_complete()
+            or self.spans[child.span_id].details.get("ident_released", False)
+            for child in span.children
+        ):
+            span.details["ident_released"] = True
+            logger.debug(
+                "%s: release_kinstr_ident parent released "
+                "instr_ident=%s span_id=%s exec_span_id=%s kamlet=(%s,%s)",
+                self.clock.cycle, instr_ident, span_id, exec_span_id,
+                kamlet_x, kamlet_y)
+            self._kinstr_by_ident.pop(instr_ident, None)
 
     def complete_kinstr(self, instr_ident: int) -> None:
         """Complete a kinstr span by its instr_ident."""
@@ -643,9 +663,15 @@ class Monitor:
             assert False, f"kinstr_exec key {key} already in lookup table"
         parent_span_id = self._kinstr_by_ident.get(instr_ident)
         if parent_span_id is None:
+            matching_spans = [
+                (span_id, span.span_type.value, span.completed_cycle, span.details)
+                for span_id, span in self.spans.items()
+                if span.details.get("instr_ident") == instr_ident
+            ]
             raise KeyError(
                 f"kinstr {instr_type} with instr_ident={instr_ident} not found in lookup table. "
-                f"Was it already completed? Active idents: {list(self._kinstr_by_ident.keys())}"
+                f"Was it already completed? Active idents: {list(self._kinstr_by_ident.keys())} "
+                f"matching_spans={matching_spans}"
             )
         span_id = self.create_span(
             span_type=SpanType.KINSTR_EXEC,
@@ -1197,8 +1223,24 @@ class Monitor:
     def create_sync_spans(self, sync_ident: int, parent_span_id: int, params,
                           name: str | None = None) -> None:
         """Create global SYNC span and SYNC_LOCAL children for all synchronizers."""
-        assert (sync_ident, name) not in self._sync_by_key, \
-            f"Sync spans already exist for ({sync_ident}, {name})"
+        if (sync_ident, name) in self._sync_by_key:
+            old_span_id = self._sync_by_key[(sync_ident, name)]
+            old_span = self.spans.get(old_span_id)
+            new_parent = self.spans.get(parent_span_id)
+            old_tree = (
+                self.format_span_tree(old_span_id)
+                if old_span is not None else "<old sync span missing>")
+            new_tree = (
+                self.format_span_tree(parent_span_id)
+                if new_parent is not None else "<new parent span missing>")
+            assert False, (
+                f"Sync spans already exist for ({sync_ident}, {name}); "
+                f"old_span_id={old_span_id} "
+                f"old_completed={None if old_span is None else old_span.completed_cycle} "
+                f"old_children_finalized={None if old_span is None else old_span.children_finalized} "
+                f"new_parent_span_id={parent_span_id}\n\n"
+                f"Old sync span:\n{old_tree}\n\n"
+                f"New parent span:\n{new_tree}")
         global_span_id = self.record_sync_created(sync_ident, parent_span_id, name)
         for ky in range(params.k_rows):
             for kx in range(params.k_cols):
@@ -1719,7 +1761,8 @@ class Monitor:
 
     def _is_allowed_incomplete(self, span: Span) -> bool:
         allowed_incomplete = (SpanType.FLOW_CONTROL, SpanType.SETUP,
-                              SpanType.SYNC_LOCAL)
+                              SpanType.SYNC_LOCAL,
+                              SpanType.RESOURCE_EXHAUSTED)
         if span.span_type in allowed_incomplete:
             return True
 
