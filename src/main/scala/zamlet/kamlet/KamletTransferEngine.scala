@@ -141,6 +141,18 @@ class KamletTransferEngineIO(params: ZamletParams) extends Bundle {
   // to become available, replays the local instruction, then releases it.
   val kceReleaseSlot = Valid(new KceSlotRelease(params))
   val kceSlotIsAvailable = Flipped(Valid(params.cacheSlot()))
+  // Status responses are guaranteed to arrive exactly one cycle after the
+  // corresponding request, with no buffering on this path.
+  val kceSlotStatusReq = Valid(params.cacheSlot())
+  val kceSlotStatusResp = Flipped(Valid(Bool()))
+  // Instr-start status is a fixed-latency Valid path. KCE must consume the
+  // response without backpressure. If a query response says an ident has not
+  // started, the corresponding start notification is guaranteed not to arrive
+  // at KCE until after KCE has had a cycle to store the request as
+  // WaitingForInstrIdent.
+  val kceInstrStartedReq = Flipped(Valid(params.ident()))
+  val kceInstrStartedResp = Valid(Bool())
+  val kceInstrStartedNotify = Valid(params.ident())
 
   val errors = Output(new KteErrors)
 }
@@ -226,6 +238,22 @@ class KamletTransferEngine(params: ZamletParams) extends Module {
   io.syncLocalEvent.bits.includeActiveMask := false.B
   io.syncLocalEvent.bits.mustDrainValid := false.B
   io.syncLocalEvent.bits.mustDrainSyncIdent := 0.U
+  io.kceSlotStatusReq.valid := false.B
+  io.kceSlotStatusReq.bits := DontCare
+
+  val instrQuery0KteMatches = VecInit(kteEntries.map { entry =>
+    val base = entry.kinstr.kinstr.asTypeOf(new KInstrBase(params))
+    entry.state =/= KteState.Free && base.instrIdent === io.kceInstrStartedReq.bits
+  })
+  val instrQuery0CacheWaitMatches = VecInit(cacheWaitEntries.map { entry =>
+    val base = entry.bits.kinstr.kinstr.asTypeOf(new KInstrBase(params))
+    entry.valid && base.instrIdent === io.kceInstrStartedReq.bits
+  })
+  val instrQuery1Valid = RegNext(io.kceInstrStartedReq.valid, false.B)
+  val instrQuery1Started =
+    RegNext(instrQuery0KteMatches.asUInt.orR || instrQuery0CacheWaitMatches.asUInt.orR, false.B)
+  io.kceInstrStartedResp.valid := instrQuery1Valid
+  io.kceInstrStartedResp.bits := instrQuery1Started
 
   // ============================================================
   // Issue admission
@@ -271,9 +299,30 @@ class KamletTransferEngine(params: ZamletParams) extends Module {
     cacheWaitEntriesNext(issue0CacheWaitFreeIndex).bits.kinstr := rsIssue.bits.kinstr
     cacheWaitEntriesNext(issue0CacheWaitFreeIndex).bits.slot := rsIssue.bits.cacheSlot
     cacheWaitEntriesNext(issue0CacheWaitFreeIndex).bits.slotAvailable := false.B
+    io.kceSlotStatusReq.valid := true.B
+    io.kceSlotStatusReq.bits := rsIssue.bits.cacheSlot
   }
   errorsNext.unsupportedIssueOpcode :=
     rsIssue.fire && !issue0IsSupported
+
+  val issue0InstrStartedNotifyValid = rsIssue.fire && issue0IsSupported
+  val issue0InstrStartedNotifyIdent = issue0Base.instrIdent
+  val instrNotify0Valid = RegNext(issue0InstrStartedNotifyValid, false.B)
+  val instrNotify0Ident = RegNext(issue0InstrStartedNotifyIdent)
+  val instrNotify1Valid = RegNext(instrNotify0Valid, false.B)
+  val instrNotify1Ident = RegNext(instrNotify0Ident)
+  // Delay the start notification relative to the status response path so KCE
+  // cannot observe "not started" and then miss the start pulse before the
+  // pending entry is visible to the wake logic.
+  io.kceInstrStartedNotify.valid := instrNotify1Valid
+  io.kceInstrStartedNotify.bits := instrNotify1Ident
+
+  val issue1StatusIndex = RegNext(issue0CacheWaitFreeIndex)
+  when (io.kceSlotStatusResp.valid) {
+    cacheWaitEntriesNext(issue1StatusIndex).bits.slotAvailable :=
+      cacheWaitEntries(issue1StatusIndex).bits.slotAvailable ||
+        io.kceSlotStatusResp.bits
+  }
 
   when (rsIssue.fire && issue0IsJteTransfer && issue0IsSupportedJteTransfer) {
     kteEntriesNext(issue0KteFreeIndex).state := KteState.WaitingForJamlets

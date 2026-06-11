@@ -12,8 +12,8 @@ These are project style notes for Chisel/RTL work.
 - Name real pipeline stages with the flow prefix and stage number:
   `req0`, `req1`, `req2`, `alloc0`, `alloc1`, etc.
 - Use names like `req0Out` and `req1In` for the two sides of a stage buffer.
-- If a flow is not one pipeline, use a different prefix instead of continuing
-  stage numbers.
+- Do not continue stage numbering across independent pipelines. Give each
+  independent pipeline its own prefix.
 - For stream split/join logic, it is okay for one output valid to depend on the
   other output ready when both outputs must fire together.
 

@@ -208,6 +208,10 @@ async def cache_wait_replays_after_slot_available(dut: HierarchyObject) -> None:
         dut,
         j_in_k=params.j_in_k,
         te_depth=params.witem_table_depth,
+        n_cache_slots=params.n_cache_slots,
+        slot_status_available_probability=0.0,
+        requested_slot_available_probability=0.0,
+        unrequested_slot_available_probability=0.0,
     )
     driver.start(rng)
     cocotb.start_soon(Clock(dut.clock, 1, "ns").start())
@@ -245,6 +249,10 @@ async def cache_wait_replays_immediately_when_slot_present(dut: HierarchyObject)
         dut,
         j_in_k=params.j_in_k,
         te_depth=params.witem_table_depth,
+        n_cache_slots=params.n_cache_slots,
+        slot_status_available_probability=1.0,
+        requested_slot_available_probability=0.0,
+        unrequested_slot_available_probability=0.0,
     )
     driver.start(rng)
     cocotb.start_soon(Clock(dut.clock, 1, "ns").start())
@@ -258,7 +266,6 @@ async def cache_wait_replays_immediately_when_slot_present(dut: HierarchyObject)
         will_write=False,
     )
     await submitted
-    driver.pulse_slot_available(cache_slot)
     replay = await driver.wait_for_local_replay(timeout_cycles=100)
     assert replay["kinstr"] == kinstr
     assert replay["cacheSlot"] == cache_slot

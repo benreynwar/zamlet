@@ -419,8 +419,12 @@ class KcePendingTableParams:
     slotIsAvailableBuffer: bool = True
     req01FB: bool = True
     req01BB: bool = True
-    req12FB: bool = True
-    req12BB: bool = True
+    req23FB: bool = True
+    req23BB: bool = True
+    req34FB: bool = True
+    req34BB: bool = True
+    req45FB: bool = True
+    req45BB: bool = True
     alloc01FB: bool = True
     alloc01BB: bool = True
     alloc12FB: bool = True

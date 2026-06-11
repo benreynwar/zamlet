@@ -139,6 +139,10 @@ class TagTableIO[R <: Data, F <: Data, P <: Data](
   val writebackReq = Decoupled(new TagWritebackReq(tagWidth, slotWidth, payloadType))
   val writebackComplete = Flipped(Valid(UInt(slotWidth.W)))
 
+  // Registered read of current lifecycle state by slot.
+  val slotStatusReq = Flipped(Valid(UInt(slotWidth.W)))
+  val slotStatusResp = Valid(TagState())
+
   // Registered transition errors from the table.
   val errors = Output(new TagTableErrors)
 }
@@ -237,6 +241,9 @@ class TagTable[R <: Data, F <: Data, P <: Data](
     fillMeta(slot) := slotMeta(slot).fillMeta
     payload(slot) := slotMeta(slot).payload
   }
+
+  io.slotStatusResp.valid := RegNext(io.slotStatusReq.valid, false.B)
+  io.slotStatusResp.bits := RegNext(state(io.slotStatusReq.bits))
 
   // ============================================================
   // Free Slot FIFO

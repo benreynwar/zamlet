@@ -475,7 +475,7 @@ class PackedLoadStoreSimple(KInstr):
             instr_ident=self.instr_ident,
             f1=self.rf_addr,
             f2=self.mask_reg,
-            f5=self.ew,
+            f5=int(self.ew) << ElementWidthCode.width(),
             f6=f6,
             f7=f7,
             misc=misc,
@@ -588,7 +588,7 @@ class PackedBinaryOp(KInstr):
             f2=self.mask_reg,
             f3=self.src_a_reg,
             f4=self.src_b_reg,
-            f5=self.ew,
+            f5=int(self.ew) << ElementWidthCode.width(),
             f6=f6,
             misc=misc,
         )

@@ -171,17 +171,31 @@ class KteDriver:
         dut: HierarchyObject,
         j_in_k: int = 2,
         te_depth: int = 8,
+        n_cache_slots: int | None = None,
         sync_result_probability: float = 0.5,
+        slot_status_available_probability: float = 0.5,
+        requested_slot_available_probability: float = 0.1,
+        unrequested_slot_available_probability: float = 0.02,
     ):
         self.dut = dut
         self.j_in_k = j_in_k
         self.te_depth = te_depth
+        self.n_cache_slots = (
+            n_cache_slots
+            if n_cache_slots is not None
+            else 1 << len(dut.io_kceSlotIsAvailable_bits)
+        )
         self.sync_result_probability = sync_result_probability
+        self.slot_status_available_probability = slot_status_available_probability
+        self.requested_slot_available_probability = requested_slot_available_probability
+        self.unrequested_slot_available_probability = unrequested_slot_available_probability
         self.issue = ValidReadySource(dut, dut.clock, "io_rsIssue")
         self.sync_results = deque()
         self.local_replays = deque()
         self.cache_slot_releases = deque()
         self._slot_available_queue = deque()
+        self.slot_status_reqs = deque()
+        self._unavailable_requested_slots: set[int] = set()
         self.jamlets = [
             KteJamletModel(dut, j, te_depth=te_depth)
             for j in range(j_in_k)
@@ -195,7 +209,8 @@ class KteDriver:
         cocotb.start_soon(self._drive_sync_result(make_seed(rng)))
         cocotb.start_soon(self._monitor_local_replay())
         cocotb.start_soon(self._monitor_cache_slot_release())
-        cocotb.start_soon(self._drive_slot_available())
+        cocotb.start_soon(self._drive_slot_status_resp(make_seed(rng)))
+        cocotb.start_soon(self._drive_slot_available(make_seed(rng)))
 
     def append_issue(self, issue: dict[str, int]) -> None:
         return self.issue.append(issue)
@@ -237,8 +252,7 @@ class KteDriver:
             "kinstr_param0": base_addr,
             "kinstr_param1": start_index,
             "kinstr_param2": end_index,
-            "cacheLineAddr": 0,
-            "willWrite": int(is_store),
+            "cacheSlot": 0,
         })
 
     def append_cache_wait_local(
@@ -260,7 +274,6 @@ class KteDriver:
             "kinstr_param1": 0,
             "kinstr_param2": 0,
             "cacheSlot": cache_slot,
-            "willWrite": int(will_write),
         })
 
     def pulse_slot_available(self, slot: int) -> None:
@@ -275,6 +288,8 @@ class KteDriver:
         self.dut.io_syncResult_valid.value = 0
 
         self.dut.io_kceSlotIsAvailable_valid.value = 0
+        self.dut.io_kceSlotStatusResp_valid.value = 0
+        self.dut.io_kceInstrStartedReq_valid.value = 0
 
         for j in range(self.j_in_k):
             for te_index in range(self.te_depth):
@@ -395,13 +410,52 @@ class KteDriver:
                 self.cache_slot_releases.append(
                     int(self.dut.io_kceReleaseSlot_bits_slot.value))
 
-    async def _drive_slot_available(self) -> None:
+    async def _drive_slot_status_resp(self, seed: int) -> None:
+        rng = Random(seed)
+        resp_queue = deque()
+        self.dut.io_kceSlotStatusResp_valid.value = 0
+
+        while True:
+            if resp_queue:
+                pending_available = resp_queue.popleft()
+                self.dut.io_kceSlotStatusResp_valid.value = 1
+                self.dut.io_kceSlotStatusResp_bits.value = int(pending_available)
+            else:
+                self.dut.io_kceSlotStatusResp_valid.value = 0
+
+            await ReadOnly()
+            if int(self.dut.io_kceSlotStatusReq_valid.value):
+                slot = int(self.dut.io_kceSlotStatusReq_bits.value)
+                available = rng.random() < self.slot_status_available_probability
+                self.slot_status_reqs.append((slot, available))
+                if available:
+                    self._unavailable_requested_slots.discard(slot)
+                else:
+                    self._unavailable_requested_slots.add(slot)
+                resp_queue.append(available)
+
+            await RisingEdge(self.dut.clock)
+
+    async def _drive_slot_available(self, seed: int) -> None:
+        rng = Random(seed)
         self.dut.io_kceSlotIsAvailable_valid.value = 0
         while True:
             if self._slot_available_queue:
-                self.dut.io_kceSlotIsAvailable_valid.value = 1
-                self.dut.io_kceSlotIsAvailable_bits.value = (
-                    self._slot_available_queue.popleft())
+                slot = self._slot_available_queue.popleft()
+            elif (
+                self._unavailable_requested_slots
+                and rng.random() < self.requested_slot_available_probability
+            ):
+                slot = rng.choice(sorted(self._unavailable_requested_slots))
+                self._unavailable_requested_slots.remove(slot)
+            elif rng.random() < self.unrequested_slot_available_probability:
+                slot = rng.randrange(self.n_cache_slots)
             else:
+                slot = None
+
+            if slot is None:
                 self.dut.io_kceSlotIsAvailable_valid.value = 0
+            else:
+                self.dut.io_kceSlotIsAvailable_valid.value = 1
+                self.dut.io_kceSlotIsAvailable_bits.value = slot
             await RisingEdge(self.dut.clock)

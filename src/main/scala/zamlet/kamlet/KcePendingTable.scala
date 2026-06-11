@@ -15,6 +15,15 @@ class KcePendingTableIO(params: ZamletParams) extends Bundle {
   val replay = Vec(params.jInK, Decoupled(new JteHandlerReplay(params)))
   val cacheLineRelease = Vec(params.jInK, Flipped(Valid(new KceSlotRelease(params))))
 
+  // Instr-start status is a fixed-latency Valid path. KCE must consume the
+  // response without backpressure. If a query response says an ident has not
+  // started, the corresponding start notification is guaranteed not to arrive
+  // at KCE until after KCE has had a cycle to store the request as
+  // WaitingForInstrIdent.
+  val instrStartedReq = Valid(params.ident())
+  val instrStartedResp = Flipped(Valid(Bool()))
+  val instrStartedNotify = Flipped(Valid(params.ident()))
+
   // Metadata table access. JTE-originated releases are aggregated into the
   // single releaseSlot event.
   val claimSlotReq = Decoupled(new KceClaimSlotReq(params))
@@ -29,12 +38,36 @@ class KcePendingTableIO(params: ZamletParams) extends Bundle {
 class KcePendingReq(params: ZamletParams) extends Bundle {
   val jInK = UInt((params.log2JCols + params.log2JRows).W)
   val req = new CacheLineRequest(params)
-  // True once req1 has reserved capacity for this request to wait in the
-  // pending-entry table if the cache table reports a fetching slot.
+}
+
+object KcePendingEntryState extends ChiselEnum {
+  val WaitingForInstrIdent, WaitingForSlotAvailable = Value
+}
+
+// Work item carried by the req* pipeline after req0. The final req stage uses
+// these facts to either emit a direct cacheLineResp or create one new pending
+// entry.
+class KcePendingReqWork(params: ZamletParams) extends Bundle {
+  val jInK = UInt((params.log2JCols + params.log2JRows).W)
+  val req = new CacheLineRequest(params)
+
+  // True once KTE has accepted ownership of this instruction ident.
+  val instrIdentAvailable = Bool()
+
+  // True once req3 has reserved pending-table capacity by decrementing the
+  // free-slot counter. If the final req stage does not create an entry, it
+  // releases this reservation by incrementing the counter.
   val reservedPendingSlot = Bool()
+
+  // Cache claim result facts. slotClaimed means slot is meaningful;
+  // slotAvailable means replay/SRAM access can use it immediately.
+  val slotClaimed = Bool()
+  val slotAvailable = Bool()
+  val slot = params.cacheSlot()
 }
 
 class KcePendingEntry(params: ZamletParams) extends Bundle {
+  val state = KcePendingEntryState()
   val slot = params.cacheSlot()
   val pendingReq = new KcePendingReq(params)
   val slotAvailable = Bool()
@@ -43,11 +76,12 @@ class KcePendingEntry(params: ZamletParams) extends Bundle {
 
 class KcePendingTableErrors extends Bundle {
   val slotAvailableNeedsAlloc = Bool()
-  val pendingSlotsInUseOverflow = Bool()
-  val pendingSlotsInUseUnderflow = Bool()
+  val pendingSlotsFreeOverflow = Bool()
+  val pendingSlotsFreeUnderflow = Bool()
   val freeEntryOverwrite = Bool()
   val allocRespReplayConflict = Bool()
   val wakeReplayConflict = Bool()
+  val instrStartedRespOverflow = Bool()
 }
 
 class KcePendingTable(params: ZamletParams) extends Module {
@@ -63,10 +97,9 @@ class KcePendingTable(params: ZamletParams) extends Module {
     DoubleBuffer(io.cacheLineReq(jInK), ptp.cacheLineReqFB, ptp.cacheLineReqBB)
   }
 
-  val cacheLineResp = (0 until params.jInK).map { jInK =>
-    val resp = Wire(Decoupled(new CacheLineResponse(params)))
-    io.cacheLineResp(jInK) <> DoubleBuffer(resp, ptp.cacheLineRespFB, ptp.cacheLineRespBB)
-    resp
+  val cacheLineResp = Wire(Vec(params.jInK, Decoupled(new CacheLineResponse(params))))
+  for (jInK <- 0 until params.jInK) {
+    io.cacheLineResp(jInK) <> DoubleBuffer(cacheLineResp(jInK), ptp.cacheLineRespFB, ptp.cacheLineRespBB)
   }
 
   val replay = (0 until params.jInK).map { jInK =>
@@ -105,6 +138,8 @@ class KcePendingTable(params: ZamletParams) extends Module {
   allocSlotReq.valid := false.B
   allocSlotReq.bits := DontCare
   allocSlotResp.ready := false.B
+  io.instrStartedReq.valid := false.B
+  io.instrStartedReq.bits := DontCare
 
   val errors = Wire(new KcePendingTableErrors)
   errors := 0.U.asTypeOf(errors)
@@ -122,29 +157,29 @@ class KcePendingTable(params: ZamletParams) extends Module {
   entriesNext := entries
 
   private val entryIndexWidth = log2Ceil(params.kcePendingTableDepth)
-  val freeEntryUpdate = Wire(Bool())
-  val freeEntryNext = Wire(UInt(entryIndexWidth.W))
-  val freeEntry = RegEnable(freeEntryNext, 0.U, freeEntryUpdate)
-  freeEntryUpdate := false.B
-  freeEntryNext := freeEntry
+  val freeEntryVec = VecInit((0 until params.kcePendingTableDepth).map { entry =>
+    !entries(entry).valid
+  })
+  val freeEntry = PriorityEncoder(freeEntryVec)
 
-  val pendingSlotsInUseWidth = log2Ceil(params.kcePendingTableDepth + 1)
-  val pendingSlotsInUseNext = Wire(UInt(pendingSlotsInUseWidth.W))
-  val pendingSlotsInUse = RegEnable(pendingSlotsInUseNext, 0.U, true.B)
-  pendingSlotsInUseNext := pendingSlotsInUse
-  val hasFreePendingSlot = pendingSlotsInUse < params.kcePendingTableDepth.U
-  val pendingSlotsInUseIncr = Wire(Bool())
-  val pendingSlotsInUseDecr = Wire(Bool())
+  val pendingSlotsFreeWidth = log2Ceil(params.kcePendingTableDepth + 1)
+  val pendingSlotsFreeNext = Wire(UInt(pendingSlotsFreeWidth.W))
+  val pendingSlotsFree = RegEnable(pendingSlotsFreeNext, params.kcePendingTableDepth.U, true.B)
+  pendingSlotsFreeNext := pendingSlotsFree
+  val pendingSlotReserveCount = Wire(UInt(pendingSlotsFreeWidth.W))
+  val pendingSlotReleaseReqCount = Wire(UInt(pendingSlotsFreeWidth.W))
+  val pendingSlotReleaseReplayCount = Wire(UInt(pendingSlotsFreeWidth.W))
   val replayRespFire = Wire(Bool())
-  pendingSlotsInUseIncr := false.B
-  pendingSlotsInUseDecr := false.B
+  pendingSlotReserveCount := 0.U
+  pendingSlotReleaseReqCount := 0.U
+  pendingSlotReleaseReplayCount := 0.U
   replayRespFire := false.B
 
   // ============================================================
   // req0 -> req1 request arbitration
   // ============================================================
 
-  val req0Out = Wire(Decoupled(new KcePendingReq(params)))
+  val req0Out = Wire(Decoupled(new KcePendingReqWork(params)))
   val req1In = DoubleBuffer(req0Out, ptp.req01FB, ptp.req01BB)
 
   val req0BaseNext = Wire(UInt(jInKWidth.W))
@@ -178,88 +213,162 @@ class KcePendingTable(params: ZamletParams) extends Module {
   req0Out.valid := req0Valid.asUInt.orR
   req0Out.bits.jInK := req0Selected
   req0Out.bits.req := req0SelectedBits
+  req0Out.bits.instrIdentAvailable := false.B
   req0Out.bits.reservedPendingSlot := false.B
+  req0Out.bits.slotClaimed := false.B
+  req0Out.bits.slotAvailable := false.B
+  req0Out.bits.slot := 0.U
 
   for (jInK <- 0 until params.jInK) {
     cacheLineReq(jInK).ready := req0Out.ready && req0Selected === jInK.U
   }
 
-  // req1 sends the cache-table claim. req1Out carries the original request
-  // forward only when that claim request is accepted.
-  val req1Out = Wire(Decoupled(new KcePendingReq(params)))
-  val req2In = DoubleBuffer(req1Out, ptp.req12FB, ptp.req12BB)
+  // req1 sends the fixed-latency instruction-start query to KTE. The original
+  // request advances with the query so req2 can join it with the response.
+  val req1Out = Wire(Decoupled(new KcePendingReqWork(params)))
+  // Forward-only: req2 metadata must advance in lockstep with the fixed-latency
+  // instrStartedResp. A backward/skid entry would decouple metadata from the
+  // response cycle.
+  val req2In = DoubleBuffer(req1Out, true, false)
 
-  claimSlotReq.valid := req1In.valid && req1Out.ready
-  claimSlotReq.bits.cacheLineAddr := req1In.bits.req.address
-  claimSlotReq.bits.willWrite := req1In.bits.req.payload.msgType === MessageType.StoreWordReq.asUInt
-  claimSlotReq.bits.claimIfFetching := hasFreePendingSlot
-  req1Out.valid := req1In.valid && claimSlotReq.ready
+  io.instrStartedReq.valid := req1In.valid && req1Out.ready
+  io.instrStartedReq.bits := req1In.bits.req.payload.ident
+  req1Out.valid := req1In.valid
   req1Out.bits := req1In.bits
-  req1Out.bits.reservedPendingSlot := hasFreePendingSlot
-  req1In.ready := claimSlotReq.ready && req1Out.ready
+  req1In.ready := req1Out.ready
 
-  // req2 joins the original request with the cache-table claim response and
-  // returns the immediate response to the originating JTE lane.
-  val req2RespReady = VecInit((0 until params.jInK).map { jInK =>
-    cacheLineResp(jInK).ready
-  })(req2In.bits.jInK)
-  val req2Present =
+  // req2 joins the original request with the fixed-latency KTE response.
+  val req2Out = Wire(Decoupled(new KcePendingReqWork(params)))
+  val req3In = DoubleBuffer(req2Out, ptp.req23FB, ptp.req23BB)
+  val instrStartedRespToBuffer = Wire(Decoupled(Bool()))
+  instrStartedRespToBuffer.valid := io.instrStartedResp.valid
+  instrStartedRespToBuffer.bits := io.instrStartedResp.bits
+  val instrStartedRespBuffered = DoubleBuffer(instrStartedRespToBuffer, false, true)
+  // KTE does not see ready on this fixed-latency Valid response. The local
+  // ready only reports whether the backward buffer can absorb this response.
+  errors.instrStartedRespOverflow := io.instrStartedResp.valid && !instrStartedRespToBuffer.ready
+
+  req2Out.valid := req2In.valid && instrStartedRespBuffered.valid
+  req2Out.bits := req2In.bits
+  req2Out.bits.instrIdentAvailable := instrStartedRespBuffered.bits
+  req2In.ready := instrStartedRespBuffered.valid && req2Out.ready
+  instrStartedRespBuffered.ready := req2In.valid && req2Out.ready
+
+  // ============================================================
+  // req3 cache claim request
+  // ============================================================
+
+  // req3 reserves pending-table capacity and, when the instruction is ready,
+  // sends the cache claim. Requests with a missing instr ident bypass the claim
+  // and are committed by req5 as WaitingForInstrIdent.
+  val req3Out = Wire(Decoupled(new KcePendingReqWork(params)))
+  val req3CanReserve = pendingSlotsFree =/= 0.U
+  val req3SendsClaim = req3In.bits.instrIdentAvailable
+  val req3CanAdvance = !req3SendsClaim || claimSlotReq.ready
+
+  claimSlotReq.valid := req3In.valid && req3SendsClaim && req3Out.ready
+  claimSlotReq.bits.cacheLineAddr := req3In.bits.req.address
+  claimSlotReq.bits.willWrite := req3In.bits.req.payload.msgType === MessageType.StoreWordReq.asUInt
+  claimSlotReq.bits.claimIfFetching := req3CanReserve
+
+  req3Out.valid := req3In.valid && req3CanAdvance
+  req3Out.bits := req3In.bits
+  req3Out.bits.reservedPendingSlot := req3CanReserve
+  req3In.ready := req3Out.ready && req3CanAdvance
+  pendingSlotReserveCount := Mux(req3Out.fire && req3CanReserve, 1.U, 0.U)
+
+  // ============================================================
+  // req4 cache claim response
+  // ============================================================
+
+  val req4In = DoubleBuffer(req3Out, ptp.req34FB, ptp.req34BB)
+  val req4Out = Wire(Decoupled(new KcePendingReqWork(params)))
+  val req4NeedsClaimResp = req4In.bits.instrIdentAvailable
+  val req4CanAdvance = !req4NeedsClaimResp || claimSlotResp.valid
+  val req4Present =
     claimSlotResp.bits.didClaim &&
-    (claimSlotResp.bits.state === KceCacheSlotState.PresentClean ||
-      claimSlotResp.bits.state === KceCacheSlotState.PresentDirty)
-  val req2Fetching =
+      (claimSlotResp.bits.state === KceCacheSlotState.PresentClean ||
+        claimSlotResp.bits.state === KceCacheSlotState.PresentDirty)
+  val req4Fetching =
     claimSlotResp.bits.didClaim &&
-    (claimSlotResp.bits.state === KceCacheSlotState.Fetching ||
-      claimSlotResp.bits.state === KceCacheSlotState.FetchingWillWrite)
-  val req2NeedsAlloc =
-    !claimSlotResp.bits.hasSlot && req2In.bits.reservedPendingSlot
-  val req2StoredInPendingTable =
-    (req2Fetching || req2NeedsAlloc) && req2In.bits.reservedPendingSlot
-  val req2StoreEntry = req2StoredInPendingTable
+      (claimSlotResp.bits.state === KceCacheSlotState.Fetching ||
+        claimSlotResp.bits.state === KceCacheSlotState.FetchingWillWrite)
+
+  req4Out.valid := req4In.valid && req4CanAdvance
+  req4Out.bits := req4In.bits
+  req4Out.bits.slot := claimSlotResp.bits.slot
+  req4Out.bits.slotClaimed := req4NeedsClaimResp && (req4Present || req4Fetching)
+  req4Out.bits.slotAvailable := req4NeedsClaimResp && req4Present
+  req4In.ready := req4Out.ready && req4CanAdvance
+  claimSlotResp.ready := req4In.valid && req4NeedsClaimResp && req4Out.ready
+
+  // ============================================================
+  // req5 commit
+  // ============================================================
+
+  val req5In = DoubleBuffer(req4Out, ptp.req45FB, ptp.req45BB)
+  val req5NeedsInstrWait = !req5In.bits.instrIdentAvailable
+  val req5NeedsSlotWait =
+    req5In.bits.instrIdentAvailable && !req5In.bits.slotAvailable
+  val req5NeedsStore =
+    req5In.bits.reservedPendingSlot &&
+      (req5NeedsInstrWait || req5NeedsSlotWait)
+  val req5ReleasesReservation =
+    req5In.fire &&
+      req5In.bits.reservedPendingSlot &&
+      !(req5NeedsInstrWait || req5NeedsSlotWait)
+  val req5RespState = MuxCase(CacheLineState.Dropped, Seq(
+    (req5In.bits.instrIdentAvailable && req5In.bits.slotAvailable) -> CacheLineState.Ready,
+    (req5In.bits.reservedPendingSlot && (req5NeedsInstrWait || req5NeedsSlotWait)) ->
+      CacheLineState.StoredInPendingTable))
 
   for (jInK <- 0 until params.jInK) {
-    cacheLineResp(jInK).valid :=
-      req2In.valid && claimSlotResp.valid && req2In.bits.jInK === jInK.U
-    cacheLineResp(jInK).bits.slot := claimSlotResp.bits.slot
-    cacheLineResp(jInK).bits.state := MuxCase(CacheLineState.Dropped, Seq(
-      req2Present -> CacheLineState.Ready,
-      req2StoredInPendingTable -> CacheLineState.StoredInPendingTable))
+    cacheLineResp(jInK).valid := req5In.valid && req5In.bits.jInK === jInK.U
+    cacheLineResp(jInK).bits.slot := req5In.bits.slot
+    cacheLineResp(jInK).bits.state := req5RespState
   }
-  req2In.ready := claimSlotResp.valid && req2RespReady
-  claimSlotResp.ready := req2In.valid && req2RespReady
+  req5In.ready := cacheLineResp(req5In.bits.jInK).ready
 
-  val req2RespFire = req2In.valid && claimSlotResp.valid && req2RespReady
-  errors.freeEntryOverwrite := req2RespFire && req2StoreEntry && entries(freeEntry).valid
-  when (req2RespFire && req2StoreEntry) {
+  errors.freeEntryOverwrite := req5In.fire && req5NeedsStore && entries(freeEntry).valid
+  when (req5In.fire && req5NeedsStore) {
     entriesNext(freeEntry).valid := true.B
-    entriesNext(freeEntry).bits.slot := claimSlotResp.bits.slot
-    entriesNext(freeEntry).bits.pendingReq := req2In.bits
-    entriesNext(freeEntry).bits.slotAvailable := false.B
-    entriesNext(freeEntry).bits.needsAlloc := req2NeedsAlloc
+    entriesNext(freeEntry).bits.state := Mux(
+      req5NeedsInstrWait,
+      KcePendingEntryState.WaitingForInstrIdent,
+      KcePendingEntryState.WaitingForSlotAvailable)
+    entriesNext(freeEntry).bits.slot := req5In.bits.slot
+    entriesNext(freeEntry).bits.pendingReq.jInK := req5In.bits.jInK
+    entriesNext(freeEntry).bits.pendingReq.req := req5In.bits.req
+    entriesNext(freeEntry).bits.slotAvailable := req5In.bits.slotAvailable
+    entriesNext(freeEntry).bits.needsAlloc := req5NeedsSlotWait && !req5In.bits.slotClaimed
   }
 
-  val freeEntryCandidates = Wire(Vec(params.kcePendingTableDepth, Bool()))
-  for (entry <- 0 until params.kcePendingTableDepth) {
-    freeEntryCandidates(entry) := !entries(entry).valid && freeEntry =/= entry.U
-  }
-  when (req2RespFire && req2StoreEntry && freeEntryCandidates.asUInt.orR) {
-    freeEntryUpdate := true.B
-    freeEntryNext := PriorityEncoder(freeEntryCandidates)
-  }
+  pendingSlotReleaseReqCount := Mux(req5ReleasesReservation, 1.U, 0.U)
+  pendingSlotReleaseReplayCount := Mux(replayRespFire, 1.U, 0.U)
+  val pendingSlotReleaseCount = pendingSlotReleaseReqCount + pendingSlotReleaseReplayCount
+  errors.pendingSlotsFreeOverflow :=
+    pendingSlotsFree +& pendingSlotReleaseCount > params.kcePendingTableDepth.U +& pendingSlotReserveCount
+  errors.pendingSlotsFreeUnderflow :=
+    pendingSlotsFree +& pendingSlotReleaseCount < pendingSlotReserveCount
 
-  pendingSlotsInUseIncr := req1Out.fire
-  pendingSlotsInUseDecr := (req2RespFire && !req2StoredInPendingTable) || replayRespFire
-  errors.pendingSlotsInUseOverflow :=
-    pendingSlotsInUseIncr && !pendingSlotsInUseDecr &&
-      pendingSlotsInUse === params.kcePendingTableDepth.U
-  errors.pendingSlotsInUseUnderflow :=
-    !pendingSlotsInUseIncr && pendingSlotsInUseDecr &&
-      pendingSlotsInUse === 0.U
+  pendingSlotsFreeNext := pendingSlotsFree - pendingSlotReserveCount + pendingSlotReleaseCount
 
-  when (pendingSlotsInUseIncr && !pendingSlotsInUseDecr) {
-    pendingSlotsInUseNext := pendingSlotsInUse + 1.U
-  } .elsewhen (!pendingSlotsInUseIncr && pendingSlotsInUseDecr) {
-    pendingSlotsInUseNext := pendingSlotsInUse - 1.U
+  // ============================================================
+  // identWake pending entries
+  // ============================================================
+
+  when (io.instrStartedNotify.valid) {
+    for (entry <- 0 until params.kcePendingTableDepth) {
+      when (
+        entries(entry).valid &&
+          entries(entry).bits.state === KcePendingEntryState.WaitingForInstrIdent &&
+          entries(entry).bits.pendingReq.req.payload.ident === io.instrStartedNotify.bits
+      ) {
+        entriesNext(entry).bits.state := KcePendingEntryState.WaitingForSlotAvailable
+        entriesNext(entry).bits.needsAlloc := true.B
+        entriesNext(entry).bits.slotAvailable := false.B
+      }
+    }
   }
 
   // ============================================================
@@ -268,6 +377,7 @@ class KcePendingTable(params: ZamletParams) extends Module {
 
   val alloc0Matches = VecInit((0 until params.kcePendingTableDepth).map { entry =>
     entries(entry).valid &&
+      entries(entry).bits.state === KcePendingEntryState.WaitingForSlotAvailable &&
       entries(entry).bits.needsAlloc
   })
   val alloc0HasMatch = alloc0Matches.asUInt.orR
@@ -306,6 +416,7 @@ class KcePendingTable(params: ZamletParams) extends Module {
     when (
       slotIsAvailable.valid &&
         entries(entry).valid &&
+        entries(entry).bits.state === KcePendingEntryState.WaitingForSlotAvailable &&
         entries(entry).bits.slot === slotIsAvailable.bits
     ) {
       entriesNext(entry).bits.slotAvailable := true.B
@@ -317,7 +428,10 @@ class KcePendingTable(params: ZamletParams) extends Module {
   // ============================================================
 
   val replayMatches = VecInit((0 until params.kcePendingTableDepth).map { entry =>
-    entries(entry).valid && entries(entry).bits.slotAvailable
+    entries(entry).valid &&
+      entries(entry).bits.state === KcePendingEntryState.WaitingForSlotAvailable &&
+      entries(entry).bits.slotAvailable &&
+      !entries(entry).bits.needsAlloc
   })
   // FIXME: This is fixed priority for the first pass. Consider round-robin if
   // ready low-index entries can starve higher-index entries.

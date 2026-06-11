@@ -79,6 +79,18 @@ class KamletCacheEngineIO(params: ZamletParams) extends Bundle {
   // KamletTransferEngine cache-line path.
   val kteReleaseSlot = Flipped(Valid(new KceSlotRelease(params)))
   val kteSlotIsAvailable = Valid(params.cacheSlot())
+  // Status responses are guaranteed to arrive exactly one cycle after the
+  // corresponding request, with no buffering on this path.
+  val kteSlotStatusReq = Flipped(Valid(params.cacheSlot()))
+  val kteSlotStatusResp = Valid(Bool())
+  // Instr-start status is a fixed-latency Valid path. KCE must consume the
+  // response without backpressure. If a query response says an ident has not
+  // started, the corresponding start notification is guaranteed not to arrive
+  // at KCE until after KCE has had a cycle to store the request as
+  // WaitingForInstrIdent.
+  val kteInstrStartedReq = Valid(params.ident())
+  val kteInstrStartedResp = Flipped(Valid(Bool()))
+  val kteInstrStartedNotify = Flipped(Valid(params.ident()))
 
   // ReservationStation cache-line path.
   val rsAllocSlotReq = Flipped(Decoupled(new KceAllocSlotReq(params)))
@@ -146,6 +158,9 @@ class KamletCacheEngine(params: ZamletParams) extends Module {
     memletInterface.io.jceFetchDone(jInK) := io.jceFetchDone(jInK)
     io.jceWritebackReq(jInK) := memletInterface.io.jceWritebackReq(jInK)
   }
+  io.kteInstrStartedReq := pendingTable.io.instrStartedReq
+  pendingTable.io.instrStartedResp := io.kteInstrStartedResp
+  pendingTable.io.instrStartedNotify := io.kteInstrStartedNotify
 
   // ============================================================
   // PendingTable / RS <-> TagTable
@@ -226,6 +241,12 @@ class KamletCacheEngine(params: ZamletParams) extends Module {
     io.kteReleaseSlot.bits.slot)
 
   pendingTable.io.slotIsAvailable := memletInterface.io.fetchSlotComplete
+
+  tagTable.io.slotStatusReq := io.kteSlotStatusReq
+  io.kteSlotStatusResp.valid := tagTable.io.slotStatusResp.valid
+  io.kteSlotStatusResp.bits :=
+    tagTable.io.slotStatusResp.bits === TagState.PresentClean ||
+      tagTable.io.slotStatusResp.bits === TagState.PresentDirty
 
   // ============================================================
   // TagTable <-> MemletInterface

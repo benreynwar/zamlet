@@ -241,6 +241,11 @@ class Kamlet(
 
   cacheEngine.io.kteReleaseSlot := transferEngine.io.kceReleaseSlot
   transferEngine.io.kceSlotIsAvailable := cacheEngine.io.kteSlotIsAvailable
+  cacheEngine.io.kteSlotStatusReq := transferEngine.io.kceSlotStatusReq
+  transferEngine.io.kceSlotStatusResp := cacheEngine.io.kteSlotStatusResp
+  cacheEngine.io.kteInstrStartedResp := transferEngine.io.kceInstrStartedResp
+  transferEngine.io.kceInstrStartedReq := cacheEngine.io.kteInstrStartedReq
+  cacheEngine.io.kteInstrStartedNotify := transferEngine.io.kceInstrStartedNotify
 
   kamletNetworkNode.io.thisX := io.knetX
   kamletNetworkNode.io.thisY := io.knetY

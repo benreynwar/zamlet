@@ -149,6 +149,8 @@ class KamletTlb(params: ZamletParams) extends Module {
   tagTable.io.writebackReq.ready := true.B
   tagTable.io.writebackComplete.valid := false.B
   tagTable.io.writebackComplete.bits := DontCare
+  tagTable.io.slotStatusReq.valid := false.B
+  tagTable.io.slotStatusReq.bits := DontCare
 
   val claimRespQueueDepth = 4
   val claimRespQueueAlmostFullThreshold = (claimRespQueueDepth - 2).U
