@@ -545,10 +545,6 @@ case class ZamletParams(
   def kIndexWidth: Int = log2Ceil(kInL)
   def memStripeAddrWidth: Int = memAddrWidth - log2JInL
   def maxConcurrentSyncs: Int = 1 << syncIdentWidth
-  // FIXME: Derive this from LocalExec once its pipeline latency is exposed
-  // through parameters instead of an instantiated ALU.
-  def localExecLatency: Int = 5
-
   class JCoords extends Bundle {
     val x = UInt(xPosWidth.W)
     val y = UInt(yPosWidth.W)

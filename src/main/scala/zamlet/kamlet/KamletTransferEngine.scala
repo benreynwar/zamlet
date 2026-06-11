@@ -5,7 +5,8 @@ import chisel3.util._
 import zamlet.ZamletParams
 import zamlet.jamlet.{IdentQueryInstr, IndexedInstr, JteCreate, JteInitiatorInput,
                        KInstr, KInstrBase, KInstrOpcode, KinstrWithParams,
-                       LoadSimpleInstr, StoreSimpleInstr, SyncTriggerInstr, TransferMode}
+                       LoadSimpleInstr, LocalExec, StoreSimpleInstr, SyncTriggerInstr,
+                       TransferMode}
 import zamlet.utils.{DoubleBuffer, ValidBuffer}
 
 object KteOpType extends ChiselEnum {
@@ -618,8 +619,9 @@ class KamletTransferEngine(params: ZamletParams) extends Module {
   val replay0MaskReg = Mux(replay0IsLoadSimple,
     replay0LoadSimple.maskReg, replay0StoreSimple.maskReg)
 
+  val replay0ReleaseDelay = LocalExec.inputToDependentInputMinSeparation(params)
   val replay0ReleaseFifoSpace = releaseFifoDepth.U - releaseFifoCount
-  val replay0CanStartReleaseDelay = replay0ReleaseFifoSpace >= params.localExecLatency.U
+  val replay0CanStartReleaseDelay = replay0ReleaseFifoSpace >= replay0ReleaseDelay.U
 
   io.localReplay.valid := replay0Valid && replay0CanStartReleaseDelay
   io.localReplay.bits := replay0Kinstr
@@ -642,9 +644,9 @@ class KamletTransferEngine(params: ZamletParams) extends Module {
   }
 
   val replay0ReleaseDelayValid =
-    ShiftRegister(io.localReplay.fire, params.localExecLatency, false.B, true.B)
+    ShiftRegister(io.localReplay.fire, replay0ReleaseDelay, false.B, true.B)
   val replay0ReleaseDelayBits =
-    ShiftRegister(replay0ReleaseEntry, params.localExecLatency)
+    ShiftRegister(replay0ReleaseEntry, replay0ReleaseDelay)
 
   // ============================================================
   // Transfer cleanup

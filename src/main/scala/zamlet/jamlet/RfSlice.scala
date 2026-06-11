@@ -177,6 +177,14 @@ class RfSlice(params: ZamletParams) extends Module {
   }
 }
 
+object RfSlice {
+  // Minimum cycle separation from a write-port request to a same-address
+  // read-port request for the read response to observe the written value.
+  def writeToReadSameAddressMinSeparation(params: ZamletParams): Int = {
+    1
+  }
+}
+
 /** Generator for RfSlice module */
 object RfSliceGenerator extends zamlet.ModuleGenerator {
   override def makeModule(args: Seq[String]): Module = {

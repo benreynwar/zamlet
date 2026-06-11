@@ -217,6 +217,30 @@ class LocalExec(params: ZamletParams) extends Module {
   io.errors.alu := alu.io.errors
 }
 
+object LocalExec {
+  // Cycles from kinstrIn.valid to the LocalExec RF read request ports.
+  // Reads are currently driven directly from the input/s0 stage.
+  def inputToReadPortLatency(params: ZamletParams): Int = {
+    0
+  }
+
+  // Cycles from kinstrIn.valid to rfWriteReq.valid for LocalExec operations
+  // that write the register file.
+  def inputToWritePortLatency(params: ZamletParams): Int = {
+    // kinstrIn is the s0 stage; RF/SRAM responses are consumed in s1.
+    val s0ToS1Latency = 1
+    s0ToS1Latency + JamletAlu.outputLatency(params)
+  }
+
+  // Minimum cycle separation from a producer kinstrIn.valid to a dependent
+  // consumer kinstrIn.valid so the consumer RF read observes the producer write.
+  def inputToDependentInputMinSeparation(params: ZamletParams): Int = {
+    inputToWritePortLatency(params) +
+      RfSlice.writeToReadSameAddressMinSeparation(params) -
+      inputToReadPortLatency(params)
+  }
+}
+
 /** Generator for LocalExec module */
 object LocalExecGenerator extends zamlet.ModuleGenerator {
   override def makeModule(args: Seq[String]): Module = {

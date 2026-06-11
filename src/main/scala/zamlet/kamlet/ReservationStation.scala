@@ -3,7 +3,7 @@ package zamlet.kamlet
 import chisel3._
 import chisel3.util._
 import zamlet.{LaneOrder, Ordering, WidthFormat, ZamletParams}
-import zamlet.jamlet.{KInstr, KInstrBase, KinstrWithParams, LoadImmInstr,
+import zamlet.jamlet.{KInstr, KInstrBase, KinstrWithParams, LoadImmInstr, LocalExec,
                        WriteParamInstr}
 import zamlet.utils.{DoubleBuffer, ValidBuffer}
 
@@ -105,8 +105,9 @@ class ReservationStation(params: ZamletParams) extends Module {
   val issue1In = Wire(Decoupled(new RsIssuePayload(params)))
   val issue1Out = Wire(Decoupled(new RsIssuePayload(params)))
   val issue2In = Wire(Decoupled(new RsIssuePayload(params)))
+  val localExecDependentInputSeparation = LocalExec.inputToDependentInputMinSeparation(params)
   val localInFlight =
-    RegInit(VecInit(Seq.fill(params.localExecLatency)(0.U.asTypeOf(new RsLocalInFlight(params)))))
+    RegInit(VecInit(Seq.fill(localExecDependentInputSeparation)(0.U.asTypeOf(new RsLocalInFlight(params)))))
 
   def memFootprint(valid: Bool, payload: RsIssuePayload): Valid[KteMemFootprint] = {
     val footprint = Wire(Valid(new KteMemFootprint(params)))
@@ -309,12 +310,12 @@ class ReservationStation(params: ZamletParams) extends Module {
   issue2LocalInFlight.mem.bits := issue2MemWithSlot.bits
 
   localInFlight(0) := issue2LocalInFlight
-  for (stage <- 1 until params.localExecLatency) {
+  for (stage <- 1 until localExecDependentInputSeparation) {
     localInFlight(stage) := localInFlight(stage - 1)
   }
 
-  when (localInFlight(params.localExecLatency - 1).valid) {
-    for (rfUse <- localInFlight(params.localExecLatency - 1).rfRelease.uses) {
+  when (localInFlight(localExecDependentInputSeparation - 1).valid) {
+    for (rfUse <- localInFlight(localExecDependentInputSeparation - 1).rfRelease.uses) {
       when (rfUse.valid) {
         rfBusyNext(rfUse.addr) := false.B
       }
