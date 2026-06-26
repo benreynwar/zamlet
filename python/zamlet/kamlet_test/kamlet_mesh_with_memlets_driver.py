@@ -98,6 +98,7 @@ class KamletMeshWithMemletsDriver:
                 getattr(self.dut, f'io_{name}_{kx}_in_bits').value = 0
 
     def start(self, rng: Random) -> None:
+        self._start_axi_memories()
         for source in self.n_kamlet_a_in:
             source.start(rng)
         for sink in self.n_kamlet_a_out:
@@ -110,16 +111,14 @@ class KamletMeshWithMemletsDriver:
             source.start(rng)
         for sink in self.n_jnet_out.values():
             sink.start(rng)
+        self.start_tlb_responder()
 
-    def start_axi_memories(self) -> list[OrderedKamletAxiMemory]:
-        memories = []
+    def _start_axi_memories(self) -> None:
         for idx in range(self.params.k_in_l):
             signals = Axi4Signals.from_prefix(self.dut, f'io_axi_{idx}')
             memory = OrderedKamletAxiMemory(
                 signals, self.dut.clock, self.params, self.memory, idx)
             memory.start()
-            memories.append(memory)
-        return memories
 
     def log_debug_state(self) -> None:
         logger.debug(
@@ -202,33 +201,33 @@ class KamletMeshWithMemletsDriver:
         params = self.params
         header_field_widths = dict(params.abstract_base_header_fields)
         max_packet_body_words = (1 << header_field_widths['length']) - 1
-        assert 0 < len(encoded_kinstrs) <= max_packet_body_words, (
-            f'instruction packet has {len(encoded_kinstrs)} body words; '
-            f'max is {max_packet_body_words}')
+        assert encoded_kinstrs
         source_x, source_y = kamlet_network.lamlet_kcoord(params)
         target_x, target_y = kamlet_network.kamlet_kcoord(params, params.k_in_l - 1)
-        header = Header(
-            target_x=target_x,
-            target_y=target_y,
-            source_x=source_x,
-            source_y=source_y,
-            length=len(encoded_kinstrs),
-            message_type=MessageType.INSTRUCTIONS,
-            send_type=SendType.BROADCAST,
-        )
-        logger.debug(
-            'enqueue instructions source=(%d,%d) target=(%d,%d) length=%d words=%s',
-            source_x,
-            source_y,
-            target_x,
-            target_y,
-            len(encoded_kinstrs),
-            [f'0x{word:016x}' for word in encoded_kinstrs],
-        )
-        self.n_kamlet_b_in[0].enqueue_packet(
-            header.encode(params),
-            encoded_kinstrs,
-        )
+        for start in range(0, len(encoded_kinstrs), max_packet_body_words):
+            chunk = encoded_kinstrs[start:start + max_packet_body_words]
+            header = Header(
+                target_x=target_x,
+                target_y=target_y,
+                source_x=source_x,
+                source_y=source_y,
+                length=len(chunk),
+                message_type=MessageType.INSTRUCTIONS,
+                send_type=SendType.BROADCAST,
+            )
+            logger.debug(
+                'enqueue instructions source=(%d,%d) target=(%d,%d) length=%d words=%s',
+                source_x,
+                source_y,
+                target_x,
+                target_y,
+                len(chunk),
+                [f'0x{word:016x}' for word in chunk],
+            )
+            self.n_kamlet_b_in[0].enqueue_packet(
+                header.encode(params),
+                chunk,
+            )
 
     def start_tlb_responder(self) -> 'KamletMeshTlbResponder':
         responder = KamletMeshTlbResponder(self)
@@ -262,13 +261,17 @@ class KamletMeshTlbResponder:
         assert isinstance(logical_stripe_addr, int)
 
         mapping = self.driver.memory.translate_logical_stripe(logical_stripe_addr)
+        physical_stripe_addr = (
+            (mapping.physical_stripe_addr // self.params.cache_slot_words_per_jamlet)
+            << self.params.log2_page_words_per_jamlet
+        ) | (mapping.physical_stripe_addr % self.params.cache_slot_words_per_jamlet)
         self.requests.append((req_header.tlb_req_slot, logical_stripe_addr))
         logger.debug(
             'tlb req kx=%d slot=%d logical_stripe=0x%x physical_stripe=0x%x',
             kx,
             req_header.tlb_req_slot,
             logical_stripe_addr,
-            mapping.physical_stripe_addr,
+            physical_stripe_addr,
         )
 
         resp_header = KamletTlbRespHeader(
@@ -285,5 +288,5 @@ class KamletMeshTlbResponder:
         )
         self.driver.n_kamlet_a_in[kx].enqueue_packet(
             resp_header.encode(self.params),
-            [mapping.physical_stripe_addr],
+            [physical_stripe_addr],
         )

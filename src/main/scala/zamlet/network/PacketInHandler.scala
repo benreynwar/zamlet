@@ -152,7 +152,8 @@ class PacketInHandler(params: ZamletParams) extends Module {
   val inputDirMask = Wire(UInt(5.W))
   inputDirMask := UIntToOH(io.inputDirection.asUInt, 5)
   val otherDirections = Wire(UInt(5.W))
-  otherDirections := directions & ~inputDirMask
+  val localInput = io.inputDirection === NetworkDirections.Here
+  otherDirections := Mux(localInput, directions, directions & ~inputDirMask)
 
   // This is comes from otherDirections when we're processing the header and
   // otherwise comes from a registered version from the last header.
@@ -164,7 +165,7 @@ class PacketInHandler(params: ZamletParams) extends Module {
     connectionDirections := bufferedDirections
   }
   val badRegularRoute = Wire(Bool())
-  badRegularRoute := (connectionDirections & inputDirMask) =/= 0.U
+  badRegularRoute := !localInput && (connectionDirections & inputDirMask) =/= 0.U
 
   // We get ready back from those that can accept it. (have to reverse because of Uint vs Seq ordering default)
   val outputReadys = Wire(UInt(5.W))

@@ -12,6 +12,7 @@ from zamlet.addresses import Ordering
 from zamlet.kamlet.kinstructions import (
     KInstrOpcode,
     PackedBinaryOp,
+    PackedLoadIndexedUnordered,
     PackedLoadSimple,
     PackedStoreSimple,
     PackedWriteParam,
@@ -66,13 +67,13 @@ async def wait_for_cache_line(
 @cocotb.test(timeout_time=TEST_TIMEOUT_NS, timeout_unit="ns")
 async def vector_load_then_vector_store(dut: HierarchyObject) -> None:
     test_utils.configure_logging_sim()
+    test_params = test_utils.get_test_params()
     params = load_params()
-    rng = random.Random(test_utils.get_test_params().get("seed", 0))
+    rng = random.Random(test_params["seed"])
 
     cocotb.start_soon(Clock(dut.clock, 1, "ns").start())
     driver = KamletMeshWithMemletsDriver(dut, params)
     driver.initialize_inputs()
-    driver.start_axi_memories()
     await driver.reset()
     driver.start(rng)
 
@@ -114,12 +115,6 @@ async def vector_load_then_vector_store(dut: HierarchyObject) -> None:
             data=params.j_in_l,
         ).encode(params),
     ]
-    assert len(setup_instrs) <= (1 << params.message_length_width) - 1
-    driver.enqueue_instructions(setup_instrs)
-
-    for _ in range(40):
-        await RisingEdge(dut.clock)
-
     work_instrs = [
         PackedLoadSimple(
             rf_addr=rf_addr,
@@ -138,8 +133,8 @@ async def vector_load_then_vector_store(dut: HierarchyObject) -> None:
             instr_ident=6,
         ).encode(params),
     ]
-    assert len(work_instrs) <= (1 << params.message_length_width) - 1
-    driver.enqueue_instructions(work_instrs)
+    instrs = setup_instrs + work_instrs
+    driver.enqueue_instructions(instrs)
 
     expected = list(bytes(params.stripe_bytes))
     expected[:params.stripe_bytes] = source_data[:params.stripe_bytes]
@@ -150,13 +145,13 @@ async def vector_load_then_vector_store(dut: HierarchyObject) -> None:
 @cocotb.test(timeout_time=TEST_TIMEOUT_NS, timeout_unit="ns")
 async def vector_load_load_add_checks_dest_register(dut: HierarchyObject) -> None:
     test_utils.configure_logging_sim()
+    test_params = test_utils.get_test_params()
     params = load_params()
-    rng = random.Random(test_utils.get_test_params().get("seed", 0))
+    rng = random.Random(test_params["seed"])
 
     cocotb.start_soon(Clock(dut.clock, 1, "ns").start())
     driver = KamletMeshWithMemletsDriver(dut, params)
     driver.initialize_inputs()
-    driver.start_axi_memories()
     await driver.reset()
     driver.start(rng)
 
@@ -213,12 +208,6 @@ async def vector_load_load_add_checks_dest_register(dut: HierarchyObject) -> Non
             data=params.j_in_l,
         ).encode(params),
     ]
-    assert len(setup_instrs) <= (1 << params.message_length_width) - 1
-    driver.enqueue_instructions(setup_instrs)
-
-    for _ in range(40):
-        await RisingEdge(dut.clock)
-
     work_instrs = [
         PackedLoadSimple(
             rf_addr=rf_a,
@@ -247,11 +236,117 @@ async def vector_load_load_add_checks_dest_register(dut: HierarchyObject) -> Non
             instr_ident=16,
         ).encode(params),
     ]
-    assert len(work_instrs) <= (1 << params.message_length_width) - 1
-    driver.enqueue_instructions(work_instrs)
+    instrs = setup_instrs + work_instrs
+    driver.enqueue_instructions(instrs)
 
     expected = [
         (a + b) & ((1 << 64) - 1)
         for a, b in zip(a_values, b_values)
     ]
     await driver.wait_for_rf_elements(rf_dst, ordering, expected, 2_000)
+
+
+@cocotb.test(timeout_time=TEST_TIMEOUT_NS, timeout_unit="ns")
+async def indexed_load_gathers_from_loaded_offsets(dut: HierarchyObject) -> None:
+    test_utils.configure_logging_sim()
+    test_params = test_utils.get_test_params()
+    params = load_params()
+    rng = random.Random(test_params["seed"])
+
+    cocotb.start_soon(Clock(dut.clock, 1, "ns").start())
+    driver = KamletMeshWithMemletsDriver(dut, params)
+    driver.initialize_inputs()
+    await driver.reset()
+    driver.start(rng)
+
+    ordering = Ordering(LaneOrder.ROW_MAJOR, 64)
+    index_physical_line = 0x50
+    data_physical_line = 0x60
+    index_logical_line = 0x500
+    data_logical_line = 0x600
+    driver.memory.map_cache_line(index_physical_line, index_logical_line, ordering)
+    driver.memory.map_cache_line(data_physical_line, data_logical_line, ordering)
+
+    line_bytes = params.cache_slot_words_per_jamlet * params.stripe_bytes
+    gather_order = list(range(params.j_in_l))
+    rng.shuffle(gather_order)
+    offsets = [index * params.word_bytes for index in gather_order]
+    source_values = [
+        0x3000_0000_0000_0000 + 0x101 * index
+        for index in range(params.j_in_l)
+    ]
+
+    index_data = bytearray(line_bytes)
+    data = bytearray(line_bytes)
+    for element_index, offset in enumerate(offsets):
+        start = element_index * params.word_bytes
+        index_data[start:start + params.word_bytes] = offset.to_bytes(
+            params.word_bytes, 'little')
+    for element_index, value in enumerate(source_values):
+        start = element_index * params.word_bytes
+        data[start:start + params.word_bytes] = value.to_bytes(
+            params.word_bytes, 'little')
+    driver.memory.write_logical_bytes(
+        index_logical_line * line_bytes, bytes(index_data))
+    driver.memory.write_logical_bytes(
+        data_logical_line * line_bytes, bytes(data))
+
+    index_base_ref = 0
+    data_base_ref = 1
+    start_ref = 0
+    end_ref = 0
+    rf_index = 4
+    rf_dst = 5
+    setup_instrs = [
+        PackedWriteParam(
+            instr_ident=20,
+            param_idx=base_addr_param_idx(params, index_base_ref),
+            data=driver.memory.base_addr_for_cache_line(index_physical_line),
+        ).encode(params),
+        PackedWriteParam(
+            instr_ident=21,
+            param_idx=base_addr_param_idx(params, data_base_ref),
+            data=data_logical_line * line_bytes,
+        ).encode(params),
+        PackedWriteParam(
+            instr_ident=22,
+            param_idx=start_index_param_idx(params, start_ref),
+            data=0,
+        ).encode(params),
+        PackedWriteParam(
+            instr_ident=23,
+            param_idx=end_index_param_idx(params, end_ref),
+            data=params.j_in_l,
+        ).encode(params),
+    ]
+    load_index_instrs = [
+        PackedLoadSimple(
+            rf_addr=rf_index,
+            base_addr_param_idx=index_base_ref,
+            start_index_param_idx=start_ref,
+            end_index_param_idx=end_ref,
+            ew=ElementWidthCode.EW64,
+            instr_ident=24,
+        ).encode(params),
+    ]
+    driver.enqueue_instructions(setup_instrs + load_index_instrs)
+    await driver.wait_for_rf_elements(rf_index, ordering, offsets, 2_000)
+
+    indexed_load_instrs = [
+        PackedLoadIndexedUnordered(
+            reg=rf_dst,
+            index_reg=rf_index,
+            fault_sync_ident=1,
+            completion_sync_ident=2,
+            base_addr_param_idx=data_base_ref,
+            start_index_param_idx=start_ref,
+            end_index_param_idx=end_ref,
+            rf_ew=ElementWidthCode.EW64,
+            index_ew=ElementWidthCode.EW64,
+            instr_ident=25,
+        ).encode(params),
+    ]
+    driver.enqueue_instructions(indexed_load_instrs)
+
+    expected = [source_values[index] for index in gather_order]
+    await driver.wait_for_rf_elements(rf_dst, ordering, expected, 4_000)

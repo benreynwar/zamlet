@@ -75,6 +75,18 @@ class Jte(params: ZamletParams) extends Module {
   state.io.tlbAvailable <> io.tlbAvailable
 
   receiver.io.packet <> io.channel0In
+  private val slotToRegLookupHasBuffer =
+    params.jteReceiverParams.slotToRegReqFB ||
+      params.jteReceiverParams.slotToRegReqBB ||
+      params.jteReceiverParams.slotToRegRespFB ||
+      params.jteReceiverParams.slotToRegRespBB ||
+      params.jteStateParams.slotToRegReqFB ||
+      params.jteStateParams.slotToRegReqBB ||
+      params.jteStateParams.slotToRegRespFB ||
+      params.jteStateParams.slotToRegRespBB
+  require(
+    slotToRegLookupHasBuffer,
+    "JTE receiver/state slot-to-reg lookup requires a buffer on the request/response cycle")
   receiver.io.teIndexToRegReq <> state.io.teIndexToRegReq
   state.io.teIndexToRegResp <> receiver.io.teIndexToRegResp
   io.rfWriteReq <> receiver.io.rfWriteReq

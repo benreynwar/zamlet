@@ -79,7 +79,7 @@ class JteHandlerBC(params: ZamletParams) extends Bundle {
   val ident = params.ident()
   val teIndex = UInt(log2Ceil(params.witemTableDepth).W)
   val data = params.word()
-  val cacheLineOffset = UInt(params.log2PageWordsPerJamlet.W)
+  val cacheLineOffset = UInt(params.log2CacheSlotWordsPerJamlet.W)
 }
 
 class JteHandlerReplay(params: ZamletParams) extends Bundle {
@@ -183,7 +183,7 @@ class JteHandlerB(params: ZamletParams) extends Module {
   payload.ident := io.ab.bits.ident
   payload.teIndex := io.ab.bits.teIndex
   payload.data := io.ab.bits.data
-  payload.cacheLineOffset := io.ab.bits.stripeAddr(params.log2PageWordsPerJamlet - 1, 0)
+  payload.cacheLineOffset := io.ab.bits.stripeAddr(params.log2CacheSlotWordsPerJamlet - 1, 0)
 
   io.cacheLineReq.valid := io.ab.valid && io.bc.ready
   io.cacheLineReq.bits.address := io.ab.bits.stripeAddr >> params.log2PageWordsPerJamlet
@@ -297,7 +297,7 @@ class JteHandlerE(params: ZamletParams) extends Module {
   io.de.ready := io.ef.ready && (!useSram || io.sramReq.ready)
 
   io.cacheLineRelease.valid := io.de.fire && useSram
-  io.cacheLineRelease.bits := io.de.bits.sramAddr(params.sramAddrWidth - 1, params.log2PageWordsPerJamlet)
+  io.cacheLineRelease.bits := io.de.bits.sramAddr(params.sramAddrWidth - 1, params.log2CacheSlotWordsPerJamlet)
 }
 
 class JteHandlerFIO(params: ZamletParams) extends Bundle {
