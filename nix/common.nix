@@ -144,6 +144,7 @@ let
     klayout
     python-env
     bazelisk
+    ccache
     git
     jq
     which
@@ -227,12 +228,40 @@ in {
       printf '%s\n' "$(IFS=:; echo "''${result[*]}")"
     }
     export PATH="$(dedupPATH)"
-    export ZAMLET_BAZEL_PATH="${bazelPath}"
+    export ZAMLET_CCACHE_DIR="$HOME/.cache/ccache-zamlet-bazel"
+    export ZAMLET_CCACHE_WRAPPER_DIR="$PWD/.nix-shell-bin"
+    mkdir -p "$ZAMLET_CCACHE_WRAPPER_DIR"
+    cat > "$ZAMLET_CCACHE_WRAPPER_DIR/gcc" <<CCACHE_GCC
+#!/usr/bin/env bash
+exec "${pkgs.ccache}/bin/ccache" "${pkgs.stdenv.cc}/bin/gcc" "\$@"
+CCACHE_GCC
+    cat > "$ZAMLET_CCACHE_WRAPPER_DIR/g++" <<CCACHE_GXX
+#!/usr/bin/env bash
+exec "${pkgs.ccache}/bin/ccache" "${pkgs.stdenv.cc}/bin/g++" "\$@"
+CCACHE_GXX
+    cat > "$ZAMLET_CCACHE_WRAPPER_DIR/cc" <<CCACHE_CC
+#!/usr/bin/env bash
+exec "${pkgs.ccache}/bin/ccache" "${pkgs.stdenv.cc}/bin/cc" "\$@"
+CCACHE_CC
+    cat > "$ZAMLET_CCACHE_WRAPPER_DIR/c++" <<CCACHE_CXX
+#!/usr/bin/env bash
+exec "${pkgs.ccache}/bin/ccache" "${pkgs.stdenv.cc}/bin/c++" "\$@"
+CCACHE_CXX
+    chmod +x \
+      "$ZAMLET_CCACHE_WRAPPER_DIR/gcc" \
+      "$ZAMLET_CCACHE_WRAPPER_DIR/g++" \
+      "$ZAMLET_CCACHE_WRAPPER_DIR/cc" \
+      "$ZAMLET_CCACHE_WRAPPER_DIR/c++"
+
+    export ZAMLET_BAZEL_PATH="$ZAMLET_CCACHE_WRAPPER_DIR:${bazelPath}"
 
     export PYTHONPATH="$PWD/python:$PYTHONPATH"
+    export CCACHE_DIR="$ZAMLET_CCACHE_DIR"
+    export CCACHE_BASEDIR="$PWD"
+    export CCACHE_NOHASHDIR=1
 
     # Ensure sandbox writable paths exist (Bazel requires them to)
-    mkdir -p "$HOME/.cache/coursier" "$HOME/.cache/llvm-firtool"
+    mkdir -p "$HOME/.cache/coursier" "$HOME/.cache/llvm-firtool" "$ZAMLET_CCACHE_DIR"
 
     # Generate user-specific bazel sandbox paths
     cat > "$PWD/.bazelrc.user" <<BAZELRC
@@ -242,9 +271,19 @@ in {
 build --action_env=PATH=$ZAMLET_BAZEL_PATH
 build --host_action_env=PATH=$ZAMLET_BAZEL_PATH
 build --repo_env=PATH=$ZAMLET_BAZEL_PATH
+build --action_env=CCACHE_DIR=$ZAMLET_CCACHE_DIR
+build --host_action_env=CCACHE_DIR=$ZAMLET_CCACHE_DIR
+build --repo_env=CCACHE_DIR=$ZAMLET_CCACHE_DIR
+build --action_env=CCACHE_BASEDIR=$PWD
+build --host_action_env=CCACHE_BASEDIR=$PWD
+build --repo_env=CCACHE_BASEDIR=$PWD
+build --action_env=CCACHE_NOHASHDIR=1
+build --host_action_env=CCACHE_NOHASHDIR=1
+build --repo_env=CCACHE_NOHASHDIR=1
 # Allow Chisel's coursier to download firtool from within Bazel sandbox
 build --sandbox_writable_path=$HOME/.cache/coursier
 build --sandbox_writable_path=$HOME/.cache/llvm-firtool
+build --sandbox_writable_path=$ZAMLET_CCACHE_DIR
 BAZELRC
   '';
 
@@ -252,7 +291,6 @@ BAZELRC
   devHook = ''
     # Wrapper script so bazel-bsp uses a separate output_base, preventing it
     # from invalidating the terminal bazel's analysis cache.
-    mkdir -p "$PWD/.nix-shell-bin"
     rm -f "$PWD/.nix-shell-bin/bazel"
     cat > "$PWD/.nix-shell-bin/bazel" <<WRAPPER
 #!/usr/bin/env bash
