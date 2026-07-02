@@ -38,6 +38,7 @@
   "messageTypeWidth": 6,
   "nAChannels": 1,
   "nBChannels": 1,
+  "resetPipelineDepth": 8,
   "networkNodeParams": {
     "iaForwardBuffer": true,
     "iaBackwardBuffer": true,

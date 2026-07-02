@@ -124,6 +124,8 @@ class JteHandlerA(params: ZamletParams) extends Module {
   stateInitial.isHeader := true.B
   val state = RegEnable(stateNext, stateInitial, fire)
   stateNext := state
+  val errors = Wire(new JteHandlerAErrors())
+  errors := 0.U.asTypeOf(new JteHandlerAErrors())
 
   val header = Wire(new JteHeader(params))
   header := io.packet.bits.data.asTypeOf(new JteHeader(params))
@@ -132,7 +134,8 @@ class JteHandlerA(params: ZamletParams) extends Module {
   } .otherwise {
     stateNext.remainingBodyWords:= state.remainingBodyWords - 1.U
   }
-  io.errors.unexpectedHeader := (state.isHeader =/= io.packet.bits.isHeader) && io.packet.valid
+  errors.unexpectedHeader := (state.isHeader =/= io.packet.bits.isHeader) && io.packet.valid
+  io.errors := RegNext(errors, 0.U.asTypeOf(new JteHandlerAErrors()))
   stateNext.isHeader := stateNext.remainingBodyWords === 0.U
 
   when (state.isHeader) {
@@ -398,6 +401,7 @@ class JteHandlerIO(params: ZamletParams) extends Bundle {
   val packetOut = Decoupled(new NetworkWord(params))
   val x = Input(UInt(params.xPosWidth.W))
   val y = Input(UInt(params.yPosWidth.W))
+  val errors = Output(new JteHandlerAErrors())
   val cacheLineReq = Decoupled(new CacheLineRequest(params))
   val cacheLineResp = Flipped(Decoupled(new CacheLineResponse(params)))
   val cacheLineReplay = Flipped(Decoupled(new JteHandlerReplay(params)))
@@ -412,6 +416,7 @@ class JteHandler(params: ZamletParams) extends Module {
 
   val aStage = Module(new JteHandlerA(params))
   aStage.io.packet <> DoubleBuffer(io.packetIn, hp.packetInFB, hp.packetInBB)
+  io.errors := aStage.io.errors
 
   val bStage = Module(new JteHandlerB(params))
   bStage.io.ab <> DoubleBuffer(aStage.io.ab, hp.abFB, hp.abBB)

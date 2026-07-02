@@ -4,6 +4,7 @@ import chisel3._
 import chisel3.util._
 import zamlet.ZamletParams
 import zamlet.network.NetworkWord
+import zamlet.utils.{ResetPipeline, ResetPipelineBudget}
 
 class MemletErrors(params: ZamletParams) extends Bundle {
   val controlErrors = new ControlSideErrors(params)
@@ -72,19 +73,30 @@ class MemletIO(params: ZamletParams) extends Bundle {
     Decoupled(new NetworkWord(params))))
 }
 
-class Memlet(params: ZamletParams) extends Module {
+class Memlet(params: ZamletParams, resetBudget: ResetPipelineBudget) extends Module {
   val io = IO(new MemletIO(params))
 
   val nRouters = params.nMemletRouters
   val nGSlots = params.nMemletGatheringSlots
   val nRSlots = params.nResponseBufferSlots
 
+  val resetPipeline =
+    ResetPipeline(clock, reset.asBool, 1, resetBudget, "Memlet")
+  val childResetBudget = resetPipeline.childBudget
+
+  withReset(resetPipeline.localReset) {
+
   // ============================================================
   // Instantiate control side, slices, and MemoryEngine
   // ============================================================
 
   val controlSide = Module(new ControlSide(params))
-  val slices = Seq.tabulate(nRouters)(i => Module(new MemletSlice(params)))
+  val slices = Seq.tabulate(nRouters) { i =>
+    val s: MemletSlice = withReset(resetPipeline.childReset) {
+      Module(new MemletSlice(params, childResetBudget))
+    }
+    s
+  }
   val engine = Module(new MemoryEngine(params))
 
   io.axi <> engine.io.axi
@@ -253,6 +265,7 @@ class Memlet(params: ZamletParams) extends Module {
     io.errors.gatherErrors(r) := slices(r).io.gatherErrors
     io.errors.responseErrors(r) := slices(r).io.responseErrors
   }
+  }
 }
 
 object MemletGenerator extends zamlet.ModuleGenerator {
@@ -262,7 +275,7 @@ object MemletGenerator extends zamlet.ModuleGenerator {
       System.exit(1)
     }
     val params = ZamletParams.fromFile(args(0))
-    new Memlet(params)
+    new Memlet(params, ResetPipelineBudget(params.resetPipelineDepth))
   }
 }
 

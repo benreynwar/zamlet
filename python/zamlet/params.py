@@ -573,6 +573,7 @@ class ZamletParams:
     lamlet_dispatch_queue_depth: int = 8
     ident_tracker_out_forward_buffer: bool = True
     ident_tracker_out_backward_buffer: bool = True
+    reset_pipeline_depth: int = 8
     network_node_params: NetworkNodeParams = field(default_factory=NetworkNodeParams)
     kamlet_packet_merge_params: PacketMergeParams = field(default_factory=PacketMergeParams)
     kamlet_a_ingress_packet_router_params: MessageTypePacketRouterParams = field(
@@ -874,6 +875,7 @@ class ZamletParams:
         'identTrackerOutBackwardBuffer': 'ident_tracker_out_backward_buffer',
         'nAChannels': 'n_a_channels',
         'nBChannels': 'n_b_channels',
+        'resetPipelineDepth': 'reset_pipeline_depth',
         'networkNodeParams': 'network_node_params',
         'kamletPacketMergeParams': 'kamlet_packet_merge_params',
         'kamletAIngressPacketRouterParams': 'kamlet_a_ingress_packet_router_params',

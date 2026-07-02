@@ -130,7 +130,7 @@ class AccessOut(params: RFParams) extends Bundle {
 /**
  * Register File - handles register file and tagging
  */
-class RegisterFile(params: RFParams) extends Module {
+class RegisterFile(params: RFParams, resetBudget: ResetPipelineBudget) extends Module {
   // Create builder params for internal use
   val builderParams = params.toBuilderParams()
   val oAccessLatency = if (params.aoBuffer) 1 else 0
@@ -145,9 +145,10 @@ class RegisterFile(params: RFParams) extends Module {
 
   val stalled = io.localStall || io.externalStall
 
-  val resetBuffered = ResetStage(clock, reset)
+  val resetPipeline =
+    ResetPipeline(clock, reset.asBool, 1, resetBudget, "RegisterFile")
 
-  withReset(resetBuffered) {
+  withReset(resetPipeline.localReset) {
 
     val stateInitial = Wire(Vec(params.nRegs, new RegisterState(builderParams)))
 
@@ -314,7 +315,10 @@ class WritePort(params: RFBuilderParams) extends Bundle {
 /**
  * Builder class for creating register files with multiple ports
  */
-class RegisterFileBuilder(val params: RFBuilderParams) {
+class RegisterFileBuilder(
+  val params: RFBuilderParams,
+  resetBudget: ResetPipelineBudget
+) {
   private var readPorts = List[ReadPort]()
   private var writePorts = List[WritePort]()
   
@@ -346,7 +350,7 @@ class RegisterFileBuilder(val params: RFBuilderParams) {
       nWrites = writePorts.length
     )
     
-    val rf = Module(new RegisterFile(actualParams))
+    val rf = Module(new RegisterFile(actualParams, resetBudget))
     
     // Connect data ports
     for (i <- readPorts.indices) {
@@ -371,8 +375,8 @@ class RegisterFileBuilder(val params: RFBuilderParams) {
  * Factory object for creating RegisterFileBuilder instances
  */
 object RegisterFileBuilder {
-  def apply(params: RFBuilderParams): RegisterFileBuilder = {
-    new RegisterFileBuilder(params)
+  def apply(params: RFBuilderParams, resetBudget: ResetPipelineBudget): RegisterFileBuilder = {
+    new RegisterFileBuilder(params, resetBudget)
   }
 }
 
@@ -388,7 +392,7 @@ object RegisterFileGenerator extends zamlet.ModuleGenerator {
       null
     } else {
       val params = RFParams.fromFile(args(0))
-      new RegisterFile(params)
+      new RegisterFile(params, ResetPipelineBudget(1))
     }
   }
 }
