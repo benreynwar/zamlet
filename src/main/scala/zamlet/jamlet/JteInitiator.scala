@@ -85,14 +85,11 @@ class JteInitiatorAIO(params: ZamletParams) extends Bundle {
   val laneIndex = Input(UInt(params.log2JInL.W))
   val input = Flipped(Decoupled(new JteInitiatorInput(params)))
   val ab = Decoupled(new JteInitiatorAB(params))
-  val rfMaskReq = Decoupled(params.rfAddr())
-  val rfDataReq = Decoupled(params.rfAddr())
 }
 
 class JteInitiatorA(params: ZamletParams) extends Module {
   val io = IO(new JteInitiatorAIO(params))
 
-  val fire = io.ab.valid && io.ab.ready
   val input = io.input.bits
 
   val log2DataEW = WidthHelpers.ewLog2Bits(input.rfDataEW)
@@ -150,19 +147,9 @@ class JteInitiatorA(params: ZamletParams) extends Module {
   val indexUse = (input.mode === TransferMode.IndexLoad || input.mode === TransferMode.IndexStore) && !noLocalElements
   val dataUse = (input.mode === TransferMode.IndexStore || input.mode === TransferMode.StrideStore) && !noLocalElements
   val maskUse = io.input.bits.maskEnabled && !noLocalElements
-  val startCount = startInner + (startOuter << log2Ratio)
 
-  // Submit register reads
-  val maskNotBlocking = io.rfMaskReq.ready || !maskUse
-  val dataNotBlocking = io.rfDataReq.ready || !dataUse
-
-  io.rfMaskReq.valid := io.input.valid && io.ab.ready && dataNotBlocking && maskUse
-  io.rfMaskReq.bits := input.maskReg
-  io.rfDataReq.valid := io.input.valid && io.ab.ready && maskNotBlocking && dataUse
-  io.rfDataReq.bits := input.dataReg
-
-  io.ab.valid := io.input.valid && maskNotBlocking && dataNotBlocking
-  io.input.ready := io.ab.ready && maskNotBlocking && dataNotBlocking
+  io.ab.valid := io.input.valid
+  io.input.ready := io.ab.ready
 
   io.ab.bits.input := input
   io.ab.bits.indexUse := indexUse
@@ -179,6 +166,29 @@ class JteInitiatorA(params: ZamletParams) extends Module {
   io.ab.bits.noLocalElements := noLocalElements
 
   io.ab.bits.teIndex := io.input.bits.teIndex
+}
+
+class JteInitiatorZIO(params: ZamletParams) extends Bundle {
+  val za = Flipped(Decoupled(new JteInitiatorAB(params)))
+  val ab = Decoupled(new JteInitiatorAB(params))
+  val rfMaskReq = Decoupled(params.rfAddr())
+  val rfDataReq = Decoupled(params.rfAddr())
+}
+
+class JteInitiatorZ(params: ZamletParams) extends Module {
+  val io = IO(new JteInitiatorZIO(params))
+
+  val maskNotBlocking = io.rfMaskReq.ready || !io.za.bits.maskUse
+  val dataNotBlocking = io.rfDataReq.ready || !io.za.bits.dataUse
+
+  io.rfMaskReq.valid := io.za.valid && io.ab.ready && dataNotBlocking && io.za.bits.maskUse
+  io.rfMaskReq.bits := io.za.bits.input.maskReg
+  io.rfDataReq.valid := io.za.valid && io.ab.ready && maskNotBlocking && io.za.bits.dataUse
+  io.rfDataReq.bits := io.za.bits.input.dataReg
+
+  io.ab.valid := io.za.valid && maskNotBlocking && dataNotBlocking
+  io.za.ready := io.ab.ready && maskNotBlocking && dataNotBlocking
+  io.ab.bits := io.za.bits
 }
 
 class JteInitiatorBC(params: ZamletParams) extends Bundle {
@@ -804,12 +814,15 @@ class JteInitiator(params: ZamletParams) extends Module {
   val aStage = Module(new JteInitiatorA(params))
   aStage.io.laneIndex := RegNext(io.laneIndex)
   aStage.io.input <> DoubleBuffer(io.input, ip.inputFB, ip.inputBB)
-  io.rfDataReq <> DoubleBuffer(aStage.io.rfDataReq, ip.rfDataReqFB, ip.rfDataReqBB)
-  io.rfMaskReq <> DoubleBuffer(aStage.io.rfMaskReq, ip.rfMaskReqFB, ip.rfMaskReqBB)
+
+  val zStage = Module(new JteInitiatorZ(params))
+  zStage.io.za <> DoubleBuffer(aStage.io.ab, ip.zFB, ip.zBB)
+  io.rfDataReq <> DoubleBuffer(zStage.io.rfDataReq, ip.rfDataReqFB, ip.rfDataReqBB)
+  io.rfMaskReq <> DoubleBuffer(zStage.io.rfMaskReq, ip.rfMaskReqFB, ip.rfMaskReqBB)
 
   val bStage = Module(new JteInitiatorB(params))
   io.rfIndexReq <> DoubleBuffer(bStage.io.rfIndexReq, ip.rfIndexReqFB, ip.rfIndexReqBB)
-  bStage.io.ab <> DoubleBuffer(aStage.io.ab, ip.abFB, ip.abBB)
+  bStage.io.ab <> DoubleBuffer(zStage.io.ab, ip.abFB, ip.abBB)
 
   val cStage = Module(new JteInitiatorC(params))
   cStage.io.bc <> DoubleBuffer(bStage.io.bc, ip.bcFB, ip.bcBB)

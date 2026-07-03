@@ -149,6 +149,8 @@
     "rfMaskReqBB": true,
     "rfIndexReqFB": true,
     "rfIndexReqBB": true,
+    "zFB": true,
+    "zBB": true,
     "abFB": true,
     "abBB": true,
     "bcFB": true,

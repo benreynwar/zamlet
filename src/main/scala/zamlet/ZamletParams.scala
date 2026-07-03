@@ -5,7 +5,9 @@ import chisel3.util._
 import io.circe._
 import io.circe.parser._
 import io.circe.generic.semiauto._
+import java.io.File
 import scala.io.Source
+import scala.util.control.NonFatal
 
 class Ordering extends Bundle {
   val wf = WidthFormat()
@@ -132,6 +134,8 @@ case class JteInitiatorParams(
   rfMaskReqBB: Boolean = true,
   rfIndexReqFB: Boolean = true,
   rfIndexReqBB: Boolean = true,
+  zFB: Boolean = true,
+  zBB: Boolean = true,
   abFB: Boolean = true,
   abBB: Boolean = true,
   bcFB: Boolean = true,
@@ -590,9 +594,72 @@ object ZamletParams {
   implicit val kamletTlbParamsDecoder: Decoder[KamletTlbParams] = deriveDecoder[KamletTlbParams]
   implicit val zamletParamsDecoder: Decoder[ZamletParams] = deriveDecoder[ZamletParams]
 
+  private def readFile(file: File): String = {
+    val source = Source.fromFile(file)
+    try {
+      source.mkString
+    } finally {
+      source.close()
+    }
+  }
+
+  private def deepMerge(base: Json, overrideJson: Json): Json = {
+    (base.asObject, overrideJson.asObject) match {
+      case (Some(baseObject), Some(overrideObject)) =>
+        val mergedKeys = baseObject.keys.toSet ++ overrideObject.keys.toSet
+        Json.fromJsonObject(JsonObject.fromIterable(mergedKeys.toSeq.map { key =>
+          val mergedValue = (baseObject(key), overrideObject(key)) match {
+            case (Some(baseValue), Some(overrideValue)) => deepMerge(baseValue, overrideValue)
+            case (Some(baseValue), None) => baseValue
+            case (None, Some(overrideValue)) => overrideValue
+            case (None, None) => Json.Null
+          }
+          key -> mergedValue
+        }))
+      case _ => overrideJson
+    }
+  }
+
+  private def withoutMetadata(json: Json): Json = {
+    json.mapObject(_.remove("base"))
+  }
+
+  private def loadJsonWithBase(file: File, stack: List[String]): Either[String, Json] = {
+    val canonical = file.getCanonicalFile
+    val path = canonical.getPath
+    if (stack.contains(path)) {
+      Left(s"Config inheritance cycle: ${(path :: stack).reverse.mkString(" -> ")}")
+    } else {
+      val jsonContent = try {
+        Right(readFile(canonical))
+      } catch {
+        case NonFatal(error) => Left(s"Failed to read JSON config $path: ${error.getMessage}")
+      }
+      jsonContent.flatMap { content =>
+        parse(content).left.map(error => s"Failed to parse JSON in $path: $error")
+      }.flatMap { json =>
+        json.hcursor.downField("base").focus match {
+          case Some(baseJson) =>
+            baseJson.as[String] match {
+              case Right(basePath) =>
+                val baseFile = new File(basePath)
+                val resolvedBaseFile =
+                  if (baseFile.isAbsolute) baseFile else new File(canonical.getParentFile, basePath)
+                loadJsonWithBase(resolvedBaseFile, path :: stack).map { loadedBaseJson =>
+                  withoutMetadata(deepMerge(loadedBaseJson, json))
+                }
+              case Left(error) =>
+                Left(s"Invalid base field in $path: $error")
+            }
+          case None =>
+            Right(withoutMetadata(json))
+        }
+      }
+    }
+  }
+
   def fromFile(fileName: String): ZamletParams = {
-    val jsonContent = Source.fromFile(fileName).mkString
-    val paramsResult = decode[ZamletParams](jsonContent)
+    val paramsResult = loadJsonWithBase(new File(fileName), Nil).flatMap(_.as[ZamletParams].left.map(_.toString))
     paramsResult match {
       case Right(params) => params
       case Left(error) =>

@@ -22,7 +22,18 @@ chisel_dse_module(
     generator = JAMLET_PKG + ":jamlet",
     config = ZAMLET_CONFIG,
     pdk = ":sky130hd",
-    clock_period = "10.0",
+    clock_period = "20.0",
+    core_utilization = "35",
+    pin_order_cfg = ":jamlet_pin_order.cfg",
+)
+
+chisel_dse_module(
+    name = "Jamlet_1024lanes",
+    top = "Jamlet",
+    generator = JAMLET_PKG + ":jamlet",
+    config = "//configs:zamlet_1024lanes.json",
+    pdk = ":sky130hd",
+    clock_period = "20.0",
     core_utilization = "35",
     pin_order_cfg = ":jamlet_pin_order.cfg",
 )
@@ -72,7 +83,7 @@ ZAMLET_CONFIGS = [
     config = cfg_path,
     pdk = ":sky130hd",
     extra_generator_args = extra_args,
-    clock_period = "10.0",
+    clock_period = "20.0",
     core_utilization = core_util,
     synth_config = ":synth_autoname",
 ) for module, target, extra_args, core_util in JAMLET_SUB_MODULES
@@ -85,6 +96,6 @@ chisel_dse_module(
     generator = JAMLET_PKG + ":vectorrf",
     config = "//configs:vector_rf_3r1w.json",
     pdk = ":sky130hd",
-    clock_period = "10.0",
+    clock_period = "20.0",
     core_utilization = "40",
 )
