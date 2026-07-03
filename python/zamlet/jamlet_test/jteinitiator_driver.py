@@ -9,6 +9,8 @@ from zamlet.lane_order import LaneOrder
 from zamlet.params import ZamletParams
 from zamlet.test_helpers.streams import ValidMonitor, ValidReadySink, ValidReadySource
 
+JTE_STATE_INITIAL = 0
+
 
 class ScalarResponder:
     def __init__(
@@ -144,7 +146,7 @@ class JteInitiatorDriver:
         return tasks
 
     def enqueue_instruction(self, instr) -> None:
-        self.input.append({
+        item = {
             "teIndex": 0,
             "instrIdent": 0,
             "mode": instr.mode,
@@ -160,7 +162,10 @@ class JteInitiatorDriver:
             "rfDataWF": instr.reg_wf,
             "rfDataEW": instr.data_ew,
             "rfIndexEW": instr.index_ew,
-        })
+        }
+        for i in range(self.params.word_bytes):
+            item[f"initiator_{i}"] = JTE_STATE_INITIAL
+        self.input.append(item)
 
     def enqueue_instructions(self, instrs) -> None:
         for instr in instrs:

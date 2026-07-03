@@ -5,6 +5,12 @@ import chisel3.util._
 import zamlet.ZamletParams
 import zamlet.network.{INetworkWord, NetworkWord}
 
+class JteErrors extends Bundle {
+  val state = new JteStateErrors()
+  val receiver = new JteReceiverAErrors()
+  val handler = new JteHandlerAErrors()
+}
+
 class JteIO(params: ZamletParams) extends Bundle {
   val laneIndex = Input(UInt(params.log2JInL.W))
   val x = Input(UInt(8.W))
@@ -15,7 +21,7 @@ class JteIO(params: ZamletParams) extends Bundle {
   val inputReq = Decoupled(UInt(log2Ceil(params.witemTableDepth).W))
   val inputResp = Flipped(Decoupled(new JteInitiatorInput(params)))
   val transferComplete = Output(Vec(params.witemTableDepth, Bool()))
-  val errors = Output(new JteStateErrors())
+  val errors = Output(new JteErrors())
 
   val channel0In = Flipped(Decoupled(new NetworkWord(params)))
   val channel1In = Flipped(Decoupled(new NetworkWord(params)))
@@ -56,7 +62,9 @@ class Jte(params: ZamletParams) extends Module {
   io.inputReq <> state.io.inputReq
   state.io.inputResp <> io.inputResp
   io.transferComplete := state.io.transferComplete
-  io.errors := state.io.errors
+  io.errors.state := state.io.errors
+  io.errors.receiver := receiver.io.errors
+  io.errors.handler := handler.io.errors
 
   initiator.io.laneIndex := io.laneIndex
   initiator.io.x := io.x
@@ -75,6 +83,18 @@ class Jte(params: ZamletParams) extends Module {
   state.io.tlbAvailable <> io.tlbAvailable
 
   receiver.io.packet <> io.channel0In
+  private val slotToRegLookupHasBuffer =
+    params.jteReceiverParams.slotToRegReqFB ||
+      params.jteReceiverParams.slotToRegReqBB ||
+      params.jteReceiverParams.slotToRegRespFB ||
+      params.jteReceiverParams.slotToRegRespBB ||
+      params.jteStateParams.slotToRegReqFB ||
+      params.jteStateParams.slotToRegReqBB ||
+      params.jteStateParams.slotToRegRespFB ||
+      params.jteStateParams.slotToRegRespBB
+  require(
+    slotToRegLookupHasBuffer,
+    "JTE receiver/state slot-to-reg lookup requires a buffer on the request/response cycle")
   receiver.io.teIndexToRegReq <> state.io.teIndexToRegReq
   state.io.teIndexToRegResp <> receiver.io.teIndexToRegResp
   io.rfWriteReq <> receiver.io.rfWriteReq

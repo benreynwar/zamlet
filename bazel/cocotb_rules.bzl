@@ -24,18 +24,28 @@ def _verilate_impl(ctx):
     cpp_output = ctx.actions.declare_directory(ctx.attr.name + "_cpp")
     hpp_output = ctx.actions.declare_directory(ctx.attr.name + "_hpp")
 
+    output_split_args = ""
+    if ctx.attr.output_split > 0:
+        output_split_args += " --output-split %d" % ctx.attr.output_split
+    if ctx.attr.output_split_cfuncs > 0:
+        output_split_args += " --output-split-cfuncs %d" % ctx.attr.output_split_cfuncs
+    if ctx.attr.output_split_ctrace > 0:
+        output_split_args += " --output-split-ctrace %d" % ctx.attr.output_split_ctrace
+
     # Run verilator
     ctx.actions.run_shell(
         outputs = [verilator_output],
         inputs = input_files,
         command = """{verilator} --cc --vpi --public-flat-rw \
             --timescale 1ns/1ps --trace \
+            {output_split_args} \
             --prefix Vtop \
             --Mdir {out_dir} \
             --top-module {module_top} \
             {inputs}
         """.format(
             verilator = verilator_tc.verilator_bin,
+            output_split_args = output_split_args,
             out_dir = verilator_output.path,
             module_top = ctx.attr.module_top,
             inputs = input_paths,
@@ -117,6 +127,9 @@ verilate = rule(
         "srcs": attr.label_list(allow_files = [".v", ".sv"]),
         "module_top": attr.string(mandatory = True),
         "deps": attr.label_list(providers = [CcInfo]),
+        "output_split": attr.int(default = 20000),
+        "output_split_cfuncs": attr.int(default = 20000),
+        "output_split_ctrace": attr.int(default = 20000),
         "_cc_toolchain": attr.label(
             default = Label("@bazel_tools//tools/cpp:current_cc_toolchain"),
         ),

@@ -3,8 +3,9 @@ package zamlet.kamlet
 import chisel3._
 import chisel3.util._
 import zamlet.ZamletParams
-import zamlet.memlet.{AXI4MasterIO, Memlet, MemletErrors}
+import zamlet.memlet.{AXI4MasterIO, Memlet}
 import zamlet.network.{CombinedNetworkNode, NetworkWord}
+import zamlet.utils.{ResetPipeline, ResetPipelineBudget}
 
 class KamletMeshWithMemlets(params: ZamletParams) extends Module {
   require(params.kCols % 2 == 0, "KamletMeshWithMemlets requires even kCols")
@@ -42,17 +43,29 @@ class KamletMeshWithMemlets(params: ZamletParams) extends Module {
       dataBits = params.memBeatWords * params.wordWidth,
       idBits = params.memAxiIdBits
     ))
-    val memletErrors = Output(Vec(params.kInL, new MemletErrors(params)))
   })
 
-  val mesh = Module(new KamletMesh(params, MeshEdgeNeighbors.isolated(params.kCols, params.kRows)))
+  private val rootResetBudget = ResetPipelineBudget(params.resetPipelineDepth)
+  private val resetPipeline =
+    ResetPipeline(clock, reset.asBool, 1, rootResetBudget, "KamletMeshWithMemlets")
+  private val childResetBudget = resetPipeline.childBudget
+
+  withReset(resetPipeline.localReset) {
+  val mesh: KamletMesh = withReset(resetPipeline.childReset) {
+    Module(new KamletMesh(
+      params,
+      MeshEdgeNeighbors.isolated(params.kCols, params.kRows),
+      childResetBudget))
+  }
   mesh.io.knetOffsetX := io.knetOffsetX
   mesh.io.knetOffsetY := io.knetOffsetY
   mesh.io.lamletKnetX := io.lamletKnetX
   mesh.io.lamletKnetY := io.lamletKnetY
 
   val memlets = Seq.tabulate(params.kCols, params.kRows) { (kX, kY) =>
-    val m = Module(new Memlet(params))
+    val m: Memlet = withReset(resetPipeline.childReset) {
+      Module(new Memlet(params, childResetBudget))
+    }
     val idx = kY * params.kCols + kX
     for (router <- 0 until params.nMemletRouters) {
       m.io.routerCoords(router).x := KamletMeshCoords.memletJnetRouterX(params, kX, router)
@@ -68,12 +81,13 @@ class KamletMeshWithMemlets(params: ZamletParams) extends Module {
       }
     }
     io.axi(idx) <> m.io.axi
-    io.memletErrors(idx) := m.io.errors
     m
   }
 
   val controlNodes = Seq.tabulate(params.kCols, params.kRows) { (kX, kY) =>
-    val n = Module(new CombinedNetworkNode(params))
+    val n: CombinedNetworkNode = withReset(resetPipeline.childReset) {
+      Module(new CombinedNetworkNode(params, childResetBudget))
+    }
     n.io.thisX := KamletMeshCoords.memletKnetX(params, io.knetOffsetX, kX)
     n.io.thisY := KamletMeshCoords.memletKnetY(params, io.knetOffsetY, kY)
     n.io.aHi <> memlets(kX)(kY).io.controlAHi
@@ -84,21 +98,21 @@ class KamletMeshWithMemlets(params: ZamletParams) extends Module {
     n
   }
 
-  private def tieIn(port: DecoupledIO[NetworkWord]): Unit = {
+  def tieIn(port: DecoupledIO[NetworkWord]): Unit = {
     port.valid := false.B
     port.bits := DontCare
   }
 
-  private def tieOut(port: DecoupledIO[NetworkWord]): Unit = {
+  def tieOut(port: DecoupledIO[NetworkWord]): Unit = {
     port.ready := true.B
   }
 
-  private def tieSyncIn(port: SyncIO): Unit = {
+  def tieSyncIn(port: SyncIO): Unit = {
     port.in.valid := false.B
     port.in.bits := 0.U
   }
 
-  private def connectKnetEastWest(left: CombinedNetworkNode, right: CombinedNetworkNode): Unit = {
+  def connectKnetEastWest(left: CombinedNetworkNode, right: CombinedNetworkNode): Unit = {
     for (ch <- 0 until params.nAChannels) {
       left.io.aEo(ch) <> right.io.aWi(ch)
       right.io.aWo(ch) <> left.io.aEi(ch)
@@ -109,7 +123,7 @@ class KamletMeshWithMemlets(params: ZamletParams) extends Module {
     }
   }
 
-  private def connectKnetToWestMesh(node: CombinedNetworkNode, kY: Int): Unit = {
+  def connectKnetToWestMesh(node: CombinedNetworkNode, kY: Int): Unit = {
     for (ch <- 0 until params.nAChannels) {
       node.io.aEi(ch) <> mesh.io.wKamletAOut(kY)(ch)
       node.io.aEo(ch) <> mesh.io.wKamletAIn(kY)(ch)
@@ -120,7 +134,7 @@ class KamletMeshWithMemlets(params: ZamletParams) extends Module {
     }
   }
 
-  private def connectKnetToEastMesh(node: CombinedNetworkNode, kY: Int): Unit = {
+  def connectKnetToEastMesh(node: CombinedNetworkNode, kY: Int): Unit = {
     for (ch <- 0 until params.nAChannels) {
       node.io.aWi(ch) <> mesh.io.eKamletAOut(kY)(ch)
       node.io.aWo(ch) <> mesh.io.eKamletAIn(kY)(ch)
@@ -131,7 +145,7 @@ class KamletMeshWithMemlets(params: ZamletParams) extends Module {
     }
   }
 
-  private def tieKnetNorthSouth(node: CombinedNetworkNode): Unit = {
+  def tieKnetNorthSouth(node: CombinedNetworkNode): Unit = {
     for (ch <- 0 until params.nAChannels) {
       tieIn(node.io.aNi(ch))
       tieOut(node.io.aNo(ch))
@@ -146,7 +160,7 @@ class KamletMeshWithMemlets(params: ZamletParams) extends Module {
     }
   }
 
-  private def tieKnetWest(node: CombinedNetworkNode): Unit = {
+  def tieKnetWest(node: CombinedNetworkNode): Unit = {
     for (ch <- 0 until params.nAChannels) {
       tieIn(node.io.aWi(ch))
       tieOut(node.io.aWo(ch))
@@ -157,7 +171,7 @@ class KamletMeshWithMemlets(params: ZamletParams) extends Module {
     }
   }
 
-  private def tieKnetEast(node: CombinedNetworkNode): Unit = {
+  def tieKnetEast(node: CombinedNetworkNode): Unit = {
     for (ch <- 0 until params.nAChannels) {
       tieIn(node.io.aEi(ch))
       tieOut(node.io.aEo(ch))
@@ -174,7 +188,7 @@ class KamletMeshWithMemlets(params: ZamletParams) extends Module {
     }
   }
 
-  private val halfCols = KamletMeshCoords.halfCols(params)
+  val halfCols = KamletMeshCoords.halfCols(params)
 
   for (kY <- 0 until params.kRows) {
     for (kX <- 0 until halfCols - 1) {
@@ -192,7 +206,7 @@ class KamletMeshWithMemlets(params: ZamletParams) extends Module {
 
   case class RouterEndpoint(memlet: Memlet, router: Int, x: Int, y: Int)
 
-  private val routerEndpoints = (
+  val routerEndpoints = (
     for {
       kX <- 0 until params.kCols
       kY <- 0 until params.kRows
@@ -207,9 +221,9 @@ class KamletMeshWithMemlets(params: ZamletParams) extends Module {
     }
   ).toSeq
 
-  private val routerByCoord = routerEndpoints.map(e => (e.x, e.y) -> e).toMap
+  val routerByCoord = routerEndpoints.map(e => (e.x, e.y) -> e).toMap
 
-  private def connectRoutersEastWest(left: RouterEndpoint, right: RouterEndpoint): Unit = {
+  def connectRoutersEastWest(left: RouterEndpoint, right: RouterEndpoint): Unit = {
     for (ch <- 0 until params.nAChannels) {
       left.memlet.io.aEo(left.router)(ch) <> right.memlet.io.aWi(right.router)(ch)
       right.memlet.io.aWo(right.router)(ch) <> left.memlet.io.aEi(left.router)(ch)
@@ -220,7 +234,7 @@ class KamletMeshWithMemlets(params: ZamletParams) extends Module {
     }
   }
 
-  private def connectRoutersNorthSouth(north: RouterEndpoint, south: RouterEndpoint): Unit = {
+  def connectRoutersNorthSouth(north: RouterEndpoint, south: RouterEndpoint): Unit = {
     for (ch <- 0 until params.nAChannels) {
       south.memlet.io.aNi(south.router)(ch) <> north.memlet.io.aSo(north.router)(ch)
       south.memlet.io.aNo(south.router)(ch) <> north.memlet.io.aSi(north.router)(ch)
@@ -231,7 +245,7 @@ class KamletMeshWithMemlets(params: ZamletParams) extends Module {
     }
   }
 
-  private def connectRouterToWestMesh(e: RouterEndpoint): Unit = {
+  def connectRouterToWestMesh(e: RouterEndpoint): Unit = {
     val kY = e.y / params.jRows
     val jY = e.y % params.jRows
     for (ch <- 0 until params.nAChannels) {
@@ -245,7 +259,7 @@ class KamletMeshWithMemlets(params: ZamletParams) extends Module {
     }
   }
 
-  private def connectRouterToEastMesh(e: RouterEndpoint): Unit = {
+  def connectRouterToEastMesh(e: RouterEndpoint): Unit = {
     val kY = e.y / params.jRows
     val jY = e.y % params.jRows
     for (ch <- 0 until params.nAChannels) {
@@ -259,7 +273,7 @@ class KamletMeshWithMemlets(params: ZamletParams) extends Module {
     }
   }
 
-  private def tieRouterNorth(e: RouterEndpoint): Unit = {
+  def tieRouterNorth(e: RouterEndpoint): Unit = {
     for (ch <- 0 until params.nAChannels) {
       tieIn(e.memlet.io.aNi(e.router)(ch))
       tieOut(e.memlet.io.aNo(e.router)(ch))
@@ -270,7 +284,7 @@ class KamletMeshWithMemlets(params: ZamletParams) extends Module {
     }
   }
 
-  private def tieRouterSouth(e: RouterEndpoint): Unit = {
+  def tieRouterSouth(e: RouterEndpoint): Unit = {
     for (ch <- 0 until params.nAChannels) {
       tieIn(e.memlet.io.aSi(e.router)(ch))
       tieOut(e.memlet.io.aSo(e.router)(ch))
@@ -281,7 +295,7 @@ class KamletMeshWithMemlets(params: ZamletParams) extends Module {
     }
   }
 
-  private def tieRouterWest(e: RouterEndpoint): Unit = {
+  def tieRouterWest(e: RouterEndpoint): Unit = {
     for (ch <- 0 until params.nAChannels) {
       tieIn(e.memlet.io.aWi(e.router)(ch))
       tieOut(e.memlet.io.aWo(e.router)(ch))
@@ -292,7 +306,7 @@ class KamletMeshWithMemlets(params: ZamletParams) extends Module {
     }
   }
 
-  private def tieRouterEast(e: RouterEndpoint): Unit = {
+  def tieRouterEast(e: RouterEndpoint): Unit = {
     for (ch <- 0 until params.nAChannels) {
       tieIn(e.memlet.io.aEi(e.router)(ch))
       tieOut(e.memlet.io.aEo(e.router)(ch))
@@ -303,8 +317,8 @@ class KamletMeshWithMemlets(params: ZamletParams) extends Module {
     }
   }
 
-  private val meshJnetWestX = KamletMeshCoords.sideJnetCols(params)
-  private val meshJnetEastX = KamletMeshCoords.sideJnetCols(params) + params.kCols * params.jCols - 1
+  val meshJnetWestX = KamletMeshCoords.sideJnetCols(params)
+  val meshJnetEastX = KamletMeshCoords.sideJnetCols(params) + params.kCols * params.jCols - 1
 
   for (e <- routerEndpoints) {
     routerByCoord.get((e.x, e.y - 1)) match {
@@ -384,6 +398,7 @@ class KamletMeshWithMemlets(params: ZamletParams) extends Module {
     tieSyncIn(mesh.io.eSyncSE(i))
     tieSyncIn(mesh.io.wSyncNW(i))
     tieSyncIn(mesh.io.wSyncSW(i))
+  }
   }
 }
 

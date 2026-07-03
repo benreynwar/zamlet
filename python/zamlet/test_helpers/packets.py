@@ -1,5 +1,6 @@
 from collections import deque
 from random import Random
+from typing import Any, List
 
 import cocotb
 from cocotb.triggers import Event
@@ -29,8 +30,8 @@ class NetworkPacketSource:
         for word in body_words:
             self.enqueue_word(word, False)
 
-    def start(self, rng: Random, p_valid: float = 1.0) -> None:
-        cocotb.start_soon(self.run(seed=make_seed(rng), p_valid=p_valid))
+    def start(self, rng: Random, p_valid: float = 1.0) -> List[Any]:
+        return [cocotb.start_soon(self.run(seed=make_seed(rng), p_valid=p_valid))]
 
     async def run(self, seed: int, p_valid: float = 1.0) -> None:
         rng = Random(seed)
@@ -78,9 +79,11 @@ class NetworkPacketSink:
         self.future_queue.append(future)
         return future
 
-    def start(self, rng: Random, p_ready: float = 1.0) -> None:
-        cocotb.start_soon(self.run(seed=make_seed(rng), p_ready=p_ready))
-        cocotb.start_soon(self.resolve())
+    def start(self, rng: Random, p_ready: float = 1.0) -> List[Any]:
+        return [
+            cocotb.start_soon(self.run(seed=make_seed(rng), p_ready=p_ready)),
+            cocotb.start_soon(self.resolve()),
+        ]
 
     async def resolve(self) -> None:
         while True:

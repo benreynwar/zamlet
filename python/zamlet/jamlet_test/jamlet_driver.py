@@ -36,20 +36,51 @@ def _check_error_wire(dut: HierarchyObject, prefix: str, name: str, description:
 
 
 def check_jte_error_wires(dut: HierarchyObject, prefix: str) -> None:
-    _check_error_wire(dut, prefix, "createTeIndexInUse", "JTE create teIndex already in use")
-    _check_error_wire(dut, prefix, "teIndexToRegInvalid", "JTE teIndex-to-reg request for invalid entry")
-    _check_error_wire(dut, prefix, "receiverUpdateInvalid", "JTE receiver update for invalid slot")
+    state_prefix = f"{prefix}_state"
+    _check_error_wire(dut, state_prefix, "createTeIndexInUse", "JTE create teIndex already in use")
+    _check_error_wire(dut, state_prefix, "teIndexToRegInvalid", "JTE teIndex-to-reg request for invalid entry")
+    _check_error_wire(dut, state_prefix, "receiverUpdateInvalid", "JTE receiver update for invalid slot")
     _check_error_wire(
         dut,
-        prefix,
+        state_prefix,
         "receiverUpdateIdentMismatch",
         "JTE receiver update ident mismatch",
     )
     _check_error_wire(
         dut,
-        prefix,
+        state_prefix,
         "initiatorCommitInvalid",
         "JTE initiator commit for invalid slot",
+    )
+    _check_error_wire(
+        dut,
+        state_prefix,
+        "tlbAvailableInvalid",
+        "JTE TLB available for invalid slot",
+    )
+    _check_error_wire(
+        dut,
+        state_prefix,
+        "tlbAvailableUnexpectedState",
+        "JTE TLB available in unexpected state",
+    )
+    _check_error_wire(
+        dut,
+        state_prefix,
+        "tlbAvailableReceiverConflict",
+        "JTE TLB available receiver conflict",
+    )
+    _check_error_wire(
+        dut,
+        f"{prefix}_receiver",
+        "unexpectedHeader",
+        "JTE receiver saw an unexpected packet header",
+    )
+    _check_error_wire(
+        dut,
+        f"{prefix}_handler",
+        "unexpectedHeader",
+        "JTE handler saw an unexpected packet header",
     )
 
 
@@ -174,10 +205,11 @@ class JamletDriver:
     async def reset(self) -> None:
         await RisingEdge(self.dut.clock)
         self.dut.reset.value = 1
-        await RisingEdge(self.dut.clock)
+        for _ in range(self.params.reset_pipeline_depth + 1):
+            await RisingEdge(self.dut.clock)
         self.dut.reset.value = 0
-        await RisingEdge(self.dut.clock)
-        await RisingEdge(self.dut.clock)
+        for _ in range(self.params.reset_pipeline_depth + 1):
+            await RisingEdge(self.dut.clock)
 
     async def send_read_line_resp(self, slot: int, words: list[int]) -> None:
         assert len(words) == self.params.cache_slot_words_per_jamlet

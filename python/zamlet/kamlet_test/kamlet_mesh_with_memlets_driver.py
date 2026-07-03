@@ -98,6 +98,7 @@ class KamletMeshWithMemletsDriver:
                 getattr(self.dut, f'io_{name}_{kx}_in_bits').value = 0
 
     def start(self, rng: Random) -> None:
+        self._start_axi_memories()
         for source in self.n_kamlet_a_in:
             source.start(rng)
         for sink in self.n_kamlet_a_out:
@@ -110,16 +111,15 @@ class KamletMeshWithMemletsDriver:
             source.start(rng)
         for sink in self.n_jnet_out.values():
             sink.start(rng)
+        self.start_tlb_responder()
+        cocotb.start_soon(self.monitor_error_wires())
 
-    def start_axi_memories(self) -> list[OrderedKamletAxiMemory]:
-        memories = []
+    def _start_axi_memories(self) -> None:
         for idx in range(self.params.k_in_l):
             signals = Axi4Signals.from_prefix(self.dut, f'io_axi_{idx}')
             memory = OrderedKamletAxiMemory(
                 signals, self.dut.clock, self.params, self.memory, idx)
             memory.start()
-            memories.append(memory)
-        return memories
 
     def log_debug_state(self) -> None:
         logger.debug(
@@ -191,49 +191,218 @@ class KamletMeshWithMemletsDriver:
 
     async def reset(self) -> None:
         self.dut.reset.value = 1
-        await RisingEdge(self.dut.clock)
-        await RisingEdge(self.dut.clock)
+        for _ in range(self.params.reset_pipeline_depth):
+            await RisingEdge(self.dut.clock)
         self.dut.reset.value = 0
-        await RisingEdge(self.dut.clock)
-        await RisingEdge(self.dut.clock)
-        await RisingEdge(self.dut.clock)
+        for _ in range(self.params.reset_pipeline_depth):
+            await RisingEdge(self.dut.clock)
 
     def enqueue_instructions(self, encoded_kinstrs: list[int]) -> None:
         params = self.params
         header_field_widths = dict(params.abstract_base_header_fields)
         max_packet_body_words = (1 << header_field_widths['length']) - 1
-        assert 0 < len(encoded_kinstrs) <= max_packet_body_words, (
-            f'instruction packet has {len(encoded_kinstrs)} body words; '
-            f'max is {max_packet_body_words}')
+        assert encoded_kinstrs
         source_x, source_y = kamlet_network.lamlet_kcoord(params)
         target_x, target_y = kamlet_network.kamlet_kcoord(params, params.k_in_l - 1)
-        header = Header(
-            target_x=target_x,
-            target_y=target_y,
-            source_x=source_x,
-            source_y=source_y,
-            length=len(encoded_kinstrs),
-            message_type=MessageType.INSTRUCTIONS,
-            send_type=SendType.BROADCAST,
-        )
-        logger.debug(
-            'enqueue instructions source=(%d,%d) target=(%d,%d) length=%d words=%s',
-            source_x,
-            source_y,
-            target_x,
-            target_y,
-            len(encoded_kinstrs),
-            [f'0x{word:016x}' for word in encoded_kinstrs],
-        )
-        self.n_kamlet_b_in[0].enqueue_packet(
-            header.encode(params),
-            encoded_kinstrs,
-        )
+        for start in range(0, len(encoded_kinstrs), max_packet_body_words):
+            chunk = encoded_kinstrs[start:start + max_packet_body_words]
+            header = Header(
+                target_x=target_x,
+                target_y=target_y,
+                source_x=source_x,
+                source_y=source_y,
+                length=len(chunk),
+                message_type=MessageType.INSTRUCTIONS,
+                send_type=SendType.BROADCAST,
+            )
+            logger.debug(
+                'enqueue instructions source=(%d,%d) target=(%d,%d) length=%d words=%s',
+                source_x,
+                source_y,
+                target_x,
+                target_y,
+                len(chunk),
+                [f'0x{word:016x}' for word in chunk],
+            )
+            self.n_kamlet_b_in[0].enqueue_packet(
+                header.encode(params),
+                chunk,
+            )
 
     def start_tlb_responder(self) -> 'KamletMeshTlbResponder':
         responder = KamletMeshTlbResponder(self)
         responder.start()
         return responder
+
+    def _n_memlet_routers(self) -> int:
+        half_cols = self.params.k_cols // 2
+        if half_cols <= self.params.j_rows:
+            return self.params.j_rows // half_cols
+        return 1
+
+    def _error_signals(self) -> list[tuple[str, object]]:
+        signals = []
+        for kx in range(self.params.k_cols):
+            for ky in range(self.params.k_rows):
+                kamlet = getattr(self.dut.mesh, f"kamlets_{kx}_{ky}")
+                self._append_kamlet_error_signals(signals, kamlet, f"kamlet({kx},{ky})")
+                for jy in range(self.params.j_rows):
+                    for jx in range(self.params.j_cols):
+                        jamlet = getattr(kamlet, f"jamlets_{jy}_{jx}")
+                        self._append_jamlet_error_signals(
+                            signals,
+                            jamlet,
+                            f"jamlet({kx},{ky},{jy},{jx})",
+                        )
+                memlet = getattr(self.dut, f"memlets_{kx}_{ky}")
+                self._append_memlet_error_signals(signals, memlet, f"memlet({kx},{ky})")
+        return signals
+
+    def _append_jte_error_signals(
+        self,
+        signals: list[tuple[str, object]],
+        jamlet: HierarchyObject,
+        label: str,
+    ) -> None:
+        for field in [
+            "createTeIndexInUse",
+            "teIndexToRegInvalid",
+            "receiverUpdateInvalid",
+            "receiverUpdateIdentMismatch",
+            "initiatorCommitInvalid",
+            "tlbAvailableInvalid",
+            "tlbAvailableUnexpectedState",
+            "tlbAvailableReceiverConflict",
+        ]:
+            signals.append((
+                f"{label}.jte.state.{field}",
+                getattr(jamlet, f"io_errors_jte_state_{field}"),
+            ))
+        for field in ["unexpectedHeader"]:
+            signals.append((
+                f"{label}.jte.receiver.{field}",
+                getattr(jamlet, f"io_errors_jte_receiver_{field}"),
+            ))
+            signals.append((
+                f"{label}.jte.handler.{field}",
+                getattr(jamlet, f"io_errors_jte_handler_{field}"),
+            ))
+
+    def _append_jamlet_error_signals(
+        self,
+        signals: list[tuple[str, object]],
+        jamlet: HierarchyObject,
+        label: str,
+    ) -> None:
+        self._append_jte_error_signals(signals, jamlet, label)
+        for field in ["badRxLength", "badRxMessageType"]:
+            signals.append((f"{label}.jce.{field}", getattr(
+                jamlet, f"io_errors_jce_{field}")))
+        for field in ["unsupportedOpcode"]:
+            signals.append((f"{label}.localExec.{field}", getattr(
+                jamlet, f"io_errors_localExec_{field}")))
+        for field in ["unsupportedEw", "unsupportedWf", "unsupportedEwWfRatio"]:
+            signals.append((f"{label}.localExec.alu.{field}", getattr(
+                jamlet, f"io_errors_localExec_alu_{field}")))
+        for field in ["badMessageType"]:
+            signals.append((f"{label}.aHoRouter.{field}", getattr(
+                jamlet, f"io_errors_aHoRouter_{field}")))
+
+    def _append_kamlet_error_signals(
+        self,
+        signals: list[tuple[str, object]],
+        kamlet: HierarchyObject,
+        label: str,
+    ) -> None:
+        for field in ["unexpectedHeader", "unexpectedData"]:
+            signals.append((f"{label}.instrQueue.{field}", getattr(
+                kamlet, f"io_errors_instrQueue_{field}")))
+        for field in ["binarySrcLaneOrderMismatch"]:
+            signals.append((f"{label}.reservationStation.{field}", getattr(
+                kamlet, f"io_errors_reservationStation_{field}")))
+        for field in [
+            "fetchTableFull", "jceFetchDoneUnknownSlot", "jceFetchDoneDuplicate",
+            "packetInBadMessageType", "packetInDrop",
+        ]:
+            signals.append((f"{label}.cacheEngine.memletInterface.{field}", getattr(
+                kamlet, f"io_errors_cacheEngine_memletInterface_{field}")))
+        for field in [
+            "instrStartedNotifyUnexpectedState", "allocRespUnexpectedState",
+            "slotAvailableUnexpectedState",
+            "pendingSlotsFreeOverflow", "pendingSlotsFreeUnderflow",
+            "freeEntryOverwrite", "allocRespReplayConflict",
+            "wakeReplayConflict", "instrStartedRespOverflow",
+        ]:
+            signals.append((f"{label}.cacheEngine.pendingTable.{field}", getattr(
+                kamlet, f"io_errors_cacheEngine_pendingTable_{field}")))
+        for field in [
+            "allocBadState", "allocBadUses", "allocRecentlyUsed",
+            "fillBadState", "writebackCompleteBadState",
+            "writebackCompleteQueueNotReady", "releaseUnderflow",
+        ]:
+            signals.append((f"{label}.cacheEngine.tagTable.{field}", getattr(
+                kamlet, f"io_errors_cacheEngine_tagTable_{field}")))
+        for field in [
+            "rsClaimRespQueueOverflow", "pendingClaimRespQueueOverflow",
+            "kteClaimRespQueueOverflow",
+        ]:
+            signals.append((f"{label}.cacheEngine.{field}", getattr(
+                kamlet, f"io_errors_cacheEngine_{field}")))
+        for field in [
+            "packetInBadMessageType", "packetInUnexpectedBody",
+            "respInvalidSlot", "respUnexpectedState", "claimRespQueueOverflow",
+            "reqTxNoLamletMatch", "allocRespNoLamletMatch",
+            "allocRespDuplicateLamletMatch", "reqTxDuplicateLamletMatch",
+        ]:
+            signals.append((f"{label}.tlb.{field}", getattr(
+                kamlet, f"io_errors_tlb_{field}")))
+        for field in ["idleBody", "activeHeader"]:
+            signals.append((f"{label}.packetMerge.{field}", getattr(
+                kamlet, f"io_errors_packetMerge_{field}")))
+        for router_name in ["aPacketRouter", "bPacketRouter"]:
+            for field in ["noRoute", "idleBody", "activeHeader"]:
+                signals.append((f"{label}.{router_name}.{field}", getattr(
+                    kamlet, f"io_errors_{router_name}_{field}")))
+
+    def _append_memlet_error_signals(
+        self,
+        signals: list[tuple[str, object]],
+        memlet: HierarchyObject,
+        label: str,
+    ) -> None:
+        control_fields = [
+            "allocOverwrite", "duplicateComplete", "missingHeader",
+            "unexpectedHeader", "badMessageType", "badPacketLength",
+        ]
+        gather_fields = [
+            "cacheSlotAllocOverwrite", "missingHeader", "unexpectedHeader",
+            "duplicateArrived", "badMessageType", "badPacketLength",
+            "badSourceCoord", "unexpectedData",
+        ]
+        response_fields = [
+            "responseAllocOverwrite", "sentInInvalid", "sentInDuplicate",
+        ]
+        for field in control_fields:
+            signals.append((f"{label}.controlErrors.{field}", getattr(
+                memlet, f"io_errors_controlErrors_{field}")))
+        for router in range(self._n_memlet_routers()):
+            for field in gather_fields:
+                signals.append((f"{label}.gatherErrors[{router}].{field}", getattr(
+                    memlet, f"io_errors_gatherErrors_{router}_{field}")))
+            for field in response_fields:
+                signals.append((f"{label}.responseErrors[{router}].{field}", getattr(
+                    memlet, f"io_errors_responseErrors_{router}_{field}")))
+
+    async def monitor_error_wires(self) -> None:
+        signals = self._error_signals()
+        while True:
+            await RisingEdge(self.dut.clock)
+            await ReadOnly()
+            for name, sig in signals:
+                if int(sig.value):
+                    for _ in range(3):
+                        await RisingEdge(self.dut.clock)
+                    assert False, f"Error signal asserted: {name}"
 
 
 class KamletMeshTlbResponder:
@@ -262,13 +431,17 @@ class KamletMeshTlbResponder:
         assert isinstance(logical_stripe_addr, int)
 
         mapping = self.driver.memory.translate_logical_stripe(logical_stripe_addr)
+        physical_stripe_addr = (
+            (mapping.physical_stripe_addr // self.params.cache_slot_words_per_jamlet)
+            << self.params.log2_page_words_per_jamlet
+        ) | (mapping.physical_stripe_addr % self.params.cache_slot_words_per_jamlet)
         self.requests.append((req_header.tlb_req_slot, logical_stripe_addr))
         logger.debug(
             'tlb req kx=%d slot=%d logical_stripe=0x%x physical_stripe=0x%x',
             kx,
             req_header.tlb_req_slot,
             logical_stripe_addr,
-            mapping.physical_stripe_addr,
+            physical_stripe_addr,
         )
 
         resp_header = KamletTlbRespHeader(
@@ -285,5 +458,5 @@ class KamletMeshTlbResponder:
         )
         self.driver.n_kamlet_a_in[kx].enqueue_packet(
             resp_header.encode(self.params),
-            [mapping.physical_stripe_addr],
+            [physical_stripe_addr],
         )

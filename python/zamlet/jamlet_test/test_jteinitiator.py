@@ -23,8 +23,6 @@ MODE_INDEX_STORE = 3
 
 JTE_STATE_REQUEST_SENT = 3
 JTE_STATE_COMPLETE = 4
-JTE_WALK_NEEDS_PROCESSING = 0
-JTE_WALK_DONE = 2
 
 
 @dataclass
@@ -217,7 +215,6 @@ def expected_commit_for_packets(packets: list[list[object]], params: ZamletParam
     return {
         'slot': 0,
         'initiator': initiator,
-        'walkState': JTE_WALK_NEEDS_PROCESSING if packets else JTE_WALK_DONE,
     }
 
 
@@ -339,7 +336,6 @@ async def consume_and_check_commits(
                 item[f'initiator_{i}']
                 for i in range(params.word_bytes)
             ],
-            'walkState': item['walkState'],
         }
         commits_received.append(commit)
         assert commits_expected, f'unexpected commit received: {commit}'

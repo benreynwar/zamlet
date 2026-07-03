@@ -435,6 +435,7 @@ case class ZamletParams(
   // Network configuration
   nAChannels: Int = 1,
   nBChannels: Int = 1,
+  resetPipelineDepth: Int = 8,
   networkNodeParams: NetworkNodeParams = NetworkNodeParams(),
   kamletPacketMergeParams: PacketMergeParams = PacketMergeParams(),
   kamletAIngressPacketRouterParams: MessageTypePacketRouterParams = MessageTypePacketRouterParams(),

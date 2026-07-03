@@ -5,6 +5,7 @@ import chisel3.util._
 import zamlet.LaneOrder
 import zamlet.ZamletParams
 import zamlet.network.{CombinedNetworkNode, NetworkWord, PacketArbiter, MessageType}
+import zamlet.utils.{ResetPipeline, ResetPipelineBudget}
 
 /** Network channels IO - Vec of channels for each direction */
 class ChannelsIO(params: ZamletParams, nChannels: Int) extends Bundle {
@@ -25,7 +26,7 @@ class SendCacheLineCmd(params: ZamletParams) extends Bundle {
 }
 
 class JamletErrors extends Bundle {
-  val jte = new JteStateErrors()
+  val jte = new JteErrors()
   val jce = new JceErrors()
   val localExec = new LocalExecErrors()
   val aHoRouter = new PacketRouterErrors()
@@ -36,7 +37,7 @@ class JamletErrors extends Bundle {
  *
  * Contains routers, SRAM, register file slice, and witem processing logic.
  */
-class Jamlet(params: ZamletParams) extends Module {
+class Jamlet(params: ZamletParams, resetBudget: ResetPipelineBudget) extends Module {
   val io = IO(new Bundle {
     // Position
     val thisX = Input(params.xPos())
@@ -75,14 +76,24 @@ class Jamlet(params: ZamletParams) extends Module {
 
   })
 
+  val resetPipeline =
+    ResetPipeline(clock, reset.asBool, 1, resetBudget, "Jamlet")
+  val childResetBudget = resetPipeline.childBudget
+
+  withReset(resetPipeline.localReset) {
+
   // ============================================================
   // Submodules
   // ============================================================
 
-  val combinedNetworkNode = Module(new CombinedNetworkNode(params))
+  val combinedNetworkNode: CombinedNetworkNode = withReset(resetPipeline.childReset) {
+    Module(new CombinedNetworkNode(params, childResetBudget))
+  }
 
   val sram = Module(new Sram(params))
-  val rfSlice = Module(new RfSlice(params))
+  val rfSlice: RfSlice = withReset(resetPipeline.childReset) {
+    Module(new RfSlice(params, childResetBudget))
+  }
   val jte = Module(new Jte(params))
   val jce = Module(new Jce(params))
   val localExec = Module(new LocalExec(params))
@@ -266,6 +277,7 @@ class Jamlet(params: ZamletParams) extends Module {
   // ============================================================
 
   io.cacheResponse := jce.io.rxDone
+  }
 }
 
 /** Generator for Jamlet module */
@@ -276,7 +288,7 @@ object JamletGenerator extends zamlet.ModuleGenerator {
       null
     } else {
       val params = ZamletParams.fromFile(args(0))
-      new Jamlet(params)
+      new Jamlet(params, ResetPipelineBudget(params.resetPipelineDepth))
     }
   }
 }

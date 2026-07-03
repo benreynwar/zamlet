@@ -9,6 +9,7 @@ import zamlet.jamlet.{ChannelsIO, Jamlet}
 import zamlet.network.{CombinedNetworkNode, MessageType, MessageTypePacketRouter,
                        MessageTypePacketRouterErrors, NetworkWord, PacketMerge,
                        PacketMergeErrors}
+import zamlet.utils.{ResetPipeline, ResetPipelineBudget}
 
 class KamletErrors extends Bundle {
   val instrQueue = new InstrQueueErrors
@@ -29,7 +30,8 @@ class KamletErrors extends Bundle {
  */
 class Kamlet(
   params: ZamletParams,
-  neighbors: SyncNeighbors
+  neighbors: SyncNeighbors,
+  resetBudget: ResetPipelineBudget
 ) extends Module {
   val io = IO(new Bundle {
     // Position of this kamlet in the compute grid.
@@ -85,12 +87,20 @@ class Kamlet(
     val errors = Output(new KamletErrors)
   })
 
+  val resetPipeline =
+    ResetPipeline(clock, reset.asBool, 1, resetBudget, "Kamlet")
+  val childResetBudget = resetPipeline.childBudget
+
+  withReset(resetPipeline.localReset) {
+
   // ============================================================
   // Instantiate jamlets in a grid
   // ============================================================
 
   val jamlets = Seq.tabulate(params.jRows, params.jCols) { (localJY, localJX) =>
-    val j = Module(new Jamlet(params))
+    val j: Jamlet = withReset(resetPipeline.childReset) {
+      Module(new Jamlet(params, childResetBudget))
+    }
     val jInKIndex = localJY * params.jCols + localJX
     val jX = io.kX * params.jCols.U + localJX.U
     val jY = io.kY * params.jRows.U + localJY.U
@@ -216,7 +226,9 @@ class Kamlet(
     Seq(Seq(MessageType.Instructions)),
     params.kamletBIngressPacketRouterParams))
   val packetMerge = Module(new PacketMerge(params, 2, params.kamletPacketMergeParams))
-  val kamletNetworkNode = Module(new CombinedNetworkNode(params))
+  val kamletNetworkNode: CombinedNetworkNode = withReset(resetPipeline.childReset) {
+    Module(new CombinedNetworkNode(params, childResetBudget))
+  }
 
   cacheEngine.io.knetX := io.knetX
   cacheEngine.io.knetY := io.knetY
@@ -342,6 +354,7 @@ class Kamlet(
   io.errors.packetMerge := packetMerge.io.errors
   io.errors.aPacketRouter := aPacketRouter.io.errors
   io.errors.bPacketRouter := bPacketRouter.io.errors
+  }
 }
 
 object KamletGenerator extends zamlet.ModuleGenerator {
@@ -353,7 +366,7 @@ object KamletGenerator extends zamlet.ModuleGenerator {
     val params = ZamletParams.fromFile(args(0))
     // For standalone test, assume all neighbors present
     val neighbors = SyncNeighbors()
-    new Kamlet(params, neighbors)
+    new Kamlet(params, neighbors, ResetPipelineBudget(params.resetPipelineDepth))
   }
 }
 

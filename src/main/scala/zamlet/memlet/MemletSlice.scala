@@ -4,6 +4,7 @@ import chisel3._
 import chisel3.util._
 import zamlet.ZamletParams
 import zamlet.network.{CombinedNetworkNode, NetworkWord}
+import zamlet.utils.{ResetPipeline, ResetPipelineBudget}
 
 class MemletSliceIO(params: ZamletParams) extends Bundle {
 
@@ -64,14 +65,22 @@ class MemletSliceIO(params: ZamletParams) extends Bundle {
   val responseErrors = new ResponseSideErrors(params)
 }
 
-class MemletSlice(params: ZamletParams) extends Module {
+class MemletSlice(params: ZamletParams, resetBudget: ResetPipelineBudget) extends Module {
   val io = IO(new MemletSliceIO(params))
+
+  val resetPipeline =
+    ResetPipeline(clock, reset.asBool, 1, resetBudget, "MemletSlice")
+  val childResetBudget = resetPipeline.childBudget
+
+  withReset(resetPipeline.localReset) {
 
   // ============================================================
   // Router
   // ============================================================
 
-  val router = Module(new CombinedNetworkNode(params))
+  val router: CombinedNetworkNode = withReset(resetPipeline.childReset) {
+    Module(new CombinedNetworkNode(params, childResetBudget))
+  }
   router.io.thisX := io.routerX
   router.io.thisY := io.routerY
 
@@ -136,4 +145,5 @@ class MemletSlice(params: ZamletParams) extends Module {
   responseSide.io.sentIn := io.sentIn
   io.sentOut := responseSide.io.sentOut
   io.responseErrors := responseSide.io.errors
+  }
 }

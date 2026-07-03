@@ -83,6 +83,8 @@ class JteReceiverA(params: ZamletParams) extends Module {
   stateInitial.isHeader := true.B
   val state = RegEnable(stateNext, stateInitial, fire)
   stateNext := state
+  val errors = Wire(new JteReceiverAErrors())
+  errors := 0.U.asTypeOf(new JteReceiverAErrors())
 
   val header = Wire(new JteHeader(params))
   header := io.packet.bits.data.asTypeOf(new JteHeader(params))
@@ -91,7 +93,8 @@ class JteReceiverA(params: ZamletParams) extends Module {
   } .otherwise {
     stateNext.remainingBodyWords:= state.remainingBodyWords - 1.U
   }
-  io.errors.unexpectedHeader := (state.isHeader =/= io.packet.bits.isHeader) && io.packet.valid
+  errors.unexpectedHeader := (state.isHeader =/= io.packet.bits.isHeader) && io.packet.valid
+  io.errors := RegNext(errors, 0.U.asTypeOf(new JteReceiverAErrors()))
   stateNext.isHeader := stateNext.remainingBodyWords === 0.U
 
   when (state.isHeader) {
@@ -199,6 +202,7 @@ class JteReceiverIO(params: ZamletParams) extends Bundle {
   val rfWriteReq = Decoupled(new RFWriteReq(params))
   val rfWriteResp = Flipped(Decoupled(Bool()))
   val updateMsg = Decoupled(new JteReceiverUpdateMsg(params))
+  val errors = Output(new JteReceiverAErrors())
 }
 
 class JteReceiver(params: ZamletParams) extends Module {
@@ -207,6 +211,7 @@ class JteReceiver(params: ZamletParams) extends Module {
 
   val aStage = Module(new JteReceiverA(params))
   aStage.io.packet <> DoubleBuffer(io.packet, rp.packetFB, rp.packetBB)
+  io.errors := aStage.io.errors
   io.teIndexToRegReq <> DoubleBuffer(aStage.io.teIndexToRegReq, rp.slotToRegReqFB, rp.slotToRegReqBB)
 
   val bStage = Module(new JteReceiverB(params))
