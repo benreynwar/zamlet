@@ -317,7 +317,7 @@ class KamletTlb(params: ZamletParams) extends Module {
       lamletReqAfterAllocResp(allocRespTargetIndex).ordering :=
         tagTable.io.allocResp.bits.payload.ordering
       lamletReqAfterAllocResp(allocRespTargetIndex).state := KamletTlbLamletReqState.ReadyWake
-    } .otherwise {
+    } .elsewhen (tagTable.io.allocResp.bits.didAlloc) {
       lamletReqAfterAllocResp(allocRespTargetIndex).state := KamletTlbLamletReqState.WaitingFillReq
     }
   }

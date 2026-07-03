@@ -336,8 +336,6 @@ class TagTable[R <: Data, F <: Data, P <: Data](
     slotWidth,
     respMetaType,
     fillMetaType)))
-  alloc0In.ready := alloc0Out.ready
-  alloc0Out.valid := alloc0In.valid
   alloc0Out.bits.tag := alloc0In.bits.tag
   alloc0Out.bits.willWrite := alloc0In.bits.willWrite
   alloc0Out.bits.meta := alloc0In.bits.meta
@@ -352,8 +350,27 @@ class TagTable[R <: Data, F <: Data, P <: Data](
   // Misses wait for a queued free slot. A miss allocation pops one slot from
   // the free FIFO, writes the tag, and changes the lifecycle state to Reserved.
 
-  val alloc1In = DoubleBuffer(alloc0Out, params.alloc01FB, params.alloc01BB)
+  val alloc01Buffer = Module(new DoubleBuffer(
+    alloc0Out.bits.cloneType,
+    params.alloc01FB,
+    params.alloc01BB))
+  alloc01Buffer.io.i <> alloc0Out
+  val alloc1In = alloc01Buffer.io.o
   val alloc1Out = Wire(Decoupled(new TagAllocResp(slotWidth, respMetaType, payloadType)))
+
+  // Same-tag misses already buffered between alloc0 and alloc1 are older than
+  // alloc0In, but are not visible in the registered tag table yet.
+  val alloc01OutSameTagMiss =
+    alloc1In.valid && alloc01Buffer.io.fromState && !alloc1In.bits.hit &&
+      alloc1In.bits.tag === alloc0In.bits.tag
+  val alloc01HiddenSameTagMiss =
+    alloc01Buffer.io.hidden.valid && !alloc01Buffer.io.hidden.bits.hit &&
+      alloc01Buffer.io.hidden.bits.tag === alloc0In.bits.tag
+  val alloc0WaitForSameTagMiss =
+    alloc01OutSameTagMiss || alloc01HiddenSameTagMiss
+
+  alloc0In.ready := alloc0Out.ready && !alloc0WaitForSameTagMiss
+  alloc0Out.valid := alloc0In.valid && !alloc0WaitForSameTagMiss
 
   val alloc1CanRespond = Mux(
     alloc1In.bits.hit,

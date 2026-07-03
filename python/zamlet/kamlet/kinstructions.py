@@ -21,7 +21,7 @@ from zamlet import addresses
 from zamlet.addresses import KMAddr, GlobalAddress
 from zamlet.lane_order import LaneOrder
 from zamlet.params import ZamletParams
-from zamlet.control_structures import pack_fields_to_int
+from zamlet.control_structures import pack_fields_to_int, unpack_int_to_fields
 from zamlet.message import IdentHeader, MessageType, SendType, WriteMemWordHeader
 from zamlet.monitor import CompletionType, SpanType
 from zamlet.width_codes import ElementWidthCode
@@ -293,6 +293,18 @@ class KInstrOpcode(IntEnum):
 KINSTR_WIDTH = 64
 OPCODE_WIDTH = 6
 SYNC_VALUE_WIDTH = 8
+SLOTTED_KINSTR_FIELDS = [
+    ('opcode', OPCODE_WIDTH),
+    ('instr_ident', 8),
+    ('f1', 6),
+    ('f2', 6),
+    ('f3', 6),
+    ('f4', 6),
+    ('f5', 6),
+    ('f6', 6),
+    ('f7', 6),
+    ('misc', 8),
+]
 
 
 def _check_width(name: str, value: int, width: int) -> None:
@@ -313,26 +325,31 @@ def _pack_slotted_kinstr(
     f7: int = 0,
     misc: int = 0,
 ) -> int:
-    fields = [
-        ('opcode', opcode, OPCODE_WIDTH),
-        ('instr_ident', instr_ident, 8),
-        ('f1', f1, 6),
-        ('f2', f2, 6),
-        ('f3', f3, 6),
-        ('f4', f4, 6),
-        ('f5', f5, 6),
-        ('f6', f6, 6),
-        ('f7', f7, 6),
-        ('misc', misc, 8),
-    ]
+    field_values = {
+        'opcode': opcode,
+        'instr_ident': instr_ident,
+        'f1': f1,
+        'f2': f2,
+        'f3': f3,
+        'f4': f4,
+        'f5': f5,
+        'f6': f6,
+        'f7': f7,
+        'misc': misc,
+    }
     result = 0
     offset = KINSTR_WIDTH
-    for name, value, width in fields:
+    for name, width in SLOTTED_KINSTR_FIELDS:
+        value = field_values[name]
         _check_width(name, value, width)
         offset -= width
         result |= int(value) << offset
     assert offset == 0
     return result
+
+
+def decode_slotted_kinstr(value: int) -> dict[str, int]:
+    return unpack_int_to_fields(value, SLOTTED_KINSTR_FIELDS)
 
 
 def _param_ref_to_index(params, bank: int, ref: int) -> int:

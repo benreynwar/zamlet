@@ -20,7 +20,9 @@ class INetworkWordToNetworkWord(params: ZamletParams) extends Module {
 
   val suffixWidth = params.wordWidth - (params.xPosWidth + params.yPosWidth)
   val suffix = io.in.bits.data(suffixWidth - 1, 0)
-  val convertedHeader = Cat(laneIndexToCoords.io.x, laneIndexToCoords.io.y, suffix)
+  val westOffset = ((params.kCols / 2 + params.jRows - 1) / params.jRows).U
+  val targetX = (laneIndexToCoords.io.x + westOffset)(params.xPosWidth - 1, 0)
+  val convertedHeader = Cat(targetX, laneIndexToCoords.io.y, suffix)
 
   io.out.valid := io.in.valid
   io.out.bits.isHeader := io.in.bits.isHeader

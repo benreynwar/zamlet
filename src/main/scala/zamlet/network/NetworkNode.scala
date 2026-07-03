@@ -3,7 +3,7 @@ package zamlet.network
 import chisel3._
 import chisel3.util._
 import zamlet.ZamletParams
-import zamlet.utils.{ResetStage, DoubleBuffer}
+import zamlet.utils.{DoubleBuffer, ResetPipeline, ResetPipelineBudget}
 
 /**
  * Jamlet Network Node IO
@@ -38,12 +38,17 @@ class NetworkNodeIO(params: ZamletParams, nChannels: Int) extends Bundle {
  * Handles multiple channels with a single local (hi/ho) connection.
  * nChannels parameter allows reuse for both A and B channel networks.
  */
-class NetworkNode(params: ZamletParams, nChannels: Int) extends Module {
+class NetworkNode(
+  params: ZamletParams,
+  nChannels: Int,
+  resetBudget: ResetPipelineBudget
+) extends Module {
   val io = IO(new NetworkNodeIO(params, nChannels))
 
-  val resetBuffered = ResetStage(clock, reset)
+  val resetPipeline =
+    ResetPipeline(clock, reset.asBool, 1, resetBudget, "NetworkNode")
 
-  withReset(resetBuffered) {
+  withReset(resetPipeline.localReset) {
 
     val hiBuffered = Wire(Decoupled(new NetworkWord(params)))
     val hoBuffered = Wire(Decoupled(new NetworkWord(params)))
@@ -204,7 +209,7 @@ object NetworkNodeGenerator extends zamlet.ModuleGenerator {
       null
     } else {
       val params = ZamletParams.fromFile(args(0))
-      new NetworkNode(params, params.nAChannels)
+      new NetworkNode(params, params.nAChannels, ResetPipelineBudget(params.resetPipelineDepth))
     }
   }
 }

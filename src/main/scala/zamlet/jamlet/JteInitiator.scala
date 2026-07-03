@@ -17,12 +17,6 @@ object TransferMode extends ChiselEnum {
   val StrideLoad, StrideStore, IndexLoad, IndexStore, RegGather = Value
 }
 
-object JteWalkState extends ChiselEnum {
-  val NeedsProcessing = Value
-  val InProgress = Value
-  val Done = Value
-}
-
 object JteInitiatorState extends ChiselEnum {
   val Initial = Value(0.U)
   val Dropped = Value(1.U)
@@ -56,12 +50,12 @@ class JteInitiatorInput(params: ZamletParams) extends Bundle {
   // EW of the indices in the register file
   // It is assumed that the EW/WF ratio is the same in the data and index.
   val rfIndexEW = ElementWidth()
+  val initiator = Vec(params.wordBytes, JteInitiatorState())
 }
 
 class JteInitiatorCommit(params: ZamletParams) extends Bundle {
   val teIndex = UInt(log2Ceil(params.witemTableDepth).W)
   val initiator = Vec(params.wordBytes, JteInitiatorState())
-  val walkState = JteWalkState()
 }
 
 class JteInitiatorAB(params: ZamletParams) extends Bundle {
@@ -505,24 +499,31 @@ class JteInitiatorF(params: ZamletParams) extends Module {
   val lastByteStripeOffset = lastByte(params.log2StripeBytes-1, 0);
   val bytesToStripeEnd = (1 << params.log2StripeBytes).U - firstByteStripeOffset
   val spansStripe = dataEB > bytesToStripeEnd
+  val fSrcByteIndex = io.ef.bits.srcOffset(params.log2WordBytes-1, 0)
+  val fSrcByteState = io.ef.bits.input.initiator(fSrcByteIndex)
+  val fSrcByteEligible =
+    fSrcByteState === JteInitiatorState.Initial ||
+    fSrcByteState === JteInitiatorState.Dropped
+  val fActive = io.ef.bits.active && fSrcByteEligible
+
   val first = Wire(Bool())
   // Inactive elements are markers for the commit state, not memory requests.
   // They must not leave a pending second stripe section for the next active element.
-  val firstNext = !io.ef.bits.active || !first || !spansStripe
+  val firstNext = !fActive || !first || !spansStripe
   first := RegEnable(firstNext, true.B, fire)
 
   val lastByteStripe = RegEnable(firstByteStripe + 1.U, fire)
 
-  io.tlbReq.valid := io.ef.valid && io.ef.bits.active && io.fg.ready
+  io.tlbReq.valid := io.ef.valid && fActive && io.fg.ready
   io.tlbReq.bits.virtualStripeAddr := Mux(first, firstByteStripe, lastByteStripe)
   io.tlbReq.bits.teIndex := io.ef.bits.teIndex
   io.tlbReq.bits.byteIndex := io.ef.bits.srcOffset(params.log2WordBytes-1, 0)
 
   io.fg.valid := io.ef.valid && (
-    !io.ef.bits.active || io.tlbReq.ready
+    !fActive || io.tlbReq.ready
   )
   io.ef.ready := io.fg.ready && (
-    !io.ef.bits.active || (io.tlbReq.ready && (!first || !spansStripe))
+    !fActive || (io.tlbReq.ready && (!first || !spansStripe))
   )
 
   val firstSectionBytes = Mux(spansStripe, bytesToStripeEnd, dataEB)
@@ -552,8 +553,8 @@ class JteInitiatorF(params: ZamletParams) extends Module {
   io.fg.bits.isStore := io.ef.bits.isStore
   io.fg.bits.teIndex := io.ef.bits.teIndex
   io.fg.bits.instrIdent := io.ef.bits.instrIdent
-  io.fg.bits.last := io.ef.bits.last && (!io.ef.bits.active || !spansStripe || !first)
-  io.fg.bits.active := io.ef.bits.active
+  io.fg.bits.last := io.ef.bits.last && (!fActive || !spansStripe || !first)
+  io.fg.bits.active := fActive
 }
 
 class JteInitiatorGIO(params: ZamletParams) extends Bundle {
@@ -698,10 +699,6 @@ class JteInitiatorH(params: ZamletParams) extends Module {
   val initiator = Wire(Vec(params.wordBytes, JteInitiatorState()))
   val initiatorBase = RegEnable(initiatorBaseNext, initiatorInitial, commitFire)
 
-  val walkStateBaseNext = Wire(JteWalkState())
-  val walkState = Wire(JteWalkState())
-  val walkStateBase = RegEnable(walkStateBaseNext, JteWalkState.Done, commitFire)
-
   initiator := initiatorBase
   when (io.gh.bits.active) {
     when (tlbSoftDrop) {
@@ -718,22 +715,9 @@ class JteInitiatorH(params: ZamletParams) extends Module {
     initiatorBaseNext := initiatorInitial
   }
 
-  when (io.gh.bits.active && !tlbSoftDrop) {
-    walkState := JteWalkState.NeedsProcessing
-  } .otherwise {
-    walkState := walkStateBase
-  }
-
-  when (last) {
-    walkStateBaseNext := JteWalkState.Done
-  } .otherwise {
-    walkStateBaseNext := walkState
-  }
-
   io.commit.valid := commitFire && last
   io.commit.bits.initiator := initiator
   io.commit.bits.teIndex := io.gh.bits.teIndex
-  io.commit.bits.walkState := walkState
 }
 
 class JteInitiatorIIO(params: ZamletParams) extends Bundle {

@@ -3,6 +3,7 @@ package zamlet.network
 import chisel3._
 import chisel3.util._
 import zamlet.ZamletParams
+import zamlet.utils.{ResetPipeline, ResetPipelineBudget}
 
 class CombinedNetworkNodeIO(params: ZamletParams) extends Bundle {
   val thisX = Input(UInt(params.xPosWidth.W))
@@ -33,11 +34,19 @@ class CombinedNetworkNodeIO(params: ZamletParams) extends Bundle {
   val bHo = Decoupled(new NetworkWord(params))
 }
 
-class CombinedNetworkNode(params: ZamletParams) extends Module {
+class CombinedNetworkNode(params: ZamletParams, resetBudget: ResetPipelineBudget) extends Module {
   val io = IO(new CombinedNetworkNodeIO(params))
 
-  val aNetworkNode = Module(new NetworkNode(params, params.nAChannels))
-  val bNetworkNode = Module(new NetworkNode(params, params.nBChannels))
+  val resetPipeline =
+    ResetPipeline(clock, reset.asBool, 1, resetBudget, "CombinedNetworkNode")
+  val childResetBudget = resetPipeline.childBudget
+
+  val aNetworkNode: NetworkNode = withReset(resetPipeline.childReset) {
+    Module(new NetworkNode(params, params.nAChannels, childResetBudget))
+  }
+  val bNetworkNode: NetworkNode = withReset(resetPipeline.childReset) {
+    Module(new NetworkNode(params, params.nBChannels, childResetBudget))
+  }
 
   aNetworkNode.io.thisX := io.thisX
   aNetworkNode.io.thisY := io.thisY
@@ -73,7 +82,7 @@ object CombinedNetworkNodeGenerator extends zamlet.ModuleGenerator {
       null
     } else {
       val params = ZamletParams.fromFile(args(0))
-      new CombinedNetworkNode(params)
+      new CombinedNetworkNode(params, ResetPipelineBudget(params.resetPipelineDepth))
     }
   }
 }

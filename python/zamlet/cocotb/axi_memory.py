@@ -3,7 +3,7 @@
 import random
 from collections import deque
 from dataclasses import dataclass
-from typing import Dict, List, Tuple
+from typing import Any, Dict, List, Tuple
 
 import cocotb
 from cocotb.triggers import RisingEdge, ReadOnly
@@ -92,7 +92,7 @@ class Axi4MemoryBase:
         self.ar_p_ready = ar_p_ready
         self._rng = random.Random(seed)
 
-    def start(self):
+    def start(self) -> List[Any]:
         s = self.signals
         s.aw_ready.value = 0
         s.w_ready.value = 0
@@ -105,12 +105,14 @@ class Axi4MemoryBase:
         s.r_data.value = 0
         s.r_resp.value = 0
         s.r_last.value = 0
-        cocotb.start_soon(self._aw_capture(random.Random(make_seed(self._rng))))
-        cocotb.start_soon(self._w_capture(random.Random(make_seed(self._rng))))
-        cocotb.start_soon(self._match_writes())
-        cocotb.start_soon(self._b_driver())
-        cocotb.start_soon(self._ar_capture(random.Random(make_seed(self._rng))))
-        cocotb.start_soon(self._r_driver())
+        return [
+            cocotb.start_soon(self._aw_capture(random.Random(make_seed(self._rng)))),
+            cocotb.start_soon(self._w_capture(random.Random(make_seed(self._rng)))),
+            cocotb.start_soon(self._match_writes()),
+            cocotb.start_soon(self._b_driver()),
+            cocotb.start_soon(self._ar_capture(random.Random(make_seed(self._rng)))),
+            cocotb.start_soon(self._r_driver()),
+        ]
 
     async def _aw_capture(self, rng: random.Random):
         s = self.signals

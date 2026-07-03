@@ -3,7 +3,7 @@ package zamlet.jamlet
 import chisel3._
 import chisel3.util._
 import zamlet.ZamletParams
-import zamlet.utils.DoubleBuffer
+import zamlet.utils.{DoubleBuffer, ResetPipeline, ResetPipelineBudget}
 
 class RfReq(params: ZamletParams) extends Bundle {
   val addr = params.rfAddr()
@@ -29,7 +29,7 @@ class RfResp(params: ZamletParams) extends Bundle {
  * Reads are combinational. All ports can read concurrently.
  * All ports can write. Two ports writing to the same address results in DontCare.
  */
-class RfSlice(params: ZamletParams) extends Module {
+class RfSlice(params: ZamletParams, resetBudget: ResetPipelineBudget) extends Module {
   val io = IO(new Bundle {
     // JTE read ports
     val maskReq = Flipped(Decoupled(new RfReq(params)))
@@ -53,6 +53,11 @@ class RfSlice(params: ZamletParams) extends Module {
     val localExecReadMaskResp = Valid(new RfResp(params))
     val localExecWriteReq = Flipped(Valid(new RfReq(params)))
   })
+
+  val resetPipeline =
+    ResetPipeline(clock, reset.asBool, 1, resetBudget, "RfSlice")
+
+  withReset(resetPipeline.localReset) {
 
   // Memory array - combinational read, registered write
   // Two ports writing to the same address simultaneously results in DontCare.
@@ -175,6 +180,7 @@ class RfSlice(params: ZamletParams) extends Module {
     val newData = (oldData & ~jteWriteMask) | (io.jteWriteReq.bits.data & jteWriteMask)
     mem(io.jteWriteReq.bits.address) := Mux(jteCollision, DontCare, newData)
   }
+  }
 }
 
 object RfSlice {
@@ -193,7 +199,7 @@ object RfSliceGenerator extends zamlet.ModuleGenerator {
       null
     } else {
       val params = ZamletParams.fromFile(args(0))
-      new RfSlice(params)
+      new RfSlice(params, ResetPipelineBudget(params.resetPipelineDepth))
     }
   }
 }

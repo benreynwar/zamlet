@@ -18,7 +18,8 @@ class JteStateSlot(params: ZamletParams) extends Bundle {
   val instrIdent = params.ident()
   val dataReg = params.rfAddr()
   val initiator = Vec(params.wordBytes, JteInitiatorState())
-  val walkState = JteWalkState()
+  val walkIsActive = Bool()
+  val walkIsRequired = Bool()
 }
 
 class JteStateErrors extends Bundle {
@@ -113,9 +114,31 @@ class JteState(params: ZamletParams) extends Module {
   teIndexToRegResp.bits := slots(teIndexToRegReq.bits).dataReg
   receiverUpdate.ready := true.B
 
+  def slotAllBytesComplete(slot: JteStateSlot): Bool = {
+    slot.initiator.map(_ === JteInitiatorState.Complete).reduce(_ && _)
+  }
+
+  def initiatorHasEligibleByte(initiator: Vec[JteInitiatorState.Type]): Bool = {
+    initiator
+      .map(state => state === JteInitiatorState.Initial || state === JteInitiatorState.Dropped)
+      .reduce(_ || _)
+  }
+
+  def slotHasEligibleByte(slot: JteStateSlot): Bool = {
+    initiatorHasEligibleByte(slot.initiator)
+  }
+
+  def initiatorForRetryWalk(initiator: Vec[JteInitiatorState.Type]): Vec[JteInitiatorState.Type] = {
+    val result = Wire(Vec(params.wordBytes, JteInitiatorState()))
+    for (i <- 0 until params.wordBytes) {
+      result(i) := Mux(initiator(i) === JteInitiatorState.Dropped, JteInitiatorState.Initial, initiator(i))
+    }
+    result
+  }
+
   // Dispatch A: select a transfer-engine entry that needs another initiator walk.
   val dispatchACandidates = VecInit((0 until params.witemTableDepth).map { i =>
-    slots(i).valid && slots(i).walkState === JteWalkState.NeedsProcessing
+    slots(i).valid && slots(i).walkIsRequired && !slots(i).walkIsActive && slotHasEligibleByte(slots(i))
   })
   val dispatchAValid = dispatchACandidates.reduce(_ || _)
   val dispatchASlot = PriorityEncoder(dispatchACandidates)
@@ -124,7 +147,12 @@ class JteState(params: ZamletParams) extends Module {
   dispatchAB.bits.teIndex := dispatchASlot
   slotsPostDispatch := slots
   when (dispatchAB.fire) {
-    slotsPostDispatch(dispatchASlot).walkState := JteWalkState.InProgress
+    slotsPostDispatch(dispatchASlot).walkIsActive := true.B
+    slotsPostDispatch(dispatchASlot).walkIsRequired := false.B
+    // A retry walk consumes Dropped bytes from the previous pass. If they stay
+    // Dropped while this walk is active, the slot remains eligible and can
+    // dispatch duplicate requests before the new responses return.
+    slotsPostDispatch(dispatchASlot).initiator := initiatorForRetryWalk(slots(dispatchASlot).initiator)
   }
 
   // Dispatch B: request the full initiator input from the Kamlet core.
@@ -142,6 +170,7 @@ class JteState(params: ZamletParams) extends Module {
   initiatorDispatch.valid := dispatchBCBuffered.valid && inputResp.valid
   initiatorDispatch.bits := inputResp.bits
   initiatorDispatch.bits.teIndex := dispatchBCBuffered.bits.teIndex
+  initiatorDispatch.bits.initiator := slotsPostDispatch(dispatchBCBuffered.bits.teIndex).initiator
   dispatchBCBuffered.ready := inputResp.valid && initiatorDispatch.ready
 
   // State update A: receiver responses complete or retry individual bytes.
@@ -154,7 +183,7 @@ class JteState(params: ZamletParams) extends Module {
       when (receiverUpdate.fire) {
         when (receiverUpdate.bits.drop) {
           slotsPostReceiver(receiverUpdate.bits.teIndex).initiator(receiverUpdate.bits.offset) := JteInitiatorState.Dropped
-          slotsPostReceiver(receiverUpdate.bits.teIndex).walkState := JteWalkState.NeedsProcessing
+          slotsPostReceiver(receiverUpdate.bits.teIndex).walkIsRequired := true.B
         } .otherwise {
           slotsPostReceiver(receiverUpdate.bits.teIndex).initiator(receiverUpdate.bits.offset) := JteInitiatorState.Complete
         }
@@ -172,31 +201,32 @@ class JteState(params: ZamletParams) extends Module {
       val commitHasWaitingForTlb = initiatorCommit.bits.initiator
         .map(_ === JteInitiatorState.WaitingForTlb)
         .reduce(_ || _)
+      val commitMergedInitiator = Wire(Vec(params.wordBytes, JteInitiatorState()))
       for (i <- 0 until params.wordBytes) {
         when (
           slotsPostReceiver(initiatorCommit.bits.teIndex).initiator(i) === JteInitiatorState.Complete ||
           slotsPostReceiver(initiatorCommit.bits.teIndex).initiator(i) === JteInitiatorState.Dropped ||
+          slotsPostReceiver(initiatorCommit.bits.teIndex).initiator(i) === JteInitiatorState.RequestSent ||
           slotsPostReceiver(initiatorCommit.bits.teIndex).initiator(i) === JteInitiatorState.WaitingForTlb
         ) {
-          slotsPostCommit(initiatorCommit.bits.teIndex).initiator(i) :=
-            slotsPostReceiver(initiatorCommit.bits.teIndex).initiator(i)
+          commitMergedInitiator(i) := slotsPostReceiver(initiatorCommit.bits.teIndex).initiator(i)
         } .elsewhen (
           slotsPostReceiver(initiatorCommit.bits.teIndex).initiator(i) === JteInitiatorState.EarlyTlbAvailable &&
           initiatorCommit.bits.initiator(i) === JteInitiatorState.WaitingForTlb
         ) {
-          slotsPostCommit(initiatorCommit.bits.teIndex).initiator(i) := JteInitiatorState.Dropped
+          commitMergedInitiator(i) := JteInitiatorState.Dropped
         } .otherwise {
-          slotsPostCommit(initiatorCommit.bits.teIndex).initiator(i) := initiatorCommit.bits.initiator(i)
+          commitMergedInitiator(i) := initiatorCommit.bits.initiator(i)
         }
       }
-      when (slotsPostReceiver(initiatorCommit.bits.teIndex).walkState =/= JteWalkState.NeedsProcessing) {
-        slotsPostCommit(initiatorCommit.bits.teIndex).walkState := initiatorCommit.bits.walkState
-      }
+      slotsPostCommit(initiatorCommit.bits.teIndex).initiator := commitMergedInitiator
+      slotsPostCommit(initiatorCommit.bits.teIndex).walkIsActive := false.B
+      slotsPostCommit(initiatorCommit.bits.teIndex).walkIsRequired := initiatorHasEligibleByte(commitMergedInitiator)
       when (
         commitHasWaitingForTlb &&
-        !slotsPostCommit(initiatorCommit.bits.teIndex).initiator.map(_ === JteInitiatorState.WaitingForTlb).reduce(_ || _)
+        !commitMergedInitiator.map(_ === JteInitiatorState.WaitingForTlb).reduce(_ || _)
       ) {
-        slotsPostCommit(initiatorCommit.bits.teIndex).walkState := JteWalkState.NeedsProcessing
+        slotsPostCommit(initiatorCommit.bits.teIndex).walkIsRequired := true.B
       }
     }
   }
@@ -220,14 +250,8 @@ class JteState(params: ZamletParams) extends Module {
         slotsPostCommit(tlbAvailable.bits.teIndex).valid &&
         slotsPostCommit(tlbAvailable.bits.teIndex).initiator(tlbAvailable.bits.byteIndex) === JteInitiatorState.WaitingForTlb
       ) {
-        val otherWaitingForTlb = (0 until params.wordBytes).map { i =>
-          i.U =/= tlbAvailable.bits.byteIndex &&
-          slotsPostCommit(tlbAvailable.bits.teIndex).initiator(i) === JteInitiatorState.WaitingForTlb
-        }.reduce(_ || _)
         slotsPostAvailable(tlbAvailable.bits.teIndex).initiator(tlbAvailable.bits.byteIndex) := JteInitiatorState.Dropped
-        when (!otherWaitingForTlb) {
-          slotsPostAvailable(tlbAvailable.bits.teIndex).walkState := JteWalkState.NeedsProcessing
-        }
+        slotsPostAvailable(tlbAvailable.bits.teIndex).walkIsRequired := true.B
       } .elsewhen (slotsPostCommit(tlbAvailable.bits.teIndex).valid) {
         slotsPostAvailable(tlbAvailable.bits.teIndex).initiator(tlbAvailable.bits.byteIndex) := JteInitiatorState.EarlyTlbAvailable
       }
@@ -241,7 +265,8 @@ class JteState(params: ZamletParams) extends Module {
     slotsNext(teIndex).completeSent := false.B
     slotsNext(teIndex).instrIdent := create.bits.instrIdent
     slotsNext(teIndex).dataReg := create.bits.dataReg
-    slotsNext(teIndex).walkState := JteWalkState.NeedsProcessing
+    slotsNext(teIndex).walkIsActive := false.B
+    slotsNext(teIndex).walkIsRequired := true.B
     for (i <- 0 until params.wordBytes) {
       slotsNext(teIndex).initiator(i) := JteInitiatorState.Initial
     }
@@ -254,8 +279,9 @@ class JteState(params: ZamletParams) extends Module {
   // Report each completed transfer-engine entry once.
   for (i <- 0 until params.witemTableDepth) {
     val complete = slots(i).valid &&
-      slots(i).walkState === JteWalkState.Done &&
-      slots(i).initiator.map(_ === JteInitiatorState.Complete).reduce(_ && _)
+      !slots(i).walkIsActive &&
+      !slots(i).walkIsRequired &&
+      slotAllBytesComplete(slots(i))
     io.transferComplete(i) := complete && !slots(i).completeSent
     when (complete) {
       slotsNext(i).completeSent := true.B

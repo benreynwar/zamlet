@@ -94,7 +94,7 @@ class PacketSwitch(params: ZamletParams) extends Module {
 
   for (dstIdx <- 0 until 5) {
     for (srcIdx <- 0 until 5) {
-      if (dstIdx != srcIdx) {
+      if (dstIdx != srcIdx || dstIdx == DirectionBits.HERE_BIT) {
         // Map to correct output index on source handler
         outHandlers(dstIdx).io.connections(srcIdx) <> inHandlers(srcIdx).io.outputs(dstIdx)
       } else {

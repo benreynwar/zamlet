@@ -13,6 +13,7 @@ import zamlet.ZamletParams
 import zamlet.kamlet.{KamletMesh, MeshEdgeNeighbors}
 import zamlet.network.NetworkWord
 import zamlet.oamlet.VPUMemParamsKey
+import zamlet.utils.ResetPipelineBudget
 
 /** Config key for Zamlet parameters */
 case object ZamletParamsKey extends Field[ZamletParams]
@@ -66,7 +67,10 @@ class ZamletImpl(outer: Zamlet)
 
   // Submodules
   val lamlet = Module(new Lamlet(zParams))
-  val mesh = Module(new KamletMesh(zParams, MeshEdgeNeighbors.isolated(zParams.kCols, zParams.kRows)))
+  val mesh = Module(new KamletMesh(
+    zParams,
+    MeshEdgeNeighbors.isolated(zParams.kCols, zParams.kRows),
+    ResetPipelineBudget(zParams.resetPipelineDepth)))
   mesh.io.knetOffsetX := (zParams.kCols / 2).U
   mesh.io.knetOffsetY := 1.U
   mesh.io.lamletKnetX := (zParams.kCols / 2).U

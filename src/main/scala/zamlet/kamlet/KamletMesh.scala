@@ -4,6 +4,7 @@ import chisel3._
 import chisel3.util._
 import zamlet.ZamletParams
 import zamlet.network.NetworkWord
+import zamlet.utils.{ResetPipeline, ResetPipelineBudget}
 
 /**
  * Configuration for external sync neighbors at mesh perimeter.
@@ -63,7 +64,11 @@ class SyncIO extends Bundle {
  * Sync network: Each kamlet connects to 8 neighbors (N, S, E, W, NE, NW, SE, SW).
  * Edge kamlets connect to external neighbors based on edgeNeighbors config.
  */
-class KamletMesh(params: ZamletParams, edgeNeighbors: MeshEdgeNeighbors) extends Module {
+class KamletMesh(
+  params: ZamletParams,
+  edgeNeighbors: MeshEdgeNeighbors,
+  resetBudget: ResetPipelineBudget
+) extends Module {
   require(params.kCols % 2 == 0, "Kamlet/Memlet network placement requires even kCols")
 
   val io = IO(new Bundle {
@@ -137,6 +142,10 @@ class KamletMesh(params: ZamletParams, edgeNeighbors: MeshEdgeNeighbors) extends
     val wSyncNW = Vec(params.kRows - 1, new SyncIO)  // rows 1 to kRows-1
     val wSyncSW = Vec(params.kRows - 1, new SyncIO)  // rows 0 to kRows-2
   })
+
+  val resetPipeline =
+    ResetPipeline(clock, reset.asBool, 1, resetBudget, "KamletMesh")
+  val childResetBudget = resetPipeline.childBudget
 
   // ============================================================
   // Calculate neighbor configuration for each kamlet position
@@ -275,7 +284,9 @@ class KamletMesh(params: ZamletParams, edgeNeighbors: MeshEdgeNeighbors) extends
   // ============================================================
   val kamlets = Seq.tabulate(params.kCols, params.kRows) { (kX, kY) =>
     val neighbors = getNeighbors(kX, kY)
-    val k = Module(new Kamlet(params, neighbors))
+    val k: Kamlet = withReset(resetPipeline.childReset) {
+      Module(new Kamlet(params, neighbors, childResetBudget))
+    }
     val jnetBaseX = KamletMeshCoords.kamletJnetBaseX(params, kX)
     val jnetBaseY = KamletMeshCoords.kamletJnetBaseY(params, kY)
     k.io.kX := kX.U
@@ -533,7 +544,7 @@ object KamletMeshGenerator extends zamlet.ModuleGenerator {
     }
     val params = ZamletParams.fromFile(args(0))
     val edgeNeighbors = MeshEdgeNeighbors.isolated(params.kCols, params.kRows)
-    new KamletMesh(params, edgeNeighbors)
+    new KamletMesh(params, edgeNeighbors, ResetPipelineBudget(params.resetPipelineDepth))
   }
 }
 
