@@ -114,15 +114,14 @@ async def monitor_errors(dut: HierarchyObject, params: ZamletParams) -> None:
                 assert False, f"Error: {name} went high"
 
 
-async def reset(dut: HierarchyObject) -> None:
+async def reset(dut: HierarchyObject, params: ZamletParams) -> None:
     """Reset the module."""
     dut.reset.value = 1
-    await RisingEdge(dut.clock)
-    await RisingEdge(dut.clock)
+    for _ in range(params.reset_pipeline_depth + 1):
+        await RisingEdge(dut.clock)
     dut.reset.value = 0
-    await RisingEdge(dut.clock)
-    await RisingEdge(dut.clock)
-    await RisingEdge(dut.clock)
+    for _ in range(params.reset_pipeline_depth + 1):
+        await RisingEdge(dut.clock)
 
 
 async def send_word_to_kamlet(dut: HierarchyObject, kx: int, word: int, is_header: bool) -> None:
@@ -336,7 +335,7 @@ async def kamlet_mesh_test(dut: HierarchyObject) -> None:
     cocotb.start_soon(clock_gen.start())
 
     initialize_inputs(dut, params)
-    await reset(dut)
+    await reset(dut, params)
     cocotb.start_soon(monitor_errors(dut, params))
 
     await test_sync_aggregation(dut, params)

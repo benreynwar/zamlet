@@ -205,10 +205,11 @@ class JamletDriver:
     async def reset(self) -> None:
         await RisingEdge(self.dut.clock)
         self.dut.reset.value = 1
-        await RisingEdge(self.dut.clock)
+        for _ in range(self.params.reset_pipeline_depth + 1):
+            await RisingEdge(self.dut.clock)
         self.dut.reset.value = 0
-        await RisingEdge(self.dut.clock)
-        await RisingEdge(self.dut.clock)
+        for _ in range(self.params.reset_pipeline_depth + 1):
+            await RisingEdge(self.dut.clock)
 
     async def send_read_line_resp(self, slot: int, words: list[int]) -> None:
         assert len(words) == self.params.cache_slot_words_per_jamlet
