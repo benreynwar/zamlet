@@ -27,6 +27,30 @@ LibrelaneInfo = _LibrelaneInfo
 PdkInfo = _PdkInfo
 MacroInfo = _MacroInfo
 
+def _write_file_impl(ctx):
+    ctx.actions.write(
+        output = ctx.outputs.out,
+        content = ctx.attr.content,
+    )
+    return [DefaultInfo(files = depset([ctx.outputs.out]))]
+
+_write_file = rule(
+    implementation = _write_file_impl,
+    attrs = {
+        "content": attr.string(mandatory = True),
+        "out": attr.output(mandatory = True),
+    },
+)
+
+def json_file(name, data, out = None, visibility = None):
+    """Write a generated JSON file from Starlark data."""
+    _write_file(
+        name = name,
+        out = out or (name + ".json"),
+        content = json.encode_indent(data, indent = "  ") + "\n",
+        visibility = visibility,
+    )
+
 def riscv_asm_binary(name, src, linker_script, march = "rv64imafdc", mabi = "lp64d"):
     """Compile RISC-V assembly to a binary file.
 

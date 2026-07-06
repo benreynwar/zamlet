@@ -24,6 +24,7 @@ load(":checker.bzl",
     "librelane_hold_violations",
     "librelane_max_slew_violations",
     "librelane_max_cap_violations",
+    "zamlet_antenna_violations",
 )
 load(":synthesis.bzl", "librelane_synthesis", "librelane_json_header", "librelane_eqy")
 load(":floorplan.bzl", "librelane_floorplan")
@@ -118,11 +119,14 @@ def librelane_classic_flow(
     diode_on_ports = "none",
     run_heuristic_diode_insertion = False,
     run_antenna_repair = True,
+    grt_antenna_iters = None,
+    grt_antenna_margin = None,
     run_post_grt_resizer_timing = False,
     run_drt = True,
     manual_global_placements = None,
     pnr_sdc_file = None,
     signoff_sdc_file = None,
+    sdc_fragments = [],
     input_delay_constraint = None,
     output_delay_constraint = None,
     synth_config = None):
@@ -167,6 +171,7 @@ def librelane_classic_flow(
         template = "//bazel/flow/sdc:base.sdc",
         input_delay_constraint = input_delay_constraint if input_delay_constraint else "50",
         output_delay_constraint = output_delay_constraint if output_delay_constraint else "50",
+        fragments = sdc_fragments,
     )
     if not pnr_sdc_file:
         effective_pnr_sdc = ":" + name + "_sdc"
@@ -195,6 +200,10 @@ def librelane_classic_flow(
         pnr_config_kwargs["diode_on_ports"] = diode_on_ports
     if macro_placement_cfg:
         pnr_config_kwargs["macro_placement_cfg"] = macro_placement_cfg
+    if grt_antenna_iters != None:
+        pnr_config_kwargs["grt_antenna_iters"] = grt_antenna_iters
+    if grt_antenna_margin != None:
+        pnr_config_kwargs["grt_antenna_margin"] = grt_antenna_margin
 
     pnr_config_target = None
     if pnr_config_kwargs:
@@ -821,11 +830,18 @@ def librelane_classic_flow(
         src = ":" + name + "_chk_hold",
     )
 
+    # Step 77.5: Check antenna violations (local Zamlet checker, not LibreLane)
+    zamlet_antenna_violations(
+        name = name + "_zamlet_chk_ant",
+        input = input_target,
+        src = ":" + name + "_chk_slew",
+    )
+
     # Step 77: Check max cap violations
     librelane_max_cap_violations(
         name = name + "_chk_cap",
         input = input_target,
-        src = ":" + name + "_chk_slew",
+        src = ":" + name + "_zamlet_chk_ant",
     )
 
     # Step 78: Report manufacturability
@@ -834,5 +850,3 @@ def librelane_classic_flow(
         input = input_target,
         src = ":" + name + "_chk_cap",
     )
-
-

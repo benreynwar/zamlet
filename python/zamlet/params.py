@@ -337,7 +337,7 @@ class SramParams:
 
     @property
     def local_response_latency(self) -> int:
-        return sum((self.localA, self.localB, self.localC))
+        return sum((self.localA, self.localB, self.localC)) + 1
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'SramParams':
@@ -374,6 +374,16 @@ class JceParams:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'JceParams':
+        return _from_dict(cls, data, _identity_mapping(cls))
+
+
+@dataclass
+class LocalExecParams:
+    s12Buffer: bool = True
+    sramReqBuffer: bool = True
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'LocalExecParams':
         return _from_dict(cls, data, _identity_mapping(cls))
 
 
@@ -633,6 +643,7 @@ class ZamletParams:
     jte_handler_params: JteHandlerParams = field(default_factory=JteHandlerParams)
     sram_params: SramParams = field(default_factory=SramParams)
     jce_params: JceParams = field(default_factory=JceParams)
+    local_exec_params: LocalExecParams = field(default_factory=LocalExecParams)
     kce_cache_table_params: KceCacheTableParams = field(default_factory=KceCacheTableParams)
     kce_scanner_params: KceScannerParams = field(default_factory=KceScannerParams)
     kce_tag_table_params: TagTableParams = field(default_factory=TagTableParams)
@@ -929,6 +940,7 @@ class ZamletParams:
         'jteHandlerParams': 'jte_handler_params',
         'sramParams': 'sram_params',
         'jceParams': 'jce_params',
+        'localExecParams': 'local_exec_params',
         'kceCacheTableParams': 'kce_cache_table_params',
         'kceScannerParams': 'kce_scanner_params',
         'kceTagTableParams': 'kce_tag_table_params',

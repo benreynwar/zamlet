@@ -11,4 +11,8 @@ Keep edits small and explain them before applying patches.
 Prefer updating call sites to the new approach over adding compatibility shims
 for old names or old behavior.
 
+Let required inputs fail when missing or malformed. Do not hide configuration,
+test, or tool errors with defaults unless the default is an intentional part of
+the interface.
+
 Do not run Python parse-only checks.

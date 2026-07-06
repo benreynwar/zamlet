@@ -21,6 +21,8 @@ JSON_HEADER_CONFIG_KEYS = BASE_CONFIG_KEYS + [
     "SYNTH_PARAMETERS",
     "USE_SYNLIG",
     "SYNLIG_DEFER",
+    # VerilogStep.get_command() reads macro views to build blackbox models.
+    "MACROS",
     # PyosysStep.config_vars (pyosys.py lines 140-204)
     "SYNTH_LATCH_MAP",
     "SYNTH_TRISTATE_MAP",

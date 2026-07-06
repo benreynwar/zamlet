@@ -20,6 +20,7 @@ LINT_CONFIG_KEYS = BASE_CONFIG_KEYS + [
     "LINTER_DEFINES",
     # Models (used in run())
     "CELL_VERILOG_MODELS",
+    "MACROS",
     "EXTRA_VERILOG_MODELS",
 ]
 

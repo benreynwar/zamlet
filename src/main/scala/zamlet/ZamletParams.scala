@@ -228,7 +228,7 @@ case class SramParams(
   jteCFB: Boolean = true,
   jteCBB: Boolean = true,
 ) {
-  def localResponseLatency: Int = Seq(localA, localB, localC).count(identity)
+  def localResponseLatency: Int = Seq(localA, localB, localC).count(identity) + 1
 }
 
 case class JceParams(
@@ -257,6 +257,11 @@ case class JceParams(
   rxBCFB: Boolean = true,
   rxBCBB: Boolean = true,
   rxDoneFB: Boolean = true,
+)
+
+case class LocalExecParams(
+  s12Buffer: Boolean = true,
+  sramReqBuffer: Boolean = true,
 )
 
 case class KceCacheTableParams(
@@ -462,6 +467,7 @@ case class ZamletParams(
   jteHandlerParams: JteHandlerParams = JteHandlerParams(),
   sramParams: SramParams = SramParams(),
   jceParams: JceParams = JceParams(),
+  localExecParams: LocalExecParams = LocalExecParams(),
 
   // KCE cache table configuration
   kceCacheTableParams: KceCacheTableParams = KceCacheTableParams(),
@@ -587,6 +593,7 @@ object ZamletParams {
   implicit val jteHandlerParamsDecoder: Decoder[JteHandlerParams] = deriveDecoder[JteHandlerParams]
   implicit val sramParamsDecoder: Decoder[SramParams] = deriveDecoder[SramParams]
   implicit val jceParamsDecoder: Decoder[JceParams] = deriveDecoder[JceParams]
+  implicit val localExecParamsDecoder: Decoder[LocalExecParams] = deriveDecoder[LocalExecParams]
   implicit val kceCacheTableParamsDecoder: Decoder[KceCacheTableParams] = deriveDecoder[KceCacheTableParams]
   implicit val kceScannerParamsDecoder: Decoder[KceScannerParams] = deriveDecoder[KceScannerParams]
   implicit val tagTableParamsDecoder: Decoder[TagTableParams] = deriveDecoder[TagTableParams]

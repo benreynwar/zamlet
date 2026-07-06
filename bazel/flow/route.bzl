@@ -78,7 +78,11 @@ def _global_routing_impl(ctx):
     return single_step_impl(ctx, "OpenROAD.GlobalRouting", GRT_CONFIG_KEYS, step_outputs = ["def", "odb"])
 
 def _check_antennas_impl(ctx):
-    return single_step_impl(ctx, "OpenROAD.CheckAntennas", CHECK_ANTENNAS_CONFIG_KEYS, step_outputs = [])
+    return single_step_impl(
+        ctx, "OpenROAD.CheckAntennas", CHECK_ANTENNAS_CONFIG_KEYS,
+        step_outputs = [],
+        extra_outputs = ["reports/antenna.rpt", "reports/antenna_summary.rpt"],
+    )
 
 def _repair_design_post_grt_impl(ctx):
     return single_step_impl(ctx, "OpenROAD.RepairDesignPostGRT", REPAIR_DESIGN_POST_GRT_CONFIG_KEYS,

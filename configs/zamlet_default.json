@@ -272,6 +272,10 @@
     "rxBCBB": true,
     "rxDoneFB": true
   },
+  "localExecParams": {
+    "s12Buffer": true,
+    "sramReqBuffer": true
+  },
   "kceCacheTableParams": {
     "hasSlotReqFB": true,
     "hasSlotReqBB": true,

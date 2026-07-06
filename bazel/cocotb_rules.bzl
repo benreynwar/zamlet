@@ -165,6 +165,13 @@ def _python_runner_impl(ctx):
     # Get the binary
     binary = ctx.attr.binary[DefaultInfo].files_to_run.executable
 
+    config_file = None
+    if ctx.attr.config:
+        config_files = ctx.attr.config[DefaultInfo].files.to_list()
+        if len(config_files) != 1:
+            fail("config must produce exactly one file")
+        config_file = config_files[0]
+
     # Build PYTHONPATH entries (relative to runfiles)
     python_paths = ["."]
     for path in import_paths:
@@ -206,6 +213,7 @@ export PYGPI_PYTHON_BIN="{python_bin}"
 # Cocotb environment
 export COCOTB_RESOLVE_X=VALUE_ERROR
 export ZAMLET_TEST_SEED="${{ZAMLET_TEST_SEED:-0}}"
+{config_export}
 
 # Run simulation
 if [ "$VERILATOR_TRACE" = "1" ]; then
@@ -255,6 +263,11 @@ except Exception as e:
         python_libdir = cocotb_tc.python_libdir,
         python_bin = cocotb_tc.python_bin,
         binary_path = binary.short_path,
+        config_export = (
+            'export ZAMLET_TEST_CONFIG_FILENAME="{config_path}"'.format(
+                config_path = config_file.short_path,
+            ) if config_file else ""
+        ),
     )
 
     ctx.actions.write(
@@ -267,6 +280,8 @@ except Exception as e:
     binary_runfiles = ctx.attr.binary[DefaultInfo].default_runfiles
     runfiles = binary_runfiles.merge(all_runfiles)
     runfiles = runfiles.merge(ctx.runfiles(files = [binary]))
+    if config_file:
+        runfiles = runfiles.merge(ctx.runfiles(files = [config_file]))
 
     return [
         DefaultInfo(
@@ -283,6 +298,7 @@ python_runner = rule(
             executable = True,
             cfg = "target",
         ),
+        "config": attr.label(allow_files = [".json"]),
         "py_deps": attr.label_list(),
     },
     executable = True,
@@ -326,7 +342,7 @@ def cocotb_binary(name, verilog_files, module_top):
     )
 
 
-def cocotb_test(name, binary, test_module, toplevel, py_deps = [], env = {}, data = []):
+def cocotb_test(name, binary, test_module, toplevel, py_deps = [], env = {}, data = [], config = None):
     """Create a cocotb test.
 
     Args:
@@ -337,10 +353,12 @@ def cocotb_test(name, binary, test_module, toplevel, py_deps = [], env = {}, dat
         py_deps: Python library dependencies
         env: Additional environment variables
         data: Additional data files
+        config: Optional JSON config label exposed as ZAMLET_TEST_CONFIG_FILENAME
     """
     python_runner(
         name = name + "_runner",
         binary = binary,
+        config = config,
         py_deps = py_deps,
     )
 
@@ -357,7 +375,7 @@ def cocotb_test(name, binary, test_module, toplevel, py_deps = [], env = {}, dat
         name = name,
         srcs = [name + "_runner"],
         env = merged_env,
-        data = data,
+        data = data + ([config] if config else []),
     )
 
 
@@ -441,15 +459,13 @@ def chisel_module_tests(
             module_top = toplevel,
         )
 
-        cfg_path = cfg_label[2:].replace(":", "/")
-
         for mod, filt, sfx in entries:
             if include_suffix:
                 test_name = "test_{}_{}".format(cfg_base, sfx)
             else:
                 test_name = "test_" + cfg_base
 
-            env = {"ZAMLET_TEST_CONFIG_FILENAME": cfg_path}
+            env = {}
             if filt:
                 env["COCOTB_TEST_FILTER"] = filt
 
@@ -460,7 +476,7 @@ def chisel_module_tests(
                 toplevel = toplevel,
                 py_deps = [":" + base + "_py"],
                 env = env,
-                data = [cfg_label],
+                config = cfg_label,
             )
             test_targets.append(":" + test_name)
 

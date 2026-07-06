@@ -7,6 +7,7 @@ from cocotb.handle import HierarchyObject
 from cocotb.triggers import ReadOnly, RisingEdge
 
 from zamlet import test_utils
+from zamlet.maths import segmented_multiplier
 
 
 logger = logging.getLogger(__name__)
@@ -14,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 WIDTH = 64
 MIN_WIDTH = 8
-LATENCY = 8
+LATENCY = segmented_multiplier.latency(WIDTH, min_width=MIN_WIDTH)
 PRODUCT_MASK = (1 << (2 * WIDTH)) - 1
 
 

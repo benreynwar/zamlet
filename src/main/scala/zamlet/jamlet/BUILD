@@ -39,6 +39,14 @@ chisel_binary(
 )
 
 chisel_binary(
+    name = "jamlet_hard_macros",
+    srcs = [":jamlet_sources"] + JAMLET_COMMON_SRCS,
+    main_class = "zamlet.jamlet.JamletHardMacroMain",
+    deps = JAMLET_DEPS,
+    visibility = ["//visibility:public"],
+)
+
+chisel_binary(
     name = "rfslice",
     srcs = [":jamlet_sources"] + JAMLET_COMMON_SRCS,
     main_class = "zamlet.jamlet.RfSliceMain",

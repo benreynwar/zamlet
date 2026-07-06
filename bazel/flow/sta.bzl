@@ -96,6 +96,7 @@ def _multi_corner_sta_reports(corners):
     for corner in corners:
         reports.append(corner + "/max.rpt")
         reports.append(corner + "/min.rpt")
+        reports.append(corner + "/checks.rpt")
     return reports
 
 def _sta_pre_pnr_impl(ctx):
