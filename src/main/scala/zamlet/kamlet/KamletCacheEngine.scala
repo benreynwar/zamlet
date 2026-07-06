@@ -240,7 +240,8 @@ class KamletCacheEngine(params: ZamletParams) extends Module {
     pendingTable.io.releaseSlot.bits.slot,
     io.kteReleaseSlot.bits.slot)
 
-  pendingTable.io.slotIsAvailable := memletInterface.io.fetchSlotComplete
+  pendingTable.io.slotIsAvailable.valid := tagTable.io.fillCompleteForAllocResp.valid
+  pendingTable.io.slotIsAvailable.bits := tagTable.io.fillCompleteForAllocResp.bits.slot
 
   tagTable.io.slotStatusReq := io.kteSlotStatusReq
   io.kteSlotStatusResp.valid := tagTable.io.slotStatusResp.valid
@@ -269,7 +270,8 @@ class KamletCacheEngine(params: ZamletParams) extends Module {
   tagTable.io.writebackComplete.valid := memletInterface.io.writebackSlotComplete.valid
   tagTable.io.writebackComplete.bits := memletInterface.io.writebackSlotComplete.bits
 
-  io.kteSlotIsAvailable := memletInterface.io.fetchSlotComplete
+  io.kteSlotIsAvailable.valid := tagTable.io.fillCompleteForSlotStatusResp.valid
+  io.kteSlotIsAvailable.bits := tagTable.io.fillCompleteForSlotStatusResp.bits.slot
 
   // ============================================================
   // Memlet control network

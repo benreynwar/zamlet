@@ -127,6 +127,135 @@ async def multiple_indexed_transfers_clear(dut: HierarchyObject) -> None:
 
 
 @cocotb.test()
+async def grouped_indexed_loads_emit_one_completion_sync(
+    dut: HierarchyObject,
+) -> None:
+    """Randomized grouped indexed loads emit one completion sync."""
+    test_params = test_utils.get_test_params()
+    params = load_params(test_params)
+    rng = Random(test_params["seed"])
+    driver = KteDriver(
+        dut,
+        j_in_k=params.j_in_k,
+        te_depth=params.witem_table_depth,
+    )
+    driver.start(rng)
+    cocotb.start_soon(Clock(dut.clock, 1, "ns").start())
+
+    await driver.reset()
+    sync_ident = 5
+    n_transfers = min(4, params.witem_table_depth)
+    for index in range(n_transfers):
+        driver.append_indexed_transfer(
+            params,
+            instr_ident=80 + index,
+            sync_ident=sync_ident,
+            is_store=False,
+            base_addr=0x8000 + index * 0x100,
+            start_index=index * 8,
+            end_index=index * 8 + 8,
+            data_reg=8 + index,
+            index_reg=16 + index,
+            grouped_completion=True,
+            grouped_completion_close=index == n_transfers - 1,
+        )
+
+    await driver.wait_for_total_jte_clears(
+        expected_clears=n_transfers,
+        timeout_cycles=800,
+    )
+    await driver.wait_for_observed_sync_count(
+        sync_ident=sync_ident,
+        expected_count=1,
+        timeout_cycles=300,
+    )
+    await driver.idle(50)
+    assert driver.count_observed_sync_events(sync_ident) == 1
+
+
+@cocotb.test()
+async def grouped_indexed_transfer_after_close_sets_error(
+    dut: HierarchyObject,
+) -> None:
+    """A contributor after a grouped close raises the KTE error wire."""
+    test_params = test_utils.get_test_params()
+    params = load_params(test_params)
+    rng = Random(test_params["seed"])
+    driver = KteDriver(
+        dut,
+        j_in_k=params.j_in_k,
+        te_depth=params.witem_table_depth,
+        input_request_probability=0.0,
+    )
+    driver.start(rng)
+    cocotb.start_soon(Clock(dut.clock, 1, "ns").start())
+
+    await driver.reset()
+    sync_ident = 6
+    driver.append_indexed_transfer(
+        params,
+        instr_ident=90,
+        sync_ident=sync_ident,
+        is_store=False,
+        grouped_completion=True,
+        grouped_completion_close=True,
+    )
+    driver.append_indexed_transfer(
+        params,
+        instr_ident=91,
+        sync_ident=sync_ident,
+        is_store=False,
+        grouped_completion=True,
+    )
+
+    await driver.wait_for_error(
+        "groupedCompletionAfterClose",
+        timeout_cycles=100,
+    )
+
+
+@cocotb.test()
+async def grouped_indexed_mismatched_footprint_sets_error(
+    dut: HierarchyObject,
+) -> None:
+    """Grouped contributors with different memory footprints raise an error."""
+    test_params = test_utils.get_test_params()
+    params = load_params(test_params)
+    rng = Random(test_params["seed"])
+    driver = KteDriver(
+        dut,
+        j_in_k=params.j_in_k,
+        te_depth=params.witem_table_depth,
+        input_request_probability=0.0,
+    )
+    driver.start(rng)
+    cocotb.start_soon(Clock(dut.clock, 1, "ns").start())
+
+    await driver.reset()
+    sync_ident = 7
+    driver.append_indexed_transfer(
+        params,
+        instr_ident=100,
+        sync_ident=sync_ident,
+        is_store=False,
+        grouped_completion=True,
+    )
+    driver.append_indexed_transfer(
+        params,
+        instr_ident=101,
+        sync_ident=sync_ident,
+        is_store=True,
+        grouped_completion=True,
+        grouped_completion_close=True,
+    )
+
+    await driver.wait_for_error(
+        "groupedCompletionMismatchedFootprint",
+        timeout_cycles=100,
+    )
+
+
+@cocotb.test()
 async def indexed_transfers_reuse_full_table(dut: HierarchyObject) -> None:
     """Queue more transfers than fit in the KTE table and require entry reuse."""
     test_params = test_utils.get_test_params()
@@ -162,8 +291,10 @@ async def indexed_transfers_reuse_full_table(dut: HierarchyObject) -> None:
 
 
 @cocotb.test()
-async def transfer_waits_for_sync_result(dut: HierarchyObject) -> None:
-    """Delay sync results and check the transfer does not clear until sync completes."""
+async def transfer_holds_memory_hazard_until_sync_result(
+    dut: HierarchyObject,
+) -> None:
+    """Delay sync results and check the transfer memory hazard stays active."""
     test_params = test_utils.get_test_params()
     params = load_params(test_params)
     rng = Random(test_params["seed"])
@@ -190,12 +321,13 @@ async def transfer_waits_for_sync_result(dut: HierarchyObject) -> None:
     )
 
     await driver.wait_for_sync_local_event(sync_ident=4, timeout_cycles=200)
-    await driver.idle(20)
-    for jamlet in driver.jamlets:
-        assert 0 not in jamlet.state.cleared_entries
+    await driver.wait_for_jte_clear(te_index=0, timeout_cycles=100)
+    driver.set_conflict_mem(valid=True)
+    await driver.wait_for_conflict(expected=True, timeout_cycles=20)
 
     driver.sync_result_probability = 1.0
-    await driver.wait_for_jte_clear(te_index=0, timeout_cycles=100)
+    await driver.wait_for_conflict(expected=False, timeout_cycles=100)
+    driver.set_conflict_mem(valid=False)
 
 
 @cocotb.test()

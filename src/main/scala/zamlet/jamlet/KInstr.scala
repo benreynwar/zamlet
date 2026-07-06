@@ -336,6 +336,8 @@ class IndexedInstr(params: ZamletParams) extends KInstrBase(params) {
   def rfEw: ElementWidth.Type = ew
   def indexEw: ElementWidth.Type = ewB
   def baseAddrParamIdx: UInt = miscParamRef
+  def groupedCompletion: Bool = misc(3)
+  def groupedCompletionClose: Bool = misc(4)
 }
 
 /**

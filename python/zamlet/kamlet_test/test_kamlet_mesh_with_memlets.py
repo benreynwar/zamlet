@@ -276,6 +276,25 @@ def write_indexed_load_permutation_inputs(
             logical_line * line_bytes, bytes(index_data))
 
 
+def write_indexed_load_index_inputs(
+    driver: KamletMeshWithMemletsDriver,
+    params: ZamletParams,
+    index_logical_lines: list[int],
+    permutation: list[int],
+    line_bytes: int,
+) -> None:
+    for op_index, logical_line in enumerate(index_logical_lines):
+        index_data = bytearray(line_bytes)
+        start_element = op_index * params.j_in_l
+        for lane_index in range(params.j_in_l):
+            byte_offset = permutation[start_element + lane_index] * params.word_bytes
+            start = lane_index * params.word_bytes
+            index_data[start:start + params.word_bytes] = byte_offset.to_bytes(
+                params.word_bytes, 'little')
+        driver.memory.write_logical_bytes(
+            logical_line * line_bytes, bytes(index_data))
+
+
 async def load_indexed_load_offsets(
     driver: KamletMeshWithMemletsDriver,
     params: ZamletParams,
@@ -338,6 +357,74 @@ async def load_indexed_load_offsets(
         await driver.wait_for_rf_elements(rf_index, ordering, offsets, 2_000)
 
 
+async def load_indexed_load_offsets_only(
+    driver: KamletMeshWithMemletsDriver,
+    params: ZamletParams,
+    ordering: Ordering,
+    index_physical_lines: list[int],
+    index_base_refs: list[int],
+    start_ref: int,
+    end_ref: int,
+    rf_indexes: list[int],
+    permutation: list[int],
+    instr_ident_base: int,
+) -> None:
+    setup_instrs = [
+        PackedWriteParam(
+            instr_ident=instr_ident_base + index,
+            param_idx=base_addr_param_idx(params, base_ref),
+            data=driver.memory.base_addr_for_cache_line(physical_line),
+        ).encode(params)
+        for index, (base_ref, physical_line) in enumerate(
+            zip(index_base_refs, index_physical_lines))
+    ] + [
+        PackedWriteParam(
+            instr_ident=instr_ident_base + 8,
+            param_idx=start_index_param_idx(params, start_ref),
+            data=0,
+        ).encode(params),
+        PackedWriteParam(
+            instr_ident=instr_ident_base + 9,
+            param_idx=end_index_param_idx(params, end_ref),
+            data=params.j_in_l,
+        ).encode(params),
+    ]
+    load_index_instrs = [
+        PackedLoadSimple(
+            rf_addr=rf_index,
+            base_addr_param_idx=index_base_ref,
+            start_index_param_idx=start_ref,
+            end_index_param_idx=end_ref,
+            ew=ElementWidthCode.EW64,
+            instr_ident=instr_ident_base + 10 + index,
+        ).encode(params)
+        for index, (rf_index, index_base_ref) in enumerate(
+            zip(rf_indexes, index_base_refs))
+    ]
+    driver.enqueue_instructions(setup_instrs + load_index_instrs)
+    for op_index, rf_index in enumerate(rf_indexes):
+        start = op_index * params.j_in_l
+        offsets = [
+            permutation[element_index] * params.word_bytes
+            for element_index in range(start, start + params.j_in_l)
+        ]
+        await driver.wait_for_rf_elements(rf_index, ordering, offsets, 2_000)
+
+
+def write_word_values_to_memory(
+    driver: KamletMeshWithMemletsDriver,
+    params: ZamletParams,
+    logical_addr: int,
+    values: list[int],
+) -> None:
+    data = bytearray(len(values) * params.word_bytes)
+    for element_index, value in enumerate(values):
+        start = element_index * params.word_bytes
+        data[start:start + params.word_bytes] = value.to_bytes(
+            params.word_bytes, 'little')
+    driver.memory.write_logical_bytes(logical_addr, bytes(data))
+
+
 def enqueue_parallel_indexed_loads(
     driver: KamletMeshWithMemletsDriver,
     params: ZamletParams,
@@ -366,6 +453,38 @@ def enqueue_parallel_indexed_loads(
     driver.enqueue_instructions(indexed_load_instrs)
 
 
+def enqueue_grouped_indexed_loads(
+    driver: KamletMeshWithMemletsDriver,
+    params: ZamletParams,
+    rf_indexes: list[int],
+    rf_dsts: list[int],
+    data_base_refs: list[int],
+    start_ref: int,
+    end_ref: int,
+    completion_sync_ident: int,
+    instr_ident_base: int,
+) -> None:
+    indexed_load_instrs = [
+        PackedLoadIndexedUnordered(
+            reg=rf_dst,
+            index_reg=rf_index,
+            fault_sync_ident=0,
+            completion_sync_ident=completion_sync_ident,
+            base_addr_param_idx=data_base_ref,
+            start_index_param_idx=start_ref,
+            end_index_param_idx=end_ref,
+            rf_ew=ElementWidthCode.EW64,
+            index_ew=ElementWidthCode.EW64,
+            grouped_completion=True,
+            grouped_completion_close=index == len(rf_dsts) - 1,
+            instr_ident=instr_ident_base + index,
+        ).encode(params)
+        for index, (rf_dst, rf_index, data_base_ref) in enumerate(
+            zip(rf_dsts, rf_indexes, data_base_refs))
+    ]
+    driver.enqueue_instructions(indexed_load_instrs)
+
+
 def indexed_load_expected_values(
     params: ZamletParams,
     source_values: list[int],
@@ -377,6 +496,29 @@ def indexed_load_expected_values(
         source_values[permutation[element_index]]
         for element_index in range(start, start + params.j_in_l)
     ]
+
+
+def log_grouped_indexed_load_context(
+    params: ZamletParams,
+    rf_dst: int,
+    rf_index: int,
+    data_base_ref: int,
+    source_values: list[int],
+    permutation: list[int],
+) -> None:
+    start = rf_index * params.j_in_l
+    source_indexes = permutation[start:start + params.j_in_l]
+    logger.info(
+        'grouped indexed load check dst=%d data_ref=%d index_reg=%d source_indexes=%s offsets=%s',
+        rf_dst,
+        data_base_ref,
+        rf_index,
+        source_indexes,
+        [
+            source_index * params.word_bytes
+            for source_index in source_indexes
+        ],
+    )
 
 
 @cocotb.test(timeout_time=TEST_TIMEOUT_NS, timeout_unit="ns")
@@ -476,6 +618,147 @@ async def indexed_load_gathers_from_loaded_offsets(dut: HierarchyObject) -> None
             expected = indexed_load_expected_values(
                 params, source_values, permutation, op_index)
             await driver.wait_for_rf_elements(rf_dst, ordering, expected, 4_000)
+
+
+@cocotb.test(timeout_time=40_000, timeout_unit="ns")
+async def grouped_indexed_loads_complete_long_batch(dut: HierarchyObject) -> None:
+    test_utils.configure_logging_sim()
+    test_params = test_utils.get_test_params()
+    params = load_params()
+    rng = random.Random(test_params["seed"])
+
+    cocotb.start_soon(Clock(dut.clock, 1, "ns").start())
+    driver = KamletMeshWithMemletsDriver(dut, params)
+    driver.initialize_inputs()
+    await driver.reset()
+    driver.start(rng)
+
+    ordering = Ordering(LaneOrder.ROW_MAJOR, 64)
+    n_index_vectors = 8
+    n_data_regions = 4
+    n_indexed_loads = n_data_regions * n_index_vectors
+    vector_len = n_index_vectors * params.j_in_l
+    line_bytes = params.cache_slot_words_per_jamlet * params.stripe_bytes
+    data_region_lines = (
+        vector_len * params.word_bytes + line_bytes - 1
+    ) // line_bytes
+    assert n_index_vectors == 1 << params.param_ref_idx_width
+    assert 8 + n_indexed_loads <= params.rf_slice_words
+
+    index_base_refs = list(range(n_index_vectors))
+    data_base_refs = list(range(n_data_regions))
+    start_ref = 0
+    end_ref = 0
+    rf_index_vectors = list(range(n_index_vectors))
+    rf_dsts = [
+        8 + index
+        for index in range(n_indexed_loads)
+    ]
+    rf_indexes = [
+        rf_index
+        for _ in range(n_data_regions)
+        for rf_index in rf_index_vectors
+    ]
+    load_data_base_refs = [
+        data_base_ref
+        for data_base_ref in data_base_refs
+        for _ in rf_index_vectors
+    ]
+
+    index_physical_lines = [
+        0xa0 + index
+        for index in range(n_index_vectors)
+    ]
+    data_physical_region_bases = [
+        0xb0 + index * data_region_lines
+        for index in range(n_data_regions)
+    ]
+    index_logical_lines = [
+        0xa00 + index
+        for index in range(n_index_vectors)
+    ]
+    data_logical_region_bases = [
+        0xb00 + index * data_region_lines
+        for index in range(n_data_regions)
+    ]
+    for physical_line, logical_line in zip(
+        index_physical_lines, index_logical_lines):
+        driver.memory.map_cache_line(physical_line, logical_line, ordering)
+    for physical_base, logical_base in zip(
+        data_physical_region_bases, data_logical_region_bases):
+        for line_offset in range(data_region_lines):
+            driver.memory.map_cache_line(
+                physical_base + line_offset,
+                logical_base + line_offset,
+                ordering,
+            )
+
+    source_values_by_region = [
+        [
+            rng.getrandbits(params.word_width)
+            for _ in range(vector_len)
+        ]
+        for _ in range(n_data_regions)
+    ]
+    permutation = list(range(vector_len))
+    rng.shuffle(permutation)
+    write_indexed_load_index_inputs(
+        driver,
+        params,
+        index_logical_lines,
+        permutation,
+        line_bytes,
+    )
+    for values, logical_base in zip(source_values_by_region, data_logical_region_bases):
+        write_word_values_to_memory(
+            driver, params, logical_base * line_bytes, values)
+
+    await load_indexed_load_offsets_only(
+        driver,
+        params,
+        ordering,
+        index_physical_lines,
+        index_base_refs,
+        start_ref,
+        end_ref,
+        rf_index_vectors,
+        permutation,
+        20,
+    )
+    data_param_instrs = [
+        PackedWriteParam(
+            instr_ident=50 + index,
+            param_idx=base_addr_param_idx(params, data_base_ref),
+            data=logical_base * line_bytes,
+        ).encode(params)
+        for index, (data_base_ref, logical_base) in enumerate(
+            zip(data_base_refs, data_logical_region_bases))
+    ]
+    driver.enqueue_instructions(data_param_instrs)
+    enqueue_grouped_indexed_loads(
+        driver,
+        params,
+        rf_indexes,
+        rf_dsts,
+        load_data_base_refs,
+        start_ref,
+        end_ref,
+        completion_sync_ident=1,
+        instr_ident_base=80,
+    )
+    for rf_dst, rf_index, data_base_ref in zip(
+        rf_dsts, rf_indexes, load_data_base_refs):
+        expected = indexed_load_expected_values(
+            params, source_values_by_region[data_base_ref], permutation, rf_index)
+        log_grouped_indexed_load_context(
+            params,
+            rf_dst,
+            rf_index,
+            data_base_ref,
+            source_values_by_region[data_base_ref],
+            permutation,
+        )
+        await driver.wait_for_rf_elements(rf_dst, ordering, expected, 2_000)
 
 
 def write_indexed_store_permutation_inputs(

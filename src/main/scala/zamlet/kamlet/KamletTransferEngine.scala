@@ -96,6 +96,18 @@ class KteEntry(params: ZamletParams) extends Bundle {
   val complete = Vec(params.jInK, Bool())
 }
 
+// Completion groups let several indexed transfers share one completion sync.
+// The group tracks local contributors until all have reached Cleanup. The last
+// local contributor to drain keeps its KTE entry allocated as the memory hazard
+// owner until the global sync result returns.
+class KteCompletionGroup(params: ZamletParams) extends Bundle {
+  val valid = Bool()
+  val closed = Bool()
+  val outstanding = UInt(log2Ceil(params.witemTableDepth + 1).W)
+  val willWrite = Bool()
+  val writeset = Valid(params.writeset())
+}
+
 class KteErrors extends Bundle {
   val wakeAlreadyAvailable = Bool()
   val releaseFifoOverflow = Bool()
@@ -103,6 +115,10 @@ class KteErrors extends Bundle {
   val invalidJteInputReq = Bool()
   val unsupportedJteInputOpcode = Bool()
   val syncResultWithoutEntry = Bool()
+  val groupedCompletionReusedActiveSync = Bool()
+  val groupedCompletionAfterClose = Bool()
+  val groupedCompletionMismatchedFootprint = Bool()
+  val groupedCompletionCleanupWithoutGroup = Bool()
 }
 
 class KteReleaseEntry(params: ZamletParams) extends Bundle {
@@ -182,6 +198,21 @@ class KamletTransferEngine(params: ZamletParams) extends Module {
   val kteEntriesNext = Wire(Vec(jteDepth, new KteEntry(params)))
   val kteEntries = RegEnable(kteEntriesNext, kteEntriesInitial, true.B)
   kteEntriesNext := kteEntries
+
+  // Indexed grouped-completion state is keyed directly by completion sync
+  // ident. A valid entry means that sync ident is already in use by a local
+  // group and cannot be reused for a separate group yet.
+  val completionGroupsInitial =
+    VecInit(Seq.fill(params.maxConcurrentSyncs)(0.U.asTypeOf(new KteCompletionGroup(params))))
+  val completionGroupsNext = Wire(Vec(params.maxConcurrentSyncs, new KteCompletionGroup(params)))
+  val completionGroups = RegEnable(completionGroupsNext, completionGroupsInitial, true.B)
+  // Apply grouped-completion admission before cleanup. This handles a cycle
+  // where one contributor is admitted while an older contributor drains.
+  val completionGroupsAfterIssue = Wire(Vec(params.maxConcurrentSyncs, new KteCompletionGroup(params)))
+  val completionGroupsAfterCleanup = Wire(Vec(params.maxConcurrentSyncs, new KteCompletionGroup(params)))
+  completionGroupsAfterIssue := completionGroups
+  completionGroupsAfterCleanup := completionGroupsAfterIssue
+  completionGroupsNext := completionGroupsAfterCleanup
 
   val errorsNext = Wire(new KteErrors)
   errorsNext := 0.U.asTypeOf(new KteErrors)
@@ -277,6 +308,21 @@ class KamletTransferEngine(params: ZamletParams) extends Module {
   val issue0IsIndexedLoad = issue0Base.opcode === KInstrOpcode.LoadIdxUnord
   val issue0IsIndexedStore = issue0Base.opcode === KInstrOpcode.StoreIdxUnord
   val issue0IsSupportedJteTransfer = issue0IsIndexedLoad || issue0IsIndexedStore
+  val issue0IsGroupedCompletion =
+    issue0IsJteTransfer && issue0IsSupportedJteTransfer && issue0Indexed.groupedCompletion
+  val issue0Group = completionGroups(issue0Indexed.completionSyncIdent)
+  val issue0GroupMatchesFootprint =
+    issue0Group.willWrite === issue0IsIndexedStore &&
+      issue0Group.writeset.valid === issue0Base.writeset.valid &&
+      (!issue0Group.writeset.valid || issue0Group.writeset.bits === issue0Base.writeset.bits)
+  // Error case: this starts a new group on an ident whose previous grouped
+  // completion is still waiting for its sync result.
+  val issue0GroupedIdentStillOwned = VecInit(kteEntries.map { entry =>
+    val indexed = entry.kinstr.kinstr.asTypeOf(new IndexedInstr(params))
+    entry.state =/= KteState.Free &&
+      indexed.groupedCompletion &&
+      indexed.completionSyncIdent === issue0Indexed.completionSyncIdent
+  }).asUInt.orR
   val issue0IsSyncTrigger = issue0Base.opcode === KInstrOpcode.SyncTrigger
   val issue0IsIdentQuery = issue0Base.opcode === KInstrOpcode.IdentQuery
   val issue0IsSupportedSync = issue0IsSyncTrigger || issue0IsIdentQuery
@@ -305,6 +351,12 @@ class KamletTransferEngine(params: ZamletParams) extends Module {
   }
   errorsNext.unsupportedIssueOpcode :=
     rsIssue.fire && !issue0IsSupported
+  errorsNext.groupedCompletionAfterClose :=
+    rsIssue.fire && issue0IsGroupedCompletion && issue0Group.valid && issue0Group.closed
+  errorsNext.groupedCompletionMismatchedFootprint :=
+    rsIssue.fire && issue0IsGroupedCompletion && issue0Group.valid && !issue0GroupMatchesFootprint
+  errorsNext.groupedCompletionReusedActiveSync :=
+    rsIssue.fire && issue0IsGroupedCompletion && !issue0Group.valid && issue0GroupedIdentStillOwned
 
   val issue0InstrStartedNotifyValid = rsIssue.fire && issue0IsSupported
   val issue0InstrStartedNotifyIdent = issue0Base.instrIdent
@@ -334,6 +386,17 @@ class KamletTransferEngine(params: ZamletParams) extends Module {
       jteCreate(jInK).bits.teIndex := issue0KteFreeIndex
       jteCreate(jInK).bits.instrIdent := issue0Base.instrIdent
       jteCreate(jInK).bits.dataReg := issue0JteDataReg
+    }
+    when (issue0Indexed.groupedCompletion) {
+      completionGroupsAfterIssue(issue0Indexed.completionSyncIdent).valid := true.B
+      completionGroupsAfterIssue(issue0Indexed.completionSyncIdent).closed :=
+        issue0Group.closed || issue0Indexed.groupedCompletionClose
+      completionGroupsAfterIssue(issue0Indexed.completionSyncIdent).outstanding :=
+        Mux(issue0Group.valid, issue0Group.outstanding + 1.U, 1.U)
+      when (!issue0Group.valid) {
+        completionGroupsAfterIssue(issue0Indexed.completionSyncIdent).willWrite := issue0IsIndexedStore
+        completionGroupsAfterIssue(issue0Indexed.completionSyncIdent).writeset := issue0Base.writeset
+      }
     }
   }
 
@@ -414,7 +477,7 @@ class KamletTransferEngine(params: ZamletParams) extends Module {
         kteEntries(teIndex).complete(jInK) || io.transferComplete(jInK)(teIndex)
       })
       when (completeNextVec.asUInt.andR) {
-        kteEntriesNext(teIndex).state := KteState.NeedsSync
+        kteEntriesNext(teIndex).state := KteState.Cleanup
       }
     }
   }
@@ -532,7 +595,7 @@ class KamletTransferEngine(params: ZamletParams) extends Module {
   errorsNext.syncResultWithoutEntry := io.syncResult.valid && !syncResult0MatchValid
 
   when (io.syncResult.valid && syncResult0MatchValid) {
-    kteEntriesNext(syncResult0TeIndex).state := KteState.Cleanup
+    kteEntriesNext(syncResult0TeIndex).state := KteState.Free
   }
 
   // ============================================================
@@ -660,6 +723,13 @@ class KamletTransferEngine(params: ZamletParams) extends Module {
   val cleanup0IsJte =
     cleanup0Base.opcode === KInstrOpcode.LoadIdxUnord ||
       cleanup0Base.opcode === KInstrOpcode.StoreIdxUnord
+  val cleanup0IsGroupedCompletion = cleanup0IsJte && cleanup0Indexed.groupedCompletion
+  val cleanup0Group = completionGroupsAfterIssue(cleanup0Indexed.completionSyncIdent)
+  val cleanup0GroupDrains =
+    cleanup0IsGroupedCompletion &&
+      cleanup0Group.valid &&
+      cleanup0Group.closed &&
+      cleanup0Group.outstanding === 1.U
   val cleanup0NeedsRelease = cleanup0IsJte
   val cleanup0Ready =
     !cleanup0NeedsRelease || (!replay0ReleaseDelayValid && releaseFifo.io.enq.ready)
@@ -678,12 +748,34 @@ class KamletTransferEngine(params: ZamletParams) extends Module {
   cleanup0ReleaseEntry.releaseCacheSlot := false.B
   cleanup0ReleaseEntry.cacheSlot := 0.U
 
+  errorsNext.groupedCompletionCleanupWithoutGroup :=
+    cleanup0Valid &&
+      cleanup0Ready &&
+      cleanup0IsGroupedCompletion &&
+      (!cleanup0Group.valid || cleanup0Group.outstanding === 0.U)
+
   when (cleanup0Valid && cleanup0Ready) {
     for (jInK <- 0 until params.jInK) {
       jteClear(jInK).valid := cleanup0IsJte
       jteClear(jInK).bits := cleanup0TeIndex
     }
-    kteEntriesNext(cleanup0TeIndex).state := KteState.Free
+    when (cleanup0IsGroupedCompletion) {
+      completionGroupsAfterCleanup(cleanup0Indexed.completionSyncIdent).outstanding :=
+        cleanup0Group.outstanding - 1.U
+      when (cleanup0Group.outstanding === 1.U) {
+        completionGroupsAfterCleanup(cleanup0Indexed.completionSyncIdent).valid := false.B
+        completionGroupsAfterCleanup(cleanup0Indexed.completionSyncIdent).closed := false.B
+      }
+    }
+    // Indexed transfers release RF/JTE resources here, but the KTE entry
+    // remains allocated until the sync result releases the memory hazard.
+    when (cleanup0IsGroupedCompletion) {
+      kteEntriesNext(cleanup0TeIndex).state := Mux(cleanup0GroupDrains, KteState.NeedsSync, KteState.Free)
+    }.elsewhen (cleanup0IsJte) {
+      kteEntriesNext(cleanup0TeIndex).state := KteState.NeedsSync
+    }.otherwise {
+      kteEntriesNext(cleanup0TeIndex).state := KteState.Free
+    }
   }
 
   val cleanup0ReleaseValid = cleanup0Valid && cleanup0Ready && cleanup0NeedsRelease

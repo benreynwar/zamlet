@@ -3,7 +3,7 @@ package zamlet.kamlet
 import chisel3._
 import chisel3.util._
 import zamlet.TagTableParams
-import zamlet.utils.{DoubleBuffer, ValidBuffer}
+import zamlet.utils.{BroadcastUpdateBuffer, DoubleBuffer, ValidBuffer}
 
 object TagState extends ChiselEnum {
   val Empty = Value
@@ -132,6 +132,12 @@ class TagTableIO[R <: Data, F <: Data, P <: Data](
   val fillReq = Decoupled(new TagFillReq(tagWidth, slotWidth, fillMetaType))
   // Mark a Filling slot Present after its payload/tag data has been installed.
   val fillComplete = Flipped(Valid(new TagFillComplete(slotWidth, payloadType)))
+  // If this arrives in the same cycle as a matching slotStatusResp, the
+  // response already includes this fill-complete update.
+  val fillCompleteForSlotStatusResp = Valid(new TagFillComplete(slotWidth, payloadType))
+  // If this arrives in the same cycle as a matching allocResp, the response
+  // already includes this fill-complete update.
+  val fillCompleteForAllocResp = Valid(new TagFillComplete(slotWidth, payloadType))
   // Record completion of one consumer use; decrements nUses.
   val release = Flipped(Valid(UInt(slotWidth.W)))
 
@@ -350,11 +356,34 @@ class TagTable[R <: Data, F <: Data, P <: Data](
   // Misses wait for a queued free slot. A miss allocation pops one slot from
   // the free FIFO, writes the tag, and changes the lifecycle state to Reserved.
 
-  val alloc01Buffer = Module(new DoubleBuffer(
+  def updateAlloc0Result(
+    result: Alloc0Result[R, F],
+    fillComplete: TagFillComplete[P],
+  ): Alloc0Result[R, F] = {
+    val updated = Wire(new Alloc0Result(tagWidth, slotWidth, respMetaType, fillMetaType))
+    updated := result
+    when (result.hit && result.hitSlot === fillComplete.slot) {
+      when (result.hitState === TagState.FillingClean) {
+        updated.hitState := TagState.PresentClean
+      } .elsewhen (result.hitState === TagState.FillingDirty) {
+        updated.hitState := TagState.PresentDirty
+      }
+    }
+    updated
+  }
+
+  // Raw fillComplete updates table state this cycle. The registered copy is
+  // grouped with the next cycle's state-derived responses.
+  val fillCompleteForStateResp = RegNext(io.fillComplete, 0.U.asTypeOf(io.fillComplete))
+
+  val alloc01Buffer = Module(new BroadcastUpdateBuffer(
     alloc0Out.bits.cloneType,
+    new TagFillComplete(slotWidth, payloadType),
+    updateAlloc0Result,
     params.alloc01FB,
     params.alloc01BB))
   alloc01Buffer.io.i <> alloc0Out
+  alloc01Buffer.io.broadcastIn := fillCompleteForStateResp
   val alloc1In = alloc01Buffer.io.o
   val alloc1Out = Wire(Decoupled(new TagAllocResp(slotWidth, respMetaType, payloadType)))
 
@@ -389,7 +418,38 @@ class TagTable[R <: Data, F <: Data, P <: Data](
   alloc1Out.bits.state := Mux(alloc1In.bits.hit, alloc1In.bits.hitState, alloc1MissState)
   freeSlotDeq.ready := alloc1In.valid && !alloc1In.bits.hit && alloc1Out.ready
 
-  io.allocResp <> DoubleBuffer(alloc1Out, params.allocRespFB, params.allocRespBB)
+  def updateAllocResp(
+    resp: TagAllocResp[R, P],
+    fillComplete: TagFillComplete[P],
+  ): TagAllocResp[R, P] = {
+    val updated = Wire(new TagAllocResp(slotWidth, respMetaType, payloadType))
+    updated := resp
+    when (resp.slot === fillComplete.slot) {
+      when (resp.state === TagState.FillingClean) {
+        updated.state := TagState.PresentClean
+        updated.payload := fillComplete.payload
+      } .elsewhen (resp.state === TagState.FillingDirty) {
+        updated.state := TagState.PresentDirty
+        updated.payload := fillComplete.payload
+      }
+    }
+    updated
+  }
+
+  // This is the timing buffer for allocResp. If a response waits here while a
+  // matching fillComplete passes it, update the delayed response so it remains
+  // consistent with the table state.
+  val allocRespBuffer = Module(new BroadcastUpdateBuffer(
+    new TagAllocResp(slotWidth, respMetaType, payloadType),
+    new TagFillComplete(slotWidth, payloadType),
+    updateAllocResp,
+    params.allocRespFB,
+    params.allocRespBB))
+  allocRespBuffer.io.i <> alloc1Out
+  allocRespBuffer.io.broadcastIn := alloc01Buffer.io.broadcastOut
+  io.allocResp <> allocRespBuffer.io.o
+  io.fillCompleteForSlotStatusResp := fillCompleteForStateResp
+  io.fillCompleteForAllocResp := allocRespBuffer.io.broadcastOut
 
   val alloc1Fire = alloc1In.fire && alloc1Out.fire
   val allocFire = alloc1Fire && !alloc1In.bits.hit
@@ -447,7 +507,7 @@ class TagTable[R <: Data, F <: Data, P <: Data](
   // ============================================================
   // Fill completion installs the payload and makes the slot usable by lookup paths.
 
-  val fill0 = ValidBuffer(io.fillComplete, params.fillBuffer)
+  val fill0 = io.fillComplete
   errors.fillBadState := fill0.valid && !isFilling(state(fill0.bits.slot))
 
   val slotMetaAfterFill = Wire(Vec(nSlots, new SlotMeta(tagWidth, params, fillMetaType, payloadType)))

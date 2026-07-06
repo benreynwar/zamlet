@@ -34,3 +34,12 @@ chisel_binary(
     deps = UTILS_DEPS,
     visibility = ["//visibility:public"],
 )
+
+
+chisel_binary(
+    name = "seen_tag_buffer",
+    srcs = [":utils_sources"] + UTILS_COMMON_SRCS,
+    main_class = "zamlet.utils.SeenTagBufferMain",
+    deps = UTILS_DEPS,
+    visibility = ["//visibility:public"],
+)

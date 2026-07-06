@@ -176,6 +176,7 @@ class KteDriver:
         slot_status_available_probability: float = 0.5,
         requested_slot_available_probability: float = 0.1,
         unrequested_slot_available_probability: float = 0.02,
+        input_request_probability: float = 0.5,
     ):
         self.dut = dut
         self.j_in_k = j_in_k
@@ -191,13 +192,19 @@ class KteDriver:
         self.unrequested_slot_available_probability = unrequested_slot_available_probability
         self.issue = ValidReadySource(dut, dut.clock, "io_rsIssue")
         self.sync_results = deque()
+        self.observed_sync_events = []
         self.local_replays = deque()
         self.cache_slot_releases = deque()
         self._slot_available_queue = deque()
         self.slot_status_reqs = deque()
         self._unavailable_requested_slots: set[int] = set()
         self.jamlets = [
-            KteJamletModel(dut, j, te_depth=te_depth)
+            KteJamletModel(
+                dut,
+                j,
+                te_depth=te_depth,
+                input_request_probability=input_request_probability,
+            )
             for j in range(j_in_k)
         ]
 
@@ -228,6 +235,8 @@ class KteDriver:
         index_reg: int = 4,
         mask_reg: int = 0,
         mask_enabled: bool = False,
+        grouped_completion: bool = False,
+        grouped_completion_close: bool = False,
     ) -> None:
         kinstr_cls = (
             PackedStoreIndexedUnordered
@@ -241,6 +250,8 @@ class KteDriver:
             mask_reg=mask_reg,
             mask_enabled=mask_enabled,
             instr_ident=instr_ident,
+            grouped_completion=grouped_completion,
+            grouped_completion_close=grouped_completion_close,
         )
         self.append_issue({
             "opType": KTE_OP_JTE_TRANSFER,
@@ -279,9 +290,25 @@ class KteDriver:
     def pulse_slot_available(self, slot: int) -> None:
         self._slot_available_queue.append(slot)
 
+    def set_conflict_mem(
+        self,
+        valid: bool,
+        unknown: bool = True,
+        will_write: bool = True,
+        cache_slot: int = 0,
+        writeset_valid: bool = False,
+        writeset: int = 0,
+    ) -> None:
+        self.dut.io_conflictMem_valid.value = int(valid)
+        self.dut.io_conflictMem_bits_unknown.value = int(unknown)
+        self.dut.io_conflictMem_bits_willWrite.value = int(will_write)
+        self.dut.io_conflictMem_bits_cacheSlot.value = cache_slot
+        self.dut.io_conflictMem_bits_writeset_valid.value = int(writeset_valid)
+        self.dut.io_conflictMem_bits_writeset_bits.value = writeset
+
     def set_defaults(self) -> None:
         """Drive all KTE inputs to idle values."""
-        self.dut.io_conflictMem_valid.value = 0
+        self.set_conflict_mem(valid=False)
         self.dut.io_localReplay_ready.value = 0
         self.dut.io_rfRelease_ready.value = 0
 
@@ -341,6 +368,24 @@ class KteDriver:
         raise AssertionError(
             f"timed out waiting for syncLocalEvent sync_ident={sync_ident}")
 
+    def count_observed_sync_events(self, sync_ident: int) -> int:
+        return sum(
+            1 for event in self.observed_sync_events
+            if event["syncIdent"] == sync_ident
+        )
+
+    async def wait_for_observed_sync_count(
+        self, sync_ident: int, expected_count: int, timeout_cycles: int
+    ) -> None:
+        for _ in range(timeout_cycles):
+            if self.count_observed_sync_events(sync_ident) == expected_count:
+                return
+            await RisingEdge(self.dut.clock)
+        actual_count = self.count_observed_sync_events(sync_ident)
+        raise AssertionError(
+            f"timed out waiting for {expected_count} observed sync events "
+            f"for sync_ident={sync_ident}; actual={actual_count}")
+
     async def wait_for_local_replay(self, timeout_cycles: int) -> dict[str, int]:
         for _ in range(timeout_cycles):
             if self.local_replays:
@@ -359,17 +404,40 @@ class KteDriver:
             await RisingEdge(self.dut.clock)
         raise AssertionError(f"timed out waiting for cache slot release slot={slot}")
 
+    async def wait_for_conflict(
+        self, expected: bool, timeout_cycles: int
+    ) -> None:
+        for _ in range(timeout_cycles):
+            await RisingEdge(self.dut.clock)
+            await ReadOnly()
+            if bool(int(self.dut.io_conflict.value)) == expected:
+                await RisingEdge(self.dut.clock)
+                return
+        raise AssertionError(f"timed out waiting for io_conflict={expected}")
+
+    async def wait_for_error(self, error_name: str, timeout_cycles: int) -> None:
+        signal = getattr(self.dut, f"io_errors_{error_name}")
+        for _ in range(timeout_cycles):
+            await RisingEdge(self.dut.clock)
+            await ReadOnly()
+            if int(signal.value):
+                await RisingEdge(self.dut.clock)
+                return
+        raise AssertionError(f"timed out waiting for KTE error {error_name}")
+
     async def _monitor_sync_local_event(self) -> None:
         while True:
             await RisingEdge(self.dut.clock)
             await ReadOnly()
             if int(self.dut.io_syncLocalEvent_valid.value):
-                self.sync_results.append({
+                event = {
                     "syncIdent": int(self.dut.io_syncLocalEvent_bits_syncIdent.value),
                     "value": int(self.dut.io_syncLocalEvent_bits_value.value),
                     "includeActiveMask": int(
                         self.dut.io_syncLocalEvent_bits_includeActiveMask.value),
-                })
+                }
+                self.observed_sync_events.append(event)
+                self.sync_results.append(event)
 
     async def _drive_sync_result(self, seed: int) -> None:
         rng = Random(seed)

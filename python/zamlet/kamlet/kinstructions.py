@@ -526,6 +526,8 @@ class PackedIndexed(KInstr):
     instr_ident: int = 0
     writeset_valid: bool = False
     writeset: int = 0
+    grouped_completion: bool = False
+    grouped_completion_close: bool = False
 
     def encode(self, params) -> int:
         assert params.ident_width == 8
@@ -541,6 +543,8 @@ class PackedIndexed(KInstr):
         f7 = (int(self.writeset_valid) << params.writeset_width) | int(self.writeset)
         misc = (
             int(self.base_addr_param_idx)
+            | (int(self.grouped_completion) << 3)
+            | (int(self.grouped_completion_close) << 4)
             | (int(self.mask_enabled) << 7)
         )
         return _pack_slotted_kinstr(

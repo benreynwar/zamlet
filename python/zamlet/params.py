@@ -350,7 +350,6 @@ class KceCacheTableParams:
     allocSlotRespBB: bool = True
     rsHasSlotReqBuffer: bool = True
     rsHasSlotRespBuffer: bool = True
-    slotIsAvailableBuffer: bool = True
     memletPacketInFB: bool = True
     memletPacketInBB: bool = True
     memletPacketOutFB: bool = True
@@ -388,7 +387,6 @@ class TagTableParams:
     claimReqBB: bool = True
     claimRespFB: bool = True
     claimRespBB: bool = True
-    fillBuffer: bool = True
     releaseBuffer: bool = True
     scan01FB: bool = True
     scan01BB: bool = True
@@ -416,7 +414,6 @@ class KcePendingTableParams:
     allocSlotRespFB: bool = True
     allocSlotRespBB: bool = True
     releaseSlotBuffer: bool = True
-    slotIsAvailableBuffer: bool = True
     req01FB: bool = True
     req01BB: bool = True
     req23FB: bool = True

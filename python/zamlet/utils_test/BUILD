@@ -75,11 +75,44 @@ cocotb_test(
     py_deps = [":test_double_buffer_py"],
 )
 
+genrule(
+    name = "seen_tag_buffer_verilog",
+    outs = ["SeenTagBuffer.sv"],
+    cmd = """
+    TMPDIR=$$(mktemp -d)
+    $(location //src/main/scala/zamlet/utils:seen_tag_buffer) $$TMPDIR 32 8
+    cat $$TMPDIR/*.sv > $@
+    rm -rf $$TMPDIR
+    """,
+    tools = ["//src/main/scala/zamlet/utils:seen_tag_buffer"],
+)
+
+cocotb_binary(
+    name = "seen_tag_buffer_exe",
+    verilog_files = [":seen_tag_buffer_verilog"],
+    module_top = "SeenTagBuffer",
+)
+
+py_library(
+    name = "test_seen_tag_buffer_py",
+    srcs = ["test_seen_tag_buffer.py"],
+    deps = ["//python/zamlet:zamlet"],
+)
+
+cocotb_test(
+    name = "test_seen_tag_buffer",
+    binary = ":seen_tag_buffer_exe",
+    test_module = "zamlet.utils_test.test_seen_tag_buffer",
+    toplevel = "SeenTagBuffer",
+    py_deps = [":test_seen_tag_buffer_py"],
+)
+
 test_suite(
     name = "all_tests",
     tests = [
         ":test_dropping_fifo_{}".format(name) for name, _ in DROPPING_FIFO_CONFIGS
     ] + [
         ":test_double_buffer",
+        ":test_seen_tag_buffer",
     ],
 )

@@ -5,7 +5,7 @@ import chisel3.util._
 import zamlet.ZamletParams
 import zamlet.jamlet.{CacheLineRequest, CacheLineResponse, CacheLineState, JteHandlerReplay}
 import zamlet.network.MessageType
-import zamlet.utils.{DoubleBuffer, ValidBuffer}
+import zamlet.utils.{BroadcastUpdateBuffer, DoubleBuffer, ValidBuffer}
 
 class KcePendingTableIO(params: ZamletParams) extends Bundle {
   // JTE request/response path. Full pending/replay behavior will be implemented
@@ -29,6 +29,8 @@ class KcePendingTableIO(params: ZamletParams) extends Bundle {
   val claimSlotReq = Decoupled(new KceClaimSlotReq(params))
   val claimSlotResp = Flipped(Decoupled(new KceClaimSlotResp(params)))
   val allocSlotReq = Decoupled(new KceAllocSlotReq(params))
+  // If slotIsAvailable arrives in the same cycle as a matching allocSlotResp,
+  // allocSlotResp already includes that slot-is-available update.
   val allocSlotResp = Flipped(Decoupled(new KceAllocSlotResp(params)))
   val releaseSlot = Valid(new KceSlotRelease(params))
   val slotIsAvailable = Flipped(Valid(params.cacheSlot()))
@@ -118,11 +120,37 @@ class KcePendingTable(params: ZamletParams) extends Module {
 
   val allocSlotReq = Wire(Decoupled(new KceAllocSlotReq(params)))
   io.allocSlotReq <> DoubleBuffer(allocSlotReq, ptp.allocSlotReqFB, ptp.allocSlotReqBB)
-  val allocSlotResp = DoubleBuffer(io.allocSlotResp, ptp.allocSlotRespFB, ptp.allocSlotRespBB)
 
   val releaseSlot = Wire(Valid(new KceSlotRelease(params)))
   io.releaseSlot := ValidBuffer(releaseSlot, ptp.releaseSlotBuffer)
-  val slotIsAvailable = ValidBuffer(io.slotIsAvailable, ptp.slotIsAvailableBuffer)
+
+  def updateAllocSlotResp(resp: KceAllocSlotResp, availableSlot: UInt): KceAllocSlotResp = {
+    val updated = Wire(new KceAllocSlotResp(params))
+    updated := resp
+    when (resp.slot === availableSlot) {
+      when (resp.state === KceCacheSlotState.Fetching) {
+        updated.state := KceCacheSlotState.PresentClean
+      } .elsewhen (resp.state === KceCacheSlotState.FetchingWillWrite) {
+        updated.state := KceCacheSlotState.PresentDirty
+      }
+    }
+    updated
+  }
+
+  // This is the input timing buffer for allocSlotResp. It preserves the IO
+  // contract above by updating delayed responses from slotIsAvailable.
+  val allocSlotRespBuffer = Module(new BroadcastUpdateBuffer(
+    new KceAllocSlotResp(params),
+    params.cacheSlot(),
+    updateAllocSlotResp,
+    ptp.allocSlotRespFB,
+    ptp.allocSlotRespBB))
+  allocSlotRespBuffer.io.i <> io.allocSlotResp
+  allocSlotRespBuffer.io.broadcastIn := io.slotIsAvailable
+  val allocSlotResp = allocSlotRespBuffer.io.o
+  // The wake path consumes the slot-available broadcast after it has passed
+  // through the same timing buffer as allocSlotResp.
+  val slotIsAvailable = allocSlotRespBuffer.io.broadcastOut
 
   for (jInK <- 0 until params.jInK) {
     cacheLineReq(jInK).ready := false.B

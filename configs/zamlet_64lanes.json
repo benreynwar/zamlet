@@ -281,7 +281,6 @@
     "allocSlotRespBB": true,
     "rsHasSlotReqBuffer": true,
     "rsHasSlotRespBuffer": true,
-    "slotIsAvailableBuffer": true,
     "memletPacketInFB": true,
     "memletPacketInBB": true,
     "memletPacketOutFB": true,
@@ -307,7 +306,6 @@
     "claimReqBB": true,
     "claimRespFB": true,
     "claimRespBB": true,
-    "fillBuffer": true,
     "releaseBuffer": true,
     "scan01FB": true,
     "scan01BB": true
@@ -329,7 +327,6 @@
     "allocSlotRespFB": true,
     "allocSlotRespBB": true,
     "releaseSlotBuffer": true,
-    "slotIsAvailableBuffer": true,
     "req01FB": true,
     "req01BB": true,
     "req23FB": true,
@@ -396,7 +393,6 @@
     "claimReqBB": true,
     "claimRespFB": true,
     "claimRespBB": true,
-    "fillBuffer": true,
     "releaseBuffer": true,
     "scan01FB": true,
     "scan01BB": true
