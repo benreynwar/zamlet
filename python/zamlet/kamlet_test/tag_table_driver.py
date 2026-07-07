@@ -19,6 +19,7 @@ class TagState(IntEnum):
     PRESENT_CLEAN = 6
     PRESENT_DIRTY = 7
     EVICTING = 8
+    PRESENT_DIRTY_CANCELLED_EVICTION = 9
 
 
 @dataclass(frozen=True)

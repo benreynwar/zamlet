@@ -393,7 +393,8 @@ def chisel_module_tests(
         srcs,
         test_modules,
         configs = None,
-        py_deps = None):
+        py_deps = None,
+        target_base = None):
     """Emit Verilog generation + cocotb tests for one Chisel module.
 
     For each (tag, label) in `configs`, emits a chisel_verilog genrule and a
@@ -413,9 +414,11 @@ def chisel_module_tests(
         configs: list of (tag, label) pairs; defaults to one entry tagged
             "default" with //configs:zamlet_default.json.
         py_deps: extra py_library deps beyond //python/zamlet:zamlet.
+        target_base: optional prefix for generated Bazel targets. Defaults to
+            lowercased `toplevel`.
     """
     configs = configs or [("default", _DEFAULT_CONFIG)]
-    base = toplevel.lower()
+    base = target_base or toplevel.lower()
 
     native.py_library(
         name = base + "_py",

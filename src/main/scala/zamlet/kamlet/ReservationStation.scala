@@ -31,6 +31,8 @@ class RsLocalInFlight(params: ZamletParams) extends Bundle {
 
 class ReservationStationErrors extends Bundle {
   val binarySrcLaneOrderMismatch = Bool()
+  val rfReadReleaseUnderflow = Bool()
+  val rfWriteReleaseUnexpected = Bool()
 }
 
 class ReservationStationIO(params: ZamletParams) extends Bundle {
@@ -59,10 +61,6 @@ class ReservationStation(params: ZamletParams) extends Module {
   val paramMemNext = Wire(Vec(paramMemNumEntries, UInt(params.memAddrWidth.W)))
   val paramMem = RegEnable(paramMemNext, VecInit(Seq.fill(paramMemNumEntries)(0.U(params.memAddrWidth.W))), true.B)
   paramMemNext := paramMem
-
-  val rfBusyNext = Wire(Vec(params.rfSliceWords, Bool()))
-  val rfBusy = RegEnable(rfBusyNext, VecInit(Seq.fill(params.rfSliceWords)(false.B)), true.B)
-  rfBusyNext := rfBusy
 
   val rfOrderingInit = Wire(Vec(params.rfSliceWords, new Ordering))
   for (rfAddr <- 0 until params.rfSliceWords) {
@@ -106,6 +104,15 @@ class ReservationStation(params: ZamletParams) extends Module {
   val issue1Out = Wire(Decoupled(new RsIssuePayload(params)))
   val issue2In = Wire(Decoupled(new RsIssuePayload(params)))
   val localExecDependentInputSeparation = LocalExec.inputToDependentInputMinSeparation(params)
+  val maxRfReaders = params.witemTableDepth + localExecDependentInputSeparation
+  val rfReadCountWidth = log2Ceil(maxRfReaders + 1)
+  val rfReadCountMax = maxRfReaders.U(rfReadCountWidth.W)
+  val rfReadCountNext = Wire(Vec(params.rfSliceWords, UInt(rfReadCountWidth.W)))
+  val rfReadCount = RegEnable(rfReadCountNext,
+    VecInit(Seq.fill(params.rfSliceWords)(0.U(rfReadCountWidth.W))), true.B)
+  val rfWriteBusyNext = Wire(Vec(params.rfSliceWords, Bool()))
+  val rfWriteBusy =
+    RegEnable(rfWriteBusyNext, VecInit(Seq.fill(params.rfSliceWords)(false.B)), true.B)
   val localInFlight =
     RegInit(VecInit(Seq.fill(localExecDependentInputSeparation)(0.U.asTypeOf(new RsLocalInFlight(params)))))
 
@@ -187,6 +194,7 @@ class ReservationStation(params: ZamletParams) extends Module {
     issue0Out.bits.rfUses(slot).valid :=
       issue0Slotted.rfSlotReads(slot) || issue0Slotted.rfSlotWrites(slot)
     issue0Out.bits.rfUses(slot).addr := issue0Slotted.rfSlotAddr(slot)
+    issue0Out.bits.rfUses(slot).isWrite := issue0Slotted.rfSlotWrites(slot)
   }
   val issue01Buffer =
     Module(new DoubleBuffer(new RsIssuePayload(params), rsp.issue01FB, rsp.issue01BB))
@@ -233,8 +241,6 @@ class ReservationStation(params: ZamletParams) extends Module {
   errors.binarySrcLaneOrderMismatch :=
     renamedIn.fire && issue0Slotted.isAlu &&
       issue0SrcAOrdering.laneOrder =/= issue0SrcBOrdering.laneOrder
-  io.errors := RegNext(errors)
-
   // issue1: join cache-local instructions with their allocation response.
   issue1Out.bits := issue1In.bits
   issue1Out.bits.cacheSlot := kceAllocSlotResp.bits.slot
@@ -252,7 +258,10 @@ class ReservationStation(params: ZamletParams) extends Module {
   val issue2CacheLocalToKte = issue2IsCacheLocal && !issue2In.bits.cacheSlotPresent
   val issue2CacheLocalToLocal = issue2IsCacheLocal && issue2In.bits.cacheSlotPresent
   val issue2RfBlocked = issue2In.bits.rfUses.map(rfUse =>
-    rfUse.valid && rfBusy(rfUse.addr)).reduce(_ || _)
+    rfUse.valid &&
+      Mux(rfUse.isWrite,
+        rfWriteBusy(rfUse.addr) || rfReadCount(rfUse.addr) =/= 0.U,
+        rfWriteBusy(rfUse.addr) || rfReadCount(rfUse.addr) === rfReadCountMax)).reduce(_ || _)
   val issue2MemWithSlot = memFootprint(issue2In.valid, issue2In.bits)
   val issue2LocalMemConflict =
     localInFlight.map(entry => KteMemFootprint.conflicts(issue2MemWithSlot, entry.mem)).reduce(_ || _)
@@ -314,27 +323,63 @@ class ReservationStation(params: ZamletParams) extends Module {
     localInFlight(stage) := localInFlight(stage - 1)
   }
 
+  val rfReadCountAfterLocalRelease = Wire(Vec(params.rfSliceWords, UInt(rfReadCountWidth.W)))
+  val rfWriteBusyAfterLocalRelease = Wire(Vec(params.rfSliceWords, Bool()))
+  rfReadCountAfterLocalRelease := rfReadCount
+  rfWriteBusyAfterLocalRelease := rfWriteBusy
+
   when (localInFlight(localExecDependentInputSeparation - 1).valid) {
     for (rfUse <- localInFlight(localExecDependentInputSeparation - 1).rfRelease.uses) {
       when (rfUse.valid) {
-        rfBusyNext(rfUse.addr) := false.B
+        when (rfUse.isWrite) {
+          errors.rfWriteReleaseUnexpected := !rfWriteBusy(rfUse.addr)
+          rfWriteBusyAfterLocalRelease(rfUse.addr) := false.B
+        } .otherwise {
+          errors.rfReadReleaseUnderflow := rfReadCount(rfUse.addr) === 0.U
+          rfReadCountAfterLocalRelease(rfUse.addr) := rfReadCount(rfUse.addr) - 1.U
+        }
       }
     }
   }
+
+  val rfReadCountAfterKteRelease = Wire(Vec(params.rfSliceWords, UInt(rfReadCountWidth.W)))
+  val rfWriteBusyAfterKteRelease = Wire(Vec(params.rfSliceWords, Bool()))
+  rfReadCountAfterKteRelease := rfReadCountAfterLocalRelease
+  rfWriteBusyAfterKteRelease := rfWriteBusyAfterLocalRelease
 
   when (kteRfRelease.fire) {
     for (rfUse <- kteRfRelease.bits.uses) {
       when (rfUse.valid) {
-        rfBusyNext(rfUse.addr) := false.B
+        when (rfUse.isWrite) {
+          errors.rfWriteReleaseUnexpected := !rfWriteBusyAfterLocalRelease(rfUse.addr)
+          rfWriteBusyAfterKteRelease(rfUse.addr) := false.B
+        } .otherwise {
+          errors.rfReadReleaseUnderflow := rfReadCountAfterLocalRelease(rfUse.addr) === 0.U
+          rfReadCountAfterKteRelease(rfUse.addr) := rfReadCountAfterLocalRelease(rfUse.addr) - 1.U
+        }
       }
     }
   }
 
+  val rfReadCountAfterAcquire = Wire(Vec(params.rfSliceWords, UInt(rfReadCountWidth.W)))
+  val rfWriteBusyAfterAcquire = Wire(Vec(params.rfSliceWords, Bool()))
+  rfReadCountAfterAcquire := rfReadCountAfterKteRelease
+  rfWriteBusyAfterAcquire := rfWriteBusyAfterKteRelease
+
   when (issue2In.fire && (issue2IsLocalRfOp || issue2IsKteRfOp)) {
     for (rfUse <- issue2In.bits.rfUses) {
       when (rfUse.valid) {
-        rfBusyNext(rfUse.addr) := true.B
+        when (rfUse.isWrite) {
+          rfWriteBusyAfterAcquire(rfUse.addr) := true.B
+        } .otherwise {
+          rfReadCountAfterAcquire(rfUse.addr) := rfReadCountAfterKteRelease(rfUse.addr) + 1.U
+        }
       }
     }
   }
+
+  rfReadCountNext := rfReadCountAfterAcquire
+  rfWriteBusyNext := rfWriteBusyAfterAcquire
+
+  io.errors := RegNext(errors)
 }

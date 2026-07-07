@@ -15,6 +15,7 @@ object TagState extends ChiselEnum {
   val PresentClean = Value
   val PresentDirty = Value
   val Evicting = Value
+  val PresentDirtyCancelledEviction = Value
 }
 
 class TagTableErrors extends Bundle {
@@ -193,7 +194,9 @@ class TagTable[R <: Data, F <: Data, P <: Data](
       state === TagState.FillingClean ||
       state === TagState.FillingDirty ||
       state === TagState.PresentClean ||
-      state === TagState.PresentDirty
+      state === TagState.PresentDirty ||
+      state === TagState.Evicting ||
+      state === TagState.PresentDirtyCancelledEviction
   }
 
   def isReserved(state: TagState.Type): Bool = {
@@ -201,7 +204,9 @@ class TagTable[R <: Data, F <: Data, P <: Data](
   }
 
   def isPresent(state: TagState.Type): Bool = {
-    state === TagState.PresentClean || state === TagState.PresentDirty
+    state === TagState.PresentClean ||
+      state === TagState.PresentDirty ||
+      state === TagState.PresentDirtyCancelledEviction
   }
 
   def isFilling(state: TagState.Type): Bool = {
@@ -405,6 +410,12 @@ class TagTable[R <: Data, F <: Data, P <: Data](
     alloc1In.bits.hit,
     nUses(alloc1In.bits.hitSlot) =/= maxUses,
     freeSlotDeq.valid)
+  val alloc1ReclaimsEviction =
+    alloc1In.bits.hit && alloc1In.bits.hitState === TagState.Evicting
+  val alloc1HitRespState = Mux(
+    alloc1ReclaimsEviction,
+    TagState.PresentDirty,
+    alloc1In.bits.hitState)
   alloc1In.ready := alloc1Out.ready && alloc1CanRespond
   alloc1Out.valid := alloc1In.valid && alloc1CanRespond
   alloc1Out.bits.slot := Mux(alloc1In.bits.hit, alloc1In.bits.hitSlot, freeSlotDeq.bits)
@@ -415,7 +426,7 @@ class TagTable[R <: Data, F <: Data, P <: Data](
     allocFillReqEnq.ready,
     Mux(alloc1In.bits.willWrite, TagState.FillingDirty, TagState.FillingClean),
     Mux(alloc1In.bits.willWrite, TagState.ReservedDirty, TagState.ReservedClean))
-  alloc1Out.bits.state := Mux(alloc1In.bits.hit, alloc1In.bits.hitState, alloc1MissState)
+  alloc1Out.bits.state := Mux(alloc1In.bits.hit, alloc1HitRespState, alloc1MissState)
   freeSlotDeq.ready := alloc1In.valid && !alloc1In.bits.hit && alloc1Out.ready
 
   def updateAllocResp(
@@ -476,7 +487,13 @@ class TagTable[R <: Data, F <: Data, P <: Data](
   when (alloc1Fire && alloc1In.bits.hit) {
     slotMetaAfterAlloc(alloc1In.bits.hitSlot).nUses := nUses(alloc1In.bits.hitSlot) + 1.U
     slotMetaAfterAlloc(alloc1In.bits.hitSlot).recentlyUsed := true.B
-    when (alloc1In.bits.willWrite) {
+    // Reclaiming an evicting same-tag slot cancels the eviction logically. The
+    // stale writeback is allowed to finish, but its completion must not free
+    // this slot.
+    when (alloc1ReclaimsEviction) {
+      slotMetaAfterAlloc(alloc1In.bits.hitSlot).state :=
+        TagState.PresentDirtyCancelledEviction
+    } .elsewhen (alloc1In.bits.willWrite) {
       slotMetaAfterAlloc(alloc1In.bits.hitSlot).state :=
         markDirty(state(alloc1In.bits.hitSlot))
     }
@@ -487,19 +504,27 @@ class TagTable[R <: Data, F <: Data, P <: Data](
   // ============================================================
 
   val writebackComplete0 = ValidBuffer(io.writebackComplete, true)
-  writebackFreeSlotEnq.valid := writebackComplete0.valid
+  val writebackComplete0Evicting =
+    state(writebackComplete0.bits) === TagState.Evicting
+  val writebackComplete0Cancelled =
+    state(writebackComplete0.bits) === TagState.PresentDirtyCancelledEviction
+  writebackFreeSlotEnq.valid := writebackComplete0.valid && writebackComplete0Evicting
   writebackFreeSlotEnq.bits := writebackComplete0.bits
   errors.writebackCompleteBadState :=
-    writebackComplete0.valid && state(writebackComplete0.bits) =/= TagState.Evicting
+    writebackComplete0.valid &&
+      !writebackComplete0Evicting &&
+      !writebackComplete0Cancelled
   errors.writebackCompleteQueueNotReady :=
-    writebackComplete0.valid && !writebackFreeSlotEnq.ready
+    writebackComplete0.valid && writebackComplete0Evicting && !writebackFreeSlotEnq.ready
 
   val slotMetaAfterWriteback = Wire(Vec(nSlots, new SlotMeta(tagWidth, params, fillMetaType, payloadType)))
   slotMetaAfterWriteback := slotMetaAfterAlloc
-  when (writebackComplete0.valid) {
+  when (writebackComplete0.valid && writebackComplete0Evicting) {
     slotMetaAfterWriteback(writebackComplete0.bits).state := TagState.EmptyInQueue
     slotMetaAfterWriteback(writebackComplete0.bits).nUses := 0.U
     slotMetaAfterWriteback(writebackComplete0.bits).recentlyUsed := false.B
+  } .elsewhen (writebackComplete0.valid && writebackComplete0Cancelled) {
+    slotMetaAfterWriteback(writebackComplete0.bits).state := TagState.PresentDirty
   }
 
   // ============================================================

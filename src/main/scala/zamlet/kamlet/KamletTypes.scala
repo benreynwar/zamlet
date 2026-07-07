@@ -6,6 +6,7 @@ import zamlet.ZamletParams
 class RfUse(params: ZamletParams) extends Bundle {
   val valid = Bool()
   val addr = params.rfAddr()
+  val isWrite = Bool()
 }
 
 class RfRelease(params: ZamletParams) extends Bundle {

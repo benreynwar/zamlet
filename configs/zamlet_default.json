@@ -15,7 +15,7 @@
   "elementIndexWidth": 22,
   "log2NParams": 6,
   "paramRefIdxWidth": 3,
-  "witemTableDepth": 8,
+  "witemTableDepth": 32,
   "kcePendingTableDepth": 16,
   "kteCacheWaitTableDepth": 16,
   "tlbReqTableDepth": 16,

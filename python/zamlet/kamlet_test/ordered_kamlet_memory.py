@@ -160,6 +160,22 @@ class OrderedKamletMemory:
                             ) & 0xff
         return result
 
+    def read_lamlet_cache_line_coherent_from_dut(
+        self, dut, logical_cache_line_addr: int,
+    ) -> list[int]:
+        params = self.params
+        line_bytes = params.cache_slot_words_per_jamlet * params.stripe_bytes
+        result = list(self.read_logical_bytes(
+            logical_cache_line_addr * line_bytes,
+            line_bytes,
+        ))
+        cache_result = self.read_lamlet_cache_line_from_dut(
+            dut, logical_cache_line_addr)
+        for index, value in enumerate(cache_result):
+            if value is not None:
+                result[index] = value
+        return result
+
     def cache_slot_snapshots(self, dut, k_index: int) -> list[CacheSlotSnapshot]:
         tag_table = self._kamlet(dut, k_index).cacheEngine.tagTable
         snapshots = []

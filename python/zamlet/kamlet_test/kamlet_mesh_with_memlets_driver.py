@@ -189,6 +189,38 @@ class KamletMeshWithMemletsDriver:
         self.log_debug_state()
         assert False, f'RF elements did not match: {actual}'
 
+    async def wait_for_sync_result_cycles(
+        self, sync_ident: int, timeout_cycles: int,
+    ) -> tuple[dict[int, int], int]:
+        results: dict[int, int] = {}
+        for cycle in range(timeout_cycles):
+            await RisingEdge(self.dut.clock)
+            await ReadOnly()
+            for kx in range(self.params.k_cols):
+                for ky in range(self.params.k_rows):
+                    k_index = ky * self.params.k_cols + kx
+                    if k_index in results:
+                        continue
+                    synchronizer = getattr(
+                        self.dut.mesh, f"kamlets_{kx}_{ky}").synchronizer
+                    if int(synchronizer.io_result_valid.value) == 0:
+                        continue
+                    ident = int(synchronizer.io_result_bits_syncIdent.value)
+                    if ident == sync_ident:
+                        results[k_index] = int(
+                            synchronizer.io_result_bits_value.value)
+            if len(results) == self.params.k_in_l:
+                return results, cycle + 1
+        self.log_debug_state()
+        assert False, f'sync result {sync_ident} did not complete'
+
+    async def wait_for_sync_result(
+        self, sync_ident: int, timeout_cycles: int,
+    ) -> dict[int, int]:
+        results, _ = await self.wait_for_sync_result_cycles(
+            sync_ident, timeout_cycles)
+        return results
+
     async def reset(self) -> None:
         self.dut.reset.value = 1
         for _ in range(self.params.reset_pipeline_depth):

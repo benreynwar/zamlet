@@ -693,10 +693,12 @@ class KamletTransferEngine(params: ZamletParams) extends Module {
   for (rfUse <- replay0ReleaseEntry.rfRelease.uses) {
     rfUse.valid := false.B
     rfUse.addr := 0.U
+    rfUse.isWrite := false.B
   }
   replay0ReleaseEntry.rfRelease.uses(0).valid := replay0IsLoadSimple || replay0IsStoreSimple
   replay0ReleaseEntry.rfRelease.uses(0).addr := Mux(replay0IsLoadSimple, replay0LoadSimple.rfAddr,
     replay0StoreSimple.rfAddr)
+  replay0ReleaseEntry.rfRelease.uses(0).isWrite := replay0IsLoadSimple
   replay0ReleaseEntry.rfRelease.uses(1).valid := replay0MaskEnabled
   replay0ReleaseEntry.rfRelease.uses(1).addr := replay0MaskReg
   replay0ReleaseEntry.releaseCacheSlot := true.B
@@ -738,9 +740,11 @@ class KamletTransferEngine(params: ZamletParams) extends Module {
   for (rfUse <- cleanup0ReleaseEntry.rfRelease.uses) {
     rfUse.valid := false.B
     rfUse.addr := 0.U
+    rfUse.isWrite := false.B
   }
   cleanup0ReleaseEntry.rfRelease.uses(0).valid := cleanup0IsJte
   cleanup0ReleaseEntry.rfRelease.uses(0).addr := cleanup0Indexed.reg
+  cleanup0ReleaseEntry.rfRelease.uses(0).isWrite := cleanup0Base.opcode === KInstrOpcode.LoadIdxUnord
   cleanup0ReleaseEntry.rfRelease.uses(1).valid := cleanup0IsJte
   cleanup0ReleaseEntry.rfRelease.uses(1).addr := cleanup0Indexed.indexReg
   cleanup0ReleaseEntry.rfRelease.uses(2).valid := cleanup0IsJte && cleanup0Indexed.maskEnabled

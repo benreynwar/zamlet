@@ -16,7 +16,8 @@ class PacketArbiter(params: ZamletParams, nInputs: Int) extends Module {
     val out = Decoupled(new NetworkWord(params))
   })
 
-  // Track which input is currently sending a packet
+  // Track the selected input while body words are passing. Packet headers are
+  // accepted in the idle state; wordsRemaining counts following body words.
   val activeInput = RegInit(0.U(log2Ceil(nInputs).W))
   val inPacket = RegInit(false.B)
   val wordsRemaining = Reg(UInt(4.W))
@@ -71,8 +72,8 @@ class PacketArbiter(params: ZamletParams, nInputs: Int) extends Module {
       when(io.out.fire && io.in(selectedInput).bits.isHeader) {
         val header = io.in(selectedInput).bits.data.asTypeOf(new PacketHeader(params))
         activeInput := selectedInput
-        wordsRemaining := header.length - 1.U
-        when(header.length > 1.U) {
+        wordsRemaining := header.length
+        when(header.length > 0.U) {
           inPacket := true.B
         }.otherwise {
           // Single-word packet, update priority immediately

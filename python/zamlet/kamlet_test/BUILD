@@ -53,6 +53,19 @@ chisel_module_tests(
     test_modules = ["zamlet.kamlet_test.test_kamlet_mesh_with_memlets"],
 )
 
+chisel_module_tests(
+    generator = "//src/main/scala/zamlet/kamlet:kamletmeshwithmemlets",
+    toplevel = "KamletMeshWithMemlets",
+    target_base = "kamletmeshwithmemlets_transpose",
+    srcs = [
+        "kamlet_mesh_with_memlets_driver.py",
+        "ordered_kamlet_memory.py",
+        "tag_table_driver.py",
+        "test_kamlet_mesh_with_memlets_transpose.py",
+    ],
+    test_modules = ["zamlet.kamlet_test.test_kamlet_mesh_with_memlets_transpose"],
+)
+
 chisel_module_tests_no_config(
     generator = "//src/main/scala/zamlet/kamlet:tagtable",
     toplevel = "TagTable",

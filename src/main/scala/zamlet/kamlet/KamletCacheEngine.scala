@@ -116,6 +116,7 @@ class KamletCacheEngine(params: ZamletParams) extends Module {
       (state === TagState.FillingDirty) -> KceCacheSlotState.FetchingWillWrite,
       (state === TagState.PresentClean) -> KceCacheSlotState.PresentClean,
       (state === TagState.PresentDirty) -> KceCacheSlotState.PresentDirty,
+      (state === TagState.PresentDirtyCancelledEviction) -> KceCacheSlotState.PresentDirty,
       (state === TagState.Evicting) -> KceCacheSlotState.Evicting))
   }
 
@@ -247,7 +248,8 @@ class KamletCacheEngine(params: ZamletParams) extends Module {
   io.kteSlotStatusResp.valid := tagTable.io.slotStatusResp.valid
   io.kteSlotStatusResp.bits :=
     tagTable.io.slotStatusResp.bits === TagState.PresentClean ||
-      tagTable.io.slotStatusResp.bits === TagState.PresentDirty
+      tagTable.io.slotStatusResp.bits === TagState.PresentDirty ||
+      tagTable.io.slotStatusResp.bits === TagState.PresentDirtyCancelledEviction
 
   // ============================================================
   // TagTable <-> MemletInterface
