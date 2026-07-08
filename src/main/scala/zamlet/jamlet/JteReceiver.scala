@@ -4,7 +4,7 @@ import chisel3._
 import chisel3.util._
 import zamlet.ZamletParams
 import zamlet.utils.DoubleBuffer
-import zamlet.network.{JteHeader, MessageType, NetworkWord}
+import zamlet.network.{JteResponseHeader, MessageType, NetworkWord}
 
   // Receives packets on channel 0
   //
@@ -22,7 +22,6 @@ class RFWriteReq(params: ZamletParams) extends Bundle {
 
 class JteReceiverUpdateMsg(params: ZamletParams) extends Bundle {
   val teIndex = UInt(log2Ceil(params.witemTableDepth).W)
-  val ident = params.ident()
   val msgType = UInt(params.messageTypeWidth.W)
   val offset = UInt(params.log2WordBytes.W)
   val drop = Bool()
@@ -30,7 +29,6 @@ class JteReceiverUpdateMsg(params: ZamletParams) extends Bundle {
 
 class JteReceiverAB(params: ZamletParams) extends Bundle {
   val teIndex = UInt(log2Ceil(params.witemTableDepth).W)
-  val ident = params.ident()
   val msgType = UInt(params.messageTypeWidth.W)
   val nBytes = UInt((params.log2WordWidth - 3).W)
   val dstOffset = UInt(params.log2WordBytes.W)
@@ -40,7 +38,6 @@ class JteReceiverAB(params: ZamletParams) extends Bundle {
 
 class JteReceiverBC(params: ZamletParams) extends Bundle {
   val teIndex = UInt(log2Ceil(params.witemTableDepth).W)
-  val ident = params.ident()
   val msgType = UInt(params.messageTypeWidth.W)
   val nBytes = UInt((params.log2WordWidth - 3).W)
   val srcOffset = UInt(params.log2WordBytes.W)
@@ -54,7 +51,6 @@ class JteReceiverAState(params: ZamletParams) extends Bundle {
   val dstOffset = UInt(params.log2WordBytes.W)
   val srcOffset = UInt(params.log2WordBytes.W)
   val teIndex = UInt(log2Ceil(params.witemTableDepth).W)
-  val ident = params.ident()
   val data = params.word()
   val remainingBodyWords = UInt(params.messageLengthWidth.W)
   val isHeader = Bool()
@@ -86,8 +82,8 @@ class JteReceiverA(params: ZamletParams) extends Module {
   val errors = Wire(new JteReceiverAErrors())
   errors := 0.U.asTypeOf(new JteReceiverAErrors())
 
-  val header = Wire(new JteHeader(params))
-  header := io.packet.bits.data.asTypeOf(new JteHeader(params))
+  val header = Wire(new JteResponseHeader(params))
+  header := io.packet.bits.data.asTypeOf(new JteResponseHeader(params))
   when (state.isHeader) {
     stateNext.remainingBodyWords := header.length
   } .otherwise {
@@ -103,7 +99,6 @@ class JteReceiverA(params: ZamletParams) extends Module {
     stateNext.dstOffset := header.dstOffset
     stateNext.srcOffset := header.srcOffset
     stateNext.teIndex := header.slot
-    stateNext.ident := header.ident
   } .otherwise {
     stateNext.data := io.packet.bits.data
   }
@@ -117,7 +112,6 @@ class JteReceiverA(params: ZamletParams) extends Module {
   io.ab.bits.nBytes := stateNext.nBytes
   io.ab.bits.dstOffset := stateNext.dstOffset
   io.ab.bits.srcOffset := stateNext.srcOffset
-  io.ab.bits.ident := stateNext.ident
   io.ab.bits.data := stateNext.data
   io.packet.ready := (io.ab.ready && io.teIndexToRegReq.ready) || !stateNext.isHeader
 }
@@ -151,7 +145,6 @@ class JteReceiverB(params: ZamletParams) extends Module {
 
   io.bc.valid := io.ab.valid && io.teIndexToRegResp.valid && (!writeRf || io.rfWriteReq.ready)
   io.bc.bits.teIndex := io.ab.bits.teIndex
-  io.bc.bits.ident := io.ab.bits.ident
   io.bc.bits.msgType := io.ab.bits.msgType
   io.bc.bits.nBytes := io.ab.bits.nBytes
   io.bc.bits.srcOffset := io.ab.bits.srcOffset
@@ -188,7 +181,6 @@ class JteReceiverD(params: ZamletParams) extends Module {
 
   io.updateMsg.valid := io.cd.valid
   io.updateMsg.bits.teIndex := io.cd.bits.teIndex
-  io.updateMsg.bits.ident := io.cd.bits.ident
   io.updateMsg.bits.msgType := io.cd.bits.msgType
   io.updateMsg.bits.offset := io.cd.bits.srcOffset
   io.updateMsg.bits.drop := io.cd.bits.drop
@@ -215,12 +207,22 @@ class JteReceiver(params: ZamletParams) extends Module {
   io.teIndexToRegReq <> DoubleBuffer(aStage.io.teIndexToRegReq, rp.slotToRegReqFB, rp.slotToRegReqBB)
 
   val bStage = Module(new JteReceiverB(params))
-  bStage.io.ab <> DoubleBuffer(aStage.io.ab, rp.abFB, rp.abBB)
+  // B joins the response packet metadata with the state-table slot-to-reg lookup.
+  val abSlotToRegJoinQueue = Module(new Queue(
+    new JteReceiverAB(params),
+    rp.slotToRegJoinQueueDepth(params.jteStateParams)))
+  abSlotToRegJoinQueue.io.enq <> aStage.io.ab
+  bStage.io.ab <> DoubleBuffer(abSlotToRegJoinQueue.io.deq, rp.abFB, rp.abBB)
   bStage.io.teIndexToRegResp <> DoubleBuffer(io.teIndexToRegResp, rp.slotToRegRespFB, rp.slotToRegRespBB)
   io.rfWriteReq <> DoubleBuffer(bStage.io.rfWriteReq, rp.rfWriteReqFB, rp.rfWriteReqBB)
 
   val cStage = Module(new JteReceiverC(params))
-  cStage.io.bc <> DoubleBuffer(bStage.io.bc, rp.bcFB, rp.bcBB)
+  // C joins the receiver update metadata with the RF write acknowledgement.
+  val bcRfWriteJoinQueue = Module(new Queue(
+    new JteReceiverBC(params),
+    rp.rfWriteJoinQueueDepth))
+  bcRfWriteJoinQueue.io.enq <> bStage.io.bc
+  cStage.io.bc <> DoubleBuffer(bcRfWriteJoinQueue.io.deq, rp.bcFB, rp.bcBB)
   cStage.io.rfWriteResp <> DoubleBuffer(io.rfWriteResp, rp.rfWriteRespFB, rp.rfWriteRespBB)
 
   val dStage = Module(new JteReceiverD(params))

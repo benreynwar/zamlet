@@ -26,7 +26,6 @@ class JteStateErrors extends Bundle {
   val createTeIndexInUse = Bool()
   val teIndexToRegInvalid = Bool()
   val receiverUpdateInvalid = Bool()
-  val receiverUpdateIdentMismatch = Bool()
   val initiatorCommitInvalid = Bool()
   val tlbAvailableInvalid = Bool()
   val tlbAvailableUnexpectedState = Bool()
@@ -179,7 +178,6 @@ class JteState(params: ZamletParams) extends Module {
     when (!slots(receiverUpdate.bits.teIndex).valid) {
       errors.receiverUpdateInvalid := true.B
     } .otherwise {
-      errors.receiverUpdateIdentMismatch := slots(receiverUpdate.bits.teIndex).instrIdent =/= receiverUpdate.bits.ident
       when (receiverUpdate.fire) {
         when (receiverUpdate.bits.drop) {
           slotsPostReceiver(receiverUpdate.bits.teIndex).initiator(receiverUpdate.bits.offset) := JteInitiatorState.Dropped

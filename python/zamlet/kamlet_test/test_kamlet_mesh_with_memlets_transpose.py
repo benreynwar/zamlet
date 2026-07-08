@@ -34,6 +34,7 @@ logger = logging.getLogger(__name__)
 async def monitor_jte_sram_writes(
     driver: KamletMeshWithMemletsDriver,
     stop: dict[str, bool],
+    stats: dict[str, int | None],
     log_period_cycles: int,
 ) -> None:
     counts = {
@@ -46,6 +47,7 @@ async def monitor_jte_sram_writes(
         await RisingEdge(driver.dut.clock)
         await ReadOnly()
         cycle += 1
+        stats["cycles_observed"] = cycle
         for kx in range(driver.params.k_cols):
             kamlet = getattr(driver.dut.mesh, f"kamlets_{kx}_0")
             for jy in range(driver.params.j_rows):
@@ -56,6 +58,10 @@ async def monitor_jte_sram_writes(
                     and int(handler.io_sramReq_bits_isWrite.value) == 1
                 ):
                     counts[(kx, jy)] += 1
+                    stats["total_sram_writes"] += 1
+                    if stats["first_sram_write_cycle"] is None:
+                        stats["first_sram_write_cycle"] = cycle
+                    stats["last_sram_write_cycle"] = cycle
         if cycle % log_period_cycles == 0:
             logger.info(
                 "measured transpose progress cycles=%d jte_sram_writes=%s total=%d",
@@ -296,7 +302,8 @@ def enqueue_repeated_vector_transpose_stores(
 ) -> int:
     param_ref_count = 1 << params.param_ref_idx_width
     store_instrs = []
-    store_ident = 0
+    group_instr_ident = 0
+    n_stores = 0
     for repeat in range(n_repeats):
         for batch_start in range(0, len(rf_sources), param_ref_count):
             batch_stop = min(batch_start + param_ref_count, len(rf_sources))
@@ -327,11 +334,11 @@ def enqueue_repeated_vector_transpose_stores(
                     writeset=writeset,
                     grouped_completion=True,
                     grouped_completion_close=last_store,
-                    instr_ident=store_ident,
+                    instr_ident=group_instr_ident,
                 ).encode(params))
-                store_ident += 1
+                n_stores += 1
     driver.enqueue_instructions(store_instrs)
-    return store_ident
+    return n_stores
 
 
 @cocotb.test(timeout_time=TEST_TIMEOUT_NS, timeout_unit="ns")
@@ -467,15 +474,43 @@ async def grouped_indexed_store_transposes_row_major_grid(
         n_stores * params.j_in_l,
     )
     sram_monitor_stop = {"done": False}
+    sram_monitor_stats = {
+        "first_sram_write_cycle": None,
+        "last_sram_write_cycle": None,
+        "total_sram_writes": 0,
+        "cycles_observed": 0,
+    }
     sram_monitor = cocotb.start_soon(monitor_jte_sram_writes(
         driver,
         sram_monitor_stop,
+        sram_monitor_stats,
         log_period_cycles=500,
     ))
     _, sync_cycles = await driver.wait_for_sync_result_cycles(
         sync_ident=2, timeout_cycles=20_000)
     sram_monitor_stop["done"] = True
     await sram_monitor
+    first_write_cycle = sram_monitor_stats["first_sram_write_cycle"]
+    last_write_cycle = sram_monitor_stats["last_sram_write_cycle"]
+    sram_write_span = (
+        None
+        if first_write_cycle is None or last_write_cycle is None
+        else last_write_cycle - first_write_cycle + 1
+    )
+    logger.info(
+        (
+            "measured transpose throughput enqueue_cycle=0 "
+            "first_sram_write_cycle=%s last_sram_write_cycle=%s "
+            "sync_complete_cycle=%d sram_write_span_cycles=%s "
+            "observed_sram_writes=%d expected_sram_writes=%d"
+        ),
+        first_write_cycle,
+        last_write_cycle,
+        sync_cycles,
+        sram_write_span,
+        sram_monitor_stats["total_sram_writes"],
+        n_stores * params.j_in_l,
+    )
     visible_cycles = await wait_for_logical_region(
         driver,
         dest_logical_line,

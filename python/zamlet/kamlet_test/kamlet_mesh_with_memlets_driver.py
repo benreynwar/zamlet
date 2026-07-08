@@ -300,7 +300,6 @@ class KamletMeshWithMemletsDriver:
             "createTeIndexInUse",
             "teIndexToRegInvalid",
             "receiverUpdateInvalid",
-            "receiverUpdateIdentMismatch",
             "initiatorCommitInvalid",
             "tlbAvailableInvalid",
             "tlbAvailableUnexpectedState",
@@ -352,6 +351,21 @@ class KamletMeshWithMemletsDriver:
         for field in ["binarySrcLaneOrderMismatch"]:
             signals.append((f"{label}.reservationStation.{field}", getattr(
                 kamlet, f"io_errors_reservationStation_{field}")))
+        for field in [
+            "wakeAlreadyAvailable",
+            "releaseFifoOverflow",
+            "unsupportedIssueOpcode",
+            "invalidJteInputReq",
+            "unsupportedJteInputOpcode",
+            "syncResultWithoutEntry",
+            "groupedCompletionReusedActiveSync",
+            "groupedCompletionAfterClose",
+            "groupedCompletionMismatchedFootprint",
+            "groupedCompletionMismatchedIdent",
+            "groupedCompletionCleanupWithoutGroup",
+        ]:
+            signals.append((f"{label}.transferEngine.{field}", getattr(
+                kamlet, f"io_errors_transferEngine_{field}")))
         for field in [
             "fetchTableFull", "jceFetchDoneUnknownSlot", "jceFetchDoneDuplicate",
             "packetInBadMessageType", "packetInDrop",

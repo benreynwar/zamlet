@@ -901,4 +901,9 @@ class ZamletParams:
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'ZamletParams':
         """Create ZamletParams from dictionary with camelCase field names."""
-        return _from_dict(cls, data, cls._FIELD_MAPPING)
+        params = _from_dict(cls, data, cls._FIELD_MAPPING)
+        params.kce_tag_table_params.nUsesWidth = max(
+            params.kce_tag_table_params.nUsesWidth,
+            math.ceil(math.log2(params.witem_table_depth)),
+        )
+        return params

@@ -258,40 +258,77 @@ object JteHeaderFields {
   def byteCountWidth(params: ZamletParams): Int = params.log2WordWidth - 3
   def offsetWidth(params: ZamletParams): Int = params.log2WordWidth - 3
   def slotWidth(params: ZamletParams): Int = log2Ceil(params.witemTableDepth)
+  def stripeAddrWidth(params: ZamletParams): Int = params.memAddrWidth - params.log2JInL
 
-  def width(params: ZamletParams): Int =
-    byteCountWidth(params) + 2 * offsetWidth(params) + slotWidth(params)
+  def requestWidth(params: ZamletParams): Int =
+    byteCountWidth(params) + 2 * offsetWidth(params)
+
+  def responseWidth(params: ZamletParams): Int =
+    requestWidth(params) + slotWidth(params)
 }
 
-trait HasJteFields { this: Bundle =>
+trait HasJteCommonFields { this: Bundle =>
   protected def jteParams: ZamletParams
 
   val nBytes = UInt(JteHeaderFields.byteCountWidth(jteParams).W)
   val dstOffset = UInt(JteHeaderFields.offsetWidth(jteParams).W)
   val srcOffset = UInt(JteHeaderFields.offsetWidth(jteParams).W)
+}
+
+trait HasJteResponseFields extends HasJteCommonFields { this: Bundle =>
+  protected def jteParams: ZamletParams
+
   val slot = UInt(JteHeaderFields.slotWidth(jteParams).W)
 }
 
-abstract class AbstractJteHeader(params: ZamletParams)
-    extends AbstractIdentHeader(params) with HasJteFields {
+abstract class AbstractJteRequestHeader(params: ZamletParams)
+    extends AbstractIdentHeader(params) with HasJteCommonFields {
   override protected def jteParams: ZamletParams = params
 
-  def jteHeaderWidth: Int = identHeaderWidth + JteHeaderFields.width(params)
+  def jteRequestHeaderWidth: Int = identHeaderWidth + JteHeaderFields.requestWidth(params)
 }
 
-class JteHeader(params: ZamletParams) extends AbstractJteHeader(params) {
-  val _padding = UInt((params.wordWidth - jteHeaderWidth).W)
+class JteRequestHeader(params: ZamletParams) extends AbstractJteRequestHeader(params) {
+  require(jteRequestHeaderWidth <= params.wordWidth,
+    s"JTE request header width ($jteRequestHeaderWidth) must fit in word width (${params.wordWidth})")
+  val _padding = UInt((params.wordWidth - jteRequestHeaderWidth).W)
 }
 
-abstract class AbstractJteIHeader(params: ZamletParams)
-    extends AbstractIdentIHeader(params) with HasJteFields {
+abstract class AbstractJteIRequestHeader(params: ZamletParams)
+    extends AbstractIdentIHeader(params) with HasJteCommonFields {
   override protected def jteParams: ZamletParams = params
 
-  def jteHeaderWidth: Int = identHeaderWidth + JteHeaderFields.width(params)
+  def jteRequestHeaderWidth: Int = identHeaderWidth + JteHeaderFields.requestWidth(params)
 }
 
-class JteIHeader(params: ZamletParams) extends AbstractJteIHeader(params) {
-  val _padding = UInt((params.wordWidth - jteHeaderWidth).W)
+class JteIRequestHeader(params: ZamletParams) extends AbstractJteIRequestHeader(params) {
+  require(jteRequestHeaderWidth <= params.wordWidth,
+    s"JTE internal request header width ($jteRequestHeaderWidth) must fit in word width (${params.wordWidth})")
+  val _padding = UInt((params.wordWidth - jteRequestHeaderWidth).W)
+}
+
+abstract class AbstractJteResponseHeader(params: ZamletParams)
+    extends AbstractPacketHeader(params) with HasJteResponseFields {
+  override protected def jteParams: ZamletParams = params
+
+  def jteResponseHeaderWidth: Int = baseWidth + JteHeaderFields.responseWidth(params)
+}
+
+class JteResponseHeader(params: ZamletParams) extends AbstractJteResponseHeader(params) {
+  require(jteResponseHeaderWidth <= params.wordWidth,
+    s"JTE response header width ($jteResponseHeaderWidth) must fit in word width (${params.wordWidth})")
+  val _padding = UInt((params.wordWidth - jteResponseHeaderWidth).W)
+}
+
+class JteRequestAddressBody(params: ZamletParams) extends Bundle {
+  val stripeAddr = UInt(JteHeaderFields.stripeAddrWidth(params).W)
+  val slot = UInt(JteHeaderFields.slotWidth(params).W)
+
+  def bodyWidth: Int = JteHeaderFields.stripeAddrWidth(params) + JteHeaderFields.slotWidth(params)
+
+  require(bodyWidth <= params.wordWidth,
+    s"JTE request address body width ($bodyWidth) must fit in word width (${params.wordWidth})")
+  val _padding = UInt((params.wordWidth - bodyWidth).W)
 }
 
 abstract class AbstractJceIHeader(params: ZamletParams) extends AbstractPacketIHeader(params) {

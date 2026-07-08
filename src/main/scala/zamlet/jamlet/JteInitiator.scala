@@ -11,7 +11,7 @@ import zamlet.ElementWidth
 import zamlet.LaneOrder
 import zamlet.WidthHelpers
 import zamlet.Utils
-import zamlet.network.{INetworkWord, JteIHeader, MessageType, NetworkWord, SendType}
+import zamlet.network.{INetworkWord, JteIRequestHeader, JteRequestAddressBody, MessageType, NetworkWord, SendType}
 
 object TransferMode extends ChiselEnum {
   val StrideLoad, StrideStore, IndexLoad, IndexStore, RegGather = Value
@@ -724,8 +724,8 @@ class JteInitiatorI(params: ZamletParams) extends Module {
   val msgIndexNext = Wire(UInt(2.W))
   val msgIndex = RegEnable(msgIndexNext, 0.U, fire)
 
-  val header = Wire(new JteIHeader(params))
-  header := 0.U.asTypeOf(new JteIHeader(params))
+  val header = Wire(new JteIRequestHeader(params))
+  header := 0.U.asTypeOf(new JteIRequestHeader(params))
   header.dstIndex := io.hi.bits.dstLaneIndex
   header.sourceX := io.x
   header.sourceY := io.y
@@ -741,7 +741,14 @@ class JteInitiatorI(params: ZamletParams) extends Module {
   header.dstOffset := io.hi.bits.dstOffset
   header.srcOffset := io.hi.bits.srcOffset
   header.ident := io.hi.bits.instrIdent
-  header.slot := io.hi.bits.teIndex
+
+  // Requests need the instruction ident at the remote jamlet. The source-side
+  // JTE slot is only needed when the response returns, so keep it with the
+  // address body word instead of spending header bits on both ident and slot.
+  val addressBody = Wire(new JteRequestAddressBody(params))
+  addressBody := 0.U.asTypeOf(new JteRequestAddressBody(params))
+  addressBody.stripeAddr := io.hi.bits.dstStripeAddr
+  addressBody.slot := io.hi.bits.teIndex
 
   io.packet.valid := io.hi.valid
   io.packet.bits.isHeader := false.B
@@ -752,7 +759,7 @@ class JteInitiatorI(params: ZamletParams) extends Module {
   when (msgIndex === 0.U) {
     io.packet.bits.isHeader := true.B
   } .elsewhen (msgIndex === 1.U) {
-    io.packet.bits.data := io.hi.bits.dstStripeAddr
+    io.packet.bits.data := addressBody.asUInt
     when (!io.hi.bits.isStore) {
       completeMessage := true.B
     }
@@ -802,7 +809,13 @@ class JteInitiator(params: ZamletParams) extends Module {
   dStage.io.rfMaskResp <> DoubleBuffer(io.rfMaskResp, ip.rfMaskRespFB, ip.rfMaskRespBB)
   dStage.io.rfDataResp <> DoubleBuffer(io.rfDataResp, ip.rfDataRespFB, ip.rfDataRespBB)
   dStage.io.rfIndexResp <> DoubleBuffer(io.rfIndexResp, ip.rfIndexRespFB, ip.rfIndexRespBB)
-  dStage.io.cd <> DoubleBuffer(cStage.io.cd, ip.cdFB, ip.cdBB)
+  // D joins the local element payload with RF read responses. The queue absorbs
+  // configured RF request/response buffering so earlier stages can keep issuing.
+  val cdRfJoinQueue = Module(new Queue(
+    new JteInitiatorBC(params),
+    ip.rfJoinQueueDepth(params.rfSliceParams)))
+  cdRfJoinQueue.io.enq <> cStage.io.cd
+  dStage.io.cd <> DoubleBuffer(cdRfJoinQueue.io.deq, ip.cdFB, ip.cdBB)
 
   val eStage = Module(new JteInitiatorE(params))
   eStage.io.de <> DoubleBuffer(dStage.io.de, ip.deFB, ip.deBB)
@@ -815,7 +828,13 @@ class JteInitiator(params: ZamletParams) extends Module {
   gStage.io.fg <> DoubleBuffer(fStage.io.fg, ip.fgFB, ip.fgBB)
 
   val hStage = Module(new JteInitiatorH(params))
-  hStage.io.gh <> DoubleBuffer(gStage.io.gh, ip.ghFB, ip.ghBB)
+  // H joins the local memory-section payload with the TLB hit response.
+  // Misses are tracked by KamletTlb; this queue covers the hit response path.
+  val ghTlbJoinQueue = Module(new Queue(
+    new JteInitiatorFG(params),
+    ip.tlbJoinQueueDepth(params.kamletTlbParams, params.tlbTagTableParams)))
+  ghTlbJoinQueue.io.enq <> gStage.io.gh
+  hStage.io.gh <> DoubleBuffer(ghTlbJoinQueue.io.deq, ip.ghFB, ip.ghBB)
   hStage.io.tlbResp <> DoubleBuffer(io.tlbResp, ip.tlbRespFB, ip.tlbRespBB)
   io.commit := ValidBuffer(hStage.io.commit, ip.commitBuffer)
 

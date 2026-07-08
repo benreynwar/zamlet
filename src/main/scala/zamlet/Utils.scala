@@ -13,6 +13,9 @@ object SimpleElementWidth extends ChiselEnum {
 
 object Utils {
 
+  def boolToInt(value: Boolean): Int =
+    if (value) 1 else 0
+
   def ewLog2Bits(ew: SimpleElementWidth.Type): UInt = {
     val result = WireDefault(UInt(3.W), 0.U)
     switch(ew) {

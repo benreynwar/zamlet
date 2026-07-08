@@ -11,7 +11,7 @@ import zamlet.ElementWidth
 import zamlet.LaneOrder
 import zamlet.WidthHelpers
 import zamlet.Utils
-import zamlet.network.{JteHeader, MessageType, NetworkWord, SendType}
+import zamlet.network.{JteRequestAddressBody, JteRequestHeader, JteResponseHeader, MessageType, NetworkWord, SendType}
 
   // Receives packets on channel 0 and channel 1
   // Sends packets on channel 0
@@ -127,8 +127,10 @@ class JteHandlerA(params: ZamletParams) extends Module {
   val errors = Wire(new JteHandlerAErrors())
   errors := 0.U.asTypeOf(new JteHandlerAErrors())
 
-  val header = Wire(new JteHeader(params))
-  header := io.packet.bits.data.asTypeOf(new JteHeader(params))
+  val header = Wire(new JteRequestHeader(params))
+  header := io.packet.bits.data.asTypeOf(new JteRequestHeader(params))
+  val addressBody = Wire(new JteRequestAddressBody(params))
+  addressBody := io.packet.bits.data.asTypeOf(new JteRequestAddressBody(params))
   when (state.isHeader) {
     stateNext.remainingBodyWords := header.length
   } .otherwise {
@@ -146,11 +148,18 @@ class JteHandlerA(params: ZamletParams) extends Module {
     stateNext.dstOffset := header.dstOffset
     stateNext.srcOffset := header.srcOffset
     stateNext.ident := header.ident
-    stateNext.teIndex := header.slot
-  } .elsewhen(stateNext.msgType === MessageType.StoreWordReq.asUInt && stateNext.isHeader) {
-    stateNext.data := io.packet.bits.data
   } .otherwise {
-    stateNext.stripeAddr := io.packet.bits.data
+    val firstBodyWord = state.remainingBodyWords === Mux(
+      state.msgType === MessageType.StoreWordReq.asUInt,
+      2.U,
+      1.U,
+    )
+    when (firstBodyWord) {
+      stateNext.stripeAddr := addressBody.stripeAddr
+      stateNext.teIndex := addressBody.slot
+    } .otherwise {
+      stateNext.data := io.packet.bits.data
+    }
   }
 
   io.ab.valid := stateNext.isHeader && io.packet.valid
@@ -367,8 +376,8 @@ class JteHandlerH(params: ZamletParams) extends Module {
   val msgIndex = RegInit(0.U(1.W))
   val completeMessage = !sendData || msgIndex === 1.U
 
-  val header = Wire(new JteHeader(params))
-  header := 0.U.asTypeOf(new JteHeader(params))
+  val header = Wire(new JteResponseHeader(params))
+  header := 0.U.asTypeOf(new JteResponseHeader(params))
   header.targetX := io.gh.bits.srcX
   header.targetY := io.gh.bits.srcY
   header.sourceX := io.x
@@ -383,7 +392,6 @@ class JteHandlerH(params: ZamletParams) extends Module {
   header.nBytes := io.gh.bits.nBytes
   header.dstOffset := io.gh.bits.dstOffset
   header.srcOffset := io.gh.bits.srcOffset
-  header.ident := io.gh.bits.ident
   header.slot := io.gh.bits.teIndex
 
   io.packet.valid := io.gh.valid
@@ -426,7 +434,13 @@ class JteHandler(params: ZamletParams) extends Module {
   cStage.io.bc <> DoubleBuffer(bStage.io.bc, hp.bcFB, hp.bcBB)
 
   val dStage = Module(new JteHandlerD(params))
-  dStage.io.cd <> DoubleBuffer(cStage.io.cd, hp.cdFB, hp.cdBB)
+  // D joins the local request payload with the cache-line lookup response.
+  // This queue keeps packet ingestion moving while the response path catches up.
+  val cdJoinQueue = Module(new Queue(
+    new JteHandlerBC(params),
+    hp.cacheLineJoinQueueDepth(params.kcePendingTableParams)))
+  cdJoinQueue.io.enq <> cStage.io.cd
+  dStage.io.cd <> DoubleBuffer(cdJoinQueue.io.deq, hp.cdFB, hp.cdBB)
   dStage.io.cacheLineResp <> DoubleBuffer(io.cacheLineResp, hp.cacheLineRespFB, hp.cacheLineRespBB)
   dStage.io.replay <> io.cacheLineReplay
 

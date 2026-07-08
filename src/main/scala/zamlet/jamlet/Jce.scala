@@ -98,14 +98,17 @@ class Jce(params: ZamletParams) extends Module {
 
   val txCIn = DoubleBuffer(txBIn, jp.bcFB, jp.bcBB)
   val txCSramResp = DoubleBuffer(io.sramReadResp, jp.sramReadRespFB, jp.sramReadRespBB)
+  // txC joins the local read metadata with the SRAM read response.
+  val txCJoinQueue = Module(new Queue(new JceTxA(params), jp.sramReadJoinQueueDepth))
+  txCJoinQueue.io.enq <> txCIn
 
   val txCMerged = Wire(Decoupled(new JceTxC(params)))
-  txCMerged.valid := txCIn.valid && txCSramResp.valid
-  txCIn.ready := txCMerged.ready && txCSramResp.valid
-  txCSramResp.ready := txCIn.valid && txCMerged.ready
+  txCMerged.valid := txCJoinQueue.io.deq.valid && txCSramResp.valid
+  txCJoinQueue.io.deq.ready := txCMerged.ready && txCSramResp.valid
+  txCSramResp.ready := txCJoinQueue.io.deq.valid && txCMerged.ready
 
-  txCMerged.bits.slot := txCIn.bits.slot
-  txCMerged.bits.wordOffset := txCIn.bits.wordOffset
+  txCMerged.bits.slot := txCJoinQueue.io.deq.bits.slot
+  txCMerged.bits.wordOffset := txCJoinQueue.io.deq.bits.wordOffset
   txCMerged.bits.data := txCSramResp.bits
 
   val txD = DoubleBuffer(txCMerged, jp.cdFB, jp.cdBB)
@@ -202,13 +205,16 @@ class Jce(params: ZamletParams) extends Module {
 
   val rxC = DoubleBuffer(rxB, jp.rxBCFB, jp.rxBCBB)
   val rxCSramResp = DoubleBuffer(io.sramWriteResp, jp.sramWriteRespFB, jp.sramWriteRespBB)
+  // rxC joins the local write metadata with the SRAM write acknowledgement.
+  val rxCJoinQueue = Module(new Queue(new JceRxA(params), jp.sramWriteJoinQueueDepth))
+  rxCJoinQueue.io.enq <> rxC
 
-  rxC.ready := rxCSramResp.valid
-  rxCSramResp.ready := rxC.valid
+  rxCJoinQueue.io.deq.ready := rxCSramResp.valid
+  rxCSramResp.ready := rxCJoinQueue.io.deq.valid
 
   val rxCOpDone = Wire(Valid(params.cacheSlot()))
-  rxCOpDone.valid := rxC.fire && rxC.bits.last
-  rxCOpDone.bits := rxC.bits.slot
+  rxCOpDone.valid := rxCJoinQueue.io.deq.fire && rxCJoinQueue.io.deq.bits.last
+  rxCOpDone.bits := rxCJoinQueue.io.deq.bits.slot
 
   io.rxDone := ValidBuffer(rxCOpDone)
 }

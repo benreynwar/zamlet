@@ -655,11 +655,14 @@ class TagTable[R <: Data, F <: Data, P <: Data](
   val claim0Hit = claim0Matches.asUInt.orR
   val claim0Slot = PriorityEncoder(claim0Matches)
   val claim0State = Mux(claim0Hit, state(claim0Slot), TagState.Empty)
+  // Claim is the final table update stage in this module. Its capacity check
+  // must use the same post-scan metadata that the claim increment writes.
+  val claim0UsesAvailable = slotMetaAfterScan(claim0Slot).nUses =/= maxUses
   val claim0DidClaim =
     claim0Hit &&
       claim0In.bits.doClaim &&
       isClaimable(claim0In.bits, claim0State) &&
-      nUses(claim0Slot) =/= maxUses
+      claim0UsesAvailable
 
   val claim0Out = Wire(Valid(new TagClaimResp(slotWidth, respMetaType, payloadType)))
   claim0Out.valid := claim0In.valid

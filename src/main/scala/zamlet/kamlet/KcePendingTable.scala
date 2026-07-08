@@ -309,7 +309,14 @@ class KcePendingTable(params: ZamletParams) extends Module {
   // req4 cache claim response
   // ============================================================
 
-  val req4In = DoubleBuffer(req3Out, ptp.req34FB, ptp.req34BB)
+  // req3 issues the tag-table claim on a side path. The queue absorbs that
+  // response latency so req3 can keep accepting cache-line requests while older
+  // metadata waits at req4 for its matching claimSlotResp.
+  val req4JoinQueue = Module(new Queue(
+    new KcePendingReqWork(params),
+    ptp.claimJoinQueueDepth(params.kceTagTableParams)))
+  req4JoinQueue.io.enq <> req3Out
+  val req4In = DoubleBuffer(req4JoinQueue.io.deq, ptp.req34FB, ptp.req34BB)
   val req4Out = Wire(Decoupled(new KcePendingReqWork(params)))
   val req4NeedsClaimResp = req4In.bits.instrIdentAvailable
   val req4CanAdvance = !req4NeedsClaimResp || claimSlotResp.valid

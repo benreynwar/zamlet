@@ -234,12 +234,24 @@ def _jte_tail_width(params) -> int:
     return 3 * params.log2_word_bytes + _jte_slot_width(params)
 
 
+def _jte_request_tail_width(params) -> int:
+    return 3 * params.log2_word_bytes
+
+
 def _jte_tail_fields(params) -> list[tuple[str, int]]:
     return [
         ('n_bytes_encoded', params.log2_word_bytes),
         ('dst_offset', params.log2_word_bytes),
         ('src_offset', params.log2_word_bytes),
         ('slot', _jte_slot_width(params)),
+    ]
+
+
+def _jte_request_tail_fields(params) -> list[tuple[str, int]]:
+    return [
+        ('n_bytes_encoded', params.log2_word_bytes),
+        ('dst_offset', params.log2_word_bytes),
+        ('src_offset', params.log2_word_bytes),
     ]
 
 
@@ -286,7 +298,7 @@ class JteHeader(IdentHeader):
 
 
 @dataclass
-class JteIHeader:
+class JteIRequestHeader:
     dst_index: int
     source_x: int
     source_y: int
@@ -297,7 +309,6 @@ class JteIHeader:
     n_bytes: int
     dst_offset: int
     src_offset: int
-    slot: int
 
     @staticmethod
     def fields(params):
@@ -309,7 +320,7 @@ class JteIHeader:
             + params.message_type_width
             + 1
             + params.ident_width
-            + _jte_tail_width(params)
+            + _jte_request_tail_width(params)
         )
         return [
             ('dst_index', _indexed_dst_width(params)),
@@ -319,7 +330,7 @@ class JteIHeader:
             ('message_type', params.message_type_width),
             ('send_type', 1),
             ('ident', params.ident_width),
-            *_jte_tail_fields(params),
+            *_jte_request_tail_fields(params),
             ('_padding', params.word_width - used),
         ]
 
@@ -329,11 +340,35 @@ class JteIHeader:
         return pack_fields_to_int(SimpleNamespace(**values), self.fields(params))
 
     @classmethod
-    def decode(cls, value: int, params) -> 'JteIHeader':
+    def decode(cls, value: int, params) -> 'JteIRequestHeader':
         fields = unpack_int_to_fields(value, cls.fields(params))
         fields.pop('_padding', None)
         fields['n_bytes'] = _decode_jte_n_bytes(fields.pop('n_bytes_encoded'), params)
         _decode_header_enums(fields)
+        return cls(**fields)
+
+
+@dataclass
+class JteRequestAddressBody:
+    stripe_addr: int
+    slot: int
+
+    @staticmethod
+    def fields(params):
+        used = params.mem_addr_width - params.log2_j_in_l + _jte_slot_width(params)
+        return [
+            ('stripe_addr', params.mem_addr_width - params.log2_j_in_l),
+            ('slot', _jte_slot_width(params)),
+            ('_padding', params.word_width - used),
+        ]
+
+    def encode(self, params) -> int:
+        return pack_fields_to_int(self, self.fields(params))
+
+    @classmethod
+    def decode(cls, value: int, params) -> 'JteRequestAddressBody':
+        fields = unpack_int_to_fields(value, cls.fields(params))
+        fields.pop('_padding', None)
         return cls(**fields)
 
 

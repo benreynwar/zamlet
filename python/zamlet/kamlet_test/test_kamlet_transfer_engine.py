@@ -144,11 +144,12 @@ async def grouped_indexed_loads_emit_one_completion_sync(
 
     await driver.reset()
     sync_ident = 5
+    group_instr_ident = 80
     n_transfers = min(4, params.witem_table_depth)
     for index in range(n_transfers):
         driver.append_indexed_transfer(
             params,
-            instr_ident=80 + index,
+            instr_ident=group_instr_ident,
             sync_ident=sync_ident,
             is_store=False,
             base_addr=0x8000 + index * 0x100,
@@ -233,16 +234,17 @@ async def grouped_indexed_mismatched_footprint_sets_error(
 
     await driver.reset()
     sync_ident = 7
+    group_instr_ident = 100
     driver.append_indexed_transfer(
         params,
-        instr_ident=100,
+        instr_ident=group_instr_ident,
         sync_ident=sync_ident,
         is_store=False,
         grouped_completion=True,
     )
     driver.append_indexed_transfer(
         params,
-        instr_ident=101,
+        instr_ident=group_instr_ident,
         sync_ident=sync_ident,
         is_store=True,
         grouped_completion=True,

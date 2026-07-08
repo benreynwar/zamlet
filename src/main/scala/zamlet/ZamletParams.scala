@@ -161,7 +161,48 @@ case class JteInitiatorParams(
   hiBB: Boolean = true,
   packetFB: Boolean = true,
   packetBB: Boolean = true,
-)
+) {
+  def rfJoinQueueDepth(rfSliceParams: RfSliceParams): Int = {
+    val localPayloadLatency =
+      Utils.boolToInt(abFB) +
+        Utils.boolToInt(bcFB) +
+        Utils.boolToInt(cdFB)
+    val maskRespLatency =
+      Utils.boolToInt(rfMaskReqFB) +
+        Utils.boolToInt(rfSliceParams.maskReqForwardBuffer) +
+        Utils.boolToInt(rfSliceParams.maskRespForwardBuffer) +
+        Utils.boolToInt(rfMaskRespFB)
+    val indexRespLatency =
+      Utils.boolToInt(rfIndexReqFB) +
+        Utils.boolToInt(rfSliceParams.indexReqForwardBuffer) +
+        Utils.boolToInt(rfSliceParams.indexRespForwardBuffer) +
+        Utils.boolToInt(rfIndexRespFB)
+    val dataRespLatency =
+      Utils.boolToInt(rfDataReqFB) +
+        Utils.boolToInt(rfSliceParams.dataReqForwardBuffer) +
+        Utils.boolToInt(rfSliceParams.dataRespForwardBuffer) +
+        Utils.boolToInt(rfDataRespFB)
+    val responseLatency = Seq(maskRespLatency, indexRespLatency, dataRespLatency).max
+
+    (responseLatency - localPayloadLatency).max(1)
+  }
+
+  def tlbJoinQueueDepth(kamletTlbParams: KamletTlbParams, tagTableParams: TagTableParams): Int = {
+    val localPayloadLatency =
+      Utils.boolToInt(fgFB) +
+        Utils.boolToInt(ghFB)
+    val tlbHitResponseLatency =
+      Utils.boolToInt(tlbReqFB) +
+        Utils.boolToInt(kamletTlbParams.tlbReqFB) +
+        Utils.boolToInt(tagTableParams.claimReqFB) +
+        Utils.boolToInt(tagTableParams.claimRespFB) +
+        1 + // claimRespQueue in KamletTlb.
+        Utils.boolToInt(kamletTlbParams.tlbRespFB) +
+        Utils.boolToInt(tlbRespFB)
+
+    (tlbHitResponseLatency - localPayloadLatency).max(1)
+  }
+}
 
 case class JteReceiverParams(
   packetFB: Boolean = true,
@@ -182,7 +223,27 @@ case class JteReceiverParams(
   cdBB: Boolean = true,
   updateMsgFB: Boolean = false,
   updateMsgBB: Boolean = false,
-)
+) {
+  def slotToRegJoinQueueDepth(stateParams: JteStateParams): Int = {
+    val localPayloadLatency = Utils.boolToInt(abFB)
+    val responseLatency =
+      Utils.boolToInt(slotToRegReqFB) +
+        Utils.boolToInt(stateParams.slotToRegReqFB) +
+        Utils.boolToInt(stateParams.slotToRegRespFB) +
+        Utils.boolToInt(slotToRegRespFB)
+
+    (responseLatency - localPayloadLatency).max(1)
+  }
+
+  def rfWriteJoinQueueDepth: Int = {
+    val localPayloadLatency = Utils.boolToInt(bcFB)
+    val responseLatency =
+      Utils.boolToInt(rfWriteReqFB) +
+        Utils.boolToInt(rfWriteRespFB)
+
+    (responseLatency - localPayloadLatency).max(1)
+  }
+}
 
 case class JteHandlerParams(
   packetInFB: Boolean = true,
@@ -211,7 +272,26 @@ case class JteHandlerParams(
   ghBB: Boolean = true,
   packetOutFB: Boolean = true,
   packetOutBB: Boolean = true,
-)
+) {
+  def cacheLineJoinQueueDepth(pendingTableParams: KcePendingTableParams): Int = {
+    val localPayloadLatency =
+      Utils.boolToInt(bcFB) +
+        Utils.boolToInt(cdFB)
+    val cacheLineResponseLatency =
+      Utils.boolToInt(cacheLineReqFB) +
+        Utils.boolToInt(pendingTableParams.cacheLineReqFB) +
+        Utils.boolToInt(pendingTableParams.req01FB) +
+        1 + // req1 -> req2 fixed forward buffer for the instr-start query join.
+        Utils.boolToInt(pendingTableParams.req23FB) +
+        1 + // claimJoinQueue in KcePendingTable.
+        Utils.boolToInt(pendingTableParams.req34FB) +
+        Utils.boolToInt(pendingTableParams.req45FB) +
+        Utils.boolToInt(pendingTableParams.cacheLineRespFB) +
+        Utils.boolToInt(cacheLineRespFB)
+
+    (cacheLineResponseLatency - localPayloadLatency).max(1)
+  }
+}
 
 case class SramParams(
   localA: Boolean = true,
@@ -253,7 +333,29 @@ case class JceParams(
   rxBCFB: Boolean = true,
   rxBCBB: Boolean = true,
   rxDoneFB: Boolean = true,
-)
+) {
+  def sramReadJoinQueueDepth: Int = {
+    val localPayloadLatency =
+      Utils.boolToInt(abFB) +
+        Utils.boolToInt(bcFB)
+    val sramRespLatency =
+      Utils.boolToInt(sramReadReqFB) +
+        Utils.boolToInt(sramReadRespFB)
+
+    (sramRespLatency - localPayloadLatency).max(1)
+  }
+
+  def sramWriteJoinQueueDepth: Int = {
+    val localPayloadLatency =
+      Utils.boolToInt(rxABFB) +
+        Utils.boolToInt(rxBCFB)
+    val sramRespLatency =
+      Utils.boolToInt(sramWriteReqFB) +
+        Utils.boolToInt(sramWriteRespFB)
+
+    (sramRespLatency - localPayloadLatency).max(1)
+  }
+}
 
 case class KceCacheTableParams(
   hasSlotReqFB: Boolean = true,
@@ -329,7 +431,19 @@ case class KcePendingTableParams(
   alloc01BB: Boolean = true,
   alloc12FB: Boolean = true,
   alloc12BB: Boolean = true,
-)
+) {
+  def claimJoinQueueDepth(tagTableParams: TagTableParams): Int = {
+    val localMetadataLatency = Utils.boolToInt(req34FB)
+    val claimResponseLatency =
+      Utils.boolToInt(claimSlotReqFB) +
+        Utils.boolToInt(tagTableParams.claimReqFB) +
+        Utils.boolToInt(tagTableParams.claimRespFB) +
+        1 + // pendingClaimRespQueue in KamletCacheEngine.
+        Utils.boolToInt(claimSlotRespFB)
+
+    (claimResponseLatency - localMetadataLatency).max(1)
+  }
+}
 
 case class KceMemletInterfaceParams(
   fetchSlotReqFB: Boolean = true,
@@ -588,11 +702,21 @@ object ZamletParams {
   implicit val kamletTlbParamsDecoder: Decoder[KamletTlbParams] = deriveDecoder[KamletTlbParams]
   implicit val zamletParamsDecoder: Decoder[ZamletParams] = deriveDecoder[ZamletParams]
 
+  def kceTagTableNUseWidth(params: ZamletParams): Int =
+    log2Ceil(params.witemTableDepth)
+
+  def normalize(params: ZamletParams): ZamletParams = {
+    val kceNUseWidth = kceTagTableNUseWidth(params)
+    params.copy(
+      kceTagTableParams = params.kceTagTableParams.copy(
+        nUsesWidth = params.kceTagTableParams.nUsesWidth.max(kceNUseWidth)))
+  }
+
   def fromFile(fileName: String): ZamletParams = {
     val jsonContent = Source.fromFile(fileName).mkString
     val paramsResult = decode[ZamletParams](jsonContent)
     paramsResult match {
-      case Right(params) => params
+      case Right(params) => normalize(params)
       case Left(error) =>
         println(s"Failed to parse JSON: ${error}")
         System.exit(1)

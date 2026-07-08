@@ -11,7 +11,7 @@ from cocotb.handle import HierarchyObject
 from zamlet import test_utils
 from zamlet.jamlet_test.jteinitiator_driver import JteInitiatorDriver
 from zamlet.lane_order import LaneOrder
-from zamlet.message import JteIHeader, MessageType, SendType
+from zamlet.message import JteIRequestHeader, JteRequestAddressBody, MessageType, SendType
 from zamlet.params import ZamletParams
 from zamlet.width_codes import ElementWidthCode, WidthFormatCode
 
@@ -180,7 +180,7 @@ def expected_packets_for_instruction(
             dst_offset = ((dst_index * mem_wf_bytes) + (paddr % mem_wf_bytes)) % params.word_bytes
             src_offset = reg_byte % params.word_bytes
             is_store = instr.mode == MODE_INDEX_STORE
-            header = JteIHeader(
+            header = JteIRequestHeader(
                 dst_index=dst_index,
                 source_x=this_x,
                 source_y=this_y,
@@ -195,9 +195,8 @@ def expected_packets_for_instruction(
                 n_bytes=n_bytes,
                 dst_offset=dst_offset,
                 src_offset=src_offset,
-                slot=0,
             )
-            packet = [header, pstripe]
+            packet = [header, JteRequestAddressBody(stripe_addr=pstripe, slot=0)]
             if is_store:
                 body = read_bytes(content, instr.data_reg, reg_byte, n_bytes) << (8 * dst_offset)
                 packet.append(body)
@@ -302,12 +301,16 @@ async def consume_and_check_packets(
             await triggers.RisingEdge(driver.clock)
         word = driver.packet.pop()
         assert word["isHeader"] == 1
-        header = JteIHeader.decode(word["data"], params)
+        header = JteIRequestHeader.decode(word["data"], params)
         packet = [header]
-        for _ in range(header.length):
+        for body_index in range(header.length):
             while not driver.packet.queue:
                 await triggers.RisingEdge(driver.clock)
-            packet.append(driver.packet.pop()["data"])
+            body = driver.packet.pop()["data"]
+            if body_index == 0:
+                packet.append(JteRequestAddressBody.decode(body, params))
+            else:
+                packet.append(body)
 
         packets_received.append(packet)
         assert packets_expected, f'unexpected packet received: {packet}'

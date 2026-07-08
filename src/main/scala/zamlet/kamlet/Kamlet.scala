@@ -14,6 +14,7 @@ import zamlet.utils.{ResetPipeline, ResetPipelineBudget}
 class KamletErrors extends Bundle {
   val instrQueue = new InstrQueueErrors
   val reservationStation = new ReservationStationErrors
+  val transferEngine = new KteErrors
   val cacheEngine = new KceCacheEngineErrors
   val tlb = new KamletTlbErrors
   val packetMerge = new PacketMergeErrors
@@ -349,6 +350,7 @@ class Kamlet(
 
   io.errors.instrQueue := instrQueue.io.errors
   io.errors.reservationStation := reservationStation.io.errors
+  io.errors.transferEngine := transferEngine.io.errors
   io.errors.cacheEngine := cacheEngine.io.errors
   io.errors.tlb := kamletTlb.io.errors
   io.errors.packetMerge := packetMerge.io.errors

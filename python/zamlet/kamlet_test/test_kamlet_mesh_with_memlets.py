@@ -464,6 +464,7 @@ def enqueue_grouped_indexed_loads(
     completion_sync_ident: int,
     instr_ident_base: int,
 ) -> None:
+    group_instr_ident = instr_ident_base
     indexed_load_instrs = [
         PackedLoadIndexedUnordered(
             reg=rf_dst,
@@ -477,7 +478,7 @@ def enqueue_grouped_indexed_loads(
             index_ew=ElementWidthCode.EW64,
             grouped_completion=True,
             grouped_completion_close=index == len(rf_dsts) - 1,
-            instr_ident=instr_ident_base + index,
+            instr_ident=group_instr_ident,
         ).encode(params)
         for index, (rf_dst, rf_index, data_base_ref) in enumerate(
             zip(rf_dsts, rf_indexes, data_base_refs))

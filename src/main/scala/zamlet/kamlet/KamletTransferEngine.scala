@@ -104,6 +104,7 @@ class KteCompletionGroup(params: ZamletParams) extends Bundle {
   val valid = Bool()
   val closed = Bool()
   val outstanding = UInt(log2Ceil(params.witemTableDepth + 1).W)
+  val instrIdent = params.ident()
   val willWrite = Bool()
   val writeset = Valid(params.writeset())
 }
@@ -118,6 +119,7 @@ class KteErrors extends Bundle {
   val groupedCompletionReusedActiveSync = Bool()
   val groupedCompletionAfterClose = Bool()
   val groupedCompletionMismatchedFootprint = Bool()
+  val groupedCompletionMismatchedIdent = Bool()
   val groupedCompletionCleanupWithoutGroup = Bool()
 }
 
@@ -281,9 +283,19 @@ class KamletTransferEngine(params: ZamletParams) extends Module {
     val base = entry.bits.kinstr.kinstr.asTypeOf(new KInstrBase(params))
     entry.valid && base.instrIdent === io.kceInstrStartedReq.bits
   })
+  val instrQuery0GroupMatches = VecInit(completionGroups.map { group =>
+    group.valid && group.instrIdent === io.kceInstrStartedReq.bits
+  })
   val instrQuery1Valid = RegNext(io.kceInstrStartedReq.valid, false.B)
+  // Grouped transfers use one instrIdent as the memory-owner token. Individual
+  // KTE rows can clean up before the whole group completes, so KCE queries must
+  // also see the active group state.
   val instrQuery1Started =
-    RegNext(instrQuery0KteMatches.asUInt.orR || instrQuery0CacheWaitMatches.asUInt.orR, false.B)
+    RegNext(
+      instrQuery0KteMatches.asUInt.orR ||
+        instrQuery0CacheWaitMatches.asUInt.orR ||
+        instrQuery0GroupMatches.asUInt.orR,
+      false.B)
   io.kceInstrStartedResp.valid := instrQuery1Valid
   io.kceInstrStartedResp.bits := instrQuery1Started
 
@@ -315,6 +327,8 @@ class KamletTransferEngine(params: ZamletParams) extends Module {
     issue0Group.willWrite === issue0IsIndexedStore &&
       issue0Group.writeset.valid === issue0Base.writeset.valid &&
       (!issue0Group.writeset.valid || issue0Group.writeset.bits === issue0Base.writeset.bits)
+  val issue0GroupMatchesIdent =
+    issue0Group.instrIdent === issue0Base.instrIdent
   // Error case: this starts a new group on an ident whose previous grouped
   // completion is still waiting for its sync result.
   val issue0GroupedIdentStillOwned = VecInit(kteEntries.map { entry =>
@@ -355,10 +369,18 @@ class KamletTransferEngine(params: ZamletParams) extends Module {
     rsIssue.fire && issue0IsGroupedCompletion && issue0Group.valid && issue0Group.closed
   errorsNext.groupedCompletionMismatchedFootprint :=
     rsIssue.fire && issue0IsGroupedCompletion && issue0Group.valid && !issue0GroupMatchesFootprint
+  errorsNext.groupedCompletionMismatchedIdent :=
+    rsIssue.fire && issue0IsGroupedCompletion && issue0Group.valid && !issue0GroupMatchesIdent
   errorsNext.groupedCompletionReusedActiveSync :=
     rsIssue.fire && issue0IsGroupedCompletion && !issue0Group.valid && issue0GroupedIdentStillOwned
 
-  val issue0InstrStartedNotifyValid = rsIssue.fire && issue0IsSupported
+  // For grouped indexed transfers, instrIdent is the memory-owner token for
+  // the whole group. Notify KCE when the group first starts; later members
+  // share the already-started token and must not generate duplicate wakes.
+  val issue0StartsMemoryIdent =
+    !issue0IsGroupedCompletion || !issue0Group.valid
+  val issue0InstrStartedNotifyValid =
+    rsIssue.fire && issue0IsSupported && issue0StartsMemoryIdent
   val issue0InstrStartedNotifyIdent = issue0Base.instrIdent
   val instrNotify0Valid = RegNext(issue0InstrStartedNotifyValid, false.B)
   val instrNotify0Ident = RegNext(issue0InstrStartedNotifyIdent)
@@ -394,6 +416,7 @@ class KamletTransferEngine(params: ZamletParams) extends Module {
       completionGroupsAfterIssue(issue0Indexed.completionSyncIdent).outstanding :=
         Mux(issue0Group.valid, issue0Group.outstanding + 1.U, 1.U)
       when (!issue0Group.valid) {
+        completionGroupsAfterIssue(issue0Indexed.completionSyncIdent).instrIdent := issue0Base.instrIdent
         completionGroupsAfterIssue(issue0Indexed.completionSyncIdent).willWrite := issue0IsIndexedStore
         completionGroupsAfterIssue(issue0Indexed.completionSyncIdent).writeset := issue0Base.writeset
       }

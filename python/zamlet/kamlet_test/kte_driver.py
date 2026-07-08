@@ -177,6 +177,7 @@ class KteDriver:
         requested_slot_available_probability: float = 0.1,
         unrequested_slot_available_probability: float = 0.02,
         input_request_probability: float = 0.5,
+        rf_release_ready_probability: float = 0.5,
     ):
         self.dut = dut
         self.j_in_k = j_in_k
@@ -190,7 +191,9 @@ class KteDriver:
         self.slot_status_available_probability = slot_status_available_probability
         self.requested_slot_available_probability = requested_slot_available_probability
         self.unrequested_slot_available_probability = unrequested_slot_available_probability
+        self.rf_release_ready_probability = rf_release_ready_probability
         self.issue = ValidReadySource(dut, dut.clock, "io_rsIssue")
+        self.rf_release = ValidReadySink(dut, dut.clock, "io_rfRelease")
         self.sync_results = deque()
         self.observed_sync_events = []
         self.local_replays = deque()
@@ -210,6 +213,7 @@ class KteDriver:
 
     def start(self, rng: Random) -> None:
         self.issue.start(rng=rng)
+        self.rf_release.start(rng=rng, p_ready=self.rf_release_ready_probability)
         for jamlet in self.jamlets:
             jamlet.start(rng)
         cocotb.start_soon(self._monitor_sync_local_event())

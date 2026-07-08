@@ -43,12 +43,6 @@ def check_jte_error_wires(dut: HierarchyObject, prefix: str) -> None:
     _check_error_wire(
         dut,
         state_prefix,
-        "receiverUpdateIdentMismatch",
-        "JTE receiver update ident mismatch",
-    )
-    _check_error_wire(
-        dut,
-        state_prefix,
         "initiatorCommitInvalid",
         "JTE initiator commit for invalid slot",
     )
