@@ -6,16 +6,16 @@ load(":providers.bzl", "LibrelaneInfo")
 # Config keys for each checker step
 # All steps require BASE_CONFIG_KEYS for librelane's Config.load infrastructure.
 
-# Step 2: Checker.LintTimingConstructs - checker.py lines 376-409
+# Step 2: Checker.LintTimingConstructs - checker.py lines 386-418
 # Overrides run(), only reads state_in.metrics, ignores config_vars (librelane_issue)
 # We still wire ERROR_ON_LINTER_TIMING_CONSTRUCTS because it's declared in config_vars
 LINT_TIMING_CONSTRUCTS_CONFIG_KEYS = BASE_CONFIG_KEYS + ["ERROR_ON_LINTER_TIMING_CONSTRUCTS"]
 
-# Step 3: Checker.LintErrors - checker.py lines 336-352
+# Step 3: Checker.LintErrors - checker.py lines 346-361
 # Uses MetricChecker.run() which reads self.config.get("ERROR_ON_LINTER_ERRORS") at line 119
 LINT_ERRORS_CONFIG_KEYS = BASE_CONFIG_KEYS + ["ERROR_ON_LINTER_ERRORS"]
 
-# Step 4: Checker.LintWarnings - checker.py lines 356-372
+# Step 4: Checker.LintWarnings - checker.py lines 365-381
 # Uses MetricChecker.run() which reads self.config.get("ERROR_ON_LINTER_WARNINGS") at line 119
 LINT_WARNINGS_CONFIG_KEYS = BASE_CONFIG_KEYS + ["ERROR_ON_LINTER_WARNINGS"]
 

@@ -2,7 +2,8 @@
 
 # Mapping from librelane config keys to PdkInfo field names
 # Format: "LIBRELANE_KEY": ("field_name", "type")
-# Types: "file", "file_list", "file_dict", "file_list_dict", "string", "string_list", "number", "int"
+# Types: "file", "file_list", "file_dict", "file_list_dict", "string",
+# "string_list", "number", "int", "dict"
 PDK_FIELD_MAP = {
     # Core identity (handled separately)
     "STD_CELL_LIBRARY": ("scl", "string"),
@@ -20,6 +21,7 @@ PDK_FIELD_MAP = {
     "CELL_VERILOG_MODELS": ("cell_verilog_models", "file_list"),
     "CELL_BB_VERILOG_MODELS": ("cell_bb_verilog_models", "file_list"),
     "CELL_SPICE_MODELS": ("cell_spice_models", "file_list"),
+    "PAD_VERILOG_MODELS": ("pad_verilog_models", "file_list"),
 
     # Technology LEFs
     "TECH_LEFS": ("tech_lefs", "file_dict"),
@@ -34,10 +36,12 @@ PDK_FIELD_MAP = {
     "GPIO_PAD_CELLS": ("gpio_pad_cells", "string_list"),
 
     # Floorplanning
+    "FP_FLIP_SITES": ("fp_flip_sites", "string_list"),
     "FP_TRACKS_INFO": ("fp_tracks_info", "file"),
     "FP_TAPCELL_DIST": ("fp_tapcell_dist", "number"),
-    "FP_IO_HLAYER": ("fp_io_hlayer", "string"),
-    "FP_IO_VLAYER": ("fp_io_vlayer", "string"),
+    "FP_PRUNE_THRESHOLD": ("fp_prune_threshold", "number"),
+    "IO_PIN_H_LAYER": ("fp_io_hlayer", "string"),
+    "IO_PIN_V_LAYER": ("fp_io_vlayer", "string"),
 
     # Routing
     "RT_MIN_LAYER": ("rt_min_layer", "string"),
@@ -56,8 +60,11 @@ PDK_FIELD_MAP = {
     # Timing corners
     "DEFAULT_CORNER": ("default_corner", "string"),
     "STA_CORNERS": ("sta_corners", "string_list"),
+    "PNR_CORNERS": ("pnr_corners", "string_list"),
 
     # Wire RC
+    "LAYERS_RC": ("layers_rc", "dict"),
+    "VIAS_R": ("vias_r", "dict"),
     "SIGNAL_WIRE_RC_LAYERS": ("signal_wire_rc_layers", "string_list"),
     "CLOCK_WIRE_RC_LAYERS": ("clock_wire_rc_layers", "string_list"),
 
@@ -86,8 +93,8 @@ PDK_FIELD_MAP = {
     "WELLTAP_CELL": ("welltap_cell", "string"),
     "ENDCAP_CELL": ("endcap_cell", "string"),
     "PLACE_SITE": ("place_site", "string"),
-    "FILL_CELL": ("fill_cell", "string_list"),
-    "DECAP_CELL": ("decap_cell", "string_list"),
+    "FILL_CELLS": ("fill_cell", "string_list"),
+    "DECAP_CELLS": ("decap_cell", "string_list"),
     "CELL_PAD_EXCLUDE": ("cell_pad_exclude", "string_list"),
     "DIODE_CELL": ("diode_cell", "string"),
     "TRISTATE_CELLS": ("tristate_cells", "string_list"),
@@ -96,30 +103,36 @@ PDK_FIELD_MAP = {
     "PRIMARY_GDSII_STREAMOUT_TOOL": ("primary_gdsii_streamout_tool", "string"),
 
     # Step-specific PDK variables - IO
-    "FP_IO_HLENGTH": ("fp_io_hlength", "number"),
-    "FP_IO_VLENGTH": ("fp_io_vlength", "number"),
-    "FP_IO_MIN_DISTANCE": ("fp_io_min_distance", "number"),
+    "IO_PIN_H_LENGTH": ("fp_io_hlength", "number"),
+    "IO_PIN_V_LENGTH": ("fp_io_vlength", "number"),
+    "IO_PIN_MIN_DISTANCE": ("fp_io_min_distance", "number"),
 
     # Step-specific PDK variables - PDN (Power Distribution Network)
-    "FP_PDN_RAIL_LAYER": ("fp_pdn_rail_layer", "string"),
-    "FP_PDN_RAIL_WIDTH": ("fp_pdn_rail_width", "number"),
-    "FP_PDN_RAIL_OFFSET": ("fp_pdn_rail_offset", "number"),
-    "FP_PDN_HORIZONTAL_LAYER": ("fp_pdn_horizontal_layer", "string"),
-    "FP_PDN_VERTICAL_LAYER": ("fp_pdn_vertical_layer", "string"),
-    "FP_PDN_HOFFSET": ("fp_pdn_hoffset", "number"),
-    "FP_PDN_VOFFSET": ("fp_pdn_voffset", "number"),
-    "FP_PDN_HPITCH": ("fp_pdn_hpitch", "number"),
-    "FP_PDN_VPITCH": ("fp_pdn_vpitch", "number"),
-    "FP_PDN_HSPACING": ("fp_pdn_hspacing", "number"),
-    "FP_PDN_VSPACING": ("fp_pdn_vspacing", "number"),
-    "FP_PDN_HWIDTH": ("fp_pdn_hwidth", "number"),
-    "FP_PDN_VWIDTH": ("fp_pdn_vwidth", "number"),
-    "FP_PDN_CORE_RING_HOFFSET": ("fp_pdn_core_ring_hoffset", "number"),
-    "FP_PDN_CORE_RING_VOFFSET": ("fp_pdn_core_ring_voffset", "number"),
-    "FP_PDN_CORE_RING_HSPACING": ("fp_pdn_core_ring_hspacing", "number"),
-    "FP_PDN_CORE_RING_VSPACING": ("fp_pdn_core_ring_vspacing", "number"),
-    "FP_PDN_CORE_RING_HWIDTH": ("fp_pdn_core_ring_hwidth", "number"),
-    "FP_PDN_CORE_RING_VWIDTH": ("fp_pdn_core_ring_vwidth", "number"),
+    "PDN_RAIL_LAYER": ("fp_pdn_rail_layer", "string"),
+    "PDN_RAIL_WIDTH": ("fp_pdn_rail_width", "number"),
+    "PDN_RAIL_OFFSET": ("fp_pdn_rail_offset", "number"),
+    "PDN_HORIZONTAL_LAYER": ("fp_pdn_horizontal_layer", "string"),
+    "PDN_VERTICAL_LAYER": ("fp_pdn_vertical_layer", "string"),
+    "PDN_CORE_HORIZONTAL_LAYER": ("fp_pdn_core_horizontal_layer", "string"),
+    "PDN_CORE_VERTICAL_LAYER": ("fp_pdn_core_vertical_layer", "string"),
+    "PDN_HOFFSET": ("fp_pdn_hoffset", "number"),
+    "PDN_VOFFSET": ("fp_pdn_voffset", "number"),
+    "PDN_HPITCH": ("fp_pdn_hpitch", "number"),
+    "PDN_VPITCH": ("fp_pdn_vpitch", "number"),
+    "PDN_HSPACING": ("fp_pdn_hspacing", "number"),
+    "PDN_VSPACING": ("fp_pdn_vspacing", "number"),
+    "PDN_HWIDTH": ("fp_pdn_hwidth", "number"),
+    "PDN_VWIDTH": ("fp_pdn_vwidth", "number"),
+    "PDN_CORE_RING_HOFFSET": ("fp_pdn_core_ring_hoffset", "number"),
+    "PDN_CORE_RING_VOFFSET": ("fp_pdn_core_ring_voffset", "number"),
+    "PDN_CORE_RING_HSPACING": ("fp_pdn_core_ring_hspacing", "number"),
+    "PDN_CORE_RING_VSPACING": ("fp_pdn_core_ring_vspacing", "number"),
+    "PDN_CORE_RING_HWIDTH": ("fp_pdn_core_ring_hwidth", "number"),
+    "PDN_CORE_RING_VWIDTH": ("fp_pdn_core_ring_vwidth", "number"),
+    "PDN_CORE_RING_CONNECT_TO_PADS": ("fp_pdn_core_ring_connect_to_pads", "bool"),
+    "PDN_CORE_RING_ALLOW_OUT_OF_DIE": ("fp_pdn_core_ring_allow_out_of_die", "bool"),
+    "PDN_EXTEND_TO": ("fp_pdn_extend_to", "string"),
+    "PDN_ENABLE_PINS": ("fp_pdn_enable_pins", "bool"),
 
     # Step-specific PDK variables - Antenna
     "HEURISTIC_ANTENNA_THRESHOLD": ("heuristic_antenna_threshold", "number"),
@@ -154,6 +167,8 @@ PDK_FIELD_MAP = {
     "SYNTH_FA_MAP": ("synth_fa_map", "file"),
     "SYNTH_MUX_MAP": ("synth_mux_map", "file"),
     "SYNTH_MUX4_MAP": ("synth_mux4_map", "file"),
+    "SYNTH_CLOCKGATE_POSEDGE_ICG": ("synth_clockgate_posedge_icg", "string"),
+    "SYNTH_CLOCKGATE_NEGEDGE_ICG": ("synth_clockgate_negedge_icg", "string"),
 
     # Step-specific PDK variables - Misc
     "IGNORE_DISCONNECTED_MODULES": ("ignore_disconnected_modules", "string_list"),
@@ -280,6 +295,18 @@ def _pdk_config_repo_impl(repository_ctx):
         elif field_type == "int":
             field_values[field_name] = ("int", int(value))
 
+        elif field_type == "bool":
+            if type(value) == "bool":
+                field_values[field_name] = ("bool", value)
+            else:
+                value_str = str(value).lower()
+                if value_str == "true":
+                    field_values[field_name] = ("bool", True)
+                elif value_str == "false":
+                    field_values[field_name] = ("bool", False)
+                else:
+                    fail("Expected bool for field '{}', got {}".format(field_name, value))
+
         elif field_type == "number_list":
             if type(value) == "list":
                 field_values[field_name] = ("number_list", [_as_number(v) for v in value])
@@ -293,6 +320,12 @@ def _pdk_config_repo_impl(repository_ctx):
                     number_dict[k] = _as_number(v)
                 if number_dict:
                     field_values[field_name] = ("number_dict", number_dict)
+            else:
+                fail("Expected dict for field '{}', got {}".format(field_name, type(value)))
+
+        elif field_type == "dict":
+            if type(value) == "dict":
+                field_values[field_name] = ("dict", value)
             else:
                 fail("Expected dict for field '{}', got {}".format(field_name, type(value)))
 

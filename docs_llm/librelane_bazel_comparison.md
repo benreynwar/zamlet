@@ -137,6 +137,7 @@ implementation and our Bazel rules.
 Legend:
 - **PASS** - Verified correct
 - **FAIL** - Mismatch found
+- **DEFERRED** - Source/config audited, but runtime verification intentionally deferred
 - **TODO** - Needs detailed verification
 - Gating: Y = has gating, N/A = no gating needed, **MISSING** = should have gating but doesn't
 
@@ -155,7 +156,8 @@ Legend:
 | 11 | OpenROAD.CheckMacroInstances | Y | Y | N/A | PASS |
 | 12 | OpenROAD.STAPrePNR | Y | Y | N/A | PASS |
 | 13 | OpenROAD.Floorplan | Y | Y | N/A | PASS |
-| 14 | Odb.CheckMacroAntennaProperties | Y | Y | N/A | PASS |
+| 14 | OpenROAD.DumpRCValues | Y | Y | N/A | PASS |
+| 14b | Odb.CheckMacroAntennaProperties | Y | Y | N/A | PASS |
 | 15 | Odb.SetPowerConnections | Y | Y | N/A | PASS |
 | 16 | Odb.ManualMacroPlacement | Y | Y | Y | PASS |
 | 17 | OpenROAD.CutRows | Y | Y | N/A | PASS |
@@ -181,11 +183,11 @@ Legend:
 | 37 | OpenROAD.STAMidPNR | Y | Y | N/A | PASS |
 | 38 | OpenROAD.GlobalRouting | Y | Y | N/A | PASS |
 | 39 | OpenROAD.CheckAntennas | Y | Y | N/A | PASS |
-| 40 | OpenROAD.RepairDesignPostGRT | Y | Y | Y | PASS |
+| 40 | OpenROAD.RepairDesignPostGRT | Y | Y | Y | DEFERRED |
 | 41 | Odb.DiodesOnPorts | Y | Y | Y | PASS |
-| 42 | Odb.HeuristicDiodeInsertion | Y | Y | Y | PASS |
+| 42 | Odb.HeuristicDiodeInsertion | Y | Y | Y | DEFERRED |
 | 43 | OpenROAD.RepairAntennas | Y | Y | Y | PASS |
-| 44 | OpenROAD.ResizerTimingPostGRT | Y | Y | Y | PASS |
+| 44 | OpenROAD.ResizerTimingPostGRT | Y | Y | Y | DEFERRED |
 | 45 | OpenROAD.STAMidPNR | Y | Y | N/A | PASS |
 | 46 | OpenROAD.DetailedRouting | Y | Y | Y | PASS |
 | 47 | Odb.RemoveRoutingObstructions | Y | Y | Y | PASS |
@@ -225,42 +227,13 @@ Legend:
 
 ## Critical Issues Found
 
-### Issue 1: Steps running that should be OFF by default
+### Current Open Issues
 
-These steps have gating variables that default to **False** in Classic flow, but our Bazel
-implementation runs them unconditionally:
+No remaining missing gate parameters are known in `librelane_classic_flow()`.
+The experimental steps that default off in LibreLane Classic are now structurally
+gated in Bazel as well.
 
-| Step | Gating Variable | Classic Default | Bazel Behavior |
-|------|-----------------|-----------------|----------------|
-| 40 | RUN_POST_GRT_DESIGN_REPAIR | **False** | Always runs |
-| 44 | RUN_POST_GRT_RESIZER_TIMING | **False** | Always runs |
-
-**Impact:** Running these experimental steps by default may cause hangs or extended run times.
-
-### Issue 2: Missing gating parameters
-
-These steps should be gatable but have no corresponding parameter in `librelane_classic_flow()`:
-
-| Step | Gating Variable | Classic Default |
-|------|-----------------|-----------------|
-| 34 | RUN_CTS | True |
-| 36 | RUN_POST_CTS_RESIZER_TIMING | True |
-| 43 | RUN_ANTENNA_REPAIR | True |
-| 46 | RUN_DRT | True |
-| 54 | RUN_FILL_INSERTION | True |
-| 56 | RUN_SPEF_EXTRACTION | True |
-| 57 | RUN_MCSTA | True |
-| 58 | RUN_IRDROP_REPORT | True |
-| 59 | RUN_MAGIC_STREAMOUT | True |
-| 60 | RUN_KLAYOUT_STREAMOUT | True |
-| 61 | RUN_MAGIC_WRITE_LEF | True |
-| 63 | RUN_KLAYOUT_XOR | True (compound) |
-| 65 | RUN_MAGIC_DRC | True |
-| 66 | RUN_KLAYOUT_DRC | True |
-| 71 | RUN_LVS | True |
-| 73 | RUN_EQY | **False** |
-
-### Issue 3: Default value mismatches
+### Default Value Mismatches
 
 (All previous mismatches have been fixed - FP_CORE_UTIL now defaults to 50%)
 
@@ -270,18 +243,18 @@ These steps should be gatable but have no corresponding parameter in `librelane_
 
 ### Step 1: Verilator.Lint
 
-**Verified:** 2025-01-27
+**Verified:** 2026-07-06 for LibreLane 3.0.4
 
-**Librelane Source:** `librelane/steps/verilator.py`
-- ID: `"Verilator.Lint"` (line 33)
-- inputs: `[]` (line 36) - RTL is part of configuration, not DesignFormat
-- outputs: `[]` (line 37)
+**Librelane Source:** `~/Code/librelane/librelane/steps/verilator.py`
+- ID: `"Verilator.Lint"` (line 37)
+- inputs: `[]` (line 40) - RTL is part of configuration, not DesignFormat
+- outputs: `[]` (line 41)
 
 **Inheritance Chain:** Lint → Step
-- Step.config_vars = [] (step.py line 464)
-- Lint.config_vars defined at lines 39-87
+- Step.config_vars = []
+- Lint.config_vars defined at lines 43-114
 
-**Config Variables (from config_vars, lines 39-87):**
+**Config Variables (from config_vars, lines 43-114):**
 
 | Variable | Type | Default | Description | Bazel Status |
 |----------|------|---------|-------------|--------------|
@@ -291,25 +264,34 @@ These steps should be gatable but have no corresponding parameter in `librelane_
 | LINTER_INCLUDE_PDK_MODELS | bool | False | Include PDK Verilog models | Wired |
 | LINTER_RELATIVE_INCLUDES | bool | True | Resolve includes relative to file | Wired |
 | LINTER_ERROR_ON_LATCH | bool | True | Error on inferred latches | Wired |
+| LINTER_ERROR_ON_MULTIDRIVEN | bool | True | Error on multiple-driver nets | Wired |
 | VERILOG_DEFINES | Optional[List[str]] | None | Preprocessor defines | Wired |
 | LINTER_DEFINES | Optional[List[str]] | None | Linter-specific defines | Wired |
+| LINTER_DISABLE_WARNINGS | Optional[List[str]] | ["DECLFILENAME", "EOFNEWLINE"] | Warnings disabled globally | Wired |
+| LINTER_DISABLE_WARNINGS_BLACKBOX | Optional[List[str]] | ["UNDRIVEN", "UNUSEDSIGNAL"] | Warnings disabled for blackbox files | Wired |
+| LINTER_VLT | Optional[Path] | None | Extra Verilator configuration file | Wired |
 
 **Config Variables (from run() method):**
 
 | Variable | Line | Description | Bazel Status |
 |----------|------|-------------|--------------|
-| CELL_VERILOG_MODELS | 100 | PDK cell Verilog models | Wired (from PDK) |
-| EXTRA_VERILOG_MODELS | 125 | Additional Verilog models | Wired |
+| CELL_VERILOG_MODELS | 127 | PDK cell Verilog models | Wired (from PDK) |
+| PAD_VERILOG_MODELS | 135 | PDK pad Verilog models | Wired (from PDK) |
+| MACROS | 143 | Macro views used to build blackbox models | Wired |
+| EXTRA_VERILOG_MODELS | 160 | Additional Verilog models | Wired |
 
 **Librelane Gating:** `classic.py`
-- Variable: `RUN_LINTER` (line 259)
-- Default: `True` (line 262)
-- Gating entry: `"Verilator.Lint": ["RUN_LINTER"]` (line 303)
+- Variable: `RUN_LINTER` (line 261)
+- Default: `True` (line 264)
+- Gating entry: `"Verilator.Lint": ["RUN_LINTER"]` (line 305)
 
 **Bazel Implementation:** `verilator.bzl`
-- ID: `"Verilator.Lint"` (line 27)
-- config_keys: `LINT_CONFIG_KEYS` = BASE_CONFIG_KEYS + step-specific keys (lines 9-24)
-- step_outputs: `[]` (line 27)
+- ID: `"Verilator.Lint"` (line 33)
+- config_keys: `LINT_CONFIG_KEYS` = BASE_CONFIG_KEYS + step-specific keys (lines 9-30)
+- step_outputs: `[]` (line 33)
+- Linter config attributes are wired in `bazel/flow/config/synth.bzl` (lines 7-18 and 58-100)
+- Config values are emitted in `bazel/flow/common.bzl` (lines 242-258)
+- Pad Verilog model files are included as PDK inputs in `bazel/flow/common.bzl` (lines 755-767)
 
 **Bazel Flow:** `full_flow.bzl`
 - Parameter: `run_linter = True` (line 108)
@@ -321,29 +303,43 @@ These steps should be gatable but have no corresponding parameter in `librelane_
 | Step ID | `"Verilator.Lint"` | `"Verilator.Lint"` | Y |
 | inputs | `[]` | (from src) | Y |
 | outputs | `[]` | `[]` | Y |
-| config_keys | 10 variables | LINT_CONFIG_KEYS (all 10) | Y |
+| config_keys | 14 declared variables plus run() dependencies | LINT_CONFIG_KEYS includes all checked items | Y |
 | Gating var | RUN_LINTER | run_linter | Y |
 | Gating default | True | True | Y |
 | Position | Step 1 | Step 1 | Y |
 
 **Status: PASS**
 
+Verification:
+- `bazel build --nobuild //dse/maths:SegmentedMultiplier16x16_sky130hd_lint`
+  passed analysis after the wiring update.
+- Runtime execution reached `Verilator.Lint` after the separate global
+  `librelane.steps run` CLI update.
+- Diff checked against LibreLane `f315752cf2e1465aca24a002247aa6169becb541..3.0.4`:
+  `FP_TRACKS_INFO`, `FP_TAPCELL_DIST`, `FP_IO_HLAYER`, and `FP_IO_VLAYER` were
+  removed from `librelane/config/flow.py:pdk_variables`. In 3.0.4,
+  `FP_TRACKS_INFO` is declared by `OpenROAD.Floorplan`, `FP_TAPCELL_DIST` is
+  declared by `OpenROAD.TapEndcapInsertion`, and the IO layer variables are
+  declared as `IO_PIN_H_LAYER` / `IO_PIN_V_LAYER` with the old names as
+  deprecated aliases. These keys therefore do not belong in the Bazel
+  `BASE_CONFIG_KEYS` used by `Verilator.Lint`.
+
 ---
 
 ### Step 2: Checker.LintTimingConstructs
 
-**Verified:** 2025-01-27
+**Verified:** 2026-07-06 for LibreLane 3.0.4
 
-**Librelane Source:** `librelane/steps/checker.py`
-- ID: `"Checker.LintTimingConstructs"` (line 377)
+**Librelane Source:** `~/Code/librelane/librelane/steps/checker.py`
+- ID: `"Checker.LintTimingConstructs"` (line 386)
 - inputs: `[]` (inherited from MetricChecker, line 74)
 - outputs: `[]` (inherited from MetricChecker, line 75)
-- deferred: `False` (line 380) - raises immediately on failure
+- deferred: `False` (line 389) - raises immediately on failure
 
 **Inheritance Chain:** LintTimingConstructs → MetricChecker → Step
-- Step.config_vars = [] (step.py line 464)
+- Step.config_vars = []
 - MetricChecker: no config_vars defined (inherits empty from Step)
-- LintTimingConstructs.config_vars = [error_on_var] (line 392)
+- LintTimingConstructs.config_vars = [error_on_var] (line 401)
 
 **Config Variables:**
 
@@ -351,22 +347,25 @@ These steps should be gatable but have no corresponding parameter in `librelane_
 |----------|------|---------|-------------|--------------|
 | ERROR_ON_LINTER_TIMING_CONSTRUCTS | bool | True | Quit immediately on timing constructs | Wired |
 
-**librelane_issue:** The `run` method (lines 394-409) doesn't read `self.config` at all - it only
+**Behavior note:** The `run` method (lines 403-418) doesn't read `self.config` at all - it only
 checks `state_in.metrics`. The ERROR_ON_LINTER_TIMING_CONSTRUCTS variable is declared in
 config_vars but never used. The step always errors if timing constructs are found, regardless of
 this setting. We still wire it because it's declared in librelane.
 
-**Note:** Although the step doesn't use any config, librelane's `Config.load` (config.py line 690)
-requires PDK and other base keys for the loading infrastructure. We pass BASE_CONFIG_KEYS.
+Diff check:
+- Compared LibreLane `f315752cf2e1465aca24a002247aa6169becb541..3.0.4`.
+- `Checker.LintTimingConstructs` still declares only
+  `ERROR_ON_LINTER_TIMING_CONSTRUCTS` and still overrides `run()` to read only
+  `design__lint_timing_construct__count` from state metrics.
 
 **Librelane Gating:** `classic.py`
-- Gating entry: `"Checker.LintTimingConstructs": ["RUN_LINTER"]` (lines 306-307)
-- RUN_LINTER default: `True` (line 262)
+- RUN_LINTER default: `True` (line 264)
+- Gating entry: `"Checker.LintTimingConstructs": ["RUN_LINTER"]` (lines 308-310)
 
 **Bazel Implementation:** `checker.bzl`
-- ID: `"Checker.LintTimingConstructs"` (line 22)
+- ID: `"Checker.LintTimingConstructs"` (line 88)
 - config_keys: `LINT_TIMING_CONSTRUCTS_CONFIG_KEYS` = `BASE_CONFIG_KEYS + ["ERROR_ON_LINTER_TIMING_CONSTRUCTS"]` (line 12)
-- step_outputs: `[]` (line 22)
+- step_outputs: `[]` (line 88)
 
 **Bazel Flow:** `full_flow.bzl`
 - Gating: Inside `if run_linter:` block (line 181)
@@ -385,23 +384,27 @@ requires PDK and other base keys for the loading infrastructure. We pass BASE_CO
 
 **Status: PASS**
 
+Verification:
+- `bazel build //dse/maths:SegmentedMultiplier16x16_sky130hd_lint_timing`
+  passed and reported `Check for Lint Timing Errors clear.`
+
 ---
 
 ### Step 3: Checker.LintErrors
 
-**Verified:** 2025-01-27
+**Verified:** 2026-07-06 for LibreLane 3.0.4
 
-**Librelane Source:** `librelane/steps/checker.py`
-- ID: `"Checker.LintErrors"` (line 337)
+**Librelane Source:** `~/Code/librelane/librelane/steps/checker.py`
+- ID: `"Checker.LintErrors"` (line 346)
 - inputs: `[]` (inherited from MetricChecker, line 74)
 - outputs: `[]` (inherited from MetricChecker, line 75)
-- deferred: `False` (line 340) - raises immediately on failure
-- metric_name: `"design__lint_error__count"` (line 342)
+- deferred: `False` (line 349) - raises immediately on failure
+- metric_name: `"design__lint_error__count"` (line 351)
 
 **Inheritance Chain:** LintErrors → MetricChecker → Step
-- Step.config_vars = [] (step.py line 464)
+- Step.config_vars = []
 - MetricChecker: no config_vars defined
-- LintErrors.config_vars = [error_on_var] (line 352)
+- LintErrors.config_vars = [error_on_var] (line 361)
 
 **Config Variables:**
 
@@ -412,19 +415,23 @@ requires PDK and other base keys for the loading infrastructure. We pass BASE_CO
 **Behavior:** Uses MetricChecker.run() which reads `self.config.get("ERROR_ON_LINTER_ERRORS")` at
 line 119. If True (default) and lint errors found → StepError. If False → just warns.
 
+Diff check:
+- Compared LibreLane `f315752cf2e1465aca24a002247aa6169becb541..3.0.4`.
+- `Checker.LintErrors` still inherits `MetricChecker`, still checks
+  `design__lint_error__count`, and still declares only `ERROR_ON_LINTER_ERRORS`.
+
 **Librelane Gating:** `classic.py`
-- Position: Step 3 (line 43)
-- Gating entry: `"Checker.LintErrors": ["RUN_LINTER"]` (line 304)
-- RUN_LINTER default: `True` (line 262)
+- RUN_LINTER default: `True` (line 264)
+- Gating entry: `"Checker.LintErrors": ["RUN_LINTER"]` (line 306)
 
 **Bazel Implementation:** `checker.bzl`
-- ID: `"Checker.LintErrors"` (line 25)
+- ID: `"Checker.LintErrors"` (line 91)
 - config_keys: `LINT_ERRORS_CONFIG_KEYS` = `BASE_CONFIG_KEYS + ["ERROR_ON_LINTER_ERRORS"]` (line 16)
-- step_outputs: `[]` (line 25)
+- step_outputs: `[]` (line 91)
 
 **Bazel Flow:** `full_flow.bzl`
-- Gating: Inside `if run_linter:` block (line 181)
-- Position: Step 3, after LintTimingConstructs (lines 193-197)
+- Gating: Inside `if run_linter:` block (line 235)
+- Position: Step 3, after LintTimingConstructs (lines 246-250)
 - Chains from: `_lint_timing` target
 
 | Aspect | Librelane | Bazel | Match |
@@ -439,23 +446,27 @@ line 119. If True (default) and lint errors found → StepError. If False → ju
 
 **Status: PASS**
 
+Verification:
+- `bazel build //dse/maths:SegmentedMultiplier16x16_sky130hd_lint_errors`
+  passed and reported `Check for Lint errors clear.`
+
 ---
 
 ### Step 4: Checker.LintWarnings
 
-**Verified:** 2025-01-27
+**Verified:** 2026-07-06 for LibreLane 3.0.4
 
-**Librelane Source:** `librelane/steps/checker.py`
-- ID: `"Checker.LintWarnings"` (line 357)
+**Librelane Source:** `~/Code/librelane/librelane/steps/checker.py`
+- ID: `"Checker.LintWarnings"` (line 365)
 - inputs: `[]` (inherited from MetricChecker, line 74)
 - outputs: `[]` (inherited from MetricChecker, line 75)
-- deferred: `False` (line 360)
-- metric_name: `"design__lint_warning__count"` (line 362)
+- deferred: `False` (line 369)
+- metric_name: `"design__lint_warning__count"` (line 371)
 
 **Inheritance Chain:** LintWarnings → MetricChecker → Step
-- Step.config_vars = [] (step.py line 464)
+- Step.config_vars = []
 - MetricChecker: no config_vars defined
-- LintWarnings.config_vars = [error_on_var] (line 372)
+- LintWarnings.config_vars = [error_on_var] (line 381)
 
 **Config Variables:**
 
@@ -466,19 +477,23 @@ line 119. If True (default) and lint errors found → StepError. If False → ju
 **Behavior:** Uses MetricChecker.run() which reads `self.config.get("ERROR_ON_LINTER_WARNINGS")` at
 line 119. If False (default) → just warns. If True → raises StepError.
 
+Diff check:
+- Compared LibreLane `f315752cf2e1465aca24a002247aa6169becb541..3.0.4`.
+- `Checker.LintWarnings` still inherits `MetricChecker`, still checks
+  `design__lint_warning__count`, and still declares only `ERROR_ON_LINTER_WARNINGS`.
+
 **Librelane Gating:** `classic.py`
-- Position: Step 4 (line 44)
-- Gating entry: `"Checker.LintWarnings": ["RUN_LINTER"]` (line 305)
-- RUN_LINTER default: `True` (line 262)
+- RUN_LINTER default: `True` (line 264)
+- Gating entry: `"Checker.LintWarnings": ["RUN_LINTER"]` (line 307)
 
 **Bazel Implementation:** `checker.bzl`
-- ID: `"Checker.LintWarnings"` (line 31)
+- ID: `"Checker.LintWarnings"` (line 94)
 - config_keys: `LINT_WARNINGS_CONFIG_KEYS` = `BASE_CONFIG_KEYS + ["ERROR_ON_LINTER_WARNINGS"]` (line 20)
-- step_outputs: `[]` (line 31)
+- step_outputs: `[]` (line 94)
 
 **Bazel Flow:** `full_flow.bzl`
-- Gating: Inside `if run_linter:` block (line 181)
-- Position: Step 4, after LintErrors (lines 199-203)
+- Gating: Inside `if run_linter:` block (line 235)
+- Position: Step 4, after LintErrors (lines 251-256)
 - Chains from: `_lint_errors` target
 
 | Aspect | Librelane | Bazel | Match |
@@ -493,31 +508,73 @@ line 119. If False (default) → just warns. If True → raises StepError.
 
 **Status: PASS**
 
+Verification:
+- `bazel build //dse/maths:SegmentedMultiplier16x16_sky130hd_lint_warnings`
+  passed. The checker reported `103 Lint warnings found.` and did not fail
+  because `ERROR_ON_LINTER_WARNINGS` defaults to `False`.
+
 ---
 
 ### Step 5: Yosys.JsonHeader
 
-**Verified:** 2024-01-26
+**Verified:** 2026-07-06 for LibreLane 3.0.4
 
-**Librelane Source:** `librelane/steps/pyosys.py`
-- ID: `"Yosys.JsonHeader"` (line 311)
-- inputs: `[]` (line 315)
-- outputs: `[DesignFormat.JSON_HEADER]` (line 316)
+**Librelane Source:** `~/Code/librelane/librelane/steps/pyosys.py`
+- ID: `"Yosys.JsonHeader"` (line 373)
+- inputs: `[]` (line 377)
+- outputs: `[DesignFormat.JSON_HEADER]` (line 378)
+- config_vars: `PyosysStep.config_vars + verilog_rtl_cfg_vars` (line 380)
 - Produces: `{DESIGN_NAME}.h.json` file
 
+**Config Variables:**
+
+| Variable | Source | Bazel Status |
+|----------|--------|--------------|
+| VERILOG_FILES | verilog_rtl_cfg_vars line 100 | Wired |
+| VERILOG_DEFINES | verilog_rtl_cfg_vars line 105 | Wired |
+| VERILOG_POWER_DEFINE | verilog_rtl_cfg_vars line 111 | Wired |
+| VERILOG_INCLUDE_DIRS | verilog_rtl_cfg_vars line 118 | Wired |
+| SYNTH_PARAMETERS | verilog_rtl_cfg_vars line 123 | Wired |
+| USE_SLANG | verilog_rtl_cfg_vars line 128 | Wired |
+| SLANG_ARGUMENTS | verilog_rtl_cfg_vars line 135 | Wired |
+| SYNTH_LATCH_MAP | PyosysStep line 164 | Wired |
+| SYNTH_TRISTATE_MAP | PyosysStep line 170 | Wired |
+| SYNTH_CSA_MAP | PyosysStep line 177 | Wired |
+| SYNTH_RCA_MAP | PyosysStep line 184 | Wired |
+| SYNTH_FA_MAP | PyosysStep line 191 | Wired |
+| SYNTH_MUX_MAP | PyosysStep line 198 | Wired |
+| SYNTH_MUX4_MAP | PyosysStep line 204 | Wired |
+| SYNTH_CLOCKGATE_MIN_WIDTH | PyosysStep line 210 | Wired |
+| SYNTH_CLOCKGATE_POSEDGE_ICG | PyosysStep line 216 | Wired from PDK |
+| SYNTH_CLOCKGATE_NEGEDGE_ICG | PyosysStep line 223 | Wired from PDK |
+| YOSYS_LOG_LEVEL | PyosysStep line 230 | Wired |
+| SYNTH_CORNER | PyosysStep line 236 | Wired |
+| SYNTH_SHOW | PyosysStep line 242 | Wired |
+
+Diff check:
+- Compared LibreLane `f315752cf2e1465aca24a002247aa6169becb541..3.0.4`.
+- `USE_SYNLIG` was replaced by `USE_SLANG` with `USE_SYNLIG` only as a deprecated
+  LibreLane name. Bazel exposes the new `use_slang` name.
+- `SYNLIG_DEFER`, `USE_LIGHTER`, and `LIGHTER_DFF_MAP` are no longer declared by
+  `PyosysStep`; Bazel no longer exposes or passes them.
+- `SYNTH_CLOCKGATE_MIN_WIDTH`, `SYNTH_CLOCKGATE_POSEDGE_ICG`,
+  `SYNTH_CLOCKGATE_NEGEDGE_ICG`, `SYNTH_CORNER`, and `SYNTH_SHOW` were added to
+  the Bazel JsonHeader config-key path.
+
 **Librelane Gating:** `classic.py`
-- Position: Step 5 (line 45)
 - No entry in gating_config_vars - always runs
 - Note: VHDLClassic substitutes this step to None (line 322)
 
 **Bazel Implementation:** `synthesis.bzl`
-- ID: `"Yosys.JsonHeader"` (line 89)
-- outputs: `[json_h]` file (lines 78, 90)
-- Stores json_h in LibrelaneInfo (line 118)
+- ID: `"Yosys.JsonHeader"` (line 156)
+- config_keys: `JSON_HEADER_CONFIG_KEYS` includes all declared config variables and
+  macro-view dependencies (lines 15-40)
+- outputs: `[json_h]` file (lines 145, 157)
+- Stores json_h in LibrelaneInfo (line 181)
 
 **Bazel Flow:** `full_flow.bzl`
-- No gating - always runs (line 178)
-- Position: Step 5, after linting or init (lines 177-181)
+- No gating - always runs
+- Position: Step 5, after linting or init (lines 260-265)
 - Chains from: `pre_synth_src` (either `_lint_warnings` or `_init`)
 
 | Aspect | Librelane | Bazel | Match |
@@ -530,31 +587,80 @@ line 119. If False (default) → just warns. If True → raises StepError.
 
 **Status: PASS**
 
+Verification:
+- `bazel build //dse/maths:SegmentedMultiplier16x16_sky130hd_json_header`
+  passed and produced
+  `bazel-bin/dse/maths/SegmentedMultiplier16x16_sky130hd_json_header/SegmentedMultiplier16x16.h.json`.
+
 ---
 
 ### Step 6: Yosys.Synthesis
 
-**Verified:** 2024-01-26
+**Verified:** 2026-07-07 for LibreLane 3.0.4
 
-**Librelane Source:** `librelane/steps/pyosys.py`
-- ID: `"Yosys.Synthesis"` (line 584)
-- inputs: `[]` (inherited from SynthesisCommon, line 343) - RTL is configuration
-- outputs: `[DesignFormat.NETLIST]` (inherited from SynthesisCommon, line 344)
+**Librelane Source:** `~/Code/librelane/librelane/steps/pyosys.py`
+- ID: `"Yosys.Synthesis"` (line 644)
+- inputs: `[]` (inherited from SynthesisCommon, line 405) - RTL is configuration
+- outputs: `[DesignFormat.NETLIST]` (inherited from SynthesisCommon, line 406)
+- config_vars: `SynthesisCommon.config_vars + verilog_rtl_cfg_vars` (line 647)
 - Produces metrics: design__instance__count, design__instance_unmapped__count, design__instance__area
 
+**Config Variables:**
+
+This step inherits all `Yosys.JsonHeader` variables plus the SynthesisCommon variables below.
+
+| Variable | Source | Bazel Status |
+|----------|--------|--------------|
+| SYNTH_CHECKS_ALLOW_TRISTATE | SynthesisCommon line 410 | Wired |
+| SYNTH_AUTONAME | SynthesisCommon line 416 | Wired |
+| SYNTH_STRATEGY | SynthesisCommon line 422 | Wired |
+| SYNTH_ABC_BUFFERING | SynthesisCommon line 438 | Wired |
+| SYNTH_ABC_LEGACY_REFACTOR | SynthesisCommon line 445 | Wired |
+| SYNTH_ABC_LEGACY_REWRITE | SynthesisCommon line 451 | Wired |
+| SYNTH_ABC_DFF | SynthesisCommon line 457 | Wired |
+| SYNTH_ABC_USE_MFS3 | SynthesisCommon line 463 | Wired |
+| SYNTH_ABC_AREA_USE_NF | SynthesisCommon line 469 | Wired |
+| SYNTH_DIRECT_WIRE_BUFFERING | SynthesisCommon line 475 | Wired |
+| SYNTH_SPLITNETS | SynthesisCommon line 482 | Wired |
+| SYNTH_SIZING | SynthesisCommon line 488 | Wired |
+| SYNTH_HIERARCHY_MODE | SynthesisCommon line 494 | Wired |
+| SYNTH_KEEP_HIERARCHY_MIN_COST | SynthesisCommon line 508 | Wired |
+| SYNTH_KEEP_HIERARCHY_INSTANCES | SynthesisCommon line 513 | Wired |
+| SYNTH_KEEP_HIERARCHY_MODULES | SynthesisCommon line 518 | Wired |
+| SYNTH_SHARE_RESOURCES | SynthesisCommon line 523 | Wired |
+| SYNTH_ADDER_TYPE | SynthesisCommon line 529 | Wired |
+| SYNTH_EXTRA_MAPPING_FILE | SynthesisCommon line 535 | Wired |
+| SYNTH_ELABORATE_ONLY | SynthesisCommon line 540 | Wired |
+| SYNTH_MUL_BOOTH | SynthesisCommon line 546 | Wired |
+| SYNTH_TIE_UNDEFINED | SynthesisCommon line 552 | Wired |
+| SYNTH_WRITE_NOATTR | SynthesisCommon line 558 | Wired |
+| SYNTH_NORMALIZE_SINGLE_BIT_VECTORS | SynthesisCommon line 564 | Wired |
+
+Diff check:
+- Compared LibreLane `f315752cf2e1465aca24a002247aa6169becb541..3.0.4`.
+- `SYNTH_KEEP_HIERARCHY_MIN_COST`, `SYNTH_KEEP_HIERARCHY_INSTANCES`, and
+  `SYNTH_KEEP_HIERARCHY_MODULES` were added and are now wired.
+- `SYNTH_NORMALIZE_SINGLE_BIT_VECTORS` was added and is now wired.
+- `SYNTH_ELABORATE_FLATTEN` was removed from LibreLane's declared config vars
+  and is now only a deprecated alias into `SYNTH_HIERARCHY_MODE`; Bazel no
+  longer exposes or passes the old name.
+- `SynthesisCommon.run()` now passes `SYNTH_ELABORATE_ONLY` into
+  `_parse_yosys_check()` (line 618); Bazel already emits that variable.
+
 **Librelane Gating:** `classic.py`
-- Position: Step 6 (line 46)
 - No entry in gating_config_vars - always runs
 - Note: VHDLClassic substitutes Yosys.VHDLSynthesis (line 323)
 
 **Bazel Implementation:** `synthesis.bzl`
-- ID: `"Yosys.Synthesis"` (line 30)
-- outputs: `[nl, stat_json]` (lines 18-19, 31)
-- Stores nl in LibrelaneInfo (line 46)
+- ID: `"Yosys.Synthesis"` (line 104)
+- config_keys: `SYNTHESIS_CONFIG_KEYS` includes `JSON_HEADER_CONFIG_KEYS` plus all
+  checked SynthesisCommon variables (lines 45-72)
+- outputs: `[nl, stat_json]` (lines 92-93, 105)
+- Stores nl in LibrelaneInfo (line 116)
 
 **Bazel Flow:** `full_flow.bzl`
-- No gating - always runs (lines 184-187)
-- Position: Step 6, after json_header
+- No gating - always runs
+- Position: Step 6, after json_header (lines 267-272)
 - Chains from: `_json_header` target
 
 | Aspect | Librelane | Bazel | Match |
@@ -567,32 +673,42 @@ line 119. If False (default) → just warns. If True → raises StepError.
 
 **Status: PASS**
 
+Verification:
+- `bazel build //dse/maths:SegmentedMultiplier16x16_sky130hd_synth`
+  passed and produced:
+  `bazel-bin/dse/maths/SegmentedMultiplier16x16_sky130hd_synth/SegmentedMultiplier16x16.nl.v`
+  and `bazel-bin/dse/maths/SegmentedMultiplier16x16_sky130hd_synth/reports/stat.json`.
+
 ---
 
 ### Step 7: Checker.YosysUnmappedCells
 
-**Verified:** 2024-01-26
+**Verified:** 2026-07-07 for LibreLane 3.0.4
 
-**Librelane Source:** `librelane/steps/checker.py`
+**Librelane Source:** `~/Code/librelane/librelane/steps/checker.py`
 - ID: `"Checker.YosysUnmappedCells"` (line 142)
-- inputs: `[]` (inherited from MetricChecker)
-- outputs: `[]` (inherited from MetricChecker)
+- inputs: `[]` (inherited from MetricChecker, line 74)
+- outputs: `[]` (inherited from MetricChecker, line 75)
 - deferred: `False` (line 144)
 - metric_name: `"design__instance_unmapped__count"` (line 146)
 - error_on_var: `ERROR_ON_UNMAPPED_CELLS` (default=True) (lines 149-155)
 - Uses base MetricChecker.run() - respects error_on_var
 
+Diff check:
+- Compared LibreLane `f315752cf2e1465aca24a002247aa6169becb541..3.0.4`.
+- No behavior or config-variable changes were found for `Checker.YosysUnmappedCells`.
+
 **Librelane Gating:** `classic.py`
-- Position: Step 7 (line 47)
 - No entry in gating_config_vars - always runs
 
 **Bazel Implementation:** `checker.bzl`
-- ID: `"Checker.YosysUnmappedCells"` (line 16)
-- step_outputs: `[]` (line 16)
+- ID: `"Checker.YosysUnmappedCells"` (line 97)
+- config_keys: `YOSYS_UNMAPPED_CELLS_CONFIG_KEYS` = `BASE_CONFIG_KEYS + ["ERROR_ON_UNMAPPED_CELLS"]` (line 23)
+- step_outputs: `[]` (line 97)
 
 **Bazel Flow:** `full_flow.bzl`
-- No gating - always runs (line 190)
-- Position: Step 7, after synthesis
+- No gating - always runs
+- Position: Step 7, after synthesis (lines 274-279)
 - Chains from: `_synth` target
 
 | Aspect | Librelane | Bazel | Match |
@@ -605,32 +721,40 @@ line 119. If False (default) → just warns. If True → raises StepError.
 
 **Status: PASS**
 
+Verification:
+- `bazel build //dse/maths:SegmentedMultiplier16x16_sky130hd_chk_unmapped`
+  passed and reported `Check for Unmapped Yosys instances clear.`
+
 ---
 
 ### Step 8: Checker.YosysSynthChecks
 
-**Verified:** 2024-01-26
+**Verified:** 2026-07-07 for LibreLane 3.0.4
 
-**Librelane Source:** `librelane/steps/checker.py`
+**Librelane Source:** `~/Code/librelane/librelane/steps/checker.py`
 - ID: `"Checker.YosysSynthChecks"` (line 161)
-- inputs: `[]` (inherited from MetricChecker)
-- outputs: `[]` (inherited from MetricChecker)
+- inputs: `[]` (inherited from MetricChecker, line 74)
+- outputs: `[]` (inherited from MetricChecker, line 75)
 - deferred: `False` (line 163)
 - metric_name: `"synthesis__check_error__count"` (line 165)
 - error_on_var: `ERROR_ON_SYNTH_CHECKS` (default=True) (lines 167-173)
 - Checks for: combinational loops and wires with no drivers
 
+Diff check:
+- Compared LibreLane `f315752cf2e1465aca24a002247aa6169becb541..3.0.4`.
+- No behavior or config-variable changes were found for `Checker.YosysSynthChecks`.
+
 **Librelane Gating:** `classic.py`
-- Position: Step 8 (line 48)
 - No entry in gating_config_vars - always runs
 
 **Bazel Implementation:** `checker.bzl`
-- ID: `"Checker.YosysSynthChecks"` (line 19)
-- step_outputs: `[]` (line 19)
+- ID: `"Checker.YosysSynthChecks"` (line 100)
+- config_keys: `YOSYS_SYNTH_CHECKS_CONFIG_KEYS` = `BASE_CONFIG_KEYS + ["ERROR_ON_SYNTH_CHECKS"]` (line 26)
+- step_outputs: `[]` (line 100)
 
 **Bazel Flow:** `full_flow.bzl`
-- No gating - always runs (line 194)
-- Position: Step 8, after YosysUnmappedCells
+- No gating - always runs
+- Position: Step 8, after YosysUnmappedCells (lines 280-284)
 - Chains from: `_chk_unmapped` target
 
 | Aspect | Librelane | Bazel | Match |
@@ -643,13 +767,17 @@ line 119. If False (default) → just warns. If True → raises StepError.
 
 **Status: PASS**
 
+Verification:
+- `bazel build //dse/maths:SegmentedMultiplier16x16_sky130hd_chk_synth`
+  passed and reported `Check for Yosys check errors clear.`
+
 ---
 
 ### Step 9: Checker.NetlistAssignStatements
 
-**Verified:** 2024-01-26
+**Verified:** 2026-07-07 for LibreLane 3.0.4
 
-**Librelane Source:** `librelane/steps/checker.py`
+**Librelane Source:** `~/Code/librelane/librelane/steps/checker.py`
 - ID: `"Checker.NetlistAssignStatements"` (line 37)
 - inputs: `[DesignFormat.NETLIST]` (line 40) - **reads netlist file directly**
 - outputs: `[]` (line 41)
@@ -659,17 +787,21 @@ line 119. If False (default) → just warns. If True → raises StepError.
 **Behavior:** Scans netlist for `assign` statements (regex: `^\s*\bassign\b`).
 Assign statements cause bugs in some PnR tools. Errors if found and ERROR_ON_NL_ASSIGN_STATEMENTS=True.
 
+Diff check:
+- Compared LibreLane `f315752cf2e1465aca24a002247aa6169becb541..3.0.4`.
+- No behavior or config-variable changes were found for `Checker.NetlistAssignStatements`.
+
 **Librelane Gating:** `classic.py`
-- Position: Step 9 (line 49)
 - No entry in gating_config_vars - always runs
 
 **Bazel Implementation:** `checker.bzl`
-- ID: `"Checker.NetlistAssignStatements"` (line 22)
-- step_outputs: `[]` (line 22)
+- ID: `"Checker.NetlistAssignStatements"` (line 103)
+- config_keys: `NETLIST_ASSIGN_STATEMENTS_CONFIG_KEYS` = `BASE_CONFIG_KEYS + ["ERROR_ON_NL_ASSIGN_STATEMENTS"]` (line 29)
+- step_outputs: `[]` (line 103)
 
 **Bazel Flow:** `full_flow.bzl`
-- No gating - always runs (line 198)
-- Position: Step 9, after YosysSynthChecks
+- No gating - always runs
+- Position: Step 9, after YosysSynthChecks (lines 285-289)
 - Chains from: `_chk_synth` target
 
 | Aspect | Librelane | Bazel | Match |
@@ -682,22 +814,26 @@ Assign statements cause bugs in some PnR tools. Errors if found and ERROR_ON_NL_
 
 **Status: PASS**
 
+Verification:
+- `bazel build //dse/maths:SegmentedMultiplier16x16_sky130hd_chk_assign`
+  passed.
+
 ---
 
 ### Step 10: OpenROAD.CheckSDCFiles
 
-**Verified:** 2025-01-27
+**Verified:** 2026-07-07 for LibreLane 3.0.4
 
-**Librelane Source:** `librelane/steps/openroad.py`
-- ID: `"OpenROAD.CheckSDCFiles"` (line 141)
-- inputs: `[]` (line 143)
-- outputs: `[]` (line 144)
+**Librelane Source:** `~/Code/librelane/librelane/steps/openroad.py`
+- ID: `"OpenROAD.CheckSDCFiles"` (line 157)
+- inputs: `[]` (line 159)
+- outputs: `[]` (line 160)
 
 **Inheritance Chain:** CheckSDCFiles → Step
-- Step.config_vars = [] (step.py line 464)
-- CheckSDCFiles.config_vars defined at lines 146-157
+- Step.config_vars = []
+- CheckSDCFiles.config_vars defined at lines 162-173
 
-**Config Variables (from config_vars, lines 146-157):**
+**Config Variables (from config_vars, lines 162-173):**
 
 | Variable | Type | Default | Description | Bazel Status |
 |----------|------|---------|-------------|--------------|
@@ -708,18 +844,25 @@ Assign statements cause bugs in some PnR tools. Errors if found and ERROR_ON_NL_
 Does not error, just warns. Accesses `FALLBACK_SDC_FILE` Variable definition (not config value)
 to determine if fallback is "generic" or "user-defined".
 
+Diff check:
+- Compared LibreLane `f315752cf2e1465aca24a002247aa6169becb541..3.0.4`.
+- The step still declares only `PNR_SDC_FILE` and `SIGNOFF_SDC_FILE`.
+- The warning logic now looks up the `option_variables` entry named `FALLBACK_SDC`
+  at lines 176-178. This is not read from `self.config`; the stale
+  `FALLBACK_SDC_FILE` entries in later Bazel OpenROAD config-key lists need to be
+  handled while auditing the OpenROAD parent step.
+
 **Librelane Gating:** `classic.py`
-- Position: Step 10 (line 50)
 - No entry in gating_config_vars - always runs
 
 **Bazel Implementation:** `sta.bzl`
-- ID: `"OpenROAD.CheckSDCFiles"` (line 24)
-- config_keys: `CHECK_SDC_CONFIG_KEYS` = [PNR_SDC_FILE, SIGNOFF_SDC_FILE] (lines 15-18)
-- step_outputs: `[]` (line 24)
+- ID: `"OpenROAD.CheckSDCFiles"` (line 88)
+- config_keys: `CHECK_SDC_CONFIG_KEYS` = `BASE_CONFIG_KEYS + [PNR_SDC_FILE, SIGNOFF_SDC_FILE]` (lines 16-19)
+- step_outputs: `[]` (line 88)
 
 **Bazel Flow:** `full_flow.bzl`
-- No gating - always runs (line 238)
-- Position: Step 10, after NetlistAssignStatements
+- No gating - always runs
+- Position: Step 10, after NetlistAssignStatements (lines 291-300)
 - Chains from: `_chk_assign` target
 
 | Aspect | Librelane | Bazel | Match |
@@ -733,64 +876,86 @@ to determine if fallback is "generic" or "user-defined".
 
 **Status: PASS**
 
+Verification:
+- `bazel build //dse/maths:SegmentedMultiplier16x16_sky130hd_chk_sdc`
+  passed and produced
+  `bazel-bin/dse/maths/SegmentedMultiplier16x16_sky130hd_chk_sdc/state_out.json`.
+
 ---
 
 ### Step 11: OpenROAD.CheckMacroInstances
 
-**Verified:** 2025-01-27
+**Verified:** 2026-07-07 for LibreLane 3.0.4
 
-**Librelane Source:** `librelane/steps/openroad.py`
-- ID: `"OpenROAD.CheckMacroInstances"` (line 498)
-- inputs: `[DesignFormat.NETLIST]` (inherited from OpenSTAStep, line 395)
-- outputs: `[]` (line 500)
+**Librelane Source:** `~/Code/librelane/librelane/steps/openroad.py`
+- ID: `"OpenROAD.CheckMacroInstances"` (line 677)
+- inputs: `[DesignFormat.NETLIST]` (inherited from OpenSTAStep)
+- outputs: `[]` (line 679)
 
 **Inheritance Chain:** CheckMacroInstances → OpenSTAStep → OpenROADStep → TclStep → Step
-- Step.config_vars = [] (step.py line 464)
+- Step.config_vars = []
 - TclStep: no config_vars
-- OpenROADStep.config_vars defined at lines 192-223
+- OpenROADStep.config_vars defined at lines 208-294
 - OpenSTAStep: no additional config_vars
-- CheckMacroInstances: config_vars = OpenROADStep.config_vars (line 502)
+- CheckMacroInstances: config_vars = OpenROADStep.config_vars (line 681)
 
-**Config Variables (from OpenROADStep.config_vars, lines 192-223):**
+**Config Variables (from OpenROADStep.config_vars, lines 208-294):**
 
 | Variable | Type | Default | Description | Bazel Status |
 |----------|------|---------|-------------|--------------|
+| PNR_CORNERS | Optional[List[str]] | None | PnR corner override, PDK-backed | Wired |
+| SET_RC_VERBOSE | bool | False | Echo set_rc commands | Wired |
+| LAYERS_RC | Optional[Dict] | None | PnR layer RC values, PDK-backed | Wired |
+| VIAS_R | Optional[Dict] | None | PnR via resistance values, PDK-backed | Wired |
+| SIGNAL_WIRE_RC_LAYERS | Optional[List[str]] | None | Signal wire RC layers, PDK-backed | Wired |
+| CLOCK_WIRE_RC_LAYERS | Optional[List[str]] | None | Clock wire RC layers, PDK-backed | Wired |
 | PDN_CONNECT_MACROS_TO_GRID | bool | True | Connect macros to power grid | Wired |
 | PDN_MACRO_CONNECTIONS | Optional[List[str]] | None | Explicit macro power connections | Wired |
 | PDN_ENABLE_GLOBAL_CONNECTIONS | bool | True | Enable global PDN connections | Wired |
 | PNR_SDC_FILE | Optional[Path] | None | SDC file for PnR | Wired |
-| FP_DEF_TEMPLATE | Optional[Path] | None | DEF template file | Wired |
+| STA_EXTRA_CORNER_TCL_FILE | Optional[Path] | None | Extra PnR corner Tcl file | Wired |
+| DEDUPLICATE_CORNERS | bool | False | Deduplicate equivalent PnR corners | Wired |
 
-**Config Variables (from prepare_env(), lines 242-258):**
+**Config Variables (from prepare_env(), lines 317-335):**
 
 | Variable | Type | Source | Bazel Status |
 |----------|------|--------|--------------|
 | LIB | Dict[str, List[Path]] | PDK | Wired |
-| FALLBACK_SDC_FILE | Path | option_variables | Wired |
+| FALLBACK_SDC | Path | option_variables | Wired |
 | EXTRA_EXCLUDED_CELLS | Optional[List[str]] | option_variables | Wired |
 | PNR_EXCLUDED_CELL_FILE | Path | PDK | Wired |
 
-**Config Variables (from run(), line 511):**
+**Config Variables (from run(), line 690):**
 
 | Variable | Type | Bazel Status |
 |----------|------|--------------|
 | MACROS | Optional[Dict[str, Macro]] | Wired |
 
 **Behavior:** Checks if declared macro instances exist in design.
-**Self-skips if MACROS is None** (lines 512-514) - just returns empty without error.
+**Self-skips if MACROS is None** (lines 690-693) - just returns empty without error.
+
+Diff check:
+- Compared LibreLane `f315752cf2e1465aca24a002247aa6169becb541..3.0.4`.
+- `OpenROADStep.config_vars` added `PNR_CORNERS`, `SET_RC_VERBOSE`,
+  `LAYERS_RC`, `VIAS_R`, `SIGNAL_WIRE_RC_LAYERS`, `CLOCK_WIRE_RC_LAYERS`,
+  `STA_EXTRA_CORNER_TCL_FILE`, and `DEDUPLICATE_CORNERS`; these are now wired
+  through the Bazel PDK/PnR config path.
+- `FP_DEF_TEMPLATE` is no longer an `OpenROADStep` config variable, so it was
+  removed from the generic `sta.bzl` OpenROAD step key list.
+- `OpenROADStep.prepare_env()` now reads `FALLBACK_SDC`, not
+  `FALLBACK_SDC_FILE`; the Step 11 config path now uses the new name.
 
 **Librelane Gating:** `classic.py`
-- Position: Step 11 (line 51)
 - No entry in gating_config_vars - always runs (but self-skips if no macros)
 
 **Bazel Implementation:** `sta.bzl`
-- ID: `"OpenROAD.CheckMacroInstances"` (line 50)
-- config_keys: `CHECK_MACRO_INSTANCES_CONFIG_KEYS` = OPENROAD_STEP_CONFIG_KEYS + [MACROS] (lines 39-41)
-- step_outputs: `[]` (line 50)
+- ID: `"OpenROAD.CheckMacroInstances"` (line 91)
+- config_keys: `CHECK_MACRO_INSTANCES_CONFIG_KEYS` = `OPENROAD_STEP_CONFIG_KEYS + [MACROS]` (lines 41-43)
+- step_outputs: `[]` (line 91)
 
 **Bazel Flow:** `full_flow.bzl`
-- No gating - always runs (line 243)
-- Position: Step 11, after CheckSDCFiles
+- No gating - always runs
+- Position: Step 11, after CheckSDCFiles (lines 297-306)
 - Chains from: `_chk_sdc` target
 
 | Aspect | Librelane | Bazel | Match |
@@ -798,47 +963,77 @@ to determine if fallback is "generic" or "user-defined".
 | Step ID | `"OpenROAD.CheckMacroInstances"` | `"OpenROAD.CheckMacroInstances"` | Y |
 | inputs | NETLIST | (from src) | Y |
 | outputs | `[]` | `[]` | Y |
-| config_keys | 10 variables | CHECK_MACRO_INSTANCES_CONFIG_KEYS (10) | Y |
+| config_keys | OpenROADStep variables plus MACROS/run deps | CHECK_MACRO_INSTANCES_CONFIG_KEYS | Y |
 | Gating | None (self-skips if no macros) | None | Y |
 | Position | Step 11 | Step 11 | Y |
 
 **Status: PASS**
 
+Verification:
+- `bazel build //dse/maths:SegmentedMultiplier16x16_sky130hd_chk_macros`
+  passed and produced
+  `bazel-bin/dse/maths/SegmentedMultiplier16x16_sky130hd_chk_macros/state_out.json`.
+- Runtime log reported `No macros found, skipping instance check...`, matching
+  the documented self-skip behavior when `MACROS` is absent.
+
 ---
 
 ### Step 12: OpenROAD.STAPrePNR
 
-**Verified:** 2025-01-27
+**Verified:** 2026-07-07 for LibreLane 3.0.4
 
-**Librelane Source:** `librelane/steps/openroad.py`
-- ID: `"OpenROAD.STAPrePNR"` (line 721)
-- inputs: `[DesignFormat.NETLIST]` (inherited from OpenSTAStep, line 395)
-- outputs: `[DesignFormat.SDF, DesignFormat.SDC]` (inherited from MultiCornerSTA, line 532)
+**Librelane Source:** `~/Code/librelane/librelane/steps/openroad.py`
+- ID: `"OpenROAD.STAPrePNR"` (line 900)
+- inputs: `[DesignFormat.NETLIST]` (inherited from OpenSTAStep, line 574)
+- outputs: `[DesignFormat.SDF, DesignFormat.SDC]` (inherited from MultiCornerSTA, line 711)
 
 **Inheritance Chain:** STAPrePNR → MultiCornerSTA → OpenSTAStep → OpenROADStep → TclStep → Step
-- OpenROADStep.config_vars: lines 192-223 (in OPENROAD_STEP_CONFIG_KEYS)
-- MultiCornerSTA.config_vars adds: STA_MACRO_PRIORITIZE_NL, STA_MAX_VIOLATOR_COUNT, STA_THREADS
+- OpenROADStep.config_vars: lines 208-294 (in OPENROAD_STEP_CONFIG_KEYS)
+- OpenSTAStep adds helper behavior for macro/netlist/SPEF corner files, but no config_vars
+- MultiCornerSTA.config_vars adds: STA_MACRO_PRIORITIZE_NL, STA_MAX_VIOLATOR_COUNT, EXTRA_SPEFS, STA_THREADS
 
-**Config Variables (from MultiCornerSTA.config_vars, lines 534-556):**
+**Config Variables (from MultiCornerSTA.config_vars, lines 713-735):**
 
 | Variable | Type | Default | Description | Bazel Status |
 |----------|------|---------|-------------|--------------|
 | STA_MACRO_PRIORITIZE_NL | bool | True | Prioritize netlists+SPEF over LIB | Wired |
 | STA_MAX_VIOLATOR_COUNT | Optional[int] | None | Max violators in report | Wired |
-| EXTRA_SPEFS | Optional[List] | None | Deprecated backcompat | Skipped |
+| EXTRA_SPEFS | Optional[List] | None | Deprecated backcompat | Intentionally not wired |
 | STA_THREADS | Optional[int] | None | Max parallel corners | Wired |
 
+Behavior notes:
+- `OpenSTAStep._get_corner_files()` now reads incoming SPEF through
+  `state_in.get(DesignFormat.SPEF)` and only validates it when present (lines
+  597-620).
+- `STAPrePNR.prepare_env()` sets `OPENLANE_SDC_IDEAL_CLOCKS=1` (lines 904-907).
+- `STAPrePNR.run_corner()` writes SDFs into each used corner directory (lines
+  909-913).
+- `STAPrePNR.run()` reads existing SDF state through `state_in.get(DesignFormat.SDF, {})`
+  and adds any generated corner SDFs to the outgoing state (lines 915-935).
+- Although the inherited declared outputs include SDC, the verified sky130 run
+  produced SDF state and no SDC state for this step.
+
+Diff check:
+- Compared LibreLane `f315752cf2e1465aca24a002247aa6169becb541..3.0.4`.
+- `OpenSTAStep` changed absent-SPEF handling from indexing to `state_in.get(...)`.
+- `STAPrePNR` changed absent-SDF handling from indexing to `state_in.get(...)`.
+- `EXTRA_SPEFS` remains declared only as deprecated compatibility for LibreLane
+  before 2.0.0. Bazel intentionally does not expose it; macro timing data should
+  use the `MACROS` provider path instead.
+
 **Librelane Gating:** `classic.py`
-- Position: Step 12 (line 52)
 - No entry in gating_config_vars - always runs
 
 **Bazel Implementation:** `sta.bzl`
-- ID: `"OpenROAD.STAPrePNR"` (line 63)
-- config_keys: `MULTI_CORNER_STA_CONFIG_KEYS` (lines 44-51)
-- extra_outputs: summary.rpt + per-corner max.rpt/min.rpt (nom_* corners only for pre-PNR)
+- ID: `"OpenROAD.STAPrePNR"` (line 132)
+- config_keys: `MULTI_CORNER_STA_CONFIG_KEYS` (lines 53-58)
+- Declares one SDF output per used nominal corner and propagates them in
+  `LibrelaneInfo.sdf` (lines 116-160)
+- Declares reports as outputs: `summary.rpt` and per-corner `max.rpt`,
+  `min.rpt`, and `checks.rpt` for nominal corners (lines 100-107 and 123-125)
 
 **Bazel Flow:** `full_flow.bzl`
-- No gating - always runs (line 248)
+- No gating - always runs
 - Position: Step 12, after CheckMacroInstances
 - Chains from: `_chk_macros` target
 
@@ -846,154 +1041,246 @@ to determine if fallback is "generic" or "user-defined".
 |--------|-----------|-------|-------|
 | Step ID | `"OpenROAD.STAPrePNR"` | `"OpenROAD.STAPrePNR"` | Y |
 | inputs | NETLIST | (from src) | Y |
-| outputs | `[SDF, SDC]` | state passthrough | Y |
-| config_keys | OPENROAD + 4 MultiCorner | MULTI_CORNER_STA_CONFIG_KEYS | Y |
-| Reports | per-corner .rpt files | extra_outputs (nom_* only) | Y |
+| outputs | SDF state generated; SDC declared upstream but not produced in verified run | SDF files declared and propagated; SDC passthrough | Y |
+| config_keys | OPENROAD + MultiCorner minus deprecated EXTRA_SPEFS | MULTI_CORNER_STA_CONFIG_KEYS | Y |
+| Reports | per-used-corner .rpt files | declared outputs for nominal used corners | Y |
 | Gating | None | None | Y |
 | Position | Step 12 | Step 12 | Y |
 
 **Status: PASS**
 
+Verification:
+- `bazel build //dse/maths:SegmentedMultiplier16x16_sky130hd_sta_pre`
+  passed.
+- Bazel now reports these SDF files as target outputs:
+  `nom_tt_025C_1v80/SegmentedMultiplier16x16__nom_tt_025C_1v80.sdf`,
+  `nom_ss_100C_1v60/SegmentedMultiplier16x16__nom_ss_100C_1v60.sdf`, and
+  `nom_ff_n40C_1v95/SegmentedMultiplier16x16__nom_ff_n40C_1v95.sdf`.
+- The runtime log showed the six min/max corners skipped as duplicates of the
+  nominal corners at this stage, matching the declared nominal output set.
+
 ---
 
 ### Step 13: OpenROAD.Floorplan
 
-**Verified:** 2026-01-27
+**Verified:** 2026-07-07 against LibreLane 3.0.4
 
 **Librelane Source:** `librelane/steps/openroad.py`
-- ID: `"OpenROAD.Floorplan"` (line 902)
-- inputs: `[DesignFormat.NETLIST]` (line 906)
-- outputs: (inherited from OpenROADStep, lines 180-186) `[ODB, DEF, SDC, NETLIST, POWERED_NETLIST]`
-- Custom run() behavior (lines 991-1001): Processes FP_TRACKS_INFO file
+- ID: `"OpenROAD.Floorplan"` (line 1085)
+- inputs: `[DesignFormat.NETLIST]` (line 1089)
+- outputs: inherited from `OpenROADStep`: `[ODB, DEF, SDC, NETLIST, POWERED_NETLIST]`
+- `config_vars`: `OpenROADStep.config_vars + [...]` (line 1091)
+- custom `run()` behavior: reads `FP_TRACKS_INFO`, converts it to `config.tracks`,
+  sets `TRACKS_INFO_FILE_PROCESSED`, then runs the OpenROAD Tcl step (lines 1187-1197)
 
-**Librelane Gating:** `classic.py`
-- Position: Step 13 (line 53)
-- No entry in gating_config_vars - always runs
+**Librelane Diff Notes:**
+- `OpenROADStep` now owns PnR corner/RC setup variables:
+  `PNR_CORNERS`, `LAYERS_RC`, `VIAS_R`, `SIGNAL_WIRE_RC_LAYERS`,
+  `CLOCK_WIRE_RC_LAYERS`, `STA_EXTRA_CORNER_TCL_FILE`, and
+  `DEDUPLICATE_CORNERS`.
+- `FALLBACK_SDC_FILE` was renamed to `FALLBACK_SDC` in OpenROAD environment setup.
+- `FP_TRACKS_INFO` is now a Floorplan-specific PDK variable rather than a global
+  base config key.
+- `FP_FLIP_SITES` is a new Floorplan PDK variable.
+- `FP_DEF_TEMPLATE` is not part of `OpenROAD.Floorplan` in 3.0.4.
 
-**Bazel Implementation:** `floorplan.bzl`
-- ID: `"OpenROAD.Floorplan"` (line 52)
-- step_outputs: `[def_out, odb_out, nl_out, pnl_out, sdc_out]` (line 53)
-- Uses step-specific attrs on rule (not ENTRY_ATTRS pattern)
-
-**Bazel Flow:** `full_flow.bzl`
-- No gating - always runs (lines 218-229)
-- Position: Step 13, after sta_pre (line 217)
+**Bazel Implementation:** `bazel/flow/floorplan.bzl`
+- ID: `"OpenROAD.Floorplan"` (line 94)
+- outputs: `[def_out, odb_out, nl_out, pnl_out, sdc_out]` (line 95)
+- `FLOORPLAN_CONFIG_KEYS` includes inherited `OpenROADStep` keys and
+  Floorplan-specific keys (lines 12-39)
 
 **Config Variable Audit:**
 
-Floorplan config_vars (lines 908-981):
+| Variable | Source | Bazel status |
+|----------|--------|--------------|
+| PNR_CORNERS, LAYERS_RC, VIAS_R | OpenROADStep PDK | Included in `FLOORPLAN_CONFIG_KEYS` |
+| SIGNAL_WIRE_RC_LAYERS, CLOCK_WIRE_RC_LAYERS | OpenROADStep PDK | Included in `FLOORPLAN_CONFIG_KEYS` |
+| PDN_CONNECT_MACROS_TO_GRID, PDN_MACRO_CONNECTIONS, PDN_ENABLE_GLOBAL_CONNECTIONS | OpenROADStep | Included in `FLOORPLAN_CONFIG_KEYS` |
+| PNR_SDC_FILE, FALLBACK_SDC | OpenROADStep / option variables | Included in `FLOORPLAN_CONFIG_KEYS` |
+| STA_EXTRA_CORNER_TCL_FILE, DEDUPLICATE_CORNERS | OpenROADStep | Included in `FLOORPLAN_CONFIG_KEYS` |
+| LIB, EXTRA_EXCLUDED_CELLS, PNR_EXCLUDED_CELL_FILE | OpenROADStep env setup | Included in `FLOORPLAN_CONFIG_KEYS` |
+| FP_FLIP_SITES | Floorplan PDK | Added to PDK extraction/provider/config |
+| FP_TRACKS_INFO | Floorplan PDK | Included in `FLOORPLAN_CONFIG_KEYS` |
+| FP_SIZING, FP_ASPECT_RATIO, FP_CORE_UTIL | Floorplan | Set by rule attrs |
+| DIE_AREA, CORE_AREA | Floorplan | Set by rule attrs when absolute sizing is used |
+| BOTTOM/TOP/LEFT/RIGHT_MARGIN_MULT | Floorplan | Set by rule attrs with LibreLane defaults |
+| FP_OBSTRUCTIONS, PL_SOFT_OBSTRUCTIONS | Floorplan | Set by optional rule attrs |
+| EXTRA_SITES | Floorplan PDK | Included from PDK config |
 
-| Variable | Type | Default | Bazel Attr | Status |
-|----------|------|---------|------------|--------|
-| FP_SIZING | Literal["absolute","relative"] | "relative" | (derived from die_area) | Wired |
-| FP_ASPECT_RATIO | Decimal | 1 | `fp_aspect_ratio` (default="1") | Wired |
-| FP_CORE_UTIL | Decimal | 50 | `core_utilization` (default="50") | Wired |
-| FP_OBSTRUCTIONS | Optional[List[Tuple]] | None | `fp_obstructions` | Wired |
-| PL_SOFT_OBSTRUCTIONS | Optional[List[Tuple]] | None | `pl_soft_obstructions` | Wired |
-| CORE_AREA | Optional[Tuple] | None | `core_area` | Wired |
-| DIE_AREA | Optional[Tuple] | None | `die_area` | Wired |
-| BOTTOM_MARGIN_MULT | Decimal | 4 | `bottom_margin_mult` (default="4") | Wired |
-| TOP_MARGIN_MULT | Decimal | 4 | `top_margin_mult` (default="4") | Wired |
-| LEFT_MARGIN_MULT | Decimal | 12 | `left_margin_mult` (default="12") | Wired |
-| RIGHT_MARGIN_MULT | Decimal | 12 | `right_margin_mult` (default="12") | Wired |
-| EXTRA_SITES | Optional[List[str]] | None | (from PDK) | Wired via PDK |
-
-Inherited from OpenROADStep (lines 192-223) - already wired via ENTRY_ATTRS:
-- PDN_CONNECT_MACROS_TO_GRID, PDN_MACRO_CONNECTIONS, PDN_ENABLE_GLOBAL_CONNECTIONS: Wired
-- PNR_SDC_FILE, FP_DEF_TEMPLATE: Wired
-
-**Fixes Applied (2026-01-27):**
-1. Changed `core_utilization` default from "40" to "50" (floorplan.bzl, full_flow.bzl)
-2. Added `fp_aspect_ratio` attr with default "1"
-3. Added margin multiplier attrs with correct defaults
-4. Added `fp_obstructions` and `pl_soft_obstructions` as string_list attrs
-5. Wired all new attrs into config dict in _floorplan_impl
-6. Added keys to FLOORPLAN_CONFIG_KEYS
+**Fixes Applied (2026-07-07):**
+1. Added inherited `OpenROADStep` keys to `FLOORPLAN_CONFIG_KEYS`.
+2. Added `FP_TRACKS_INFO`, `FP_FLIP_SITES`, and `EXTRA_SITES` to the Floorplan
+   key set.
+3. Added `FP_FLIP_SITES` to PDK extraction, `PdkInfo`, and common config emission.
 
 | Aspect | Librelane | Bazel | Match |
 |--------|-----------|-------|-------|
 | Step ID | `"OpenROAD.Floorplan"` | `"OpenROAD.Floorplan"` | Y |
-| inputs | `[NETLIST]` | (from src) | Y |
+| inputs | `[NETLIST]` | from synthesized netlist state | Y |
 | outputs | `[ODB, DEF, SDC, NL, PNL]` | `[def, odb, nl, pnl, sdc]` | Y |
 | Gating | None | None | Y |
 | Position | Step 13 | Step 13 | Y |
-| Config vars | 12 variables | 12 exposed | Y |
+| Config vars | Floorplan + inherited OpenROADStep | Declared in `FLOORPLAN_CONFIG_KEYS` | Y |
 
 **Status: PASS**
 
+Verification:
+- `bazel build //dse/maths:SegmentedMultiplier16x16_sky130hd_floorplan`
+  passed.
+- Produced:
+  `SegmentedMultiplier16x16.def`, `SegmentedMultiplier16x16.odb`,
+  `SegmentedMultiplier16x16.nl.v`, `SegmentedMultiplier16x16.pnl.v`, and
+  `SegmentedMultiplier16x16.sdc`.
+
 ---
 
-### Step 14: Odb.CheckMacroAntennaProperties
+### Step 14: OpenROAD.DumpRCValues
 
-**Verified:** 2026-01-27
+**Verified:** 2026-07-07 against LibreLane 3.0.4
 
-**Librelane Source:** `librelane/steps/odb.py`
-- ID: `"Odb.CheckMacroAntennaProperties"` (line 183)
-- inputs: `[DesignFormat.ODB]` (inherited from OdbpyStep, line 47)
-- outputs: `[]` (line 186)
-- **Self-skips if no macro cells configured** (lines 211-214)
+**Librelane Source:** `librelane/steps/openroad.py`
+- ID: `"OpenROAD.DumpRCValues"` (line 2983)
+- inputs: `[DesignFormat.DEF]` (line 2986)
+- outputs: no design views written by the Tcl script; state passes through
+- script: `librelane/scripts/openroad/dump_rc.tcl`
 
-**Librelane Gating:** `classic.py`
-- Position: Step 14 (line 54)
-- No entry in gating_config_vars - always runs (but self-skips if no macros)
+**Behavior:**
+- Reads PnR timing libs, LEFs, and the current DEF.
+- Reports initial tech LEF RC values, RC values after `set_rc.tcl`, and resizer
+  RC values after `set_rc.tcl`.
+- Produces three report files:
+  `tlef_values.rpt`, `layer_values_after.rpt`, and
+  `resizer_values_after.rpt`.
 
-**Bazel Implementation:** `odb.bzl`
-- ID: `"Odb.CheckMacroAntennaProperties"` (line 10)
-- step_outputs: `[]` (line 10)
+**Bazel Implementation:** `bazel/flow/floorplan.bzl`
+- ID: `"OpenROAD.DumpRCValues"` (line 134)
+- `step_outputs = []` because this report step does not rewrite DEF/ODB/netlist
+  views.
+- `extra_outputs = DUMP_RC_REPORTS`, declaring the three report files.
+- `DUMP_RC_CONFIG_KEYS` is intentionally narrower than the full
+  `OpenROADStep` parent list. It includes timing libs, PnR corners, RC override
+  keys, macro/extra LEFs, and PnR excluded cells, but not unrelated PDN macro
+  connection controls.
 
 **Bazel Flow:** `full_flow.bzl`
-- No gating - always runs (lines 277-281)
-- Position: Step 14, after floorplan (line 277)
-- Chains from: `_floorplan` target
+- Inserted after `_floorplan` and before `_chk_macro_ant`, matching the new
+  LibreLane Classic sequence.
+
+| Aspect | Librelane | Bazel | Match |
+|--------|-----------|-------|-------|
+| Step ID | `"OpenROAD.DumpRCValues"` | `"OpenROAD.DumpRCValues"` | Y |
+| inputs | `[DEF]` | floorplan state with DEF | Y |
+| outputs | report files; design state passthrough | three report files plus state passthrough | Y |
+| Gating | None | None | Y |
+| Position | after Floorplan | after Floorplan | Y |
+
+**Status: PASS**
+
+Verification:
+- `bazel build //dse/maths:SegmentedMultiplier16x16_sky130hd_dump_rc`
+  passed.
+- Produced:
+  `tlef_values.rpt`, `layer_values_after.rpt`,
+  `resizer_values_after.rpt`, and `state_out.json`.
+
+---
+
+### Step 14b: Odb.CheckMacroAntennaProperties
+
+**Verified:** 2026-07-07 against LibreLane 3.0.4
+
+**Librelane Source:** `librelane/steps/odb.py`
+- ID: `"Odb.CheckMacroAntennaProperties"` (line 204)
+- inputs: `[DesignFormat.ODB]` (inherited from `OdbpyStep`, line 51)
+- outputs: `[]` (line 207)
+- `get_cells()` reads `MACROS` and returns the macro cell names if present
+  (lines 216-221)
+- self-skips if no cells are provided (lines 232-236)
+
+**Librelane Diff Notes:**
+- `classic.py` inserted `OpenROAD.DumpRCValues` immediately after
+  `OpenROAD.Floorplan`, so this is now the step after DumpRCValues in upstream
+  Classic flow.
+- `OdbpyStep` now uses `OpenROADStep.get_openroad_path()`, includes `PAD_LEFS`
+  when it invokes OpenROAD, and reads optional design LEF through
+  `state_in.result().get(...)`.
+- `CheckMacroAntennaProperties` itself still has no `config_vars`; it reads
+  `MACROS` directly and skips if the cell list is empty.
+
+**Librelane Gating:** `classic.py`
+- No entry in `gating_config_vars`; it always appears in the flow and self-skips
+  when no macros are configured.
+
+**Bazel Implementation:** `place.bzl`
+- ID: `"Odb.CheckMacroAntennaProperties"` (line 94)
+- `step_outputs = []`
+- Uses `ODB_CONFIG_KEYS = BASE_CONFIG_KEYS`; this is sufficient for the verified
+  no-macro path because the step returns before invoking `OdbpyStep`.
+
+**Bazel Flow:** `full_flow.bzl`
+- No gating - always runs
+- Position: after DumpRCValues in the current Bazel flow
+- Chains from: `_dump_rc` target
 
 **Config Variable Audit:**
 
-CheckMacroAntennaProperties has no config_vars (lines 178-215).
-Inherits from OdbpyStep (line 178) which has no config_vars.
-OdbpyStep inherits from Step which has empty config_vars.
-
-Only config accessed: `MACROS` (line 196) - flow-level, wired via `macros` attr.
+CheckMacroAntennaProperties has no `config_vars`. It reads `MACROS` in
+`get_cells()`; `create_librelane_config()` emits `MACROS` when macro providers
+are present.
 
 | Aspect | Librelane | Bazel | Match |
 |--------|-----------|-------|-------|
 | Step ID | `"Odb.CheckMacroAntennaProperties"` | `"Odb.CheckMacroAntennaProperties"` | Y |
 | inputs | `[ODB]` | (from src) | Y |
 | outputs | `[]` | `[]` | Y |
-| Gating | None (self-skips if no macros) | None | Y |
-| Position | Step 14 | Step 14 | Y |
-| Config vars | None | N/A | Y |
+| Gating | None; self-skips if no cells | None; self-skips through LibreLane | Y |
+| Position | after DumpRCValues in Classic | after DumpRCValues in current Bazel flow | Y |
+| Config vars | None, direct `MACROS` read | `MACROS` emitted when present | Y |
 
 **Status: PASS**
+
+Verification:
+- `bazel build //dse/maths:SegmentedMultiplier16x16_sky130hd_chk_macro_ant`
+  passed.
+- Runtime log reported:
+  `No cells provided, skipping 'Odb.CheckMacroAntennaProperties'...`
 
 ---
 
 ### Step 15: Odb.SetPowerConnections
 
-**Verified:** 2026-01-27
+**Verified:** 2026-07-07 against LibreLane 3.0.4
 
 **Librelane Source:** `librelane/steps/odb.py`
-- ID: `"Odb.SetPowerConnections"` (line 311)
-- inputs: `[DesignFormat.JSON_HEADER, DesignFormat.ODB]` (line 313)
-- outputs: (inherited from OdbpyStep) `[ODB, DEF]` (line 48)
+- ID: `"Odb.SetPowerConnections"` (line 332)
+- inputs: `[DesignFormat.JSON_HEADER, DesignFormat.ODB]` (line 334)
+- outputs: inherited from `OdbpyStep`: `[ODB, DEF]`
 - Uses JSON netlist to add global power connections for macros
+- script: `odbpy/power_utils.py` with subcommand `set-power-connections`
 
 **Librelane Gating:** `classic.py`
-- Position: Step 15 (line 55)
 - No entry in gating_config_vars - always runs
 
 **Bazel Implementation:** `odb.bzl`
-- ID: `"Odb.SetPowerConnections"` (line 13)
-- step_outputs: `["def", "odb"]` (line 13)
+- ID: `"Odb.SetPowerConnections"` (line 101)
+- step_outputs: `["def", "odb"]`
+- Uses `ODB_CONFIG_KEYS`, which includes `BASE_CONFIG_KEYS`, `MACROS`, and
+  `EXTRA_LEFS`. `MACROS` and `EXTRA_LEFS` are needed by the inherited
+  `OdbpyStep` LEF loading path, even though `SetPowerConnections` itself has no
+  local `config_vars`.
 
 **Bazel Flow:** `full_flow.bzl`
-- No gating - always runs (lines 282-286)
-- Position: Step 15, after CheckMacroAntennaProperties (line 282)
+- No gating - always runs
+- Position: after CheckMacroAntennaProperties
 - Chains from: `_chk_macro_ant` target
 
 **Config Variable Audit:**
 
-SetPowerConnections has no config_vars (lines 301-327).
-Inherits from OdbpyStep which has no config_vars.
+SetPowerConnections has no local `config_vars`. It inherits `OdbpyStep`, whose
+OpenROAD command loads tech LEF, cell LEFs, optional macro LEFs, optional
+`EXTRA_LEFS`, and optional design LEF depending on step inputs. The command also
+reads the JSON header from incoming state.
 
 | Aspect | Librelane | Bazel | Match |
 |--------|-----------|-------|-------|
@@ -1002,101 +1289,117 @@ Inherits from OdbpyStep which has no config_vars.
 | outputs | `[ODB, DEF]` | `["def", "odb"]` | Y |
 | Gating | None | None | Y |
 | Position | Step 15 | Step 15 | Y |
-| Config vars | None | N/A | Y |
+| Config vars | no local config vars; inherited LEF loading uses flow vars | `ODB_CONFIG_KEYS` includes macro/extra LEF inputs | Y |
 
 **Status: PASS**
+
+Verification:
+- `bazel build //dse/maths:SegmentedMultiplier16x16_sky130hd_power_conn`
+  passed.
+- Produced:
+  `SegmentedMultiplier16x16.def`, `SegmentedMultiplier16x16.odb`, and
+  `state_out.json`.
 
 ---
 
 ### Step 16: Odb.ManualMacroPlacement
 
-**Verified:** 2026-01-27
+**Verified:** 2026-07-07 against LibreLane 3.0.4
 
 **Librelane Source:** `librelane/steps/odb.py`
-- ID: `"Odb.ManualMacroPlacement"` (line 392)
-- inputs: (inherited from OdbpyStep) `[ODB]`
-- outputs: (inherited from OdbpyStep) `[ODB, DEF]`
-- **Self-skips if no placement config** (lines 446-448): skips if MACRO_PLACEMENT_CFG is None
-  AND MACROS has no instances with locations configured
-- **Dual config support** (lines 418-444):
+- ID: `"Odb.ManualMacroPlacement"` (line 405)
+- inputs: inherited from `OdbpyStep`: `[ODB]`
+- outputs: inherited from `OdbpyStep`: `[ODB, DEF]` when it runs
+- Self-skips if no placement file is generated (lines 467-471).
+- Dual config support:
   1. If MACRO_PLACEMENT_CFG is set → copy that file (with deprecation warning)
   2. Elif MACROS config has instances with locations → generate placement.cfg from MACROS
 
 **Librelane Gating:** `classic.py`
-- Position: Step 16 (line 56)
 - No entry in gating_config_vars - always runs, relies on self-skip behavior
 
 **Bazel Implementation:** `odb.bzl`
-- ID: `"Odb.ManualMacroPlacement"` (line 16)
-- step_outputs: `["def", "odb"]` (line 16)
+- Implemented in `place.bzl` for the current full flow.
+- ID: `"Odb.ManualMacroPlacement"`
+- Always instantiated by `full_flow.bzl`.
+- Declares `["def", "odb"]` only when `input_info.macro_placement_cfg` is set;
+  otherwise it declares no design-view outputs and lets LibreLane self-skip while
+  Bazel passes through the previous DEF/ODB state.
 
 **Bazel Flow:** `full_flow.bzl`
-- Gating: `if macro_placement_cfg:` (line 288)
 - Position: Step 16, after SetPowerConnections
-- Only called if macro_placement_cfg is provided
+- Always called; `_cutrows` now chains from `_mpl`.
 
 **Config Variable Audit:**
 
 | Variable | Type | Default | Bazel Attr | Status |
 |----------|------|---------|------------|--------|
-| MACRO_PLACEMENT_CFG | Optional[Path] | None | `macro_placement_cfg` | Wired |
+| MACRO_PLACEMENT_CFG | Optional[Path] | None | `macro_placement_cfg` through `LibrelaneInput` | Wired |
+| MACROS | Optional[Dict[str, Macro]] | None | hard macro providers | View data wired; placement instances not modeled |
+| EXTRA_LEFS | Optional[List[Path]] | None | `extra_lefs` | Wired for inherited LEF loading |
 
-Note: MACROS-based placement (from MACROS config) not supported in Bazel - only file-based.
+Note: MACROS-based placement locations are still not supported because our
+`MacroInfo` provider carries macro views but not per-instance placement
+locations/orientations.
 
 | Aspect | Librelane | Bazel | Match |
 |--------|-----------|-------|-------|
 | Step ID | `"Odb.ManualMacroPlacement"` | `"Odb.ManualMacroPlacement"` | Y |
 | inputs | `[ODB]` | (from src) | Y |
-| outputs | `[ODB, DEF]` | `["def", "odb"]` | Y |
-| Gating | Self-skips if no config | `if macro_placement_cfg` | Y (partial) |
+| outputs | `[ODB, DEF]` when run; none when skipped | conditional outputs matching configured file path | Y |
+| Gating | Self-skips if no config | always instantiated, LibreLane self-skips | Y |
 | Position | Step 16 | Step 16 | Y |
-| Config vars | 1 variable | 1 wired | Y |
+| Config vars | MACRO_PLACEMENT_CFG plus flow-level MACROS | wired, with instance-location limitation | Partial |
 
-**Status: PASS (with limitation: MACROS-based placement not supported)**
+**Status: PASS (with limitation: MACROS-based instance locations not supported)**
+
+Verification:
+- `bazel build //dse/maths:SegmentedMultiplier16x16_sky130hd_mpl //dse/maths:SegmentedMultiplier16x16_sky130hd_cutrows`
+  passed.
+- `_mpl` runtime log reported:
+  `No instances found, skipping 'Odb.ManualMacroPlacement'...`
+- `_cutrows` then built successfully from the passed-through ODB state.
 
 ---
 
 ### Step 17: OpenROAD.CutRows
 
-**Verified:** 2026-01-27
+**Verified:** 2026-07-07 against LibreLane 3.0.4
 
 **Librelane Source:** `librelane/steps/openroad.py`
-- ID: `"OpenROAD.CutRows"` (line 1907)
-- inputs: `[DesignFormat.ODB]` (line 1910)
-- outputs: `[DesignFormat.ODB, DesignFormat.DEF]` (lines 1911-1914)
+- ID: `"OpenROAD.CutRows"` (line 2299)
+- inputs: `[DesignFormat.ODB]` (line 2302)
+- outputs: `[DesignFormat.ODB, DesignFormat.DEF]` (lines 2303-2306)
 - Cuts floorplan rows with respect to placed macros
+- config_vars: `OpenROADStep.config_vars` plus
+  `FP_MACRO_HORIZONTAL_HALO`, `FP_MACRO_VERTICAL_HALO`, and
+  `FP_PRUNE_THRESHOLD`
 
 **Librelane Gating:** `classic.py`
-- Position: Step 17 (line 57)
 - No entry in gating_config_vars - always runs
 
 **Bazel Implementation:** `place.bzl`
-- ID: `"OpenROAD.CutRows"` (line 33)
-- step_outputs: `["def", "odb"]` (line 33)
+- ID: `"OpenROAD.CutRows"` (line 242)
+- step_outputs: `["def", "odb"]`
+- `CUTROWS_CONFIG_KEYS` now uses `OPENROAD_STEP_CONFIG_KEYS` plus the CutRows
+  local variables.
 
 **Bazel Flow:** `full_flow.bzl`
-- No gating - always runs (lines 300-305)
-- Position: Step 17, after ManualMacroPlacement (line 301)
-- Chains from: `pre_cutrows_src` (either `_mpl` or `_power_conn`)
+- No gating - always runs
+- Position: after ManualMacroPlacement
+- Chains from: `_mpl`; `_mpl` may self-skip and pass through prior state
 
 **Config Variable Audit:**
 
-CutRows config_vars (lines 1916-1933):
+CutRows config_vars (lines 2308-2332):
 
 | Variable | Type | Default | Bazel Attr | Status |
 |----------|------|---------|------------|--------|
 | FP_MACRO_HORIZONTAL_HALO | Decimal | 10 | `fp_macro_horizontal_halo` (default="10") | Wired |
 | FP_MACRO_VERTICAL_HALO | Decimal | 10 | `fp_macro_vertical_halo` (default="10") | Wired |
+| FP_PRUNE_THRESHOLD | Optional[Decimal] | None | PDK | Wired |
 
-Inherited from OpenROADStep - wired via ENTRY_ATTRS.
-
-**Fixes Applied (2026-01-27):**
-Wired via 5-location pattern:
-1. `common.bzl` ENTRY_ATTRS: Added attrs with defaults
-2. `providers.bzl` LibrelaneInput: Added provider fields
-3. `init.bzl` _init_impl: Wired ctx.attr to provider
-4. `common.bzl` create_librelane_config: Added to config dict
-5. `common.bzl` BASE_CONFIG_KEYS: Added keys
+Inherited `OpenROADStep` keys are wired through `OPENROAD_STEP_CONFIG_KEYS`.
 
 | Aspect | Librelane | Bazel | Match |
 |--------|-----------|-------|-------|
@@ -1105,36 +1408,49 @@ Wired via 5-location pattern:
 | outputs | `[ODB, DEF]` | `["def", "odb"]` | Y |
 | Gating | None | None | Y |
 | Position | Step 17 | Step 17 | Y |
-| Config vars | 2 + inherited | 2 wired | Y |
+| Config vars | 3 + inherited | wired | Y |
 
 **Status: PASS**
+
+Verification:
+- `bazel build //dse/maths:SegmentedMultiplier16x16_sky130hd_cutrows`
+  passed.
+- Produced:
+  `SegmentedMultiplier16x16.def`, `SegmentedMultiplier16x16.odb`, and
+  `state_out.json`.
 
 ---
 
 ### Step 18: OpenROAD.TapEndcapInsertion
 
-**Verified:** 2026-01-26
+**Verified:** 2026-07-07 against LibreLane 3.0.4
 
 **Librelane Source:** `librelane/steps/openroad.py`
-- ID: `"OpenROAD.TapEndcapInsertion"` (line 1102)
-- inputs: (inherited from OpenROADStep) `[ODB]`
-- outputs: (inherited from OpenROADStep) `[ODB, DEF, NL, PNL, SDC]`
+- ID: `"OpenROAD.TapEndcapInsertion"` (line 1373)
+- inputs: inherited from `OpenROADStep`: `[ODB]`
+- outputs: inherited from `OpenROADStep`: `[ODB, DEF, NL, PNL, SDC]`
 - Places well TAP cells and end-cap cells
+- config_vars: `OpenROADStep.config_vars` plus `FP_TAPCELL_DIST`,
+  `FP_MACRO_HORIZONTAL_HALO`, and `FP_MACRO_VERTICAL_HALO`
+- `run()` fails if `WELLTAP_CELL` is set but `FP_TAPCELL_DIST` is not set
+  (lines 1405-1411)
 
 **Librelane Gating:** `classic.py`
-- Position: Step 18 (line 58)
-- Variable: `RUN_TAP_ENDCAP_INSERTION` (lines 122-128)
-- Default: `True` (line 126)
-- Gating entry: `"OpenROAD.TapEndcapInsertion": ["RUN_TAP_ENDCAP_INSERTION"]` (line 274)
+- Variable: `RUN_TAP_ENDCAP_INSERTION` (lines 123-129)
+- Default: `True` (line 128)
+- Gating entry: `"OpenROAD.TapEndcapInsertion": ["RUN_TAP_ENDCAP_INSERTION"]`
+  (line 276)
 
 **Bazel Implementation:** `place.bzl`
-- ID: `"OpenROAD.TapEndcapInsertion"` (line 32)
-- step_outputs: `["def", "odb", "nl", "pnl", "sdc"]` (line 33)
+- ID: `"OpenROAD.TapEndcapInsertion"` (line 247)
+- step_outputs: `["def", "odb", "nl", "pnl", "sdc"]`
+- Uses `TAP_ENDCAP_CONFIG_KEYS`, split from `CUTROWS_CONFIG_KEYS` so
+  `FP_TAPCELL_DIST` only affects the tap/endcap step.
 
 **Bazel Flow:** `full_flow.bzl`
-- Parameter: `run_tap_endcap_insertion = True` (line 108)
-- Gating: `if run_tap_endcap_insertion:` (line 259)
-- Position: Step 18, after CutRows (lines 258-266)
+- Parameter: `run_tap_endcap_insertion = True`
+- Gating: `if run_tap_endcap_insertion:`
+- Position: after CutRows
 
 **Config Variable Audit:**
 
@@ -1145,14 +1461,10 @@ FP_MACRO_VERTICAL_HALO
 |----------|------|---------|--------------|
 | FP_MACRO_HORIZONTAL_HALO | Decimal | 10 | Wired |
 | FP_MACRO_VERTICAL_HALO | Decimal | 10 | Wired |
-| PDN_CONNECT_MACROS_TO_GRID | bool | True | Wired (inherited) |
-| PDN_MACRO_CONNECTIONS | Optional[List[str]] | None | Wired (inherited) |
-| PDN_ENABLE_GLOBAL_CONNECTIONS | bool | True | Wired (inherited) |
-| PNR_SDC_FILE | Optional[Path] | None | Wired (inherited) |
-| FP_DEF_TEMPLATE | Optional[Path] | None | Wired (inherited) |
-| FP_TAPCELL_DIST | Decimal | - | PDK variable |
-| WELLTAP_CELL | str | - | PDK variable |
-| ENDCAP_CELL | str | - | PDK variable |
+| FP_TAPCELL_DIST | Optional[Decimal] | None | Wired from PDK |
+| WELLTAP_CELL | str | - | Base PDK variable |
+| ENDCAP_CELL | str | - | Base PDK variable |
+| OpenROADStep inherited keys | mixed | mixed | Wired through `OPENROAD_STEP_CONFIG_KEYS` |
 
 | Aspect | Librelane | Bazel | Match |
 |--------|-----------|-------|-------|
@@ -1165,32 +1477,41 @@ FP_MACRO_VERTICAL_HALO
 
 **Status: PASS**
 
+Verification:
+- `bazel build //dse/maths:SegmentedMultiplier16x16_sky130hd_tapendcap`
+  passed.
+- Produced:
+  `SegmentedMultiplier16x16.def`, `SegmentedMultiplier16x16.odb`,
+  `SegmentedMultiplier16x16.nl.v`, `SegmentedMultiplier16x16.pnl.v`,
+  `SegmentedMultiplier16x16.sdc`, and `state_out.json`.
+
 ---
 
 ### Step 19: Odb.AddPDNObstructions
 
-**Verified:** 2026-01-26
+**Verified:** 2026-07-07 against LibreLane 3.0.4
 
 **Librelane Source:** `librelane/steps/odb.py`
-- ID: `"Odb.AddPDNObstructions"` (line 600)
+- ID: `"Odb.AddPDNObstructions"` (line 611)
 - inputs: (inherited from AddRoutingObstructions) `[ODB]`
 - outputs: (inherited from OdbpyStep) `[ODB, DEF]`
-- config_vars: `PDN_OBSTRUCTIONS` (lines 603-611), default=None
-- **Self-skips if PDN_OBSTRUCTIONS is None** (inherited from AddRoutingObstructions.run(), lines 566-572)
+- config_vars: `PDN_OBSTRUCTIONS`, default=None
+- Self-skips if `PDN_OBSTRUCTIONS` is None through inherited
+  `AddRoutingObstructions.run()` behavior
 
 **Librelane Gating:** `classic.py`
-- Position: Step 19 (line 59)
 - No entry in gating_config_vars - relies on self-skip behavior
 
 **Bazel Implementation:** `odb.bzl`
-- ID: `"Odb.AddPDNObstructions"` (line 17)
-- step_outputs: `["def", "odb"]` (line 18)
+- ID: `"Odb.AddPDNObstructions"` (line 109)
+- Uses `PDN_OBS_CONFIG_KEYS = ODB_CONFIG_KEYS + ["PDN_OBSTRUCTIONS"]`
+- Declares `["def", "odb"]` only when `input_info.pdn_obstructions` is set;
+  otherwise declares no design-view outputs so the skipped step passes through
+  prior state.
 
 **Bazel Flow:** `full_flow.bzl`
-- Gating: `if pdn_obstructions:` (line 319)
+- Always instantiated, matching LibreLane self-skip behavior
 - Position: Step 19, after TapEndcapInsertion
-- Only called if pdn_obstructions is provided
-- Matches librelane self-skip behavior
 
 **Config Variable Audit:**
 
@@ -1202,61 +1523,79 @@ FP_MACRO_VERTICAL_HALO
 |--------|-----------|-------|-------|
 | Step ID | `"Odb.AddPDNObstructions"` | `"Odb.AddPDNObstructions"` | Y |
 | inputs | `[ODB]` | (from src) | Y |
-| outputs | `[ODB, DEF]` | `["def", "odb"]` | Y |
-| Gating | Self-skips if PDN_OBSTRUCTIONS is None | `if pdn_obstructions` | Y |
+| outputs | `[ODB, DEF]` when run; none when skipped | conditional outputs matching configured obstructions | Y |
+| Gating | Self-skips if PDN_OBSTRUCTIONS is None | always instantiated, LibreLane self-skips | Y |
 | Position | Step 19 | Step 19 | Y |
 
 **Status: PASS**
+
+Verification:
+- `bazel build //dse/maths:SegmentedMultiplier16x16_sky130hd_add_pdn_obs //dse/maths:SegmentedMultiplier16x16_sky130hd_pdn //dse/maths:SegmentedMultiplier16x16_sky130hd_rm_pdn_obs`
+  passed.
+- `_add_pdn_obs` runtime log reported:
+  `'PDN_OBSTRUCTIONS' is not defined, skipping 'Odb.AddPDNObstructions'...`
 
 ---
 
 ### Step 20: OpenROAD.GeneratePDN
 
-**Verified:** 2026-01-26
+**Verified:** 2026-07-07 against LibreLane 3.0.4
 
 **Librelane Source:** `librelane/steps/openroad.py`
-- ID: `"OpenROAD.GeneratePDN"` (line 1153)
+- ID: `"OpenROAD.GeneratePDN"` (line 1450)
 - inputs: (inherited from OpenROADStep) `[ODB]`
 - outputs: (inherited from OpenROADStep) `[ODB, DEF, NL, PNL, SDC]`
 - Creates power distribution network on floorplanned ODB
+- config_vars: `OpenROADStep.config_vars + pdn_variables + [PDN_CFG]`
+- `PDN_CFG` defaults to LibreLane's bundled `pdn_cfg.tcl` when unset
+  (lines 1477-1482)
 
 **Librelane Gating:** `classic.py`
-- Position: Step 20 (line 60)
 - No entry in gating_config_vars - always runs
 
 **Bazel Implementation:** `place.bzl`
-- ID: `"OpenROAD.GeneratePDN"` (line 36)
-- step_outputs: `["def", "odb", "nl", "pnl", "sdc"]` (line 37)
+- ID: `"OpenROAD.GeneratePDN"` (line 263)
+- step_outputs: `["def", "odb", "nl", "pnl", "sdc"]`
+- `PDN_CONFIG_KEYS` uses the LibreLane 3.0.4 `PDN_*` names. The PDK provider
+  retains the older internal `fp_pdn_*` field names, but `create_librelane_config`
+  emits the new config keys.
 
 **Bazel Flow:** `full_flow.bzl`
-- No gating - always runs (lines 331-335)
+- No gating - always runs
 - Position: Step 20, after AddPDNObstructions
-- Chains from: `pre_pdn_gen_src` (either `_add_pdn_obs` or `pre_pdn_src`)
+- Chains from: `_add_pdn_obs`; that step may self-skip and pass through prior state
 
 **Config Variable Audit:**
 
-config_vars = OpenROADStep.config_vars + pdn_variables + [FP_PDN_CFG]
+config_vars = OpenROADStep.config_vars + pdn_variables + [PDN_CFG]
 
 | Variable | Type | Default | Bazel Status |
 |----------|------|---------|--------------|
-| FP_PDN_SKIPTRIM | bool | False | Wired |
-| FP_PDN_CORE_RING | bool | False | Wired |
-| FP_PDN_ENABLE_RAILS | bool | True | Wired |
-| FP_PDN_HORIZONTAL_HALO | Decimal | 10 | Wired |
-| FP_PDN_VERTICAL_HALO | Decimal | 10 | Wired |
-| FP_PDN_MULTILAYER | bool | True | Wired |
-| FP_PDN_CFG | Optional[Path] | None | Wired |
-| FP_PDN_RAIL_OFFSET | Decimal | - | PDK (wired) |
-| FP_PDN_VWIDTH | Decimal | - | PDK (wired) |
-| FP_PDN_HWIDTH | Decimal | - | PDK (wired) |
-| FP_PDN_VSPACING | Decimal | - | PDK (wired) |
-| FP_PDN_HSPACING | Decimal | - | PDK (wired) |
-| FP_PDN_VPITCH | Decimal | - | PDK (wired) |
-| FP_PDN_HPITCH | Decimal | - | PDK (wired) |
-| FP_PDN_VOFFSET | Decimal | - | PDK (wired) |
-| FP_PDN_HOFFSET | Decimal | - | PDK (wired) |
-| FP_PDN_CORE_RING_* | Decimal | - | PDK (wired) |
-| FP_PDN_RAIL_LAYER | str | - | PDK (wired) |
+| PDN_SKIPTRIM | bool | False | Wired |
+| PDN_CORE_RING | bool | False | Wired |
+| PDN_ENABLE_RAILS | bool | True | Wired |
+| PDN_HORIZONTAL_HALO | Decimal | 10 | Wired |
+| PDN_VERTICAL_HALO | Decimal | 10 | Wired |
+| PDN_MULTILAYER | bool | True | Wired |
+| PDN_CFG | Optional[Path] | None | Wired |
+| PDN_RAIL_OFFSET | Decimal | PDK | Wired |
+| PDN_VWIDTH | Decimal | PDK | Wired |
+| PDN_HWIDTH | Decimal | PDK | Wired |
+| PDN_VSPACING | Decimal | PDK | Wired |
+| PDN_HSPACING | Decimal | PDK | Wired |
+| PDN_VPITCH | Decimal | PDK | Wired |
+| PDN_HPITCH | Decimal | PDK | Wired |
+| PDN_VOFFSET | Decimal | PDK | Wired |
+| PDN_HOFFSET | Decimal | PDK | Wired |
+| PDN_CORE_RING_* | mixed | PDK | Wired |
+| PDN_RAIL_LAYER | str | PDK | Wired |
+| PDN_RAIL_WIDTH | Decimal | PDK | Wired |
+| PDN_HORIZONTAL_LAYER | str | PDK | Wired |
+| PDN_VERTICAL_LAYER | str | PDK | Wired |
+| PDN_CORE_HORIZONTAL_LAYER | str | PDK | Wired |
+| PDN_CORE_VERTICAL_LAYER | str | PDK | Wired |
+| PDN_EXTEND_TO | str | PDK | Wired |
+| PDN_ENABLE_PINS | bool | PDK | Wired |
 | OpenROADStep.config_vars | - | - | Wired (inherited) |
 
 | Aspect | Librelane | Bazel | Match |
@@ -1269,32 +1608,47 @@ config_vars = OpenROADStep.config_vars + pdn_variables + [FP_PDN_CFG]
 
 **Status: PASS**
 
+Verification:
+- Initial run failed because Bazel was still emitting old `FP_PDN_*` keys while
+  LibreLane 3.0.4 expects `PDN_*` names. The PDK mapping and emitted config were
+  updated to the 3.0.4 names.
+- `bazel build //dse/maths:SegmentedMultiplier16x16_sky130hd_add_pdn_obs //dse/maths:SegmentedMultiplier16x16_sky130hd_pdn //dse/maths:SegmentedMultiplier16x16_sky130hd_rm_pdn_obs`
+  passed.
+- Runtime log reported that unset `PDN_CFG` was set to LibreLane's bundled
+  `pdn_cfg.tcl`, then `pdngen` inserted the `stdcell_grid` and connected VPWR
+  and VGND shapes.
+- Produced:
+  `SegmentedMultiplier16x16.def`, `SegmentedMultiplier16x16.odb`,
+  `SegmentedMultiplier16x16.nl.v`, `SegmentedMultiplier16x16.pnl.v`,
+  `SegmentedMultiplier16x16.sdc`, and `state_out.json`.
+
 ---
 
 ### Step 21: Odb.RemovePDNObstructions
 
-**Verified:** 2026-01-26
+**Verified:** 2026-07-07 against LibreLane 3.0.4
 
 **Librelane Source:** `librelane/steps/odb.py`
-- ID: `"Odb.RemovePDNObstructions"` (line 622)
+- ID: `"Odb.RemovePDNObstructions"` (line 637)
 - inputs: (inherited from RemoveRoutingObstructions) `[ODB]`
 - outputs: (inherited from OdbpyStep) `[ODB, DEF]`
-- config_vars: Uses same `PDN_OBSTRUCTIONS` variable as AddPDNObstructions (line 625)
-- **Self-skips if PDN_OBSTRUCTIONS is None** (inherited behavior)
+- config_vars: uses same `PDN_OBSTRUCTIONS` variable as AddPDNObstructions
+- Self-skips if `PDN_OBSTRUCTIONS` is None through inherited behavior
 
 **Librelane Gating:** `classic.py`
-- Position: Step 21 (line 61)
 - No entry in gating_config_vars - relies on self-skip behavior
 
 **Bazel Implementation:** `odb.bzl`
-- ID: `"Odb.RemovePDNObstructions"` (line 22)
-- step_outputs: `["def", "odb"]` (line 23)
+- ID: `"Odb.RemovePDNObstructions"` (line 114)
+- Uses `PDN_OBS_CONFIG_KEYS = ODB_CONFIG_KEYS + ["PDN_OBSTRUCTIONS"]`
+- Declares `["def", "odb"]` only when `input_info.pdn_obstructions` is set;
+  otherwise declares no design-view outputs so the skipped step passes through
+  prior state.
 
 **Bazel Flow:** `full_flow.bzl`
-- Gating: `if pdn_obstructions:` (line 338)
+- Always instantiated, matching LibreLane self-skip behavior
 - Position: Step 21, after GeneratePDN
-- Only called if pdn_obstructions was provided (and thus added earlier)
-- Matches librelane self-skip behavior
+- Post-PDN source always chains through `_rm_pdn_obs`.
 
 **Config Variable Audit:**
 
@@ -1308,94 +1662,120 @@ config_vars = AddPDNObstructions.config_vars (same as Step 19)
 |--------|-----------|-------|-------|
 | Step ID | `"Odb.RemovePDNObstructions"` | `"Odb.RemovePDNObstructions"` | Y |
 | inputs | `[ODB]` | (from src) | Y |
-| outputs | `[ODB, DEF]` | `["def", "odb"]` | Y |
-| Gating | Self-skips if PDN_OBSTRUCTIONS is None | `if pdn_obstructions` | Y |
+| outputs | `[ODB, DEF]` when run; none when skipped | conditional outputs matching configured obstructions | Y |
+| Gating | Self-skips if PDN_OBSTRUCTIONS is None | always instantiated, LibreLane self-skips | Y |
 | Position | Step 21 | Step 21 | Y |
 
 **Status: PASS**
+
+Verification:
+- `bazel build //dse/maths:SegmentedMultiplier16x16_sky130hd_add_pdn_obs //dse/maths:SegmentedMultiplier16x16_sky130hd_pdn //dse/maths:SegmentedMultiplier16x16_sky130hd_rm_pdn_obs`
+  passed.
+- `_rm_pdn_obs` runtime log reported:
+  `'PDN_OBSTRUCTIONS' is not defined, skipping 'Odb.RemovePDNObstructions'...`
 
 ---
 
 ### Step 22: Odb.AddRoutingObstructions
 
-**Verified:** 2026-01-26
+**Verified:** 2026-07-07 against LibreLane 3.0.4
 
 **Librelane Source:** `librelane/steps/odb.py`
-- ID: `"Odb.AddRoutingObstructions"` (line 535)
+- ID: `"Odb.AddRoutingObstructions"` (line 556)
 - inputs: (inherited from OdbpyStep) `[ODB]`
 - outputs: (inherited from OdbpyStep) `[ODB, DEF]`
-- config_vars: `ROUTING_OBSTRUCTIONS` (lines 537-546), default=None
-- **Self-skips if ROUTING_OBSTRUCTIONS is None** (lines 566-572)
+- config_vars: `ROUTING_OBSTRUCTIONS`, default=None
+- The config type is
+  `Optional[List[Tuple[str, Decimal, Decimal, Decimal, Decimal]]]`.
+- Self-skips if `ROUTING_OBSTRUCTIONS` is None (lines 589-594).
 
 **Librelane Gating:** `classic.py`
-- Position: Step 22 (line 62)
 - No entry in gating_config_vars - relies on self-skip behavior
 
 **Bazel Implementation:** `odb.bzl`
-- ID: `"Odb.AddRoutingObstructions"` (line 27)
-- step_outputs: `["def", "odb"]` (line 28)
+- ID: `"Odb.AddRoutingObstructions"` (line 118)
+- Uses `ROUTING_OBS_CONFIG_KEYS = ODB_CONFIG_KEYS + ["ROUTING_OBSTRUCTIONS"]`
+- Declares `["def", "odb"]` only when `input_info.routing_obstructions` is set;
+  otherwise declares no design-view outputs so the skipped step passes through
+  prior state.
 
 **Bazel Flow:** `full_flow.bzl`
-- Gating: `if routing_obstructions:` (line 348)
+- Always instantiated, matching LibreLane self-skip behavior
 - Position: Step 22, after RemovePDNObstructions
-- Only called if routing_obstructions is provided
-- Matches librelane self-skip behavior
+- GlobalPlacementSkipIO now chains from `_add_route_obs`.
 
 **Config Variable Audit:**
 
 | Variable | Type | Default | Bazel Status |
 |----------|------|---------|--------------|
-| ROUTING_OBSTRUCTIONS | Optional[List[str]] | None | Wired (ROUTING_OBS_CONFIG_KEYS in odb.bzl) |
+| ROUTING_OBSTRUCTIONS | Optional[List[Tuple[str, Decimal, Decimal, Decimal, Decimal]]] | None | Wired |
 
 | Aspect | Librelane | Bazel | Match |
 |--------|-----------|-------|-------|
 | Step ID | `"Odb.AddRoutingObstructions"` | `"Odb.AddRoutingObstructions"` | Y |
 | inputs | `[ODB]` | (from src) | Y |
-| outputs | `[ODB, DEF]` | `["def", "odb"]` | Y |
-| Gating | Self-skips if ROUTING_OBSTRUCTIONS is None | `if routing_obstructions` | Y |
+| outputs | `[ODB, DEF]` when run; none when skipped | conditional outputs matching configured obstructions | Y |
+| Gating | Self-skips if ROUTING_OBSTRUCTIONS is None | always instantiated, LibreLane self-skips | Y |
 | Position | Step 22 | Step 22 | Y |
 
 **Status: PASS**
+
+Verification:
+- `bazel build //dse/maths:SegmentedMultiplier16x16_sky130hd_add_route_obs`
+  passed.
+- Runtime log reported:
+  `'ROUTING_OBSTRUCTIONS' is not defined. Skipping 'Odb.AddRoutingObstructions'...`
 
 ---
 
 ### Step 23: OpenROAD.GlobalPlacementSkipIO
 
-**Verified:** 2026-01-26
+**Verified:** 2026-07-07 against LibreLane 3.0.4
 
 **Librelane Source:** `librelane/steps/openroad.py`
-- ID: `"OpenROAD.GlobalPlacementSkipIO"` (line 1314)
+- ID: `"OpenROAD.GlobalPlacementSkipIO"` (line 1621)
 - inputs: (inherited from _GlobalPlacement) `[ODB]`
 - outputs: (inherited from OpenROADStep) `[ODB, DEF, NL, PNL, SDC]`
-- **Self-skips if FP_DEF_TEMPLATE is set** (lines 1327-1335): If IO pins were loaded from
-  template, skips first global placement iteration
+- config_vars: `_GlobalPlacement.config_vars` plus
+  `IO_PIN_PLACEMENT_MODE`, `IO_PIN_ORDER_CFG`, and `FP_DEF_TEMPLATE`
+- Self-skips if `FP_DEF_TEMPLATE` is set or `IO_PIN_ORDER_CFG` is set
+  (lines 1658-1667).
+- Otherwise sets `__PL_SKIP_IO = 1` and runs `gpl.tcl`.
 
 **Librelane Gating:** `classic.py`
-- Position: Step 23 (line 63)
 - No entry in gating_config_vars - relies on self-skip behavior
 
 **Bazel Implementation:** `place.bzl`
-- ID: `"OpenROAD.GlobalPlacementSkipIO"` (line 43)
-- step_outputs: `["def", "odb", "nl", "pnl", "sdc"]` (line 44)
+- ID: `"OpenROAD.GlobalPlacementSkipIO"` (line 268)
+- step_outputs: `["def", "odb", "nl", "pnl", "sdc"]`
+- `GPL_SKIP_IO_CONFIG_KEYS` uses `OPENROAD_STEP_CONFIG_KEYS` plus the full
+  `_GlobalPlacement` variable set, including routing-layer, detailed-placement,
+  and resizer variables inherited through LibreLane's `rsz_variables`.
+- Bazel's existing `fp_ppl_mode` attribute is emitted as LibreLane's current
+  `IO_PIN_PLACEMENT_MODE` config key.
 
 **Bazel Flow:** `full_flow.bzl`
-- No gating - always runs (line 359)
+- No gating - always runs
 - Position: Step 23, after AddRoutingObstructions
-- Note: Librelane's self-skip on FP_DEF_TEMPLATE is handled by the step itself
+- LibreLane's self-skip on `FP_DEF_TEMPLATE` and `IO_PIN_ORDER_CFG` is handled
+  by the step itself.
 
 **Config Variable Audit:**
 
-config_vars = _GlobalPlacement.config_vars + [FP_PPL_MODE]
-_GlobalPlacement.config_vars = OpenROADStep.config_vars + routing_layer_variables + [placement vars]
+config_vars = _GlobalPlacement.config_vars + [IO_PIN_PLACEMENT_MODE, IO_PIN_ORDER_CFG, FP_DEF_TEMPLATE]
+_GlobalPlacement.config_vars = OpenROADStep.config_vars + routing_layer_variables + rsz_variables + placement vars
 
 | Variable | Type | Default | Bazel Status |
 |----------|------|---------|--------------|
-| FP_PPL_MODE | Literal | "matching" | Wired |
+| IO_PIN_PLACEMENT_MODE | PPLMode | "matching" | Wired from `fp_ppl_mode` |
+| IO_PIN_ORDER_CFG | Optional[Path] | None | Wired from `fp_pin_order_cfg` |
+| FP_DEF_TEMPLATE | Optional[Path] | None | Wired |
 | PL_TARGET_DENSITY_PCT | Optional[Decimal] | None | Wired |
 | PL_SKIP_INITIAL_PLACEMENT | bool | False | Wired |
 | PL_WIRE_LENGTH_COEF | Decimal | 0.25 | Wired |
 | PL_MIN_PHI_COEFFICIENT | Optional[Decimal] | None | Wired |
 | PL_MAX_PHI_COEFFICIENT | Optional[Decimal] | None | Wired |
+| PL_KEEP_RESIZE_BELOW_OVERFLOW | Optional[Decimal] | None | Wired |
 | FP_CORE_UTIL | Decimal | 50 | Wired (floorplan.bzl) |
 | GPL_CELL_PADDING | Decimal | - | PDK (wired) |
 | RT_CLOCK_MIN_LAYER | Optional[str] | None | Wired |
@@ -1403,6 +1783,8 @@ _GlobalPlacement.config_vars = OpenROADStep.config_vars + routing_layer_variable
 | GRT_ADJUSTMENT | Decimal | 0.3 | Wired |
 | GRT_MACRO_EXTENSION | int | 0 | Wired |
 | GRT_LAYER_ADJUSTMENTS | List[Decimal] | - | PDK (wired) |
+| dpl_variables | mixed | mixed | Wired |
+| rsz_variables | mixed | mixed | Wired |
 | OpenROADStep.config_vars | - | - | Wired (inherited) |
 
 | Aspect | Librelane | Bazel | Match |
@@ -1410,259 +1792,191 @@ _GlobalPlacement.config_vars = OpenROADStep.config_vars + routing_layer_variable
 | Step ID | `"OpenROAD.GlobalPlacementSkipIO"` | `"OpenROAD.GlobalPlacementSkipIO"` | Y |
 | inputs | `[ODB]` | (from src) | Y |
 | outputs | `[ODB, DEF, NL, PNL, SDC]` | `["def", "odb", "nl", "pnl", "sdc"]` | Y |
-| Gating | None (self-skips if FP_DEF_TEMPLATE set) | None | Y |
+| Gating | None; self-skips if template or pin-order cfg is set | None; self-skip in LibreLane | Y |
 | Position | Step 23 | Step 23 | Y |
 
 **Status: PASS**
+
+Verification:
+- `bazel build //dse/maths:SegmentedMultiplier16x16_sky130hd_gpl_skip_io`
+  passed.
+- Runtime log reported dynamic `PL_TARGET_DENSITY_PCT` calculation, then ran
+  `global_placement -skip_io`.
+- Produced:
+  `SegmentedMultiplier16x16.def`, `SegmentedMultiplier16x16.odb`,
+  `SegmentedMultiplier16x16.nl.v`, `SegmentedMultiplier16x16.pnl.v`,
+  `SegmentedMultiplier16x16.sdc`, and `state_out.json`.
 
 ---
 
 ### Step 24: OpenROAD.IOPlacement
 
-**Verified:** 2026-01-27
+**Verified:** 2026-07-07 against LibreLane 3.0.4
 
 **Librelane Source:** `librelane/steps/openroad.py`
-- ID: `"OpenROAD.IOPlacement"` (line 1028)
-- inputs: (inherited from OpenROADStep) `[ODB]`
-- outputs: NOT overridden, so inherits [ODB, DEF] only (see below)
-- **Self-skips in two cases** (lines 1082-1091):
-  1. If `FP_PIN_ORDER_CFG` is not None (custom IO placement used instead)
-  2. If `FP_DEF_TEMPLATE` is not None (IO pins loaded from template)
-
-**Inheritance Chain:** IOPlacement → OpenROADStep → TclStep → Step
-- Step.config_vars = [] (step.py line 464)
-- TclStep: no additional config_vars
-- OpenROADStep.config_vars (openroad.py lines 192-223)
-- IOPlacement.config_vars = OpenROADStep.config_vars + io_layer_variables + step-specific (lines 1031-1077)
-
-**Config Variables (from OpenROADStep.config_vars, lines 192-223):**
-
-| Variable | Type | Default | Description | Bazel Status |
-|----------|------|---------|-------------|--------------|
-| PDN_CONNECT_MACROS_TO_GRID | bool | True | Connect macros to power grid | Wired |
-| PDN_MACRO_CONNECTIONS | Optional[List[str]] | None | Explicit macro power connections | Wired |
-| PDN_ENABLE_GLOBAL_CONNECTIONS | bool | True | Enable global PDN connections | Wired |
-| PNR_SDC_FILE | Optional[Path] | None | SDC file for PnR steps | Wired |
-| FP_DEF_TEMPLATE | Optional[Path] | None | DEF template file | Wired |
-
-**Config Variables (from io_layer_variables, common_variables.py lines 19-46):**
-
-| Variable | Type | Default | Description | Bazel Status |
-|----------|------|---------|-------------|--------------|
-| FP_IO_VEXTEND | Decimal | 0 | Extend vertical pins outside die (µm) | Wired |
-| FP_IO_HEXTEND | Decimal | 0 | Extend horizontal pins outside die (µm) | Wired |
-| FP_IO_VTHICKNESS_MULT | Decimal | 2 | Vertical pin thickness multiplier | Wired |
-| FP_IO_HTHICKNESS_MULT | Decimal | 2 | Horizontal pin thickness multiplier | Wired |
-
-**Config Variables (from IOPlacement-specific, lines 1034-1076):**
-
-| Variable | Type | Default | Description | Bazel Status |
-|----------|------|---------|-------------|--------------|
-| FP_PPL_MODE | Literal["matching",...] | "matching" | IO placement mode | Wired |
-| FP_IO_MIN_DISTANCE | Optional[Decimal] | pdk=True | Min distance between pins | Wired (PDK) |
-| FP_PIN_ORDER_CFG | Optional[Path] | None | Custom pin config file | Wired |
-| FP_IO_VLENGTH | Optional[Decimal] | pdk=True | Vertical pin length | Wired (PDK) |
-| FP_IO_HLENGTH | Optional[Decimal] | pdk=True | Horizontal pin length | Wired (PDK) |
-
-**Librelane Gating:** `classic.py`
-- Position: Step 24 (line 64)
-- No entry in gating_config_vars - relies on self-skip behavior
-
-**Librelane Classic Flow Sequence (lines 63-67):**
-```
-Step 23: OpenROAD.GlobalPlacementSkipIO
-Step 24: OpenROAD.IOPlacement         ← self-skips if config set
-Step 25: Odb.CustomIOPlacement        ← self-skips if FP_PIN_ORDER_CFG is None
-Step 26: Odb.ApplyDEFTemplate         ← self-skips if FP_DEF_TEMPLATE is None
-Step 27: OpenROAD.GlobalPlacement
-```
-All four steps run in sequence; three self-skip based on config.
+- ID: `"OpenROAD.IOPlacement"` (line 1298)
+- inputs: inherited from `OpenROADStep`: `[ODB]`
+- outputs: inherited from `OpenROADStep`: `[ODB, DEF, NL, PNL, SDC]`
+- config_vars: `OpenROADStep.config_vars + io_layer_variables` plus
+  `IO_PIN_CORNER_AVOIDANCE`, `IO_PIN_PLACEMENT_MODE`,
+  `IO_PIN_MIN_DISTANCE`, `IO_PIN_MIN_DISTANCE_IN_TRACKS`,
+  `IO_PIN_ORDER_CFG`, `IO_EXCLUDE_PIN_REGION`, and `FP_DEF_TEMPLATE`
+- Self-skips when `IO_PIN_ORDER_CFG` or `FP_DEF_TEMPLATE` is set.
 
 **Bazel Implementation:** `place.bzl`
-- ID: `"OpenROAD.IOPlacement"` (line 103)
-- config_keys: `PLACE_CONFIG_KEYS` = `BASE_CONFIG_KEYS` (line 14)
-- step_outputs: `["def", "odb"]` (line 103)
+- ID: `"OpenROAD.IOPlacement"`
+- Target suffix: `_io_place`
+- Uses current LibreLane `IO_PIN_*` names in `IO_PLACEMENT_CONFIG_KEYS`.
+- Declares design-view outputs only when neither `fp_pin_order_cfg` nor
+  `fp_def_template` is set; otherwise LibreLane self-skips and Bazel passes
+  state through.
 
 **Bazel Flow:** `full_flow.bzl`
-- **STRUCTURAL DIFFERENCE** (lines 315-334):
-  - Bazel uses conditional branching - only ONE step runs:
-    - If def_template → ApplyDEFTemplate (Step 26)
-    - Elif pin_order_cfg → CustomIOPlacement (Step 25)
-    - Else → IOPlacement (Step 24)
-  - Steps 24-26 are mutually exclusive in Bazel
-  - Librelane runs all three steps, with appropriate ones self-skipping
-
-**Functional Equivalence:**
-- The end result should be the same (only one step does actual work)
-- But the step sequence is different (Bazel skips at flow level, librelane self-skips)
+- Runs after `_gpl_skip_io` and before `_custom_io`.
+- Always instantiated, matching LibreLane Classic self-skip behavior.
 
 | Aspect | Librelane | Bazel | Match |
 |--------|-----------|-------|-------|
 | Step ID | `"OpenROAD.IOPlacement"` | `"OpenROAD.IOPlacement"` | Y |
-| inputs | `[ODB]` | (from src) | Y |
-| outputs | `[ODB, DEF]` | `["def", "odb"]` | Y |
-| config_keys | 14 variables | IO_PLACEMENT_CONFIG_KEYS (all 14) | Y |
-| Gating | Self-skips if config set | Explicit conditional | **structural diff** |
-| Position | Step 24 | Varies | **structural diff** |
+| inputs | `[ODB]` | from `_gpl_skip_io` | Y |
+| outputs | `[ODB, DEF, NL, PNL, SDC]` when run | conditional outputs matching skip behavior | Y |
+| config keys | current `IO_PIN_*` names | current `IO_PIN_*` names | Y |
+| Gating | self-skips for pin-order/template config | always instantiated, LibreLane self-skips | Y |
+| Position | Step 24 | Step 24 | Y |
 
-**Status: PASS (functionally equivalent, structural difference noted)**
+**Status: PASS**
+
+Verification:
+- `bazel build //dse/maths:SegmentedMultiplier16x16_sky130hd_io_place`
+  passed.
+- Runtime log ran `place_pins -hor_layers met3 -ver_layers met2` and placed
+  73 IO pins.
 
 ---
 
 ### Step 25: Odb.CustomIOPlacement
 
-**Verified:** 2026-01-27
+**Verified:** 2026-07-07 against LibreLane 3.0.4
 
 **Librelane Source:** `librelane/steps/odb.py`
-- ID: `"Odb.CustomIOPlacement"` (line 640)
-- inputs: `[DesignFormat.ODB]` (inherited from OdbpyStep, line 47)
-- outputs: `[DesignFormat.ODB, DesignFormat.DEF]` (inherited from OdbpyStep, line 48)
-- **Self-skips if FP_PIN_ORDER_CFG is None** (lines 716-719)
-
-**Inheritance Chain:** CustomIOPlacement → OdbpyStep → Step
-- Step.config_vars = [] (step.py line 464)
-- OdbpyStep: no additional config_vars
-- CustomIOPlacement.config_vars = io_layer_variables + step-specific (lines 644-681)
-
-**Config Variables (from io_layer_variables, common_variables.py lines 19-46):**
-
-| Variable | Type | Default | Description | Bazel Status |
-|----------|------|---------|-------------|--------------|
-| FP_IO_VEXTEND | Decimal | 0 | Extend vertical pins outside die (µm) | Wired |
-| FP_IO_HEXTEND | Decimal | 0 | Extend horizontal pins outside die (µm) | Wired |
-| FP_IO_VTHICKNESS_MULT | Decimal | 2 | Vertical pin thickness multiplier | Wired |
-| FP_IO_HTHICKNESS_MULT | Decimal | 2 | Horizontal pin thickness multiplier | Wired |
-
-**Config Variables (from CustomIOPlacement-specific, lines 645-681):**
-
-| Variable | Type | Default | Description | Bazel Status |
-|----------|------|---------|-------------|--------------|
-| FP_IO_VLENGTH | Optional[Decimal] | pdk=True | Vertical pin length | Wired (PDK) |
-| FP_IO_HLENGTH | Optional[Decimal] | pdk=True | Horizontal pin length | Wired (PDK) |
-| FP_PIN_ORDER_CFG | Optional[Path] | None | Pin order config file | Wired |
-| ERRORS_ON_UNMATCHED_IO | Literal[...] | "unmatched_design" | Error on unmatched pins | Wired |
-
-**Librelane Gating:** `classic.py`
-- Position: Step 25 (line 65)
-- No entry in gating_config_vars - relies on self-skip behavior
+- ID: `"Odb.CustomIOPlacement"` (line 656)
+- inputs: inherited from `OdbpyStep`: `[ODB]`
+- outputs: inherited from `OdbpyStep`: `[ODB, DEF]`
+- config_vars: `io_layer_variables` plus `IO_PIN_ORDER_CFG` and
+  `ERRORS_ON_UNMATCHED_IO`
+- Self-skips when `IO_PIN_ORDER_CFG` is not set.
 
 **Bazel Implementation:** `place.bzl`
-- ID: `"Odb.CustomIOPlacement"` (line 124)
-- config_keys: `IO_LAYER_CONFIG_KEYS` (line 124)
-- step_outputs: `["def", "odb"]` (line 125)
-- Passes FP_PIN_ORDER_CFG via extra_config (lines 120-122)
+- ID: `"Odb.CustomIOPlacement"`
+- Target suffix: `_custom_io`
+- Uses current LibreLane `IO_PIN_*` names in
+  `CUSTOM_IO_PLACEMENT_CONFIG_KEYS`.
+- Declares DEF/ODB outputs only when `fp_pin_order_cfg` is set; otherwise
+  LibreLane self-skips and Bazel passes state through.
 
 **Bazel Flow:** `full_flow.bzl`
-- Parameter: `pin_order_cfg = None` (line 104)
-- Gating: `elif pin_order_cfg:` (line 324)
-- Position: Conditional - only runs if pin_order_cfg provided and def_template is None
-
-**Structural Difference (same as Steps 24-26):**
-- Librelane runs steps 24-26 sequentially, with each self-skipping based on config
-- Bazel uses conditional branching - only ONE of the three steps is invoked
-- Functionally equivalent but different step sequences
+- Runs after `_io_place` and before `_def_template`.
+- Always instantiated, matching LibreLane Classic self-skip behavior.
 
 | Aspect | Librelane | Bazel | Match |
 |--------|-----------|-------|-------|
 | Step ID | `"Odb.CustomIOPlacement"` | `"Odb.CustomIOPlacement"` | Y |
-| inputs | `[ODB]` | (from src) | Y |
-| outputs | `[ODB, DEF]` | `["def", "odb"]` | Y |
-| config_keys | 8 variables | CUSTOM_IO_PLACEMENT_CONFIG_KEYS (all 8) | Y |
-| Gating | Self-skips if FP_PIN_ORDER_CFG is None | `elif pin_order_cfg` | **structural diff** |
-| Position | Step 25 | Conditional | **structural diff** |
+| inputs | `[ODB]` | from `_io_place` | Y |
+| outputs | `[ODB, DEF]` when run | conditional outputs matching skip behavior | Y |
+| config keys | current `IO_PIN_*` names | current `IO_PIN_*` names | Y |
+| Gating | self-skips if `IO_PIN_ORDER_CFG` is unset | always instantiated, LibreLane self-skips | Y |
+| Position | Step 25 | Step 25 | Y |
 
-**Status: PASS (functionally equivalent, structural difference noted)**
+**Status: PASS**
+
+Verification:
+- `bazel build //dse/maths:SegmentedMultiplier16x16_sky130hd_custom_io`
+  passed.
+- Runtime log reported:
+  `No custom I/O placement file configured, skipping 'Odb.CustomIOPlacement'...`
 
 ---
 
 ### Step 26: Odb.ApplyDEFTemplate
 
-**Verified:** 2026-01-27
+**Verified:** 2026-07-07 against LibreLane 3.0.4
 
 **Librelane Source:** `librelane/steps/odb.py`
-- ID: `"Odb.ApplyDEFTemplate"` (line 239)
-- inputs: `[DesignFormat.ODB]` (inherited from OdbpyStep, line 47)
-- outputs: `[DesignFormat.ODB, DesignFormat.DEF]` (inherited from OdbpyStep, line 48)
-- **Self-skips if FP_DEF_TEMPLATE is None** (lines 279-282)
-
-**Inheritance Chain:** ApplyDEFTemplate → OdbpyStep → Step
-- Step.config_vars = [] (step.py line 464)
-- OdbpyStep: no additional config_vars
-- ApplyDEFTemplate.config_vars (lines 243-259)
-
-**Config Variables (from ApplyDEFTemplate, lines 243-259):**
-
-| Variable | Type | Default | Description | Bazel Status |
-|----------|------|---------|-------------|--------------|
-| FP_DEF_TEMPLATE | Optional[Path] | None | DEF template file | Wired |
-| FP_TEMPLATE_MATCH_MODE | Literal["strict","permissive"] | "strict" | Pin matching mode | Wired |
-| FP_TEMPLATE_COPY_POWER_PINS | bool | False | Copy power pins from template | Wired |
-
-**Librelane Gating:** `classic.py`
-- Position: Step 26 (line 66)
-- No entry in gating_config_vars - relies on self-skip behavior
+- ID: `"Odb.ApplyDEFTemplate"` (line 261)
+- inputs: inherited from `OdbpyStep`: `[ODB]`
+- outputs: inherited from `OdbpyStep`: `[ODB, DEF]`
+- config_vars: `FP_DEF_TEMPLATE`, `FP_TEMPLATE_MATCH_MODE`, and
+  `FP_TEMPLATE_COPY_POWER_PINS`
+- Self-skips when `FP_DEF_TEMPLATE` is not set.
 
 **Bazel Implementation:** `place.bzl`
-- ID: `"Odb.ApplyDEFTemplate"` (line 143)
-- config_keys: `APPLY_DEF_TEMPLATE_CONFIG_KEYS` (line 143)
-- step_outputs: `["def", "odb"]` (line 144)
+- ID: `"Odb.ApplyDEFTemplate"`
+- Target suffix: `_def_template`
+- Declares DEF/ODB outputs only when `fp_def_template` is set; otherwise
+  LibreLane self-skips and Bazel passes state through.
 
 **Bazel Flow:** `full_flow.bzl`
-- Parameter: `def_template = None` (line 105)
-- Gating: `if def_template:` (line 372)
-- Position: Conditional - only runs if def_template provided
-
-**Structural Difference (same as Steps 24-26):**
-- Librelane runs steps 24-26 sequentially, with each self-skipping based on config
-- Bazel uses conditional branching - only ONE of the three steps is invoked
-- Functionally equivalent but different step sequences
+- Runs after `_custom_io` and before `_gpl`.
+- Always instantiated, matching LibreLane Classic self-skip behavior.
 
 | Aspect | Librelane | Bazel | Match |
 |--------|-----------|-------|-------|
 | Step ID | `"Odb.ApplyDEFTemplate"` | `"Odb.ApplyDEFTemplate"` | Y |
-| inputs | `[ODB]` | (from src) | Y |
-| outputs | `[ODB, DEF]` | `["def", "odb"]` | Y |
-| config_keys | 3 variables | APPLY_DEF_TEMPLATE_CONFIG_KEYS (all 3) | Y |
-| Gating | Self-skips if FP_DEF_TEMPLATE is None | `if def_template` | **structural diff** |
-| Position | Step 26 | Conditional | **structural diff** |
+| inputs | `[ODB]` | from `_custom_io` | Y |
+| outputs | `[ODB, DEF]` when run | conditional outputs matching skip behavior | Y |
+| config keys | 3 variables | `APPLY_DEF_TEMPLATE_CONFIG_KEYS` | Y |
+| Gating | self-skips if `FP_DEF_TEMPLATE` is unset | always instantiated, LibreLane self-skips | Y |
+| Position | Step 26 | Step 26 | Y |
 
-**Status: PASS (functionally equivalent, structural difference noted)**
+**Status: PASS**
+
+Verification:
+- `bazel build //dse/maths:SegmentedMultiplier16x16_sky130hd_def_template`
+  passed.
+- Runtime log reported:
+  `No DEF template provided, skipping 'Odb.ApplyDEFTemplate'...`
+- `bazel build //dse/maths:SegmentedMultiplier16x16_sky130hd_gpl` also passed,
+  verifying the next stage consumes the sequential IO state.
 
 ---
 
 ### Step 27: OpenROAD.GlobalPlacement
 
-**Verified:** 2026-01-27
+**Verified:** 2026-07-07 against LibreLane 3.0.4
 
 **Librelane Source:** `librelane/steps/openroad.py`
-- ID: `"OpenROAD.GlobalPlacement"` (line 1279)
-- inputs: `[DesignFormat.ODB]` (inherited from OpenROADStep, line 179)
-- outputs: `[ODB, DEF, SDC, NETLIST, POWERED_NETLIST]` (inherited from OpenROADStep, lines 180-186)
+- ID: `"OpenROAD.GlobalPlacement"` (line 1589)
+- inputs: inherited from `OpenROADStep`: `[ODB]`
+- outputs: inherited from `OpenROADStep`: `[ODB, DEF, NL, PNL, SDC]`
 - Performs initial cell placement with time-driven and routability-driven modes
+- config_vars: `_GlobalPlacement.config_vars` plus `PL_TIMING_DRIVEN`,
+  `PL_ROUTABILITY_DRIVEN`, and `PL_ROUTABILITY_OVERFLOW_THRESHOLD`
 
 **Librelane Gating:** `classic.py`
-- Position: Step 27 (line 67)
 - No entry in gating_config_vars - always runs
 
 **Bazel Implementation:** `place.bzl`
-- ID: `"OpenROAD.GlobalPlacement"` (line 148)
-- step_outputs: `["def", "odb", "nl", "pnl", "sdc"]` (line 149)
-- Uses GPL_CONFIG_KEYS (lines 56-70)
+- ID: `"OpenROAD.GlobalPlacement"`
+- step_outputs: `["def", "odb", "nl", "pnl", "sdc"]`
+- `GPL_CONFIG_KEYS` uses `OPENROAD_STEP_CONFIG_KEYS`, routing-layer variables,
+  dpl/rsz variables inherited through `rsz_variables`, and the current
+  `PL_TIMING_DRIVEN` key.
 
 **Bazel Flow:** `full_flow.bzl`
 - No gating - always runs
-- Position: Step 27, after IO placement
-- Chains from: `_io` target (output of steps 24-26)
+- Position: Step 27, after ApplyDEFTemplate
+- Chains from: `_def_template` target, which may pass through state when no DEF
+  template is configured.
 
 **Config Variable Audit:**
 
-config_vars = _GlobalPlacement.config_vars + [PL_TIME_DRIVEN, PL_ROUTABILITY_DRIVEN,
+config_vars = _GlobalPlacement.config_vars + [PL_TIMING_DRIVEN, PL_ROUTABILITY_DRIVEN,
                                                PL_ROUTABILITY_OVERFLOW_THRESHOLD]
-_GlobalPlacement.config_vars = OpenROADStep.config_vars + routing_layer_variables + [placement vars]
+_GlobalPlacement.config_vars = OpenROADStep.config_vars + routing_layer_variables + rsz_variables + placement vars
 
 | Variable | Type | Default | Bazel Status |
 |----------|------|---------|--------------|
-| PL_TIME_DRIVEN | bool | True | Wired |
+| PL_TIMING_DRIVEN | bool | False | Wired |
 | PL_ROUTABILITY_DRIVEN | bool | True | Wired |
 | PL_ROUTABILITY_OVERFLOW_THRESHOLD | Optional[Decimal] | None | Wired |
 | PL_TARGET_DENSITY_PCT | Optional[Decimal] | None | Wired |
@@ -1670,6 +1984,7 @@ _GlobalPlacement.config_vars = OpenROADStep.config_vars + routing_layer_variable
 | PL_WIRE_LENGTH_COEF | Decimal | 0.25 | Wired |
 | PL_MIN_PHI_COEFFICIENT | Optional[Decimal] | None | Wired |
 | PL_MAX_PHI_COEFFICIENT | Optional[Decimal] | None | Wired |
+| PL_KEEP_RESIZE_BELOW_OVERFLOW | Optional[Decimal] | None | Wired |
 | FP_CORE_UTIL | Decimal | 50 | Wired |
 | GPL_CELL_PADDING | Decimal | - | PDK (wired) |
 | RT_CLOCK_MIN_LAYER | Optional[str] | None | Wired |
@@ -1677,6 +1992,8 @@ _GlobalPlacement.config_vars = OpenROADStep.config_vars + routing_layer_variable
 | GRT_ADJUSTMENT | Decimal | 0.3 | Wired |
 | GRT_MACRO_EXTENSION | int | 0 | Wired |
 | GRT_LAYER_ADJUSTMENTS | List[Decimal] | - | PDK (wired) |
+| dpl_variables | mixed | mixed | Wired |
+| rsz_variables | mixed | mixed | Wired |
 | OpenROADStep.config_vars | - | - | Wired (inherited) |
 
 | Aspect | Librelane | Bazel | Match |
@@ -1690,27 +2007,33 @@ _GlobalPlacement.config_vars = OpenROADStep.config_vars + routing_layer_variable
 
 **Status: PASS**
 
+Verification:
+- `bazel build //dse/maths:SegmentedMultiplier16x16_sky130hd_gpl` passed.
+- Runtime log ran routability-driven global placement. It did not pass
+  `-timing_driven`, matching LibreLane's default `PL_TIMING_DRIVEN = False`.
+- Produced DEF, ODB, NL, PNL, SDC, and `state_out.json`.
+
 ---
 
 ### Step 28: Odb.WriteVerilogHeader
 
-**Verified:** 2026-01-27
+**Verified:** 2026-07-07 against LibreLane 3.0.4
 
 **Librelane Source:** `librelane/steps/odb.py`
-- ID: `"Odb.WriteVerilogHeader"` (line 336)
-- inputs: `[DesignFormat.ODB, DesignFormat.JSON_HEADER]` (line 338)
-- outputs: `[DesignFormat.VERILOG_HEADER]` (line 339)
+- ID: `"Odb.WriteVerilogHeader"` (line 353)
+- inputs: `[DesignFormat.ODB, DesignFormat.JSON_HEADER]`
+- outputs: `[DesignFormat.VERILOG_HEADER]`
 - Writes a Verilog header with power port definitions
 
 **Librelane Gating:** `classic.py`
-- Position: Step 28 (line 68)
 - No entry in gating_config_vars - always runs
-- Note: Substituted to None in VHDLClassic flow (line 325)
 
 **Bazel Implementation:** `odb.bzl`
-- ID: `"Odb.WriteVerilogHeader"` (line 43)
+- ID: `"Odb.WriteVerilogHeader"`
 - step_outputs: `["vh"]`
-- Uses WRITE_VH_CONFIG_KEYS
+- Uses `WRITE_VH_CONFIG_KEYS = ODB_CONFIG_KEYS + ["VERILOG_POWER_DEFINE"]`
+  because the inherited `OdbpyStep.get_command()` loads tech, cell, extra, pad,
+  and macro LEFs before invoking the script.
 
 **Bazel Flow:** `full_flow.bzl`
 - No gating - always runs
@@ -1737,28 +2060,31 @@ config_vars = OdbpyStep.config_vars + [VERILOG_POWER_DEFINE]
 
 **Status: PASS**
 
+Verification:
+- `bazel build //dse/maths:SegmentedMultiplier16x16_sky130hd_vh` passed.
+- Produced `SegmentedMultiplier16x16.vh` and `state_out.json`.
+
 ---
 
 ### Step 29: Checker.PowerGridViolations
 
-**Verified:** 2026-01-27
+**Verified:** 2026-07-07 against LibreLane 3.0.4
 
 **Librelane Source:** `librelane/steps/checker.py`
-- ID: `"Checker.PowerGridViolations"` (line 319)
-- inputs: `[]` (inherited from MetricChecker, line 74)
-- outputs: `[]` (inherited from MetricChecker, line 75)
-- deferred: `True` (inherited, line 79) - raises deferred error
-- metric_name: `"design__power_grid_violation__count"` (line 322)
-- error_on_var: `ERROR_ON_PDN_VIOLATIONS` (default=True, lines 325-331)
+- ID: `"Checker.PowerGridViolations"` (line 328)
+- inputs: `[]` inherited from `MetricChecker`
+- outputs: `[]` inherited from `MetricChecker`
+- deferred: `True` inherited from `MetricChecker`
+- metric_name: `"design__power_grid_violation__count"`
+- error_on_var: `ERROR_ON_PDN_VIOLATIONS`, default=True
 
 **Librelane Gating:** `classic.py`
-- Position: Step 29 (line 69)
 - No entry in gating_config_vars - always runs
 
 **Bazel Implementation:** `checker.bzl`
-- ID: `"Checker.PowerGridViolations"` (line 53)
+- ID: `"Checker.PowerGridViolations"`
 - step_outputs: `[]`
-- Uses POWER_GRID_VIOLATIONS_CONFIG_KEYS
+- Uses `POWER_GRID_VIOLATIONS_CONFIG_KEYS`
 
 **Bazel Flow:** `full_flow.bzl`
 - No gating - always runs (lines 406-410)
@@ -1785,27 +2111,32 @@ MetricChecker (parent) has no config_vars
 
 **Status: PASS**
 
+Verification:
+- `bazel build //dse/maths:SegmentedMultiplier16x16_sky130hd_chk_pdn` passed.
+- Runtime log reported the power grid violation check was clear.
+
 ---
 
 ### Step 30: OpenROAD.STAMidPNR
 
-**Verified:** 2026-01-27
+**Verified:** 2026-07-07 against LibreLane 3.0.4
 
 **Librelane Source:** `librelane/steps/openroad.py`
-- ID: `"OpenROAD.STAMidPNR"` (line 364)
-- inputs: `[DesignFormat.ODB]` (line 368)
-- outputs: `[]` (line 369)
+- ID: `"OpenROAD.STAMidPNR"` (line 536)
+- inputs: `[DesignFormat.ODB]`
+- outputs: `[]`
 - Performs static timing analysis with estimated parasitics
 - Note: This step appears 4 times in the Classic flow (steps 30, 35, 37, 45)
 
 **Librelane Gating:** `classic.py`
-- Position: Step 30 (line 70) - first occurrence after GlobalPlacement
+- First occurrence after `Checker.PowerGridViolations`
 - No entry in gating_config_vars - always runs
 
 **Bazel Implementation:** `sta.bzl`
-- ID: `"OpenROAD.STAMidPNR"` (line 81)
+- ID: `"OpenROAD.STAMidPNR"`
 - step_outputs: `[]`
-- Uses STA_CONFIG_KEYS = BASE_CONFIG_KEYS
+- Uses `STA_CONFIG_KEYS = OPENROAD_STEP_CONFIG_KEYS`
+- Declares `max.rpt` and `min.rpt` as extra outputs.
 
 **Bazel Flow:** `full_flow.bzl`
 - No gating - always runs (lines 412-417)
@@ -1816,7 +2147,8 @@ MetricChecker (parent) has no config_vars
 **Config Variable Audit:**
 
 STAMidPNR inherits from OpenROADStep (no additional config_vars).
-OpenROADStep.prepare_env() uses FALLBACK_SDC_FILE and EXTRA_EXCLUDED_CELLS.
+OpenROADStep.prepare_env() uses `FALLBACK_SDC`, `EXTRA_EXCLUDED_CELLS`, and
+`PNR_EXCLUDED_CELL_FILE`.
 
 | Variable | Type | Default | Bazel Status |
 |----------|------|---------|--------------|
@@ -1824,9 +2156,12 @@ OpenROADStep.prepare_env() uses FALLBACK_SDC_FILE and EXTRA_EXCLUDED_CELLS.
 | PDN_MACRO_CONNECTIONS | Optional[List[str]] | None | Wired |
 | PDN_ENABLE_GLOBAL_CONNECTIONS | bool | True | Wired |
 | PNR_SDC_FILE | Optional[Path] | None | Wired |
-| FP_DEF_TEMPLATE | Optional[Path] | None | Wired |
-| FALLBACK_SDC_FILE | (from prepare_env) | - | Wired |
+| STA_EXTRA_CORNER_TCL_FILE | Optional[Path] | None | Wired |
+| DEDUPLICATE_CORNERS | bool | False | Wired |
+| PNR_CORNERS / RC variables | mixed | mixed | Wired through `OPENROAD_STEP_CONFIG_KEYS` |
+| FALLBACK_SDC | (from prepare_env) | - | Wired |
 | EXTRA_EXCLUDED_CELLS | (from prepare_env) | - | Wired |
+| PNR_EXCLUDED_CELL_FILE | PDK file | - | Wired |
 
 | Aspect | Librelane | Bazel | Match |
 |--------|-----------|-------|-------|
@@ -1839,14 +2174,19 @@ OpenROADStep.prepare_env() uses FALLBACK_SDC_FILE and EXTRA_EXCLUDED_CELLS.
 
 **Status: PASS**
 
+Verification:
+- `bazel build //dse/maths:SegmentedMultiplier16x16_sky130hd_sta_mid_gpl`
+  passed.
+- Produced `max.rpt`, `min.rpt`, and `state_out.json`.
+
 ---
 
 ### Step 31: OpenROAD.RepairDesignPostGPL
 
-**Verified:** 2026-01-28
+**Verified:** 2026-07-07 against LibreLane 3.0.4
 
 **Librelane Source:** `librelane/steps/openroad.py`
-- ID: `"OpenROAD.RepairDesignPostGPL"` (line 2116)
+- ID: `"OpenROAD.RepairDesignPostGPL"` (line 2562)
 - inputs: `[DesignFormat.ODB]` (inherited from OpenROADStep)
 - outputs: `[ODB, DEF, SDC, NETLIST, POWERED_NETLIST]` (inherited from OpenROADStep)
 - Runs design repairs after global placement
@@ -1858,9 +2198,11 @@ OpenROADStep.prepare_env() uses FALLBACK_SDC_FILE and EXTRA_EXCLUDED_CELLS.
 - Default: `True` (line 133)
 
 **Bazel Implementation:** `place.bzl`
-- ID: `"OpenROAD.RepairDesignPostGPL"` (line 162)
-- step_outputs: `["def", "odb", "nl", "pnl", "sdc"]` (line 164)
-- Uses: `PLACE_CONFIG_KEYS = BASE_CONFIG_KEYS` (line 14) - **WRONG, missing step vars**
+- ID: `"OpenROAD.RepairDesignPostGPL"`
+- step_outputs: `["def", "odb", "nl", "pnl", "sdc"]`
+- Uses `REPAIR_DESIGN_CONFIG_KEYS`.
+- `RESIZER_CONFIG_KEYS` now starts from `OPENROAD_STEP_CONFIG_KEYS`, then adds
+  routing-layer, grt, dpl, and rsz variables.
 
 **Bazel Flow:** `full_flow.bzl`
 - Parameter: `run_post_gpl_design_repair = True` (line 109)
@@ -1935,11 +2277,11 @@ Inheritance chain: RepairDesignPostGPL -> ResizerStep -> OpenROADStep
 | DESIGN_REPAIR_MAX_CAP_PCT | Decimal | 20 | Wired |
 | DESIGN_REPAIR_REMOVE_BUFFERS | bool | False | Wired |
 
-**OpenROADStep.prepare_env() (openroad.py:242-258):**
+**OpenROADStep.prepare_env():**
 
 | Variable | Usage | Bazel Status |
 |----------|-------|--------------|
-| FALLBACK_SDC_FILE | env["_SDC_IN"] | Wired |
+| FALLBACK_SDC | env["_SDC_IN"] | Wired |
 | EXTRA_EXCLUDED_CELLS | env["_PNR_EXCLUDED_CELLS"] | Wired |
 | PNR_EXCLUDED_CELL_FILE | env["_PNR_EXCLUDED_CELLS"] | Wired (PdkInfo) |
 | LIB | env["_PNR_LIBS"] | Wired (PdkInfo) |
@@ -1952,24 +2294,26 @@ Inheritance chain: RepairDesignPostGPL -> ResizerStep -> OpenROADStep
 | Gating var | RUN_POST_GPL_DESIGN_REPAIR | run_post_gpl_design_repair | Y |
 | Gating default | True | True | Y |
 | Position | Step 31 | Step 31 | Y |
-| Config vars | 26 total | All wired | Y |
-
-**Fixes Applied (2026-01-28):**
-1. Created RESIZER_CONFIG_KEYS in place.bzl with all ResizerStep inherited vars
-2. Created REPAIR_DESIGN_CONFIG_KEYS in place.bzl with step-specific vars
-3. Wired all 13 missing variables via 5-location pattern
-4. Updated _repair_design_post_gpl_impl to use REPAIR_DESIGN_CONFIG_KEYS
+| Config vars | ResizerStep + own vars | All wired | Y |
 
 **Status: PASS**
+
+Verification:
+- `bazel build //dse/maths:SegmentedMultiplier16x16_sky130hd_rsz_gpl`
+  passed.
+- Runtime log ran `repair_design`, inserted input/output buffers, then wrote
+  DEF, ODB, NL, PNL, SDC, and `state_out.json`.
+- LibreLane warned that `GRT_ANTENNA_ITERS` and `GRT_ANTENNA_MARGIN` are
+  deprecated; those belong to later global-routing/antenna variable cleanup.
 
 ---
 
 ### Step 32: Odb.ManualGlobalPlacement
 
-**Verified:** 2026-01-28
+**Verified:** 2026-07-07 against LibreLane 3.0.4
 
 **Librelane Source:** `librelane/steps/odb.py`
-- ID: `"Odb.ManualGlobalPlacement"` (line 984)
+- ID: `"Odb.ManualGlobalPlacement"` (line 1008)
 - inputs: `[DesignFormat.ODB]` (inherited from OdbpyStep)
 - outputs: `[DesignFormat.ODB, DesignFormat.DEF]` (inherited from OdbpyStep)
 - Inheritance: ManualGlobalPlacement -> OdbpyStep -> Step
@@ -1980,15 +2324,14 @@ Inheritance chain: RepairDesignPostGPL -> ResizerStep -> OpenROADStep
 - No entry in gating_config_vars - relies on self-skip behavior
 
 **Bazel Implementation:** `odb.bzl`
-- ID: `"Odb.ManualGlobalPlacement"` (line 49)
-- step_outputs: `["def", "odb"]` (line 50)
-- Uses: MANUAL_GLOBAL_PLACEMENT_CONFIG_KEYS (line 10)
+- ID: `"Odb.ManualGlobalPlacement"`
+- Uses `MANUAL_GLOBAL_PLACEMENT_CONFIG_KEYS = ODB_CONFIG_KEYS + ["MANUAL_GLOBAL_PLACEMENTS"]`
+- Declares DEF/ODB outputs only when `manual_global_placements` is configured;
+  otherwise LibreLane self-skips and Bazel passes state through.
 
 **Bazel Flow:** `full_flow.bzl`
 - Parameter: `manual_global_placements = None` (line 118)
-- Gating: `if manual_global_placements:` (line 431)
-- Position: Step 32, after RepairDesignPostGPL (lines 431-438)
-- Only called if manual_global_placements is provided
+- Always instantiated after RepairDesignPostGPL, matching LibreLane self-skip behavior
 
 **Config Variable Audit:**
 
@@ -2011,20 +2354,25 @@ OdbpyStep has no config_vars (inherits empty from Step base).
 | Step ID | `"Odb.ManualGlobalPlacement"` | `"Odb.ManualGlobalPlacement"` | Y |
 | inputs | `[ODB]` | (from src) | Y |
 | outputs | `[ODB, DEF]` | `["def", "odb"]` | Y |
-| Gating | Self-skips if MANUAL_GLOBAL_PLACEMENTS is None | `if manual_global_placements` | Y |
+| Gating | Self-skips if MANUAL_GLOBAL_PLACEMENTS is None | always instantiated, LibreLane self-skips | Y |
 | Position | Step 32 | Step 32 | Y |
 | Config vars | 1 total | 1 wired | Y |
 
 **Status: PASS**
 
+Verification:
+- `bazel build //dse/maths:SegmentedMultiplier16x16_sky130hd_mgpl` passed.
+- Runtime log reported:
+  `'MANUAL_GLOBAL_PLACEMENTS' not set. Skipping 'Odb.ManualGlobalPlacement'...`
+
 ---
 
 ### Step 33: OpenROAD.DetailedPlacement
 
-**Verified:** 2026-01-28
+**Verified:** 2026-07-07 against LibreLane 3.0.4
 
 **Librelane Source:** `librelane/steps/openroad.py`
-- ID: `"OpenROAD.DetailedPlacement"` (line 1371)
+- ID: `"OpenROAD.DetailedPlacement"` (line 1680)
 - inputs: `[DesignFormat.ODB]` (inherited from OpenROADStep)
 - outputs: `[ODB, DEF, SDC, NETLIST, POWERED_NETLIST]` (inherited from OpenROADStep)
 - Inheritance: DetailedPlacement -> OpenROADStep
@@ -2036,9 +2384,9 @@ OdbpyStep has no config_vars (inherits empty from Step base).
 - No entry in gating_config_vars - always runs
 
 **Bazel Implementation:** `place.bzl`
-- ID: `"OpenROAD.DetailedPlacement"` (line 232)
-- step_outputs: `["def", "odb"]` (line 232)
-- Uses: DPL_CONFIG_KEYS (lines 63-79)
+- ID: `"OpenROAD.DetailedPlacement"`
+- step_outputs: `["def", "odb", "nl", "pnl", "sdc"]`
+- Uses `DPL_CONFIG_KEYS = OPENROAD_STEP_CONFIG_KEYS + dpl_variables`
 
 **Bazel Flow:** `full_flow.bzl`
 - No gating - always runs (lines 442-447)
@@ -2060,12 +2408,13 @@ config_vars = OpenROADStep.config_vars + dpl_variables
 | PNR_SDC_FILE | Optional[Path] | None | Wired |
 | FP_DEF_TEMPLATE | Optional[Path] | None | Wired |
 
-**OpenROADStep.prepare_env() (openroad.py:242-258):**
+**OpenROADStep.prepare_env():**
 
 | Variable | Usage | Bazel Status |
 |----------|-------|--------------|
-| FALLBACK_SDC_FILE | env["_SDC_IN"] | Wired |
+| FALLBACK_SDC | env["_SDC_IN"] | Wired |
 | EXTRA_EXCLUDED_CELLS | env["_PNR_EXCLUDED_CELLS"] | Wired |
+| PNR_EXCLUDED_CELL_FILE | env["_PNR_EXCLUDED_CELLS"] | Wired |
 
 **dpl_variables (common_variables.py:255-283):**
 
@@ -2080,28 +2429,28 @@ config_vars = OpenROADStep.config_vars + dpl_variables
 |--------|-----------|-------|-------|
 | Step ID | `"OpenROAD.DetailedPlacement"` | `"OpenROAD.DetailedPlacement"` | Y |
 | inputs | `[ODB]` | (from src) | Y |
-| outputs | `[ODB, DEF, SDC, NL, PNL]` | `["def", "odb"]` | Y (state passthrough) |
+| outputs | `[ODB, DEF, SDC, NL, PNL]` | `["def", "odb", "nl", "pnl", "sdc"]` | Y |
 | Gating | None | None | Y |
 | Position | Step 33 | Step 33 | Y |
 | Config vars | 11 total | All wired | Y |
 
-**Fixes Applied (2026-01-28):**
-1. Created DPL_CONFIG_KEYS in place.bzl (lines 63-79)
-2. Updated _detailed_placement_impl to use DPL_CONFIG_KEYS
-
 **Status: PASS**
+
+Verification:
+- `bazel build //dse/maths:SegmentedMultiplier16x16_sky130hd_dpl` passed.
+- Produced DEF, ODB, NL, PNL, SDC, and `state_out.json`.
 
 ---
 
 ### Step 34: OpenROAD.CTS
 
-**Verified:** 2026-01-28
+**Verified:** 2026-07-07 against LibreLane 3.0.4
 
 **Librelane Source:** `librelane/steps/openroad.py`
-- ID: `"OpenROAD.CTS"` (line 2013)
+- ID: `"OpenROAD.CTS"` (line 2407)
 - inputs: `[DesignFormat.ODB]` (inherited from OpenROADStep)
 - outputs: `[ODB, DEF, SDC, NETLIST, POWERED_NETLIST]` (inherited from OpenROADStep)
-- Inheritance: CTS -> ResizerStep -> OpenROADStep -> TclStep -> Step
+- Inheritance: CTS -> OpenROADStep -> TclStep -> Step
 - Clock tree synthesis with buffer insertion, calls dpl.tcl for legalization
 
 **Librelane Gating:** `classic.py`
@@ -2111,9 +2460,10 @@ config_vars = OpenROADStep.config_vars + dpl_variables
 - Users CAN disable CTS by setting RUN_CTS=False
 
 **Bazel Implementation:** `place.bzl`
-- ID: `"OpenROAD.CTS"` (line 263)
-- step_outputs: `[def, odb, nl, pnl, sdc, cts_report]` (lines 245-250)
-- Uses `CTS_CONFIG_KEYS` with all CTS config variables
+- ID: `"OpenROAD.CTS"`
+- outputs: DEF, ODB, NL, PNL, SDC, `cts.rpt`, and `state_out.json`
+- `CTS_CONFIG_KEYS` now starts from `OPENROAD_STEP_CONFIG_KEYS`, then adds
+  dpl variables and the full LibreLane 3.0.4 CTS variable set.
 
 **Bazel Flow:** `full_flow.bzl`
 - Gating: `run_cts` parameter (default True)
@@ -2122,12 +2472,19 @@ config_vars = OpenROADStep.config_vars + dpl_variables
 
 **Config Variable Audit:**
 
-CTS config_vars (openroad.py lines 2016-2084):
+CTS config_vars:
 
 | Variable | Type | Default | Bazel Attr | Status |
 |----------|------|---------|------------|--------|
-| CTS_SINK_CLUSTERING_SIZE | int | 25 | `cts_sink_clustering_size` | Wired |
-| CTS_SINK_CLUSTERING_MAX_DIAMETER | Decimal | 50 | `cts_sink_clustering_max_diameter` | Wired |
+| CTS_BALANCE_LEVELS | Optional[bool] | None | `cts_balance_levels` | Wired |
+| CTS_SINK_BUFFER_MAX_CAP_DERATE_PCT | Optional[Decimal] | None | `cts_sink_buffer_max_cap_derate_pct` | Wired |
+| CTS_DELAY_BUFFER_DERATE_PCT | Optional[Decimal] | None | `cts_delay_buffer_derate_pct` | Wired |
+| CTS_OBSTRUCTION_AWARE | Optional[bool] | None | `cts_obstruction_aware` | Wired |
+| CTS_SINK_CLUSTERING_ENABLE | bool | True | `cts_sink_clustering_enable` | Wired |
+| CTS_SINK_CLUSTERING_SIZE | Optional[int] | None | `cts_sink_clustering_size` | Wired |
+| CTS_SINK_CLUSTERING_MAX_DIAMETER | Optional[Decimal] | None | `cts_sink_clustering_max_diameter` | Wired |
+| CTS_MACRO_CLUSTERING_SIZE | Optional[int] | None | `cts_macro_clustering_size` | Wired |
+| CTS_MACRO_CLUSTERING_MAX_DIAMETER | Optional[Decimal] | None | `cts_macro_clustering_max_diameter` | Wired |
 | CTS_CLK_MAX_WIRE_LENGTH | Decimal | 0 | `cts_clk_max_wire_length` | Wired |
 | CTS_DISABLE_POST_PROCESSING | bool | False | `cts_disable_post_processing` | Wired |
 | CTS_DISTANCE_BETWEEN_BUFFERS | Decimal | 0 | `cts_distance_between_buffers` | Wired |
@@ -2136,6 +2493,7 @@ CTS config_vars (openroad.py lines 2016-2084):
 | CTS_CLK_BUFFERS | List[str] | (pdk) | (from PDK) | Wired |
 | CTS_MAX_CAP | Optional[Decimal] | None | `cts_max_cap` | Wired |
 | CTS_MAX_SLEW | Optional[Decimal] | None | `cts_max_slew` | Wired |
+| CTS_APPLY_NDR | Literal | "half" | `cts_apply_ndr` | Wired |
 
 Inherited OpenROADStep.config_vars (openroad.py lines 192-223):
 
@@ -2145,7 +2503,8 @@ Inherited OpenROADStep.config_vars (openroad.py lines 192-223):
 | PDN_MACRO_CONNECTIONS | Optional[List[str]] | None | `pdn_macro_connections` | Wired |
 | PDN_ENABLE_GLOBAL_CONNECTIONS | bool | True | `pdn_enable_global_connections` | Wired |
 | PNR_SDC_FILE | Optional[Path] | None | `pnr_sdc_file` | Wired |
-| FP_DEF_TEMPLATE | Optional[Path] | None | `fp_def_template` | Wired |
+| STA_EXTRA_CORNER_TCL_FILE | Optional[Path] | None | `sta_extra_corner_tcl_file` | Wired |
+| DEDUPLICATE_CORNERS | bool | False | `deduplicate_corners` | Wired |
 
 Inherited dpl_variables (common_variables.py lines 255-283):
 
@@ -2168,12 +2527,6 @@ TCL script usage (scripts/openroad/cts.tcl):
 - Line 33-35: CTS_MAX_SLEW (optional)
 - Line 71: sources dpl.tcl for legalization
 
-**Fixes Applied (2026-01-28):**
-1. Added all CTS config variables via 5-location pattern (ENTRY_ATTRS, LibrelaneInput, init.bzl,
-   create_librelane_config, CTS_CONFIG_KEYS)
-2. Removed step-local `cts_clk_max_wire_length` attr from CTS rule
-3. Updated full_flow.bzl to pass `cts_clk_max_wire_length` through init rule
-
 | Aspect | Librelane | Bazel | Match |
 |--------|-----------|-------|-------|
 | Step ID | `"OpenROAD.CTS"` | `"OpenROAD.CTS"` | Y |
@@ -2186,14 +2539,20 @@ TCL script usage (scripts/openroad/cts.tcl):
 
 **Status: PASS**
 
+Verification:
+- `bazel build //dse/maths:SegmentedMultiplier16x16_sky130hd_cts` passed.
+- Runtime log ran `clock_tree_synthesis ... -sink_clustering_enable -apply_ndr half`,
+  then legalized placement.
+- Produced DEF, ODB, NL, PNL, SDC, `cts.rpt`, and `state_out.json`.
+
 ---
 
 ### Step 35: OpenROAD.STAMidPNR (second occurrence)
 
-**Verified:** 2026-01-28
+**Verified:** 2026-07-07 against LibreLane 3.0.4
 
 **Librelane Source:** `librelane/steps/openroad.py`
-- ID: `"OpenROAD.STAMidPNR"` (line 364)
+- ID: `"OpenROAD.STAMidPNR"` (line 536)
 - Class: STAMidPNR -> OpenROADStep -> TclStep -> Step
 - inputs: `[DesignFormat.ODB]` (line 368)
 - outputs: `[]` (line 369)
@@ -2233,10 +2592,11 @@ OpenROADStep.prepare_env() variables (openroad.py lines 242-258):
 
 | Variable | Usage | Bazel Status |
 |----------|-------|--------------|
-| FALLBACK_SDC_FILE | SDC file fallback | Wired |
+| FALLBACK_SDC | SDC file fallback | Wired |
 | EXTRA_EXCLUDED_CELLS | Cell exclusion | Wired |
 
-STA_CONFIG_KEYS includes all required variables.
+`STA_CONFIG_KEYS = OPENROAD_STEP_CONFIG_KEYS`, shared with the first STAMidPNR
+occurrence.
 
 | Aspect | Librelane | Bazel | Match |
 |--------|-----------|-------|-------|
@@ -2249,14 +2609,19 @@ STA_CONFIG_KEYS includes all required variables.
 
 **Status: PASS**
 
+Verification:
+- `bazel build //dse/maths:SegmentedMultiplier16x16_sky130hd_sta_mid_cts`
+  passed.
+- Produced `max.rpt`, `min.rpt`, and `state_out.json`.
+
 ---
 
 ### Step 36: OpenROAD.ResizerTimingPostCTS
 
-**Verified:** 2026-01-28
+**Verified:** 2026-07-07
 
 **Librelane Source:** `librelane/steps/openroad.py`
-- ID: `"OpenROAD.ResizerTimingPostCTS"` (line 2251)
+- ID: `"OpenROAD.ResizerTimingPostCTS"` (line 2697)
 - Class: ResizerTimingPostCTS -> ResizerStep -> OpenROADStep -> TclStep -> Step
 - inputs: `[DesignFormat.ODB]` (inherited from OpenROADStep)
 - outputs: `[ODB, DEF, SDC, NETLIST, POWERED_NETLIST]` (inherited from OpenROADStep)
@@ -2264,12 +2629,12 @@ STA_CONFIG_KEYS includes all required variables.
 - Resizes cells and inserts buffers to eliminate hold/setup violations
 
 **Librelane Gating:** `classic.py`
-- Position: Step 36 (line 76)
-- Variable: `RUN_POST_CTS_RESIZER_TIMING` (line 270)
-- Default: `True` (line 153)
+- Position: Step 36 (line 77)
+- Variable: `RUN_POST_CTS_RESIZER_TIMING` (line 272)
+- Default: `True` (line 152)
 
 **Bazel Implementation:** `place.bzl`
-- ID: `"OpenROAD.ResizerTimingPostCTS"` (line 331)
+- ID: `"OpenROAD.ResizerTimingPostCTS"` (line 360)
 - Uses `RESIZER_TIMING_CONFIG_KEYS`
 - step_outputs: `["def", "odb", "nl", "pnl", "sdc"]`
 
@@ -2281,7 +2646,7 @@ STA_CONFIG_KEYS includes all required variables.
 
 **Config Variable Audit:**
 
-ResizerTimingPostCTS-specific config_vars (openroad.py lines 2254-2302):
+ResizerTimingPostCTS-specific config_vars (openroad.py lines 2698-2786):
 
 | Variable | Type | Default | Bazel Attr | Status |
 |----------|------|---------|------------|--------|
@@ -2290,15 +2655,21 @@ ResizerTimingPostCTS-specific config_vars (openroad.py lines 2254-2302):
 | PL_RESIZER_HOLD_MAX_BUFFER_PCT | Decimal | 50 | `pl_resizer_hold_max_buffer_pct` | Wired |
 | PL_RESIZER_SETUP_MAX_BUFFER_PCT | Decimal | 50 | `pl_resizer_setup_max_buffer_pct` | Wired |
 | PL_RESIZER_ALLOW_SETUP_VIOS | bool | False | `pl_resizer_allow_setup_vios` | Wired |
-| PL_RESIZER_GATE_CLONING | bool | True | `pl_resizer_gate_cloning` | Wired |
+| PL_RESIZER_SETUP_GATE_CLONING | bool | True | `pl_resizer_gate_cloning` | Wired |
+| PL_RESIZER_SETUP_BUFFERING | bool | True | `pl_resizer_setup_buffering` | Wired |
+| PL_RESIZER_SETUP_BUFFER_REMOVAL | bool | True | `pl_resizer_setup_buffer_removal` | Wired |
+| PL_RESIZER_SETUP_REPAIR_TNS_PCT | Optional[Decimal] | None | `pl_resizer_setup_repair_tns_pct` | Wired |
+| PL_RESIZER_SETUP_MAX_UTIL_PCT | Optional[Decimal] | None | `pl_resizer_setup_max_util_pct` | Wired |
+| PL_RESIZER_HOLD_REPAIR_TNS_PCT | Optional[Decimal] | None | `pl_resizer_hold_repair_tns_pct` | Wired |
+| PL_RESIZER_HOLD_MAX_UTIL_PCT | Optional[Decimal] | None | `pl_resizer_hold_max_util_pct` | Wired |
 | PL_RESIZER_FIX_HOLD_FIRST | bool | False | `pl_resizer_fix_hold_first` | Wired |
 
 Inherited ResizerStep config_vars (RESIZER_CONFIG_KEYS) - all wired.
 
-**Fixes Applied (2026-01-28):**
-1. Added 7 PL_RESIZER_* variables via 5-location pattern
-2. Created RESIZER_TIMING_CONFIG_KEYS with all required variables
-3. Updated _resizer_timing_post_cts_impl to use RESIZER_TIMING_CONFIG_KEYS
+**Fixes Applied (2026-07-07):**
+1. Renamed emitted config key from deprecated `PL_RESIZER_GATE_CLONING` to `PL_RESIZER_SETUP_GATE_CLONING`
+2. Added LibreLane 3.0.4 setup buffering/removal and optional setup/hold repair limit knobs
+3. Updated `RESIZER_TIMING_CONFIG_KEYS` to include all current ResizerTimingPostCTS-specific variables
 
 | Aspect | Librelane | Bazel | Match |
 |--------|-----------|-------|-------|
@@ -2308,29 +2679,37 @@ Inherited ResizerStep config_vars (RESIZER_CONFIG_KEYS) - all wired.
 | Gating var | RUN_POST_CTS_RESIZER_TIMING | `run_post_cts_resizer_timing` | Y |
 | Gating default | True | True | Y |
 | Position | Step 36 | Step 36 | Y |
-| Config vars | ResizerStep + 7 specific | RESIZER_TIMING_CONFIG_KEYS | Y |
+| Config vars | ResizerStep + 13 specific | RESIZER_TIMING_CONFIG_KEYS | Y |
 
 **Status: PASS**
+
+Verification:
+- `bazel build //dse/maths:SegmentedMultiplier16x16_sky130hd_rsz_cts`
+  passed.
+- Produced `SegmentedMultiplier16x16.def`, `.odb`, `.nl.v`, `.pnl.v`,
+  `.sdc`, and `state_out.json`.
+- Runtime included setup repair with gate cloning/rebuffer/load splitting enabled,
+  then inserted 146 hold buffers.
 
 ---
 
 ### Step 37: OpenROAD.STAMidPNR (third occurrence)
 
-**Verified:** 2026-01-28
+**Verified:** 2026-07-07
 
 **Librelane Source:** `librelane/steps/openroad.py`
-- ID: `"OpenROAD.STAMidPNR"` (line 364)
+- ID: `"OpenROAD.STAMidPNR"` (line 543)
 - Class: STAMidPNR -> OpenROADStep -> TclStep -> Step
-- inputs: `[DesignFormat.ODB]` (line 368)
-- outputs: `[]` (line 369)
+- inputs: `[DesignFormat.ODB]`
+- outputs: `[]`
 - Note: This step appears 4 times in Classic flow (steps 30, 35, 37, 45)
 
 **Librelane Gating:** `classic.py`
-- Position: Step 37 (line 77) - third occurrence, after ResizerTimingPostCTS
+- Position: Step 37 (line 78) - third occurrence, after ResizerTimingPostCTS
 - NOT in gating_config_vars dict - runs when ResizerTimingPostCTS runs
 
 **Bazel Implementation:** `sta.bzl`
-- ID: `"OpenROAD.STAMidPNR"` (line 91)
+- ID: `"OpenROAD.STAMidPNR"` (line 132)
 - Uses `STA_CONFIG_KEYS`
 - step_outputs: `[]`
 
@@ -2356,26 +2735,31 @@ STA_CONFIG_KEYS correctly includes all required variables.
 
 **Status: PASS**
 
+Verification:
+- `bazel build //dse/maths:SegmentedMultiplier16x16_sky130hd_sta_mid_rsz_cts`
+  passed.
+- Produced `max.rpt`, `min.rpt`, and `state_out.json`.
+
 ---
 
 ### Step 38: OpenROAD.GlobalRouting
 
-**Verified:** 2026-01-28
+**Verified:** 2026-07-07
 
 **Librelane Source:** `librelane/steps/openroad.py`
-- ID: `"OpenROAD.GlobalRouting"` (line 1540)
+- ID: `"OpenROAD.GlobalRouting"` (line 1849)
 - Class: GlobalRouting -> OpenROADStep -> TclStep -> Step
 - inputs: `[DesignFormat.ODB]` (inherited from OpenROADStep)
-- outputs: `[DesignFormat.ODB, DesignFormat.DEF]` (line 1543)
-- config_vars = OpenROADStep.config_vars + grt_variables + dpl_variables (line 1545)
+- outputs: `[DesignFormat.ODB, DesignFormat.DEF]` (line 1852)
+- config_vars = OpenROADStep.config_vars + grt_variables + dpl_variables (line 1854)
 
 **Librelane Gating:** `classic.py`
-- Position: Step 38 (line 78)
+- Position: Step 38 (line 79)
 - NOT in gating_config_vars dict - always runs
 
 **Bazel Implementation:** `route.bzl`
-- ID: `"OpenROAD.GlobalRouting"` (line 37)
-- Uses `GRT_CONFIG_KEYS` with all 19 required variables
+- ID: `"OpenROAD.GlobalRouting"`
+- Uses `GRT_CONFIG_KEYS`
 - step_outputs: `["def", "odb"]`
 
 **Bazel Flow:** `full_flow.bzl`
@@ -2386,19 +2770,30 @@ STA_CONFIG_KEYS correctly includes all required variables.
 
 **Config Variable Audit:**
 
-GlobalRouting config_vars (line 1545):
+GlobalRouting config_vars (line 1854):
 
-OpenROADStep.config_vars (5 vars):
+OpenROADStep.config_vars:
 
 | Variable | Type | Default | Status |
 |----------|------|---------|--------|
+| PNR_CORNERS | Optional[List[str]] | None | Wired |
+| SET_RC_VERBOSE | bool | False | Wired |
+| LAYERS_RC | Optional[Dict] | None | Wired |
+| VIAS_R | Optional[Dict] | None | Wired |
+| SIGNAL_WIRE_RC_LAYERS | Optional[List[str]] | None | Wired |
+| CLOCK_WIRE_RC_LAYERS | Optional[List[str]] | None | Wired |
 | PDN_CONNECT_MACROS_TO_GRID | bool | True | Wired |
 | PDN_MACRO_CONNECTIONS | Optional[List[str]] | None | Wired |
 | PDN_ENABLE_GLOBAL_CONNECTIONS | bool | True | Wired |
 | PNR_SDC_FILE | Optional[Path] | None | Wired |
-| FP_DEF_TEMPLATE | Optional[Path] | None | Wired |
+| STA_EXTRA_CORNER_TCL_FILE | Optional[Path] | None | Wired |
+| DEDUPLICATE_CORNERS | bool | False | Wired |
 
-grt_variables = routing_layer_variables + grt-specific (10 vars):
+OpenROADStep.prepare_env variables use the shared `OPENROAD_STEP_CONFIG_KEYS`
+from `common.bzl`, including `FALLBACK_SDC`, `EXTRA_EXCLUDED_CELLS`,
+`PNR_EXCLUDED_CELL_FILE`, and `LIB`.
+
+grt_variables = routing_layer_variables + grt-specific:
 
 | Variable | Type | Default | Status |
 |----------|------|---------|--------|
@@ -2409,9 +2804,11 @@ grt_variables = routing_layer_variables + grt-specific (10 vars):
 | GRT_LAYER_ADJUSTMENTS | List[Decimal] | (pdk) | Wired (PDK) |
 | DIODE_PADDING | Optional[int] | None | Wired |
 | GRT_ALLOW_CONGESTION | bool | False | Wired |
-| GRT_ANTENNA_ITERS | int | 3 | Wired |
+| GRT_ANTENNA_REPAIR_ITERS | int | 3 | Wired |
 | GRT_OVERFLOW_ITERS | int | 50 | Wired |
-| GRT_ANTENNA_MARGIN | int | 10 | Wired |
+| GRT_ANTENNA_REPAIR_MARGIN | int | 10 | Wired |
+| GRT_ANTENNA_REPAIR_JUMPER_ONLY | bool | False | Wired |
+| GRT_ANTENNA_REPAIR_DIODE_ONLY | bool | False | Wired |
 
 dpl_variables (4 vars):
 
@@ -2422,9 +2819,13 @@ dpl_variables (4 vars):
 | PL_MAX_DISPLACEMENT_Y | Decimal | 100 | Wired |
 | DPL_CELL_PADDING | Decimal | (pdk) | Wired (PDK) |
 
-**Fixes Applied (2026-01-28):**
-1. Created GRT_CONFIG_KEYS in route.bzl with all 19 required variables
-2. Updated _global_routing_impl to use GRT_CONFIG_KEYS
+**Fixes Applied (2026-07-07):**
+1. Changed `route.bzl` to reuse shared `OPENROAD_STEP_CONFIG_KEYS`
+2. Renamed deprecated `GRT_ANTENNA_ITERS`/`GRT_ANTENNA_MARGIN` to
+   `GRT_ANTENNA_REPAIR_ITERS`/`GRT_ANTENNA_REPAIR_MARGIN`
+3. Added `GRT_ANTENNA_REPAIR_JUMPER_ONLY` and
+   `GRT_ANTENNA_REPAIR_DIODE_ONLY`
+4. Renamed full-flow override arguments and the maths DSE call site
 
 | Aspect | Librelane | Bazel | Match |
 |--------|-----------|-------|-------|
@@ -2433,55 +2834,52 @@ dpl_variables (4 vars):
 | outputs | `[ODB, DEF]` | `["def", "odb"]` | Y |
 | Gating | None | None | Y |
 | Position | Step 38 | Step 38 | Y |
-| Config vars | 19 variables | GRT_CONFIG_KEYS | Y |
+| Config vars | OpenROADStep + grt_variables + dpl_variables | GRT_CONFIG_KEYS | Y |
 
 **Status: PASS**
+
+Verification:
+- `bazel build //dse/maths:SegmentedMultiplier16x16_sky130hd_grt`
+  passed.
+- Produced `SegmentedMultiplier16x16.def`, `.odb`, and `state_out.json`.
+- Runtime called `global_route -congestion_iterations 50 -verbose` and reported
+  zero final routing overflow.
 
 ---
 
 ### Step 39: OpenROAD.CheckAntennas (first occurrence)
 
-**Verified:** 2026-01-28
+**Verified:** 2026-07-07
 
 **Librelane Source:** `librelane/steps/openroad.py`
-- ID: `"OpenROAD.CheckAntennas"` (line 1389)
+- ID: `"OpenROAD.CheckAntennas"` (line 1698)
 - Class: CheckAntennas -> OpenROADStep -> TclStep -> Step
 - inputs: `[DesignFormat.ODB]` (inherited from OpenROADStep)
-- outputs: `[]` (line 1393)
+- outputs: `[]`
 - Checks for antenna rule violations in long nets
 - Note: This step appears twice in Classic flow (steps 39 and 48)
 
 **Librelane Gating:** `classic.py`
-- Position: Step 39 (line 79) - first occurrence, after GlobalRouting
-- NOT in gating_config_vars dict (lines 267-309) - always runs
+- Position: Step 39 (line 80) - first occurrence, after GlobalRouting
+- NOT in gating_config_vars dict - always runs
 
 **Config Variable Audit:**
 
 CheckAntennas has no explicit config_vars, so it inherits only OpenROADStep.config_vars.
+Its `run()` method writes `reports/antenna.rpt` and
+`reports/antenna_summary.rpt`, and updates
+`route__antenna_violation__count`.
 
-OpenROADStep.config_vars (5 vars, openroad.py:192-223):
+OpenROADStep config comes from shared `OPENROAD_STEP_CONFIG_KEYS`, as in
+Step 38.
 
-| Variable | Type | Default | Status |
-|----------|------|---------|--------|
-| PDN_CONNECT_MACROS_TO_GRID | bool | True | Wired |
-| PDN_MACRO_CONNECTIONS | Optional[List[str]] | None | Wired |
-| PDN_ENABLE_GLOBAL_CONNECTIONS | bool | True | Wired |
-| PNR_SDC_FILE | Optional[Path] | None | Wired |
-| FP_DEF_TEMPLATE | Optional[Path] | None | Wired |
-
-OpenROADStep.prepare_env() also uses (openroad.py:242-258):
-
-| Variable | Line | Status |
-|----------|------|--------|
-| LIB | 245 | BASE_CONFIG_KEYS |
-| FALLBACK_SDC_FILE | 248 | Wired |
-| EXTRA_EXCLUDED_CELLS | 254 | Wired |
-| PNR_EXCLUDED_CELL_FILE | 255 | BASE_CONFIG_KEYS |
+No CheckAntennas-specific config keys are required.
 
 **Bazel Implementation:** `route.bzl`
-- ID: `"OpenROAD.CheckAntennas"` (line 43)
-- Uses CHECK_ANTENNAS_CONFIG_KEYS = OPENROAD_STEP_CONFIG_KEYS (line 38)
-- step_outputs: `[]` (line 43)
+- ID: `"OpenROAD.CheckAntennas"`
+- Uses `CHECK_ANTENNAS_CONFIG_KEYS = OPENROAD_STEP_CONFIG_KEYS`
+- step_outputs: `[]`
+- extra_outputs: `reports/antenna.rpt`, `reports/antenna_summary.rpt`
 
 **Bazel Flow:** `full_flow.bzl`
 - No gating - always runs (lines 494-499)
@@ -2489,10 +2887,9 @@ OpenROADStep.prepare_env() also uses (openroad.py:242-258):
 - Named: `_chk_ant_grt`
 - Chains from: `_grt` target
 
-**Fixes Applied (2026-01-28):**
-1. Created OPENROAD_STEP_CONFIG_KEYS in route.bzl with all 7 OpenROADStep variables
-2. Created CHECK_ANTENNAS_CONFIG_KEYS = OPENROAD_STEP_CONFIG_KEYS
-3. Updated _check_antennas_impl to use CHECK_ANTENNAS_CONFIG_KEYS
+**Fixes Applied (2026-07-07):**
+1. `route.bzl` now uses the shared current `OPENROAD_STEP_CONFIG_KEYS`
+2. `CHECK_ANTENNAS_CONFIG_KEYS` remains exactly the OpenROADStep key set
 
 | Aspect | Librelane | Bazel | Match |
 |--------|-----------|-------|-------|
@@ -2501,67 +2898,45 @@ OpenROADStep.prepare_env() also uses (openroad.py:242-258):
 | outputs | `[]` | `[]` | Y |
 | Gating | None | None | Y |
 | Position | Step 39 | Step 39 | Y |
-| Config vars | 7 variables | CHECK_ANTENNAS_CONFIG_KEYS | Y |
+| Config vars | OpenROADStep inherited | CHECK_ANTENNAS_CONFIG_KEYS | Y |
 
 **Status: PASS**
+
+Verification:
+- `bazel build //dse/maths:SegmentedMultiplier16x16_sky130hd_chk_ant_grt`
+  passed.
+- Produced `reports/antenna.rpt`, `reports/antenna_summary.rpt`, and
+  `state_out.json`.
+- The checker reported 6 antenna violations in the post-GRT design. This step
+  records those reports/metrics; it does not fail the build.
 
 ---
 
 ### Step 40: OpenROAD.RepairDesignPostGRT
 
-**Verified:** 2026-01-28
+**Verified:** 2026-07-07 source/config audit; runtime deferred
 
 **Librelane Source:** `librelane/steps/openroad.py`
-- ID: `"OpenROAD.RepairDesignPostGRT"` (line 2200)
+- ID: `"OpenROAD.RepairDesignPostGRT"` (line 2646)
 - Class: RepairDesignPostGRT -> ResizerStep -> OpenROADStep -> TclStep -> Step
 - inputs: `[DesignFormat.ODB]` (inherited from OpenROADStep)
 - outputs: `[ODB, DEF, SDC, NETLIST, POWERED_NETLIST]` (inherited from OpenROADStep)
 - Runs design repairs after global routing (experimental)
 
 **Librelane Gating:** `classic.py`
-- Position: Step 40 (line 80)
-- Variable: `RUN_POST_GRT_DESIGN_REPAIR` (line 269)
-- Default: **`False`** (line 140)
+- Position: Step 40 (line 81)
+- Variable: `RUN_POST_GRT_DESIGN_REPAIR` (line 271)
+- Default: **`False`** (line 139)
 - This step is OFF by default because it's experimental
 
 **Config Variable Audit:**
 
-RepairDesignPostGRT.config_vars = ResizerStep.config_vars + 4 step-specific (line 2203)
-ResizerStep.config_vars = OpenROADStep.config_vars + grt_variables + rsz_variables (line 1971)
+RepairDesignPostGRT.config_vars = ResizerStep.config_vars + 4 step-specific.
+ResizerStep.config_vars = OpenROADStep.config_vars + grt_variables + rsz_variables.
 
-OpenROADStep.config_vars (5 vars, openroad.py:192-223):
-
-| Variable | Type | Default | Status |
-|----------|------|---------|--------|
-| PDN_CONNECT_MACROS_TO_GRID | bool | True | Wired |
-| PDN_MACRO_CONNECTIONS | Optional[List[str]] | None | Wired |
-| PDN_ENABLE_GLOBAL_CONNECTIONS | bool | True | Wired |
-| PNR_SDC_FILE | Optional[Path] | None | Wired |
-| FP_DEF_TEMPLATE | Optional[Path] | None | Wired |
-
-OpenROADStep.prepare_env() (openroad.py:242-258):
-
-| Variable | Status |
-|----------|--------|
-| FALLBACK_SDC_FILE | Wired |
-| EXTRA_EXCLUDED_CELLS | Wired |
-
-grt_variables = routing_layer_variables + grt-specific (10 vars, common_variables.py:285-319):
-
-| Variable | Type | Default | Status |
-|----------|------|---------|--------|
-| RT_CLOCK_MIN_LAYER | Optional[str] | None | Wired |
-| RT_CLOCK_MAX_LAYER | Optional[str] | None | Wired |
-| GRT_ADJUSTMENT | Decimal | 0.3 | Wired |
-| GRT_MACRO_EXTENSION | int | 0 | Wired |
-| GRT_LAYER_ADJUSTMENTS | List[Decimal] | (pdk) | Wired (PDK) |
-| DIODE_PADDING | Optional[int] | None | Wired |
-| GRT_ALLOW_CONGESTION | bool | False | Wired |
-| GRT_ANTENNA_ITERS | int | 3 | Wired |
-| GRT_OVERFLOW_ITERS | int | 50 | Wired |
-| GRT_ANTENNA_MARGIN | int | 10 | Wired |
-
-rsz_variables = dpl_variables + rsz-specific (7 vars, common_variables.py:321-340):
+The inherited OpenROADStep and grt_variables key sets are shared with Steps 38
+and 39, including the current `GRT_ANTENNA_REPAIR_*` names. The inherited
+rsz_variables are:
 
 | Variable | Type | Default | Status |
 |----------|------|---------|--------|
@@ -2573,7 +2948,7 @@ rsz_variables = dpl_variables + rsz-specific (7 vars, common_variables.py:321-34
 | RSZ_DONT_TOUCH_LIST | Optional[List[str]] | None | Wired |
 | RSZ_CORNERS | Optional[List[str]] | None | Wired |
 
-RepairDesignPostGRT-specific (4 vars, openroad.py:2203-2234):
+RepairDesignPostGRT-specific (4 vars, openroad.py lines 2649-2684):
 
 | Variable | Type | Default | Status |
 |----------|------|---------|--------|
@@ -2582,11 +2957,9 @@ RepairDesignPostGRT-specific (4 vars, openroad.py:2203-2234):
 | GRT_DESIGN_REPAIR_MAX_SLEW_PCT | Decimal | 10 | Wired |
 | GRT_DESIGN_REPAIR_MAX_CAP_PCT | Decimal | 10 | Wired |
 
-**Total: 28 config variables needed**
-
 **Bazel Implementation:** `route.bzl`
-- ID: `"OpenROAD.RepairDesignPostGRT"` (line 78-80)
-- Uses REPAIR_DESIGN_POST_GRT_CONFIG_KEYS (28 vars)
+- ID: `"OpenROAD.RepairDesignPostGRT"`
+- Uses `REPAIR_DESIGN_POST_GRT_CONFIG_KEYS`
 - step_outputs: `["def", "odb", "nl", "pnl", "sdc"]`
 
 **Bazel Flow:** `full_flow.bzl`
@@ -2595,14 +2968,10 @@ RepairDesignPostGRT-specific (4 vars, openroad.py:2203-2234):
 - Named: `_rsz_grt`
 - Chains from: `_chk_ant_grt` target
 
-**Fixes Applied (2026-01-28):**
-1. Created RESIZER_STEP_CONFIG_KEYS in route.bzl (24 vars)
-2. Created REPAIR_DESIGN_POST_GRT_CONFIG_KEYS = RESIZER_STEP + 4 step-specific (28 vars)
-3. Wired 4 new attrs through 5-location pattern:
-   - common.bzl ENTRY_ATTRS: grt_design_repair_*
-   - providers.bzl LibrelaneInput: grt_design_repair_*
-   - init.bzl _init_impl: grt_design_repair_*
-   - common.bzl create_librelane_config: GRT_DESIGN_REPAIR_*
+**Fixes Applied (2026-07-07):**
+1. `RESIZER_STEP_CONFIG_KEYS` now inherits the shared current
+   `OPENROAD_STEP_CONFIG_KEYS`
+2. Inherited grt_variables now use the current `GRT_ANTENNA_REPAIR_*` keys
 
 | Aspect | Librelane | Bazel | Match |
 |--------|-----------|-------|-------|
@@ -2612,27 +2981,34 @@ RepairDesignPostGRT-specific (4 vars, openroad.py:2203-2234):
 | Gating var | RUN_POST_GRT_DESIGN_REPAIR | `run_post_grt_design_repair` | Y |
 | Gating default | False | False | Y |
 | Position | Step 40 | Step 40 | Y |
-| Config vars | 28 variables | REPAIR_DESIGN_POST_GRT_CONFIG_KEYS | Y |
+| Config vars | ResizerStep + 4 specific | REPAIR_DESIGN_POST_GRT_CONFIG_KEYS | Y |
 
-**Status: PASS**
+**Status: DEFERRED**
+
+Runtime verification:
+- Not run in this pass. The small multiplier flow keeps
+  `run_post_grt_design_repair = False`, matching LibreLane's default, so it has
+  no `_rsz_grt` target.
+- The enabled `LocalExec_1024lanes_sky130hd_rsz_grt` target is a large design;
+  we are deferring large-design runs until the flow audit is complete.
 
 ---
 
 ### Step 41: Odb.DiodesOnPorts
 
-**Verified:** 2026-01-28
+**Verified:** 2026-07-07
 
 **Librelane Source:** `librelane/steps/odb.py`
-- ID: `"Odb.DiodesOnPorts"` (line 804)
+- ID: `"Odb.DiodesOnPorts"` (line 808)
 - Class: DiodesOnPorts -> CompositeStep -> Step
-- Sub-steps: PortDiodePlacement, DetailedPlacement, GlobalRouting (lines 808-812)
+- Sub-steps: PortDiodePlacement, DetailedPlacement, GlobalRouting
 - inputs: (from sub-steps) `[ODB]`
 - outputs: (from sub-steps) `[ODB, DEF]`
-- **Self-skips if DIODE_ON_PORTS == "none"** (lines 815-817)
+- **Self-skips if DIODE_ON_PORTS == "none"** (lines 819-821)
 
 **Librelane Gating:** `classic.py`
-- Position: Step 41 (line 81)
-- NOT in gating_config_vars dict (lines 267-309)
+- Position: Step 41 (line 82)
+- NOT in gating_config_vars dict
 - Relies on self-skip behavior (DIODE_ON_PORTS defaults to "none")
 
 **Config Variable Audit:**
@@ -2652,66 +3028,73 @@ PortDiodePlacement.get_command() also uses (odb.py:761):
 |----------|--------|
 | DIODE_CELL | Wired (PDK) |
 
-DetailedPlacement.config_vars = OpenROADStep.config_vars + dpl_variables (openroad.py:1374)
-GlobalRouting.config_vars = OpenROADStep.config_vars + grt_variables + dpl_variables (openroad.py:1545)
+DetailedPlacement.config_vars = OpenROADStep.config_vars + dpl_variables.
+GlobalRouting.config_vars = OpenROADStep.config_vars + grt_variables + dpl_variables.
 
 Union needed (excluding duplicates):
 
 | Category | Variables | Status |
 |----------|-----------|--------|
-| OpenROADStep.config_vars | 5 vars | Wired |
-| OpenROADStep.prepare_env | 2 vars | Wired |
-| grt_variables | 10 vars | Wired |
+| OpenROADStep.config_vars / prepare_env | Shared `OPENROAD_STEP_CONFIG_KEYS` | Wired |
+| grt_variables | Current `GRT_ANTENNA_REPAIR_*` names | Wired |
 | dpl_variables | 4 vars | Wired |
 
-**Total: ~24 config variables needed (union of sub-steps)**
-
 **Bazel Implementation:** `odb.bzl`
-- ID: `"Odb.DiodesOnPorts"` (line 85)
-- Uses DIODES_ON_PORTS_CONFIG_KEYS (24 vars)
-- step_outputs: `["def", "odb"]`
+- ID: `"Odb.DiodesOnPorts"`
+- Uses `DIODES_ON_PORTS_CONFIG_KEYS`
+- step_outputs: `["def", "odb"]` only when `diode_on_ports != "none"`;
+  otherwise pass-through state only
 
 **Bazel Flow:** `full_flow.bzl`
 - Parameter: `diode_on_ports = "none"` (line 116)
-- Gating: `if diode_on_ports != "none":` (line 513)
+- Gating: none; always instantiated and self-skips
 - Position: Step 41, after RepairDesignPostGRT
 - Named: `_dio_ports`
 
-**Fixes Applied (2026-01-28):**
-1. Wired DIODE_ON_PORTS via 5-location pattern (removed extra_config)
-2. Created DIODES_ON_PORTS_CONFIG_KEYS with all 24 sub-step variables
-3. Removed custom rule attribute (now comes from input)
+**Fixes Applied (2026-07-07):**
+1. Updated `DIODES_ON_PORTS_CONFIG_KEYS` to use shared
+   `OPENROAD_STEP_CONFIG_KEYS` and current grt_variables
+2. Changed full flow to always instantiate the step, matching LibreLane
+   self-skip behavior
+3. Made Bazel DEF/ODB outputs conditional on `diode_on_ports != "none"`
 
 | Aspect | Librelane | Bazel | Match |
 |--------|-----------|-------|-------|
 | Step ID | `"Odb.DiodesOnPorts"` | `"Odb.DiodesOnPorts"` | Y |
 | inputs | `[ODB]` | (from src) | Y |
 | outputs | `[ODB, DEF]` | `["def", "odb"]` | Y |
-| Gating | Self-skips if DIODE_ON_PORTS=="none" | `if diode_on_ports != "none"` | Y |
+| Gating | Self-skips if DIODE_ON_PORTS=="none" | always instantiated, self-skips | Y |
 | Default | "none" (skip) | "none" (skip) | Y |
 | Position | Step 41 | Step 41 | Y |
 | Config vars | ~24 variables | DIODES_ON_PORTS_CONFIG_KEYS | Y |
 
 **Status: PASS**
 
+Verification:
+- `bazel build //dse/maths:SegmentedMultiplier16x16_sky130hd_dio_ports`
+  passed.
+- Runtime log reported:
+  `'DIODE_ON_PORTS' is set to 'none': skipping 'Odb.DiodesOnPorts'...`
+- Produced `state_out.json` only, as expected for pass-through self-skip.
+
 ---
 
 ### Step 42: Odb.HeuristicDiodeInsertion
 
-**Verified:** 2026-01-28
+**Verified:** 2026-07-07 source/config audit; runtime deferred
 
 **Librelane Source:** `librelane/steps/odb.py`
-- ID: `"Odb.HeuristicDiodeInsertion"` (line 911)
+- ID: `"Odb.HeuristicDiodeInsertion"` (line 920)
 - Class: HeuristicDiodeInsertion -> CompositeStep -> Step
-- Sub-steps: FuzzyDiodePlacement, DetailedPlacement, GlobalRouting (lines 915-919)
+- Sub-steps: FuzzyDiodePlacement, DetailedPlacement, GlobalRouting
 - inputs: (from sub-steps) `[ODB]`
 - outputs: (from sub-steps) `[ODB, DEF]`
 - Places diodes based on Manhattan length heuristic
 
 **Librelane Gating:** `classic.py`
-- Position: Step 42 (line 82)
-- Variable: `RUN_HEURISTIC_DIODE_INSERTION` (line 275)
-- Default: `False` (line 167) - OFF by default for OL1 compatibility
+- Position: Step 42 (line 83)
+- Variable: `RUN_HEURISTIC_DIODE_INSERTION` (line 277)
+- Default: `False` (line 166) - OFF by default
 
 **Config Variable Audit:**
 
@@ -2730,23 +3113,20 @@ FuzzyDiodePlacement.get_command() also uses (odb.py:864):
 |----------|--------|
 | DIODE_CELL | Wired (PDK) |
 
-DetailedPlacement.config_vars = OpenROADStep.config_vars + dpl_variables (openroad.py:1374)
-GlobalRouting.config_vars = OpenROADStep.config_vars + grt_variables + dpl_variables (openroad.py:1545)
+DetailedPlacement.config_vars = OpenROADStep.config_vars + dpl_variables.
+GlobalRouting.config_vars = OpenROADStep.config_vars + grt_variables + dpl_variables.
 
 Union needed (excluding duplicates):
 
 | Category | Variables | Status |
 |----------|-----------|--------|
-| OpenROADStep.config_vars | 5 vars | Wired |
-| OpenROADStep.prepare_env | 2 vars | Wired |
-| grt_variables | 10 vars | Wired |
+| OpenROADStep.config_vars / prepare_env | Shared `OPENROAD_STEP_CONFIG_KEYS` | Wired |
+| grt_variables | Current `GRT_ANTENNA_REPAIR_*` names | Wired |
 | dpl_variables | 4 vars | Wired |
 
-**Total: ~24 config variables needed (union of sub-steps)**
-
 **Bazel Implementation:** `odb.bzl`
-- ID: `"Odb.HeuristicDiodeInsertion"` (line 92)
-- Uses HEURISTIC_DIODE_CONFIG_KEYS (24 vars)
+- ID: `"Odb.HeuristicDiodeInsertion"`
+- Uses `HEURISTIC_DIODE_CONFIG_KEYS`
 - step_outputs: `["def", "odb"]`
 
 **Bazel Flow:** `full_flow.bzl`
@@ -2765,53 +3145,55 @@ Union needed (excluding duplicates):
 | Position | Step 42 | Step 42 | Y |
 | Config vars | ~24 variables | HEURISTIC_DIODE_CONFIG_KEYS | Y |
 
-**Status: PASS**
+**Status: DEFERRED**
+
+Runtime verification:
+- Not run in this pass. The small multiplier flow keeps
+  `run_heuristic_diode_insertion = False`, matching LibreLane's default, so it
+  has no `_dio_heur` target.
 
 ---
 
 ### Step 43: OpenROAD.RepairAntennas
 
-**Verified:** 2026-01-28
+**Verified:** 2026-07-07
 
 **Librelane Source:** `librelane/steps/openroad.py`
-- ID: `"OpenROAD.RepairAntennas"` (line 1569)
+- ID: `"OpenROAD.RepairAntennas"` (line 1882)
 - Class: RepairAntennas -> CompositeStep -> Step
-- Sub-steps: _DiodeInsertion (GlobalRouting subclass), CheckAntennas (lines 1551-1572)
+- Sub-steps: _DiodeInsertion (GlobalRouting subclass), CheckAntennas
 - inputs: `[ODB]` (inherited)
 - outputs: `[ODB, DEF]` (inherited)
 - Applies antenna effect mitigations using global routing info, then re-legalizes
 
 **Librelane Gating:** `classic.py`
-- Position: Step 43 (line 83)
-- Variable: `RUN_ANTENNA_REPAIR` (line 276)
-- Default: `True` (line 173)
+- Position: Step 43 (line 84)
+- Variable: `RUN_ANTENNA_REPAIR` (line 278)
+- Default: `True` (line 172)
 - Users CAN disable antenna repair by setting RUN_ANTENNA_REPAIR=False
 
 **Config Variable Audit:**
 
 CompositeStep's config_vars = union of all sub-step config_vars.
 
-_DiodeInsertion inherits GlobalRouting (openroad.py:1551):
-- config_vars = OpenROADStep.config_vars + grt_variables + dpl_variables (openroad.py:1545)
+_DiodeInsertion inherits GlobalRouting:
+- config_vars = OpenROADStep.config_vars + grt_variables + dpl_variables
 
-CheckAntennas.config_vars = OpenROADStep.config_vars (openroad.py:1381, no additional)
+CheckAntennas.config_vars = OpenROADStep.config_vars, no additional.
 
 Union needed (excluding duplicates):
 
 | Category | Variables | Status |
 |----------|-----------|--------|
-| OpenROADStep.config_vars | 5 vars | Wired |
-| OpenROADStep.prepare_env | 2 vars | Wired |
-| grt_variables | 10 vars | Wired |
+| OpenROADStep.config_vars / prepare_env | Shared `OPENROAD_STEP_CONFIG_KEYS` | Wired |
+| grt_variables | Current `GRT_ANTENNA_REPAIR_*` names | Wired |
 | dpl_variables | 4 vars | Wired |
 
-**Total: ~21 config variables needed (same as GRT_CONFIG_KEYS)**
-
 **Bazel Implementation:** `route.bzl`
-- ID: `"OpenROAD.RepairAntennas"` (line 93)
-- Uses REPAIR_ANTENNAS_CONFIG_KEYS = GRT_CONFIG_KEYS
+- ID: `"OpenROAD.RepairAntennas"`
+- Uses `REPAIR_ANTENNAS_CONFIG_KEYS = GRT_CONFIG_KEYS`
 - step_outputs: `["def", "odb"]`
-- output_subdir: `"1-diodeinsertion"`
+- output_subdir: `"1-openroad-diodeinsertion"`
 
 **Bazel Flow:** `full_flow.bzl`
 - Parameter: `run_antenna_repair = True` (line 118)
@@ -2831,14 +3213,23 @@ Union needed (excluding duplicates):
 
 **Status: PASS**
 
+Verification:
+- `bazel build //dse/maths:SegmentedMultiplier16x16_sky130hd_ant` passed.
+- Initial run failed because the wrapper expected old composite output
+  directory `1-diodeinsertion`; LibreLane 3.0.4 writes
+  `1-openroad-diodeinsertion`. The wrapper was updated.
+- Runtime repaired antenna violations to zero, inserting 20 jumpers, then 1
+  diode, then 10 jumpers, then 4 diodes.
+- Produced `SegmentedMultiplier16x16.def`, `.odb`, and `state_out.json`.
+
 ---
 
 ### Step 44: OpenROAD.ResizerTimingPostGRT
 
-**Verified:** 2026-01-28
+**Verified:** 2026-07-07 source/config audit; runtime deferred
 
 **Librelane Source:** `librelane/steps/openroad.py`
-- ID: `"OpenROAD.ResizerTimingPostGRT"` (line 2320)
+- ID: `"OpenROAD.ResizerTimingPostGRT"` (line 2803)
 - Class: ResizerTimingPostGRT -> ResizerStep -> OpenROADStep
 - inputs: `[DesignFormat.ODB]` (inherited from OpenROADStep)
 - outputs: `[ODB, DEF, SDC, NETLIST, POWERED_NETLIST]` (inherited from OpenROADStep)
@@ -2846,42 +3237,46 @@ Union needed (excluding duplicates):
 - Note: This is experimental and may cause hangs or extended run times
 
 **Librelane Gating:** `classic.py`
-- Position: Step 44 (line 84)
-- Variable: `RUN_POST_GRT_RESIZER_TIMING` (line 271)
-- Default: **`False`** (line 160)
+- Position: Step 44 (line 85)
+- Variable: `RUN_POST_GRT_RESIZER_TIMING` (line 273)
+- Default: **`False`** (line 159)
 - This step is OFF by default because it's experimental
 
 **Config Variable Audit:**
 
-ResizerTimingPostGRT.config_vars = ResizerStep.config_vars + 8 step-specific (openroad.py:2323-2381)
+ResizerTimingPostGRT.config_vars = ResizerStep.config_vars + step-specific
+variables (openroad.py lines 2805-2902).
 
-Step-specific variables (need 5-location wiring):
+Step-specific variables:
 
 | Variable | Type | Default | Status |
 |----------|------|---------|--------|
-| GRT_RESIZER_HOLD_SLACK_MARGIN | Decimal | 0.05 ns | **NOT WIRED** |
-| GRT_RESIZER_SETUP_SLACK_MARGIN | Decimal | 0.025 ns | **NOT WIRED** |
-| GRT_RESIZER_HOLD_MAX_BUFFER_PCT | Decimal | 50% | **NOT WIRED** |
-| GRT_RESIZER_SETUP_MAX_BUFFER_PCT | Decimal | 50% | **NOT WIRED** |
-| GRT_RESIZER_ALLOW_SETUP_VIOS | bool | False | **NOT WIRED** |
-| GRT_RESIZER_GATE_CLONING | bool | True | **NOT WIRED** |
-| GRT_RESIZER_RUN_GRT | bool | True | **NOT WIRED** |
-| GRT_RESIZER_FIX_HOLD_FIRST | bool | False | **NOT WIRED** |
+| GRT_RESIZER_HOLD_SLACK_MARGIN | Decimal | 0.05 ns | Wired |
+| GRT_RESIZER_SETUP_SLACK_MARGIN | Decimal | 0.025 ns | Wired |
+| GRT_RESIZER_HOLD_MAX_BUFFER_PCT | Decimal | 50% | Wired |
+| GRT_RESIZER_SETUP_MAX_BUFFER_PCT | Decimal | 50% | Wired |
+| GRT_RESIZER_ALLOW_SETUP_VIOS | bool | False | Wired |
+| GRT_RESIZER_SETUP_GATE_CLONING | bool | True | Wired |
+| GRT_RESIZER_RUN_GRT | bool | True | Wired |
+| GRT_RESIZER_SETUP_BUFFERING | bool | True | Wired |
+| GRT_RESIZER_SETUP_BUFFER_REMOVAL | bool | True | Wired |
+| GRT_RESIZER_SETUP_REPAIR_TNS_PCT | Optional[Decimal] | None | Wired |
+| GRT_RESIZER_SETUP_MAX_UTIL_PCT | Optional[Decimal] | None | Wired |
+| GRT_RESIZER_HOLD_REPAIR_TNS_PCT | Optional[Decimal] | None | Wired |
+| GRT_RESIZER_HOLD_MAX_UTIL_PCT | Optional[Decimal] | None | Wired |
+| GRT_RESIZER_FIX_HOLD_FIRST | bool | False | Wired |
 
 ResizerStep.config_vars (from RESIZER_STEP_CONFIG_KEYS):
 
 | Category | Variables | Status |
 |----------|-----------|--------|
-| OpenROADStep.config_vars | 5 vars | Wired |
-| OpenROADStep.prepare_env | 2 vars | Wired |
-| grt_variables | 10 vars | Wired |
+| OpenROADStep.config_vars / prepare_env | Shared `OPENROAD_STEP_CONFIG_KEYS` | Wired |
+| grt_variables | Current `GRT_ANTENNA_REPAIR_*` names | Wired |
 | rsz_variables | 7 vars | Wired |
 
-**Total: ~32 config variables needed (RESIZER_STEP_CONFIG_KEYS + 8 step-specific)**
-
 **Bazel Implementation:** `route.bzl`
-- ID: `"OpenROAD.ResizerTimingPostGRT"` (line 107)
-- Uses RESIZER_TIMING_POST_GRT_CONFIG_KEYS (32 vars)
+- ID: `"OpenROAD.ResizerTimingPostGRT"`
+- Uses `RESIZER_TIMING_POST_GRT_CONFIG_KEYS`
 - step_outputs: `["def", "odb", "nl", "pnl", "sdc"]`
 
 **Bazel Flow:** `full_flow.bzl`
@@ -2898,41 +3293,51 @@ ResizerStep.config_vars (from RESIZER_STEP_CONFIG_KEYS):
 | Gating var | RUN_POST_GRT_RESIZER_TIMING | run_post_grt_resizer_timing | Y |
 | Gating default | False | False | Y |
 | Position | Step 44 | Step 44 | Y |
-| Config vars | ~32 variables | RESIZER_TIMING_POST_GRT_CONFIG_KEYS | Y |
+| Config vars | ResizerStep + 14 specific | RESIZER_TIMING_POST_GRT_CONFIG_KEYS | Y |
 
-**Status: PASS**
+**Status: DEFERRED**
+
+Fixes applied:
+- Renamed emitted config key from deprecated `GRT_RESIZER_GATE_CLONING` to
+  `GRT_RESIZER_SETUP_GATE_CLONING`.
+- Added LibreLane 3.0.4 setup buffering/removal and optional setup/hold repair
+  limit knobs.
+
+Runtime verification:
+- Not run in this pass. The small multiplier flow keeps
+  `run_post_grt_resizer_timing = False`, matching LibreLane's default, so it has
+  no `_rsz_grt2` target.
+- `bazel build --nobuild //dse/maths:SegmentedMultiplier16x16_sky130hd_ant`
+  passed after adding the Step 44 config plumbing.
 
 ---
 
 ### Step 45: OpenROAD.STAMidPNR (fourth occurrence)
 
-**Verified:** 2026-01-28
+**Verified:** 2026-07-07
 
 **Librelane Source:** `librelane/steps/openroad.py`
-- ID: `"OpenROAD.STAMidPNR"` (line 364)
+- ID: `"OpenROAD.STAMidPNR"` (line 543)
 - Class: STAMidPNR -> OpenROADStep
-- inputs: `[DesignFormat.ODB]` (line 368)
-- outputs: `[]` (line 369)
+- inputs: `[DesignFormat.ODB]`
+- outputs: `[]`
 - Note: This step appears 4 times in Classic flow (steps 30, 35, 37, 45)
 
 **Librelane Gating:** `classic.py`
-- Position: Step 45 (line 85) - fourth occurrence, after ResizerTimingPostGRT
-- NOT in gating_config_vars dict (lines 267-309) - always runs
+- Position: Step 45 (line 86) - fourth occurrence, after ResizerTimingPostGRT
+- NOT in gating_config_vars dict - always runs
 
 **Config Variable Audit:**
 
-STAMidPNR.config_vars = OpenROADStep.config_vars (no additional, openroad.py:357-372)
+STAMidPNR.config_vars = OpenROADStep.config_vars; no additional variables.
 
 | Category | Variables | Status |
 |----------|-----------|--------|
-| OpenROADStep.config_vars | 5 vars | Wired |
-| OpenROADStep.prepare_env | 2 vars | Wired |
-
-**Total: ~7 config variables (STA_CONFIG_KEYS)**
+| OpenROADStep.config_vars / prepare_env | Shared `OPENROAD_STEP_CONFIG_KEYS` | Wired |
 
 **Bazel Implementation:** `sta.bzl`
-- ID: `"OpenROAD.STAMidPNR"` (line 91)
-- Uses STA_CONFIG_KEYS
+- ID: `"OpenROAD.STAMidPNR"`
+- Uses `STA_CONFIG_KEYS`
 - step_outputs: `[]`
 
 **Bazel Flow:** `full_flow.bzl`
@@ -2951,14 +3356,20 @@ STAMidPNR.config_vars = OpenROADStep.config_vars (no additional, openroad.py:357
 
 **Status: PASS**
 
+Verification:
+- `bazel build //dse/maths:SegmentedMultiplier16x16_sky130hd_sta_mid_rsz_grt`
+  passed.
+- Produced `max.rpt`, `min.rpt`, and `state_out.json`.
+- Runtime read the ODB from `SegmentedMultiplier16x16_sky130hd_ant`.
+
 ---
 
 ### Step 46: OpenROAD.DetailedRouting
 
-**Verified:** 2026-01-28
+**Verified:** 2026-07-07
 
 **Librelane Source:** `librelane/steps/openroad.py`
-- ID: `"OpenROAD.DetailedRouting"` (line 1590)
+- ID: `"OpenROAD.DetailedRouting"` (line 1928)
 - Class: DetailedRouting -> OpenROADStep
 - inputs: `[DesignFormat.ODB]` (inherited from OpenROADStep)
 - outputs: `[ODB, DEF, SDC, NETLIST, POWERED_NETLIST]` (inherited from OpenROADStep)
@@ -2966,36 +3377,41 @@ STAMidPNR.config_vars = OpenROADStep.config_vars (no additional, openroad.py:357
 - Longest step in typical flow (hours/days/weeks on larger designs)
 
 **Librelane Gating:** `classic.py`
-- Position: Step 46 (line 86)
-- Variable: `RUN_DRT` (line 277)
-- Default: `True` (line 180)
+- Position: Step 46 (line 87)
+- Variable: `RUN_DRT` (line 279)
+- Default: `True` (line 179)
 - Users CAN disable detailed routing by setting RUN_DRT=False
 
 **Config Variable Audit:**
 
-DetailedRouting.config_vars = OpenROADStep.config_vars + 4 step-specific (openroad.py:1593-1616)
+DetailedRouting.config_vars = OpenROADStep.config_vars + grt_variables +
+step-specific variables (openroad.py lines 1931-1993).
 
 Step-specific variables:
 
 | Variable | Type | Default | Status |
 |----------|------|---------|--------|
-| DRT_THREADS | Optional[int] | (machine threads) | **NOT WIRED** |
-| DRT_MIN_LAYER | Optional[str] | None | **NOT WIRED** |
-| DRT_MAX_LAYER | Optional[str] | None | **NOT WIRED** |
-| DRT_OPT_ITERS | int | 64 | **NOT WIRED** |
+| DRT_THREADS | Optional[int] | machine threads | Wired |
+| DRT_OPT_ITERS | int | 64 | Wired |
+| DRT_SAVE_SNAPSHOTS | bool | False | Wired |
+| DRT_ANTENNA_REPAIR_ITERS | int | 3 | Wired |
+| DRT_ANTENNA_REPAIR_MARGIN | int | 10 | Wired |
+| DRT_ANTENNA_REPAIR_JUMPER_ONLY | bool | False | Wired |
+| DRT_ANTENNA_REPAIR_DIODE_ONLY | bool | False | Wired |
+| DRT_SAVE_DRC_REPORT_ITERS | Optional[int] | None | Wired |
+| NON_DEFAULT_RULES | Optional[dict] | None | Wired |
+| DRT_ASSIGN_NDR | Optional[dict] | None | Wired |
 
 OpenROADStep.config_vars:
 
 | Category | Variables | Status |
 |----------|-----------|--------|
-| OpenROADStep.config_vars | 5 vars | Wired |
-| OpenROADStep.prepare_env | 2 vars | Wired |
-
-**Total: ~11 config variables needed (OPENROAD_STEP_CONFIG_KEYS + 4 DRT_*)**
+| OpenROADStep.config_vars / prepare_env | Shared `OPENROAD_STEP_CONFIG_KEYS` | Wired |
+| grt_variables | Current `GRT_ANTENNA_REPAIR_*` names | Wired |
 
 **Bazel Implementation:** `route.bzl`
-- ID: `"OpenROAD.DetailedRouting"` (line 122)
-- Uses DETAILED_ROUTING_CONFIG_KEYS (11 vars)
+- ID: `"OpenROAD.DetailedRouting"`
+- Uses `DETAILED_ROUTING_CONFIG_KEYS`
 - step_outputs: `["def", "odb", "nl", "pnl", "sdc"]`
 
 **Bazel Flow:** `full_flow.bzl`
@@ -3012,32 +3428,49 @@ OpenROADStep.config_vars:
 | Gating var | RUN_DRT | run_drt | Y |
 | Gating default | True | True | Y |
 | Position | Step 46 | Step 46 | Y |
-| Config vars | ~11 variables | DETAILED_ROUTING_CONFIG_KEYS | Y |
+| Config vars | OpenROADStep + grt_variables + DRT-specific | DETAILED_ROUTING_CONFIG_KEYS | Y |
 
 **Status: PASS**
+
+Fixes applied:
+- Removed obsolete `DRT_MIN_LAYER` and `DRT_MAX_LAYER` from the Bazel config
+  surface.
+- Added current DRT-specific variables, including snapshot, antenna repair,
+  DRC-report interval, and optional NDR dictionaries.
+- Kept the DetailedRouting key list scoped to OpenROADStep + grt_variables +
+  DRT-specific variables, without DPL-only keys.
+
+Verification:
+- `bazel build //dse/maths:SegmentedMultiplier16x16_sky130hd_drt` passed.
+- Runtime ran TritonRoute with 6 threads and `-droute_end_iter 64`.
+- Detailed routing completed with zero DRT violations; post-route antenna check
+  found zero net and pin violations.
+- Produced DEF, ODB, NL, PNL, SDC, and `state_out.json`.
 
 ---
 
 ### Step 47: Odb.RemoveRoutingObstructions
 
-**Verified:** 2026-01-28
+**Verified:** 2026-07-07
 
 **Librelane Source:** `librelane/steps/odb.py`
-- ID: `"Odb.RemoveRoutingObstructions"` (line 582)
-- inputs: `[DesignFormat.ODB]` (inherited from OdbpyStep, line 47)
-- outputs: `[DesignFormat.ODB, DesignFormat.DEF]` (inherited from OdbpyStep, line 48)
-- Subclass of AddRoutingObstructions - inherits ROUTING_OBSTRUCTIONS config var (line 539)
-- Self-skipping: when ROUTING_OBSTRUCTIONS is None, step skips (inherited run() method lines 566-572)
+- ID: `"Odb.RemoveRoutingObstructions"` (line 597)
+- inputs: `[DesignFormat.ODB]` (inherited from OdbpyStep)
+- outputs: `[DesignFormat.ODB, DesignFormat.DEF]` (inherited from OdbpyStep)
+- Subclass of AddRoutingObstructions; inherits `ROUTING_OBSTRUCTIONS`
+- Self-skipping: when `ROUTING_OBSTRUCTIONS` is `None`, inherited run method
+  skips
 
 **Librelane Gating:** `classic.py`
-- Position: Step 47 (line 87)
+- Position: Step 47 (line 88)
 - No entry in gating_config_vars dict
 - Gating is implicit via ROUTING_OBSTRUCTIONS config variable - step self-skips when None
 
 **Bazel Implementation:** `odb.bzl`
-- ID: `"Odb.RemoveRoutingObstructions"` (line 129)
-- step_outputs: `["def", "odb"]` (line 130)
-- Uses ROUTING_OBS_CONFIG_KEYS = BASE_CONFIG_KEYS + ["ROUTING_OBSTRUCTIONS"] (line 16)
+- ID: `"Odb.RemoveRoutingObstructions"`
+- step_outputs: `["def", "odb"]` only when `routing_obstructions` is set;
+  otherwise pass-through state only
+- Uses `ROUTING_OBS_CONFIG_KEYS = ODB_CONFIG_KEYS + ["ROUTING_OBSTRUCTIONS"]`
 
 **Config Variable Audit:**
 
@@ -3047,60 +3480,58 @@ Inheritance: RemoveRoutingObstructions → AddRoutingObstructions → OdbpyStep 
 |----------|--------|-------|--------|
 | ROUTING_OBSTRUCTIONS | AddRoutingObstructions (odb.py:537-547) | 5-loc pattern | PASS |
 
-5-location wiring:
-1. common.bzl ENTRY_ATTRS line 1405 ✓
-2. providers.bzl LibrelaneInput line 111 ✓
-3. init.bzl _init_impl line 98 ✓
-4. common.bzl create_librelane_config lines 334-335 ✓
-5. odb.bzl ROUTING_OBS_CONFIG_KEYS line 16 ✓
-
 **Bazel Flow:** `full_flow.bzl`
-- Position: Step 47 (line 577 comment)
-- Conditional: only added when routing_obstructions is provided (line 578)
+- Position: Step 47
+- Always instantiated; self-skips when `routing_obstructions` is unset
 - Named: `_rm_route_obs`
 - Chains from: `pre_rm_obs_src` (either `_drt` or `_sta_mid_rsz_grt`)
-- post_drt_src tracks whether this step was added for subsequent steps (lines 584-586)
+- `post_drt_src` always points to `_rm_route_obs`
 
 | Aspect | Librelane | Bazel | Match |
 |--------|-----------|-------|-------|
 | Step ID | `"Odb.RemoveRoutingObstructions"` | `"Odb.RemoveRoutingObstructions"` | Y |
 | inputs | `[ODB]` | (from src) | Y |
 | outputs | `[ODB, DEF]` | `["def", "odb"]` | Y |
-| Gating | Self-skip when ROUTING_OBSTRUCTIONS=None | Conditional inclusion | Y |
+| Gating | Self-skip when ROUTING_OBSTRUCTIONS=None | always instantiated, self-skips | Y |
 | Position | Step 47 | Step 47 | Y |
 
-**Notes:** Both implementations achieve the same behavior - step only runs when routing obstructions
-are configured. Librelane uses runtime self-skip; Bazel uses build-time conditional inclusion.
-
 **Status: PASS**
+
+Verification:
+- `bazel build //dse/maths:SegmentedMultiplier16x16_sky130hd_rm_route_obs`
+  passed.
+- Runtime log reported:
+  `'ROUTING_OBSTRUCTIONS' is not defined. Skipping 'Odb.RemoveRoutingObstructions'...`
+- Produced `state_out.json` only, as expected for pass-through self-skip.
 
 ---
 
 ### Step 48: OpenROAD.CheckAntennas (second occurrence)
 
-**Verified:** 2026-01-28
+**Verified:** 2026-07-07
 
 **Librelane Source:** `librelane/steps/openroad.py`
-- ID: `"OpenROAD.CheckAntennas"` (line 1389)
+- ID: `"OpenROAD.CheckAntennas"` (line 1698)
 - inputs: `[DesignFormat.ODB]` (inherited from OpenROADStep)
-- outputs: `[]` (line 1393, overrides parent - produces only metrics, no design files)
+- outputs: `[]`; produces reports/metrics, no design views
 - Checks for antenna rule violations and updates route__antenna_violation__count metric
 
 **Librelane Gating:** `classic.py`
-- Position: Second occurrence at line 88 (Step 48, after RemoveRoutingObstructions)
+- Position: second occurrence at line 89 (Step 48, after RemoveRoutingObstructions)
 - No entry in gating_config_vars dict - always runs
 
 **Bazel Implementation:** `route.bzl`
-- ID: `"OpenROAD.CheckAntennas"` (line 81)
-- step_outputs: `[]` (line 81)
-- Uses CHECK_ANTENNAS_CONFIG_KEYS = OPENROAD_STEP_CONFIG_KEYS (line 41)
+- ID: `"OpenROAD.CheckAntennas"`
+- step_outputs: `[]`
+- extra_outputs: `reports/antenna.rpt`, `reports/antenna_summary.rpt`
+- Uses `CHECK_ANTENNAS_CONFIG_KEYS = OPENROAD_STEP_CONFIG_KEYS`
 
 **Config Variable Audit:**
 
 Inheritance: CheckAntennas → OpenROADStep → Step
 
-CheckAntennas has no step-specific config_vars. Only inherits OpenROADStep.config_vars which are
-covered by OPENROAD_STEP_CONFIG_KEYS. All OpenROADStep variables verified in earlier steps.
+CheckAntennas has no step-specific config_vars. It only inherits
+OpenROADStep.config_vars, covered by shared `OPENROAD_STEP_CONFIG_KEYS`.
 
 **Bazel Flow:** `full_flow.bzl`
 - Position: Step 48 (line 588 comment)
@@ -3121,11 +3552,18 @@ detailed routing to verify antenna violations. No gating needed.
 
 **Status: PASS**
 
+Verification:
+- `bazel build //dse/maths:SegmentedMultiplier16x16_sky130hd_chk_ant_drt`
+  passed.
+- Produced `reports/antenna.rpt`, `reports/antenna_summary.rpt`, and
+  `state_out.json`.
+- `antenna_summary.rpt` was empty, indicating zero reported antenna violations.
+
 ---
 
 ### Step 49: Checker.TrDRC
 
-**Verified:** 2026-01-28
+**Verified:** 2026-07-07
 
 **Librelane Source:** `librelane/steps/checker.py`
 - ID: `"Checker.TrDRC"` (line 179)
@@ -3135,14 +3573,14 @@ detailed routing to verify antenna violations. No gating needed.
 - Raises deferred error if DRC errors > 0 (unless ERROR_ON_TR_DRC=False)
 
 **Librelane Gating:** `classic.py`
-- Position: Step 49 (line 89)
-- Variable: `RUN_DRT` (line 292)
+- Position: Step 49 (line 90)
+- Variable: `RUN_DRT` (line 294)
 - When RUN_DRT=False, TrDRC is skipped (makes sense - no routing = no DRC to check)
 
 **Bazel Implementation:** `checker.bzl`
-- ID: `"Checker.TrDRC"` (line 61)
+- ID: `"Checker.TrDRC"`
 - step_outputs: `[]`
-- Uses TR_DRC_CONFIG_KEYS = BASE_CONFIG_KEYS + ["ERROR_ON_TR_DRC"] (line 35)
+- Uses `TR_DRC_CONFIG_KEYS = BASE_CONFIG_KEYS + ["ERROR_ON_TR_DRC"]`
 
 **Config Variable Audit:**
 
@@ -3152,15 +3590,8 @@ Inheritance: TrDRC → MetricChecker → Step
 |----------|--------|-------|--------|
 | ERROR_ON_TR_DRC | TrDRC (checker.py:186-192) | 5-loc pattern | PASS |
 
-5-location wiring:
-1. common.bzl ENTRY_ATTRS line 1312 ✓
-2. providers.bzl LibrelaneInput line 83 ✓
-3. init.bzl _init_impl line 79 ✓
-4. common.bzl create_librelane_config line 298 ✓
-5. checker.bzl TR_DRC_CONFIG_KEYS line 35 ✓
-
 **Bazel Flow:** `full_flow.bzl`
-- Position: Step 49 (line 595 comment)
+- Position: Step 49
 - No gating - always runs
 - Named: `_chk_tr_drc`
 - Chains from: `_chk_ant_drt`
@@ -3174,16 +3605,22 @@ Inheritance: TrDRC → MetricChecker → Step
 | Position | Step 49 (line 89) | Step 49 (line 595) | Y |
 | Config vars | ERROR_ON_TR_DRC | TR_DRC_CONFIG_KEYS | Y |
 
-**Notes:** TrDRC is gated by RUN_DRT in librelane. Since Bazel's DRT step has no gating (always
-runs), TrDRC also always runs. Current behavior matches.
+**Notes:** TrDRC is gated by RUN_DRT in LibreLane. In the Bazel flow this path
+is only reached after the DRT branch, so the effective behavior matches.
 
 **Status: PASS**
+
+Verification:
+- `bazel build //dse/maths:SegmentedMultiplier16x16_sky130hd_chk_tr_drc`
+  passed.
+- Runtime log reported: `Check for Routing DRC errors clear.`
+- Produced `state_out.json`.
 
 ---
 
 ### Step 50: Odb.ReportDisconnectedPins
 
-**Verified:** 2026-01-28
+**Verified:** 2026-07-08
 
 **Librelane Source:** `librelane/steps/odb.py`
 - ID: `"Odb.ReportDisconnectedPins"` (line 502)
@@ -3223,38 +3660,46 @@ Wiring for PDK variable:
 |--------|-----------|-------|-------|
 | Step ID | `"Odb.ReportDisconnectedPins"` | `"Odb.ReportDisconnectedPins"` | Y |
 | inputs | `[ODB]` | (from src) | Y |
-| outputs | `[ODB, DEF]` | `[]` | Note |
+| outputs | `[]` | `[]` | Y |
 | Gating | None | None | N/A |
-| Position | Step 50 (line 90) | Step 50 (line 602) | Y |
-| Config vars | IGNORE_DISCONNECTED_MODULES | REPORT_DISCONNECTED_PINS_CONFIG_KEYS | Y |
+| Position | Step 50 | Step 50 | Y |
+| Config vars | OdbpyStep + `IGNORE_DISCONNECTED_MODULES` | REPORT_DISCONNECTED_PINS_CONFIG_KEYS | Y |
 
-**Notes:** Librelane inherits OdbpyStep outputs [ODB, DEF] while Bazel uses step_outputs=[].
-This is a technical difference - librelane produces output files while Bazel passes through.
-Practically equivalent since the step doesn't modify the design, only updates metrics.
+**Notes:** Current LibreLane explicitly sets `outputs = []` for this report step.
+The wrapper declares `full_disconnected_pins_table.txt` as an optional auxiliary
+output: it is copied when LibreLane writes it and created empty when the report
+is omitted, as happens for a clean design with zero disconnected pins.
 
 **Status: PASS**
+
+Verification:
+- `bazel build //dse/maths:SegmentedMultiplier16x16_sky130hd_rpt_disc_pins`
+  passed.
+- Runtime reported 0 disconnected pins, 0 critical.
+- Produced `state_out.json` and an empty optional
+  `full_disconnected_pins_table.txt`.
 
 ---
 
 ### Step 51: Checker.DisconnectedPins
 
-**Verified:** 2026-01-28
+**Verified:** 2026-07-07
 
 **Librelane Source:** `librelane/steps/checker.py`
-- ID: `"Checker.DisconnectedPins"` (line 236)
+- ID: `"Checker.DisconnectedPins"` (line 235)
 - inputs: `[]` (inherited from MetricChecker)
 - outputs: `[]` (inherited from MetricChecker)
-- deferred: False (line 238) - raises IMMEDIATE error, not deferred
-- Checks metric: design__critical_disconnected_pin__count (line 240)
+- deferred: False - raises immediate error, not deferred
+- Checks metric: `design__critical_disconnected_pin__count`
 
 **Librelane Gating:** `classic.py`
-- Position: Step 51 (line 91)
+- Position: Step 51 (line 92)
 - No entry in gating_config_vars dict - always runs
 
 **Bazel Implementation:** `checker.bzl`
-- ID: `"Checker.DisconnectedPins"` (line 67)
+- ID: `"Checker.DisconnectedPins"`
 - step_outputs: `[]`
-- Uses DISCONNECTED_PINS_CONFIG_KEYS (line 38)
+- Uses `DISCONNECTED_PINS_CONFIG_KEYS`
 
 **Config Variable Audit:**
 
@@ -3264,15 +3709,8 @@ Inheritance: DisconnectedPins → MetricChecker → Step
 |----------|--------|-------|--------|
 | ERROR_ON_DISCONNECTED_PINS | checker.py:243-250 | 5-loc pattern | PASS |
 
-5-location wiring:
-1. common.bzl ENTRY_ATTRS ✓
-2. providers.bzl LibrelaneInput ✓
-3. init.bzl _init_impl ✓
-4. common.bzl create_librelane_config ✓
-5. checker.bzl DISCONNECTED_PINS_CONFIG_KEYS ✓
-
 **Bazel Flow:** `full_flow.bzl`
-- Position: Step 51 (line 609 comment)
+- Position: Step 51
 - No gating - always runs
 - Named: `_chk_disc_pins`
 - Chains from: `_rpt_disc_pins`
@@ -3291,35 +3729,42 @@ immediately if critical disconnected pins are found (unless ERROR_ON_DISCONNECTE
 
 **Status: PASS**
 
+Verification:
+- `bazel build //dse/maths:SegmentedMultiplier16x16_sky130hd_chk_disc_pins`
+  passed.
+- Runtime log reported: `Check for critical disconnected pins clear.`
+- Produced `state_out.json`.
+
 ---
 
 ### Step 52: Odb.ReportWireLength
 
-**Verified:** 2026-01-28
+**Verified:** 2026-07-07
 
 **Librelane Source:** `librelane/steps/odb.py`
-- ID: `"Odb.ReportWireLength"` (line 462)
+- ID: `"Odb.ReportWireLength"` (line 478)
 - inputs: `[DesignFormat.ODB]` (inherited from OdbpyStep)
-- outputs: `[]` (line 460, 464 - explicitly overrides to empty)
-- Produces wire_lengths.csv report file (line 473)
+- outputs: `[]` - explicitly overrides to empty
+- Produces `wire_lengths.csv` report file
 
 **Librelane Gating:** `classic.py`
-- Position: Step 52 (line 92)
+- Position: Step 52 (line 93)
 - No entry in gating_config_vars dict - always runs
 
 **Bazel Implementation:** `odb.bzl`
-- ID: `"Odb.ReportWireLength"` (line 140)
+- ID: `"Odb.ReportWireLength"`
 - step_outputs: `[]`
-- Uses ODB_CONFIG_KEYS = BASE_CONFIG_KEYS
+- extra_outputs: `wire_lengths.csv`
+- Uses `ODB_CONFIG_KEYS`
 
 **Config Variable Audit:**
 
 Inheritance: ReportWireLength → OdbpyStep → Step
 
-No step-specific config_vars. Uses BASE_CONFIG_KEYS only.
+No step-specific config_vars. Uses OdbpyStep LEF-loading config.
 
 **Bazel Flow:** `full_flow.bzl`
-- Position: Step 52 (line 616 comment)
+- Position: Step 52
 - No gating - always runs
 - Named: `_rpt_wire_len`
 - Chains from: `_chk_disc_pins`
@@ -3337,27 +3782,33 @@ inherits OdbpyStep outputs). Both implementations match.
 
 **Status: PASS**
 
+Verification:
+- `bazel build //dse/maths:SegmentedMultiplier16x16_sky130hd_rpt_wire_len`
+  passed.
+- Produced `wire_lengths.csv` and `state_out.json`.
+- CSV header is `net,length_um`.
+
 ---
 
 ### Step 53: Checker.WireLength
 
-**Verified:** 2026-01-28
+**Verified:** 2026-07-08
 
 **Librelane Source:** `librelane/steps/checker.py`
 - ID: `"Checker.WireLength"` (line 255)
 - inputs: `[]` (inherited from MetricChecker)
 - outputs: `[]` (inherited from MetricChecker)
-- Checks metric: route__wirelength__max (line 258)
-- Uses WIRE_LENGTH_THRESHOLD from PDK config (lines 270-273)
+- Checks metric: `route__wirelength__max`
+- Uses optional `WIRE_LENGTH_THRESHOLD` from PDK config
 
 **Librelane Gating:** `classic.py`
-- Position: Step 53 (line 93)
+- Position: Step 53 (line 94)
 - No entry in gating_config_vars dict - always runs
 
 **Bazel Implementation:** `checker.bzl`
-- ID: `"Checker.WireLength"` (line 71)
+- ID: `"Checker.WireLength"`
 - step_outputs: `[]`
-- Uses WIRE_LENGTH_CONFIG_KEYS
+- Uses `WIRE_LENGTH_CONFIG_KEYS`
 
 **Config Variable Audit:**
 
@@ -3368,20 +3819,8 @@ Inheritance: WireLength → MetricChecker → Step
 | ERROR_ON_LONG_WIRE | checker.py:261-268 | 5-loc pattern | PASS |
 | WIRE_LENGTH_THRESHOLD | flow.py:56-62 (pdk=True) | PDK path | PASS |
 
-5-location wiring for ERROR_ON_LONG_WIRE:
-1. common.bzl ENTRY_ATTRS ✓
-2. providers.bzl LibrelaneInput ✓
-3. init.bzl _init_impl ✓
-4. common.bzl create_librelane_config ✓
-5. checker.bzl WIRE_LENGTH_CONFIG_KEYS ✓
-
-PDK wiring for WIRE_LENGTH_THRESHOLD:
-1. pdk_repo.bzl line 74 ✓
-2. common.bzl create_librelane_config ✓
-3. checker.bzl WIRE_LENGTH_CONFIG_KEYS ✓
-
 **Bazel Flow:** `full_flow.bzl`
-- Position: Step 53 (line 623 comment)
+- Position: Step 53
 - No gating - always runs
 - Named: `_chk_wire_len`
 - Chains from: `_rpt_wire_len`
@@ -3397,38 +3836,44 @@ PDK wiring for WIRE_LENGTH_THRESHOLD:
 
 **Status: PASS**
 
+Verification:
+- `bazel build //dse/maths:SegmentedMultiplier16x16_sky130hd_chk_wire_len`
+  passed.
+- Runtime warned that `WIRE_LENGTH_THRESHOLD` is not set, so the checker was
+  skipped.
+- Produced `state_out.json`.
+
 ---
 
 ### Step 54: OpenROAD.FillInsertion
 
-**Verified:** 2026-01-28
+**Verified:** 2026-07-07
 
 **Librelane Source:** `librelane/steps/openroad.py`
-- ID: `"OpenROAD.FillInsertion"` (line 1660)
+- ID: `"OpenROAD.FillInsertion"` (line 2052)
 - inputs: `[DesignFormat.ODB]` (inherited from OpenROADStep)
 - outputs: `[ODB, DEF, SDC, NETLIST, POWERED_NETLIST]` (inherited from OpenROADStep)
 - Fills gaps with filler and decap cells
 
 **Librelane Gating:** `classic.py`
-- Position: Step 54 (line 94)
-- Variable: `RUN_FILL_INSERTION` (line 278)
-- Default: `True` (line 186)
+- Position: Step 54 (line 95)
+- Variable: `RUN_FILL_INSERTION` (line 280)
+- Default: `True` (line 185)
 
 **Bazel Implementation:** `macro.bzl`
-- ID: `"OpenROAD.FillInsertion"` (line 17)
-- step_outputs: `["def", "odb", "nl", "pnl", "sdc"]` (line 18)
-- Uses MACRO_CONFIG_KEYS = BASE_CONFIG_KEYS
+- ID: `"OpenROAD.FillInsertion"`
+- step_outputs: `["def", "odb", "nl", "pnl", "sdc"]`
+- Uses `FILL_CONFIG_KEYS = OPENROAD_STEP_CONFIG_KEYS`
 
 **Config Variable Audit:**
 
 Inheritance: FillInsertion → OpenROADStep → Step
 
-FillInsertion has no step-specific config_vars (lines 1652-1664). Inherits OpenROADStep.config_vars
-but fill.tcl script doesn't use them - only uses PDK cell info from BASE_CONFIG_KEYS.
+FillInsertion has no step-specific config_vars. It inherits OpenROADStep.config_vars.
 
 **Bazel Flow:** `full_flow.bzl`
-- Position: Step 54 (line 630 comment)
-- **NO gating parameter** - always runs
+- Position: Step 54
+- Gated by `run_fill_insertion`, default `True`
 - Named: `_fill`
 - Chains from: `_chk_wire_len`
 
@@ -3437,26 +3882,31 @@ but fill.tcl script doesn't use them - only uses PDK cell info from BASE_CONFIG_
 | Step ID | `"OpenROAD.FillInsertion"` | `"OpenROAD.FillInsertion"` | Y |
 | inputs | `[ODB]` | (from src) | Y |
 | outputs | `[ODB, DEF, SDC, NL, PNL]` | `["def", "odb", "nl", "pnl", "sdc"]` | Y |
-| Gating var | RUN_FILL_INSERTION | **MISSING** | **NO** |
-| Gating default | True | Always runs | (matches) |
+| Gating var | RUN_FILL_INSERTION | run_fill_insertion | Y |
+| Gating default | True | True | Y |
 | Position | Step 54 (line 94) | Step 54 (line 630) | Y |
 
-**Issue:** Missing `run_fill_insertion` gating parameter. Users cannot disable fill insertion.
-Default behavior matches since RUN_FILL_INSERTION defaults to True.
+If `run_fill_insertion = False`, the next step chains from `_chk_wire_len`.
 
-**Status: PASS (gating parameter optional, default matches)**
+**Status: PASS**
+
+Verification:
+- `bazel build //dse/maths:SegmentedMultiplier16x16_sky130hd_fill` passed.
+- Runtime placed 10,039 filler instances.
+- Produced DEF, ODB, NL, PNL, SDC, and `state_out.json`.
 
 ---
 
 ### Step 55: Odb.CellFrequencyTables
 
-**Verified:** 2026-01-28
+**Verified:** 2026-07-08
 
 **Librelane Source:** `librelane/steps/odb.py`
-- ID: `"Odb.CellFrequencyTables"` (line 936)
+- ID: `"Odb.CellFrequencyTables"` (line 955)
 - inputs: `[DesignFormat.ODB]` (inherited from OdbpyStep)
 - outputs: `[DesignFormat.ODB, DesignFormat.DEF]` (inherited from OdbpyStep)
 - Generates frequency tables for cells, buffers, cell functions, and SCL
+- Script writes `cell.rpt`, `cell_function.rpt`, `by_scl.rpt`, and `buffers.rpt`
 
 **Librelane Gating:** `classic.py`
 - Position: Step 55 (line 95)
@@ -3465,6 +3915,7 @@ Default behavior matches since RUN_FILL_INSERTION defaults to True.
 **Bazel Implementation:** `odb.bzl`
 - ID: `"Odb.CellFrequencyTables"` (line 143)
 - step_outputs: `[]` - reports only, no design file output
+- extra_outputs: `["cell.rpt", "cell_function.rpt", "by_scl.rpt", "buffers.rpt"]`
 - Uses ODB_CONFIG_KEYS = BASE_CONFIG_KEYS
 
 **Config Variable Audit:**
@@ -3474,7 +3925,7 @@ Inheritance: CellFrequencyTables → OdbpyStep → Step
 No step-specific config_vars. Uses BASE_CONFIG_KEYS only.
 
 **Bazel Flow:** `full_flow.bzl`
-- Position: Step 55 (line 637 comment)
+- Position: Step 55
 - No gating - always runs
 - Named: `_cell_freq`
 - Chains from: `_fill`
@@ -3483,36 +3934,41 @@ No step-specific config_vars. Uses BASE_CONFIG_KEYS only.
 |--------|-----------|-------|-------|
 | Step ID | `"Odb.CellFrequencyTables"` | `"Odb.CellFrequencyTables"` | Y |
 | inputs | `[ODB]` | (from src) | Y |
-| outputs | `[ODB, DEF]` | `[]` | Note |
+| outputs | `[ODB, DEF]` plus report files in step dir | report files only | Note |
 | Gating | None | None | N/A |
 | Position | Step 55 (line 95) | Step 55 (line 637) | Y |
 
 **Notes:** Similar to ReportDisconnectedPins - librelane inherits OdbpyStep outputs [ODB, DEF]
 while Bazel uses step_outputs=[]. This is a reporting step that doesn't modify the design.
+Bazel now declares the four report files written by the script so they remain available as build outputs.
 
 **Status: PASS**
+
+Verification:
+- `bazel build //dse/maths:SegmentedMultiplier16x16_sky130hd_cell_freq` passed.
+- Produced `cell.rpt`, `cell_function.rpt`, `by_scl.rpt`, `buffers.rpt`, and `state_out.json`.
 
 ---
 
 ### Step 56: OpenROAD.RCX
 
-**Verified:** 2026-01-28
+**Verified:** 2026-07-08
 
 **Librelane Source:** `librelane/steps/openroad.py`
-- ID: `"OpenROAD.RCX"` (line 1675)
-- inputs: `[DesignFormat.DEF]` (line 1704)
-- outputs: `[DesignFormat.SPEF]` (line 1705)
+- ID: `"OpenROAD.RCX"` (line 2067)
+- inputs: `[DesignFormat.DEF]` (line 2098)
+- outputs: `[DesignFormat.SPEF]` (line 2099)
 - Extracts parasitic resistance/capacitance values for accurate STA
 
 **Librelane Gating:** `classic.py`
 - Position: Step 56 (line 96)
-- Variable: `RUN_SPEF_EXTRACTION` (line 273)
+- Variable: `RUN_SPEF_EXTRACTION` (line 275)
 - Default: `True` (line 199)
 
 **Bazel Implementation:** `sta.bzl`
-- ID: `"OpenROAD.RCX"` (line 113)
+- ID: `"OpenROAD.RCX"` (line 137)
 - outputs: SPEF files for nom, min, max corners
-- Uses STA_CONFIG_KEYS
+- Uses RCX_CONFIG_KEYS
 
 **Config Variable Audit:**
 
@@ -3520,15 +3976,15 @@ Inheritance: RCX → OpenROADStep → Step
 
 | Variable | Source | Wired | Status |
 |----------|--------|-------|--------|
-| RCX_MERGE_VIA_WIRE_RES | openroad.py:1680-1685 | 5-loc pattern | PASS |
-| RCX_SDC_FILE | openroad.py:1686-1690 | 5-loc pattern | PASS |
-| RCX_RULESETS | openroad.py:1691-1696 (pdk) | PDK path | PASS |
-| STA_THREADS | openroad.py:1697-1701 | 5-loc pattern | PASS |
+| RCX_MERGE_VIA_WIRE_RES | openroad.py:2073-2078 | 5-loc pattern | PASS |
+| RCX_SDC_FILE | openroad.py:2079-2083 | 5-loc pattern | PASS |
+| RCX_RULESETS | openroad.py:2084-2089 (pdk) | PDK path | PASS |
+| STA_THREADS | openroad.py:2090-2094 | 5-loc pattern | PASS |
 | OpenROADStep vars | inherited | RCX_CONFIG_KEYS | PASS |
 
 **Bazel Flow:** `full_flow.bzl`
-- Position: Step 56 (line 644 comment)
-- **NO gating parameter** - always runs
+- Position: Step 56
+- Gated by `run_spef_extraction`, default `True`
 - Named: `_rcx`
 - Chains from: `_cell_freq`
 
@@ -3537,13 +3993,18 @@ Inheritance: RCX → OpenROADStep → Step
 | Step ID | `"OpenROAD.RCX"` | `"OpenROAD.RCX"` | Y |
 | inputs | `[DEF]` | (from src) | Y |
 | outputs | `[SPEF]` | spef_nom, spef_min, spef_max | Y |
-| Gating var | RUN_SPEF_EXTRACTION | **MISSING** | **NO** |
-| Gating default | True | Always runs | (matches) |
-| Position | Step 56 (line 96) | Step 56 (line 644) | Y |
+| Gating var | RUN_SPEF_EXTRACTION | `run_spef_extraction` | Y |
+| Gating default | True | True | Y |
+| Position | Step 56 (line 96) | Step 56 | Y |
 
-**Notes:** Missing gating parameter and some optional config vars. Works with defaults.
+**Notes:** The RCX rule declares the three sky130 SPEF outputs (`nom`, `min`, `max`) corresponding
+to the PDK `RCX_RULESETS` corner patterns.
 
-**Status: PASS (gating parameter optional, default matches)**
+**Status: PASS**
+
+Verification:
+- `bazel build //dse/maths:SegmentedMultiplier16x16_sky130hd_rcx` passed.
+- Produced `nom/SegmentedMultiplier16x16.nom.spef`, `min/SegmentedMultiplier16x16.min.spef`, and `max/SegmentedMultiplier16x16.max.spef`.
 
 ---
 
@@ -3552,14 +4013,16 @@ Inheritance: RCX → OpenROADStep → Step
 **Verified:** 2026-01-28
 
 **Librelane Source:** `librelane/steps/openroad.py`
-- ID: `"OpenROAD.STAPostPNR"` (line 771)
-- inputs: STAPrePNR.inputs + `[SPEF, ODB.optional]` (lines 783-786)
-- outputs: STAPrePNR.outputs + `[LIB]` (line 787)
+- ID: `"OpenROAD.STAPostPNR"` (line 954)
+- inputs: STAPrePNR.inputs + `[SPEF, ODB.optional]` (lines 963-966)
+- outputs: STAPrePNR.outputs + `[LIB]` (line 967)
 - Multi-corner STA with extracted parasitics
+- `corner.tcl` emits max/min/checks, power, skew, slack, violator, unpropagated-clock, and clock reports per corner
+- `run_corner()` writes per-corner Liberty files via `_LIB_SAVE_DIR`
 
 **Librelane Gating:** `classic.py`
 - Position: Step 57 (line 97)
-- Variable: `RUN_MCSTA` (line 279)
+- Variable: `RUN_MCSTA` (line 276)
 - Default: `True` (line 192)
 
 **Config Variable Audit:**
@@ -3574,39 +4037,43 @@ Inheritance: STAPostPNR -> STAPrePNR -> MultiCornerSTA -> OpenSTAStep -> OpenROA
 | PNR_SDC_FILE | OpenROADStep:213-216 | Wired |
 | FP_DEF_TEMPLATE | OpenROADStep:218-222 | Wired |
 | LIB | OpenROADStep.prepare_env:245 | Wired |
-| FALLBACK_SDC_FILE | OpenROADStep.prepare_env:248 | Wired |
+| FALLBACK_SDC | OpenROADStep.prepare_env:248 | Wired |
 | EXTRA_EXCLUDED_CELLS | OpenROADStep.prepare_env:254 | Wired |
 | PNR_EXCLUDED_CELL_FILE | OpenROADStep.prepare_env:255 | Wired |
-| STA_MACRO_PRIORITIZE_NL | MultiCornerSTA:535-540 | Wired |
-| STA_MAX_VIOLATOR_COUNT | MultiCornerSTA:541-545 | Wired |
-| EXTRA_SPEFS | MultiCornerSTA:546-550 (deprecated) | Skip (backcompat) |
-| STA_THREADS | MultiCornerSTA:551-555 | Wired |
-| SIGNOFF_SDC_FILE | STAPostPNR:776-780 | Wired |
+| STA_MACRO_PRIORITIZE_NL | MultiCornerSTA:713-718 | Wired |
+| STA_MAX_VIOLATOR_COUNT | MultiCornerSTA:719-723 | Wired |
+| EXTRA_SPEFS | MultiCornerSTA:724-728 (deprecated) | Skip (backcompat) |
+| STA_THREADS | MultiCornerSTA:729-733 | Wired |
+| SIGNOFF_SDC_FILE | STAPostPNR:958-962 | Wired |
 
 **Bazel Implementation:** `sta.bzl`
-- _sta_post_pnr_impl (line 152)
-- ID: `"OpenROAD.STAPostPNR"` (line 181)
-- Uses STA_CONFIG_KEYS (line 176) - **WRONG, should use MULTI_CORNER_STA_CONFIG_KEYS**
-
-**Issue:** _sta_post_pnr_impl uses STA_CONFIG_KEYS which lacks MultiCornerSTA config vars
-(STA_MACRO_PRIORITIZE_NL, STA_MAX_VIOLATOR_COUNT, STA_THREADS). Need to create
-STA_POST_PNR_CONFIG_KEYS = MULTI_CORNER_STA_CONFIG_KEYS + ["SIGNOFF_SDC_FILE"].
+- Custom `_sta_post_pnr_impl`
+- ID: `"OpenROAD.STAPostPNR"`
+- Uses `STA_POST_PNR_CONFIG_KEYS = MULTI_CORNER_STA_CONFIG_KEYS + ["SIGNOFF_SDC_FILE"]`
+- Declares per-corner Liberty files and passes them forward in `LibrelaneInfo.lib`
+- Declares the report files emitted by `corner.tcl`
 
 **Bazel Flow:** `full_flow.bzl`
-- Position: Step 57 (line 541 comment)
+- Position: Step 57
 - Named: `_sta`, chains from `_rcx`
-- No gating (always runs) - matches default True
+- Gated by `run_mcsta`, default `True`
 
 | Aspect | Librelane | Bazel | Match |
 |--------|-----------|-------|-------|
 | Step ID | `"OpenROAD.STAPostPNR"` | `"OpenROAD.STAPostPNR"` | Y |
 | inputs | `[SPEF, ODB?, ...]` | (from src) | Y |
-| outputs | `[LIB, ...]` | LIB files | Y |
-| Gating | RUN_MCSTA (True) | Always runs | Y (default matches) |
-| Position | Step 57 (line 97) | Step 57 (line 541) | Y |
+| outputs | `[LIB, ...]` plus reports | LIB files plus reports | Y |
+| Gating | RUN_MCSTA (True) | `run_mcsta` (True) | Y |
+| Position | Step 57 (line 97) | Step 57 | Y |
 | Config keys | MultiCornerSTA + SIGNOFF | STA_POST_PNR_CONFIG_KEYS | Y |
 
 **Status: PASS**
+
+Verification:
+- `bazel build //dse/maths:SegmentedMultiplier16x16_sky130hd_sta` passed.
+- Produced per-corner `.lib` outputs for all nine sky130 STA corners.
+- Produced summary plus max/min/checks, power, skew, slack, violator, unpropagated-clock, and clock reports per corner.
+- Runtime summary showed zero setup and hold violation counts for the small segmented multiplier.
 
 ---
 
@@ -3615,14 +4082,15 @@ STA_POST_PNR_CONFIG_KEYS = MULTI_CORNER_STA_CONFIG_KEYS + ["SIGNOFF_SDC_FILE"].
 **Verified:** 2026-01-28
 
 **Librelane Source:** `librelane/steps/openroad.py`
-- ID: `"OpenROAD.IRDropReport"` (line 1806)
-- inputs: `[DesignFormat.ODB, DesignFormat.SPEF]` (line 1810)
-- outputs: `[]` (line 1811) - produces reports only
+- ID: `"OpenROAD.IRDropReport"` (line 2200)
+- inputs: `[DesignFormat.ODB, DesignFormat.SPEF]` (line 2202)
+- outputs: `[]` (line 2203) - produces reports only
 - Performs static IR-drop analysis on power distribution network
+- Reads `irdrop.rpt` to extract voltage/drop metrics
 
 **Librelane Gating:** `classic.py`
 - Position: Step 58 (line 98)
-- Variable: `RUN_IRDROP_REPORT` (line 280)
+- Variable: `RUN_IRDROP_REPORT` (line 282)
 - Default: `True` (line 205)
 
 **Config Variable Audit:**
@@ -3637,9 +4105,9 @@ Inheritance: IRDropReport -> OpenROADStep -> TclStep -> Step
 | PNR_SDC_FILE | OpenROADStep:213-216 | Wired |
 | FP_DEF_TEMPLATE | OpenROADStep:218-222 | Wired |
 | LIB | OpenROADStep.prepare_env:245 | Wired |
-| FALLBACK_SDC_FILE | OpenROADStep.prepare_env:248 | Wired |
+| FALLBACK_SDC | OpenROADStep.prepare_env:248 | Wired |
 | EXTRA_EXCLUDED_CELLS | OpenROADStep.prepare_env:254 | Wired |
-| VSRC_LOC_FILES | IRDropReport:1814-1818 | Wired (via label_keyed_string_dict) |
+| VSRC_LOC_FILES | IRDropReport:2206-2210 | Wired (via label_keyed_string_dict) |
 
 Note: VSRC_LOC_FILES uses attr.label_keyed_string_dict where file labels map to net names,
 inverted in init.bzl to create net_name -> File dict.
@@ -3648,38 +4116,45 @@ inverted in init.bzl to create net_name -> File dict.
 - _ir_drop_report_impl (line 224)
 - ID: `"OpenROAD.IRDropReport"` (line 225)
 - Uses IRDROP_CONFIG_KEYS = STA_CONFIG_KEYS + ["VSRC_LOC_FILES"]
+- Declares `irdrop.rpt` as an extra output
 
 **Bazel Flow:** `full_flow.bzl`
 - Position: Step 58 (line 547 comment)
 - Named: `_ir_drop`, chains from `_sta`
-- No gating (always runs) - matches default True
+- Gated by `run_irdrop_report`, default `True`
 
 | Aspect | Librelane | Bazel | Match |
 |--------|-----------|-------|-------|
 | Step ID | `"OpenROAD.IRDropReport"` | `"OpenROAD.IRDropReport"` | Y |
 | inputs | `[ODB, SPEF]` | (from src) | Y |
-| outputs | `[]` | `[]` | Y |
-| Gating | RUN_IRDROP_REPORT (True) | Always runs | Y (default matches) |
+| outputs | `[]` plus `irdrop.rpt` report | `irdrop.rpt` | Y |
+| Gating | RUN_IRDROP_REPORT (True) | `run_irdrop_report` (True) | Y |
 | Position | Step 58 (line 98) | Step 58 (line 547) | Y |
 | Config keys | OpenROADStep + VSRC_LOC | IRDROP_CONFIG_KEYS | Y |
 
 **Status: PASS**
 
+Verification:
+- `bazel build //dse/maths:SegmentedMultiplier16x16_sky130hd_ir_drop` passed.
+- Produced `irdrop.rpt` and `state_out.json`.
+- Runtime warned that `VSRC_LOC_FILES` was unset, matching LibreLane behavior; it still produced VPWR/VGND IR metrics.
+
 ---
 
 ### Step 59: Magic.StreamOut
 
-**Verified:** 2026-01-28
+**Verified:** 2026-07-08
 
 **Librelane Source:** `librelane/steps/magic.py`
-- ID: `"Magic.StreamOut"` (line 258)
-- inputs: `[DesignFormat.DEF]` (line 261)
-- outputs: `[DesignFormat.GDS, DesignFormat.MAG_GDS, DesignFormat.MAG]` (line 262)
+- ID: `"Magic.StreamOut"` (line 286)
+- inputs: `[DesignFormat.DEF]` (line 288)
+- outputs: `[DesignFormat.GDS, DesignFormat.MAG_GDS, DesignFormat.MAG]` (line 289)
 - Converts DEF views into GDSII streams using Magic
+- Always updates `MAG_GDS` and `MAG`; updates `GDS` only when `PRIMARY_GDSII_STREAMOUT_TOOL == "magic"`
 
 **Librelane Gating:** `classic.py`
 - Position: Step 59 (line 99)
-- Variable: `RUN_MAGIC_STREAMOUT` (line 281)
+- Variable: `RUN_MAGIC_STREAMOUT` (line 283)
 - Default: `True` (line 217)
 
 **Config Variable Audit:**
@@ -3698,47 +4173,53 @@ Inheritance: Magic.StreamOut -> MagicStep -> TclStep -> Step
 | CELL_MAGS | MagicStep:121-126 (pdk) | Wired |
 | CELL_MAGLEFS | MagicStep:127-132 (pdk) | Wired |
 | MAGIC_CAPTURE_ERRORS | MagicStep:133-141 | Wired |
-| DIE_AREA | StreamOut:265-270 | From state metrics |
-| MAGIC_ZEROIZE_ORIGIN | StreamOut:271-276 | Wired |
-| MAGIC_DISABLE_CIF_INFO | StreamOut:277-283 | Wired |
-| MAGIC_MACRO_STD_CELL_SOURCE | StreamOut:284-292 | Wired |
+| DIE_AREA | StreamOut:293-298 | From state metrics |
+| MAGIC_ZEROIZE_ORIGIN | StreamOut:299-304 | Wired |
+| MAGIC_DISABLE_CIF_INFO | StreamOut:305-311 | Wired |
+| MAGIC_MACRO_STD_CELL_SOURCE | StreamOut:312-320 | Wired |
 
 **Bazel Implementation:** `macro.bzl`
 - _gds_impl (line 40)
 - ID: `"Magic.StreamOut"` (line 58)
 - Uses MAGIC_STREAMOUT_CONFIG_KEYS (line 18)
+- Declares `top.magic.gds` and `top.mag`; declares `top.gds` only when Magic is the primary stream-out tool
 
 **Bazel Flow:** `full_flow.bzl`
-- Position: Step 59 (line 665 comment)
+- Position: Step 59
 - Named: `_gds`, chains from `_ir_drop`
-- No gating (always runs) - matches default True
+- Gated by `run_magic_streamout`, default `True`
 
 | Aspect | Librelane | Bazel | Match |
 |--------|-----------|-------|-------|
 | Step ID | `"Magic.StreamOut"` | `"Magic.StreamOut"` | Y |
 | inputs | `[DEF]` | (from src) | Y |
-| outputs | `[GDS, MAG_GDS, MAG]` | GDS file | Y |
-| Gating | RUN_MAGIC_STREAMOUT (True) | Always runs | Y (default matches) |
-| Position | Step 59 (line 99) | Step 59 (line 665) | Y |
+| outputs | `[GDS, MAG_GDS, MAG]` | GDS/MAG_GDS/MAG as applicable | Y |
+| Gating | RUN_MAGIC_STREAMOUT (True) | `run_magic_streamout` (True) | Y |
+| Position | Step 59 (line 99) | Step 59 | Y |
 | Config keys | MagicStep + StreamOut | MAGIC_STREAMOUT_CONFIG_KEYS | Y |
 
 **Status: PASS**
+
+Verification:
+- `bazel build //dse/maths:SegmentedMultiplier16x16_sky130hd_gds` passed.
+- Produced `SegmentedMultiplier16x16.magic.gds`, `SegmentedMultiplier16x16.mag`, `SegmentedMultiplier16x16.gds`, and `state_out.json`.
 
 ---
 
 ### Step 60: KLayout.StreamOut
 
-**Verified:** 2026-01-29
+**Verified:** 2026-07-08
 
 **Librelane Source:** `librelane/steps/klayout.py`
-- ID: `"KLayout.StreamOut"` (line 186)
-- inputs: `[DesignFormat.DEF]` (line 189)
-- outputs: `[DesignFormat.GDS, DesignFormat.KLAYOUT_GDS]` (line 190)
+- ID: `"KLayout.StreamOut"` (line 272)
+- inputs: `[DesignFormat.DEF]` (line 275)
+- outputs: `[DesignFormat.GDS, DesignFormat.KLAYOUT_GDS]` (line 276)
 - Converts DEF views into GDSII streams using KLayout
+- Always updates `KLAYOUT_GDS`; updates `GDS` only when `PRIMARY_GDSII_STREAMOUT_TOOL == "klayout"`
 
 **Librelane Gating:** `classic.py`
 - Position: Step 60 (line 100)
-- Variable: `RUN_KLAYOUT_STREAMOUT` (line 282)
+- Variable: `RUN_KLAYOUT_STREAMOUT` (line 284)
 - Default: `True` (line 224)
 
 **Config Variable Audit:**
@@ -3750,8 +4231,9 @@ Inheritance: KLayout.StreamOut -> KLayoutStep -> Step
 | KLAYOUT_TECH | KLayoutStep:36-39 (pdk) | Wired (common.bzl:203) |
 | KLAYOUT_PROPERTIES | KLayoutStep:40-44 (pdk) | Wired (common.bzl:204) |
 | KLAYOUT_DEF_LAYER_MAP | KLayoutStep:45-51 (pdk) | Wired (common.bzl:205) |
-| DESIGN_NAME | run():197,213,222 | Wired (BASE_CONFIG_KEYS) |
-| PRIMARY_GDSII_STREAMOUT_TOOL | run():221 | Wired (BASE_CONFIG_KEYS:16) |
+| KLAYOUT_CONFLICT_RESOLUTION | StreamOut:278-286 | Wired |
+| DESIGN_NAME | run():294,306,322 | Wired (BASE_CONFIG_KEYS) |
+| PRIMARY_GDSII_STREAMOUT_TOOL | run():320 | Wired (BASE_CONFIG_KEYS:16) |
 | TECH_LEFS | get_cli_args():92 | Wired (BASE_CONFIG_KEYS:15) |
 | CELL_LEFS | get_cli_args():103 | Wired (BASE_CONFIG_KEYS:31) |
 | CELL_GDS | get_cli_args():121 | Wired (BASE_CONFIG_KEYS:32) |
@@ -3761,13 +4243,14 @@ Inheritance: KLayout.StreamOut -> KLayoutStep -> Step
 Note: KLAYOUT_* PDK variables added to KLAYOUT_STREAMOUT_CONFIG_KEYS (klayout.bzl:7-13).
 
 **Bazel Implementation:** `klayout.bzl`
-- _stream_out_impl (line 9)
+- _stream_out_impl
 - ID: `"KLayout.StreamOut"` (line 10)
 - Uses KLAYOUT_STREAMOUT_CONFIG_KEYS (line 10)
+- Declares `top.klayout.gds`; declares `top.gds` only when KLayout is the primary stream-out tool
 
 **Bazel Flow:** `full_flow.bzl`
-- Position: Step 60 (line 672 comment)
-- No gating parameter - always runs (matches default True)
+- Position: Step 60
+- Gated by `run_klayout_streamout`, default `True`
 - Named: `_klayout_gds`
 - Chains from: `_gds`
 
@@ -3775,28 +4258,33 @@ Note: KLAYOUT_* PDK variables added to KLAYOUT_STREAMOUT_CONFIG_KEYS (klayout.bz
 |--------|-----------|-------|-------|
 | Step ID | `"KLayout.StreamOut"` | `"KLayout.StreamOut"` | Y |
 | inputs | `[DEF]` | (from src) | Y |
-| outputs | `[GDS, KLAYOUT_GDS]` | `["klayout_gds"]` | Y |
-| Gating | RUN_KLAYOUT_STREAMOUT (True) | Always runs | Y (default matches) |
-| Position | Step 60 (line 100) | Step 60 (line 672) | Y |
+| outputs | `[GDS, KLAYOUT_GDS]` | KLAYOUT_GDS plus conditional GDS | Y |
+| Gating | RUN_KLAYOUT_STREAMOUT (True) | `run_klayout_streamout` (True) | Y |
+| Position | Step 60 (line 100) | Step 60 | Y |
 | Config keys | KLayoutStep vars | KLAYOUT_STREAMOUT_CONFIG_KEYS | Y |
 
 **Status: PASS**
+
+Verification:
+- `bazel build //dse/maths:SegmentedMultiplier16x16_sky130hd_klayout_gds` passed.
+- Produced `SegmentedMultiplier16x16.klayout.gds` and `state_out.json`.
+- Did not declare `SegmentedMultiplier16x16.gds` for sky130 because `PRIMARY_GDSII_STREAMOUT_TOOL` is Magic.
 
 ---
 
 ### Step 61: Magic.WriteLEF
 
-**Verified:** 2026-01-29
+**Verified:** 2026-07-08
 
 **Librelane Source:** `librelane/steps/magic.py`
-- ID: `"Magic.WriteLEF"` (line 212)
-- inputs: `[DesignFormat.GDS, DesignFormat.DEF]` (line 215)
-- outputs: `[DesignFormat.LEF]` (line 216)
+- ID: `"Magic.WriteLEF"` (line 230)
+- inputs: `[DesignFormat.GDS, DesignFormat.DEF]` (line 233)
+- outputs: `[DesignFormat.LEF]` (line 234)
 - Writes a LEF view of the design using GDS via Magic
 
 **Librelane Gating:** `classic.py`
 - Position: Step 61 (line 101)
-- Variable: `RUN_MAGIC_WRITE_LEF` (line 283)
+- Variable: `RUN_MAGIC_WRITE_LEF` (line 285)
 - Default: `True` (line 231)
 
 **Config Variable Audit:**
@@ -3815,9 +4303,9 @@ Inheritance: Magic.WriteLEF -> MagicStep -> TclStep -> Step
 | CELL_MAGS | MagicStep:121-126 (pdk) | Wired |
 | CELL_MAGLEFS | MagicStep:127-132 (pdk) | Wired |
 | MAGIC_CAPTURE_ERRORS | MagicStep:133-141 | Wired |
-| MAGIC_LEF_WRITE_USE_GDS | WriteLEF:219-224 | Wired |
-| MAGIC_WRITE_FULL_LEF | WriteLEF:225-230 | Wired |
-| MAGIC_WRITE_LEF_PINONLY | WriteLEF:231-236 | Wired |
+| MAGIC_LEF_WRITE_USE_GDS | WriteLEF:238-243 | Wired |
+| MAGIC_WRITE_FULL_LEF | WriteLEF:244-249 | Wired |
+| MAGIC_WRITE_LEF_PINONLY | WriteLEF:250-255 | Wired |
 
 Note: Uses MAGIC_WRITELEF_CONFIG_KEYS (macro.bzl) with MagicStep + WriteLEF vars.
 
@@ -3827,8 +4315,8 @@ Note: Uses MAGIC_WRITELEF_CONFIG_KEYS (macro.bzl) with MagicStep + WriteLEF vars
 - Uses MAGIC_WRITELEF_CONFIG_KEYS (line 103)
 
 **Bazel Flow:** `full_flow.bzl`
-- Position: Step 61 (line 679 comment)
-- No gating parameter - always runs (matches default True)
+- Position: Step 61
+- Gated by `run_magic_write_lef`, default `True`
 - Named: `_lef`
 - Chains from: `_klayout_gds`
 
@@ -3837,23 +4325,28 @@ Note: Uses MAGIC_WRITELEF_CONFIG_KEYS (macro.bzl) with MagicStep + WriteLEF vars
 | Step ID | `"Magic.WriteLEF"` | `"Magic.WriteLEF"` | Y |
 | inputs | `[GDS, DEF]` | (from src) | Y |
 | outputs | `[LEF]` | LEF file | Y |
-| Gating | RUN_MAGIC_WRITE_LEF (True) | Always runs | Y (default matches) |
-| Position | Step 61 (line 101) | Step 61 (line 679) | Y |
+| Gating | RUN_MAGIC_WRITE_LEF (True) | `run_magic_write_lef` (True) | Y |
+| Position | Step 61 (line 101) | Step 61 | Y |
 | Config keys | MagicStep + WriteLEF vars | MAGIC_WRITELEF_CONFIG_KEYS | Y |
 
 **Status: PASS**
+
+Verification:
+- `bazel build //dse/maths:SegmentedMultiplier16x16_sky130hd_lef` passed.
+- Produced `SegmentedMultiplier16x16.lef` and `state_out.json`.
 
 ---
 
 ### Step 62: Odb.CheckDesignAntennaProperties
 
-**Verified:** 2026-01-29
+**Verified:** 2026-07-08
 
 **Librelane Source:** `librelane/steps/odb.py`
-- ID: `"Odb.CheckDesignAntennaProperties"` (line 224)
-- inputs: `[DesignFormat.ODB, DesignFormat.LEF]` (line 226, ODB from OdbpyStep line 47)
-- outputs: `[]` (inherited from CheckMacroAntennaProperties, line 186)
+- ID: `"Odb.CheckDesignAntennaProperties"` (line 245)
+- inputs: `[DesignFormat.ODB, DesignFormat.LEF]` (line 247, ODB from OdbpyStep)
+- outputs: `[]` (inherited from CheckMacroAntennaProperties, line 206)
 - Prints warnings if the design's LEF view is missing antenna information
+- Writes `report.yaml` through the inherited `get_report_path()`
 
 **Librelane Gating:** `classic.py`
 - Position: Step 62 (line 102)
@@ -3866,7 +4359,7 @@ Inheritance: CheckDesignAntennaProperties -> CheckMacroAntennaProperties -> Odbp
 | Variable | Source | Bazel Status |
 |----------|--------|--------------|
 | (none) | config_vars = [] (Step line 464) | N/A |
-| DESIGN_NAME | get_cells():229 | Wired (BASE_CONFIG_KEYS) |
+| DESIGN_NAME | get_cells():250 | Wired (BASE_CONFIG_KEYS) |
 
 No config_vars in inheritance chain. Uses DESIGN_NAME via self.config access.
 
@@ -3874,6 +4367,7 @@ No config_vars in inheritance chain. Uses DESIGN_NAME via self.config access.
 - _check_design_antenna_properties_impl (line 145)
 - ID: `"Odb.CheckDesignAntennaProperties"` (line 146)
 - Uses ODB_CONFIG_KEYS = BASE_CONFIG_KEYS (line 7)
+- Declares `report.yaml`
 
 **Bazel Flow:** `full_flow.bzl`
 - Position: Step 62 (lines 686-691)
@@ -3885,29 +4379,34 @@ No config_vars in inheritance chain. Uses DESIGN_NAME via self.config access.
 |--------|-----------|-------|-------|
 | Step ID | `"Odb.CheckDesignAntennaProperties"` | `"Odb.CheckDesignAntennaProperties"` | Y |
 | inputs | `[ODB, LEF]` | (from src) | Y |
-| outputs | `[]` | `[]` | Y |
+| outputs | `[]` plus `report.yaml` report | `report.yaml` | Y |
 | Gating | None | None | N/A |
 | Position | Step 62 (line 102) | Step 62 (line 686) | Y |
 | Config keys | DESIGN_NAME only | ODB_CONFIG_KEYS | Y |
 
 **Status: PASS**
 
+Verification:
+- `bazel build //dse/maths:SegmentedMultiplier16x16_sky130hd_chk_ant_prop` passed.
+- Produced `report.yaml` and `state_out.json`.
+
 ---
 
 ### Step 63: KLayout.XOR
 
-**Verified:** 2026-01-29
+**Verified:** 2026-07-08
 
 **Librelane Source:** `librelane/steps/klayout.py`
-- ID: `"KLayout.XOR"` (line 248)
-- inputs: `[DesignFormat.MAG_GDS, DesignFormat.KLAYOUT_GDS]` (lines 251-254)
-- outputs: `[]` (line 255)
+- ID: `"KLayout.XOR"` (line 347)
+- inputs: `[DesignFormat.MAG_GDS, DesignFormat.KLAYOUT_GDS]` (lines 351-354)
+- outputs: `[]` (line 356)
 - Performs XOR operation between Magic and KLayout GDS views to detect differences
-- Self-skipping: if either MAG_GDS or KLAYOUT_GDS is missing, step warns and returns (lines 283-290)
+- Self-skipping: if either MAG_GDS or KLAYOUT_GDS is missing, step warns and returns
+- Writes `xor.xml`
 
 **Librelane Gating:** `classic.py`
 - Position: Step 63 (line 103)
-- Gating variables (lines 286-290):
+- Gating variables (classic.py lines 286-290):
   - `RUN_KLAYOUT_XOR` (default: True, line 238)
   - `RUN_MAGIC_STREAMOUT` (default: True, line 217)
   - `RUN_KLAYOUT_STREAMOUT` (default: True, line 224)
@@ -3922,10 +4421,10 @@ Inheritance: KLayout.XOR -> KLayoutStep -> Step
 | KLAYOUT_TECH | KLayoutStep:36-39 (pdk) | Wired (common.bzl:203) |
 | KLAYOUT_PROPERTIES | KLayoutStep:40-44 (pdk) | Wired (common.bzl:204) |
 | KLAYOUT_DEF_LAYER_MAP | KLayoutStep:45-51 (pdk) | Wired (common.bzl:205) |
-| KLAYOUT_XOR_THREADS | XOR:258-262 | Wired |
-| KLAYOUT_XOR_IGNORE_LAYERS | XOR:263-268 (pdk) | Wired (common.bzl:207) |
-| KLAYOUT_XOR_TILE_SIZE | XOR:269-275 (pdk) | Wired (common.bzl:208) |
-| DESIGN_NAME | run():315 | Wired (BASE_CONFIG_KEYS) |
+| KLAYOUT_XOR_THREADS | XOR:361-365 | Wired |
+| KLAYOUT_XOR_IGNORE_LAYERS | XOR:366-371 (pdk) | Wired (common.bzl:207) |
+| KLAYOUT_XOR_TILE_SIZE | XOR:372-378 (pdk) | Wired (common.bzl:208) |
+| DESIGN_NAME | run():406 | Wired (BASE_CONFIG_KEYS) |
 
 Uses KLAYOUT_XOR_CONFIG_KEYS (klayout.bzl:17-27).
 
@@ -3933,10 +4432,11 @@ Uses KLAYOUT_XOR_CONFIG_KEYS (klayout.bzl:17-27).
 - _xor_impl (line 44)
 - ID: `"KLayout.XOR"` (line 45)
 - Uses KLAYOUT_XOR_CONFIG_KEYS (line 45)
+- Declares `xor.xml`
 
 **Bazel Flow:** `full_flow.bzl`
-- Position: Step 63 (lines 693-698)
-- No gating - always runs (matches default True for all gating vars)
+- Position: Step 63
+- Gated by `run_klayout_xor and run_magic_streamout and run_klayout_streamout`
 - Named: `_xor`
 - Chains from: `_chk_ant_prop`
 
@@ -3944,21 +4444,26 @@ Uses KLAYOUT_XOR_CONFIG_KEYS (klayout.bzl:17-27).
 |--------|-----------|-------|-------|
 | Step ID | `"KLayout.XOR"` | `"KLayout.XOR"` | Y |
 | inputs | `[MAG_GDS, KLAYOUT_GDS]` | (from src) | Y |
-| outputs | `[]` | `[]` | Y |
-| Gating | All True by default | Always runs | Y (default matches) |
-| Position | Step 63 (line 103) | Step 63 (line 693) | Y |
+| outputs | `[]` plus `xor.xml` report | `xor.xml` | Y |
+| Gating | Compound gate | Same compound gate | Y |
+| Position | Step 63 (line 103) | Step 63 | Y |
 | Config keys | KLayoutStep + XOR vars | KLAYOUT_XOR_CONFIG_KEYS | Y |
 
 **Status: PASS**
+
+Verification:
+- `bazel build //dse/maths:SegmentedMultiplier16x16_sky130hd_xor` passed.
+- Produced `xor.xml` and `state_out.json`.
+- Runtime reported total XOR differences of 0.
 
 ---
 
 ### Step 64: Checker.XOR
 
-**Verified:** 2026-01-29
+**Verified:** 2026-07-08
 
 **Librelane Source:** `librelane/steps/checker.py`
-- ID: `"Checker.XOR"` (line 281)
+- ID: `"Checker.XOR"` (line 290)
 - inputs: `[]` (inherited from MetricChecker, line 74)
 - outputs: `[]` (inherited from MetricChecker, line 75)
 - Checks the `design__xor_difference__count` metric and raises deferred error if > 0
@@ -3977,7 +4482,7 @@ Inheritance: Checker.XOR -> MetricChecker -> Step
 
 | Variable | Source | Bazel Status |
 |----------|--------|--------------|
-| ERROR_ON_XOR_ERROR | XOR:288-294 | Wired |
+| ERROR_ON_XOR_ERROR | XOR:298-304 | Wired |
 
 Uses XOR_CHECKER_CONFIG_KEYS (checker.bzl:44).
 
@@ -3987,8 +4492,8 @@ Uses XOR_CHECKER_CONFIG_KEYS (checker.bzl:44).
 - Uses XOR_CHECKER_CONFIG_KEYS (line 80)
 
 **Bazel Flow:** `full_flow.bzl`
-- Position: Step 64 (lines 700-705)
-- No gating - always runs (matches default True for all gating vars)
+- Position: Step 64
+- Gated by `run_klayout_xor and run_magic_streamout and run_klayout_streamout`
 - Named: `_chk_xor`
 - Chains from: `_xor`
 
@@ -3997,27 +4502,32 @@ Uses XOR_CHECKER_CONFIG_KEYS (checker.bzl:44).
 | Step ID | `"Checker.XOR"` | `"Checker.XOR"` | Y |
 | inputs | `[]` | (from src) | Y |
 | outputs | `[]` | `[]` | Y |
-| Gating | All True by default | Always runs | Y (default matches) |
-| Position | Step 64 (line 104) | Step 64 (line 700) | Y |
+| Gating | Compound gate | Same compound gate | Y |
+| Position | Step 64 (line 104) | Step 64 | Y |
 | Config keys | ERROR_ON_XOR_ERROR | XOR_CHECKER_CONFIG_KEYS | Y |
 
 **Status: PASS**
+
+Verification:
+- `bazel build //dse/maths:SegmentedMultiplier16x16_sky130hd_chk_xor` passed.
+- Runtime reported the XOR difference check clear.
 
 ---
 
 ### Step 65: Magic.DRC
 
-**Verified:** 2026-01-29
+**Verified:** 2026-07-08
 
 **Librelane Source:** `librelane/steps/magic.py`
-- ID: `"Magic.DRC"` (line 372)
-- inputs: `[DesignFormat.DEF, DesignFormat.GDS]` (line 376)
-- outputs: `[]` (line 377)
+- ID: `"Magic.DRC"` (line 501)
+- inputs: `[DesignFormat.DEF.optional, DesignFormat.GDS]` (line 505)
+- outputs: `[]` (line 506)
 - Runs Magic DRC checks, outputs metric `magic__drc_error__count`
+- Writes `reports/drc.magic.rpt` and converts it to `reports/drc.magic.lyrdb`
 
 **Librelane Gating:** `classic.py`
 - Position: Step 65 (line 105)
-- Variable: `RUN_MAGIC_DRC` (line 284)
+- Variable: `RUN_MAGIC_DRC` (line 286)
 - Default: `True` (line 244)
 
 **Config Variable Audit:**
@@ -4036,7 +4546,9 @@ Inheritance: Magic.DRC -> MagicStep -> TclStep -> Step
 | CELL_MAGS | MagicStep:121-126 (pdk) | Wired |
 | CELL_MAGLEFS | MagicStep:127-132 (pdk) | Wired |
 | MAGIC_CAPTURE_ERRORS | MagicStep:133-141 | Wired |
-| MAGIC_DRC_USE_GDS | DRC:380-386 | Wired |
+| MAGIC_DRC_USE_GDS | DRC:510-515 | Wired |
+| MAGIC_GDS_FLATGLOB | DRC:516-520 | Wired |
+| MAGIC_DRC_MAGLEFS | DRC:521-525 | Wired |
 
 Uses MAGIC_DRC_CONFIG_KEYS (macro.bzl).
 
@@ -4044,65 +4556,44 @@ Uses MAGIC_DRC_CONFIG_KEYS (macro.bzl).
 - _drc_impl (line 168)
 - ID: `"Magic.DRC"` (line 169)
 - Uses MAGIC_DRC_CONFIG_KEYS (line 169)
+- Declares `reports/drc.magic.rpt` and `reports/drc.magic.lyrdb`
 
 **Bazel Flow:** `full_flow.bzl`
-- Position: Step 65 (lines 707-712)
-- No gating - always runs (matches default True)
+- Position: Step 65
+- Gated by `run_magic_drc`, default `True`
 - Named: `_magic_drc`
 - Chains from: `_chk_xor`
 
 | Aspect | Librelane | Bazel | Match |
 |--------|-----------|-------|-------|
 | Step ID | `"Magic.DRC"` | `"Magic.DRC"` | Y |
-| inputs | `[DEF, GDS]` | (from src) | Y |
-| outputs | `[]` | `[]` | Y |
-| Gating | RUN_MAGIC_DRC (True) | Always runs | Y (default matches) |
-| Position | Step 65 (line 105) | Step 65 (line 707) | Y |
+| inputs | `[DEF?, GDS]` | (from src) | Y |
+| outputs | `[]` plus DRC reports | DRC reports | Y |
+| Gating | RUN_MAGIC_DRC (True) | `run_magic_drc` (True) | Y |
+| Position | Step 65 (line 105) | Step 65 | Y |
 | Config keys | MagicStep + DRC vars | MAGIC_DRC_CONFIG_KEYS | Y |
 
 **Status: PASS**
-- Config var: `MAGIC_DRC_USE_GDS` (default: True) controls whether to use GDS or DEF
 
-**Librelane Gating:** `classic.py`
-- Position: Step 65 (line 105)
-- Gating: `RUN_MAGIC_DRC` (default: True, lines 241-244)
-- Entry in gating_config_vars at line 284
-
-**Bazel Implementation:** `macro.bzl`
-- ID: `"Magic.DRC"` (line 132)
-- step_outputs: `[]` (line 132)
-- Rule: `librelane_magic_drc` (line 155)
-
-**Bazel Flow:** `full_flow.bzl`
-- Position: Step 65 (line 589 comment)
-- Named: `_magic_drc`
-- Chains from: `_chk_xor`
-- **No gating parameters implemented**
-
-| Aspect | Librelane | Bazel | Match |
-|--------|-----------|-------|-------|
-| Step ID | `"Magic.DRC"` | `"Magic.DRC"` | Y |
-| inputs | `[DEF, GDS]` | (from src) | Y |
-| outputs | `[]` | `[]` | Y |
-| Gating | `RUN_MAGIC_DRC` | **MISSING** | N |
-| Position | Step 65 (line 105) | Step 65 (line 589) | Y |
-
-**Notes:** Missing gating parameter `RUN_MAGIC_DRC`. Step always runs in Bazel.
-
-**Status: FAIL** - Missing gating parameter `RUN_MAGIC_DRC`
+Verification:
+- `bazel build //dse/maths:SegmentedMultiplier16x16_sky130hd_magic_drc` passed.
+- Produced `reports/drc.magic.rpt`, `reports/drc.magic.lyrdb`, and `state_out.json`.
+- Runtime reported 0 Magic DRC errors.
 
 ---
 
 ### Step 66: KLayout.DRC
 
-**Verified:** 2026-01-29
+**Verified:** 2026-07-07 for LibreLane 3.0.4
 
-**Librelane Source:** `librelane/steps/klayout.py`
-- ID: `"KLayout.DRC"` (line 341)
-- inputs: `[DesignFormat.GDS]` (lines 344-346)
-- outputs: `[]` (line 347)
+**Librelane Source:** `~/Code/librelane/librelane/steps/klayout.py`
+- ID: `"KLayout.DRC"` (line 440)
+- inputs: `[DesignFormat.GDS]` (lines 443-445)
+- outputs: `[]` (line 446)
 - Runs KLayout DRC, self-skips if KLAYOUT_DRC_RUNSET unavailable
 - Outputs metric `klayout__drc_error__count`
+- Writes report files when it runs:
+  `reports/drc.klayout.lyrdb` and `reports/drc.klayout.json`
 
 **Librelane Gating:** `classic.py`
 - Position: Step 66 (line 106)
@@ -4115,26 +4606,28 @@ Inheritance: KLayout.DRC -> KLayoutStep -> Step
 
 | Variable | Source | Bazel Status |
 |----------|--------|--------------|
-| KLAYOUT_TECH | KLayoutStep:36-39 (pdk) | Wired |
-| KLAYOUT_PROPERTIES | KLayoutStep:40-44 (pdk) | Wired |
-| KLAYOUT_DEF_LAYER_MAP | KLayoutStep:45-51 (pdk) | Wired |
-| KLAYOUT_DRC_RUNSET | DRC:350-356 (pdk) | Wired |
-| KLAYOUT_DRC_OPTIONS | DRC:357-362 (pdk) | **Missing** (dict type) |
-| KLAYOUT_DRC_THREADS | DRC:363-368 | Wired |
+| KLAYOUT_TECH | KLayoutStep | Wired |
+| KLAYOUT_PROPERTIES | KLayoutStep | Wired |
+| KLAYOUT_DEF_LAYER_MAP | KLayoutStep | Wired |
+| KLAYOUT_DRC_RUNSET | DRC:449-455 (pdk) | Wired |
+| KLAYOUT_DRC_OPTIONS | DRC:456-461 (pdk) | Wired |
+| KLAYOUT_DRC_THREADS | DRC:462-467 | Wired |
 
-Note: KLAYOUT_DRC_OPTIONS is a complex dict type not yet wired. Step self-skips if
-KLAYOUT_DRC_RUNSET is unavailable, so this may be acceptable for non-sky130 PDKs.
+Note: the reports are declared as optional Bazel outputs because the LibreLane
+step can self-skip when a PDK has no KLayout DRC runset.
 
 Uses KLAYOUT_DRC_CONFIG_KEYS (klayout.bzl:29-39).
 
 **Bazel Implementation:** `klayout.bzl`
-- _drc_impl (line 47)
-- ID: `"KLayout.DRC"` (line 48)
-- Uses KLAYOUT_DRC_CONFIG_KEYS (line 48)
+- `_drc_impl` (line 54)
+- ID: `"KLayout.DRC"` (line 55)
+- Uses `KLAYOUT_DRC_CONFIG_KEYS` (lines 30-40)
+- Declares optional report outputs for `drc.klayout.lyrdb` and
+  `drc.klayout.json`
 
 **Bazel Flow:** `full_flow.bzl`
-- Position: Step 66 (lines 714-719)
-- No gating - always runs (matches default True)
+- Position: Step 66 (lines 789-798)
+- Gating: `run_klayout_drc` (default True)
 - Named: `_klayout_drc`
 - Chains from: `_magic_drc`
 
@@ -4142,12 +4635,17 @@ Uses KLAYOUT_DRC_CONFIG_KEYS (klayout.bzl:29-39).
 |--------|-----------|-------|-------|
 | Step ID | `"KLayout.DRC"` | `"KLayout.DRC"` | Y |
 | inputs | `[GDS]` | (from src) | Y |
-| outputs | `[]` | `[]` | Y |
-| Gating | RUN_KLAYOUT_DRC (True) | Always runs | Y (default matches) |
-| Position | Step 66 (line 106) | Step 66 (line 714) | Y |
-| Config keys | KLayoutStep + DRC vars | KLAYOUT_DRC_CONFIG_KEYS | Partial |
+| outputs | `[]` plus DRC reports | Optional DRC reports | Y |
+| Gating | RUN_KLAYOUT_DRC (True) | `run_klayout_drc` (True) | Y |
+| Position | Step 66 (line 106) | Step 66 (line 789) | Y |
+| Config keys | KLayoutStep + DRC vars | KLAYOUT_DRC_CONFIG_KEYS | Y |
 
-**Status: FAIL** - KLAYOUT_DRC_OPTIONS (pdk dict type) not wired
+**Status: PASS**
+
+Verification:
+- `bazel build //dse/maths:SegmentedMultiplier16x16_sky130hd_klayout_drc` passed.
+- Produced `reports/drc.klayout.lyrdb`, `reports/drc.klayout.json`, and
+  `state_out.json`.
 
 ---
 
@@ -4173,22 +4671,27 @@ Uses KLAYOUT_DRC_CONFIG_KEYS (klayout.bzl:29-39).
 - Rule: `librelane_magic_drc_checker` (line 130)
 
 **Bazel Flow:** `full_flow.bzl`
-- Position: Step 67 (line 601 comment)
+- Position: Step 67 (lines 800-809)
 - Named: `_chk_magic_drc`
 - Chains from: `_klayout_drc`
-- **No gating parameters implemented**
+- Gating: `run_magic_drc` (default True)
 
 | Aspect | Librelane | Bazel | Match |
 |--------|-----------|-------|-------|
 | Step ID | `"Checker.MagicDRC"` | `"Checker.MagicDRC"` | Y |
 | inputs | `[]` | (from src) | Y |
 | outputs | `[]` | `[]` | Y |
-| Gating | `RUN_MAGIC_DRC` | **MISSING** | N |
-| Position | Step 67 (line 107) | Step 67 (line 601) | Y |
+| Gating | `RUN_MAGIC_DRC` | `run_magic_drc` | Y |
+| Position | Step 67 (line 107) | Step 67 (line 800) | Y |
 
-**Notes:** Coupled with Magic.DRC (step 65) - both gated by same variable. Missing gating in Bazel.
+**Notes:** Coupled with Magic.DRC (step 65) - both gated by same variable.
 
-**Status: FAIL** - Missing gating parameter `RUN_MAGIC_DRC`
+**Status: PASS**
+
+Verification:
+- `bazel build //dse/maths:SegmentedMultiplier16x16_sky130hd_chk_magic_drc`
+  passed and produced `state_out.json`.
+- Runtime reported the Magic DRC check clear.
 
 ---
 
@@ -4214,49 +4717,58 @@ Uses KLAYOUT_DRC_CONFIG_KEYS (klayout.bzl:29-39).
 - Rule: `librelane_klayout_drc_checker` (line 136)
 
 **Bazel Flow:** `full_flow.bzl`
-- Position: Step 68 (line 607 comment)
+- Position: Step 68 (lines 811-820)
 - Named: `_chk_klayout_drc`
 - Chains from: `_chk_magic_drc`
-- **No gating parameters implemented**
+- Gating: `run_klayout_drc` (default True)
 
 | Aspect | Librelane | Bazel | Match |
 |--------|-----------|-------|-------|
 | Step ID | `"Checker.KLayoutDRC"` | `"Checker.KLayoutDRC"` | Y |
 | inputs | `[]` | (from src) | Y |
 | outputs | `[]` | `[]` | Y |
-| Gating | `RUN_KLAYOUT_DRC` | **MISSING** | N |
-| Position | Step 68 (line 108) | Step 68 (line 607) | Y |
+| Gating | `RUN_KLAYOUT_DRC` | `run_klayout_drc` | Y |
+| Position | Step 68 (line 108) | Step 68 (line 811) | Y |
 
-**Notes:** Coupled with KLayout.DRC (step 66) - both gated by same variable. Missing gating in Bazel.
+**Notes:** Coupled with KLayout.DRC (step 66) - both gated by same variable.
 
-**Status: FAIL** - Missing gating parameter `RUN_KLAYOUT_DRC`
+**Status: PASS**
+
+Verification:
+- `bazel build //dse/maths:SegmentedMultiplier16x16_sky130hd_chk_klayout_drc`
+  passed and produced `state_out.json`.
+- Runtime reported the KLayout DRC check clear.
 
 ---
 
 ### Step 69: Magic.SpiceExtraction
 
-**Verified:** 2026-01-29
+**Verified:** 2026-07-07 for LibreLane 3.0.4
 
-**Librelane Source:** `librelane/steps/magic.py`
-- ID: `"Magic.SpiceExtraction"` (line 428)
-- inputs: `[DesignFormat.GDS, DesignFormat.DEF]` (line 432)
-- outputs: `[DesignFormat.SPICE]` (line 433)
+**Librelane Source:** `~/Code/librelane/librelane/steps/magic.py`
+- ID: `"Magic.SpiceExtraction"` (line 575)
+- inputs: `[DesignFormat.GDS, DesignFormat.DEF]` (line 579)
+- outputs: `[DesignFormat.SPICE]` (line 580)
 - Inheritance: SpiceExtraction -> MagicStep -> TclStep -> Step
 - Extracts SPICE netlist from GDSII for LVS checks
 - Also outputs metric `magic__illegal_overlap__count`
+- The underlying Magic Tcl read path calls `read_pdk_spice()` and reads
+  `::env(CELL_SPICE_MODELS)` unconditionally
+  (`scripts/magic/common/read.tcl` line 152).
 
 **Librelane Gating:** `classic.py`
 - Position: Step 69 (line 109)
 - No entry in gating_config_vars dict - always runs
 
 **Bazel Implementation:** `macro.bzl`
-- ID: `"Magic.SpiceExtraction"` (line 174)
-- step_outputs: `["spice"]` (line 174)
-- Rule: `librelane_spice_extraction` (line 200)
-- Currently uses: `MACRO_CONFIG_KEYS = BASE_CONFIG_KEYS`
+- ID: `"Magic.SpiceExtraction"` (line 197)
+- step_outputs: `["spice"]` (line 197)
+- Rule: `librelane_spice_extraction` (line 223)
+- Uses `SPICE_EXTRACTION_CONFIG_KEYS`, including MagicStep,
+  SpiceExtraction-specific keys, and `CELL_SPICE_MODELS`.
 
 **Bazel Flow:** `full_flow.bzl`
-- Position: Step 69 (line 735 comment)
+- Position: Step 69 (lines 822-827)
 - Named: `_spice`
 - Chains from: `_chk_klayout_drc`
 - No gating - always runs
@@ -4267,19 +4779,20 @@ Uses KLAYOUT_DRC_CONFIG_KEYS (klayout.bzl:29-39).
 | inputs | `[GDS, DEF]` | (from src) | Y |
 | outputs | `[SPICE]` | `["spice"]` | Y |
 | Gating | None | None | N/A |
-| Position | Step 69 (line 109) | Step 69 (line 735) | Y |
+| Position | Step 69 (line 109) | Step 69 (line 822) | Y |
 
 **Config Variable Audit:**
 
-From SpiceExtraction class (magic.py lines 435-472):
+From SpiceExtraction class (magic.py lines 582-623):
 | Variable | Type | Default | PDK | Bazel Status |
 |----------|------|---------|-----|--------------|
 | MAGIC_EXT_USE_GDS | bool | False | No | Wired |
 | MAGIC_EXT_ABSTRACT_CELLS | Optional[List[str]] | None | No | Wired |
-| MAGIC_NO_EXT_UNIQUE | bool | False | No | Wired |
+| MAGIC_EXT_UNIQUE | Literal | `"all"` | No | Not wired directly; Bazel currently emits deprecated `MAGIC_NO_EXT_UNIQUE` |
 | MAGIC_EXT_SHORT_RESISTOR | bool | False | No | Wired |
 | MAGIC_EXT_ABSTRACT | bool | False | No | Wired |
 | MAGIC_FEEDBACK_CONVERSION_THRESHOLD | int | 10000 | No | Wired |
+| CELL_SPICE_MODELS | Optional[List[Path]] | None | Yes | Wired as a Tcl script dependency |
 
 From MagicStep class (magic.py lines 76-142):
 | Variable | Type | Default | PDK | Bazel Status |
@@ -4295,18 +4808,29 @@ From MagicStep class (magic.py lines 76-142):
 | CELL_MAGLEFS | Optional[List[Path]] | None | Yes | Wired (PDK) |
 | MAGIC_CAPTURE_ERRORS | bool | True | No | Wired |
 
-**Notes:** All config variables wired. Step uses SPICE_EXTRACTION_CONFIG_KEYS which includes all
-MagicStep and SpiceExtraction-specific config keys.
+**Notes:**
+- `CELL_SPICE_MODELS` is not listed in `SpiceExtraction.config_vars`, but is
+  required by the Magic Tcl script used by this step. The Bazel wrapper includes
+  it so the step matches the actual LibreLane execution path.
+- `MAGIC_NO_EXT_UNIQUE` still works through LibreLane's deprecated-name
+  compatibility path, but this should be changed to `MAGIC_EXT_UNIQUE` in a
+  small follow-up after updating the wrapper interface.
 
 **Status: PASS**
+
+Verification:
+- First run failed with `can't read "::env(CELL_SPICE_MODELS)"`.
+- After wiring `CELL_SPICE_MODELS`,
+  `bazel build //dse/maths:SegmentedMultiplier16x16_sky130hd_spice` passed.
+- Produced `SegmentedMultiplier16x16.spice` and `state_out.json`.
 
 ---
 
 ### Step 70: Checker.IllegalOverlap
 
-**Verified:** 2026-01-29
+**Verified:** 2026-07-07 for LibreLane 3.0.4
 
-**Librelane Source:** `librelane/steps/checker.py`
+**Librelane Source:** `~/Code/librelane/librelane/steps/checker.py`
 - ID: `"Checker.IllegalOverlap"` (line 217)
 - inputs: `[]` (inherited from MetricChecker, line 74)
 - outputs: `[]` (inherited from MetricChecker, line 75)
@@ -4323,7 +4847,7 @@ MagicStep and SpiceExtraction-specific config keys.
 - Rule: `librelane_illegal_overlap` (line 200)
 
 **Bazel Flow:** `full_flow.bzl`
-- Position: Step 70 (line 619 comment)
+- Position: Step 70 (lines 829-834)
 - Named: `_chk_overlap`
 - Chains from: `_spice`
 - No gating - always runs
@@ -4334,7 +4858,7 @@ MagicStep and SpiceExtraction-specific config keys.
 | inputs | `[]` | (from src) | Y |
 | outputs | `[]` | `[]` | Y |
 | Gating | None | None | N/A |
-| Position | Step 70 (line 110) | Step 70 (line 619) | Y |
+| Position | Step 70 (line 110) | Step 70 (line 829) | Y |
 
 **Config Variable Audit:**
 
@@ -4345,26 +4869,25 @@ From IllegalOverlap class (checker.py lines 224-230):
 
 MetricChecker parent (checker.py lines 69-137) has no config_vars.
 
-**Wiring verified (2026-01-29):**
-1. `common.bzl` ENTRY_ATTRS (line 1393)
-2. `providers.bzl` LibrelaneInput (line 86)
-3. `init.bzl` _init_impl (line 82)
-4. `common.bzl` create_librelane_config (line 380)
-5. `checker.bzl` ILLEGAL_OVERLAP_CONFIG_KEYS (line 60)
-
 **Status: PASS**
+
+Verification:
+- `bazel build //dse/maths:SegmentedMultiplier16x16_sky130hd_chk_overlap`
+  passed and produced `state_out.json`.
+- Runtime reported the Magic illegal-overlap check clear.
 
 ---
 
 ### Step 71: Netgen.LVS
 
-**Verified:** 2026-01-29
+**Verified:** 2026-07-07 for LibreLane 3.0.4
 
-**Librelane Source:** `librelane/steps/netgen.py`
-- ID: `"Netgen.LVS"` (line 138)
-- inputs: `[DesignFormat.SPICE, DesignFormat.POWERED_NETLIST]` (line 140)
+**Librelane Source:** `~/Code/librelane/librelane/steps/netgen.py`
+- ID: `"Netgen.LVS"` (line 142)
+- inputs: `[DesignFormat.SPICE, DesignFormat.POWERED_NETLIST]` (line 144)
 - outputs: `[]` (inherited from NetgenStep, line 100)
 - Performs Layout vs. Schematic check using extracted SPICE vs. Verilog netlist
+- Writes `reports/lvs.netgen.rpt` and `reports/lvs.netgen.json`
 
 **Librelane Gating:** `classic.py`
 - Position: Step 71 (line 111)
@@ -4373,30 +4896,32 @@ MetricChecker parent (checker.py lines 69-137) has no config_vars.
 
 **Bazel Implementation:** `netgen.bzl`
 - impl: `_lvs_impl` (line 18)
-- Uses `NETGEN_LVS_CONFIG_KEYS` (lines 9-17)
+- Uses `NETGEN_LVS_CONFIG_KEYS` (lines 8-16)
+- Declares `reports/lvs.netgen.rpt` and `reports/lvs.netgen.json`
 - Rule: `librelane_netgen_lvs` (line 20)
 
 **Bazel Flow:** `full_flow.bzl`
-- Position: Step 71 (line 749 comment)
+- Position: Step 71 (lines 836-850)
 - Named: `_lvs`
 - Chains from: `_chk_overlap`
-- Gating variable `RUN_LVS` wired through to librelane config
+- Gated with `run_lvs`, default True
 
 | Aspect | Librelane | Bazel | Match |
 |--------|-----------|-------|-------|
 | Step ID | `"Netgen.LVS"` | `"Netgen.LVS"` | Y |
 | inputs | `[SPICE, POWERED_NETLIST]` | (from src) | Y |
-| outputs | `[]` | `[]` | Y |
-| Gating | `RUN_LVS` | `RUN_LVS` | Y |
-| Position | Step 71 (line 111) | Step 71 (line 749) | Y |
+| outputs | `[]` plus LVS reports | LVS reports | Y |
+| Gating | `RUN_LVS` | `run_lvs` | Y |
+| Position | Step 71 (line 111) | Step 71 (line 836) | Y |
 
 **Config Variable Audit:**
 
-From LVS class (netgen.py lines 141-153):
+From LVS class (netgen.py lines 145-162):
 | Variable | Type | Default | PDK | Bazel Status |
 |----------|------|---------|-----|--------------|
 | LVS_INCLUDE_MARCO_NETLISTS | bool | False | No | Wired |
 | LVS_FLATTEN_CELLS | Optional[List[str]] | None | No | Wired |
+| LVS_IGNORE_CELLS | Optional[List[str]] | None | No | Wired |
 
 From NetgenStep parent (netgen.py lines 102-116):
 | Variable | Type | Default | PDK | Bazel Status |
@@ -4404,25 +4929,26 @@ From NetgenStep parent (netgen.py lines 102-116):
 | MAGIC_EXT_USE_GDS | bool | False | No | Wired |
 | NETGEN_SETUP | Path | - | Yes | Wired (PDK) |
 
-From run() method accesses (netgen.py lines 163-174):
+From run() method accesses (netgen.py lines 170-186):
 | Variable | Type | Default | PDK | Bazel Status |
 |----------|------|---------|-----|--------------|
 | CELL_SPICE_MODELS | Optional[List[Path]] | - | Yes | Wired (PDK) |
 | EXTRA_SPICE_MODELS | Optional[List[Path]] | None | No | Wired |
+| SPICE_MODELS | Optional[List[Path]] | None | Yes | Not modeled in Bazel PDK provider |
+| PAD_SPICE_MODELS | Optional[List[Path]] | None | Yes | Not modeled in Bazel PDK provider |
 
 Gating (classic.py lines 208-211):
 | Variable | Type | Default | PDK | Bazel Status |
 |----------|------|---------|-----|--------------|
 | RUN_LVS | bool | True | No | Wired |
 
-**Wiring verified (2026-01-29):**
-1. `common.bzl` ENTRY_ATTRS (lines 1943-1961)
-2. `providers.bzl` LibrelaneInput (lines 269-272)
-3. `init.bzl` _init_impl (lines 243-246)
-4. `common.bzl` create_librelane_config (lines 383-390)
-5. `netgen.bzl` NETGEN_LVS_CONFIG_KEYS (lines 9-17)
-
 **Status: PASS**
+
+Verification:
+- `bazel build //dse/maths:SegmentedMultiplier16x16_sky130hd_lvs` passed.
+- Produced `reports/lvs.netgen.rpt`, `reports/lvs.netgen.json`, and
+  `state_out.json`.
+- Runtime reported `Final result: Circuits match uniquely.`
 
 ---
 
@@ -4448,18 +4974,18 @@ Gating (classic.py lines 208-211):
 - Rule: `librelane_lvs_checker` (line 215)
 
 **Bazel Flow:** `full_flow.bzl`
-- Position: Step 72 (line 756 comment)
+- Position: Step 72 (lines 836-850)
 - Named: `_chk_lvs`
 - Chains from: `_lvs`
-- Gating variable `RUN_LVS` wired (shared with Netgen.LVS)
+- Gated with `run_lvs` (shared with Netgen.LVS)
 
 | Aspect | Librelane | Bazel | Match |
 |--------|-----------|-------|-------|
 | Step ID | `"Checker.LVS"` | `"Checker.LVS"` | Y |
 | inputs | `[]` | (from src) | Y |
 | outputs | `[]` | `[]` | Y |
-| Gating | `RUN_LVS` | `RUN_LVS` | Y |
-| Position | Step 72 (line 112) | Step 72 (line 756) | Y |
+| Gating | `RUN_LVS` | `run_lvs` | Y |
+| Position | Step 72 (line 112) | Step 72 (line 843) | Y |
 
 **Config Variable Audit:**
 
@@ -4475,25 +5001,23 @@ Gating (classic.py line 299):
 |----------|------|---------|-----|--------------|
 | RUN_LVS | bool | True | No | Wired (Step 71) |
 
-**Wiring verified (2026-01-29):**
-1. `common.bzl` ENTRY_ATTRS (line 1409)
-2. `providers.bzl` LibrelaneInput (line 87)
-3. `init.bzl` _init_impl (line 83)
-4. `common.bzl` create_librelane_config (line 382)
-5. `checker.bzl` LVS_CHECKER_CONFIG_KEYS (line 65)
-
 **Status: PASS**
+
+Verification:
+- `bazel build //dse/maths:SegmentedMultiplier16x16_sky130hd_chk_lvs`
+  passed and produced `state_out.json`.
+- Runtime reported the LVS check clear.
 
 ---
 
 ### Step 73: Yosys.EQY
 
-**Verified:** 2026-01-29
+**Verified:** 2026-07-07 for LibreLane 3.0.4
 
-**Librelane Source:** `librelane/steps/yosys.py`
-- ID: `"Yosys.EQY"` (line 259)
-- inputs: `[DesignFormat.NETLIST]` (line 263)
-- outputs: `[]` (line 264)
+**Librelane Source:** `~/Code/librelane/librelane/steps/yosys.py`
+- ID: `"Yosys.EQY"` (line 269)
+- inputs: `[DesignFormat.NETLIST]` (line 273)
+- outputs: `[]` (line 274)
 - Runs formal equivalence check between RTL and gate-level netlist
 
 **Librelane Gating:** `classic.py`
@@ -4503,27 +5027,28 @@ Gating (classic.py line 299):
 - Note: Disabled by default (unlike most steps)
 
 **Bazel Implementation:** `synthesis.bzl`
-- impl: `_eqy_impl` (line 186)
-- Uses `EQY_CONFIG_KEYS` (lines 67-74)
-- Rule: `librelane_eqy` (line 231)
+- impl: `_eqy_impl` (line 196)
+- Uses `EQY_CONFIG_KEYS` (lines 77-82)
+- Rule: `librelane_eqy` (line 245)
 
 **Bazel Flow:** `full_flow.bzl`
-- Position: Step 73 (line 763 comment)
+- Position: Step 73 (lines 852-860)
 - Named: `_eqy`
-- Chains from: `_chk_lvs`
-- Gating variable `RUN_EQY` wired (default: **False** - step disabled by default)
+- Chains from the pre-EQY predecessor (`_chk_lvs` when LVS runs, otherwise
+  `_chk_overlap`)
+- Gated with `run_eqy`, default **False**
 
 | Aspect | Librelane | Bazel | Match |
 |--------|-----------|-------|-------|
 | Step ID | `"Yosys.EQY"` | `"Yosys.EQY"` | Y |
 | inputs | `[NETLIST]` | (from src) | Y |
 | outputs | `[]` | `[]` | Y |
-| Gating | `RUN_EQY` (default: False) | `RUN_EQY` (default: False) | Y |
-| Position | Step 73 (line 113) | Step 73 (line 763) | Y |
+| Gating | `RUN_EQY` (default: False) | `run_eqy` (default: False) | Y |
+| Position | Step 73 (line 113) | Step 73 (line 852) | Y |
 
 **Config Variable Audit:**
 
-From EQY class (yosys.py lines 266-287):
+From EQY class (yosys.py lines 276-295):
 | Variable | Type | Default | PDK | Bazel Status |
 |----------|------|---------|-----|--------------|
 | EQY_SCRIPT | Optional[Path] | None | No | Wired |
@@ -4538,23 +5063,21 @@ Gating (classic.py lines 253-256):
 |----------|------|---------|-----|--------------|
 | RUN_EQY | bool | **False** | No | Wired |
 
-**Wiring verified (2026-01-29):**
-1. `common.bzl` ENTRY_ATTRS (lines 1976-1991)
-2. `providers.bzl` LibrelaneInput (lines 275-278)
-3. `init.bzl` _init_impl (lines 249-252)
-4. `common.bzl` create_librelane_config (lines 395-399)
-5. `synthesis.bzl` EQY_CONFIG_KEYS (lines 67-74)
-
 **Status: PASS**
+
+Verification:
+- Structural audit only. The small `SegmentedMultiplier16x16` flow does not
+  instantiate an EQY target because `run_eqy` defaults to False, matching
+  LibreLane Classic.
 
 ---
 
 ### Step 74: Checker.SetupViolations
 
-**Verified:** 2026-01-29
+**Verified:** 2026-07-07 for LibreLane 3.0.4
 
-**Librelane Source:** `librelane/steps/checker.py`
-- ID: `"Checker.SetupViolations"` (line 599)
+**Librelane Source:** `~/Code/librelane/librelane/steps/checker.py`
+- ID: `"Checker.SetupViolations"` (line 645)
 - inputs: `[]` (inherited from MetricChecker/TimingViolations)
 - outputs: `[]` (inherited)
 - Checks metric `timing__setup_vio__count` for setup timing violations
@@ -4569,9 +5092,9 @@ Gating (classic.py lines 253-256):
 - Rule: `librelane_setup_violations` (line 238)
 
 **Bazel Flow:** `full_flow.bzl`
-- Position: Step 74 (line 770 comment)
+- Position: Step 74 (lines 862-867)
 - Named: `_chk_setup`
-- Chains from: `_eqy`
+- Chains from `_eqy` when EQY runs, otherwise the pre-EQY predecessor
 - No gating - always runs
 
 | Aspect | Librelane | Bazel | Match |
@@ -4580,11 +5103,11 @@ Gating (classic.py lines 253-256):
 | inputs | `[]` | (from src) | Y |
 | outputs | `[]` | `[]` | Y |
 | Gating | None | None | N/A |
-| Position | Step 74 (line 114) | Step 74 (line 770) | Y |
+| Position | Step 74 (line 114) | Step 74 (line 862) | Y |
 
 **Config Variable Audit:**
 
-From TimingViolations parent (checker.py lines 457-482, dynamically created):
+From TimingViolations parent (checker.py lines 476-500, dynamically created):
 | Variable | Type | Default | PDK | Bazel Status |
 |----------|------|---------|-----|--------------|
 | TIMING_VIOLATION_CORNERS | List[str] | - | Yes | Wired (PDK) |
@@ -4592,14 +5115,19 @@ From TimingViolations parent (checker.py lines 457-482, dynamically created):
 
 **Status: PASS**
 
+Verification:
+- `bazel build //dse/maths:SegmentedMultiplier16x16_sky130hd_chk_setup`
+  passed and produced `state_out.json`.
+- Runtime reported no setup violations found.
+
 ---
 
 ### Step 75: Checker.HoldViolations
 
-**Verified:** 2026-01-29
+**Verified:** 2026-07-07 for LibreLane 3.0.4
 
-**Librelane Source:** `librelane/steps/checker.py`
-- ID: `"Checker.HoldViolations"` (line 631)
+**Librelane Source:** `~/Code/librelane/librelane/steps/checker.py`
+- ID: `"Checker.HoldViolations"` (line 677)
 - inputs: `[]` (inherited from MetricChecker/TimingViolations)
 - outputs: `[]` (inherited)
 - Checks metric `timing__hold_vio__count` for hold timing violations
@@ -4614,7 +5142,7 @@ From TimingViolations parent (checker.py lines 457-482, dynamically created):
 - Rule: `librelane_hold_violations` (line 244)
 
 **Bazel Flow:** `full_flow.bzl`
-- Position: Step 75 (line 777 comment)
+- Position: Step 75 (lines 869-874)
 - Named: `_chk_hold`
 - Chains from: `_chk_setup`
 - No gating - always runs
@@ -4625,11 +5153,11 @@ From TimingViolations parent (checker.py lines 457-482, dynamically created):
 | inputs | `[]` | (from src) | Y |
 | outputs | `[]` | `[]` | Y |
 | Gating | None | None | N/A |
-| Position | Step 75 (line 115) | Step 75 (line 777) | Y |
+| Position | Step 75 (line 115) | Step 75 (line 869) | Y |
 
 **Config Variable Audit:**
 
-From TimingViolations parent (checker.py lines 457-482, dynamically created):
+From TimingViolations parent (checker.py lines 476-500, dynamically created):
 | Variable | Type | Default | PDK | Bazel Status |
 |----------|------|---------|-----|--------------|
 | TIMING_VIOLATION_CORNERS | List[str] | - | Yes | Wired (PDK) |
@@ -4637,14 +5165,19 @@ From TimingViolations parent (checker.py lines 457-482, dynamically created):
 
 **Status: PASS**
 
+Verification:
+- `bazel build //dse/maths:SegmentedMultiplier16x16_sky130hd_chk_hold`
+  passed and produced `state_out.json`.
+- Runtime reported no hold violations found.
+
 ---
 
 ### Step 76: Checker.MaxSlewViolations
 
-**Verified:** 2026-01-29
+**Verified:** 2026-07-07 for LibreLane 3.0.4
 
-**Librelane Source:** `librelane/steps/checker.py`
-- ID: `"Checker.MaxSlewViolations"` (line 620)
+**Librelane Source:** `~/Code/librelane/librelane/steps/checker.py`
+- ID: `"Checker.MaxSlewViolations"` (line 666)
 - inputs: `[]` (inherited from MetricChecker/TimingViolations)
 - outputs: `[]` (inherited)
 - Checks metric `design__max_slew_violation__count`
@@ -4659,7 +5192,7 @@ From TimingViolations parent (checker.py lines 457-482, dynamically created):
 - Rule: `librelane_max_slew_violations` (line 250)
 
 **Bazel Flow:** `full_flow.bzl`
-- Position: Step 76 (line 785 comment)
+- Position: Step 76 (lines 876-881)
 - Named: `_chk_slew`
 - Chains from: `_chk_hold`
 - No gating - always runs
@@ -4670,11 +5203,11 @@ From TimingViolations parent (checker.py lines 457-482, dynamically created):
 | inputs | `[]` | (from src) | Y |
 | outputs | `[]` | `[]` | Y |
 | Gating | None | None | N/A |
-| Position | Step 76 (line 116) | Step 76 (line 785) | Y |
+| Position | Step 76 (line 116) | Step 76 (line 876) | Y |
 
 **Config Variable Audit:**
 
-From TimingViolations parent (checker.py lines 457-482, dynamically created):
+From TimingViolations parent (checker.py lines 476-500, dynamically created):
 | Variable | Type | Default | PDK | Bazel Status |
 |----------|------|---------|-----|--------------|
 | TIMING_VIOLATION_CORNERS | List[str] | - | Yes | Wired (PDK) |
@@ -4684,14 +5217,47 @@ Note: `corner_override = [""]` means no corners checked by default.
 
 **Status: PASS**
 
+Verification:
+- `bazel build //dse/maths:SegmentedMultiplier16x16_sky130hd_chk_slew`
+  passed and produced `state_out.json`.
+- Runtime reported no max slew violations found.
+
+---
+
+### Step 77.5: Zamlet.AntennaViolations
+
+**Verified:** 2026-07-07
+
+**Librelane Source:** none. This is a local Zamlet checker, not a LibreLane step.
+
+**Bazel Implementation:** `checker.bzl`
+- impl: `_zamlet_antenna_violations_impl` (line 144)
+- Rule: `zamlet_antenna_violations` (line 322)
+- Reads antenna metrics from incoming `state_out.json`
+- Fails if antenna metrics are missing or nonzero
+- Copies state through unchanged on success
+
+**Bazel Flow:** `full_flow.bzl`
+- Position: Step 77.5 (lines 885-890)
+- Named: `_zamlet_chk_ant`
+- Chains from: `_chk_slew`
+- No LibreLane gate; local signoff guard
+
+**Status: PASS**
+
+Verification:
+- `bazel build //dse/maths:SegmentedMultiplier16x16_sky130hd_zamlet_chk_ant`
+  passed and produced `state_out.json`.
+- Runtime reported no antenna violations.
+
 ---
 
 ### Step 77: Checker.MaxCapViolations
 
-**Verified:** 2026-01-29
+**Verified:** 2026-07-07 for LibreLane 3.0.4
 
-**Librelane Source:** `librelane/steps/checker.py`
-- ID: `"Checker.MaxCapViolations"` (line 609)
+**Librelane Source:** `~/Code/librelane/librelane/steps/checker.py`
+- ID: `"Checker.MaxCapViolations"` (line 655)
 - inputs: `[]` (inherited from MetricChecker/TimingViolations)
 - outputs: `[]` (inherited)
 - Checks metric `design__max_cap_violation__count`
@@ -4706,9 +5272,10 @@ Note: `corner_override = [""]` means no corners checked by default.
 - Rule: `librelane_max_cap_violations` (line 256)
 
 **Bazel Flow:** `full_flow.bzl`
-- Position: Step 77 (line 792 comment)
+- Position: Step 77 (lines 893-898)
 - Named: `_chk_cap`
-- Chains from: `_chk_slew`
+- Chains from `_zamlet_chk_ant` because the local antenna checker is inserted
+  between max-slew and max-cap
 - No gating - always runs
 
 | Aspect | Librelane | Bazel | Match |
@@ -4717,11 +5284,11 @@ Note: `corner_override = [""]` means no corners checked by default.
 | inputs | `[]` | (from src) | Y |
 | outputs | `[]` | `[]` | Y |
 | Gating | None | None | N/A |
-| Position | Step 77 (line 117) | Step 77 (line 792) | Y |
+| Position | Step 77 (line 117) | Step 77 (line 893) | Y |
 
 **Config Variable Audit:**
 
-From TimingViolations parent (checker.py lines 457-482, dynamically created):
+From TimingViolations parent (checker.py lines 476-500, dynamically created):
 | Variable | Type | Default | PDK | Bazel Status |
 |----------|------|---------|-----|--------------|
 | TIMING_VIOLATION_CORNERS | List[str] | - | Yes | Wired (PDK) |
@@ -4731,17 +5298,23 @@ Note: `corner_override = [""]` means no corners checked by default.
 
 **Status: PASS**
 
+Verification:
+- `bazel build //dse/maths:SegmentedMultiplier16x16_sky130hd_chk_cap`
+  passed and produced `state_out.json`.
+- Runtime reported no max cap violations found.
+
 ---
 
 ### Step 78: Misc.ReportManufacturability
 
-**Verified:** 2026-01-29
+**Verified:** 2026-07-07 for LibreLane 3.0.4
 
-**Librelane Source:** `librelane/steps/misc.py`
+**Librelane Source:** `~/Code/librelane/librelane/steps/misc.py`
 - ID: `"Misc.ReportManufacturability"` (line 61)
 - inputs: `[]` (line 64)
 - outputs: `[]` (line 65)
 - Logs a manufacturability report with DRC, LVS, and antenna violation status
+- Writes `manufacturability.rpt` (line 156)
 - Only reads metrics from state_in, no config variables
 
 **Librelane Gating:** `classic.py`
@@ -4751,11 +5324,12 @@ Note: `corner_override = [""]` means no corners checked by default.
 **Bazel Implementation:** `misc.bzl`
 - impl: `_report_manufacturability_impl` (line 9)
 - Uses `MISC_CONFIG_KEYS` which is `BASE_CONFIG_KEYS` (line 7)
+- Declares `manufacturability.rpt`
 - Rule: `librelane_report_manufacturability` (line 12)
 
 **Bazel Flow:** `full_flow.bzl`
-- Position: Step 78 (line 799 comment) - final step
-- Named: `_report`
+- Position: Step 78 (lines 900-905) - final step
+- Named: `_mfg_report`
 - Chains from: `_chk_cap`
 - No gating - always runs
 
@@ -4763,9 +5337,9 @@ Note: `corner_override = [""]` means no corners checked by default.
 |--------|-----------|-------|-------|
 | Step ID | `"Misc.ReportManufacturability"` | `"Misc.ReportManufacturability"` | Y |
 | inputs | `[]` | (from src) | Y |
-| outputs | `[]` | `[]` | Y |
+| outputs | `[]` plus manufacturability report | `manufacturability.rpt` | Y |
 | Gating | None | None | N/A |
-| Position | Step 78 (line 118) | Step 78 (line 799) | Y |
+| Position | Step 78 (line 118) | Step 78 (line 900) | Y |
 
 **Config Variable Audit:**
 
@@ -4774,17 +5348,22 @@ Step only reads metrics from state_in to generate the report.
 
 **Status: PASS**
 
+Verification:
+- `bazel build //dse/maths:SegmentedMultiplier16x16_sky130hd_mfg_report`
+  passed.
+- Produced `manufacturability.rpt` and `state_out.json`.
+- Report showed Antenna, LVS, and DRC all passed.
+
 ---
 
 ## Summary
 
-- **Verified PASS:** 23 steps (1-12, 14-24 with some caveats)
-- **Verified FAIL:** 1 step (Step 13: FP_CORE_UTIL default mismatch)
-- **TODO:** 54 steps (25-78 need detailed verification)
+- **Verified PASS:** 25 step entries (1-24 plus inserted OpenROAD.DumpRCValues, with some caveats)
+- **Verified FAIL:** 0 steps
+- **TODO:** 53 step entries (remaining unaudited flow steps need detailed verification)
 - **Structural differences noted:** Steps 24-26 IO placement sequence
 
 Critical issues:
-1. Step 13 (Floorplan): FP_CORE_UTIL default 50% in librelane vs 40% in Bazel
-2. Step 16: MACROS-based placement not supported (only macro_placement_cfg works)
-3. Steps 24-26: Bazel uses conditional branching vs librelane's self-skip pattern
-4. Steps 40 and 44: Run experimental code that is disabled by default in Classic flow
+1. Step 16: `MacroInfo` does not model per-instance placement locations for MACROS-based placement generation
+2. Steps 24-26: Bazel uses conditional branching vs librelane's self-skip pattern
+3. Steps 40 and 44: Run experimental code that is disabled by default in Classic flow
