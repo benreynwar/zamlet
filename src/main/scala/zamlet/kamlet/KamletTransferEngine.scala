@@ -614,11 +614,24 @@ class KamletTransferEngine(params: ZamletParams) extends Module {
   })
   val syncResult0MatchValid = syncResult0MatchVec.asUInt.orR
   val syncResult0TeIndex = PriorityEncoder(syncResult0MatchVec)
+  val syncResult0Base =
+    kteEntries(syncResult0TeIndex).kinstr.kinstr.asTypeOf(new KInstrBase(params))
+  val syncResult0Indexed =
+    kteEntries(syncResult0TeIndex).kinstr.kinstr.asTypeOf(new IndexedInstr(params))
+  val syncResult0IsGroupedCompletion =
+    (syncResult0Base.opcode === KInstrOpcode.LoadIdxUnord ||
+      syncResult0Base.opcode === KInstrOpcode.StoreIdxUnord) &&
+      syncResult0Indexed.groupedCompletion
 
   errorsNext.syncResultWithoutEntry := io.syncResult.valid && !syncResult0MatchValid
 
   when (io.syncResult.valid && syncResult0MatchValid) {
     kteEntriesNext(syncResult0TeIndex).state := KteState.Free
+    when (syncResult0IsGroupedCompletion) {
+      completionGroupsNext(syncResult0Indexed.completionSyncIdent).valid := false.B
+      completionGroupsNext(syncResult0Indexed.completionSyncIdent).closed := false.B
+      completionGroupsNext(syncResult0Indexed.completionSyncIdent).outstanding := 0.U
+    }
   }
 
   // ============================================================
@@ -787,12 +800,11 @@ class KamletTransferEngine(params: ZamletParams) extends Module {
       jteClear(jInK).bits := cleanup0TeIndex
     }
     when (cleanup0IsGroupedCompletion) {
+      // Keep the group valid when the last local contributor drains. The valid
+      // bit owns the memory ident until the final sync result frees the KTE
+      // entry; outstanding only counts local contributors still before cleanup.
       completionGroupsAfterCleanup(cleanup0Indexed.completionSyncIdent).outstanding :=
         cleanup0Group.outstanding - 1.U
-      when (cleanup0Group.outstanding === 1.U) {
-        completionGroupsAfterCleanup(cleanup0Indexed.completionSyncIdent).valid := false.B
-        completionGroupsAfterCleanup(cleanup0Indexed.completionSyncIdent).closed := false.B
-      }
     }
     // Indexed transfers release RF/JTE resources here, but the KTE entry
     // remains allocated until the sync result releases the memory hazard.

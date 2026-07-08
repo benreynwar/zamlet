@@ -702,8 +702,13 @@ object ZamletParams {
   implicit val kamletTlbParamsDecoder: Decoder[KamletTlbParams] = deriveDecoder[KamletTlbParams]
   implicit val zamletParamsDecoder: Decoder[ZamletParams] = deriveDecoder[ZamletParams]
 
+  def kceTagTableMaxActiveUses(params: ZamletParams): Int =
+    params.wordBytes * params.jInK * params.witemTableDepth +
+      params.kcePendingTableDepth +
+      params.kteCacheWaitTableDepth
+
   def kceTagTableNUseWidth(params: ZamletParams): Int =
-    log2Ceil(params.witemTableDepth)
+    log2Ceil(kceTagTableMaxActiveUses(params) + 1)
 
   def normalize(params: ZamletParams): ZamletParams = {
     val kceNUseWidth = kceTagTableNUseWidth(params)

@@ -21,6 +21,7 @@ object TagState extends ChiselEnum {
 class TagTableErrors extends Bundle {
   val allocBadState = Bool()
   val allocBadUses = Bool()
+  val allocUsesOverflow = Bool()
   val allocRecentlyUsed = Bool()
   val fillBadState = Bool()
   val writebackCompleteBadState = Bool()
@@ -406,10 +407,8 @@ class TagTable[R <: Data, F <: Data, P <: Data](
   alloc0In.ready := alloc0Out.ready && !alloc0WaitForSameTagMiss
   alloc0Out.valid := alloc0In.valid && !alloc0WaitForSameTagMiss
 
-  val alloc1CanRespond = Mux(
-    alloc1In.bits.hit,
-    nUses(alloc1In.bits.hitSlot) =/= maxUses,
-    freeSlotDeq.valid)
+  val alloc1HitUsesAvailable = nUses(alloc1In.bits.hitSlot) =/= maxUses
+  val alloc1CanRespond = Mux(alloc1In.bits.hit, true.B, freeSlotDeq.valid)
   val alloc1ReclaimsEviction =
     alloc1In.bits.hit && alloc1In.bits.hitState === TagState.Evicting
   val alloc1HitRespState = Mux(
@@ -484,7 +483,9 @@ class TagTable[R <: Data, F <: Data, P <: Data](
     slotMetaAfterAlloc(freeSlotDeq.bits).nUses := 1.U
     slotMetaAfterAlloc(freeSlotDeq.bits).recentlyUsed := false.B
   }
-  when (alloc1Fire && alloc1In.bits.hit) {
+  errors.allocUsesOverflow :=
+    alloc1Fire && alloc1In.bits.hit && !alloc1HitUsesAvailable
+  when (alloc1Fire && alloc1In.bits.hit && alloc1HitUsesAvailable) {
     slotMetaAfterAlloc(alloc1In.bits.hitSlot).nUses := nUses(alloc1In.bits.hitSlot) + 1.U
     slotMetaAfterAlloc(alloc1In.bits.hitSlot).recentlyUsed := true.B
     // Reclaiming an evicting same-tag slot cancels the eviction logically. The
