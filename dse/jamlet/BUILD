@@ -1,7 +1,7 @@
 # Jamlet Component DSE
 
-load("//bazel:verilog.bzl", "chisel_dse_module")
-load("//bazel/flow:defs.bzl", "librelane_synth_config")
+load("//bazel:verilog.bzl", "chisel_dse_module", "chisel_verilog_no_config")
+load("//bazel/flow:defs.bzl", "librelane_classic_flow", "librelane_synth_config")
 load("@sky130_fd_sc_hd_config//:defs.bzl", "pdk")
 
 pdk(name = "sky130hd")
@@ -87,4 +87,66 @@ chisel_dse_module(
     pdk = ":sky130hd",
     clock_period = "10.0",
     core_utilization = "40",
+)
+
+chisel_verilog_no_config(
+    name = "JamletMxu",
+    generator = JAMLET_PKG + ":jamletmxu",
+)
+
+librelane_classic_flow(
+    name = "JamletMxu_sky130hd",
+    verilog_files = [":JamletMxu.sv"],
+    top = "JamletMxu",
+    pdk = ":sky130hd",
+    clock_period = "20.0",
+    core_utilization = "40",
+    synth_config = ":synth_autoname",
+)
+
+chisel_verilog_no_config(
+    name = "JamletMxu4x4",
+    generator = JAMLET_PKG + ":jamletmxu",
+    extra_args = ["4"],
+)
+
+librelane_classic_flow(
+    name = "JamletMxu4x4_sky130hd",
+    verilog_files = [":JamletMxu4x4.sv"],
+    top = "JamletMxu",
+    pdk = ":sky130hd",
+    clock_period = "20.0",
+    core_utilization = "40",
+    synth_config = ":synth_autoname",
+)
+
+chisel_verilog_no_config(
+    name = "JamletMxuGrid4x4",
+    generator = JAMLET_PKG + ":jamletmxugrid",
+    extra_args = ["4"],
+)
+
+librelane_classic_flow(
+    name = "JamletMxuGrid4x4_sky130hd",
+    verilog_files = [":JamletMxuGrid4x4.sv"],
+    top = "JamletMxuGrid",
+    pdk = ":sky130hd",
+    clock_period = "20.0",
+    core_utilization = "40",
+    synth_config = ":synth_autoname",
+)
+
+chisel_verilog_no_config(
+    name = "JamletMxuCell",
+    generator = JAMLET_PKG + ":jamletmxucell",
+)
+
+librelane_classic_flow(
+    name = "JamletMxuCell_sky130hd",
+    verilog_files = [":JamletMxuCell.sv"],
+    top = "JamletMxuCell",
+    pdk = ":sky130hd",
+    clock_period = "20.0",
+    core_utilization = "35",
+    synth_config = ":synth_autoname",
 )

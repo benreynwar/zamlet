@@ -79,6 +79,38 @@ chisel_binary(
 )
 
 chisel_binary(
+    name = "jamletmxu",
+    srcs = ["JamletMxu.scala"] + JAMLET_COMMON_SRCS,
+    main_class = "zamlet.jamlet.JamletMxuMain",
+    deps = JAMLET_DEPS,
+    visibility = ["//visibility:public"],
+)
+
+chisel_binary(
+    name = "jamletmxucell",
+    srcs = ["JamletMxu.scala"] + JAMLET_COMMON_SRCS,
+    main_class = "zamlet.jamlet.JamletMxuCellMain",
+    deps = JAMLET_DEPS,
+    visibility = ["//visibility:public"],
+)
+
+chisel_binary(
+    name = "jamletmxugrid",
+    srcs = ["JamletMxu.scala"] + JAMLET_COMMON_SRCS,
+    main_class = "zamlet.jamlet.JamletMxuGridMain",
+    deps = JAMLET_DEPS,
+    visibility = ["//visibility:public"],
+)
+
+chisel_binary(
+    name = "jamletmxutestgrid",
+    srcs = ["JamletMxu.scala"] + JAMLET_COMMON_SRCS,
+    main_class = "zamlet.jamlet.JamletMxuTestGridMain",
+    deps = JAMLET_DEPS,
+    visibility = ["//visibility:public"],
+)
+
+chisel_binary(
     name = "vectorrf",
     srcs = [":jamlet_sources"] + JAMLET_COMMON_SRCS,
     main_class = "zamlet.jamlet.VectorRfMain",
