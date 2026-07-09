@@ -1,3 +1,4 @@
+import json
 import logging
 from random import Random
 
@@ -12,8 +13,16 @@ from zamlet import test_utils
 logger = logging.getLogger(__name__)
 
 
-WIDTH = 64
-LATENCY = 2
+TEST_PARAMS = test_utils.get_test_params()
+with open(TEST_PARAMS["params_file"]) as f:
+    CONFIG = json.load(f)
+
+WIDTH = CONFIG["width"]
+LATENCY = (
+    int(CONFIG["registerInput"]) +
+    int(CONFIG["registerMiddle"]) +
+    int(CONFIG["registerOutput"])
+)
 MASK = (1 << WIDTH) - 1
 
 

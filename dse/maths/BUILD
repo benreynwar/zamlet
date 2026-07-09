@@ -54,6 +54,7 @@ SEGMENTED_MULT_WIDTHS = [
     pdk = ":sky130hd",
     clock_period = "14.0",
     core_utilization = "40",
+    grt_antenna_margin = 50,
     input_delay_constraint = "40",
     output_delay_constraint = "40",
 ) for width in SEGMENTED_MULT_WIDTHS]

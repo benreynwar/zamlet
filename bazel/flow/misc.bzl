@@ -7,7 +7,9 @@ load(":providers.bzl", "LibrelaneInfo")
 MISC_CONFIG_KEYS = BASE_CONFIG_KEYS
 
 def _report_manufacturability_impl(ctx):
-    return single_step_impl(ctx, "Misc.ReportManufacturability", MISC_CONFIG_KEYS, step_outputs = [])
+    return single_step_impl(ctx, "Misc.ReportManufacturability", MISC_CONFIG_KEYS,
+        step_outputs = [],
+        extra_outputs = ["manufacturability.rpt"])
 
 librelane_report_manufacturability = rule(
     implementation = _report_manufacturability_impl,

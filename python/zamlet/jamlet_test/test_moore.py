@@ -1,4 +1,3 @@
-import json
 import logging
 from typing import Tuple, List
 
@@ -20,8 +19,7 @@ async def indextocoordswithreg_test(dut: HierarchyObject) -> None:
 
     # Load params
     test_params = test_utils.get_test_params()
-    with open(test_params['params_file']) as f:
-        params = ZamletParams.from_dict(json.load(f))
+    params = ZamletParams.from_file(test_params['params_file'])
 
     cocotb.start_soon(clock.Clock(dut.clock, 2, 'ns').start())
 
@@ -55,8 +53,7 @@ async def coordstoindexwithreg_test(dut: HierarchyObject) -> None:
 
     # Load params
     test_params = test_utils.get_test_params()
-    with open(test_params['params_file']) as f:
-        params = ZamletParams.from_dict(json.load(f))
+    params = ZamletParams.from_file(test_params['params_file'])
 
     cocotb.start_soon(clock.Clock(dut.clock, 2, 'ns').start())
 

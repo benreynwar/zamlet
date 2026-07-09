@@ -78,6 +78,7 @@ class JamletAlu(params: ZamletParams) extends Module {
   val add = Module(new SegmentedPrefixAdder(
     params.wordWidth,
     registerInput = false,
+    registerMiddle = true,
     registerOutput = true))
   val outputLatency = JamletAlu.outputLatency(params)
   require(outputLatency >= add.latency, "JamletAlu assumes multiplier latency is at least adder latency")
@@ -152,6 +153,7 @@ object JamletAlu {
       registerInput = true,
       registerLeafInput = true,
       recombineBufferMinWidth = 32,
+      recombineFinalAdderBufferMinWidth = 128,
       registerOutput = true)
   }
 }

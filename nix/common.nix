@@ -14,18 +14,17 @@ let
   flake-compat = fetchTarball
     "https://github.com/edolstra/flake-compat/archive/35bb57c0c8d8b62bbfd284272c928ceb64ddbde9.tar.gz";
 
-  # main branch, pinned 2025-02-05
+  # 3.0.4 release, pinned 2026-06-07
   librelane-src-unpatched = builtins.fetchGit {
     url = "https://github.com/librelane/librelane";
-    ref = "main";
-    rev = "f315752cf2e1465aca24a002247aa6169becb541";
+    ref = "refs/tags/3.0.4";
+    rev = "0f39aab99009d4a81ee3f863f0da9ca2f0b43a99";
   };
 
   librelane-src = bootstrap-pkgs.applyPatches {
     name = "librelane-patched";
     src = librelane-src-unpatched;
     patches = [
-      ./librelane-macro-placement.patch
       ./patches/librelane-magic-abspath-rcfile.patch
     ];
   };
@@ -71,13 +70,16 @@ let
   cocotb-bus = pkgs.python3.pkgs.buildPythonPackage rec {
     pname = "cocotb-bus";
     version = "0-unstable";
+    pyproject = true;
+
     src = pkgs.fetchFromGitHub {
       owner = "cocotb";
       repo = "cocotb-bus";
       rev = "b9b248ecc8793de6c4534e8014b99b92e1a1519a";
       sha256 = "sha256-eikhcBVnbqcYaTre99bEipcykHGZPKgLCXUjgjDn9RE=";
     };
-    propagatedBuildInputs = [ cocotb2 ];
+    build-system = [ pkgs.python3.pkgs.setuptools ];
+    propagatedBuildInputs = [ cocotb2 pkgs.python3.pkgs.scapy ];
     doCheck = false;
   };
 
@@ -85,12 +87,15 @@ let
   cocotbext-axi = pkgs.python3.pkgs.buildPythonPackage rec {
     pname = "cocotbext-axi";
     version = "0-unstable";
+    pyproject = true;
+
     src = pkgs.fetchFromGitHub {
       owner = "alexforencich";
       repo = "cocotbext-axi";
       rev = "3e1e7fc1ec488811d742adde6f7283852f134458";
       sha256 = "sha256-BITHHk1YXfYXH0kb7gh0A71WkKmz95VALBm3vmqMDFA=";
     };
+    build-system = [ pkgs.python3.pkgs.setuptools ];
     propagatedBuildInputs = [ cocotb2 cocotb-bus ];
     doCheck = false;
   };
@@ -157,7 +162,7 @@ let
     pkgs.cachix
     pkgs.ruff
     pkgs.mypy
-    ((pkgs.vim_configurable.override { guiSupport = "no"; }).customize {
+    (pkgs.vim-full.customize {
       vimrcConfig.packages.zamlet = with pkgs.vimPlugins; {
         start = [ ale ];
       };

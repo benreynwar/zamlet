@@ -16,17 +16,13 @@ BASE_CONFIG_KEYS = [
     "PRIMARY_GDSII_STREAMOUT_TOOL",
     "DEFAULT_CORNER",
     "STA_CORNERS",
-    "FP_TRACKS_INFO",
-    "FP_TAPCELL_DIST",
-    "FP_IO_HLAYER",
-    "FP_IO_VLAYER",
     "RT_MIN_LAYER",
     "RT_MAX_LAYER",
     # scl_variables (required)
     "SCL_GROUND_PINS",
     "SCL_POWER_PINS",
-    "FILL_CELL",
-    "DECAP_CELL",
+    "FILL_CELLS",
+    "DECAP_CELLS",
     "LIB",
     "CELL_LEFS",
     "CELL_GDS",
@@ -53,6 +49,28 @@ BASE_CONFIG_KEYS = [
     "CLOCK_PERIOD",
 ]
 
+# Config keys for steps inheriting from OpenROADStep in LibreLane 3.0.4.
+OPENROAD_STEP_CONFIG_KEYS = BASE_CONFIG_KEYS + [
+    # config_vars
+    "PNR_CORNERS",
+    "SET_RC_VERBOSE",
+    "LAYERS_RC",
+    "VIAS_R",
+    "SIGNAL_WIRE_RC_LAYERS",
+    "CLOCK_WIRE_RC_LAYERS",
+    "PDN_CONNECT_MACROS_TO_GRID",
+    "PDN_MACRO_CONNECTIONS",
+    "PDN_ENABLE_GLOBAL_CONNECTIONS",
+    "PNR_SDC_FILE",
+    "STA_EXTRA_CORNER_TCL_FILE",
+    "DEDUPLICATE_CORNERS",
+    # prepare_env()
+    "LIB",
+    "FALLBACK_SDC",
+    "EXTRA_EXCLUDED_CELLS",
+    "PNR_EXCLUDED_CELL_FILE",
+]
+
 def _add_optional(config, key, value):
     """Add a value to config if it's not None."""
     if value != None:
@@ -67,6 +85,11 @@ def _add_optional_file_list(config, key, files):
     """Add a list of file paths to config if the list is not None/empty."""
     if files:
         config[key] = [f.path for f in files]
+
+def _add_optional_bool_string(config, key, value):
+    """Add an optional bool represented by a constrained string attr."""
+    if value:
+        config[key] = value == "true"
 
 def _add_optional_file_dict(config, key, file_dict):
     """Add a dict of file paths to config if the dict is not None/empty."""
@@ -106,6 +129,7 @@ def create_librelane_config(input_info, state_info, required_keys):
         # PDK config - cells (as paths for librelane)
         "CELL_LEFS": [f.path for f in pdk.cell_lefs],
         "CELL_GDS": [f.path for f in pdk.cell_gds],
+        "CELL_SPICE_MODELS": [f.path for f in pdk.cell_spice_models],
 
         # PDK config - tech LEFs (corner -> path)
         "TECH_LEFS": {corner: f.path for corner, f in pdk.tech_lefs.items()},
@@ -117,8 +141,8 @@ def create_librelane_config(input_info, state_info, required_keys):
         # PDK config - floorplanning
         "FP_TRACKS_INFO": pdk.fp_tracks_info.path,
         "FP_TAPCELL_DIST": pdk.fp_tapcell_dist,
-        "FP_IO_HLAYER": pdk.fp_io_hlayer,
-        "FP_IO_VLAYER": pdk.fp_io_vlayer,
+        "IO_PIN_H_LAYER": pdk.fp_io_hlayer,
+        "IO_PIN_V_LAYER": pdk.fp_io_vlayer,
         "PLACE_SITE": pdk.place_site,
 
         # PDK config - routing
@@ -145,8 +169,8 @@ def create_librelane_config(input_info, state_info, required_keys):
         # PDK config - placement cells
         "WELLTAP_CELL": pdk.welltap_cell,
         "ENDCAP_CELL": pdk.endcap_cell,
-        "FILL_CELL": pdk.fill_cell,
-        "DECAP_CELL": pdk.decap_cell,
+        "FILL_CELLS": pdk.fill_cell,
+        "DECAP_CELLS": pdk.decap_cell,
         "DIODE_CELL": pdk.diode_cell,
         "CELL_PAD_EXCLUDE": pdk.cell_pad_exclude,
 
@@ -171,29 +195,42 @@ def create_librelane_config(input_info, state_info, required_keys):
         config["VDD_PIN_VOLTAGE"] = pdk.vdd_pin_voltage
 
     # Step-specific optional fields
+    _add_optional(config, "PNR_CORNERS", pdk.pnr_corners)
+    _add_optional(config, "LAYERS_RC", pdk.layers_rc)
+    _add_optional(config, "VIAS_R", pdk.vias_r)
+    _add_optional(config, "SIGNAL_WIRE_RC_LAYERS", pdk.signal_wire_rc_layers)
+    _add_optional(config, "CLOCK_WIRE_RC_LAYERS", pdk.clock_wire_rc_layers)
+    _add_optional(config, "FP_FLIP_SITES", pdk.fp_flip_sites)
     _add_optional(config, "EXTRA_SITES", pdk.extra_sites)
-    _add_optional(config, "FP_IO_HLENGTH", pdk.fp_io_hlength)
-    _add_optional(config, "FP_IO_VLENGTH", pdk.fp_io_vlength)
-    _add_optional(config, "FP_IO_MIN_DISTANCE", pdk.fp_io_min_distance)
-    _add_optional(config, "FP_PDN_RAIL_LAYER", pdk.fp_pdn_rail_layer)
-    _add_optional(config, "FP_PDN_RAIL_WIDTH", pdk.fp_pdn_rail_width)
-    _add_optional(config, "FP_PDN_RAIL_OFFSET", pdk.fp_pdn_rail_offset)
-    _add_optional(config, "FP_PDN_HORIZONTAL_LAYER", pdk.fp_pdn_horizontal_layer)
-    _add_optional(config, "FP_PDN_VERTICAL_LAYER", pdk.fp_pdn_vertical_layer)
-    _add_optional(config, "FP_PDN_HOFFSET", pdk.fp_pdn_hoffset)
-    _add_optional(config, "FP_PDN_VOFFSET", pdk.fp_pdn_voffset)
-    _add_optional(config, "FP_PDN_HPITCH", pdk.fp_pdn_hpitch)
-    _add_optional(config, "FP_PDN_VPITCH", pdk.fp_pdn_vpitch)
-    _add_optional(config, "FP_PDN_HSPACING", pdk.fp_pdn_hspacing)
-    _add_optional(config, "FP_PDN_VSPACING", pdk.fp_pdn_vspacing)
-    _add_optional(config, "FP_PDN_HWIDTH", pdk.fp_pdn_hwidth)
-    _add_optional(config, "FP_PDN_VWIDTH", pdk.fp_pdn_vwidth)
-    _add_optional(config, "FP_PDN_CORE_RING_HOFFSET", pdk.fp_pdn_core_ring_hoffset)
-    _add_optional(config, "FP_PDN_CORE_RING_VOFFSET", pdk.fp_pdn_core_ring_voffset)
-    _add_optional(config, "FP_PDN_CORE_RING_HSPACING", pdk.fp_pdn_core_ring_hspacing)
-    _add_optional(config, "FP_PDN_CORE_RING_VSPACING", pdk.fp_pdn_core_ring_vspacing)
-    _add_optional(config, "FP_PDN_CORE_RING_HWIDTH", pdk.fp_pdn_core_ring_hwidth)
-    _add_optional(config, "FP_PDN_CORE_RING_VWIDTH", pdk.fp_pdn_core_ring_vwidth)
+    _add_optional(config, "FP_PRUNE_THRESHOLD", pdk.fp_prune_threshold)
+    _add_optional(config, "IO_PIN_H_LENGTH", pdk.fp_io_hlength)
+    _add_optional(config, "IO_PIN_V_LENGTH", pdk.fp_io_vlength)
+    _add_optional(config, "IO_PIN_MIN_DISTANCE", pdk.fp_io_min_distance)
+    _add_optional(config, "PDN_RAIL_LAYER", pdk.fp_pdn_rail_layer)
+    _add_optional(config, "PDN_RAIL_WIDTH", pdk.fp_pdn_rail_width)
+    _add_optional(config, "PDN_RAIL_OFFSET", pdk.fp_pdn_rail_offset)
+    _add_optional(config, "PDN_HORIZONTAL_LAYER", pdk.fp_pdn_horizontal_layer)
+    _add_optional(config, "PDN_VERTICAL_LAYER", pdk.fp_pdn_vertical_layer)
+    _add_optional(config, "PDN_CORE_HORIZONTAL_LAYER", pdk.fp_pdn_core_horizontal_layer)
+    _add_optional(config, "PDN_CORE_VERTICAL_LAYER", pdk.fp_pdn_core_vertical_layer)
+    _add_optional(config, "PDN_HOFFSET", pdk.fp_pdn_hoffset)
+    _add_optional(config, "PDN_VOFFSET", pdk.fp_pdn_voffset)
+    _add_optional(config, "PDN_HPITCH", pdk.fp_pdn_hpitch)
+    _add_optional(config, "PDN_VPITCH", pdk.fp_pdn_vpitch)
+    _add_optional(config, "PDN_HSPACING", pdk.fp_pdn_hspacing)
+    _add_optional(config, "PDN_VSPACING", pdk.fp_pdn_vspacing)
+    _add_optional(config, "PDN_HWIDTH", pdk.fp_pdn_hwidth)
+    _add_optional(config, "PDN_VWIDTH", pdk.fp_pdn_vwidth)
+    _add_optional(config, "PDN_CORE_RING_HOFFSET", pdk.fp_pdn_core_ring_hoffset)
+    _add_optional(config, "PDN_CORE_RING_VOFFSET", pdk.fp_pdn_core_ring_voffset)
+    _add_optional(config, "PDN_CORE_RING_HSPACING", pdk.fp_pdn_core_ring_hspacing)
+    _add_optional(config, "PDN_CORE_RING_VSPACING", pdk.fp_pdn_core_ring_vspacing)
+    _add_optional(config, "PDN_CORE_RING_HWIDTH", pdk.fp_pdn_core_ring_hwidth)
+    _add_optional(config, "PDN_CORE_RING_VWIDTH", pdk.fp_pdn_core_ring_vwidth)
+    _add_optional(config, "PDN_CORE_RING_CONNECT_TO_PADS", pdk.fp_pdn_core_ring_connect_to_pads)
+    _add_optional(config, "PDN_CORE_RING_ALLOW_OUT_OF_DIE", pdk.fp_pdn_core_ring_allow_out_of_die)
+    _add_optional(config, "PDN_EXTEND_TO", pdk.fp_pdn_extend_to)
+    _add_optional(config, "PDN_ENABLE_PINS", pdk.fp_pdn_enable_pins)
     _add_optional(config, "HEURISTIC_ANTENNA_THRESHOLD", pdk.heuristic_antenna_threshold)
     _add_optional_file(config, "MAGICRC", pdk.magicrc)
     _add_optional_file(config, "MAGIC_TECH", pdk.magic_tech)
@@ -244,10 +281,15 @@ def create_librelane_config(input_info, state_info, required_keys):
     config["LINTER_INCLUDE_PDK_MODELS"] = input_info.linter_include_pdk_models
     config["LINTER_RELATIVE_INCLUDES"] = input_info.linter_relative_includes
     config["LINTER_ERROR_ON_LATCH"] = input_info.linter_error_on_latch
+    config["LINTER_ERROR_ON_MULTIDRIVEN"] = input_info.linter_error_on_multidriven
     if input_info.linter_defines:
         config["LINTER_DEFINES"] = input_info.linter_defines
+    config["LINTER_DISABLE_WARNINGS"] = input_info.linter_disable_warnings
+    config["LINTER_DISABLE_WARNINGS_BLACKBOX"] = input_info.linter_disable_warnings_blackbox
+    _add_optional_file(config, "LINTER_VLT", input_info.linter_vlt)
     # CELL_VERILOG_MODELS comes from PDK
     _add_optional_file_list(config, "CELL_VERILOG_MODELS", pdk.cell_verilog_models)
+    _add_optional_file_list(config, "PAD_VERILOG_MODELS", pdk.pad_verilog_models)
     # EXTRA_VERILOG_MODELS from user input
     if input_info.extra_verilog_models:
         config["EXTRA_VERILOG_MODELS"] = [f.path for f in input_info.extra_verilog_models]
@@ -260,11 +302,17 @@ def create_librelane_config(input_info, state_info, required_keys):
     # Yosys config (from librelane/steps/pyosys.py)
     if input_info.synth_parameters:
         config["SYNTH_PARAMETERS"] = input_info.synth_parameters
-    config["USE_SYNLIG"] = input_info.use_synlig
-    config["SYNLIG_DEFER"] = input_info.synlig_defer
-    config["USE_LIGHTER"] = input_info.use_lighter
-    _add_optional_file(config, "LIGHTER_DFF_MAP", input_info.lighter_dff_map)
+    config["USE_SLANG"] = input_info.use_slang
+    if input_info.slang_arguments:
+        config["SLANG_ARGUMENTS"] = input_info.slang_arguments
+    if input_info.synth_clockgate_min_width > 0:
+        config["SYNTH_CLOCKGATE_MIN_WIDTH"] = input_info.synth_clockgate_min_width
+    _add_optional(config, "SYNTH_CLOCKGATE_POSEDGE_ICG", pdk.synth_clockgate_posedge_icg)
+    _add_optional(config, "SYNTH_CLOCKGATE_NEGEDGE_ICG", pdk.synth_clockgate_negedge_icg)
     config["YOSYS_LOG_LEVEL"] = input_info.yosys_log_level
+    if input_info.synth_corner:
+        config["SYNTH_CORNER"] = input_info.synth_corner
+    config["SYNTH_SHOW"] = input_info.synth_show
 
     # Yosys.Synthesis config (from librelane/steps/pyosys.py SynthesisCommon)
     _add_optional(config, "TRISTATE_CELLS", pdk.tristate_cells)
@@ -281,15 +329,21 @@ def create_librelane_config(input_info, state_info, required_keys):
     config["SYNTH_SPLITNETS"] = input_info.synth_splitnets
     config["SYNTH_SIZING"] = input_info.synth_sizing
     config["SYNTH_HIERARCHY_MODE"] = input_info.synth_hierarchy_mode
+    if input_info.synth_keep_hierarchy_min_cost > 0:
+        config["SYNTH_KEEP_HIERARCHY_MIN_COST"] = input_info.synth_keep_hierarchy_min_cost
+    if input_info.synth_keep_hierarchy_instances:
+        config["SYNTH_KEEP_HIERARCHY_INSTANCES"] = input_info.synth_keep_hierarchy_instances
+    if input_info.synth_keep_hierarchy_modules:
+        config["SYNTH_KEEP_HIERARCHY_MODULES"] = input_info.synth_keep_hierarchy_modules
     config["SYNTH_SHARE_RESOURCES"] = input_info.synth_share_resources
     config["SYNTH_ADDER_TYPE"] = input_info.synth_adder_type
     _add_optional_file(config, "SYNTH_EXTRA_MAPPING_FILE", input_info.synth_extra_mapping_file)
     config["SYNTH_ELABORATE_ONLY"] = input_info.synth_elaborate_only
-    config["SYNTH_ELABORATE_FLATTEN"] = input_info.synth_elaborate_flatten
     config["SYNTH_MUL_BOOTH"] = input_info.synth_mul_booth
     if input_info.synth_tie_undefined:
         config["SYNTH_TIE_UNDEFINED"] = input_info.synth_tie_undefined
     config["SYNTH_WRITE_NOATTR"] = input_info.synth_write_noattr
+    config["SYNTH_NORMALIZE_SINGLE_BIT_VECTORS"] = input_info.synth_normalize_single_bit_vectors
 
     # Post-synthesis checker config (from librelane/steps/checker.py)
     config["ERROR_ON_UNMAPPED_CELLS"] = input_info.error_on_unmapped_cells
@@ -301,11 +355,14 @@ def create_librelane_config(input_info, state_info, required_keys):
     config["ERROR_ON_LONG_WIRE"] = input_info.error_on_long_wire
     _add_optional(config, "WIRE_LENGTH_THRESHOLD", pdk.wire_length_threshold)
 
-    # OpenROADStep config (from librelane/steps/openroad.py lines 192-223)
+    # OpenROADStep config (from librelane/steps/openroad.py)
+    config["SET_RC_VERBOSE"] = input_info.set_rc_verbose
     config["PDN_CONNECT_MACROS_TO_GRID"] = input_info.pdn_connect_macros_to_grid
     if input_info.pdn_macro_connections:
         config["PDN_MACRO_CONNECTIONS"] = input_info.pdn_macro_connections
     config["PDN_ENABLE_GLOBAL_CONNECTIONS"] = input_info.pdn_enable_global_connections
+    _add_optional_file(config, "STA_EXTRA_CORNER_TCL_FILE", input_info.sta_extra_corner_tcl_file)
+    config["DEDUPLICATE_CORNERS"] = input_info.deduplicate_corners
     _add_optional_file(config, "FP_DEF_TEMPLATE", input_info.fp_def_template)
     _add_optional_file(config, "FP_PIN_ORDER_CFG", input_info.fp_pin_order_cfg)
 
@@ -313,12 +370,12 @@ def create_librelane_config(input_info, state_info, required_keys):
     config["FP_TEMPLATE_MATCH_MODE"] = input_info.fp_template_match_mode
     config["FP_TEMPLATE_COPY_POWER_PINS"] = input_info.fp_template_copy_power_pins
 
-    # OpenROADStep.prepare_env() config (from librelane/steps/openroad.py lines 242-258)
+    # OpenROADStep.prepare_env() config (from librelane/steps/openroad.py)
     if input_info.extra_excluded_cells:
         config["EXTRA_EXCLUDED_CELLS"] = input_info.extra_excluded_cells
-    # FALLBACK_SDC_FILE - use pnr_sdc_file as fallback (Bazel always sets this)
+    # FALLBACK_SDC - use pnr_sdc_file as fallback when provided.
     if input_info.pnr_sdc_file:
-        config["FALLBACK_SDC_FILE"] = input_info.pnr_sdc_file.path
+        config["FALLBACK_SDC"] = input_info.pnr_sdc_file.path
 
     # MultiCornerSTA config (from librelane/steps/openroad.py lines 534-556)
     config["STA_MACRO_PRIORITIZE_NL"] = input_info.sta_macro_prioritize_nl
@@ -350,6 +407,9 @@ def create_librelane_config(input_info, state_info, required_keys):
     config["MAGIC_DISABLE_CIF_INFO"] = input_info.magic_disable_cif_info
     config["MAGIC_MACRO_STD_CELL_SOURCE"] = input_info.magic_macro_std_cell_source
 
+    # KLayout.StreamOut config (klayout.py:278-286)
+    config["KLAYOUT_CONFLICT_RESOLUTION"] = input_info.klayout_conflict_resolution
+
     # Magic.WriteLEF config (magic.py:218-237)
     config["MAGIC_LEF_WRITE_USE_GDS"] = input_info.magic_lef_write_use_gds
     config["MAGIC_WRITE_FULL_LEF"] = input_info.magic_write_full_lef
@@ -364,6 +424,10 @@ def create_librelane_config(input_info, state_info, required_keys):
 
     # Magic.DRC config (magic.py:380-386)
     config["MAGIC_DRC_USE_GDS"] = input_info.magic_drc_use_gds
+    if input_info.magic_gds_flatglob:
+        config["MAGIC_GDS_FLATGLOB"] = input_info.magic_gds_flatglob
+    if input_info.magic_drc_maglefs:
+        config["MAGIC_DRC_MAGLEFS"] = [f.path for f in input_info.magic_drc_maglefs]
     # Magic.DRC gating (classic.py:239-242)
     config["RUN_MAGIC_DRC"] = input_info.run_magic_drc
     # Checker.MagicDRC config (checker.py:205-211)
@@ -387,6 +451,8 @@ def create_librelane_config(input_info, state_info, required_keys):
     config["LVS_INCLUDE_MARCO_NETLISTS"] = input_info.lvs_include_marco_netlists
     if input_info.lvs_flatten_cells:
         config["LVS_FLATTEN_CELLS"] = input_info.lvs_flatten_cells
+    if input_info.lvs_ignore_cells:
+        config["LVS_IGNORE_CELLS"] = input_info.lvs_ignore_cells
     # Extra SPICE models (flow.py:466-470)
     if input_info.extra_spice_models:
         config["EXTRA_SPICE_MODELS"] = [f.path for f in input_info.extra_spice_models]
@@ -428,10 +494,10 @@ def create_librelane_config(input_info, state_info, required_keys):
     _add_optional_file_list(config, "EXTRA_GDS_FILES", input_info.extra_gds_files)
 
     # io_layer_variables (common_variables.py lines 19-46) - IOPlacement, CustomIOPlacement
-    config["FP_IO_VEXTEND"] = float(input_info.fp_io_vextend)
-    config["FP_IO_HEXTEND"] = float(input_info.fp_io_hextend)
-    config["FP_IO_VTHICKNESS_MULT"] = float(input_info.fp_io_vthickness_mult)
-    config["FP_IO_HTHICKNESS_MULT"] = float(input_info.fp_io_hthickness_mult)
+    config["IO_PIN_V_EXTENSION"] = float(input_info.fp_io_vextend)
+    config["IO_PIN_H_EXTENSION"] = float(input_info.fp_io_hextend)
+    config["IO_PIN_V_THICKNESS_MULT"] = float(input_info.fp_io_vthickness_mult)
+    config["IO_PIN_H_THICKNESS_MULT"] = float(input_info.fp_io_hthickness_mult)
 
     # CustomIOPlacement config (odb.py lines 673-680)
     config["ERRORS_ON_UNMATCHED_IO"] = input_info.errors_on_unmatched_io
@@ -439,13 +505,15 @@ def create_librelane_config(input_info, state_info, required_keys):
     # GlobalPlacement config
     if input_info.pl_target_density_pct:
         config["PL_TARGET_DENSITY_PCT"] = int(input_info.pl_target_density_pct)
-    config["FP_PPL_MODE"] = input_info.fp_ppl_mode
+    config["IO_PIN_PLACEMENT_MODE"] = input_info.fp_ppl_mode
     config["PL_SKIP_INITIAL_PLACEMENT"] = input_info.pl_skip_initial_placement
     config["PL_WIRE_LENGTH_COEF"] = float(input_info.pl_wire_length_coef)
     if input_info.pl_min_phi_coefficient:
         config["PL_MIN_PHI_COEFFICIENT"] = float(input_info.pl_min_phi_coefficient)
     if input_info.pl_max_phi_coefficient:
         config["PL_MAX_PHI_COEFFICIENT"] = float(input_info.pl_max_phi_coefficient)
+    if input_info.pl_keep_resize_below_overflow:
+        config["PL_KEEP_RESIZE_BELOW_OVERFLOW"] = float(input_info.pl_keep_resize_below_overflow)
     if input_info.rt_clock_min_layer:
         config["RT_CLOCK_MIN_LAYER"] = input_info.rt_clock_min_layer
     if input_info.rt_clock_max_layer:
@@ -454,7 +522,7 @@ def create_librelane_config(input_info, state_info, required_keys):
     config["GRT_MACRO_EXTENSION"] = input_info.grt_macro_extension
 
     # GlobalPlacement-specific config (openroad.py lines 1282-1300)
-    config["PL_TIME_DRIVEN"] = input_info.pl_time_driven
+    config["PL_TIMING_DRIVEN"] = input_info.pl_time_driven
     config["PL_ROUTABILITY_DRIVEN"] = input_info.pl_routability_driven
     if input_info.pl_routability_overflow_threshold:
         config["PL_ROUTABILITY_OVERFLOW_THRESHOLD"] = float(
@@ -462,21 +530,23 @@ def create_librelane_config(input_info, state_info, required_keys):
     config["FP_CORE_UTIL"] = int(input_info.fp_core_util)
 
     # OpenROAD.GeneratePDN (pdn_variables)
-    config["FP_PDN_SKIPTRIM"] = input_info.fp_pdn_skiptrim
-    config["FP_PDN_CORE_RING"] = input_info.fp_pdn_core_ring
-    config["FP_PDN_ENABLE_RAILS"] = input_info.fp_pdn_enable_rails
-    config["FP_PDN_HORIZONTAL_HALO"] = float(input_info.fp_pdn_horizontal_halo)
-    config["FP_PDN_VERTICAL_HALO"] = float(input_info.fp_pdn_vertical_halo)
-    config["FP_PDN_MULTILAYER"] = input_info.fp_pdn_multilayer
-    _add_optional_file(config, "FP_PDN_CFG", input_info.fp_pdn_cfg)
+    config["PDN_SKIPTRIM"] = input_info.fp_pdn_skiptrim
+    config["PDN_CORE_RING"] = input_info.fp_pdn_core_ring
+    config["PDN_ENABLE_RAILS"] = input_info.fp_pdn_enable_rails
+    config["PDN_HORIZONTAL_HALO"] = float(input_info.fp_pdn_horizontal_halo)
+    config["PDN_VERTICAL_HALO"] = float(input_info.fp_pdn_vertical_halo)
+    config["PDN_MULTILAYER"] = input_info.fp_pdn_multilayer
+    _add_optional_file(config, "PDN_CFG", input_info.fp_pdn_cfg)
 
-    # grt_variables (common_variables.py:285-319) - ResizerStep subclasses
+    # grt_variables - ResizerStep subclasses
     if input_info.diode_padding:
         config["DIODE_PADDING"] = input_info.diode_padding
     config["GRT_ALLOW_CONGESTION"] = input_info.grt_allow_congestion
-    config["GRT_ANTENNA_ITERS"] = input_info.grt_antenna_iters
+    config["GRT_ANTENNA_REPAIR_ITERS"] = input_info.grt_antenna_repair_iters
     config["GRT_OVERFLOW_ITERS"] = input_info.grt_overflow_iters
-    config["GRT_ANTENNA_MARGIN"] = input_info.grt_antenna_margin
+    config["GRT_ANTENNA_REPAIR_MARGIN"] = input_info.grt_antenna_repair_margin
+    config["GRT_ANTENNA_REPAIR_JUMPER_ONLY"] = input_info.grt_antenna_repair_jumper_only
+    config["GRT_ANTENNA_REPAIR_DIODE_ONLY"] = input_info.grt_antenna_repair_diode_only
 
     # dpl_variables (common_variables.py:255-283) - ResizerStep subclasses
     config["PL_OPTIMIZE_MIRRORING"] = input_info.pl_optimize_mirroring
@@ -505,8 +575,19 @@ def create_librelane_config(input_info, state_info, required_keys):
         config["MANUAL_GLOBAL_PLACEMENTS"] = json.decode(input_info.manual_global_placements)
 
     # OpenROAD.CTS config_vars (openroad.py:2016-2084)
+    _add_optional_bool_string(config, "CTS_BALANCE_LEVELS", input_info.cts_balance_levels)
+    if input_info.cts_sink_buffer_max_cap_derate_pct:
+        config["CTS_SINK_BUFFER_MAX_CAP_DERATE_PCT"] = float(input_info.cts_sink_buffer_max_cap_derate_pct)
+    if input_info.cts_delay_buffer_derate_pct:
+        config["CTS_DELAY_BUFFER_DERATE_PCT"] = float(input_info.cts_delay_buffer_derate_pct)
+    _add_optional_bool_string(config, "CTS_OBSTRUCTION_AWARE", input_info.cts_obstruction_aware)
+    config["CTS_SINK_CLUSTERING_ENABLE"] = input_info.cts_sink_clustering_enable
     config["CTS_SINK_CLUSTERING_SIZE"] = input_info.cts_sink_clustering_size
     config["CTS_SINK_CLUSTERING_MAX_DIAMETER"] = float(input_info.cts_sink_clustering_max_diameter)
+    if input_info.cts_macro_clustering_size:
+        config["CTS_MACRO_CLUSTERING_SIZE"] = int(input_info.cts_macro_clustering_size)
+    if input_info.cts_macro_clustering_max_diameter:
+        config["CTS_MACRO_CLUSTERING_MAX_DIAMETER"] = float(input_info.cts_macro_clustering_max_diameter)
     config["CTS_CLK_MAX_WIRE_LENGTH"] = float(input_info.cts_clk_max_wire_length)
     config["CTS_DISABLE_POST_PROCESSING"] = input_info.cts_disable_post_processing
     config["CTS_DISTANCE_BETWEEN_BUFFERS"] = float(input_info.cts_distance_between_buffers)
@@ -516,43 +597,71 @@ def create_librelane_config(input_info, state_info, required_keys):
         config["CTS_MAX_CAP"] = float(input_info.cts_max_cap)
     if input_info.cts_max_slew:
         config["CTS_MAX_SLEW"] = float(input_info.cts_max_slew)
+    config["CTS_APPLY_NDR"] = input_info.cts_apply_ndr
 
-    # ResizerTimingPostCTS/PostGRT config_vars (openroad.py:2254-2302)
+    # ResizerTimingPostCTS/PostGRT config_vars (openroad.py:2689-2786)
     config["PL_RESIZER_HOLD_SLACK_MARGIN"] = float(input_info.pl_resizer_hold_slack_margin)
     config["PL_RESIZER_SETUP_SLACK_MARGIN"] = float(input_info.pl_resizer_setup_slack_margin)
     config["PL_RESIZER_HOLD_MAX_BUFFER_PCT"] = float(input_info.pl_resizer_hold_max_buffer_pct)
     config["PL_RESIZER_SETUP_MAX_BUFFER_PCT"] = float(input_info.pl_resizer_setup_max_buffer_pct)
     config["PL_RESIZER_ALLOW_SETUP_VIOS"] = input_info.pl_resizer_allow_setup_vios
-    config["PL_RESIZER_GATE_CLONING"] = input_info.pl_resizer_gate_cloning
+    config["PL_RESIZER_SETUP_GATE_CLONING"] = input_info.pl_resizer_gate_cloning
+    config["PL_RESIZER_SETUP_BUFFERING"] = input_info.pl_resizer_setup_buffering
+    config["PL_RESIZER_SETUP_BUFFER_REMOVAL"] = input_info.pl_resizer_setup_buffer_removal
+    if input_info.pl_resizer_setup_repair_tns_pct:
+        config["PL_RESIZER_SETUP_REPAIR_TNS_PCT"] = float(input_info.pl_resizer_setup_repair_tns_pct)
+    if input_info.pl_resizer_setup_max_util_pct:
+        config["PL_RESIZER_SETUP_MAX_UTIL_PCT"] = float(input_info.pl_resizer_setup_max_util_pct)
+    if input_info.pl_resizer_hold_repair_tns_pct:
+        config["PL_RESIZER_HOLD_REPAIR_TNS_PCT"] = float(input_info.pl_resizer_hold_repair_tns_pct)
+    if input_info.pl_resizer_hold_max_util_pct:
+        config["PL_RESIZER_HOLD_MAX_UTIL_PCT"] = float(input_info.pl_resizer_hold_max_util_pct)
     config["PL_RESIZER_FIX_HOLD_FIRST"] = input_info.pl_resizer_fix_hold_first
 
-    # RepairDesignPostGRT config_vars (openroad.py:2203-2234)
+    # RepairDesignPostGRT config_vars (openroad.py:2649-2684)
     config["GRT_DESIGN_REPAIR_RUN_GRT"] = input_info.grt_design_repair_run_grt
     config["GRT_DESIGN_REPAIR_MAX_WIRE_LENGTH"] = float(input_info.grt_design_repair_max_wire_length)
     config["GRT_DESIGN_REPAIR_MAX_SLEW_PCT"] = float(input_info.grt_design_repair_max_slew_pct)
     config["GRT_DESIGN_REPAIR_MAX_CAP_PCT"] = float(input_info.grt_design_repair_max_cap_pct)
 
-    # ResizerTimingPostGRT config_vars (openroad.py:2323-2381)
+    # ResizerTimingPostGRT config_vars (openroad.py:2805-2869)
     config["GRT_RESIZER_HOLD_SLACK_MARGIN"] = float(input_info.grt_resizer_hold_slack_margin)
     config["GRT_RESIZER_SETUP_SLACK_MARGIN"] = float(input_info.grt_resizer_setup_slack_margin)
     config["GRT_RESIZER_HOLD_MAX_BUFFER_PCT"] = float(input_info.grt_resizer_hold_max_buffer_pct)
     config["GRT_RESIZER_SETUP_MAX_BUFFER_PCT"] = float(input_info.grt_resizer_setup_max_buffer_pct)
     config["GRT_RESIZER_ALLOW_SETUP_VIOS"] = input_info.grt_resizer_allow_setup_vios
-    config["GRT_RESIZER_GATE_CLONING"] = input_info.grt_resizer_gate_cloning
+    config["GRT_RESIZER_SETUP_GATE_CLONING"] = input_info.grt_resizer_gate_cloning
     config["GRT_RESIZER_RUN_GRT"] = input_info.grt_resizer_run_grt
+    config["GRT_RESIZER_SETUP_BUFFERING"] = input_info.grt_resizer_setup_buffering
+    config["GRT_RESIZER_SETUP_BUFFER_REMOVAL"] = input_info.grt_resizer_setup_buffer_removal
+    if input_info.grt_resizer_setup_repair_tns_pct:
+        config["GRT_RESIZER_SETUP_REPAIR_TNS_PCT"] = float(input_info.grt_resizer_setup_repair_tns_pct)
+    if input_info.grt_resizer_setup_max_util_pct:
+        config["GRT_RESIZER_SETUP_MAX_UTIL_PCT"] = float(input_info.grt_resizer_setup_max_util_pct)
+    if input_info.grt_resizer_hold_repair_tns_pct:
+        config["GRT_RESIZER_HOLD_REPAIR_TNS_PCT"] = float(input_info.grt_resizer_hold_repair_tns_pct)
+    if input_info.grt_resizer_hold_max_util_pct:
+        config["GRT_RESIZER_HOLD_MAX_UTIL_PCT"] = float(input_info.grt_resizer_hold_max_util_pct)
     config["GRT_RESIZER_FIX_HOLD_FIRST"] = input_info.grt_resizer_fix_hold_first
 
     # Odb.DiodesOnPorts config_vars (odb.py:738-744)
     config["DIODE_ON_PORTS"] = input_info.diode_on_ports
 
-    # DetailedRouting config_vars (openroad.py:1593-1616)
+    # DetailedRouting config_vars (openroad.py:1931-1993)
     if input_info.drt_threads > 0:
         config["DRT_THREADS"] = input_info.drt_threads
-    if input_info.drt_min_layer:
-        config["DRT_MIN_LAYER"] = input_info.drt_min_layer
-    if input_info.drt_max_layer:
-        config["DRT_MAX_LAYER"] = input_info.drt_max_layer
     config["DRT_OPT_ITERS"] = input_info.drt_opt_iters
+    config["DRT_SAVE_SNAPSHOTS"] = input_info.drt_save_snapshots
+    config["DRT_ANTENNA_REPAIR_ITERS"] = input_info.drt_antenna_repair_iters
+    config["DRT_ANTENNA_REPAIR_MARGIN"] = input_info.drt_antenna_repair_margin
+    config["DRT_ANTENNA_REPAIR_JUMPER_ONLY"] = input_info.drt_antenna_repair_jumper_only
+    config["DRT_ANTENNA_REPAIR_DIODE_ONLY"] = input_info.drt_antenna_repair_diode_only
+    if input_info.drt_save_drc_report_iters:
+        config["DRT_SAVE_DRC_REPORT_ITERS"] = int(input_info.drt_save_drc_report_iters)
+    if input_info.non_default_rules:
+        config["NON_DEFAULT_RULES"] = json.decode(input_info.non_default_rules)
+    if input_info.drt_assign_ndr:
+        config["DRT_ASSIGN_NDR"] = json.decode(input_info.drt_assign_ndr)
 
     # Filter to only include required_keys
     # Steps that need BASE_CONFIG_KEYS must explicitly include them
@@ -758,6 +867,8 @@ def get_pdk_files(pdk_info):
         files.extend(pdk_info.cell_bb_verilog_models)
     if pdk_info.cell_spice_models:
         files.extend(pdk_info.cell_spice_models)
+    if pdk_info.pad_verilog_models:
+        files.extend(pdk_info.pad_verilog_models)
     if pdk_info.gpio_pads_lef:
         files.extend(pdk_info.gpio_pads_lef)
     if pdk_info.gpio_pads_lef_core_side:
@@ -811,8 +922,9 @@ def get_input_files(input_info, state_info):
         inputs.append(input_info.signoff_sdc_file)
 
     # Add Lighter DFF map if provided
-    if input_info.lighter_dff_map:
-        inputs.append(input_info.lighter_dff_map)
+    # Add Verilator config if provided
+    if input_info.linter_vlt:
+        inputs.append(input_info.linter_vlt)
 
     # Add extra synthesis mapping file if provided
     if input_info.synth_extra_mapping_file:
@@ -833,6 +945,9 @@ def get_input_files(input_info, state_info):
     # Add VSRC location files for IR drop analysis
     if input_info.vsrc_loc_files:
         inputs.extend(input_info.vsrc_loc_files.values())
+
+    if input_info.magic_drc_maglefs:
+        inputs.extend(input_info.magic_drc_maglefs)
 
     # Add macro files
     if input_info.macros:
@@ -920,13 +1035,16 @@ def run_librelane_step(
         inputs,
         input_info,
         state_info,
-        output_subdir = ""):
+        output_subdir = "",
+        optional_outputs = []):
     """Run a librelane step.
 
     Args:
         ctx: Rule context
         step_id: Librelane step ID (e.g., "Yosys.Synthesis")
-        outputs: List of declared output Files (in target directory)
+        outputs: List of declared mandatory output Files (in target directory)
+        optional_outputs: List of declared output Files copied if LibreLane writes
+            them, otherwise created empty
         config_content: JSON string for config
         inputs: List of input Files
         input_info: LibrelaneInput with flow configuration
@@ -973,6 +1091,20 @@ def run_librelane_step(
             dst = output.path,
         ))
 
+    for output in optional_outputs:
+        rel_path = relative_path(output.path, design_dir)
+        librelane_path = librelane_output_path(rel_path, output_subdir)
+        copy_commands.append(
+            ('mkdir -p "$(dirname "{dst}")" && ' +
+             'if [ -e "{design_dir}/{src}" ]; then ' +
+             'cp "{design_dir}/{src}" "{dst}"; ' +
+             'else : > "{dst}"; fi').format(
+                design_dir = design_dir,
+                src = librelane_path,
+                dst = output.path,
+            )
+        )
+
     # Merge metrics from previous state_out into state_in at execution time
     if state_info and state_info.state_out:
         prev_state_out = state_info.state_out.path
@@ -987,17 +1119,14 @@ def run_librelane_step(
         state_in_path = state_in_base.path
 
     ctx.actions.run_shell(
-        outputs = outputs + [state_out],
+        outputs = outputs + optional_outputs + [state_out],
         inputs = inputs + [config_file, state_in_base],
         command = """
             set -e
             {merge_metrics_cmd}
             LOGFILE="$(pwd)/{design_dir}/librelane.log"
             HOME="$(pwd)/{design_dir}" librelane.steps run \\
-                --manual-pdk \\
                 --pdk-root "$PDK_ROOT" \\
-                --pdk {pdk} \\
-                --scl {scl} \\
                 --id {step_id} \\
                 -c {config_file} \\
                 -i "{state_in}" \\
@@ -1015,8 +1144,6 @@ def run_librelane_step(
             {copy_commands}
         """.format(
             merge_metrics_cmd = merge_metrics_cmd,
-            pdk = input_info.pdk_info.name,
-            scl = input_info.pdk_info.scl,
             config_file = config_file.path,
             state_in = state_in_path,
             step_id = step_id,
@@ -1029,7 +1156,7 @@ def run_librelane_step(
     return state_out
 
 def single_step_impl(ctx, step_id, config_keys, step_outputs, extra_config = {}, extra_inputs = [],
-                     output_subdir = "", extra_outputs = []):
+                     output_subdir = "", extra_outputs = [], optional_extra_outputs = []):
     """Run a librelane step with configurable outputs.
 
     Args:
@@ -1048,6 +1175,8 @@ def single_step_impl(ctx, step_id, config_keys, step_outputs, extra_config = {},
         extra_outputs: List of additional output file paths relative to step dir
             (e.g., ["summary.rpt", "nom/max.rpt"]). These are auxiliary outputs
             like reports that don't affect state.
+        optional_extra_outputs: List of additional output file paths relative to
+            step dir. These are copied when produced, otherwise created empty.
 
     Returns:
         List of providers [DefaultInfo, LibrelaneInfo]
@@ -1131,6 +1260,10 @@ def single_step_impl(ctx, step_id, config_keys, step_outputs, extra_config = {},
         extra_output_files.append(ctx.actions.declare_file(ctx.label.name + "/" + path))
     outputs.extend(extra_output_files)
 
+    optional_extra_output_files = []
+    for path in optional_extra_outputs:
+        optional_extra_output_files.append(ctx.actions.declare_file(ctx.label.name + "/" + path))
+
     # Get input files
     inputs = get_input_files(input_info, state_info) + extra_inputs
 
@@ -1143,6 +1276,7 @@ def single_step_impl(ctx, step_id, config_keys, step_outputs, extra_config = {},
         ctx = ctx,
         step_id = step_id,
         outputs = outputs,
+        optional_outputs = optional_extra_output_files,
         config_content = json.encode(config),
         inputs = inputs,
         input_info = input_info,
@@ -1152,7 +1286,7 @@ def single_step_impl(ctx, step_id, config_keys, step_outputs, extra_config = {},
 
     # Build new LibrelaneInfo (state only - config stays in LibrelaneInput)
     # Include extra outputs in DefaultInfo but not in LibrelaneInfo (they're auxiliary)
-    default_files = outputs + [state_out] if outputs else [state_out]
+    default_files = outputs + optional_extra_output_files + [state_out]
     return [
         DefaultInfo(files = depset(default_files)),
         LibrelaneInfo(
@@ -1281,21 +1415,25 @@ ENTRY_ATTRS = {
         doc = "Key-value pairs to be chparam'd in Yosys (format: key1=value1)",
         default = [],
     ),
-    "use_synlig": attr.bool(
-        doc = "Use Synlig plugin for better SystemVerilog parsing",
+    "use_slang": attr.bool(
+        doc = "Use Slang frontend for better SystemVerilog parsing",
         default = False,
     ),
-    "synlig_defer": attr.bool(
-        doc = "Use -defer flag with Synlig (experimental)",
-        default = False,
+    "slang_arguments": attr.string_list(
+        doc = "Arguments passed to the Slang frontend",
+        default = [],
     ),
-    "use_lighter": attr.bool(
-        doc = "Use Lighter plugin to optimize clock-gated flip-flops",
-        default = False,
+    "synth_clockgate_min_width": attr.int(
+        doc = "Clock-gate flip-flop groups at or above this width; 0 leaves unset",
+        default = 0,
     ),
-    "lighter_dff_map": attr.label(
-        doc = "Custom DFF map file for Lighter plugin",
-        allow_single_file = True,
+    "synth_corner": attr.string(
+        doc = "Synthesis timing corner override; empty leaves unset",
+        default = "",
+    ),
+    "synth_show": attr.bool(
+        doc = "Generate Yosys graphviz output",
+        default = False,
     ),
     "yosys_log_level": attr.string(
         doc = "Yosys log level: ALL, WARNING, or ERROR",
@@ -1358,6 +1496,18 @@ ENTRY_ATTRS = {
         default = "flatten",
         values = ["flatten", "deferred_flatten", "keep"],
     ),
+    "synth_keep_hierarchy_min_cost": attr.int(
+        doc = "Mark modules above this estimated gate cost as keep_hierarchy; 0 leaves unset",
+        default = 0,
+    ),
+    "synth_keep_hierarchy_instances": attr.string_list(
+        doc = "Instances to mark keep_hierarchy",
+        default = [],
+    ),
+    "synth_keep_hierarchy_modules": attr.string_list(
+        doc = "Modules to mark keep_hierarchy",
+        default = [],
+    ),
     "synth_share_resources": attr.bool(
         doc = "Merge shareable resources to reduce cell count",
         default = True,
@@ -1375,10 +1525,6 @@ ENTRY_ATTRS = {
         doc = "Elaborate design without logic mapping",
         default = False,
     ),
-    "synth_elaborate_flatten": attr.bool(
-        doc = "Flatten top level during elaborate-only mode",
-        default = True,
-    ),
     "synth_mul_booth": attr.bool(
         doc = "Use Booth encoding for multipliers",
         default = False,
@@ -1390,6 +1536,10 @@ ENTRY_ATTRS = {
     ),
     "synth_write_noattr": attr.bool(
         doc = "Omit Verilog-2001 attributes from output netlists",
+        default = True,
+    ),
+    "synth_normalize_single_bit_vectors": attr.bool(
+        doc = "Normalize [0:0] vectors to scalar wires",
         default = True,
     ),
     # Post-synthesis checker config (from librelane/steps/checker.py)
@@ -1588,9 +1738,13 @@ ENTRY_ATTRS = {
         doc = "Upper bound on µ_k variable in GPL algorithm",
         default = "",
     ),
+    "pl_keep_resize_below_overflow": attr.string(
+        doc = "Keep timing-driven resize changes when overflow is below this value",
+        default = "",
+    ),
     "pl_time_driven": attr.bool(
         doc = "Use time driven placement in global placer",
-        default = True,
+        default = False,
     ),
     "pl_routability_driven": attr.bool(
         doc = "Use routability driven placement in global placer",
@@ -1620,7 +1774,7 @@ ENTRY_ATTRS = {
         doc = "GCells added to macro blockage boundaries",
         default = 0,
     ),
-    # grt_variables (common_variables.py:285-319) - used by ResizerStep subclasses
+    # grt_variables - used by ResizerStep subclasses
     "diode_padding": attr.int(
         doc = "Diode cell padding in sites (increases width during placement checks)",
         default = 0,
@@ -1629,7 +1783,7 @@ ENTRY_ATTRS = {
         doc = "Allow congestion during global routing",
         default = False,
     ),
-    "grt_antenna_iters": attr.int(
+    "grt_antenna_repair_iters": attr.int(
         doc = "Maximum iterations for global antenna repairs",
         default = 3,
     ),
@@ -1637,9 +1791,17 @@ ENTRY_ATTRS = {
         doc = "Maximum iterations waiting for overflow to reach desired value",
         default = 50,
     ),
-    "grt_antenna_margin": attr.int(
+    "grt_antenna_repair_margin": attr.int(
         doc = "Margin percentage to over-fix antenna violations",
         default = 10,
+    ),
+    "grt_antenna_repair_jumper_only": attr.bool(
+        doc = "Only use jumpers to fix antenna violations",
+        default = False,
+    ),
+    "grt_antenna_repair_diode_only": attr.bool(
+        doc = "Only use antenna diodes to fix antenna violations",
+        default = False,
     ),
     # dpl_variables (common_variables.py:255-283) - used by ResizerStep subclasses
     "pl_optimize_mirroring": attr.bool(
@@ -1714,6 +1876,36 @@ ENTRY_ATTRS = {
         doc = "Max cluster diameter in µm",
         default = "50",
     ),
+    "cts_balance_levels": attr.string(
+        doc = "Balance CTS levels override: true, false, or empty for unset",
+        default = "",
+        values = ["", "true", "false"],
+    ),
+    "cts_sink_buffer_max_cap_derate_pct": attr.string(
+        doc = "CTS sink buffer max cap derate percentage; empty leaves unset",
+        default = "",
+    ),
+    "cts_delay_buffer_derate_pct": attr.string(
+        doc = "CTS delay buffer derate percentage; empty leaves unset",
+        default = "",
+    ),
+    "cts_obstruction_aware": attr.string(
+        doc = "CTS obstruction-aware buffering override: true, false, or empty for unset",
+        default = "",
+        values = ["", "true", "false"],
+    ),
+    "cts_sink_clustering_enable": attr.bool(
+        doc = "Enable CTS sink clustering",
+        default = True,
+    ),
+    "cts_macro_clustering_size": attr.string(
+        doc = "Max macro sinks per cluster; empty leaves unset",
+        default = "",
+    ),
+    "cts_macro_clustering_max_diameter": attr.string(
+        doc = "Max macro cluster diameter in µm; empty leaves unset",
+        default = "",
+    ),
     "cts_clk_max_wire_length": attr.string(
         doc = "Max clock wire length in µm (0 = no limit)",
         default = "0",
@@ -1737,6 +1929,11 @@ ENTRY_ATTRS = {
     "cts_max_slew": attr.string(
         doc = "Max slew for CTS characterization in ns (empty = from lib)",
         default = "",
+    ),
+    "cts_apply_ndr": attr.string(
+        doc = "CTS non-default-rule strategy",
+        default = "half",
+        values = ["none", "root_only", "half", "full"],
     ),
     # ResizerTimingPostCTS/PostGRT config_vars (openroad.py:2254-2302)
     "pl_resizer_hold_slack_margin": attr.string(
@@ -1763,11 +1960,35 @@ ENTRY_ATTRS = {
         doc = "Enable gate cloning when fixing setup violations",
         default = True,
     ),
+    "pl_resizer_setup_buffering": attr.bool(
+        doc = "Enable setup rebuffering and load splitting",
+        default = True,
+    ),
+    "pl_resizer_setup_buffer_removal": attr.bool(
+        doc = "Enable setup buffer removal",
+        default = True,
+    ),
+    "pl_resizer_setup_repair_tns_pct": attr.string(
+        doc = "Percentage of setup violating endpoints to repair; empty leaves unset",
+        default = "",
+    ),
+    "pl_resizer_setup_max_util_pct": attr.string(
+        doc = "Max setup repair utilization percentage; empty leaves unset",
+        default = "",
+    ),
+    "pl_resizer_hold_repair_tns_pct": attr.string(
+        doc = "Percentage of hold violating endpoints to repair; empty leaves unset",
+        default = "",
+    ),
+    "pl_resizer_hold_max_util_pct": attr.string(
+        doc = "Max hold repair utilization percentage; empty leaves unset",
+        default = "",
+    ),
     "pl_resizer_fix_hold_first": attr.bool(
         doc = "Fix hold violations before setup (experimental)",
         default = False,
     ),
-    # RepairDesignPostGRT config_vars (openroad.py:2203-2234)
+    # RepairDesignPostGRT config_vars (openroad.py:2649-2684)
     "grt_design_repair_run_grt": attr.bool(
         doc = "Run GRT before and after resizer during post-GRT repair",
         default = True,
@@ -1784,7 +2005,7 @@ ENTRY_ATTRS = {
         doc = "Capacitance margin percentage during post-GRT design repair",
         default = "10",
     ),
-    # ResizerTimingPostGRT config_vars (openroad.py:2323-2381)
+    # ResizerTimingPostGRT config_vars (openroad.py:2805-2869)
     "grt_resizer_hold_slack_margin": attr.string(
         doc = "Time margin for hold slack when fixing violations (ns)",
         default = "0.05",
@@ -1813,6 +2034,30 @@ ENTRY_ATTRS = {
         doc = "Run global routing after resizer steps",
         default = True,
     ),
+    "grt_resizer_setup_buffering": attr.bool(
+        doc = "Enable setup rebuffering and load splitting",
+        default = True,
+    ),
+    "grt_resizer_setup_buffer_removal": attr.bool(
+        doc = "Enable setup buffer removal",
+        default = True,
+    ),
+    "grt_resizer_setup_repair_tns_pct": attr.string(
+        doc = "Percentage of setup violating endpoints to repair; empty leaves unset",
+        default = "",
+    ),
+    "grt_resizer_setup_max_util_pct": attr.string(
+        doc = "Max setup repair utilization percentage; empty leaves unset",
+        default = "",
+    ),
+    "grt_resizer_hold_repair_tns_pct": attr.string(
+        doc = "Percentage of hold violating endpoints to repair; empty leaves unset",
+        default = "",
+    ),
+    "grt_resizer_hold_max_util_pct": attr.string(
+        doc = "Max hold repair utilization percentage; empty leaves unset",
+        default = "",
+    ),
     "grt_resizer_fix_hold_first": attr.bool(
         doc = "Experimental: fix hold before setup violations",
         default = False,
@@ -1823,22 +2068,46 @@ ENTRY_ATTRS = {
         default = "none",
         values = ["none", "in", "out", "both"],
     ),
-    # DetailedRouting config_vars (openroad.py:1593-1616)
+    # DetailedRouting config_vars (openroad.py:1931-1993)
     "drt_threads": attr.int(
         doc = "Number of threads for detailed routing (0 = machine thread count)",
         default = 0,
     ),
-    "drt_min_layer": attr.string(
-        doc = "Override lowest layer for detailed routing",
-        default = "",
-    ),
-    "drt_max_layer": attr.string(
-        doc = "Override highest layer for detailed routing",
-        default = "",
-    ),
     "drt_opt_iters": attr.int(
         doc = "Max optimization iterations in TritonRoute",
         default = 64,
+    ),
+    "drt_save_snapshots": attr.bool(
+        doc = "Save detailed routing iteration ODB snapshots",
+        default = False,
+    ),
+    "drt_antenna_repair_iters": attr.int(
+        doc = "Maximum post-DRT antenna repair iterations",
+        default = 3,
+    ),
+    "drt_antenna_repair_margin": attr.int(
+        doc = "Margin percentage to over-fix post-DRT antenna violations",
+        default = 10,
+    ),
+    "drt_antenna_repair_jumper_only": attr.bool(
+        doc = "Only use jumpers for post-DRT antenna repair",
+        default = False,
+    ),
+    "drt_antenna_repair_diode_only": attr.bool(
+        doc = "Only use antenna diodes for post-DRT antenna repair",
+        default = False,
+    ),
+    "drt_save_drc_report_iters": attr.string(
+        doc = "Iteration interval for DRT DRC reports; empty leaves unset",
+        default = "",
+    ),
+    "non_default_rules": attr.string(
+        doc = "JSON object of non-default routing rules; empty leaves unset",
+        default = "",
+    ),
+    "drt_assign_ndr": attr.string(
+        doc = "JSON object mapping net regexes to NDR names; empty leaves unset",
+        default = "",
     ),
     # MagicStep config (magic.py:76-142)
     "magic_def_labels": attr.bool(
@@ -1900,6 +2169,11 @@ ENTRY_ATTRS = {
         default = "macro",
         values = ["PDK", "macro"],
     ),
+    "klayout_conflict_resolution": attr.string(
+        doc = "KLayout stream-out cell conflict resolution",
+        default = "RenameCell",
+        values = ["AddToCell", "OverwriteCell", "RenameCell", "SkipNewCell"],
+    ),
     # KLayout steps config (flow.py:456-480)
     "extra_lefs": attr.label_list(
         doc = "Extra LEF files for macros (loaded by KLayout, Magic, OpenROAD)",
@@ -1939,6 +2213,15 @@ ENTRY_ATTRS = {
         doc = "Run Magic DRC on GDS instead of DEF (more accurate but slower)",
         default = True,
     ),
+    "magic_gds_flatglob": attr.string_list(
+        doc = "Magic GDS cell-name patterns to flatten for DRC",
+        default = [],
+    ),
+    "magic_drc_maglefs": attr.label_list(
+        doc = "Magic abstract LEF views to load before DRC",
+        allow_files = [".mag", ".maglef"],
+        default = [],
+    ),
     # Magic.DRC gating (classic.py:239-242)
     "run_magic_drc": attr.bool(
         doc = "Enable Magic DRC step",
@@ -1976,6 +2259,10 @@ ENTRY_ATTRS = {
     ),
     "lvs_flatten_cells": attr.string_list(
         doc = "Cell names to flatten during LVS",
+        default = [],
+    ),
+    "lvs_ignore_cells": attr.string_list(
+        doc = "Cell names to ignore during LVS",
         default = [],
     ),
     # Flow-level config for LVS (flow.py:466-470)
@@ -2021,4 +2308,3 @@ ENTRY_ATTRS = {
         default = [""],
     ),
 }
-

@@ -8,6 +8,7 @@ load(":providers.bzl", "LibrelaneInfo")
 NETGEN_LVS_CONFIG_KEYS = BASE_CONFIG_KEYS + [
     "LVS_INCLUDE_MARCO_NETLISTS",
     "LVS_FLATTEN_CELLS",
+    "LVS_IGNORE_CELLS",
     "EXTRA_SPICE_MODELS",
     "MAGIC_EXT_USE_GDS",
     "NETGEN_SETUP",
@@ -15,7 +16,9 @@ NETGEN_LVS_CONFIG_KEYS = BASE_CONFIG_KEYS + [
 ]
 
 def _lvs_impl(ctx):
-    return single_step_impl(ctx, "Netgen.LVS", NETGEN_LVS_CONFIG_KEYS, step_outputs = [])
+    return single_step_impl(ctx, "Netgen.LVS", NETGEN_LVS_CONFIG_KEYS,
+        step_outputs = [],
+        extra_outputs = ["reports/lvs.netgen.rpt", "reports/lvs.netgen.json"])
 
 librelane_netgen_lvs = rule(
     implementation = _lvs_impl,

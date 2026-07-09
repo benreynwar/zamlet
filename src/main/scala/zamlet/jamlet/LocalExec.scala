@@ -1,33 +1,71 @@
 package zamlet.jamlet
 
 import chisel3._
+import chisel3.experimental.ExtModule
 import chisel3.util._
 import zamlet.{ElementWidth, WidthFormat, WidthHelpers, ZamletParams}
+import zamlet.utils.ValidBuffer
 
 class LocalExecErrors extends Bundle {
   val unsupportedOpcode = Bool()
   val alu = new JamletAluErrors()
 }
 
+class LocalExecIO(params: ZamletParams) extends Bundle {
+  val laneIndex = Input(UInt(params.log2JInL.W))
+
+  val kinstrIn = Flipped(Valid(new KinstrWithParams(params)))
+
+  val rfReadAReq = Valid(new RfReq(params))
+  val rfReadAResp = Flipped(Valid(new RfResp(params)))
+  val rfReadBReq = Valid(new RfReq(params))
+  val rfReadBResp = Flipped(Valid(new RfResp(params)))
+  val rfReadMaskReq = Valid(new RfReq(params))
+  val rfReadMaskResp = Flipped(Valid(new RfResp(params)))
+  val rfWriteReq = Valid(new RfReq(params))
+
+  val sramReq = Valid(new SramRequest(params))
+  val sramResp = Flipped(Valid(params.word()))
+
+  val errors = Output(new LocalExecErrors())
+}
+
+class LocalExecStage(params: ZamletParams) extends Bundle {
+  val isAlu = Bool()
+  val isLoadImm = Bool()
+  val isLoadSimple = Bool()
+  val isStoreSimple = Bool()
+  val opcode = KInstrOpcode()
+  val startIndex = params.elementIndex()
+  val endIndex = UInt(params.endElementIndexWidth.W)
+  val cacheSlot = params.cacheSlot()
+  val laneIndex = UInt(params.log2JInL.W)
+  val wf = WidthFormat()
+
+  val dstReg = params.rfAddr()
+  val loadImmRfAddr = params.rfAddr()
+  val loadImmSection = UInt(log2Ceil(params.wordBytes / 4).W)
+  val loadImmByteMask = UInt(4.W)
+  val loadImmData = UInt(32.W)
+
+  val simpleRfAddr = params.rfAddr()
+  val simpleSramWordOffset = UInt(params.log2CacheSlotWordsPerJamlet.W)
+  val simpleEw = ElementWidth()
+  val simpleMaskEnabled = Bool()
+
+  val aluEw = ElementWidth()
+  val aluSignedA = Bool()
+  val aluSignedB = Bool()
+  val aluUseUpper = Bool()
+  val aluMaskEnabled = Bool()
+
+  val rfA = params.word()
+  val rfB = params.word()
+  val rfMask = params.word()
+}
+
 class LocalExec(params: ZamletParams) extends Module {
-  val io = IO(new Bundle {
-    val laneIndex = Input(UInt(params.log2JInL.W))
-
-    val kinstrIn = Flipped(Valid(new KinstrWithParams(params)))
-
-    val rfReadAReq = Valid(new RfReq(params))
-    val rfReadAResp = Flipped(Valid(new RfResp(params)))
-    val rfReadBReq = Valid(new RfReq(params))
-    val rfReadBResp = Flipped(Valid(new RfResp(params)))
-    val rfReadMaskReq = Valid(new RfReq(params))
-    val rfReadMaskResp = Flipped(Valid(new RfResp(params)))
-    val rfWriteReq = Valid(new RfReq(params))
-
-    val sramReq = Valid(new SramRequest(params))
-    val sramResp = Flipped(Valid(params.word()))
-
-    val errors = Output(new LocalExecErrors())
-  })
+  val io = IO(new LocalExecIO(params))
 
   val alu = Module(new JamletAlu(params))
 
@@ -103,23 +141,54 @@ class LocalExec(params: ZamletParams) extends Module {
   val s1AluUseUpper = RegNext(s0BinaryInstr.useUpper)
   val s1AluMaskEnabled = RegNext(s0BinaryInstr.maskEnabled)
 
-  val s1RfA = io.rfReadAResp.bits.readData
-  val s1RfB = io.rfReadBResp.bits.readData
-  val s1RfMask = io.rfReadMaskResp.bits.readData
+  val s1Out = Wire(Valid(new LocalExecStage(params)))
+  s1Out.valid := s1Valid
+  s1Out.bits.isAlu := s1IsAlu
+  s1Out.bits.isLoadImm := s1IsLoadImm
+  s1Out.bits.isLoadSimple := s1IsLoadSimple
+  s1Out.bits.isStoreSimple := s1IsStoreSimple
+  s1Out.bits.opcode := s1Opcode
+  s1Out.bits.startIndex := s1StartIndex
+  s1Out.bits.endIndex := s1EndIndex
+  s1Out.bits.cacheSlot := s1CacheSlot
+  s1Out.bits.laneIndex := s1LaneIndex
+  s1Out.bits.wf := s1Wf
+  s1Out.bits.dstReg := s1DstReg
+  s1Out.bits.loadImmRfAddr := s1LoadImmRfAddr
+  s1Out.bits.loadImmSection := s1LoadImmSection
+  s1Out.bits.loadImmByteMask := s1LoadImmByteMask
+  s1Out.bits.loadImmData := s1LoadImmData
+  s1Out.bits.simpleRfAddr := s1SimpleRfAddr
+  s1Out.bits.simpleSramWordOffset := s1SimpleSramWordOffset
+  s1Out.bits.simpleEw := s1SimpleEw
+  s1Out.bits.simpleMaskEnabled := s1SimpleMaskEnabled
+  s1Out.bits.aluEw := s1AluEw
+  s1Out.bits.aluSignedA := s1AluSignedA
+  s1Out.bits.aluSignedB := s1AluSignedB
+  s1Out.bits.aluUseUpper := s1AluUseUpper
+  s1Out.bits.aluMaskEnabled := s1AluMaskEnabled
+  s1Out.bits.rfA := io.rfReadAResp.bits.readData
+  s1Out.bits.rfB := io.rfReadBResp.bits.readData
+  s1Out.bits.rfMask := io.rfReadMaskResp.bits.readData
 
-  val s1MaskWord = Mux(
-    (s1IsAlu && s1AluMaskEnabled) || ((s1IsLoadSimple || s1IsStoreSimple) && s1SimpleMaskEnabled),
-    s1RfMask,
+  val s2In = ValidBuffer(s1Out, params.localExecParams.s12Buffer)
+
+  val s2MaskWord = Mux(
+    (s2In.bits.isAlu && s2In.bits.aluMaskEnabled) ||
+      ((s2In.bits.isLoadSimple || s2In.bits.isStoreSimple) && s2In.bits.simpleMaskEnabled),
+    s2In.bits.rfMask,
     Fill(params.wordWidth, true.B))
 
   def expandByteMask(byteMask: UInt): UInt = {
     VecInit((0 until params.wordBytes).map { i => Fill(8, byteMask(i)) }).asUInt
   }
 
-  val s1LoadImmByteMaskExpanded = (s1LoadImmByteMask << (s1LoadImmSection << 2.U))(
+  val s2LoadImmByteMaskExpanded =
+    (s2In.bits.loadImmByteMask << (s2In.bits.loadImmSection << 2.U))(
     params.wordBytes - 1, 0)
-  val s1LoadImmWriteData = (s1LoadImmData.asTypeOf(UInt(params.wordWidth.W)) << (s1LoadImmSection << 5.U))
-  val s1LoadImmBitMask = expandByteMask(s1LoadImmByteMaskExpanded)
+  val s2LoadImmWriteData =
+    s2In.bits.loadImmData.asTypeOf(UInt(params.wordWidth.W)) << (s2In.bits.loadImmSection << 5.U)
+  val s2LoadImmBitMask = expandByteMask(s2LoadImmByteMaskExpanded)
 
   def elementBitMask(
     ew: ElementWidth.Type,
@@ -150,49 +219,58 @@ class LocalExec(params: ZamletParams) extends Module {
     VecInit(byteMask.map(Fill(8, _))).asUInt
   }
 
-  val s1SimpleMask = elementBitMask(s1SimpleEw, s1Wf, s1StartIndex, s1EndIndex, s1MaskWord, s1LaneIndex)
-  val s1SramAddress =
-    (s1CacheSlot * params.cacheSlotWordsPerJamlet.U) + s1SimpleSramWordOffset
+  val s2SimpleMask = elementBitMask(
+    s2In.bits.simpleEw,
+    s2In.bits.wf,
+    s2In.bits.startIndex,
+    s2In.bits.endIndex,
+    s2MaskWord,
+    s2In.bits.laneIndex)
+  val s2SramAddress =
+    (s2In.bits.cacheSlot * params.cacheSlotWordsPerJamlet.U) + s2In.bits.simpleSramWordOffset
 
-  io.sramReq.valid := s1Valid && (s1IsLoadSimple || s1IsStoreSimple)
-  io.sramReq.bits.address := s1SramAddress
-  io.sramReq.bits.isWrite := s1IsStoreSimple
-  io.sramReq.bits.data := s1RfA
-  io.sramReq.bits.writeMask := Mux(s1IsStoreSimple, s1SimpleMask, DontCare)
+  val sramReq0 = Wire(Valid(new SramRequest(params)))
+  sramReq0.valid := s2In.valid && (s2In.bits.isLoadSimple || s2In.bits.isStoreSimple)
+  sramReq0.bits.address := s2SramAddress
+  sramReq0.bits.isWrite := s2In.bits.isStoreSimple
+  sramReq0.bits.data := s2In.bits.rfA
+  sramReq0.bits.writeMask := Mux(s2In.bits.isStoreSimple, s2SimpleMask, DontCare)
+  io.sramReq := ValidBuffer(sramReq0, params.localExecParams.sramReqBuffer)
 
-  val s1AluOp = Wire(JamletAluOp())
-  s1AluOp := JamletAluOp.MulLow
-  when(s1Opcode === KInstrOpcode.Add) {
-    s1AluOp := JamletAluOp.Add
-  }.elsewhen(s1Opcode === KInstrOpcode.Sub) {
-    s1AluOp := JamletAluOp.Sub
-  }.elsewhen(s1Opcode === KInstrOpcode.MulHigh) {
-    s1AluOp := JamletAluOp.MulHigh
+  val s2AluOp = Wire(JamletAluOp())
+  s2AluOp := JamletAluOp.MulLow
+  when(s2In.bits.opcode === KInstrOpcode.Add) {
+    s2AluOp := JamletAluOp.Add
+  }.elsewhen(s2In.bits.opcode === KInstrOpcode.Sub) {
+    s2AluOp := JamletAluOp.Sub
+  }.elsewhen(s2In.bits.opcode === KInstrOpcode.MulHigh) {
+    s2AluOp := JamletAluOp.MulHigh
   }
 
-  alu.io.input.valid := s1Valid && s1IsAlu
-  alu.io.input.bits.inA := s1RfA
-  alu.io.input.bits.inB := s1RfB
-  alu.io.input.bits.inM := s1MaskWord
-  alu.io.input.bits.ew := s1AluEw
-  alu.io.input.bits.wf := s1Wf
-  alu.io.input.bits.startIndex := s1StartIndex(alu.io.input.bits.startIndex.getWidth - 1, 0)
-  alu.io.input.bits.endIndex := s1EndIndex
-  alu.io.input.bits.laneIndex := s1LaneIndex
-  alu.io.input.bits.isSignedA := s1AluSignedA
-  alu.io.input.bits.isSignedB := s1AluSignedB
-  alu.io.input.bits.op := s1AluOp
-  alu.io.input.bits.useUpper := s1AluUseUpper
+  alu.io.input.valid := s2In.valid && s2In.bits.isAlu
+  alu.io.input.bits.inA := s2In.bits.rfA
+  alu.io.input.bits.inB := s2In.bits.rfB
+  alu.io.input.bits.inM := s2MaskWord
+  alu.io.input.bits.ew := s2In.bits.aluEw
+  alu.io.input.bits.wf := s2In.bits.wf
+  alu.io.input.bits.startIndex := s2In.bits.startIndex(alu.io.input.bits.startIndex.getWidth - 1, 0)
+  alu.io.input.bits.endIndex := s2In.bits.endIndex
+  alu.io.input.bits.laneIndex := s2In.bits.laneIndex
+  alu.io.input.bits.isSignedA := s2In.bits.aluSignedA
+  alu.io.input.bits.isSignedB := s2In.bits.aluSignedB
+  alu.io.input.bits.op := s2AluOp
+  alu.io.input.bits.useUpper := s2In.bits.aluUseUpper
 
   val latency = alu.outputLatency
-  val loadImmWbValid = ShiftRegister(s1Valid && s1IsLoadImm, latency)
-  val loadImmWbAddr = ShiftRegister(s1LoadImmRfAddr, latency)
-  val loadImmWbData = ShiftRegister(s1LoadImmWriteData, latency)
-  val loadImmWbMask = ShiftRegister(s1LoadImmBitMask, latency)
+  val loadImmWbValid = ShiftRegister(s2In.valid && s2In.bits.isLoadImm, latency)
+  val loadImmWbAddr = ShiftRegister(s2In.bits.loadImmRfAddr, latency)
+  val loadImmWbData = ShiftRegister(s2LoadImmWriteData, latency)
+  val loadImmWbMask = ShiftRegister(s2LoadImmBitMask, latency)
 
-  val loadSimpleWbValid = ShiftRegister(s1Valid && s1IsLoadSimple, latency)
-  val loadSimpleWbAddr = ShiftRegister(s1SimpleRfAddr, latency)
-  val sramResponseLatency = params.sramParams.localResponseLatency
+  val loadSimpleWbValid = ShiftRegister(s2In.valid && s2In.bits.isLoadSimple, latency)
+  val loadSimpleWbAddr = ShiftRegister(s2In.bits.simpleRfAddr, latency)
+  val sramResponseLatency = params.sramParams.localResponseLatency +
+    (if (params.localExecParams.sramReqBuffer) 1 else 0)
   require(latency >= sramResponseLatency,
     s"LocalExec load-simple writeback latency $latency is shorter than SRAM local response latency $sramResponseLatency")
   val loadSimpleWbData = if (latency == sramResponseLatency) {
@@ -200,9 +278,9 @@ class LocalExec(params: ZamletParams) extends Module {
   } else {
     ShiftRegister(io.sramResp.bits, latency - sramResponseLatency)
   }
-  val loadSimpleWbMask = ShiftRegister(s1SimpleMask, latency)
+  val loadSimpleWbMask = ShiftRegister(s2SimpleMask, latency)
 
-  val aluWbAddr = ShiftRegister(s1DstReg, latency)
+  val aluWbAddr = ShiftRegister(s2In.bits.dstReg, latency)
 
   io.rfWriteReq.valid := alu.io.output.valid || loadImmWbValid || loadSimpleWbValid
   io.rfWriteReq.bits.addr := Mux(alu.io.output.valid, aluWbAddr,
@@ -217,6 +295,14 @@ class LocalExec(params: ZamletParams) extends Module {
   io.errors.alu := alu.io.errors
 }
 
+class LocalExecHardMacro(params: ZamletParams) extends ExtModule {
+  override val desiredName = "LocalExec"
+
+  val clock = IO(Input(Clock()))
+  val reset = IO(Input(Bool()))
+  val io = IO(new LocalExecIO(params))
+}
+
 object LocalExec {
   // Cycles from kinstrIn.valid to the LocalExec RF read request ports.
   // Reads are currently driven directly from the input/s0 stage.
@@ -229,7 +315,8 @@ object LocalExec {
   def inputToWritePortLatency(params: ZamletParams): Int = {
     // kinstrIn is the s0 stage; RF/SRAM responses are consumed in s1.
     val s0ToS1Latency = 1
-    s0ToS1Latency + JamletAlu.outputLatency(params)
+    val s1ToS2Latency = if (params.localExecParams.s12Buffer) 1 else 0
+    s0ToS1Latency + s1ToS2Latency + JamletAlu.outputLatency(params)
   }
 
   // Minimum cycle separation from a producer kinstrIn.valid to a dependent

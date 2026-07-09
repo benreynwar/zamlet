@@ -4,17 +4,44 @@ load(":providers.bzl", "LibrelaneInput", "LibrelaneInfo")
 load(":common.bzl",
     "create_librelane_config",
     "run_librelane_step",
+    "single_step_impl",
     "get_input_files",
     "FLOW_ATTRS",
     "BASE_CONFIG_KEYS",
+    "OPENROAD_STEP_CONFIG_KEYS",
 )
 
-# Config keys needed by floorplan step (from floorplan.tcl and common/io.tcl)
-FLOORPLAN_CONFIG_KEYS = BASE_CONFIG_KEYS + [
-    # Floorplan-specific keys (set in impl, not from create_librelane_config)
+# Config keys needed by OpenROAD.Floorplan in LibreLane 3.0.4.
+FLOORPLAN_CONFIG_KEYS = OPENROAD_STEP_CONFIG_KEYS + [
+    "FP_FLIP_SITES",
+    "FP_TRACKS_INFO",
     "FP_SIZING", "DIE_AREA", "CORE_AREA", "FP_CORE_UTIL", "FP_ASPECT_RATIO",
     "BOTTOM_MARGIN_MULT", "TOP_MARGIN_MULT", "LEFT_MARGIN_MULT", "RIGHT_MARGIN_MULT",
     "FP_OBSTRUCTIONS", "PL_SOFT_OBSTRUCTIONS",
+    "EXTRA_SITES",
+]
+
+DUMP_RC_REPORTS = [
+    "tlef_values.rpt",
+    "layer_values_after.rpt",
+    "resizer_values_after.rpt",
+]
+
+# OpenROAD.DumpRCValues inherits OpenROADStep, but dump_rc.tcl only reads
+# libraries/LEFs/DEF and RC setup. Keep this narrower than the full parent list.
+DUMP_RC_CONFIG_KEYS = BASE_CONFIG_KEYS + [
+    "PNR_CORNERS",
+    "SET_RC_VERBOSE",
+    "LAYERS_RC",
+    "VIAS_R",
+    "SIGNAL_WIRE_RC_LAYERS",
+    "CLOCK_WIRE_RC_LAYERS",
+    "DEDUPLICATE_CORNERS",
+    "LIB",
+    "EXTRA_EXCLUDED_CELLS",
+    "PNR_EXCLUDED_CELL_FILE",
+    "MACROS",
+    "EXTRA_LEFS",
 ]
 
 def _floorplan_impl(ctx):
@@ -101,6 +128,15 @@ def _floorplan_impl(ctx):
         ),
     ]
 
+def _dump_rc_values_impl(ctx):
+    return single_step_impl(
+        ctx,
+        "OpenROAD.DumpRCValues",
+        DUMP_RC_CONFIG_KEYS,
+        step_outputs = [],
+        extra_outputs = DUMP_RC_REPORTS,
+    )
+
 librelane_floorplan = rule(
     implementation = _floorplan_impl,
     attrs = dict(FLOW_ATTRS, **{
@@ -139,5 +175,11 @@ librelane_floorplan = rule(
             default = [],
         ),
     }),
+    provides = [DefaultInfo, LibrelaneInfo],
+)
+
+librelane_dump_rc_values = rule(
+    implementation = _dump_rc_values_impl,
+    attrs = FLOW_ATTRS,
     provides = [DefaultInfo, LibrelaneInfo],
 )

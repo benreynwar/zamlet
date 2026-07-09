@@ -54,7 +54,7 @@ BUNDLED_ATTRS = {
     # Synthesis
     "synth_strategy": attr.string(doc = "Synthesis optimization strategy"),
     "synth_autoname": attr.bool(doc = "Auto-generate names for unnamed cells"),
-    "use_synlig": attr.bool(doc = "Use Synlig plugin for SystemVerilog"),
+    "use_slang": attr.bool(doc = "Use Slang frontend for SystemVerilog"),
     # Linting
     "run_linter": attr.bool(doc = "Run Verilator linter"),
     # Add more as needed...
@@ -88,7 +88,7 @@ def _prepare_flow(ctx, verilog_paths):
     _add_if_set(config, "DIE_AREA", ctx.attr.die_area)
     _add_if_set(config, "SYNTH_STRATEGY", ctx.attr.synth_strategy)
     _add_if_set(config, "SYNTH_AUTONAME", ctx.attr.synth_autoname)
-    _add_if_set(config, "USE_SYNLIG", ctx.attr.use_synlig)
+    _add_if_set(config, "USE_SLANG", ctx.attr.use_slang)
     _add_if_set(config, "RUN_LINTER", ctx.attr.run_linter)
 
     input_delay = ctx.attr.input_delay_constraint

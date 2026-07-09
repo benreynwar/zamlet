@@ -150,6 +150,8 @@
     "rfMaskReqBB": true,
     "rfIndexReqFB": true,
     "rfIndexReqBB": true,
+    "zFB": true,
+    "zBB": true,
     "abFB": true,
     "abBB": true,
     "bcFB": true,
@@ -269,6 +271,10 @@
     "rxBCFB": true,
     "rxBCBB": true,
     "rxDoneFB": true
+  },
+  "localExecParams": {
+    "s12Buffer": true,
+    "sramReqBuffer": true
   },
   "kceCacheTableParams": {
     "hasSlotReqFB": true,
