@@ -130,6 +130,7 @@ class KamletCacheEngine(params: ZamletParams) extends Module {
   val tagTable = Module(new TagTable(
     tagWidth = params.cacheLineAddrWidth,
     slotWidth = params.cacheSlotWidth,
+    nUsesWidth = ZamletParams.kceTagTableNUseWidth(params),
     params = ttp,
     respMetaType = KceTagTableClient(),
     fillMetaType = UInt(0.W),

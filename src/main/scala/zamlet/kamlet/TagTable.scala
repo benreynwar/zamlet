@@ -80,12 +80,12 @@ class TagWritebackReq[P <: Data](tagWidth: Int, slotWidth: Int, payloadType: P) 
 
 class SlotMeta[F <: Data, P <: Data](
   tagWidth: Int,
-  params: TagTableParams,
+  nUsesWidth: Int,
   fillMetaType: F,
   payloadType: P,
 ) extends Bundle {
   val state = TagState()
-  val nUses = params.nUses()
+  val nUses = UInt(nUsesWidth.W)
   val recentlyUsed = Bool()
   val tag = UInt(tagWidth.W)
   val fillMeta = fillMetaType.cloneType
@@ -107,10 +107,10 @@ class Alloc0Result[R <: Data, F <: Data](
   val hitState = TagState()
 }
 
-class Scan0Result(slotWidth: Int, params: TagTableParams) extends Bundle {
+class Scan0Result(slotWidth: Int, nUsesWidth: Int) extends Bundle {
   val slot = UInt(slotWidth.W)
   val state = TagState()
-  val nUses = params.nUses()
+  val nUses = UInt(nUsesWidth.W)
   val recentlyUsed = Bool()
 }
 
@@ -158,6 +158,7 @@ class TagTableIO[R <: Data, F <: Data, P <: Data](
 class TagTable[R <: Data, F <: Data, P <: Data](
   tagWidth: Int,
   slotWidth: Int,
+  nUsesWidth: Int,
   params: TagTableParams,
   respMetaType: R,
   fillMetaType: F,
@@ -165,7 +166,7 @@ class TagTable[R <: Data, F <: Data, P <: Data](
 ) extends Module {
   require(tagWidth > 0)
   require(slotWidth > 0)
-  require(params.nUsesWidth > 0)
+  require(nUsesWidth > 0)
   require(params.freeQueueDepth > 1)
   require(params.fillReqQueueDepth > 1)
   require(params.scanBackpressureDepth > 0)
@@ -174,6 +175,7 @@ class TagTable[R <: Data, F <: Data, P <: Data](
   private val nSlots = 1 << slotWidth
   private val freePtrWidth = log2Ceil(params.freeQueueDepth)
   private val freeCountWidth = log2Ceil(params.freeQueueDepth + 1)
+  private def slotMetaType = new SlotMeta(tagWidth, nUsesWidth, fillMetaType, payloadType)
 
   val io = IO(new TagTableIO(tagWidth, slotWidth, params, respMetaType, fillMetaType, payloadType))
 
@@ -225,22 +227,22 @@ class TagTable[R <: Data, F <: Data, P <: Data](
       (state === TagState.PresentClean) -> TagState.PresentDirty))
   }
 
-  val maxUses = ((BigInt(1) << params.nUsesWidth) - 1).U(params.nUsesWidth.W)
+  val maxUses = ((BigInt(1) << nUsesWidth) - 1).U(nUsesWidth.W)
 
   // ============================================================
   // Slot Lifecycle State
   // ============================================================
 
-  val slotMetaInitial = Wire(Vec(nSlots, new SlotMeta(tagWidth, params, fillMetaType, payloadType)))
-  slotMetaInitial := 0.U.asTypeOf(Vec(nSlots, new SlotMeta(tagWidth, params, fillMetaType, payloadType)))
+  val slotMetaInitial = Wire(Vec(nSlots, slotMetaType))
+  slotMetaInitial := 0.U.asTypeOf(Vec(nSlots, slotMetaType))
   for (slot <- 0 until nSlots) {
     slotMetaInitial(slot).state := TagState.Empty
   }
-  val slotMetaNext = Wire(Vec(nSlots, new SlotMeta(tagWidth, params, fillMetaType, payloadType)))
+  val slotMetaNext = Wire(Vec(nSlots, slotMetaType))
   val slotMeta = RegNext(slotMetaNext, slotMetaInitial)
 
   val state = Wire(Vec(nSlots, TagState()))
-  val nUses = Wire(Vec(nSlots, UInt(params.nUsesWidth.W)))
+  val nUses = Wire(Vec(nSlots, UInt(nUsesWidth.W)))
   val recentlyUsed = Wire(Vec(nSlots, Bool()))
   val tag = Wire(Vec(nSlots, UInt(tagWidth.W)))
   val fillMeta = Wire(Vec(nSlots, fillMetaType.cloneType))
@@ -474,7 +476,7 @@ class TagTable[R <: Data, F <: Data, P <: Data](
   errors.allocRecentlyUsed :=
     allocFire && recentlyUsed(freeSlotDeq.bits)
 
-  val slotMetaAfterAlloc = Wire(Vec(nSlots, new SlotMeta(tagWidth, params, fillMetaType, payloadType)))
+  val slotMetaAfterAlloc = Wire(Vec(nSlots, slotMetaType))
   slotMetaAfterAlloc := slotMeta
   when (allocFire) {
     slotMetaAfterAlloc(freeSlotDeq.bits).tag := alloc1In.bits.tag
@@ -518,7 +520,7 @@ class TagTable[R <: Data, F <: Data, P <: Data](
   errors.writebackCompleteQueueNotReady :=
     writebackComplete0.valid && writebackComplete0Evicting && !writebackFreeSlotEnq.ready
 
-  val slotMetaAfterWriteback = Wire(Vec(nSlots, new SlotMeta(tagWidth, params, fillMetaType, payloadType)))
+  val slotMetaAfterWriteback = Wire(Vec(nSlots, slotMetaType))
   slotMetaAfterWriteback := slotMetaAfterAlloc
   when (writebackComplete0.valid && writebackComplete0Evicting) {
     slotMetaAfterWriteback(writebackComplete0.bits).state := TagState.EmptyInQueue
@@ -536,7 +538,7 @@ class TagTable[R <: Data, F <: Data, P <: Data](
   val fill0 = io.fillComplete
   errors.fillBadState := fill0.valid && !isFilling(state(fill0.bits.slot))
 
-  val slotMetaAfterFill = Wire(Vec(nSlots, new SlotMeta(tagWidth, params, fillMetaType, payloadType)))
+  val slotMetaAfterFill = Wire(Vec(nSlots, slotMetaType))
   slotMetaAfterFill := slotMetaAfterWriteback
   when (fill0.valid) {
     slotMetaAfterFill(fill0.bits.slot).state := Mux(
@@ -554,7 +556,7 @@ class TagTable[R <: Data, F <: Data, P <: Data](
   val release0 = ValidBuffer(io.release, params.releaseBuffer)
   errors.releaseUnderflow := release0.valid && nUses(release0.bits) === 0.U
 
-  val slotMetaAfterRelease = Wire(Vec(nSlots, new SlotMeta(tagWidth, params, fillMetaType, payloadType)))
+  val slotMetaAfterRelease = Wire(Vec(nSlots, slotMetaType))
   slotMetaAfterRelease := slotMetaAfterFill
   when (release0.valid) {
     slotMetaAfterRelease(release0.bits).nUses := slotMetaAfterFill(release0.bits).nUses - 1.U
@@ -569,7 +571,7 @@ class TagTable[R <: Data, F <: Data, P <: Data](
   scan0SlotNext := scan0Slot
 
   val scan0ShouldRun = freeCount < params.scanBackpressureDepth.U || freeSlotDeq.fire
-  val scan0Out = Wire(Decoupled(new Scan0Result(slotWidth, params)))
+  val scan0Out = Wire(Decoupled(new Scan0Result(slotWidth, nUsesWidth)))
   scan0Out.valid := scan0ShouldRun
   scan0Out.bits.slot := scan0Slot
   scan0Out.bits.state := state(scan0Slot)
@@ -613,7 +615,7 @@ class TagTable[R <: Data, F <: Data, P <: Data](
   io.writebackReq.bits.tag := tag(scan1In.bits.slot)
   io.writebackReq.bits.payload := payload(scan1In.bits.slot)
 
-  val slotMetaAfterScan = Wire(Vec(nSlots, new SlotMeta(tagWidth, params, fillMetaType, payloadType)))
+  val slotMetaAfterScan = Wire(Vec(nSlots, slotMetaType))
   slotMetaAfterScan := slotMetaAfterRelease
   when (scan1In.fire) {
     // Fill retries from scan are opportunistic. If the fill request FIFO is
@@ -676,7 +678,7 @@ class TagTable[R <: Data, F <: Data, P <: Data](
 
   io.claimResp := ValidBuffer(claim0Out, params.claimRespFB)
 
-  val slotMetaAfterClaim = Wire(Vec(nSlots, new SlotMeta(tagWidth, params, fillMetaType, payloadType)))
+  val slotMetaAfterClaim = Wire(Vec(nSlots, slotMetaType))
   slotMetaAfterClaim := slotMetaAfterScan
   when (claim0In.valid && claim0DidClaim) {
     slotMetaAfterClaim(claim0Slot).nUses := slotMetaAfterScan(claim0Slot).nUses + 1.U
@@ -705,8 +707,8 @@ object TagTableGenerator extends zamlet.ModuleGenerator {
     new TagTable(
       tagWidth = tagWidth,
       slotWidth = slotWidth,
+      nUsesWidth = nUsesWidth,
       params = TagTableParams(
-        nUsesWidth = nUsesWidth,
         freeQueueDepth = freeQueueDepth,
         fillReqQueueDepth = fillReqQueueDepth,
         scanBackpressureDepth = scanBackpressureDepth,

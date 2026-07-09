@@ -1,6 +1,7 @@
 package zamlet.jamlet
 
 import chisel3._
+import chisel3.experimental.ExtModule
 import chisel3.util._
 import zamlet.ZamletParams
 import zamlet.utils.DoubleBuffer
@@ -217,6 +218,14 @@ class Jce(params: ZamletParams) extends Module {
   rxCOpDone.bits := rxCJoinQueue.io.deq.bits.slot
 
   io.rxDone := ValidBuffer(rxCOpDone)
+}
+
+class JceHardMacro(params: ZamletParams) extends ExtModule {
+  override val desiredName = "Jce"
+
+  val clock = IO(Input(Clock()))
+  val reset = IO(Input(Bool()))
+  val io = IO(new JceIO(params))
 }
 
 object JceGenerator extends zamlet.ModuleGenerator {

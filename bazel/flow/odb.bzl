@@ -1,43 +1,38 @@
 # Odb (OpenDB) manipulation rules
 
-load(":common.bzl", "single_step_impl", "FLOW_ATTRS", "BASE_CONFIG_KEYS")
-load(":providers.bzl", "LibrelaneInfo")
+load(":common.bzl", "single_step_impl", "FLOW_ATTRS", "BASE_CONFIG_KEYS", "OPENROAD_STEP_CONFIG_KEYS")
+load(":providers.bzl", "LibrelaneInput", "LibrelaneInfo")
 
-# Odb steps need BASE_CONFIG_KEYS for PDK info and design config
-ODB_CONFIG_KEYS = BASE_CONFIG_KEYS
+# OdbpyStep loads LEFs before running its Python command. Include flow-level
+# optional LEF sources that affect the OpenDB view.
+ODB_CONFIG_KEYS = BASE_CONFIG_KEYS + [
+    "MACROS",
+    "EXTRA_LEFS",
+]
 
-# Step 50: Odb.ReportDisconnectedPins - odb.py lines 478-512
+# Step 50: Odb.ReportDisconnectedPins - odb.py lines 497-535
 # IGNORE_DISCONNECTED_MODULES is a PDK variable (pdk=True)
-REPORT_DISCONNECTED_PINS_CONFIG_KEYS = BASE_CONFIG_KEYS + ["IGNORE_DISCONNECTED_MODULES"]
+REPORT_DISCONNECTED_PINS_CONFIG_KEYS = ODB_CONFIG_KEYS + ["IGNORE_DISCONNECTED_MODULES"]
 
-# Odb.ManualGlobalPlacement needs MANUAL_GLOBAL_PLACEMENTS
-MANUAL_GLOBAL_PLACEMENT_CONFIG_KEYS = BASE_CONFIG_KEYS + ["MANUAL_GLOBAL_PLACEMENTS"]
+# Odb.ManualGlobalPlacement inherits OdbpyStep LEF loading and needs MANUAL_GLOBAL_PLACEMENTS.
+MANUAL_GLOBAL_PLACEMENT_CONFIG_KEYS = ODB_CONFIG_KEYS + ["MANUAL_GLOBAL_PLACEMENTS"]
 
-# Odb.AddPDNObstructions / Odb.RemovePDNObstructions need PDN_OBSTRUCTIONS
-PDN_OBS_CONFIG_KEYS = BASE_CONFIG_KEYS + ["PDN_OBSTRUCTIONS"]
+# Odb.AddPDNObstructions / Odb.RemovePDNObstructions need PDN_OBSTRUCTIONS.
+PDN_OBS_CONFIG_KEYS = ODB_CONFIG_KEYS + ["PDN_OBSTRUCTIONS"]
 
 # Odb.AddRoutingObstructions / Odb.RemoveRoutingObstructions need ROUTING_OBSTRUCTIONS
-ROUTING_OBS_CONFIG_KEYS = BASE_CONFIG_KEYS + ["ROUTING_OBSTRUCTIONS"]
+ROUTING_OBS_CONFIG_KEYS = ODB_CONFIG_KEYS + ["ROUTING_OBSTRUCTIONS"]
 
-# Odb.WriteVerilogHeader needs VERILOG_POWER_DEFINE
-WRITE_VH_CONFIG_KEYS = BASE_CONFIG_KEYS + ["VERILOG_POWER_DEFINE"]
+# Odb.WriteVerilogHeader inherits OdbpyStep LEF loading and needs VERILOG_POWER_DEFINE.
+WRITE_VH_CONFIG_KEYS = ODB_CONFIG_KEYS + ["VERILOG_POWER_DEFINE"]
 
 # Odb.DiodesOnPorts is a CompositeStep containing:
 #   PortDiodePlacement (OdbpyStep) + DetailedPlacement + GlobalRouting
 # Needs union of all sub-step config_vars (odb.py:788-818)
-DIODES_ON_PORTS_CONFIG_KEYS = BASE_CONFIG_KEYS + [
+DIODES_ON_PORTS_CONFIG_KEYS = OPENROAD_STEP_CONFIG_KEYS + [
     # PortDiodePlacement config_vars (odb.py:738-752)
     "DIODE_ON_PORTS",
     "GPL_CELL_PADDING",
-    # OpenROADStep.config_vars (openroad.py:192-223) - for DetailedPlacement, GlobalRouting
-    "PDN_CONNECT_MACROS_TO_GRID",
-    "PDN_MACRO_CONNECTIONS",
-    "PDN_ENABLE_GLOBAL_CONNECTIONS",
-    "PNR_SDC_FILE",
-    "FP_DEF_TEMPLATE",
-    # OpenROADStep.prepare_env() (openroad.py:242-258)
-    "FALLBACK_SDC_FILE",
-    "EXTRA_EXCLUDED_CELLS",
     # grt_variables (common_variables.py:285-319) - for GlobalRouting
     "RT_CLOCK_MIN_LAYER",
     "RT_CLOCK_MAX_LAYER",
@@ -46,9 +41,11 @@ DIODES_ON_PORTS_CONFIG_KEYS = BASE_CONFIG_KEYS + [
     "GRT_LAYER_ADJUSTMENTS",
     "DIODE_PADDING",
     "GRT_ALLOW_CONGESTION",
-    "GRT_ANTENNA_ITERS",
+    "GRT_ANTENNA_REPAIR_ITERS",
     "GRT_OVERFLOW_ITERS",
-    "GRT_ANTENNA_MARGIN",
+    "GRT_ANTENNA_REPAIR_MARGIN",
+    "GRT_ANTENNA_REPAIR_JUMPER_ONLY",
+    "GRT_ANTENNA_REPAIR_DIODE_ONLY",
     # dpl_variables (common_variables.py:255-283) - for DetailedPlacement, GlobalRouting
     "PL_OPTIMIZE_MIRRORING",
     "PL_MAX_DISPLACEMENT_X",
@@ -59,19 +56,10 @@ DIODES_ON_PORTS_CONFIG_KEYS = BASE_CONFIG_KEYS + [
 # Odb.HeuristicDiodeInsertion is a CompositeStep containing:
 #   FuzzyDiodePlacement (OdbpyStep) + DetailedPlacement + GlobalRouting
 # Needs union of all sub-step config_vars (odb.py:891-919)
-HEURISTIC_DIODE_CONFIG_KEYS = BASE_CONFIG_KEYS + [
+HEURISTIC_DIODE_CONFIG_KEYS = OPENROAD_STEP_CONFIG_KEYS + [
     # FuzzyDiodePlacement config_vars (odb.py:840-855)
     "HEURISTIC_ANTENNA_THRESHOLD",
     "GPL_CELL_PADDING",
-    # OpenROADStep.config_vars (openroad.py:192-223) - for DetailedPlacement, GlobalRouting
-    "PDN_CONNECT_MACROS_TO_GRID",
-    "PDN_MACRO_CONNECTIONS",
-    "PDN_ENABLE_GLOBAL_CONNECTIONS",
-    "PNR_SDC_FILE",
-    "FP_DEF_TEMPLATE",
-    # OpenROADStep.prepare_env() (openroad.py:242-258)
-    "FALLBACK_SDC_FILE",
-    "EXTRA_EXCLUDED_CELLS",
     # grt_variables (common_variables.py:285-319) - for GlobalRouting
     "RT_CLOCK_MIN_LAYER",
     "RT_CLOCK_MAX_LAYER",
@@ -80,9 +68,11 @@ HEURISTIC_DIODE_CONFIG_KEYS = BASE_CONFIG_KEYS + [
     "GRT_LAYER_ADJUSTMENTS",
     "DIODE_PADDING",
     "GRT_ALLOW_CONGESTION",
-    "GRT_ANTENNA_ITERS",
+    "GRT_ANTENNA_REPAIR_ITERS",
     "GRT_OVERFLOW_ITERS",
-    "GRT_ANTENNA_MARGIN",
+    "GRT_ANTENNA_REPAIR_MARGIN",
+    "GRT_ANTENNA_REPAIR_JUMPER_ONLY",
+    "GRT_ANTENNA_REPAIR_DIODE_ONLY",
     # dpl_variables (common_variables.py:255-283) - for DetailedPlacement, GlobalRouting
     "PL_OPTIMIZE_MIRRORING",
     "PL_MAX_DISPLACEMENT_X",
@@ -100,14 +90,20 @@ def _manual_macro_placement_impl(ctx):
     return single_step_impl(ctx, "Odb.ManualMacroPlacement", ODB_CONFIG_KEYS, step_outputs = ["def", "odb"])
 
 def _add_pdn_obstructions_impl(ctx):
-    return single_step_impl(ctx, "Odb.AddPDNObstructions", PDN_OBS_CONFIG_KEYS, step_outputs = ["def", "odb"])
+    input_info = ctx.attr.input[LibrelaneInput]
+    step_outputs = ["def", "odb"] if input_info.pdn_obstructions else []
+    return single_step_impl(ctx, "Odb.AddPDNObstructions", PDN_OBS_CONFIG_KEYS, step_outputs = step_outputs)
 
 def _remove_pdn_obstructions_impl(ctx):
-    return single_step_impl(ctx, "Odb.RemovePDNObstructions", PDN_OBS_CONFIG_KEYS, step_outputs = ["def", "odb"])
+    input_info = ctx.attr.input[LibrelaneInput]
+    step_outputs = ["def", "odb"] if input_info.pdn_obstructions else []
+    return single_step_impl(ctx, "Odb.RemovePDNObstructions", PDN_OBS_CONFIG_KEYS, step_outputs = step_outputs)
 
 def _add_routing_obstructions_impl(ctx):
+    input_info = ctx.attr.input[LibrelaneInput]
+    step_outputs = ["def", "odb"] if input_info.routing_obstructions else []
     return single_step_impl(ctx, "Odb.AddRoutingObstructions", ROUTING_OBS_CONFIG_KEYS,
-        step_outputs = ["def", "odb"])
+        step_outputs = step_outputs)
 
 def _custom_io_placement_impl(ctx):
     return single_step_impl(ctx, "Odb.CustomIOPlacement", ODB_CONFIG_KEYS, step_outputs = ["def", "odb"])
@@ -119,31 +115,42 @@ def _write_verilog_header_impl(ctx):
     return single_step_impl(ctx, "Odb.WriteVerilogHeader", WRITE_VH_CONFIG_KEYS, step_outputs = ["vh"])
 
 def _manual_global_placement_impl(ctx):
+    input_info = ctx.attr.input[LibrelaneInput]
+    step_outputs = ["def", "odb"] if input_info.manual_global_placements else []
     return single_step_impl(ctx, "Odb.ManualGlobalPlacement", MANUAL_GLOBAL_PLACEMENT_CONFIG_KEYS,
-        step_outputs = ["def", "odb"])
+        step_outputs = step_outputs)
 
 def _diodes_on_ports_impl(ctx):
+    input_info = ctx.attr.input[LibrelaneInput]
+    step_outputs = ["def", "odb"] if input_info.diode_on_ports != "none" else []
     return single_step_impl(ctx, "Odb.DiodesOnPorts", DIODES_ON_PORTS_CONFIG_KEYS,
-        step_outputs = ["def", "odb"])
+        step_outputs = step_outputs)
 
 def _heuristic_diode_insertion_impl(ctx):
     return single_step_impl(ctx, "Odb.HeuristicDiodeInsertion", HEURISTIC_DIODE_CONFIG_KEYS, step_outputs = ["def", "odb"])
 
 def _remove_routing_obstructions_impl(ctx):
+    input_info = ctx.attr.input[LibrelaneInput]
+    step_outputs = ["def", "odb"] if input_info.routing_obstructions else []
     return single_step_impl(ctx, "Odb.RemoveRoutingObstructions", ROUTING_OBS_CONFIG_KEYS,
-        step_outputs = ["def", "odb"])
+        step_outputs = step_outputs)
 
 def _report_disconnected_pins_impl(ctx):
-    return single_step_impl(ctx, "Odb.ReportDisconnectedPins", REPORT_DISCONNECTED_PINS_CONFIG_KEYS, step_outputs = [])
+    return single_step_impl(ctx, "Odb.ReportDisconnectedPins", REPORT_DISCONNECTED_PINS_CONFIG_KEYS,
+        step_outputs = [], optional_extra_outputs = ["full_disconnected_pins_table.txt"])
 
 def _report_wire_length_impl(ctx):
-    return single_step_impl(ctx, "Odb.ReportWireLength", ODB_CONFIG_KEYS, step_outputs = [])
+    return single_step_impl(ctx, "Odb.ReportWireLength", ODB_CONFIG_KEYS,
+        step_outputs = [], extra_outputs = ["wire_lengths.csv"])
 
 def _cell_frequency_tables_impl(ctx):
-    return single_step_impl(ctx, "Odb.CellFrequencyTables", ODB_CONFIG_KEYS, step_outputs = [])
+    return single_step_impl(ctx, "Odb.CellFrequencyTables", ODB_CONFIG_KEYS,
+        step_outputs = [],
+        extra_outputs = ["cell.rpt", "cell_function.rpt", "by_scl.rpt", "buffers.rpt"])
 
 def _check_design_antenna_properties_impl(ctx):
-    return single_step_impl(ctx, "Odb.CheckDesignAntennaProperties", ODB_CONFIG_KEYS, step_outputs = [])
+    return single_step_impl(ctx, "Odb.CheckDesignAntennaProperties", ODB_CONFIG_KEYS,
+        step_outputs = [], extra_outputs = ["report.yaml"])
 
 # Rule declarations
 librelane_check_macro_antenna_properties = rule(

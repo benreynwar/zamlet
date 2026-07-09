@@ -31,13 +31,13 @@ def custom_encoder(obj):
 
 def get_all_pdk_variables():
     """Collect all PDK variables from flow config and all registered steps."""
-    from librelane.config.flow import pdk_variables, scl_variables
+    from librelane.config.flow import pdk_variables, scl_variables, pad_variables
     # Import all steps to register them in the factory
     import librelane.steps
     from librelane.steps import Step
 
     # Start with flow-level PDK variables
-    all_vars = list(pdk_variables) + list(scl_variables)
+    all_vars = list(pdk_variables) + list(scl_variables) + list(pad_variables)
     seen_names = {v.name for v in all_vars}
 
     # Collect step-specific PDK variables
@@ -68,9 +68,10 @@ def load_pdk_config(pdk_root: str, pdk: str, scl: str) -> Dict[str, Any]:
 
     # Get fully processed config using librelane's internal method
     # This handles deprecated names, type coercion, etc.
-    processed, _pdkpath, _scl = Config._Config__get_pdk_config(
+    processed, _pdkpath, _scl, _pad = Config._Config__get_pdk_config(
         pdk=pdk,
         scl=scl,
+        pad=None,
         pdk_root=pdk_root,
         flow_pdk_vars=all_pdk_vars,
     )

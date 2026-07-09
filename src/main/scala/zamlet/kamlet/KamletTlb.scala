@@ -130,6 +130,7 @@ class KamletTlb(params: ZamletParams) extends Module {
   val tagTable = Module(new TagTable(
     tagWidth = params.memStripeAddrWidth,
     slotWidth = log2Ceil(params.tlbCacheTableDepth),
+    nUsesWidth = ZamletParams.tlbTagTableNUseWidth(params),
     params = ttp,
     respMetaType = new KamletTlbTagMeta(params),
     fillMetaType = UInt(0.W),

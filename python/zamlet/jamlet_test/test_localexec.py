@@ -23,7 +23,6 @@ from zamlet.width_codes import ElementWidthCode, WidthFormatCode
 
 
 RF_RESPONSE_LATENCY = 1
-LOCAL_EXEC_S1_LATENCY = 1
 
 
 @dataclass
@@ -469,18 +468,21 @@ async def localexec_random_stream(dut: HierarchyObject) -> None:
     params = load_params()
     cases = make_cases(params)
     alu_latency = segmented_multiplier_latency(params.word_width)
-    sram_response_latency = params.sram_params.local_response_latency
+    s2_latency = RF_RESPONSE_LATENCY + int(params.local_exec_params.s12Buffer)
+    sram_req_latency = s2_latency + int(params.local_exec_params.sramReqBuffer)
+    sram_response_latency = sram_req_latency + params.sram_params.local_response_latency
+    writeback_latency = s2_latency + alu_latency
     await reset_dut(dut)
 
     issue_q = deque(cases)
     rf_a_response_q = deque([None] * RF_RESPONSE_LATENCY)
     rf_b_response_q = deque([None] * RF_RESPONSE_LATENCY)
     rf_mask_response_q = deque([None] * RF_RESPONSE_LATENCY)
-    sram_expected_q = deque([None] * LOCAL_EXEC_S1_LATENCY)
-    sram_response_q = deque([None] * (LOCAL_EXEC_S1_LATENCY + sram_response_latency))
-    writeback_expected_q = deque([None] * (LOCAL_EXEC_S1_LATENCY + alu_latency))
+    sram_expected_q = deque([None] * sram_req_latency)
+    sram_response_q = deque([None] * sram_response_latency)
+    writeback_expected_q = deque([None] * writeback_latency)
 
-    cycles = len(cases) + LOCAL_EXEC_S1_LATENCY + max(alu_latency, sram_response_latency) + 3
+    cycles = len(cases) + max(writeback_latency, sram_response_latency) + 3
     for cycle in range(cycles):
         case = issue_q.popleft() if issue_q else None
 

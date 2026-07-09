@@ -22,9 +22,37 @@ chisel_dse_module(
     generator = JAMLET_PKG + ":jamlet",
     config = ZAMLET_CONFIG,
     pdk = ":sky130hd",
-    clock_period = "10.0",
+    clock_period = "20.0",
     core_utilization = "35",
     pin_order_cfg = ":jamlet_pin_order.cfg",
+)
+
+chisel_dse_module(
+    name = "Jamlet_1024lanes",
+    top = "Jamlet",
+    generator = JAMLET_PKG + ":jamlet",
+    config = "//configs:zamlet_1024lanes.json",
+    pdk = ":sky130hd",
+    clock_period = "20.0",
+    core_utilization = "35",
+    pin_order_cfg = ":jamlet_pin_order.cfg",
+)
+
+chisel_dse_module(
+    name = "Jamlet_1024lanes_hard_macros",
+    top = "Jamlet",
+    generator = JAMLET_PKG + ":jamlet_hard_macros",
+    config = "//configs:zamlet_1024lanes.json",
+    pdk = ":sky130hd",
+    clock_period = "20.0",
+    core_utilization = "35",
+    macros = [
+        ":Jce_1024lanes_sky130hd_lef",
+        ":LocalExec_1024lanes_sky130hd_lef",
+        ":Sram_1024lanes_sky130hd_lef",
+    ],
+    pin_order_cfg = ":jamlet_pin_order.cfg",
+    synth_config = ":synth_autoname",
 )
 
 # (ModuleName, bazel_target_name, extra_generator_args, core_utilization)
@@ -32,7 +60,6 @@ JAMLET_SUB_MODULES = [
     ("RfSlice", "rfslice", [], "35"),
     ("Sram", "sram", [], "35"),
     ("Jce", "jce", [], "35"),
-    ("LocalExec", "localexec", [], "35"),
     ("CoordsToIndexWithReg", "coordstoindexwithreg", [], "35"),
     ("IndexToCoordsWithReg", "indextocoordswithreg", [], "35"),
     ("Jte", "jte", [], "40"),
@@ -72,11 +99,25 @@ ZAMLET_CONFIGS = [
     config = cfg_path,
     pdk = ":sky130hd",
     extra_generator_args = extra_args,
-    clock_period = "10.0",
+    clock_period = "20.0",
     core_utilization = core_util,
     synth_config = ":synth_autoname",
 ) for module, target, extra_args, core_util in JAMLET_SUB_MODULES
   for cfg_name, cfg_path in ZAMLET_CONFIGS]
+
+[chisel_dse_module(
+    name = "LocalExec_{}".format(cfg_name),
+    top = "LocalExec",
+    generator = JAMLET_PKG + ":localexec",
+    config = cfg_path,
+    pdk = ":sky130hd",
+    clock_period = "20.0",
+    core_utilization = "35",
+    synth_config = ":synth_autoname",
+    sdc_fragments = [":localexec.sdc"],
+    run_post_grt_design_repair = True,
+    run_post_grt_resizer_timing = True,
+) for cfg_name, cfg_path in ZAMLET_CONFIGS]
 
 # VectorRf - generic vector register file slice
 chisel_dse_module(
@@ -85,6 +126,6 @@ chisel_dse_module(
     generator = JAMLET_PKG + ":vectorrf",
     config = "//configs:vector_rf_3r1w.json",
     pdk = ":sky130hd",
-    clock_period = "10.0",
+    clock_period = "20.0",
     core_utilization = "40",
 )

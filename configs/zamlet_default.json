@@ -150,6 +150,8 @@
     "rfMaskReqBB": true,
     "rfIndexReqFB": true,
     "rfIndexReqBB": true,
+    "zFB": true,
+    "zBB": true,
     "abFB": true,
     "abBB": true,
     "bcFB": true,
@@ -270,6 +272,10 @@
     "rxBCBB": true,
     "rxDoneFB": true
   },
+  "localExecParams": {
+    "s12Buffer": true,
+    "sramReqBuffer": true
+  },
   "kceCacheTableParams": {
     "hasSlotReqFB": true,
     "hasSlotReqBB": true,
@@ -292,7 +298,6 @@
     "emptyQueueScanBackpressureDepth": 8
   },
   "kceTagTableParams": {
-    "nUsesWidth": 3,
     "freeQueueDepth": 16,
     "fillReqQueueDepth": 16,
     "scanBackpressureDepth": 8,
@@ -379,7 +384,6 @@
     "resp01BB": true
   },
   "tlbTagTableParams": {
-    "nUsesWidth": 3,
     "freeQueueDepth": 16,
     "fillReqQueueDepth": 16,
     "scanBackpressureDepth": 8,

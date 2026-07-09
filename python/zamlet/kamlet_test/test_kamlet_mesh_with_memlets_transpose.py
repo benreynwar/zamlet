@@ -1,4 +1,3 @@
-import json
 import logging
 import random
 
@@ -25,7 +24,7 @@ from zamlet.params import ZamletParams
 from zamlet.width_codes import ElementWidthCode
 
 
-TEST_TIMEOUT_NS = 3_000
+TEST_TIMEOUT_NS = 100_000
 
 
 logger = logging.getLogger(__name__)
@@ -38,8 +37,10 @@ async def monitor_jte_sram_writes(
     log_period_cycles: int,
 ) -> None:
     counts = {
-        (kx, jy): 0
+        (kx, ky, jx, jy): 0
         for kx in range(driver.params.k_cols)
+        for ky in range(driver.params.k_rows)
+        for jx in range(driver.params.j_cols)
         for jy in range(driver.params.j_rows)
     }
     cycle = 0
@@ -49,19 +50,21 @@ async def monitor_jte_sram_writes(
         cycle += 1
         stats["cycles_observed"] = cycle
         for kx in range(driver.params.k_cols):
-            kamlet = getattr(driver.dut.mesh, f"kamlets_{kx}_0")
-            for jy in range(driver.params.j_rows):
-                handler = getattr(kamlet, f"jamlets_{jy}_0").jte.handler
-                if (
-                    int(handler.io_sramReq_valid.value) == 1
-                    and int(handler.io_sramReq_ready.value) == 1
-                    and int(handler.io_sramReq_bits_isWrite.value) == 1
-                ):
-                    counts[(kx, jy)] += 1
-                    stats["total_sram_writes"] += 1
-                    if stats["first_sram_write_cycle"] is None:
-                        stats["first_sram_write_cycle"] = cycle
-                    stats["last_sram_write_cycle"] = cycle
+            for ky in range(driver.params.k_rows):
+                kamlet = getattr(driver.dut.mesh, f"kamlets_{kx}_{ky}")
+                for jx in range(driver.params.j_cols):
+                    for jy in range(driver.params.j_rows):
+                        handler = getattr(kamlet, f"jamlets_{jx}_{jy}").jte.handler
+                        if (
+                            int(handler.io_sramReq_valid.value) == 1
+                            and int(handler.io_sramReq_ready.value) == 1
+                            and int(handler.io_sramReq_bits_isWrite.value) == 1
+                        ):
+                            counts[(kx, ky, jx, jy)] += 1
+                            stats["total_sram_writes"] += 1
+                            if stats["first_sram_write_cycle"] is None:
+                                stats["first_sram_write_cycle"] = cycle
+                            stats["last_sram_write_cycle"] = cycle
         if cycle % log_period_cycles == 0:
             logger.info(
                 "measured transpose progress cycles=%d jte_sram_writes=%s total=%d",
@@ -78,8 +81,7 @@ async def monitor_jte_sram_writes(
 
 def load_params() -> ZamletParams:
     test_params = test_utils.get_test_params()
-    with open(test_params["params_file"]) as f:
-        return ZamletParams.from_dict(json.load(f))
+    return ZamletParams.from_file(test_params["params_file"])
 
 
 def values_to_bytes(params: ZamletParams, values: list[int]) -> bytes:

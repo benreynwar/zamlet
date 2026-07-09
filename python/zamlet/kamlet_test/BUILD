@@ -64,6 +64,29 @@ chisel_module_tests(
         "test_kamlet_mesh_with_memlets_transpose.py",
     ],
     test_modules = ["zamlet.kamlet_test.test_kamlet_mesh_with_memlets_transpose"],
+    configs = [
+        ("default", "//configs:zamlet_default.json"),
+        ("16lanes", "//configs:zamlet_16lanes.json"),
+    ],
+    timeout = "long",
+)
+
+chisel_module_tests(
+    generator = "//src/main/scala/zamlet/kamlet:kamletmeshwithmemlets",
+    toplevel = "KamletMeshWithMemlets",
+    target_base = "kamletmeshwithmemlets_transpose_8x8",
+    srcs = [
+        "kamlet_mesh_with_memlets_driver.py",
+        "ordered_kamlet_memory.py",
+        "tag_table_driver.py",
+        "test_kamlet_mesh_with_memlets_transpose.py",
+    ],
+    test_modules = ["zamlet.kamlet_test.test_kamlet_mesh_with_memlets_transpose"],
+    configs = [("64lanes", "//configs:zamlet_64lanes.json")],
+    py_deps = [],
+    timeout = "eternal",
+    public_flat_rw = False,
+    trace = False,
 )
 
 chisel_module_tests_no_config(

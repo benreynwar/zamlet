@@ -24,6 +24,12 @@ def _verilate_impl(ctx):
     cpp_output = ctx.actions.declare_directory(ctx.attr.name + "_cpp")
     hpp_output = ctx.actions.declare_directory(ctx.attr.name + "_hpp")
 
+    verilator_visibility_args = []
+    if ctx.attr.public_flat_rw:
+        verilator_visibility_args.append("--public-flat-rw")
+    if ctx.attr.trace:
+        verilator_visibility_args.append("--trace")
+
     output_split_args = ""
     if ctx.attr.output_split > 0:
         output_split_args += " --output-split %d" % ctx.attr.output_split
@@ -36,8 +42,8 @@ def _verilate_impl(ctx):
     ctx.actions.run_shell(
         outputs = [verilator_output],
         inputs = input_files,
-        command = """{verilator} --cc --vpi --public-flat-rw \
-            --timescale 1ns/1ps --trace \
+        command = """{verilator} --cc --vpi {verilator_visibility_args} \
+            --timescale 1ns/1ps \
             {output_split_args} \
             --prefix Vtop \
             --Mdir {out_dir} \
@@ -45,6 +51,7 @@ def _verilate_impl(ctx):
             {inputs}
         """.format(
             verilator = verilator_tc.verilator_bin,
+            verilator_visibility_args = " ".join(verilator_visibility_args),
             output_split_args = output_split_args,
             out_dir = verilator_output.path,
             module_top = ctx.attr.module_top,
@@ -85,6 +92,7 @@ def _verilate_impl(ctx):
 
     compilation_contexts = [dep[CcInfo].compilation_context for dep in ctx.attr.deps]
 
+    defines = ["VM_TRACE"] if ctx.attr.trace else []
     compilation_context, compilation_outputs = cc_common.compile(
         name = ctx.attr.name,
         actions = ctx.actions,
@@ -93,7 +101,7 @@ def _verilate_impl(ctx):
         user_compile_flags = ["-std=c++17", "-faligned-new"],
         srcs = [cpp_output],
         includes = [hpp_output.path],
-        defines = ["VM_TRACE"],
+        defines = defines,
         public_hdrs = [hpp_output],
         compilation_contexts = compilation_contexts,
     )
@@ -127,6 +135,8 @@ verilate = rule(
         "srcs": attr.label_list(allow_files = [".v", ".sv"]),
         "module_top": attr.string(mandatory = True),
         "deps": attr.label_list(providers = [CcInfo]),
+        "public_flat_rw": attr.bool(default = True),
+        "trace": attr.bool(default = True),
         "output_split": attr.int(default = 20000),
         "output_split_cfuncs": attr.int(default = 20000),
         "output_split_ctrace": attr.int(default = 20000),
@@ -164,6 +174,13 @@ def _python_runner_impl(ctx):
 
     # Get the binary
     binary = ctx.attr.binary[DefaultInfo].files_to_run.executable
+
+    config_file = None
+    if ctx.attr.config:
+        config_files = ctx.attr.config[DefaultInfo].files.to_list()
+        if len(config_files) != 1:
+            fail("config must produce exactly one file")
+        config_file = config_files[0]
 
     # Build PYTHONPATH entries (relative to runfiles)
     python_paths = ["."]
@@ -206,6 +223,7 @@ export PYGPI_PYTHON_BIN="{python_bin}"
 # Cocotb environment
 export COCOTB_RESOLVE_X=VALUE_ERROR
 export ZAMLET_TEST_SEED="${{ZAMLET_TEST_SEED:-0}}"
+{config_export}
 
 # Run simulation
 if [ "$VERILATOR_TRACE" = "1" ]; then
@@ -255,6 +273,11 @@ except Exception as e:
         python_libdir = cocotb_tc.python_libdir,
         python_bin = cocotb_tc.python_bin,
         binary_path = binary.short_path,
+        config_export = (
+            'export ZAMLET_TEST_CONFIG_FILENAME="{config_path}"'.format(
+                config_path = config_file.short_path,
+            ) if config_file else ""
+        ),
     )
 
     ctx.actions.write(
@@ -267,6 +290,8 @@ except Exception as e:
     binary_runfiles = ctx.attr.binary[DefaultInfo].default_runfiles
     runfiles = binary_runfiles.merge(all_runfiles)
     runfiles = runfiles.merge(ctx.runfiles(files = [binary]))
+    if config_file:
+        runfiles = runfiles.merge(ctx.runfiles(files = [config_file]))
 
     return [
         DefaultInfo(
@@ -283,6 +308,7 @@ python_runner = rule(
             executable = True,
             cfg = "target",
         ),
+        "config": attr.label(allow_files = [".json"]),
         "py_deps": attr.label_list(),
     },
     executable = True,
@@ -293,7 +319,7 @@ python_runner = rule(
 # Convenience macros
 # -----------------------------------------------------------------------------
 
-def cocotb_binary(name, verilog_files, module_top):
+def cocotb_binary(name, verilog_files, module_top, public_flat_rw = True, trace = True):
     """Create a cocotb simulation binary.
 
     Args:
@@ -305,6 +331,8 @@ def cocotb_binary(name, verilog_files, module_top):
         name = name + "_verilated",
         srcs = verilog_files,
         module_top = module_top,
+        public_flat_rw = public_flat_rw,
+        trace = trace,
         deps = ["@nix_verilator//:verilator_includes"],
     )
 
@@ -326,7 +354,7 @@ def cocotb_binary(name, verilog_files, module_top):
     )
 
 
-def cocotb_test(name, binary, test_module, toplevel, py_deps = [], env = {}, data = []):
+def cocotb_test(name, binary, test_module, toplevel, py_deps = [], env = {}, data = [], config = None, timeout = None, trace = True):
     """Create a cocotb test.
 
     Args:
@@ -337,10 +365,14 @@ def cocotb_test(name, binary, test_module, toplevel, py_deps = [], env = {}, dat
         py_deps: Python library dependencies
         env: Additional environment variables
         data: Additional data files
+        config: Optional JSON config label exposed as ZAMLET_TEST_CONFIG_FILENAME
+        timeout: Optional Bazel test timeout class
+        trace: Whether to ask the simulator to write a VCD trace
     """
     python_runner(
         name = name + "_runner",
         binary = binary,
+        config = config,
         py_deps = py_deps,
     )
 
@@ -348,17 +380,20 @@ def cocotb_test(name, binary, test_module, toplevel, py_deps = [], env = {}, dat
         "COCOTB_TEST_MODULES": test_module,
         "TOPLEVEL": toplevel,
         "TOPLEVEL_LANG": "verilog",
-        "VERILATOR_TRACE": "1",
+        "VERILATOR_TRACE": "1" if trace else "0",
     }
     merged_env = dict(default_env)
     merged_env.update(env)
 
-    native.sh_test(
-        name = name,
-        srcs = [name + "_runner"],
-        env = merged_env,
-        data = data,
-    )
+    test_kwargs = {
+        "name": name,
+        "srcs": [name + "_runner"],
+        "env": merged_env,
+        "data": data + ([config] if config else []),
+    }
+    if timeout:
+        test_kwargs["timeout"] = timeout
+    native.sh_test(**test_kwargs)
 
 
 _DEFAULT_CONFIG = "//configs:zamlet_default.json"
@@ -394,7 +429,10 @@ def chisel_module_tests(
         test_modules,
         configs = None,
         py_deps = None,
-        target_base = None):
+        target_base = None,
+        timeout = None,
+        public_flat_rw = True,
+        trace = True):
     """Emit Verilog generation + cocotb tests for one Chisel module.
 
     For each (tag, label) in `configs`, emits a chisel_verilog genrule and a
@@ -416,6 +454,9 @@ def chisel_module_tests(
         py_deps: extra py_library deps beyond //python/zamlet:zamlet.
         target_base: optional prefix for generated Bazel targets. Defaults to
             lowercased `toplevel`.
+        timeout: optional Bazel test timeout class for generated tests.
+        public_flat_rw: whether generated Verilator models expose internals.
+        trace: whether generated tests should build and run with VCD tracing.
     """
     configs = configs or [("default", _DEFAULT_CONFIG)]
     base = target_base or toplevel.lower()
@@ -442,9 +483,9 @@ def chisel_module_tests(
             name = cfg_base + "_exe",
             verilog_files = [":" + cfg_base + "_verilog"],
             module_top = toplevel,
+            public_flat_rw = public_flat_rw,
+            trace = trace,
         )
-
-        cfg_path = cfg_label[2:].replace(":", "/")
 
         for mod, filt, sfx in entries:
             if include_suffix:
@@ -452,7 +493,7 @@ def chisel_module_tests(
             else:
                 test_name = "test_" + cfg_base
 
-            env = {"ZAMLET_TEST_CONFIG_FILENAME": cfg_path}
+            env = {}
             if filt:
                 env["COCOTB_TEST_FILTER"] = filt
 
@@ -463,7 +504,9 @@ def chisel_module_tests(
                 toplevel = toplevel,
                 py_deps = [":" + base + "_py"],
                 env = env,
-                data = [cfg_label],
+                config = cfg_label,
+                timeout = timeout,
+                trace = trace,
             )
             test_targets.append(":" + test_name)
 
@@ -475,7 +518,10 @@ def chisel_module_tests_no_config(
         srcs,
         test_modules,
         generator_args = None,
-        py_deps = None):
+        py_deps = None,
+        timeout = None,
+        public_flat_rw = True,
+        trace = True):
     """Emit Verilog generation + cocotb tests for a configless Chisel module."""
     base = toplevel.lower()
     generator_args = generator_args or []
@@ -495,6 +541,8 @@ def chisel_module_tests_no_config(
         name = base + "_exe",
         verilog_files = [":" + base + "_verilog"],
         module_top = toplevel,
+        public_flat_rw = public_flat_rw,
+        trace = trace,
     )
 
     entries = [_normalize_entry(e) for e in test_modules]
@@ -518,6 +566,8 @@ def chisel_module_tests_no_config(
             toplevel = toplevel,
             py_deps = [":" + base + "_py"],
             env = env,
+            timeout = timeout,
+            trace = trace,
         )
         test_targets.append(":" + test_name)
 

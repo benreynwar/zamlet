@@ -37,7 +37,10 @@ class JamletErrors extends Bundle {
  *
  * Contains routers, SRAM, register file slice, and witem processing logic.
  */
-class Jamlet(params: ZamletParams, resetBudget: ResetPipelineBudget) extends Module {
+class Jamlet(
+    params: ZamletParams,
+    resetBudget: ResetPipelineBudget,
+    useHardMacros: Boolean = false) extends Module {
   val io = IO(new Bundle {
     // Position
     val thisX = Input(params.xPos())
@@ -90,13 +93,27 @@ class Jamlet(params: ZamletParams, resetBudget: ResetPipelineBudget) extends Mod
     Module(new CombinedNetworkNode(params, childResetBudget))
   }
 
-  val sram = Module(new Sram(params))
+  val sramIo = Module(new SramWrapper(params, useHardMacros)).io
   val rfSlice: RfSlice = withReset(resetPipeline.childReset) {
     Module(new RfSlice(params, childResetBudget))
   }
   val jte = Module(new Jte(params))
-  val jce = Module(new Jce(params))
-  val localExec = Module(new LocalExec(params))
+  val jceIo = if (useHardMacros) {
+    val jce = Module(new JceHardMacro(params))
+    jce.clock := clock
+    jce.reset := resetPipeline.localReset.asBool
+    jce.io
+  } else {
+    Module(new Jce(params)).io
+  }
+  val localExecIo = if (useHardMacros) {
+    val localExec = Module(new LocalExecHardMacro(params))
+    localExec.clock := clock
+    localExec.reset := resetPipeline.localReset.asBool
+    localExec.io
+  } else {
+    Module(new LocalExec(params)).io
+  }
   val bArbiter = Module(new PacketArbiter(params, 2))  // JTE Ch1 + JCE
   // val alu = Module(new ALU(params))
 
@@ -164,7 +181,7 @@ class Jamlet(params: ZamletParams, resetBudget: ResetPipelineBudget) extends Mod
   jte.io.channel0In <> jteChannel0In
   jteChannel0In <> aHoRouter.io.out(1)
 
-  jce.io.packetIn <> aHoRouter.io.out(0)
+  jceIo.packetIn <> aHoRouter.io.out(0)
 
   // Ch0 local input: JTE responses/acks.
   combinedNetworkNode.io.aHi <> jte.io.channel0Out
@@ -176,14 +193,14 @@ class Jamlet(params: ZamletParams, resetBudget: ResetPipelineBudget) extends Mod
   jte.io.channel1In <> combinedNetworkNode.io.bHo
 
   // --- SRAM connections ---
-  sram.io.jteReq <> jte.io.sramReq
-  jte.io.sramResp <> sram.io.jteResp
-  sram.io.jceReadReq <> jce.io.sramReadReq
-  jce.io.sramReadResp <> sram.io.jceReadResp
-  sram.io.jceWriteReq <> jce.io.sramWriteReq
-  jce.io.sramWriteResp <> sram.io.jceWriteResp
-  sram.io.localReq <> localExec.io.sramReq
-  localExec.io.sramResp <> sram.io.localResp
+  sramIo.jteReq <> jte.io.sramReq
+  jte.io.sramResp <> sramIo.jteResp
+  sramIo.jceReadReq <> jceIo.sramReadReq
+  jceIo.sramReadResp <> sramIo.jceReadResp
+  sramIo.jceWriteReq <> jceIo.sramWriteReq
+  jceIo.sramWriteResp <> sramIo.jceWriteResp
+  sramIo.localReq <> localExecIo.sramReq
+  localExecIo.sramResp <> sramIo.localResp
 
   // --- RfSlice connections ---
   rfSlice.io.maskReq.valid := jte.io.rfMaskReq.valid
@@ -217,29 +234,29 @@ class Jamlet(params: ZamletParams, resetBudget: ResetPipelineBudget) extends Mod
   rfSlice.io.dataResp.ready := jte.io.rfDataResp.ready
 
   // LocalExec connections
-  localExec.io.laneIndex := io.laneIndices(io.immediateKinstr.bits.ordering.laneOrder.asUInt)
-  localExec.io.kinstrIn := io.immediateKinstr
-  rfSlice.io.localExecReadAReq <> localExec.io.rfReadAReq
-  localExec.io.rfReadAResp <> rfSlice.io.localExecReadAResp
-  rfSlice.io.localExecReadBReq <> localExec.io.rfReadBReq
-  localExec.io.rfReadBResp <> rfSlice.io.localExecReadBResp
-  rfSlice.io.localExecReadMaskReq <> localExec.io.rfReadMaskReq
-  localExec.io.rfReadMaskResp <> rfSlice.io.localExecReadMaskResp
-  rfSlice.io.localExecWriteReq <> localExec.io.rfWriteReq
+  localExecIo.laneIndex := io.laneIndices(io.immediateKinstr.bits.ordering.laneOrder.asUInt)
+  localExecIo.kinstrIn := io.immediateKinstr
+  rfSlice.io.localExecReadAReq <> localExecIo.rfReadAReq
+  localExecIo.rfReadAResp <> rfSlice.io.localExecReadAResp
+  rfSlice.io.localExecReadBReq <> localExecIo.rfReadBReq
+  localExecIo.rfReadBResp <> rfSlice.io.localExecReadBResp
+  rfSlice.io.localExecReadMaskReq <> localExecIo.rfReadMaskReq
+  localExecIo.rfReadMaskResp <> rfSlice.io.localExecReadMaskResp
+  rfSlice.io.localExecWriteReq <> localExecIo.rfWriteReq
 
   // B channel arbiter inputs: JTE Ch1 requests + JCE
   val jteChannel1Out = Module(new INetworkWordToNetworkWord(params))
   jteChannel1Out.io.in <> jte.io.channel1Out
   bArbiter.io.in(0) <> jteChannel1Out.io.out
-  bArbiter.io.in(1) <> jce.io.packetOut
+  bArbiter.io.in(1) <> jceIo.packetOut
 
   // JCE connections
-  jce.io.memletX := io.memletX
-  jce.io.memletY := io.memletY
-  jce.io.thisX := io.thisX
-  jce.io.thisY := io.thisY
-  jce.io.op.valid := io.sendCacheLine.valid
-  jce.io.op.bits.slot := io.sendCacheLine.bits.slot
+  jceIo.memletX := io.memletX
+  jceIo.memletY := io.memletY
+  jceIo.thisX := io.thisX
+  jceIo.thisY := io.thisY
+  jceIo.op.valid := io.sendCacheLine.valid
+  jceIo.op.bits.slot := io.sendCacheLine.bits.slot
 
   // --- ALU connections ---
   // alu.io.dispatch := io.dispatch  // for immediate ALU ops
@@ -257,8 +274,8 @@ class Jamlet(params: ZamletParams, resetBudget: ResetPipelineBudget) extends Mod
   jte.io.inputResp <> io.jteInputResp
   io.transferComplete := jte.io.transferComplete
   io.errors.jte := jte.io.errors
-  io.errors.jce := jce.io.errors
-  io.errors.localExec := localExec.io.errors
+  io.errors.jce := jceIo.errors
+  io.errors.localExec := localExecIo.errors
   io.errors.aHoRouter := aHoRouter.io.errors
   io.tlbReq <> jte.io.tlbReq
   jte.io.tlbResp <> io.tlbResp
@@ -276,7 +293,7 @@ class Jamlet(params: ZamletParams, resetBudget: ResetPipelineBudget) extends Mod
   // Temporary: tie off non-network outputs
   // ============================================================
 
-  io.cacheResponse := jce.io.rxDone
+  io.cacheResponse := jceIo.rxDone
   }
 }
 
@@ -301,4 +318,29 @@ object JamletMain extends App {
   val outputDir = args(0)
   val configFile = args(1)
   JamletGenerator.generate(outputDir, Seq(configFile))
+}
+
+object JamletHardMacroGenerator extends zamlet.ModuleGenerator {
+  override def makeModule(args: Seq[String]): Module = {
+    if (args.length < 1) {
+      println("Usage: <command> <outputDir> Jamlet <jamletParamsFileName>")
+      null
+    } else {
+      val params = ZamletParams.fromFile(args(0))
+      new Jamlet(
+        params,
+        ResetPipelineBudget(params.resetPipelineDepth),
+        useHardMacros = true)
+    }
+  }
+}
+
+object JamletHardMacroMain extends App {
+  if (args.length < 2) {
+    println("Usage: <outputDir> <configFile>")
+    System.exit(1)
+  }
+  val outputDir = args(0)
+  val configFile = args(1)
+  JamletHardMacroGenerator.generate(outputDir, Seq(configFile))
 }
