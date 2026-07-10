@@ -12,6 +12,12 @@ librelane_synth_config(
     synth_autoname = True,
 )
 
+librelane_synth_config(
+    name = "synth_mxu_preserve_cell",
+    synth_autoname = True,
+    synth_keep_hierarchy_modules = ["JamletMxuCell"],
+)
+
 ZAMLET_CONFIG = "//configs:zamlet_default.json"
 JAMLET_PKG = "//src/main/scala/zamlet/jamlet"
 
@@ -142,7 +148,7 @@ librelane_classic_flow(
     pdk = ":sky130hd",
     clock_period = "20.0",
     core_utilization = "40",
-    synth_config = ":synth_autoname",
+    synth_config = ":synth_mxu_preserve_cell",
 )
 
 chisel_verilog_no_config(
@@ -158,13 +164,13 @@ librelane_classic_flow(
     pdk = ":sky130hd",
     clock_period = "20.0",
     core_utilization = "40",
-    synth_config = ":synth_autoname",
+    synth_config = ":synth_mxu_preserve_cell",
 )
 
 chisel_verilog_no_config(
     name = "JamletMxuGrid4x4",
     generator = JAMLET_PKG + ":jamletmxugrid",
-    extra_args = ["4"],
+    extra_args = ["4", "true"],
 )
 
 librelane_classic_flow(
@@ -174,7 +180,8 @@ librelane_classic_flow(
     pdk = ":sky130hd",
     clock_period = "20.0",
     core_utilization = "40",
-    synth_config = ":synth_autoname",
+    synth_config = ":synth_mxu_preserve_cell",
+    design_repair_max_wire_length = "150",
 )
 
 chisel_verilog_no_config(

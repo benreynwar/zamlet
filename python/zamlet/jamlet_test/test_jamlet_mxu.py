@@ -1,3 +1,4 @@
+import json
 import random
 
 import cocotb
@@ -15,6 +16,14 @@ INT8_MIN = -128
 INT8_MAX = 127
 UINT8_MASK = (1 << 8) - 1
 UINT32_MASK = (1 << 32) - 1
+
+
+TEST_PARAMS = test_utils.get_test_params()
+with open(TEST_PARAMS["params_file"]) as f:
+    CONFIG = json.load(f)
+
+PRODUCT_LATENCY = int(CONFIG["registerProduct"])
+CONTROL_INPUT_LATENCY = 2
 
 
 class CycleDriver:
@@ -128,16 +137,12 @@ async def load_storage(
     a_store: list[list[list[list[int]]]],
     b_store: list[list[list[list[int]]]],
 ) -> None:
-    load_driver.request(MXU_N)
     for local_row in reversed(range(MXU_N)):
         a_lanes = [[a_store[br][bc][local_row] for bc in range(GRID_N)] for br in range(GRID_N)]
         b_lanes = [[b_store[br][bc][local_row] for bc in range(GRID_N)] for br in range(GRID_N)]
         set_block_lanes(dut, "aStoreNorthIn", a_lanes)
         set_block_lanes(dut, "bStoreNorthIn", b_lanes)
         await RisingEdge(dut.clock)
-    zeros = [[[0 for _ in range(MXU_N)] for _ in range(GRID_N)] for _ in range(GRID_N)]
-    set_block_lanes(dut, "aStoreNorthIn", zeros)
-    set_block_lanes(dut, "bStoreNorthIn", zeros)
 
 
 async def wait_cycles(dut: HierarchyObject, cycles: int) -> None:
@@ -165,26 +170,28 @@ async def matrix_multiply(
     a: list[list[int]],
     b: list[list[int]],
 ) -> None:
+
+    # Drive the data in
+    load_driver.request(MXU_N)
+    await wait_cycles(dut, CONTROL_INPUT_LATENCY)
     a_store, b_store = make_initial_stores(a, b)
-    await load_storage(dut, load_driver, a_store, b_store)
+    cocotb.start_soon(load_storage(dut, load_driver, a_store, b_store))
 
-    dut.io_westLoop.value = 1
-    dut.io_northLoop.value = 1
-
+    await wait_cycles(dut, MXU_N - CONTROL_INPUT_LATENCY)
     dut.io_initialize.value = 1
     await RisingEdge(dut.clock)
+    step_driver.request(N)
     dut.io_initialize.value = 0
 
-    step_driver.request(N)
-    dump_driver.request(1)
-    await wait_cycles(dut, N)
+    await wait_cycles(dut, N + PRODUCT_LATENCY)
 
     dut.io_storeAccumulator.value = 1
     await RisingEdge(dut.clock)
     dut.io_storeAccumulator.value = 0
-
     dumped = [[0 for _ in range(N)] for _ in range(N)]
     dump_driver.request(MXU_N)
+
+    await wait_cycles(dut, CONTROL_INPUT_LATENCY)
     for local_col in range(MXU_N):
         await ReadOnly()
         for row, col, value in sample_c_west(dut, local_col):
@@ -202,8 +209,7 @@ def random_matrix(rng: random.Random) -> list[list[int]]:
 
 @cocotb.test()
 async def test_4x4_matrix_multiply_on_2x2_mxu_grid(dut: HierarchyObject) -> None:
-    params = test_utils.get_test_params()
-    rng = random.Random(params["seed"])
+    rng = random.Random(TEST_PARAMS["seed"])
     await reset_dut(dut)
     load_driver = CycleDriver(dut, "io_load")
     step_driver = CycleDriver(dut, "io_step")
@@ -211,6 +217,9 @@ async def test_4x4_matrix_multiply_on_2x2_mxu_grid(dut: HierarchyObject) -> None
     cocotb.start_soon(load_driver.run())
     cocotb.start_soon(step_driver.run())
     cocotb.start_soon(dump_driver.run())
+    dut.io_westLoop.value = 1
+    dut.io_northLoop.value = 1
+
     await RisingEdge(dut.clock)
 
     tasks = []

@@ -323,12 +323,12 @@ SIGNOFF_ATTRS = {
         default = [],
     ),
     "max_slew_violation_corners": attr.string_list(
-        doc = "IPVT corners for max slew violation checking (default: no corners checked)",
-        default = [""],
+        doc = "IPVT corners for max slew violation checking",
+        default = ["*"],
     ),
     "max_cap_violation_corners": attr.string_list(
-        doc = "IPVT corners for max cap violation checking (default: no corners checked)",
-        default = [""],
+        doc = "IPVT corners for max cap violation checking",
+        default = ["*"],
     ),
 }
 
@@ -389,8 +389,8 @@ SIGNOFF_DEFAULTS = {
     "error_on_klayout_drc": True,
     "setup_violation_corners": [],
     "hold_violation_corners": [],
-    "max_slew_violation_corners": [""],
-    "max_cap_violation_corners": [""],
+    "max_slew_violation_corners": ["*"],
+    "max_cap_violation_corners": ["*"],
 }
 
 

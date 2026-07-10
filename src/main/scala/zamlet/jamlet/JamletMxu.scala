@@ -24,22 +24,30 @@ class JamletMxuCellIO extends Bundle {
   val dump = Input(Bool())
 }
 
-class JamletMxuCell extends Module {
+class JamletMxuCell(registerProduct: Boolean = false) extends Module {
   val io = IO(new JamletMxuCellIO)
 
-  val aStore = RegEnable(io.aStoreIn, io.load)
-  val bStore = RegEnable(io.bStoreIn, io.load)
+  val initialize = RegNext(io.initialize, false.B)
+  val storeAccumulator = RegNext(io.storeAccumulator, false.B)
+  val step = RegNext(io.step, false.B)
+  val load = RegNext(io.load, false.B)
+  val dump = RegNext(io.dump, false.B)
 
-  val a = RegEnable(Mux(io.initialize, aStore, io.aIn), io.initialize || io.step)
-  val b = RegEnable(Mux(io.initialize, bStore, io.bIn), io.initialize || io.step)
+  val aStore = RegEnable(io.aStoreIn, load)
+  val bStore = RegEnable(io.bStoreIn, load)
+
+  val a = RegEnable(Mux(initialize, aStore, io.aIn), initialize || step)
+  val b = RegEnable(Mux(initialize, bStore, io.bIn), initialize || step)
 
   val product = (a.asSInt * b.asSInt).asUInt
-  val productExtended = Cat(Fill(16, product(15)), product)
+  val productExtendedRaw = Cat(Fill(16, product(15)), product)
+  val productExtended = if (registerProduct) RegEnable(productExtendedRaw, step) else productExtendedRaw
+  val accumulateStep = if (registerProduct) RegNext(step, false.B) else step
   val cNext = Wire(UInt(32.W))
-  val c = RegEnable(cNext, io.step || io.storeAccumulator)
-  cNext := Mux(io.storeAccumulator, Mux(io.step, productExtended, 0.U), (c + productExtended)(31, 0))
+  val c = RegEnable(cNext, accumulateStep || storeAccumulator)
+  cNext := Mux(storeAccumulator, Mux(accumulateStep, productExtended, 0.U), (c + productExtended)(31, 0))
 
-  val cStore = RegEnable(Mux(io.storeAccumulator, c, io.cShiftIn), io.storeAccumulator || io.dump)
+  val cStore = RegEnable(Mux(storeAccumulator, c, io.cShiftIn), storeAccumulator || dump)
 
   io.aOut := a
   io.aStoreOut := aStore
@@ -71,10 +79,16 @@ class JamletMxuGridIO(n: Int) extends Bundle {
   val dump = Input(Bool())
 }
 
-class JamletMxuGrid(n: Int = 4) extends Module {
+class JamletMxuGrid(n: Int = 4, registerProduct: Boolean = false) extends Module {
   val io = IO(new JamletMxuGridIO(n))
 
-  val cells = Seq.tabulate(n, n) { (_, _) => Module(new JamletMxuCell) }
+  val initialize = RegNext(io.initialize, false.B)
+  val storeAccumulator = RegNext(io.storeAccumulator, false.B)
+  val step = RegNext(io.step, false.B)
+  val load = RegNext(io.load, false.B)
+  val dump = RegNext(io.dump, false.B)
+
+  val cells = Seq.tabulate(n, n) { (_, _) => Module(new JamletMxuCell(registerProduct)) }
 
   for (row <- 0 until n) {
     for (col <- 0 until n) {
@@ -86,11 +100,11 @@ class JamletMxuGrid(n: Int = 4) extends Module {
       cell.io.bStoreIn := (if (row == 0) io.bStoreNorthIn(col) else cells(row - 1)(col).io.bStoreOut)
       cell.io.cShiftIn := (if (col == n - 1) io.cEastIn(row) else cells(row)(col + 1).io.cShiftOut)
 
-      cell.io.initialize := io.initialize
-      cell.io.storeAccumulator := io.storeAccumulator
-      cell.io.step := io.step
-      cell.io.load := io.load
-      cell.io.dump := io.dump
+      cell.io.initialize := initialize
+      cell.io.storeAccumulator := storeAccumulator
+      cell.io.step := step
+      cell.io.load := load
+      cell.io.dump := dump
     }
 
     io.aEastOut(row) := cells(row)(n - 1).io.aOut
@@ -134,7 +148,8 @@ class JamletMxuIO(n: Int) extends Bundle {
 class JamletMxu(
     n: Int = 8,
     hasEwLoop: Boolean = true,
-    hasNsLoop: Boolean = true) extends Module {
+    hasNsLoop: Boolean = true,
+    registerProduct: Boolean = false) extends Module {
   require(n == 2 || n == 4 || n == 8)
   val io = IO(new JamletMxuIO(n))
 
@@ -155,7 +170,7 @@ class JamletMxu(
   }
 
   if (n <= 4) {
-    val grid = Module(new JamletMxuGrid(n))
+    val grid = Module(new JamletMxuGrid(n, registerProduct))
     connectControls(grid)
 
     for (row <- 0 until n) {
@@ -174,10 +189,10 @@ class JamletMxu(
       io.bStoreSouthOut(col) := grid.io.bStoreSouthOut(col)
     }
   } else {
-    val nw = Module(new JamletMxuGrid(4))
-    val ne = Module(new JamletMxuGrid(4))
-    val sw = Module(new JamletMxuGrid(4))
-    val se = Module(new JamletMxuGrid(4))
+    val nw = Module(new JamletMxuGrid(4, registerProduct))
+    val ne = Module(new JamletMxuGrid(4, registerProduct))
+    val sw = Module(new JamletMxuGrid(4, registerProduct))
+    val se = Module(new JamletMxuGrid(4, registerProduct))
     val grids = Seq(nw, ne, sw, se)
     grids.foreach(connectControls)
 
@@ -248,7 +263,11 @@ class JamletMxuTestGridIO(gridRows: Int, gridCols: Int, mxuN: Int) extends Bundl
   val dump = Input(Bool())
 }
 
-class JamletMxuTestGrid(gridRows: Int = 2, gridCols: Int = 2, mxuN: Int = 4) extends Module {
+class JamletMxuTestGrid(
+    gridRows: Int = 2,
+    gridCols: Int = 2,
+    mxuN: Int = 4,
+    registerProduct: Boolean = false) extends Module {
   require(gridRows > 0 && isPow2(gridRows))
   require(gridCols > 0 && isPow2(gridCols))
   val io = IO(new JamletMxuTestGridIO(gridRows, gridCols, mxuN))
@@ -270,7 +289,8 @@ class JamletMxuTestGrid(gridRows: Int = 2, gridCols: Int = 2, mxuN: Int = 4) ext
     Module(new JamletMxu(
       n = mxuN,
       hasEwLoop = true,
-      hasNsLoop = true))
+      hasNsLoop = true,
+      registerProduct = registerProduct))
   }
 
   for (physicalRow <- 0 until gridRows) {
@@ -334,14 +354,16 @@ object JamletMxuGenerator extends zamlet.ModuleGenerator {
     new JamletMxu(
       n = args.headOption.map(_.toInt).getOrElse(8),
       hasEwLoop = args.drop(1).headOption.forall(_.toBoolean),
-      hasNsLoop = args.drop(2).headOption.forall(_.toBoolean))
+      hasNsLoop = args.drop(2).headOption.forall(_.toBoolean),
+      registerProduct = args.drop(3).headOption.exists(_.toBoolean))
   }
 }
 
 object JamletMxuGridGenerator extends zamlet.ModuleGenerator {
   override def makeModule(args: Seq[String]): Module = {
     new JamletMxuGrid(
-      n = args.headOption.map(_.toInt).getOrElse(4))
+      n = args.headOption.map(_.toInt).getOrElse(4),
+      registerProduct = args.drop(1).headOption.exists(_.toBoolean))
   }
 }
 
@@ -350,13 +372,15 @@ object JamletMxuTestGridGenerator extends zamlet.ModuleGenerator {
     new JamletMxuTestGrid(
       gridRows = args.headOption.map(_.toInt).getOrElse(2),
       gridCols = args.drop(1).headOption.map(_.toInt).getOrElse(2),
-      mxuN = args.drop(2).headOption.map(_.toInt).getOrElse(4))
+      mxuN = args.drop(2).headOption.map(_.toInt).getOrElse(4),
+      registerProduct = args.drop(3).headOption.exists(_.toBoolean))
   }
 }
 
 object JamletMxuCellGenerator extends zamlet.ModuleGenerator {
   override def makeModule(args: Seq[String]): Module = {
-    new JamletMxuCell
+    new JamletMxuCell(
+      registerProduct = args.headOption.exists(_.toBoolean))
   }
 }
 

@@ -488,7 +488,8 @@ def chisel_module_tests_no_config(
         srcs,
         test_modules,
         generator_args = None,
-        py_deps = None):
+        py_deps = None,
+        config = None):
     """Emit Verilog generation + cocotb tests for a configless Chisel module."""
     base = toplevel.lower()
     generator_args = generator_args or []
@@ -531,6 +532,7 @@ def chisel_module_tests_no_config(
             toplevel = toplevel,
             py_deps = [":" + base + "_py"],
             env = env,
+            config = config,
         )
         test_targets.append(":" + test_name)
 

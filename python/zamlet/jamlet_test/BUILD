@@ -1,4 +1,5 @@
 load("//bazel:cocotb_rules.bzl", "chisel_module_tests", "chisel_module_tests_no_config")
+load("//bazel:defs.bzl", "json_file")
 
 chisel_module_tests(
     generator = "//src/main/scala/zamlet/jamlet:indextocoordswithreg",
@@ -55,11 +56,22 @@ chisel_module_tests(
     test_modules = ["zamlet.jamlet_test.test_jamlet_alu"],
 )
 
+json_file(
+    name = "jamlet_mxu_test_grid_params",
+    data = {
+        "gridRows": 2,
+        "gridCols": 2,
+        "mxuN": 2,
+        "registerProduct": True,
+    },
+)
+
 chisel_module_tests_no_config(
     generator = "//src/main/scala/zamlet/jamlet:jamletmxutestgrid",
     toplevel = "JamletMxuTestGrid",
     srcs = ["test_jamlet_mxu.py"],
-    generator_args = ["2", "2", "2"],
+    generator_args = ["2", "2", "2", "true"],
+    config = ":jamlet_mxu_test_grid_params",
     test_modules = ["zamlet.jamlet_test.test_jamlet_mxu"],
 )
 

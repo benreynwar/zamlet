@@ -56,6 +56,9 @@ def _init_impl(ctx):
             clock_port = ctx.attr.clock_port,
             clock_period = ctx.attr.clock_period,
             pdk_info = pdk_info,
+            default_corner = ctx.attr.default_corner,
+            max_transition_constraint = ctx.attr.max_transition_constraint,
+            max_capacitance_constraint = ctx.attr.max_capacitance_constraint,
             verilog_files = depset(ctx.files.verilog_files),
             macros = macros,
             pnr_sdc_file = pnr_sdc,
@@ -330,6 +333,18 @@ _INIT_ATTRS.update({
     "signoff_config": attr.label(
         doc = "Optional signoff configuration (librelane_signoff_config target)",
         providers = [SignoffConfig],
+    ),
+    "default_corner": attr.string(
+        doc = "Override DEFAULT_CORNER from the PDK config; empty uses the PDK value",
+        default = "",
+    ),
+    "max_transition_constraint": attr.string(
+        doc = "Override MAX_TRANSITION_CONSTRAINT from the PDK config; empty uses the PDK value",
+        default = "",
+    ),
+    "max_capacitance_constraint": attr.string(
+        doc = "Override MAX_CAPACITANCE_CONSTRAINT from the PDK config; empty uses the PDK value",
+        default = "",
     ),
 })
 

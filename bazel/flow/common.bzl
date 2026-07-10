@@ -135,7 +135,7 @@ def create_librelane_config(input_info, state_info, required_keys):
         "TECH_LEFS": {corner: f.path for corner, f in pdk.tech_lefs.items()},
 
         # PDK config - timing
-        "DEFAULT_CORNER": pdk.default_corner,
+        "DEFAULT_CORNER": input_info.default_corner if input_info.default_corner else pdk.default_corner,
         "STA_CORNERS": pdk.sta_corners,
 
         # PDK config - floorplanning
@@ -187,9 +187,13 @@ def create_librelane_config(input_info, state_info, required_keys):
     }
 
     # Add optional fields if present
-    if pdk.max_transition_constraint:
+    if input_info.max_transition_constraint:
+        config["MAX_TRANSITION_CONSTRAINT"] = float(input_info.max_transition_constraint)
+    elif pdk.max_transition_constraint:
         config["MAX_TRANSITION_CONSTRAINT"] = pdk.max_transition_constraint
-    if pdk.max_capacitance_constraint:
+    if input_info.max_capacitance_constraint:
+        config["MAX_CAPACITANCE_CONSTRAINT"] = float(input_info.max_capacitance_constraint)
+    elif pdk.max_capacitance_constraint:
         config["MAX_CAPACITANCE_CONSTRAINT"] = pdk.max_capacitance_constraint
     if pdk.vdd_pin_voltage:
         config["VDD_PIN_VOLTAGE"] = pdk.vdd_pin_voltage
@@ -2300,11 +2304,11 @@ ENTRY_ATTRS = {
         default = [],
     ),
     "max_slew_violation_corners": attr.string_list(
-        doc = "IPVT corners for max slew violation checking (default: no corners checked)",
-        default = [""],
+        doc = "IPVT corners for max slew violation checking (empty = use TIMING_VIOLATION_CORNERS)",
+        default = [],
     ),
     "max_cap_violation_corners": attr.string_list(
-        doc = "IPVT corners for max cap violation checking (default: no corners checked)",
-        default = [""],
+        doc = "IPVT corners for max cap violation checking (empty = use TIMING_VIOLATION_CORNERS)",
+        default = [],
     ),
 }

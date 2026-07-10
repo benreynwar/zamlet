@@ -106,8 +106,8 @@ let
     format = "wheel";
 
     src = pkgs.fetchurl {
-      url = "https://files.pythonhosted.org/packages/f9/e6/7dafff9eefdde03eb0f535dfd8f633850efcee10ce11d968217bdbdb934f/pywellen-0.18.1-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl";
-      hash = "sha256-gIO8jq52LWDzN4wcYXzy1d517ZGKb7ADTJJwlJ1tUmA=";
+      url = "https://files.pythonhosted.org/packages/5f/44/05241150719b39c77b398ffbe6cddc32fb9ed5f099029dd89f10845ba09f/pywellen-0.18.1-cp313-cp313-manylinux_2_17_x86_64.manylinux2014_x86_64.whl";
+      hash = "sha256-FTLFv+BwA2w7+GXGQm045jRdDr/TYKVCTaC3+vKa7Pk=";
     };
 
     doCheck = false;

@@ -13,6 +13,9 @@ LibrelaneInput = provider(
 
         # PDK info
         "pdk_info": "PdkInfo provider with full PDK configuration",
+        "default_corner": "Default timing corner override",
+        "max_transition_constraint": "Max transition constraint override in ns",
+        "max_capacitance_constraint": "Max capacitance constraint override in pF",
 
         # Input RTL (before synthesis)
         "verilog_files": "Depset of input verilog File objects",

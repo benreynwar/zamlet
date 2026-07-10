@@ -107,6 +107,13 @@ def librelane_classic_flow(
     def_template = None,
     macro_placement_cfg = None,
     cts_clk_max_wire_length = None,
+    default_corner = "",
+    max_transition_constraint = "",
+    max_capacitance_constraint = "",
+    design_repair_max_wire_length = None,
+    design_repair_max_slew_pct = None,
+    design_repair_max_cap_pct = None,
+    grt_design_repair_max_wire_length = None,
     run_cts = True,
     run_post_cts_resizer_timing = True,
     run_eqy = False,
@@ -167,6 +174,11 @@ def librelane_classic_flow(
         def_template: DEF template file with die area and pin placements (alternative to pin_order_cfg)
         macro_placement_cfg: Macro placement configuration file (instance X Y orientation)
         cts_clk_max_wire_length: Max clock wire length in µm before buffer insertion (0=disabled)
+        default_corner: Override DEFAULT_CORNER from the PDK config
+        max_transition_constraint: Override MAX_TRANSITION_CONSTRAINT from the PDK config
+        max_capacitance_constraint: Override MAX_CAPACITANCE_CONSTRAINT from the PDK config
+        design_repair_max_slew_pct: Override DESIGN_REPAIR_MAX_SLEW_PCT
+        design_repair_max_cap_pct: Override DESIGN_REPAIR_MAX_CAP_PCT
         run_cts: Enable clock tree synthesis (default True)
         run_post_cts_resizer_timing: Enable timing optimization after CTS (default True, ignored if run_cts=False)
         run_eqy: Enable EQY formal equivalence check (default False)
@@ -230,6 +242,14 @@ def librelane_classic_flow(
         pnr_config_kwargs["grt_antenna_repair_jumper_only"] = grt_antenna_repair_jumper_only
     if grt_antenna_repair_diode_only != None:
         pnr_config_kwargs["grt_antenna_repair_diode_only"] = grt_antenna_repair_diode_only
+    if design_repair_max_wire_length != None:
+        pnr_config_kwargs["design_repair_max_wire_length"] = design_repair_max_wire_length
+    if design_repair_max_slew_pct != None:
+        pnr_config_kwargs["design_repair_max_slew_pct"] = design_repair_max_slew_pct
+    if design_repair_max_cap_pct != None:
+        pnr_config_kwargs["design_repair_max_cap_pct"] = design_repair_max_cap_pct
+    if grt_design_repair_max_wire_length != None:
+        pnr_config_kwargs["grt_design_repair_max_wire_length"] = grt_design_repair_max_wire_length
 
     pnr_config_target = None
     if pnr_config_kwargs:
@@ -252,6 +272,9 @@ def librelane_classic_flow(
         signoff_sdc_file = effective_signoff_sdc if effective_signoff_sdc else "//bazel/flow/sdc:base.sdc",
         pnr_config = pnr_config_target,
         synth_config = synth_config,
+        default_corner = default_corner,
+        max_transition_constraint = max_transition_constraint,
+        max_capacitance_constraint = max_capacitance_constraint,
     )
 
     # Common input reference for all steps
