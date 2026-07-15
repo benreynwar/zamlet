@@ -21,9 +21,7 @@ with open(TEST_PARAMS["params_file"]) as f:
 GRID_ROWS = int(CONFIG["gridRows"])
 GRID_COLS = int(CONFIG["gridCols"])
 MXU_N = int(CONFIG["mxuN"])
-N = GRID_ROWS * MXU_N
 assert GRID_ROWS == GRID_COLS
-assert N == GRID_COLS * MXU_N
 
 BC_BUFFER = bool(CONFIG["bcBuffer"])
 PRODUCT_LATENCY = int(BC_BUFFER)
@@ -88,6 +86,33 @@ def set_loop_control(dut: HierarchyObject, name: str, values: list[int]) -> None
         getattr(dut, f"io_{name}_{index}").value = value
 
 
+def edge_controls(size: int) -> list[int]:
+    return [int(index == 0 or index == size - 1) for index in range(size)]
+
+
+def tile_edge_controls(grid_size: int, tile_size: int) -> list[int]:
+    return [
+        int(index % tile_size == 0 or index % tile_size == tile_size - 1)
+        for index in range(grid_size)
+    ]
+
+
+def route_position(index: int, size: int) -> int:
+    assert size % 2 == 0
+    if index % 2 == 0:
+        return index // 2
+    return size - ((index + 1) // 2)
+
+
+def matrix_block_sizes() -> list[int]:
+    size = 2
+    sizes = []
+    while size <= GRID_ROWS:
+        sizes.append(size)
+        size *= 2
+    return sizes
+
+
 def zero_inputs(dut: HierarchyObject) -> None:
     for block_row in range(GRID_ROWS):
         for block_col in range(GRID_COLS):
@@ -105,9 +130,10 @@ def zero_inputs(dut: HierarchyObject) -> None:
 
 
 def matrix_product(a: list[list[int]], b: list[list[int]]) -> list[list[int]]:
+    n = len(a)
     return [
-        [sum(a[row][k] * b[k][col] for k in range(N)) for col in range(N)]
-        for row in range(N)
+        [sum(a[row][k] * b[k][col] for k in range(n)) for col in range(n)]
+        for row in range(n)
     ]
 
 
@@ -120,15 +146,23 @@ def int8_bits(value: int) -> int:
 
 def drive_ab_for_cycle(
     dut: HierarchyObject,
+    tile_block_row: int,
+    tile_block_col: int,
+    matrix_blocks: int,
     a: list[list[int]],
     b: list[list[int]],
     local_cycle: int,
 ) -> None:
-    for block_row in range(GRID_ROWS):
-        for block_col in range(GRID_COLS):
-            shared_block = (block_row + block_col) % GRID_COLS
+    for local_block_row in range(matrix_blocks):
+        for local_block_col in range(matrix_blocks):
+            block_row = tile_block_row + local_block_row
+            block_col = tile_block_col + local_block_col
+            shared_block = (
+                route_position(local_block_row, matrix_blocks)
+                + route_position(local_block_col, matrix_blocks)
+            ) % matrix_blocks
             for local_row in range(MXU_N):
-                row = block_row * MXU_N + local_row
+                row = local_block_row * MXU_N + local_row
                 k = local_cycle - local_row
                 if 0 <= k < MXU_N:
                     col = shared_block * MXU_N + k
@@ -136,7 +170,7 @@ def drive_ab_for_cycle(
                     getattr(dut, signal).value = int8_bits(a[row][col])
 
             for local_col in range(MXU_N):
-                col = block_col * MXU_N + local_col
+                col = local_block_col * MXU_N + local_col
                 k = local_cycle - local_col
                 if 0 <= k < MXU_N:
                     row = shared_block * MXU_N + k
@@ -147,8 +181,8 @@ def drive_ab_for_cycle(
 async def reset_dut(dut: HierarchyObject) -> None:
     cocotb.start_soon(Clock(dut.clock, 2, "ns").start())
     dut.reset.value = 1
-    set_loop_control(dut, "ewLoop", [0 for _ in range(GRID_COLS)])
-    set_loop_control(dut, "nsLoop", [0 for _ in range(GRID_ROWS)])
+    set_loop_control(dut, "ewUseBackward", [0 for _ in range(GRID_COLS)])
+    set_loop_control(dut, "nsUseBackward", [0 for _ in range(GRID_ROWS)])
     zero_inputs(dut)
     await RisingEdge(dut.clock)
     dut.reset.value = 0
@@ -176,49 +210,81 @@ async def matrix_multiply(
     init_driver: ControlWaveDriver,
     step_driver: ControlWaveDriver,
     complete_driver: ControlWaveDriver,
-    a: list[list[int]],
-    b: list[list[int]],
+    matrix_blocks: int,
+    tile_inputs: dict[tuple[int, int], tuple[list[list[int]], list[list[int]]]],
 ) -> None:
 
+    matrix_n = matrix_blocks * MXU_N
     start_cycle = step_driver.cycle
     init_driver.request(MXU_N)
-    step_driver.request(N)
+    step_driver.request(matrix_n)
     for local_cycle in range(2 * MXU_N - 1):
-        drive_ab_for_cycle(dut, a, b, local_cycle)
+        for (tile_block_row, tile_block_col), (a, b) in tile_inputs.items():
+            drive_ab_for_cycle(
+                dut,
+                tile_block_row,
+                tile_block_col,
+                matrix_blocks,
+                a,
+                b,
+                local_cycle,
+            )
         await RisingEdge(dut.clock)
 
-    while step_driver.cycle < start_cycle + N - 1:
+    while step_driver.cycle < start_cycle + matrix_n - 1:
         await RisingEdge(dut.clock)
     complete_driver.request(1)
 
-    dumped = [[0 for _ in range(N)] for _ in range(N)]
-    last_cycle = start_cycle + N + (MXU_N - 1) + PRODUCT_LATENCY + 2 + (2 * (MXU_N - 1)) + 1
+    dumped = {
+        tile: [[0 for _ in range(matrix_n)] for _ in range(matrix_n)]
+        for tile in tile_inputs
+    }
+    last_cycle = start_cycle + matrix_n + (MXU_N - 1) + PRODUCT_LATENCY + 2 + (2 * (MXU_N - 1)) + 1
 
     while step_driver.cycle <= last_cycle:
         await ReadOnly()
-        for block_row in range(GRID_ROWS):
-            for block_col in range(GRID_COLS):
-                for local_row in range(MXU_N):
-                    base_cycle = start_cycle + N + local_row + PRODUCT_LATENCY + 2
-                    offset = step_driver.cycle - base_cycle
-                    if 0 <= offset < 2 * MXU_N:
-                        local_col = offset // 2
-                        upper = offset % 2
-                        value = read_expected_c_half(dut, block_row, block_col, local_row)
-                        row = block_row * MXU_N + local_row
-                        col = block_col * MXU_N + local_col
-                        if upper:
-                            dumped[row][col] |= value << 16
-                        else:
-                            dumped[row][col] |= value
+        for tile_block_row, tile_block_col in tile_inputs:
+            for local_block_row in range(matrix_blocks):
+                for local_block_col in range(matrix_blocks):
+                    block_row = tile_block_row + local_block_row
+                    block_col = tile_block_col + local_block_col
+                    for local_row in range(MXU_N):
+                        base_cycle = start_cycle + matrix_n + local_row + PRODUCT_LATENCY + 2
+                        offset = step_driver.cycle - base_cycle
+                        if 0 <= offset < 2 * MXU_N:
+                            local_col = offset // 2
+                            upper = offset % 2
+                            value = read_expected_c_half(dut, block_row, block_col, local_row)
+                            row = local_block_row * MXU_N + local_row
+                            col = local_block_col * MXU_N + local_col
+                            if upper:
+                                dumped[(tile_block_row, tile_block_col)][row][col] |= value << 16
+                            else:
+                                dumped[(tile_block_row, tile_block_col)][row][col] |= value
         await RisingEdge(dut.clock)
 
-    expected = [[value & UINT32_MASK for value in row] for row in matrix_product(a, b)]
-    assert dumped == expected, f"a={a} b={b} dumped={dumped} expected={expected}"
+    for tile, (a, b) in tile_inputs.items():
+        expected = [[value & UINT32_MASK for value in row] for row in matrix_product(a, b)]
+        assert dumped[tile] == expected, f"tile={tile} a={a} b={b} dumped={dumped[tile]} expected={expected}"
 
 
-def random_matrix(rng: random.Random) -> list[list[int]]:
-    return [[rng.randint(INT8_MIN, INT8_MAX) for _ in range(N)] for _ in range(N)]
+def random_matrix(rng: random.Random, n: int) -> list[list[int]]:
+    return [[rng.randint(INT8_MIN, INT8_MAX) for _ in range(n)] for _ in range(n)]
+
+
+def random_tile_inputs(
+    rng: random.Random,
+    matrix_blocks: int,
+) -> dict[tuple[int, int], tuple[list[list[int]], list[list[int]]]]:
+    matrix_n = matrix_blocks * MXU_N
+    return {
+        (tile_block_row, tile_block_col): (
+            random_matrix(rng, matrix_n),
+            random_matrix(rng, matrix_n),
+        )
+        for tile_block_row in range(0, GRID_ROWS, matrix_blocks)
+        for tile_block_col in range(0, GRID_COLS, matrix_blocks)
+    }
 
 
 @cocotb.test()
@@ -231,24 +297,27 @@ async def test_4x4_matrix_multiply_on_2x2_mxu_grid(dut: HierarchyObject) -> None
     cocotb.start_soon(step_driver.run())
     cocotb.start_soon(complete_driver.run())
     cocotb.start_soon(init_driver.run())
-    set_loop_control(dut, "ewLoop", [1 for _ in range(GRID_COLS)])
-    set_loop_control(dut, "nsLoop", [1 for _ in range(GRID_ROWS)])
 
     await RisingEdge(dut.clock)
 
-    tasks = []
-    for _ in range(4):
-        tasks.append(cocotb.start_soon(
-            matrix_multiply(
-                dut,
-                init_driver,
-                step_driver,
-                complete_driver,
-                random_matrix(rng),
-                random_matrix(rng),
-            )
-        ))
-        await wait_cycles(dut, N)
+    for matrix_blocks in matrix_block_sizes():
+        set_loop_control(dut, "ewUseBackward", tile_edge_controls(GRID_COLS, matrix_blocks))
+        set_loop_control(dut, "nsUseBackward", tile_edge_controls(GRID_ROWS, matrix_blocks))
 
-    for task in tasks:
-        await task
+        tasks = []
+        matrix_n = matrix_blocks * MXU_N
+        for _ in range(4):
+            tasks.append(cocotb.start_soon(
+                matrix_multiply(
+                    dut,
+                    init_driver,
+                    step_driver,
+                    complete_driver,
+                    matrix_blocks,
+                    random_tile_inputs(rng, matrix_blocks),
+                )
+            ))
+            await wait_cycles(dut, matrix_n)
+
+        for task in tasks:
+            await task

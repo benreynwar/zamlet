@@ -56,24 +56,57 @@ chisel_module_tests(
     test_modules = ["zamlet.jamlet_test.test_jamlet_alu"],
 )
 
-json_file(
-    name = "jamlet_mxu_test_grid_params",
-    data = {
+MXU_TEST_GRID_PARAMS = [
+    {
+        "name": "jamlet_mxu_test_grid_2x2_mxu2",
+        "top": "JamletMxuTestGrid2x2Mxu2",
         "gridRows": 2,
         "gridCols": 2,
         "mxuN": 2,
         "bcBuffer": True,
     },
-)
+    {
+        "name": "jamlet_mxu_test_grid_4x4_mxu2",
+        "top": "JamletMxuTestGrid4x4Mxu2",
+        "gridRows": 4,
+        "gridCols": 4,
+        "mxuN": 2,
+        "bcBuffer": True,
+    },
+    {
+        "name": "jamlet_mxu_test_grid_4x4_mxu4",
+        "top": "JamletMxuTestGrid4x4Mxu4",
+        "gridRows": 4,
+        "gridCols": 4,
+        "mxuN": 4,
+        "bcBuffer": True,
+    },
+]
 
-chisel_module_tests_no_config(
+[json_file(
+    name = params["name"] + "_params",
+    data = {
+        "gridRows": params["gridRows"],
+        "gridCols": params["gridCols"],
+        "mxuN": params["mxuN"],
+        "bcBuffer": params["bcBuffer"],
+    },
+) for params in MXU_TEST_GRID_PARAMS]
+
+[chisel_module_tests_no_config(
     generator = "//src/main/scala/zamlet/jamlet:jamletmxutestgrid",
-    toplevel = "JamletMxuTestGrid",
+    toplevel = params["top"],
     srcs = ["test_jamlet_mxu.py"],
-    generator_args = ["2", "2", "2", "true"],
-    config = ":jamlet_mxu_test_grid_params",
+    generator_args = [
+        str(params["gridRows"]),
+        str(params["gridCols"]),
+        str(params["mxuN"]),
+        str(params["bcBuffer"]).lower(),
+        params["top"],
+    ],
+    config = ":" + params["name"] + "_params",
     test_modules = ["zamlet.jamlet_test.test_jamlet_mxu"],
-)
+) for params in MXU_TEST_GRID_PARAMS]
 
 chisel_module_tests(
     generator = "//src/main/scala/zamlet/jamlet:jamlet",
@@ -105,8 +138,7 @@ test_suite(
         ":coordstoindexwithreg_tests",
         ":jteinitiator_tests",
         ":jamletalu_tests",
-        ":jamletmxutestgrid_tests",
         ":jamlet_tests",
         ":localexec_tests",
-    ],
+    ] + [":" + params["top"].lower() + "_tests" for params in MXU_TEST_GRID_PARAMS],
 )

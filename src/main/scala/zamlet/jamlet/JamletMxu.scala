@@ -65,16 +65,18 @@ class JamletMxuGridHardMacro(n: Int = 4) extends ExtModule {
 
 class JamletMxuIO(n: Int) extends Bundle {
   val ewFromMemory = Input(Vec(n, UInt(8.W)))
-  val ewInput = Input(Vec(n, UInt(8.W)))
-  val ewLoopInput = Input(Vec(n, UInt(8.W)))
-  val ewLoop = Input(Bool())
-  val ewOutput = Output(Vec(n, UInt(8.W)))
+  val ewForwardInput = Input(Vec(n, UInt(8.W)))
+  val ewBackwardInput = Input(Vec(n, UInt(8.W)))
+  val ewUseBackward = Input(Bool())
+  val ewForwardOutput = Output(Vec(n, UInt(8.W)))
+  val ewBackwardOutput = Output(Vec(n, UInt(8.W)))
 
   val nsFromMemory = Input(Vec(n, UInt(8.W)))
-  val nsInput = Input(Vec(n, UInt(8.W)))
-  val nsLoopInput = Input(Vec(n, UInt(8.W)))
-  val nsLoop = Input(Bool())
-  val nsOutput = Output(Vec(n, UInt(8.W)))
+  val nsForwardInput = Input(Vec(n, UInt(8.W)))
+  val nsBackwardInput = Input(Vec(n, UInt(8.W)))
+  val nsUseBackward = Input(Bool())
+  val nsForwardOutput = Output(Vec(n, UInt(8.W)))
+  val nsBackwardOutput = Output(Vec(n, UInt(8.W)))
 
   val cToMemory = Output(Vec(n, UInt(16.W)))
   val cToMemoryValid = Output(Vec(n, Bool()))
@@ -110,7 +112,7 @@ class JamletMxu(
   }
 
   def ewTopologyInput(row: Int): UInt = {
-    if (hasEwLoop) Mux(io.ewLoop, io.ewLoopInput(row), io.ewInput(row)) else io.ewInput(row)
+    if (hasEwLoop) Mux(io.ewUseBackward, io.ewBackwardInput(row), io.ewForwardInput(row)) else io.ewForwardInput(row)
   }
 
   def ewSelectedInput(row: Int): UInt = {
@@ -118,7 +120,7 @@ class JamletMxu(
   }
 
   def nsTopologyInput(col: Int): UInt = {
-    if (hasNsLoop) Mux(io.nsLoop, io.nsLoopInput(col), io.nsInput(col)) else io.nsInput(col)
+    if (hasNsLoop) Mux(io.nsUseBackward, io.nsBackwardInput(col), io.nsForwardInput(col)) else io.nsForwardInput(col)
   }
 
   def nsSelectedInput(col: Int): UInt = {
@@ -134,14 +136,16 @@ class JamletMxu(
       grid.io.cValidIn(row) := false.B
       grid.io.stepIn(row) := io.stepIn(row)
       grid.io.completeIn(row) := io.completeIn(row)
-      io.ewOutput(row) := grid.io.aOut(row)
+      io.ewForwardOutput(row) := grid.io.aOut(row)
+      io.ewBackwardOutput(row) := io.ewBackwardInput(row)
       io.cToMemory(row) := grid.io.cOut(row)
       io.cToMemoryValid(row) := grid.io.cValidOut(row)
     }
 
     for (col <- 0 until n) {
       grid.io.bIn(col) := nsSelectedInput(col)
-      io.nsOutput(col) := grid.io.bOut(col)
+      io.nsForwardOutput(col) := grid.io.bOut(col)
+      io.nsBackwardOutput(col) := io.nsBackwardInput(col)
     }
 
     io.error := grid.io.error
@@ -156,8 +160,10 @@ class JamletMxu(
       ne.aIn(row) := nw.aOut(row)
       sw.aIn(row) := ewSelectedInput(row + 4)
       se.aIn(row) := sw.aOut(row)
-      io.ewOutput(row) := ne.aOut(row)
-      io.ewOutput(row + 4) := se.aOut(row)
+      io.ewForwardOutput(row) := ne.aOut(row)
+      io.ewForwardOutput(row + 4) := se.aOut(row)
+      io.ewBackwardOutput(row) := io.ewBackwardInput(row)
+      io.ewBackwardOutput(row + 4) := io.ewBackwardInput(row + 4)
 
       nw.stepIn(row) := io.stepIn(row)
       ne.stepIn(row) := nw.stepOut(row)
@@ -189,8 +195,10 @@ class JamletMxu(
       sw.bIn(col) := nw.bOut(col)
       ne.bIn(col) := nsSelectedInput(col + 4)
       se.bIn(col) := ne.bOut(col)
-      io.nsOutput(col) := sw.bOut(col)
-      io.nsOutput(col + 4) := se.bOut(col)
+      io.nsForwardOutput(col) := sw.bOut(col)
+      io.nsForwardOutput(col + 4) := se.bOut(col)
+      io.nsBackwardOutput(col) := io.nsBackwardInput(col)
+      io.nsBackwardOutput(col + 4) := io.nsBackwardInput(col + 4)
     }
 
     io.error := nw.error || ne.error || sw.error || se.error
