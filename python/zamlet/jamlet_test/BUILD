@@ -56,31 +56,29 @@ chisel_module_tests(
     test_modules = ["zamlet.jamlet_test.test_jamlet_alu"],
 )
 
+MXU_TEST_GRID_SIZES = [
+    (2, 2, 2),
+    (4, 4, 2),
+    (4, 4, 4),
+]
+
+REGISTER_BACKWARD_OUTPUT_OPTIONS = [
+    (False, "noreg", "NoReg"),
+    (True, "reg", "Reg"),
+]
+
 MXU_TEST_GRID_PARAMS = [
     {
-        "name": "jamlet_mxu_test_grid_2x2_mxu2",
-        "top": "JamletMxuTestGrid2x2Mxu2",
-        "gridRows": 2,
-        "gridCols": 2,
-        "mxuN": 2,
+        "name": "jamlet_mxu_test_grid_{}x{}_mxu{}_{}".format(grid_rows, grid_cols, mxu_n, name_suffix),
+        "top": "JamletMxuTestGrid{}x{}Mxu{}{}".format(grid_rows, grid_cols, mxu_n, top_suffix),
+        "gridRows": grid_rows,
+        "gridCols": grid_cols,
+        "mxuN": mxu_n,
         "bcBuffer": True,
-    },
-    {
-        "name": "jamlet_mxu_test_grid_4x4_mxu2",
-        "top": "JamletMxuTestGrid4x4Mxu2",
-        "gridRows": 4,
-        "gridCols": 4,
-        "mxuN": 2,
-        "bcBuffer": True,
-    },
-    {
-        "name": "jamlet_mxu_test_grid_4x4_mxu4",
-        "top": "JamletMxuTestGrid4x4Mxu4",
-        "gridRows": 4,
-        "gridCols": 4,
-        "mxuN": 4,
-        "bcBuffer": True,
-    },
+        "registerBackwardOutput": register_backward_output,
+    }
+    for grid_rows, grid_cols, mxu_n in MXU_TEST_GRID_SIZES
+    for register_backward_output, name_suffix, top_suffix in REGISTER_BACKWARD_OUTPUT_OPTIONS
 ]
 
 [json_file(
@@ -90,6 +88,7 @@ MXU_TEST_GRID_PARAMS = [
         "gridCols": params["gridCols"],
         "mxuN": params["mxuN"],
         "bcBuffer": params["bcBuffer"],
+        "registerBackwardOutput": params["registerBackwardOutput"],
     },
 ) for params in MXU_TEST_GRID_PARAMS]
 
@@ -102,6 +101,7 @@ MXU_TEST_GRID_PARAMS = [
         str(params["gridCols"]),
         str(params["mxuN"]),
         str(params["bcBuffer"]).lower(),
+        str(params["registerBackwardOutput"]).lower(),
         params["top"],
     ],
     config = ":" + params["name"] + "_params",

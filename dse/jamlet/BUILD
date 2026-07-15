@@ -20,6 +20,7 @@ librelane_synth_config(
 
 ZAMLET_CONFIG = "//configs:zamlet_default.json"
 JAMLET_PKG = "//src/main/scala/zamlet/jamlet"
+SYSTOLIC_PKG = "//src/main/scala/zamlet/systolic"
 
 # Jamlet top module with custom pin placement
 chisel_dse_module(
@@ -139,6 +140,7 @@ chisel_dse_module(
 chisel_verilog_no_config(
     name = "JamletMxu",
     generator = JAMLET_PKG + ":jamletmxu",
+    extra_args = ["8", "true", "true", "true", "true"],
 )
 
 librelane_classic_flow(
@@ -148,12 +150,33 @@ librelane_classic_flow(
     pdk = ":sky130hd",
     clock_period = "20.0",
     fp_core_util = "40",
+    io_pin_order_cfg = ":jamlet_mxu8x8_pin_order.cfg",
+    sdc_fragments = [":jamlet_mxu8x8.sdc"],
     synth_config = ":synth_mxu_preserve_cell",
+    design_repair_max_wire_length = "150",
+)
+
+chisel_verilog_no_config(
+    name = "SystolicArray",
+    generator = SYSTOLIC_PKG + ":systolicarray",
+    extra_args = ["8"],
+)
+
+librelane_classic_flow(
+    name = "SystolicArray_sky130hd",
+    verilog_files = [":SystolicArray.sv"],
+    top = "SystolicArray",
+    pdk = ":sky130hd",
+    clock_period = "20.0",
+    fp_core_util = "40",
+    synth_config = ":synth_autoname",
+    design_repair_max_wire_length = "150",
 )
 
 chisel_verilog_no_config(
     name = "JamletMxuHardMacros",
     generator = JAMLET_PKG + ":jamletmxu_hard_macros",
+    extra_args = ["8", "true", "true", "true"],
 )
 
 librelane_classic_flow(

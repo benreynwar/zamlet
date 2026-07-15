@@ -2,6 +2,7 @@ package zamlet.jamlet
 
 import chisel3._
 import chisel3.experimental.ExtModule
+import zamlet.utils.ResetPipeline
 
 class JamletMxuGridIO(n: Int) extends Bundle {
   val aIn = Input(Vec(n, UInt(8.W)))
@@ -25,7 +26,10 @@ class JamletMxuGridIO(n: Int) extends Bundle {
 class JamletMxuGrid(n: Int = 4, bcBuffer: Boolean = false) extends Module {
   val io = IO(new JamletMxuGridIO(n))
 
-  val cells = Seq.tabulate(n, n) { (_, _) => Module(new JamletMxuCell(bcBuffer)) }
+  val cellReset = ResetPipeline(clock, reset.asBool, 1)
+  val cells = withReset(cellReset) {
+    Seq.tabulate(n, n) { (_, _) => Module(new JamletMxuCell(bcBuffer)) }
+  }
 
   for (row <- 0 until n) {
     for (col <- 0 until n) {
@@ -92,10 +96,23 @@ class JamletMxu(
     hasEwLoop: Boolean = true,
     hasNsLoop: Boolean = true,
     bcBuffer: Boolean = false,
+    registerBackwardOutput: Boolean = false,
     useHardMacros: Boolean = false) extends Module {
   require(n == 2 || n == 4 || n == 8)
   require(!useHardMacros || n == 8)
   val io = IO(new JamletMxuIO(n))
+
+  val ewBackwardInput = Wire(Vec(n, UInt(8.W)))
+  val nsBackwardInput = Wire(Vec(n, UInt(8.W)))
+  for (index <- 0 until n) {
+    if (registerBackwardOutput) {
+      ewBackwardInput(index) := RegNext(io.ewBackwardInput(index))
+      nsBackwardInput(index) := RegNext(io.nsBackwardInput(index))
+    } else {
+      ewBackwardInput(index) := io.ewBackwardInput(index)
+      nsBackwardInput(index) := io.nsBackwardInput(index)
+    }
+  }
 
   def instantiateGrid(name: String): JamletMxuGridIO = {
     if (useHardMacros) {
@@ -112,7 +129,7 @@ class JamletMxu(
   }
 
   def ewTopologyInput(row: Int): UInt = {
-    if (hasEwLoop) Mux(io.ewUseBackward, io.ewBackwardInput(row), io.ewForwardInput(row)) else io.ewForwardInput(row)
+    if (hasEwLoop) Mux(io.ewUseBackward, ewBackwardInput(row), io.ewForwardInput(row)) else io.ewForwardInput(row)
   }
 
   def ewSelectedInput(row: Int): UInt = {
@@ -120,7 +137,7 @@ class JamletMxu(
   }
 
   def nsTopologyInput(col: Int): UInt = {
-    if (hasNsLoop) Mux(io.nsUseBackward, io.nsBackwardInput(col), io.nsForwardInput(col)) else io.nsForwardInput(col)
+    if (hasNsLoop) Mux(io.nsUseBackward, nsBackwardInput(col), io.nsForwardInput(col)) else io.nsForwardInput(col)
   }
 
   def nsSelectedInput(col: Int): UInt = {
@@ -137,7 +154,7 @@ class JamletMxu(
       grid.io.stepIn(row) := io.stepIn(row)
       grid.io.completeIn(row) := io.completeIn(row)
       io.ewForwardOutput(row) := grid.io.aOut(row)
-      io.ewBackwardOutput(row) := io.ewBackwardInput(row)
+      io.ewBackwardOutput(row) := ewBackwardInput(row)
       io.cToMemory(row) := grid.io.cOut(row)
       io.cToMemoryValid(row) := grid.io.cValidOut(row)
     }
@@ -145,10 +162,10 @@ class JamletMxu(
     for (col <- 0 until n) {
       grid.io.bIn(col) := nsSelectedInput(col)
       io.nsForwardOutput(col) := grid.io.bOut(col)
-      io.nsBackwardOutput(col) := io.nsBackwardInput(col)
+      io.nsBackwardOutput(col) := nsBackwardInput(col)
     }
 
-    io.error := grid.io.error
+    io.error := RegNext(grid.io.error, false.B)
   } else {
     val nw = instantiateGrid("nw")
     val ne = instantiateGrid("ne")
@@ -162,8 +179,8 @@ class JamletMxu(
       se.aIn(row) := sw.aOut(row)
       io.ewForwardOutput(row) := ne.aOut(row)
       io.ewForwardOutput(row + 4) := se.aOut(row)
-      io.ewBackwardOutput(row) := io.ewBackwardInput(row)
-      io.ewBackwardOutput(row + 4) := io.ewBackwardInput(row + 4)
+      io.ewBackwardOutput(row) := ewBackwardInput(row)
+      io.ewBackwardOutput(row + 4) := ewBackwardInput(row + 4)
 
       nw.stepIn(row) := io.stepIn(row)
       ne.stepIn(row) := nw.stepOut(row)
@@ -197,11 +214,11 @@ class JamletMxu(
       se.bIn(col) := ne.bOut(col)
       io.nsForwardOutput(col) := sw.bOut(col)
       io.nsForwardOutput(col + 4) := se.bOut(col)
-      io.nsBackwardOutput(col) := io.nsBackwardInput(col)
-      io.nsBackwardOutput(col + 4) := io.nsBackwardInput(col + 4)
+      io.nsBackwardOutput(col) := nsBackwardInput(col)
+      io.nsBackwardOutput(col + 4) := nsBackwardInput(col + 4)
     }
 
-    io.error := nw.error || ne.error || sw.error || se.error
+    io.error := RegNext(nw.error || ne.error || sw.error || se.error, false.B)
   }
 }
 
@@ -211,7 +228,8 @@ object JamletMxuGenerator extends zamlet.ModuleGenerator {
       n = args.headOption.map(_.toInt).getOrElse(8),
       hasEwLoop = args.drop(1).headOption.forall(_.toBoolean),
       hasNsLoop = args.drop(2).headOption.forall(_.toBoolean),
-      bcBuffer = args.drop(3).headOption.exists(_.toBoolean))
+      bcBuffer = args.drop(3).headOption.exists(_.toBoolean),
+      registerBackwardOutput = args.drop(4).headOption.exists(_.toBoolean))
   }
 }
 
@@ -222,6 +240,7 @@ object JamletMxuHardMacroGenerator extends zamlet.ModuleGenerator {
       hasEwLoop = args.drop(1).headOption.forall(_.toBoolean),
       hasNsLoop = args.drop(2).headOption.forall(_.toBoolean),
       bcBuffer = true,
+      registerBackwardOutput = args.drop(3).headOption.exists(_.toBoolean),
       useHardMacros = true)
   }
 }

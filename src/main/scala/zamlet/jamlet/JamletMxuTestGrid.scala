@@ -27,6 +27,7 @@ class JamletMxuTestGrid(
     gridCols: Int,
     mxuN: Int,
     bcBuffer: Boolean,
+    registerBackwardOutput: Boolean,
     moduleName: String) extends Module {
   override val desiredName = moduleName
   require(gridRows > 0 && isPow2(gridRows))
@@ -40,7 +41,8 @@ class JamletMxuTestGrid(
       n = mxuN,
       hasEwLoop = true,
       hasNsLoop = true,
-      bcBuffer = bcBuffer))
+      bcBuffer = bcBuffer,
+      registerBackwardOutput = registerBackwardOutput))
   }
 
   for (physicalRow <- 0 until gridRows) {
@@ -115,13 +117,14 @@ class JamletMxuTestGrid(
 
 object JamletMxuTestGridGenerator extends zamlet.ModuleGenerator {
   override def makeModule(args: Seq[String]): Module = {
-    require(args.length == 5)
+    require(args.length == 6)
     new JamletMxuTestGrid(
       gridRows = args(0).toInt,
       gridCols = args(1).toInt,
       mxuN = args(2).toInt,
       bcBuffer = args(3).toBoolean,
-      moduleName = args(4))
+      registerBackwardOutput = args(4).toBoolean,
+      moduleName = args(5))
   }
 }
 
