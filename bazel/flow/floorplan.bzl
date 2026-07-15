@@ -61,7 +61,7 @@ def _floorplan_impl(ctx):
     sdc_out = ctx.actions.declare_file(ctx.label.name + "/" + top + ".sdc")
 
     # Get input files
-    inputs = get_input_files(input_info, state_info)
+    inputs = get_input_files(input_info, state_info, FLOORPLAN_CONFIG_KEYS)
 
     # Create config with floorplan settings
     config = create_librelane_config(input_info, state_info, FLOORPLAN_CONFIG_KEYS)

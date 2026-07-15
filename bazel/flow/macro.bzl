@@ -94,7 +94,7 @@ def _gds_impl(ctx):
         gds = state_info.gds
 
     # Get input files
-    inputs = get_input_files(input_info, state_info)
+    inputs = get_input_files(input_info, state_info, MAGIC_STREAMOUT_CONFIG_KEYS)
 
     # Create config
     config = create_librelane_config(input_info, state_info, MAGIC_STREAMOUT_CONFIG_KEYS)
@@ -143,7 +143,7 @@ def _lef_impl(ctx):
     lef = ctx.actions.declare_file(ctx.label.name + "/" + top + ".lef")
 
     # Get input files
-    inputs = get_input_files(input_info, state_info)
+    inputs = get_input_files(input_info, state_info, MAGIC_WRITELEF_CONFIG_KEYS)
 
     # Create config
     config = create_librelane_config(input_info, state_info, MAGIC_WRITELEF_CONFIG_KEYS)

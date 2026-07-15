@@ -321,7 +321,7 @@ def _cts_impl(ctx):
     cts_report = ctx.actions.declare_file(ctx.label.name + "/cts.rpt")
 
     # Get input files
-    inputs = get_input_files(input_info, state_info)
+    inputs = get_input_files(input_info, state_info, CTS_CONFIG_KEYS)
 
     # Create config with CTS options (all via LibrelaneInput, no step-local attrs)
     config = create_librelane_config(input_info, state_info, CTS_CONFIG_KEYS)

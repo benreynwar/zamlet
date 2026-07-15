@@ -903,7 +903,10 @@ def get_pdk_files(pdk_info):
 
     return files
 
-def get_input_files(input_info, state_info):
+def _uses_config(config_keys, key):
+    return config_keys == None or key in config_keys
+
+def get_input_files(input_info, state_info, config_keys = None):
     """Get all input files for a librelane step.
 
     Args:
@@ -921,43 +924,44 @@ def get_input_files(input_info, state_info):
     if input_info.verilog_files:
         inputs.extend(input_info.verilog_files.to_list())
 
-    # Add custom SDC files if provided
-    if input_info.pnr_sdc_file:
+    # Add optional files only for steps that declare the matching config key.
+    if input_info.pnr_sdc_file and _uses_config(config_keys, "PNR_SDC_FILE"):
         inputs.append(input_info.pnr_sdc_file)
-    if input_info.signoff_sdc_file:
+    if input_info.signoff_sdc_file and _uses_config(config_keys, "SIGNOFF_SDC_FILE"):
         inputs.append(input_info.signoff_sdc_file)
 
-    # Add Lighter DFF map if provided
-    # Add Verilator config if provided
-    if input_info.linter_vlt:
+    if input_info.linter_vlt and _uses_config(config_keys, "LINTER_VLT"):
         inputs.append(input_info.linter_vlt)
 
-    # Add extra synthesis mapping file if provided
-    if input_info.synth_extra_mapping_file:
+    if input_info.synth_extra_mapping_file and _uses_config(config_keys, "SYNTH_EXTRA_MAPPING_FILE"):
         inputs.append(input_info.synth_extra_mapping_file)
 
-    # Add custom PDN config if provided
-    if input_info.pdn_cfg:
+    if input_info.pdn_cfg and _uses_config(config_keys, "PDN_CFG"):
         inputs.append(input_info.pdn_cfg)
 
-    # Add DEF template if provided
-    if input_info.fp_def_template:
+    if input_info.fp_def_template and _uses_config(config_keys, "FP_DEF_TEMPLATE"):
         inputs.append(input_info.fp_def_template)
 
-    # Add pin order config if provided
-    if input_info.io_pin_order_cfg:
+    if input_info.io_pin_order_cfg and _uses_config(config_keys, "IO_PIN_ORDER_CFG"):
         inputs.append(input_info.io_pin_order_cfg)
 
-    # Add macro placement config if provided
-    if input_info.macro_placement_cfg:
+    if input_info.macro_placement_cfg and _uses_config(config_keys, "MACRO_PLACEMENT_CFG"):
         inputs.append(input_info.macro_placement_cfg)
 
-    # Add VSRC location files for IR drop analysis
-    if input_info.vsrc_loc_files:
+    if input_info.vsrc_loc_files and _uses_config(config_keys, "VSRC_LOC_FILES"):
         inputs.extend(input_info.vsrc_loc_files.values())
 
-    if input_info.magic_drc_maglefs:
+    if input_info.magic_drc_maglefs and _uses_config(config_keys, "MAGIC_DRC_MAGLEFS"):
         inputs.extend(input_info.magic_drc_maglefs)
+
+    if input_info.rcx_sdc_file and _uses_config(config_keys, "RCX_SDC_FILE"):
+        inputs.append(input_info.rcx_sdc_file)
+
+    if input_info.sta_extra_corner_tcl_file and _uses_config(config_keys, "STA_EXTRA_CORNER_TCL_FILE"):
+        inputs.append(input_info.sta_extra_corner_tcl_file)
+
+    if input_info.eqy_script and _uses_config(config_keys, "EQY_SCRIPT"):
+        inputs.append(input_info.eqy_script)
 
     # Add macro files
     if input_info.macros:
@@ -1275,7 +1279,7 @@ def single_step_impl(ctx, step_id, config_keys, step_outputs, extra_config = {},
         optional_extra_output_files.append(ctx.actions.declare_file(ctx.label.name + "/" + path))
 
     # Get input files
-    inputs = get_input_files(input_info, state_info) + extra_inputs
+    inputs = get_input_files(input_info, state_info, config_keys) + extra_inputs
 
     # Create config (filtered to only keys this step uses)
     config = create_librelane_config(input_info, state_info, config_keys)

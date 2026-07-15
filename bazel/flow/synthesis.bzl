@@ -93,7 +93,7 @@ def _synthesis_impl(ctx):
     stat_json = ctx.actions.declare_file(ctx.label.name + "/reports/stat.json")
 
     # Get input files
-    inputs = get_input_files(input_info, state_info)
+    inputs = get_input_files(input_info, state_info, SYNTHESIS_CONFIG_KEYS)
 
     # Create config
     config = create_librelane_config(input_info, state_info, SYNTHESIS_CONFIG_KEYS)
@@ -148,7 +148,7 @@ def _json_header_impl(ctx):
     json_h = ctx.actions.declare_file(ctx.label.name + "/" + top + ".h.json")
 
     # Get input files
-    inputs = get_input_files(input_info, state_info)
+    inputs = get_input_files(input_info, state_info, JSON_HEADER_CONFIG_KEYS)
 
     # Create config
     config = create_librelane_config(input_info, state_info, JSON_HEADER_CONFIG_KEYS)
@@ -203,7 +203,7 @@ def _eqy_impl(ctx):
     state_info = ctx.attr.src[LibrelaneInfo]
 
     # Get input files
-    inputs = get_input_files(input_info, state_info)
+    inputs = get_input_files(input_info, state_info, EQY_CONFIG_KEYS)
 
     # Create config
     config = create_librelane_config(input_info, state_info, EQY_CONFIG_KEYS)

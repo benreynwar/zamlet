@@ -6,6 +6,8 @@ Before making Python test edits, read and follow `docs_llm/python-test-style.md`
 
 Before debugging waveforms, read `docs_llm/waveform-debugging.md`.
 
+When checking how LibreLane behaves, use the local source at `~/Code/librelane`.
+
 Keep edits small and explain them before applying patches.
 
 Prefer updating call sites to the new approach over adding compatibility shims

@@ -107,7 +107,7 @@ def _sta_pre_pnr_impl(ctx):
     for path in _multi_corner_sta_reports(nom_corners):
         report_outputs.append(ctx.actions.declare_file(ctx.label.name + "/" + path))
 
-    inputs = get_input_files(input_info, state_info)
+    inputs = get_input_files(input_info, state_info, MULTI_CORNER_STA_CONFIG_KEYS)
     config = create_librelane_config(input_info, state_info, MULTI_CORNER_STA_CONFIG_KEYS)
 
     state_out = run_librelane_step(
@@ -162,7 +162,7 @@ def _rcx_impl(ctx):
     spef_max = ctx.actions.declare_file(ctx.label.name + "/max/" + top + ".max.spef")
 
     # Get input files
-    inputs = get_input_files(input_info, state_info)
+    inputs = get_input_files(input_info, state_info, RCX_CONFIG_KEYS)
 
     # Create config
     config = create_librelane_config(input_info, state_info, RCX_CONFIG_KEYS)
@@ -218,7 +218,7 @@ def _sta_post_pnr_impl(ctx):
     for path in _multi_corner_sta_reports(input_info.pdk_info.sta_corners):
         report_outputs.append(ctx.actions.declare_file(ctx.label.name + "/" + path))
 
-    inputs = get_input_files(input_info, state_info)
+    inputs = get_input_files(input_info, state_info, STA_POST_PNR_CONFIG_KEYS)
     config = create_librelane_config(input_info, state_info, STA_POST_PNR_CONFIG_KEYS)
 
     state_out = run_librelane_step(
