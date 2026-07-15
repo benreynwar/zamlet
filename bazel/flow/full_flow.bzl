@@ -99,13 +99,14 @@ def librelane_classic_flow(
     pdk,
     clock_period = "10.0",
     clock_port = "clock",
-    core_utilization = "50",
+    fp_core_util = "50",
     pl_target_density_pct = "",
     die_area = None,
     macros = [],
-    pin_order_cfg = None,
-    def_template = None,
+    io_pin_order_cfg = None,
+    fp_def_template = None,
     macro_placement_cfg = None,
+    pdn_macro_connections = [],
     cts_clk_max_wire_length = None,
     default_corner = "",
     max_transition_constraint = "",
@@ -166,13 +167,14 @@ def librelane_classic_flow(
         pdk: PDK target
         clock_period: Clock period in ns
         clock_port: Clock port name
-        core_utilization: Target core utilization (0-100), ignored if die_area specified
+        fp_core_util: Target core utilization (0-100), ignored if die_area specified
         pl_target_density_pct: Target placement density percentage (0-100), empty for dynamic
         die_area: Explicit die area as "x0 y0 x1 y1" in microns
         macros: List of hard macro targets (for hierarchical designs)
-        pin_order_cfg: Pin order configuration file for custom IO placement
-        def_template: DEF template file with die area and pin placements (alternative to pin_order_cfg)
+        io_pin_order_cfg: Pin order configuration file for custom IO placement
+        fp_def_template: DEF template file with die area and pin placements (alternative to io_pin_order_cfg)
         macro_placement_cfg: Macro placement configuration file (instance X Y orientation)
+        pdn_macro_connections: Explicit macro power connections
         cts_clk_max_wire_length: Max clock wire length in µm before buffer insertion (0=disabled)
         default_corner: Override DEFAULT_CORNER from the PDK config
         max_transition_constraint: Override MAX_TRANSITION_CONSTRAINT from the PDK config
@@ -216,14 +218,14 @@ def librelane_classic_flow(
     pnr_config_kwargs = {}
     if pl_target_density_pct:
         pnr_config_kwargs["pl_target_density_pct"] = pl_target_density_pct
-    if pin_order_cfg:
-        pnr_config_kwargs["fp_pin_order_cfg"] = pin_order_cfg
-    if def_template:
-        pnr_config_kwargs["fp_def_template"] = def_template
+    if io_pin_order_cfg:
+        pnr_config_kwargs["io_pin_order_cfg"] = io_pin_order_cfg
+    if fp_def_template:
+        pnr_config_kwargs["fp_def_template"] = fp_def_template
     if cts_clk_max_wire_length:
         pnr_config_kwargs["cts_clk_max_wire_length"] = cts_clk_max_wire_length
-    if core_utilization != "50":
-        pnr_config_kwargs["fp_core_util"] = core_utilization
+    if fp_core_util != "50":
+        pnr_config_kwargs["fp_core_util"] = fp_core_util
     if pdn_obstructions:
         pnr_config_kwargs["pdn_obstructions"] = pdn_obstructions
     if routing_obstructions:
@@ -234,6 +236,8 @@ def librelane_classic_flow(
         pnr_config_kwargs["diode_on_ports"] = diode_on_ports
     if macro_placement_cfg:
         pnr_config_kwargs["macro_placement_cfg"] = macro_placement_cfg
+    if pdn_macro_connections:
+        pnr_config_kwargs["pdn_macro_connections"] = pdn_macro_connections
     if grt_antenna_repair_iters != None:
         pnr_config_kwargs["grt_antenna_repair_iters"] = grt_antenna_repair_iters
     if grt_antenna_repair_margin != None:
@@ -367,7 +371,7 @@ def librelane_classic_flow(
             name = name + "_floorplan",
             input = input_target,
             src = ":" + name + "_sta_pre",
-            core_utilization = core_utilization,
+            fp_core_util = fp_core_util,
         )
 
     # Post-floorplan checks and setup
@@ -449,8 +453,8 @@ def librelane_classic_flow(
     )
 
     # IO placement sequence; steps self-skip based on pin-order/template config.
-    if def_template and pin_order_cfg:
-        fail("Cannot specify both def_template and pin_order_cfg")
+    if fp_def_template and io_pin_order_cfg:
+        fail("Cannot specify both fp_def_template and io_pin_order_cfg")
 
     librelane_io_placement(
         name = name + "_io_place",

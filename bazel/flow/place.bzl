@@ -267,18 +267,20 @@ def _generate_pdn_impl(ctx):
         step_outputs = ["def", "odb", "nl", "pnl", "sdc"])
 
 def _global_placement_skip_io_impl(ctx):
+    input_info = ctx.attr.input[LibrelaneInput]
+    step_outputs = [] if input_info.fp_def_template or input_info.io_pin_order_cfg else ["def", "odb", "nl", "pnl", "sdc"]
     return single_step_impl(ctx, "OpenROAD.GlobalPlacementSkipIO", GPL_SKIP_IO_CONFIG_KEYS,
-        step_outputs = ["def", "odb", "nl", "pnl", "sdc"])
+        step_outputs = step_outputs)
 
 def _io_placement_impl(ctx):
     input_info = ctx.attr.input[LibrelaneInput]
-    step_outputs = [] if input_info.fp_pin_order_cfg or input_info.fp_def_template else ["def", "odb"]
+    step_outputs = [] if input_info.io_pin_order_cfg or input_info.fp_def_template else ["def", "odb"]
     return single_step_impl(ctx, "OpenROAD.IOPlacement", IO_PLACEMENT_CONFIG_KEYS,
         step_outputs = step_outputs)
 
 def _custom_io_placement_impl(ctx):
     input_info = ctx.attr.input[LibrelaneInput]
-    step_outputs = ["def", "odb"] if input_info.fp_pin_order_cfg else []
+    step_outputs = ["def", "odb"] if input_info.io_pin_order_cfg else []
     return single_step_impl(ctx, "Odb.CustomIOPlacement", CUSTOM_IO_PLACEMENT_CONFIG_KEYS,
         step_outputs = step_outputs)
 

@@ -29,8 +29,8 @@ chisel_dse_module(
     config = ZAMLET_CONFIG,
     pdk = ":sky130hd",
     clock_period = "20.0",
-    core_utilization = "35",
-    pin_order_cfg = ":jamlet_pin_order.cfg",
+    fp_core_util = "35",
+    io_pin_order_cfg = ":jamlet_pin_order.cfg",
 )
 
 chisel_dse_module(
@@ -40,8 +40,8 @@ chisel_dse_module(
     config = "//configs:zamlet_1024lanes.json",
     pdk = ":sky130hd",
     clock_period = "20.0",
-    core_utilization = "35",
-    pin_order_cfg = ":jamlet_pin_order.cfg",
+    fp_core_util = "35",
+    io_pin_order_cfg = ":jamlet_pin_order.cfg",
 )
 
 chisel_dse_module(
@@ -51,17 +51,17 @@ chisel_dse_module(
     config = "//configs:zamlet_1024lanes.json",
     pdk = ":sky130hd",
     clock_period = "20.0",
-    core_utilization = "35",
+    fp_core_util = "35",
     macros = [
         ":Jce_1024lanes_sky130hd_lef",
         ":LocalExec_1024lanes_sky130hd_lef",
         ":Sram_1024lanes_sky130hd_lef",
     ],
-    pin_order_cfg = ":jamlet_pin_order.cfg",
+    io_pin_order_cfg = ":jamlet_pin_order.cfg",
     synth_config = ":synth_autoname",
 )
 
-# (ModuleName, bazel_target_name, extra_generator_args, core_utilization)
+# (ModuleName, bazel_target_name, extra_generator_args, fp_core_util)
 JAMLET_SUB_MODULES = [
     ("RfSlice", "rfslice", [], "35"),
     ("Sram", "sram", [], "35"),
@@ -106,7 +106,7 @@ ZAMLET_CONFIGS = [
     pdk = ":sky130hd",
     extra_generator_args = extra_args,
     clock_period = "20.0",
-    core_utilization = core_util,
+    fp_core_util = core_util,
     synth_config = ":synth_autoname",
 ) for module, target, extra_args, core_util in JAMLET_SUB_MODULES
   for cfg_name, cfg_path in ZAMLET_CONFIGS]
@@ -118,7 +118,7 @@ ZAMLET_CONFIGS = [
     config = cfg_path,
     pdk = ":sky130hd",
     clock_period = "20.0",
-    core_utilization = "35",
+    fp_core_util = "35",
     synth_config = ":synth_autoname",
     sdc_fragments = [":localexec.sdc"],
     run_post_grt_design_repair = True,
@@ -133,7 +133,7 @@ chisel_dse_module(
     config = "//configs:vector_rf_3r1w.json",
     pdk = ":sky130hd",
     clock_period = "20.0",
-    core_utilization = "40",
+    fp_core_util = "40",
 )
 
 chisel_verilog_no_config(
@@ -147,8 +147,29 @@ librelane_classic_flow(
     top = "JamletMxu",
     pdk = ":sky130hd",
     clock_period = "20.0",
-    core_utilization = "40",
+    fp_core_util = "40",
     synth_config = ":synth_mxu_preserve_cell",
+)
+
+chisel_verilog_no_config(
+    name = "JamletMxuHardMacros",
+    generator = JAMLET_PKG + ":jamletmxu_hard_macros",
+)
+
+librelane_classic_flow(
+    name = "JamletMxuHardMacros_sky130hd",
+    verilog_files = [":JamletMxuHardMacros.sv"],
+    top = "JamletMxu",
+    pdk = ":sky130hd",
+    clock_period = "20.0",
+    die_area = "0 0 1400 1400",
+    macros = [":JamletMxuGrid4x4_sky130hd_lef"],
+    macro_placement_cfg = ":jamlet_mxu_hard_macros_placement.cfg",
+    pdn_macro_connections = [
+        "(ne_ne|nw_nw|se_se|sw_sw) VPWR VGND VPWR VGND",
+    ],
+    synth_config = ":synth_autoname",
+    design_repair_max_wire_length = "150",
 )
 
 chisel_verilog_no_config(
@@ -163,7 +184,7 @@ librelane_classic_flow(
     top = "JamletMxu",
     pdk = ":sky130hd",
     clock_period = "20.0",
-    core_utilization = "40",
+    fp_core_util = "40",
     synth_config = ":synth_mxu_preserve_cell",
 )
 
@@ -179,7 +200,8 @@ librelane_classic_flow(
     top = "JamletMxuGrid",
     pdk = ":sky130hd",
     clock_period = "20.0",
-    core_utilization = "40",
+    fp_core_util = "40",
+    io_pin_order_cfg = ":jamlet_mxu_grid4x4_pin_order.cfg",
     synth_config = ":synth_mxu_preserve_cell",
     design_repair_max_wire_length = "150",
 )
@@ -195,6 +217,6 @@ librelane_classic_flow(
     top = "JamletMxuCell",
     pdk = ":sky130hd",
     clock_period = "20.0",
-    core_utilization = "35",
+    fp_core_util = "35",
     synth_config = ":synth_autoname",
 )

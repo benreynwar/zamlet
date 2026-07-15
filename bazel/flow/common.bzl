@@ -64,6 +64,8 @@ OPENROAD_STEP_CONFIG_KEYS = BASE_CONFIG_KEYS + [
     "PNR_SDC_FILE",
     "STA_EXTRA_CORNER_TCL_FILE",
     "DEDUPLICATE_CORNERS",
+    # TclStep.prepare_env() derives MACRO_LEFS from MACROS for OpenROAD.
+    "MACROS",
     # prepare_env()
     "LIB",
     "FALLBACK_SDC",
@@ -141,8 +143,8 @@ def create_librelane_config(input_info, state_info, required_keys):
         # PDK config - floorplanning
         "FP_TRACKS_INFO": pdk.fp_tracks_info.path,
         "FP_TAPCELL_DIST": pdk.fp_tapcell_dist,
-        "IO_PIN_H_LAYER": pdk.fp_io_hlayer,
-        "IO_PIN_V_LAYER": pdk.fp_io_vlayer,
+        "IO_PIN_H_LAYER": pdk.io_pin_h_layer,
+        "IO_PIN_V_LAYER": pdk.io_pin_v_layer,
         "PLACE_SITE": pdk.place_site,
 
         # PDK config - routing
@@ -207,34 +209,34 @@ def create_librelane_config(input_info, state_info, required_keys):
     _add_optional(config, "FP_FLIP_SITES", pdk.fp_flip_sites)
     _add_optional(config, "EXTRA_SITES", pdk.extra_sites)
     _add_optional(config, "FP_PRUNE_THRESHOLD", pdk.fp_prune_threshold)
-    _add_optional(config, "IO_PIN_H_LENGTH", pdk.fp_io_hlength)
-    _add_optional(config, "IO_PIN_V_LENGTH", pdk.fp_io_vlength)
-    _add_optional(config, "IO_PIN_MIN_DISTANCE", pdk.fp_io_min_distance)
-    _add_optional(config, "PDN_RAIL_LAYER", pdk.fp_pdn_rail_layer)
-    _add_optional(config, "PDN_RAIL_WIDTH", pdk.fp_pdn_rail_width)
-    _add_optional(config, "PDN_RAIL_OFFSET", pdk.fp_pdn_rail_offset)
-    _add_optional(config, "PDN_HORIZONTAL_LAYER", pdk.fp_pdn_horizontal_layer)
-    _add_optional(config, "PDN_VERTICAL_LAYER", pdk.fp_pdn_vertical_layer)
-    _add_optional(config, "PDN_CORE_HORIZONTAL_LAYER", pdk.fp_pdn_core_horizontal_layer)
-    _add_optional(config, "PDN_CORE_VERTICAL_LAYER", pdk.fp_pdn_core_vertical_layer)
-    _add_optional(config, "PDN_HOFFSET", pdk.fp_pdn_hoffset)
-    _add_optional(config, "PDN_VOFFSET", pdk.fp_pdn_voffset)
-    _add_optional(config, "PDN_HPITCH", pdk.fp_pdn_hpitch)
-    _add_optional(config, "PDN_VPITCH", pdk.fp_pdn_vpitch)
-    _add_optional(config, "PDN_HSPACING", pdk.fp_pdn_hspacing)
-    _add_optional(config, "PDN_VSPACING", pdk.fp_pdn_vspacing)
-    _add_optional(config, "PDN_HWIDTH", pdk.fp_pdn_hwidth)
-    _add_optional(config, "PDN_VWIDTH", pdk.fp_pdn_vwidth)
-    _add_optional(config, "PDN_CORE_RING_HOFFSET", pdk.fp_pdn_core_ring_hoffset)
-    _add_optional(config, "PDN_CORE_RING_VOFFSET", pdk.fp_pdn_core_ring_voffset)
-    _add_optional(config, "PDN_CORE_RING_HSPACING", pdk.fp_pdn_core_ring_hspacing)
-    _add_optional(config, "PDN_CORE_RING_VSPACING", pdk.fp_pdn_core_ring_vspacing)
-    _add_optional(config, "PDN_CORE_RING_HWIDTH", pdk.fp_pdn_core_ring_hwidth)
-    _add_optional(config, "PDN_CORE_RING_VWIDTH", pdk.fp_pdn_core_ring_vwidth)
-    _add_optional(config, "PDN_CORE_RING_CONNECT_TO_PADS", pdk.fp_pdn_core_ring_connect_to_pads)
-    _add_optional(config, "PDN_CORE_RING_ALLOW_OUT_OF_DIE", pdk.fp_pdn_core_ring_allow_out_of_die)
-    _add_optional(config, "PDN_EXTEND_TO", pdk.fp_pdn_extend_to)
-    _add_optional(config, "PDN_ENABLE_PINS", pdk.fp_pdn_enable_pins)
+    _add_optional(config, "IO_PIN_H_LENGTH", pdk.io_pin_h_length)
+    _add_optional(config, "IO_PIN_V_LENGTH", pdk.io_pin_v_length)
+    _add_optional(config, "IO_PIN_MIN_DISTANCE", pdk.io_pin_min_distance)
+    _add_optional(config, "PDN_RAIL_LAYER", pdk.pdn_rail_layer)
+    _add_optional(config, "PDN_RAIL_WIDTH", pdk.pdn_rail_width)
+    _add_optional(config, "PDN_RAIL_OFFSET", pdk.pdn_rail_offset)
+    _add_optional(config, "PDN_HORIZONTAL_LAYER", pdk.pdn_horizontal_layer)
+    _add_optional(config, "PDN_VERTICAL_LAYER", pdk.pdn_vertical_layer)
+    _add_optional(config, "PDN_CORE_HORIZONTAL_LAYER", pdk.pdn_core_horizontal_layer)
+    _add_optional(config, "PDN_CORE_VERTICAL_LAYER", pdk.pdn_core_vertical_layer)
+    _add_optional(config, "PDN_HOFFSET", pdk.pdn_hoffset)
+    _add_optional(config, "PDN_VOFFSET", pdk.pdn_voffset)
+    _add_optional(config, "PDN_HPITCH", pdk.pdn_hpitch)
+    _add_optional(config, "PDN_VPITCH", pdk.pdn_vpitch)
+    _add_optional(config, "PDN_HSPACING", pdk.pdn_hspacing)
+    _add_optional(config, "PDN_VSPACING", pdk.pdn_vspacing)
+    _add_optional(config, "PDN_HWIDTH", pdk.pdn_hwidth)
+    _add_optional(config, "PDN_VWIDTH", pdk.pdn_vwidth)
+    _add_optional(config, "PDN_CORE_RING_HOFFSET", pdk.pdn_core_ring_hoffset)
+    _add_optional(config, "PDN_CORE_RING_VOFFSET", pdk.pdn_core_ring_voffset)
+    _add_optional(config, "PDN_CORE_RING_HSPACING", pdk.pdn_core_ring_hspacing)
+    _add_optional(config, "PDN_CORE_RING_VSPACING", pdk.pdn_core_ring_vspacing)
+    _add_optional(config, "PDN_CORE_RING_HWIDTH", pdk.pdn_core_ring_hwidth)
+    _add_optional(config, "PDN_CORE_RING_VWIDTH", pdk.pdn_core_ring_vwidth)
+    _add_optional(config, "PDN_CORE_RING_CONNECT_TO_PADS", pdk.pdn_core_ring_connect_to_pads)
+    _add_optional(config, "PDN_CORE_RING_ALLOW_OUT_OF_DIE", pdk.pdn_core_ring_allow_out_of_die)
+    _add_optional(config, "PDN_EXTEND_TO", pdk.pdn_extend_to)
+    _add_optional(config, "PDN_ENABLE_PINS", pdk.pdn_enable_pins)
     _add_optional(config, "HEURISTIC_ANTENNA_THRESHOLD", pdk.heuristic_antenna_threshold)
     _add_optional_file(config, "MAGICRC", pdk.magicrc)
     _add_optional_file(config, "MAGIC_TECH", pdk.magic_tech)
@@ -368,7 +370,7 @@ def create_librelane_config(input_info, state_info, required_keys):
     _add_optional_file(config, "STA_EXTRA_CORNER_TCL_FILE", input_info.sta_extra_corner_tcl_file)
     config["DEDUPLICATE_CORNERS"] = input_info.deduplicate_corners
     _add_optional_file(config, "FP_DEF_TEMPLATE", input_info.fp_def_template)
-    _add_optional_file(config, "FP_PIN_ORDER_CFG", input_info.fp_pin_order_cfg)
+    _add_optional_file(config, "IO_PIN_ORDER_CFG", input_info.io_pin_order_cfg)
 
     # ApplyDEFTemplate config (odb.py lines 249-259)
     config["FP_TEMPLATE_MATCH_MODE"] = input_info.fp_template_match_mode
@@ -498,10 +500,10 @@ def create_librelane_config(input_info, state_info, required_keys):
     _add_optional_file_list(config, "EXTRA_GDS_FILES", input_info.extra_gds_files)
 
     # io_layer_variables (common_variables.py lines 19-46) - IOPlacement, CustomIOPlacement
-    config["IO_PIN_V_EXTENSION"] = float(input_info.fp_io_vextend)
-    config["IO_PIN_H_EXTENSION"] = float(input_info.fp_io_hextend)
-    config["IO_PIN_V_THICKNESS_MULT"] = float(input_info.fp_io_vthickness_mult)
-    config["IO_PIN_H_THICKNESS_MULT"] = float(input_info.fp_io_hthickness_mult)
+    config["IO_PIN_V_EXTENSION"] = float(input_info.io_pin_v_extension)
+    config["IO_PIN_H_EXTENSION"] = float(input_info.io_pin_h_extension)
+    config["IO_PIN_V_THICKNESS_MULT"] = float(input_info.io_pin_v_thickness_mult)
+    config["IO_PIN_H_THICKNESS_MULT"] = float(input_info.io_pin_h_thickness_mult)
 
     # CustomIOPlacement config (odb.py lines 673-680)
     config["ERRORS_ON_UNMATCHED_IO"] = input_info.errors_on_unmatched_io
@@ -509,7 +511,7 @@ def create_librelane_config(input_info, state_info, required_keys):
     # GlobalPlacement config
     if input_info.pl_target_density_pct:
         config["PL_TARGET_DENSITY_PCT"] = int(input_info.pl_target_density_pct)
-    config["IO_PIN_PLACEMENT_MODE"] = input_info.fp_ppl_mode
+    config["IO_PIN_PLACEMENT_MODE"] = input_info.io_pin_placement_mode
     config["PL_SKIP_INITIAL_PLACEMENT"] = input_info.pl_skip_initial_placement
     config["PL_WIRE_LENGTH_COEF"] = float(input_info.pl_wire_length_coef)
     if input_info.pl_min_phi_coefficient:
@@ -526,7 +528,7 @@ def create_librelane_config(input_info, state_info, required_keys):
     config["GRT_MACRO_EXTENSION"] = input_info.grt_macro_extension
 
     # GlobalPlacement-specific config (openroad.py lines 1282-1300)
-    config["PL_TIMING_DRIVEN"] = input_info.pl_time_driven
+    config["PL_TIMING_DRIVEN"] = input_info.pl_timing_driven
     config["PL_ROUTABILITY_DRIVEN"] = input_info.pl_routability_driven
     if input_info.pl_routability_overflow_threshold:
         config["PL_ROUTABILITY_OVERFLOW_THRESHOLD"] = float(
@@ -534,13 +536,13 @@ def create_librelane_config(input_info, state_info, required_keys):
     config["FP_CORE_UTIL"] = int(input_info.fp_core_util)
 
     # OpenROAD.GeneratePDN (pdn_variables)
-    config["PDN_SKIPTRIM"] = input_info.fp_pdn_skiptrim
-    config["PDN_CORE_RING"] = input_info.fp_pdn_core_ring
-    config["PDN_ENABLE_RAILS"] = input_info.fp_pdn_enable_rails
-    config["PDN_HORIZONTAL_HALO"] = float(input_info.fp_pdn_horizontal_halo)
-    config["PDN_VERTICAL_HALO"] = float(input_info.fp_pdn_vertical_halo)
-    config["PDN_MULTILAYER"] = input_info.fp_pdn_multilayer
-    _add_optional_file(config, "PDN_CFG", input_info.fp_pdn_cfg)
+    config["PDN_SKIPTRIM"] = input_info.pdn_skiptrim
+    config["PDN_CORE_RING"] = input_info.pdn_core_ring
+    config["PDN_ENABLE_RAILS"] = input_info.pdn_enable_rails
+    config["PDN_HORIZONTAL_HALO"] = float(input_info.pdn_horizontal_halo)
+    config["PDN_VERTICAL_HALO"] = float(input_info.pdn_vertical_halo)
+    config["PDN_MULTILAYER"] = input_info.pdn_multilayer
+    _add_optional_file(config, "PDN_CFG", input_info.pdn_cfg)
 
     # grt_variables - ResizerStep subclasses
     if input_info.diode_padding:
@@ -609,7 +611,7 @@ def create_librelane_config(input_info, state_info, required_keys):
     config["PL_RESIZER_HOLD_MAX_BUFFER_PCT"] = float(input_info.pl_resizer_hold_max_buffer_pct)
     config["PL_RESIZER_SETUP_MAX_BUFFER_PCT"] = float(input_info.pl_resizer_setup_max_buffer_pct)
     config["PL_RESIZER_ALLOW_SETUP_VIOS"] = input_info.pl_resizer_allow_setup_vios
-    config["PL_RESIZER_SETUP_GATE_CLONING"] = input_info.pl_resizer_gate_cloning
+    config["PL_RESIZER_SETUP_GATE_CLONING"] = input_info.pl_resizer_setup_gate_cloning
     config["PL_RESIZER_SETUP_BUFFERING"] = input_info.pl_resizer_setup_buffering
     config["PL_RESIZER_SETUP_BUFFER_REMOVAL"] = input_info.pl_resizer_setup_buffer_removal
     if input_info.pl_resizer_setup_repair_tns_pct:
@@ -634,7 +636,7 @@ def create_librelane_config(input_info, state_info, required_keys):
     config["GRT_RESIZER_HOLD_MAX_BUFFER_PCT"] = float(input_info.grt_resizer_hold_max_buffer_pct)
     config["GRT_RESIZER_SETUP_MAX_BUFFER_PCT"] = float(input_info.grt_resizer_setup_max_buffer_pct)
     config["GRT_RESIZER_ALLOW_SETUP_VIOS"] = input_info.grt_resizer_allow_setup_vios
-    config["GRT_RESIZER_SETUP_GATE_CLONING"] = input_info.grt_resizer_gate_cloning
+    config["GRT_RESIZER_SETUP_GATE_CLONING"] = input_info.grt_resizer_setup_gate_cloning
     config["GRT_RESIZER_RUN_GRT"] = input_info.grt_resizer_run_grt
     config["GRT_RESIZER_SETUP_BUFFERING"] = input_info.grt_resizer_setup_buffering
     config["GRT_RESIZER_SETUP_BUFFER_REMOVAL"] = input_info.grt_resizer_setup_buffer_removal
@@ -935,16 +937,20 @@ def get_input_files(input_info, state_info):
         inputs.append(input_info.synth_extra_mapping_file)
 
     # Add custom PDN config if provided
-    if input_info.fp_pdn_cfg:
-        inputs.append(input_info.fp_pdn_cfg)
+    if input_info.pdn_cfg:
+        inputs.append(input_info.pdn_cfg)
 
     # Add DEF template if provided
     if input_info.fp_def_template:
         inputs.append(input_info.fp_def_template)
 
     # Add pin order config if provided
-    if input_info.fp_pin_order_cfg:
-        inputs.append(input_info.fp_pin_order_cfg)
+    if input_info.io_pin_order_cfg:
+        inputs.append(input_info.io_pin_order_cfg)
+
+    # Add macro placement config if provided
+    if input_info.macro_placement_cfg:
+        inputs.append(input_info.macro_placement_cfg)
 
     # Add VSRC location files for IR drop analysis
     if input_info.vsrc_loc_files:
@@ -1600,7 +1606,7 @@ ENTRY_ATTRS = {
         doc = "DEF file to use as floorplan template",
         allow_single_file = [".def"],
     ),
-    "fp_pin_order_cfg": attr.label(
+    "io_pin_order_cfg": attr.label(
         doc = "Pin order configuration file for custom IO placement",
         allow_single_file = True,
     ),
@@ -1661,31 +1667,31 @@ ENTRY_ATTRS = {
         default = [],
     ),
     # OpenROAD.GeneratePDN (pdn_variables from common_variables.py)
-    "fp_pdn_skiptrim": attr.bool(
+    "pdn_skiptrim": attr.bool(
         doc = "Skip metal trim step during pdngen",
         default = False,
     ),
-    "fp_pdn_core_ring": attr.bool(
+    "pdn_core_ring": attr.bool(
         doc = "Enable adding a core ring around the design",
         default = False,
     ),
-    "fp_pdn_enable_rails": attr.bool(
+    "pdn_enable_rails": attr.bool(
         doc = "Enable creation of rails in the power grid",
         default = True,
     ),
-    "fp_pdn_horizontal_halo": attr.string(
+    "pdn_horizontal_halo": attr.string(
         doc = "Horizontal halo around macros during PDN insertion (µm)",
         default = "10",
     ),
-    "fp_pdn_vertical_halo": attr.string(
+    "pdn_vertical_halo": attr.string(
         doc = "Vertical halo around macros during PDN insertion (µm)",
         default = "10",
     ),
-    "fp_pdn_multilayer": attr.bool(
+    "pdn_multilayer": attr.bool(
         doc = "Use multiple layers in power grid (False for macro hardening)",
         default = True,
     ),
-    "fp_pdn_cfg": attr.label(
+    "pdn_cfg": attr.label(
         doc = "Custom PDN configuration file",
         allow_single_file = True,
     ),
@@ -1695,19 +1701,19 @@ ENTRY_ATTRS = {
         default = [],
     ),
     # io_layer_variables (common_variables.py lines 19-46) - used by IOPlacement, CustomIOPlacement
-    "fp_io_vextend": attr.string(
+    "io_pin_v_extension": attr.string(
         doc = "Extend vertical IO pins outside die (µm)",
         default = "0",
     ),
-    "fp_io_hextend": attr.string(
+    "io_pin_h_extension": attr.string(
         doc = "Extend horizontal IO pins outside die (µm)",
         default = "0",
     ),
-    "fp_io_vthickness_mult": attr.string(
+    "io_pin_v_thickness_mult": attr.string(
         doc = "Vertical pin thickness multiplier (base is layer min width)",
         default = "2",
     ),
-    "fp_io_hthickness_mult": attr.string(
+    "io_pin_h_thickness_mult": attr.string(
         doc = "Horizontal pin thickness multiplier (base is layer min width)",
         default = "2",
     ),
@@ -1722,7 +1728,7 @@ ENTRY_ATTRS = {
         doc = "Target placement density percentage (if empty, calculated dynamically)",
         default = "",
     ),
-    "fp_ppl_mode": attr.string(
+    "io_pin_placement_mode": attr.string(
         doc = "IO placement mode: matching, random_equidistant, or annealing",
         default = "matching",
     ),
@@ -1746,7 +1752,7 @@ ENTRY_ATTRS = {
         doc = "Keep timing-driven resize changes when overflow is below this value",
         default = "",
     ),
-    "pl_time_driven": attr.bool(
+    "pl_timing_driven": attr.bool(
         doc = "Use time driven placement in global placer",
         default = False,
     ),
@@ -1960,7 +1966,7 @@ ENTRY_ATTRS = {
         doc = "Allow setup violations when fixing hold violations",
         default = False,
     ),
-    "pl_resizer_gate_cloning": attr.bool(
+    "pl_resizer_setup_gate_cloning": attr.bool(
         doc = "Enable gate cloning when fixing setup violations",
         default = True,
     ),
@@ -2030,7 +2036,7 @@ ENTRY_ATTRS = {
         doc = "Allow setup violations when fixing hold",
         default = False,
     ),
-    "grt_resizer_gate_cloning": attr.bool(
+    "grt_resizer_setup_gate_cloning": attr.bool(
         doc = "Enable gate cloning when fixing setup violations",
         default = True,
     ),

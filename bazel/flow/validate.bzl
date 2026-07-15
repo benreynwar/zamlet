@@ -46,7 +46,7 @@ BUNDLED_ATTRS = {
         allow_single_file = [".sdc"],
     ),
     # Optional attrs with None default (to detect user overrides)
-    "core_utilization": attr.string(doc = "Target core utilization percentage"),
+    "fp_core_util": attr.string(doc = "Target core utilization percentage"),
     "die_area": attr.string(doc = "Die area as 'x0 y0 x1 y1'"),
     # IO delay constraints (percentage of clock period)
     "input_delay_constraint": attr.string(doc = "Input delay as percentage of clock period"),
@@ -84,7 +84,7 @@ def _prepare_flow(ctx, verilog_paths):
 
     config["CLOCK_PORT"] = ctx.attr.clock_port
     config["CLOCK_PERIOD"] = float(ctx.attr.clock_period)
-    _add_if_set(config, "FP_CORE_UTIL", ctx.attr.core_utilization)
+    _add_if_set(config, "FP_CORE_UTIL", ctx.attr.fp_core_util)
     _add_if_set(config, "DIE_AREA", ctx.attr.die_area)
     _add_if_set(config, "SYNTH_STRATEGY", ctx.attr.synth_strategy)
     _add_if_set(config, "SYNTH_AUTONAME", ctx.attr.synth_autoname)

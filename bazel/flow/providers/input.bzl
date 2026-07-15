@@ -102,7 +102,7 @@ LibrelaneInput = provider(
         "sta_extra_corner_tcl_file": "File - Extra OpenROAD corner Tcl file (optional)",
         "deduplicate_corners": "bool - Deduplicate equivalent PnR corners",
         "fp_def_template": "File - DEF template for floorplan (optional)",
-        "fp_pin_order_cfg": "File - Pin order config for custom IO placement (optional)",
+        "io_pin_order_cfg": "File - Pin order config for custom IO placement (optional)",
 
         # ApplyDEFTemplate config (odb.py lines 249-259)
         "fp_template_match_mode": "string - DEF template pin matching mode",
@@ -154,17 +154,17 @@ LibrelaneInput = provider(
         "routing_obstructions": "List[str] - Routing obstructions (layer llx lly urx ury)",
 
         # io_layer_variables (common_variables.py lines 19-46) - IOPlacement, CustomIOPlacement
-        "fp_io_vextend": "string - Extend vertical IO pins outside die (um)",
-        "fp_io_hextend": "string - Extend horizontal IO pins outside die (um)",
-        "fp_io_vthickness_mult": "string - Vertical pin thickness multiplier",
-        "fp_io_hthickness_mult": "string - Horizontal pin thickness multiplier",
+        "io_pin_v_extension": "string - Extend vertical IO pins outside die (um)",
+        "io_pin_h_extension": "string - Extend horizontal IO pins outside die (um)",
+        "io_pin_v_thickness_mult": "string - Vertical pin thickness multiplier",
+        "io_pin_h_thickness_mult": "string - Horizontal pin thickness multiplier",
 
         # CustomIOPlacement config (odb.py lines 673-680)
         "errors_on_unmatched_io": "string - Error on unmatched IO pins",
 
         # GlobalPlacement config
         "pl_target_density_pct": "string - Target placement density percentage",
-        "fp_ppl_mode": "string - IO placement mode",
+        "io_pin_placement_mode": "string - IO placement mode",
         "pl_skip_initial_placement": "bool - Skip initial placement",
         "pl_wire_length_coef": "string - Wirelength coefficient",
         "pl_min_phi_coefficient": "string - Min phi coefficient",
@@ -174,19 +174,19 @@ LibrelaneInput = provider(
         "rt_clock_max_layer": "string - Max clock routing layer",
         "grt_adjustment": "string - Global routing adjustment",
         "grt_macro_extension": "int - Macro blockage extension",
-        "pl_time_driven": "bool - Time driven placement",
+        "pl_timing_driven": "bool - Timing driven placement",
         "pl_routability_driven": "bool - Routability driven placement",
         "pl_routability_overflow_threshold": "string - Routability overflow threshold",
         "fp_core_util": "string - Core utilization percentage",
 
         # OpenROAD.GeneratePDN (pdn_variables from common_variables.py)
-        "fp_pdn_skiptrim": "bool - Skip metal trim step during pdngen",
-        "fp_pdn_core_ring": "bool - Enable core ring around design",
-        "fp_pdn_enable_rails": "bool - Enable rails in power grid",
-        "fp_pdn_horizontal_halo": "string - Horizontal halo around macros for PDN (um)",
-        "fp_pdn_vertical_halo": "string - Vertical halo around macros for PDN (um)",
-        "fp_pdn_multilayer": "bool - Use multiple layers in power grid",
-        "fp_pdn_cfg": "File - Custom PDN configuration file",
+        "pdn_skiptrim": "bool - Skip metal trim step during pdngen",
+        "pdn_core_ring": "bool - Enable core ring around design",
+        "pdn_enable_rails": "bool - Enable rails in power grid",
+        "pdn_horizontal_halo": "string - Horizontal halo around macros for PDN (um)",
+        "pdn_vertical_halo": "string - Vertical halo around macros for PDN (um)",
+        "pdn_multilayer": "bool - Use multiple layers in power grid",
+        "pdn_cfg": "File - Custom PDN configuration file",
 
         # grt_variables (common_variables.py:285-319) - ResizerStep subclasses
         "diode_padding": "int - Diode cell padding in sites",
@@ -244,7 +244,7 @@ LibrelaneInput = provider(
         "pl_resizer_hold_max_buffer_pct": "string - Max hold buffers as % of instances (default 50)",
         "pl_resizer_setup_max_buffer_pct": "string - Max setup buffers as % of instances (default 50)",
         "pl_resizer_allow_setup_vios": "bool - Allow setup violations when fixing hold",
-        "pl_resizer_gate_cloning": "bool - Enable gate cloning for setup fixes (default True)",
+        "pl_resizer_setup_gate_cloning": "bool - Enable gate cloning for setup fixes (default True)",
         "pl_resizer_setup_buffering": "bool - Enable setup rebuffering and load splitting",
         "pl_resizer_setup_buffer_removal": "bool - Enable setup buffer removal",
         "pl_resizer_setup_repair_tns_pct": "string - Percentage of setup violating endpoints to repair",
@@ -263,7 +263,7 @@ LibrelaneInput = provider(
         "grt_resizer_hold_max_buffer_pct": "string - Max buffers for hold fixes (%)",
         "grt_resizer_setup_max_buffer_pct": "string - Max buffers for setup fixes (%)",
         "grt_resizer_allow_setup_vios": "bool - Allow setup violations when fixing hold",
-        "grt_resizer_gate_cloning": "bool - Enable gate cloning for setup fixes",
+        "grt_resizer_setup_gate_cloning": "bool - Enable gate cloning for setup fixes",
         "grt_resizer_run_grt": "bool - Run GRT after resizer steps",
         "grt_resizer_setup_buffering": "bool - Enable setup rebuffering and load splitting",
         "grt_resizer_setup_buffer_removal": "bool - Enable setup buffer removal",

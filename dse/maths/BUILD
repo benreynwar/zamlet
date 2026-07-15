@@ -24,7 +24,7 @@ WALLACE_MULT_CONFIGS = [
     config = "//configs:{}.json".format(name),
     pdk = ":sky130hd",
     clock_period = "10.0",
-    core_utilization = "40",
+    fp_core_util = "40",
     input_delay_constraint = "40",
     output_delay_constraint = "40",
 ) for name in WALLACE_MULT_CONFIGS]
@@ -53,7 +53,7 @@ SEGMENTED_MULT_WIDTHS = [
     top = "SegmentedMultiplier{}x{}".format(width, width),
     pdk = ":sky130hd",
     clock_period = "14.0",
-    core_utilization = "40",
+    fp_core_util = "40",
     grt_antenna_margin = 50,
     input_delay_constraint = "40",
     output_delay_constraint = "40",
@@ -67,7 +67,7 @@ librelane_classic_bundled_flow(
     pdk = ":sky130hd",
     clock_period = "10.0",
     clock_port = "clock",
-    core_utilization = "40",
+    fp_core_util = "40",
     input_delay_constraint = "40",
     output_delay_constraint = "40",
 )
@@ -80,7 +80,7 @@ librelane_flow_inputs(
     pdk = ":sky130hd",
     clock_period = "10.0",
     clock_port = "clock",
-    core_utilization = "40",
+    fp_core_util = "40",
     input_delay_constraint = "40",
     output_delay_constraint = "40",
 )

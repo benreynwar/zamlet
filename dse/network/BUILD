@@ -22,7 +22,7 @@ chisel_dse_module(
     clock_period = "10.0",
     die_area = "0 0 330 770",
     pl_target_density_pct = "50",
-    pin_order_cfg = ":networknode_pin_order.cfg",
+    io_pin_order_cfg = ":networknode_pin_order.cfg",
 )
 
 # CombinedNetworkNode needs a DEF template between verilog gen and flow
@@ -49,7 +49,7 @@ librelane_classic_flow(
     clock_period = "10.0",
     die_area = COMBINED_NETWORK_NODE_DIE_AREA,
     pl_target_density_pct = "60",
-    def_template = ":CombinedNetworkNode_default_sky130hd_def_template",
+    fp_def_template = ":CombinedNetworkNode_default_sky130hd_def_template",
 )
 
 # PacketArbiter with 2 inputs (as used in Jamlet)
@@ -61,5 +61,5 @@ chisel_dse_module(
     pdk = ":sky130hd",
     extra_generator_args = ["2"],
     clock_period = "10.0",
-    core_utilization = "60",
+    fp_core_util = "60",
 )

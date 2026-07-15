@@ -81,7 +81,7 @@ def _floorplan_impl(ctx):
     else:
         # Relative sizing mode (default)
         config["FP_SIZING"] = "relative"
-        config["FP_CORE_UTIL"] = int(ctx.attr.core_utilization)
+        config["FP_CORE_UTIL"] = int(ctx.attr.fp_core_util)
         config["FP_ASPECT_RATIO"] = float(ctx.attr.fp_aspect_ratio)
 
     # Optional obstructions
@@ -142,7 +142,7 @@ librelane_floorplan = rule(
     attrs = dict(FLOW_ATTRS, **{
         "die_area": attr.string(doc = "Die area as 'x0 y0 x1 y1' in microns"),
         "core_area": attr.string(doc = "Core area as 'x0 y0 x1 y1' in microns"),
-        "core_utilization": attr.string(
+        "fp_core_util": attr.string(
             doc = "Target core utilization percentage (0-100)",
             default = "50",
         ),

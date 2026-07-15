@@ -86,7 +86,7 @@ def chisel_dse_module(
         pdk: PDK target label (e.g. ":sky130hd")
         extra_generator_args: Extra args for the Chisel generator
         **flow_kwargs: Passed to librelane_classic_flow
-            (clock_period, core_utilization, pin_order_cfg, etc.)
+            (clock_period, fp_core_util, io_pin_order_cfg, etc.)
     """
     chisel_verilog(
         name = name,

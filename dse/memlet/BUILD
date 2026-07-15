@@ -23,7 +23,7 @@ chisel_dse_module(
     config = ZAMLET_CONFIG,
     pdk = ":sky130hd",
     clock_period = "10.0",
-    core_utilization = "50",
+    fp_core_util = "50",
 )
 
 chisel_dse_module(
@@ -33,5 +33,5 @@ chisel_dse_module(
     config = ZAMLET_CONFIG,
     pdk = ":sky130hd",
     clock_period = "10.0",
-    core_utilization = "50",
+    fp_core_util = "50",
 )
