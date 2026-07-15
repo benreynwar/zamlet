@@ -62,7 +62,7 @@ json_file(
         "gridRows": 2,
         "gridCols": 2,
         "mxuN": 2,
-        "registerProduct": True,
+        "bcBuffer": True,
     },
 )
 
