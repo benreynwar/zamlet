@@ -10,13 +10,13 @@ SYSTOLIC_DEPS = [
 ]
 
 chisel_binary(
-    name = "systolicarray",
+    name = "weightstationary",
     srcs = [
-        "SystolicArray.scala",
+        "WeightStationary.scala",
         "//src/main/scala/zamlet:zamlet_common_sources",
         "//src/main/scala/zamlet/utils:utils_sources",
     ],
-    main_class = "zamlet.systolic.SystolicArrayMain",
+    main_class = "zamlet.systolic.WeightStationaryMain",
     deps = SYSTOLIC_DEPS,
     visibility = ["//visibility:public"],
 )

@@ -21,6 +21,7 @@ with open(TEST_PARAMS["params_file"]) as f:
     CONFIG = json.load(f)
 
 N = int(CONFIG["n"])
+RESET_GROUP_SIZE = int(CONFIG["resetGroupSize"])
 
 
 def set_vector(dut: HierarchyObject, name: str, values: list[int]) -> None:
@@ -29,22 +30,20 @@ def set_vector(dut: HierarchyObject, name: str, values: list[int]) -> None:
         getattr(dut, f"io_{name}_{index}").value = value
 
 
-def drive_control(dut: HierarchyObject, name: str, lanes: list[bool]) -> None:
-    set_vector(dut, name, [int(value) for value in lanes])
-
-
 def zero_inputs(dut: HierarchyObject) -> None:
-    for name in ["inputIn", "weightLoadIn", "sumIn", "loadWeightIn", "startIn", "stepIn"]:
+    for name in ["inputIn", "weightLoadIn", "sumIn"]:
         set_vector(dut, name, [0 for _ in range(N)])
+    dut.io_loadWeightIn.value = 0
+    dut.io_stepIn.value = 0
 
 
 async def reset_dut(dut: HierarchyObject) -> None:
     cocotb.start_soon(Clock(dut.clock, 2, "ns").start())
     dut.reset.value = 1
     zero_inputs(dut)
-    await RisingEdge(dut.clock)
+    await wait_cycles(dut, 4)
     dut.reset.value = 0
-    await RisingEdge(dut.clock)
+    await wait_cycles(dut, 1 + int(RESET_GROUP_SIZE > 0))
 
 
 async def wait_cycles(dut: HierarchyObject, cycles: int) -> None:
@@ -52,25 +51,23 @@ async def wait_cycles(dut: HierarchyObject, cycles: int) -> None:
         await RisingEdge(dut.clock)
 
 
-async def load_weights(
+def drive_weights(
     dut: HierarchyObject,
-    load_weight_driver: SkewedControlDriver,
+    weights: list[list[int]],
+    local_cycle: int,
+) -> None:
+    for col in range(N):
+        row = local_cycle - col
+        if 0 <= row < N:
+            getattr(dut, f"io_weightLoadIn_{col}").value = int8_bits(weights[row][col])
+
+
+async def feed_weights(
+    dut: HierarchyObject,
     weights: list[list[int]],
 ) -> None:
-    load_weight_driver.request(N)
-    for local_cycle in range(N):
-        row = N - 1 - local_cycle
-        set_vector(dut, "weightLoadIn", [int8_bits(weights[row][col]) for col in range(N)])
-        await RisingEdge(dut.clock)
-
-    set_vector(dut, "weightLoadIn", [0 for _ in range(N)])
-    while load_weight_driver.cycle < 2 * N:
-        await RisingEdge(dut.clock)
-
-
-async def start_weights(dut: HierarchyObject, start_driver: SkewedControlDriver) -> None:
-    start_driver.request(1)
-    while start_driver.cycle < 2 * N:
+    for local_cycle in range(2 * N - 1):
+        drive_weights(dut, weights, local_cycle)
         await RisingEdge(dut.clock)
 
 
@@ -79,16 +76,19 @@ def drive_inputs_and_sums(
     inputs: list[list[int]],
     local_cycle: int,
 ) -> None:
-    input_values = []
     for row in range(N):
-        output_row = local_cycle - row
-        if 0 <= output_row < N:
-            input_values.append(int8_bits(inputs[output_row][row]))
-        else:
-            input_values.append(0)
+        k = local_cycle - row
+        if 0 <= k < N:
+            getattr(dut, f"io_inputIn_{row}").value = int8_bits(inputs[k][row])
 
-    set_vector(dut, "inputIn", input_values)
-    set_vector(dut, "sumIn", [0 for _ in range(N)])
+
+async def feed_inputs_and_sums(
+    dut: HierarchyObject,
+    inputs: list[list[int]],
+) -> None:
+    for local_cycle in range(2 * N - 1):
+        drive_inputs_and_sums(dut, inputs, local_cycle)
+        await RisingEdge(dut.clock)
 
 
 def capture_outputs(
@@ -97,7 +97,7 @@ def capture_outputs(
     local_cycle: int,
 ) -> None:
     for col in range(N):
-        row = local_cycle - N - col
+        row = local_cycle - N - col - 1
         if 0 <= row < N:
             captured[row][col] = int(getattr(dut, f"io_sumOut_{col}").value)
 
@@ -105,28 +105,27 @@ def capture_outputs(
 async def matrix_multiply(
     dut: HierarchyObject,
     load_weight_driver: SkewedControlDriver,
-    start_driver: SkewedControlDriver,
     step_driver: SkewedControlDriver,
     inputs: list[list[int]],
     weights: list[list[int]],
 ) -> None:
     expected = [[value & UINT32_MASK for value in row] for row in matrix_product(inputs, weights)]
 
-    await load_weights(dut, load_weight_driver, weights)
-    await start_weights(dut, start_driver)
-
-    start_cycle = step_driver.cycle
+    # The one-cycle load pulse moves diagonally with the first step. Each A-to-B
+    # boundary replaces the weight as it captures the first input of the new sum.
+    load_weight_driver.request(1)
     step_driver.request(N)
+    await RisingEdge(dut.clock)
+    cocotb.start_soon(feed_weights(dut, weights))
+    cocotb.start_soon(feed_inputs_and_sums(dut, inputs))
     captured: list[list[int | None]] = [[None for _ in range(N)] for _ in range(N)]
-    last_cycle = N + (N - 1) + (N - 1)
+    last_cycle = N + (N - 1) + (N - 1) + 1
 
     for local_cycle in range(last_cycle + 1):
-        drive_inputs_and_sums(dut, inputs, local_cycle)
         await RisingEdge(dut.clock)
         await ReadOnly()
         capture_outputs(dut, captured, local_cycle)
 
-    zero_inputs(dut)
     assert captured == expected, (
         f"inputs={inputs} weights={weights} captured={captured} expected={expected}"
     )
@@ -137,31 +136,25 @@ async def test_matrix_multiply(dut: HierarchyObject) -> None:
     rng = random.Random(TEST_PARAMS["seed"])
     await reset_dut(dut)
 
-    load_weight_driver = SkewedControlDriver(
-        N,
-        lambda lanes: drive_control(dut, "loadWeightIn", lanes),
-    )
-    start_driver = SkewedControlDriver(
-        N,
-        lambda lanes: drive_control(dut, "startIn", lanes),
-    )
-    step_driver = SkewedControlDriver(
-        N,
-        lambda lanes: drive_control(dut, "stepIn", lanes),
-    )
-    cocotb.start_soon(load_weight_driver.run(dut.clock))
-    cocotb.start_soon(start_driver.run(dut.clock))
-    cocotb.start_soon(step_driver.run(dut.clock))
+    load_weight_driver = SkewedControlDriver(dut, "loadWeightIn")
+    step_driver = SkewedControlDriver(dut, "stepIn")
+    cocotb.start_soon(load_weight_driver.run())
+    cocotb.start_soon(step_driver.run())
 
     await RisingEdge(dut.clock)
 
+    tasks = []
     for _ in range(4):
-        await matrix_multiply(
-            dut,
-            load_weight_driver,
-            start_driver,
-            step_driver,
-            random_matrix(rng, N),
-            random_matrix(rng, N),
-        )
+        tasks.append(cocotb.start_soon(
+            matrix_multiply(
+                dut,
+                load_weight_driver,
+                step_driver,
+                random_matrix(rng, N),
+                random_matrix(rng, N),
+            )
+        ))
         await wait_cycles(dut, N)
+
+    for task in tasks:
+        await task

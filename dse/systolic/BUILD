@@ -1,7 +1,7 @@
 # Systolic array physical design experiments
 
 load("//bazel:verilog.bzl", "chisel_verilog_no_config")
-load("//bazel:design/systolic/defs.bzl", "sum_stationary_top")
+load("//bazel:design/systolic/defs.bzl", "sum_stationary_top", "weight_stationary_top")
 load("//bazel/flow:defs.bzl", "librelane_classic_flow", "librelane_synth_config")
 load("//bazel/flow/sdc:sdc_template.bzl", "sdc_template")
 load("@sky130_fd_sc_hd_config//:defs.bzl", "pdk")
@@ -11,8 +11,12 @@ pdk(name = "sky130hd")
 SYSTOLIC_PKG = "//src/main/scala/zamlet/systolic"
 
 librelane_synth_config(
-    name = "synth_autoname",
+    name = "synth_weight_stationary_preserve_cell",
     synth_autoname = True,
+    synth_keep_hierarchy_modules = [
+        "WeightStationaryCell",
+        "WeightStationaryResetGroup",
+    ],
 )
 
 librelane_synth_config(
@@ -23,6 +27,60 @@ librelane_synth_config(
         "SumStationaryCell",
         "SumStationaryResetGroup",
     ],
+)
+
+WEIGHT_STATIONARY_CONFIGS = [
+    (8, 4),
+    (4, 0),
+    (2, 0),
+]
+WEIGHT_STATIONARY_CLOCK_PERIODS = [20, 16, 12, 11, 10]
+WEIGHT_STATIONARY_UTILIZATIONS = [40, 50, 60, 65, 70]
+
+[
+    chisel_verilog_no_config(
+        name = weight_stationary_top(n, reset_group),
+        generator = SYSTOLIC_PKG + ":weightstationary",
+        extra_args = [str(n), str(reset_group)],
+    )
+    for n, reset_group in WEIGHT_STATIONARY_CONFIGS
+]
+
+[
+    librelane_classic_flow(
+        name = weight_stationary_top(n, reset_group) +
+               "_sky130hd_{}ns_util{}".format(clock_period, utilization),
+        verilog_files = [":" + weight_stationary_top(n, reset_group) + ".sv"],
+        top = weight_stationary_top(n, reset_group),
+        pdk = ":sky130hd",
+        clock_period = "{}.0".format(clock_period),
+        fp_core_util = str(utilization),
+        io_pin_order_cfg = ":weight_stationary{}x{}_pin_order.cfg".format(n, n),
+        pnr_sdc_file = ":weight_stationary_pnr_sdc",
+        signoff_sdc_file = ":weight_stationary_signoff_sdc",
+        synth_config = ":synth_weight_stationary_preserve_cell",
+        design_repair_max_wire_length = "150",
+        run_post_grt_resizer_timing = True,
+        mid_setup_wns_threshold = "-0.2",
+    )
+    for n, reset_group in WEIGHT_STATIONARY_CONFIGS
+    for clock_period in WEIGHT_STATIONARY_CLOCK_PERIODS
+    for utilization in WEIGHT_STATIONARY_UTILIZATIONS
+]
+
+sdc_template(
+    name = "weight_stationary_pnr_sdc",
+    template = "//bazel/flow/sdc:base.sdc",
+    clock_period_scale = "0.9",
+    input_delay_constraint = "75",
+    output_delay_constraint = "55",
+)
+
+sdc_template(
+    name = "weight_stationary_signoff_sdc",
+    template = "//bazel/flow/sdc:base.sdc",
+    input_delay_constraint = "75",
+    output_delay_constraint = "45",
 )
 
 SUM_STATIONARY_CONFIGS = [

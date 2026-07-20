@@ -1,5 +1,4 @@
 import random
-from collections.abc import Callable
 
 from cocotb.triggers import ReadOnly, RisingEdge
 
@@ -10,36 +9,30 @@ UINT32_MASK = (1 << 32) - 1
 
 
 class SkewedControlDriver:
-    def __init__(self, lane_count: int, drive_lanes: Callable[[list[bool]], None]):
+    def __init__(self, dut, signal_name: str):
+        self.signal = getattr(dut, f"io_{signal_name}")
+        self.clock = dut.clock
         self.cycle = 0
         self.n_cycles = 0
         self.just_set = False
         self.next_n_cycles: None | int = None
-        self.history = [False for _ in range(lane_count - 1)]
-        self.drive_lanes = drive_lanes
 
     def request(self, cycles: int) -> None:
-        # We are in the Writeable phase.
         assert self.n_cycles == 0
         if cycles > 0:
-            self.drive_lanes([True] + self.history)
+            self.signal.value = 1
             assert not self.just_set
             self.just_set = True
             self.next_n_cycles = cycles - 1
 
-    async def run(self, clock) -> None:
+    async def run(self) -> None:
         while True:
-            await RisingEdge(clock)
-            lane0 = self.just_set or self.n_cycles > 0
-            lanes = [lane0] + self.history
+            await RisingEdge(self.clock)
             if not self.just_set:
-                self.drive_lanes(lanes)
+                self.signal.value = int(self.n_cycles > 0)
             await ReadOnly()
-            lane0 = self.just_set or self.n_cycles > 0
-            lanes[0] = lane0
             if self.n_cycles > 0:
                 self.n_cycles -= 1
-            self.history = lanes[:-1]
             if self.just_set:
                 self.just_set = False
                 assert self.next_n_cycles is not None
