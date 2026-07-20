@@ -14,6 +14,7 @@ librelane_synth_config(
     name = "synth_weight_stationary_preserve_cell",
     synth_autoname = True,
     synth_keep_hierarchy_modules = [
+        "RegisterWithPipelinedReset",
         "WeightStationaryCell",
         "WeightStationaryResetGroup",
     ],
@@ -23,7 +24,7 @@ librelane_synth_config(
     name = "synth_sum_stationary_preserve_cell",
     synth_autoname = True,
     synth_keep_hierarchy_modules = [
-        "SumStationaryCDrainRegister",
+        "RegisterWithPipelinedReset",
         "SumStationaryCell",
         "SumStationaryResetGroup",
     ],

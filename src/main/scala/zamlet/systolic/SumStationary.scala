@@ -22,21 +22,6 @@ class SumStationaryResetGroup extends RawModule {
   }
 }
 
-class SumStationaryCDrainRegister(
-    resetBudget: ResetPipelineBudget = ResetPipelineBudget(1)) extends Module {
-  val io = IO(new Bundle {
-    val in = Input(Valid(UInt(32.W)))
-    val out = Output(Valid(UInt(32.W)))
-  })
-
-  resetBudget.consume(1, "SumStationaryCDrainRegister")
-  val localReset = ResetPipeline(clock, reset.asBool, 1)
-  withReset(localReset) {
-    io.out.valid := RegNext(io.in.valid, false.B)
-    io.out.bits := RegNext(io.in.bits)
-  }
-}
-
 class SumStationaryCellIO extends Bundle {
   // A moves west to east and B moves north to south. Valid and final move with A.
   val aA = Input(UInt(8.W))
@@ -261,7 +246,7 @@ class SumStationary(
   val middleCDrain = if (splitCDrain) {
     Seq.tabulate(n) { col =>
       val middleCDrainRegister = withReset(resetFor(n / 2, col)) {
-        Module(new SumStationaryCDrainRegister(cellResetBudget))
+        Module(new RegisterWithPipelinedReset(Valid(UInt(32.W)), cellResetBudget))
       }
       middleCDrainRegister.io.in.valid := cells(n / 2)(col).io.eCDrainOut.valid
       middleCDrainRegister.io.in.bits := cells(n / 2)(col).io.eCDrainOut.bits.data
@@ -317,7 +302,7 @@ class SumStationary(
 
       assert(!(northCDrain.valid && upperCDrainValid))
       val upperCDrainRegister = withReset(resetFor(0, col)) {
-        Module(new SumStationaryCDrainRegister(cellResetBudget))
+        Module(new RegisterWithPipelinedReset(Valid(UInt(32.W)), cellResetBudget))
       }
       upperCDrainRegister.io.in.valid := northCDrain.valid || upperCDrainValid
       upperCDrainRegister.io.in.bits := Mux(
@@ -327,7 +312,7 @@ class SumStationary(
 
       assert(!(upperCDrainRegister.io.out.valid && lowerCDrainValid))
       val cOutRegister = withReset(resetFor(0, col)) {
-        Module(new SumStationaryCDrainRegister(cellResetBudget))
+        Module(new RegisterWithPipelinedReset(Valid(UInt(32.W)), cellResetBudget))
       }
       cOutRegister.io.in.valid := upperCDrainRegister.io.out.valid || lowerCDrainValid
       cOutRegister.io.in.bits := Mux(
@@ -339,7 +324,7 @@ class SumStationary(
       // Without a split, the complete drain flows through every cell to row zero
       // and receives one final register before cOut.
       val cOutRegister = withReset(resetFor(0, col)) {
-        Module(new SumStationaryCDrainRegister(cellResetBudget))
+        Module(new RegisterWithPipelinedReset(Valid(UInt(32.W)), cellResetBudget))
       }
       cOutRegister.io.in.valid := true.B
       cOutRegister.io.in.bits := cells(0)(col).io.eCDrainOut.bits.data

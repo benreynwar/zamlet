@@ -28,6 +28,8 @@ class JamletMxuTestGrid(
     mxuN: Int,
     registerBC: Boolean,
     registerBackwardOutput: Boolean,
+    splitCDrain: Boolean,
+    resetGroupSize: Int,
     moduleName: String) extends Module {
   override val desiredName = moduleName
   require(gridRows > 0 && isPow2(gridRows))
@@ -42,7 +44,10 @@ class JamletMxuTestGrid(
       hasEwLoop = true,
       hasNsLoop = true,
       registerBC = registerBC,
-      registerBackwardOutput = registerBackwardOutput))
+      registerBackwardOutput = registerBackwardOutput,
+      splitCDrain = splitCDrain,
+      resetGroupSize = resetGroupSize,
+      resetBudget = zamlet.utils.ResetPipelineBudget(if (resetGroupSize == 0) 2 else 3)))
   }
 
   for (physicalRow <- 0 until gridRows) {
@@ -117,14 +122,16 @@ class JamletMxuTestGrid(
 
 object JamletMxuTestGridGenerator extends zamlet.ModuleGenerator {
   override def makeModule(args: Seq[String]): Module = {
-    require(args.length == 6)
+    require(args.length == 8)
     new JamletMxuTestGrid(
       gridRows = args(0).toInt,
       gridCols = args(1).toInt,
       mxuN = args(2).toInt,
       registerBC = args(3).toBoolean,
       registerBackwardOutput = args(4).toBoolean,
-      moduleName = args(5))
+      splitCDrain = args(5).toBoolean,
+      resetGroupSize = args(6).toInt,
+      moduleName = args(7))
   }
 }
 

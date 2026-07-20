@@ -1,7 +1,35 @@
 package zamlet.jamlet
 
 import chisel3._
+import chisel3.util._
 import zamlet.utils.{ResetPipeline, ResetPipelineBudget}
+
+class JamletMxuResetGroup extends RawModule {
+  val clock = IO(Input(Clock()))
+  val resetIn = IO(Input(Bool()))
+  val resetOut = IO(Output(Reset()))
+
+  withClock(clock) {
+    val groupReset = RegNext(resetIn)
+    dontTouch(groupReset)
+    resetOut := groupReset
+  }
+}
+
+class JamletMxuCDrainRegister(
+    resetBudget: ResetPipelineBudget = ResetPipelineBudget(1)) extends Module {
+  val io = IO(new Bundle {
+    val in = Input(Valid(UInt(32.W)))
+    val out = Output(Valid(UInt(32.W)))
+  })
+
+  resetBudget.consume(1, "JamletMxuCDrainRegister")
+  val localReset = ResetPipeline(clock, reset.asBool, 1)
+  withReset(localReset) {
+    io.out.valid := RegNext(io.in.valid, false.B)
+    io.out.bits := RegNext(io.in.bits)
+  }
+}
 
 class JamletMxuIO(n: Int) extends Bundle {
   val ewFromMemory = Input(Vec(n, UInt(8.W)))
@@ -35,19 +63,46 @@ class JamletMxu(
     registerBC: Boolean = false,
     registerDE: Boolean = false,
     registerBackwardOutput: Boolean = false,
+    splitCDrain: Boolean = false,
+    resetGroupSize: Int = 0,
     resetBudget: ResetPipelineBudget = ResetPipelineBudget(2)) extends Module {
   override val desiredName =
     s"JamletMxu${n}x${n}_EwLoop${if (hasEwLoop) 1 else 0}" +
       s"_NsLoop${if (hasNsLoop) 1 else 0}" +
       s"_CSA${if (useCarrySaveAccumulator) 1 else 0}" +
       s"_BC${if (registerBC) 1 else 0}_DE${if (registerDE) 1 else 0}" +
-      s"_BackwardReg${if (registerBackwardOutput) 1 else 0}"
+      s"_BackwardReg${if (registerBackwardOutput) 1 else 0}" +
+      s"_SplitDrain${if (splitCDrain) 1 else 0}_ResetGroup$resetGroupSize"
   require(n == 2 || n == 4 || n == 8)
+  require(!splitCDrain || n >= 4)
+  require(resetGroupSize >= 0)
+  require(resetGroupSize == 0 || n % resetGroupSize == 0)
   val io = IO(new JamletMxuIO(n))
 
   val resetPipeline = ResetPipeline(clock, reset.asBool, 1, resetBudget, "JamletMxu")
-  val cellReset = resetPipeline.childReset
-  val cellResetBudget = resetPipeline.childBudget
+  val cellResetBudget = if (resetGroupSize == 0) {
+    resetPipeline.childBudget
+  } else {
+    resetPipeline.childBudget.consume(1, "JamletMxu reset groups")
+  }
+  val groupResets = if (resetGroupSize == 0) {
+    Seq.empty
+  } else {
+    Seq.tabulate(n / resetGroupSize, n / resetGroupSize) { (groupRow, groupCol) =>
+      val resetGroup = Module(new JamletMxuResetGroup)
+        .suggestName(s"resetGroup_${groupRow}_${groupCol}")
+      resetGroup.clock := clock
+      resetGroup.resetIn := resetPipeline.childReset.asBool
+      resetGroup.resetOut
+    }
+  }
+  def resetFor(row: Int, col: Int): Reset = {
+    if (resetGroupSize == 0) {
+      resetPipeline.childReset
+    } else {
+      groupResets(row / resetGroupSize)(col / resetGroupSize)
+    }
+  }
 
   val ewBackwardInput = Wire(Vec(n, UInt(8.W)))
   val nsBackwardInput = Wire(Vec(n, UInt(8.W)))
@@ -100,14 +155,27 @@ class JamletMxu(
     Mux(init(col), io.nsFromMemory(col), nsTopologyInput(col))
   }
 
-  val cells = Seq.tabulate(n, n) { (_, _) =>
-    withReset(cellReset) {
+  val cells = Seq.tabulate(n, n) { (row, col) =>
+    withReset(resetFor(row, col)) {
       Module(new JamletMxuCell(
         useCarrySaveAccumulator = useCarrySaveAccumulator,
         registerBC = registerBC,
         registerDE = registerDE,
         resetBudget = cellResetBudget))
     }
+  }
+
+  val middleCDrain = if (splitCDrain) {
+    Seq.tabulate(n) { row =>
+      val middleCDrainRegister = withReset(resetFor(row, n / 2)) {
+        Module(new JamletMxuCDrainRegister(cellResetBudget))
+      }
+      middleCDrainRegister.io.in.valid := cells(row)(n / 2).io.eCDrainOut.valid
+      middleCDrainRegister.io.in.bits := cells(row)(n / 2).io.eCDrainOut.bits.data
+      middleCDrainRegister.io.out
+    }
+  } else {
+    Seq.empty
   }
 
   for (row <- 0 until n) {
@@ -117,10 +185,15 @@ class JamletMxu(
       cell.io.aB := (if (row == 0) nsSelectedInput(col) else cells(row - 1)(col).io.bB)
       cell.io.aValid := (if (col == 0) stepIn(row) else cells(row)(col - 1).io.bValid)
       cell.io.aFinal := (if (col == 0) completeIn(row) else cells(row)(col - 1).io.bFinal)
-      if (col == n - 1) {
+      val startsCDrain = col == n - 1 || (splitCDrain && col == 0)
+      if (startsCDrain) {
         cell.io.eCDrainIn.valid := false.B
         cell.io.eCDrainIn.bits.data := 0.U
         cell.io.eCDrainIn.bits.fromFar := false.B
+      } else if (splitCDrain && col == n / 2 - 1) {
+        cell.io.eCDrainIn.valid := middleCDrain(row).valid
+        cell.io.eCDrainIn.bits.data := middleCDrain(row).bits
+        cell.io.eCDrainIn.bits.fromFar := true.B
       } else {
         cell.io.eCDrainIn := cells(row)(col + 1).io.eCDrainOut
       }
@@ -128,8 +201,42 @@ class JamletMxu(
 
     io.ewForwardOutput(row) := cells(row)(n - 1).io.bA
     io.ewBackwardOutput(row) := ewBackwardInput(row)
-    io.cToMemory(row) := RegNext(cells(row)(0).io.eCDrainOut.bits.data, 0.U)
-    io.cToMemoryValid(row) := RegNext(cells(row)(0).io.eCDrainOut.valid, false.B)
+    if (splitCDrain) {
+      val westCDrain = cells(row)(0).io.eCDrainOut
+      val secondWestCDrain = cells(row)(1).io.eCDrainOut
+      val nearCDrainValid = secondWestCDrain.valid && !secondWestCDrain.bits.fromFar
+      val farCDrainValid = secondWestCDrain.valid && secondWestCDrain.bits.fromFar
+
+      assert(!(westCDrain.valid && nearCDrainValid))
+      val nearCDrainRegister = withReset(resetFor(row, 0)) {
+        Module(new JamletMxuCDrainRegister(cellResetBudget))
+      }
+      nearCDrainRegister.io.in.valid := westCDrain.valid || nearCDrainValid
+      nearCDrainRegister.io.in.bits := Mux(
+        nearCDrainValid,
+        secondWestCDrain.bits.data,
+        westCDrain.bits.data)
+
+      assert(!(nearCDrainRegister.io.out.valid && farCDrainValid))
+      val cToMemoryRegister = withReset(resetFor(row, 0)) {
+        Module(new JamletMxuCDrainRegister(cellResetBudget))
+      }
+      cToMemoryRegister.io.in.valid := nearCDrainRegister.io.out.valid || farCDrainValid
+      cToMemoryRegister.io.in.bits := Mux(
+        farCDrainValid,
+        secondWestCDrain.bits.data,
+        nearCDrainRegister.io.out.bits)
+      io.cToMemory(row) := cToMemoryRegister.io.out.bits
+      io.cToMemoryValid(row) := cToMemoryRegister.io.out.valid
+    } else {
+      val cToMemoryRegister = withReset(resetFor(row, 0)) {
+        Module(new JamletMxuCDrainRegister(cellResetBudget))
+      }
+      cToMemoryRegister.io.in.valid := cells(row)(0).io.eCDrainOut.valid
+      cToMemoryRegister.io.in.bits := cells(row)(0).io.eCDrainOut.bits.data
+      io.cToMemory(row) := cToMemoryRegister.io.out.bits
+      io.cToMemoryValid(row) := cToMemoryRegister.io.out.valid
+    }
   }
 
   for (col <- 0 until n) {
@@ -142,6 +249,7 @@ class JamletMxu(
 
 object JamletMxuGenerator extends zamlet.ModuleGenerator {
   override def makeModule(args: Seq[String]): Module = {
+    val resetGroupSize = args.drop(8).headOption.map(_.toInt).getOrElse(0)
     new JamletMxu(
       n = args.headOption.map(_.toInt).getOrElse(8),
       hasEwLoop = args.drop(1).headOption.forall(_.toBoolean),
@@ -149,7 +257,10 @@ object JamletMxuGenerator extends zamlet.ModuleGenerator {
       useCarrySaveAccumulator = args.drop(3).headOption.exists(_.toBoolean),
       registerBC = args.drop(4).headOption.exists(_.toBoolean),
       registerDE = args.drop(5).headOption.exists(_.toBoolean),
-      registerBackwardOutput = args.drop(6).headOption.exists(_.toBoolean))
+      registerBackwardOutput = args.drop(6).headOption.exists(_.toBoolean),
+      splitCDrain = args.drop(7).headOption.exists(_.toBoolean),
+      resetGroupSize = resetGroupSize,
+      resetBudget = ResetPipelineBudget(if (resetGroupSize == 0) 2 else 3))
   }
 }
 

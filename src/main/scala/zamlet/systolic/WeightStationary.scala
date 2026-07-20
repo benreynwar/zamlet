@@ -136,6 +136,15 @@ class WeightStationary(
     (loadWeightIn, stepIn)
   }
 
+  val sumIn = Seq.tabulate(n) { col =>
+    val sumInRegister = withReset(resetPipeline.childReset) {
+      Module(new RegisterWithPipelinedReset(UInt(32.W), resetPipeline.childBudget))
+        .suggestName(s"sumInRegister_$col")
+    }
+    sumInRegister.io.in := io.sumIn(col)
+    sumInRegister.io.out
+  }
+
   for (row <- 0 until n) {
     for (col <- 0 until n) {
       val cell = cells(row)(col)
@@ -146,7 +155,7 @@ class WeightStationary(
       cell.io.weightLoadIn := (if (row == 0) io.weightLoadIn(col) else cells(row - 1)(col).io.weightLoadOut)
       cell.io.loadWeightIn := (if (row == 0) loadWeightIn(col) else cells(row - 1)(col).io.loadWeightOut)
 
-      cell.io.sumIn := (if (row == 0) io.sumIn(col) else cells(row - 1)(col).io.sumOut)
+      cell.io.sumIn := (if (row == 0) sumIn(col) else cells(row - 1)(col).io.sumOut)
     }
   }
 

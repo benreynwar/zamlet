@@ -57,9 +57,10 @@ chisel_module_tests(
 )
 
 MXU_TEST_GRID_SIZES = [
-    (2, 2, 2),
-    (4, 4, 2),
-    (4, 4, 4),
+    (2, 2, 2, False, 0),
+    (4, 4, 2, False, 0),
+    (4, 4, 4, False, 0),
+    (2, 2, 4, True, 2),
 ]
 
 REGISTER_BACKWARD_OUTPUT_OPTIONS = [
@@ -69,15 +70,29 @@ REGISTER_BACKWARD_OUTPUT_OPTIONS = [
 
 MXU_TEST_GRID_PARAMS = [
     {
-        "name": "jamlet_mxu_test_grid_{}x{}_mxu{}_{}".format(grid_rows, grid_cols, mxu_n, name_suffix),
-        "top": "JamletMxuTestGrid{}x{}Mxu{}{}".format(grid_rows, grid_cols, mxu_n, top_suffix),
+        "name": "jamlet_mxu_test_grid_{}x{}_mxu{}_split{}_{}".format(
+            grid_rows,
+            grid_cols,
+            mxu_n,
+            int(split_c_drain),
+            name_suffix,
+        ),
+        "top": "JamletMxuTestGrid{}x{}Mxu{}Split{}{}".format(
+            grid_rows,
+            grid_cols,
+            mxu_n,
+            int(split_c_drain),
+            top_suffix,
+        ),
         "gridRows": grid_rows,
         "gridCols": grid_cols,
         "mxuN": mxu_n,
         "registerBC": True,
         "registerBackwardOutput": register_backward_output,
+        "splitCDrain": split_c_drain,
+        "resetGroupSize": reset_group_size,
     }
-    for grid_rows, grid_cols, mxu_n in MXU_TEST_GRID_SIZES
+    for grid_rows, grid_cols, mxu_n, split_c_drain, reset_group_size in MXU_TEST_GRID_SIZES
     for register_backward_output, name_suffix, top_suffix in REGISTER_BACKWARD_OUTPUT_OPTIONS
 ]
 
@@ -89,6 +104,8 @@ MXU_TEST_GRID_PARAMS = [
         "mxuN": params["mxuN"],
         "registerBC": params["registerBC"],
         "registerBackwardOutput": params["registerBackwardOutput"],
+        "splitCDrain": params["splitCDrain"],
+        "resetGroupSize": params["resetGroupSize"],
     },
 ) for params in MXU_TEST_GRID_PARAMS]
 
@@ -102,6 +119,8 @@ MXU_TEST_GRID_PARAMS = [
         str(params["mxuN"]),
         str(params["registerBC"]).lower(),
         str(params["registerBackwardOutput"]).lower(),
+        str(params["splitCDrain"]).lower(),
+        str(params["resetGroupSize"]),
         params["top"],
     ],
     config = ":" + params["name"] + "_params",

@@ -17,7 +17,11 @@ librelane_synth_config(
 librelane_synth_config(
     name = "synth_mxu_preserve_cell",
     synth_autoname = True,
-    synth_keep_hierarchy_modules = ["JamletMxuCell"],
+    synth_keep_hierarchy_modules = [
+        "JamletMxuCDrainRegister",
+        "JamletMxuCell",
+        "JamletMxuResetGroup",
+    ],
 )
 
 ZAMLET_CONFIG = "//configs:zamlet_default.json"
@@ -139,15 +143,17 @@ chisel_dse_module(
 )
 
 JAMLET_MXU_CONFIGS = [
-    (8, True, True, False, True, False, True),
-    (8, True, True, True, True, False, True),
+    (2, True, True, False, True, False, True, False, 0),
+    (4, True, True, False, True, False, True, False, 0),
+    (8, True, True, False, True, False, True, True, 4),
+    (8, True, True, True, True, False, True, False, 0),
 ]
 JAMLET_MXU_CLOCK_PERIODS = [20, 16, 12, 11, 10]
 JAMLET_MXU_UTILIZATIONS = [40, 50, 60, 65, 70]
 
 [
     chisel_verilog_no_config(
-        name = jamlet_mxu_top(n, ew_loop, ns_loop, csa, bc, de, backward_reg),
+        name = jamlet_mxu_top(n, ew_loop, ns_loop, csa, bc, de, backward_reg, split_drain, reset_group),
         generator = JAMLET_PKG + ":jamletmxu",
         extra_args = [
             str(n),
@@ -157,47 +163,50 @@ JAMLET_MXU_UTILIZATIONS = [40, 50, 60, 65, 70]
             str(bc).lower(),
             str(de).lower(),
             str(backward_reg).lower(),
+            str(split_drain).lower(),
+            str(reset_group),
         ],
     )
-    for n, ew_loop, ns_loop, csa, bc, de, backward_reg in JAMLET_MXU_CONFIGS
+    for n, ew_loop, ns_loop, csa, bc, de, backward_reg, split_drain, reset_group in JAMLET_MXU_CONFIGS
 ]
 
 [
     librelane_classic_flow(
-        name = jamlet_mxu_top(n, ew_loop, ns_loop, csa, bc, de, backward_reg) +
+        name = jamlet_mxu_top(n, ew_loop, ns_loop, csa, bc, de, backward_reg, split_drain, reset_group) +
                "_sky130hd_{}ns_util{}".format(clock_period, utilization),
         verilog_files = [
-            ":" + jamlet_mxu_top(n, ew_loop, ns_loop, csa, bc, de, backward_reg) + ".sv",
+            ":" + jamlet_mxu_top(n, ew_loop, ns_loop, csa, bc, de, backward_reg, split_drain, reset_group) + ".sv",
         ],
-        top = jamlet_mxu_top(n, ew_loop, ns_loop, csa, bc, de, backward_reg),
+        top = jamlet_mxu_top(n, ew_loop, ns_loop, csa, bc, de, backward_reg, split_drain, reset_group),
         pdk = ":sky130hd",
         clock_period = "{}.0".format(clock_period),
         fp_core_util = str(utilization),
-        io_pin_order_cfg = ":jamlet_mxu8x8_pin_order.cfg",
-        pnr_sdc_file = ":jamlet_mxu8x8_pnr_sdc",
-        signoff_sdc_file = ":jamlet_mxu8x8_signoff_sdc",
+        io_pin_order_cfg = ":jamlet_mxu{}x{}_pin_order.cfg".format(n, n),
+        pnr_sdc_file = ":jamlet_mxu_pnr_sdc",
+        signoff_sdc_file = ":jamlet_mxu_signoff_sdc",
         synth_config = ":synth_mxu_preserve_cell",
         design_repair_max_wire_length = "150",
+        run_post_grt_resizer_timing = True,
+        mid_setup_wns_threshold = "-0.2",
     )
-    for n, ew_loop, ns_loop, csa, bc, de, backward_reg in JAMLET_MXU_CONFIGS
+    for n, ew_loop, ns_loop, csa, bc, de, backward_reg, split_drain, reset_group in JAMLET_MXU_CONFIGS
     for clock_period in JAMLET_MXU_CLOCK_PERIODS
     for utilization in JAMLET_MXU_UTILIZATIONS
 ]
 
 sdc_template(
-    name = "jamlet_mxu8x8_pnr_sdc",
+    name = "jamlet_mxu_pnr_sdc",
     template = "//bazel/flow/sdc:base.sdc",
-    input_delay_constraint = "60",
-    output_delay_constraint = "60",
-    fragments = [":jamlet_mxu8x8_pnr.sdc"],
+    clock_period_scale = "0.9",
+    input_delay_constraint = "75",
+    output_delay_constraint = "55",
 )
 
 sdc_template(
-    name = "jamlet_mxu8x8_signoff_sdc",
+    name = "jamlet_mxu_signoff_sdc",
     template = "//bazel/flow/sdc:base.sdc",
-    input_delay_constraint = "60",
-    output_delay_constraint = "60",
-    fragments = [":jamlet_mxu8x8_signoff.sdc"],
+    input_delay_constraint = "75",
+    output_delay_constraint = "45",
 )
 
 chisel_verilog_no_config(

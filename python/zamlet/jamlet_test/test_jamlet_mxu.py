@@ -29,6 +29,8 @@ REGISTER_BC = bool(CONFIG["registerBC"])
 PRODUCT_LATENCY = int(REGISTER_BC)
 REGISTER_BACKWARD_OUTPUT = bool(CONFIG["registerBackwardOutput"])
 INTER_MXU_LATENCY = int(REGISTER_BACKWARD_OUTPUT)
+SPLIT_C_DRAIN = bool(CONFIG["splitCDrain"])
+RESET_GROUP_SIZE = int(CONFIG["resetGroupSize"])
 CONTROL_INPUT_LATENCY = 1
 
 BlockLanes = list[list[list[int | bool]]]
@@ -132,7 +134,7 @@ async def reset_dut(dut: HierarchyObject) -> None:
     set_loop_control(dut, "ewUseBackward", [0 for _ in range(GRID_COLS)])
     set_loop_control(dut, "nsUseBackward", [0 for _ in range(GRID_ROWS)])
     zero_inputs(dut)
-    await wait_cycles(dut, 3)
+    await wait_cycles(dut, 3 + int(RESET_GROUP_SIZE > 0))
     dut.reset.value = 0
     await RisingEdge(dut.clock)
 
@@ -222,7 +224,8 @@ async def matrix_multiply(
         tile: [[0 for _ in range(matrix_n)] for _ in range(matrix_n)]
         for tile in tile_inputs
     }
-    last_cycle = start_cycle + mxu_grid_cycles(matrix_blocks) + (MXU_N - 1) + PRODUCT_LATENCY + 2 + (2 * (MXU_N - 1)) + 1
+    output_fixed_latency = PRODUCT_LATENCY + 2 + int(SPLIT_C_DRAIN)
+    last_cycle = start_cycle + mxu_grid_cycles(matrix_blocks) + (MXU_N - 1) + output_fixed_latency + (2 * (MXU_N - 1)) + 1
 
     while step_driver.cycle <= last_cycle:
         await ReadOnly()
@@ -232,7 +235,7 @@ async def matrix_multiply(
                     block_row = tile_block_row + local_block_row
                     block_col = tile_block_col + local_block_col
                     for local_row in range(MXU_N):
-                        base_cycle = start_cycle + mxu_grid_cycles(matrix_blocks) + local_row + PRODUCT_LATENCY + 2
+                        base_cycle = start_cycle + mxu_grid_cycles(matrix_blocks) + local_row + output_fixed_latency
                         offset = step_driver.cycle - base_cycle
                         if 0 <= offset < MXU_N:
                             local_col = offset
