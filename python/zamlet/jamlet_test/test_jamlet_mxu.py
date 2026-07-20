@@ -7,7 +7,13 @@ from cocotb.handle import HierarchyObject
 from cocotb.triggers import ReadOnly, RisingEdge
 
 from zamlet import test_utils
-from zamlet.matrix_test_utils import UINT32_MASK, SkewedControlDriver, int8_bits, matrix_product, random_matrix
+from zamlet.matrix_test_utils import (
+    UINT32_MASK,
+    SkewedControlDriver,
+    int8_bits,
+    matrix_product,
+    random_matrix,
+)
 
 
 TEST_PARAMS = test_utils.get_test_params()
@@ -19,35 +25,16 @@ GRID_COLS = int(CONFIG["gridCols"])
 MXU_N = int(CONFIG["mxuN"])
 assert GRID_ROWS == GRID_COLS
 
-BC_BUFFER = bool(CONFIG["bcBuffer"])
-PRODUCT_LATENCY = int(BC_BUFFER)
+REGISTER_BC = bool(CONFIG["registerBC"])
+PRODUCT_LATENCY = int(REGISTER_BC)
 REGISTER_BACKWARD_OUTPUT = bool(CONFIG["registerBackwardOutput"])
 INTER_MXU_LATENCY = int(REGISTER_BACKWARD_OUTPUT)
+CONTROL_INPUT_LATENCY = 1
 
 BlockLanes = list[list[list[int | bool]]]
 
 
-class ControlWaveDriver:
-    def __init__(self, dut: HierarchyObject, signal_name: str):
-        self.dut = dut
-        self.signal_name = signal_name
-        self.driver = SkewedControlDriver(MXU_N, self._drive)
-
-    def request(self, cycles: int) -> None:
-        self.driver.request(cycles)
-
-    async def run(self) -> None:
-        await self.driver.run(self.dut.clock)
-
-    @property
-    def cycle(self) -> int:
-        return self.driver.cycle
-
-    def _drive(self, lanes: list[bool]) -> None:
-        for block_row in range(GRID_ROWS):
-            for block_col in range(GRID_COLS):
-                for lane, value in enumerate(lanes):
-                    getattr(self.dut, f"io_{self.signal_name}_{block_row}_{block_col}_{lane}").value = int(value)
+ControlDriver = SkewedControlDriver
 
 
 def set_boundary(dut: HierarchyObject, name: str, values: list[list[int]]) -> None:
@@ -100,12 +87,9 @@ def zero_inputs(dut: HierarchyObject) -> None:
                 getattr(dut, dut_signal).value = 0
                 dut_signal = f"io_nsFromMemory_{block_row}_{block_col}_{lane}"
                 getattr(dut, dut_signal).value = 0
-                dut_signal = f"io_stepIn_{block_row}_{block_col}_{lane}"
-                getattr(dut, dut_signal).value = 0
-                dut_signal = f"io_completeIn_{block_row}_{block_col}_{lane}"
-                getattr(dut, dut_signal).value = 0
-                dut_signal = f"io_init_{block_row}_{block_col}_{lane}"
-                getattr(dut, dut_signal).value = 0
+    dut.io_stepIn.value = 0
+    dut.io_completeIn.value = 0
+    dut.io_init.value = 0
 
 
 def drive_ab_for_cycle(
@@ -148,7 +132,7 @@ async def reset_dut(dut: HierarchyObject) -> None:
     set_loop_control(dut, "ewUseBackward", [0 for _ in range(GRID_COLS)])
     set_loop_control(dut, "nsUseBackward", [0 for _ in range(GRID_ROWS)])
     zero_inputs(dut)
-    await RisingEdge(dut.clock)
+    await wait_cycles(dut, 3)
     dut.reset.value = 0
     await RisingEdge(dut.clock)
 
@@ -160,7 +144,7 @@ async def wait_cycles(dut: HierarchyObject, cycles: int) -> None:
 
 async def send_step_wave(
     dut: HierarchyObject,
-    step_driver: ControlWaveDriver,
+    step_driver: ControlDriver,
     matrix_blocks: int,
     start_cycle: int,
 ) -> None:
@@ -172,30 +156,21 @@ async def send_step_wave(
         step_driver.request(MXU_N)
 
 
-def read_expected_c_half(
+async def send_complete_pulse(
     dut: HierarchyObject,
-    block_row: int,
-    block_col: int,
-    local_row: int,
-) -> int:
-    valid = int(getattr(dut, f"io_cToMemoryValid_{block_row}_{block_col}_{local_row}").value)
-    assert valid == 1
-    return int(getattr(dut, f"io_cToMemory_{block_row}_{block_col}_{local_row}").value)
-
-
-async def matrix_multiply(
-    dut: HierarchyObject,
-    init_driver: ControlWaveDriver,
-    step_driver: ControlWaveDriver,
-    complete_driver: ControlWaveDriver,
-    matrix_blocks: int,
-    tile_inputs: dict[tuple[int, int], tuple[list[list[int]], list[list[int]]]],
+    complete_driver: ControlDriver,
+    target_cycle: int,
 ) -> None:
+    while complete_driver.cycle < target_cycle:
+        await RisingEdge(dut.clock)
+    complete_driver.request(1)
 
-    matrix_n = matrix_blocks * MXU_N
-    start_cycle = step_driver.cycle
-    init_driver.request(MXU_N)
-    cocotb.start_soon(send_step_wave(dut, step_driver, matrix_blocks, start_cycle))
+
+async def feed_ab(
+    dut: HierarchyObject,
+    tile_inputs: dict[tuple[int, int], tuple[list[list[int]], list[list[int]]]],
+    matrix_blocks: int,
+) -> None:
     for local_cycle in range(2 * MXU_N - 1):
         for (tile_block_row, tile_block_col), (a, b) in tile_inputs.items():
             drive_ab_for_cycle(
@@ -209,9 +184,39 @@ async def matrix_multiply(
             )
         await RisingEdge(dut.clock)
 
-    while step_driver.cycle < start_cycle + mxu_grid_cycles(matrix_blocks) - 1:
-        await RisingEdge(dut.clock)
-    complete_driver.request(1)
+
+def read_expected_c(
+    dut: HierarchyObject,
+    block_row: int,
+    block_col: int,
+    local_row: int,
+) -> int:
+    valid = int(getattr(dut, f"io_cToMemoryValid_{block_row}_{block_col}_{local_row}").value)
+    assert valid == 1
+    return int(getattr(dut, f"io_cToMemory_{block_row}_{block_col}_{local_row}").value)
+
+
+async def matrix_multiply(
+    dut: HierarchyObject,
+    init_driver: ControlDriver,
+    step_driver: ControlDriver,
+    complete_driver: ControlDriver,
+    matrix_blocks: int,
+    tile_inputs: dict[tuple[int, int], tuple[list[list[int]], list[list[int]]]],
+) -> None:
+
+    matrix_n = matrix_blocks * MXU_N
+    driver_start_cycle = step_driver.cycle
+    start_cycle = driver_start_cycle + CONTROL_INPUT_LATENCY
+    init_driver.request(MXU_N)
+    cocotb.start_soon(send_step_wave(dut, step_driver, matrix_blocks, driver_start_cycle))
+    cocotb.start_soon(send_complete_pulse(
+        dut,
+        complete_driver,
+        start_cycle + mxu_grid_cycles(matrix_blocks) - 1 - CONTROL_INPUT_LATENCY,
+    ))
+    await wait_cycles(dut, CONTROL_INPUT_LATENCY)
+    await feed_ab(dut, tile_inputs, matrix_blocks)
 
     dumped = {
         tile: [[0 for _ in range(matrix_n)] for _ in range(matrix_n)]
@@ -229,16 +234,12 @@ async def matrix_multiply(
                     for local_row in range(MXU_N):
                         base_cycle = start_cycle + mxu_grid_cycles(matrix_blocks) + local_row + PRODUCT_LATENCY + 2
                         offset = step_driver.cycle - base_cycle
-                        if 0 <= offset < 2 * MXU_N:
-                            local_col = offset // 2
-                            upper = offset % 2
-                            value = read_expected_c_half(dut, block_row, block_col, local_row)
+                        if 0 <= offset < MXU_N:
+                            local_col = offset
+                            value = read_expected_c(dut, block_row, block_col, local_row)
                             row = local_block_row * MXU_N + local_row
                             col = local_block_col * MXU_N + local_col
-                            if upper:
-                                dumped[(tile_block_row, tile_block_col)][row][col] |= value << 16
-                            else:
-                                dumped[(tile_block_row, tile_block_col)][row][col] |= value
+                            dumped[(tile_block_row, tile_block_col)][row][col] = value
         await RisingEdge(dut.clock)
 
     for tile, (a, b) in tile_inputs.items():
@@ -265,9 +266,9 @@ def random_tile_inputs(
 async def test_4x4_matrix_multiply_on_2x2_mxu_grid(dut: HierarchyObject) -> None:
     rng = random.Random(TEST_PARAMS["seed"])
     await reset_dut(dut)
-    step_driver = ControlWaveDriver(dut, "stepIn")
-    complete_driver = ControlWaveDriver(dut, "completeIn")
-    init_driver = ControlWaveDriver(dut, "init")
+    step_driver = ControlDriver(dut, "stepIn")
+    complete_driver = ControlDriver(dut, "completeIn")
+    init_driver = ControlDriver(dut, "init")
     cocotb.start_soon(step_driver.run())
     cocotb.start_soon(complete_driver.run())
     cocotb.start_soon(init_driver.run())

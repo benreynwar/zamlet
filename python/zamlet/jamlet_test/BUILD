@@ -74,7 +74,7 @@ MXU_TEST_GRID_PARAMS = [
         "gridRows": grid_rows,
         "gridCols": grid_cols,
         "mxuN": mxu_n,
-        "bcBuffer": True,
+        "registerBC": True,
         "registerBackwardOutput": register_backward_output,
     }
     for grid_rows, grid_cols, mxu_n in MXU_TEST_GRID_SIZES
@@ -87,7 +87,7 @@ MXU_TEST_GRID_PARAMS = [
         "gridRows": params["gridRows"],
         "gridCols": params["gridCols"],
         "mxuN": params["mxuN"],
-        "bcBuffer": params["bcBuffer"],
+        "registerBC": params["registerBC"],
         "registerBackwardOutput": params["registerBackwardOutput"],
     },
 ) for params in MXU_TEST_GRID_PARAMS]
@@ -100,7 +100,7 @@ MXU_TEST_GRID_PARAMS = [
         str(params["gridRows"]),
         str(params["gridCols"]),
         str(params["mxuN"]),
-        str(params["bcBuffer"]).lower(),
+        str(params["registerBC"]).lower(),
         str(params["registerBackwardOutput"]).lower(),
         params["top"],
     ],

@@ -101,25 +101,9 @@ chisel_binary(
 )
 
 chisel_binary(
-    name = "jamletmxu_hard_macros",
-    srcs = JAMLET_MXU_SRCS + JAMLET_COMMON_SRCS,
-    main_class = "zamlet.jamlet.JamletMxuHardMacroMain",
-    deps = JAMLET_DEPS,
-    visibility = ["//visibility:public"],
-)
-
-chisel_binary(
     name = "jamletmxucell",
     srcs = JAMLET_MXU_SRCS + JAMLET_COMMON_SRCS,
     main_class = "zamlet.jamlet.JamletMxuCellMain",
-    deps = JAMLET_DEPS,
-    visibility = ["//visibility:public"],
-)
-
-chisel_binary(
-    name = "jamletmxugrid",
-    srcs = JAMLET_MXU_SRCS + JAMLET_COMMON_SRCS,
-    main_class = "zamlet.jamlet.JamletMxuGridMain",
     deps = JAMLET_DEPS,
     visibility = ["//visibility:public"],
 )

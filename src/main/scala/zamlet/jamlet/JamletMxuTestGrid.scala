@@ -12,11 +12,11 @@ class JamletMxuTestGridIO(gridRows: Int, gridCols: Int, mxuN: Int) extends Bundl
   val nsUseBackward = Input(Vec(gridRows, Bool()))
   val bSouthOut = Output(Vec(gridCols, Vec(mxuN, UInt(8.W))))
 
-  val stepIn = Input(Vec(gridRows, Vec(gridCols, Vec(mxuN, Bool()))))
-  val completeIn = Input(Vec(gridRows, Vec(gridCols, Vec(mxuN, Bool()))))
-  val init = Input(Vec(gridRows, Vec(gridCols, Vec(mxuN, Bool()))))
+  val stepIn = Input(Bool())
+  val completeIn = Input(Bool())
+  val init = Input(Bool())
 
-  val cToMemory = Output(Vec(gridRows, Vec(gridCols, Vec(mxuN, UInt(16.W)))))
+  val cToMemory = Output(Vec(gridRows, Vec(gridCols, Vec(mxuN, UInt(32.W)))))
   val cToMemoryValid = Output(Vec(gridRows, Vec(gridCols, Vec(mxuN, Bool()))))
 
   val error = Output(Bool())
@@ -26,7 +26,7 @@ class JamletMxuTestGrid(
     gridRows: Int,
     gridCols: Int,
     mxuN: Int,
-    bcBuffer: Boolean,
+    registerBC: Boolean,
     registerBackwardOutput: Boolean,
     moduleName: String) extends Module {
   override val desiredName = moduleName
@@ -41,7 +41,7 @@ class JamletMxuTestGrid(
       n = mxuN,
       hasEwLoop = true,
       hasNsLoop = true,
-      bcBuffer = bcBuffer,
+      registerBC = registerBC,
       registerBackwardOutput = registerBackwardOutput))
   }
 
@@ -54,12 +54,12 @@ class JamletMxuTestGrid(
 
       for (row <- 0 until mxuN) {
         block.io.ewFromMemory(row) := io.ewFromMemory(physicalRow)(physicalCol)(row)
-        block.io.init(row) := io.init(physicalRow)(physicalCol)(row)
-        block.io.stepIn(row) := io.stepIn(physicalRow)(physicalCol)(row)
-        block.io.completeIn(row) := io.completeIn(physicalRow)(physicalCol)(row)
         io.cToMemory(physicalRow)(physicalCol)(row) := block.io.cToMemory(row)
         io.cToMemoryValid(physicalRow)(physicalCol)(row) := block.io.cToMemoryValid(row)
       }
+      block.io.init := io.init
+      block.io.stepIn := io.stepIn
+      block.io.completeIn := io.completeIn
 
       for (col <- 0 until mxuN) {
         block.io.nsFromMemory(col) := io.nsFromMemory(physicalRow)(physicalCol)(col)
@@ -122,7 +122,7 @@ object JamletMxuTestGridGenerator extends zamlet.ModuleGenerator {
       gridRows = args(0).toInt,
       gridCols = args(1).toInt,
       mxuN = args(2).toInt,
-      bcBuffer = args(3).toBoolean,
+      registerBC = args(3).toBoolean,
       registerBackwardOutput = args(4).toBoolean,
       moduleName = args(5))
   }

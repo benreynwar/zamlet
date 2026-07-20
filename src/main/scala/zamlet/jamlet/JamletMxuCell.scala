@@ -2,6 +2,13 @@ package zamlet.jamlet
 
 import chisel3._
 import chisel3.util._
+import zamlet.maths.CSA3to2
+import zamlet.utils.{ResetPipeline, ResetPipelineBudget}
+
+class JamletMxuCDrain extends Bundle {
+  val data = UInt(32.W)
+  val fromFar = Bool()
+}
 
 class JamletMxuCellIO extends Bundle {
   // Input of A
@@ -23,98 +30,82 @@ class JamletMxuCellIO extends Bundle {
   // Output final signal
   val bFinal = Output(Bool())
 
-  // The shiftbuffer interface that we use to stream the sum out.
-  val dShiftData = Input(UInt(16.W))
-  val dValid = Input(Bool())
-  val eShiftData = Output(UInt(16.W))
-  val eValid = Output(Bool())
+  // C drain path. Neighbor data passes through unless this cell is emitting
+  // its completed accumulator.
+  val eCDrainIn = Input(Valid(new JamletMxuCDrain))
+  val eCDrainOut = Output(Valid(new JamletMxuCDrain))
 
   val error = Output(Bool())
 }
 
-class JamletMxuCell(bcBuffer: Boolean = false) extends Module {
+class JamletMxuCell(
+    useCarrySaveAccumulator: Boolean = false,
+    registerBC: Boolean = false,
+    registerDE: Boolean = false,
+    resetBudget: ResetPipelineBudget = ResetPipelineBudget(1)) extends Module {
   val io = IO(new JamletMxuCellIO)
 
-  val bValid = RegNext(io.aValid, false.B)
-  val bFinal = RegNext(io.aFinal, false.B)
-  val bA = RegEnable(io.aA, io.aValid)
-  val bB = RegEnable(io.aB, io.aValid)
+  val resetPipeline =
+    ResetPipeline(clock, reset.asBool, 1, resetBudget, "JamletMxuCell")
 
-  val bAB = (bA.asSInt * bB.asSInt).asUInt
-  val bABExtended = Cat(Fill(16, bAB(15)), bAB)
-  val cAB = if (bcBuffer) RegEnable(bABExtended, bValid) else bABExtended
-  val cValid = if (bcBuffer) RegNext(bValid, false.B) else bValid
-  val cFinal = if (bcBuffer) RegNext(bFinal, false.B) else bFinal
-  val dFinal = RegNext(cFinal, false.B)
-  val eFinal = RegNext(dFinal, false.B)
+  withReset(resetPipeline.localReset) {
+    val bValid = RegNext(io.aValid, false.B)
+    val bFinal = RegNext(io.aFinal, false.B)
+    val bA = RegEnable(io.aA, io.aValid)
+    val bB = RegEnable(io.aB, io.aValid)
 
-  // Because the output shift-register is only 16-bit wides and our accumulator is
-  // 32 bit wide we take two cycles to move the sum into the shift register.
-  // cFinal is the final-product cycle.
-  //
-  // On dFinal, the lower half of dC moves into the shift-data register.
-  // On eFinal, the upper half of dC moves into the shift-data register.
+    val bAB = (bA.asSInt * bB.asSInt).asUInt
+    val bABExtended = Cat(Fill(16, bAB(15)), bAB)
+    val cAB = if (registerBC) RegEnable(bABExtended, bValid) else bABExtended
+    val cValid = if (registerBC) RegNext(bValid, false.B) else bValid
+    val cFinal = if (registerBC) RegNext(bFinal, false.B) else bFinal
+    val dFinal = RegNext(cFinal, false.B)
+    val dCDrainData = Wire(UInt(32.W))
 
+    if (useCarrySaveAccumulator) {
+      val accSumNext = Wire(UInt(32.W))
+      val accCarryNext = Wire(UInt(32.W))
+      val accSum = RegEnable(accSumNext, 0.U(32.W), cValid || dFinal)
+      val accCarry = RegEnable(accCarryNext, 0.U(32.W), cValid || dFinal)
 
-  // Stage C computes the value loaded into the C-to-D accumulator register.
-  // dC is the output of that register.
-  val dCNext = Wire(UInt(32.W))
-  // We need to update this register when either cValid is high (active new value from multiplier)
-  // or dFinal or eFinal are high (we need to set the value to 0 if cValid is low since we are
-  // emptying it).
-  val dC = RegEnable(dCNext, 0.U(32.W), cValid || dFinal || eFinal)
+      val cAccSumBase = Mux(dFinal, 0.U(32.W), accSum)
+      val cAccCarryBase = Mux(dFinal, 0.U(32.W), accCarry)
+      val csa = Module(new CSA3to2(32))
+      csa.io.a := cAccSumBase
+      csa.io.b := cAccCarryBase
+      csa.io.c := cAB
 
-  // Choose the accumulator base before adding cAB. dFinal is the first result
-  // extraction cycle; eFinal is the second result extraction cycle, where dC
-  // contains the old upper half and the new lower half.
-  val cCBase = Wire(UInt(32.W))
-  cCBase := dC
-  when (dFinal) {
-    // We just completed the sum last cycle so the new accumluator base is 0.
-    cCBase := 0.U
-  } .elsewhen (eFinal) {
-    // The lower bits were updated last cycle, but the upper bits are still the
-    // result being shifted out this cycle.
-    cCBase := Cat(Fill(16, dC(15)), dC(15, 0))
+      accSumNext := cAccSumBase
+      accCarryNext := cAccCarryBase
+      when (cValid) {
+        accSumNext := csa.io.sum
+        accCarryNext := csa.io.carry
+      }
+
+      dCDrainData := accSum + accCarry
+    } else {
+      val dCNext = Wire(UInt(32.W))
+      val dC = RegEnable(dCNext, 0.U(32.W), cValid || dFinal)
+      val cCBase = Mux(dFinal, 0.U(32.W), dC)
+      dCNext := cCBase
+      when (cValid) {
+        dCNext := (cCBase + cAB)(31, 0)
+      }
+      dCDrainData := dC
+    }
+
+    val eFinal = if (registerDE) RegNext(dFinal, false.B) else dFinal
+    val eCDrainData = if (registerDE) RegNext(dCDrainData) else dCDrainData
+    val eCollision = eFinal && io.eCDrainIn.valid
+    val error = RegNext(eCollision, false.B)
+
+    io.bA := bA
+    io.bB := bB
+    io.bValid := bValid
+    io.bFinal := bFinal
+    io.eCDrainOut.valid := eFinal || io.eCDrainIn.valid
+    io.eCDrainOut.bits.data := Mux(eFinal, eCDrainData, io.eCDrainIn.bits.data)
+    io.eCDrainOut.bits.fromFar := Mux(eFinal, false.B, io.eCDrainIn.bits.fromFar)
+    io.error := error
   }
-
-  // Add on the result from the multiplier when it is active.
-  val cC = Wire(UInt(32.W))
-  cC := cCBase
-  when (cValid) {
-    cC := (cCBase + cAB)(31, 0)
-  }
-
-  // dFinal moves the lower half into the shift-data register and keeps the
-  // upper half in dC for the next cycle. eFinal moves that upper half into the
-  // shift-data register and restores dC to the new accumulator value.
-  dCNext := dC
-  when (dFinal) {
-    dCNext := Cat(dC(31, 16), cC(15, 0))
-  } .elsewhen (cValid || dFinal || eFinal) {
-    dCNext := cC
-  }
-
-  val dShiftChosen = Wire(UInt(16.W))
-  dShiftChosen := io.dShiftData
-  when (dFinal) {
-    dShiftChosen := dC(15, 0)
-  } .elsewhen (eFinal) {
-    dShiftChosen := dC(31, 16)
-  }
-
-  val dShiftInject = dFinal || eFinal
-  val dCollision = dShiftInject && io.dValid
-
-  val eShiftData = RegEnable(dShiftChosen, dShiftInject || io.dValid)
-  val eValid = RegNext(dShiftInject || io.dValid, false.B)
-  val error = RegNext(dCollision, false.B)
-
-  io.bA := bA
-  io.bB := bB
-  io.bValid := bValid
-  io.bFinal := bFinal
-  io.eShiftData := eShiftData
-  io.eValid := eValid
-  io.error := error
 }

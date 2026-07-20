@@ -1,7 +1,9 @@
 # Jamlet Component DSE
 
 load("//bazel:verilog.bzl", "chisel_dse_module", "chisel_verilog_no_config")
+load("//bazel:design/jamlet/defs.bzl", "jamlet_mxu_top")
 load("//bazel/flow:defs.bzl", "librelane_classic_flow", "librelane_synth_config")
+load("//bazel/flow/sdc:sdc_template.bzl", "sdc_template")
 load("@sky130_fd_sc_hd_config//:defs.bzl", "pdk")
 
 pdk(name = "sky130hd")
@@ -20,7 +22,6 @@ librelane_synth_config(
 
 ZAMLET_CONFIG = "//configs:zamlet_default.json"
 JAMLET_PKG = "//src/main/scala/zamlet/jamlet"
-SYSTOLIC_PKG = "//src/main/scala/zamlet/systolic"
 
 # Jamlet top module with custom pin placement
 chisel_dse_module(
@@ -137,96 +138,66 @@ chisel_dse_module(
     fp_core_util = "40",
 )
 
-chisel_verilog_no_config(
-    name = "JamletMxu",
-    generator = JAMLET_PKG + ":jamletmxu",
-    extra_args = ["8", "true", "true", "true", "true"],
+JAMLET_MXU_CONFIGS = [
+    (8, True, True, False, True, False, True),
+    (8, True, True, True, True, False, True),
+]
+JAMLET_MXU_CLOCK_PERIODS = [20, 16, 12, 11, 10]
+JAMLET_MXU_UTILIZATIONS = [40, 50, 60, 65, 70]
+
+[
+    chisel_verilog_no_config(
+        name = jamlet_mxu_top(n, ew_loop, ns_loop, csa, bc, de, backward_reg),
+        generator = JAMLET_PKG + ":jamletmxu",
+        extra_args = [
+            str(n),
+            str(ew_loop).lower(),
+            str(ns_loop).lower(),
+            str(csa).lower(),
+            str(bc).lower(),
+            str(de).lower(),
+            str(backward_reg).lower(),
+        ],
+    )
+    for n, ew_loop, ns_loop, csa, bc, de, backward_reg in JAMLET_MXU_CONFIGS
+]
+
+[
+    librelane_classic_flow(
+        name = jamlet_mxu_top(n, ew_loop, ns_loop, csa, bc, de, backward_reg) +
+               "_sky130hd_{}ns_util{}".format(clock_period, utilization),
+        verilog_files = [
+            ":" + jamlet_mxu_top(n, ew_loop, ns_loop, csa, bc, de, backward_reg) + ".sv",
+        ],
+        top = jamlet_mxu_top(n, ew_loop, ns_loop, csa, bc, de, backward_reg),
+        pdk = ":sky130hd",
+        clock_period = "{}.0".format(clock_period),
+        fp_core_util = str(utilization),
+        io_pin_order_cfg = ":jamlet_mxu8x8_pin_order.cfg",
+        pnr_sdc_file = ":jamlet_mxu8x8_pnr_sdc",
+        signoff_sdc_file = ":jamlet_mxu8x8_signoff_sdc",
+        synth_config = ":synth_mxu_preserve_cell",
+        design_repair_max_wire_length = "150",
+    )
+    for n, ew_loop, ns_loop, csa, bc, de, backward_reg in JAMLET_MXU_CONFIGS
+    for clock_period in JAMLET_MXU_CLOCK_PERIODS
+    for utilization in JAMLET_MXU_UTILIZATIONS
+]
+
+sdc_template(
+    name = "jamlet_mxu8x8_pnr_sdc",
+    template = "//bazel/flow/sdc:base.sdc",
+    input_delay_constraint = "60",
+    output_delay_constraint = "60",
+    fragments = [":jamlet_mxu8x8_pnr.sdc"],
 )
 
-librelane_classic_flow(
-    name = "JamletMxu_sky130hd",
-    verilog_files = [":JamletMxu.sv"],
-    top = "JamletMxu",
-    pdk = ":sky130hd",
-    clock_period = "20.0",
-    fp_core_util = "40",
-    io_pin_order_cfg = ":jamlet_mxu8x8_pin_order.cfg",
-    sdc_fragments = [":jamlet_mxu8x8.sdc"],
-    synth_config = ":synth_mxu_preserve_cell",
-    design_repair_max_wire_length = "150",
-)
-
-chisel_verilog_no_config(
-    name = "SystolicArray",
-    generator = SYSTOLIC_PKG + ":systolicarray",
-    extra_args = ["8"],
-)
-
-librelane_classic_flow(
-    name = "SystolicArray_sky130hd",
-    verilog_files = [":SystolicArray.sv"],
-    top = "SystolicArray",
-    pdk = ":sky130hd",
-    clock_period = "20.0",
-    fp_core_util = "40",
-    synth_config = ":synth_autoname",
-    design_repair_max_wire_length = "150",
-)
-
-chisel_verilog_no_config(
-    name = "JamletMxuHardMacros",
-    generator = JAMLET_PKG + ":jamletmxu_hard_macros",
-    extra_args = ["8", "true", "true", "true"],
-)
-
-librelane_classic_flow(
-    name = "JamletMxuHardMacros_sky130hd",
-    verilog_files = [":JamletMxuHardMacros.sv"],
-    top = "JamletMxu",
-    pdk = ":sky130hd",
-    clock_period = "20.0",
-    die_area = "0 0 1400 1400",
-    macros = [":JamletMxuGrid4x4_sky130hd_lef"],
-    macro_placement_cfg = ":jamlet_mxu_hard_macros_placement.cfg",
-    pdn_macro_connections = [
-        "(ne_ne|nw_nw|se_se|sw_sw) VPWR VGND VPWR VGND",
-    ],
-    synth_config = ":synth_autoname",
-    design_repair_max_wire_length = "150",
-)
-
-chisel_verilog_no_config(
-    name = "JamletMxu4x4",
-    generator = JAMLET_PKG + ":jamletmxu",
-    extra_args = ["4"],
-)
-
-librelane_classic_flow(
-    name = "JamletMxu4x4_sky130hd",
-    verilog_files = [":JamletMxu4x4.sv"],
-    top = "JamletMxu",
-    pdk = ":sky130hd",
-    clock_period = "20.0",
-    fp_core_util = "40",
-    synth_config = ":synth_mxu_preserve_cell",
-)
-
-chisel_verilog_no_config(
-    name = "JamletMxuGrid4x4",
-    generator = JAMLET_PKG + ":jamletmxugrid",
-    extra_args = ["4", "true"],
-)
-
-librelane_classic_flow(
-    name = "JamletMxuGrid4x4_sky130hd",
-    verilog_files = [":JamletMxuGrid4x4.sv"],
-    top = "JamletMxuGrid",
-    pdk = ":sky130hd",
-    clock_period = "20.0",
-    fp_core_util = "40",
-    io_pin_order_cfg = ":jamlet_mxu_grid4x4_pin_order.cfg",
-    synth_config = ":synth_mxu_preserve_cell",
-    design_repair_max_wire_length = "150",
+sdc_template(
+    name = "jamlet_mxu8x8_signoff_sdc",
+    template = "//bazel/flow/sdc:base.sdc",
+    input_delay_constraint = "60",
+    output_delay_constraint = "60",
+    fragments = [":jamlet_mxu8x8_signoff.sdc"],
 )
 
 chisel_verilog_no_config(
