@@ -41,17 +41,18 @@ STA_POST_PNR_CONFIG_KEYS = MULTI_CORNER_STA_CONFIG_KEYS + [
     "SIGNOFF_SDC_FILE",
 ]
 
-# STA mid-PnR inherits OpenROADStep directly.
-STA_CONFIG_KEYS = OPENROAD_STEP_CONFIG_KEYS
+# Mid-PnR multi-corner STA uses a local LibreLane plugin that runs OpenROAD's
+# database-backed STA script through LibreLane's MultiCornerSTA report handling.
+STA_MID_PNR_CONFIG_KEYS = MULTI_CORNER_STA_CONFIG_KEYS
 
 # Step 58: OpenROAD.IRDropReport - openroad.py lines 1799-1878
 # Inherits from OpenROADStep, adds VSRC_LOC_FILES (line 1814-1818)
-IRDROP_CONFIG_KEYS = STA_CONFIG_KEYS + [
+IRDROP_CONFIG_KEYS = OPENROAD_STEP_CONFIG_KEYS + [
     "VSRC_LOC_FILES",
 ]
 
 # Step 56: OpenROAD.RCX - openroad.py lines 1668-1708
-RCX_CONFIG_KEYS = STA_CONFIG_KEYS + [
+RCX_CONFIG_KEYS = OPENROAD_STEP_CONFIG_KEYS + [
     "RCX_MERGE_VIA_WIRE_RES",
     "RCX_SDC_FILE",
     "RCX_RULESETS",
@@ -144,11 +145,50 @@ def _sta_pre_pnr_impl(ctx):
     ]
 
 def _sta_mid_pnr_impl(ctx):
-    return single_step_impl(
-        ctx, "OpenROAD.STAMidPNR", STA_CONFIG_KEYS,
-        step_outputs = [],
-        extra_outputs = ["max.rpt", "min.rpt"],
+    input_info = ctx.attr.input[LibrelaneInput]
+    state_info = ctx.attr.src[LibrelaneInfo]
+
+    report_outputs = []
+    for path in _multi_corner_sta_reports(input_info.pdk_info.sta_corners):
+        report_outputs.append(ctx.actions.declare_file(ctx.label.name + "/" + path))
+
+    plugin_files = ctx.files._zamlet_librelane_plugin_files
+    inputs = get_input_files(input_info, state_info, STA_MID_PNR_CONFIG_KEYS)
+    config = create_librelane_config(input_info, state_info, STA_MID_PNR_CONFIG_KEYS)
+
+    state_out = run_librelane_step(
+        ctx = ctx,
+        step_id = "Zamlet.STAMidPNRMultiCorner",
+        outputs = report_outputs,
+        config_content = json.encode(config),
+        inputs = inputs,
+        input_info = input_info,
+        state_info = state_info,
+        plugin_files = plugin_files,
     )
+
+    return [
+        DefaultInfo(files = depset(report_outputs + [state_out])),
+        LibrelaneInfo(
+            state_out = state_out,
+            nl = state_info.nl,
+            pnl = state_info.pnl,
+            odb = state_info.odb,
+            sdc = state_info.sdc,
+            sdf = state_info.sdf,
+            spef = state_info.spef,
+            lib = state_info.lib,
+            gds = state_info.gds,
+            mag_gds = state_info.mag_gds,
+            klayout_gds = state_info.klayout_gds,
+            lef = state_info.lef,
+            mag = state_info.mag,
+            spice = state_info.spice,
+            json_h = state_info.json_h,
+            vh = state_info.vh,
+            **{"def": getattr(state_info, "def", None)}
+        ),
+    ]
 
 def _rcx_impl(ctx):
     """Parasitic extraction - produces SPEF for all corners (passes through def/odb)."""
@@ -278,7 +318,13 @@ librelane_sta_pre_pnr = rule(
 
 librelane_sta_mid_pnr = rule(
     implementation = _sta_mid_pnr_impl,
-    attrs = FLOW_ATTRS,
+    attrs = dict(FLOW_ATTRS, _zamlet_librelane_plugin_files = attr.label_list(
+        default = [
+            Label("//bazel/flow:librelane_plugin_zamlet/__init__.py"),
+            Label("//bazel/flow:librelane_plugin_zamlet/sta_mid_pnr.py"),
+        ],
+        allow_files = True,
+    )),
     provides = [DefaultInfo, LibrelaneInfo],
 )
 

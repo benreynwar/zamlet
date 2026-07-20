@@ -13,6 +13,7 @@ def _sdc_template_impl(ctx):
         template = ctx.file.template,
         output = template_out,
         substitutions = {
+            "{{CLOCK_PERIOD_SCALE}}": ctx.attr.clock_period_scale,
             "{{INPUT_DELAY_CONSTRAINT}}": ctx.attr.input_delay_constraint,
             "{{OUTPUT_DELAY_CONSTRAINT}}": ctx.attr.output_delay_constraint,
         },
@@ -47,6 +48,10 @@ sdc_template = rule(
         "output_delay_constraint": attr.string(
             mandatory = True,
             doc = "Output delay constraint as percentage of clock period",
+        ),
+        "clock_period_scale": attr.string(
+            default = "1.0",
+            doc = "Multiplier applied to CLOCK_PERIOD in the generated SDC",
         ),
         "fragments": attr.label_list(
             allow_files = [".sdc"],

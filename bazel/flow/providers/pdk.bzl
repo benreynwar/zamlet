@@ -5,7 +5,7 @@ PdkInfo = provider(
     fields = {
         # Core identity
         "name": "PDK name (e.g., 'sky130A')",
-        "scl": "Standard cell library name",
+        "std_cell_library": "Standard cell library name",
 
         # Power/ground
         "vdd_pin": "Power pin name (e.g., 'VPWR')",
@@ -164,8 +164,8 @@ PdkInfo = provider(
         "welltap_cell": "Well tap cell name",
         "endcap_cell": "End cap cell name",
         "place_site": "Placement site name",
-        "fill_cell": "List of fill cell names/patterns",
-        "decap_cell": "List of decap cell names/patterns",
+        "fill_cells": "List of fill cell names/patterns",
+        "decap_cells": "List of decap cell names/patterns",
         "cell_pad_exclude": "List of cells excluded from padding",
         "diode_cell": "Diode cell (cell/port format, optional)",
         "tristate_cells": "List of tristate buffer cell patterns (optional)",

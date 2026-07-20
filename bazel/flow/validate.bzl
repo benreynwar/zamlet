@@ -96,8 +96,8 @@ def _prepare_flow(ctx, verilog_paths):
     generate_sdc = input_delay or output_delay
     sdc_generation_script = ""
     if generate_sdc:
-        effective_input_delay = input_delay if input_delay else "50"
-        effective_output_delay = output_delay if output_delay else "50"
+        effective_input_delay = input_delay if input_delay else "60"
+        effective_output_delay = output_delay if output_delay else "60"
         sdc_generation_script = """
 sed -e 's/{{{{INPUT_DELAY_CONSTRAINT}}}}/{input_delay}/' \\
     -e 's/{{{{OUTPUT_DELAY_CONSTRAINT}}}}/{output_delay}/' \\
@@ -130,7 +130,7 @@ sed -e 's/{{{{INPUT_DELAY_CONSTRAINT}}}}/{input_delay}/' \\
         sdc_generation_script = sdc_generation_script,
         inputs = inputs,
         pdk_name = pdk.name,
-        scl = pdk.scl,
+        scl = pdk.std_cell_library,
         top = ctx.attr.top,
     )
 

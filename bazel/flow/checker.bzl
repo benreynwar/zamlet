@@ -132,6 +132,60 @@ def _lvs_impl(ctx):
 def _setup_violations_impl(ctx):
     return single_step_impl(ctx, "Checker.SetupViolations", SETUP_VIOLATIONS_CONFIG_KEYS, step_outputs = [])
 
+def _setup_wns_threshold_impl(ctx):
+    state_info = ctx.attr.src[LibrelaneInfo]
+    state_out = ctx.actions.declare_file(ctx.label.name + "/state_out.json")
+
+    ctx.actions.run_shell(
+        inputs = [state_info.state_out],
+        outputs = [state_out],
+        command = """
+            set -e
+            cp "{src_state_out}" "{state_out}"
+
+            setup_wns="$(jq -r '.metrics.timing__setup__ws // "missing"' "{src_state_out}")"
+            if [ "$setup_wns" = "missing" ]; then
+                echo "ERROR: Zamlet setup WNS checker could not find timing__setup__ws."
+                exit 1
+            fi
+
+            if ! jq -n -e --arg wns "$setup_wns" --arg threshold "{threshold}" \
+                '($wns | tonumber) >= ($threshold | tonumber)' >/dev/null; then
+                echo "ERROR: setup WNS $setup_wns ns is below threshold {threshold} ns."
+                exit 1
+            fi
+
+            echo "Setup WNS $setup_wns ns meets threshold {threshold} ns."
+        """.format(
+            src_state_out = state_info.state_out.path,
+            state_out = state_out.path,
+            threshold = ctx.attr.threshold,
+        ),
+    )
+
+    return [
+        DefaultInfo(files = depset([state_out])),
+        LibrelaneInfo(
+            state_out = state_out,
+            nl = state_info.nl,
+            pnl = state_info.pnl,
+            odb = state_info.odb,
+            sdc = state_info.sdc,
+            sdf = state_info.sdf,
+            spef = state_info.spef,
+            lib = state_info.lib,
+            gds = state_info.gds,
+            mag_gds = state_info.mag_gds,
+            klayout_gds = state_info.klayout_gds,
+            lef = state_info.lef,
+            mag = state_info.mag,
+            spice = state_info.spice,
+            json_h = state_info.json_h,
+            vh = state_info.vh,
+            **{"def": getattr(state_info, "def", None)}
+        ),
+    ]
+
 def _hold_violations_impl(ctx):
     return single_step_impl(ctx, "Checker.HoldViolations", HOLD_VIOLATIONS_CONFIG_KEYS, step_outputs = [])
 
@@ -296,6 +350,17 @@ librelane_lvs_checker = rule(
 librelane_setup_violations = rule(
     implementation = _setup_violations_impl,
     attrs = FLOW_ATTRS,
+    provides = [DefaultInfo, LibrelaneInfo],
+)
+
+zamlet_setup_wns_threshold = rule(
+    implementation = _setup_wns_threshold_impl,
+    attrs = dict(FLOW_ATTRS, **{
+        "threshold": attr.string(
+            doc = "Minimum allowed setup WNS in ns.",
+            default = "0",
+        ),
+    }),
     provides = [DefaultInfo, LibrelaneInfo],
 )
 

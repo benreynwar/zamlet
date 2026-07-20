@@ -1,9 +1,5 @@
 load("//bazel:chisel.bzl", "chisel_binary")
 
-SYSTOLIC_SRCS = [
-    "SystolicArray.scala",
-]
-
 SYSTOLIC_DEPS = [
     "@maven//:com_chuusai_shapeless_2_13",
     "@maven//:io_circe_circe_core_2_13",
@@ -15,10 +11,25 @@ SYSTOLIC_DEPS = [
 
 chisel_binary(
     name = "systolicarray",
-    srcs = SYSTOLIC_SRCS + [
+    srcs = [
+        "SystolicArray.scala",
         "//src/main/scala/zamlet:zamlet_common_sources",
+        "//src/main/scala/zamlet/utils:utils_sources",
     ],
     main_class = "zamlet.systolic.SystolicArrayMain",
+    deps = SYSTOLIC_DEPS,
+    visibility = ["//visibility:public"],
+)
+
+chisel_binary(
+    name = "sumstationary",
+    srcs = [
+        "SumStationary.scala",
+        "//src/main/scala/zamlet:zamlet_common_sources",
+        "//src/main/scala/zamlet/maths:maths_sources",
+        "//src/main/scala/zamlet/utils:utils_sources",
+    ],
+    main_class = "zamlet.systolic.SumStationaryMain",
     deps = SYSTOLIC_DEPS,
     visibility = ["//visibility:public"],
 )

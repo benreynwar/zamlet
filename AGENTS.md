@@ -5,6 +5,8 @@ Before making RTL/Chisel edits, read and follow `docs_llm/rtl-style.md`.
 Before making Python test edits, read and follow `docs_llm/python-test-style.md`.
 
 Before debugging waveforms, read `docs_llm/waveform-debugging.md`.
+If a test is failing and it's not obvious from the log what the problem is,
+look at the waveform rather than guessing.
 
 When checking how LibreLane behaves, use the local source at `~/Code/librelane`.
 

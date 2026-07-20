@@ -24,6 +24,7 @@ load(":checker.bzl",
     "librelane_hold_violations",
     "librelane_max_slew_violations",
     "librelane_max_cap_violations",
+    "zamlet_setup_wns_threshold",
     "zamlet_antenna_violations",
 )
 load(":synthesis.bzl", "librelane_synthesis", "librelane_json_header", "librelane_eqy")
@@ -114,6 +115,7 @@ def librelane_classic_flow(
     design_repair_max_wire_length = None,
     design_repair_max_slew_pct = None,
     design_repair_max_cap_pct = None,
+    pl_resizer_setup_slack_margin = None,
     grt_design_repair_max_wire_length = None,
     run_cts = True,
     run_post_cts_resizer_timing = True,
@@ -144,6 +146,7 @@ def librelane_classic_flow(
     run_magic_drc = True,
     run_klayout_drc = True,
     run_lvs = True,
+    mid_setup_wns_threshold = "0",
     manual_global_placements = None,
     pnr_sdc_file = None,
     signoff_sdc_file = None,
@@ -205,8 +208,8 @@ def librelane_classic_flow(
     sdc_template(
         name = name + "_sdc",
         template = "//bazel/flow/sdc:base.sdc",
-        input_delay_constraint = input_delay_constraint if input_delay_constraint else "50",
-        output_delay_constraint = output_delay_constraint if output_delay_constraint else "50",
+        input_delay_constraint = input_delay_constraint if input_delay_constraint else "60",
+        output_delay_constraint = output_delay_constraint if output_delay_constraint else "60",
         fragments = sdc_fragments,
     )
     if not pnr_sdc_file:
@@ -252,6 +255,8 @@ def librelane_classic_flow(
         pnr_config_kwargs["design_repair_max_slew_pct"] = design_repair_max_slew_pct
     if design_repair_max_cap_pct != None:
         pnr_config_kwargs["design_repair_max_cap_pct"] = design_repair_max_cap_pct
+    if pl_resizer_setup_slack_margin != None:
+        pnr_config_kwargs["pl_resizer_setup_slack_margin"] = pl_resizer_setup_slack_margin
     if grt_design_repair_max_wire_length != None:
         pnr_config_kwargs["grt_design_repair_max_wire_length"] = grt_design_repair_max_wire_length
 
@@ -471,7 +476,6 @@ def librelane_classic_flow(
         input = input_target,
         src = ":" + name + "_custom_io",
     )
-
     # Global placement (full) - refine placement with IO pins fixed
     librelane_global_placement(
         name = name + "_gpl",
@@ -561,6 +565,30 @@ def librelane_classic_flow(
             pre_grt_src = ":" + name + "_sta_mid_cts"
     else:
         pre_grt_src = ":" + name + "_dpl"
+
+    # Optional build target for requiring the selected mid-PnR STA point to be
+    # clean before global routing.
+    zamlet_setup_wns_threshold(
+        name = name + "_chk_mid_setup",
+        input = input_target,
+        src = pre_grt_src,
+        threshold = mid_setup_wns_threshold,
+    )
+    librelane_hold_violations(
+        name = name + "_chk_mid_hold",
+        input = input_target,
+        src = ":" + name + "_chk_mid_setup",
+    )
+    librelane_max_slew_violations(
+        name = name + "_chk_mid_slew",
+        input = input_target,
+        src = ":" + name + "_chk_mid_hold",
+    )
+    librelane_max_cap_violations(
+        name = name + "_chk_mid_cap",
+        input = input_target,
+        src = ":" + name + "_chk_mid_slew",
+    )
 
     # Step 38: Global routing
     librelane_global_routing(

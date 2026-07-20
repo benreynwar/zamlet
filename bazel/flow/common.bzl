@@ -120,7 +120,7 @@ def create_librelane_config(input_info, state_info, required_keys):
 
         # PDK identity
         "PDK": pdk.name,
-        "STD_CELL_LIBRARY": pdk.scl,
+        "STD_CELL_LIBRARY": pdk.std_cell_library,
 
         # PDK config - power/ground
         "VDD_PIN": pdk.vdd_pin,
@@ -171,8 +171,8 @@ def create_librelane_config(input_info, state_info, required_keys):
         # PDK config - placement cells
         "WELLTAP_CELL": pdk.welltap_cell,
         "ENDCAP_CELL": pdk.endcap_cell,
-        "FILL_CELLS": pdk.fill_cell,
-        "DECAP_CELLS": pdk.decap_cell,
+        "FILL_CELLS": pdk.fill_cells,
+        "DECAP_CELLS": pdk.decap_cells,
         "DIODE_CELL": pdk.diode_cell,
         "CELL_PAD_EXCLUDE": pdk.cell_pad_exclude,
 
@@ -1050,7 +1050,8 @@ def run_librelane_step(
         input_info,
         state_info,
         output_subdir = "",
-        optional_outputs = []):
+        optional_outputs = [],
+        plugin_files = []):
     """Run a librelane step.
 
     Args:
@@ -1066,6 +1067,7 @@ def run_librelane_step(
         output_subdir: Subdirectory within runs/bazel/ where outputs are written.
             Empty for most steps, but CompositeSteps write to subdirectories
             (e.g., "1-diodeinsertion" for RepairAntennas).
+        plugin_files: LibreLane plugin package files to make importable.
 
     Returns:
         File - the state_out.json from this step
@@ -1084,6 +1086,7 @@ def run_librelane_step(
 
     # Declare state_out as an output (we'll copy it from librelane)
     state_out = ctx.actions.declare_file(ctx.label.name + "/state_out.json")
+    log_out = ctx.actions.declare_file(ctx.label.name + "/librelane.log")
 
     # Build copy commands to move files from librelane output to declared outputs
     copy_commands = []
@@ -1132,13 +1135,21 @@ def run_librelane_step(
         merge_metrics_cmd = ""
         state_in_path = state_in_base.path
 
+    pythonpath_cmd = ""
+    if plugin_files:
+        plugin_dirs = depset([
+            plugin.dirname.rsplit("/", 1)[0]
+            for plugin in plugin_files
+        ]).to_list()
+        pythonpath_cmd = 'export PYTHONPATH="$(pwd)/{}:$PYTHONPATH"'.format(":$(pwd)/".join(plugin_dirs))
+
     ctx.actions.run_shell(
-        outputs = outputs + optional_outputs + [state_out],
-        inputs = inputs + [config_file, state_in_base],
+        inputs = inputs + plugin_files + [config_file, state_in_base],
         command = """
             set -e
             {merge_metrics_cmd}
-            LOGFILE="$(pwd)/{design_dir}/librelane.log"
+            {pythonpath_cmd}
+            LOGFILE="{log_out}"
             HOME="$(pwd)/{design_dir}" librelane.steps run \\
                 --pdk-root "$PDK_ROOT" \\
                 --id {step_id} \\
@@ -1158,13 +1169,16 @@ def run_librelane_step(
             {copy_commands}
         """.format(
             merge_metrics_cmd = merge_metrics_cmd,
+            pythonpath_cmd = pythonpath_cmd,
             config_file = config_file.path,
             state_in = state_in_path,
             step_id = step_id,
             design_dir = design_dir,
             copy_commands = "\n            ".join(copy_commands),
+            log_out = log_out.path,
         ),
         use_default_shell_env = True,
+        outputs = outputs + optional_outputs + [state_out, log_out],
     )
 
     return state_out
