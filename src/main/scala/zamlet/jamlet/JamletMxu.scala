@@ -2,7 +2,7 @@ package zamlet.jamlet
 
 import chisel3._
 import chisel3.util._
-import zamlet.utils.{ResetPipeline, ResetPipelineBudget}
+import zamlet.utils.{RegisterWithPipelinedReset, ResetPipeline, ResetPipelineBudget}
 
 class JamletMxuResetGroup extends RawModule {
   val clock = IO(Input(Clock()))
@@ -104,29 +104,39 @@ class JamletMxu(
     }
   }
 
+  def controlRegister(in: Bool, name: String): Bool = {
+    val register = withReset(resetPipeline.childReset) {
+      Module(new RegisterWithPipelinedReset(
+        Bool(),
+        resetPipeline.childBudget)).suggestName(name)
+    }
+    register.io.in := in
+    register.io.out
+  }
+
   val ewBackwardInput = Wire(Vec(n, UInt(8.W)))
   val nsBackwardInput = Wire(Vec(n, UInt(8.W)))
-  val ewUseBackward = RegNext(io.ewUseBackward, false.B)
-  val nsUseBackward = RegNext(io.nsUseBackward, false.B)
+  val ewUseBackward = controlRegister(io.ewUseBackward, "ewUseBackward")
+  val nsUseBackward = controlRegister(io.nsUseBackward, "nsUseBackward")
   val ewUseBackwardMux = Seq.tabulate(n) { row =>
-    RegNext(ewUseBackward, false.B).suggestName(s"ewUseBackwardMux_$row")
+    controlRegister(ewUseBackward, s"ewUseBackwardMux_$row")
   }
   val nsUseBackwardMux = Seq.tabulate(n) { col =>
-    RegNext(nsUseBackward, false.B).suggestName(s"nsUseBackwardMux_$col")
+    controlRegister(nsUseBackward, s"nsUseBackwardMux_$col")
   }
   var previousInit: Bool = io.init
   val init = Seq.tabulate(n) { lane =>
-    previousInit = RegNext(previousInit, false.B).suggestName(s"init_$lane")
+    previousInit = controlRegister(previousInit, s"init_$lane")
     previousInit
   }
   var previousStepIn: Bool = io.stepIn
   val stepIn = Seq.tabulate(n) { lane =>
-    previousStepIn = RegNext(previousStepIn, false.B).suggestName(s"stepIn_$lane")
+    previousStepIn = controlRegister(previousStepIn, s"stepIn_$lane")
     previousStepIn
   }
   var previousCompleteIn: Bool = io.completeIn
   val completeIn = Seq.tabulate(n) { lane =>
-    previousCompleteIn = RegNext(previousCompleteIn, false.B).suggestName(s"completeIn_$lane")
+    previousCompleteIn = controlRegister(previousCompleteIn, s"completeIn_$lane")
     previousCompleteIn
   }
   for (index <- 0 until n) {
@@ -244,7 +254,9 @@ class JamletMxu(
     io.nsBackwardOutput(col) := nsBackwardInput(col)
   }
 
-  io.error := RegNext(cells.flatten.map(_.io.error).reduce(_ || _), false.B)
+  io.error := controlRegister(
+    cells.flatten.map(_.io.error).reduce(_ || _),
+    "error")
 }
 
 object JamletMxuGenerator extends zamlet.ModuleGenerator {

@@ -12,7 +12,6 @@ SYSTOLIC_DEPS = [
 chisel_binary(
     name = "weightstationary",
     srcs = [
-        "RegisterWithPipelinedReset.scala",
         "WeightStationary.scala",
         "//src/main/scala/zamlet:zamlet_common_sources",
         "//src/main/scala/zamlet/utils:utils_sources",
@@ -25,7 +24,6 @@ chisel_binary(
 chisel_binary(
     name = "sumstationary",
     srcs = [
-        "RegisterWithPipelinedReset.scala",
         "SumStationary.scala",
         "//src/main/scala/zamlet:zamlet_common_sources",
         "//src/main/scala/zamlet/maths:maths_sources",

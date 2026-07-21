@@ -2,7 +2,7 @@ package zamlet.systolic
 
 import chisel3._
 import chisel3.util._
-import zamlet.utils.{ResetPipeline, ResetPipelineBudget}
+import zamlet.utils.{RegisterWithPipelinedReset, ResetPipeline, ResetPipelineBudget}
 
 class WeightStationaryResetGroup extends RawModule {
   val clock = IO(Input(Clock()))

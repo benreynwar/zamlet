@@ -3,7 +3,7 @@ package zamlet.systolic
 import chisel3._
 import chisel3.util._
 import zamlet.maths.CSA3to2
-import zamlet.utils.{ResetPipeline, ResetPipelineBudget}
+import zamlet.utils.{RegisterWithPipelinedReset, ResetPipeline, ResetPipelineBudget}
 
 class SumStationaryCDrain extends Bundle {
   val data = UInt(32.W)

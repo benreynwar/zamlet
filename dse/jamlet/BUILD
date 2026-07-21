@@ -21,6 +21,7 @@ librelane_synth_config(
         "JamletMxuCDrainRegister",
         "JamletMxuCell",
         "JamletMxuResetGroup",
+        "RegisterWithPipelinedReset",
     ],
 )
 
