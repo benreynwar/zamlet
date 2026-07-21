@@ -4,8 +4,7 @@ import random
 import cocotb
 from cocotb.clock import Clock
 from cocotb.handle import HierarchyObject
-from cocotb.triggers import ReadOnly, RisingEdge
-
+from cocotb.triggers import ReadOnly
 from zamlet import test_utils
 from zamlet.matrix_test_utils import (
     UINT32_MASK,
@@ -14,7 +13,7 @@ from zamlet.matrix_test_utils import (
     matrix_product,
     random_matrix,
 )
-
+from zamlet.test_utils import rising_edge
 
 TEST_PARAMS = test_utils.get_test_params()
 with open(TEST_PARAMS["params_file"]) as f:
@@ -53,7 +52,7 @@ def zero_inputs(dut: HierarchyObject) -> None:
 
 async def wait_cycles(dut: HierarchyObject, cycles: int) -> None:
     for _ in range(cycles):
-        await RisingEdge(dut.clock)
+        await rising_edge(dut.clock)
 
 
 async def reset_dut(dut: HierarchyObject) -> None:
@@ -89,7 +88,7 @@ async def feed_ab(
 ) -> None:
     for local_cycle in range(2 * N - 1):
         drive_ab_for_cycle(dut, a, b, local_cycle)
-        await RisingEdge(dut.clock)
+        await rising_edge(dut.clock)
 
 
 def capture_outputs(
@@ -109,7 +108,7 @@ async def request_complete(
     target_cycle: int,
 ) -> None:
     while complete_driver.cycle < target_cycle:
-        await RisingEdge(dut.clock)
+        await rising_edge(dut.clock)
     complete_driver.request(1)
 
 
@@ -126,12 +125,12 @@ async def matrix_multiply(
     start_cycle = step_driver.cycle
     step_driver.request(N)
     cocotb.start_soon(request_complete(dut, complete_driver, start_cycle + N - 1))
-    await RisingEdge(dut.clock)
+    await rising_edge(dut.clock)
     cocotb.start_soon(feed_ab(dut, a, b))
 
     last_cycle = 3 * (N - 1) + OUTPUT_FIXED_LATENCY
     for local_cycle in range(last_cycle + 1):
-        await RisingEdge(dut.clock)
+        await rising_edge(dut.clock)
         await ReadOnly()
         capture_outputs(dut, captured, local_cycle)
 
@@ -148,7 +147,7 @@ async def test_matrix_multiply(dut: HierarchyObject) -> None:
     cocotb.start_soon(step_driver.run())
     cocotb.start_soon(complete_driver.run())
 
-    await RisingEdge(dut.clock)
+    await rising_edge(dut.clock)
 
     tasks = []
     for _ in range(4):

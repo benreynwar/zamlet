@@ -3,12 +3,13 @@ from random import Random
 import cocotb
 from cocotb.clock import Clock
 from cocotb.handle import HierarchyObject
-from cocotb.triggers import RisingEdge
+
 from zamlet import test_utils
 from zamlet.kamlet_test.tag_table_driver import (
-    TagTableDriver,
     TagState,
+    TagTableDriver,
 )
+from zamlet.test_utils import rising_edge
 
 
 async def reservation_worker(
@@ -21,7 +22,7 @@ async def reservation_worker(
     await driver.wait_for_fill_complete(slot)
 
     for _ in range(rng.randrange(8)):
-        await RisingEdge(driver.clock)
+        await rising_edge(driver.clock)
     await driver.release(slot)
     return slot
 

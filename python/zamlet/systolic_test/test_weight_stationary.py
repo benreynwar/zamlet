@@ -4,8 +4,7 @@ import random
 import cocotb
 from cocotb.clock import Clock
 from cocotb.handle import HierarchyObject
-from cocotb.triggers import ReadOnly, RisingEdge
-
+from cocotb.triggers import ReadOnly
 from zamlet import test_utils
 from zamlet.matrix_test_utils import (
     UINT32_MASK,
@@ -14,7 +13,7 @@ from zamlet.matrix_test_utils import (
     matrix_product,
     random_matrix,
 )
-
+from zamlet.test_utils import rising_edge
 
 TEST_PARAMS = test_utils.get_test_params()
 with open(TEST_PARAMS["params_file"]) as f:
@@ -48,7 +47,7 @@ async def reset_dut(dut: HierarchyObject) -> None:
 
 async def wait_cycles(dut: HierarchyObject, cycles: int) -> None:
     for _ in range(cycles):
-        await RisingEdge(dut.clock)
+        await rising_edge(dut.clock)
 
 
 def drive_weights(
@@ -68,7 +67,7 @@ async def feed_weights(
 ) -> None:
     for local_cycle in range(2 * N - 1):
         drive_weights(dut, weights, local_cycle)
-        await RisingEdge(dut.clock)
+        await rising_edge(dut.clock)
 
 
 def drive_inputs_and_sums(
@@ -88,7 +87,7 @@ async def feed_inputs_and_sums(
 ) -> None:
     for local_cycle in range(2 * N - 1):
         drive_inputs_and_sums(dut, inputs, local_cycle)
-        await RisingEdge(dut.clock)
+        await rising_edge(dut.clock)
 
 
 def capture_outputs(
@@ -115,14 +114,14 @@ async def matrix_multiply(
     # boundary replaces the weight as it captures the first input of the new sum.
     load_weight_driver.request(1)
     step_driver.request(N)
-    await RisingEdge(dut.clock)
+    await rising_edge(dut.clock)
     cocotb.start_soon(feed_weights(dut, weights))
     cocotb.start_soon(feed_inputs_and_sums(dut, inputs))
     captured: list[list[int | None]] = [[None for _ in range(N)] for _ in range(N)]
     last_cycle = N + (N - 1) + (N - 1) + 1
 
     for local_cycle in range(last_cycle + 1):
-        await RisingEdge(dut.clock)
+        await rising_edge(dut.clock)
         await ReadOnly()
         capture_outputs(dut, captured, local_cycle)
 
@@ -141,7 +140,7 @@ async def test_matrix_multiply(dut: HierarchyObject) -> None:
     cocotb.start_soon(load_weight_driver.run())
     cocotb.start_soon(step_driver.run())
 
-    await RisingEdge(dut.clock)
+    await rising_edge(dut.clock)
 
     tasks = []
     for _ in range(4):

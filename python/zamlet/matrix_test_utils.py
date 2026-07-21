@@ -1,7 +1,8 @@
 import random
 
-from cocotb.triggers import ReadOnly, RisingEdge
+from cocotb.triggers import ReadOnly
 
+from zamlet.test_utils import rising_edge
 
 INT8_MIN = -128
 INT8_MAX = 127
@@ -27,7 +28,7 @@ class SkewedControlDriver:
 
     async def run(self) -> None:
         while True:
-            await RisingEdge(self.clock)
+            await rising_edge(self.clock)
             if not self.just_set:
                 self.signal.value = int(self.n_cycles > 0)
             await ReadOnly()

@@ -6,8 +6,7 @@ from dataclasses import dataclass
 import cocotb
 from cocotb.clock import Clock
 from cocotb.handle import HierarchyObject
-from cocotb.triggers import ReadOnly, RisingEdge
-
+from cocotb.triggers import ReadOnly
 from zamlet import test_utils
 from zamlet.kamlet.kinstructions import (
     KInstrOpcode,
@@ -19,8 +18,8 @@ from zamlet.kamlet.kinstructions import (
 from zamlet.lane_order import LaneOrder
 from zamlet.maths.segmented_multiplier import latency as segmented_multiplier_latency
 from zamlet.params import ZamletParams
+from zamlet.test_utils import rising_edge
 from zamlet.width_codes import ElementWidthCode, WidthFormatCode
-
 
 RF_RESPONSE_LATENCY = 1
 
@@ -403,9 +402,9 @@ async def reset_dut(dut: HierarchyObject) -> None:
     drive_rf_response(dut, "B", None)
     drive_rf_response(dut, "Mask", None)
     drive_sram_response(dut, None)
-    await RisingEdge(dut.clock)
+    await rising_edge(dut.clock)
     dut.reset.value = 0
-    await RisingEdge(dut.clock)
+    await rising_edge(dut.clock)
 
 
 def drive_instruction(dut: HierarchyObject, case: LocalExecCase | None) -> None:
@@ -530,4 +529,4 @@ async def localexec_random_stream(dut: HierarchyObject) -> None:
         assert int(dut.io_errors_alu_unsupportedWf.value) == 0
         assert int(dut.io_errors_alu_unsupportedEwWfRatio.value) == 0
 
-        await RisingEdge(dut.clock)
+        await rising_edge(dut.clock)

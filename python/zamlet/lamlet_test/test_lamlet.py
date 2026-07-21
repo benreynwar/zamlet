@@ -1,15 +1,14 @@
+import logging
 import os
 import sys
-import logging
 
 import cocotb
 from cocotb.clock import Clock
 from cocotb.handle import HierarchyObject
-from cocotb.triggers import RisingEdge, ReadOnly, ClockCycles
-
+from cocotb.triggers import ClockCycles, ReadOnly
 from zamlet import test_utils
 from zamlet.instructions.encode import encode_vle, encode_vse
-
+from zamlet.test_utils import rising_edge
 
 logger = logging.getLogger(__name__)
 
@@ -49,10 +48,10 @@ def initialize_inputs(dut: HierarchyObject) -> None:
 async def reset(dut: HierarchyObject) -> None:
     """Reset the module."""
     dut.reset.value = 1
-    await RisingEdge(dut.clock)
-    await RisingEdge(dut.clock)
+    await rising_edge(dut.clock)
+    await rising_edge(dut.clock)
     dut.reset.value = 0
-    await RisingEdge(dut.clock)
+    await rising_edge(dut.clock)
 
 
 async def send_instruction(dut: HierarchyObject, inst: int, rs1_data: int,
@@ -67,20 +66,20 @@ async def send_instruction(dut: HierarchyObject, inst: int, rs1_data: int,
 
     # Wait for ready
     while True:
-        await RisingEdge(dut.clock)
+        await rising_edge(dut.clock)
         await ReadOnly()
         if int(dut.io_ex_ready.value) == 1:
             break
 
     # Deassert valid after handshake
-    await RisingEdge(dut.clock)
+    await rising_edge(dut.clock)
     dut.io_ex_valid.value = 0
 
 
 async def wait_for_tlb_request(dut: HierarchyObject, timeout_cycles: int = 100):
     """Wait for a TLB request. Returns vaddr or None on timeout."""
     for _ in range(timeout_cycles):
-        await RisingEdge(dut.clock)
+        await rising_edge(dut.clock)
         await ReadOnly()
         if int(dut.io_tlbReq_valid.value) == 1:
             vaddr = int(dut.io_tlbReq_bits_vaddr.value)
@@ -104,7 +103,7 @@ async def respond_tlb(dut: HierarchyObject, paddr: int, miss: bool = False,
 async def wait_for_mesh_packet(dut: HierarchyObject, timeout_cycles: int = 100):
     """Wait for a mesh packet. Returns (is_header, data) or None on timeout."""
     for _ in range(timeout_cycles):
-        await RisingEdge(dut.clock)
+        await rising_edge(dut.clock)
         await ReadOnly()
         if int(dut.io_mesh_valid.value) == 1:
             is_header = int(dut.io_mesh_bits_isHeader.value)
@@ -118,7 +117,7 @@ async def collect_mesh_packets(dut: HierarchyObject, count: int,
     """Collect a number of mesh packets."""
     packets = []
     for _ in range(timeout_cycles):
-        await RisingEdge(dut.clock)
+        await rising_edge(dut.clock)
         await ReadOnly()
         if int(dut.io_mesh_valid.value) == 1:
             is_header = int(dut.io_mesh_bits_isHeader.value)
@@ -132,7 +131,7 @@ async def collect_mesh_packets(dut: HierarchyObject, count: int,
 async def wait_for_retire(dut: HierarchyObject, timeout_cycles: int = 100):
     """Wait for retire_late signal. Returns inst or None on timeout."""
     for _ in range(timeout_cycles):
-        await RisingEdge(dut.clock)
+        await rising_edge(dut.clock)
         await ReadOnly()
         if int(dut.io_com_retireLate.value) == 1:
             inst = int(dut.io_com_inst.value)
@@ -151,7 +150,7 @@ class RetireMonitor:
     async def _monitor(self, dut: HierarchyObject):
         """Background task that monitors for retire signal."""
         while self.retired is None:
-            await RisingEdge(dut.clock)
+            await rising_edge(dut.clock)
             await ReadOnly()
             if int(dut.io_com_retireLate.value) == 1:
                 inst = int(dut.io_com_inst.value)
@@ -211,13 +210,13 @@ async def basic_vle_test(dut: HierarchyObject) -> None:
     assert cmd == 0, f"Expected read command (0), got {cmd}"
 
     # Exit ReadOnly phase before setting TLB response
-    await RisingEdge(dut.clock)
+    await rising_edge(dut.clock)
 
     # Respond with successful translation (identity map for simplicity)
     # The TLB response is registered in IssueUnit, so hold it for several cycles
     await respond_tlb(dut, paddr=rs1_data)
     for _ in range(5):
-        await RisingEdge(dut.clock)
+        await rising_edge(dut.clock)
         await respond_tlb(dut, paddr=rs1_data)
 
     # Wait for mesh output (header + instruction)
@@ -272,13 +271,13 @@ async def basic_vse_test(dut: HierarchyObject) -> None:
     assert cmd == 1, f"Expected write command (1), got {cmd}"
 
     # Exit ReadOnly phase before setting TLB response
-    await RisingEdge(dut.clock)
+    await rising_edge(dut.clock)
 
     # Respond with successful translation
     # The TLB response is registered in IssueUnit, so hold it for several cycles
     await respond_tlb(dut, paddr=rs1_data)
     for _ in range(5):
-        await RisingEdge(dut.clock)
+        await rising_edge(dut.clock)
         await respond_tlb(dut, paddr=rs1_data)
 
     # Wait for mesh packets
@@ -311,7 +310,7 @@ async def lamlet_test(dut: HierarchyObject) -> None:
     await basic_vle_test(dut)
 
     # Reset between tests (wait for clock edge to exit ReadOnly phase)
-    await RisingEdge(dut.clock)
+    await rising_edge(dut.clock)
     initialize_inputs(dut)
     await reset(dut)
 

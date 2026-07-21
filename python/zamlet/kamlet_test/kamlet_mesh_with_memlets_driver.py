@@ -5,9 +5,16 @@ from random import Random
 
 import cocotb
 from cocotb.handle import HierarchyObject
-from cocotb.triggers import ReadOnly, RisingEdge
+from cocotb.triggers import ReadOnly
 
+from zamlet import kamlet_network
 from zamlet.addresses import Ordering
+from zamlet.cocotb.axi_memory import Axi4Signals
+from zamlet.kamlet_test.ordered_kamlet_memory import (
+    OrderedKamletAxiMemory,
+    OrderedKamletMemory,
+)
+from zamlet.lane_order import vw_index_to_j_coords
 from zamlet.message import (
     Header,
     KamletTlbReqHeader,
@@ -16,16 +23,9 @@ from zamlet.message import (
     SendType,
 )
 from zamlet.params import ZamletParams
-from zamlet.cocotb.axi_memory import Axi4Signals
-from zamlet import kamlet_network
-from zamlet.kamlet_test.ordered_kamlet_memory import (
-    OrderedKamletAxiMemory,
-    OrderedKamletMemory,
-)
-from zamlet.lane_order import vw_index_to_j_coords
 from zamlet.test_helpers.packets import NetworkPacketSink, NetworkPacketSource
+from zamlet.test_utils import rising_edge
 from zamlet.width_codes import wf_code
-
 
 logger = logging.getLogger(__name__)
 
@@ -175,7 +175,7 @@ class KamletMeshWithMemletsDriver:
         timeout_cycles: int,
     ) -> list[int]:
         for _ in range(timeout_cycles):
-            await RisingEdge(self.dut.clock)
+            await rising_edge(self.dut.clock)
             await ReadOnly()
             actual = self.read_rf_elements(rf_addr, ordering, len(expected))
             if actual == expected:
@@ -192,10 +192,10 @@ class KamletMeshWithMemletsDriver:
     async def reset(self) -> None:
         self.dut.reset.value = 1
         for _ in range(self.params.reset_pipeline_depth):
-            await RisingEdge(self.dut.clock)
+            await rising_edge(self.dut.clock)
         self.dut.reset.value = 0
         for _ in range(self.params.reset_pipeline_depth):
-            await RisingEdge(self.dut.clock)
+            await rising_edge(self.dut.clock)
 
     def enqueue_instructions(self, encoded_kinstrs: list[int]) -> None:
         params = self.params
@@ -396,12 +396,12 @@ class KamletMeshWithMemletsDriver:
     async def monitor_error_wires(self) -> None:
         signals = self._error_signals()
         while True:
-            await RisingEdge(self.dut.clock)
+            await rising_edge(self.dut.clock)
             await ReadOnly()
             for name, sig in signals:
                 if int(sig.value):
                     for _ in range(3):
-                        await RisingEdge(self.dut.clock)
+                        await rising_edge(self.dut.clock)
                     assert False, f"Error signal asserted: {name}"
 
 
@@ -420,7 +420,7 @@ class KamletMeshTlbResponder:
         while True:
             while sink.packet_queue:
                 self.handle_packet(kx, sink.packet_queue.popleft())
-            await RisingEdge(self.driver.dut.clock)
+            await rising_edge(self.driver.dut.clock)
 
     def handle_packet(self, kx: int, packet: list[object]) -> None:
         assert len(packet) == 2

@@ -6,8 +6,9 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Tuple
 
 import cocotb
-from cocotb.triggers import RisingEdge, ReadOnly
+from cocotb.triggers import ReadOnly
 
+from zamlet.test_utils import rising_edge
 from zamlet.utils import make_seed
 
 
@@ -117,7 +118,7 @@ class Axi4MemoryBase:
     async def _aw_capture(self, rng: random.Random):
         s = self.signals
         while True:
-            await RisingEdge(self.clock)
+            await rising_edge(self.clock)
             s.aw_ready.value = int(rng.random() < self.aw_p_ready)
             await ReadOnly()
             if int(s.aw_valid.value) == 1 and int(s.aw_ready.value) == 1:
@@ -134,7 +135,7 @@ class Axi4MemoryBase:
         s = self.signals
         burst: List[int] = []
         while True:
-            await RisingEdge(self.clock)
+            await rising_edge(self.clock)
             s.w_ready.value = int(rng.random() < self.w_p_ready)
             await ReadOnly()
             if int(s.w_valid.value) == 1 and int(s.w_ready.value) == 1:
@@ -145,7 +146,7 @@ class Axi4MemoryBase:
 
     async def _match_writes(self):
         while True:
-            await RisingEdge(self.clock)
+            await rising_edge(self.clock)
             if self._aw_queue and self._w_bursts:
                 aw = self._aw_queue.popleft()
                 data = self._w_bursts.popleft()
@@ -155,7 +156,7 @@ class Axi4MemoryBase:
     async def _b_driver(self):
         s = self.signals
         while True:
-            await RisingEdge(self.clock)
+            await rising_edge(self.clock)
             s.b_valid.value = 0
             if self._b_queue:
                 bid = self._b_queue.popleft()
@@ -164,13 +165,13 @@ class Axi4MemoryBase:
                 s.b_resp.value = 0
                 await ReadOnly()
                 while int(s.b_ready.value) != 1:
-                    await RisingEdge(self.clock)
+                    await rising_edge(self.clock)
                     await ReadOnly()
 
     async def _ar_capture(self, rng: random.Random):
         s = self.signals
         while True:
-            await RisingEdge(self.clock)
+            await rising_edge(self.clock)
             s.ar_ready.value = int(rng.random() < self.ar_p_ready)
             await ReadOnly()
             if int(s.ar_valid.value) == 1 and int(s.ar_ready.value) == 1:
@@ -185,7 +186,7 @@ class Axi4MemoryBase:
 
     async def _r_driver(self):
         s = self.signals
-        await RisingEdge(self.clock)
+        await rising_edge(self.clock)
         while True:
             s.r_valid.value = 0
             if self._ar_queue:
@@ -199,11 +200,11 @@ class Axi4MemoryBase:
                     s.r_last.value = 1 if i == len(data) - 1 else 0
                     await ReadOnly()
                     while int(s.r_ready.value) != 1:
-                        await RisingEdge(self.clock)
+                        await rising_edge(self.clock)
                         await ReadOnly()
-                    await RisingEdge(self.clock)
+                    await rising_edge(self.clock)
             else:
-                await RisingEdge(self.clock)
+                await rising_edge(self.clock)
 
     def handle_write(self, aw: dict, data: List[int]) -> None:
         raise NotImplementedError

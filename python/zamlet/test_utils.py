@@ -7,6 +7,7 @@ import shutil
 from pathlib import Path
 
 import cocotb
+from cocotb.triggers import RisingEdge, Timer
 
 # Version-compatible imports for cocotb 1.9.2 and 2.0.0
 try:
@@ -26,6 +27,12 @@ except ImportError:
 
 
 logger = logging.getLogger(__name__)
+
+
+async def rising_edge(clock) -> None:
+    await RisingEdge(clock)
+    # CVC implements cbReadWriteSynch as a #0 callback, which can race the RTL.
+    await Timer(1, unit="step")
 
 
 def configure_logging_pre_sim(level: str = 'INFO') -> None:
