@@ -132,10 +132,12 @@ find_nix_verilator(name = "nix_verilator")
 find_nix_cocotb = use_repo_rule("//bazel/toolchains:nix_cocotb.bzl", "find_nix_cocotb")
 find_nix_cocotb(name = "nix_cocotb")
 
+find_nix_cvc = use_repo_rule("//bazel/toolchains:nix_cvc.bzl", "find_nix_cvc")
+find_nix_cvc(name = "nix_cvc")
+
 # Register Nix toolchains
 register_toolchains(
     "@nix_python//:toolchain",
     "@nix_verilator//:toolchain",
     "@nix_cocotb//:toolchain",
 )
-

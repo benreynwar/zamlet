@@ -305,6 +305,99 @@ python_runner = rule(
     toolchains = ["//bazel/toolchains:cocotb_toolchain_type"],
 )
 
+def _cvc_runner_impl(ctx):
+    cocotb_tc = ctx.toolchains["//bazel/toolchains:cocotb_toolchain_type"].cocotb
+
+    import_paths = []
+    runfiles = ctx.runfiles(
+        files = ctx.files.srcs + [ctx.file._cvc, ctx.file._vpi] + ctx.files._cvc_runtime,
+    )
+    for py_dep in ctx.attr.py_deps:
+        if PyInfo in py_dep:
+            import_paths.extend(py_dep[PyInfo].imports.to_list())
+        if DefaultInfo in py_dep:
+            runfiles = runfiles.merge(py_dep[DefaultInfo].default_runfiles)
+
+    config_file = None
+    if ctx.attr.config:
+        config_files = ctx.attr.config[DefaultInfo].files.to_list()
+        if len(config_files) != 1:
+            fail("config must produce exactly one file")
+        config_file = config_files[0]
+        runfiles = runfiles.merge(ctx.runfiles(files = [config_file]))
+
+    python_paths = [ctx.workspace_name]
+    python_paths.extend([path for path in import_paths if path and path != "."])
+    wrapper = ctx.actions.declare_file(ctx.label.name + ".sh")
+    ctx.actions.write(
+        output = wrapper,
+        is_executable = True,
+        content = """#!/bin/bash
+set -euo pipefail
+
+PYTHONPATH_PARTS=("$(pwd)")
+{pythonpath_entries}
+IFS=':'; export PYTHONPATH="${{PYTHONPATH_PARTS[*]}}:${{PYTHONPATH:-}}"
+export LD_LIBRARY_PATH="$(dirname "{vpi}"):{python_libdir}:${{LD_LIBRARY_PATH:-}}"
+export PYGPI_PYTHON_BIN="{python_bin}"
+export COCOTB_RESOLVE_X=VALUE_ERROR
+export ZAMLET_TEST_SEED="${{ZAMLET_TEST_SEED:-0}}"
+{config_export}
+
+"{cvc}" +interp +acc+2 ${{CVC_ARGS:-}} -o cvc_sim \
+  "+loadvpi={vpi}:vlog_startup_routines_bootstrap" \
+  {sources}
+
+if [ -f verilog.dump ]; then
+  cp verilog.dump "$TEST_UNDECLARED_OUTPUTS_DIR/dump.vcd"
+fi
+
+test -f results.xml || {{
+  echo "ERROR: results.xml not found - cocotb test did not complete" >&2
+  exit 1
+}}
+"{python_bin}" -m cocotb_tools.check_results results.xml
+""".format(
+            cvc = ctx.file._cvc.short_path,
+            vpi = ctx.file._vpi.short_path,
+            sources = " ".join([src.short_path for src in ctx.files.srcs]),
+            python_libdir = cocotb_tc.python_libdir,
+            python_bin = cocotb_tc.python_bin,
+            pythonpath_entries = "\n".join([
+                'PYTHONPATH_PARTS+=("$(pwd)/../{}")'.format(path)
+                for path in python_paths
+            ]),
+            config_export = (
+                'export ZAMLET_TEST_CONFIG_FILENAME="{}"'.format(config_file.short_path)
+                if config_file else ""
+            ),
+        ),
+    )
+
+    return [DefaultInfo(executable = wrapper, runfiles = runfiles)]
+
+cvc_runner = rule(
+    implementation = _cvc_runner_impl,
+    attrs = {
+        "srcs": attr.label_list(allow_files = [".v", ".sv"]),
+        "config": attr.label(allow_files = [".json"]),
+        "py_deps": attr.label_list(),
+        "_cvc": attr.label(
+            default = Label("@nix_cvc//:cvc_bin"),
+            allow_single_file = True,
+        ),
+        "_vpi": attr.label(
+            default = Label("@nix_cocotb//:cvc_vpi"),
+            allow_single_file = True,
+        ),
+        "_cvc_runtime": attr.label(
+            default = Label("@nix_cocotb//:cvc_runtime"),
+        ),
+    },
+    executable = True,
+    toolchains = ["//bazel/toolchains:cocotb_toolchain_type"],
+)
+
 # -----------------------------------------------------------------------------
 # Convenience macros
 # -----------------------------------------------------------------------------
@@ -367,6 +460,31 @@ def cocotb_test(name, binary, test_module, toplevel, py_deps = [], env = {}, dat
         "TOPLEVEL": toplevel,
         "TOPLEVEL_LANG": "verilog",
         "VERILATOR_TRACE": "1",
+    }
+    merged_env = dict(default_env)
+    merged_env.update(env)
+
+    native.sh_test(
+        name = name,
+        srcs = [name + "_runner"],
+        env = merged_env,
+        data = data + ([config] if config else []),
+    )
+
+def cvc_cocotb_test(name, verilog_files, test_module, toplevel, py_deps = [], env = {}, data = [], config = None):
+    """Create a cocotb test that runs Verilog directly with CVC."""
+    cvc_runner(
+        name = name + "_runner",
+        srcs = verilog_files,
+        config = config,
+        py_deps = py_deps,
+    )
+
+    default_env = {
+        "COCOTB_TEST_MODULES": test_module,
+        "COCOTB_TOPLEVEL": toplevel,
+        "TOPLEVEL": toplevel,
+        "TOPLEVEL_LANG": "verilog",
     }
     merged_env = dict(default_env)
     merged_env.update(env)

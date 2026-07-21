@@ -79,6 +79,18 @@ cc_import(
     visibility = ["//visibility:public"],
 )
 
+filegroup(
+    name = "cvc_vpi",
+    srcs = ["libs/libcocotbvpi_modelsim.so"],
+    visibility = ["//visibility:public"],
+)
+
+filegroup(
+    name = "cvc_runtime",
+    srcs = glob(["libs/*.so"]),
+    visibility = ["//visibility:public"],
+)
+
 cc_import(
     name = "libcocotb",
     shared_library = "libs/libcocotb.so",
