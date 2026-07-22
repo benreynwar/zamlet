@@ -138,8 +138,8 @@ class WeightStationary(
   }
 
   val sumIn = Seq.tabulate(n) { col =>
-    val sumInRegister = withReset(resetPipeline.childReset) {
-      Module(new RegisterWithPipelinedReset(UInt(32.W), resetPipeline.childBudget))
+    val sumInRegister = withReset(resetFor(0, col)) {
+      Module(new RegisterWithPipelinedReset(UInt(32.W), cellResetBudget))
         .suggestName(s"sumInRegister_$col")
     }
     sumInRegister.io.in := io.sumIn(col)

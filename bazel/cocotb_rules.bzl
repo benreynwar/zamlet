@@ -20,6 +20,12 @@ IverilogSimulationInfo = provider(fields = {
     "vvp": "Icarus runtime",
 })
 
+IverilogRawActivityInfo = provider(fields = {
+    "simulation_log": "Complete Icarus and Cocotb simulation log",
+    "vcd": "Unvalidated activity VCD",
+    "window": "Power measurement window",
+})
+
 # -----------------------------------------------------------------------------
 # verilate rule - compiles Verilog to C++ library using verilator toolchain
 # -----------------------------------------------------------------------------
@@ -335,7 +341,7 @@ def _iverilog_post_pnr_runner_impl(ctx):
     sdf = state_info.sdf[ctx.attr.sdf_corner]
     sdf_loader = ctx.actions.declare_file(ctx.label.name + "_sdf.v")
     sdf_annotations = "\n".join([
-        '  initial $sdf_annotate("{}", {}.{});'.format(
+        '    $sdf_annotate("{}", {}.{});'.format(
             sdf.path,
             ctx.attr.toplevel,
             instance_path,
@@ -345,7 +351,9 @@ def _iverilog_post_pnr_runner_impl(ctx):
     ctx.actions.write(
         output = sdf_loader,
         content = '''module zamlet_sdf_loader;
+  initial begin
 {sdf_annotations}
+  end
 endmodule
 '''.format(sdf_annotations = sdf_annotations),
     )
@@ -458,7 +466,7 @@ iverilog_post_pnr_runner = rule(
     toolchains = ["//bazel/toolchains:cocotb_toolchain_type"],
 )
 
-def _iverilog_activity_impl(ctx):
+def _iverilog_raw_activity_impl(ctx):
     simulation = ctx.attr.simulation[IverilogSimulationInfo]
     if simulation.config == None:
         fail("Icarus activity simulation requires a test configuration")
@@ -514,6 +522,57 @@ export ZAMLET_POWER_WINDOW_FILE="{window}"
   "{vvp}" -M "$(dirname "{vpi}")" -m libcocotbvpi_icarus icarus_sim.vvp
 }} 2>&1 | tee "{simulation_log}"
 
+# OpenROAD's VCD reader does not accept Icarus's dump-control records.
+sed -i -e '/^\\$dumpon$/d' -e '/^\\$dumpoff$/d' "{vcd}"
+
+test -f results.xml
+"{python_bin}" -m cocotb_tools.check_results results.xml
+test -s "{vcd}"
+test -s "{window}"
+""".format(
+            config = simulation.config.path,
+            dump_loader = dump_loader.path,
+            iverilog = simulation.iverilog.path,
+            python_bin = cocotb_tc.python_bin,
+            python_libdir = cocotb_tc.python_libdir,
+            python_paths = "".join([":$(pwd)/../{}".format(path) for path in simulation.python_paths]),
+            sources = " ".join([src.path for src in simulation.sources]),
+            simulation_log = simulation_log.path,
+            test_module = ctx.attr.test_module,
+            toplevel = simulation.toplevel,
+            vcd = vcd.path,
+            vpi = simulation.vpi.path,
+            vvp = simulation.vvp.path,
+            window = window.path,
+        ),
+        mnemonic = "IverilogPowerActivity",
+        progress_message = "Generating Icarus power activity for {}".format(simulation.toplevel),
+    )
+    return [
+        DefaultInfo(files = depset([vcd, window, simulation_log])),
+        IverilogRawActivityInfo(
+            simulation_log = simulation_log,
+            vcd = vcd,
+            window = window,
+        ),
+    ]
+
+_iverilog_raw_activity = rule(
+    implementation = _iverilog_raw_activity_impl,
+    attrs = {
+        "simulation": attr.label(mandatory = True, providers = [IverilogSimulationInfo]),
+        "test_module": attr.string(mandatory = True),
+    },
+    toolchains = ["//bazel/toolchains:cocotb_toolchain_type"],
+)
+
+def _iverilog_activity_check_impl(ctx):
+    activity = ctx.attr.activity[IverilogRawActivityInfo]
+    stamp = ctx.actions.declare_file(ctx.label.name + "/validated")
+    ctx.actions.run_shell(
+        inputs = [activity.vcd, activity.window, activity.simulation_log],
+        outputs = [stamp],
+        command = """set -euo pipefail
 if grep -Eq 'Unable to open SDF file|Unable to match.*(instance|port)' "{simulation_log}"; then
   echo "ERROR: SDF annotation was incomplete" >&2
   exit 1
@@ -534,13 +593,6 @@ if grep '^SDF WARNING:.*not supported' "{simulation_log}" | grep -v 'TIMINGCHECK
   echo "ERROR: Unsupported SDF delay construct" >&2
   exit 1
 fi
-# OpenROAD's VCD reader does not accept Icarus's dump-control records.
-sed -i -e '/^\\$dumpon$/d' -e '/^\\$dumpoff$/d' "{vcd}"
-
-test -f results.xml
-"{python_bin}" -m cocotb_tools.check_results results.xml
-test -s "{vcd}"
-test -s "{window}"
 start_ps=$(jq -er '.start_ps' "{window}")
 end_ps=$(jq -er '.end_ps' "{window}")
 first_ps=$(awk '/^#[0-9]+$/ {{ print substr($0, 2); exit }}' "{vcd}")
@@ -558,40 +610,41 @@ awk '
   !/^\\$/ && !/^#/ && NF {{ change_count++ }}
   END {{ exit !(timestamp_count > 1 && change_count > 0) }}
 ' "{vcd}"
+touch "{stamp}"
 """.format(
-            config = simulation.config.path,
-            dump_loader = dump_loader.path,
-            iverilog = simulation.iverilog.path,
             max_sdf_interconnect_errors = ctx.attr.max_sdf_interconnect_errors,
-            python_bin = cocotb_tc.python_bin,
-            python_libdir = cocotb_tc.python_libdir,
-            python_paths = "".join([":$(pwd)/../{}".format(path) for path in simulation.python_paths]),
-            sources = " ".join([src.path for src in simulation.sources]),
-            simulation_log = simulation_log.path,
-            test_module = ctx.attr.test_module,
-            toplevel = simulation.toplevel,
-            vcd = vcd.path,
-            vpi = simulation.vpi.path,
-            vvp = simulation.vvp.path,
-            window = window.path,
+            simulation_log = activity.simulation_log.path,
+            stamp = stamp.path,
+            vcd = activity.vcd.path,
+            window = activity.window.path,
         ),
-        mnemonic = "IverilogPowerActivity",
-        progress_message = "Generating Icarus power activity for {}".format(simulation.toplevel),
+        mnemonic = "ValidatePowerActivity",
+        progress_message = "Validating Icarus power activity for {}".format(ctx.label),
     )
     return [
-        DefaultInfo(files = depset([vcd, window, simulation_log])),
-        PowerActivityInfo(vcd = vcd, window = window),
+        DefaultInfo(files = depset([activity.vcd, activity.window, activity.simulation_log, stamp])),
+        PowerActivityInfo(vcd = activity.vcd, window = activity.window),
     ]
 
-iverilog_activity = rule(
-    implementation = _iverilog_activity_impl,
+_iverilog_activity_check = rule(
+    implementation = _iverilog_activity_check_impl,
     attrs = {
+        "activity": attr.label(mandatory = True, providers = [IverilogRawActivityInfo]),
         "max_sdf_interconnect_errors": attr.int(default = 0),
-        "simulation": attr.label(mandatory = True, providers = [IverilogSimulationInfo]),
-        "test_module": attr.string(mandatory = True),
     },
-    toolchains = ["//bazel/toolchains:cocotb_toolchain_type"],
 )
+
+def iverilog_activity(name, simulation, test_module, max_sdf_interconnect_errors = 0):
+    _iverilog_raw_activity(
+        name = name + "_raw",
+        simulation = simulation,
+        test_module = test_module,
+    )
+    _iverilog_activity_check(
+        name = name,
+        activity = ":" + name + "_raw",
+        max_sdf_interconnect_errors = max_sdf_interconnect_errors,
+    )
 
 # -----------------------------------------------------------------------------
 # Convenience macros

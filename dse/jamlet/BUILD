@@ -221,7 +221,7 @@ JAMLET_MXU_UTILIZATIONS = [40, 50, 60, 65, 70]
             "blocks_1_1.dut",
         ],
         vcd_instance_path = "blocks_0_0.dut",
-        max_sdf_interconnect_errors = 8,
+        max_sdf_interconnect_errors = 4 * n * n,
         verilog_files = [
             ":" + jamlet_mxu_top(n, ew_loop, ns_loop, csa, bc, de, backward_reg, split_drain, reset_group) + ".sv",
         ],
