@@ -4,7 +4,7 @@ import random
 import cocotb
 from cocotb.clock import Clock
 from cocotb.handle import HierarchyObject
-from cocotb.triggers import ReadOnly
+from cocotb.triggers import Event, ReadOnly
 from zamlet import test_utils
 from zamlet.matrix_test_utils import (
     UINT32_MASK,
@@ -13,7 +13,7 @@ from zamlet.matrix_test_utils import (
     matrix_product,
     random_matrix,
 )
-from zamlet.test_utils import next_drive_phase
+from zamlet.test_utils import PowerMeasurementWindow, next_drive_phase
 
 TEST_PARAMS = test_utils.get_test_params()
 with open(TEST_PARAMS["params_file"]) as f:
@@ -30,6 +30,7 @@ REGISTER_BACKWARD_OUTPUT = bool(CONFIG["registerBackwardOutput"])
 INTER_MXU_LATENCY = int(REGISTER_BACKWARD_OUTPUT)
 SPLIT_C_DRAIN = bool(CONFIG["splitCDrain"])
 RESET_GROUP_SIZE = int(CONFIG["resetGroupSize"])
+CLOCK_PERIOD_NS = float(CONFIG["clockPeriodNs"])
 CONTROL_INPUT_LATENCY = 1
 
 BlockLanes = list[list[list[int | bool]]]
@@ -128,7 +129,13 @@ def drive_ab_for_cycle(
 
 
 async def reset_dut(dut: HierarchyObject) -> None:
-    cocotb.start_soon(Clock(dut.clock, 2, "ns").start())
+    if hasattr(dut, "VPWR"):
+        dut.VPWR.value = 1
+    if hasattr(dut, "VGND"):
+        dut.VGND.value = 0
+    if hasattr(dut, "powerDumpEnable"):
+        dut.powerDumpEnable.value = 0
+    cocotb.start_soon(Clock(dut.clock, CLOCK_PERIOD_NS, "ns").start())
     dut.reset.value = 1
     set_loop_control(dut, "ewUseBackward", [0 for _ in range(GRID_COLS)])
     set_loop_control(dut, "nsUseBackward", [0 for _ in range(GRID_ROWS)])
@@ -171,6 +178,7 @@ async def feed_ab(
     dut: HierarchyObject,
     tile_inputs: dict[tuple[int, int], tuple[list[list[int]], list[list[int]]]],
     matrix_blocks: int,
+    sent: Event,
 ) -> None:
     for local_cycle in range(2 * MXU_N - 1):
         for (tile_block_row, tile_block_col), (a, b) in tile_inputs.items():
@@ -184,6 +192,7 @@ async def feed_ab(
                 local_cycle,
             )
         await next_drive_phase(dut.clock)
+    sent.set()
 
 
 def read_expected_c(
@@ -204,6 +213,7 @@ async def matrix_multiply(
     complete_driver: ControlDriver,
     matrix_blocks: int,
     tile_inputs: dict[tuple[int, int], tuple[list[list[int]], list[list[int]]]],
+    sent: Event,
 ) -> None:
 
     matrix_n = matrix_blocks * MXU_N
@@ -217,7 +227,7 @@ async def matrix_multiply(
         start_cycle + mxu_grid_cycles(matrix_blocks) - 1 - CONTROL_INPUT_LATENCY,
     ))
     await wait_cycles(dut, CONTROL_INPUT_LATENCY)
-    await feed_ab(dut, tile_inputs, matrix_blocks)
+    await feed_ab(dut, tile_inputs, matrix_blocks, sent)
 
     dumped = {
         tile: [[0 for _ in range(matrix_n)] for _ in range(matrix_n)]
@@ -247,6 +257,14 @@ async def matrix_multiply(
     for tile, (a, b) in tile_inputs.items():
         expected = [[value & UINT32_MASK for value in row] for row in matrix_product(a, b)]
         assert dumped[tile] == expected, f"tile={tile} a={a} b={b} dumped={dumped[tile]} expected={expected}"
+
+
+async def record_power_window(dut: HierarchyObject, sent: list[Event]) -> None:
+    power_window = PowerMeasurementWindow(dut)
+    await sent[1].wait()
+    power_window.start()
+    await sent[-1].wait()
+    power_window.stop()
 
 
 def random_tile_inputs(
@@ -281,8 +299,10 @@ async def test_4x4_matrix_multiply_on_2x2_mxu_grid(dut: HierarchyObject) -> None
         set_loop_control(dut, "ewUseBackward", tile_edge_controls(GRID_COLS, matrix_blocks))
         set_loop_control(dut, "nsUseBackward", tile_edge_controls(GRID_ROWS, matrix_blocks))
 
+        sent = [Event() for _ in range(4)]
+        power_task = cocotb.start_soon(record_power_window(dut, sent))
         tasks = []
-        for _ in range(4):
+        for matrix_index in range(4):
             tasks.append(cocotb.start_soon(
                 matrix_multiply(
                     dut,
@@ -291,9 +311,11 @@ async def test_4x4_matrix_multiply_on_2x2_mxu_grid(dut: HierarchyObject) -> None
                     complete_driver,
                     matrix_blocks,
                     random_tile_inputs(rng, matrix_blocks),
+                    sent[matrix_index],
                 )
             ))
             await wait_cycles(dut, mxu_grid_cycles(matrix_blocks))
 
         for task in tasks:
             await task
+        await power_task

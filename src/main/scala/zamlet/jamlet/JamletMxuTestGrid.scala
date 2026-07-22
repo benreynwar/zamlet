@@ -1,6 +1,7 @@
 package zamlet.jamlet
 
 import chisel3._
+import chisel3.experimental.{Analog, attach}
 import chisel3.util._
 
 class JamletMxuTestGridIO(gridRows: Int, gridCols: Int, mxuN: Int) extends Bundle {
@@ -26,28 +27,54 @@ class JamletMxuTestGrid(
     gridRows: Int,
     gridCols: Int,
     mxuN: Int,
+    useCarrySaveAccumulator: Boolean,
     registerBC: Boolean,
+    registerDE: Boolean,
     registerBackwardOutput: Boolean,
     splitCDrain: Boolean,
     resetGroupSize: Int,
-    moduleName: String) extends Module {
+    moduleName: String,
+    postPnr: Boolean = false) extends Module {
   override val desiredName = moduleName
   require(gridRows > 0 && isPow2(gridRows))
   require(gridCols > 0 && isPow2(gridCols))
   require(gridRows % 2 == 0)
   require(gridCols % 2 == 0)
   val io = IO(new JamletMxuTestGridIO(gridRows, gridCols, mxuN))
+  val powerDumpEnable = if (postPnr) Some(IO(Input(Bool()))) else None
+  val VPWR = if (postPnr) Some(IO(Analog(1.W))) else None
+  val VGND = if (postPnr) Some(IO(Analog(1.W))) else None
 
-  val blocks = Seq.tabulate(gridRows, gridCols) { (_, _) =>
-    Module(new JamletMxu(
-      n = mxuN,
-      hasEwLoop = true,
-      hasNsLoop = true,
-      registerBC = registerBC,
-      registerBackwardOutput = registerBackwardOutput,
-      splitCDrain = splitCDrain,
-      resetGroupSize = resetGroupSize,
-      resetBudget = zamlet.utils.ResetPipelineBudget(if (resetGroupSize == 0) 2 else 3)))
+  val blocks: Seq[Seq[HasJamletMxuIO]] = Seq.tabulate(gridRows, gridCols) { (row, col) =>
+    if (postPnr) {
+      val block = Module(new JamletMxuIverilogInstance(
+        mxuN,
+        hasEwLoop = true,
+        hasNsLoop = true,
+        useCarrySaveAccumulator,
+        registerBC,
+        registerDE,
+        registerBackwardOutput,
+        splitCDrain,
+        resetGroupSize)).suggestName(s"blocks_${row}_${col}")
+      attach(block.VPWR, VPWR.get)
+      attach(block.VGND, VGND.get)
+      block
+    } else {
+      val block = Module(new JamletMxu(
+        n = mxuN,
+        hasEwLoop = true,
+        hasNsLoop = true,
+        useCarrySaveAccumulator = useCarrySaveAccumulator,
+        registerBC = registerBC,
+        registerDE = registerDE,
+        registerBackwardOutput = registerBackwardOutput,
+        splitCDrain = splitCDrain,
+        resetGroupSize = resetGroupSize,
+        resetBudget = zamlet.utils.ResetPipelineBudget(if (resetGroupSize == 0) 2 else 3)))
+        .suggestName(s"blocks_${row}_${col}")
+      block
+    }
   }
 
   for (physicalRow <- 0 until gridRows) {
@@ -121,18 +148,28 @@ class JamletMxuTestGrid(
 }
 
 object JamletMxuTestGridGenerator extends zamlet.ModuleGenerator {
-  override def makeModule(args: Seq[String]): Module = {
-    require(args.length == 8)
+  def makeModule(args: Seq[String], postPnr: Boolean): Module = {
+    require(args.length == 10)
     new JamletMxuTestGrid(
       gridRows = args(0).toInt,
       gridCols = args(1).toInt,
       mxuN = args(2).toInt,
-      registerBC = args(3).toBoolean,
-      registerBackwardOutput = args(4).toBoolean,
-      splitCDrain = args(5).toBoolean,
-      resetGroupSize = args(6).toInt,
-      moduleName = args(7))
+      useCarrySaveAccumulator = args(3).toBoolean,
+      registerBC = args(4).toBoolean,
+      registerDE = args(5).toBoolean,
+      registerBackwardOutput = args(6).toBoolean,
+      splitCDrain = args(7).toBoolean,
+      resetGroupSize = args(8).toInt,
+      moduleName = args(9),
+      postPnr = postPnr)
   }
+
+  override def makeModule(args: Seq[String]): Module = makeModule(args, postPnr = false)
+}
+
+object JamletMxuTestGridIverilogWrapperGenerator extends zamlet.ModuleGenerator {
+  override def makeModule(args: Seq[String]): Module =
+    JamletMxuTestGridGenerator.makeModule(args, postPnr = true)
 }
 
 object JamletMxuTestGridMain extends App {
@@ -141,4 +178,12 @@ object JamletMxuTestGridMain extends App {
     System.exit(1)
   }
   JamletMxuTestGridGenerator.generate(args(0), args.drop(1))
+}
+
+object JamletMxuTestGridIverilogWrapperMain extends App {
+  if (args.length < 1) {
+    println("Usage: <outputDir>")
+    System.exit(1)
+  }
+  JamletMxuTestGridIverilogWrapperGenerator.generate(args(0), args.drop(1))
 }

@@ -1,0 +1,73 @@
+diff --git a/librelane/scripts/odbpy/io_place.py b/librelane/scripts/odbpy/io_place.py
+index 9cc75de..4e56977 100644
+--- a/librelane/scripts/odbpy/io_place.py
++++ b/librelane/scripts/odbpy/io_place.py
+@@ -64,47 +64,36 @@ def equally_spaced_sequence(side, side_pin_placement, possible_locations):
+             file=sys.stderr,
+         )
+         sys.exit(1)
+-    elif total_pin_count == tracks:
+-        return possible_locations, side_pin_placement  # All positions.
+     elif total_pin_count == 0:
+         return result, side_pin_placement
+ 
+-    # From this point, pin_count always < tracks.
+-    tracks_per_pin = math.floor(tracks / total_pin_count)  # >=1
+-    # O| | | O| | | O| | |
+-    # tracks_per_pin = 3
+-    # notice the last two tracks are unused
+-    # thus:
+-    used_tracks = tracks_per_pin * (total_pin_count - 1) + 1
+-    unused_tracks = tracks - used_tracks
+-
+-    # Place the pins at those tracks...
+-    current_track = unused_tracks // 2  # So that the tracks used are centered
+-    starting_track_index = current_track
+-    if virtual_pin_count == 0:  # No virtual pins
+-        for _ in range(0, total_pin_count):
+-            result.append(possible_locations[current_track])
+-            current_track += tracks_per_pin
++    if total_pin_count == 1:
++        slot_indices = [tracks // 2]
+-    else:  # There are virtual pins
++    else:
+-        for i in range(len(side_pin_placement)):
+-            if not isinstance(side_pin_placement[i], int):  # We have an actual pin
+-                result.append(possible_locations[current_track])
+-                current_track += tracks_per_pin
+-            else:  # Virtual Pins, so just leave their needed spaces
+-                current_track += tracks_per_pin * side_pin_placement[i]
+-        side_pin_placement = [
+-            pin for pin in side_pin_placement if not isinstance(pin, int)
+-        ]  # Remove the virtual pins from the side_pin_placement list
++        denominator = total_pin_count - 1
++        slot_indices = [
++            (i * (tracks - 1) + denominator // 2) // denominator
++            for i in range(total_pin_count)
++        ]
++
++    logical_index = 0
++    actual_pins = []
++    for pin in side_pin_placement:
++        if isinstance(pin, int):
++            logical_index += pin
++        else:
++            result.append(possible_locations[slot_indices[logical_index]])
++            actual_pins.append(pin)
++            logical_index += 1
++    side_pin_placement = actual_pins
+ 
+     print(f"Placement details for the {side} side")
+     print("Virtual pin count: ", virtual_pin_count)
+     print("Actual pin count: ", actual_pin_count)
+     print("Total pin count: ", total_pin_count)
+     print("Tracks count: ", len(possible_locations))
+-    print("Tracks per pin: ", tracks_per_pin)
+-    print("Used tracks count: ", used_tracks)
+-    print("Unused track count: ", unused_tracks)
+-    print("Starting track index: ", starting_track_index)
++    print("First track index: ", slot_indices[0])
++    print("Last track index: ", slot_indices[-1])
+ 
+     VISUALIZE_PLACEMENT = False
+     if VISUALIZE_PLACEMENT:

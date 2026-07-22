@@ -1,6 +1,7 @@
 package zamlet.jamlet
 
 import chisel3._
+import chisel3.experimental.{Analog, ExtModule, attach}
 import chisel3.util._
 import zamlet.utils.{RegisterWithPipelinedReset, ResetPipeline, ResetPipelineBudget}
 
@@ -55,6 +56,10 @@ class JamletMxuIO(n: Int) extends Bundle {
   val error = Output(Bool())
 }
 
+trait HasJamletMxuIO {
+  val io: JamletMxuIO
+}
+
 class JamletMxu(
     n: Int = 8,
     hasEwLoop: Boolean = true,
@@ -65,7 +70,8 @@ class JamletMxu(
     registerBackwardOutput: Boolean = false,
     splitCDrain: Boolean = false,
     resetGroupSize: Int = 0,
-    resetBudget: ResetPipelineBudget = ResetPipelineBudget(2)) extends Module {
+    resetBudget: ResetPipelineBudget = ResetPipelineBudget(2))
+    extends Module with HasJamletMxuIO {
   override val desiredName =
     s"JamletMxu${n}x${n}_EwLoop${if (hasEwLoop) 1 else 0}" +
       s"_NsLoop${if (hasNsLoop) 1 else 0}" +
@@ -289,6 +295,62 @@ object JamletMxuGenerator extends zamlet.ModuleGenerator {
       resetGroupSize = resetGroupSize,
       resetBudget = ResetPipelineBudget(if (resetGroupSize == 0) 2 else 3))
   }
+}
+
+class JamletMxuIverilogCore(
+    n: Int,
+    hasEwLoop: Boolean,
+    hasNsLoop: Boolean,
+    useCarrySaveAccumulator: Boolean,
+    registerBC: Boolean,
+    registerDE: Boolean,
+    registerBackwardOutput: Boolean,
+    splitCDrain: Boolean,
+    resetGroupSize: Int) extends ExtModule with HasJamletMxuIO {
+  override val desiredName =
+    s"JamletMxu${n}x${n}_EwLoop${if (hasEwLoop) 1 else 0}" +
+      s"_NsLoop${if (hasNsLoop) 1 else 0}" +
+      s"_CSA${if (useCarrySaveAccumulator) 1 else 0}" +
+      s"_BC${if (registerBC) 1 else 0}_DE${if (registerDE) 1 else 0}" +
+      s"_BackwardReg${if (registerBackwardOutput) 1 else 0}" +
+      s"_SplitDrain${if (splitCDrain) 1 else 0}_ResetGroup$resetGroupSize"
+
+  val clock = IO(Input(Clock()))
+  val reset = IO(Input(Reset()))
+  val VPWR = IO(Analog(1.W))
+  val VGND = IO(Analog(1.W))
+  val io = IO(new JamletMxuIO(n))
+}
+
+class JamletMxuIverilogInstance(
+    n: Int,
+    hasEwLoop: Boolean,
+    hasNsLoop: Boolean,
+    useCarrySaveAccumulator: Boolean,
+    registerBC: Boolean,
+    registerDE: Boolean,
+    registerBackwardOutput: Boolean,
+    splitCDrain: Boolean,
+    resetGroupSize: Int) extends Module with HasJamletMxuIO {
+  val io = IO(new JamletMxuIO(n))
+  val VPWR = IO(Analog(1.W))
+  val VGND = IO(Analog(1.W))
+
+  val dut = Module(new JamletMxuIverilogCore(
+    n,
+    hasEwLoop,
+    hasNsLoop,
+    useCarrySaveAccumulator,
+    registerBC,
+    registerDE,
+    registerBackwardOutput,
+    splitCDrain,
+    resetGroupSize))
+  dut.clock := clock
+  dut.reset := reset
+  attach(dut.VPWR, VPWR)
+  attach(dut.VGND, VGND)
+  dut.io <> io
 }
 
 object JamletMxuCellGenerator extends zamlet.ModuleGenerator {

@@ -117,6 +117,14 @@ chisel_binary(
 )
 
 chisel_binary(
+    name = "jamletmxutestgrid_iverilog_wrapper",
+    srcs = JAMLET_MXU_SRCS + JAMLET_COMMON_SRCS,
+    main_class = "zamlet.jamlet.JamletMxuTestGridIverilogWrapperMain",
+    deps = JAMLET_DEPS,
+    visibility = ["//visibility:public"],
+)
+
+chisel_binary(
     name = "vectorrf",
     srcs = [":jamlet_sources"] + JAMLET_COMMON_SRCS,
     main_class = "zamlet.jamlet.VectorRfMain",

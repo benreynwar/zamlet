@@ -1,6 +1,13 @@
 load("//bazel:cocotb_rules.bzl", "chisel_module_tests", "chisel_module_tests_no_config")
 load("//bazel:defs.bzl", "json_file")
 
+py_library(
+    name = "jamlet_mxu_test_py",
+    srcs = ["test_jamlet_mxu.py"],
+    deps = ["//python/zamlet:zamlet"],
+    visibility = ["//visibility:public"],
+)
+
 chisel_module_tests(
     generator = "//src/main/scala/zamlet/jamlet:indextocoordswithreg",
     toplevel = "IndexToCoordsWithReg",
@@ -106,6 +113,7 @@ MXU_TEST_GRID_PARAMS = [
         "registerBackwardOutput": params["registerBackwardOutput"],
         "splitCDrain": params["splitCDrain"],
         "resetGroupSize": params["resetGroupSize"],
+        "clockPeriodNs": 2.0,
     },
 ) for params in MXU_TEST_GRID_PARAMS]
 
@@ -117,7 +125,9 @@ MXU_TEST_GRID_PARAMS = [
         str(params["gridRows"]),
         str(params["gridCols"]),
         str(params["mxuN"]),
+        "false",
         str(params["registerBC"]).lower(),
+        "false",
         str(params["registerBackwardOutput"]).lower(),
         str(params["splitCDrain"]).lower(),
         str(params["resetGroupSize"]),

@@ -15,6 +15,7 @@ IverilogSimulationInfo = provider(fields = {
     "python_paths": "Python import paths relative to the execroot",
     "sources": "Verilog sources using execroot-relative paths",
     "toplevel": "Simulation wrapper top module",
+    "vcd_instance_path": "Instance below the wrapper to dump",
     "vpi": "Cocotb Icarus VPI library",
     "vvp": "Icarus runtime",
 })
@@ -333,12 +334,20 @@ def _iverilog_post_pnr_runner_impl(ctx):
 
     sdf = state_info.sdf[ctx.attr.sdf_corner]
     sdf_loader = ctx.actions.declare_file(ctx.label.name + "_sdf.v")
+    sdf_annotations = "\n".join([
+        '  initial $sdf_annotate("{}", {}.{});'.format(
+            sdf.path,
+            ctx.attr.toplevel,
+            instance_path,
+        )
+        for instance_path in ctx.attr.sdf_instance_paths
+    ])
     ctx.actions.write(
         output = sdf_loader,
         content = '''module zamlet_sdf_loader;
-  initial $sdf_annotate("{sdf}", {toplevel}.dut);
+{sdf_annotations}
 endmodule
-'''.format(sdf = sdf.path, toplevel = ctx.attr.toplevel),
+'''.format(sdf_annotations = sdf_annotations),
     )
 
     cocotb_tc = ctx.toolchains["//bazel/toolchains:cocotb_toolchain_type"].cocotb
@@ -422,6 +431,7 @@ test -f results.xml || {{
             python_paths = [path for path in import_paths if path and path != "."],
             sources = sources,
             toplevel = ctx.attr.toplevel,
+            vcd_instance_path = ctx.attr.vcd_instance_path,
             vpi = ctx.file._vpi,
             vvp = ctx.file._vvp,
         ),
@@ -433,7 +443,9 @@ iverilog_post_pnr_runner = rule(
         "flow": attr.label(mandatory = True, providers = [LibrelaneInfo]),
         "flow_input": attr.label(mandatory = True, providers = [LibrelaneInput]),
         "sdf_corner": attr.string(mandatory = True),
+        "sdf_instance_paths": attr.string_list(mandatory = True),
         "toplevel": attr.string(mandatory = True),
+        "vcd_instance_path": attr.string(mandatory = True),
         "wrapper_verilog": attr.label(mandatory = True, allow_files = [".v", ".sv"]),
         "config": attr.label(allow_files = [".json"]),
         "py_deps": attr.label_list(),
@@ -460,7 +472,7 @@ def _iverilog_activity_impl(ctx):
         content = '''module zamlet_vcd_dump;
   initial begin
     $dumpfile("{vcd}");
-    $dumpvars(0, {toplevel}.dut);
+    $dumpvars(0, {toplevel}.{vcd_instance_path});
     $dumpoff;
   end
 
@@ -471,7 +483,11 @@ def _iverilog_activity_impl(ctx):
       $dumpoff;
   end
 endmodule
-'''.format(vcd = vcd.path, toplevel = simulation.toplevel),
+'''.format(
+            vcd = vcd.path,
+            toplevel = simulation.toplevel,
+            vcd_instance_path = simulation.vcd_instance_path,
+        ),
     )
 
     cocotb_tc = ctx.toolchains["//bazel/toolchains:cocotb_toolchain_type"].cocotb
@@ -498,11 +514,19 @@ export ZAMLET_POWER_WINDOW_FILE="{window}"
   "{vvp}" -M "$(dirname "{vpi}")" -m libcocotbvpi_icarus icarus_sim.vvp
 }} 2>&1 | tee "{simulation_log}"
 
-if grep -Eq 'Unable to open SDF file|Could not find intermodpath|Unable to match.*(instance|port)' "{simulation_log}"; then
+if grep -Eq 'Unable to open SDF file|Unable to match.*(instance|port)' "{simulation_log}"; then
   echo "ERROR: SDF annotation was incomplete" >&2
   exit 1
 fi
-if grep '^SDF ERROR:' "{simulation_log}" | grep -v 'Chosen value not defined' >/dev/null; then
+interconnect_errors=$(grep -c '^SDF ERROR:.*Could not find intermodpath' "{simulation_log}" || true)
+if [ "$interconnect_errors" -gt {max_sdf_interconnect_errors} ]; then
+  echo "ERROR: $interconnect_errors SDF interconnect delays failed; limit is {max_sdf_interconnect_errors}" >&2
+  exit 1
+fi
+if [ "$interconnect_errors" -gt 0 ]; then
+  echo "WARNING: accepting $interconnect_errors failed SDF interconnect delays (limit {max_sdf_interconnect_errors})" >&2
+fi
+if grep '^SDF ERROR:' "{simulation_log}" | grep -v 'Chosen value not defined' | grep -v 'Could not find intermodpath' >/dev/null; then
   echo "ERROR: Unexpected SDF error" >&2
   exit 1
 fi
@@ -538,6 +562,7 @@ awk '
             config = simulation.config.path,
             dump_loader = dump_loader.path,
             iverilog = simulation.iverilog.path,
+            max_sdf_interconnect_errors = ctx.attr.max_sdf_interconnect_errors,
             python_bin = cocotb_tc.python_bin,
             python_libdir = cocotb_tc.python_libdir,
             python_paths = "".join([":$(pwd)/../{}".format(path) for path in simulation.python_paths]),
@@ -561,6 +586,7 @@ awk '
 iverilog_activity = rule(
     implementation = _iverilog_activity_impl,
     attrs = {
+        "max_sdf_interconnect_errors": attr.int(default = 0),
         "simulation": attr.label(mandatory = True, providers = [IverilogSimulationInfo]),
         "test_module": attr.string(mandatory = True),
     },
@@ -650,21 +676,30 @@ def iverilog_post_pnr_cocotb_test(
         py_deps = [],
         env = {},
         data = [],
-        config = None):
+        config = None,
+        wrapper_toplevel = None,
+        sdf_instance_paths = None,
+        vcd_instance_path = None,
+        max_sdf_interconnect_errors = 0):
     """Run a cocotb test on a LibreLane final netlist using Icarus."""
-    wrapper_toplevel = toplevel + "IverilogWrapper"
+    wrapper_toplevel = wrapper_toplevel or toplevel + "IverilogWrapper"
+    sdf_instance_paths = sdf_instance_paths or ["dut"]
+    vcd_instance_path = vcd_instance_path or "dut"
     iverilog_post_pnr_runner(
         name = name + "_runner",
         flow = flow,
         flow_input = flow_input,
         sdf_corner = sdf_corner,
+        sdf_instance_paths = sdf_instance_paths,
         toplevel = wrapper_toplevel,
+        vcd_instance_path = vcd_instance_path,
         wrapper_verilog = wrapper_verilog,
         config = config,
         py_deps = py_deps,
     )
     iverilog_activity(
         name = name + "_activity",
+        max_sdf_interconnect_errors = max_sdf_interconnect_errors,
         simulation = name + "_runner",
         test_module = test_module,
     )

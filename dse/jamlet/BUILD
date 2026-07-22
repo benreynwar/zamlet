@@ -2,6 +2,7 @@
 
 load("//bazel:verilog.bzl", "chisel_dse_module", "chisel_verilog_no_config")
 load("//bazel:design/jamlet/defs.bzl", "jamlet_mxu_top")
+load("//bazel:hard_macro_flow.bzl", "hard_macro_flow")
 load("//bazel/flow:defs.bzl", "librelane_classic_flow", "librelane_synth_config")
 load("//bazel/flow/sdc:sdc_template.bzl", "sdc_template")
 load("@sky130_fd_sc_hd_config//:defs.bzl", "pdk")
@@ -172,9 +173,55 @@ JAMLET_MXU_UTILIZATIONS = [40, 50, 60, 65, 70]
 ]
 
 [
-    librelane_classic_flow(
+    chisel_verilog_no_config(
+        name = jamlet_mxu_top(n, ew_loop, ns_loop, csa, bc, de, backward_reg, split_drain, reset_group) +
+               "_iverilog_wrapper",
+        generator = JAMLET_PKG + ":jamletmxutestgrid_iverilog_wrapper",
+        extra_args = [
+            "2",
+            "2",
+            str(n),
+            str(csa).lower(),
+            str(bc).lower(),
+            str(de).lower(),
+            str(backward_reg).lower(),
+            str(split_drain).lower(),
+            str(reset_group),
+            jamlet_mxu_top(n, ew_loop, ns_loop, csa, bc, de, backward_reg, split_drain, reset_group) +
+            "IverilogWrapper",
+        ],
+    )
+    for n, ew_loop, ns_loop, csa, bc, de, backward_reg, split_drain, reset_group in JAMLET_MXU_CONFIGS
+]
+
+[
+    hard_macro_flow(
         name = jamlet_mxu_top(n, ew_loop, ns_loop, csa, bc, de, backward_reg, split_drain, reset_group) +
                "_sky130hd_{}ns_util{}".format(clock_period, utilization),
+        wrapper_verilog = ":" +
+                          jamlet_mxu_top(n, ew_loop, ns_loop, csa, bc, de, backward_reg, split_drain, reset_group) +
+                          "_iverilog_wrapper_verilog",
+        test_module = "zamlet.jamlet_test.test_jamlet_mxu",
+        py_deps = ["//python/zamlet/jamlet_test:jamlet_mxu_test_py"],
+        test_params = {
+            "gridRows": 2,
+            "gridCols": 2,
+            "mxuN": n,
+            "registerBC": bc,
+            "registerBackwardOutput": backward_reg,
+            "splitCDrain": split_drain,
+            "resetGroupSize": reset_group,
+        },
+        simulation_toplevel = jamlet_mxu_top(n, ew_loop, ns_loop, csa, bc, de, backward_reg, split_drain, reset_group) +
+                              "IverilogWrapper",
+        sdf_instance_paths = [
+            "blocks_0_0.dut",
+            "blocks_0_1.dut",
+            "blocks_1_0.dut",
+            "blocks_1_1.dut",
+        ],
+        vcd_instance_path = "blocks_0_0.dut",
+        max_sdf_interconnect_errors = 8,
         verilog_files = [
             ":" + jamlet_mxu_top(n, ew_loop, ns_loop, csa, bc, de, backward_reg, split_drain, reset_group) + ".sv",
         ],

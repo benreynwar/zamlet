@@ -73,6 +73,10 @@ def hard_macro_flow(
         test_params,
         clock_period,
         fp_core_util,
+        simulation_toplevel = None,
+        sdf_instance_paths = None,
+        vcd_instance_path = None,
+        max_sdf_interconnect_errors = 0,
         **flow_kwargs):
     librelane_classic_flow(
         name = name,
@@ -97,13 +101,18 @@ def hard_macro_flow(
         toplevel = flow_kwargs["top"],
         py_deps = py_deps,
         config = ":" + name + "_power_params",
+        wrapper_toplevel = simulation_toplevel,
+        sdf_instance_paths = sdf_instance_paths,
+        vcd_instance_path = vcd_instance_path,
+        max_sdf_interconnect_errors = max_sdf_interconnect_errors,
     )
     librelane_power_post_pnr(
         name = name + "_power",
         src = ":" + name + "_sta",
         input = ":" + name + "_init",
         activity = ":" + name + "_power_sim_activity",
-        vcd_scope = flow_kwargs["top"] + "IverilogWrapper/dut",
+        vcd_scope = (simulation_toplevel or flow_kwargs["top"] + "IverilogWrapper") +
+                    "/" + (vcd_instance_path or "dut").replace(".", "/"),
     )
     hard_macro_analysis(
         name = name + "_macro",
