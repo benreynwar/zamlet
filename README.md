@@ -61,13 +61,3 @@ My current focus is on improving the documentation (i.e. writing this) so I can 
 and on continuing to work on the RTL implementation.  I would like to get to a point where I can
 run simple kernels that use a subset of the vector extension on an FPGA by the northern summer of
 2026.  Fully supporting RVV will be substantial work and will happen much later.
-
-## External Tool License (LLM generated)
-
-The Nix development environment builds the CVC Verilog simulator from the
-[open-src-cvc repository](https://github.com/cambridgehackers/open-src-cvc). CVC uses the
-"OSS CVC dual licensing modified Artistic Open Source Software License." Building or using CVC
-signifies acceptance of that license. The license permits commercial design verification, but
-commercial redistribution and distribution with closed-source software have additional
-restrictions. The Nix package installs the complete license and licensing FAQ under
-`share/licenses/open-src-cvc`.

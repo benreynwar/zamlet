@@ -7,7 +7,7 @@ from cocotb.handle import HierarchyObject
 from cocotb.triggers import ReadOnly
 from zamlet import test_utils
 from zamlet.maths import segmented_multiplier
-from zamlet.test_utils import rising_edge
+from zamlet.test_utils import next_drive_phase
 
 logger = logging.getLogger(__name__)
 
@@ -54,9 +54,9 @@ async def reset(dut: HierarchyObject) -> None:
     dut.io_input_bits_signedB.value = 0
     dut.io_input_bits_elementWidthLog2.value = 3
     dut.reset.value = 1
-    await rising_edge(dut.clock)
+    await next_drive_phase(dut.clock)
     dut.reset.value = 0
-    await rising_edge(dut.clock)
+    await next_drive_phase(dut.clock)
 
 
 async def run_cases(dut: HierarchyObject, cases: list[tuple[int, int, int, bool, bool]]) -> None:
@@ -87,7 +87,7 @@ async def run_cases(dut: HierarchyObject, cases: list[tuple[int, int, int, bool,
                 f"actual=0x{actual:032x} expected=0x{expected:032x}"
             )
 
-        await rising_edge(dut.clock)
+        await next_drive_phase(dut.clock)
 
 
 @cocotb.test()

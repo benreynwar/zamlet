@@ -21,7 +21,7 @@ from zamlet.message import Header, MessageType
 from zamlet.params import ZamletParams
 from zamlet.router import xy_direction
 from zamlet.test_helpers.packets import NetworkPacketSink, NetworkPacketSource
-from zamlet.test_utils import rising_edge
+from zamlet.test_utils import next_drive_phase
 
 logger = logging.getLogger(__name__)
 
@@ -73,12 +73,12 @@ class CocotbDriver(MemletDriver):
                 getattr(self.dut, f'io_a{d}o_{r}_0_ready').value = 0
 
         self.dut.reset.value = 1
-        await rising_edge(self.dut.clock)
-        await rising_edge(self.dut.clock)
+        await next_drive_phase(self.dut.clock)
+        await next_drive_phase(self.dut.clock)
         self.dut.reset.value = 0
         # Wait for reset synchronizer (2 cycles) + RegNext on position (1 cycle)
         for _ in range(4):
-            await rising_edge(self.dut.clock)
+            await next_drive_phase(self.dut.clock)
 
     def start(self) -> None:
         super().start()
@@ -111,7 +111,7 @@ class CocotbDriver(MemletDriver):
                     d = xy_direction(rx, ry, header.source_x, header.source_y).name
                     self._enqueue_packet(self.b_sources[(r, d)], packet)
             else:
-                await rising_edge(self.dut.clock)
+                await next_drive_phase(self.dut.clock)
 
     def _is_control_packet(self, header: Header) -> bool:
         return header.message_type in (
@@ -132,7 +132,7 @@ class CocotbDriver(MemletDriver):
         while True:
             while sink.packet_queue:
                 await self.a_queue_append(r, sink.packet_queue.popleft())
-            await rising_edge(self.dut.clock)
+            await next_drive_phase(self.dut.clock)
 
     async def _error_monitor(self) -> None:
         """Background: assert all error signals stay zero every cycle."""
@@ -171,16 +171,16 @@ class CocotbDriver(MemletDriver):
             if fired:
                 # Let a few more cycles into the waveform for debugging context.
                 for _ in range(3):
-                    await rising_edge(self.dut.clock)
+                    await next_drive_phase(self.dut.clock)
                 assert False, f"Error signal asserted: {fired}"
-            await rising_edge(self.dut.clock)
+            await next_drive_phase(self.dut.clock)
 
     def _make_future(self):
         return Future(Event())
 
     async def tick(self, n: int = 1) -> None:
         for _ in range(n):
-            await rising_edge(self.dut.clock)
+            await next_drive_phase(self.dut.clock)
 
     def start_soon(self, coro):
         return cocotb.start_soon(coro)

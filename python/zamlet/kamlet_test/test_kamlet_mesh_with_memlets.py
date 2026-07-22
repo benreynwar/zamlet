@@ -26,7 +26,7 @@ from zamlet.kamlet_test.kamlet_mesh_with_memlets_driver import (
 )
 from zamlet.lane_order import LaneOrder
 from zamlet.params import ZamletParams
-from zamlet.test_utils import rising_edge
+from zamlet.test_utils import next_drive_phase
 from zamlet.width_codes import ElementWidthCode
 
 TEST_TIMEOUT_NS = 20_000
@@ -48,7 +48,7 @@ async def wait_for_cache_line(
     timeout_cycles: int,
 ) -> list[int | None]:
     for _ in range(timeout_cycles):
-        await rising_edge(driver.dut.clock)
+        await next_drive_phase(driver.dut.clock)
         await ReadOnly()
         actual = driver.memory.read_lamlet_cache_line_from_dut(
             driver.dut, logical_cache_line_addr)

@@ -80,14 +80,14 @@ cc_import(
 )
 
 filegroup(
-    name = "cvc_vpi",
-    srcs = ["libs/libcocotbvpi_modelsim.so"],
+    name = "vpi_runtime",
+    srcs = glob(["libs/*.so"]),
     visibility = ["//visibility:public"],
 )
 
 filegroup(
-    name = "cvc_runtime",
-    srcs = glob(["libs/*.so"]),
+    name = "icarus_vpi",
+    srcs = ["libs/libcocotbvpi_icarus.vpl"],
     visibility = ["//visibility:public"],
 )
 

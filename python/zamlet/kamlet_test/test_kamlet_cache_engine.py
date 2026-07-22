@@ -6,7 +6,7 @@ from cocotb.handle import HierarchyObject
 
 from zamlet import test_utils
 from zamlet.params import ZamletParams
-from zamlet.test_utils import rising_edge
+from zamlet.test_utils import next_drive_phase
 
 
 def load_params(test_params: dict) -> ZamletParams:
@@ -55,9 +55,9 @@ async def smoke_build_and_reset(dut: HierarchyObject) -> None:
     cocotb.start_soon(Clock(dut.clock, 1, "ns").start())
 
     dut.reset.value = 1
-    await rising_edge(dut.clock)
-    await rising_edge(dut.clock)
+    await next_drive_phase(dut.clock)
+    await next_drive_phase(dut.clock)
     dut.reset.value = 0
 
     for _ in range(5):
-        await rising_edge(dut.clock)
+        await next_drive_phase(dut.clock)

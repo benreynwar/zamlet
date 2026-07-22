@@ -132,8 +132,8 @@ find_nix_verilator(name = "nix_verilator")
 find_nix_cocotb = use_repo_rule("//bazel/toolchains:nix_cocotb.bzl", "find_nix_cocotb")
 find_nix_cocotb(name = "nix_cocotb")
 
-find_nix_cvc = use_repo_rule("//bazel/toolchains:nix_cvc.bzl", "find_nix_cvc")
-find_nix_cvc(name = "nix_cvc")
+find_nix_iverilog = use_repo_rule("//bazel/toolchains:nix_iverilog.bzl", "find_nix_iverilog")
+find_nix_iverilog(name = "nix_iverilog")
 
 # Register Nix toolchains
 register_toolchains(

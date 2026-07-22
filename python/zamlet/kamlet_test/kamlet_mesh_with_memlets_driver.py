@@ -24,7 +24,7 @@ from zamlet.message import (
 )
 from zamlet.params import ZamletParams
 from zamlet.test_helpers.packets import NetworkPacketSink, NetworkPacketSource
-from zamlet.test_utils import rising_edge
+from zamlet.test_utils import next_drive_phase
 from zamlet.width_codes import wf_code
 
 logger = logging.getLogger(__name__)
@@ -175,7 +175,7 @@ class KamletMeshWithMemletsDriver:
         timeout_cycles: int,
     ) -> list[int]:
         for _ in range(timeout_cycles):
-            await rising_edge(self.dut.clock)
+            await next_drive_phase(self.dut.clock)
             await ReadOnly()
             actual = self.read_rf_elements(rf_addr, ordering, len(expected))
             if actual == expected:
@@ -192,10 +192,10 @@ class KamletMeshWithMemletsDriver:
     async def reset(self) -> None:
         self.dut.reset.value = 1
         for _ in range(self.params.reset_pipeline_depth):
-            await rising_edge(self.dut.clock)
+            await next_drive_phase(self.dut.clock)
         self.dut.reset.value = 0
         for _ in range(self.params.reset_pipeline_depth):
-            await rising_edge(self.dut.clock)
+            await next_drive_phase(self.dut.clock)
 
     def enqueue_instructions(self, encoded_kinstrs: list[int]) -> None:
         params = self.params
@@ -396,12 +396,12 @@ class KamletMeshWithMemletsDriver:
     async def monitor_error_wires(self) -> None:
         signals = self._error_signals()
         while True:
-            await rising_edge(self.dut.clock)
+            await next_drive_phase(self.dut.clock)
             await ReadOnly()
             for name, sig in signals:
                 if int(sig.value):
                     for _ in range(3):
-                        await rising_edge(self.dut.clock)
+                        await next_drive_phase(self.dut.clock)
                     assert False, f"Error signal asserted: {name}"
 
 
@@ -420,7 +420,7 @@ class KamletMeshTlbResponder:
         while True:
             while sink.packet_queue:
                 self.handle_packet(kx, sink.packet_queue.popleft())
-            await rising_edge(self.driver.dut.clock)
+            await next_drive_phase(self.driver.dut.clock)
 
     def handle_packet(self, kx: int, packet: list[object]) -> None:
         assert len(packet) == 2

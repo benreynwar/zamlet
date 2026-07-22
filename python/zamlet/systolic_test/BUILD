@@ -1,14 +1,28 @@
-load("//bazel:cocotb_rules.bzl", "chisel_module_tests_no_config", "cvc_cocotb_test")
+load("//bazel:cocotb_rules.bzl", "chisel_module_tests_no_config")
 load("//bazel:design/systolic/defs.bzl", "sum_stationary_top", "weight_stationary_top")
 load("//bazel:defs.bzl", "json_file")
 
+py_library(
+    name = "sum_stationary_test",
+    srcs = ["test_sum_stationary.py"],
+    visibility = ["//visibility:public"],
+    deps = ["//python/zamlet:zamlet"],
+)
+
+py_library(
+    name = "weight_stationary_test",
+    srcs = ["test_weight_stationary.py"],
+    visibility = ["//visibility:public"],
+    deps = ["//python/zamlet:zamlet"],
+)
+
 WEIGHT_STATIONARY_PARAMS = [
     {
-        "top": weight_stationary_top(8, reset_group_size),
-        "n": 8,
+        "top": weight_stationary_top(n, reset_group_size),
+        "n": n,
         "resetGroupSize": reset_group_size,
     }
-    for reset_group_size in [0, 4]
+    for n, reset_group_size in [(8, 0), (8, 4), (2, 0)]
 ]
 
 [json_file(
@@ -16,6 +30,7 @@ WEIGHT_STATIONARY_PARAMS = [
     data = {
         "n": params["n"],
         "resetGroupSize": params["resetGroupSize"],
+        "clockPeriodNs": 2,
     },
 ) for params in WEIGHT_STATIONARY_PARAMS]
 
@@ -67,21 +82,9 @@ SUM_STATIONARY_PARAMS = [
         "registerDE": params["registerDE"],
         "splitCDrain": params["splitCDrain"],
         "resetGroupSize": params["resetGroupSize"],
+        "clockPeriodNs": 2,
     },
 ) for params in SUM_STATIONARY_PARAMS]
-
-CVC_SUM_STATIONARY_PARAMS = SUM_STATIONARY_PARAMS[0]
-CVC_SUM_STATIONARY_BASE = CVC_SUM_STATIONARY_PARAMS["top"].lower()
-
-cvc_cocotb_test(
-    name = "test_" + CVC_SUM_STATIONARY_BASE + "_cvc",
-    verilog_files = [":" + CVC_SUM_STATIONARY_BASE + "_verilog"],
-    test_module = "zamlet.systolic_test.test_sum_stationary",
-    toplevel = CVC_SUM_STATIONARY_PARAMS["top"],
-    py_deps = [":" + CVC_SUM_STATIONARY_BASE + "_py"],
-    env = {"CVC_ARGS": "+dumpvars"},
-    config = ":" + CVC_SUM_STATIONARY_BASE + "_params",
-)
 
 [chisel_module_tests_no_config(
     generator = "//src/main/scala/zamlet/systolic:sumstationary",

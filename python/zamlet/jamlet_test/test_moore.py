@@ -7,7 +7,7 @@ from cocotb.handle import HierarchyObject
 from cocotb.triggers import ReadOnly
 from zamlet import test_utils
 from zamlet.params import ZamletParams
-from zamlet.test_utils import rising_edge
+from zamlet.test_utils import next_drive_phase
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +24,7 @@ async def indextocoordswithreg_test(dut: HierarchyObject) -> None:
 
     n_lanes = params.k_cols * params.j_cols * params.k_rows * params.j_rows
     index_list = list(range(n_lanes)) + [0, 0]
-    await rising_edge(dut.clock)
+    await next_drive_phase(dut.clock)
     coords = []
     for index in index_list:
         dut.io_index.value = index
@@ -32,7 +32,7 @@ async def indextocoordswithreg_test(dut: HierarchyObject) -> None:
         x = int(dut.io_x.value)
         y = int(dut.io_y.value)
         coords.append((x, y))
-        await rising_edge(dut.clock)
+        await next_drive_phase(dut.clock)
     coords = coords[2:]
     assert len(coords) == n_lanes
     assert len(set(coords)) == n_lanes
@@ -60,18 +60,18 @@ async def coordstoindexwithreg_test(dut: HierarchyObject) -> None:
     n_rows = params.k_rows * params.j_rows
     n_lanes = n_cols * n_rows
     coords: List[Tuple[int, int]|None] = [None] * n_lanes
-    await rising_edge(dut.clock)
+    await next_drive_phase(dut.clock)
     for x in range(n_cols):
         for y in range(n_rows):
             dut.io_x.value = x
             dut.io_y.value = y
-            await rising_edge(dut.clock)
-            await rising_edge(dut.clock)
+            await next_drive_phase(dut.clock)
+            await next_drive_phase(dut.clock)
             await ReadOnly()
             index = int(dut.io_index.value)
-            await rising_edge(dut.clock)
+            await next_drive_phase(dut.clock)
             coords[index] = (x, y)
-    await rising_edge(dut.clock)
+    await next_drive_phase(dut.clock)
     assert len(coords) == n_lanes
     assert len(set(coords)) == n_lanes
     assert all(xy is not None and 0 <= xy[0] < n_cols for xy in coords)

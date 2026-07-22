@@ -9,7 +9,7 @@ from zamlet.lane_order import LaneOrder
 from zamlet.message import CacheLineHeader, MessageType, SendType
 from zamlet.params import ZamletParams
 from zamlet.test_helpers.packets import NetworkPacketSink, NetworkPacketSource
-from zamlet.test_utils import rising_edge
+from zamlet.test_utils import next_drive_phase
 from zamlet.width_codes import WidthFormatCode
 
 
@@ -119,7 +119,7 @@ def check_error_wires(dut: HierarchyObject, prefix: str) -> None:
 
 async def monitor_error_wires(dut: HierarchyObject, prefix: str) -> None:
     while True:
-        await rising_edge(dut.clock)
+        await next_drive_phase(dut.clock)
         await ReadOnly()
         check_error_wires(dut, prefix)
 
@@ -203,13 +203,13 @@ class JamletDriver:
         cocotb.start_soon(monitor_error_wires(self.dut, "io_errors"))
 
     async def reset(self) -> None:
-        await rising_edge(self.dut.clock)
+        await next_drive_phase(self.dut.clock)
         self.dut.reset.value = 1
         for _ in range(self.params.reset_pipeline_depth + 1):
-            await rising_edge(self.dut.clock)
+            await next_drive_phase(self.dut.clock)
         self.dut.reset.value = 0
         for _ in range(self.params.reset_pipeline_depth + 1):
-            await rising_edge(self.dut.clock)
+            await next_drive_phase(self.dut.clock)
 
     async def send_read_line_resp(self, slot: int, words: list[int]) -> None:
         assert len(words) == self.params.cache_slot_words_per_jamlet
@@ -233,10 +233,10 @@ class JamletDriver:
     async def send_cache_line(self, slot: int) -> list[int]:
         packet_future = self.b_out.get_packet_future()
 
-        await rising_edge(self.dut.clock)
+        await next_drive_phase(self.dut.clock)
         self.dut.io_sendCacheLine_valid.value = 1
         self.dut.io_sendCacheLine_bits_slot.value = slot
-        await rising_edge(self.dut.clock)
+        await next_drive_phase(self.dut.clock)
         self.dut.io_sendCacheLine_valid.value = 0
 
         packet = await packet_future
@@ -259,7 +259,7 @@ class JamletDriver:
 
     async def _cache_response_monitor(self) -> None:
         while True:
-            await rising_edge(self.dut.clock)
+            await next_drive_phase(self.dut.clock)
             await ReadOnly()
             if int(self.dut.io_cacheResponse_valid.value):
                 assert self.cache_response_futures, "unexpected cacheResponse"

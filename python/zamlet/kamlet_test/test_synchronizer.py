@@ -8,7 +8,7 @@ from cocotb.handle import HierarchyObject
 from cocotb.triggers import ReadOnly
 
 from zamlet import test_utils
-from zamlet.test_utils import rising_edge
+from zamlet.test_utils import next_drive_phase
 
 logger = logging.getLogger(__name__)
 
@@ -43,10 +43,10 @@ def initialize_inputs(dut: HierarchyObject) -> None:
 async def reset(dut: HierarchyObject) -> None:
     """Reset the module."""
     dut.reset.value = 1
-    await rising_edge(dut.clock)
-    await rising_edge(dut.clock)
+    await next_drive_phase(dut.clock)
+    await next_drive_phase(dut.clock)
     dut.reset.value = 0
-    await rising_edge(dut.clock)
+    await next_drive_phase(dut.clock)
 
 
 async def send_local_event(dut: HierarchyObject, sync_ident: int, value: int) -> None:
@@ -55,7 +55,7 @@ async def send_local_event(dut: HierarchyObject, sync_ident: int, value: int) ->
     dut.io_localEvent_bits_syncIdent.value = sync_ident
     dut.io_localEvent_bits_value.value = value
     dut.io_localEvent_bits_includeActiveMask.value = 0
-    await rising_edge(dut.clock)
+    await next_drive_phase(dut.clock)
     dut.io_localEvent_valid.value = 0
 
 
@@ -72,15 +72,15 @@ async def send_sync_packet(dut: HierarchyObject, direction: int, sync_ident: int
     # Byte 0: sync_ident, last_byte=0
     port_valid.value = 1
     port_bits.value = (0 << 8) | (sync_ident & 0xFF)
-    await rising_edge(dut.clock)
+    await next_drive_phase(dut.clock)
 
     # Byte 1: low value byte, last_byte=0
     port_bits.value = (0 << 8) | (value & 0xFF)
-    await rising_edge(dut.clock)
+    await next_drive_phase(dut.clock)
 
     # Byte 2: high value byte, last_byte=1
     port_bits.value = (1 << 8) | ((value >> 8) & 0xFF)
-    await rising_edge(dut.clock)
+    await next_drive_phase(dut.clock)
 
     port_valid.value = 0
 
@@ -88,7 +88,7 @@ async def send_sync_packet(dut: HierarchyObject, direction: int, sync_ident: int
 async def wait_for_result(dut: HierarchyObject, timeout_cycles: int = 100):
     """Wait for a sync result to be valid. Returns (sync_ident, value) or None on timeout."""
     for _ in range(timeout_cycles):
-        await rising_edge(dut.clock)
+        await next_drive_phase(dut.clock)
         await ReadOnly()
         if int(dut.io_result_valid.value) == 1:
             sync_ident = int(dut.io_result_bits_syncIdent.value)
@@ -101,7 +101,7 @@ async def wait_for_port_out(dut: HierarchyObject, direction: int, timeout_cycles
     """Wait for output on a port. Returns list of (last_byte, data) tuples or None on timeout."""
     packets = []
     for _ in range(timeout_cycles):
-        await rising_edge(dut.clock)
+        await next_drive_phase(dut.clock)
         await ReadOnly()
         port_valid = getattr(dut, f'io_portOut_{direction}_valid')
         port_bits = getattr(dut, f'io_portOut_{direction}_bits')
@@ -124,7 +124,7 @@ async def collect_all_port_outputs(dut: HierarchyObject, cycles: int = 50):
     pending = {d: [] for d in range(Dir.COUNT)}
 
     for _ in range(cycles):
-        await rising_edge(dut.clock)
+        await next_drive_phase(dut.clock)
         await ReadOnly()
 
         for d in range(Dir.COUNT):
@@ -219,7 +219,7 @@ class OutputCollector:
     async def run(self):
         self._running = True
         while self._running:
-            await rising_edge(self.dut.clock)
+            await next_drive_phase(self.dut.clock)
             await ReadOnly()
             for d in range(Dir.COUNT):
                 port_valid = getattr(self.dut, f'io_portOut_{d}_valid')
@@ -266,7 +266,7 @@ async def outgoing_packets_test(dut: HierarchyObject) -> None:
 
     # Wait for outputs to be sent
     for _ in range(50):
-        await rising_edge(dut.clock)
+        await next_drive_phase(dut.clock)
 
     collector.stop()
 
@@ -299,7 +299,7 @@ async def multiple_syncs_test(dut: HierarchyObject) -> None:
     logger.info(f"Sync 1 completed: value={result1[1]}")
 
     # Exit ReadOnly phase before sending more packets
-    await rising_edge(dut.clock)
+    await next_drive_phase(dut.clock)
 
     # Now send neighbor packets for sync 2
     for d in range(Dir.COUNT):
@@ -330,14 +330,14 @@ async def synchronizer_test(dut: HierarchyObject) -> None:
     await basic_sync_test(dut)
 
     # Reset for next test
-    await rising_edge(dut.clock)
+    await next_drive_phase(dut.clock)
     initialize_inputs(dut)
     await reset(dut)
 
     await outgoing_packets_test(dut)
 
     # Reset for next test
-    await rising_edge(dut.clock)
+    await next_drive_phase(dut.clock)
     initialize_inputs(dut)
     await reset(dut)
 

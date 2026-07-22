@@ -4,6 +4,20 @@
 load("@bazel_tools//tools/cpp:toolchain_utils.bzl", "find_cpp_toolchain")
 load("@rules_cc//cc:defs.bzl", "cc_binary", "CcInfo")
 load("//bazel:verilog.bzl", "chisel_verilog", "chisel_verilog_no_config")
+load("//bazel/flow/providers:input.bzl", "LibrelaneInput")
+load("//bazel/flow/providers:state.bzl", "LibrelaneInfo")
+load("//bazel:power_activity.bzl", "PowerActivityInfo")
+
+IverilogSimulationInfo = provider(fields = {
+    "config": "Test configuration file",
+    "inputs": "Complete input depset for an action simulation",
+    "iverilog": "Icarus compiler",
+    "python_paths": "Python import paths relative to the execroot",
+    "sources": "Verilog sources using execroot-relative paths",
+    "toplevel": "Simulation wrapper top module",
+    "vpi": "Cocotb Icarus VPI library",
+    "vvp": "Icarus runtime",
+})
 
 # -----------------------------------------------------------------------------
 # verilate rule - compiles Verilog to C++ library using verilator toolchain
@@ -305,13 +319,32 @@ python_runner = rule(
     toolchains = ["//bazel/toolchains:cocotb_toolchain_type"],
 )
 
-def _cvc_runner_impl(ctx):
-    cocotb_tc = ctx.toolchains["//bazel/toolchains:cocotb_toolchain_type"].cocotb
+def _iverilog_post_pnr_runner_impl(ctx):
+    input_info = ctx.attr.flow_input[LibrelaneInput]
+    state_info = ctx.attr.flow[LibrelaneInfo]
+    if state_info.pnl == None:
+        fail("flow does not provide a final powered netlist")
 
-    import_paths = []
-    runfiles = ctx.runfiles(
-        files = ctx.files.srcs + [ctx.file._cvc, ctx.file._vpi] + ctx.files._cvc_runtime,
+    cell_models = input_info.pdk_info.cell_verilog_models
+    if not cell_models:
+        fail("PDK does not provide standard-cell Verilog models")
+    if type(state_info.sdf) != "dict" or ctx.attr.sdf_corner not in state_info.sdf:
+        fail("flow does not provide SDF corner '{}'".format(ctx.attr.sdf_corner))
+
+    sdf = state_info.sdf[ctx.attr.sdf_corner]
+    sdf_loader = ctx.actions.declare_file(ctx.label.name + "_sdf.v")
+    ctx.actions.write(
+        output = sdf_loader,
+        content = '''module zamlet_sdf_loader;
+  initial $sdf_annotate("{sdf}", {toplevel}.dut);
+endmodule
+'''.format(sdf = sdf.path, toplevel = ctx.attr.toplevel),
     )
+
+    cocotb_tc = ctx.toolchains["//bazel/toolchains:cocotb_toolchain_type"].cocotb
+    sources = [state_info.pnl] + cell_models + ctx.files.wrapper_verilog + [sdf_loader]
+    runfiles = ctx.runfiles(files = sources + [sdf, ctx.file._iverilog, ctx.file._vvp, ctx.file._vpi] + ctx.files._icarus_runtime)
+    import_paths = []
     for py_dep in ctx.attr.py_deps:
         if PyInfo in py_dep:
             import_paths.extend(py_dep[PyInfo].imports.to_list())
@@ -326,8 +359,6 @@ def _cvc_runner_impl(ctx):
         config_file = config_files[0]
         runfiles = runfiles.merge(ctx.runfiles(files = [config_file]))
 
-    python_paths = [ctx.workspace_name]
-    python_paths.extend([path for path in import_paths if path and path != "."])
     wrapper = ctx.actions.declare_file(ctx.label.name + ".sh")
     ctx.actions.write(
         output = wrapper,
@@ -335,22 +366,18 @@ def _cvc_runner_impl(ctx):
         content = """#!/bin/bash
 set -euo pipefail
 
-PYTHONPATH_PARTS=("$(pwd)")
-{pythonpath_entries}
-IFS=':'; export PYTHONPATH="${{PYTHONPATH_PARTS[*]}}:${{PYTHONPATH:-}}"
-export LD_LIBRARY_PATH="$(dirname "{vpi}"):{python_libdir}:${{LD_LIBRARY_PATH:-}}"
+export PYTHONPATH="$(pwd){python_paths}:${{PYTHONPATH:-}}"
+export LD_LIBRARY_PATH="{python_libdir}:${{LD_LIBRARY_PATH:-}}"
 export PYGPI_PYTHON_BIN="{python_bin}"
 export COCOTB_RESOLVE_X=VALUE_ERROR
 export ZAMLET_TEST_SEED="${{ZAMLET_TEST_SEED:-0}}"
 {config_export}
 
-"{cvc}" +interp +acc+2 ${{CVC_ARGS:-}} -o cvc_sim \
-  "+loadvpi={vpi}:vlog_startup_routines_bootstrap" \
-  {sources}
-
-if [ -f verilog.dump ]; then
-  cp verilog.dump "$TEST_UNDECLARED_OUTPUTS_DIR/dump.vcd"
-fi
+"{iverilog}" -g2012 -gspecify -ginterconnect -Ttyp -DCOCOTB_SIM=1 \
+  -DUSE_POWER_PINS -s "{toplevel}" -s zamlet_sdf_loader \
+  -o icarus_sim.vvp {sources}
+"{vvp}" -M "$(dirname "{vpi}")" -m libcocotbvpi_icarus \
+  icarus_sim.vvp
 
 test -f results.xml || {{
   echo "ERROR: results.xml not found - cocotb test did not complete" >&2
@@ -358,43 +385,185 @@ test -f results.xml || {{
 }}
 "{python_bin}" -m cocotb_tools.check_results results.xml
 """.format(
-            cvc = ctx.file._cvc.short_path,
-            vpi = ctx.file._vpi.short_path,
-            sources = " ".join([src.short_path for src in ctx.files.srcs]),
-            python_libdir = cocotb_tc.python_libdir,
-            python_bin = cocotb_tc.python_bin,
-            pythonpath_entries = "\n".join([
-                'PYTHONPATH_PARTS+=("$(pwd)/../{}")'.format(path)
-                for path in python_paths
-            ]),
             config_export = (
                 'export ZAMLET_TEST_CONFIG_FILENAME="{}"'.format(config_file.short_path)
                 if config_file else ""
             ),
+            iverilog = ctx.file._iverilog.short_path,
+            python_bin = cocotb_tc.python_bin,
+            python_libdir = cocotb_tc.python_libdir,
+            python_paths = "".join([
+                ":$(pwd)/../{}".format(path)
+                for path in import_paths
+                if path and path != "."
+            ]),
+            sources = " ".join([src.short_path for src in sources]),
+            toplevel = ctx.attr.toplevel,
+            vpi = ctx.file._vpi.short_path,
+            vvp = ctx.file._vvp.short_path,
         ),
     )
+    action_inputs = sources + [sdf, ctx.file._iverilog, ctx.file._vvp, ctx.file._vpi] + ctx.files._icarus_runtime
+    transitive_action_inputs = []
+    for py_dep in ctx.attr.py_deps:
+        if PyInfo in py_dep:
+            transitive_action_inputs.append(py_dep[PyInfo].transitive_sources)
+        if DefaultInfo in py_dep:
+            transitive_action_inputs.append(py_dep[DefaultInfo].files)
+    if config_file:
+        action_inputs.append(config_file)
 
-    return [DefaultInfo(executable = wrapper, runfiles = runfiles)]
+    return [
+        DefaultInfo(executable = wrapper, runfiles = runfiles),
+        IverilogSimulationInfo(
+            config = config_file,
+            inputs = depset(action_inputs, transitive = transitive_action_inputs),
+            iverilog = ctx.file._iverilog,
+            python_paths = [path for path in import_paths if path and path != "."],
+            sources = sources,
+            toplevel = ctx.attr.toplevel,
+            vpi = ctx.file._vpi,
+            vvp = ctx.file._vvp,
+        ),
+    ]
 
-cvc_runner = rule(
-    implementation = _cvc_runner_impl,
+iverilog_post_pnr_runner = rule(
+    implementation = _iverilog_post_pnr_runner_impl,
     attrs = {
-        "srcs": attr.label_list(allow_files = [".v", ".sv"]),
+        "flow": attr.label(mandatory = True, providers = [LibrelaneInfo]),
+        "flow_input": attr.label(mandatory = True, providers = [LibrelaneInput]),
+        "sdf_corner": attr.string(mandatory = True),
+        "toplevel": attr.string(mandatory = True),
+        "wrapper_verilog": attr.label(mandatory = True, allow_files = [".v", ".sv"]),
         "config": attr.label(allow_files = [".json"]),
         "py_deps": attr.label_list(),
-        "_cvc": attr.label(
-            default = Label("@nix_cvc//:cvc_bin"),
-            allow_single_file = True,
-        ),
-        "_vpi": attr.label(
-            default = Label("@nix_cocotb//:cvc_vpi"),
-            allow_single_file = True,
-        ),
-        "_cvc_runtime": attr.label(
-            default = Label("@nix_cocotb//:cvc_runtime"),
-        ),
+        "_iverilog": attr.label(default = Label("@nix_iverilog//:iverilog"), allow_single_file = True),
+        "_vvp": attr.label(default = Label("@nix_iverilog//:vvp"), allow_single_file = True),
+        "_vpi": attr.label(default = Label("@nix_cocotb//:icarus_vpi"), allow_single_file = True),
+        "_icarus_runtime": attr.label(default = Label("@nix_cocotb//:vpi_runtime")),
     },
     executable = True,
+    toolchains = ["//bazel/toolchains:cocotb_toolchain_type"],
+)
+
+def _iverilog_activity_impl(ctx):
+    simulation = ctx.attr.simulation[IverilogSimulationInfo]
+    if simulation.config == None:
+        fail("Icarus activity simulation requires a test configuration")
+
+    vcd = ctx.actions.declare_file(ctx.label.name + "/dump.vcd")
+    window = ctx.actions.declare_file(ctx.label.name + "/power_window.json")
+    simulation_log = ctx.actions.declare_file(ctx.label.name + "/simulation.log")
+    dump_loader = ctx.actions.declare_file(ctx.label.name + "_dump.v")
+    ctx.actions.write(
+        output = dump_loader,
+        content = '''module zamlet_vcd_dump;
+  initial begin
+    $dumpfile("{vcd}");
+    $dumpvars(0, {toplevel}.dut);
+    $dumpoff;
+  end
+
+  always @({toplevel}.powerDumpEnable) begin
+    if ({toplevel}.powerDumpEnable)
+      $dumpon;
+    else
+      $dumpoff;
+  end
+endmodule
+'''.format(vcd = vcd.path, toplevel = simulation.toplevel),
+    )
+
+    cocotb_tc = ctx.toolchains["//bazel/toolchains:cocotb_toolchain_type"].cocotb
+    ctx.actions.run_shell(
+        inputs = depset([dump_loader], transitive = [simulation.inputs]),
+        outputs = [vcd, window, simulation_log],
+        command = """set -euo pipefail
+export PYTHONPATH="$(pwd){python_paths}"
+export LD_LIBRARY_PATH="$(dirname "{vpi}"):{python_libdir}:${{LD_LIBRARY_PATH:-}}"
+export PYGPI_PYTHON_BIN="{python_bin}"
+export COCOTB_RESOLVE_X=VALUE_ERROR
+export COCOTB_TEST_MODULES="{test_module}"
+export COCOTB_TOPLEVEL="{toplevel}"
+export TOPLEVEL="{toplevel}"
+export TOPLEVEL_LANG=verilog
+export ZAMLET_TEST_SEED=0
+export ZAMLET_TEST_CONFIG_FILENAME="{config}"
+export ZAMLET_POWER_WINDOW_FILE="{window}"
+
+{{
+  "{iverilog}" -g2012 -gspecify -ginterconnect -Ttyp -DCOCOTB_SIM=1 \
+    -DUSE_POWER_PINS -s "{toplevel}" -s zamlet_sdf_loader -s zamlet_vcd_dump \
+    -o icarus_sim.vvp {sources} {dump_loader}
+  "{vvp}" -M "$(dirname "{vpi}")" -m libcocotbvpi_icarus icarus_sim.vvp
+}} 2>&1 | tee "{simulation_log}"
+
+if grep -Eq 'Unable to open SDF file|Could not find intermodpath|Unable to match.*(instance|port)' "{simulation_log}"; then
+  echo "ERROR: SDF annotation was incomplete" >&2
+  exit 1
+fi
+if grep '^SDF ERROR:' "{simulation_log}" | grep -v 'Chosen value not defined' >/dev/null; then
+  echo "ERROR: Unexpected SDF error" >&2
+  exit 1
+fi
+if grep '^SDF WARNING:.*not supported' "{simulation_log}" | grep -v 'TIMINGCHECK not supported' >/dev/null; then
+  echo "ERROR: Unsupported SDF delay construct" >&2
+  exit 1
+fi
+# OpenROAD's VCD reader does not accept Icarus's dump-control records.
+sed -i -e '/^\\$dumpon$/d' -e '/^\\$dumpoff$/d' "{vcd}"
+
+test -f results.xml
+"{python_bin}" -m cocotb_tools.check_results results.xml
+test -s "{vcd}"
+test -s "{window}"
+start_ps=$(jq -er '.start_ps' "{window}")
+end_ps=$(jq -er '.end_ps' "{window}")
+first_ps=$(awk '/^#[0-9]+$/ {{ print substr($0, 2); exit }}' "{vcd}")
+last_ps=$(awk '/^#[0-9]+$/ {{ value = substr($0, 2) }} END {{ print value }}' "{vcd}")
+test "$start_ps" -lt "$end_ps"
+test "$first_ps" -eq "$start_ps"
+test "$last_ps" -eq "$end_ps"
+grep -q '^\\$scope module dut \\$end$' "{vcd}"
+if grep -Eq '^\\$dumpon$|^\\$dumpoff$' "{vcd}"; then
+  echo "ERROR: VCD still contains unsupported dump-control records" >&2
+  exit 1
+fi
+awk '
+  /^#[0-9]+$/ {{ timestamp_count++ }}
+  !/^\\$/ && !/^#/ && NF {{ change_count++ }}
+  END {{ exit !(timestamp_count > 1 && change_count > 0) }}
+' "{vcd}"
+""".format(
+            config = simulation.config.path,
+            dump_loader = dump_loader.path,
+            iverilog = simulation.iverilog.path,
+            python_bin = cocotb_tc.python_bin,
+            python_libdir = cocotb_tc.python_libdir,
+            python_paths = "".join([":$(pwd)/../{}".format(path) for path in simulation.python_paths]),
+            sources = " ".join([src.path for src in simulation.sources]),
+            simulation_log = simulation_log.path,
+            test_module = ctx.attr.test_module,
+            toplevel = simulation.toplevel,
+            vcd = vcd.path,
+            vpi = simulation.vpi.path,
+            vvp = simulation.vvp.path,
+            window = window.path,
+        ),
+        mnemonic = "IverilogPowerActivity",
+        progress_message = "Generating Icarus power activity for {}".format(simulation.toplevel),
+    )
+    return [
+        DefaultInfo(files = depset([vcd, window, simulation_log])),
+        PowerActivityInfo(vcd = vcd, window = window),
+    ]
+
+iverilog_activity = rule(
+    implementation = _iverilog_activity_impl,
+    attrs = {
+        "simulation": attr.label(mandatory = True, providers = [IverilogSimulationInfo]),
+        "test_module": attr.string(mandatory = True),
+    },
     toolchains = ["//bazel/toolchains:cocotb_toolchain_type"],
 )
 
@@ -434,7 +603,6 @@ def cocotb_binary(name, verilog_files, module_top):
         visibility = ["//visibility:public"],
     )
 
-
 def cocotb_test(name, binary, test_module, toplevel, py_deps = [], env = {}, data = [], config = None):
     """Create a cocotb test.
 
@@ -471,19 +639,40 @@ def cocotb_test(name, binary, test_module, toplevel, py_deps = [], env = {}, dat
         data = data + ([config] if config else []),
     )
 
-def cvc_cocotb_test(name, verilog_files, test_module, toplevel, py_deps = [], env = {}, data = [], config = None):
-    """Create a cocotb test that runs Verilog directly with CVC."""
-    cvc_runner(
+def iverilog_post_pnr_cocotb_test(
+        name,
+        flow,
+        flow_input,
+        wrapper_verilog,
+        sdf_corner,
+        test_module,
+        toplevel,
+        py_deps = [],
+        env = {},
+        data = [],
+        config = None):
+    """Run a cocotb test on a LibreLane final netlist using Icarus."""
+    wrapper_toplevel = toplevel + "IverilogWrapper"
+    iverilog_post_pnr_runner(
         name = name + "_runner",
-        srcs = verilog_files,
+        flow = flow,
+        flow_input = flow_input,
+        sdf_corner = sdf_corner,
+        toplevel = wrapper_toplevel,
+        wrapper_verilog = wrapper_verilog,
         config = config,
         py_deps = py_deps,
+    )
+    iverilog_activity(
+        name = name + "_activity",
+        simulation = name + "_runner",
+        test_module = test_module,
     )
 
     default_env = {
         "COCOTB_TEST_MODULES": test_module,
-        "COCOTB_TOPLEVEL": toplevel,
-        "TOPLEVEL": toplevel,
+        "COCOTB_TOPLEVEL": wrapper_toplevel,
+        "TOPLEVEL": wrapper_toplevel,
         "TOPLEVEL_LANG": "verilog",
     }
     merged_env = dict(default_env)

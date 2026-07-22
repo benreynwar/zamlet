@@ -7,7 +7,7 @@ from cocotb.triggers import Event, ReadOnly
 
 from zamlet.future import Future
 from zamlet.message import Header, int_to_header
-from zamlet.test_utils import rising_edge
+from zamlet.test_utils import next_drive_phase
 from zamlet.utils import make_seed
 
 
@@ -53,7 +53,7 @@ class NetworkPacketSource:
                 await ReadOnly()
                 fired = bool(int(self.ready.value))
 
-            await rising_edge(self.clock)
+            await next_drive_phase(self.clock)
 
             if fired:
                 current = None
@@ -89,7 +89,7 @@ class NetworkPacketSink:
         while True:
             while self.future_queue and self.packet_queue:
                 self.future_queue.popleft().set_result(self.packet_queue.popleft())
-            await rising_edge(self.clock)
+            await next_drive_phase(self.clock)
 
     async def run(self, seed: int, p_ready: float = 1.0) -> None:
         rng = Random(seed)
@@ -119,4 +119,4 @@ class NetworkPacketSink:
                 if packet and remaining == 0:
                     self.packet_queue.append(packet)
                     packet = []
-            await rising_edge(self.clock)
+            await next_drive_phase(self.clock)

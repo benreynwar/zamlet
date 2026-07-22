@@ -5,10 +5,6 @@ let
   # nixos-24.05 branch, pinned 2025-02-05
   nixpkgs = fetchTarball "https://github.com/NixOS/nixpkgs/archive/b134951a4c9f3c995fd7be05f3243f8ecd65d798.tar.gz";
   bootstrap-pkgs = import nixpkgs {};
-  cvc-pkgs = import nixpkgs {
-    config.allowUnfreePredicate = pkg: (pkg.pname or "") == "open-src-cvc";
-  };
-
   # nixpkgs-unstable, pinned 2026-03-16 (for newer metals with Bazel support)
   nixpkgs-unstable = fetchTarball
     "https://github.com/NixOS/nixpkgs/archive/a07d4ce6bee67d7c838a8a5796e75dff9caa21ef.tar.gz";
@@ -29,6 +25,7 @@ let
     src = librelane-src-unpatched;
     patches = [
       ./patches/librelane-magic-abspath-rcfile.patch
+      ./patches/librelane-custom-io-full-edge-spacing.patch
     ];
   };
 
@@ -48,9 +45,6 @@ let
       rev = "v${version}";
       sha256 = "sha256-BpshczKA83ZeytGDrHEg6IAbI5FxciAUnzwE10hgPC0=";
     };
-    patches = [
-      ./patches/cocotb-cvc-iterator-probes.patch
-    ];
     # cocotb 2.0 uses src/ layout instead of cocotb/ at root
     preCheck = ''
       export PATH=$out/bin:$PATH
@@ -139,8 +133,6 @@ let
   # RISC-V Clang/LLD (for VPU vector spill support)
   riscv-clang = import ./riscv-clang.nix { pkgs = bootstrap-pkgs; };
 
-  cvc = import ./cvc.nix { pkgs = cvc-pkgs; };
-
   # Project build dependencies
   buildDeps = with pkgs; [
     stdenv.cc.cc.lib  # Standard library for Bazel-downloaded binaries
@@ -153,7 +145,7 @@ let
     yosys
     magic-vlsi
     verilator-new
-    cvc
+    iverilog
     klayout
     python-env
     bazelisk

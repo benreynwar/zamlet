@@ -9,7 +9,7 @@ from cocotb.handle import HierarchyObject
 from cocotb.triggers import ReadOnly
 
 from zamlet import test_utils
-from zamlet.test_utils import rising_edge
+from zamlet.test_utils import next_drive_phase
 from zamlet.utils import make_seed
 
 logger = logging.getLogger(__name__)
@@ -22,14 +22,14 @@ async def driver(dut: HierarchyObject, rng: Random, items: list[int]) -> None:
         while rng.random() > p_valid:
             dut.io_i_valid.value = 0
             dut.io_i_bits.value = rng.getrandbits(len(dut.io_i_bits.value))
-            await rising_edge(dut.clock)
+            await next_drive_phase(dut.clock)
         dut.io_i_valid.value = 1
         dut.io_i_bits.value = item
         await ReadOnly()
         while int(dut.io_i_ready.value) == 0:
-            await rising_edge(dut.clock)
+            await next_drive_phase(dut.clock)
             await ReadOnly()
-        await rising_edge(dut.clock)
+        await next_drive_phase(dut.clock)
         dut.io_i_valid.value = 1
     dut.io_i_valid.value = 0
 
@@ -48,7 +48,7 @@ async def monitor(dut: HierarchyObject, rng: Random,
                 f"Item {idx}: expected {expected[idx]:#x}, got {got:#x}"
             )
             idx += 1
-        await rising_edge(dut.clock)
+        await next_drive_phase(dut.clock)
     dut.io_o_ready.value = 0
 
 
@@ -69,10 +69,10 @@ async def test_random_stream(dut: HierarchyObject) -> None:
     dut.io_i_valid.value = 0
     dut.io_o_ready.value = 0
     dut.reset.value = 1
-    await rising_edge(dut.clock)
-    await rising_edge(dut.clock)
+    await next_drive_phase(dut.clock)
+    await next_drive_phase(dut.clock)
     dut.reset.value = 0
-    await rising_edge(dut.clock)
+    await next_drive_phase(dut.clock)
 
     drv = cocotb.start_soon(driver(dut, Random(make_seed(rng)), items))
     mon = cocotb.start_soon(monitor(dut, Random(make_seed(rng)), items))

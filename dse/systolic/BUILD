@@ -1,8 +1,11 @@
 # Systolic array physical design experiments
 
+package(default_visibility = ["//visibility:public"])
+
 load("//bazel:verilog.bzl", "chisel_verilog_no_config")
 load("//bazel:design/systolic/defs.bzl", "sum_stationary_top", "weight_stationary_top")
-load("//bazel/flow:defs.bzl", "librelane_classic_flow", "librelane_synth_config")
+load("//bazel:hard_macro_flow.bzl", "hard_macro_flow")
+load("//bazel/flow:defs.bzl", "librelane_synth_config")
 load("//bazel/flow/sdc:sdc_template.bzl", "sdc_template")
 load("@sky130_fd_sc_hd_config//:defs.bzl", "pdk")
 
@@ -35,7 +38,7 @@ WEIGHT_STATIONARY_CONFIGS = [
     (4, 0),
     (2, 0),
 ]
-WEIGHT_STATIONARY_CLOCK_PERIODS = [20, 16, 12, 11, 10]
+WEIGHT_STATIONARY_CLOCK_PERIODS = [20, 16, 12, 11, 10, 9]
 WEIGHT_STATIONARY_UTILIZATIONS = [40, 50, 60, 65, 70]
 
 [
@@ -48,9 +51,26 @@ WEIGHT_STATIONARY_UTILIZATIONS = [40, 50, 60, 65, 70]
 ]
 
 [
-    librelane_classic_flow(
+    chisel_verilog_no_config(
+        name = weight_stationary_top(n, reset_group) + "_iverilog_wrapper",
+        generator = SYSTOLIC_PKG + ":weightstationary_iverilog_wrapper",
+        extra_args = [str(n), str(reset_group)],
+    )
+    for n, reset_group in WEIGHT_STATIONARY_CONFIGS
+]
+
+[
+    hard_macro_flow(
         name = weight_stationary_top(n, reset_group) +
                "_sky130hd_{}ns_util{}".format(clock_period, utilization),
+        wrapper_verilog = ":" + weight_stationary_top(n, reset_group) +
+                          "_iverilog_wrapper_verilog",
+        test_module = "zamlet.systolic_test.test_weight_stationary",
+        py_deps = ["//python/zamlet/systolic_test:weight_stationary_test"],
+        test_params = {
+            "n": n,
+            "resetGroupSize": reset_group,
+        },
         verilog_files = [":" + weight_stationary_top(n, reset_group) + ".sv"],
         top = weight_stationary_top(n, reset_group),
         pdk = ":sky130hd",
@@ -93,7 +113,7 @@ SUM_STATIONARY_CONFIGS = [
     (2, True, False, 0),
 ]
 
-SUM_STATIONARY_CLOCK_PERIODS = [20, 16, 12, 11, 10]
+SUM_STATIONARY_CLOCK_PERIODS = [20, 16, 12, 11, 10, 9]
 SUM_STATIONARY_UTILIZATIONS = [40, 50, 60, 65, 70]
 
 [
@@ -113,9 +133,39 @@ SUM_STATIONARY_UTILIZATIONS = [40, 50, 60, 65, 70]
 ]
 
 [
-    librelane_classic_flow(
+    chisel_verilog_no_config(
+        name = sum_stationary_top(n, csa, True, False, split_drain, reset_group) +
+               "_iverilog_wrapper",
+        generator = SYSTOLIC_PKG + ":sumstationary_iverilog_wrapper",
+        extra_args = [
+            str(n),
+            str(csa).lower(),
+            "true",
+            "false",
+            str(split_drain).lower(),
+            str(reset_group),
+        ],
+    )
+    for n, csa, split_drain, reset_group in SUM_STATIONARY_CONFIGS
+]
+
+[
+    hard_macro_flow(
         name = sum_stationary_top(n, csa, True, False, split_drain, reset_group) +
                "_sky130hd_{}ns_util{}".format(clock_period, utilization),
+        wrapper_verilog = ":" +
+                          sum_stationary_top(n, csa, True, False, split_drain, reset_group) +
+                          "_iverilog_wrapper_verilog",
+        test_module = "zamlet.systolic_test.test_sum_stationary",
+        py_deps = ["//python/zamlet/systolic_test:sum_stationary_test"],
+        test_params = {
+            "n": n,
+            "useCarrySaveAccumulator": csa,
+            "registerBC": True,
+            "registerDE": False,
+            "splitCDrain": split_drain,
+            "resetGroupSize": reset_group,
+        },
         verilog_files = [
             ":" + sum_stationary_top(n, csa, True, False, split_drain, reset_group) + ".sv",
         ],

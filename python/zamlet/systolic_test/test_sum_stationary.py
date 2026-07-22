@@ -4,7 +4,7 @@ import random
 import cocotb
 from cocotb.clock import Clock
 from cocotb.handle import HierarchyObject
-from cocotb.triggers import ReadOnly
+from cocotb.triggers import Event, ReadOnly
 from zamlet import test_utils
 from zamlet.matrix_test_utils import (
     UINT32_MASK,
@@ -13,7 +13,7 @@ from zamlet.matrix_test_utils import (
     matrix_product,
     random_matrix,
 )
-from zamlet.test_utils import rising_edge
+from zamlet.test_utils import PowerMeasurementWindow, next_drive_phase
 
 TEST_PARAMS = test_utils.get_test_params()
 with open(TEST_PARAMS["params_file"]) as f:
@@ -24,6 +24,7 @@ REGISTER_BC = bool(CONFIG["registerBC"])
 REGISTER_DE = bool(CONFIG["registerDE"])
 SPLIT_C_DRAIN = bool(CONFIG["splitCDrain"])
 RESET_GROUP_SIZE = int(CONFIG["resetGroupSize"])
+CLOCK_PERIOD_NS = float(CONFIG["clockPeriodNs"])
 
 # Fixed latency from the final A/B feed edge for a dot product to observing the
 # selected sum at cOut. The top-level scalar control delay is not included here
@@ -52,11 +53,17 @@ def zero_inputs(dut: HierarchyObject) -> None:
 
 async def wait_cycles(dut: HierarchyObject, cycles: int) -> None:
     for _ in range(cycles):
-        await rising_edge(dut.clock)
+        await next_drive_phase(dut.clock)
 
 
 async def reset_dut(dut: HierarchyObject) -> None:
-    cocotb.start_soon(Clock(dut.clock, 2, "ns").start())
+    if hasattr(dut, "VPWR"):
+        dut.VPWR.value = 1
+    if hasattr(dut, "VGND"):
+        dut.VGND.value = 0
+    if hasattr(dut, "powerDumpEnable"):
+        dut.powerDumpEnable.value = 0
+    cocotb.start_soon(Clock(dut.clock, CLOCK_PERIOD_NS, "ns").start())
     dut.reset.value = 1
     zero_inputs(dut)
     await wait_cycles(dut, 4)
@@ -85,10 +92,12 @@ async def feed_ab(
     dut: HierarchyObject,
     a: list[list[int]],
     b: list[list[int]],
+    sent: Event,
 ) -> None:
     for local_cycle in range(2 * N - 1):
         drive_ab_for_cycle(dut, a, b, local_cycle)
-        await rising_edge(dut.clock)
+        await next_drive_phase(dut.clock)
+    sent.set()
 
 
 def capture_outputs(
@@ -108,7 +117,7 @@ async def request_complete(
     target_cycle: int,
 ) -> None:
     while complete_driver.cycle < target_cycle:
-        await rising_edge(dut.clock)
+        await next_drive_phase(dut.clock)
     complete_driver.request(1)
 
 
@@ -118,6 +127,7 @@ async def matrix_multiply(
     complete_driver: SkewedControlDriver,
     a: list[list[int]],
     b: list[list[int]],
+    sent: Event,
 ) -> None:
     expected = [[value & UINT32_MASK for value in row] for row in matrix_product(a, b)]
     captured: list[list[int | None]] = [[None for _ in range(N)] for _ in range(N)]
@@ -125,16 +135,24 @@ async def matrix_multiply(
     start_cycle = step_driver.cycle
     step_driver.request(N)
     cocotb.start_soon(request_complete(dut, complete_driver, start_cycle + N - 1))
-    await rising_edge(dut.clock)
-    cocotb.start_soon(feed_ab(dut, a, b))
+    await next_drive_phase(dut.clock)
+    cocotb.start_soon(feed_ab(dut, a, b, sent))
 
     last_cycle = 3 * (N - 1) + OUTPUT_FIXED_LATENCY
     for local_cycle in range(last_cycle + 1):
-        await rising_edge(dut.clock)
+        await next_drive_phase(dut.clock)
         await ReadOnly()
         capture_outputs(dut, captured, local_cycle)
 
     assert captured == expected, f"a={a} b={b} captured={captured} expected={expected}"
+
+
+async def record_power_window(dut: HierarchyObject, sent: list[Event]) -> None:
+    power_window = PowerMeasurementWindow(dut)
+    await sent[1].wait()
+    power_window.start()
+    await sent[-1].wait()
+    power_window.stop()
 
 
 @cocotb.test()
@@ -147,10 +165,12 @@ async def test_matrix_multiply(dut: HierarchyObject) -> None:
     cocotb.start_soon(step_driver.run())
     cocotb.start_soon(complete_driver.run())
 
-    await rising_edge(dut.clock)
+    await next_drive_phase(dut.clock)
 
+    sent = [Event() for _ in range(4)]
+    power_task = cocotb.start_soon(record_power_window(dut, sent))
     tasks = []
-    for _ in range(4):
+    for matrix_index in range(4):
         tasks.append(cocotb.start_soon(
             matrix_multiply(
                 dut,
@@ -158,9 +178,11 @@ async def test_matrix_multiply(dut: HierarchyObject) -> None:
                 complete_driver,
                 random_matrix(rng, N),
                 random_matrix(rng, N),
+                sent[matrix_index],
             )
         ))
         await wait_cycles(dut, N)
 
     for task in tasks:
         await task
+    await power_task

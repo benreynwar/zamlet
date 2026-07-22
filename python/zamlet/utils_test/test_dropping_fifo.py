@@ -11,7 +11,7 @@ from cocotb.handle import HierarchyObject
 from cocotb.triggers import ReadOnly
 
 from zamlet import generate_rtl, test_utils
-from zamlet.test_utils import rising_edge
+from zamlet.test_utils import next_drive_phase
 
 logger = logging.getLogger(__name__)
 this_dir = os.path.abspath(os.path.dirname(__file__))
@@ -30,10 +30,10 @@ async def basic_fifo_test(dut: HierarchyObject, max_val: int) -> None:
 
     # Reset
     dut.reset.value = 1
-    await rising_edge(dut.clock)
-    await rising_edge(dut.clock)
+    await next_drive_phase(dut.clock)
+    await next_drive_phase(dut.clock)
     dut.reset.value = 0
-    await rising_edge(dut.clock)
+    await next_drive_phase(dut.clock)
 
     # Check initial state
     assert dut.io_i_ready.value == 1, "FIFO should be ready when empty"
@@ -42,7 +42,7 @@ async def basic_fifo_test(dut: HierarchyObject, max_val: int) -> None:
     # Write first item
     dut.io_i_valid.value = 1
     dut.io_i_bits.value = val1
-    await rising_edge(dut.clock)
+    await next_drive_phase(dut.clock)
     dut.io_i_valid.value = 0
     await ReadOnly()
 
@@ -51,11 +51,11 @@ async def basic_fifo_test(dut: HierarchyObject, max_val: int) -> None:
     assert dut.io_o_bits.value == val1, "Output should match input"
     assert dut.io_count.value == 0, "Count should be 0 for newly written item"
 
-    await rising_edge(dut.clock)
+    await next_drive_phase(dut.clock)
     # Write second item (count should increment for first item)
     dut.io_i_valid.value = 1
     dut.io_i_bits.value = val2
-    await rising_edge(dut.clock)
+    await next_drive_phase(dut.clock)
     dut.io_i_valid.value = 0
 
     # First item should still be at output but count incremented
@@ -64,9 +64,9 @@ async def basic_fifo_test(dut: HierarchyObject, max_val: int) -> None:
     assert dut.io_count.value == 1, "Count should increment when second item written"
 
     # Read first item
-    await rising_edge(dut.clock)
+    await next_drive_phase(dut.clock)
     dut.io_o_ready.value = 1
-    await rising_edge(dut.clock)
+    await next_drive_phase(dut.clock)
     dut.io_o_ready.value = 0
 
     # Second item should now be at output
@@ -81,17 +81,17 @@ async def dropping_test(dut: HierarchyObject, max_val: int) -> None:
     normal_val = max_val // 2
 
     # Reset
-    await rising_edge(dut.clock)
+    await next_drive_phase(dut.clock)
     dut.reset.value = 1
-    await rising_edge(dut.clock)
+    await next_drive_phase(dut.clock)
     dut.reset.value = 0
-    await rising_edge(dut.clock)
+    await next_drive_phase(dut.clock)
 
     # Write and drop an item
     dut.io_i_valid.value = 1
     dut.io_i_bits.value = dropped_val
     dut.io_drop.value = 1
-    await rising_edge(dut.clock)
+    await next_drive_phase(dut.clock)
     dut.io_i_valid.value = 0
     dut.io_drop.value = 0
 
@@ -100,10 +100,10 @@ async def dropping_test(dut: HierarchyObject, max_val: int) -> None:
     assert dut.io_o_valid.value == 0, "FIFO should be empty after drop"
 
     # Write a normal item
-    await rising_edge(dut.clock)
+    await next_drive_phase(dut.clock)
     dut.io_i_valid.value = 1
     dut.io_i_bits.value = normal_val
-    await rising_edge(dut.clock)
+    await next_drive_phase(dut.clock)
     dut.io_i_valid.value = 0
 
     # Should be available at output
@@ -113,11 +113,11 @@ async def dropping_test(dut: HierarchyObject, max_val: int) -> None:
     assert dut.io_count.value == 0, "Count should be 0 for newly written item"
 
     # Test dropping an item after we have one in the FIFO
-    await rising_edge(dut.clock)
+    await next_drive_phase(dut.clock)
     dut.io_i_valid.value = 1
     dut.io_i_bits.value = dropped_val
     dut.io_drop.value = 1
-    await rising_edge(dut.clock)
+    await next_drive_phase(dut.clock)
     dut.io_i_valid.value = 0
     dut.io_drop.value = 0
 
@@ -135,24 +135,24 @@ async def count_tracking_test(dut: HierarchyObject, max_val: int) -> None:
     val3 = max_val
 
     # Reset
-    await rising_edge(dut.clock)
+    await next_drive_phase(dut.clock)
     dut.reset.value = 1
-    await rising_edge(dut.clock)
+    await next_drive_phase(dut.clock)
     dut.reset.value = 0
-    await rising_edge(dut.clock)
+    await next_drive_phase(dut.clock)
 
     # Write item 1
     dut.io_i_valid.value = 1
     dut.io_i_bits.value = val1
-    await rising_edge(dut.clock)
+    await next_drive_phase(dut.clock)
 
     # Write item 2
     dut.io_i_bits.value = val2
-    await rising_edge(dut.clock)
+    await next_drive_phase(dut.clock)
 
     # Write item 3
     dut.io_i_bits.value = val3
-    await rising_edge(dut.clock)
+    await next_drive_phase(dut.clock)
     dut.io_i_valid.value = 0
 
     # Item 1 should be at output with count = 2 (items 2 and 3 consumed after it)
@@ -161,9 +161,9 @@ async def count_tracking_test(dut: HierarchyObject, max_val: int) -> None:
     assert dut.io_count.value == 2, "Count should be 2 for item 1"
 
     # Read item 1
-    await rising_edge(dut.clock)
+    await next_drive_phase(dut.clock)
     dut.io_o_ready.value = 1
-    await rising_edge(dut.clock)
+    await next_drive_phase(dut.clock)
     dut.io_o_ready.value = 0
 
     # Item 2 should be at output with count = 1 (item 3 consumed after it)
@@ -172,9 +172,9 @@ async def count_tracking_test(dut: HierarchyObject, max_val: int) -> None:
     assert dut.io_count.value == 1, "Count should be 1 for item 2"
 
     # Read item 2
-    await rising_edge(dut.clock)
+    await next_drive_phase(dut.clock)
     dut.io_o_ready.value = 1
-    await rising_edge(dut.clock)
+    await next_drive_phase(dut.clock)
     dut.io_o_ready.value = 0
 
     # Item 3 should be at output with count = 0
@@ -189,21 +189,21 @@ async def simultaneous_read_write_test(dut: HierarchyObject, max_val: int) -> No
     val2 = max_val // 2
 
     # Reset and fill FIFO with one item
-    await rising_edge(dut.clock)
+    await next_drive_phase(dut.clock)
     dut.reset.value = 1
-    await rising_edge(dut.clock)
+    await next_drive_phase(dut.clock)
     dut.reset.value = 0
-    await rising_edge(dut.clock)
+    await next_drive_phase(dut.clock)
 
     # Write first item
     dut.io_i_valid.value = 1
     dut.io_i_bits.value = val1
-    await rising_edge(dut.clock)
+    await next_drive_phase(dut.clock)
 
     # Simultaneous read and write
     dut.io_i_bits.value = val2
     dut.io_o_ready.value = 1
-    await rising_edge(dut.clock)
+    await next_drive_phase(dut.clock)
     dut.io_i_valid.value = 0
     dut.io_o_ready.value = 0
 
@@ -217,26 +217,26 @@ async def simultaneous_read_write_test(dut: HierarchyObject, max_val: int) -> No
 async def backpressure_test(dut: HierarchyObject, max_val: int, depth: int) -> None:
     """Test backpressure behavior when FIFO is full"""
     # Reset
-    await rising_edge(dut.clock)
+    await next_drive_phase(dut.clock)
     dut.reset.value = 1
-    await rising_edge(dut.clock)
+    await next_drive_phase(dut.clock)
     dut.reset.value = 0
-    await rising_edge(dut.clock)
+    await next_drive_phase(dut.clock)
 
     # Fill FIFO to capacity
     dut.io_i_valid.value = 1
     for i in range(depth):
         dut.io_i_bits.value = i % (max_val + 1)
-        await rising_edge(dut.clock)
+        await next_drive_phase(dut.clock)
 
     # FIFO should now be full and not ready
     await ReadOnly()
     assert dut.io_i_ready.value == 0, "FIFO should not be ready when full"
 
     # Try to write another item (should be rejected)
-    await rising_edge(dut.clock)
+    await next_drive_phase(dut.clock)
     dut.io_i_bits.value = max_val
-    await rising_edge(dut.clock)
+    await next_drive_phase(dut.clock)
     dut.io_i_valid.value = 0
 
     # First item should still be at output
@@ -244,9 +244,9 @@ async def backpressure_test(dut: HierarchyObject, max_val: int, depth: int) -> N
     assert dut.io_o_bits.value == 0, "First item should still be at output"
 
     # Read one item to make space
-    await rising_edge(dut.clock)
+    await next_drive_phase(dut.clock)
     dut.io_o_ready.value = 1
-    await rising_edge(dut.clock)
+    await next_drive_phase(dut.clock)
     dut.io_o_ready.value = 0
 
     # FIFO should be ready again

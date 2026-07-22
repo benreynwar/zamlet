@@ -19,7 +19,7 @@ from zamlet.message import (
 )
 from zamlet.params import ZamletParams
 from zamlet.test_helpers.streams import ValidReadySink, ValidReadySource
-from zamlet.test_utils import rising_edge
+from zamlet.test_utils import next_drive_phase
 from zamlet.width_codes import WidthFormatCode
 
 TLB_STATUS_HIT = 0
@@ -82,21 +82,21 @@ class KamletTlbDriver:
 
     async def reset(self) -> None:
         self.dut.reset.value = 1
-        await rising_edge(self.dut.clock)
-        await rising_edge(self.dut.clock)
+        await next_drive_phase(self.dut.clock)
+        await next_drive_phase(self.dut.clock)
         self.dut.reset.value = 0
 
     async def wait_for_packet_word(self) -> dict[str, int]:
         while True:
             if self.packet_out.queue:
                 return self.packet_out.pop()
-            await rising_edge(self.dut.clock)
+            await next_drive_phase(self.dut.clock)
 
     async def wait_for_tlb_resp(self, j_in_k: int) -> dict[str, int]:
         while True:
             if self.tlb_resp[j_in_k].queue:
                 return self.tlb_resp[j_in_k].pop()
-            await rising_edge(self.dut.clock)
+            await next_drive_phase(self.dut.clock)
 
     async def route_tlb_resps(self) -> None:
         while True:
@@ -107,7 +107,7 @@ class KamletTlbDriver:
                     logger.info("tlbResp j=%d te=%d byte=%d status=%d", *key, resp["status"])
                     assert self.tlb_resp_waiters[key], f"unexpected tlbResp {key}"
                     self.tlb_resp_waiters[key].popleft().set_result(resp)
-            await rising_edge(self.dut.clock)
+            await next_drive_phase(self.dut.clock)
 
     async def available(
         self,
@@ -131,9 +131,9 @@ class KamletTlbDriver:
                     te_index,
                     byte_index,
                 )
-                await rising_edge(self.dut.clock)
+                await next_drive_phase(self.dut.clock)
                 return
-            await rising_edge(self.dut.clock)
+            await next_drive_phase(self.dut.clock)
 
     async def request_and_wait_for_translation(
         self,

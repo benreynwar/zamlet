@@ -12,7 +12,7 @@ from zamlet.kamlet.kinstructions import (
 )
 from zamlet.lane_order import LaneOrder
 from zamlet.test_helpers.streams import ValidReadySink, ValidReadySource
-from zamlet.test_utils import rising_edge
+from zamlet.test_utils import next_drive_phase
 from zamlet.utils import make_seed
 from zamlet.width_codes import WidthFormatCode
 
@@ -80,7 +80,7 @@ class KteJamletModel:
 
     async def _monitor_create(self) -> None:
         while True:
-            await rising_edge(self.dut.clock)
+            await next_drive_phase(self.dut.clock)
             await ReadOnly()
             if int(getattr(self.dut, f"io_jteCreate_{self.index}_valid").value):
                 te_index = int(getattr(
@@ -96,7 +96,7 @@ class KteJamletModel:
 
     async def _monitor_clear(self) -> None:
         while True:
-            await rising_edge(self.dut.clock)
+            await next_drive_phase(self.dut.clock)
             await ReadOnly()
             if int(getattr(self.dut, f"io_jteClear_{self.index}_valid").value):
                 te_index = int(getattr(
@@ -113,7 +113,7 @@ class KteJamletModel:
         rng = Random(seed)
 
         while True:
-            await rising_edge(self.dut.clock)
+            await next_drive_phase(self.dut.clock)
             candidates = [
                 te_index
                 for te_index in sorted(self.state.jte_entries)
@@ -127,7 +127,7 @@ class KteJamletModel:
 
     async def _record_input_resp(self) -> None:
         while True:
-            await rising_edge(self.dut.clock)
+            await next_drive_phase(self.dut.clock)
             while self.input_resp.queue:
                 resp = self.input_resp.pop()
                 te_index = resp["teIndex"]
@@ -161,7 +161,7 @@ class KteJamletModel:
                 self.state.completed_inputs.add(te_index)
                 complete_signals[te_index].value = 1
 
-            await rising_edge(self.dut.clock)
+            await next_drive_phase(self.dut.clock)
 
 
 class KteDriver:
@@ -299,13 +299,13 @@ class KteDriver:
     async def reset(self) -> None:
         self.set_defaults()
         self.dut.reset.value = 1
-        await rising_edge(self.dut.clock)
-        await rising_edge(self.dut.clock)
+        await next_drive_phase(self.dut.clock)
+        await next_drive_phase(self.dut.clock)
         self.dut.reset.value = 0
 
     async def idle(self, cycles: int) -> None:
         for _ in range(cycles):
-            await rising_edge(self.dut.clock)
+            await next_drive_phase(self.dut.clock)
 
     async def wait_for_jte_clear(self, te_index: int, timeout_cycles: int) -> None:
         for _ in range(timeout_cycles):
@@ -314,7 +314,7 @@ class KteDriver:
                 for jamlet in self.jamlets
             ):
                 return
-            await rising_edge(self.dut.clock)
+            await next_drive_phase(self.dut.clock)
         raise AssertionError(f"timed out waiting for JTE clear teIndex={te_index}")
 
     async def wait_for_total_jte_clears(
@@ -326,7 +326,7 @@ class KteDriver:
                 for jamlet in self.jamlets
             ):
                 return
-            await rising_edge(self.dut.clock)
+            await next_drive_phase(self.dut.clock)
         counts = [jamlet.state.clear_counts for jamlet in self.jamlets]
         raise AssertionError(
             f"timed out waiting for {expected_clears} JTE clears; counts={counts}")
@@ -338,7 +338,7 @@ class KteDriver:
             for event in self.sync_results:
                 if event["syncIdent"] == sync_ident:
                     return
-            await rising_edge(self.dut.clock)
+            await next_drive_phase(self.dut.clock)
         raise AssertionError(
             f"timed out waiting for syncLocalEvent sync_ident={sync_ident}")
 
@@ -346,7 +346,7 @@ class KteDriver:
         for _ in range(timeout_cycles):
             if self.local_replays:
                 return self.local_replays.popleft()
-            await rising_edge(self.dut.clock)
+            await next_drive_phase(self.dut.clock)
         raise AssertionError("timed out waiting for localReplay")
 
     async def wait_for_cache_slot_release(
@@ -357,12 +357,12 @@ class KteDriver:
                 released_slot = self.cache_slot_releases.popleft()
                 if released_slot == slot:
                     return
-            await rising_edge(self.dut.clock)
+            await next_drive_phase(self.dut.clock)
         raise AssertionError(f"timed out waiting for cache slot release slot={slot}")
 
     async def _monitor_sync_local_event(self) -> None:
         while True:
-            await rising_edge(self.dut.clock)
+            await next_drive_phase(self.dut.clock)
             await ReadOnly()
             if int(self.dut.io_syncLocalEvent_valid.value):
                 self.sync_results.append({
@@ -387,12 +387,12 @@ class KteDriver:
             else:
                 self.dut.io_syncResult_valid.value = 0
 
-            await rising_edge(self.dut.clock)
+            await next_drive_phase(self.dut.clock)
 
     async def _monitor_local_replay(self) -> None:
         self.dut.io_localReplay_ready.value = 1
         while True:
-            await rising_edge(self.dut.clock)
+            await next_drive_phase(self.dut.clock)
             await ReadOnly()
             if (
                 int(self.dut.io_localReplay_valid.value)
@@ -405,7 +405,7 @@ class KteDriver:
 
     async def _monitor_cache_slot_release(self) -> None:
         while True:
-            await rising_edge(self.dut.clock)
+            await next_drive_phase(self.dut.clock)
             await ReadOnly()
             if int(self.dut.io_kceReleaseSlot_valid.value):
                 self.cache_slot_releases.append(
@@ -435,7 +435,7 @@ class KteDriver:
                     self._unavailable_requested_slots.add(slot)
                 resp_queue.append(available)
 
-            await rising_edge(self.dut.clock)
+            await next_drive_phase(self.dut.clock)
 
     async def _drive_slot_available(self, seed: int) -> None:
         rng = Random(seed)
@@ -459,4 +459,4 @@ class KteDriver:
             else:
                 self.dut.io_kceSlotIsAvailable_valid.value = 1
                 self.dut.io_kceSlotIsAvailable_bits.value = slot
-            await rising_edge(self.dut.clock)
+            await next_drive_phase(self.dut.clock)

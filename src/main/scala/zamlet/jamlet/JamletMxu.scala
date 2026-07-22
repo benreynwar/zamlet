@@ -104,11 +104,11 @@ class JamletMxu(
     }
   }
 
-  def controlRegister(in: Bool, name: String): Bool = {
-    val register = withReset(resetPipeline.childReset) {
+  def controlRegister(in: Bool, name: String, localReset: Reset): Bool = {
+    val register = withReset(localReset) {
       Module(new RegisterWithPipelinedReset(
         Bool(),
-        resetPipeline.childBudget)).suggestName(name)
+        cellResetBudget)).suggestName(name)
     }
     register.io.in := in
     register.io.out
@@ -116,27 +116,30 @@ class JamletMxu(
 
   val ewBackwardInput = Wire(Vec(n, UInt(8.W)))
   val nsBackwardInput = Wire(Vec(n, UInt(8.W)))
-  val ewUseBackward = controlRegister(io.ewUseBackward, "ewUseBackward")
-  val nsUseBackward = controlRegister(io.nsUseBackward, "nsUseBackward")
+  val ewUseBackward = controlRegister(
+    io.ewUseBackward, "ewUseBackward", resetFor(0, 0))
+  val nsUseBackward = controlRegister(
+    io.nsUseBackward, "nsUseBackward", resetFor(0, 0))
   val ewUseBackwardMux = Seq.tabulate(n) { row =>
-    controlRegister(ewUseBackward, s"ewUseBackwardMux_$row")
+    controlRegister(ewUseBackward, s"ewUseBackwardMux_$row", resetFor(row, 0))
   }
   val nsUseBackwardMux = Seq.tabulate(n) { col =>
-    controlRegister(nsUseBackward, s"nsUseBackwardMux_$col")
+    controlRegister(nsUseBackward, s"nsUseBackwardMux_$col", resetFor(0, col))
   }
   var previousInit: Bool = io.init
   val init = Seq.tabulate(n) { lane =>
-    previousInit = controlRegister(previousInit, s"init_$lane")
+    previousInit = controlRegister(previousInit, s"init_$lane", resetFor(lane, 0))
     previousInit
   }
   var previousStepIn: Bool = io.stepIn
   val stepIn = Seq.tabulate(n) { lane =>
-    previousStepIn = controlRegister(previousStepIn, s"stepIn_$lane")
+    previousStepIn = controlRegister(previousStepIn, s"stepIn_$lane", resetFor(lane, 0))
     previousStepIn
   }
   var previousCompleteIn: Bool = io.completeIn
   val completeIn = Seq.tabulate(n) { lane =>
-    previousCompleteIn = controlRegister(previousCompleteIn, s"completeIn_$lane")
+    previousCompleteIn = controlRegister(
+      previousCompleteIn, s"completeIn_$lane", resetFor(lane, 0))
     previousCompleteIn
   }
   for (index <- 0 until n) {
@@ -254,9 +257,21 @@ class JamletMxu(
     io.nsBackwardOutput(col) := nsBackwardInput(col)
   }
 
-  io.error := controlRegister(
-    cells.flatten.map(_.io.error).reduce(_ || _),
-    "error")
+  val errorInputs = if (resetGroupSize == 0) {
+    cells.flatten.map(_.io.error)
+  } else {
+    Seq.tabulate(n / resetGroupSize, n / resetGroupSize) { (groupRow, groupCol) =>
+      val groupErrors = for {
+        row <- groupRow * resetGroupSize until (groupRow + 1) * resetGroupSize
+        col <- groupCol * resetGroupSize until (groupCol + 1) * resetGroupSize
+      } yield cells(row)(col).io.error
+      controlRegister(
+        groupErrors.reduce(_ || _),
+        s"errorGroup_${groupRow}_${groupCol}",
+        resetFor(groupRow * resetGroupSize, groupCol * resetGroupSize))
+    }.flatten
+  }
+  io.error := controlRegister(errorInputs.reduce(_ || _), "error", resetFor(0, 0))
 }
 
 object JamletMxuGenerator extends zamlet.ModuleGenerator {

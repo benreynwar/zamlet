@@ -1,6 +1,7 @@
 # Static Timing Analysis rules
 
 load(":providers.bzl", "LibrelaneInput", "LibrelaneInfo")
+load("//bazel:power_activity.bzl", "PowerActivityInfo", "PowerReportInfo")
 load(":common.bzl",
     "single_step_impl",
     "FLOW_ATTRS",
@@ -248,11 +249,14 @@ def _sta_post_pnr_impl(ctx):
     top = input_info.top
 
     lib_outputs = {}
+    sdf_outputs = {}
     outputs = []
     for corner in input_info.pdk_info.sta_corners:
         lib = ctx.actions.declare_file(ctx.label.name + "/" + corner + "/" + top + "__" + corner + ".lib")
+        sdf = ctx.actions.declare_file(ctx.label.name + "/" + corner + "/" + top + "__" + corner + ".sdf")
         lib_outputs[corner] = lib
-        outputs.append(lib)
+        sdf_outputs[corner] = sdf
+        outputs.extend([lib, sdf])
 
     report_outputs = []
     for path in _multi_corner_sta_reports(input_info.pdk_info.sta_corners):
@@ -279,7 +283,7 @@ def _sta_post_pnr_impl(ctx):
             pnl = state_info.pnl,
             odb = state_info.odb,
             sdc = state_info.sdc,
-            sdf = state_info.sdf,
+            sdf = sdf_outputs,
             spef = state_info.spef,
             lib = lib_outputs,
             gds = state_info.gds,
@@ -292,6 +296,68 @@ def _sta_post_pnr_impl(ctx):
             vh = state_info.vh,
             **{"def": getattr(state_info, "def", None)}
         ),
+    ]
+
+def _power_post_pnr_impl(ctx):
+    input_info = ctx.attr.input[LibrelaneInput]
+    state_info = ctx.attr.src[LibrelaneInfo]
+    activity = ctx.attr.activity[PowerActivityInfo]
+
+    activity_tcl = ctx.actions.declare_file(ctx.label.name + "/read_activity.tcl")
+    ctx.actions.write(
+        output = activity_tcl,
+        content = "read_vcd -scope {{{}}} {{{}}}\n".format(
+            ctx.attr.vcd_scope,
+            activity.vcd.path,
+        ) + """puts "%OL_CREATE_REPORT activity.rpt"
+report_activity_annotation -report_annotated
+puts "%OL_END_REPORT"
+""",
+    )
+
+    reports_by_corner = {
+        corner: ctx.actions.declare_file(ctx.label.name + "/" + corner + "/power.rpt")
+        for corner in input_info.pdk_info.sta_corners
+    }
+    activity_reports = [
+        ctx.actions.declare_file(ctx.label.name + "/" + corner + "/activity.rpt")
+        for corner in input_info.pdk_info.sta_corners
+    ]
+    reports = reports_by_corner.values() + activity_reports
+    inputs = get_input_files(input_info, state_info, STA_POST_PNR_CONFIG_KEYS)
+    inputs.extend([activity.vcd, activity.window, activity_tcl])
+    config = create_librelane_config(input_info, state_info, STA_POST_PNR_CONFIG_KEYS)
+    config["STA_EXTRA_CORNER_TCL_FILE"] = activity_tcl.path
+
+    state_out = run_librelane_step(
+        ctx = ctx,
+        step_id = "OpenROAD.STAPostPNR",
+        outputs = reports,
+        config_content = json.encode(config),
+        inputs = inputs,
+        input_info = input_info,
+        state_info = state_info,
+    )
+    activity_check = ctx.actions.declare_file(ctx.label.name + "/activity_check.txt")
+    report_paths = " ".join(["\"{}\"".format(report.path) for report in activity_reports])
+    ctx.actions.run_shell(
+        inputs = activity_reports,
+        outputs = [activity_check],
+        command = """set -e
+for report in {reports}; do
+  annotated=$(sed -n 's/^vcd  *//p' "$report")
+  unannotated=$(sed -n 's/^unannotated  *//p' "$report")
+  test -n "$annotated"
+  test "$annotated" -gt 0
+  test "$unannotated" -eq 0
+done
+echo "All corners have complete VCD activity annotation." > "{output}"
+""".format(reports = report_paths, output = activity_check.path),
+        mnemonic = "CheckPowerActivityAnnotation",
+    )
+    return [
+        DefaultInfo(files = depset(reports + [state_out, activity_check])),
+        PowerReportInfo(reports = reports_by_corner, state_out = state_out),
     ]
 
 def _ir_drop_report_impl(ctx):
@@ -338,6 +404,15 @@ librelane_sta_post_pnr = rule(
     implementation = _sta_post_pnr_impl,
     attrs = FLOW_ATTRS,
     provides = [DefaultInfo, LibrelaneInfo],
+)
+
+librelane_power_post_pnr = rule(
+    implementation = _power_post_pnr_impl,
+    attrs = dict(
+        FLOW_ATTRS,
+        activity = attr.label(mandatory = True, providers = [PowerActivityInfo]),
+        vcd_scope = attr.string(mandatory = True),
+    ),
 )
 
 librelane_ir_drop_report = rule(

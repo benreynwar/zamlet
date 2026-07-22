@@ -7,7 +7,7 @@ from cocotb.clock import Clock
 from cocotb.handle import HierarchyObject
 from cocotb.triggers import ReadOnly
 from zamlet import test_utils
-from zamlet.test_utils import rising_edge
+from zamlet.test_utils import next_drive_phase
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +68,7 @@ async def reset(dut: HierarchyObject) -> None:
     dut.io_x.value = 0
     dut.io_y.value = 0
     dut.reset.value = 1
-    await rising_edge(dut.clock)
+    await next_drive_phase(dut.clock)
     dut.reset.value = 0
 
 
@@ -110,7 +110,7 @@ async def wallace_mult_test(dut: HierarchyObject) -> None:
             result = int(dut.io_out.value)
             assert result == expected, \
                 f"Cycle {cycle}, input {idx}: {x:#x} * {y:#x} = {result:#x}, expected {expected:#x}"
-        await rising_edge(dut.clock)
+        await next_drive_phase(dut.clock)
 
 
     logger.info(f"PASS: {num_tests} random multiplications verified")

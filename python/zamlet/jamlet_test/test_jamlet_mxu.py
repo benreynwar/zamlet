@@ -13,7 +13,7 @@ from zamlet.matrix_test_utils import (
     matrix_product,
     random_matrix,
 )
-from zamlet.test_utils import rising_edge
+from zamlet.test_utils import next_drive_phase
 
 TEST_PARAMS = test_utils.get_test_params()
 with open(TEST_PARAMS["params_file"]) as f:
@@ -135,12 +135,12 @@ async def reset_dut(dut: HierarchyObject) -> None:
     zero_inputs(dut)
     await wait_cycles(dut, 3 + int(RESET_GROUP_SIZE > 0))
     dut.reset.value = 0
-    await rising_edge(dut.clock)
+    await wait_cycles(dut, 1 + int(RESET_GROUP_SIZE > 0))
 
 
 async def wait_cycles(dut: HierarchyObject, cycles: int) -> None:
     for _ in range(cycles):
-        await rising_edge(dut.clock)
+        await next_drive_phase(dut.clock)
 
 
 async def send_step_wave(
@@ -153,7 +153,7 @@ async def send_step_wave(
     for block_index in range(1, matrix_blocks):
         target_cycle = start_cycle + block_index * (MXU_N + INTER_MXU_LATENCY)
         while step_driver.cycle < target_cycle:
-            await rising_edge(dut.clock)
+            await next_drive_phase(dut.clock)
         step_driver.request(MXU_N)
 
 
@@ -163,7 +163,7 @@ async def send_complete_pulse(
     target_cycle: int,
 ) -> None:
     while complete_driver.cycle < target_cycle:
-        await rising_edge(dut.clock)
+        await next_drive_phase(dut.clock)
     complete_driver.request(1)
 
 
@@ -183,7 +183,7 @@ async def feed_ab(
                 b,
                 local_cycle,
             )
-        await rising_edge(dut.clock)
+        await next_drive_phase(dut.clock)
 
 
 def read_expected_c(
@@ -242,7 +242,7 @@ async def matrix_multiply(
                             row = local_block_row * MXU_N + local_row
                             col = local_block_col * MXU_N + local_col
                             dumped[(tile_block_row, tile_block_col)][row][col] = value
-        await rising_edge(dut.clock)
+        await next_drive_phase(dut.clock)
 
     for tile, (a, b) in tile_inputs.items():
         expected = [[value & UINT32_MASK for value in row] for row in matrix_product(a, b)]
@@ -275,7 +275,7 @@ async def test_4x4_matrix_multiply_on_2x2_mxu_grid(dut: HierarchyObject) -> None
     cocotb.start_soon(complete_driver.run())
     cocotb.start_soon(init_driver.run())
 
-    await rising_edge(dut.clock)
+    await next_drive_phase(dut.clock)
 
     for matrix_blocks in matrix_block_sizes():
         set_loop_control(dut, "ewUseBackward", tile_edge_controls(GRID_COLS, matrix_blocks))

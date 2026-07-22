@@ -1,6 +1,7 @@
 package zamlet.systolic
 
 import chisel3._
+import chisel3.experimental.{Analog, ExtModule, attach}
 import chisel3.util._
 import zamlet.utils.{RegisterWithPipelinedReset, ResetPipeline, ResetPipelineBudget}
 
@@ -168,6 +169,32 @@ class WeightStationary(
   }
 }
 
+class WeightStationaryIverilogCore(n: Int, resetGroupSize: Int) extends ExtModule {
+  override val desiredName = s"WeightStationary${n}x${n}_ResetGroup$resetGroupSize"
+
+  val clock = IO(Input(Clock()))
+  val reset = IO(Input(Reset()))
+  val VPWR = IO(Analog(1.W))
+  val VGND = IO(Analog(1.W))
+  val io = IO(new WeightStationaryIO(n))
+}
+
+class WeightStationaryIverilogWrapper(n: Int, resetGroupSize: Int) extends Module {
+  override val desiredName =
+    s"WeightStationary${n}x${n}_ResetGroup${resetGroupSize}IverilogWrapper"
+  val io = IO(new WeightStationaryIO(n))
+  val powerDumpEnable = IO(Input(Bool()))
+  val VPWR = IO(Analog(1.W))
+  val VGND = IO(Analog(1.W))
+
+  val dut = Module(new WeightStationaryIverilogCore(n, resetGroupSize))
+  dut.clock := clock
+  dut.reset := reset
+  attach(dut.VPWR, VPWR)
+  attach(dut.VGND, VGND)
+  dut.io <> io
+}
+
 object WeightStationaryGenerator extends zamlet.ModuleGenerator {
   override def makeModule(args: Seq[String]): Module = {
     val resetGroupSize = args.drop(1).headOption.map(_.toInt).getOrElse(0)
@@ -178,10 +205,25 @@ object WeightStationaryGenerator extends zamlet.ModuleGenerator {
   }
 }
 
+object WeightStationaryIverilogWrapperGenerator extends zamlet.ModuleGenerator {
+  override def makeModule(args: Seq[String]): Module =
+    new WeightStationaryIverilogWrapper(
+      n = args.headOption.map(_.toInt).getOrElse(8),
+      resetGroupSize = args.drop(1).headOption.map(_.toInt).getOrElse(0))
+}
+
 object WeightStationaryMain extends App {
   if (args.length < 1) {
     println("Usage: <outputDir>")
     System.exit(1)
   }
   WeightStationaryGenerator.generate(args(0), args.drop(1))
+}
+
+object WeightStationaryIverilogWrapperMain extends App {
+  if (args.length < 1) {
+    println("Usage: <outputDir>")
+    System.exit(1)
+  }
+  WeightStationaryIverilogWrapperGenerator.generate(args(0), args.drop(1))
 }

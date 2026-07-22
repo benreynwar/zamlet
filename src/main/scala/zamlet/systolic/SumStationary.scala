@@ -1,6 +1,7 @@
 package zamlet.systolic
 
 import chisel3._
+import chisel3.experimental.{Analog, ExtModule, attach}
 import chisel3.util._
 import zamlet.maths.CSA3to2
 import zamlet.utils.{RegisterWithPipelinedReset, ResetPipeline, ResetPipelineBudget}
@@ -151,6 +152,38 @@ class SumStationaryIO(n: Int) extends Bundle {
   val completeIn = Input(Bool())
 }
 
+case class SumStationaryParams(
+    n: Int,
+    useCarrySaveAccumulator: Boolean,
+    registerBC: Boolean,
+    registerDE: Boolean,
+    splitCDrain: Boolean,
+    resetGroupSize: Int) {
+  val moduleName =
+    s"SumStationary${n}x${n}_CSA${if (useCarrySaveAccumulator) 1 else 0}" +
+      s"_BC${if (registerBC) 1 else 0}_DE${if (registerDE) 1 else 0}" +
+      s"_SplitDrain${if (splitCDrain) 1 else 0}_ResetGroup$resetGroupSize"
+
+  def makeModule: SumStationary = new SumStationary(
+    n,
+    useCarrySaveAccumulator,
+    registerBC,
+    registerDE,
+    splitCDrain,
+    resetGroupSize,
+    ResetPipelineBudget(if (resetGroupSize == 0) 2 else 3))
+}
+
+object SumStationaryParams {
+  def fromArgs(args: Seq[String]): SumStationaryParams = SumStationaryParams(
+    n = args.headOption.map(_.toInt).getOrElse(8),
+    useCarrySaveAccumulator = args.drop(1).headOption.exists(_.toBoolean),
+    registerBC = args.drop(2).headOption.forall(_.toBoolean),
+    registerDE = args.drop(3).headOption.exists(_.toBoolean),
+    splitCDrain = args.drop(4).headOption.exists(_.toBoolean),
+    resetGroupSize = args.drop(5).headOption.map(_.toInt).getOrElse(0))
+}
+
 /** An `n` by `n` sum-stationary systolic array.
   *
   * A enters from the west, B enters from the north, and every cell retains its
@@ -176,10 +209,13 @@ class SumStationary(
     splitCDrain: Boolean = false,
     resetGroupSize: Int = 0,
     resetBudget: ResetPipelineBudget = ResetPipelineBudget(2)) extends Module {
-  override val desiredName =
-    s"SumStationary${n}x${n}_CSA${if (useCarrySaveAccumulator) 1 else 0}" +
-      s"_BC${if (registerBC) 1 else 0}_DE${if (registerDE) 1 else 0}" +
-      s"_SplitDrain${if (splitCDrain) 1 else 0}_ResetGroup$resetGroupSize"
+  override val desiredName = SumStationaryParams(
+    n,
+    useCarrySaveAccumulator,
+    registerBC,
+    registerDE,
+    splitCDrain,
+    resetGroupSize).moduleName
   require(n > 0)
   require(!splitCDrain || (n >= 4 && n % 2 == 0))
   require(resetGroupSize >= 0)
@@ -333,18 +369,39 @@ class SumStationary(
   }
 }
 
+class SumStationaryIverilogCore(params: SumStationaryParams) extends ExtModule {
+  override val desiredName = params.moduleName
+
+  val clock = IO(Input(Clock()))
+  val reset = IO(Input(Reset()))
+  val VPWR = IO(Analog(1.W))
+  val VGND = IO(Analog(1.W))
+  val io = IO(new SumStationaryIO(params.n))
+}
+
+class SumStationaryIverilogWrapper(params: SumStationaryParams) extends Module {
+  override val desiredName = params.moduleName + "IverilogWrapper"
+  val io = IO(new SumStationaryIO(params.n))
+  val powerDumpEnable = IO(Input(Bool()))
+  val VPWR = IO(Analog(1.W))
+  val VGND = IO(Analog(1.W))
+
+  val dut = Module(new SumStationaryIverilogCore(params))
+  dut.clock := clock
+  dut.reset := reset
+  attach(dut.VPWR, VPWR)
+  attach(dut.VGND, VGND)
+  dut.io <> io
+}
+
 object SumStationaryGenerator extends zamlet.ModuleGenerator {
-  override def makeModule(args: Seq[String]): Module = {
-    val resetGroupSize = args.drop(5).headOption.map(_.toInt).getOrElse(0)
-    new SumStationary(
-      n = args.headOption.map(_.toInt).getOrElse(8),
-      useCarrySaveAccumulator = args.drop(1).headOption.exists(_.toBoolean),
-      registerBC = args.drop(2).headOption.forall(_.toBoolean),
-      registerDE = args.drop(3).headOption.exists(_.toBoolean),
-      splitCDrain = args.drop(4).headOption.exists(_.toBoolean),
-      resetGroupSize = resetGroupSize,
-      resetBudget = ResetPipelineBudget(if (resetGroupSize == 0) 2 else 3))
-  }
+  override def makeModule(args: Seq[String]): Module =
+    SumStationaryParams.fromArgs(args).makeModule
+}
+
+object SumStationaryIverilogWrapperGenerator extends zamlet.ModuleGenerator {
+  override def makeModule(args: Seq[String]): Module =
+    new SumStationaryIverilogWrapper(SumStationaryParams.fromArgs(args))
 }
 
 object SumStationaryMain extends App {
@@ -353,4 +410,12 @@ object SumStationaryMain extends App {
     System.exit(1)
   }
   SumStationaryGenerator.generate(args(0), args.drop(1))
+}
+
+object SumStationaryIverilogWrapperMain extends App {
+  if (args.length < 1) {
+    println("Usage: <outputDir>")
+    System.exit(1)
+  }
+  SumStationaryIverilogWrapperGenerator.generate(args(0), args.drop(1))
 }

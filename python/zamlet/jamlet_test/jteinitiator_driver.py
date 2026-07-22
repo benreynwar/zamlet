@@ -6,7 +6,7 @@ from cocotb.handle import HierarchyObject
 from zamlet.lane_order import LaneOrder
 from zamlet.params import ZamletParams
 from zamlet.test_helpers.streams import ValidMonitor, ValidReadySink, ValidReadySource
-from zamlet.test_utils import rising_edge
+from zamlet.test_utils import next_drive_phase
 
 JTE_STATE_INITIAL = 0
 
@@ -71,7 +71,7 @@ class ScalarResponder:
                 addr = self.req.pop()
                 self.check_expected(addr)
                 self.resp.append(self.lookup(addr))
-            await rising_edge(self.clock)
+            await next_drive_phase(self.clock)
 
 
 class TlbResponder(ScalarResponder):
@@ -95,7 +95,7 @@ class TlbResponder(ScalarResponder):
                 req = self.req.pop()
                 self.check_expected(req)
                 self.resp.append(self.lookup(req))
-            await rising_edge(self.clock)
+            await next_drive_phase(self.clock)
 
 
 class JteInitiatorDriver:

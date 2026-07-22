@@ -9,7 +9,7 @@ from zamlet.kamlet_test.tag_table_driver import (
     TagState,
     TagTableDriver,
 )
-from zamlet.test_utils import rising_edge
+from zamlet.test_utils import next_drive_phase
 
 
 async def reservation_worker(
@@ -22,7 +22,7 @@ async def reservation_worker(
     await driver.wait_for_fill_complete(slot)
 
     for _ in range(rng.randrange(8)):
-        await rising_edge(driver.clock)
+        await next_drive_phase(driver.clock)
     await driver.release(slot)
     return slot
 

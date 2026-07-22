@@ -7,7 +7,7 @@ import cocotb
 from cocotb.handle import HierarchyObject
 from cocotb.triggers import Event, ReadOnly
 
-from zamlet.test_utils import rising_edge
+from zamlet.test_utils import next_drive_phase
 from zamlet.utils import make_seed
 
 
@@ -147,8 +147,8 @@ class TagTableDriver:
         self.dut.io_writebackReq_ready.value = 1
         self.dut.io_writebackComplete_valid.value = 0
         self.dut.io_writebackComplete_bits.value = 0
-        await rising_edge(self.clock)
-        await rising_edge(self.clock)
+        await next_drive_phase(self.clock)
+        await next_drive_phase(self.clock)
         self.dut.reset.value = 0
 
     async def wait_for_allocated_slot(self) -> int:
@@ -159,13 +159,13 @@ class TagTableDriver:
         while True:
             if self.alloc_resps:
                 return self.alloc_resps.popleft()
-            await rising_edge(self.clock)
+            await next_drive_phase(self.clock)
 
     async def wait_for_claim_resp(self) -> ClaimResp:
         while True:
             if self.claim_resps:
                 return self.claim_resps.popleft()
-            await rising_edge(self.clock)
+            await next_drive_phase(self.clock)
 
     async def wait_for_fill_complete(self, slot: int) -> None:
         event = self.fill_complete_events.setdefault(slot, Event())
@@ -175,7 +175,7 @@ class TagTableDriver:
         while True:
             if not self.fill_completes:
                 return
-            await rising_edge(self.clock)
+            await next_drive_phase(self.clock)
 
     async def alloc(self, tag: int, will_write: bool = False) -> AllocResp:
         self.alloc_reqs.append(AllocReq(tag=tag, will_write=will_write))
@@ -218,7 +218,7 @@ class TagTableDriver:
                 int(self.dut.io_allocReq_valid.value)
                 and int(self.dut.io_allocReq_ready.value)
             )
-            await rising_edge(self.clock)
+            await next_drive_phase(self.clock)
             if fire:
                 active_req = None
 
@@ -239,7 +239,7 @@ class TagTableDriver:
                     slot=slot,
                     state=int(self.dut.io_allocResp_bits_state.value),
                 ))
-            await rising_edge(self.clock)
+            await next_drive_phase(self.clock)
 
     async def drive_claim_req(self, seed: int) -> None:
         rng = Random(seed)
@@ -258,7 +258,7 @@ class TagTableDriver:
                 )
             else:
                 self.dut.io_claimReq_valid.value = 0
-            await rising_edge(self.clock)
+            await next_drive_phase(self.clock)
             if active_req is not None:
                 active_req = None
 
@@ -272,7 +272,7 @@ class TagTableDriver:
                     state=int(self.dut.io_claimResp_bits_state.value),
                     did_claim=int(self.dut.io_claimResp_bits_didClaim.value),
                 ))
-            await rising_edge(self.clock)
+            await next_drive_phase(self.clock)
 
     async def monitor_fill_req(self, seed: int) -> None:
         rng = Random(seed)
@@ -292,11 +292,11 @@ class TagTableDriver:
                 cocotb.start_soon(
                     self.complete_fill_after_delay(req, rng.randrange(8))
                 )
-            await rising_edge(self.clock)
+            await next_drive_phase(self.clock)
 
     async def complete_fill_after_delay(self, req: FillReq, delay: int) -> None:
         for _ in range(delay):
-            await rising_edge(self.clock)
+            await next_drive_phase(self.clock)
         self.fill_completes.append(req.slot)
 
     async def drive_fill_complete(self) -> None:
@@ -309,7 +309,7 @@ class TagTableDriver:
                 self.dut.io_fillComplete_bits_slot.value = active_slot
             else:
                 self.dut.io_fillComplete_valid.value = 0
-            await rising_edge(self.clock)
+            await next_drive_phase(self.clock)
             if active_slot is not None:
                 event = self.fill_complete_events.setdefault(active_slot, Event())
                 event.set()
@@ -333,7 +333,7 @@ class TagTableDriver:
                 cocotb.start_soon(
                     self.complete_writeback_after_delay(req, rng.randrange(8))
                 )
-            await rising_edge(self.clock)
+            await next_drive_phase(self.clock)
 
     async def complete_writeback_after_delay(
         self,
@@ -341,7 +341,7 @@ class TagTableDriver:
         delay: int,
     ) -> None:
         for _ in range(delay):
-            await rising_edge(self.clock)
+            await next_drive_phase(self.clock)
         self.writeback_completes.append(req.slot)
 
     async def drive_writeback_complete(self) -> None:
@@ -354,7 +354,7 @@ class TagTableDriver:
                 self.dut.io_writebackComplete_bits.value = active_slot
             else:
                 self.dut.io_writebackComplete_valid.value = 0
-            await rising_edge(self.clock)
+            await next_drive_phase(self.clock)
             active_slot = None
 
     async def drive_release(self, seed: int) -> None:
@@ -369,7 +369,7 @@ class TagTableDriver:
                 self.dut.io_release_bits.value = active_req.slot
             else:
                 self.dut.io_release_valid.value = 0
-            await rising_edge(self.clock)
+            await next_drive_phase(self.clock)
             if active_req is not None:
                 active_req.done.set()
                 active_req = None
@@ -398,7 +398,7 @@ class TagTableDriver:
                     self.dut.io_errors_releaseUnderflow.value
                 ),
             ))
-            await rising_edge(self.clock)
+            await next_drive_phase(self.clock)
 
     async def check_errors(self) -> None:
         while True:
@@ -410,4 +410,4 @@ class TagTableDriver:
             assert int(self.dut.io_errors_writebackCompleteBadState.value) == 0
             assert int(self.dut.io_errors_writebackCompleteQueueNotReady.value) == 0
             assert int(self.dut.io_errors_releaseUnderflow.value) == 0
-            await rising_edge(self.clock)
+            await next_drive_phase(self.clock)

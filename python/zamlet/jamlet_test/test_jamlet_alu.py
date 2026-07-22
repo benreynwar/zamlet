@@ -8,7 +8,7 @@ from cocotb.triggers import ReadOnly
 from zamlet import test_utils
 from zamlet.maths import segmented_multiplier
 from zamlet.params import ZamletParams
-from zamlet.test_utils import rising_edge
+from zamlet.test_utils import next_drive_phase
 
 OP_MUL_LOW = 0
 OP_MUL_HIGH = 1
@@ -121,9 +121,9 @@ async def reset_dut(dut: HierarchyObject) -> None:
     dut.io_input_bits_isSignedB.value = 0
     dut.io_input_bits_op.value = 0
     dut.io_input_bits_useUpper.value = 0
-    await rising_edge(dut.clock)
+    await next_drive_phase(dut.clock)
     dut.reset.value = 0
-    await rising_edge(dut.clock)
+    await next_drive_phase(dut.clock)
 
 
 def make_case(
@@ -218,7 +218,7 @@ async def run_cases(
             assert int(dut.io_errors_unsupportedWf.value) == 0
             assert int(dut.io_errors_unsupportedEwWfRatio.value) == 0
 
-        await rising_edge(dut.clock)
+        await next_drive_phase(dut.clock)
 
 
 @cocotb.test()
