@@ -39,6 +39,10 @@ def main() -> None:
             "drc_errors": metrics["route__drc_errors"],
             "wirelength_um": metrics["route__wirelength"],
         },
+        "electrical": {
+            "max_cap_violations": metrics["design__max_cap_violation__count"],
+            "max_slew_violations": metrics["design__max_slew_violation__count"],
+        },
         "timing_ns": {
             "setup_worst_slack": metrics["timing__setup__ws"],
             "hold_worst_slack": metrics["timing__hold__ws"],

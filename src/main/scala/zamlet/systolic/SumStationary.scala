@@ -74,8 +74,8 @@ class SumStationaryCell(
   withReset(resetPipeline.localReset) {
     val bFirst = RegNext(io.aFirst, false.B)
     val bFinal = RegNext(io.aFinal, false.B)
-    val bA = RegNext(io.aA, 0.U)
-    val bB = RegNext(io.aB, 0.U)
+    val bA = RegNext(io.aA)
+    val bB = RegNext(io.aB)
 
     val bAB = (bA.asSInt * bB.asSInt).asUInt
     val bABExtended = Cat(Fill(16, bAB(15)), bAB)
@@ -91,8 +91,8 @@ class SumStationaryCell(
     if (useCarrySaveAccumulator) {
       val accSumNext = Wire(UInt(32.W))
       val accCarryNext = Wire(UInt(32.W))
-      val accSum = RegNext(accSumNext, 0.U(32.W))
-      val accCarry = RegNext(accCarryNext, 0.U(32.W))
+      val accSum = RegNext(accSumNext)
+      val accCarry = RegNext(accCarryNext)
 
       // Stage C adds a product every cycle. cFirst discards any state accumulated
       // outside an operation. On the cycle after cFinal, stage D has the completed
@@ -110,7 +110,7 @@ class SumStationaryCell(
       dCDrainData := accSum + accCarry
     } else {
       val dCNext = Wire(UInt(32.W))
-      val dC = RegNext(dCNext, 0.U(32.W))
+      val dC = RegNext(dCNext)
 
       // Stage C adds a product every cycle. cFirst discards any state accumulated
       // outside an operation before adding the first product.

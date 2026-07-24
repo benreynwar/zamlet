@@ -42,7 +42,7 @@ class WeightStationaryCell(
     ResetPipeline(clock, reset.asBool, 1, resetBudget, "WeightStationaryCell")
 
   withReset(resetPipeline.localReset) {
-    val bInput = RegNext(io.inputIn, 0.U)
+    val bInput = RegNext(io.inputIn)
     val bStep = RegNext(io.stepIn, false.B)
 
     // Weight data is combinational through the column. The registered load pulse
@@ -52,14 +52,13 @@ class WeightStationaryCell(
 
     val bProduct = (bInput.asSInt * bWeight.asSInt).asUInt
 
-    val cStep = RegNext(bStep, false.B)
-    val cProduct = RegNext(Cat(Fill(16, bProduct(15)), bProduct), 0.U)
+    val cProduct = RegNext(Cat(Fill(16, bProduct(15)), bProduct))
 
     io.inputOut := bInput
     io.weightLoadOut := io.weightLoadIn
     // sumIn enters stage C. The stage-C addition is registered at C-to-D.
     // The next row consumes dSum with the corresponding delayed step.
-    val dSum = RegNext((io.sumIn + cProduct)(31, 0), 0.U)
+    val dSum = RegNext((io.sumIn + cProduct)(31, 0))
 
     io.sumOut := dSum
 

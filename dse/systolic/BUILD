@@ -17,7 +17,7 @@ PDK_CONFIGS = [
     {
         "name": "sky130hd",
         "target": ":sky130hd",
-        "clock_periods": ["20", "16", "12", "11", "10", "9"],
+        "clock_periods": ["20", "16", "12", "11", "10", "9.5", "9", "8.5"],
         "flow_kwargs": {
             "design_repair_max_wire_length": "150",
         },
@@ -62,7 +62,7 @@ WEIGHT_STATIONARY_CONFIGS = [
     (4, 0),
     (2, 0),
 ]
-WEIGHT_STATIONARY_UTILIZATIONS = [40, 50, 60, 65, 70]
+WEIGHT_STATIONARY_UTILIZATIONS = [40, 50, 60, 65, 70, 72, 74, 75, 80]
 
 [
     chisel_verilog_no_config(
@@ -137,7 +137,7 @@ SUM_STATIONARY_CONFIGS = [
     (2, True, False, 0),
 ]
 
-SUM_STATIONARY_UTILIZATIONS = [40, 50, 60, 65, 70]
+SUM_STATIONARY_UTILIZATIONS = [40, 50, 60, 65, 70, 72, 74, 75, 80]
 
 [
     chisel_verilog_no_config(

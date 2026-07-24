@@ -58,6 +58,16 @@ def get_all_pdk_variables():
     return all_vars
 
 
+def has_configured_value(config, variable) -> bool:
+    """Check a variable under its current and LibreLane-declared old names."""
+    names = [variable.name]
+    for deprecated_name in variable.deprecated_names:
+        if isinstance(deprecated_name, tuple):
+            deprecated_name, _ = deprecated_name
+        names.append(deprecated_name)
+    return any(config.get(name) is not None for name in names)
+
+
 def load_pdk_config(pdk_root: str, pdk: str, scl: str) -> Dict[str, Any]:
     """Load PDK and SCL configuration using librelane.
 
@@ -76,7 +86,10 @@ def load_pdk_config(pdk_root: str, pdk: str, scl: str) -> Dict[str, Any]:
         pdk_root, pdk, scl, None
     )
     mutable = GenericDict(raw)
-    if not mutable.get("MAGICRC") and not mutable.get("MAGIC_TECH"):
+    variables_by_name = {variable.name: variable for variable in all_pdk_vars}
+    if not has_configured_value(
+        mutable, variables_by_name["MAGICRC"]
+    ) and not has_configured_value(mutable, variables_by_name["MAGIC_TECH"]):
         if "MAGIC_PDK_SETUP" in mutable:
             mutable.pop("MAGIC_PDK_SETUP")
 

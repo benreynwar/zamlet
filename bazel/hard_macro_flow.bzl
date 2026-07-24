@@ -4,6 +4,13 @@ load("//bazel:power_activity.bzl", "PowerReportInfo")
 load("//bazel/flow:defs.bzl", "LibrelaneInfo", "librelane_classic_flow", "librelane_power_post_pnr")
 load("//bazel/flow:providers.bzl", "LibrelaneInput")
 
+PnrAnalysisInfo = provider(
+    doc = "Summary metrics produced from final routed STA and power analysis.",
+    fields = {
+        "analysis": "File containing area, timing, routing, and power metrics as JSON.",
+    },
+)
+
 
 def _state_files(state):
     files = []
@@ -24,8 +31,8 @@ def _state_files(state):
     return files
 
 
-def _hard_macro_analysis_impl(ctx):
-    macro = ctx.attr.macro[LibrelaneInfo]
+def _pnr_analysis_impl(ctx):
+    state = ctx.attr.state[LibrelaneInfo]
     power = ctx.attr.power[PowerReportInfo]
     flow_input = ctx.attr.flow_input[LibrelaneInput]
     nominal_corner = flow_input.default_corner or flow_input.pdk_info.default_corner
@@ -34,7 +41,7 @@ def _hard_macro_analysis_impl(ctx):
 
     analysis = ctx.actions.declare_file(ctx.label.name + "/analysis.json")
     args = ctx.actions.args()
-    args.add("--state", macro.state_out)
+    args.add("--state", state.state_out)
     args.add("--power-report", power.reports[nominal_corner])
     args.add("--clock-period-ns", ctx.attr.clock_period_ns)
     args.add("--target-utilization", ctx.attr.target_utilization)
@@ -42,19 +49,22 @@ def _hard_macro_analysis_impl(ctx):
     ctx.actions.run(
         executable = ctx.executable._summarize,
         arguments = [args],
-        inputs = [macro.state_out, power.reports[nominal_corner]],
+        inputs = [state.state_out, power.reports[nominal_corner]],
         outputs = [analysis],
         mnemonic = "SummarizeHardMacro",
     )
 
-    files = _state_files(macro) + ctx.attr.power[DefaultInfo].files.to_list() + [analysis]
-    return [DefaultInfo(files = depset(files))]
+    files = _state_files(state) + ctx.attr.power[DefaultInfo].files.to_list() + [analysis]
+    return [
+        DefaultInfo(files = depset(files)),
+        PnrAnalysisInfo(analysis = analysis),
+    ]
 
 
-hard_macro_analysis = rule(
-    implementation = _hard_macro_analysis_impl,
+pnr_analysis = rule(
+    implementation = _pnr_analysis_impl,
     attrs = {
-        "macro": attr.label(mandatory = True, providers = [LibrelaneInfo]),
+        "state": attr.label(mandatory = True, providers = [LibrelaneInfo]),
         "power": attr.label(mandatory = True, providers = [PowerReportInfo]),
         "flow_input": attr.label(mandatory = True, providers = [LibrelaneInput]),
         "clock_period_ns": attr.string(mandatory = True),
@@ -118,9 +128,17 @@ def hard_macro_flow(
         vcd_scope = (simulation_toplevel or flow_kwargs["top"] + "IverilogWrapper") +
                     "/" + (vcd_instance_path or "dut").replace(".", "/"),
     )
-    hard_macro_analysis(
+    pnr_analysis(
+        name = name + "_analysis",
+        state = ":" + name + "_sta",
+        power = ":" + name + "_power",
+        flow_input = ":" + name + "_init",
+        clock_period_ns = clock_period,
+        target_utilization = fp_core_util,
+    )
+    pnr_analysis(
         name = name + "_macro",
-        macro = ":" + name + "_mfg_report",
+        state = ":" + name + "_mfg_report",
         power = ":" + name + "_power",
         flow_input = ":" + name + "_init",
         clock_period_ns = clock_period,

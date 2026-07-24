@@ -189,6 +189,7 @@ def _pdk_config_repo_impl(repository_ctx):
 
     # Path to the dump script (relative to workspace root)
     script_path = repository_ctx.path(repository_ctx.attr._dump_script)
+    repository_ctx.watch(script_path)
 
     # Run the dump script
     # PATH must be passed through so we find nix-shell's python3 with librelane
