@@ -1,7 +1,7 @@
 package zamlet.systolic
 
 import chisel3._
-import chisel3.experimental.{Analog, ExtModule, attach}
+import chisel3.experimental.ExtModule
 import chisel3.util._
 import zamlet.utils.{RegisterWithPipelinedReset, ResetPipeline, ResetPipelineBudget}
 
@@ -42,7 +42,7 @@ class WeightStationaryCell(
     ResetPipeline(clock, reset.asBool, 1, resetBudget, "WeightStationaryCell")
 
   withReset(resetPipeline.localReset) {
-    val bInput = RegEnable(io.inputIn, io.stepIn)
+    val bInput = RegNext(io.inputIn, 0.U)
     val bStep = RegNext(io.stepIn, false.B)
 
     // Weight data is combinational through the column. The registered load pulse
@@ -53,12 +53,13 @@ class WeightStationaryCell(
     val bProduct = (bInput.asSInt * bWeight.asSInt).asUInt
 
     val cStep = RegNext(bStep, false.B)
-    val cProduct = RegEnable(Cat(Fill(16, bProduct(15)), bProduct), bStep)
+    val cProduct = RegNext(Cat(Fill(16, bProduct(15)), bProduct), 0.U)
 
     io.inputOut := bInput
     io.weightLoadOut := io.weightLoadIn
     // sumIn enters stage C. The stage-C addition is registered at C-to-D.
-    val dSum = RegEnable((io.sumIn + cProduct)(31, 0), 0.U, cStep)
+    // The next row consumes dSum with the corresponding delayed step.
+    val dSum = RegNext((io.sumIn + cProduct)(31, 0), 0.U)
 
     io.sumOut := dSum
 
@@ -174,8 +175,6 @@ class WeightStationaryIverilogCore(n: Int, resetGroupSize: Int) extends ExtModul
 
   val clock = IO(Input(Clock()))
   val reset = IO(Input(Reset()))
-  val VPWR = IO(Analog(1.W))
-  val VGND = IO(Analog(1.W))
   val io = IO(new WeightStationaryIO(n))
 }
 
@@ -184,14 +183,10 @@ class WeightStationaryIverilogWrapper(n: Int, resetGroupSize: Int) extends Modul
     s"WeightStationary${n}x${n}_ResetGroup${resetGroupSize}IverilogWrapper"
   val io = IO(new WeightStationaryIO(n))
   val powerDumpEnable = IO(Input(Bool()))
-  val VPWR = IO(Analog(1.W))
-  val VGND = IO(Analog(1.W))
 
   val dut = Module(new WeightStationaryIverilogCore(n, resetGroupSize))
   dut.clock := clock
   dut.reset := reset
-  attach(dut.VPWR, VPWR)
-  attach(dut.VGND, VGND)
   dut.io <> io
 }
 

@@ -28,7 +28,7 @@ CLOCK_PERIOD_NS = float(CONFIG["clockPeriodNs"])
 
 # Fixed latency from the final A/B feed edge for a dot product to observing the
 # selected sum at cOut. The top-level scalar control delay is not included here
-# because the test waits one cycle after requesting step before it starts
+# because the test waits one cycle after requesting first before it starts
 # feed_ab.
 # 1. optional BC register captures the final product.
 # 2. compulsory CD accumulator register captures the completed sum.
@@ -47,8 +47,8 @@ def set_vector(dut: HierarchyObject, name: str, values: list[int]) -> None:
 def zero_inputs(dut: HierarchyObject) -> None:
     set_vector(dut, "aIn", [0 for _ in range(N)])
     set_vector(dut, "bIn", [0 for _ in range(N)])
-    dut.io_stepIn.value = 0
-    dut.io_completeIn.value = 0
+    dut.io_firstIn.value = 0
+    dut.io_finalIn.value = 0
 
 
 async def wait_cycles(dut: HierarchyObject, cycles: int) -> None:
@@ -111,20 +111,20 @@ def capture_outputs(
             captured[row][col] = int(getattr(dut, f"io_cOut_{col}").value)
 
 
-async def request_complete(
+async def request_final(
     dut: HierarchyObject,
-    complete_driver: SkewedControlDriver,
+    final_driver: SkewedControlDriver,
     target_cycle: int,
 ) -> None:
-    while complete_driver.cycle < target_cycle:
+    while final_driver.cycle < target_cycle:
         await next_drive_phase(dut.clock)
-    complete_driver.request(1)
+    final_driver.request(1)
 
 
 async def matrix_multiply(
     dut: HierarchyObject,
-    step_driver: SkewedControlDriver,
-    complete_driver: SkewedControlDriver,
+    first_driver: SkewedControlDriver,
+    final_driver: SkewedControlDriver,
     a: list[list[int]],
     b: list[list[int]],
     sent: Event,
@@ -132,9 +132,9 @@ async def matrix_multiply(
     expected = [[value & UINT32_MASK for value in row] for row in matrix_product(a, b)]
     captured: list[list[int | None]] = [[None for _ in range(N)] for _ in range(N)]
 
-    start_cycle = step_driver.cycle
-    step_driver.request(N)
-    cocotb.start_soon(request_complete(dut, complete_driver, start_cycle + N - 1))
+    start_cycle = first_driver.cycle
+    first_driver.request(1)
+    cocotb.start_soon(request_final(dut, final_driver, start_cycle + N - 1))
     await next_drive_phase(dut.clock)
     cocotb.start_soon(feed_ab(dut, a, b, sent))
 
@@ -160,10 +160,10 @@ async def test_matrix_multiply(dut: HierarchyObject) -> None:
     rng = random.Random(TEST_PARAMS["seed"])
     await reset_dut(dut)
 
-    step_driver = SkewedControlDriver(dut, "stepIn")
-    complete_driver = SkewedControlDriver(dut, "completeIn")
-    cocotb.start_soon(step_driver.run())
-    cocotb.start_soon(complete_driver.run())
+    first_driver = SkewedControlDriver(dut, "firstIn")
+    final_driver = SkewedControlDriver(dut, "finalIn")
+    cocotb.start_soon(first_driver.run())
+    cocotb.start_soon(final_driver.run())
 
     await next_drive_phase(dut.clock)
 
@@ -174,8 +174,8 @@ async def test_matrix_multiply(dut: HierarchyObject) -> None:
         tasks.append(cocotb.start_soon(
             matrix_multiply(
                 dut,
-                step_driver,
-                complete_driver,
+                first_driver,
+                final_driver,
                 random_matrix(rng, N),
                 random_matrix(rng, N),
                 sent[matrix_index],

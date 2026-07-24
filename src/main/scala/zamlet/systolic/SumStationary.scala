@@ -1,7 +1,7 @@
 package zamlet.systolic
 
 import chisel3._
-import chisel3.experimental.{Analog, ExtModule, attach}
+import chisel3.experimental.ExtModule
 import chisel3.util._
 import zamlet.maths.CSA3to2
 import zamlet.utils.{RegisterWithPipelinedReset, ResetPipeline, ResetPipelineBudget}
@@ -24,14 +24,14 @@ class SumStationaryResetGroup extends RawModule {
 }
 
 class SumStationaryCellIO extends Bundle {
-  // A moves west to east and B moves north to south. Valid and final move with A.
+  // A moves west to east and B moves north to south. First and final move with A.
   val aA = Input(UInt(8.W))
   val bA = Output(UInt(8.W))
   val aB = Input(UInt(8.W))
   val bB = Output(UInt(8.W))
 
-  val aValid = Input(Bool())
-  val bValid = Output(Bool())
+  val aFirst = Input(Bool())
+  val bFirst = Output(Bool())
   val aFinal = Input(Bool())
   val bFinal = Output(Bool())
 
@@ -42,10 +42,10 @@ class SumStationaryCellIO extends Bundle {
 /** One signed 8-bit multiply, 32-bit sum-stationary processing element.
   *
   * The data path stages and their boundaries are:
-  *   - A: A, B, valid, and final arrive at the cell.
-  *   - A-to-B: A, B, valid, and final registers.
+  *   - A: A, B, first, and final arrive at the cell.
+  *   - A-to-B: A, B, first, and final registers.
   *   - B: signed multiplication.
-  *   - B-to-C: optional product, valid, and final registers (`registerBC`).
+  *   - B-to-C: optional product, first, and final registers (`registerBC`).
   *   - C: accumulation.
   *   - C-to-D: accumulator and final registers.
   *   - D: completed accumulator value; carry propagation in carry-save mode.
@@ -56,9 +56,10 @@ class SumStationaryCellIO extends Bundle {
   * removes carry propagation from the recurrence; propagation occurs only when a
   * completed result enters the drain. The conventional mode stores one binary sum.
   *
-  * `final` marks a valid product as the last product in its dot product. On the
-  * following cycle the completed accumulator enters the drain and the accumulator
-  * can begin the next dot product.
+  * `first` and `final` mark the inclusive range of products in a dot product.
+  * Every cycle between them is a product; values outside that range are ignored.
+  * On the cycle following `final`, the completed accumulator enters the drain
+  * while the accumulator can begin the next dot product.
   */
 class SumStationaryCell(
     useCarrySaveAccumulator: Boolean = false,
@@ -71,17 +72,17 @@ class SumStationaryCell(
     ResetPipeline(clock, reset.asBool, 1, resetBudget, "SumStationaryCell")
 
   withReset(resetPipeline.localReset) {
-    val bValid = RegNext(io.aValid, false.B)
+    val bFirst = RegNext(io.aFirst, false.B)
     val bFinal = RegNext(io.aFinal, false.B)
-    val bA = RegEnable(io.aA, io.aValid)
-    val bB = RegEnable(io.aB, io.aValid)
+    val bA = RegNext(io.aA, 0.U)
+    val bB = RegNext(io.aB, 0.U)
 
     val bAB = (bA.asSInt * bB.asSInt).asUInt
     val bABExtended = Cat(Fill(16, bAB(15)), bAB)
 
     // Optional B-to-C boundary used to separate multiplier and accumulator timing.
     val cAB = if (registerBC) RegNext(bABExtended) else bABExtended
-    val cValid = if (registerBC) RegNext(bValid, false.B) else bValid
+    val cFirst = if (registerBC) RegNext(bFirst, false.B) else bFirst
     val cFinal = if (registerBC) RegNext(bFinal, false.B) else bFinal
 
     val dFinal = RegNext(cFinal, false.B)
@@ -90,36 +91,31 @@ class SumStationaryCell(
     if (useCarrySaveAccumulator) {
       val accSumNext = Wire(UInt(32.W))
       val accCarryNext = Wire(UInt(32.W))
-      val accSum = RegEnable(accSumNext, 0.U(32.W), cValid || dFinal)
-      val accCarry = RegEnable(accCarryNext, 0.U(32.W), cValid || dFinal)
+      val accSum = RegNext(accSumNext, 0.U(32.W))
+      val accCarry = RegNext(accCarryNext, 0.U(32.W))
 
-      // Stage C adds the next product into the carry-save accumulator. On the
-      // cycle after cFinal, stage D has the completed carry-save value and
-      // converts it to binary for output while stage C can start the next sum.
-      val cAccSumBase = Mux(dFinal, 0.U(32.W), accSum)
-      val cAccCarryBase = Mux(dFinal, 0.U(32.W), accCarry)
+      // Stage C adds a product every cycle. cFirst discards any state accumulated
+      // outside an operation. On the cycle after cFinal, stage D has the completed
+      // carry-save value and converts it to binary for output.
+      val cAccSumBase = Mux(cFirst, 0.U(32.W), accSum)
+      val cAccCarryBase = Mux(cFirst, 0.U(32.W), accCarry)
       val csa = Module(new CSA3to2(32))
       csa.io.a := cAccSumBase
       csa.io.b := cAccCarryBase
       csa.io.c := cAB
 
-      accSumNext := cAccSumBase
-      accCarryNext := cAccCarryBase
-      when (cValid) {
-        accSumNext := csa.io.sum
-        accCarryNext := csa.io.carry
-      }
+      accSumNext := csa.io.sum
+      accCarryNext := csa.io.carry
 
       dCDrainData := accSum + accCarry
     } else {
       val dCNext = Wire(UInt(32.W))
-      val dC = RegEnable(dCNext, 0.U(32.W), cValid || dFinal)
+      val dC = RegNext(dCNext, 0.U(32.W))
 
-      val cCBase = Mux(dFinal, 0.U(32.W), dC)
-      dCNext := cCBase
-      when (cValid) {
-        dCNext := (cCBase + cAB)(31, 0)
-      }
+      // Stage C adds a product every cycle. cFirst discards any state accumulated
+      // outside an operation before adding the first product.
+      val cCBase = Mux(cFirst, 0.U(32.W), dC)
+      dCNext := (cCBase + cAB)(31, 0)
 
       dCDrainData := dC
     }
@@ -134,7 +130,7 @@ class SumStationaryCell(
 
     io.bA := bA
     io.bB := bB
-    io.bValid := bValid
+    io.bFirst := bFirst
     io.bFinal := bFinal
   }
 }
@@ -148,8 +144,8 @@ class SumStationaryIO(n: Int) extends Bundle {
 
   val cOut = Output(Vec(n, UInt(32.W)))
 
-  val stepIn = Input(Bool())
-  val completeIn = Input(Bool())
+  val firstIn = Input(Bool())
+  val finalIn = Input(Bool())
 }
 
 case class SumStationaryParams(
@@ -187,9 +183,10 @@ object SumStationaryParams {
 /** An `n` by `n` sum-stationary systolic array.
   *
   * A enters from the west, B enters from the north, and every cell retains its
-  * dot-product sum until `completeIn` sends the completed sums into the northbound
-  * C drain. `stepIn` and `completeIn` are delayed per row to form the same diagonal
-  * wavefront as A; the cell carries both controls east with A.
+  * dot-product sum until `finalIn` sends the completed sums into the northbound
+  * C drain. `firstIn` and `finalIn` are delayed per row to form the same diagonal
+  * wavefront as A; the cell carries both controls east with A. Every cycle from
+  * first through final is assumed to contain a product.
   *
   * @param n square array dimension
   * @param useCarrySaveAccumulator select carry-save rather than binary accumulators
@@ -263,18 +260,18 @@ class SumStationary(
 
   // Row zero receives each control after one register, row one after two, and so
   // on. A is presented with the corresponding timing by the external wavefront.
-  val (stepIn, completeIn) = withReset(resetPipeline.localReset) {
-    var previousStepIn: Bool = io.stepIn
-    val stepIn = Seq.tabulate(n) { lane =>
-      previousStepIn = RegNext(previousStepIn, false.B).suggestName(s"stepIn_$lane")
-      previousStepIn
+  val (firstIn, finalIn) = withReset(resetPipeline.localReset) {
+    var previousFirstIn: Bool = io.firstIn
+    val firstIn = Seq.tabulate(n) { lane =>
+      previousFirstIn = RegNext(previousFirstIn, false.B).suggestName(s"firstIn_$lane")
+      previousFirstIn
     }
-    var previousCompleteIn: Bool = io.completeIn
-    val completeIn = Seq.tabulate(n) { lane =>
-      previousCompleteIn = RegNext(previousCompleteIn, false.B).suggestName(s"completeIn_$lane")
-      previousCompleteIn
+    var previousFinalIn: Bool = io.finalIn
+    val finalIn = Seq.tabulate(n) { lane =>
+      previousFinalIn = RegNext(previousFinalIn, false.B).suggestName(s"finalIn_$lane")
+      previousFinalIn
     }
-    (stepIn, completeIn)
+    (firstIn, finalIn)
   }
 
   // In split mode, results from the lower half cross into the upper half through
@@ -312,8 +309,8 @@ class SumStationary(
         cell.io.eCDrainIn := cells(row + 1)(col).io.eCDrainOut
       }
 
-      cell.io.aValid := (if (col == 0) stepIn(row) else cells(row)(col - 1).io.bValid)
-      cell.io.aFinal := (if (col == 0) completeIn(row) else cells(row)(col - 1).io.bFinal)
+      cell.io.aFirst := (if (col == 0) firstIn(row) else cells(row)(col - 1).io.bFirst)
+      cell.io.aFinal := (if (col == 0) finalIn(row) else cells(row)(col - 1).io.bFinal)
     }
   }
 
@@ -374,8 +371,6 @@ class SumStationaryIverilogCore(params: SumStationaryParams) extends ExtModule {
 
   val clock = IO(Input(Clock()))
   val reset = IO(Input(Reset()))
-  val VPWR = IO(Analog(1.W))
-  val VGND = IO(Analog(1.W))
   val io = IO(new SumStationaryIO(params.n))
 }
 
@@ -383,14 +378,10 @@ class SumStationaryIverilogWrapper(params: SumStationaryParams) extends Module {
   override val desiredName = params.moduleName + "IverilogWrapper"
   val io = IO(new SumStationaryIO(params.n))
   val powerDumpEnable = IO(Input(Bool()))
-  val VPWR = IO(Analog(1.W))
-  val VGND = IO(Analog(1.W))
 
   val dut = Module(new SumStationaryIverilogCore(params))
   dut.clock := clock
   dut.reset := reset
-  attach(dut.VPWR, VPWR)
-  attach(dut.VGND, VGND)
   dut.io <> io
 }
 
