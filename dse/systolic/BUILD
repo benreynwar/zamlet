@@ -7,9 +7,33 @@ load("//bazel:design/systolic/defs.bzl", "sum_stationary_top", "weight_stationar
 load("//bazel:hard_macro_flow.bzl", "hard_macro_flow")
 load("//bazel/flow:defs.bzl", "librelane_synth_config")
 load("//bazel/flow/sdc:sdc_template.bzl", "sdc_template")
+load("@asap7sc7p5t_config//:defs.bzl", asap7_pdk = "pdk")
 load("@sky130_fd_sc_hd_config//:defs.bzl", "pdk")
 
 pdk(name = "sky130hd")
+asap7_pdk(name = "asap7sc7p5t")
+
+PDK_CONFIGS = [
+    {
+        "name": "sky130hd",
+        "target": ":sky130hd",
+        "clock_periods": ["20", "16", "12", "11", "10", "9"],
+        "flow_kwargs": {
+            "design_repair_max_wire_length": "150",
+        },
+    },
+    {
+        "name": "asap7sc7p5t",
+        "target": ":asap7sc7p5t",
+        "clock_periods": ["2", "1.6", "1.2", "1.1", "1.0", "0.9"],
+        "flow_kwargs": {
+            "io_pin_h_thickness_mult": "1",
+            "io_pin_v_thickness_mult": "1",
+            "pl_resizer_hold_slack_margin": "0",
+            "grt_resizer_hold_slack_margin": "0",
+        },
+    },
+]
 
 SYSTOLIC_PKG = "//src/main/scala/zamlet/systolic"
 
@@ -38,7 +62,6 @@ WEIGHT_STATIONARY_CONFIGS = [
     (4, 0),
     (2, 0),
 ]
-WEIGHT_STATIONARY_CLOCK_PERIODS = [20, 16, 12, 11, 10, 9]
 WEIGHT_STATIONARY_UTILIZATIONS = [40, 50, 60, 65, 70]
 
 [
@@ -62,7 +85,7 @@ WEIGHT_STATIONARY_UTILIZATIONS = [40, 50, 60, 65, 70]
 [
     hard_macro_flow(
         name = weight_stationary_top(n, reset_group) +
-               "_sky130hd_{}ns_util{}".format(clock_period, utilization),
+               "_{}_{}ns_util{}".format(pdk_config["name"], clock_period, utilization),
         wrapper_verilog = ":" + weight_stationary_top(n, reset_group) +
                           "_iverilog_wrapper_verilog",
         test_module = "zamlet.systolic_test.test_weight_stationary",
@@ -73,19 +96,20 @@ WEIGHT_STATIONARY_UTILIZATIONS = [40, 50, 60, 65, 70]
         },
         verilog_files = [":" + weight_stationary_top(n, reset_group) + ".sv"],
         top = weight_stationary_top(n, reset_group),
-        pdk = ":sky130hd",
-        clock_period = "{}.0".format(clock_period),
+        pdk = pdk_config["target"],
+        clock_period = clock_period,
         fp_core_util = str(utilization),
+        pdk_flow_config = pdk_config["flow_kwargs"],
         io_pin_order_cfg = ":weight_stationary{}x{}_pin_order.cfg".format(n, n),
         pnr_sdc_file = ":weight_stationary_pnr_sdc",
         signoff_sdc_file = ":weight_stationary_signoff_sdc",
         synth_config = ":synth_weight_stationary_preserve_cell",
-        design_repair_max_wire_length = "150",
         run_post_grt_resizer_timing = True,
         mid_setup_wns_threshold = "-0.2",
     )
     for n, reset_group in WEIGHT_STATIONARY_CONFIGS
-    for clock_period in WEIGHT_STATIONARY_CLOCK_PERIODS
+    for pdk_config in PDK_CONFIGS
+    for clock_period in pdk_config["clock_periods"]
     for utilization in WEIGHT_STATIONARY_UTILIZATIONS
 ]
 
@@ -113,7 +137,6 @@ SUM_STATIONARY_CONFIGS = [
     (2, True, False, 0),
 ]
 
-SUM_STATIONARY_CLOCK_PERIODS = [20, 16, 12, 11, 10, 9]
 SUM_STATIONARY_UTILIZATIONS = [40, 50, 60, 65, 70]
 
 [
@@ -152,7 +175,7 @@ SUM_STATIONARY_UTILIZATIONS = [40, 50, 60, 65, 70]
 [
     hard_macro_flow(
         name = sum_stationary_top(n, csa, True, False, split_drain, reset_group) +
-               "_sky130hd_{}ns_util{}".format(clock_period, utilization),
+               "_{}_{}ns_util{}".format(pdk_config["name"], clock_period, utilization),
         wrapper_verilog = ":" +
                           sum_stationary_top(n, csa, True, False, split_drain, reset_group) +
                           "_iverilog_wrapper_verilog",
@@ -170,19 +193,20 @@ SUM_STATIONARY_UTILIZATIONS = [40, 50, 60, 65, 70]
             ":" + sum_stationary_top(n, csa, True, False, split_drain, reset_group) + ".sv",
         ],
         top = sum_stationary_top(n, csa, True, False, split_drain, reset_group),
-        pdk = ":sky130hd",
-        clock_period = "{}.0".format(clock_period),
+        pdk = pdk_config["target"],
+        clock_period = clock_period,
         fp_core_util = str(utilization),
+        pdk_flow_config = pdk_config["flow_kwargs"],
         io_pin_order_cfg = ":sum_stationary{}x{}_pin_order.cfg".format(n, n),
         pnr_sdc_file = ":sum_stationary_pnr_sdc",
         signoff_sdc_file = ":sum_stationary_signoff_sdc",
         synth_config = ":synth_sum_stationary_preserve_cell",
-        design_repair_max_wire_length = "150",
         run_post_grt_resizer_timing = True,
         mid_setup_wns_threshold = "-0.2",
     )
     for n, csa, split_drain, reset_group in SUM_STATIONARY_CONFIGS
-    for clock_period in SUM_STATIONARY_CLOCK_PERIODS
+    for pdk_config in PDK_CONFIGS
+    for clock_period in pdk_config["clock_periods"]
     for utilization in SUM_STATIONARY_UTILIZATIONS
 ]
 

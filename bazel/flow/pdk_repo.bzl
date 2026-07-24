@@ -40,6 +40,7 @@ PDK_FIELD_TYPES = {
     "FP_TRACKS_INFO": "file",
     "FP_TAPCELL_DIST": "number",
     "FP_PRUNE_THRESHOLD": "number",
+    "PDN_CFG": "file",
     "IO_PIN_H_LAYER": "string",
     "IO_PIN_V_LAYER": "string",
 
@@ -63,6 +64,7 @@ PDK_FIELD_TYPES = {
     "PNR_CORNERS": "string_list",
 
     # Wire RC
+    "SET_RC_TCL": "file",
     "LAYERS_RC": "dict",
     "VIAS_R": "dict",
     "SIGNAL_WIRE_RC_LAYERS": "string_list",

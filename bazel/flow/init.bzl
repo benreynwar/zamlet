@@ -133,7 +133,7 @@ def _init_impl(ctx):
             pdn_horizontal_halo = _get_pnr_val(ctx, pnr_config, "pdn_horizontal_halo"),
             pdn_vertical_halo = _get_pnr_val(ctx, pnr_config, "pdn_vertical_halo"),
             pdn_multilayer = _get_pnr_val(ctx, pnr_config, "pdn_multilayer"),
-            pdn_cfg = _get_pnr_val(ctx, pnr_config, "pdn_cfg"),
+            pdn_cfg = _get_pnr_val(ctx, pnr_config, "pdn_cfg") or pdk_info.pdn_cfg,
             pdn_connect_macros_to_grid = _get_pnr_val(ctx, pnr_config, "pdn_connect_macros_to_grid"),
             pdn_macro_connections = _get_pnr_val(ctx, pnr_config, "pdn_macro_connections"),
             pdn_enable_global_connections = _get_pnr_val(ctx, pnr_config, "pdn_enable_global_connections"),

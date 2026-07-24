@@ -1,7 +1,7 @@
 package zamlet.jamlet
 
 import chisel3._
-import chisel3.experimental.{Analog, ExtModule, attach}
+import chisel3.experimental.ExtModule
 import chisel3.util._
 import zamlet.utils.{RegisterWithPipelinedReset, ResetPipeline, ResetPipelineBudget}
 
@@ -317,8 +317,6 @@ class JamletMxuIverilogCore(
 
   val clock = IO(Input(Clock()))
   val reset = IO(Input(Reset()))
-  val VPWR = IO(Analog(1.W))
-  val VGND = IO(Analog(1.W))
   val io = IO(new JamletMxuIO(n))
 }
 
@@ -333,8 +331,6 @@ class JamletMxuIverilogInstance(
     splitCDrain: Boolean,
     resetGroupSize: Int) extends Module with HasJamletMxuIO {
   val io = IO(new JamletMxuIO(n))
-  val VPWR = IO(Analog(1.W))
-  val VGND = IO(Analog(1.W))
 
   val dut = Module(new JamletMxuIverilogCore(
     n,
@@ -348,8 +344,6 @@ class JamletMxuIverilogInstance(
     resetGroupSize))
   dut.clock := clock
   dut.reset := reset
-  attach(dut.VPWR, VPWR)
-  attach(dut.VGND, VGND)
   dut.io <> io
 }
 

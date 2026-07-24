@@ -329,16 +329,17 @@ python_runner = rule(
 def _iverilog_post_pnr_runner_impl(ctx):
     input_info = ctx.attr.flow_input[LibrelaneInput]
     state_info = ctx.attr.flow[LibrelaneInfo]
-    if state_info.pnl == None:
-        fail("flow does not provide a final powered netlist")
+    sdf_corner = ctx.attr.sdf_corner or input_info.default_corner or input_info.pdk_info.default_corner
+    if state_info.nl == None:
+        fail("flow does not provide a final netlist")
 
     cell_models = input_info.pdk_info.cell_verilog_models
     if not cell_models:
         fail("PDK does not provide standard-cell Verilog models")
-    if type(state_info.sdf) != "dict" or ctx.attr.sdf_corner not in state_info.sdf:
-        fail("flow does not provide SDF corner '{}'".format(ctx.attr.sdf_corner))
+    if type(state_info.sdf) != "dict" or sdf_corner not in state_info.sdf:
+        fail("flow does not provide SDF corner '{}'".format(sdf_corner))
 
-    sdf = state_info.sdf[ctx.attr.sdf_corner]
+    sdf = state_info.sdf[sdf_corner]
     sdf_loader = ctx.actions.declare_file(ctx.label.name + "_sdf.v")
     sdf_annotations = "\n".join([
         '    $sdf_annotate("{}", {}.{});'.format(
@@ -359,7 +360,7 @@ endmodule
     )
 
     cocotb_tc = ctx.toolchains["//bazel/toolchains:cocotb_toolchain_type"].cocotb
-    sources = [state_info.pnl] + cell_models + ctx.files.wrapper_verilog + [sdf_loader]
+    sources = [state_info.nl] + cell_models + ctx.files.wrapper_verilog + [sdf_loader]
     runfiles = ctx.runfiles(files = sources + [sdf, ctx.file._iverilog, ctx.file._vvp, ctx.file._vpi] + ctx.files._icarus_runtime)
     import_paths = []
     for py_dep in ctx.attr.py_deps:
@@ -391,7 +392,7 @@ export ZAMLET_TEST_SEED="${{ZAMLET_TEST_SEED:-0}}"
 {config_export}
 
 "{iverilog}" -g2012 -gspecify -ginterconnect -Ttyp -DCOCOTB_SIM=1 \
-  -DUSE_POWER_PINS -s "{toplevel}" -s zamlet_sdf_loader \
+  -s "{toplevel}" -s zamlet_sdf_loader \
   -o icarus_sim.vvp {sources}
 "{vvp}" -M "$(dirname "{vpi}")" -m libcocotbvpi_icarus \
   icarus_sim.vvp
@@ -450,7 +451,7 @@ iverilog_post_pnr_runner = rule(
     attrs = {
         "flow": attr.label(mandatory = True, providers = [LibrelaneInfo]),
         "flow_input": attr.label(mandatory = True, providers = [LibrelaneInput]),
-        "sdf_corner": attr.string(mandatory = True),
+        "sdf_corner": attr.string(),
         "sdf_instance_paths": attr.string_list(mandatory = True),
         "toplevel": attr.string(mandatory = True),
         "vcd_instance_path": attr.string(mandatory = True),
@@ -477,7 +478,8 @@ def _iverilog_raw_activity_impl(ctx):
     dump_loader = ctx.actions.declare_file(ctx.label.name + "_dump.v")
     ctx.actions.write(
         output = dump_loader,
-        content = '''module zamlet_vcd_dump;
+        content = '''`timescale 1ps/1ps
+module zamlet_vcd_dump;
   initial begin
     $dumpfile("{vcd}");
     $dumpvars(0, {toplevel}.{vcd_instance_path});
@@ -517,7 +519,7 @@ export ZAMLET_POWER_WINDOW_FILE="{window}"
 
 {{
   "{iverilog}" -g2012 -gspecify -ginterconnect -Ttyp -DCOCOTB_SIM=1 \
-    -DUSE_POWER_PINS -s "{toplevel}" -s zamlet_sdf_loader -s zamlet_vcd_dump \
+    -s "{toplevel}" -s zamlet_sdf_loader -s zamlet_vcd_dump \
     -o icarus_sim.vvp {sources} {dump_loader}
   "{vvp}" -M "$(dirname "{vpi}")" -m libcocotbvpi_icarus icarus_sim.vvp
 }} 2>&1 | tee "{simulation_log}"
@@ -723,13 +725,13 @@ def iverilog_post_pnr_cocotb_test(
         flow,
         flow_input,
         wrapper_verilog,
-        sdf_corner,
         test_module,
         toplevel,
         py_deps = [],
         env = {},
         data = [],
         config = None,
+        sdf_corner = None,
         wrapper_toplevel = None,
         sdf_instance_paths = None,
         vcd_instance_path = None,
@@ -742,7 +744,7 @@ def iverilog_post_pnr_cocotb_test(
         name = name + "_runner",
         flow = flow,
         flow_input = flow_input,
-        sdf_corner = sdf_corner,
+        sdf_corner = sdf_corner or "",
         sdf_instance_paths = sdf_instance_paths,
         toplevel = wrapper_toplevel,
         vcd_instance_path = vcd_instance_path,

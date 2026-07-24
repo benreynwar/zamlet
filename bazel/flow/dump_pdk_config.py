@@ -16,6 +16,11 @@ from decimal import Decimal
 from typing import Any, Dict
 
 
+# LibreLane treats PDN_CFG as a design option. Our PDK provider also permits a
+# PDK to supply a default custom grid, while retaining the design override.
+PDK_DEFAULT_VARIABLES = {"PDN_CFG"}
+
+
 def custom_encoder(obj):
     """JSON encoder that handles librelane types."""
     if isinstance(obj, Decimal):
@@ -46,7 +51,7 @@ def get_all_pdk_variables():
         if step_cls is None:
             continue
         for var in step_cls.config_vars:
-            if var.pdk and var.name not in seen_names:
+            if (var.pdk or var.name in PDK_DEFAULT_VARIABLES) and var.name not in seen_names:
                 all_vars.append(var)
                 seen_names.add(var.name)
 
@@ -61,20 +66,31 @@ def load_pdk_config(pdk_root: str, pdk: str, scl: str) -> Dict[str, Any]:
     - Variable processing with deprecated name handling
     - Type coercion
     """
-    from librelane.config import Config
+    from librelane.common import GenericDict
+    from librelane.config import Config, InvalidConfig
 
     # Get all PDK variables (flow-level + step-specific)
     all_pdk_vars = get_all_pdk_variables()
 
-    # Get fully processed config using librelane's internal method
-    # This handles deprecated names, type coercion, etc.
-    processed, _pdkpath, _scl, _pad = Config._Config__get_pdk_config(
-        pdk=pdk,
-        scl=scl,
-        pad=None,
-        pdk_root=pdk_root,
-        flow_pdk_vars=all_pdk_vars,
+    raw, _pdkpath, _scl, _pad = Config._Config__get_pdk_raw(
+        pdk_root, pdk, scl, None
     )
+    mutable = GenericDict(raw)
+    if not mutable.get("MAGICRC") and not mutable.get("MAGIC_TECH"):
+        if "MAGIC_PDK_SETUP" in mutable:
+            mutable.pop("MAGIC_PDK_SETUP")
+
+    processed, warnings, errors = Config._Config__process_variable_list(
+        mutable,
+        all_pdk_vars,
+        on_unknown_key=None,
+        permissive_typing=True,
+        missing_ok=True,
+    )
+    if errors:
+        raise InvalidConfig("PDK configuration files", warnings, errors)
+    processed["PDK_ROOT"] = pdk_root
+    processed["PDK"] = pdk
     return dict(processed)
 
 

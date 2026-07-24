@@ -2,6 +2,18 @@
 
 load(":providers.bzl", "LibrelaneInput", "LibrelaneInfo", "PdkInfo", "MacroInfo")
 
+# LibreLane 3.0.4 compatibility defaults. A PDK may override any of these.
+_CONSTRAINT_DEFAULTS = {
+    "MAX_FANOUT_CONSTRAINT": 10,
+    "CLOCK_UNCERTAINTY_CONSTRAINT": 0.25,
+    "CLOCK_TRANSITION_CONSTRAINT": 0.15,
+    "TIME_DERATING_CONSTRAINT": 5,
+    "IO_DELAY_CONSTRAINT": 20,
+}
+
+def _pdk_constraint(value, name):
+    return value if value != None else _CONSTRAINT_DEFAULTS[name]
+
 # Universal config keys required by all steps (from librelane's flow_common_variables)
 # These must always be present - steps add their own keys on top of these
 # Derived from librelane/config/flow.py: pdk_variables + scl_variables + option_variables
@@ -54,6 +66,7 @@ OPENROAD_STEP_CONFIG_KEYS = BASE_CONFIG_KEYS + [
     # config_vars
     "PNR_CORNERS",
     "SET_RC_VERBOSE",
+    "SET_RC_TCL",
     "LAYERS_RC",
     "VIAS_R",
     "SIGNAL_WIRE_RC_LAYERS",
@@ -131,7 +144,6 @@ def create_librelane_config(input_info, state_info, required_keys):
         # PDK config - cells (as paths for librelane)
         "CELL_LEFS": [f.path for f in pdk.cell_lefs],
         "CELL_GDS": [f.path for f in pdk.cell_gds],
-        "CELL_SPICE_MODELS": [f.path for f in pdk.cell_spice_models],
 
         # PDK config - tech LEFs (corner -> path)
         "TECH_LEFS": {corner: f.path for corner, f in pdk.tech_lefs.items()},
@@ -178,15 +190,18 @@ def create_librelane_config(input_info, state_info, required_keys):
 
         # PDK config - constraints
         "OUTPUT_CAP_LOAD": pdk.output_cap_load,
-        "MAX_FANOUT_CONSTRAINT": pdk.max_fanout_constraint,
-        "CLOCK_UNCERTAINTY_CONSTRAINT": pdk.clock_uncertainty_constraint,
-        "CLOCK_TRANSITION_CONSTRAINT": pdk.clock_transition_constraint,
-        "TIME_DERATING_CONSTRAINT": pdk.time_derating_constraint,
-        "IO_DELAY_CONSTRAINT": pdk.io_delay_constraint,
+        "MAX_FANOUT_CONSTRAINT": _pdk_constraint(pdk.max_fanout_constraint, "MAX_FANOUT_CONSTRAINT"),
+        "CLOCK_UNCERTAINTY_CONSTRAINT": _pdk_constraint(pdk.clock_uncertainty_constraint, "CLOCK_UNCERTAINTY_CONSTRAINT"),
+        "CLOCK_TRANSITION_CONSTRAINT": _pdk_constraint(pdk.clock_transition_constraint, "CLOCK_TRANSITION_CONSTRAINT"),
+        "TIME_DERATING_CONSTRAINT": _pdk_constraint(pdk.time_derating_constraint, "TIME_DERATING_CONSTRAINT"),
+        "IO_DELAY_CONSTRAINT": _pdk_constraint(pdk.io_delay_constraint, "IO_DELAY_CONSTRAINT"),
 
         # PDK config - signoff
         "PRIMARY_GDSII_STREAMOUT_TOOL": pdk.primary_gdsii_streamout_tool,
     }
+
+    if pdk.cell_spice_models:
+        config["CELL_SPICE_MODELS"] = [f.path for f in pdk.cell_spice_models]
 
     # Add optional fields if present
     if input_info.max_transition_constraint:
@@ -202,6 +217,7 @@ def create_librelane_config(input_info, state_info, required_keys):
 
     # Step-specific optional fields
     _add_optional(config, "PNR_CORNERS", pdk.pnr_corners)
+    _add_optional_file(config, "SET_RC_TCL", pdk.set_rc_tcl)
     _add_optional(config, "LAYERS_RC", pdk.layers_rc)
     _add_optional(config, "VIAS_R", pdk.vias_r)
     _add_optional(config, "SIGNAL_WIRE_RC_LAYERS", pdk.signal_wire_rc_layers)
@@ -819,6 +835,10 @@ def get_pdk_files(pdk_info):
     # Single files - core
     if pdk_info.fp_tracks_info:
         files.append(pdk_info.fp_tracks_info)
+    if pdk_info.pdn_cfg:
+        files.append(pdk_info.pdn_cfg)
+    if pdk_info.set_rc_tcl:
+        files.append(pdk_info.set_rc_tcl)
     if pdk_info.synth_excluded_cell_file:
         files.append(pdk_info.synth_excluded_cell_file)
     if pdk_info.pnr_excluded_cell_file:

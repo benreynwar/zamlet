@@ -26,6 +26,10 @@ let
     patches = [
       ./patches/librelane-magic-abspath-rcfile.patch
       ./patches/librelane-custom-io-full-edge-spacing.patch
+      ./patches/librelane-custom-pdn-config.patch
+      ./patches/librelane-preserve-liberty-order.patch
+      ./patches/librelane-custom-rc-config.patch
+      ./patches/librelane-preserve-repeated-tracks.patch
     ];
   };
 
@@ -35,6 +39,11 @@ let
   librelane-flake = (import flake-compat { src = librelane-src; }).defaultNix;
   pkgs = librelane-flake.legacyPackages.${builtins.currentSystem};
   sky130-pdk = import ./sky130.nix { inherit pkgs; };
+  asap7-pdk = import ./asap7.nix { inherit pkgs; };
+  pdk-root = pkgs.symlinkJoin {
+    name = "zamlet-pdks";
+    paths = [ sky130-pdk asap7-pdk ];
+  };
 
   # cocotb 2.0 override
   cocotb2 = pkgs.python3.pkgs.cocotb.overridePythonAttrs (old: rec {
@@ -63,6 +72,14 @@ let
       rev = "v${version}";
       sha256 = "sha256-3eWNCJBuSBYPLr1cUJgGHA+LPL+rpRNZYRtNoF0Cz+4=";
     };
+  });
+
+  # OpenSTA emits valid SDF conditions using bitwise operators, which Icarus's
+  # otherwise-skippable conditional-path parser does not accept.
+  iverilog-patched = pkgs.iverilog.overrideAttrs (old: {
+    patches = (old.patches or []) ++ [
+      ./patches/iverilog-sdf-conditional-bitwise-operators.patch
+    ];
   });
 
   # cocotb-bus for AXI testing (same commit as MODULE.bazel)
@@ -145,7 +162,7 @@ let
     yosys
     magic-vlsi
     verilator-new
-    iverilog
+    iverilog-patched
     klayout
     python-env
     bazelisk
@@ -195,11 +212,11 @@ let
     file
   ]));
 in {
-  inherit pkgs sky130-pdk python-env riscv-clang buildDeps devTools;
+  inherit pkgs sky130-pdk asap7-pdk python-env riscv-clang buildDeps devTools;
 
   # Environment variables
   env = {
-    PDK_ROOT = sky130-pdk;
+    PDK_ROOT = pdk-root;
     PDK = "sky130A";
     LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath [
       pkgs.stdenv.cc.cc.lib

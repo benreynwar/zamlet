@@ -71,3 +71,25 @@ index 9cc75de..4e56977 100644
  
      VISUALIZE_PLACEMENT = False
      if VISUALIZE_PLACEMENT:
+@@ -415,6 +404,10 @@ def io_place(
+                 for i in range(len(v_tracks))
+                 if (i % (math.ceil(min_distance / v_step))) == 0
+             ]
++            pin_tracks[side] = [
++                track for track in pin_tracks[side]
++                if BLOCK_LL_X + H_LENGTH + V_WIDTH // 2 <= track <= BLOCK_UR_X - H_LENGTH - (V_WIDTH - V_WIDTH // 2)
++            ]
+         elif side in ["W", "E"]:
+             pin_tracks[side] = [
+                 h_tracks[i]
+@@ -429,6 +422,9 @@ def io_place(
+                 )
+                 == 0
+             ]
++            pin_tracks[side] = [
++                track for track in pin_tracks[side]
++                if BLOCK_LL_Y + V_LENGTH + H_WIDTH // 2 <= track <= BLOCK_UR_Y - V_LENGTH - (H_WIDTH - H_WIDTH // 2)
++            ]
+-
+     # reversals (including randomly-assigned pins, if needed)
+     for side, side_info in info_by_side.items():

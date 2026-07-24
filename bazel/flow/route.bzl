@@ -1,6 +1,6 @@
 # Routing rules
 
-load(":providers.bzl", "LibrelaneInfo")
+load(":providers.bzl", "LibrelaneInfo", "LibrelaneInput")
 load(":common.bzl", "single_step_impl", "FLOW_ATTRS", "OPENROAD_STEP_CONFIG_KEYS")
 
 # GlobalRouting config keys (OpenROADStep + grt_variables + dpl_variables)
@@ -86,6 +86,12 @@ def _repair_design_post_grt_impl(ctx):
 REPAIR_ANTENNAS_CONFIG_KEYS = GRT_CONFIG_KEYS
 
 def _repair_antennas_impl(ctx):
+    if ctx.attr.input[LibrelaneInput].pdk_info.diode_cell == None:
+        return [
+            DefaultInfo(files = ctx.attr.src[DefaultInfo].files),
+            ctx.attr.src[LibrelaneInfo],
+        ]
+
     return single_step_impl(ctx, "OpenROAD.RepairAntennas", REPAIR_ANTENNAS_CONFIG_KEYS,
         step_outputs = ["def", "odb"], output_subdir = "1-openroad-diodeinsertion")
 

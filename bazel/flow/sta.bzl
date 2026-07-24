@@ -197,10 +197,15 @@ def _rcx_impl(ctx):
     state_info = ctx.attr.src[LibrelaneInfo]
     top = input_info.top
 
-    # RCX produces SPEF for each corner (nom, min, max)
-    spef_nom = ctx.actions.declare_file(ctx.label.name + "/nom/" + top + ".nom.spef")
-    spef_min = ctx.actions.declare_file(ctx.label.name + "/min/" + top + ".min.spef")
-    spef_max = ctx.actions.declare_file(ctx.label.name + "/max/" + top + ".max.spef")
+    spef_outputs = {}
+    for corner in sorted(input_info.pdk_info.rcx_rulesets.keys()):
+        corner_sanitized = corner.strip("*_")
+        output_dir = ctx.label.name
+        if corner_sanitized:
+            output_dir += "/" + corner_sanitized
+        spef_outputs[corner] = ctx.actions.declare_file(
+            output_dir + "/" + top + "." + corner_sanitized + ".spef",
+        )
 
     # Get input files
     inputs = get_input_files(input_info, state_info, RCX_CONFIG_KEYS)
@@ -212,7 +217,7 @@ def _rcx_impl(ctx):
     state_out = run_librelane_step(
         ctx = ctx,
         step_id = "OpenROAD.RCX",
-        outputs = [spef_nom, spef_min, spef_max],
+        outputs = spef_outputs.values(),
         config_content = json.encode(config),
         inputs = inputs,
         input_info = input_info,
@@ -220,7 +225,7 @@ def _rcx_impl(ctx):
     )
 
     return [
-        DefaultInfo(files = depset([spef_nom, spef_min, spef_max])),
+        DefaultInfo(files = depset(spef_outputs.values())),
         LibrelaneInfo(
             state_out = state_out,
             nl = state_info.nl,
@@ -228,7 +233,7 @@ def _rcx_impl(ctx):
             odb = state_info.odb,
             sdc = state_info.sdc,
             sdf = state_info.sdf,
-            spef = {"nom_*": spef_nom, "min_*": spef_min, "max_*": spef_max},
+            spef = spef_outputs,
             lib = state_info.lib,
             gds = state_info.gds,
             mag_gds = state_info.mag_gds,

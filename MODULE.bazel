@@ -73,7 +73,16 @@ pdk_config.config(
     pdk = "sky130A",
     scl = "sky130_fd_sc_hd",
 )
-use_repo(pdk_config, "sky130_fd_sc_hd_config")
+pdk_config.config(
+    name = "asap7sc7p5t_config",
+    pdk = "asap7",
+    scl = "asap7sc7p5t",
+)
+use_repo(
+    pdk_config,
+    "asap7sc7p5t_config",
+    "sky130_fd_sc_hd_config",
+)
 
 # Repository rules
 http_archive = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")

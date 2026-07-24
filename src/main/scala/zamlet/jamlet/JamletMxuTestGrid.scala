@@ -1,7 +1,6 @@
 package zamlet.jamlet
 
 import chisel3._
-import chisel3.experimental.{Analog, attach}
 import chisel3.util._
 
 class JamletMxuTestGridIO(gridRows: Int, gridCols: Int, mxuN: Int) extends Bundle {
@@ -42,8 +41,6 @@ class JamletMxuTestGrid(
   require(gridCols % 2 == 0)
   val io = IO(new JamletMxuTestGridIO(gridRows, gridCols, mxuN))
   val powerDumpEnable = if (postPnr) Some(IO(Input(Bool()))) else None
-  val VPWR = if (postPnr) Some(IO(Analog(1.W))) else None
-  val VGND = if (postPnr) Some(IO(Analog(1.W))) else None
 
   val blocks: Seq[Seq[HasJamletMxuIO]] = Seq.tabulate(gridRows, gridCols) { (row, col) =>
     if (postPnr) {
@@ -57,8 +54,6 @@ class JamletMxuTestGrid(
         registerBackwardOutput,
         splitCDrain,
         resetGroupSize)).suggestName(s"blocks_${row}_${col}")
-      attach(block.VPWR, VPWR.get)
-      attach(block.VGND, VGND.get)
       block
     } else {
       val block = Module(new JamletMxu(

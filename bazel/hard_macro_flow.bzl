@@ -2,6 +2,7 @@ load("//bazel:cocotb_rules.bzl", "iverilog_post_pnr_cocotb_test")
 load("//bazel:defs.bzl", "json_file")
 load("//bazel:power_activity.bzl", "PowerReportInfo")
 load("//bazel/flow:defs.bzl", "LibrelaneInfo", "librelane_classic_flow", "librelane_power_post_pnr")
+load("//bazel/flow:providers.bzl", "LibrelaneInput")
 
 
 def _state_files(state):
@@ -26,7 +27,8 @@ def _state_files(state):
 def _hard_macro_analysis_impl(ctx):
     macro = ctx.attr.macro[LibrelaneInfo]
     power = ctx.attr.power[PowerReportInfo]
-    nominal_corner = "nom_tt_025C_1v80"
+    flow_input = ctx.attr.flow_input[LibrelaneInput]
+    nominal_corner = flow_input.default_corner or flow_input.pdk_info.default_corner
     if nominal_corner not in power.reports:
         fail("Power reports do not contain {}".format(nominal_corner))
 
@@ -54,6 +56,7 @@ hard_macro_analysis = rule(
     attrs = {
         "macro": attr.label(mandatory = True, providers = [LibrelaneInfo]),
         "power": attr.label(mandatory = True, providers = [PowerReportInfo]),
+        "flow_input": attr.label(mandatory = True, providers = [LibrelaneInput]),
         "clock_period_ns": attr.string(mandatory = True),
         "target_utilization": attr.string(mandatory = True),
         "_summarize": attr.label(
@@ -73,11 +76,13 @@ def hard_macro_flow(
         test_params,
         clock_period,
         fp_core_util,
+        pdk_flow_config = {},
         simulation_toplevel = None,
         sdf_instance_paths = None,
         vcd_instance_path = None,
         max_sdf_interconnect_errors = 0,
         **flow_kwargs):
+    flow_kwargs.update(pdk_flow_config)
     librelane_classic_flow(
         name = name,
         clock_period = clock_period,
@@ -96,7 +101,6 @@ def hard_macro_flow(
         flow = ":" + name + "_sta",
         flow_input = ":" + name + "_init",
         wrapper_verilog = wrapper_verilog,
-        sdf_corner = "nom_tt_025C_1v80",
         test_module = test_module,
         toplevel = flow_kwargs["top"],
         py_deps = py_deps,
@@ -118,6 +122,7 @@ def hard_macro_flow(
         name = name + "_macro",
         macro = ":" + name + "_mfg_report",
         power = ":" + name + "_power",
+        flow_input = ":" + name + "_init",
         clock_period_ns = clock_period,
         target_utilization = fp_core_util,
     )

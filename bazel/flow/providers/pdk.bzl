@@ -39,6 +39,7 @@ PdkInfo = provider(
         "fp_tracks_info": "Tracks info File",
         "fp_tapcell_dist": "Distance between tap cells (Decimal, um)",
         "fp_prune_threshold": "Minimum row width to preserve during row cutting (optional)",
+        "pdn_cfg": "Default custom PDN configuration file (optional)",
         "io_pin_h_layer": "Metal layer for horizontal IO pins",
         "io_pin_v_layer": "Metal layer for vertical IO pins",
 
@@ -134,6 +135,7 @@ PdkInfo = provider(
         "pnr_corners": "List of PnR corner names (optional)",
 
         # Wire RC
+        "set_rc_tcl": "Custom OpenROAD RC setup script (optional)",
         "layers_rc": "Layer resistance/capacitance values by corner (optional)",
         "vias_r": "Via resistance values by corner (optional)",
         "signal_wire_rc_layers": "List of layers for signal wire RC (optional)",

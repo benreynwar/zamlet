@@ -105,6 +105,8 @@ def librelane_classic_flow(
     die_area = None,
     macros = [],
     io_pin_order_cfg = None,
+    io_pin_h_thickness_mult = None,
+    io_pin_v_thickness_mult = None,
     fp_def_template = None,
     macro_placement_cfg = None,
     pdn_macro_connections = [],
@@ -115,7 +117,9 @@ def librelane_classic_flow(
     design_repair_max_wire_length = None,
     design_repair_max_slew_pct = None,
     design_repair_max_cap_pct = None,
+    pl_resizer_hold_slack_margin = None,
     pl_resizer_setup_slack_margin = None,
+    grt_resizer_hold_slack_margin = None,
     grt_design_repair_max_wire_length = None,
     run_cts = True,
     run_post_cts_resizer_timing = True,
@@ -175,6 +179,8 @@ def librelane_classic_flow(
         die_area: Explicit die area as "x0 y0 x1 y1" in microns
         macros: List of hard macro targets (for hierarchical designs)
         io_pin_order_cfg: Pin order configuration file for custom IO placement
+        io_pin_h_thickness_mult: Horizontal pin thickness as a multiple of layer minimum width
+        io_pin_v_thickness_mult: Vertical pin thickness as a multiple of layer minimum width
         fp_def_template: DEF template file with die area and pin placements (alternative to io_pin_order_cfg)
         macro_placement_cfg: Macro placement configuration file (instance X Y orientation)
         pdn_macro_connections: Explicit macro power connections
@@ -223,6 +229,10 @@ def librelane_classic_flow(
         pnr_config_kwargs["pl_target_density_pct"] = pl_target_density_pct
     if io_pin_order_cfg:
         pnr_config_kwargs["io_pin_order_cfg"] = io_pin_order_cfg
+    if io_pin_h_thickness_mult != None:
+        pnr_config_kwargs["io_pin_h_thickness_mult"] = io_pin_h_thickness_mult
+    if io_pin_v_thickness_mult != None:
+        pnr_config_kwargs["io_pin_v_thickness_mult"] = io_pin_v_thickness_mult
     if fp_def_template:
         pnr_config_kwargs["fp_def_template"] = fp_def_template
     if cts_clk_max_wire_length:
@@ -255,8 +265,12 @@ def librelane_classic_flow(
         pnr_config_kwargs["design_repair_max_slew_pct"] = design_repair_max_slew_pct
     if design_repair_max_cap_pct != None:
         pnr_config_kwargs["design_repair_max_cap_pct"] = design_repair_max_cap_pct
+    if pl_resizer_hold_slack_margin != None:
+        pnr_config_kwargs["pl_resizer_hold_slack_margin"] = pl_resizer_hold_slack_margin
     if pl_resizer_setup_slack_margin != None:
         pnr_config_kwargs["pl_resizer_setup_slack_margin"] = pl_resizer_setup_slack_margin
+    if grt_resizer_hold_slack_margin != None:
+        pnr_config_kwargs["grt_resizer_hold_slack_margin"] = grt_resizer_hold_slack_margin
     if grt_design_repair_max_wire_length != None:
         pnr_config_kwargs["grt_design_repair_max_wire_length"] = grt_design_repair_max_wire_length
 
