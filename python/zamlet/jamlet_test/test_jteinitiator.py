@@ -5,16 +5,15 @@ from dataclasses import dataclass
 from random import Random
 
 import cocotb
-from cocotb import clock, triggers
+from cocotb import clock
 from cocotb.handle import HierarchyObject
-
 from zamlet import test_utils
 from zamlet.jamlet_test.jteinitiator_driver import JteInitiatorDriver
 from zamlet.lane_order import LaneOrder
 from zamlet.message import JteIHeader, MessageType, SendType
 from zamlet.params import ZamletParams
+from zamlet.test_utils import next_drive_phase
 from zamlet.width_codes import ElementWidthCode, WidthFormatCode
-
 
 logger = logging.getLogger(__name__)
 
@@ -299,14 +298,14 @@ async def consume_and_check_packets(
 ) -> None:
     while True:
         while not driver.packet.queue:
-            await triggers.RisingEdge(driver.clock)
+            await next_drive_phase(driver.clock)
         word = driver.packet.pop()
         assert word["isHeader"] == 1
         header = JteIHeader.decode(word["data"], params)
         packet = [header]
         for _ in range(header.length):
             while not driver.packet.queue:
-                await triggers.RisingEdge(driver.clock)
+                await next_drive_phase(driver.clock)
             packet.append(driver.packet.pop()["data"])
 
         packets_received.append(packet)
@@ -328,7 +327,7 @@ async def consume_and_check_commits(
     commit_index = 0
     while True:
         while not driver.commit.queue:
-            await triggers.RisingEdge(driver.clock)
+            await next_drive_phase(driver.clock)
         item = driver.commit.pop()
         commit = {
             'slot': item['teIndex'],
@@ -355,7 +354,7 @@ async def wait_for_packets(dut: HierarchyObject, packets: deque[list[object]], n
     for _ in range(timeout_cycles):
         if len(packets) >= n_packets:
             return
-        await triggers.RisingEdge(dut.clock)
+        await next_drive_phase(dut.clock)
     assert len(packets) >= n_packets, f'timed out waiting for {n_packets} packets, got {len(packets)}'
 
 
@@ -368,7 +367,7 @@ async def wait_for_commits(
     for _ in range(timeout_cycles):
         if len(commits) >= n_commits:
             return
-        await triggers.RisingEdge(dut.clock)
+        await next_drive_phase(dut.clock)
     assert len(commits) >= n_commits, f'timed out waiting for {n_commits} commits, got {len(commits)}'
 
 
@@ -454,9 +453,9 @@ async def jteinitiator_random_test(dut: HierarchyObject) -> None:
     cocotb.start_soon(consume_and_check_commits(driver, commits_received, commits_expected, params))
 
     dut.reset.value = 1
-    await triggers.RisingEdge(dut.clock)
+    await next_drive_phase(dut.clock)
     dut.reset.value = 0
-    await triggers.RisingEdge(dut.clock)
+    await next_drive_phase(dut.clock)
 
     driver.enqueue_instructions(instrs_to_send)
     try:

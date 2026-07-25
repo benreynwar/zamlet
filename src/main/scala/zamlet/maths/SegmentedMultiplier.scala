@@ -27,20 +27,24 @@ class SegmentedMultiplier(
     registerInput: Boolean = true,
     registerLeafInput: Boolean = true,
     recombineBufferMinWidth: Int = 32,
+    recombineFinalAdderBufferMinWidth: Int = 128,
     registerOutput: Boolean = true) extends Module {
   require(width >= minWidth, "width must be at least minWidth")
   require(isPow2(width), "width must be a power of two")
   require(isPow2(minWidth), "minWidth must be a power of two")
   require(width % minWidth == 0, "width must be a multiple of minWidth")
   require(recombineBufferMinWidth >= minWidth, "recombineBufferMinWidth must be at least minWidth")
+  require(isPow2(recombineFinalAdderBufferMinWidth), "recombineFinalAdderBufferMinWidth must be a power of two")
 
   val registerRecombine: Boolean = width >= recombineBufferMinWidth
+  val registerRecombineFinalAdderMiddle: Boolean = 2 * width >= recombineFinalAdderBufferMinWidth
   val latency: Int = SegmentedMultiplier.latency(
     width,
     minWidth,
     registerInput,
     registerLeafInput,
     recombineBufferMinWidth,
+    recombineFinalAdderBufferMinWidth,
     registerOutput)
 
   override def desiredName: String = s"SegmentedMultiplier${width}x$width"
@@ -65,6 +69,7 @@ class SegmentedMultiplier(
         registerInput = registerLeafInput && halfWidth == minWidth,
         registerLeafInput = registerLeafInput,
         recombineBufferMinWidth = recombineBufferMinWidth,
+        recombineFinalAdderBufferMinWidth = recombineFinalAdderBufferMinWidth,
         registerOutput = true))
       module.suggestName(name)
       module.io.input.valid := s0.valid
@@ -111,7 +116,8 @@ class SegmentedMultiplier(
     val recombine = Module(new SegmentedMultiplierRecombine(
       width,
       registerInput = false,
-      registerMiddle = registerRecombine,
+      registerCarrySaveOutput = registerRecombine,
+      registerFinalAdderMiddle = registerRecombineFinalAdderMiddle,
       registerOutput = false))
     recombine.io.input.valid := loLo.io.output.valid
     recombine.io.input.bits.loLo := loLo.io.output.bits.product
@@ -138,6 +144,7 @@ object SegmentedMultiplier {
       registerInput: Boolean,
       registerLeafInput: Boolean,
       recombineBufferMinWidth: Int,
+      recombineFinalAdderBufferMinWidth: Int,
       registerOutput: Boolean): Int = {
     val inputLatency = if (registerInput) 1 else 0
     val outputLatency = if (registerOutput) 1 else 0
@@ -151,10 +158,12 @@ object SegmentedMultiplier {
           registerInput = registerLeafInput && width / 2 == minWidth,
           registerLeafInput = registerLeafInput,
           recombineBufferMinWidth = recombineBufferMinWidth,
+          recombineFinalAdderBufferMinWidth = recombineFinalAdderBufferMinWidth,
           registerOutput = true) +
           SegmentedMultiplierRecombine.latency(
             registerInput = false,
-            registerMiddle = width >= recombineBufferMinWidth,
+            registerCarrySaveOutput = width >= recombineBufferMinWidth,
+            registerFinalAdderMiddle = 2 * width >= recombineFinalAdderBufferMinWidth,
             registerOutput = false)
       }
     inputLatency + internalLatency + outputLatency

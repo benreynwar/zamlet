@@ -30,10 +30,24 @@ JAMLET_COMMON_SRCS = [
     "//src/main/scala/zamlet/network:network_sources",
 ]
 
+JAMLET_MXU_SRCS = [
+    "JamletMxu.scala",
+    "JamletMxuCell.scala",
+    "JamletMxuTestGrid.scala",
+]
+
 chisel_binary(
     name = "jamlet",
     srcs = [":jamlet_sources"] + JAMLET_COMMON_SRCS,
     main_class = "zamlet.jamlet.JamletMain",
+    deps = JAMLET_DEPS,
+    visibility = ["//visibility:public"],
+)
+
+chisel_binary(
+    name = "jamlet_hard_macros",
+    srcs = [":jamlet_sources"] + JAMLET_COMMON_SRCS,
+    main_class = "zamlet.jamlet.JamletHardMacroMain",
     deps = JAMLET_DEPS,
     visibility = ["//visibility:public"],
 )
@@ -74,6 +88,38 @@ chisel_binary(
     name = "jamletalu",
     srcs = ["JamletALU.scala"] + JAMLET_COMMON_SRCS,
     main_class = "zamlet.jamlet.JamletAluMain",
+    deps = JAMLET_DEPS,
+    visibility = ["//visibility:public"],
+)
+
+chisel_binary(
+    name = "jamletmxu",
+    srcs = JAMLET_MXU_SRCS + JAMLET_COMMON_SRCS,
+    main_class = "zamlet.jamlet.JamletMxuMain",
+    deps = JAMLET_DEPS,
+    visibility = ["//visibility:public"],
+)
+
+chisel_binary(
+    name = "jamletmxucell",
+    srcs = JAMLET_MXU_SRCS + JAMLET_COMMON_SRCS,
+    main_class = "zamlet.jamlet.JamletMxuCellMain",
+    deps = JAMLET_DEPS,
+    visibility = ["//visibility:public"],
+)
+
+chisel_binary(
+    name = "jamletmxutestgrid",
+    srcs = JAMLET_MXU_SRCS + JAMLET_COMMON_SRCS,
+    main_class = "zamlet.jamlet.JamletMxuTestGridMain",
+    deps = JAMLET_DEPS,
+    visibility = ["//visibility:public"],
+)
+
+chisel_binary(
+    name = "jamletmxutestgrid_iverilog_wrapper",
+    srcs = JAMLET_MXU_SRCS + JAMLET_COMMON_SRCS,
+    main_class = "zamlet.jamlet.JamletMxuTestGridIverilogWrapperMain",
     deps = JAMLET_DEPS,
     visibility = ["//visibility:public"],
 )

@@ -19,8 +19,10 @@ JSON_HEADER_CONFIG_KEYS = BASE_CONFIG_KEYS + [
     "VERILOG_POWER_DEFINE",
     "VERILOG_INCLUDE_DIRS",
     "SYNTH_PARAMETERS",
-    "USE_SYNLIG",
-    "SYNLIG_DEFER",
+    "USE_SLANG",
+    "SLANG_ARGUMENTS",
+    # VerilogStep.get_command() reads macro views to build blackbox models.
+    "MACROS",
     # PyosysStep.config_vars (pyosys.py lines 140-204)
     "SYNTH_LATCH_MAP",
     "SYNTH_TRISTATE_MAP",
@@ -29,9 +31,12 @@ JSON_HEADER_CONFIG_KEYS = BASE_CONFIG_KEYS + [
     "SYNTH_FA_MAP",
     "SYNTH_MUX_MAP",
     "SYNTH_MUX4_MAP",
-    "USE_LIGHTER",
-    "LIGHTER_DFF_MAP",
+    "SYNTH_CLOCKGATE_MIN_WIDTH",
+    "SYNTH_CLOCKGATE_POSEDGE_ICG",
+    "SYNTH_CLOCKGATE_NEGEDGE_ICG",
     "YOSYS_LOG_LEVEL",
+    "SYNTH_CORNER",
+    "SYNTH_SHOW",
 ]
 
 # Config keys for Yosys.Synthesis (from librelane/steps/pyosys.py)
@@ -53,14 +58,17 @@ SYNTHESIS_CONFIG_KEYS = JSON_HEADER_CONFIG_KEYS + [
     "SYNTH_SPLITNETS",
     "SYNTH_SIZING",
     "SYNTH_HIERARCHY_MODE",
+    "SYNTH_KEEP_HIERARCHY_MIN_COST",
+    "SYNTH_KEEP_HIERARCHY_INSTANCES",
+    "SYNTH_KEEP_HIERARCHY_MODULES",
     "SYNTH_SHARE_RESOURCES",
     "SYNTH_ADDER_TYPE",
     "SYNTH_EXTRA_MAPPING_FILE",
     "SYNTH_ELABORATE_ONLY",
-    "SYNTH_ELABORATE_FLATTEN",
     "SYNTH_MUL_BOOTH",
     "SYNTH_TIE_UNDEFINED",
     "SYNTH_WRITE_NOATTR",
+    "SYNTH_NORMALIZE_SINGLE_BIT_VECTORS",
 ]
 
 # Step 73: Yosys.EQY - yosys.py lines 250-350
@@ -85,7 +93,7 @@ def _synthesis_impl(ctx):
     stat_json = ctx.actions.declare_file(ctx.label.name + "/reports/stat.json")
 
     # Get input files
-    inputs = get_input_files(input_info, state_info)
+    inputs = get_input_files(input_info, state_info, SYNTHESIS_CONFIG_KEYS)
 
     # Create config
     config = create_librelane_config(input_info, state_info, SYNTHESIS_CONFIG_KEYS)
@@ -140,7 +148,7 @@ def _json_header_impl(ctx):
     json_h = ctx.actions.declare_file(ctx.label.name + "/" + top + ".h.json")
 
     # Get input files
-    inputs = get_input_files(input_info, state_info)
+    inputs = get_input_files(input_info, state_info, JSON_HEADER_CONFIG_KEYS)
 
     # Create config
     config = create_librelane_config(input_info, state_info, JSON_HEADER_CONFIG_KEYS)
@@ -195,7 +203,7 @@ def _eqy_impl(ctx):
     state_info = ctx.attr.src[LibrelaneInfo]
 
     # Get input files
-    inputs = get_input_files(input_info, state_info)
+    inputs = get_input_files(input_info, state_info, EQY_CONFIG_KEYS)
 
     # Create config
     config = create_librelane_config(input_info, state_info, EQY_CONFIG_KEYS)

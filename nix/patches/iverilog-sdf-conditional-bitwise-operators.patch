@@ -1,0 +1,34 @@
+diff --git a/vpi/sdf_parse.y b/vpi/sdf_parse.y
+index e499b95c..199697bf 100644
+--- a/vpi/sdf_parse.y
++++ b/vpi/sdf_parse.y
+@@ -77,8 +77,11 @@
+ %type <delval_list> delval_list
+ 
+ %left K_LOR
++%left '|'
+ %left K_LAND
++%left '&'
+ %left K_EQ K_NE K_CEQ K_CNE
++%right '!' '~'
+ 
+ %%
+ 
+@@ -436,13 +439,17 @@ timing_check_condition
+   /* This is not complete! */
+ conditional_port_expr
+   : port
+       { free($1); }
+   | scalar_constant
+   | '(' conditional_port_expr ')'
++  | '~' conditional_port_expr
++  | '!' conditional_port_expr
++  | conditional_port_expr '&' conditional_port_expr
++  | conditional_port_expr '|' conditional_port_expr
+   | conditional_port_expr K_LAND conditional_port_expr
+   | conditional_port_expr K_LOR conditional_port_expr
+   | conditional_port_expr K_EQ conditional_port_expr
+   | conditional_port_expr K_NE conditional_port_expr
+   | conditional_port_expr K_CEQ conditional_port_expr
+   | conditional_port_expr K_CNE conditional_port_expr
+   ;

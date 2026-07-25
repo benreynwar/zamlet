@@ -1,3 +1,5 @@
+{ includeRiscvClang ? true }:
+
 # Common Nix configuration for the Zamlet project.
 # Exports buildDeps (project build dependencies) and devTools (developer tooling) separately
 # so consumers can choose what they need.
@@ -5,7 +7,6 @@ let
   # nixos-24.05 branch, pinned 2025-02-05
   nixpkgs = fetchTarball "https://github.com/NixOS/nixpkgs/archive/b134951a4c9f3c995fd7be05f3243f8ecd65d798.tar.gz";
   bootstrap-pkgs = import nixpkgs {};
-
   # nixpkgs-unstable, pinned 2026-03-16 (for newer metals with Bazel support)
   nixpkgs-unstable = fetchTarball
     "https://github.com/NixOS/nixpkgs/archive/a07d4ce6bee67d7c838a8a5796e75dff9caa21ef.tar.gz";
@@ -14,19 +15,23 @@ let
   flake-compat = fetchTarball
     "https://github.com/edolstra/flake-compat/archive/35bb57c0c8d8b62bbfd284272c928ceb64ddbde9.tar.gz";
 
-  # main branch, pinned 2025-02-05
+  # 3.0.4 release, pinned 2026-06-07
   librelane-src-unpatched = builtins.fetchGit {
     url = "https://github.com/librelane/librelane";
-    ref = "main";
-    rev = "f315752cf2e1465aca24a002247aa6169becb541";
+    ref = "refs/tags/3.0.4";
+    rev = "0f39aab99009d4a81ee3f863f0da9ca2f0b43a99";
   };
 
   librelane-src = bootstrap-pkgs.applyPatches {
     name = "librelane-patched";
     src = librelane-src-unpatched;
     patches = [
-      ./librelane-macro-placement.patch
       ./patches/librelane-magic-abspath-rcfile.patch
+      ./patches/librelane-custom-io-full-edge-spacing.patch
+      ./patches/librelane-custom-pdn-config.patch
+      ./patches/librelane-preserve-liberty-order.patch
+      ./patches/librelane-custom-rc-config.patch
+      ./patches/librelane-preserve-repeated-tracks.patch
     ];
   };
 
@@ -36,6 +41,11 @@ let
   librelane-flake = (import flake-compat { src = librelane-src; }).defaultNix;
   pkgs = librelane-flake.legacyPackages.${builtins.currentSystem};
   sky130-pdk = import ./sky130.nix { inherit pkgs; };
+  asap7-pdk = import ./asap7.nix { inherit pkgs; };
+  pdk-root = pkgs.symlinkJoin {
+    name = "zamlet-pdks";
+    paths = [ sky130-pdk asap7-pdk ];
+  };
 
   # cocotb 2.0 override
   cocotb2 = pkgs.python3.pkgs.cocotb.overridePythonAttrs (old: rec {
@@ -46,7 +56,6 @@ let
       rev = "v${version}";
       sha256 = "sha256-BpshczKA83ZeytGDrHEg6IAbI5FxciAUnzwE10hgPC0=";
     };
-    patches = [];
     # cocotb 2.0 uses src/ layout instead of cocotb/ at root
     preCheck = ''
       export PATH=$out/bin:$PATH
@@ -67,17 +76,28 @@ let
     };
   });
 
+  # OpenSTA emits valid SDF conditions using bitwise operators, which Icarus's
+  # otherwise-skippable conditional-path parser does not accept.
+  iverilog-patched = pkgs.iverilog.overrideAttrs (old: {
+    patches = (old.patches or []) ++ [
+      ./patches/iverilog-sdf-conditional-bitwise-operators.patch
+    ];
+  });
+
   # cocotb-bus for AXI testing (same commit as MODULE.bazel)
   cocotb-bus = pkgs.python3.pkgs.buildPythonPackage rec {
     pname = "cocotb-bus";
     version = "0-unstable";
+    pyproject = true;
+
     src = pkgs.fetchFromGitHub {
       owner = "cocotb";
       repo = "cocotb-bus";
       rev = "b9b248ecc8793de6c4534e8014b99b92e1a1519a";
       sha256 = "sha256-eikhcBVnbqcYaTre99bEipcykHGZPKgLCXUjgjDn9RE=";
     };
-    propagatedBuildInputs = [ cocotb2 ];
+    build-system = [ pkgs.python3.pkgs.setuptools ];
+    propagatedBuildInputs = [ cocotb2 pkgs.python3.pkgs.scapy ];
     doCheck = false;
   };
 
@@ -85,12 +105,15 @@ let
   cocotbext-axi = pkgs.python3.pkgs.buildPythonPackage rec {
     pname = "cocotbext-axi";
     version = "0-unstable";
+    pyproject = true;
+
     src = pkgs.fetchFromGitHub {
       owner = "alexforencich";
       repo = "cocotbext-axi";
       rev = "3e1e7fc1ec488811d742adde6f7283852f134458";
       sha256 = "sha256-BITHHk1YXfYXH0kb7gh0A71WkKmz95VALBm3vmqMDFA=";
     };
+    build-system = [ pkgs.python3.pkgs.setuptools ];
     propagatedBuildInputs = [ cocotb2 cocotb-bus ];
     doCheck = false;
   };
@@ -101,8 +124,8 @@ let
     format = "wheel";
 
     src = pkgs.fetchurl {
-      url = "https://files.pythonhosted.org/packages/f9/e6/7dafff9eefdde03eb0f535dfd8f633850efcee10ce11d968217bdbdb934f/pywellen-0.18.1-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl";
-      hash = "sha256-gIO8jq52LWDzN4wcYXzy1d517ZGKb7ADTJJwlJ1tUmA=";
+      url = "https://files.pythonhosted.org/packages/5f/44/05241150719b39c77b398ffbe6cddc32fb9ed5f099029dd89f10845ba09f/pywellen-0.18.1-cp313-cp313-manylinux_2_17_x86_64.manylinux2014_x86_64.whl";
+      hash = "sha256-FTLFv+BwA2w7+GXGQm045jRdDr/TYKVCTaC3+vKa7Pk=";
     };
 
     doCheck = false;
@@ -130,8 +153,11 @@ let
   riscv-clang = import ./riscv-clang.nix { pkgs = bootstrap-pkgs; };
 
   # Project build dependencies
-  buildDeps = with pkgs; [
+  buildDeps = (with pkgs; [
     stdenv.cc.cc.lib  # Standard library for Bazel-downloaded binaries
+    autoconf          # For regenerating open-pdks configure scripts
+    bootstrap-pkgs.automake  # Match open-pdks' generated AM_PATH_PYTHON
+    p7zip             # For extracting upstream ASAP7 Liberty archives
     cmake             # For building LLVM locally
     ninja             # For building LLVM locally
     jdk21
@@ -141,6 +167,7 @@ let
     yosys
     magic-vlsi
     verilator-new
+    iverilog-patched
     klayout
     python-env
     bazelisk
@@ -149,15 +176,14 @@ let
     jq
     which
     riscv-toolchain
-    riscv-clang
-  ];
+  ]) ++ pkgs.lib.optional includeRiscvClang riscv-clang;
 
   # Developer tooling (editor, LSP, etc.)
   devTools = [
     pkgs.cachix
     pkgs.ruff
     pkgs.mypy
-    ((pkgs.vim_configurable.override { guiSupport = "no"; }).customize {
+    (pkgs.vim-full.customize {
       vimrcConfig.packages.zamlet = with pkgs.vimPlugins; {
         start = [ ale ];
       };
@@ -190,11 +216,11 @@ let
     file
   ]));
 in {
-  inherit pkgs sky130-pdk python-env riscv-clang buildDeps devTools;
+  inherit pkgs sky130-pdk asap7-pdk python-env riscv-clang buildDeps devTools;
 
   # Environment variables
   env = {
-    PDK_ROOT = sky130-pdk;
+    PDK_ROOT = pdk-root;
     PDK = "sky130A";
     LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath [
       pkgs.stdenv.cc.cc.lib

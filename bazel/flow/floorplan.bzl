@@ -4,17 +4,45 @@ load(":providers.bzl", "LibrelaneInput", "LibrelaneInfo")
 load(":common.bzl",
     "create_librelane_config",
     "run_librelane_step",
+    "single_step_impl",
     "get_input_files",
     "FLOW_ATTRS",
     "BASE_CONFIG_KEYS",
+    "OPENROAD_STEP_CONFIG_KEYS",
 )
 
-# Config keys needed by floorplan step (from floorplan.tcl and common/io.tcl)
-FLOORPLAN_CONFIG_KEYS = BASE_CONFIG_KEYS + [
-    # Floorplan-specific keys (set in impl, not from create_librelane_config)
+# Config keys needed by OpenROAD.Floorplan in LibreLane 3.0.4.
+FLOORPLAN_CONFIG_KEYS = OPENROAD_STEP_CONFIG_KEYS + [
+    "FP_FLIP_SITES",
+    "FP_TRACKS_INFO",
     "FP_SIZING", "DIE_AREA", "CORE_AREA", "FP_CORE_UTIL", "FP_ASPECT_RATIO",
     "BOTTOM_MARGIN_MULT", "TOP_MARGIN_MULT", "LEFT_MARGIN_MULT", "RIGHT_MARGIN_MULT",
     "FP_OBSTRUCTIONS", "PL_SOFT_OBSTRUCTIONS",
+    "EXTRA_SITES",
+]
+
+DUMP_RC_REPORTS = [
+    "tlef_values.rpt",
+    "layer_values_after.rpt",
+    "resizer_values_after.rpt",
+]
+
+# OpenROAD.DumpRCValues inherits OpenROADStep, but dump_rc.tcl only reads
+# libraries/LEFs/DEF and RC setup. Keep this narrower than the full parent list.
+DUMP_RC_CONFIG_KEYS = BASE_CONFIG_KEYS + [
+    "PNR_CORNERS",
+    "SET_RC_VERBOSE",
+    "SET_RC_TCL",
+    "LAYERS_RC",
+    "VIAS_R",
+    "SIGNAL_WIRE_RC_LAYERS",
+    "CLOCK_WIRE_RC_LAYERS",
+    "DEDUPLICATE_CORNERS",
+    "LIB",
+    "EXTRA_EXCLUDED_CELLS",
+    "PNR_EXCLUDED_CELL_FILE",
+    "MACROS",
+    "EXTRA_LEFS",
 ]
 
 def _floorplan_impl(ctx):
@@ -34,7 +62,7 @@ def _floorplan_impl(ctx):
     sdc_out = ctx.actions.declare_file(ctx.label.name + "/" + top + ".sdc")
 
     # Get input files
-    inputs = get_input_files(input_info, state_info)
+    inputs = get_input_files(input_info, state_info, FLOORPLAN_CONFIG_KEYS)
 
     # Create config with floorplan settings
     config = create_librelane_config(input_info, state_info, FLOORPLAN_CONFIG_KEYS)
@@ -54,7 +82,7 @@ def _floorplan_impl(ctx):
     else:
         # Relative sizing mode (default)
         config["FP_SIZING"] = "relative"
-        config["FP_CORE_UTIL"] = int(ctx.attr.core_utilization)
+        config["FP_CORE_UTIL"] = int(ctx.attr.fp_core_util)
         config["FP_ASPECT_RATIO"] = float(ctx.attr.fp_aspect_ratio)
 
     # Optional obstructions
@@ -101,12 +129,21 @@ def _floorplan_impl(ctx):
         ),
     ]
 
+def _dump_rc_values_impl(ctx):
+    return single_step_impl(
+        ctx,
+        "OpenROAD.DumpRCValues",
+        DUMP_RC_CONFIG_KEYS,
+        step_outputs = [],
+        extra_outputs = DUMP_RC_REPORTS,
+    )
+
 librelane_floorplan = rule(
     implementation = _floorplan_impl,
     attrs = dict(FLOW_ATTRS, **{
         "die_area": attr.string(doc = "Die area as 'x0 y0 x1 y1' in microns"),
         "core_area": attr.string(doc = "Core area as 'x0 y0 x1 y1' in microns"),
-        "core_utilization": attr.string(
+        "fp_core_util": attr.string(
             doc = "Target core utilization percentage (0-100)",
             default = "50",
         ),
@@ -139,5 +176,11 @@ librelane_floorplan = rule(
             default = [],
         ),
     }),
+    provides = [DefaultInfo, LibrelaneInfo],
+)
+
+librelane_dump_rc_values = rule(
+    implementation = _dump_rc_values_impl,
+    attrs = FLOW_ATTRS,
     provides = [DefaultInfo, LibrelaneInfo],
 )

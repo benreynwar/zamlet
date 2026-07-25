@@ -16,6 +16,7 @@ test_suite(
         "//python/zamlet/maths_test:all_tests",
         "//python/zamlet/utils_test:all_tests",
         "//python/zamlet/jamlet_test:all_tests",
+        "//python/zamlet/systolic_test:all_tests",
         "//python/zamlet/kamlet_test:all_tests",
         # "//python/zamlet/lamlet_test:all_tests",  # empty - disabled
         "//python/zamlet/shuttle_test:all_tests",

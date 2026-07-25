@@ -13,6 +13,9 @@ LibrelaneInput = provider(
 
         # PDK info
         "pdk_info": "PdkInfo provider with full PDK configuration",
+        "default_corner": "Default timing corner override",
+        "max_transition_constraint": "Max transition constraint override in ns",
+        "max_capacitance_constraint": "Max capacitance constraint override in pF",
 
         # Input RTL (before synthesis)
         "verilog_files": "Depset of input verilog File objects",
@@ -33,7 +36,11 @@ LibrelaneInput = provider(
         "linter_include_pdk_models": "Include PDK Verilog models in linting",
         "linter_relative_includes": "Resolve includes relative to file",
         "linter_error_on_latch": "Error on inferred latches",
+        "linter_error_on_multidriven": "Error on multiple-driver nets",
         "linter_defines": "Linter-specific preprocessor defines (list)",
+        "linter_disable_warnings": "Verilator warning codes disabled globally",
+        "linter_disable_warnings_blackbox": "Verilator warning codes disabled for blackbox models",
+        "linter_vlt": "Extra Verilator configuration file",
         "extra_verilog_models": "Extra Verilog models (list of Files)",
 
         # Checker config (from librelane/steps/checker.py)
@@ -43,10 +50,11 @@ LibrelaneInput = provider(
 
         # Yosys config (from librelane/steps/pyosys.py)
         "synth_parameters": "Key-value pairs for Yosys chparam (list)",
-        "use_synlig": "Use Synlig plugin for SystemVerilog",
-        "synlig_defer": "Use -defer flag with Synlig",
-        "use_lighter": "Use Lighter plugin for clock-gated FFs",
-        "lighter_dff_map": "File - Custom DFF map for Lighter",
+        "use_slang": "Use Slang frontend for SystemVerilog",
+        "slang_arguments": "Arguments passed to the Slang frontend",
+        "synth_clockgate_min_width": "Minimum group size for clock-gating",
+        "synth_corner": "Synthesis timing corner override",
+        "synth_show": "Generate Yosys graphviz output",
         "yosys_log_level": "Yosys log level (ALL, WARNING, ERROR)",
 
         # Yosys.Synthesis config (from librelane/steps/pyosys.py SynthesisCommon)
@@ -63,14 +71,17 @@ LibrelaneInput = provider(
         "synth_splitnets": "Split multi-bit nets",
         "synth_sizing": "Enable ABC cell sizing",
         "synth_hierarchy_mode": "Hierarchy handling mode",
+        "synth_keep_hierarchy_min_cost": "Keep hierarchy for modules above estimated gate cost",
+        "synth_keep_hierarchy_instances": "Instances to mark keep_hierarchy",
+        "synth_keep_hierarchy_modules": "Modules to mark keep_hierarchy",
         "synth_share_resources": "Merge shareable resources",
         "synth_adder_type": "Adder mapping type",
         "synth_extra_mapping_file": "File - Extra techmap file",
         "synth_elaborate_only": "Elaborate without logic mapping",
-        "synth_elaborate_flatten": "Flatten during elaborate-only",
         "synth_mul_booth": "Use Booth encoding for multipliers",
         "synth_tie_undefined": "Tie undefined values (high/low/empty)",
         "synth_write_noattr": "Omit Verilog attributes from netlist",
+        "synth_normalize_single_bit_vectors": "Normalize [0:0] vectors to scalar wires",
 
         # Post-synthesis checker config (from librelane/steps/checker.py)
         "error_on_unmapped_cells": "Error on unmapped cells (Step 7)",
@@ -84,11 +95,14 @@ LibrelaneInput = provider(
         "error_on_lvs_error": "bool - Error on LVS errors (Step 72)",
 
         # OpenROADStep config (from librelane/steps/openroad.py lines 192-223)
+        "set_rc_verbose": "bool - Echo set_rc commands",
         "pdn_connect_macros_to_grid": "bool - Connect macros to top level power grid",
         "pdn_macro_connections": "List[str] - Explicit macro power connections",
         "pdn_enable_global_connections": "bool - Enable global PDN connections",
+        "sta_extra_corner_tcl_file": "File - Extra OpenROAD corner Tcl file (optional)",
+        "deduplicate_corners": "bool - Deduplicate equivalent PnR corners",
         "fp_def_template": "File - DEF template for floorplan (optional)",
-        "fp_pin_order_cfg": "File - Pin order config for custom IO placement (optional)",
+        "io_pin_order_cfg": "File - Pin order config for custom IO placement (optional)",
 
         # ApplyDEFTemplate config (odb.py lines 249-259)
         "fp_template_match_mode": "string - DEF template pin matching mode",
@@ -122,6 +136,8 @@ LibrelaneInput = provider(
         "magic_zeroize_origin": "bool - Move layout origin to 0,0",
         "magic_disable_cif_info": "bool - Disable CIF info in GDSII",
         "magic_macro_std_cell_source": "string - Macro std cell source (PDK/macro)",
+        # KLayout.StreamOut config
+        "klayout_conflict_resolution": "string - KLayout stream-out cell conflict resolution",
 
         # OpenROAD.RCX config (openroad.py:1679-1702)
         "rcx_merge_via_wire_res": "bool - Merge via and wire resistances",
@@ -138,45 +154,48 @@ LibrelaneInput = provider(
         "routing_obstructions": "List[str] - Routing obstructions (layer llx lly urx ury)",
 
         # io_layer_variables (common_variables.py lines 19-46) - IOPlacement, CustomIOPlacement
-        "fp_io_vextend": "string - Extend vertical IO pins outside die (um)",
-        "fp_io_hextend": "string - Extend horizontal IO pins outside die (um)",
-        "fp_io_vthickness_mult": "string - Vertical pin thickness multiplier",
-        "fp_io_hthickness_mult": "string - Horizontal pin thickness multiplier",
+        "io_pin_v_extension": "string - Extend vertical IO pins outside die (um)",
+        "io_pin_h_extension": "string - Extend horizontal IO pins outside die (um)",
+        "io_pin_v_thickness_mult": "string - Vertical pin thickness multiplier",
+        "io_pin_h_thickness_mult": "string - Horizontal pin thickness multiplier",
 
         # CustomIOPlacement config (odb.py lines 673-680)
         "errors_on_unmatched_io": "string - Error on unmatched IO pins",
 
         # GlobalPlacement config
         "pl_target_density_pct": "string - Target placement density percentage",
-        "fp_ppl_mode": "string - IO placement mode",
+        "io_pin_placement_mode": "string - IO placement mode",
         "pl_skip_initial_placement": "bool - Skip initial placement",
         "pl_wire_length_coef": "string - Wirelength coefficient",
         "pl_min_phi_coefficient": "string - Min phi coefficient",
         "pl_max_phi_coefficient": "string - Max phi coefficient",
+        "pl_keep_resize_below_overflow": "string - Keep resize changes below this overflow",
         "rt_clock_min_layer": "string - Min clock routing layer",
         "rt_clock_max_layer": "string - Max clock routing layer",
         "grt_adjustment": "string - Global routing adjustment",
         "grt_macro_extension": "int - Macro blockage extension",
-        "pl_time_driven": "bool - Time driven placement",
+        "pl_timing_driven": "bool - Timing driven placement",
         "pl_routability_driven": "bool - Routability driven placement",
         "pl_routability_overflow_threshold": "string - Routability overflow threshold",
         "fp_core_util": "string - Core utilization percentage",
 
         # OpenROAD.GeneratePDN (pdn_variables from common_variables.py)
-        "fp_pdn_skiptrim": "bool - Skip metal trim step during pdngen",
-        "fp_pdn_core_ring": "bool - Enable core ring around design",
-        "fp_pdn_enable_rails": "bool - Enable rails in power grid",
-        "fp_pdn_horizontal_halo": "string - Horizontal halo around macros for PDN (um)",
-        "fp_pdn_vertical_halo": "string - Vertical halo around macros for PDN (um)",
-        "fp_pdn_multilayer": "bool - Use multiple layers in power grid",
-        "fp_pdn_cfg": "File - Custom PDN configuration file",
+        "pdn_skiptrim": "bool - Skip metal trim step during pdngen",
+        "pdn_core_ring": "bool - Enable core ring around design",
+        "pdn_enable_rails": "bool - Enable rails in power grid",
+        "pdn_horizontal_halo": "string - Horizontal halo around macros for PDN (um)",
+        "pdn_vertical_halo": "string - Vertical halo around macros for PDN (um)",
+        "pdn_multilayer": "bool - Use multiple layers in power grid",
+        "pdn_cfg": "File - Custom PDN configuration file",
 
         # grt_variables (common_variables.py:285-319) - ResizerStep subclasses
         "diode_padding": "int - Diode cell padding in sites",
         "grt_allow_congestion": "bool - Allow congestion during global routing",
-        "grt_antenna_iters": "int - Max iterations for global antenna repairs",
+        "grt_antenna_repair_iters": "int - Max iterations for global antenna repairs",
         "grt_overflow_iters": "int - Max iterations for overflow convergence",
-        "grt_antenna_margin": "int - Margin % to over-fix antenna violations",
+        "grt_antenna_repair_margin": "int - Margin % to over-fix antenna violations",
+        "grt_antenna_repair_jumper_only": "bool - Only use jumpers to fix antenna violations",
+        "grt_antenna_repair_diode_only": "bool - Only use antenna diodes to fix antenna violations",
 
         # dpl_variables (common_variables.py:255-283) - ResizerStep subclasses
         "pl_optimize_mirroring": "bool - Run optimize_mirroring during detailed placement",
@@ -204,12 +223,20 @@ LibrelaneInput = provider(
         # OpenROAD.CTS config_vars (openroad.py:2016-2084)
         "cts_sink_clustering_size": "int - Max sinks per cluster (default 25)",
         "cts_sink_clustering_max_diameter": "string - Max cluster diameter in um (default 50)",
+        "cts_balance_levels": "string - Balance CTS levels override",
+        "cts_sink_buffer_max_cap_derate_pct": "string - CTS sink buffer max cap derate percentage",
+        "cts_delay_buffer_derate_pct": "string - CTS delay buffer derate percentage",
+        "cts_obstruction_aware": "string - CTS obstruction-aware buffering override",
+        "cts_sink_clustering_enable": "bool - Enable CTS sink clustering",
+        "cts_macro_clustering_size": "string - Max macro sinks per cluster",
+        "cts_macro_clustering_max_diameter": "string - Max macro cluster diameter in um",
         "cts_clk_max_wire_length": "string - Max clock wire length in um (default 0)",
         "cts_disable_post_processing": "bool - Disable post-CTS outlier processing",
         "cts_distance_between_buffers": "string - Distance between buffers in um (default 0)",
         "cts_corners": "List[str] - IPVT corners for CTS (empty = STA_CORNERS)",
         "cts_max_cap": "string - Max capacitance for CTS characterization in pF",
         "cts_max_slew": "string - Max slew for CTS characterization in ns",
+        "cts_apply_ndr": "string - CTS non-default-rule strategy",
 
         # ResizerTimingPostCTS/PostGRT config_vars (openroad.py:2254-2302)
         "pl_resizer_hold_slack_margin": "string - Hold slack margin in ns (default 0.1)",
@@ -217,7 +244,13 @@ LibrelaneInput = provider(
         "pl_resizer_hold_max_buffer_pct": "string - Max hold buffers as % of instances (default 50)",
         "pl_resizer_setup_max_buffer_pct": "string - Max setup buffers as % of instances (default 50)",
         "pl_resizer_allow_setup_vios": "bool - Allow setup violations when fixing hold",
-        "pl_resizer_gate_cloning": "bool - Enable gate cloning for setup fixes (default True)",
+        "pl_resizer_setup_gate_cloning": "bool - Enable gate cloning for setup fixes (default True)",
+        "pl_resizer_setup_buffering": "bool - Enable setup rebuffering and load splitting",
+        "pl_resizer_setup_buffer_removal": "bool - Enable setup buffer removal",
+        "pl_resizer_setup_repair_tns_pct": "string - Percentage of setup violating endpoints to repair",
+        "pl_resizer_setup_max_util_pct": "string - Max setup repair utilization percentage",
+        "pl_resizer_hold_repair_tns_pct": "string - Percentage of hold violating endpoints to repair",
+        "pl_resizer_hold_max_util_pct": "string - Max hold repair utilization percentage",
         "pl_resizer_fix_hold_first": "bool - Fix hold before setup (experimental)",
         # RepairDesignPostGRT config_vars
         "grt_design_repair_run_grt": "bool - Run GRT before/after resizer in post-GRT repair",
@@ -230,16 +263,28 @@ LibrelaneInput = provider(
         "grt_resizer_hold_max_buffer_pct": "string - Max buffers for hold fixes (%)",
         "grt_resizer_setup_max_buffer_pct": "string - Max buffers for setup fixes (%)",
         "grt_resizer_allow_setup_vios": "bool - Allow setup violations when fixing hold",
-        "grt_resizer_gate_cloning": "bool - Enable gate cloning for setup fixes",
+        "grt_resizer_setup_gate_cloning": "bool - Enable gate cloning for setup fixes",
         "grt_resizer_run_grt": "bool - Run GRT after resizer steps",
+        "grt_resizer_setup_buffering": "bool - Enable setup rebuffering and load splitting",
+        "grt_resizer_setup_buffer_removal": "bool - Enable setup buffer removal",
+        "grt_resizer_setup_repair_tns_pct": "string - Percentage of setup violating endpoints to repair",
+        "grt_resizer_setup_max_util_pct": "string - Max setup repair utilization percentage",
+        "grt_resizer_hold_repair_tns_pct": "string - Percentage of hold violating endpoints to repair",
+        "grt_resizer_hold_max_util_pct": "string - Max hold repair utilization percentage",
         "grt_resizer_fix_hold_first": "bool - Fix hold before setup (experimental)",
         # Odb.DiodesOnPorts config_vars
         "diode_on_ports": "string - Insert diodes on ports: none, in, out, both",
         # DetailedRouting config_vars
         "drt_threads": "int - Threads for detailed routing (0=auto)",
-        "drt_min_layer": "string - Override min layer for DRT",
-        "drt_max_layer": "string - Override max layer for DRT",
         "drt_opt_iters": "int - Max optimization iterations",
+        "drt_save_snapshots": "bool - Save detailed routing iteration ODB snapshots",
+        "drt_antenna_repair_iters": "int - Max post-DRT antenna repair iterations",
+        "drt_antenna_repair_margin": "int - Margin % to over-fix post-DRT antenna violations",
+        "drt_antenna_repair_jumper_only": "bool - Only use jumpers for post-DRT antenna repair",
+        "drt_antenna_repair_diode_only": "bool - Only use diodes for post-DRT antenna repair",
+        "drt_save_drc_report_iters": "string - Iteration interval for DRT DRC reports",
+        "non_default_rules": "string - JSON object of non-default routing rules",
+        "drt_assign_ndr": "string - JSON object mapping net regexes to NDR names",
         # KLayout/Magic/OpenROAD extra files (flow.py:456-480)
         "extra_lefs": "List[File] - Extra LEF files for macros",
         "extra_gds_files": "List[File] - Extra GDS files for macros",
@@ -253,6 +298,8 @@ LibrelaneInput = provider(
         "error_on_xor_error": "bool - Error on XOR differences",
         # Magic.DRC config (magic.py:380-386)
         "magic_drc_use_gds": "bool - Run Magic DRC on GDS instead of DEF",
+        "magic_gds_flatglob": "List[str] - Magic GDS cell-name patterns to flatten for DRC",
+        "magic_drc_maglefs": "List[File] - Magic abstract LEF views to load before DRC",
         # Magic.DRC gating (classic.py:239-242)
         "run_magic_drc": "bool - Enable Magic DRC step",
         # Checker.MagicDRC config (checker.py:205-211)
@@ -267,6 +314,7 @@ LibrelaneInput = provider(
         "run_lvs": "bool - Enable Netgen LVS step",
         "lvs_include_marco_netlists": "bool - Include macro netlists in LVS",
         "lvs_flatten_cells": "List[str] - Cells to flatten during LVS",
+        "lvs_ignore_cells": "List[str] - Cells to ignore during LVS",
         "extra_spice_models": "List[File] - Extra SPICE models for LVS",
         # Yosys.EQY config (Step 73)
         "run_eqy": "bool - Enable EQY formal equivalence check (default: False)",

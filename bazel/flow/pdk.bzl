@@ -6,7 +6,7 @@ def _pdk_impl(ctx):
     return [
         PdkInfo(
             name = ctx.attr.pdk_name,
-            scl = ctx.attr.scl,
+            std_cell_library = ctx.attr.scl,
         ),
     ]
 

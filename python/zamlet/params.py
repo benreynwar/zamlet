@@ -1,6 +1,8 @@
+import json
 import logging
 import math
 from dataclasses import dataclass, fields, field
+from pathlib import Path
 from typing import Any, Dict
 
 logger = logging.getLogger(__name__)
@@ -29,6 +31,41 @@ def _from_dict(cls, data: Dict[str, Any], mapping: Dict[str, str]):
 
 def _identity_mapping(cls) -> Dict[str, str]:
     return {f.name: f.name for f in fields(cls)}
+
+
+def _deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
+    result = dict(base)
+    for key, value in override.items():
+        if key in result and isinstance(result[key], dict) and isinstance(value, dict):
+            result[key] = _deep_merge(result[key], value)
+        else:
+            result[key] = value
+    return result
+
+
+def _load_json_with_base(path: Path, stack: list[Path]) -> Dict[str, Any]:
+    canonical = path.resolve()
+    if canonical in stack:
+        cycle = " -> ".join(str(p) for p in [*stack, canonical])
+        raise ValueError(f"Config inheritance cycle: {cycle}")
+
+    with canonical.open() as f:
+        data = json.load(f)
+
+    base = data.get("base")
+    if base is None:
+        data.pop("base", None)
+        return data
+    if not isinstance(base, str):
+        raise TypeError(f"Invalid base field in {canonical}: expected string")
+
+    base_path = Path(base)
+    if not base_path.is_absolute():
+        base_path = canonical.parent / base_path
+
+    override = dict(data)
+    del override["base"]
+    return _deep_merge(_load_json_with_base(base_path, [*stack, canonical]), override)
 
 
 @dataclass
@@ -185,6 +222,8 @@ class JteInitiatorParams:
     rfMaskReqBB: bool = True
     rfIndexReqFB: bool = True
     rfIndexReqBB: bool = True
+    zFB: bool = True
+    zBB: bool = True
     abFB: bool = True
     abBB: bool = True
     bcFB: bool = True
@@ -298,7 +337,7 @@ class SramParams:
 
     @property
     def local_response_latency(self) -> int:
-        return sum((self.localA, self.localB, self.localC))
+        return sum((self.localA, self.localB, self.localC)) + 1
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'SramParams':
@@ -335,6 +374,16 @@ class JceParams:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'JceParams':
+        return _from_dict(cls, data, _identity_mapping(cls))
+
+
+@dataclass
+class LocalExecParams:
+    s12Buffer: bool = True
+    sramReqBuffer: bool = True
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'LocalExecParams':
         return _from_dict(cls, data, _identity_mapping(cls))
 
 
@@ -594,6 +643,7 @@ class ZamletParams:
     jte_handler_params: JteHandlerParams = field(default_factory=JteHandlerParams)
     sram_params: SramParams = field(default_factory=SramParams)
     jce_params: JceParams = field(default_factory=JceParams)
+    local_exec_params: LocalExecParams = field(default_factory=LocalExecParams)
     kce_cache_table_params: KceCacheTableParams = field(default_factory=KceCacheTableParams)
     kce_scanner_params: KceScannerParams = field(default_factory=KceScannerParams)
     kce_tag_table_params: TagTableParams = field(default_factory=TagTableParams)
@@ -890,6 +940,7 @@ class ZamletParams:
         'jteHandlerParams': 'jte_handler_params',
         'sramParams': 'sram_params',
         'jceParams': 'jce_params',
+        'localExecParams': 'local_exec_params',
         'kceCacheTableParams': 'kce_cache_table_params',
         'kceScannerParams': 'kce_scanner_params',
         'kceTagTableParams': 'kce_tag_table_params',
@@ -905,3 +956,8 @@ class ZamletParams:
     def from_dict(cls, data: Dict[str, Any]) -> 'ZamletParams':
         """Create ZamletParams from dictionary with camelCase field names."""
         return _from_dict(cls, data, cls._FIELD_MAPPING)
+
+    @classmethod
+    def from_file(cls, path: str) -> 'ZamletParams':
+        """Create ZamletParams from a JSON file, applying base-file inheritance."""
+        return cls.from_dict(_load_json_with_base(Path(path), []))

@@ -1,19 +1,27 @@
+import json
 import logging
 from random import Random
 
 import cocotb
 from cocotb.clock import Clock
 from cocotb.handle import HierarchyObject
-from cocotb.triggers import ReadOnly, RisingEdge
-
+from cocotb.triggers import ReadOnly
 from zamlet import test_utils
-
+from zamlet.test_utils import next_drive_phase
 
 logger = logging.getLogger(__name__)
 
 
-WIDTH = 64
-LATENCY = 2
+TEST_PARAMS = test_utils.get_test_params()
+with open(TEST_PARAMS["params_file"]) as f:
+    CONFIG = json.load(f)
+
+WIDTH = CONFIG["width"]
+LATENCY = (
+    int(CONFIG["registerInput"]) +
+    int(CONFIG["registerMiddle"]) +
+    int(CONFIG["registerOutput"])
+)
 MASK = (1 << WIDTH) - 1
 
 
@@ -42,9 +50,9 @@ async def reset(dut: HierarchyObject) -> None:
     dut.io_input_bits_subtract.value = 0
     dut.io_input_bits_elementWidthLog2.value = 3
     dut.reset.value = 1
-    await RisingEdge(dut.clock)
+    await next_drive_phase(dut.clock)
     dut.reset.value = 0
-    await RisingEdge(dut.clock)
+    await next_drive_phase(dut.clock)
 
 
 async def run_cases(dut: HierarchyObject, cases: list[tuple[int, int, int, bool]]) -> None:
@@ -74,7 +82,7 @@ async def run_cases(dut: HierarchyObject, cases: list[tuple[int, int, int, bool]
                 f"actual=0x{actual:016x} expected=0x{expected:016x}"
             )
 
-        await RisingEdge(dut.clock)
+        await next_drive_phase(dut.clock)
 
 
 @cocotb.test()

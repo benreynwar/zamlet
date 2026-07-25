@@ -5,7 +5,7 @@ PdkInfo = provider(
     fields = {
         # Core identity
         "name": "PDK name (e.g., 'sky130A')",
-        "scl": "Standard cell library name",
+        "std_cell_library": "Standard cell library name",
 
         # Power/ground
         "vdd_pin": "Power pin name (e.g., 'VPWR')",
@@ -20,6 +20,7 @@ PdkInfo = provider(
         "cell_verilog_models": "List of cell Verilog model Files (optional)",
         "cell_bb_verilog_models": "List of cell black-box Verilog model Files (optional)",
         "cell_spice_models": "List of cell SPICE model Files (optional)",
+        "pad_verilog_models": "List of pad Verilog model Files (optional)",
 
         # Technology LEFs - dict of corner -> File
         "tech_lefs": "Dict of corner pattern to tech LEF File",
@@ -34,10 +35,13 @@ PdkInfo = provider(
         "gpio_pad_cells": "List of GPIO pad cell name prefixes (optional)",
 
         # Floorplanning
+        "fp_flip_sites": "List of placement sites to flip vertically (optional)",
         "fp_tracks_info": "Tracks info File",
         "fp_tapcell_dist": "Distance between tap cells (Decimal, um)",
-        "fp_io_hlayer": "Metal layer for horizontal IO pins",
-        "fp_io_vlayer": "Metal layer for vertical IO pins",
+        "fp_prune_threshold": "Minimum row width to preserve during row cutting (optional)",
+        "pdn_cfg": "Default custom PDN configuration file (optional)",
+        "io_pin_h_layer": "Metal layer for horizontal IO pins",
+        "io_pin_v_layer": "Metal layer for vertical IO pins",
 
         # Routing
         "rt_min_layer": "Minimum routing layer",
@@ -54,30 +58,36 @@ PdkInfo = provider(
         "cts_clk_buffers": "List of clock buffer cells for CTS",
 
         # IO
-        "fp_io_hlength": "Horizontal IO pin length",
-        "fp_io_vlength": "Vertical IO pin length",
-        "fp_io_min_distance": "Minimum distance between IO pins",
+        "io_pin_h_length": "Horizontal IO pin length",
+        "io_pin_v_length": "Vertical IO pin length",
+        "io_pin_min_distance": "Minimum distance between IO pins",
 
         # PDN (Power Distribution Network)
-        "fp_pdn_rail_layer": "PDN rail layer",
-        "fp_pdn_rail_width": "PDN rail width",
-        "fp_pdn_rail_offset": "PDN rail offset",
-        "fp_pdn_horizontal_layer": "PDN horizontal strap layer",
-        "fp_pdn_vertical_layer": "PDN vertical strap layer",
-        "fp_pdn_hoffset": "PDN horizontal offset",
-        "fp_pdn_voffset": "PDN vertical offset",
-        "fp_pdn_hpitch": "PDN horizontal pitch",
-        "fp_pdn_vpitch": "PDN vertical pitch",
-        "fp_pdn_hspacing": "PDN horizontal spacing",
-        "fp_pdn_vspacing": "PDN vertical spacing",
-        "fp_pdn_hwidth": "PDN horizontal width",
-        "fp_pdn_vwidth": "PDN vertical width",
-        "fp_pdn_core_ring_hoffset": "PDN core ring horizontal offset",
-        "fp_pdn_core_ring_voffset": "PDN core ring vertical offset",
-        "fp_pdn_core_ring_hspacing": "PDN core ring horizontal spacing",
-        "fp_pdn_core_ring_vspacing": "PDN core ring vertical spacing",
-        "fp_pdn_core_ring_hwidth": "PDN core ring horizontal width",
-        "fp_pdn_core_ring_vwidth": "PDN core ring vertical width",
+        "pdn_rail_layer": "PDN rail layer",
+        "pdn_rail_width": "PDN rail width",
+        "pdn_rail_offset": "PDN rail offset",
+        "pdn_horizontal_layer": "PDN horizontal strap layer",
+        "pdn_vertical_layer": "PDN vertical strap layer",
+        "pdn_core_horizontal_layer": "PDN core ring horizontal layer (optional)",
+        "pdn_core_vertical_layer": "PDN core ring vertical layer (optional)",
+        "pdn_hoffset": "PDN horizontal offset",
+        "pdn_voffset": "PDN vertical offset",
+        "pdn_hpitch": "PDN horizontal pitch",
+        "pdn_vpitch": "PDN vertical pitch",
+        "pdn_hspacing": "PDN horizontal spacing",
+        "pdn_vspacing": "PDN vertical spacing",
+        "pdn_hwidth": "PDN horizontal width",
+        "pdn_vwidth": "PDN vertical width",
+        "pdn_core_ring_hoffset": "PDN core ring horizontal offset",
+        "pdn_core_ring_voffset": "PDN core ring vertical offset",
+        "pdn_core_ring_hspacing": "PDN core ring horizontal spacing",
+        "pdn_core_ring_vspacing": "PDN core ring vertical spacing",
+        "pdn_core_ring_hwidth": "PDN core ring horizontal width",
+        "pdn_core_ring_vwidth": "PDN core ring vertical width",
+        "pdn_core_ring_connect_to_pads": "Connect core ring to pad pins",
+        "pdn_core_ring_allow_out_of_die": "Allow core ring shapes outside die",
+        "pdn_extend_to": "PDN stripe/ring extension mode",
+        "pdn_enable_pins": "Promote power straps to block pins",
 
         # Antenna
         "heuristic_antenna_threshold": "Threshold for heuristic antenna insertion",
@@ -112,6 +122,8 @@ PdkInfo = provider(
         "synth_fa_map": "Synthesis FA map file",
         "synth_mux_map": "Synthesis MUX map file",
         "synth_mux4_map": "Synthesis MUX4 map file",
+        "synth_clockgate_posedge_icg": "Positive-edge clock-gate ICG cell (optional)",
+        "synth_clockgate_negedge_icg": "Negative-edge clock-gate ICG cell (optional)",
 
         # Misc
         "ignore_disconnected_modules": "List of modules to ignore disconnection errors",
@@ -120,8 +132,12 @@ PdkInfo = provider(
         # Timing corners
         "default_corner": "Default timing corner",
         "sta_corners": "List of STA corner names",
+        "pnr_corners": "List of PnR corner names (optional)",
 
         # Wire RC
+        "set_rc_tcl": "Custom OpenROAD RC setup script (optional)",
+        "layers_rc": "Layer resistance/capacitance values by corner (optional)",
+        "vias_r": "Via resistance values by corner (optional)",
         "signal_wire_rc_layers": "List of layers for signal wire RC (optional)",
         "clock_wire_rc_layers": "List of layers for clock wire RC (optional)",
 
@@ -150,8 +166,8 @@ PdkInfo = provider(
         "welltap_cell": "Well tap cell name",
         "endcap_cell": "End cap cell name",
         "place_site": "Placement site name",
-        "fill_cell": "List of fill cell names/patterns",
-        "decap_cell": "List of decap cell names/patterns",
+        "fill_cells": "List of fill cell names/patterns",
+        "decap_cells": "List of decap cell names/patterns",
         "cell_pad_exclude": "List of cells excluded from padding",
         "diode_cell": "Diode cell (cell/port format, optional)",
         "tristate_cells": "List of tristate buffer cell patterns (optional)",

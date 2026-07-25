@@ -34,9 +34,12 @@ SignoffConfig = provider(
         "magic_write_full_lef": "Include all shapes in macro LEF",
         "magic_write_lef_pinonly": "Mark only port labels as pins",
         "magic_drc_use_gds": "Run Magic DRC on GDS instead of DEF",
+        "magic_gds_flatglob": "Magic GDS cell-name patterns to flatten for DRC",
+        "magic_drc_maglefs": "Magic abstract LEF views to load before DRC",
         "run_magic_drc": "Enable Magic DRC step",
 
         # KLayout
+        "klayout_conflict_resolution": "KLayout stream-out cell conflict resolution",
         "klayout_xor_threads": "Number of threads for KLayout XOR",
         "klayout_drc_threads": "Number of threads for KLayout DRC",
         "run_klayout_drc": "Enable KLayout DRC step",
@@ -45,6 +48,7 @@ SignoffConfig = provider(
         "run_lvs": "Enable Netgen LVS step",
         "lvs_include_marco_netlists": "Include macro netlists in LVS",
         "lvs_flatten_cells": "Cells to flatten during LVS",
+        "lvs_ignore_cells": "Cells to ignore during LVS",
 
         # Extra files
         "extra_lefs": "Extra LEF files for macros",
@@ -179,12 +183,26 @@ SIGNOFF_ATTRS = {
         doc = "Run Magic DRC on GDS instead of DEF (more accurate but slower)",
         default = True,
     ),
+    "magic_gds_flatglob": attr.string_list(
+        doc = "Magic GDS cell-name patterns to flatten for DRC",
+        default = [],
+    ),
+    "magic_drc_maglefs": attr.label_list(
+        doc = "Magic abstract LEF views to load before DRC",
+        allow_files = [".mag", ".maglef"],
+        default = [],
+    ),
     "run_magic_drc": attr.bool(
         doc = "Enable Magic DRC step",
         default = True,
     ),
 
     # KLayout
+    "klayout_conflict_resolution": attr.string(
+        doc = "KLayout stream-out cell conflict resolution",
+        default = "RenameCell",
+        values = ["AddToCell", "OverwriteCell", "RenameCell", "SkipNewCell"],
+    ),
     "klayout_xor_threads": attr.int(
         doc = "Number of threads for KLayout XOR check (0 = auto)",
         default = 0,
@@ -209,6 +227,10 @@ SIGNOFF_ATTRS = {
     ),
     "lvs_flatten_cells": attr.string_list(
         doc = "Cell names to flatten during LVS",
+        default = [],
+    ),
+    "lvs_ignore_cells": attr.string_list(
+        doc = "Cell names to ignore during LVS",
         default = [],
     ),
 
@@ -301,12 +323,12 @@ SIGNOFF_ATTRS = {
         default = [],
     ),
     "max_slew_violation_corners": attr.string_list(
-        doc = "IPVT corners for max slew violation checking (default: no corners checked)",
-        default = [""],
+        doc = "IPVT corners for max slew violation checking",
+        default = ["*"],
     ),
     "max_cap_violation_corners": attr.string_list(
-        doc = "IPVT corners for max cap violation checking (default: no corners checked)",
-        default = [""],
+        doc = "IPVT corners for max cap violation checking",
+        default = ["*"],
     ),
 }
 
@@ -336,13 +358,17 @@ SIGNOFF_DEFAULTS = {
     "magic_write_full_lef": False,
     "magic_write_lef_pinonly": False,
     "magic_drc_use_gds": True,
+    "magic_gds_flatglob": [],
+    "magic_drc_maglefs": [],
     "run_magic_drc": True,
+    "klayout_conflict_resolution": "RenameCell",
     "klayout_xor_threads": 0,
     "klayout_drc_threads": 0,
     "run_klayout_drc": True,
     "run_lvs": True,
     "lvs_include_marco_netlists": False,
     "lvs_flatten_cells": [],
+    "lvs_ignore_cells": [],
     "extra_lefs": [],
     "extra_gds_files": [],
     "extra_spice_models": [],
@@ -363,8 +389,8 @@ SIGNOFF_DEFAULTS = {
     "error_on_klayout_drc": True,
     "setup_violation_corners": [],
     "hold_violation_corners": [],
-    "max_slew_violation_corners": [""],
-    "max_cap_violation_corners": [""],
+    "max_slew_violation_corners": ["*"],
+    "max_cap_violation_corners": ["*"],
 }
 
 
@@ -394,13 +420,17 @@ def _signoff_config_impl(ctx):
         magic_write_full_lef = ctx.attr.magic_write_full_lef,
         magic_write_lef_pinonly = ctx.attr.magic_write_lef_pinonly,
         magic_drc_use_gds = ctx.attr.magic_drc_use_gds,
+        magic_gds_flatglob = ctx.attr.magic_gds_flatglob,
+        magic_drc_maglefs = ctx.files.magic_drc_maglefs,
         run_magic_drc = ctx.attr.run_magic_drc,
+        klayout_conflict_resolution = ctx.attr.klayout_conflict_resolution,
         klayout_xor_threads = ctx.attr.klayout_xor_threads,
         klayout_drc_threads = ctx.attr.klayout_drc_threads,
         run_klayout_drc = ctx.attr.run_klayout_drc,
         run_lvs = ctx.attr.run_lvs,
         lvs_include_marco_netlists = ctx.attr.lvs_include_marco_netlists,
         lvs_flatten_cells = ctx.attr.lvs_flatten_cells,
+        lvs_ignore_cells = ctx.attr.lvs_ignore_cells,
         extra_lefs = ctx.files.extra_lefs,
         extra_gds_files = ctx.files.extra_gds_files,
         extra_spice_models = ctx.files.extra_spice_models,

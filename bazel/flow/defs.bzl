@@ -23,6 +23,7 @@ load(":route.bzl",
     _librelane_detailed_routing = "librelane_detailed_routing",
 )
 load(":sta.bzl",
+    _librelane_power_post_pnr = "librelane_power_post_pnr",
     _librelane_sta_mid_pnr = "librelane_sta_mid_pnr",
     _librelane_sta_post_pnr = "librelane_sta_post_pnr",
 )
@@ -82,6 +83,7 @@ librelane_detailed_routing = _librelane_detailed_routing
 # STA
 librelane_sta_mid_pnr = _librelane_sta_mid_pnr
 librelane_sta_post_pnr = _librelane_sta_post_pnr
+librelane_power_post_pnr = _librelane_power_post_pnr
 
 # Macro generation
 librelane_fill = _librelane_fill

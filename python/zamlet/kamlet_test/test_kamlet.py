@@ -8,19 +8,18 @@ Tests the sync network MIN aggregation across kamlets:
 
 import json
 import logging
-from typing import List
 
 import cocotb
 from cocotb.clock import Clock
 from cocotb.handle import HierarchyObject
-from cocotb.triggers import RisingEdge, ReadOnly
+from cocotb.triggers import ReadOnly
 
 from zamlet import test_utils
-from zamlet.params import ZamletParams
-from zamlet.message import Header, MessageType, SendType
 from zamlet.kamlet.kinstructions import SyncTrigger
+from zamlet.message import Header, MessageType, SendType
+from zamlet.params import ZamletParams
+from zamlet.test_utils import next_drive_phase
 from zamlet.transactions.ident_query import IdentQuery
-
 
 logger = logging.getLogger(__name__)
 
@@ -104,13 +103,13 @@ async def monitor_errors(dut: HierarchyObject, params: ZamletParams) -> None:
             ])
 
     while True:
-        await RisingEdge(dut.clock)
+        await next_drive_phase(dut.clock)
         await ReadOnly()
         for name, sig in error_signals:
             if int(sig.value) != 0:
                 # Let sim run a few more cycles for waveform context
                 for _ in range(3):
-                    await RisingEdge(dut.clock)
+                    await next_drive_phase(dut.clock)
                 assert False, f"Error: {name} went high"
 
 
@@ -118,10 +117,10 @@ async def reset(dut: HierarchyObject, params: ZamletParams) -> None:
     """Reset the module."""
     dut.reset.value = 1
     for _ in range(params.reset_pipeline_depth + 1):
-        await RisingEdge(dut.clock)
+        await next_drive_phase(dut.clock)
     dut.reset.value = 0
     for _ in range(params.reset_pipeline_depth + 1):
-        await RisingEdge(dut.clock)
+        await next_drive_phase(dut.clock)
 
 
 async def send_word_to_kamlet(dut: HierarchyObject, kx: int, word: int, is_header: bool) -> None:
@@ -134,9 +133,9 @@ async def send_word_to_kamlet(dut: HierarchyObject, kx: int, word: int, is_heade
     header_sig.value = 1 if is_header else 0
     await ReadOnly()
     while int(ready_sig.value) != 1:
-        await RisingEdge(dut.clock)
+        await next_drive_phase(dut.clock)
         await ReadOnly()
-    await RisingEdge(dut.clock)
+    await next_drive_phase(dut.clock)
     valid_sig.value = 0
 
 
@@ -185,7 +184,7 @@ async def wait_for_sync_results(dut: HierarchyObject, params: ZamletParams,
     results = {}
 
     for _ in range(timeout_cycles):
-        await RisingEdge(dut.clock)
+        await next_drive_phase(dut.clock)
         await ReadOnly()
 
         for kx in range(params.k_cols):
@@ -339,5 +338,5 @@ async def kamlet_mesh_test(dut: HierarchyObject) -> None:
     cocotb.start_soon(monitor_errors(dut, params))
 
     await test_sync_aggregation(dut, params)
-    await RisingEdge(dut.clock)  # Exit ReadOnly phase before next test
+    await next_drive_phase(dut.clock)  # Exit ReadOnly phase before next test
     await test_ident_query(dut, params)

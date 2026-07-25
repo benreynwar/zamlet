@@ -1,163 +1,180 @@
 # Repository rule to extract PDK configuration at fetch time
 
-# Mapping from librelane config keys to PdkInfo field names
-# Format: "LIBRELANE_KEY": ("field_name", "type")
-# Types: "file", "file_list", "file_dict", "file_list_dict", "string", "string_list", "number", "int"
-PDK_FIELD_MAP = {
+# LibreLane PDK config keys and their Bazel value types. PdkInfo field names are
+# always the lowercase form of these keys.
+# Types: "file", "file_list", "file_dict", "file_list_dict", "string",
+# "string_list", "number", "int", "dict"
+PDK_FIELD_TYPES = {
     # Core identity (handled separately)
-    "STD_CELL_LIBRARY": ("scl", "string"),
+    "STD_CELL_LIBRARY": "string",
 
     # Power/ground
-    "VDD_PIN": ("vdd_pin", "string"),
-    "GND_PIN": ("gnd_pin", "string"),
-    "VDD_PIN_VOLTAGE": ("vdd_pin_voltage", "number"),
-    "SCL_POWER_PINS": ("scl_power_pins", "string_list"),
-    "SCL_GROUND_PINS": ("scl_ground_pins", "string_list"),
+    "VDD_PIN": "string",
+    "GND_PIN": "string",
+    "VDD_PIN_VOLTAGE": "number",
+    "SCL_POWER_PINS": "string_list",
+    "SCL_GROUND_PINS": "string_list",
 
     # Cell libraries - files
-    "CELL_LEFS": ("cell_lefs", "file_list"),
-    "CELL_GDS": ("cell_gds", "file_list"),
-    "CELL_VERILOG_MODELS": ("cell_verilog_models", "file_list"),
-    "CELL_BB_VERILOG_MODELS": ("cell_bb_verilog_models", "file_list"),
-    "CELL_SPICE_MODELS": ("cell_spice_models", "file_list"),
+    "CELL_LEFS": "file_list",
+    "CELL_GDS": "file_list",
+    "CELL_VERILOG_MODELS": "file_list",
+    "CELL_BB_VERILOG_MODELS": "file_list",
+    "CELL_SPICE_MODELS": "file_list",
+    "PAD_VERILOG_MODELS": "file_list",
 
     # Technology LEFs
-    "TECH_LEFS": ("tech_lefs", "file_dict"),
+    "TECH_LEFS": "file_dict",
 
     # Timing libraries
-    "LIB": ("lib", "file_list_dict"),
+    "LIB": "file_list_dict",
 
     # GPIO pads
-    "GPIO_PADS_LEF": ("gpio_pads_lef", "file_list"),
-    "GPIO_PADS_LEF_CORE_SIDE": ("gpio_pads_lef_core_side", "file_list"),
-    "GPIO_PADS_VERILOG": ("gpio_pads_verilog", "file_list"),
-    "GPIO_PAD_CELLS": ("gpio_pad_cells", "string_list"),
+    "GPIO_PADS_LEF": "file_list",
+    "GPIO_PADS_LEF_CORE_SIDE": "file_list",
+    "GPIO_PADS_VERILOG": "file_list",
+    "GPIO_PAD_CELLS": "string_list",
 
     # Floorplanning
-    "FP_TRACKS_INFO": ("fp_tracks_info", "file"),
-    "FP_TAPCELL_DIST": ("fp_tapcell_dist", "number"),
-    "FP_IO_HLAYER": ("fp_io_hlayer", "string"),
-    "FP_IO_VLAYER": ("fp_io_vlayer", "string"),
+    "FP_FLIP_SITES": "string_list",
+    "FP_TRACKS_INFO": "file",
+    "FP_TAPCELL_DIST": "number",
+    "FP_PRUNE_THRESHOLD": "number",
+    "PDN_CFG": "file",
+    "IO_PIN_H_LAYER": "string",
+    "IO_PIN_V_LAYER": "string",
 
     # Routing
-    "RT_MIN_LAYER": ("rt_min_layer", "string"),
-    "RT_MAX_LAYER": ("rt_max_layer", "string"),
-    "GRT_LAYER_ADJUSTMENTS": ("grt_layer_adjustments", "number_list"),
+    "RT_MIN_LAYER": "string",
+    "RT_MAX_LAYER": "string",
+    "GRT_LAYER_ADJUSTMENTS": "number_list",
 
     # Placement
-    "GPL_CELL_PADDING": ("gpl_cell_padding", "int"),
-    "DPL_CELL_PADDING": ("dpl_cell_padding", "int"),
-    "EXTRA_SITES": ("extra_sites", "string_list"),
+    "GPL_CELL_PADDING": "int",
+    "DPL_CELL_PADDING": "int",
+    "EXTRA_SITES": "string_list",
 
     # CTS
-    "CTS_ROOT_BUFFER": ("cts_root_buffer", "string"),
-    "CTS_CLK_BUFFERS": ("cts_clk_buffers", "string_list"),
+    "CTS_ROOT_BUFFER": "string",
+    "CTS_CLK_BUFFERS": "string_list",
 
     # Timing corners
-    "DEFAULT_CORNER": ("default_corner", "string"),
-    "STA_CORNERS": ("sta_corners", "string_list"),
+    "DEFAULT_CORNER": "string",
+    "STA_CORNERS": "string_list",
+    "PNR_CORNERS": "string_list",
 
     # Wire RC
-    "SIGNAL_WIRE_RC_LAYERS": ("signal_wire_rc_layers", "string_list"),
-    "CLOCK_WIRE_RC_LAYERS": ("clock_wire_rc_layers", "string_list"),
+    "SET_RC_TCL": "file",
+    "LAYERS_RC": "dict",
+    "VIAS_R": "dict",
+    "SIGNAL_WIRE_RC_LAYERS": "string_list",
+    "CLOCK_WIRE_RC_LAYERS": "string_list",
 
     # Constraints
-    "DEFAULT_MAX_TRAN": ("default_max_tran", "number"),
-    "OUTPUT_CAP_LOAD": ("output_cap_load", "number"),
-    "MAX_FANOUT_CONSTRAINT": ("max_fanout_constraint", "int"),
-    "MAX_TRANSITION_CONSTRAINT": ("max_transition_constraint", "number"),
-    "MAX_CAPACITANCE_CONSTRAINT": ("max_capacitance_constraint", "number"),
-    "CLOCK_UNCERTAINTY_CONSTRAINT": ("clock_uncertainty_constraint", "number"),
-    "CLOCK_TRANSITION_CONSTRAINT": ("clock_transition_constraint", "number"),
-    "TIME_DERATING_CONSTRAINT": ("time_derating_constraint", "number"),
-    "IO_DELAY_CONSTRAINT": ("io_delay_constraint", "number"),
-    "WIRE_LENGTH_THRESHOLD": ("wire_length_threshold", "number"),
+    "DEFAULT_MAX_TRAN": "number",
+    "OUTPUT_CAP_LOAD": "number",
+    "MAX_FANOUT_CONSTRAINT": "int",
+    "MAX_TRANSITION_CONSTRAINT": "number",
+    "MAX_CAPACITANCE_CONSTRAINT": "number",
+    "CLOCK_UNCERTAINTY_CONSTRAINT": "number",
+    "CLOCK_TRANSITION_CONSTRAINT": "number",
+    "TIME_DERATING_CONSTRAINT": "number",
+    "IO_DELAY_CONSTRAINT": "number",
+    "WIRE_LENGTH_THRESHOLD": "number",
 
     # Synthesis cells
-    "SYNTH_DRIVING_CELL": ("synth_driving_cell", "string"),
-    "SYNTH_CLK_DRIVING_CELL": ("synth_clk_driving_cell", "string"),
-    "SYNTH_TIEHI_CELL": ("synth_tiehi_cell", "string"),
-    "SYNTH_TIELO_CELL": ("synth_tielo_cell", "string"),
-    "SYNTH_BUFFER_CELL": ("synth_buffer_cell", "string"),
-    "SYNTH_EXCLUDED_CELL_FILE": ("synth_excluded_cell_file", "file"),
-    "PNR_EXCLUDED_CELL_FILE": ("pnr_excluded_cell_file", "file"),
+    "SYNTH_DRIVING_CELL": "string",
+    "SYNTH_CLK_DRIVING_CELL": "string",
+    "SYNTH_TIEHI_CELL": "string",
+    "SYNTH_TIELO_CELL": "string",
+    "SYNTH_BUFFER_CELL": "string",
+    "SYNTH_EXCLUDED_CELL_FILE": "file",
+    "PNR_EXCLUDED_CELL_FILE": "file",
 
     # Placement cells
-    "WELLTAP_CELL": ("welltap_cell", "string"),
-    "ENDCAP_CELL": ("endcap_cell", "string"),
-    "PLACE_SITE": ("place_site", "string"),
-    "FILL_CELL": ("fill_cell", "string_list"),
-    "DECAP_CELL": ("decap_cell", "string_list"),
-    "CELL_PAD_EXCLUDE": ("cell_pad_exclude", "string_list"),
-    "DIODE_CELL": ("diode_cell", "string"),
-    "TRISTATE_CELLS": ("tristate_cells", "string_list"),
+    "WELLTAP_CELL": "string",
+    "ENDCAP_CELL": "string",
+    "PLACE_SITE": "string",
+    "FILL_CELLS": "string_list",
+    "DECAP_CELLS": "string_list",
+    "CELL_PAD_EXCLUDE": "string_list",
+    "DIODE_CELL": "string",
+    "TRISTATE_CELLS": "string_list",
 
     # Signoff
-    "PRIMARY_GDSII_STREAMOUT_TOOL": ("primary_gdsii_streamout_tool", "string"),
+    "PRIMARY_GDSII_STREAMOUT_TOOL": "string",
 
     # Step-specific PDK variables - IO
-    "FP_IO_HLENGTH": ("fp_io_hlength", "number"),
-    "FP_IO_VLENGTH": ("fp_io_vlength", "number"),
-    "FP_IO_MIN_DISTANCE": ("fp_io_min_distance", "number"),
+    "IO_PIN_H_LENGTH": "number",
+    "IO_PIN_V_LENGTH": "number",
+    "IO_PIN_MIN_DISTANCE": "number",
 
     # Step-specific PDK variables - PDN (Power Distribution Network)
-    "FP_PDN_RAIL_LAYER": ("fp_pdn_rail_layer", "string"),
-    "FP_PDN_RAIL_WIDTH": ("fp_pdn_rail_width", "number"),
-    "FP_PDN_RAIL_OFFSET": ("fp_pdn_rail_offset", "number"),
-    "FP_PDN_HORIZONTAL_LAYER": ("fp_pdn_horizontal_layer", "string"),
-    "FP_PDN_VERTICAL_LAYER": ("fp_pdn_vertical_layer", "string"),
-    "FP_PDN_HOFFSET": ("fp_pdn_hoffset", "number"),
-    "FP_PDN_VOFFSET": ("fp_pdn_voffset", "number"),
-    "FP_PDN_HPITCH": ("fp_pdn_hpitch", "number"),
-    "FP_PDN_VPITCH": ("fp_pdn_vpitch", "number"),
-    "FP_PDN_HSPACING": ("fp_pdn_hspacing", "number"),
-    "FP_PDN_VSPACING": ("fp_pdn_vspacing", "number"),
-    "FP_PDN_HWIDTH": ("fp_pdn_hwidth", "number"),
-    "FP_PDN_VWIDTH": ("fp_pdn_vwidth", "number"),
-    "FP_PDN_CORE_RING_HOFFSET": ("fp_pdn_core_ring_hoffset", "number"),
-    "FP_PDN_CORE_RING_VOFFSET": ("fp_pdn_core_ring_voffset", "number"),
-    "FP_PDN_CORE_RING_HSPACING": ("fp_pdn_core_ring_hspacing", "number"),
-    "FP_PDN_CORE_RING_VSPACING": ("fp_pdn_core_ring_vspacing", "number"),
-    "FP_PDN_CORE_RING_HWIDTH": ("fp_pdn_core_ring_hwidth", "number"),
-    "FP_PDN_CORE_RING_VWIDTH": ("fp_pdn_core_ring_vwidth", "number"),
+    "PDN_RAIL_LAYER": "string",
+    "PDN_RAIL_WIDTH": "number",
+    "PDN_RAIL_OFFSET": "number",
+    "PDN_HORIZONTAL_LAYER": "string",
+    "PDN_VERTICAL_LAYER": "string",
+    "PDN_CORE_HORIZONTAL_LAYER": "string",
+    "PDN_CORE_VERTICAL_LAYER": "string",
+    "PDN_HOFFSET": "number",
+    "PDN_VOFFSET": "number",
+    "PDN_HPITCH": "number",
+    "PDN_VPITCH": "number",
+    "PDN_HSPACING": "number",
+    "PDN_VSPACING": "number",
+    "PDN_HWIDTH": "number",
+    "PDN_VWIDTH": "number",
+    "PDN_CORE_RING_HOFFSET": "number",
+    "PDN_CORE_RING_VOFFSET": "number",
+    "PDN_CORE_RING_HSPACING": "number",
+    "PDN_CORE_RING_VSPACING": "number",
+    "PDN_CORE_RING_HWIDTH": "number",
+    "PDN_CORE_RING_VWIDTH": "number",
+    "PDN_CORE_RING_CONNECT_TO_PADS": "bool",
+    "PDN_CORE_RING_ALLOW_OUT_OF_DIE": "bool",
+    "PDN_EXTEND_TO": "string",
+    "PDN_ENABLE_PINS": "bool",
 
     # Step-specific PDK variables - Antenna
-    "HEURISTIC_ANTENNA_THRESHOLD": ("heuristic_antenna_threshold", "number"),
+    "HEURISTIC_ANTENNA_THRESHOLD": "number",
 
     # Step-specific PDK variables - Magic
-    "MAGICRC": ("magicrc", "file"),
-    "MAGIC_TECH": ("magic_tech", "file"),
-    "MAGIC_PDK_SETUP": ("magic_pdk_setup", "file"),
-    "CELL_MAGS": ("cell_mags", "file_list"),
-    "CELL_MAGLEFS": ("cell_maglefs", "file_list"),
+    "MAGICRC": "file",
+    "MAGIC_TECH": "file",
+    "MAGIC_PDK_SETUP": "file",
+    "CELL_MAGS": "file_list",
+    "CELL_MAGLEFS": "file_list",
 
     # Step-specific PDK variables - KLayout
-    "KLAYOUT_TECH": ("klayout_tech", "file"),
-    "KLAYOUT_PROPERTIES": ("klayout_properties", "file"),
-    "KLAYOUT_DEF_LAYER_MAP": ("klayout_def_layer_map", "file"),
-    "KLAYOUT_DRC_RUNSET": ("klayout_drc_runset", "file"),
-    "KLAYOUT_DRC_OPTIONS": ("klayout_drc_options", "bool_int_dict"),
-    "KLAYOUT_XOR_IGNORE_LAYERS": ("klayout_xor_ignore_layers", "string_list"),
-    "KLAYOUT_XOR_TILE_SIZE": ("klayout_xor_tile_size", "int"),
+    "KLAYOUT_TECH": "file",
+    "KLAYOUT_PROPERTIES": "file",
+    "KLAYOUT_DEF_LAYER_MAP": "file",
+    "KLAYOUT_DRC_RUNSET": "file",
+    "KLAYOUT_DRC_OPTIONS": "bool_int_dict",
+    "KLAYOUT_XOR_IGNORE_LAYERS": "string_list",
+    "KLAYOUT_XOR_TILE_SIZE": "int",
 
     # Step-specific PDK variables - Netgen
-    "NETGEN_SETUP": ("netgen_setup", "file"),
+    "NETGEN_SETUP": "file",
 
     # Step-specific PDK variables - RCX
-    "RCX_RULESETS": ("rcx_rulesets", "file_dict"),
+    "RCX_RULESETS": "file_dict",
 
     # Step-specific PDK variables - Synthesis maps
-    "SYNTH_LATCH_MAP": ("synth_latch_map", "file"),
-    "SYNTH_TRISTATE_MAP": ("synth_tristate_map", "file"),
-    "SYNTH_CSA_MAP": ("synth_csa_map", "file"),
-    "SYNTH_RCA_MAP": ("synth_rca_map", "file"),
-    "SYNTH_FA_MAP": ("synth_fa_map", "file"),
-    "SYNTH_MUX_MAP": ("synth_mux_map", "file"),
-    "SYNTH_MUX4_MAP": ("synth_mux4_map", "file"),
+    "SYNTH_LATCH_MAP": "file",
+    "SYNTH_TRISTATE_MAP": "file",
+    "SYNTH_CSA_MAP": "file",
+    "SYNTH_RCA_MAP": "file",
+    "SYNTH_FA_MAP": "file",
+    "SYNTH_MUX_MAP": "file",
+    "SYNTH_MUX4_MAP": "file",
+    "SYNTH_CLOCKGATE_POSEDGE_ICG": "string",
+    "SYNTH_CLOCKGATE_NEGEDGE_ICG": "string",
 
     # Step-specific PDK variables - Misc
-    "IGNORE_DISCONNECTED_MODULES": ("ignore_disconnected_modules", "string_list"),
-    "TIMING_VIOLATION_CORNERS": ("timing_violation_corners", "string_list"),
+    "IGNORE_DISCONNECTED_MODULES": "string_list",
+    "TIMING_VIOLATION_CORNERS": "string_list",
 }
 
 def _pdk_config_repo_impl(repository_ctx):
@@ -172,6 +189,7 @@ def _pdk_config_repo_impl(repository_ctx):
 
     # Path to the dump script (relative to workspace root)
     script_path = repository_ctx.path(repository_ctx.attr._dump_script)
+    repository_ctx.watch(script_path)
 
     # Run the dump script
     # PATH must be passed through so we find nix-shell's python3 with librelane
@@ -215,11 +233,12 @@ def _pdk_config_repo_impl(repository_ctx):
         if value == None or value == "":
             continue
 
-        if librelane_key not in PDK_FIELD_MAP:
+        if librelane_key not in PDK_FIELD_TYPES:
             # Unknown field - skip
             continue
 
-        field_name, field_type = PDK_FIELD_MAP[librelane_key]
+        field_name = librelane_key.lower()
+        field_type = PDK_FIELD_TYPES[librelane_key]
 
         # Skip if we already have a value for this field (handles deprecated names)
         if field_name in field_values:
@@ -280,6 +299,18 @@ def _pdk_config_repo_impl(repository_ctx):
         elif field_type == "int":
             field_values[field_name] = ("int", int(value))
 
+        elif field_type == "bool":
+            if type(value) == "bool":
+                field_values[field_name] = ("bool", value)
+            else:
+                value_str = str(value).lower()
+                if value_str == "true":
+                    field_values[field_name] = ("bool", True)
+                elif value_str == "false":
+                    field_values[field_name] = ("bool", False)
+                else:
+                    fail("Expected bool for field '{}', got {}".format(field_name, value))
+
         elif field_type == "number_list":
             if type(value) == "list":
                 field_values[field_name] = ("number_list", [_as_number(v) for v in value])
@@ -293,6 +324,12 @@ def _pdk_config_repo_impl(repository_ctx):
                     number_dict[k] = _as_number(v)
                 if number_dict:
                     field_values[field_name] = ("number_dict", number_dict)
+            else:
+                fail("Expected dict for field '{}', got {}".format(field_name, type(value)))
+
+        elif field_type == "dict":
+            if type(value) == "dict":
+                field_values[field_name] = ("dict", value)
             else:
                 fail("Expected dict for field '{}', got {}".format(field_name, type(value)))
 
@@ -405,8 +442,9 @@ def _pdk_impl(ctx):
             name = "{}",
 '''.format(pdk, scl, pdk)
 
-    # Generate each field - include all fields from PDK_FIELD_MAP
-    for librelane_key, (field_name, field_type) in sorted(PDK_FIELD_MAP.items()):
+    # Generate each field listed in the PDK schema.
+    for librelane_key, field_type in sorted(PDK_FIELD_TYPES.items()):
+        field_name = librelane_key.lower()
         if field_name in field_values:
             _, value = field_values[field_name]
             if field_type == "file":

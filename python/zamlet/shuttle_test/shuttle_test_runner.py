@@ -13,11 +13,12 @@ import os
 
 import cocotb
 from cocotb.clock import Clock
-from cocotb.triggers import RisingEdge, ClockCycles
+from cocotb.triggers import ClockCycles
 from cocotb_bus.bus import Bus
 from cocotbext.axi import AxiRam
-from cocotbext.axi.axi_channels import AxiWriteBus, AxiReadBus, AxiBus
+from cocotbext.axi.axi_channels import AxiBus, AxiReadBus, AxiWriteBus
 
+from zamlet.test_utils import next_drive_phase
 
 # Memory map
 DRAM_BASE = 0x80000000
@@ -126,7 +127,7 @@ async def run_test(dut):
     # Wait for completion
     timeout_cycles = 10000
     for cycle in range(timeout_cycles):
-        await RisingEdge(dut.clock)
+        await next_drive_phase(dut.clock)
 
         if cycle % 100 == 0:
             status = read_mmio_u64(MMIO_STATUS)

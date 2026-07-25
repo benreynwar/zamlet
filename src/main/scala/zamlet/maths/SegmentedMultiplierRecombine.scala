@@ -4,51 +4,66 @@ import chisel3._
 import chisel3.util._
 import zamlet.utils.ValidBuffer
 
-class SegmentedMultiplierRecombineAddInput(width: Int) extends Bundle {
-  val a = UInt(width.W)
-  val b = UInt(width.W)
+class SegmentedMultiplierRecombineAdderIO(width: Int) extends Bundle {
+  val input = Flipped(Valid(Vec(4, UInt(width.W))))
+  val output = Valid(UInt(width.W))
 }
 
-class SegmentedMultiplierRecombineAddOutput(width: Int) extends Bundle {
-  val sum = UInt(width.W)
-}
-
-class SegmentedMultiplierRecombineAddIO(width: Int) extends Bundle {
-  val input = Flipped(Valid(new SegmentedMultiplierRecombineAddInput(width)))
-  val output = Valid(new SegmentedMultiplierRecombineAddOutput(width))
-}
-
-class SegmentedMultiplierRecombineAddStage(
+class SegmentedMultiplierRecombineAdder(
     width: Int,
+    registerCarrySaveOutput: Boolean,
+    registerFinalAdderMiddle: Boolean,
     registerOutput: Boolean,
     prefixAdderMinWidth: Int) extends Module {
   require(width >= 8, "width must be at least 8")
   require(isPow2(width), "width must be a power of two")
   require(isPow2(prefixAdderMinWidth), "prefixAdderMinWidth must be a power of two")
+  require(!registerFinalAdderMiddle || width >= prefixAdderMinWidth, "middle register requires prefix adder")
 
-  val latency: Int = SegmentedMultiplierRecombineAddStage.latency(registerOutput)
+  val latency: Int = SegmentedMultiplierRecombineAdder.latency(
+    registerCarrySaveOutput,
+    registerFinalAdderMiddle,
+    registerOutput)
 
-  override def desiredName: String = s"SegmentedMultiplierRecombineAddStage$width"
+  override def desiredName: String = s"SegmentedMultiplierRecombineAdder$width"
 
-  val io = IO(new SegmentedMultiplierRecombineAddIO(width))
+  val io = IO(new SegmentedMultiplierRecombineAdderIO(width))
+
+  val reduce0 = Module(new CSA3to2(width))
+  val reduce1 = Module(new CSA3to2(width))
+
+  reduce0.io.a := io.input.bits(0)
+  reduce0.io.b := io.input.bits(1)
+  reduce0.io.c := io.input.bits(2)
+
+  reduce1.io.a := reduce0.io.sum
+  reduce1.io.b := reduce0.io.carry
+  reduce1.io.c := io.input.bits(3)
+
+  val carrySave = Wire(Valid(Vec(2, UInt(width.W))))
+  carrySave.valid := io.input.valid
+  carrySave.bits(0) := reduce1.io.sum
+  carrySave.bits(1) := reduce1.io.carry
+  val s1 = ValidBuffer(carrySave, registerCarrySaveOutput)
 
   if (width >= prefixAdderMinWidth) {
     val adder = Module(new SegmentedPrefixAdder(
       width,
       registerInput = false,
+      registerMiddle = registerFinalAdderMiddle,
       registerOutput = registerOutput))
-    adder.io.input.valid := io.input.valid
-    adder.io.input.bits.a := io.input.bits.a
-    adder.io.input.bits.b := io.input.bits.b
+    adder.io.input.valid := s1.valid
+    adder.io.input.bits.a := s1.bits(0)
+    adder.io.input.bits.b := s1.bits(1)
     adder.io.input.bits.subtract := false.B
     adder.io.input.bits.elementWidthLog2 := log2Ceil(width).U
 
     io.output.valid := adder.io.output.valid
-    io.output.bits.sum := adder.io.output.bits.sum
+    io.output.bits := adder.io.output.bits.sum
   } else {
-    val output = Wire(Valid(new SegmentedMultiplierRecombineAddOutput(width)))
-    output.valid := io.input.valid
-    output.bits.sum := io.input.bits.a + io.input.bits.b
+    val output = Wire(Valid(UInt(width.W)))
+    output.valid := s1.valid
+    output.bits := s1.bits(0) + s1.bits(1)
     io.output := ValidBuffer(output, registerOutput)
   }
 }
@@ -75,7 +90,8 @@ class SegmentedMultiplierRecombineIO(width: Int) extends Bundle {
 class SegmentedMultiplierRecombine(
     width: Int,
     registerInput: Boolean = false,
-    registerMiddle: Boolean = true,
+    registerCarrySaveOutput: Boolean = true,
+    registerFinalAdderMiddle: Boolean = false,
     registerOutput: Boolean = true,
     prefixAdderMinWidth: Int = 32) extends Module {
   require(width >= 4, "width must be at least 4")
@@ -84,7 +100,8 @@ class SegmentedMultiplierRecombine(
 
   val latency: Int = SegmentedMultiplierRecombine.latency(
     registerInput,
-    registerMiddle,
+    registerCarrySaveOutput,
+    registerFinalAdderMiddle,
     registerOutput)
 
   override def desiredName: String = s"SegmentedMultiplierRecombine$width"
@@ -98,71 +115,66 @@ class SegmentedMultiplierRecombine(
     Cat(Fill(width, signed && product(width - 1)), product)
   }
 
-  val loAdd = Module(new SegmentedMultiplierRecombineAddStage(
+  val recombineAdder = Module(new SegmentedMultiplierRecombineAdder(
     adderWidth,
-    registerOutput = registerMiddle,
-    prefixAdderMinWidth = prefixAdderMinWidth))
-  loAdd.suggestName("lo")
-
-  val hiAdd = Module(new SegmentedMultiplierRecombineAddStage(
-    adderWidth,
-    registerOutput = registerMiddle,
-    prefixAdderMinWidth = prefixAdderMinWidth))
-  hiAdd.suggestName("hi")
-
-  val finalAdd = Module(new SegmentedMultiplierRecombineAddStage(
-    adderWidth,
+    registerCarrySaveOutput = registerCarrySaveOutput,
+    registerFinalAdderMiddle = registerFinalAdderMiddle,
     registerOutput = false,
     prefixAdderMinWidth = prefixAdderMinWidth))
-  finalAdd.suggestName("final")
+  recombineAdder.suggestName("adder")
 
   val s0LoLoWide = extendPartial(s0.bits.loLo, false.B)
   val s0LoHiWide = extendPartial(s0.bits.loHi, s0.bits.signedB)
   val s0HiLoWide = extendPartial(s0.bits.hiLo, s0.bits.signedA)
   val s0HiHiWide = extendPartial(s0.bits.hiHi, s0.bits.signedA || s0.bits.signedB)
 
-  loAdd.io.input.valid := s0.valid
-  loAdd.io.input.bits.a := s0LoLoWide
-  loAdd.io.input.bits.b := (s0LoHiWide << halfWidth)(adderWidth - 1, 0)
+  recombineAdder.io.input.valid := s0.valid
+  recombineAdder.io.input.bits(0) := s0LoLoWide
+  recombineAdder.io.input.bits(1) := (s0LoHiWide << halfWidth)(adderWidth - 1, 0)
+  recombineAdder.io.input.bits(2) := (s0HiLoWide << halfWidth)(adderWidth - 1, 0)
+  recombineAdder.io.input.bits(3) := (s0HiHiWide << width)(adderWidth - 1, 0)
 
-  hiAdd.io.input.valid := s0.valid
-  hiAdd.io.input.bits.a := (s0HiLoWide << halfWidth)(adderWidth - 1, 0)
-  hiAdd.io.input.bits.b := (s0HiHiWide << width)(adderWidth - 1, 0)
-
-  val middleLatency = SegmentedMultiplierRecombineAddStage.latency(registerMiddle)
+  val adderLatency = SegmentedMultiplierRecombineAdder.latency(
+    registerCarrySaveOutput = registerCarrySaveOutput,
+    registerFinalAdderMiddle = registerFinalAdderMiddle,
+    registerOutput = false)
   val s1PackedProduct = SegmentedMultiplier.delay(
     Cat(s0.bits.hiHi(width - 1, 0), s0.bits.loLo(width - 1, 0)),
-    middleLatency)
-  val s1ChildElementMode = SegmentedMultiplier.delay(s0.bits.childElementMode, middleLatency)
-
-  finalAdd.io.input.valid := loAdd.io.output.valid
-  finalAdd.io.input.bits.a := loAdd.io.output.bits.sum
-  finalAdd.io.input.bits.b := hiAdd.io.output.bits.sum
+    adderLatency)
+  val s1ChildElementMode = SegmentedMultiplier.delay(s0.bits.childElementMode, adderLatency)
 
   val output = Wire(Valid(new SegmentedMultiplierRecombineOutput(width)))
-  output.valid := finalAdd.io.output.valid
+  output.valid := recombineAdder.io.output.valid
   output.bits.product := Mux(
     s1ChildElementMode,
     s1PackedProduct,
-    finalAdd.io.output.bits.sum)
+    recombineAdder.io.output.bits)
 
   io.output := ValidBuffer(output, registerOutput)
 }
 
-object SegmentedMultiplierRecombineAddStage {
-  def latency(registerOutput: Boolean): Int = {
-    if (registerOutput) 1 else 0
+object SegmentedMultiplierRecombineAdder {
+  def latency(
+      registerCarrySaveOutput: Boolean,
+      registerFinalAdderMiddle: Boolean,
+      registerOutput: Boolean): Int = {
+    (if (registerCarrySaveOutput) 1 else 0) +
+      (if (registerFinalAdderMiddle) 1 else 0) +
+      (if (registerOutput) 1 else 0)
   }
 }
 
 object SegmentedMultiplierRecombine {
   def latency(
       registerInput: Boolean,
-      registerMiddle: Boolean,
+      registerCarrySaveOutput: Boolean,
+      registerFinalAdderMiddle: Boolean,
       registerOutput: Boolean): Int = {
     (if (registerInput) 1 else 0) +
-      SegmentedMultiplierRecombineAddStage.latency(registerOutput = registerMiddle) +
-      SegmentedMultiplierRecombineAddStage.latency(registerOutput = false) +
+      SegmentedMultiplierRecombineAdder.latency(
+        registerCarrySaveOutput = registerCarrySaveOutput,
+        registerFinalAdderMiddle = registerFinalAdderMiddle,
+        registerOutput = false) +
       (if (registerOutput) 1 else 0)
   }
 }

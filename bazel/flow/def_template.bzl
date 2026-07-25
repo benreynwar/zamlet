@@ -18,8 +18,8 @@ def _combined_network_node_def_impl(ctx):
         "--tech-lef", tech_lef.path,
         "--config", ctx.file.config.path,
         "--output", output.path,
-        "--v-layer", pdk.fp_io_vlayer,
-        "--h-layer", pdk.fp_io_hlayer,
+        "--v-layer", pdk.io_pin_v_layer,
+        "--h-layer", pdk.io_pin_h_layer,
     ]
     if ctx.attr.die_area:
         args.extend(["--die-area", ctx.attr.die_area])

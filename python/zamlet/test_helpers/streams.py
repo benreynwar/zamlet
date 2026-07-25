@@ -4,9 +4,10 @@ from collections import deque
 from random import Random
 
 import cocotb
-from cocotb.triggers import Event, ReadOnly, RisingEdge
+from cocotb.triggers import Event, ReadOnly
 
 from zamlet.future import Future
+from zamlet.test_utils import next_drive_phase
 from zamlet.utils import make_seed
 
 
@@ -108,7 +109,7 @@ class ValidReadySource:
                 await ReadOnly()
                 fired = bool(int(self.ready.value))
 
-            await RisingEdge(self.clock)
+            await next_drive_phase(self.clock)
 
             if fired:
                 _, future = current
@@ -157,7 +158,7 @@ class ValidReadySink:
             await ReadOnly()
             if int(self.valid.value) and int(self.ready.value):
                 self.queue.append(self._sample_bits())
-            await RisingEdge(self.clock)
+            await next_drive_phase(self.clock)
 
 
 class ValidMonitor:
@@ -185,4 +186,4 @@ class ValidMonitor:
             await ReadOnly()
             if int(self.valid.value):
                 self.queue.append(self._sample_bits())
-            await RisingEdge(self.clock)
+            await next_drive_phase(self.clock)

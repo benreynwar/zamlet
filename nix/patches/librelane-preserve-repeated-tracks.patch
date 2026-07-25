@@ -1,0 +1,40 @@
+From: Zamlet project
+Subject: Preserve repeated routing track definitions
+
+Some PDKs define several track grids for the same layer and direction. Preserve
+all paired X/Y definitions when converting classic track files to make_tracks
+commands instead of retaining only the final definition.
+
+diff --git a/librelane/steps/openroad.py b/librelane/steps/openroad.py
+index c4d412d..c13216c 100644
+--- a/librelane/steps/openroad.py
++++ b/librelane/steps/openroad.py
+@@ -99,19 +99,22 @@ def old_to_new_tracks(old_tracks: str) -> str:
+     'make_tracks li1 -x_offset 0.23 -x_pitch 0.46 -y_offset 0.17 -y_pitch 0.34\\nmake_tracks met1 -x_offset 0.17 -x_pitch 0.34 -y_offset 0.17 -y_pitch 0.34\\nmake_tracks met2 -x_offset 0.23 -x_pitch 0.46 -y_offset 0.23 -y_pitch 0.46\\nmake_tracks met3 -x_offset 0.34 -x_pitch 0.68 -y_offset 0.34 -y_pitch 0.68\\nmake_tracks met4 -x_offset 0.46 -x_pitch 0.92 -y_offset 0.46 -y_pitch 0.92\\nmake_tracks met5 -x_offset 1.70 -x_pitch 3.40 -y_offset 1.70 -y_pitch 3.40\\n'
+     """
+-    layers: Dict[str, Dict[str, Tuple[str, str]]] = {}
++    layers: Dict[str, Dict[str, List[Tuple[str, str]]]] = {}
+ 
+     for line in old_tracks.splitlines():
+         if line.strip() == "":
+             continue
+         layer, cardinal, offset, pitch = line.split()
+-        layers[layer] = layers.get(layer) or {}
+-        layers[layer][cardinal] = (offset, pitch)
++        layers[layer] = layers.get(layer) or {"X": [], "Y": []}
++        layers[layer][cardinal].append((offset, pitch))
+ 
+     final_str = ""
+     for layer, data in layers.items():
+-        x_offset, x_pitch = data["X"]
+-        y_offset, y_pitch = data["Y"]
+-        final_str += f"make_tracks {layer} -x_offset {x_offset} -x_pitch {x_pitch} -y_offset {y_offset} -y_pitch {y_pitch}\n"
++        if len(data["X"]) != len(data["Y"]):
++            raise ValueError(f"Layer {layer} has mismatched X and Y track definitions")
++        for (x_offset, x_pitch), (y_offset, y_pitch) in zip(
++            data["X"], data["Y"]
++        ):
++            final_str += f"make_tracks {layer} -x_offset {x_offset} -x_pitch {x_pitch} -y_offset {y_offset} -y_pitch {y_pitch}\n"
+ 
+     return final_str
+ 

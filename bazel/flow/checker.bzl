@@ -6,16 +6,16 @@ load(":providers.bzl", "LibrelaneInfo")
 # Config keys for each checker step
 # All steps require BASE_CONFIG_KEYS for librelane's Config.load infrastructure.
 
-# Step 2: Checker.LintTimingConstructs - checker.py lines 376-409
+# Step 2: Checker.LintTimingConstructs - checker.py lines 386-418
 # Overrides run(), only reads state_in.metrics, ignores config_vars (librelane_issue)
 # We still wire ERROR_ON_LINTER_TIMING_CONSTRUCTS because it's declared in config_vars
 LINT_TIMING_CONSTRUCTS_CONFIG_KEYS = BASE_CONFIG_KEYS + ["ERROR_ON_LINTER_TIMING_CONSTRUCTS"]
 
-# Step 3: Checker.LintErrors - checker.py lines 336-352
+# Step 3: Checker.LintErrors - checker.py lines 346-361
 # Uses MetricChecker.run() which reads self.config.get("ERROR_ON_LINTER_ERRORS") at line 119
 LINT_ERRORS_CONFIG_KEYS = BASE_CONFIG_KEYS + ["ERROR_ON_LINTER_ERRORS"]
 
-# Step 4: Checker.LintWarnings - checker.py lines 356-372
+# Step 4: Checker.LintWarnings - checker.py lines 365-381
 # Uses MetricChecker.run() which reads self.config.get("ERROR_ON_LINTER_WARNINGS") at line 119
 LINT_WARNINGS_CONFIG_KEYS = BASE_CONFIG_KEYS + ["ERROR_ON_LINTER_WARNINGS"]
 
@@ -132,6 +132,60 @@ def _lvs_impl(ctx):
 def _setup_violations_impl(ctx):
     return single_step_impl(ctx, "Checker.SetupViolations", SETUP_VIOLATIONS_CONFIG_KEYS, step_outputs = [])
 
+def _setup_wns_threshold_impl(ctx):
+    state_info = ctx.attr.src[LibrelaneInfo]
+    state_out = ctx.actions.declare_file(ctx.label.name + "/state_out.json")
+
+    ctx.actions.run_shell(
+        inputs = [state_info.state_out],
+        outputs = [state_out],
+        command = """
+            set -e
+            cp "{src_state_out}" "{state_out}"
+
+            setup_wns="$(jq -r '.metrics.timing__setup__ws // "missing"' "{src_state_out}")"
+            if [ "$setup_wns" = "missing" ]; then
+                echo "ERROR: Zamlet setup WNS checker could not find timing__setup__ws."
+                exit 1
+            fi
+
+            if ! jq -n -e --arg wns "$setup_wns" --arg threshold "{threshold}" \
+                '($wns | tonumber) >= ($threshold | tonumber)' >/dev/null; then
+                echo "ERROR: setup WNS $setup_wns ns is below threshold {threshold} ns."
+                exit 1
+            fi
+
+            echo "Setup WNS $setup_wns ns meets threshold {threshold} ns."
+        """.format(
+            src_state_out = state_info.state_out.path,
+            state_out = state_out.path,
+            threshold = ctx.attr.threshold,
+        ),
+    )
+
+    return [
+        DefaultInfo(files = depset([state_out])),
+        LibrelaneInfo(
+            state_out = state_out,
+            nl = state_info.nl,
+            pnl = state_info.pnl,
+            odb = state_info.odb,
+            sdc = state_info.sdc,
+            sdf = state_info.sdf,
+            spef = state_info.spef,
+            lib = state_info.lib,
+            gds = state_info.gds,
+            mag_gds = state_info.mag_gds,
+            klayout_gds = state_info.klayout_gds,
+            lef = state_info.lef,
+            mag = state_info.mag,
+            spice = state_info.spice,
+            json_h = state_info.json_h,
+            vh = state_info.vh,
+            **{"def": getattr(state_info, "def", None)}
+        ),
+    ]
+
 def _hold_violations_impl(ctx):
     return single_step_impl(ctx, "Checker.HoldViolations", HOLD_VIOLATIONS_CONFIG_KEYS, step_outputs = [])
 
@@ -140,6 +194,67 @@ def _max_slew_violations_impl(ctx):
 
 def _max_cap_violations_impl(ctx):
     return single_step_impl(ctx, "Checker.MaxCapViolations", MAX_CAP_VIOLATIONS_CONFIG_KEYS, step_outputs = [])
+
+def _zamlet_antenna_violations_impl(ctx):
+    state_info = ctx.attr.src[LibrelaneInfo]
+    state_out = ctx.actions.declare_file(ctx.label.name + "/state_out.json")
+
+    ctx.actions.run_shell(
+        inputs = [state_info.state_out],
+        outputs = [state_out],
+        command = """
+            set -e
+            echo "Zamlet local antenna violations checker (not a LibreLane step)."
+            mkdir -p "$(dirname "{state_out}")"
+            cp "{src_state_out}" "{state_out}"
+
+            route_count="$(jq -r '.metrics.route__antenna_violation__count // "missing"' "{src_state_out}")"
+            nets_count="$(jq -r '.metrics.antenna__violating__nets // .metrics.route__antenna_violation__count // "missing"' "{src_state_out}")"
+            pins_count="$(jq -r '.metrics.antenna__violating__pins // 0' "{src_state_out}")"
+
+            if [ "$route_count" = "missing" ] || [ "$nets_count" = "missing" ]; then
+                echo "ERROR: Zamlet local antenna checker could not find antenna metrics."
+                echo "Expected route__antenna_violation__count from OpenROAD.CheckAntennas."
+                exit 1
+            fi
+
+            if [ "$route_count" != "0" ] || [ "$nets_count" != "0" ] || [ "$pins_count" != "0" ]; then
+                echo "ERROR: Zamlet local antenna checker found antenna violations."
+                echo "  route__antenna_violation__count: $route_count"
+                echo "  antenna__violating__nets: $nets_count"
+                echo "  antenna__violating__pins: $pins_count"
+                exit 1
+            fi
+
+            echo "Zamlet local antenna checker found no antenna violations."
+        """.format(
+            src_state_out = state_info.state_out.path,
+            state_out = state_out.path,
+        ),
+    )
+
+    return [
+        DefaultInfo(files = depset([state_out])),
+        LibrelaneInfo(
+            state_out = state_out,
+            nl = state_info.nl,
+            pnl = state_info.pnl,
+            odb = state_info.odb,
+            sdc = state_info.sdc,
+            sdf = state_info.sdf,
+            spef = state_info.spef,
+            lib = state_info.lib,
+            gds = state_info.gds,
+            mag_gds = state_info.mag_gds,
+            klayout_gds = state_info.klayout_gds,
+            lef = state_info.lef,
+            mag = state_info.mag,
+            spice = state_info.spice,
+            json_h = state_info.json_h,
+            vh = state_info.vh,
+            **{"def": getattr(state_info, "def", None)}
+        ),
+    ]
 
 # Rule declarations
 librelane_lint_timing_constructs = rule(
@@ -238,6 +353,17 @@ librelane_setup_violations = rule(
     provides = [DefaultInfo, LibrelaneInfo],
 )
 
+zamlet_setup_wns_threshold = rule(
+    implementation = _setup_wns_threshold_impl,
+    attrs = dict(FLOW_ATTRS, **{
+        "threshold": attr.string(
+            doc = "Minimum allowed setup WNS in ns.",
+            default = "0",
+        ),
+    }),
+    provides = [DefaultInfo, LibrelaneInfo],
+)
+
 librelane_hold_violations = rule(
     implementation = _hold_violations_impl,
     attrs = FLOW_ATTRS,
@@ -252,6 +378,14 @@ librelane_max_slew_violations = rule(
 
 librelane_max_cap_violations = rule(
     implementation = _max_cap_violations_impl,
+    attrs = FLOW_ATTRS,
+    provides = [DefaultInfo, LibrelaneInfo],
+)
+
+# Local Zamlet checker. This intentionally is not a LibreLane step; it fails the
+# Bazel signoff chain on antenna metrics produced by OpenROAD.CheckAntennas.
+zamlet_antenna_violations = rule(
+    implementation = _zamlet_antenna_violations_impl,
     attrs = FLOW_ATTRS,
     provides = [DefaultInfo, LibrelaneInfo],
 )

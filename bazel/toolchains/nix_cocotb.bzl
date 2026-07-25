@@ -79,6 +79,18 @@ cc_import(
     visibility = ["//visibility:public"],
 )
 
+filegroup(
+    name = "vpi_runtime",
+    srcs = glob(["libs/*.so"]),
+    visibility = ["//visibility:public"],
+)
+
+filegroup(
+    name = "icarus_vpi",
+    srcs = ["libs/libcocotbvpi_icarus.vpl"],
+    visibility = ["//visibility:public"],
+)
+
 cc_import(
     name = "libcocotb",
     shared_library = "libs/libcocotb.so",

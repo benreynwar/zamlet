@@ -12,15 +12,17 @@ if { [info exists ::env(CLOCK_PORT)] } {
         set ::clock_port [lindex $::env(CLOCK_PORT) 0]
     }
 }
+set clock_period [expr $::env(CLOCK_PERIOD) * {{CLOCK_PERIOD_SCALE}}]
+
 set port_args [get_ports $clock_port]
 puts "\[INFO] Using clock $clock_port…"
-create_clock {*}$port_args -name $clock_port -period $::env(CLOCK_PERIOD)
+create_clock {*}$port_args -name $clock_port -period $clock_period
 
 # Input/output delay as percentage of clock period
 set input_delay_pct {{INPUT_DELAY_CONSTRAINT}}
 set output_delay_pct {{OUTPUT_DELAY_CONSTRAINT}}
-set input_delay_value [expr $::env(CLOCK_PERIOD) * $input_delay_pct / 100]
-set output_delay_value [expr $::env(CLOCK_PERIOD) * $output_delay_pct / 100]
+set input_delay_value [expr $clock_period * $input_delay_pct / 100]
+set output_delay_value [expr $clock_period * $output_delay_pct / 100]
 
 puts "\[INFO] Setting output delay to: $output_delay_value"
 puts "\[INFO] Setting input delay to: $input_delay_value"

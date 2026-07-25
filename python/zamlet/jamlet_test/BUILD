@@ -1,4 +1,12 @@
-load("//bazel:cocotb_rules.bzl", "chisel_module_tests")
+load("//bazel:cocotb_rules.bzl", "chisel_module_tests", "chisel_module_tests_no_config")
+load("//bazel:defs.bzl", "json_file")
+
+py_library(
+    name = "jamlet_mxu_test_py",
+    srcs = ["test_jamlet_mxu.py"],
+    deps = ["//python/zamlet:zamlet"],
+    visibility = ["//visibility:public"],
+)
 
 chisel_module_tests(
     generator = "//src/main/scala/zamlet/jamlet:indextocoordswithreg",
@@ -55,6 +63,80 @@ chisel_module_tests(
     test_modules = ["zamlet.jamlet_test.test_jamlet_alu"],
 )
 
+MXU_TEST_GRID_SIZES = [
+    (2, 2, 2, False, 0),
+    (4, 4, 2, False, 0),
+    (4, 4, 4, False, 0),
+    (2, 2, 4, True, 2),
+]
+
+REGISTER_BACKWARD_OUTPUT_OPTIONS = [
+    (False, "noreg", "NoReg"),
+    (True, "reg", "Reg"),
+]
+
+MXU_TEST_GRID_PARAMS = [
+    {
+        "name": "jamlet_mxu_test_grid_{}x{}_mxu{}_split{}_{}".format(
+            grid_rows,
+            grid_cols,
+            mxu_n,
+            int(split_c_drain),
+            name_suffix,
+        ),
+        "top": "JamletMxuTestGrid{}x{}Mxu{}Split{}{}".format(
+            grid_rows,
+            grid_cols,
+            mxu_n,
+            int(split_c_drain),
+            top_suffix,
+        ),
+        "gridRows": grid_rows,
+        "gridCols": grid_cols,
+        "mxuN": mxu_n,
+        "registerBC": True,
+        "registerBackwardOutput": register_backward_output,
+        "splitCDrain": split_c_drain,
+        "resetGroupSize": reset_group_size,
+    }
+    for grid_rows, grid_cols, mxu_n, split_c_drain, reset_group_size in MXU_TEST_GRID_SIZES
+    for register_backward_output, name_suffix, top_suffix in REGISTER_BACKWARD_OUTPUT_OPTIONS
+]
+
+[json_file(
+    name = params["name"] + "_params",
+    data = {
+        "gridRows": params["gridRows"],
+        "gridCols": params["gridCols"],
+        "mxuN": params["mxuN"],
+        "registerBC": params["registerBC"],
+        "registerBackwardOutput": params["registerBackwardOutput"],
+        "splitCDrain": params["splitCDrain"],
+        "resetGroupSize": params["resetGroupSize"],
+        "clockPeriodNs": 2.0,
+    },
+) for params in MXU_TEST_GRID_PARAMS]
+
+[chisel_module_tests_no_config(
+    generator = "//src/main/scala/zamlet/jamlet:jamletmxutestgrid",
+    toplevel = params["top"],
+    srcs = ["test_jamlet_mxu.py"],
+    generator_args = [
+        str(params["gridRows"]),
+        str(params["gridCols"]),
+        str(params["mxuN"]),
+        "false",
+        str(params["registerBC"]).lower(),
+        "false",
+        str(params["registerBackwardOutput"]).lower(),
+        str(params["splitCDrain"]).lower(),
+        str(params["resetGroupSize"]),
+        params["top"],
+    ],
+    config = ":" + params["name"] + "_params",
+    test_modules = ["zamlet.jamlet_test.test_jamlet_mxu"],
+) for params in MXU_TEST_GRID_PARAMS]
+
 chisel_module_tests(
     generator = "//src/main/scala/zamlet/jamlet:jamlet",
     toplevel = "Jamlet",
@@ -87,5 +169,5 @@ test_suite(
         ":jamletalu_tests",
         ":jamlet_tests",
         ":localexec_tests",
-    ],
+    ] + [":" + params["top"].lower() + "_tests" for params in MXU_TEST_GRID_PARAMS],
 )

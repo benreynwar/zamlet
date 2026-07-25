@@ -24,9 +24,11 @@ load(":checker.bzl",
     "librelane_hold_violations",
     "librelane_max_slew_violations",
     "librelane_max_cap_violations",
+    "zamlet_setup_wns_threshold",
+    "zamlet_antenna_violations",
 )
 load(":synthesis.bzl", "librelane_synthesis", "librelane_json_header", "librelane_eqy")
-load(":floorplan.bzl", "librelane_floorplan")
+load(":floorplan.bzl", "librelane_floorplan", "librelane_dump_rc_values")
 load(":place.bzl",
     "librelane_cut_rows",
     "librelane_tap_endcap_insertion",
@@ -98,14 +100,27 @@ def librelane_classic_flow(
     pdk,
     clock_period = "10.0",
     clock_port = "clock",
-    core_utilization = "50",
+    fp_core_util = "50",
     pl_target_density_pct = "",
     die_area = None,
     macros = [],
-    pin_order_cfg = None,
-    def_template = None,
+    io_pin_order_cfg = None,
+    io_pin_h_thickness_mult = None,
+    io_pin_v_thickness_mult = None,
+    fp_def_template = None,
     macro_placement_cfg = None,
+    pdn_macro_connections = [],
     cts_clk_max_wire_length = None,
+    default_corner = "",
+    max_transition_constraint = "",
+    max_capacitance_constraint = "",
+    design_repair_max_wire_length = None,
+    design_repair_max_slew_pct = None,
+    design_repair_max_cap_pct = None,
+    pl_resizer_hold_slack_margin = None,
+    pl_resizer_setup_slack_margin = None,
+    grt_resizer_hold_slack_margin = None,
+    grt_design_repair_max_wire_length = None,
     run_cts = True,
     run_post_cts_resizer_timing = True,
     run_eqy = False,
@@ -118,11 +133,29 @@ def librelane_classic_flow(
     diode_on_ports = "none",
     run_heuristic_diode_insertion = False,
     run_antenna_repair = True,
+    grt_allow_congestion = False,
+    grt_antenna_repair_iters = None,
+    grt_antenna_repair_margin = None,
+    grt_antenna_repair_jumper_only = None,
+    grt_antenna_repair_diode_only = None,
     run_post_grt_resizer_timing = False,
     run_drt = True,
+    run_fill_insertion = True,
+    run_spef_extraction = True,
+    run_mcsta = True,
+    run_irdrop_report = True,
+    run_magic_streamout = True,
+    run_klayout_streamout = True,
+    run_magic_write_lef = True,
+    run_klayout_xor = True,
+    run_magic_drc = True,
+    run_klayout_drc = True,
+    run_lvs = True,
+    mid_setup_wns_threshold = "0",
     manual_global_placements = None,
     pnr_sdc_file = None,
     signoff_sdc_file = None,
+    sdc_fragments = [],
     input_delay_constraint = None,
     output_delay_constraint = None,
     synth_config = None):
@@ -142,14 +175,22 @@ def librelane_classic_flow(
         pdk: PDK target
         clock_period: Clock period in ns
         clock_port: Clock port name
-        core_utilization: Target core utilization (0-100), ignored if die_area specified
+        fp_core_util: Target core utilization (0-100), ignored if die_area specified
         pl_target_density_pct: Target placement density percentage (0-100), empty for dynamic
         die_area: Explicit die area as "x0 y0 x1 y1" in microns
         macros: List of hard macro targets (for hierarchical designs)
-        pin_order_cfg: Pin order configuration file for custom IO placement
-        def_template: DEF template file with die area and pin placements (alternative to pin_order_cfg)
+        io_pin_order_cfg: Pin order configuration file for custom IO placement
+        io_pin_h_thickness_mult: Horizontal pin thickness as a multiple of layer minimum width
+        io_pin_v_thickness_mult: Vertical pin thickness as a multiple of layer minimum width
+        fp_def_template: DEF template file with die area and pin placements (alternative to io_pin_order_cfg)
         macro_placement_cfg: Macro placement configuration file (instance X Y orientation)
+        pdn_macro_connections: Explicit macro power connections
         cts_clk_max_wire_length: Max clock wire length in µm before buffer insertion (0=disabled)
+        default_corner: Override DEFAULT_CORNER from the PDK config
+        max_transition_constraint: Override MAX_TRANSITION_CONSTRAINT from the PDK config
+        max_capacitance_constraint: Override MAX_CAPACITANCE_CONSTRAINT from the PDK config
+        design_repair_max_slew_pct: Override DESIGN_REPAIR_MAX_SLEW_PCT
+        design_repair_max_cap_pct: Override DESIGN_REPAIR_MAX_CAP_PCT
         run_cts: Enable clock tree synthesis (default True)
         run_post_cts_resizer_timing: Enable timing optimization after CTS (default True, ignored if run_cts=False)
         run_eqy: Enable EQY formal equivalence check (default False)
@@ -157,6 +198,15 @@ def librelane_classic_flow(
         run_tap_endcap_insertion: Enable tap/endcap insertion (default True)
         run_post_gpl_design_repair: Enable design repair after global placement (default True)
         run_post_grt_design_repair: Enable design repair after global routing (default False, experimental)
+        run_spef_extraction: Enable parasitic extraction before final STA (default True)
+        run_mcsta: Enable final multi-corner STA after extraction (default True)
+        run_irdrop_report: Enable IR drop reporting (default True)
+        run_magic_streamout: Enable Magic GDS stream-out (default True)
+        run_klayout_streamout: Enable KLayout GDS stream-out (default True)
+        run_magic_write_lef: Enable Magic LEF generation (default True)
+        run_klayout_xor: Enable KLayout-vs-Magic XOR check (default True)
+        run_magic_drc: Enable Magic DRC and Magic DRC checker (default True)
+        run_klayout_drc: Enable KLayout DRC and KLayout DRC checker (default True)
     """
 
     # Generate templated SDC with delay constraints
@@ -165,8 +215,9 @@ def librelane_classic_flow(
     sdc_template(
         name = name + "_sdc",
         template = "//bazel/flow/sdc:base.sdc",
-        input_delay_constraint = input_delay_constraint if input_delay_constraint else "50",
-        output_delay_constraint = output_delay_constraint if output_delay_constraint else "50",
+        input_delay_constraint = input_delay_constraint if input_delay_constraint else "60",
+        output_delay_constraint = output_delay_constraint if output_delay_constraint else "60",
+        fragments = sdc_fragments,
     )
     if not pnr_sdc_file:
         effective_pnr_sdc = ":" + name + "_sdc"
@@ -177,14 +228,18 @@ def librelane_classic_flow(
     pnr_config_kwargs = {}
     if pl_target_density_pct:
         pnr_config_kwargs["pl_target_density_pct"] = pl_target_density_pct
-    if pin_order_cfg:
-        pnr_config_kwargs["fp_pin_order_cfg"] = pin_order_cfg
-    if def_template:
-        pnr_config_kwargs["fp_def_template"] = def_template
+    if io_pin_order_cfg:
+        pnr_config_kwargs["io_pin_order_cfg"] = io_pin_order_cfg
+    if io_pin_h_thickness_mult != None:
+        pnr_config_kwargs["io_pin_h_thickness_mult"] = io_pin_h_thickness_mult
+    if io_pin_v_thickness_mult != None:
+        pnr_config_kwargs["io_pin_v_thickness_mult"] = io_pin_v_thickness_mult
+    if fp_def_template:
+        pnr_config_kwargs["fp_def_template"] = fp_def_template
     if cts_clk_max_wire_length:
         pnr_config_kwargs["cts_clk_max_wire_length"] = cts_clk_max_wire_length
-    if core_utilization != "50":
-        pnr_config_kwargs["fp_core_util"] = core_utilization
+    if fp_core_util != "50":
+        pnr_config_kwargs["fp_core_util"] = fp_core_util
     if pdn_obstructions:
         pnr_config_kwargs["pdn_obstructions"] = pdn_obstructions
     if routing_obstructions:
@@ -195,6 +250,32 @@ def librelane_classic_flow(
         pnr_config_kwargs["diode_on_ports"] = diode_on_ports
     if macro_placement_cfg:
         pnr_config_kwargs["macro_placement_cfg"] = macro_placement_cfg
+    if pdn_macro_connections:
+        pnr_config_kwargs["pdn_macro_connections"] = pdn_macro_connections
+    if grt_allow_congestion:
+        pnr_config_kwargs["grt_allow_congestion"] = True
+    if grt_antenna_repair_iters != None:
+        pnr_config_kwargs["grt_antenna_repair_iters"] = grt_antenna_repair_iters
+    if grt_antenna_repair_margin != None:
+        pnr_config_kwargs["grt_antenna_repair_margin"] = grt_antenna_repair_margin
+    if grt_antenna_repair_jumper_only != None:
+        pnr_config_kwargs["grt_antenna_repair_jumper_only"] = grt_antenna_repair_jumper_only
+    if grt_antenna_repair_diode_only != None:
+        pnr_config_kwargs["grt_antenna_repair_diode_only"] = grt_antenna_repair_diode_only
+    if design_repair_max_wire_length != None:
+        pnr_config_kwargs["design_repair_max_wire_length"] = design_repair_max_wire_length
+    if design_repair_max_slew_pct != None:
+        pnr_config_kwargs["design_repair_max_slew_pct"] = design_repair_max_slew_pct
+    if design_repair_max_cap_pct != None:
+        pnr_config_kwargs["design_repair_max_cap_pct"] = design_repair_max_cap_pct
+    if pl_resizer_hold_slack_margin != None:
+        pnr_config_kwargs["pl_resizer_hold_slack_margin"] = pl_resizer_hold_slack_margin
+    if pl_resizer_setup_slack_margin != None:
+        pnr_config_kwargs["pl_resizer_setup_slack_margin"] = pl_resizer_setup_slack_margin
+    if grt_resizer_hold_slack_margin != None:
+        pnr_config_kwargs["grt_resizer_hold_slack_margin"] = grt_resizer_hold_slack_margin
+    if grt_design_repair_max_wire_length != None:
+        pnr_config_kwargs["grt_design_repair_max_wire_length"] = grt_design_repair_max_wire_length
 
     pnr_config_target = None
     if pnr_config_kwargs:
@@ -217,6 +298,9 @@ def librelane_classic_flow(
         signoff_sdc_file = effective_signoff_sdc if effective_signoff_sdc else "//bazel/flow/sdc:base.sdc",
         pnr_config = pnr_config_target,
         synth_config = synth_config,
+        default_corner = default_corner,
+        max_transition_constraint = max_transition_constraint,
+        max_capacitance_constraint = max_capacitance_constraint,
     )
 
     # Common input reference for all steps
@@ -309,14 +393,19 @@ def librelane_classic_flow(
             name = name + "_floorplan",
             input = input_target,
             src = ":" + name + "_sta_pre",
-            core_utilization = core_utilization,
+            fp_core_util = fp_core_util,
         )
 
     # Post-floorplan checks and setup
+    librelane_dump_rc_values(
+        name = name + "_dump_rc",
+        input = input_target,
+        src = ":" + name + "_floorplan",
+    )
     librelane_check_macro_antenna_properties(
         name = name + "_chk_macro_ant",
         input = input_target,
-        src = ":" + name + "_floorplan",
+        src = ":" + name + "_dump_rc",
     )
     librelane_set_power_connections(
         name = name + "_power_conn",
@@ -324,23 +413,18 @@ def librelane_classic_flow(
         src = ":" + name + "_chk_macro_ant",
     )
 
-    # Manual macro placement (if configured)
-    if macro_placement_cfg:
-        librelane_manual_macro_placement(
-            name = name + "_mpl",
-            input = input_target,
-            src = ":" + name + "_power_conn",
-            macro_placement_cfg = macro_placement_cfg,
-        )
-        pre_cutrows_src = ":" + name + "_mpl"
-    else:
-        pre_cutrows_src = ":" + name + "_power_conn"
+    # Manual macro placement self-skips when no placement config is present.
+    librelane_manual_macro_placement(
+        name = name + "_mpl",
+        input = input_target,
+        src = ":" + name + "_power_conn",
+    )
 
     # Cut rows (for macro placement clearance)
     librelane_cut_rows(
         name = name + "_cutrows",
         input = input_target,
-        src = pre_cutrows_src,
+        src = ":" + name + "_mpl",
     )
 
     # Tap and endcap cell insertion (gated)
@@ -354,45 +438,34 @@ def librelane_classic_flow(
     else:
         pre_pdn_src = ":" + name + "_cutrows"
 
-    # PDN obstructions (added before PDN, removed after) - only if configured
-    if pdn_obstructions:
-        librelane_add_pdn_obstructions(
-            name = name + "_add_pdn_obs",
-            input = input_target,
-            src = pre_pdn_src,
-        )
-        pre_pdn_gen_src = ":" + name + "_add_pdn_obs"
-    else:
-        pre_pdn_gen_src = pre_pdn_src
+    # PDN obstructions self-skip when no obstruction config is present.
+    librelane_add_pdn_obstructions(
+        name = name + "_add_pdn_obs",
+        input = input_target,
+        src = pre_pdn_src,
+    )
 
     # Power delivery network
     librelane_generate_pdn(
         name = name + "_pdn",
         input = input_target,
-        src = pre_pdn_gen_src,
+        src = ":" + name + "_add_pdn_obs",
     )
 
-    # Remove PDN obstructions - only if we added them
-    if pdn_obstructions:
-        librelane_remove_pdn_obstructions(
-            name = name + "_rm_pdn_obs",
-            input = input_target,
-            src = ":" + name + "_pdn",
-        )
-        post_pdn_src = ":" + name + "_rm_pdn_obs"
-    else:
-        post_pdn_src = ":" + name + "_pdn"
+    librelane_remove_pdn_obstructions(
+        name = name + "_rm_pdn_obs",
+        input = input_target,
+        src = ":" + name + "_pdn",
+    )
+    post_pdn_src = ":" + name + "_rm_pdn_obs"
 
-    # Add routing obstructions (removed after detailed routing) - only if configured
-    if routing_obstructions:
-        librelane_add_routing_obstructions(
-            name = name + "_add_route_obs",
-            input = input_target,
-            src = post_pdn_src,
-        )
-        pre_gpl_skip_io_src = ":" + name + "_add_route_obs"
-    else:
-        pre_gpl_skip_io_src = post_pdn_src
+    # Routing obstructions self-skip when no obstruction config is present.
+    librelane_add_routing_obstructions(
+        name = name + "_add_route_obs",
+        input = input_target,
+        src = post_pdn_src,
+    )
+    pre_gpl_skip_io_src = ":" + name + "_add_route_obs"
 
     # Global placement (skip IO) - initial placement before IO pins fixed
     librelane_global_placement_skip_io(
@@ -401,34 +474,30 @@ def librelane_classic_flow(
         src = pre_gpl_skip_io_src,
     )
 
-    # IO placement
-    if def_template and pin_order_cfg:
-        fail("Cannot specify both def_template and pin_order_cfg")
+    # IO placement sequence; steps self-skip based on pin-order/template config.
+    if fp_def_template and io_pin_order_cfg:
+        fail("Cannot specify both fp_def_template and io_pin_order_cfg")
 
-    if def_template:
-        librelane_apply_def_template(
-            name = name + "_io",
-            input = input_target,
-            src = ":" + name + "_gpl_skip_io",
-        )
-    elif pin_order_cfg:
-        librelane_custom_io_placement(
-            name = name + "_io",
-            input = input_target,
-            src = ":" + name + "_gpl_skip_io",
-        )
-    else:
-        librelane_io_placement(
-            name = name + "_io",
-            input = input_target,
-            src = ":" + name + "_gpl_skip_io",
-        )
-
+    librelane_io_placement(
+        name = name + "_io_place",
+        input = input_target,
+        src = ":" + name + "_gpl_skip_io",
+    )
+    librelane_custom_io_placement(
+        name = name + "_custom_io",
+        input = input_target,
+        src = ":" + name + "_io_place",
+    )
+    librelane_apply_def_template(
+        name = name + "_def_template",
+        input = input_target,
+        src = ":" + name + "_custom_io",
+    )
     # Global placement (full) - refine placement with IO pins fixed
     librelane_global_placement(
         name = name + "_gpl",
         input = input_target,
-        src = ":" + name + "_io",
+        src = ":" + name + "_def_template",
     )
 
     # Step 28: Write Verilog header with power ports
@@ -463,17 +532,13 @@ def librelane_classic_flow(
     else:
         pre_mgpl_src = ":" + name + "_sta_mid_gpl"
 
-    # Step 32: Manual global placement (only if configured)
-    # Config flows through LibrelaneInput (manual_global_placements attr)
-    if manual_global_placements:
-        librelane_manual_global_placement(
-            name = name + "_mgpl",
-            input = input_target,
-            src = pre_mgpl_src,
-        )
-        pre_dpl_src = ":" + name + "_mgpl"
-    else:
-        pre_dpl_src = pre_mgpl_src
+    # Step 32: Manual global placement self-skips when no placements are configured.
+    librelane_manual_global_placement(
+        name = name + "_mgpl",
+        input = input_target,
+        src = pre_mgpl_src,
+    )
+    pre_dpl_src = ":" + name + "_mgpl"
 
     # Step 33: Detailed placement
     librelane_detailed_placement(
@@ -518,6 +583,30 @@ def librelane_classic_flow(
     else:
         pre_grt_src = ":" + name + "_dpl"
 
+    # Optional build target for requiring the selected mid-PnR STA point to be
+    # clean before global routing.
+    zamlet_setup_wns_threshold(
+        name = name + "_chk_mid_setup",
+        input = input_target,
+        src = pre_grt_src,
+        threshold = mid_setup_wns_threshold,
+    )
+    librelane_hold_violations(
+        name = name + "_chk_mid_hold",
+        input = input_target,
+        src = ":" + name + "_chk_mid_setup",
+    )
+    librelane_max_slew_violations(
+        name = name + "_chk_mid_slew",
+        input = input_target,
+        src = ":" + name + "_chk_mid_hold",
+    )
+    librelane_max_cap_violations(
+        name = name + "_chk_mid_cap",
+        input = input_target,
+        src = ":" + name + "_chk_mid_slew",
+    )
+
     # Step 38: Global routing
     librelane_global_routing(
         name = name + "_grt",
@@ -543,17 +632,13 @@ def librelane_classic_flow(
     else:
         pre_diode_src = ":" + name + "_chk_ant_grt"
 
-    # Step 41: Diodes on ports (only if configured, default "none" skips)
-    # DIODE_ON_PORTS comes from input via 5-location pattern
-    if diode_on_ports != "none":
-        librelane_diodes_on_ports(
-            name = name + "_dio_ports",
-            input = input_target,
-            src = pre_diode_src,
-        )
-        pre_dio_heur_src = ":" + name + "_dio_ports"
-    else:
-        pre_dio_heur_src = pre_diode_src
+    # Step 41: Diodes on ports (self-skips when DIODE_ON_PORTS == "none")
+    librelane_diodes_on_ports(
+        name = name + "_dio_ports",
+        input = input_target,
+        src = pre_diode_src,
+    )
+    pre_dio_heur_src = ":" + name + "_dio_ports"
 
     # Step 42: Heuristic diode insertion (only if enabled)
     if run_heuristic_diode_insertion:
@@ -606,16 +691,13 @@ def librelane_classic_flow(
     else:
         pre_rm_obs_src = ":" + name + "_sta_mid_rsz_grt"
 
-    # Step 47: Remove routing obstructions (only if we added them)
-    if routing_obstructions:
-        librelane_remove_routing_obstructions(
-            name = name + "_rm_route_obs",
-            input = input_target,
-            src = pre_rm_obs_src,
-        )
-        post_drt_src = ":" + name + "_rm_route_obs"
-    else:
-        post_drt_src = pre_rm_obs_src
+    # Step 47: Remove routing obstructions (self-skips when unset)
+    librelane_remove_routing_obstructions(
+        name = name + "_rm_route_obs",
+        input = input_target,
+        src = pre_rm_obs_src,
+    )
+    post_drt_src = ":" + name + "_rm_route_obs"
 
     # Step 48: Check antennas (second occurrence, after DRT)
     librelane_check_antennas(
@@ -659,116 +741,162 @@ def librelane_classic_flow(
         src = ":" + name + "_rpt_wire_len",
     )
 
-    # Step 54: Fill insertion
-    librelane_fill(
-        name = name + "_fill",
-        input = input_target,
-        src = ":" + name + "_chk_wire_len",
-    )
+    # Step 54: Fill insertion (gated, default ON)
+    if run_fill_insertion:
+        librelane_fill(
+            name = name + "_fill",
+            input = input_target,
+            src = ":" + name + "_chk_wire_len",
+        )
+        post_fill_src = ":" + name + "_fill"
+    else:
+        post_fill_src = ":" + name + "_chk_wire_len"
 
     # Step 55: Cell frequency tables
     librelane_cell_frequency_tables(
         name = name + "_cell_freq",
         input = input_target,
-        src = ":" + name + "_fill",
+        src = post_fill_src,
     )
 
-    # Step 56: Parasitic extraction
-    librelane_rcx(
-        name = name + "_rcx",
-        input = input_target,
-        src = ":" + name + "_cell_freq",
-    )
+    # Step 56: Parasitic extraction (gated, default ON)
+    if run_spef_extraction:
+        librelane_rcx(
+            name = name + "_rcx",
+            input = input_target,
+            src = ":" + name + "_cell_freq",
+        )
+        pre_sta_post_pnr_src = ":" + name + "_rcx"
+    else:
+        pre_sta_post_pnr_src = ":" + name + "_cell_freq"
 
-    # Step 57: Final STA
-    librelane_sta_post_pnr(
-        name = name + "_sta",
-        input = input_target,
-        src = ":" + name + "_rcx",
-    )
+    # Step 57: Final STA (gated, default ON)
+    if run_mcsta:
+        librelane_sta_post_pnr(
+            name = name + "_sta",
+            input = input_target,
+            src = pre_sta_post_pnr_src,
+        )
+        pre_ir_drop_src = ":" + name + "_sta"
+    else:
+        pre_ir_drop_src = pre_sta_post_pnr_src
 
-    # Step 58: IR drop report
-    librelane_ir_drop_report(
-        name = name + "_ir_drop",
-        input = input_target,
-        src = ":" + name + "_sta",
-    )
+    # Step 58: IR drop report (gated, default ON)
+    if run_irdrop_report:
+        librelane_ir_drop_report(
+            name = name + "_ir_drop",
+            input = input_target,
+            src = pre_ir_drop_src,
+        )
+        pre_gds_src = ":" + name + "_ir_drop"
+    else:
+        pre_gds_src = pre_ir_drop_src
 
-    # Step 59: GDS stream out (Magic)
-    librelane_gds(
-        name = name + "_gds",
-        input = input_target,
-        src = ":" + name + "_ir_drop",
-    )
+    # Step 59: GDS stream out (Magic, gated, default ON)
+    if run_magic_streamout:
+        librelane_gds(
+            name = name + "_gds",
+            input = input_target,
+            src = pre_gds_src,
+        )
+        pre_klayout_gds_src = ":" + name + "_gds"
+    else:
+        pre_klayout_gds_src = pre_gds_src
 
-    # Step 60: GDS stream out (KLayout)
-    librelane_klayout_stream_out(
-        name = name + "_klayout_gds",
-        input = input_target,
-        src = ":" + name + "_gds",
-    )
+    # Step 60: GDS stream out (KLayout, gated, default ON)
+    if run_klayout_streamout:
+        librelane_klayout_stream_out(
+            name = name + "_klayout_gds",
+            input = input_target,
+            src = pre_klayout_gds_src,
+        )
+        pre_lef_src = ":" + name + "_klayout_gds"
+    else:
+        pre_lef_src = pre_klayout_gds_src
 
-    # Step 61: LEF generation (Magic)
-    librelane_lef(
-        name = name + "_lef",
-        input = input_target,
-        src = ":" + name + "_klayout_gds",
-    )
+    # Step 61: LEF generation (Magic, gated, default ON)
+    if run_magic_write_lef:
+        librelane_lef(
+            name = name + "_lef",
+            input = input_target,
+            src = pre_lef_src,
+        )
+        pre_ant_prop_src = ":" + name + "_lef"
+    else:
+        pre_ant_prop_src = pre_lef_src
 
     # Step 62: Check design antenna properties
     librelane_check_design_antenna_properties(
         name = name + "_chk_ant_prop",
         input = input_target,
-        src = ":" + name + "_lef",
+        src = pre_ant_prop_src,
     )
 
-    # Step 63: KLayout XOR (Magic vs KLayout)
-    librelane_klayout_xor(
-        name = name + "_xor",
-        input = input_target,
-        src = ":" + name + "_chk_ant_prop",
-    )
+    # Steps 63-64: KLayout XOR and checker (gated, default ON)
+    if run_klayout_xor and run_magic_streamout and run_klayout_streamout:
+        librelane_klayout_xor(
+            name = name + "_xor",
+            input = input_target,
+            src = ":" + name + "_chk_ant_prop",
+        )
+        librelane_xor(
+            name = name + "_chk_xor",
+            input = input_target,
+            src = ":" + name + "_xor",
+        )
+        pre_magic_drc_src = ":" + name + "_chk_xor"
+    else:
+        pre_magic_drc_src = ":" + name + "_chk_ant_prop"
 
-    # Step 64: Check XOR differences
-    librelane_xor(
-        name = name + "_chk_xor",
-        input = input_target,
-        src = ":" + name + "_xor",
-    )
+    # Step 65: Magic DRC (gated by signoff config, default ON)
+    if run_magic_drc:
+        librelane_magic_drc(
+            name = name + "_magic_drc",
+            input = input_target,
+            src = pre_magic_drc_src,
+        )
+        pre_klayout_drc_src = ":" + name + "_magic_drc"
+    else:
+        pre_klayout_drc_src = pre_magic_drc_src
 
-    # Step 65: Magic DRC
-    librelane_magic_drc(
-        name = name + "_magic_drc",
-        input = input_target,
-        src = ":" + name + "_chk_xor",
-    )
+    # Step 66: KLayout DRC (gated, default ON)
+    if run_klayout_drc:
+        librelane_klayout_drc(
+            name = name + "_klayout_drc",
+            input = input_target,
+            src = pre_klayout_drc_src,
+        )
+        pre_magic_drc_check_src = ":" + name + "_klayout_drc"
+    else:
+        pre_magic_drc_check_src = pre_klayout_drc_src
 
-    # Step 66: KLayout DRC
-    librelane_klayout_drc(
-        name = name + "_klayout_drc",
-        input = input_target,
-        src = ":" + name + "_magic_drc",
-    )
+    # Step 67: Check Magic DRC (same gate as Magic DRC)
+    if run_magic_drc:
+        librelane_magic_drc_checker(
+            name = name + "_chk_magic_drc",
+            input = input_target,
+            src = pre_magic_drc_check_src,
+        )
+        pre_klayout_drc_check_src = ":" + name + "_chk_magic_drc"
+    else:
+        pre_klayout_drc_check_src = pre_magic_drc_check_src
 
-    # Step 67: Check Magic DRC
-    librelane_magic_drc_checker(
-        name = name + "_chk_magic_drc",
-        input = input_target,
-        src = ":" + name + "_klayout_drc",
-    )
-
-    # Step 68: Check KLayout DRC
-    librelane_klayout_drc_checker(
-        name = name + "_chk_klayout_drc",
-        input = input_target,
-        src = ":" + name + "_chk_magic_drc",
-    )
+    # Step 68: Check KLayout DRC (same gate as KLayout DRC)
+    if run_klayout_drc:
+        librelane_klayout_drc_checker(
+            name = name + "_chk_klayout_drc",
+            input = input_target,
+            src = pre_klayout_drc_check_src,
+        )
+        pre_spice_src = ":" + name + "_chk_klayout_drc"
+    else:
+        pre_spice_src = pre_klayout_drc_check_src
 
     # Step 69: SPICE extraction
     librelane_spice_extraction(
         name = name + "_spice",
         input = input_target,
-        src = ":" + name + "_chk_klayout_drc",
+        src = pre_spice_src,
     )
 
     # Step 70: Check illegal overlaps
@@ -778,33 +906,38 @@ def librelane_classic_flow(
         src = ":" + name + "_spice",
     )
 
-    # Step 71: Netgen LVS
-    librelane_netgen_lvs(
-        name = name + "_lvs",
-        input = input_target,
-        src = ":" + name + "_chk_overlap",
-    )
-
-    # Step 72: Check LVS
-    librelane_lvs_checker(
-        name = name + "_chk_lvs",
-        input = input_target,
-        src = ":" + name + "_lvs",
-    )
+    # Steps 71-72: Netgen LVS and checker (gated, default ON)
+    if run_lvs:
+        librelane_netgen_lvs(
+            name = name + "_lvs",
+            input = input_target,
+            src = ":" + name + "_chk_overlap",
+        )
+        librelane_lvs_checker(
+            name = name + "_chk_lvs",
+            input = input_target,
+            src = ":" + name + "_lvs",
+        )
+        pre_eqy_src = ":" + name + "_chk_lvs"
+    else:
+        pre_eqy_src = ":" + name + "_chk_overlap"
 
     # Step 73: Yosys EQY (formal equivalence check, gated by run_eqy)
     if run_eqy:
         librelane_eqy(
             name = name + "_eqy",
             input = input_target,
-            src = ":" + name + "_chk_lvs",
+            src = pre_eqy_src,
         )
+        post_eqy_src = ":" + name + "_eqy"
+    else:
+        post_eqy_src = pre_eqy_src
 
     # Step 74: Check setup violations
     librelane_setup_violations(
         name = name + "_chk_setup",
         input = input_target,
-        src = ":" + name + ("_eqy" if run_eqy else "_chk_lvs"),
+        src = post_eqy_src,
     )
 
     # Step 75: Check hold violations
@@ -821,11 +954,18 @@ def librelane_classic_flow(
         src = ":" + name + "_chk_hold",
     )
 
+    # Step 77.5: Check antenna violations (local Zamlet checker, not LibreLane)
+    zamlet_antenna_violations(
+        name = name + "_zamlet_chk_ant",
+        input = input_target,
+        src = ":" + name + "_chk_slew",
+    )
+
     # Step 77: Check max cap violations
     librelane_max_cap_violations(
         name = name + "_chk_cap",
         input = input_target,
-        src = ":" + name + "_chk_slew",
+        src = ":" + name + "_zamlet_chk_ant",
     )
 
     # Step 78: Report manufacturability
@@ -834,5 +974,3 @@ def librelane_classic_flow(
         input = input_target,
         src = ":" + name + "_chk_cap",
     )
-
-

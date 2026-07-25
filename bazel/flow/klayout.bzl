@@ -1,7 +1,7 @@
 # KLayout rules
 
 load(":common.bzl", "single_step_impl", "FLOW_ATTRS", "BASE_CONFIG_KEYS")
-load(":providers.bzl", "LibrelaneInfo")
+load(":providers.bzl", "LibrelaneInfo", "LibrelaneInput")
 
 # KLayout.StreamOut config keys (KLayoutStep.config_vars + get_cli_args dependencies)
 KLAYOUT_STREAMOUT_CONFIG_KEYS = BASE_CONFIG_KEYS + [
@@ -9,6 +9,7 @@ KLAYOUT_STREAMOUT_CONFIG_KEYS = BASE_CONFIG_KEYS + [
     "KLAYOUT_TECH",
     "KLAYOUT_PROPERTIES",
     "KLAYOUT_DEF_LAYER_MAP",
+    "KLAYOUT_CONFLICT_RESOLUTION",
     # get_cli_args() dependencies (klayout.py:91-131)
     "EXTRA_LEFS",
     "EXTRA_GDS_FILES",
@@ -39,13 +40,21 @@ KLAYOUT_DRC_CONFIG_KEYS = BASE_CONFIG_KEYS + [
 ]
 
 def _stream_out_impl(ctx):
-    return single_step_impl(ctx, "KLayout.StreamOut", KLAYOUT_STREAMOUT_CONFIG_KEYS, step_outputs = ["klayout_gds"])
+    input_info = ctx.attr.input[LibrelaneInput]
+    step_outputs = ["klayout_gds"]
+    if input_info.pdk_info.primary_gdsii_streamout_tool == "klayout":
+        step_outputs.append("gds")
+    return single_step_impl(ctx, "KLayout.StreamOut", KLAYOUT_STREAMOUT_CONFIG_KEYS,
+        step_outputs = step_outputs)
 
 def _xor_impl(ctx):
-    return single_step_impl(ctx, "KLayout.XOR", KLAYOUT_XOR_CONFIG_KEYS, step_outputs = [])
+    return single_step_impl(ctx, "KLayout.XOR", KLAYOUT_XOR_CONFIG_KEYS,
+        step_outputs = [], extra_outputs = ["xor.xml"])
 
 def _drc_impl(ctx):
-    return single_step_impl(ctx, "KLayout.DRC", KLAYOUT_DRC_CONFIG_KEYS, step_outputs = [])
+    return single_step_impl(ctx, "KLayout.DRC", KLAYOUT_DRC_CONFIG_KEYS,
+        step_outputs = [],
+        optional_extra_outputs = ["reports/drc.klayout.lyrdb", "reports/drc.klayout.json"])
 
 librelane_klayout_stream_out = rule(
     implementation = _stream_out_impl,

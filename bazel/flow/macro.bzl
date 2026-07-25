@@ -8,10 +8,12 @@ load(":common.bzl",
     "get_input_files",
     "FLOW_ATTRS",
     "BASE_CONFIG_KEYS",
+    "OPENROAD_STEP_CONFIG_KEYS",
 )
 
-# Macro steps need BASE_CONFIG_KEYS for PDK info and design config
+# Macro steps need BASE_CONFIG_KEYS for PDK info and design config.
 MACRO_CONFIG_KEYS = BASE_CONFIG_KEYS
+FILL_CONFIG_KEYS = OPENROAD_STEP_CONFIG_KEYS
 
 # MagicStep config_vars (magic.py lines 76-142)
 MAGIC_STEP_CONFIG_KEYS = [
@@ -52,11 +54,15 @@ MAGIC_WRITELEF_CONFIG_KEYS = BASE_CONFIG_KEYS + MAGIC_STEP_CONFIG_KEYS + [
 MAGIC_DRC_CONFIG_KEYS = BASE_CONFIG_KEYS + MAGIC_STEP_CONFIG_KEYS + [
     # DRC config_vars
     "MAGIC_DRC_USE_GDS",
+    "MAGIC_GDS_FLATGLOB",
+    "MAGIC_DRC_MAGLEFS",
 ]
 
 # Step 69: Magic.SpiceExtraction - magic.py lines 418-517
 # MagicStep config_vars + SpiceExtraction config_vars (lines 435-472)
 SPICE_EXTRACTION_CONFIG_KEYS = BASE_CONFIG_KEYS + MAGIC_STEP_CONFIG_KEYS + [
+    # read_pdk_spice() in magic/common/read.tcl reads this env var unconditionally.
+    "CELL_SPICE_MODELS",
     # SpiceExtraction config_vars
     "MAGIC_EXT_USE_GDS",
     "MAGIC_EXT_ABSTRACT_CELLS",
@@ -67,7 +73,7 @@ SPICE_EXTRACTION_CONFIG_KEYS = BASE_CONFIG_KEYS + MAGIC_STEP_CONFIG_KEYS + [
 ]
 
 def _fill_impl(ctx):
-    return single_step_impl(ctx, "OpenROAD.FillInsertion", MACRO_CONFIG_KEYS,
+    return single_step_impl(ctx, "OpenROAD.FillInsertion", FILL_CONFIG_KEYS,
         step_outputs = ["def", "odb", "nl", "pnl", "sdc"])
 
 def _gds_impl(ctx):
@@ -76,11 +82,19 @@ def _gds_impl(ctx):
     state_info = ctx.attr.src[LibrelaneInfo]
     top = input_info.top
 
-    # Declare GDS output in target directory
-    gds = ctx.actions.declare_file(ctx.label.name + "/" + top + ".gds")
+    outputs = []
+    mag_gds = ctx.actions.declare_file(ctx.label.name + "/" + top + ".magic.gds")
+    mag = ctx.actions.declare_file(ctx.label.name + "/" + top + ".mag")
+    outputs.extend([mag_gds, mag])
+
+    if input_info.pdk_info.primary_gdsii_streamout_tool == "magic":
+        gds = ctx.actions.declare_file(ctx.label.name + "/" + top + ".gds")
+        outputs.append(gds)
+    else:
+        gds = state_info.gds
 
     # Get input files
-    inputs = get_input_files(input_info, state_info)
+    inputs = get_input_files(input_info, state_info, MAGIC_STREAMOUT_CONFIG_KEYS)
 
     # Create config
     config = create_librelane_config(input_info, state_info, MAGIC_STREAMOUT_CONFIG_KEYS)
@@ -89,7 +103,7 @@ def _gds_impl(ctx):
     state_out = run_librelane_step(
         ctx = ctx,
         step_id = "Magic.StreamOut",
-        outputs = [gds],
+        outputs = outputs,
         config_content = json.encode(config),
         inputs = inputs,
         input_info = input_info,
@@ -97,7 +111,7 @@ def _gds_impl(ctx):
     )
 
     return [
-        DefaultInfo(files = depset([gds])),
+        DefaultInfo(files = depset(outputs + [state_out])),
         LibrelaneInfo(
             state_out = state_out,
             nl = state_info.nl,
@@ -108,10 +122,10 @@ def _gds_impl(ctx):
             spef = state_info.spef,
             lib = state_info.lib,
             gds = gds,
-            mag_gds = gds,  # Magic.StreamOut produces the MAG_GDS
+            mag_gds = mag_gds,
             klayout_gds = state_info.klayout_gds,
             lef = state_info.lef,
-            mag = state_info.mag,
+            mag = mag,
             spice = state_info.spice,
             json_h = state_info.json_h,
             vh = state_info.vh,
@@ -129,7 +143,7 @@ def _lef_impl(ctx):
     lef = ctx.actions.declare_file(ctx.label.name + "/" + top + ".lef")
 
     # Get input files
-    inputs = get_input_files(input_info, state_info)
+    inputs = get_input_files(input_info, state_info, MAGIC_WRITELEF_CONFIG_KEYS)
 
     # Create config
     config = create_librelane_config(input_info, state_info, MAGIC_WRITELEF_CONFIG_KEYS)
@@ -154,7 +168,7 @@ def _lef_impl(ctx):
     )
 
     return [
-        DefaultInfo(files = depset([lef])),
+        DefaultInfo(files = depset([lef, state_out])),
         LibrelaneInfo(
             state_out = state_out,
             nl = state_info.nl,
@@ -178,7 +192,8 @@ def _lef_impl(ctx):
     ]
 
 def _drc_impl(ctx):
-    return single_step_impl(ctx, "Magic.DRC", MAGIC_DRC_CONFIG_KEYS, step_outputs = [])
+    return single_step_impl(ctx, "Magic.DRC", MAGIC_DRC_CONFIG_KEYS,
+        step_outputs = [], extra_outputs = ["reports/drc.magic.rpt", "reports/drc.magic.lyrdb"])
 
 def _spice_extraction_impl(ctx):
     return single_step_impl(ctx, "Magic.SpiceExtraction", SPICE_EXTRACTION_CONFIG_KEYS, step_outputs = ["spice"])

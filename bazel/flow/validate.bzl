@@ -46,7 +46,7 @@ BUNDLED_ATTRS = {
         allow_single_file = [".sdc"],
     ),
     # Optional attrs with None default (to detect user overrides)
-    "core_utilization": attr.string(doc = "Target core utilization percentage"),
+    "fp_core_util": attr.string(doc = "Target core utilization percentage"),
     "die_area": attr.string(doc = "Die area as 'x0 y0 x1 y1'"),
     # IO delay constraints (percentage of clock period)
     "input_delay_constraint": attr.string(doc = "Input delay as percentage of clock period"),
@@ -54,7 +54,7 @@ BUNDLED_ATTRS = {
     # Synthesis
     "synth_strategy": attr.string(doc = "Synthesis optimization strategy"),
     "synth_autoname": attr.bool(doc = "Auto-generate names for unnamed cells"),
-    "use_synlig": attr.bool(doc = "Use Synlig plugin for SystemVerilog"),
+    "use_slang": attr.bool(doc = "Use Slang frontend for SystemVerilog"),
     # Linting
     "run_linter": attr.bool(doc = "Run Verilator linter"),
     # Add more as needed...
@@ -84,11 +84,11 @@ def _prepare_flow(ctx, verilog_paths):
 
     config["CLOCK_PORT"] = ctx.attr.clock_port
     config["CLOCK_PERIOD"] = float(ctx.attr.clock_period)
-    _add_if_set(config, "FP_CORE_UTIL", ctx.attr.core_utilization)
+    _add_if_set(config, "FP_CORE_UTIL", ctx.attr.fp_core_util)
     _add_if_set(config, "DIE_AREA", ctx.attr.die_area)
     _add_if_set(config, "SYNTH_STRATEGY", ctx.attr.synth_strategy)
     _add_if_set(config, "SYNTH_AUTONAME", ctx.attr.synth_autoname)
-    _add_if_set(config, "USE_SYNLIG", ctx.attr.use_synlig)
+    _add_if_set(config, "USE_SLANG", ctx.attr.use_slang)
     _add_if_set(config, "RUN_LINTER", ctx.attr.run_linter)
 
     input_delay = ctx.attr.input_delay_constraint
@@ -96,8 +96,8 @@ def _prepare_flow(ctx, verilog_paths):
     generate_sdc = input_delay or output_delay
     sdc_generation_script = ""
     if generate_sdc:
-        effective_input_delay = input_delay if input_delay else "50"
-        effective_output_delay = output_delay if output_delay else "50"
+        effective_input_delay = input_delay if input_delay else "60"
+        effective_output_delay = output_delay if output_delay else "60"
         sdc_generation_script = """
 sed -e 's/{{{{INPUT_DELAY_CONSTRAINT}}}}/{input_delay}/' \\
     -e 's/{{{{OUTPUT_DELAY_CONSTRAINT}}}}/{output_delay}/' \\
@@ -130,7 +130,7 @@ sed -e 's/{{{{INPUT_DELAY_CONSTRAINT}}}}/{input_delay}/' \\
         sdc_generation_script = sdc_generation_script,
         inputs = inputs,
         pdk_name = pdk.name,
-        scl = pdk.scl,
+        scl = pdk.std_cell_library,
         top = ctx.attr.top,
     )
 

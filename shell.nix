@@ -1,6 +1,6 @@
 # Development shell - includes both project build deps and developer tooling
 let
-  common = import ./nix/common.nix;
+  common = import ./nix/common.nix {};
   inherit (common) pkgs buildDeps devTools env buildHook devHook;
 in
 pkgs.mkShell {

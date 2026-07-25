@@ -7,6 +7,8 @@ import shutil
 from pathlib import Path
 
 import cocotb
+from cocotb.triggers import FallingEdge, RisingEdge
+from cocotb.utils import get_sim_time
 
 # Version-compatible imports for cocotb 1.9.2 and 2.0.0
 try:
@@ -26,6 +28,36 @@ except ImportError:
 
 
 logger = logging.getLogger(__name__)
+
+
+async def next_drive_phase(clock) -> None:
+    await RisingEdge(clock)
+    await FallingEdge(clock)
+
+
+class PowerMeasurementWindow:
+    def __init__(self, dut: Any) -> None:
+        self.dut = dut
+        self.start_ps: int | None = None
+
+    def start(self) -> None:
+        assert self.start_ps is None
+        self.start_ps = int(get_sim_time(unit="ps"))
+        if hasattr(self.dut, "powerDumpEnable"):
+            self.dut.powerDumpEnable.value = 1
+
+    def stop(self) -> None:
+        assert self.start_ps is not None
+        end_ps = int(get_sim_time(unit="ps"))
+        assert end_ps > self.start_ps
+        if hasattr(self.dut, "powerDumpEnable"):
+            self.dut.powerDumpEnable.value = 0
+
+        output_path = os.environ.get("ZAMLET_POWER_WINDOW_FILE")
+        if output_path is not None:
+            with open(output_path, "w", encoding="utf-8") as output_file:
+                json.dump({"start_ps": self.start_ps, "end_ps": end_ps}, output_file)
+                output_file.write("\n")
 
 
 def configure_logging_pre_sim(level: str = 'INFO') -> None:

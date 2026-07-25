@@ -3,10 +3,11 @@
 { pkgs }:
 
 let
-  inherit (pkgs) lib stdenvNoCC cacert ciel;
+  inherit (pkgs) lib stdenvNoCC cacert;
+  ciel = pkgs.python3.pkgs.ciel;
 
   # PDK version - matches librelane's open_pdks_rev
-  version = "0fe599b2afb6708d281543108caf8310912f54af";
+  version = "8afc8346a57fe1ab7934ba5a6056ea8b43078e71";
 in
 
 stdenvNoCC.mkDerivation {
@@ -16,7 +17,7 @@ stdenvNoCC.mkDerivation {
   # Fixed-output derivation - allows network access, output verified by hash
   outputHashAlgo = "sha256";
   outputHashMode = "recursive";
-  outputHash = "sha256-/CctqSCfaKbaHsi7y/PJ/FHis8wIB/EYex4qBs4OPnM=";
+  outputHash = "sha256-4/knv2g/YSg9bLZLn5xswtrOJ0rxEcY8dWGvlfdOl0M=";
 
   nativeBuildInputs = [ ciel cacert ];
 
@@ -28,7 +29,7 @@ stdenvNoCC.mkDerivation {
     export SSL_CERT_FILE=${cacert}/etc/ssl/certs/ca-bundle.crt
 
     # Enable PDK (fetches and creates symlinks librelane expects)
-    ciel enable --pdk-root $out --pdk-family sky130 ${version}
+    ciel enable --pdk sky130 --pdk-root $out ${version}
   '';
 
   dontInstall = true;

@@ -4,12 +4,11 @@ import random
 import cocotb
 from cocotb.clock import Clock
 from cocotb.handle import HierarchyObject
-from cocotb.triggers import ReadOnly, RisingEdge
-
+from cocotb.triggers import ReadOnly
 from zamlet import test_utils
+from zamlet.maths import segmented_multiplier
 from zamlet.params import ZamletParams
-
-LATENCY = 8
+from zamlet.test_utils import next_drive_phase
 
 OP_MUL_LOW = 0
 OP_MUL_HIGH = 1
@@ -122,9 +121,9 @@ async def reset_dut(dut: HierarchyObject) -> None:
     dut.io_input_bits_isSignedB.value = 0
     dut.io_input_bits_op.value = 0
     dut.io_input_bits_useUpper.value = 0
-    await RisingEdge(dut.clock)
+    await next_drive_phase(dut.clock)
     dut.reset.value = 0
-    await RisingEdge(dut.clock)
+    await next_drive_phase(dut.clock)
 
 
 def make_case(
@@ -166,8 +165,9 @@ async def run_cases(
 ) -> None:
     history = []
     word_mask = (1 << params.word_width) - 1
+    latency = segmented_multiplier.latency(params.word_width)
 
-    for cycle in range(len(cases) + LATENCY):
+    for cycle in range(len(cases) + latency):
         if cycle < len(cases):
             a, b, in_m, ew_log2, wf_log2, start_index, end_index, lane_index, signed_a, signed_b, op = cases[cycle]
             dut.io_input_valid.value = 1
@@ -188,9 +188,11 @@ async def run_cases(
             dut.io_input_valid.value = 0
 
         await ReadOnly()
-        if cycle >= LATENCY:
+        if cycle >= latency:
             assert int(dut.io_output_valid.value) == 1
-            a, b, in_m, ew_log2, wf_log2, start_index, end_index, lane_index, signed_a, signed_b, op = history[cycle - LATENCY]
+            a, b, in_m, ew_log2, wf_log2, start_index, end_index, lane_index, signed_a, signed_b, op = history[
+                cycle - latency
+            ]
             expected = expected_data(a, b, ew_log2, signed_a, signed_b, op, params.word_width)
             expected_enable = expected_mask(
                 in_m,
@@ -216,7 +218,7 @@ async def run_cases(
             assert int(dut.io_errors_unsupportedWf.value) == 0
             assert int(dut.io_errors_unsupportedEwWfRatio.value) == 0
 
-        await RisingEdge(dut.clock)
+        await next_drive_phase(dut.clock)
 
 
 @cocotb.test()
