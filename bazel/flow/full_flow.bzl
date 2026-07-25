@@ -133,6 +133,7 @@ def librelane_classic_flow(
     diode_on_ports = "none",
     run_heuristic_diode_insertion = False,
     run_antenna_repair = True,
+    grt_allow_congestion = False,
     grt_antenna_repair_iters = None,
     grt_antenna_repair_margin = None,
     grt_antenna_repair_jumper_only = None,
@@ -251,6 +252,8 @@ def librelane_classic_flow(
         pnr_config_kwargs["macro_placement_cfg"] = macro_placement_cfg
     if pdn_macro_connections:
         pnr_config_kwargs["pdn_macro_connections"] = pdn_macro_connections
+    if grt_allow_congestion:
+        pnr_config_kwargs["grt_allow_congestion"] = True
     if grt_antenna_repair_iters != None:
         pnr_config_kwargs["grt_antenna_repair_iters"] = grt_antenna_repair_iters
     if grt_antenna_repair_margin != None:

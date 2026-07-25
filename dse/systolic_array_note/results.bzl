@@ -32,7 +32,6 @@ def _systolic_results_impl(ctx):
         json.encode({
             "area_power_runs": area_power_runs,
             "sta_runs": sta_runs,
-            "expected_results": ctx.attr.expected_results,
         }),
     )
 
@@ -58,7 +57,6 @@ systolic_results = rule(
         "sta_runs": attr.label_keyed_string_dict(
             providers = [LibrelaneInfo],
         ),
-        "expected_results": attr.string_list(),
         "output": attr.output(mandatory = True),
         "_generator": attr.label(
             default = Label("//dse/systolic_array_note:generate_results"),

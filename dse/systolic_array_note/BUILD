@@ -66,7 +66,6 @@ UTILIZATION_CONFIGS = [
     }
     for design, n, top in DESIGNS
     for utilization in [70, 72, 74, 75]
-    if not (design == "weight-stationary" and utilization == 75)
 ]
 
 STA_CONFIGS = FREQUENCY_CONFIGS + UTILIZATION_CONFIGS
@@ -91,17 +90,5 @@ systolic_results(
     name = "results",
     area_power_runs = AREA_POWER_RUNS,
     sta_runs = STA_RUNS,
-    # Failed Bazel actions have no consumable output, so expected flow failures
-    # must be recorded explicitly rather than listed in sta_runs.
-    expected_results = [
-        json.encode({
-            "clock_period_ns": "12",
-            "design": "weight-stationary",
-            "n": 2,
-            "status": "Global-routing failure",
-            "tables": ["utilization"],
-            "target_utilization_percent": 75,
-        }),
-    ],
     output = "systolic_array_results.md",
 )
