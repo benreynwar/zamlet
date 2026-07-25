@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+if [[ $# -lt 2 ]]; then
+    echo "Usage: $0 SLOT {build|test|run} [BAZEL_ARGS...]" >&2
+    exit 2
+fi
+
+slot=$1
+bazel_command=$2
+shift 2
+
+if [[ ! $slot =~ ^[A-Za-z0-9._-]+$ ]]; then
+    echo "Invalid slot name '$slot'." >&2
+    exit 2
+fi
+
+case $bazel_command in
+    build|test|run)
+        ;;
+    *)
+        echo "Bazel command must be build, test, or run." >&2
+        exit 2
+        ;;
+esac
+
+workspace=$(git rev-parse --show-toplevel)
+workspace_name=$(basename "$workspace")
+workspace_hash=$(printf '%s' "$workspace" | sha256sum | cut -c1-12)
+cache_root=${XDG_CACHE_HOME:-"$HOME/.cache"}/bazel/zamlet
+output_base=$cache_root/output-bases/$workspace_name-$workspace_hash/$slot
+disk_cache=$cache_root/disk-cache
+
+mkdir -p "$output_base" "$disk_cache"
+
+bazel=$(command -v bazel || true)
+if [[ -z $bazel || ! -x $bazel || -d $bazel ]]; then
+    echo "Executable 'bazel' was not found. Enter the project Nix shell first." >&2
+    exit 1
+fi
+
+echo "Bazel output base: $output_base"
+echo "Shared disk cache: $disk_cache"
+
+exec "$bazel" \
+    --output_base="$output_base" \
+    "$bazel_command" \
+    --disk_cache="$disk_cache" \
+    "$@"

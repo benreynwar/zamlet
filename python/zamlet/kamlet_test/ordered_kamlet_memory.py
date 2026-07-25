@@ -294,7 +294,7 @@ class OrderedKamletMemory:
     ) -> int:
         jamlet = self._jamlet(dut, k_index, j_in_k_index)
         sram_index = slot * self.params.cache_slot_words_per_jamlet + word_index
-        return int(getattr(jamlet.sram, f'mem_{sram_index}').value)
+        return int(getattr(jamlet.SramWrapper.Sram, f'mem_{sram_index}').value)
 
     def _kamlet(self, dut, k_index: int):
         kx = k_index % self.params.k_cols

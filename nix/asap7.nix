@@ -74,11 +74,11 @@ stdenvNoCC.mkDerivation {
     cp $platform/KLayout/asap7.lyp $pdk/libs.tech/klayout/
     cp $platform/drc/asap7.lydrc $pdk/libs.tech/klayout/
 
-    PYTHONPATH=${./.} python ${./test_asap7_liberty.py}
-    python ${./asap7_liberty.py} $scl/lib/*RVT*.lib*
+    PYTHONPATH=${./asap7} python ${./asap7/test_asap7_liberty.py}
+    python ${./asap7/asap7_liberty.py} $scl/lib/*RVT*.lib*
     gzip --decompress $scl/lib/*.lib.gz
 
-    ${pkgs.python3}/bin/python ${./asap7_config.py} \
+    ${pkgs.python3}/bin/python ${./asap7/asap7_config.py} \
       --orfs-platform $platform \
       --pdk-output $pdk
   '';

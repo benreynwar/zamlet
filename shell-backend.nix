@@ -1,10 +1,10 @@
-# Development shell - includes both project build deps and developer tooling
+# Backend and test shell without the custom RISC-V LLVM build or editor tools.
 let
-  common = import ./nix/common.nix {};
-  inherit (common) pkgs buildDeps devTools env buildHook devHook;
+  common = import ./nix/common.nix { includeRiscvClang = false; };
+  inherit (common) pkgs buildDeps env buildHook;
 in
 pkgs.mkShell {
-  buildInputs = buildDeps ++ devTools ++ [ pkgs.glibcLocales ];
+  buildInputs = buildDeps ++ [ pkgs.glibcLocales ];
 
   PDK_ROOT = env.PDK_ROOT;
   PDK = env.PDK;
@@ -13,8 +13,8 @@ pkgs.mkShell {
   GIT_SSL_CAINFO = env.GIT_SSL_CAINFO;
   LOCALE_ARCHIVE = "${pkgs.glibcLocales}/lib/locale/locale-archive";
 
-  shellHook = buildHook + devHook + ''
-    echo "Zamlet Development Environment"
+  shellHook = buildHook + ''
+    echo "Zamlet Backend Environment"
     echo "  OpenROAD: $(openroad -version 2>/dev/null | head -1 || echo 'available')"
     echo "  Yosys:    $(yosys -V 2>/dev/null | head -1 || echo 'available')"
     echo "  Bazel:    $(bazel --version 2>/dev/null | head -1 || echo 'available')"

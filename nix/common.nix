@@ -1,3 +1,5 @@
+{ includeRiscvClang ? true }:
+
 # Common Nix configuration for the Zamlet project.
 # Exports buildDeps (project build dependencies) and devTools (developer tooling) separately
 # so consumers can choose what they need.
@@ -151,8 +153,11 @@ let
   riscv-clang = import ./riscv-clang.nix { pkgs = bootstrap-pkgs; };
 
   # Project build dependencies
-  buildDeps = with pkgs; [
+  buildDeps = (with pkgs; [
     stdenv.cc.cc.lib  # Standard library for Bazel-downloaded binaries
+    autoconf          # For regenerating open-pdks configure scripts
+    bootstrap-pkgs.automake  # Match open-pdks' generated AM_PATH_PYTHON
+    p7zip             # For extracting upstream ASAP7 Liberty archives
     cmake             # For building LLVM locally
     ninja             # For building LLVM locally
     jdk21
@@ -171,8 +176,7 @@ let
     jq
     which
     riscv-toolchain
-    riscv-clang
-  ];
+  ]) ++ pkgs.lib.optional includeRiscvClang riscv-clang;
 
   # Developer tooling (editor, LSP, etc.)
   devTools = [
