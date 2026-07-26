@@ -30,7 +30,7 @@ def main() -> None:
         "clock_period_ns": args.clock_period_ns,
         "target_utilization_percent": args.target_utilization,
         "area_um2": {
-            "instances": metrics["design__instance__area"],
+            "instances": metrics["design__instance__area__stdcell"],
             "core": metrics["design__core__area"],
             "die": metrics["design__die__area"],
         },
