@@ -158,7 +158,8 @@ def librelane_classic_flow(
     sdc_fragments = [],
     input_delay_constraint = None,
     output_delay_constraint = None,
-    synth_config = None):
+    synth_config = None,
+    fail_soft = False):
     """Flow from Verilog through detailed routing and STA.
 
     Matches librelane Classic flow order:
@@ -301,6 +302,7 @@ def librelane_classic_flow(
         default_corner = default_corner,
         max_transition_constraint = max_transition_constraint,
         max_capacitance_constraint = max_capacitance_constraint,
+        fail_soft = fail_soft,
     )
 
     # Common input reference for all steps

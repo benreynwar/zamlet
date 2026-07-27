@@ -1,6 +1,7 @@
 package zamlet.utils
 
 import chisel3._
+import chisel3.util.Valid
 
 class ValidRegisterWithPipelinedReset[T <: Data](
     gen: T,

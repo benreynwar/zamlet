@@ -27,7 +27,13 @@ def format_area(area_um2: float) -> str:
     return f"{area_um2:,.{decimals}f} um^2"
 
 
-def format_status(metrics: dict[str, Any]) -> str:
+def format_status(
+    metrics: dict[str, Any],
+    flow_status: dict[str, Any] | None = None,
+) -> str:
+    if flow_status and flow_status["status"] == "failure":
+        return f"Flow failed: {flow_status['failed_step']}"
+
     issues = []
     setup_slack = metrics["timing__setup__ws"]
     hold_slack = metrics["timing__hold__ws"]
@@ -95,7 +101,9 @@ def main() -> None:
     sta = []
     for entry in manifest["sta_runs"]:
         metadata = load_metadata(entry["metadata"])
-        metadata["metrics"] = json.loads(Path(entry["state"]).read_text())["metrics"]
+        state = json.loads(Path(entry["state"]).read_text())
+        metadata["metrics"] = state["metrics"]
+        metadata["flow_status"] = state.get("flow_status")
         sta.append(metadata)
 
     lines = [
@@ -153,7 +161,10 @@ def main() -> None:
         rows = []
         for period in periods:
             by_design = {
-                run["design"]: format_status(run["metrics"])
+                run["design"]: format_status(
+                    run["metrics"],
+                    run["flow_status"],
+                )
                 for run in size_runs
                 if run["clock_period_ns"] == period
             }
@@ -187,7 +198,10 @@ def main() -> None:
                 run["metrics"]["design__instance__utilization"] for run in matching
             ) / len(matching)
             by_design = {
-                run["design"]: format_status(run["metrics"])
+                run["design"]: format_status(
+                    run["metrics"],
+                    run["flow_status"],
+                )
                 for run in matching
             }
             rows.append([

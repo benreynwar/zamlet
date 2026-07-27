@@ -20,6 +20,7 @@ PDK_CONFIGS = [
         "clock_periods": ["20", "16", "12", "11", "10", "9.5", "9", "8.5"],
         "flow_kwargs": {
             "design_repair_max_wire_length": "150",
+            "fail_soft": True,
             "grt_allow_congestion": True,
         },
     },
@@ -28,6 +29,7 @@ PDK_CONFIGS = [
         "target": ":asap7sc7p5t",
         "clock_periods": ["2", "1.6", "1.2", "1.1", "1.0", "0.9"],
         "flow_kwargs": {
+            "fail_soft": True,
             "grt_allow_congestion": True,
             "io_pin_h_thickness_mult": "1",
             "io_pin_v_thickness_mult": "1",

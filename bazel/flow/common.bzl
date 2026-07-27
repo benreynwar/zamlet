@@ -1163,40 +1163,138 @@ def run_librelane_step(
         ]).to_list()
         pythonpath_cmd = 'export PYTHONPATH="$(pwd)/{}:$PYTHONPATH"'.format(":$(pwd)/".join(plugin_dirs))
 
-    ctx.actions.run_shell(
-        inputs = inputs + plugin_files + [config_file, state_in_base],
-        command = """
+    mark_success_cmd = """
+        jq '. + {{"flow_status": {{"status": "success"}}}}' "{state_out}" > "{state_out}.tmp"
+        mv "{state_out}.tmp" "{state_out}"
+    """.format(state_out = state_out.path)
+
+    strict_command = """
+        set -e
+        {merge_metrics_cmd}
+        {pythonpath_cmd}
+        LOGFILE="{log_out}"
+        HOME="$(pwd)/{design_dir}" librelane.steps run \\
+            --pdk-root "$PDK_ROOT" \\
+            --id {step_id} \\
+            -c {config_file} \\
+            -i "{state_in}" \\
+            -o "$(pwd)/{design_dir}/runs/bazel" 2>&1 | tee "$LOGFILE"
+        # Check for unused config warnings (indicates config_keys mismatch)
+        # Note: librelane wraps long lines, so we search for partial match
+        if grep -q "provided is unused" "$LOGFILE"; then
+            echo ""
+            echo "ERROR: Config contains keys unused by step {step_id}:"
+            grep "provided is unused" "$LOGFILE"
+            echo ""
+            echo "Fix: Remove unused keys from config_keys list for this step."
+            exit 1
+        fi
+        {copy_commands}
+        {mark_success_cmd}
+    """.format(
+        merge_metrics_cmd = merge_metrics_cmd,
+        pythonpath_cmd = pythonpath_cmd,
+        config_file = config_file.path,
+        state_in = state_in_path,
+        step_id = step_id,
+        design_dir = design_dir,
+        copy_commands = "\n        ".join(copy_commands),
+        mark_success_cmd = mark_success_cmd,
+        log_out = log_out.path,
+    )
+
+    action_command = strict_command
+    if input_info.fail_soft:
+        placeholder_commands = []
+        for output in outputs + optional_outputs:
+            placeholder_commands.append(
+                'mkdir -p "$(dirname "{output}")" && : > "{output}"'.format(
+                    output = output.path,
+                )
+            )
+
+        previous_state_out = state_info.state_out.path if state_info and state_info.state_out else ""
+        propagate_failure_cmd = ""
+        failure_state_path = state_in_base.path
+        if previous_state_out:
+            failure_state_path = previous_state_out
+            propagate_failure_cmd = """
+                if jq -e '.flow_status.status == "failure"' "{previous_state_out}" >/dev/null; then
+                    cp "{previous_state_out}" "{state_out}"
+                    printf 'Skipped {step_id}: propagating an earlier soft failure.\\n' > "{log_out}"
+                    {placeholder_commands}
+                    exit 0
+                fi
+            """.format(
+                previous_state_out = previous_state_out,
+                state_out = state_out.path,
+                step_id = step_id,
+                log_out = log_out.path,
+                placeholder_commands = "\n                    ".join(placeholder_commands),
+            )
+
+        action_command = """
             set -e
+            {propagate_failure_cmd}
             {merge_metrics_cmd}
             {pythonpath_cmd}
             LOGFILE="{log_out}"
+            set +e
+            set -o pipefail
             HOME="$(pwd)/{design_dir}" librelane.steps run \\
                 --pdk-root "$PDK_ROOT" \\
                 --id {step_id} \\
                 -c {config_file} \\
                 -i "{state_in}" \\
                 -o "$(pwd)/{design_dir}/runs/bazel" 2>&1 | tee "$LOGFILE"
-            # Check for unused config warnings (indicates config_keys mismatch)
-            # Note: librelane wraps long lines, so we search for partial match
+            step_exit_code=$?
+            set +o pipefail
+            set -e
             if grep -q "provided is unused" "$LOGFILE"; then
-                echo ""
-                echo "ERROR: Config contains keys unused by step {step_id}:"
-                grep "provided is unused" "$LOGFILE"
-                echo ""
-                echo "Fix: Remove unused keys from config_keys list for this step."
-                exit 1
+                step_exit_code=1
+            fi
+            if [ "$step_exit_code" -ne 0 ]; then
+                error_tail=$(tail -n 40 "$LOGFILE")
+                jq \\
+                    --arg step "{step_id}" \\
+                    --arg target "{target}" \\
+                    --arg log "{log_out}" \\
+                    --arg error "$error_tail" \\
+                    --argjson exit_code "$step_exit_code" \\
+                    '. + {{"flow_status": {{
+                        "status": "failure",
+                        "failed_step": $step,
+                        "target": $target,
+                        "exit_code": $exit_code,
+                        "log": $log,
+                        "error": $error
+                    }}}}' \\
+                    "{failure_state_path}" > "{state_out}"
+                {placeholder_commands}
+                exit 0
             fi
             {copy_commands}
+            {mark_success_cmd}
         """.format(
+            propagate_failure_cmd = propagate_failure_cmd,
             merge_metrics_cmd = merge_metrics_cmd,
             pythonpath_cmd = pythonpath_cmd,
             config_file = config_file.path,
             state_in = state_in_path,
             step_id = step_id,
+            target = str(ctx.label),
             design_dir = design_dir,
+            failure_state_path = failure_state_path,
+            state_out = state_out.path,
             copy_commands = "\n            ".join(copy_commands),
+            placeholder_commands = "\n                ".join(placeholder_commands),
+            mark_success_cmd = mark_success_cmd,
             log_out = log_out.path,
-        ),
+        )
+
+    ctx.actions.run_shell(
+        inputs = inputs + plugin_files + [config_file, state_in_base],
+        command = action_command,
         use_default_shell_env = True,
         outputs = outputs + optional_outputs + [state_out, log_out],
     )
