@@ -4,7 +4,7 @@ import chisel3._
 import chisel3.experimental.ExtModule
 import chisel3.util._
 import zamlet.maths.CSA3to2
-import zamlet.utils.{RegisterWithPipelinedReset, ResetPipeline, ResetPipelineBudget}
+import zamlet.utils.{ResetPipeline, ResetPipelineBudget, ValidRegisterWithPipelinedReset}
 
 class SumStationaryCDrain extends Bundle {
   val data = UInt(32.W)
@@ -279,7 +279,7 @@ class SumStationary(
   val middleCDrain = if (splitCDrain) {
     Seq.tabulate(n) { col =>
       val middleCDrainRegister = withReset(resetFor(n / 2, col)) {
-        Module(new RegisterWithPipelinedReset(Valid(UInt(32.W)), cellResetBudget))
+        Module(new ValidRegisterWithPipelinedReset(UInt(32.W), cellResetBudget))
       }
       middleCDrainRegister.io.in.valid := cells(n / 2)(col).io.eCDrainOut.valid
       middleCDrainRegister.io.in.bits := cells(n / 2)(col).io.eCDrainOut.bits.data
@@ -335,7 +335,7 @@ class SumStationary(
 
       assert(!(northCDrain.valid && upperCDrainValid))
       val upperCDrainRegister = withReset(resetFor(0, col)) {
-        Module(new RegisterWithPipelinedReset(Valid(UInt(32.W)), cellResetBudget))
+        Module(new ValidRegisterWithPipelinedReset(UInt(32.W), cellResetBudget))
       }
       upperCDrainRegister.io.in.valid := northCDrain.valid || upperCDrainValid
       upperCDrainRegister.io.in.bits := Mux(
@@ -345,7 +345,7 @@ class SumStationary(
 
       assert(!(upperCDrainRegister.io.out.valid && lowerCDrainValid))
       val cOutRegister = withReset(resetFor(0, col)) {
-        Module(new RegisterWithPipelinedReset(Valid(UInt(32.W)), cellResetBudget))
+        Module(new ValidRegisterWithPipelinedReset(UInt(32.W), cellResetBudget))
       }
       cOutRegister.io.in.valid := upperCDrainRegister.io.out.valid || lowerCDrainValid
       cOutRegister.io.in.bits := Mux(
@@ -356,12 +356,7 @@ class SumStationary(
     } else {
       // Without a split, the complete drain flows through every cell to row zero
       // and receives one final register before cOut.
-      val cOutRegister = withReset(resetFor(0, col)) {
-        Module(new RegisterWithPipelinedReset(Valid(UInt(32.W)), cellResetBudget))
-      }
-      cOutRegister.io.in.valid := true.B
-      cOutRegister.io.in.bits := cells(0)(col).io.eCDrainOut.bits.data
-      io.cOut(col) := cOutRegister.io.out.bits
+      io.cOut(col) := RegNext(cells(0)(col).io.eCDrainOut.bits.data)
     }
   }
 }

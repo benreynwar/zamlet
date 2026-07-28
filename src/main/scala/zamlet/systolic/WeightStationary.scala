@@ -3,7 +3,7 @@ package zamlet.systolic
 import chisel3._
 import chisel3.experimental.ExtModule
 import chisel3.util._
-import zamlet.utils.{RegisterWithPipelinedReset, ResetPipeline, ResetPipelineBudget}
+import zamlet.utils.{ResetPipeline, ResetPipelineBudget}
 
 class WeightStationaryResetGroup extends RawModule {
   val clock = IO(Input(Clock()))
@@ -138,12 +138,7 @@ class WeightStationary(
   }
 
   val sumIn = Seq.tabulate(n) { col =>
-    val sumInRegister = withReset(resetFor(0, col)) {
-      Module(new RegisterWithPipelinedReset(UInt(32.W), cellResetBudget))
-        .suggestName(s"sumInRegister_$col")
-    }
-    sumInRegister.io.in := io.sumIn(col)
-    sumInRegister.io.out
+    RegNext(io.sumIn(col)).suggestName(s"sumInRegister_$col")
   }
 
   for (row <- 0 until n) {

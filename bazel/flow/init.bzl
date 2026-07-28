@@ -55,6 +55,7 @@ def _init_impl(ctx):
             top = ctx.attr.top,
             clock_port = ctx.attr.clock_port,
             clock_period = ctx.attr.clock_period,
+            fail_soft = ctx.attr.fail_soft,
             pdk_info = pdk_info,
             default_corner = ctx.attr.default_corner,
             max_transition_constraint = ctx.attr.max_transition_constraint,
@@ -345,6 +346,10 @@ _INIT_ATTRS.update({
     "max_capacitance_constraint": attr.string(
         doc = "Override MAX_CAPACITANCE_CONSTRAINT from the PDK config; empty uses the PDK value",
         default = "",
+    ),
+    "fail_soft": attr.bool(
+        doc = "Record LibreLane step failures in state_out.json instead of failing Bazel",
+        default = False,
     ),
 })
 

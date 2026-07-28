@@ -10,6 +10,7 @@ LibrelaneInput = provider(
         "top": "Top module name",
         "clock_port": "Clock port name",
         "clock_period": "Clock period in nanoseconds (string)",
+        "fail_soft": "Record LibreLane step failures instead of failing Bazel",
 
         # PDK info
         "pdk_info": "PdkInfo provider with full PDK configuration",
