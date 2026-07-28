@@ -821,23 +821,21 @@ def librelane_classic_flow(
             input = input_target,
             src = pre_lef_src,
         )
-        pre_ant_prop_src = ":" + name + "_lef"
+        librelane_check_design_antenna_properties(
+            name = name + "_chk_ant_prop",
+            input = input_target,
+            src = ":" + name + "_lef",
+        )
+        pre_magic_drc_src = ":" + name + "_chk_ant_prop"
     else:
-        pre_ant_prop_src = pre_lef_src
-
-    # Step 62: Check design antenna properties
-    librelane_check_design_antenna_properties(
-        name = name + "_chk_ant_prop",
-        input = input_target,
-        src = pre_ant_prop_src,
-    )
+        pre_magic_drc_src = pre_lef_src
 
     # Steps 63-64: KLayout XOR and checker (gated, default ON)
     if run_klayout_xor and run_magic_streamout and run_klayout_streamout:
         librelane_klayout_xor(
             name = name + "_xor",
             input = input_target,
-            src = ":" + name + "_chk_ant_prop",
+            src = pre_magic_drc_src,
         )
         librelane_xor(
             name = name + "_chk_xor",
@@ -845,8 +843,6 @@ def librelane_classic_flow(
             src = ":" + name + "_xor",
         )
         pre_magic_drc_src = ":" + name + "_chk_xor"
-    else:
-        pre_magic_drc_src = ":" + name + "_chk_ant_prop"
 
     # Step 65: Magic DRC (gated by signoff config, default ON)
     if run_magic_drc:

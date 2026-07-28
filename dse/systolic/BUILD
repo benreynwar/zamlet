@@ -33,6 +33,10 @@ PDK_CONFIGS = [
             "io_pin_v_thickness_mult": "1",
             "pl_resizer_hold_slack_margin": "0",
             "grt_resizer_hold_slack_margin": "0",
+            "run_magic_streamout": False,
+            "run_magic_write_lef": False,
+            "run_klayout_xor": False,
+            "run_magic_drc": False,
         },
     },
 ]

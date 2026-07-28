@@ -15,11 +15,10 @@ let
   flake-compat = fetchTarball
     "https://github.com/edolstra/flake-compat/archive/35bb57c0c8d8b62bbfd284272c928ceb64ddbde9.tar.gz";
 
-  # 3.0.4 release, pinned 2026-06-07
+  # ASAP7 support development branch integration commit.
   librelane-src-unpatched = builtins.fetchGit {
-    url = "https://github.com/librelane/librelane";
-    ref = "refs/tags/3.0.4";
-    rev = "0f39aab99009d4a81ee3f863f0da9ca2f0b43a99";
+    url = "https://github.com/benreynwar/librelane";
+    rev = "ec5d6eb4ce2f5eca2d8e890e259a81a5071d0a6d";
   };
 
   librelane-src = bootstrap-pkgs.applyPatches {
@@ -28,10 +27,6 @@ let
     patches = [
       ./patches/librelane-magic-abspath-rcfile.patch
       ./patches/librelane-custom-io-full-edge-spacing.patch
-      ./patches/librelane-custom-pdn-config.patch
-      ./patches/librelane-preserve-liberty-order.patch
-      ./patches/librelane-custom-rc-config.patch
-      ./patches/librelane-preserve-repeated-tracks.patch
     ];
   };
 
@@ -76,11 +71,12 @@ let
     };
   });
 
-  # OpenSTA emits valid SDF conditions using bitwise operators, which Icarus's
-  # otherwise-skippable conditional-path parser does not accept.
+  # OpenSTA emits valid SDF constructs that need fixes not yet present in the
+  # packaged Icarus snapshot.
   iverilog-patched = pkgs.iverilog.overrideAttrs (old: {
     patches = (old.patches or []) ++ [
       ./patches/iverilog-sdf-conditional-bitwise-operators.patch
+      ./patches/iverilog-sdf-timescale.patch
     ];
   });
 
@@ -152,6 +148,10 @@ let
   # RISC-V Clang/LLD (for VPU vector spill support)
   riscv-clang = import ./riscv-clang.nix { pkgs = bootstrap-pkgs; };
 
+  bazel = pkgs.writeShellScriptBin "bazel" ''
+    exec ${pkgs.bazelisk}/bin/bazelisk "$@"
+  '';
+
   # Project build dependencies
   buildDeps = (with pkgs; [
     stdenv.cc.cc.lib  # Standard library for Bazel-downloaded binaries
@@ -171,6 +171,7 @@ let
     klayout
     python-env
     bazelisk
+    bazel
     ccache
     git
     jq
