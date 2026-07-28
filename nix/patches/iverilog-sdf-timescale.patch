@@ -1,0 +1,203 @@
+From: Zamlet project
+Subject: Apply SDF TIMESCALE when annotating delays
+
+Icarus parses the SDF TIMESCALE header but otherwise ignores it. Convert SDF
+delay values into each destination module's Verilog time unit before passing
+them to vpi_put_delays.
+
+diff --git a/ivtest/ivltests/sdf1.v b/ivtest/ivltests/sdf1.v
+--- a/ivtest/ivltests/sdf1.v
++++ b/ivtest/ivltests/sdf1.v
+@@ -1,5 +1,5 @@
+ `celldefine
+-//`timescale 1ns / 1ps
++`timescale 1ns / 1ps
+ 
+ // Description : 2 input XOR
+ 
+diff --git a/ivtest/ivltests/sdf2.v b/ivtest/ivltests/sdf2.v
+--- a/ivtest/ivltests/sdf2.v
++++ b/ivtest/ivltests/sdf2.v
+@@ -1,5 +1,5 @@
+ `celldefine
+-//`timescale 1ns / 1ps
++`timescale 1ns / 1ps
+ 
+ // Description : 2 input XOR
+ 
+diff --git a/ivtest/ivltests/sdf3.v b/ivtest/ivltests/sdf3.v
+--- a/ivtest/ivltests/sdf3.v
++++ b/ivtest/ivltests/sdf3.v
+@@ -1,5 +1,5 @@
+ `celldefine
+-//`timescale 1ns / 1ps
++`timescale 1ns / 1ps
+ 
+ // Description : 2 input XOR
+ 
+diff --git a/ivtest/ivltests/sdf4.v b/ivtest/ivltests/sdf4.v
+--- a/ivtest/ivltests/sdf4.v
++++ b/ivtest/ivltests/sdf4.v
+@@ -1,5 +1,5 @@
+ `celldefine
+-//`timescale 1ns / 1ps
++`timescale 1ns / 1ps
+ 
+ // Description : 2 input XOR
+ 
+diff --git a/ivtest/ivltests/sdf5.v b/ivtest/ivltests/sdf5.v
+--- a/ivtest/ivltests/sdf5.v
++++ b/ivtest/ivltests/sdf5.v
+@@ -1,3 +1,5 @@
++`timescale 1ns / 1ps
++
+ module DFF (input D, input C, output reg Q);
+ 
+    always @(posedge C)
+diff --git a/ivtest/ivltests/sdf6.v b/ivtest/ivltests/sdf6.v
+--- a/ivtest/ivltests/sdf6.v
++++ b/ivtest/ivltests/sdf6.v
+@@ -1,3 +1,5 @@
++`timescale 1ns / 1ps
++
+ module dff (q, d, cp, sdn, cdn);
+   output q;
+   input cp;
+diff --git a/ivtest/ivltests/sdf7.v b/ivtest/ivltests/sdf7.v
+--- a/ivtest/ivltests/sdf7.v
++++ b/ivtest/ivltests/sdf7.v
+@@ -1,5 +1,5 @@
+ `celldefine
+-//`timescale 1ns / 1ps
++`timescale 1ns / 1ps
+ 
+ // Description : 2 input XOR
+ 
+diff --git a/vpi/sdf_parse.y b/vpi/sdf_parse.y
+--- a/vpi/sdf_parse.y
++++ b/vpi/sdf_parse.y
+@@ -235,11 +235,13 @@ time_scale
+   : '(' K_TIMESCALE REAL_NUMBER IDENTIFIER ')'
+       { if (sdf_flag_inform) vpi_printf("SDF INFO: %s:%d: Timescale: %f%s\n",
+ 	                                sdf_parse_path, @2.first_line, $3, $4);
++	sdf_set_timescale($3, $4, @2.first_line);
+ 	free($4);
+       }
+   | '(' K_TIMESCALE INTEGER IDENTIFIER ')'
+       { if (sdf_flag_inform) vpi_printf("SDF INFO: %s:%d: Timescale: %lu%s\n",
+ 	                                sdf_parse_path, @2.first_line, $3, $4);
++	sdf_set_timescale($3, $4, @2.first_line);
+ 	free($4);
+       }
+   ;
+diff --git a/vpi/sdf_priv.h b/vpi/sdf_priv.h
+--- a/vpi/sdf_priv.h
++++ b/vpi/sdf_priv.h
+@@ -34,6 +34,9 @@ extern int sdf_flag_inform;
+ 
+ extern int sdf_min_typ_max;
+ 
++extern void sdf_set_timescale(double multiplier, const char*unit,
++                              const int sdf_lineno);
++
+ /* ****
+  * These functions are called by the parser to process the SDF file as
+  * it is parsed.
+diff --git a/vpi/sys_sdf.c b/vpi/sys_sdf.c
+--- a/vpi/sys_sdf.c
++++ b/vpi/sys_sdf.c
+@@ -19,6 +19,7 @@
+ 
+ # include  "sys_priv.h"
+ # include  "sdf_priv.h"
++# include  <math.h>
+ # include  <stdlib.h>
+ # include  <string.h>
+ # include  <assert.h>
+@@ -37,6 +38,43 @@ static vpiHandle sdf_callh = 0;
+   /* The cell in process. */
+ static vpiHandle sdf_cur_cell;
+ static char* sdf_fname = NULL;
++static double sdf_timescale_multiplier;
++static int sdf_timescale_exponent;
++
++void sdf_set_timescale(double multiplier, const char*unit,
++                       const int sdf_lineno)
++{
++      if (strcmp(unit, "s") == 0)
++	    sdf_timescale_exponent = 0;
++      else if (strcmp(unit, "ms") == 0)
++	    sdf_timescale_exponent = -3;
++      else if (strcmp(unit, "us") == 0)
++	    sdf_timescale_exponent = -6;
++      else if (strcmp(unit, "ns") == 0)
++	    sdf_timescale_exponent = -9;
++      else if (strcmp(unit, "ps") == 0)
++	    sdf_timescale_exponent = -12;
++      else if (strcmp(unit, "fs") == 0)
++	    sdf_timescale_exponent = -15;
++      else {
++	    vpi_printf("SDF ERROR: %s:%d: Invalid timescale unit %s.\n",
++	               sdf_fname, sdf_lineno, unit);
++	    return;
++      }
++
++      sdf_timescale_multiplier = multiplier;
++}
++
++/*
++ * vpiScaledRealTime values use the destination module's Verilog time unit.
++ * Convert the SDF value from the unit declared in its TIMESCALE header.
++ */
++static double sdf_scale_delay(double value, vpiHandle scope)
++{
++      const int scope_exponent = vpi_get(vpiTimeUnit, scope);
++      return value * sdf_timescale_multiplier
++	    * pow(10.0, sdf_timescale_exponent - scope_exponent);
++}
+ 
+ static vpiHandle find_scope(vpiHandle scope, const char*name)
+ {
+@@ -256,6 +294,11 @@ void sdf_interconnect_delays(struct interconnect_port_s port1, struct interconne
+ 	    if (intermodpath) {
+ 		  if (sdf_flag_inform) vpi_printf("SDF INFO: %s:%d: Created a vpiInterModPath\n", sdf_fname, sdf_lineno);
+ 
++		    /*
++		     * vpi_put_delays interprets vpiScaledRealTime in the
++		     * interconnect destination module's time unit.
++		     */
++		  vpiHandle delay_scope = vpi_handle(vpiModule, intermodpath);
+ 		  s_vpi_delay delays;
+ 		  struct t_vpi_time delay_vals[12];
+ 
+@@ -270,7 +309,9 @@ void sdf_interconnect_delays(struct interconnect_port_s port1, struct interconne
+ 			if (delval_list->val[idx].defined) {
+ 			      if (sdf_flag_inform) vpi_printf("SDF INFO: %s:%d: Putting delay: %f for index %d\n",
+ 			                                      sdf_fname, sdf_lineno, delval_list->val[idx].value, idx);
+-			      delay_vals[idx].real = delval_list->val[idx].value;
++			      delay_vals[idx].real =
++				    sdf_scale_delay(delval_list->val[idx].value,
++				                    delay_scope);
+ 			}
+ 		  }
+ 
+@@ -342,7 +382,9 @@ void sdf_iopath_delays(int vpi_edge, const char*src, const char*dst,
+ 	    for (idx = 0 ; idx < delval_list->count ; idx += 1) {
+ 		  delay_vals[idx].type = vpiScaledRealTime;
+ 		  if (delval_list->val[idx].defined) {
+-			delay_vals[idx].real = delval_list->val[idx].value;
++			delay_vals[idx].real =
++			      sdf_scale_delay(delval_list->val[idx].value,
++			                      sdf_cur_cell);
+ 		  }
+ 	    }
+ 
+@@ -474,6 +516,8 @@ static PLI_INT32 sys_sdf_annotate_calltf(ICARUS_VPI_CONST PLI_BYTE8*name)
+       sdf_min_typ_max = vpi_get(_vpiDelaySelection, 0);
+ 
+       sdf_cur_cell = 0;
++      sdf_timescale_multiplier = 1.0;
++      sdf_timescale_exponent = vpi_get(vpiTimeUnit, sdf_scope);
+       sdf_callh = callh;
+       sdf_process_file(sdf_fd, fname);
+       sdf_callh = 0;
