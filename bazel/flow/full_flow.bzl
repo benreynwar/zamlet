@@ -140,6 +140,8 @@ def librelane_classic_flow(
     grt_antenna_repair_diode_only = None,
     run_post_grt_resizer_timing = False,
     run_drt = True,
+    drt_opt_iters = None,
+    drt_antenna_repair_iters = None,
     run_fill_insertion = True,
     run_spef_extraction = True,
     run_mcsta = True,
@@ -199,6 +201,8 @@ def librelane_classic_flow(
         run_tap_endcap_insertion: Enable tap/endcap insertion (default True)
         run_post_gpl_design_repair: Enable design repair after global placement (default True)
         run_post_grt_design_repair: Enable design repair after global routing (default False, experimental)
+        drt_opt_iters: Maximum number of detailed-routing optimization iterations
+        drt_antenna_repair_iters: Maximum number of post-DRT antenna-repair attempts
         run_spef_extraction: Enable parasitic extraction before final STA (default True)
         run_mcsta: Enable final multi-corner STA after extraction (default True)
         run_irdrop_report: Enable IR drop reporting (default True)
@@ -277,6 +281,10 @@ def librelane_classic_flow(
         pnr_config_kwargs["grt_resizer_hold_slack_margin"] = grt_resizer_hold_slack_margin
     if grt_design_repair_max_wire_length != None:
         pnr_config_kwargs["grt_design_repair_max_wire_length"] = grt_design_repair_max_wire_length
+    if drt_opt_iters != None:
+        pnr_config_kwargs["drt_opt_iters"] = drt_opt_iters
+    if drt_antenna_repair_iters != None:
+        pnr_config_kwargs["drt_antenna_repair_iters"] = drt_antenna_repair_iters
 
     pnr_config_target = None
     if pnr_config_kwargs:

@@ -67,6 +67,8 @@ WEIGHT_STATIONARY_CONFIGS = [
     (2, 0),
 ]
 WEIGHT_STATIONARY_UTILIZATIONS = [40, 50, 60, 65, 70, 72, 74, 75, 80]
+DRT_OPT_ITERS = 24
+DRT_ANTENNA_REPAIR_ITERS = 1
 
 [
     chisel_verilog_no_config(
@@ -109,6 +111,8 @@ WEIGHT_STATIONARY_UTILIZATIONS = [40, 50, 60, 65, 70, 72, 74, 75, 80]
         signoff_sdc_file = ":weight_stationary_signoff_sdc",
         synth_config = ":synth_weight_stationary_preserve_cell",
         run_post_grt_resizer_timing = True,
+        drt_opt_iters = DRT_OPT_ITERS,
+        drt_antenna_repair_iters = DRT_ANTENNA_REPAIR_ITERS,
         mid_setup_wns_threshold = "-0.2",
     )
     for n, reset_group in WEIGHT_STATIONARY_CONFIGS
@@ -206,6 +210,8 @@ SUM_STATIONARY_UTILIZATIONS = [40, 50, 60, 65, 70, 72, 74, 75, 80]
         signoff_sdc_file = ":sum_stationary_signoff_sdc",
         synth_config = ":synth_sum_stationary_preserve_cell",
         run_post_grt_resizer_timing = True,
+        drt_opt_iters = DRT_OPT_ITERS,
+        drt_antenna_repair_iters = DRT_ANTENNA_REPAIR_ITERS,
         mid_setup_wns_threshold = "-0.2",
     )
     for n, csa, split_drain, reset_group in SUM_STATIONARY_CONFIGS
