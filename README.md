@@ -6,8 +6,8 @@ An exploratory RISC-V VPU scaling to large numbers of lanes.  A 2D mesh is used 
 lane-lane communication, and the vector data is structured so that data remains local for most
 operations.
 
-The project is under development. There is a python model for performance simulations that is
-close to complete, and the beginnings of an RTL implementation.
+The project is under development. There is a python model for performance simulation, and the beginnings
+of an RTL implementation.
 
 Documentation can be found at [benreynwar.github.io/zamlet/](https://benreynwar.github.io/zamlet/).
 The docs are all human written.  Much of the code is LLM generated with manual revisions, or
@@ -49,7 +49,8 @@ required.
 There is a python model that captures roughly cycle-accurate behavior with a focus on modelling the
 message passing aspects, since that is where the highest risk is.  Most of the RISC-V vector
 extension is supported by this model, and some custom extensions are added to improve performance.
-My impression so far is that the approach is practical.
+My impression so far is that the approach is practical.  My main concern is that I'm not capturing the latencies
+accurately since I don't yet have good estimates.
 
 There is a start on implementing the design in Chisel and some initial area results have been
 obtained using the skywater130 PDK.  I was most concerned that the area cost for producing,
@@ -57,7 +58,5 @@ receiving and keeping track of message states would be prohibitive, but the init
 suggest that while these costs are significant they are not prohibitive (roughly the same size as
 64-bit integer multiplier).
 
-My current focus is on improving the documentation (i.e. writing this) so I can get some feedback,
-and on continuing to work on the RTL implementation.  I would like to get to a point where I can
-run simple kernels that use a subset of the vector extension on an FPGA by the northern summer of
-2026.  Fully supporting RVV will be substantial work and will happen much later.
+I'm currently focusing on getting an implementation of a single lane solid enough that I can get good
+estimates of the latencies, and a feel for what the congestion is going to look like.
