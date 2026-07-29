@@ -65,7 +65,7 @@ UTILIZATION_CONFIGS = [
         "top": top,
     }
     for design, n, top in DESIGNS
-    for utilization in [70, 72, 74, 75]
+    for utilization in [68, 70, 72, 74]
 ]
 
 STA_CONFIGS = FREQUENCY_CONFIGS + UTILIZATION_CONFIGS
